@@ -1,0 +1,4 @@
+[submodule "vendor/sce"]
+	path = vendor/sce
+	url = https://github.com/newmassrael/scxml-core-engine.git
+	branch = main

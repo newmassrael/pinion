@@ -1,0 +1,14 @@
+[workspace]
+# Greenfield project — atomic-first design.
+# docs/GENERATED.md is the cascade output of typed primitives (add-section,
+# set-section-*, append-changelog-entry-v2). Authoring happens through the
+# Mnemosyne MCP server, not by editing GENERATED.md directly.
+docs = ["docs/GENERATED.md"]
+default_doc = "docs/GENERATED.md"
+
+[schema]
+changelog_titles = ["Changelog"]
+entry_id_prefix = "Round "
+
+[style]
+locale = "en"

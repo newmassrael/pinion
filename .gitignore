@@ -1,0 +1,25 @@
+# Cargo / Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Vendored submodule build artifacts — submodule manages its own target/.
+# Submodule itself is tracked (gitlink); only its build output is local.
+vendor/sce/target/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Mnemosyne — atomic store sidecar is the SSOT; commit it.
+# .atomic/  ← do NOT ignore; it IS the source of truth post Round 251.
+# docs/GENERATED.md ← do NOT ignore; pinion-gui uses GENERATED.md as the
+# human-readable doc surface (greenfield atomic-first design), so it
+# must be committed so reviewers can read prose without running the CLI.
+# Pre-commit hook enforces atomic-store ↔ GENERATED.md sync.
+
+# Local Claude Code state — settings.local.json, transcripts, etc.
+.claude/
+
+# Activity logs (local working notes; outside mnemosyne workspace).
+notes/
