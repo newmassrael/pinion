@@ -29,6 +29,7 @@ use crate::click::{click, ClickError, ClickOutcome};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
+use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
 use crate::snapshot::{snapshot, ExternalSnapshot, SnapshotError, SnapshotNode};
 use crate::wait_for::{wait_for, WaitForError, WaitOutcome};
 
@@ -122,6 +123,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/snapshot" => handle_scene_snapshot(scene, request.params.as_ref()),
         "scene/dry_run" => handle_scene_dry_run(scene, request.params.as_ref()),
         "scene/waitFor" => handle_scene_wait_for(scene, request.params.as_ref()),
+        "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -384,6 +386,48 @@ fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
         WaitForError::Path(_) => "Path",
         WaitForError::Query(_) => "Query",
         WaitForError::ZeroAttempts => "ZeroAttempts",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+fn handle_scene_screenshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+
+    match screenshot(scene, path) {
+        Ok(shot) => Ok(screenshot_to_json(&shot)),
+        Err(err) => Err(screenshot_error_to_rpc(err)),
+    }
+}
+
+fn screenshot_to_json(shot: &Screenshot) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("width".to_string(), Value::Number(shot.width.into()));
+    obj.insert("height".to_string(), Value::Number(shot.height.into()));
+    // v0 wire shape carries raw bytes as a JSON array of u8. Future
+    // slices may switch to base64 (single string) to halve frame size.
+    let pixels = shot
+        .pixels_rgba8
+        .iter()
+        .map(|b| Value::Number((*b).into()))
+        .collect();
+    obj.insert("pixels_rgba8".to_string(), Value::Array(pixels));
+    Value::Object(obj)
+}
+
+fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
+    let variant = match err {
+        ScreenshotError::Path(_) => "Path",
+        ScreenshotError::UnsupportedPath => "UnsupportedPath",
+        ScreenshotError::RenderBackendUnavailable => "RenderBackendUnavailable",
     };
     RpcError {
         code: -32602,
@@ -661,6 +705,28 @@ mod tests {
     fn scene_wait_for_missing_target_param_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/waitFor","params":{"path":"/external/count","max_attempts":1},"id":20}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_screenshot_returns_render_backend_unavailable_tag() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/screenshot","params":{"path":""},"id":21}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(
+            err.data,
+            Some(Value::String("RenderBackendUnavailable".to_string())),
+        );
+    }
+
+    #[test]
+    fn scene_screenshot_missing_path_is_invalid() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/screenshot","params":{},"id":22}"#;
         let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);

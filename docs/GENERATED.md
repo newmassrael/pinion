@@ -364,6 +364,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - v0 snapshot: scene-root SnapshotNode; External::introspect schema fields enumerated when opted in
 - v0 dry_run: save -> intervene -> snapshot -> rollback at /[window[id]/]external/<path>
 - v0 waitFor: sync poll N attempts; deterministic across iterations until async event injection lands
+- v0 screenshot: typed placeholder; RenderBackendUnavailable until §5.16 RHI/wgpu wires
 
 
 
@@ -563,6 +564,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Round 11 supersede: codegen caveats above (1-2, 5) no longer apply per Round 11
 - pinion thin RHI maintenance burden permanent; per-driver workaround responsibility
 - AAA scale dynamic dispatch optimization is runtime engineering, not spec phase
+- screenshot RPC method (§5.12 item 7) blocked on pinion-render-rhi delivery; v0 typed-only
 
 
 
