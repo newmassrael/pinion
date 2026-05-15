@@ -1,0 +1,304 @@
+//! JSON-RPC 2.0 envelope and method-dispatch entry (§5.7, R16 slice 10).
+//!
+//! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
+//! request envelope, route to a typed handler (§5.12), and emit a
+//! response envelope. Today the only routed method is `scene/query`
+//! (§5.12 method 1 of 7); subsequent slices register `click`, `dry_run`,
+//! `snapshot`, `rewind`, `waitFor`, `screenshot`.
+//!
+//! Notifications (requests without `id`) elicit no response per the spec
+//! — [`dispatch`] returns `None` in that case. Errors map to the
+//! standard JSON-RPC error codes:
+//!
+//!   * -32700 Parse error      — invalid JSON
+//!   * -32600 Invalid Request  — wrong `jsonrpc` version / missing fields
+//!   * -32601 Method not found — unknown `method`
+//!   * -32602 Invalid params   — params shape or domain failure
+//!   * -32603 Internal error   — handler panic / unexpected
+//!
+//! Domain errors from [`crate::query`] map onto -32602 with `data`
+//! carrying the typed [`QueryError`] variant name so AI clients can
+//! pattern-match without parsing prose.
+
+use pinion_core::external::IntrospectValue;
+use pinion_core::Scene;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::query::{query, QueryError};
+
+/// JSON-RPC 2.0 request envelope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Request {
+    pub jsonrpc: String,
+    pub method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<RequestId>,
+}
+
+/// JSON-RPC 2.0 request id (number, string, or null).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RequestId {
+    Num(i64),
+    Str(String),
+    Null,
+}
+
+/// JSON-RPC 2.0 response envelope. Exactly one of `result` / `error` is
+/// `Some` per the spec.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Response {
+    pub jsonrpc: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RpcError>,
+    pub id: Option<RequestId>,
+}
+
+/// JSON-RPC 2.0 error object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcError {
+    pub code: i32,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+
+const JSONRPC_V2: &str = "2.0";
+
+/// Dispatch one JSON-RPC 2.0 frame against `scene`.
+///
+/// Returns `Some(json)` for call requests (any with an `id`), `None`
+/// for notifications. Parse errors return a `Some(json)` carrying
+/// id=null per the spec.
+#[must_use]
+pub fn dispatch(scene: &Scene, request_json: &str) -> Option<String> {
+    let parsed: Result<Request, _> = serde_json::from_str(request_json);
+    let request = match parsed {
+        Ok(r) => r,
+        Err(e) => {
+            // Parse errors must respond with id=null per JSON-RPC 2.0.
+            return Some(serialize(&error_response(
+                None,
+                -32700,
+                "Parse error",
+                Some(Value::String(e.to_string())),
+            )));
+        }
+    };
+
+    if request.jsonrpc != JSONRPC_V2 {
+        return Some(serialize(&error_response(
+            request.id,
+            -32600,
+            "Invalid Request",
+            Some(Value::String(format!(
+                "expected jsonrpc=\"2.0\", got \"{}\"",
+                request.jsonrpc
+            ))),
+        )));
+    }
+
+    let is_notification = request.id.is_none();
+    let id = request.id.clone();
+
+    let outcome = match request.method.as_str() {
+        "scene/query" => handle_scene_query(scene, request.params.as_ref()),
+        _ => Err(RpcError {
+            code: -32601,
+            message: "Method not found".to_string(),
+            data: Some(Value::String(request.method.clone())),
+        }),
+    };
+
+    if is_notification {
+        return None;
+    }
+
+    let resp = match outcome {
+        Ok(value) => Response {
+            jsonrpc: JSONRPC_V2.to_string(),
+            result: Some(value),
+            error: None,
+            id,
+        },
+        Err(err) => Response {
+            jsonrpc: JSONRPC_V2.to_string(),
+            result: None,
+            error: Some(err),
+            id,
+        },
+    };
+
+    Some(serialize(&resp))
+}
+
+fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+
+    match query(scene, path) {
+        Ok(value) => Ok(introspect_value_to_json(value)),
+        Err(err) => Err(query_error_to_rpc(err)),
+    }
+}
+
+fn invalid_params(detail: &str) -> RpcError {
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(detail.to_string())),
+    }
+}
+
+fn query_error_to_rpc(err: QueryError) -> RpcError {
+    let variant = match err {
+        QueryError::Path(_) => "Path",
+        QueryError::UnsupportedPath => "UnsupportedPath",
+        QueryError::NoExternalAtPath => "NoExternalAtPath",
+        QueryError::IntrospectionOptedOut => "IntrospectionOptedOut",
+        QueryError::UnknownIntrospectPath => "UnknownIntrospectPath",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+fn introspect_value_to_json(value: IntrospectValue) -> Value {
+    match value {
+        IntrospectValue::Bool(b) => Value::Bool(b),
+        IntrospectValue::Int(n) => Value::Number(n.into()),
+        IntrospectValue::Float(f) => serde_json::Number::from_f64(f)
+            .map_or(Value::Null, Value::Number),
+        IntrospectValue::Text(s) => Value::String(s),
+        // `IntrospectValue::Null` collapses into the non_exhaustive
+        // wildcard; future variants also land as JSON null until §5.12
+        // schema settles a richer projection.
+        _ => Value::Null,
+    }
+}
+
+fn error_response(id: Option<RequestId>, code: i32, message: &str, data: Option<Value>) -> Response {
+    Response {
+        jsonrpc: JSONRPC_V2.to_string(),
+        result: None,
+        error: Some(RpcError {
+            code,
+            message: message.to_string(),
+            data,
+        }),
+        id,
+    }
+}
+
+fn serialize(resp: &Response) -> String {
+    // serde_json on a well-formed Response cannot fail in practice.
+    serde_json::to_string(resp).unwrap_or_else(|e| {
+        format!(
+            "{{\"jsonrpc\":\"2.0\",\"error\":{{\"code\":-32603,\"message\":\"serialize failed: {e}\"}},\"id\":null}}"
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pinion_core::external::{CountedExternal, StubExternal};
+    use pinion_core::scene::ExternalNode;
+
+    fn counted_scene(n: i64) -> Scene {
+        Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
+    }
+
+    fn parse_response(s: &str) -> Response {
+        serde_json::from_str(s).expect("dispatch produced invalid response JSON")
+    }
+
+    #[test]
+    fn parse_error_on_invalid_json() {
+        let scene = counted_scene(0);
+        let resp = parse_response(&dispatch(&scene, "{not json").unwrap());
+        assert_eq!(resp.error.unwrap().code, -32700);
+        assert_eq!(resp.id, None);
+    }
+
+    #[test]
+    fn invalid_request_on_wrong_jsonrpc_version() {
+        let scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"1.0","method":"scene/query","id":1}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32600);
+        assert_eq!(resp.id, Some(RequestId::Num(1)));
+    }
+
+    #[test]
+    fn method_not_found() {
+        let scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/unknown","id":2}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32601);
+    }
+
+    #[test]
+    fn invalid_params_when_path_missing() {
+        let scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{},"id":3}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn success_query_with_id_num() {
+        let scene = counted_scene(42);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":4}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        assert!(resp.error.is_none());
+        assert_eq!(resp.result.unwrap(), Value::Number(42.into()));
+        assert_eq!(resp.id, Some(RequestId::Num(4)));
+    }
+
+    #[test]
+    fn success_query_with_id_string() {
+        let scene = counted_scene(5);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":"req-a"}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        assert_eq!(resp.id, Some(RequestId::Str("req-a".to_string())));
+    }
+
+    #[test]
+    fn notification_emits_no_response() {
+        let scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"}}"#;
+        assert!(dispatch(&scene, req).is_none());
+    }
+
+    #[test]
+    fn query_error_maps_to_invalid_params_with_variant_tag() {
+        let scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/anything"},"id":7}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("IntrospectionOptedOut".to_string())));
+    }
+
+    #[test]
+    fn path_error_inside_query_also_maps_to_invalid_params() {
+        let scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/window[main/external/count"},"id":8}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("Path".to_string())));
+    }
+}

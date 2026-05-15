@@ -262,6 +262,8 @@ name = "pinion-rpc"
 version = "0.0.1"
 dependencies = [
  "pinion-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
