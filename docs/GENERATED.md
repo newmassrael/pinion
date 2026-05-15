@@ -362,6 +362,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - v0 click: synthesize PointerEvent::Down at (x,y) and probe External::handles_event policy
 - v0 rewind: ExternalIntrospect::intervene through /[window[id]/]external/<introspect_path>
 - v0 snapshot: scene-root SnapshotNode; External::introspect schema fields enumerated when opted in
+- v0 dry_run: save -> intervene -> snapshot -> rollback at /[window[id]/]external/<path>
 
 
 
@@ -1070,6 +1071,7 @@ fn main() {
 - Snapshot middle ground but scene-graph mutation cost unknown
 - dry_run scope bounded to scene + SCE state; non-SCE simulation (physics/ECS/float counters) excluded
 - Future game-engine subsystems must declare opt-out of dry_run determinism; no false guarantee
+- v0 dry_run at External introspect level (test-and-rollback) until SCE engine-level step hook lands
 
 
 

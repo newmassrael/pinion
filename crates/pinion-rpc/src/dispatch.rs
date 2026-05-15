@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::click::{click, ClickError, ClickOutcome};
+use crate::dry_run::{dry_run, DryRunError};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::snapshot::{snapshot, ExternalSnapshot, SnapshotError, SnapshotNode};
@@ -118,6 +119,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/click" => handle_scene_click(scene, request.params.as_ref()),
         "scene/rewind" => handle_scene_rewind(scene, request.params.as_ref()),
         "scene/snapshot" => handle_scene_snapshot(scene, request.params.as_ref()),
+        "scene/dry_run" => handle_scene_dry_run(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -295,6 +297,46 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
     }
 
     Value::Object(obj)
+}
+
+fn handle_scene_dry_run(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+    let Some(value_json) = params.get("value") else {
+        return Err(invalid_params("params.value missing"));
+    };
+    let Some(value) = json_to_introspect_value(value_json) else {
+        return Err(invalid_params(
+            "params.value unsupported (v0: null/bool/number/string only)",
+        ));
+    };
+
+    match dry_run(scene, path, value) {
+        Ok(snap) => Ok(snapshot_node_to_json(snap)),
+        Err(err) => Err(dry_run_error_to_rpc(err)),
+    }
+}
+
+fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
+    let variant = match err {
+        DryRunError::Path(_) => "Path",
+        DryRunError::UnsupportedPath => "UnsupportedPath",
+        DryRunError::NoExternalAtPath => "NoExternalAtPath",
+        DryRunError::IntrospectionOptedOut => "IntrospectionOptedOut",
+        DryRunError::InitialQueryFailed => "InitialQueryFailed",
+        DryRunError::Intervene(_) => "Intervene",
+        DryRunError::RollbackFailed => "RollbackFailed",
+        DryRunError::SnapshotFailed => "SnapshotFailed",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
 }
 
 fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
@@ -520,6 +562,31 @@ mod tests {
     fn scene_snapshot_missing_path_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{},"id":15}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_dry_run_returns_hypothetical_snapshot_and_rolls_back() {
+        let mut scene = counted_scene(3);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/dry_run","params":{"path":"/external/count","value":77},"id":16}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        let intro = result.get("introspect").unwrap().as_object().unwrap();
+        assert_eq!(intro.get("count"), Some(&Value::Number(77.into())));
+
+        // Follow-up query confirms the scene was rolled back.
+        let q_req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":17}"#;
+        let q_resp = parse_response(&dispatch(&mut scene, q_req).unwrap());
+        assert_eq!(q_resp.result.unwrap(), Value::Number(3.into()));
+    }
+
+    #[test]
+    fn scene_dry_run_missing_value_param_is_invalid() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/dry_run","params":{"path":"/external/count"},"id":18}"#;
         let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
