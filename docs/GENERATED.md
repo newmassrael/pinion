@@ -401,6 +401,9 @@ Source: `docs/.atomic/workspace.atomic.json`
 **Caveats**:
 - Coordinate system: logical DPI-aware vs physical pixel — must be settled here
 - Open registry weakens introspection like §5.2 reject did
+- Forward-compat hedge: Event enum #[non_exhaustive] for SemVer minor variant additions
+- Future variant slots: Gamepad/HID/Pointer3D addable without v2 bump; runtime zero-cost
+- CoordSpace decoupled from variant: per-variant coord enum (Logical/World3D) for future 3D pointer
 
 
 
@@ -596,6 +599,10 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Closed-form binds scope forever; expanding requires major version
 - Extensible weakens introspection guarantees per §3 capability boundaries
 - Slot #2 inferred from §2 invariants; sub-section title may be relabeled in Round 3 ratify
+- Forward-compat hedge: Rust enum #[non_exhaustive] enables SemVer minor variant additions
+- RPC discriminant union: open-set kind semantics; clients route unknown kinds via fallback handler
+- Hedge runtime cost: zero (match jump table identical); ergonomic tax: downstream forced _ arm
+- Hedge intent: future game-engine evolution (Mesh/Camera/Light) addable without v2 major bump
 
 
 
@@ -869,6 +876,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Engine-level cleanest but couples to SCE internals (§5.4 impact)
 - Rewind costliest but most modular (no SCE access required)
 - Snapshot middle ground but scene-graph mutation cost unknown
+- dry_run scope bounded to scene + SCE state; non-SCE simulation (physics/ECS/float counters) excluded
+- Future game-engine subsystems must declare opt-out of dry_run determinism; no false guarantee
 
 
 
@@ -1066,13 +1075,16 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 **Outputs**:
 - tokio dep in pinion-rpc (default features narrow per IO needs)
-- view-fn signature: fn(&State) -> Scene (no async, no I/O)
+- view-fn signature: fn(&State, &Frame) -> Scene (sync, read-only context slot)
 - Async boundary at RPC server entry; view layer remains sync
+- Frame: #[non_exhaustive] ZST in v1.0; ABI slot for future dt/frame_index w/o SemVer break
 
 
 
 **Caveats**:
 - Async view-fn could enable streaming/lazy scenes; defer until concrete need
+- Frame ZST guarantee: size_of::<Frame>() == 0 in v1.0; LLVM elides &Frame from ABI; runtime zero-cost
+- Frame must be read-only and side-effect-free to preserve §2 dry_run purity invariant
 
 
 
@@ -1610,6 +1622,36 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Round 9 git commit (audit-traceable diff with redaction history)
 - pinion-core implementation phase (carry-over from Round 7+)
 - RFC follow-ups for mnemosyne: set_section_caveats, content-hash clarity for multi-step redact
+
+
+
+### round-14 — Round 14: forward-compatibility hedges for future game-engine evolution path (§5.2 §5.13 §6.3 §5.8)
+
+**Changes**:
+- §5.2 caveat: scene enum #[non_exhaustive] + RPC open-set discriminant for SemVer minor variant addition
+- §5.13 caveat: Event #[non_exhaustive] + per-variant CoordSpace for Gamepad/HID/Pointer3D future slots
+- §6.3 outputs: view-fn signature changed to fn(&State, &Frame) -> Scene; Frame ZST in v1.0
+- §6.3 caveat: Frame ZST guarantee (LLVM ABI elision, runtime zero-cost) + read-only purity constraint
+- §5.8 caveat: dry_run scope bounded to scene + SCE state; non-SCE sim excluded from guarantee
+
+
+
+**Verification**:
+- Each hedge runtime cost = 0 (non_exhaustive match identical, Frame ZST elided by LLVM, doc-only for §5.8)
+- Ergonomic tax limited to downstream _ => arms and Frame param slot in source
+- Game-engine evolution (Mesh/Camera/Light/Gamepad/dt) addable via SemVer minor; no v2 major required
+- §2 dry_run purity invariant preserved: Frame read-only, §5.8 scope explicit
+
+
+
+**Impact**: §5.2, §5.8, §5.13, §6.3
+
+
+**Carry forward**:
+- R12 Button widget reuse: migrate to fn(&State, &Frame) -> Scene signature when next widget lands
+- pinion-core: define Frame struct as #[non_exhaustive] empty ZST with new() constructor
+- RPC schema doc: explicit open-set kind handling guidance for clients
+- §5.16 thin RHI: no spec change needed; game-engine evolution still gated on §1 future round
 
 
 
