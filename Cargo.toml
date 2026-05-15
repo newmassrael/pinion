@@ -6,6 +6,7 @@ members = [
     "crates/pinion-rpc",
     "crates/pinion-cli",
 ]
+exclude = ["vendor/sce"]
 
 [workspace.package]
 version = "0.0.1"
@@ -15,7 +16,7 @@ license = "LGPL-3.0-or-later"
 authors = ["pinion-gui contributors"]
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

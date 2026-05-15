@@ -1248,6 +1248,40 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+### Round 12 — Round 12 — first implementation atomic: pinion-core Button widget SCXML state machine integration (SCE consumer pattern R15 동형)
+
+**Changes**:
+- crates/pinion-core/widgets/button.scxml: 4-state machine (idle/hover/pressed/disabled)
+- crates/pinion-core/Cargo.toml: sce-rust-runtime + sce-build path deps (no-script feature)
+- crates/pinion-core/build.rs: sce_build::compile_scxml invocation + post-process strip
+- crates/pinion-core/src/widgets/button.rs: Button wrapper + 7 unit tests
+- Cargo.toml workspace: vendor/sce excluded; unsafe_code forbid → deny (generated code needs)
+- build.rs post-process: strip inner attributes (#![..]) and inner docs (//!) for include!() compat
+- SCE Forge consumer pattern proven: SCXML → Rust state machine via sce-build crate
+
+
+
+**Verification**:
+- cargo test -p pinion-core: 7 tests passed (initial / hover / click / cancel / disable / enable / state)
+- cargo check --workspace: clean
+- SCE blocker validation: zero (sce-rust-runtime + sce-build both production)
+- Generated button_sm.rs: 542 lines via sce-build minijinja templates
+
+
+
+**Impact**: §5.14, §5.16, §6.1
+
+
+**Carry forward**:
+- Round 12.1+: additional widget SCXMLs (TextField, Checkbox, Toggle, Modal)
+- Round 12.x: widget composition (nested widget tree)
+- Round 12.x: Forge codec for 2D Transform UBO (RHI 진입 준비)
+- Round 12.x: pinion-render-rhi 스켈레톤 (winit + ash device init)
+- build.rs strip pattern: candidate upstream contribution to sce-build (include!() friendliness)
+- unsafe_code = deny (was forbid) - acceptable trade-off for SCE generated code consumption
+
+
+
 ### Round 2 — Round 2 open axes decomposition: §5 + §5.1-§5.10 enumerate options, trade-offs, deps; §5.2/§5.4 slots inferred from §2 invariants
 
 **Changes**:

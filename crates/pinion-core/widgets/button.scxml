@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion-gui §5.16 Round 12.0 — Button widget state machine.
+
+     Five states (idle/hover/pressed/disabled) following W3C SCXML 1.0 +
+     pinion-gui §5.13 event model (closed core: PointerEnter, PointerLeave,
+     PointerDown, PointerUp; enable/disable controls).
+
+     Activation semantics: pressed -> hover transition on pointer_up emits
+     a "button.activate" internal event. Pressed -> idle transition on
+     pointer_leave is the cancel path (W3C button cancel-on-drag-off).
+
+     Disabled is an absorbing class until enable event arrives. Pointer
+     events during disabled are ignored (no transition fires).
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <state id="idle">
+    <transition event="pointer_enter" target="hover"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="hover">
+    <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_down" target="pressed"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="pressed">
+    <transition event="pointer_up" target="hover">
+      <raise event="button.activate"/>
+    </transition>
+    <transition event="pointer_leave" target="idle"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="disabled">
+    <transition event="enable" target="idle"/>
+  </state>
+
+</scxml>
