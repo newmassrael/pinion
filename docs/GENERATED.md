@@ -508,6 +508,63 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+### §5.16. GPU renderer architecture (runtime abstraction vs build-time codegen)
+
+
+**Intent**: Decision (supersede Round 10 codegen): SCE Forge structural skeleton (SCXML state + Forge codec/buffer-pool/worker) + pinion thin RHI + naga; ratified Round 11
+
+
+**Rationale**:
+- Round 10 codegen-based decision technically incorrect — Futamura projection limit
+- AAA workload overhead 25-240% in dynamic work; codegen scope mismatch (industry validated)
+- SCE counter-proposal: ~70% surface already covered by Forge primitives (RFC reject accepted)
+- Unreal/Unity/Frostbite/idTech/Source 2 all use runtime thin RHI, not codegen
+
+
+
+**Inputs**:
+- SCE Forge primitives: SCXML state, codec layout, buffer-pool, worker, sce:extern
+- naga (gfx-rs) shader cross-compile (WGSL → SPIR-V/MSL/HLSL/DXIL)
+- pinion thin RHI design (bgfx/makepad pattern; multi-threaded command, bindless, RDG)
+- R15 watching-zenoh precedent: SCE consumer pattern with byte-golden parity
+
+
+
+**Outputs**:
+- pinion-render-core: SCXML-driven UI state, Forge codec/buffer-pool/worker integration
+- pinion-render-rhi: thin RHI wrapping ash/metal-rs/windows-rs (bgfx/makepad scale)
+- pinion-render-shader: naga-based WGSL → per-target shader emit
+- Zero unjustified abstraction overhead; AAA-feasible via thin RHI + runtime techniques
+
+
+
+**Caveats**:
+- Canonical DSL design prerequisite (~3-6mo SCE Forge-class work)
+- Codegen build cost per target (~6-12mo each)
+- Dev iteration: codegen step adds build time; wgpu-fallback feature for dev
+- Static pipeline first; dynamic resource lifecycle minimal layer ~zero
+- SCE Forge must ship GPU codegen feature before pinion-gui impl can proceed
+- Round 11 supersede: codegen caveats above (1-2, 5) no longer apply per Round 11
+- Pinion thin RHI maintenance burden permanent; per-driver workaround responsibility
+- AAA scale dynamic dispatch optimization is runtime engineering, not spec phase
+
+
+
+**Alternatives rejected**:
+- GPU pipeline codegen (full) — Futamura projection limit; dynamic dispatch out of scope
+- wgpu-only runtime abstraction — 1-10% GUI / 25-240% AAA overhead, conflicts AAA aim
+- Self-built RHI (Godot/UE pattern) — 3yr+ work, 1-5% residual overhead
+- vello on wgpu — 2D only, 0.x maturity, scene model lock-in
+- Per-platform native without abstraction — cross-platform self-build cost
+- Self-built RHI without SCE skeleton — zenoh-proven SCE leverage pattern ignored
+
+
+
+**Impact scope**: §1, §5.6, §5.9, §5.14, §6
+
+
+
+
 ### §5.2. Scene primitive type set (closed-form vs extensible)
 
 
@@ -1030,6 +1087,54 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+### §6.4. Ecosystem default deps (winit, taffy, cosmic-text, accesskit, image, lyon, kurbo)
+
+
+**Intent**: Decision: auto-ratify ecosystem default crates for window, layout, text, a11y, image, path, math; ratified Round 10
+
+
+**Rationale**:
+- Each crate has near-no real alternative in Rust ecosystem (de-facto choice)
+- Axis decomposition for self-evident choices adds bloat without audit value
+- Pattern consistent with §6.1-§6.3 auto-ratified bootstrap choices
+
+
+
+**Inputs**:
+- winit (window/event loop) — only viable Rust cross-platform option
+- taffy (flexbox/grid layout) — Rust modern layout default
+- cosmic-text + swash (text shaping) — mature shaping pipeline
+- accesskit (a11y bridge) — only cross-platform a11y option for Rust
+- image (image decoding) — standard PNG/JPEG/WebP crate
+- lyon (path tessellation) — 6+yr mature, codegen input
+- kurbo (vector math) — Linebender, stable, codegen input
+
+
+
+**Outputs**:
+- Cargo.toml workspace dependencies pinned
+- Cross-cutting infrastructure crates wired into pinion-core/runtime/render
+- Pipeline tessellation via lyon → codegen target
+- Glyph atlas via cosmic-text → codegen target for text rendering
+
+
+
+**Caveats**:
+- Each crate evolves independently; minor version updates may need migration
+- kurbo is Linebender-maintained (same group as vello); kurbo is standalone math, not vello
+
+
+
+**Alternatives rejected**:
+- Per-crate axis split — each has no real alternative; ceremonial bloat
+
+
+
+**Impact scope**: §6, §5.16
+
+
+
+
 ## Changelog (atomic ledger)
 
 ### Round 1 — Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
@@ -1067,6 +1172,79 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Initial git commit (SCE submodule + Mnemosyne workspace + license + atomic + Round 1)
 - Open axis #5 MCU v1 backend decision (recommend AP-only first cut)
 - Open axis #7-#10 AI-native core invariants (RPC headless, dry_run, TUI dual)
+
+
+
+### Round 10 — Round 10 — §5.16 codegen-based zero-overhead renderer + §6.4 ecosystem default deps; SCE Forge prerequisite
+
+**Changes**:
+- §5.16 new: codegen-based renderer (canonical DSL → per-target native code)
+- §5.16 SCE Forge pattern applied to GPU layer (6-backend byte-golden precedent)
+- §5.16 zero runtime abstraction; cross-platform preserved via build-time emit
+- §5.16 targets: pinion-codegen-{vulkan, metal, dx12, webgpu}
+- §5.16 wgpu retained as dev-iteration / web fallback feature
+- §6.4 new: auto-ratify default deps (winit/taffy/cosmic-text/accesskit/image/lyon/kurbo)
+- §6.4 pattern consistent with §6.1-§6.3 Tier 1 auto-ratify
+
+
+
+**Verification**:
+- 2 add_section + ~16 set/add mutations for §5.16 and §6.4
+- T1 cross-ref pre-write check passed on all calls
+- Pending: validate_workspace + verify_generated post-Round 10
+
+
+
+**Impact**: §1, §5.6, §5.9, §6, §6.1, §6.2, §6.3, §5.16, §6.4
+
+
+**Carry forward**:
+- Pre-condition: SCE Forge ships GPU codegen feature (RFC to SCE Forge submitted)
+- Pinion-gui implementation blocked on SCE Forge GPU codegen delivery
+- After SCE Forge delivery: pinion-render-core canonical DSL design (~3-6mo)
+- After SCE Forge delivery: pinion-codegen-{vulkan,metal,dx12} per-target work
+- §5.17 Scene3D scope axis open (future)
+- §5.18 3D renderer integration axis open (future, after §5.17)
+- §5.19 canonical DSL detail axis open (after SCE Forge feature ratified)
+- §5.20 codegen target list axis open (build matrix decision)
+- pinion-render-tiny (tiny-skia CPU) for CI/headless: future Tier 2 axis
+
+
+
+### Round 11 — Round 11 — §5.16 supersede (codegen reject 수락): SCE Forge skeleton + pinion thin RHI + naga; SCE counter-proposal accepted
+
+**Changes**:
+- §5.16 intent supersede: SCE Forge structural skeleton + thin RHI + naga (codegen removed)
+- §5.16 alternatives expanded: GPU pipeline codegen (full) added as rejected
+- §5.16 rationale: Futamura projection limit + AAA dynamic dispatch industry validation
+- §5.16 outputs: pinion-render-{core,rhi,shader} crates with SCE Forge integration
+- §5.16 caveats: append Round 11 supersede notes; retain Round 10 caveats for audit
+- SCE Forge GPU codegen RFC withdrawn (counter-proposal accepted)
+- Implementation unblocked: no longer waits for SCE Phase B (9-12mo saved)
+
+
+
+**Verification**:
+- §5.16 fields updated: intent/rationale/inputs/outputs/alternatives/impact_scope replaced
+- 3 new caveats appended (Round 11 supersede notes); Round 10 caveats retained
+- T1 cross-ref pre-write check passed; round-trip preserved
+- Pending: validate_workspace + verify_generated post-Round 11
+
+
+
+**Impact**: §1, §5.6, §5.9, §5.14, §5.16, §6
+
+
+**Carry forward**:
+- pinion-render-core crate: SCXML UI state model + Forge primitives integration
+- pinion-render-rhi crate: thin RHI bgfx/makepad-scale; ash + metal-rs + windows-rs backends
+- pinion-render-shader crate: naga-based WGSL → SPIR-V/MSL/HLSL/DXIL cross-compile
+- Implementation Round 12+ unblocked (no SCE Phase B prerequisite)
+- SCXML scope ratify (§5.14 + §5.16 alignment): widget state, navigation, animation, gesture
+- Render graph DAG via SCXML parallel regions: stretch fit, prototype if needed
+- Thin RHI design: GPU-driven rendering, bindless, multi-threaded command pre-record
+- AAA scale runtime optimization (research-grade): culling, batching, dispatch, sync
+- Round 10 §5.16 caveats 1-2-5 superseded by Round 11; retained as audit trail
 
 
 
