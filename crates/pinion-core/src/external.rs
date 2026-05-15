@@ -111,6 +111,87 @@ pub enum ThreadOwnership {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StateUpdate;
 
+// ---------------------------------------------------------------------------
+// §5.15 item 8 — Optional symbolic introspection (opt-in sub-trait).
+// ---------------------------------------------------------------------------
+
+/// Schema declaring which paths an [`ExternalIntrospect`] exposes.
+///
+/// Minimal skeleton today: a static slice of `(path, type_name)` pairs.
+/// Future expansion (structured `Type` enum, nested paths, units of
+/// measure) lands via `#[non_exhaustive]` — additive only.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntrospectSchema {
+    /// Declared paths and their type-name tags. Authors are responsible
+    /// for keeping this in sync with `query` / `intervene`; mismatches
+    /// surface as test failures, not silent corruption.
+    pub fields: &'static [(&'static str, &'static str)],
+}
+
+impl IntrospectSchema {
+    #[must_use]
+    pub const fn new(fields: &'static [(&'static str, &'static str)]) -> Self {
+        Self { fields }
+    }
+}
+
+/// Opaque value payload for `query` / `intervene`. The variant set
+/// covers the minimum JSON-RPC scalar surface; structured values
+/// (arrays, objects) land when §5.12 RPC serialization wiring needs
+/// them.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum IntrospectValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Text(String),
+}
+
+/// Failure modes for [`ExternalIntrospect::intervene`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterveneError {
+    /// Path is not declared in the schema.
+    UnknownPath,
+    /// Path exists but the value variant does not match the slot type.
+    TypeMismatch,
+    /// Path exists and the type matches but the slot is read-only.
+    ReadOnly,
+}
+
+/// Opt-in symbolic introspection (§5.15 item 8). An `External` exposes
+/// this sub-trait by overriding [`External::introspect`] /
+/// [`External::introspect_mut`] to return `Some(self)`.
+///
+/// The three operations:
+///   * [`schema`](Self::schema): declare which paths exist.
+///   * [`query`](Self::query): read a value at a path.
+///   * [`intervene`](Self::intervene): write a value at a path.
+///
+/// Designed dyn-safe (all methods take `&self` or `&mut self`,
+/// no associated items, no `Self`-returning methods) so the framework
+/// can hold `&dyn ExternalIntrospect` for path-driven dispatch under
+/// the §5.12 `query` / `snapshot` / `rewind` RPC methods.
+pub trait ExternalIntrospect {
+    /// Schema of introspectable state.
+    fn schema(&self) -> IntrospectSchema;
+
+    /// Read the value at `path`. `None` when `path` is not in the
+    /// schema.
+    fn query(&self, path: &str) -> Option<IntrospectValue>;
+
+    /// Write `value` to `path`. Errors when the path is unknown, the
+    /// value does not match the slot type, or the slot is read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InterveneError`] per the variants above.
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError>;
+}
+
 /// The 8-point integration contract (§5.15). Items 1-3 are required;
 /// items 4-7 have no-op defaults so authors override selectively.
 pub trait External {
@@ -160,6 +241,21 @@ pub trait External {
     fn poll_state(&mut self) -> Option<StateUpdate> {
         None
     }
+
+    // --- 8. Optional symbolic introspection (opt-in per §5.15 caveat) ---
+
+    /// Surface the [`ExternalIntrospect`] view of this `External`, when
+    /// the author opts in. Default returns `None`; override with
+    /// `Some(self)` after `impl ExternalIntrospect for YourType`.
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        None
+    }
+
+    /// Mutable counterpart to [`introspect`](Self::introspect), used by
+    /// the §5.12 `rewind` and `dry_run` paths.
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        None
+    }
 }
 
 /// Reference no-op `External`: Gui only, framework-driven repaint,
@@ -186,6 +282,70 @@ impl External for StubExternal {
 
     fn thread_ownership(&self) -> ThreadOwnership {
         ThreadOwnership::UiThreadSync
+    }
+}
+
+/// Reference `External` opting *in* to symbolic introspection (§5.15
+/// item 8). Exposes a single `count: int` slot via the [`ExternalIntrospect`]
+/// trait; useful as a worked example and as a fixture for the §5.12
+/// `query` / `rewind` RPC methods once they wire up.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CountedExternal {
+    pub count: i64,
+}
+
+impl CountedExternal {
+    #[must_use]
+    pub const fn new(count: i64) -> Self {
+        Self { count }
+    }
+}
+
+impl External for CountedExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for CountedExternal {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[("count", "int")])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "count" => Some(IntrospectValue::Int(self.count)),
+            _ => None,
+        }
+    }
+
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        match path {
+            "count" => match value {
+                IntrospectValue::Int(n) => {
+                    self.count = n;
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            _ => Err(InterveneError::UnknownPath),
+        }
     }
 }
 
@@ -240,5 +400,69 @@ mod tests {
         // Compile-time guard: any future change that loses dyn-safety
         // (associated consts, Self-returning methods, etc.) breaks this.
         let _: Box<dyn External> = Box::new(StubExternal::new());
+    }
+
+    #[test]
+    fn stub_opts_out_of_introspection() {
+        let stub = StubExternal::new();
+        assert!(stub.introspect().is_none());
+        let mut stub_mut = StubExternal::new();
+        assert!(stub_mut.introspect_mut().is_none());
+    }
+
+    #[test]
+    fn counted_opts_in_to_introspection() {
+        let counted = CountedExternal::new(7);
+        let introspect = counted.introspect().expect("opt-in declared");
+        assert_eq!(
+            introspect.query("count"),
+            Some(IntrospectValue::Int(7)),
+        );
+        assert!(introspect.query("missing").is_none());
+    }
+
+    #[test]
+    fn counted_schema_lists_count_field() {
+        let counted = CountedExternal::new(0);
+        let schema = counted.schema();
+        assert_eq!(schema.fields, &[("count", "int")]);
+    }
+
+    #[test]
+    fn intervene_updates_value() {
+        let mut counted = CountedExternal::new(0);
+        let introspect = counted.introspect_mut().expect("opt-in declared");
+        introspect
+            .intervene("count", IntrospectValue::Int(42))
+            .expect("matching type");
+        assert_eq!(counted.count, 42);
+    }
+
+    #[test]
+    fn intervene_rejects_type_mismatch() {
+        let mut counted = CountedExternal::new(0);
+        let err = counted
+            .introspect_mut()
+            .unwrap()
+            .intervene("count", IntrospectValue::Bool(true))
+            .unwrap_err();
+        assert_eq!(err, InterveneError::TypeMismatch);
+    }
+
+    #[test]
+    fn intervene_rejects_unknown_path() {
+        let mut counted = CountedExternal::new(0);
+        let err = counted
+            .introspect_mut()
+            .unwrap()
+            .intervene("ghost", IntrospectValue::Int(1))
+            .unwrap_err();
+        assert_eq!(err, InterveneError::UnknownPath);
+    }
+
+    #[test]
+    fn introspect_sub_trait_is_dyn_safe() {
+        let counted = CountedExternal::new(0);
+        let _: &dyn ExternalIntrospect = &counted;
     }
 }

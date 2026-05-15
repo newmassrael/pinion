@@ -508,6 +508,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Contracts 1-7 mandatory; contract 8 (symbolic introspection) opt-in per External
 - Non-conforming External rejected at scene composition time, not silently broken
 - Game viewport is one consumer; video/PDF/native widget share same contract
+- Item 8 opt-in via External::introspect()/introspect_mut() returning Option<&dyn ExternalIntrospect>
 
 
 
