@@ -30,6 +30,7 @@ use crate::dry_run::{dry_run, DryRunError};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::snapshot::{snapshot, ExternalSnapshot, SnapshotError, SnapshotNode};
+use crate::wait_for::{wait_for, WaitForError, WaitOutcome};
 
 /// JSON-RPC 2.0 request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +121,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/rewind" => handle_scene_rewind(scene, request.params.as_ref()),
         "scene/snapshot" => handle_scene_snapshot(scene, request.params.as_ref()),
         "scene/dry_run" => handle_scene_dry_run(scene, request.params.as_ref()),
+        "scene/waitFor" => handle_scene_wait_for(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -331,6 +333,57 @@ fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
         DryRunError::Intervene(_) => "Intervene",
         DryRunError::RollbackFailed => "RollbackFailed",
         DryRunError::SnapshotFailed => "SnapshotFailed",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+fn handle_scene_wait_for(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+    let Some(target_json) = params.get("target") else {
+        return Err(invalid_params("params.target missing"));
+    };
+    let Some(target) = json_to_introspect_value(target_json) else {
+        return Err(invalid_params(
+            "params.target unsupported (v0: null/bool/number/string only)",
+        ));
+    };
+    let Some(max_attempts) = params.get("max_attempts").and_then(Value::as_u64) else {
+        return Err(invalid_params("params.max_attempts missing or not u64"));
+    };
+    let max_attempts = u32::try_from(max_attempts)
+        .map_err(|_| invalid_params("params.max_attempts exceeds u32 range"))?;
+
+    match wait_for(scene, path, &target, max_attempts) {
+        Ok(outcome) => Ok(wait_outcome_to_json(&outcome)),
+        Err(err) => Err(wait_for_error_to_rpc(err)),
+    }
+}
+
+fn wait_outcome_to_json(outcome: &WaitOutcome) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("matched".to_string(), Value::Bool(outcome.matched));
+    obj.insert("attempts".to_string(), Value::Number(outcome.attempts.into()));
+    obj.insert(
+        "final_value".to_string(),
+        introspect_value_to_json(outcome.final_value.clone()),
+    );
+    Value::Object(obj)
+}
+
+fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
+    let variant = match err {
+        WaitForError::Path(_) => "Path",
+        WaitForError::Query(_) => "Query",
+        WaitForError::ZeroAttempts => "ZeroAttempts",
     };
     RpcError {
         code: -32602,
@@ -587,6 +640,27 @@ mod tests {
     fn scene_dry_run_missing_value_param_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/dry_run","params":{"path":"/external/count"},"id":18}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_wait_for_returns_matched_when_target_equals_current() {
+        let mut scene = counted_scene(42);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/waitFor","params":{"path":"/external/count","target":42,"max_attempts":3},"id":19}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("matched"), Some(&Value::Bool(true)));
+        assert_eq!(result.get("attempts"), Some(&Value::Number(1.into())));
+        assert_eq!(result.get("final_value"), Some(&Value::Number(42.into())));
+    }
+
+    #[test]
+    fn scene_wait_for_missing_target_param_is_invalid() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/waitFor","params":{"path":"/external/count","max_attempts":1},"id":20}"#;
         let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);

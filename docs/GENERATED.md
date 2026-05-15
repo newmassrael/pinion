@@ -363,6 +363,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - v0 rewind: ExternalIntrospect::intervene through /[window[id]/]external/<introspect_path>
 - v0 snapshot: scene-root SnapshotNode; External::introspect schema fields enumerated when opted in
 - v0 dry_run: save -> intervene -> snapshot -> rollback at /[window[id]/]external/<path>
+- v0 waitFor: sync poll N attempts; deterministic across iterations until async event injection lands
 
 
 
