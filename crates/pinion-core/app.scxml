@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.19 — app.scxml convention (R16 first integration).
+
+     Window topology declaration: single root <state> means single-window
+     app. SCE Forge emits one WindowId variant; §5.18 RPC path resolution
+     short-circuits the absent-prefix case to this state.
+
+     Multi-window form would replace the single root with <parallel> of N
+     window <state>s (see §5.17 caveat). This first integration covers the
+     minimal single-window path only; multi-window is exercised when an
+     example consumer crate dogfoods it per §4.
+
+     onentry/onexit blocks reserved for future window lifecycle hooks; per
+     §5.19 caveat they must not invoke view-fn (purity invariant §6.3).
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="main">
+
+  <state id="main"/>
+
+</scxml>

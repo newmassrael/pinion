@@ -676,6 +676,79 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+### §5.19. app.scxml convention (file location, declaration shape, build-time discovery)
+
+
+**Intent**: app.scxml lives at consumer crate root; SCXML state set declares window topology; build.rs invokes sce_build at compile time
+
+
+**Rationale**:
+- Convention over configuration: fixed filename eliminates discovery ambiguity
+- Crate-root placement keeps SCXML co-located with build.rs that consumes it
+- SCE Forge emit at build.rs time consistent with widgets/button.scxml pattern (R12)
+- Single root state means single-window app trivially; parallel root opt-in for multi-window
+
+
+
+**Inputs**:
+- §5.17 SCE-driven window topology decision (registry/feature/SCE-emit choice)
+- §5.4 SCE Forge Rust emit pipeline (vendor/sce/sce-build)
+- R12 widgets/button.scxml + build.rs strip-inner-attrs precedent
+- W3C SCXML 1.0 syntax (parent statechart spec)
+
+
+
+**Outputs**:
+- File path: <consumer-crate>/app.scxml at crate root (sibling of Cargo.toml)
+- Generated artifact: OUT_DIR/app_sm.rs consumed via include! after attr-strip
+- Module name follows file stem: app.scxml -> mod app_sm (no user-mod collision)
+- Pinion runtime re-exports SCE-emitted WindowId/routing/lifecycle for §5.18 path dispatch
+
+
+
+**Caveats**:
+- Single root state implies single-window app; no /window[id]/ RPC prefix per §5.18 short-circuit
+- Multi-window declared via parallel root with N child states; each state id becomes WindowId variant
+- view-fn purity preserved: app.scxml declares topology only; onentry/onexit must not call view-fn
+- Generated app_sm.rs needs same inner-attr strip as button_sm.rs (include! disallows #![...])
+- Convention is opt-in: crates without app.scxml skip build.rs invocation (no auto-discovery panic)
+
+
+
+**Alternatives rejected**:
+- pinion.toml declaring window count — duplicates SCXML semantics; rejected
+- Macro attribute on view-fn declaring window — splits topology source across crate; rejected
+- Per-window separate .scxml files — loses cross-window state share via SCXML datamodel
+
+
+
+**Impact scope**: §5.4, §5.7, §5.17, §5.18, §6.3
+
+
+**Examples**:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0" datamodel="null"
+       initial="main">
+  <!-- Single-window: one root state. WindowId enum has one variant. -->
+  <state id="main"/>
+</scxml>
+```
+
+```rust
+// In your build.rs (consumer crate):
+fn main() {
+    sce_build::compile_scxml(&["app.scxml"]);
+    // Apply the same inner-attr/inner-doc strip as button_sm.rs
+    // (see crates/pinion-core/build.rs precedent from R12).
+}
+```
+
+
+
+
 ### §5.2. Scene primitive type set (closed-form vs extensible)
 
 
@@ -1432,6 +1505,35 @@ Source: `docs/.atomic/workspace.atomic.json`
 - MCP server restart may be needed after .mcp.json path change
 - crates.io 'pinion' availability check before first publish (cargo publish point)
 - Audit half retains pinion-gui per R294 design (frozen ledger preserved)
+
+
+
+### Round 16 — Round 16 — §5.19 app.scxml convention spec'd + minimal example + pinion-core build.rs integration (first slice)
+
+**Changes**:
+- §5.19 new: app.scxml convention (file location, declaration shape, build-time discovery)
+- crates/pinion-core/app.scxml: minimal single-window example (state id="main")
+- crates/pinion-core/build.rs: generalized to compile [button.scxml, app.scxml] with shared strip pass
+- crates/pinion-core/src/app.rs: AppState/AppEvent re-export via wrapped mod sm + include!
+- crates/pinion-core/src/lib.rs: pub mod app added
+
+
+
+**Verification**:
+- validate_workspace: T1=0, T3 reject=0, GENERATED.md sync, sections 28 -> 29
+- cargo check --workspace: pass
+- cargo test --workspace: pass (7 button tests, 0 regressions)
+- Generated app_sm.rs at OUT_DIR: AppState::Main + AppEvent::Null + AppPolicy emitted
+
+
+
+**Impact**: §5.4, §5.17, §5.18, §5.19, §6.3
+
+
+**Carry forward**:
+- pinion-runtime: consume AppState/AppEvent for window routing (R16 next slice)
+- pinion-rpc: §5.18 path parser short-circuit using AppState perfect-hash
+- Multi-window example: parallel root + N states demonstrating WindowId enum
 
 
 
