@@ -91,3 +91,43 @@ reason = "Round 9 self-reference cleanup: abstract meta-mention tokens from reda
 applied_in = "Round 9"
 content_hash_before = "499f92617f4fce792d032ec1bb70157d87695ff67d0c03d73c22bf1c8849b749"
 content_hash_after = "5db2566d3e186f15cf98b6549517afcc7b74f43d0836f103f47b082a7fb33845"
+
+# Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern).
+# Filesystem + atomic store sections + changelog publishable side all swept.
+# Audit half retains "pinion-gui" per R294 design (frozen ledger preserved).
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 1"
+fields = ["publishable_carry_forward_bullets", "publishable_changes_bullets", "publishable_decision_summary"]
+reason = "Round 13 rename: pinion-gui to pinion (brand consolidation)"
+applied_in = "Round 13"
+content_hash_before = "5e31b073178623f407e85d8489a47785667d5786b15980d2913deb7ddab3d623"
+content_hash_after = "8d4beb22e2eb9a9d5f182f73988a851e89ba9afc9b0e02fadabd49f01d00d6b9"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 2"
+fields = ["publishable_carry_forward_bullets"]
+reason = "Round 13 rename: pinion-gui to pinion (brand consolidation)"
+applied_in = "Round 13"
+content_hash_before = "1068c50c697fa91dca7e00ec1df375c4343a5fa16cff049163c27877c49ac2d8"
+content_hash_after = "8b19d8aadaa56bfd15a7847180b3545ca88b52155224317e065f95cab2e7997d"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 3"
+fields = ["publishable_carry_forward_bullets"]
+reason = "Round 13 rename: pinion-gui to pinion (brand consolidation)"
+applied_in = "Round 13"
+content_hash_before = "140e1fdfd8c1bc2dbac48192efecc6f20bf099b10081a9c57a1dae1b0380a5a3"
+content_hash_after = "4b0bcd8f0a6f1a7b7bef1802bc8ffa1ca8381e03e442d734379c51d8cc54e056"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 10"
+fields = ["publishable_carry_forward_bullets"]
+reason = "Round 13 rename: pinion-gui to pinion + lowercase brand consistency"
+applied_in = "Round 13"
+content_hash_before = "480a44b21f8e17ffffe37adfa1c074d7b4e838ce682010c746051019d6783286"
+content_hash_after = "99a729b33e51092002e158635cdc9817b49a500d062608b783610ae187288677"

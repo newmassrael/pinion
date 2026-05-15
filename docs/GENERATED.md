@@ -543,9 +543,9 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Codegen build cost per target (~6-12mo each)
 - Dev iteration: codegen step adds build time; wgpu-fallback feature for dev
 - Static pipeline first; dynamic resource lifecycle minimal layer ~zero
-- SCE Forge must ship GPU codegen feature before pinion-gui impl can proceed
+- SCE Forge must ship GPU codegen feature before pinion impl can proceed
 - Round 11 supersede: codegen caveats above (1-2, 5) no longer apply per Round 11
-- Pinion thin RHI maintenance burden permanent; per-driver workaround responsibility
+- pinion thin RHI maintenance burden permanent; per-driver workaround responsibility
 - AAA scale dynamic dispatch optimization is runtime engineering, not spec phase
 
 
@@ -941,7 +941,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 **Inputs**:
 - Round 3 ratified axes constrain choices (§5.1 framework-first, §5.5 AP-only, §5.7 JSON-RPC)
-- Existing pinion-gui repo state (vendor/sce wired, no Cargo.toml yet)
+- Existing pinion repo state (vendor/sce wired, no Cargo.toml yet)
 - Mnemosyne audit-grain pattern: one section per discrete decision
 
 
@@ -1137,7 +1137,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 ## Changelog (atomic ledger)
 
-### Round 1 — Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
+### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
 - §1 Vision: AI-native cross-platform GUI framework via SCE statechart + structured scene
@@ -1147,7 +1147,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Project scaffold: SCE submodule branch=main, Mnemosyne workspace, .githooks copy
 - License files: LICENSE + LICENSE-COMMERCIAL + LGPL-3 verbatim + GPL-3 verbatim
 - .gitignore: GENERATED.md committed (greenfield doc surface, atomic-first design)
-- .mcp.json: mnemosyne-mcp pointing at /home/coin/pinion-gui workspace
+- .mcp.json: mnemosyne-mcp pointing at /home/coin/pinion workspace
 
 
 
@@ -1168,7 +1168,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - §5.X open axes formal decomposition (Round 2) with refined option sets
 - Dependent axes clustering: #3 DSL depends on #1 first cut, #6 reuse follows #1
 - Axis #1 decision (framework-first vs dogfood-slice-first) gating for #3 and #6
-- CLAUDE.md authoring for pinion-gui (SSOT contract + auto-kickoff trigger)
+- CLAUDE.md authoring for pinion (SSOT contract + auto-kickoff trigger)
 - Initial git commit (SCE submodule + Mnemosyne workspace + license + atomic + Round 1)
 - Open axis #5 MCU v1 backend decision (recommend AP-only first cut)
 - Open axis #7-#10 AI-native core invariants (RPC headless, dry_run, TUI dual)
@@ -1200,7 +1200,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 **Carry forward**:
 - Pre-condition: SCE Forge ships GPU codegen feature (RFC to SCE Forge submitted)
-- Pinion-gui implementation blocked on SCE Forge GPU codegen delivery
+- pinion implementation blocked on SCE Forge GPU codegen delivery
 - After SCE Forge delivery: pinion-render-core canonical DSL design (~3-6mo)
 - After SCE Forge delivery: pinion-codegen-{vulkan,metal,dx12} per-target work
 - §5.17 Scene3D scope axis open (future)
@@ -1282,6 +1282,35 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+### Round 13 — Round 13 — project rename pinion-gui → pinion (lowercase brand, egui pattern); GitHub repo renamed via gh CLI; local filesystem mv pending
+
+**Changes**:
+- GitHub repo renamed: pinion-gui → pinion (gh repo rename); origin auto-updated to ssh
+- Filesystem text sweep: Cargo.toml, LICENSE-COMMERCIAL, CLAUDE.md, COMMIT_FORMAT, mnemosyne.toml, .mcp.json, button.scxml
+- Atomic store: §6 inputs + §5.16 caveat[4] direct edit; changelog publishable redact (4 entries)
+- Crate names retained (pinion-core/runtime/rpc/cli) — Bevy brand-prefix pattern
+- 4 [[publishable_override_ledger]] rows for R1/R2/R3/R10 (R13 reason); audit retained per R294
+
+
+
+**Verification**:
+- grep pinion-gui (case-insensitive, non-vendor, non-audit-half): 0 hits in working tree
+- validate-workspace: T1=0, T2 RT=1/1, GENERATED.md=sync, divergence=7 entries / 12 ledger rows
+- Pending: cargo check + Round 13 commit + filesystem mv to /home/coin/pinion
+
+
+
+**Impact**: §1, §5.16, §6
+
+
+**Carry forward**:
+- Filesystem mv: /home/coin/pinion-gui → /home/coin/pinion (after Round 13 commit lands)
+- MCP server restart may be needed after .mcp.json path change
+- crates.io 'pinion' availability check before first publish (cargo publish point)
+- Audit half retains pinion-gui per R294 design (frozen ledger preserved)
+
+
+
 ### Round 2 — Round 2 open axes decomposition: §5 + §5.1-§5.10 enumerate options, trade-offs, deps; §5.2/§5.4 slots inferred from §2 invariants
 
 **Changes**:
@@ -1318,7 +1347,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Axis §5.5 decision: AP-only v1 recommended; ratify or revise in Round 3
 - Axes §5.2 §5.4 inferred slots: confirm or rename in Round 3 ratify pass
 - Axes §5.7-§5.10 follow §2 invariants implementation: protocol/hook-site/split/binding
-- CLAUDE.md authoring for pinion-gui (SSOT contract + auto-kickoff trigger)
+- CLAUDE.md authoring for pinion (SSOT contract + auto-kickoff trigger)
 - Round 2 git commit (§5 atomic decomposition + settings.local.json bypass mode)
 - Bash(*) and bypassPermissions added to .claude/settings.local.json this session
 
@@ -1353,7 +1382,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 **Carry forward**:
-- CLAUDE.md authoring for pinion-gui (SSOT contract + auto-kickoff trigger)
+- CLAUDE.md authoring for pinion (SSOT contract + auto-kickoff trigger)
 - Round 3 git commit covering §5 decisions + settings.local.json defaultMode=auto
 - Initial Cargo workspace layout per framework-first §5.1 decision
 - vendor/sce embed wiring per §5.4 (Rust emit subset, no_std-aware later)

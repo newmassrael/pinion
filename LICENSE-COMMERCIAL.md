@@ -1,9 +1,9 @@
-# pinion-gui Commercial License (LGPL-3.0 Alternative)
+# pinion Commercial License (LGPL-3.0 Alternative)
 
 ## Overview
 
 This Commercial License provides an alternative to LGPL-3.0-or-later
-for the pinion-gui project (AI-native cross-platform GUI framework
+for the pinion project (AI-native cross-platform GUI framework
 synthesized via SCE statechart kind). It is required when LGPL-3
 obligations — source/object disclosure, anti-tivoization, or the
 prohibition on private modifications — are unacceptable for your
@@ -24,20 +24,20 @@ distribution.
 
 - Open source project under an LGPL-3-compatible license
 - Internal use where you can provide the LGPL-3 §4 information for
-  the pinion-gui portion of your binary on request
+  the pinion portion of your binary on request
 - Embedded device where end users can rebuild and reinstall a modified
-  pinion-gui (anti-tivoization §4.e + §6 compliant — signing key
+  pinion (anti-tivoization §4.e + §6 compliant — signing key
   provided, unlocked bootloader, documented relink procedure)
-- Modifications to pinion-gui source distributed under LGPL-3
+- Modifications to pinion source distributed under LGPL-3
 
 **License: LGPL-3.0-or-later (FREE)**
 
 ### You NEED Commercial License If ANY of the following applies:
 
-**1. Proprietary application (closed source) using pinion-gui:**
+**1. Proprietary application (closed source) using pinion:**
 
 - Your application's source code stays private
-- You ship a binary that statically OR dynamically links pinion-gui
+- You ship a binary that statically OR dynamically links pinion
 - You do not want to provide LGPL-3 §4 object code / relink
   instructions
 
@@ -47,16 +47,16 @@ distribution.
 - Anti-tivoization (LGPL-3 §4.e) is unacceptable for your product's
   security or regulatory model
 
-**3. Private modifications to pinion-gui's own source:**
+**3. Private modifications to pinion's own source:**
 
-- You modify pinion-gui internally and do not want to publish the
+- You modify pinion internally and do not want to publish the
   changes
-- You want to use modified pinion-gui in proprietary contexts
+- You want to use modified pinion in proprietary contexts
 
 **4. Redistribution as part of a derivative SDK:**
 
-- You wrap pinion-gui in a commercial SDK
-- You rebrand pinion-gui as a competing product (GUI framework under
+- You wrap pinion in a commercial SDK
+- You rebrand pinion as a competing product (GUI framework under
   your name)
 
 **5. Avoiding LGPL-3 compliance overhead in general:**
@@ -71,9 +71,9 @@ distribution.
 |---|---|---|---|
 | 1 | Keep your application source closed | NO (must provide LGPL §4 info) | YES |
 | 2 | Ship to locked-down devices (no anti-tivo) | NO (§4.e applies) | YES |
-| 3 | Modify pinion-gui source privately | NO (modifications LGPL-3) | YES |
-| 4 | Redistribute pinion-gui in a derivative SDK | NO | YES |
-| 5 | Rebrand pinion-gui as your own product | NO | YES |
+| 3 | Modify pinion source privately | NO (modifications LGPL-3) | YES |
+| 4 | Redistribute pinion in a derivative SDK | NO | YES |
+| 5 | Rebrand pinion as your own product | NO | YES |
 
 All five rights are conveyed together — there is no à la carte
 pricing for individual exemptions.
@@ -104,10 +104,10 @@ pricing for individual exemptions.
 
 | Aspect | LGPL-3.0 (Free) | Commercial |
 |--------|-----------------|------------|
-| Use unmodified pinion-gui | YES (with §4 obligations) | YES |
+| Use unmodified pinion | YES (with §4 obligations) | YES |
 | Static linking (proprietary app) | LGPL §4 disclosure required | NO disclosure required |
 | Dynamic linking (proprietary app) | LGPL §4 disclosure required | NO disclosure required |
-| Modify pinion-gui source | Must publish modifications | Keep private |
+| Modify pinion source | Must publish modifications | Keep private |
 | Embedded firmware (signed boot) | Anti-tivo §4.e applies | Anti-tivo waived |
 | Redistribute as SDK / rebrand | Not permitted | Permitted |
 | Support | Community (GitHub Issues) | Priority email |
@@ -121,18 +121,18 @@ pricing for individual exemptions.
 Upon receipt of the Commercial License fee (via cumulative GitHub
 Sponsorship at the stated threshold or via Enterprise contract), the
 Licensor grants the Licensee a non-exclusive, non-transferable,
-worldwide license to use, modify, link, and distribute pinion-gui in
+worldwide license to use, modify, link, and distribute pinion in
 proprietary products, subject to the following conditions.
 
 ### Conditions
 
 1. **License preservation in your own products.** You must preserve
-   the pinion-gui copyright notice in your product's documentation or
-   About screen ("This product includes pinion-gui, Copyright (c) 2026
+   the pinion copyright notice in your product's documentation or
+   About screen ("This product includes pinion, Copyright (c) 2026
    newmassrael").
-2. **No sublicensing of pinion-gui itself.** You may sublicense your
+2. **No sublicensing of pinion itself.** You may sublicense your
    derivative products to your customers, but you may not sublicense
-   pinion-gui standalone (rebrand and sell raw pinion-gui as a
+   pinion standalone (rebrand and sell raw pinion as a
    standalone library to a third party).
 3. **SCE runtime engine is separate.** This Commercial License does
    NOT grant any rights to SCE's runtime engine, which is
@@ -144,12 +144,12 @@ proprietary products, subject to the following conditions.
 
 If you fail to pay the cumulative threshold or breach the conditions
 above, this Commercial License terminates automatically and your
-pinion-gui use reverts to LGPL-3.0 (with full §4 obligations
+pinion use reverts to LGPL-3.0 (with full §4 obligations
 retroactively applicable to your distributed binaries).
 
 ### Warranty Disclaimer
 
-pinion-gui is provided "AS IS" without warranty of any kind. The
+pinion is provided "AS IS" without warranty of any kind. The
 Licensor's total liability under this Commercial License is limited
 to the fee paid.
 
@@ -161,19 +161,19 @@ to the fee paid.
   Open source use, with full LGPL-3 compliance.
 
 - **MIT (generated code)**
-  Code emitted by `sce-codegen` from pinion-gui's SCXML sources is
+  Code emitted by `sce-codegen` from pinion's SCXML sources is
   MIT-licensed (per SCE's `LICENSE-GENERATED.md`). The author of the
-  input SCXML file owns the copyright. For pinion-gui's own
+  input SCXML file owns the copyright. For pinion's own
   `sources/`, copyright belongs to newmassrael.
 
 - **SCE runtime engine (LGPL-2.1 + Static-Linking-Exception OR
   SCE Commercial)**
-  Separately licensed by SCE. Required at runtime by all pinion-gui
-  `out/` artifacts. A pinion-gui Commercial License does NOT include
+  Separately licensed by SCE. Required at runtime by all pinion
+  `out/` artifacts. A pinion Commercial License does NOT include
   SCE Commercial.
 
 - **Rust ecosystem dependencies (Apache-2.0, MIT)**
-  pinion-gui depends on standard Rust GUI ecosystem crates (winit,
+  pinion depends on standard Rust GUI ecosystem crates (winit,
   vello, taffy, cosmic-text, accesskit, etc.) under their respective
   permissive licenses. No license conflict — Apache-2.0 / MIT are
   compatible with both LGPL-3 and the Commercial option.
@@ -185,12 +185,12 @@ to the fee paid.
 Files covered by this Commercial License (when chosen by the
 Licensee) use:
 
-    SPDX-License-Identifier: LicenseRef-pinion-gui-Commercial
+    SPDX-License-Identifier: LicenseRef-pinion-Commercial
     SPDX-FileCopyrightText: Copyright (c) 2026 newmassrael
 
-Files dual-licensed (most of the pinion-gui source) use:
+Files dual-licensed (most of the pinion source) use:
 
-    SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-pinion-gui-Commercial
+    SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-pinion-Commercial
     SPDX-FileCopyrightText: Copyright (c) 2026 newmassrael
 
 ---
@@ -199,4 +199,4 @@ Files dual-licensed (most of the pinion-gui source) use:
 
 - **Email:** newmassrael@gmail.com
 - **GitHub Sponsors:** https://github.com/newmassrael
-- **GitHub Issues:** https://github.com/newmassrael/pinion-gui/issues
+- **GitHub Issues:** https://github.com/newmassrael/pinion/issues

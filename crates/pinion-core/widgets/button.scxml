@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- pinion-gui §5.16 Round 12.0 — Button widget state machine.
+<!-- pinion §5.16 Round 12.0 — Button widget state machine.
 
      Five states (idle/hover/pressed/disabled) following W3C SCXML 1.0 +
-     pinion-gui §5.13 event model (closed core: PointerEnter, PointerLeave,
+     pinion §5.13 event model (closed core: PointerEnter, PointerLeave,
      PointerDown, PointerUp; enable/disable controls).
 
      Activation semantics: pressed -> hover transition on pointer_up emits

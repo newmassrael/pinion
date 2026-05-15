@@ -1,4 +1,4 @@
-# Commit Message Format Guide (pinion-gui)
+# Commit Message Format Guide (pinion)
 
 ## Structure
 
@@ -21,7 +21,7 @@
 
 ### 2. Scope (Optional but recommended)
 
-Pinion-gui specific scopes:
+Pinion specific scopes:
 
 | Scope | Domain |
 |---|---|
@@ -101,7 +101,7 @@ feat(arch): R11 §5.16 supersede — codegen reject + thin RHI ratify
 chore(scaffold): SCE submodule + Mnemosyne workspace + R1 spec
 
 - SCE submodule branch=main tracking; Mnemosyne workspace baseline
-- License: LGPL-3.0-or-later OR LicenseRef-pinion-gui-Commercial
+- License: LGPL-3.0-or-later OR LicenseRef-pinion-Commercial
 - Round 1: 4 sections + changelog with full audit fields
 ```
 

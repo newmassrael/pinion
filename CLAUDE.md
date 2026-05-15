@@ -1,4 +1,4 @@
-# pinion-gui — AI-native cross-platform GUI framework
+# pinion — AI-native cross-platform GUI framework
 
 ## Quick start for AI agents
 
@@ -11,7 +11,7 @@ Reading order when entering this repo:
 
 ## Project identity
 
-pinion-gui synthesizes interactive UIs from:
+pinion synthesizes interactive UIs from:
 
 - **SCE statechart** (vendored at `vendor/sce`) for widget/screen/gesture state machines
 - **Structured scene DSL** (Rust view functions, Xilem-style) for AI-introspectable UI
