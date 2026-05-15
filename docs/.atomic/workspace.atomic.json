@@ -250,7 +250,9 @@
         "Minimal underserves first dogfood widget styling needs",
         "CSS-rich bloats type system and RPC payload",
         "Layered most flexible but steepest learning curve",
-        "R17 BoxNode v0 schema: fill: u32 ARGB only; geometry/style settled by §5.3 DSL"
+        "R17 BoxNode v0 schema: fill: u32 ARGB only; geometry/style settled by §5.3 DSL",
+        "R17 BoxNode adds `Rect { x,y,w,h: u32 }` geometry; full DSL deferred to §5.3",
+        "R17 ContainerNode v0 holds `children: Vec<Scene>`; taffy layout deferred to §5.3 DSL"
       ],
       "alternatives_rejected": [
         {

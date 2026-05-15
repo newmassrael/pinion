@@ -88,7 +88,7 @@ pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryErro
 mod tests {
     use super::*;
     use pinion_core::external::{CountedExternal, StubExternal};
-    use pinion_core::scene::{BoxNode, ExternalNode};
+    use pinion_core::scene::{BoxNode, ExternalNode, Rect};
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn box_at_root_reports_no_external() {
-        let scene = Scene::Box(BoxNode::new(0));
+        let scene = Scene::Box(BoxNode::new(0, Rect::default()));
         assert_eq!(
             query(&scene, "/external/count").unwrap_err(),
             QueryError::NoExternalAtPath,

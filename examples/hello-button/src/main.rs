@@ -1,17 +1,19 @@
 //! `hello-button` — §4 first dogfood.
 //!
 //! Opens a winit window and pipes real pointer input into the R12
-//! Button SCXML statechart (`pinion_core::widgets::button::Button`).
+//! `Button` SCXML statechart (`pinion_core::widgets::button::Button`).
 //! A sync `view(state, &Frame) -> Scene` (§6.3 view-fn signature, §2
-//! purity invariant) then maps `ButtonState` to `Scene::Box(BoxNode
-//! { fill })` (§5.2 enum + §5.11 v0 field schema). The softbuffer
-//! pixel loop reads `BoxNode.fill` directly — proving the view-fn →
-//! Scene → present chain end-to-end with the §5.16 RHI still pending.
+//! purity invariant) builds a `Scene::Container` of two `Scene::Box`
+//! children — a dark navy background covering the window and a
+//! centered button whose fill reflects `ButtonState` (§5.2 enum +
+//! §5.11 v0 `BoxNode` `fill`+`rect` schema). A recursive `paint`
+//! walks the scene tree and writes each `BoxNode` into the
+//! softbuffer pixel slice, with the §5.16 RHI still pending.
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
-use pinion_core::scene::BoxNode;
+use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::widgets::button::{Button, ButtonEvent, ButtonState};
 use pinion_core::{Frame, Scene};
 use softbuffer::{Context, Surface};
@@ -19,6 +21,11 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
+
+const WIN_W: u32 = 320;
+const WIN_H: u32 = 200;
+const BG_FILL: u32 = 0x0020_3040; // dark navy
+const BTN_RECT: Rect = Rect::new(80, 60, 160, 80);
 
 /// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
 /// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, readied
@@ -32,13 +39,45 @@ use winit::window::{Window, WindowId};
 // view-fn. Allow the lint at the view-fn boundary.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ButtonState, _frame: &Frame) -> Scene {
-    let fill: u32 = match state {
+    let btn_fill: u32 = match state {
         ButtonState::Idle => 0x00ff_ffff,     // white
         ButtonState::Hover => 0x00d0_d0d0,    // light grey
         ButtonState::Pressed => 0x0050_5050,  // dark grey
         ButtonState::Disabled => 0x00b0_2020, // muted red
     };
-    Scene::Box(BoxNode::new(fill))
+    Scene::Container(ContainerNode::new(vec![
+        Scene::Box(BoxNode::new(BG_FILL, Rect::new(0, 0, WIN_W, WIN_H))),
+        Scene::Box(BoxNode::new(btn_fill, BTN_RECT)),
+    ]))
+}
+
+/// Recursive Scene-tree paint into the softbuffer pixel slice. v0
+/// interprets `Scene::Box` (the only variant with a concrete v0
+/// payload per §5.11) and `Scene::Container` (recurse over
+/// children); other variants are deliberately skipped until their
+/// §5.11 shape lands.
+fn paint(scene: &Scene, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
+    match scene {
+        Scene::Box(node) => paint_box(node, buffer, buf_w, buf_h),
+        Scene::Container(node) => {
+            for child in &node.children {
+                paint(child, buffer, buf_w, buf_h);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn paint_box(node: &BoxNode, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
+    let r = node.rect;
+    let x_start = (r.x as usize).min(buf_w);
+    let y_start = (r.y as usize).min(buf_h);
+    let x_end = (r.x.saturating_add(r.w) as usize).min(buf_w);
+    let y_end = (r.y.saturating_add(r.h) as usize).min(buf_h);
+    for y in y_start..y_end {
+        let row = y * buf_w;
+        buffer[row + x_start..row + x_end].fill(node.fill);
+    }
 }
 
 struct App {
@@ -95,18 +134,16 @@ impl App {
         let Ok(mut buffer) = surface.buffer_mut() else {
             return;
         };
-        // §6.3 view-fn first real call; pattern-match the Scene::Box
-        // payload for the v0 fill. `_` arm is required by `Scene`'s
-        // `#[non_exhaustive]` even though v0 view-fn only returns Box.
+        // §6.3 view-fn → §5.11 Scene tree → recursive paint into the
+        // softbuffer pixel slice. Clear-to-zero first so any pixels
+        // outside the v0 background rect (after window resize) read
+        // as transparent black rather than stale frame data.
+        let buf_w = width.get() as usize;
+        let buf_h = height.get() as usize;
         let frame = Frame::new();
-        let colour = if let Scene::Box(node) = view(self.button.state(), &frame) {
-            node.fill
-        } else {
-            0
-        };
-        for pixel in buffer.iter_mut() {
-            *pixel = colour;
-        }
+        let scene = view(self.button.state(), &frame);
+        buffer.fill(0);
+        paint(&scene, &mut buffer, buf_w, buf_h);
         let _ = buffer.present();
     }
 }
@@ -119,7 +156,10 @@ impl ApplicationHandler for App {
         eprintln!("hello-button: resumed() fired; creating window...");
         let attrs = Window::default_attributes()
             .with_title("pinion hello-button (§4 first dogfood)")
-            .with_inner_size(winit::dpi::LogicalSize::new(320.0, 200.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                f64::from(WIN_W),
+                f64::from(WIN_H),
+            ));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => {
                 eprintln!("hello-button: window created id={:?}", w.id());

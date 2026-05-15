@@ -54,23 +54,47 @@ impl Modifier {
     }
 }
 
+/// Axis-aligned rectangle in top-left-origin pixel coordinates.
+///
+/// v0 §5.11 geometry primitive: `u32` fields only. Negative offsets
+/// and sub-pixel positioning are §5.3 DSL territory and intentionally
+/// excluded from this minimal schema — taffy-driven flexbox/grid
+/// (§5.11 decision) supersedes absolute geometry as that surface
+/// lands.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Rect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+impl Rect {
+    #[must_use]
+    pub const fn new(x: u32, y: u32, w: u32, h: u32) -> Self {
+        Self { x, y, w, h }
+    }
+}
+
 /// Rectangular primitive — the layout-and-fill workhorse.
 ///
-/// `fill` is the v0 minimal field: a `0x00AARRGGBB` packed colour
-/// matching the softbuffer presentation format used by the §4 first
-/// dogfood. Geometry (rect/insets) and `Style`-carried properties
-/// (border, gradient, shadow) settle with the §5.3 DSL — see the
-/// §5.11 caveat for the v0 field-schema scope.
+/// `fill` is the v0 ARGB colour (`0x00AARRGGBB`, softbuffer-native);
+/// `rect` is the v0 absolute pixel geometry. `Style`-carried
+/// properties (border, gradient, shadow) and taffy-driven relative
+/// layout settle with the §5.3 DSL — see the §5.11 caveats for the
+/// v0 field-schema scope.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct BoxNode {
     pub fill: u32,
+    pub rect: Rect,
 }
 
 impl BoxNode {
     #[must_use]
-    pub const fn new(fill: u32) -> Self {
-        Self { fill }
+    pub const fn new(fill: u32, rect: Rect) -> Self {
+        Self { fill, rect }
     }
 }
 
@@ -111,14 +135,22 @@ impl ImageNode {
 }
 
 /// Child layout container.
+///
+/// v0 §5.11 shape: holds `children: Vec<Scene>` for structural
+/// grouping; taffy-driven flexbox/grid layout (§5.11 decision)
+/// arrives with the §5.3 DSL. `Clone` is intentionally *not* derived
+/// — `Scene` carries `ExternalNode` (`Box<dyn External>`) which has
+/// no general clone strategy, see [`Scene`] doc.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default)]
-pub struct ContainerNode {}
+#[derive(Debug, Default)]
+pub struct ContainerNode {
+    pub children: Vec<Scene>,
+}
 
 impl ContainerNode {
     #[must_use]
-    pub const fn new() -> Self {
-        Self {}
+    pub fn new(children: Vec<Scene>) -> Self {
+        Self { children }
     }
 }
 
@@ -166,11 +198,11 @@ mod tests {
 
     #[test]
     fn all_seven_variants_construct() {
-        let _ = Scene::Box(BoxNode::new(0));
+        let _ = Scene::Box(BoxNode::new(0, Rect::default()));
         let _ = Scene::Text(TextNode::new());
         let _ = Scene::Path(PathNode::new());
         let _ = Scene::Image(ImageNode::new());
-        let _ = Scene::Container(ContainerNode::new());
+        let _ = Scene::Container(ContainerNode::new(vec![]));
         let _ = Scene::Effect(EffectNode::new());
         let _ = Scene::External(ExternalNode::new(stub_handle()));
     }
@@ -180,7 +212,7 @@ mod tests {
         // Inside the defining crate `#[non_exhaustive]` does not force a
         // wildcard arm, so this exhaustive match doubles as a guard: if
         // someone adds a Scene variant they must touch this test.
-        let s = Scene::Box(BoxNode::new(0));
+        let s = Scene::Box(BoxNode::new(0, Rect::default()));
         match s {
             Scene::Box(_)
             | Scene::Text(_)
@@ -198,10 +230,43 @@ mod tests {
         // extracts it bit-for-bit. Guards the v0 §5.11 field schema
         // before §5.3 DSL settles geometry/style.
         let argb = 0x00ab_cdef;
-        let scene = Scene::Box(BoxNode::new(argb));
+        let scene = Scene::Box(BoxNode::new(argb, Rect::default()));
         match scene {
             Scene::Box(node) => assert_eq!(node.fill, argb),
             _ => panic!("expected Box variant"),
+        }
+    }
+
+    #[test]
+    fn box_node_rect_round_trips_through_scene() {
+        // v0 §5.11 geometry: Rect carries x/y/w/h as u32, lossless
+        // round-trip through Scene::Box.
+        let rect = Rect::new(10, 20, 160, 80);
+        let scene = Scene::Box(BoxNode::new(0, rect));
+        match scene {
+            Scene::Box(node) => assert_eq!(node.rect, rect),
+            _ => panic!("expected Box variant"),
+        }
+    }
+
+    #[test]
+    fn container_node_children_round_trip_through_scene() {
+        // v0 §5.11 Container shape: Vec<Scene> children preserve
+        // order and variant identity through pattern-match.
+        let children = vec![
+            Scene::Box(BoxNode::new(0x00ff_0000, Rect::new(0, 0, 10, 10))),
+            Scene::Box(BoxNode::new(0x0000_ff00, Rect::new(20, 20, 5, 5))),
+        ];
+        let scene = Scene::Container(ContainerNode::new(children));
+        match scene {
+            Scene::Container(node) => {
+                assert_eq!(node.children.len(), 2);
+                match &node.children[0] {
+                    Scene::Box(b) => assert_eq!(b.fill, 0x00ff_0000),
+                    _ => panic!("child 0 not Box"),
+                }
+            }
+            _ => panic!("expected Container variant"),
         }
     }
 
