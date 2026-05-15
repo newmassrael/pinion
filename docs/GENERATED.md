@@ -262,6 +262,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Runtime flag simplest but pays branch cost forever
 - Build feature cleanest perf but ships 2 binaries to users
 - Per-view granular but overwhelming as default API
+- R15: mode toggle (immediate/retained) declarable per-window via SCXML state attribute
+- SCE-emit const per-window mode; no global runtime flag indirection
 
 
 
@@ -404,6 +406,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Forward-compat hedge: Event enum #[non_exhaustive] for SemVer minor variant additions
 - Future variant slots: Gamepad/HID/Pointer3D addable without v2 bump; runtime zero-cost
 - CoordSpace decoupled from variant: per-variant coord enum (Logical/World3D) for future 3D pointer
+- R15: WindowEvent variants (Close/Focus/Resize/DpiChange) addable via R14 non_exhaustive hedge
+- Window routing resolved at runtime layer; Event variants stay window-agnostic per §5.17
 
 
 
@@ -450,6 +454,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Single root limits per-widget reusability
 - Per-widget complicates global transitions
 - Hierarchical most flexible but boundary rules need clear spec
+- R15: hierarchical SCE root is app.scxml; windows are <parallel> child states per §5.17
+- Single-window app: app.scxml has 1 window state -> hierarchy collapses to single root SCE
 
 
 
@@ -564,6 +570,108 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 **Impact scope**: §1, §5.6, §5.9, §5.14, §6
+
+
+
+
+### §5.17. Window topology (SCE-driven app statechart vs runtime registry)
+
+
+**Intent**: Decision: app.scxml declares window topology; SCE Forge build-time emits WindowId/routing/lifecycle; single vs multi auto-branches from SCXML state count; zero runtime registry cost; ratified Round 15
+
+
+**Rationale**:
+- GUI framework primary scope mandates multi-window; game-engine evolution path also viable
+- Runtime registry imposes single-window apps with cost they don't need (HashMap, Vec routing)
+- SCE Forge already build-time emits state machines per §5.4; extend to window topology codegen
+- Cargo feature gate splits build matrix; SCXML-driven emit avoids feature flag duality
+
+
+
+**Inputs**:
+- Option A runtime registry: Vec<Window> + HashMap routing for both single and multi apps
+- Option B cargo feature multi-window: splits build matrix; LTO hope for single-window apps
+- Option C chosen: app.scxml declares window states; SCE Forge emits enum/routing/lifecycle
+- SCE Forge precedent: watching-zenoh R15 byte-golden parity SCXML emit pipeline
+- winit native multi-window event loop already a de-facto dep per §6.4
+
+
+
+**Outputs**:
+- app.scxml convention: <parallel> of window <state>s; SCE Forge consumed at build.rs
+- Build-time emit: WindowId enum, routing match, lifecycle hooks (onentry/onexit)
+- Single-window app: 1 SCXML state -> minimal emit; no Application/registry code
+- Multi-window app: N states -> full routing emit; runtime instances from static templates
+- Dock undock: runtime instance creation from build-time-known templates only
+
+
+
+**Caveats**:
+- winit always compiles multi-window support; runtime cost unavoidable absent winit alternative
+- Runtime template-only instantiation: cannot create windows with unforeseen topology at runtime
+- Cross-window state share via SCXML datamodel or explicit channel; no implicit global state
+- Dock-undock requires runtime window creation but only of build-time-declared templates
+
+
+
+**Alternatives rejected**:
+- Runtime registry (Vec+HashMap) — imposes single-window apps with multi-window cost
+- Cargo feature multi-window — splits build matrix; doubles test/doc burden
+- Type-level monomorphization (single/multi marker) — generic propagation API ergonomic cost
+
+
+
+**Impact scope**: §5.4, §5.7, §5.10, §5.13, §5.14, §5.16
+
+
+
+
+### §5.18. Multi-window RPC addressing (path prefix vs implicit first window)
+
+
+**Intent**: Decision: RPC path optional /window[id]/ prefix; id matches SCE-emit const enum via perfect-hash; absent prefix routes to first SCE-declared window; single-window apps short-circuit; ratified Round 15
+
+
+**Rationale**:
+- §5.7 JSON-RPC ratified but path scheme unspecified for multi-window scope
+- §5.17 SCE-emit WindowId enum provides static const space; perfect-hash dispatch viable
+- Single-window apps must keep current path shape (no /window[0]/) for v1 RPC compat
+- Dynamic string->WindowId lookup imposes runtime cost; SCE-emit perfect-hash is build-time
+
+
+
+**Inputs**:
+- Option A mandatory /window[id]/ prefix on all RPC paths -- breaks single-window v1 compat
+- Option B chosen: optional prefix; absent prefix routes to first SCE-declared window
+- Option C per-window RPC server instances -- transport bloat; multi-client coord cost
+- §5.12 7 typed methods; path resolution is per-method server dispatch concern
+- §5.17 SCE-emit WindowId enum names are the perfect-hash key set
+
+
+
+**Outputs**:
+- RPC path schema: /window[<id>]/<scene_path>; <id> matches SCE-emit enum variant
+- Single-window: absent prefix -> SCE-emit first window const; zero parser branch cost
+- Multi-window: build-time perfect-hash on enum names; runtime O(1) match
+- v1 schema: existing paths (no prefix) remain valid; multi-window adds prefix opt-in
+
+
+
+**Caveats**:
+- Window id strings are SCE-emit const; runtime cannot register new window names
+- Perfect-hash collision impossible; SCE-emit guarantees unique state ids in app.scxml
+- Window-scoped ops (snapshot/rewind/dry_run) implicitly per-window when prefix present
+
+
+
+**Alternatives rejected**:
+- Mandatory /window[id]/ prefix — breaks v1 single-window RPC path compat
+- Per-window RPC server instances — transport bloat; multi-client coordination cost
+- Runtime HashMap lookup of window id strings — runtime cost vs build-time perfect-hash
+
+
+
+**Impact scope**: §5.7, §5.12, §5.17
 
 
 
@@ -696,6 +804,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - FFI adds C boundary, debug overhead, but enables MCU shared source
 - Rust-native simplest but ties to AP-only or no_std Rust target
 - Slot #4 inferred from §2 SCE invariant; relabel possible in Round 3
+- R15 scope expansion: SCE Forge also emits app.scxml window topology (WindowId/routing/lifecycle)
+- SCE Forge role: widget statechart engine + app-level codegen backbone per §5.17
 
 
 
@@ -830,6 +940,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - MCP-native couples to Anthropic SDK lifecycle, evolves with their protocol
 - gRPC adds proto build dep and discovery complexity
 - JSON-RPC simplest but weak schema enforcement
+- R15 path schema: optional /window[id]/ prefix per §5.18; SCE-emit perfect-hash dispatch
+- v1 single-window RPC paths remain valid; prefix absent routes to first SCE-declared window
 
 
 
@@ -1652,6 +1764,38 @@ Source: `docs/.atomic/workspace.atomic.json`
 - pinion-core: define Frame struct as #[non_exhaustive] empty ZST with new() constructor
 - RPC schema doc: explicit open-set kind handling guidance for clients
 - §5.16 thin RHI: no spec change needed; game-engine evolution still gated on §1 future round
+
+
+
+### round-15 — Round 15: SCE-driven window topology (§5.17 §5.18 new + §5.4 §5.7 §5.10 §5.13 §5.14 caveats)
+
+**Changes**:
+- §5.17 new: app.scxml declares window topology; SCE Forge emits WindowId/routing/lifecycle
+- §5.18 new: RPC path optional /window[id]/ prefix; SCE-emit perfect-hash dispatch
+- §5.4 caveats: SCE Forge role expanded to app-level codegen backbone beyond widget statecharts
+- §5.7 §5.10 §5.13 §5.14 caveats: window prefix, per-window mode, WindowEvent slot, SCE root scope
+- Single vs multi-window auto-branches from SCXML state count; no cargo feature flag needed
+
+
+
+**Verification**:
+- Zero-cost single-window: SCXML 1 window state -> minimal emit; no Application/registry code
+- Zero-cost multi-window: build-time perfect-hash routing; no runtime HashMap lookup
+- Forward-compat: R14 non_exhaustive Event enum absorbs WindowEvent variants without v2 bump
+- Hierarchical SCE topology (§5.14) preserved: windows as <parallel> children of app.scxml root
+- winit multi-window dep cost honestly acknowledged as the one non-eliminable runtime overhead
+
+
+
+**Impact**: §5.4, §5.7, §5.10, §5.13, §5.14, §5.17, §5.18
+
+
+**Carry forward**:
+- app.scxml convention spec: example template + SCE Forge build.rs integration path
+- pinion-render-core: swapchain-per-window in §5.16 thin RHI implementation
+- RPC server skeleton (§5.7): path parser short-circuit on absent /window[id]/ prefix
+- Dock primitive (§5.2 DockArea Container variant) deferred until layout system lands
+- MCU evolution path (§5.5) preserved: const tables + no allocator dep
 
 
 
