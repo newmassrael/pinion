@@ -890,6 +890,7 @@ fn main() {
 - Slot #4 inferred from §2 SCE invariant; relabel possible in Round 3
 - R15 scope expansion: SCE Forge also emits app.scxml window topology (WindowId/routing/lifecycle)
 - SCE Forge role: widget statechart engine + app-level codegen backbone per §5.17
+- First runtime exercise: examples/hello-button runs Engine<ButtonPolicy> in winit event loop
 
 
 

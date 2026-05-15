@@ -1,0 +1,21 @@
+[package]
+name = "hello-button"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "First dogfood (§4): winit window + R12 Button SCXML statechart end-to-end"
+publish = false
+
+[[bin]]
+name = "hello-button"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+winit = { workspace = true }
+softbuffer = { workspace = true }
+
+[lints]
+workspace = true
