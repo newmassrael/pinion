@@ -27,6 +27,7 @@ use serde_json::Value;
 
 use crate::click::{click, ClickError, ClickOutcome};
 use crate::query::{query, QueryError};
+use crate::rewind::{rewind, RewindError};
 
 /// JSON-RPC 2.0 request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,11 +74,15 @@ const JSONRPC_V2: &str = "2.0";
 
 /// Dispatch one JSON-RPC 2.0 frame against `scene`.
 ///
+/// Takes `&mut Scene` because some methods (e.g. `scene/rewind`) mutate
+/// External state through introspection. Read-only methods accept a
+/// reborrowed `&Scene` internally.
+///
 /// Returns `Some(json)` for call requests (any with an `id`), `None`
 /// for notifications. Parse errors return a `Some(json)` carrying
 /// id=null per the spec.
 #[must_use]
-pub fn dispatch(scene: &Scene, request_json: &str) -> Option<String> {
+pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
     let parsed: Result<Request, _> = serde_json::from_str(request_json);
     let request = match parsed {
         Ok(r) => r,
@@ -110,6 +115,7 @@ pub fn dispatch(scene: &Scene, request_json: &str) -> Option<String> {
     let outcome = match request.method.as_str() {
         "scene/query" => handle_scene_query(scene, request.params.as_ref()),
         "scene/click" => handle_scene_click(scene, request.params.as_ref()),
+        "scene/rewind" => handle_scene_rewind(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -194,6 +200,55 @@ fn click_error_to_rpc(err: ClickError) -> RpcError {
     }
 }
 
+fn handle_scene_rewind(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+    let Some(value_json) = params.get("value") else {
+        return Err(invalid_params("params.value missing"));
+    };
+    let Some(value) = json_to_introspect_value(value_json) else {
+        return Err(invalid_params("params.value unsupported (v0: null/bool/number/string only)"));
+    };
+
+    match rewind(scene, path, value) {
+        Ok(()) => Ok(Value::Null),
+        Err(err) => Err(rewind_error_to_rpc(err)),
+    }
+}
+
+fn rewind_error_to_rpc(err: RewindError) -> RpcError {
+    let variant = match err {
+        RewindError::Path(_) => "Path",
+        RewindError::UnsupportedPath => "UnsupportedPath",
+        RewindError::NoExternalAtPath => "NoExternalAtPath",
+        RewindError::IntrospectionOptedOut => "IntrospectionOptedOut",
+        RewindError::Intervene(_) => "Intervene",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
+    match v {
+        Value::Null => Some(IntrospectValue::Null),
+        Value::Bool(b) => Some(IntrospectValue::Bool(*b)),
+        Value::Number(n) => n
+            .as_i64()
+            .map(IntrospectValue::Int)
+            .or_else(|| n.as_f64().map(IntrospectValue::Float)),
+        Value::String(s) => Some(IntrospectValue::Text(s.clone())),
+        // v0: Array/Object not yet represented in IntrospectValue.
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
 fn invalid_params(detail: &str) -> RpcError {
     RpcError {
         code: -32602,
@@ -269,42 +324,42 @@ mod tests {
 
     #[test]
     fn parse_error_on_invalid_json() {
-        let scene = counted_scene(0);
-        let resp = parse_response(&dispatch(&scene, "{not json").unwrap());
+        let mut scene = counted_scene(0);
+        let resp = parse_response(&dispatch(&mut scene, "{not json").unwrap());
         assert_eq!(resp.error.unwrap().code, -32700);
         assert_eq!(resp.id, None);
     }
 
     #[test]
     fn invalid_request_on_wrong_jsonrpc_version() {
-        let scene = counted_scene(0);
+        let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"1.0","method":"scene/query","id":1}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32600);
         assert_eq!(resp.id, Some(RequestId::Num(1)));
     }
 
     #[test]
     fn method_not_found() {
-        let scene = counted_scene(0);
+        let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/unknown","id":2}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32601);
     }
 
     #[test]
     fn invalid_params_when_path_missing() {
-        let scene = counted_scene(0);
+        let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{},"id":3}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32602);
     }
 
     #[test]
     fn success_query_with_id_num() {
-        let scene = counted_scene(42);
+        let mut scene = counted_scene(42);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":4}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         assert_eq!(resp.result.unwrap(), Value::Number(42.into()));
         assert_eq!(resp.id, Some(RequestId::Num(4)));
@@ -312,24 +367,24 @@ mod tests {
 
     #[test]
     fn success_query_with_id_string() {
-        let scene = counted_scene(5);
+        let mut scene = counted_scene(5);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":"req-a"}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         assert_eq!(resp.id, Some(RequestId::Str("req-a".to_string())));
     }
 
     #[test]
     fn notification_emits_no_response() {
-        let scene = counted_scene(0);
+        let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"}}"#;
-        assert!(dispatch(&scene, req).is_none());
+        assert!(dispatch(&mut scene, req).is_none());
     }
 
     #[test]
     fn query_error_maps_to_invalid_params_with_variant_tag() {
-        let scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
+        let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/anything"},"id":7}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("IntrospectionOptedOut".to_string())));
@@ -337,9 +392,9 @@ mod tests {
 
     #[test]
     fn path_error_inside_query_also_maps_to_invalid_params() {
-        let scene = counted_scene(0);
+        let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/window[main/external/count"},"id":8}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("Path".to_string())));
@@ -349,9 +404,9 @@ mod tests {
     fn scene_click_success_returns_handled_false() {
         // StubExternal's handles_event default returns false. The
         // dispatch round-trips that into result.handled.
-        let scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
+        let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
         let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"/external","x":1.0,"y":2.0},"id":9}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         assert_eq!(result.get("handled"), Some(&Value::Bool(false)));
@@ -359,9 +414,30 @@ mod tests {
 
     #[test]
     fn scene_click_missing_x_param_is_invalid() {
-        let scene = counted_scene(0);
+        let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"/external","y":2.0},"id":10}"#;
-        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_rewind_writes_then_query_observes_new_value() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count","value":123},"id":11}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none());
+
+        let req2 = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":12}"#;
+        let resp2 = parse_response(&dispatch(&mut scene, req2).unwrap());
+        assert_eq!(resp2.result.unwrap(), Value::Number(123.into()));
+    }
+
+    #[test]
+    fn scene_rewind_missing_value_param_is_invalid() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count"},"id":13}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
