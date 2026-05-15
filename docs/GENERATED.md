@@ -1549,6 +1549,41 @@ fn main() {
 
 
 
+### Round 17 — Round 17 — R16 round close: §5.15 8-item External contract + §5.12 7/7 typed+wire RPC + topology runtime (16 slices)
+
+**Changes**:
+- Scene enum 7 variants + Style/Modifier + Event enum closed-core (§5.2 §5.13)
+- External trait 8-point contract + ExternalIntrospect opt-in (§5.15 items 1-8)
+- ExternalNode { handle: Box<dyn External> } wires §5.15 into Scene tree (§5.2)
+- JSON-RPC 2.0 envelope + dispatch with -32700/-32600/-32601/-32602 codes (§5.7)
+- 7 typed RPC methods: query/click/rewind/snapshot/dry_run/waitFor/screenshot (§5.12)
+- WindowRouter + App + topology helpers; multi-window fixture (§5.17 §5.18)
+- Scene drops Clone derive; non_exhaustive R14 hedge throughout new enums/structs
+- serde + serde_json workspace deps added; first runtime deps beyond vendor/sce
+
+
+
+**Verification**:
+- cargo test --workspace: 110 pass (added +110 across 16 slices; 0 regressions)
+- cargo clippy --workspace --all-targets: clean on every slice's new code
+- validate_workspace per slice: T1=0 T3=0; sections 28 -> 29; entries 15 -> 17
+- Mnemosyne mutations: 1 new section + 11 caveat appends across 8 sections
+
+
+
+**Impact**: §5.2, §5.4, §5.7, §5.8, §5.12, §5.13, §5.15, §5.16, §5.17, §5.18, §5.19
+
+
+**Carry forward**:
+- tokio stdio transport: wrap dispatch in newline-delimited JSON loop (§6.3 boundary)
+- Scene::Container traversal: real nested scene-tree addressing (§5.3 DSL prereq)
+- R12 Button -> R14 view-fn fn(&State, &Frame) -> Scene migration
+- SCE engine-level dry_run step hook to replace v0 External test-and-rollback (§5.8)
+- Push-form async state channel for External (§5.15 item 7, §6.3 wiring)
+- Pixel renderer: pinion-render-rhi delivery to unblock screenshot (§5.16)
+
+
+
 ### Round 2 — Round 2 open axes decomposition: §5 + §5.1-§5.10 enumerate options, trade-offs, deps; §5.2/§5.4 slots inferred from §2 invariants
 
 **Changes**:
