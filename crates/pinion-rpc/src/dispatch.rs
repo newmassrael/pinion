@@ -28,6 +28,7 @@ use serde_json::Value;
 use crate::click::{click, ClickError, ClickOutcome};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
+use crate::snapshot::{snapshot, ExternalSnapshot, SnapshotError, SnapshotNode};
 
 /// JSON-RPC 2.0 request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +117,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/query" => handle_scene_query(scene, request.params.as_ref()),
         "scene/click" => handle_scene_click(scene, request.params.as_ref()),
         "scene/rewind" => handle_scene_rewind(scene, request.params.as_ref()),
+        "scene/snapshot" => handle_scene_snapshot(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -233,6 +235,66 @@ fn rewind_error_to_rpc(err: RewindError) -> RpcError {
         message: "Invalid params".to_string(),
         data: Some(Value::String(variant.to_string())),
     }
+}
+
+fn handle_scene_snapshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+
+    match snapshot(scene, path) {
+        Ok(node) => Ok(snapshot_node_to_json(node)),
+        Err(err) => Err(snapshot_error_to_rpc(err)),
+    }
+}
+
+fn snapshot_error_to_rpc(err: SnapshotError) -> RpcError {
+    let variant = match err {
+        SnapshotError::Path(_) => "Path",
+        SnapshotError::UnsupportedPath => "UnsupportedPath",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+fn snapshot_node_to_json(node: SnapshotNode) -> Value {
+    let mut obj = serde_json::Map::new();
+    let type_tag = match &node {
+        SnapshotNode::Box => "Box",
+        SnapshotNode::Text => "Text",
+        SnapshotNode::Path => "Path",
+        SnapshotNode::Image => "Image",
+        SnapshotNode::Container => "Container",
+        SnapshotNode::Effect => "Effect",
+        SnapshotNode::External(_) => "External",
+        // `SnapshotNode::Unknown` and future non_exhaustive additions
+        // collapse to "Unknown".
+        _ => "Unknown",
+    };
+    obj.insert("type".to_string(), Value::String(type_tag.to_string()));
+
+    if let SnapshotNode::External(ExternalSnapshot { introspect }) = node {
+        match introspect {
+            Some(fields) => {
+                let mut intro = serde_json::Map::new();
+                for (name, value) in fields {
+                    intro.insert(name, introspect_value_to_json(value));
+                }
+                obj.insert("introspect".to_string(), Value::Object(intro));
+            }
+            None => {
+                obj.insert("introspect".to_string(), Value::Null);
+            }
+        }
+    }
+
+    Value::Object(obj)
 }
 
 fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
@@ -437,6 +499,27 @@ mod tests {
     fn scene_rewind_missing_value_param_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count"},"id":13}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_snapshot_returns_type_and_introspect_object() {
+        let mut scene = counted_scene(99);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":""},"id":14}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("External".into())));
+        let intro = result.get("introspect").unwrap().as_object().unwrap();
+        assert_eq!(intro.get("count"), Some(&Value::Number(99.into())));
+    }
+
+    #[test]
+    fn scene_snapshot_missing_path_is_invalid() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{},"id":15}"#;
         let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
