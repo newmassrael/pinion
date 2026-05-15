@@ -194,7 +194,10 @@ pub trait ExternalIntrospect {
 
 /// The 8-point integration contract (§5.15). Items 1-3 are required;
 /// items 4-7 have no-op defaults so authors override selectively.
-pub trait External {
+///
+/// `Debug` is a super-trait so `Box<dyn External>` participates in the
+/// scene tree's `#[derive(Debug)]` machinery (§5.2 `ExternalNode`).
+pub trait External: core::fmt::Debug {
     // --- 1. Backend support declaration ---
 
     /// Which backends this `External` dispatches into, and the policy

@@ -17,8 +17,14 @@
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
+///
+/// `Clone` is deliberately *not* derived: `ExternalNode` owns a
+/// `Box<dyn External>` (§5.15) which has no general clone strategy.
+/// Snapshot/`dry_run` over External state goes through the §5.15 item
+/// 8 introspection surface (`ExternalIntrospect`), not a tree-wide
+/// clone.
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Scene {
     Box(BoxNode),
     Text(TextNode),
@@ -120,22 +126,35 @@ impl EffectNode {
     }
 }
 
-/// Opaque embedded-content escape (§3 capability boundary); §5.15
-/// settles the 8-item integration contract for authors.
+/// Opaque embedded-content escape (§3 capability boundary). Owns the
+/// `External` author's handle behind a `Box<dyn External>`; the §5.15
+/// 8-item contract governs the integration surface.
+///
+/// Not `Clone` — `Box<dyn External>` has no generic clone strategy,
+/// see [`Scene`] doc for the introspection-based alternative.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default)]
-pub struct ExternalNode {}
+#[derive(Debug)]
+pub struct ExternalNode {
+    pub handle: Box<dyn crate::external::External>,
+}
 
 impl ExternalNode {
     #[must_use]
-    pub const fn new() -> Self {
-        Self {}
+    pub fn new(handle: Box<dyn crate::external::External>) -> Self {
+        Self { handle }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::external::{
+        Backend, CountedExternal, External, IntrospectValue, StubExternal,
+    };
+
+    fn stub_handle() -> Box<dyn External> {
+        Box::new(StubExternal::new())
+    }
 
     #[test]
     fn all_seven_variants_construct() {
@@ -145,7 +164,7 @@ mod tests {
         let _ = Scene::Image(ImageNode::new());
         let _ = Scene::Container(ContainerNode::new());
         let _ = Scene::Effect(EffectNode::new());
-        let _ = Scene::External(ExternalNode::new());
+        let _ = Scene::External(ExternalNode::new(stub_handle()));
     }
 
     #[test]
@@ -169,5 +188,38 @@ mod tests {
     fn modifier_default_constructs() {
         let _ = Modifier::new();
         let _ = Modifier::default();
+    }
+
+    #[test]
+    fn external_handle_dispatches_through_scene() {
+        // Pattern-match the External variant and dispatch a contract
+        // method through the trait object — proves Box<dyn External>
+        // round-trips through the scene tree.
+        let scene = Scene::External(ExternalNode::new(stub_handle()));
+        match scene {
+            Scene::External(node) => {
+                let support = node.handle.backends();
+                assert!(support.supports(Backend::Gui));
+                assert!(!support.supports(Backend::Tui));
+            }
+            _ => panic!("expected External variant"),
+        }
+    }
+
+    #[test]
+    fn introspection_reaches_through_scene_with_counted() {
+        // CountedExternal opts in to §5.15 item 8. Embed it in the
+        // scene tree, then traverse to its introspect surface.
+        let scene = Scene::External(ExternalNode::new(Box::new(CountedExternal::new(5))));
+        match scene {
+            Scene::External(node) => {
+                let intro = node
+                    .handle
+                    .introspect()
+                    .expect("CountedExternal opts in to introspection");
+                assert_eq!(intro.query("count"), Some(IntrospectValue::Int(5)));
+            }
+            _ => panic!("expected External variant"),
+        }
     }
 }
