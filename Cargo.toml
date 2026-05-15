@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pinion-core",
+    "crates/pinion-runtime",
+    "crates/pinion-rpc",
+    "crates/pinion-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85.0"
+license = "LGPL-3.0-or-later"
+authors = ["pinion-gui contributors"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }

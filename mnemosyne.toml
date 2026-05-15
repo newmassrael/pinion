@@ -12,3 +12,82 @@ entry_id_prefix = "Round "
 
 [style]
 locale = "en"
+
+# Round 9 — privacy redaction of third-party identifiers from publishable
+# half of changelog entries. audit_* half retains the original frozen body
+# per R294 schema design. Section side handled via set-section-* primitives
+# (no ledger needed; Section is mutable). Section caveats lack a setter
+# primitive in mnemosyne 3ff92f3 — handled by direct atomic JSON edit
+# (Section-not-frozen scope; documented separately in Round 9 changelog).
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 1"
+fields = ["publishable_changes_bullets"]
+reason = "Round 9 user-explicit privacy redaction: remove third-party identifier, preserve dogfood concept"
+applied_in = "Round 9"
+content_hash_before = "5e31b073178623f407e85d8489a47785667d5786b15980d2913deb7ddab3d623"
+content_hash_after = "e84fa28ba169e7be39d59ac02c7de67f11586cd81c711a9192473969ce518dca"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 1"
+fields = ["publishable_carry_forward_bullets"]
+reason = "Round 9 user-explicit privacy redaction: remove third-party identifier, preserve dogfood concept"
+applied_in = "Round 9"
+content_hash_before = "5e31b073178623f407e85d8489a47785667d5786b15980d2913deb7ddab3d623"
+content_hash_after = "397438a5306bf43aa020fde647bec01b98cffcfdf2caad1d79277312fb3dda38"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 1"
+fields = ["publishable_decision_summary"]
+reason = "Round 9 user-explicit privacy redaction: remove third-party identifier, preserve dogfood concept"
+applied_in = "Round 9"
+content_hash_before = "5e31b073178623f407e85d8489a47785667d5786b15980d2913deb7ddab3d623"
+content_hash_after = "6f45ce416b534addc79e9ede317859226534e9d15355254b50582803ef035109"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 2"
+fields = ["publishable_carry_forward_bullets", "publishable_changes_bullets"]
+reason = "Round 9 user-explicit privacy redaction: remove third-party identifier, preserve dogfood concept"
+applied_in = "Round 9"
+content_hash_before = "1068c50c697fa91dca7e00ec1df375c4343a5fa16cff049163c27877c49ac2d8"
+content_hash_after = "a51bd18c03f34e0a41911ed7580759c6afc34ec1e1f47f3cfd94b6986c10d6d4"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 5"
+fields = ["publishable_carry_forward_bullets"]
+reason = "Round 9 user-explicit privacy redaction: remove third-party identifier, preserve dogfood concept"
+applied_in = "Round 9"
+content_hash_before = "52652920fc8381798a598c6afc35132a1a7ec15c36c176d72f39d7426f910ec8"
+content_hash_after = "708a673cbca43faf3491e5491c22f5f361c9bbe064255473db184cc0fddb778a"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 8"
+fields = ["publishable_carry_forward_bullets"]
+reason = "Round 9 user-explicit privacy redaction: remove third-party identifier, preserve dogfood concept"
+applied_in = "Round 9"
+content_hash_before = "17f3a07593489e12d63479e469d9942fe57e6038da02725def031419880dcdd5"
+content_hash_after = "1920d36be62b00582a063bb2ed61b37fc767f6d804d4da2d8eaf634546e34ec3"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 9"
+fields = ["publishable_verification_bullets"]
+reason = "Round 9 self-reference cleanup: abstract meta-mention tokens from redaction history itself"
+applied_in = "Round 9"
+content_hash_before = "499f92617f4fce792d032ec1bb70157d87695ff67d0c03d73c22bf1c8849b749"
+content_hash_after = "89f3d16f8f132b22220d9417716220a1709e779956c53bca79d96a0aceb7d6e5"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 9"
+fields = ["publishable_carry_forward_bullets"]
+reason = "Round 9 self-reference cleanup: abstract meta-mention tokens from redaction history itself"
+applied_in = "Round 9"
+content_hash_before = "499f92617f4fce792d032ec1bb70157d87695ff67d0c03d73c22bf1c8849b749"
+content_hash_after = "5db2566d3e186f15cf98b6549517afcc7b74f43d0836f103f47b082a7fb33845"

@@ -16,7 +16,7 @@
         "Rust GUI ecosystem crates winit vello taffy cosmic-text accesskit",
         "Xilem-style view function pattern Raph Levien precedent",
         "Mnemosyne SSOT pattern for project-level audit trail",
-        "ivis WP5 Analyzer widget catalogue first dogfood scope driver"
+        "First dogfood widget catalogue scope driver"
       ],
       "outputs_bullets": [
         "Framework Rust impl with invariants enforced at type/build level",
@@ -88,25 +88,822 @@
       "decision_status": "active"
     },
     "4": {
-      "title": "First dogfood: ivis WP5 Analyzer",
+      "title": "First dogfood: target application requirements",
       "parent_doc": "docs/GENERATED.md",
-      "intent": "First dogfood: ivis WP5 Analyzer (Zenoh network analyzer); autonomous, no deadline; validates framework on real surface",
+      "intent": "First dogfood must validate framework on real-world non-trivial GUI surface; autonomous schedule, no external deadline; widget catalogue criteria",
       "inputs_bullets": [
-        "ivis Work Package 5 slide widget catalogue (Data Interp Viz Diag Util Sim)",
-        "watching-zenoh wire spec subset for live capture decode (out-of-process)",
+        "Designated first dogfood slide widget catalogue (Data Interp Viz Diag Util Sim)",
+        "Designated wire spec subset for live capture decode (out-of-process)",
         "Approximately 12 core widgets and 6 domain-specific per slide analysis",
         "Network capture/replay/fuzz declared as external actor not framework widget"
       ],
       "outputs_bullets": [
-        "Analyzer 90%+ widgets covered by Tier-1 pure (event-with-input contract)",
+        "First dogfood 90%+ widgets covered by Tier-1 pure (event-with-input contract)",
         "Framework MVP scope tied to actual customer-driven widget requirements",
         "Validates dry_run and RPC introspection on real-world non-trivial GUI surface",
         "Node graph topology widget tests Canvas + custom scene primitive coverage"
       ],
       "caveats_bullets": [
-        "Analyzer autonomous; no delivery deadline binding framework cadence",
-        "Framework MVP first then Analyzer slice; not parallel deadline pressure",
+        "First dogfood autonomous; no delivery deadline binding framework cadence",
+        "Framework MVP first then dogfood slice; not parallel deadline pressure",
         "Node graph widget largest single component; potentially 1-2 month sub-effort"
+      ],
+      "decision_status": "active"
+    },
+    "5": {
+      "title": "Open implementation axes (Round 2 decomposition)",
+      "parent_doc": "docs/GENERATED.md",
+      "intent": "Open implementation axes formally decomposed: 10 sub-sections enumerate option sets, dependencies, and trade-offs deferred from Round 1 §5.X carry-forward",
+      "rationale_bullets": [
+        "Round 1 §1-§4 settled Vision/invariants/boundaries/dogfood; implementation form remains open",
+        "Round 1 carry-forward names #1 #3 #5 #6 directly; #7-#10 cluster mentioned",
+        "Round 2 ratifies axis set; option enumeration, deps, trade-offs; decisions deferred",
+        "Mnemosyne audit grain = one decision per section; 10 sub-sections per axis"
+      ],
+      "inputs_bullets": [
+        "Round 1 §2 settled invariants enumerate 7 commitments without implementation form",
+        "Round 1 carry-forward bullets naming open axes directly and by cluster",
+        "Mnemosyne audit-trail genre: each axis = independent section_id for cross-ref"
+      ],
+      "outputs_bullets": [
+        "10 sub-sections (§5.1-§5.10) enumerating options, trade-offs, dependencies",
+        "Cross-ref graph from §1/§2/§3/§4 into §5.X via impact_scope",
+        "Decision queue for Round 3+ (each axis resolved by superseding §5.X content)"
+      ],
+      "caveats_bullets": [
+        "Sub-sections §5.2 and §5.4 are slot-inferred from §2 invariants; relabel possible in Round 3",
+        "Axis options recorded as inputs/outputs/caveats; not alternatives_rejected (still open)"
+      ],
+      "impact_scope": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "decision_status": "active"
+    },
+    "5.1": {
+      "title": "Strategic kickoff direction (framework-first vs dogfood-slice-first)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: framework-first kickoff; common substrate (scene/RPC/dry_run) before first widget; ratified Round 3",
+      "rationale_bullets": [
+        "§1/§2/§4 cover Vision/invariants/dogfood but do not bind MVP construction direction",
+        "Framework-first builds common substrate before first widget; slice-first inverts the dependency",
+        "Choice gates §5.3 DSL form and §5.6 reuse path so must precede their decomposition",
+        "watching-zenoh precedent succeeded with framework-first (SCE Forge canonical kind first)"
+      ],
+      "inputs_bullets": [
+        "Option A framework-first: scene/RPC/dry_run substrate before any dogfood widget",
+        "Option B dogfood-slice-first: target one dogfood widget, pull framework in as needed",
+        "Rust GUI ecosystem maturity (winit/vello stable; taffy growing; cosmic-text young)",
+        "First dogfood widget catalogue size (~12 core + 6 domain per slide)"
+      ],
+      "outputs_bullets": [
+        "MVP scope binding for first 3-6 months of impl",
+        "DSL form constraint propagates downstream to §5.3",
+        "Reuse-path timing constraint propagates downstream to §5.6"
+      ],
+      "caveats_bullets": [
+        "Decision must precede §5.3 and §5.6 to avoid back-propagation rework"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Dogfood-slice-first",
+          "reason": "first widget would shape framework; AI invariants too penetrating to retrofit"
+        },
+        {
+          "alternative": "Parallel both directions",
+          "reason": "dilutes design constraints and team focus"
+        }
+      ],
+      "impact_scope": [
+        "5.3",
+        "5.6"
+      ],
+      "decision_status": "active"
+    },
+    "5.10": {
+      "title": "Mode toggle API surface (runtime flag vs build feature vs per-view)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: runtime flag for immediate vs retained mode toggle; single binary; ratified Round 3",
+      "rationale_bullets": [
+        "§2 commits to mode toggle but binding mechanism is unspecified",
+        "Determines author-facing API and runtime perf characteristic",
+        "Xilem mode-toggle precedent uses runtime flag"
+      ],
+      "inputs_bullets": [
+        "Option A runtime flag (single binary; runtime branch cost; max flexibility)",
+        "Option B build feature (compile-time; no runtime cost; two binary variants)",
+        "Option C per-view annotation (granular per-view choice; complex API)"
+      ],
+      "outputs_bullets": [
+        "Author-facing API shape",
+        "Runtime perf cost (zero for build feature, branch for runtime flag)",
+        "Binary variant count (1 for runtime, 2 for build feature)"
+      ],
+      "caveats_bullets": [
+        "Runtime flag simplest but pays branch cost forever",
+        "Build feature cleanest perf but ships 2 binaries to users",
+        "Per-view granular but overwhelming as default API"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Build feature",
+          "reason": "CI/distribution complexity doubled; two binary variants to ship"
+        },
+        {
+          "alternative": "Per-view annotation",
+          "reason": "author API too granular for default; cognitive overhead"
+        }
+      ],
+      "impact_scope": [
+        "2"
+      ],
+      "decision_status": "active"
+    },
+    "5.11": {
+      "title": "Scene primitive variant shape (minimal vs CSS-rich vs layered)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: layered primitive shape (core variant + Style trait + Modifier composition); ratified Round 5",
+      "rationale_bullets": [
+        "§5.2 chose 7 variants but did not fix per-variant field shape",
+        "Affects DSL ergonomics (§5.3), RPC payload size (§5.7), introspection cost",
+        "taffy handles flexbox/grid layout; primitive shape orthogonal to layout"
+      ],
+      "inputs_bullets": [
+        "Option A minimal: 5-10 fields per variant, basics only",
+        "Option B CSS-rich: 30+ fields per variant, flexbox/grid/borders/effects native",
+        "Option C layered: core variant struct + Style trait + Modifier composition",
+        "Xilem composability via Modifier-style trait; AccessKit role taxonomy"
+      ],
+      "outputs_bullets": [
+        "Rust enum/struct definitions for each variant",
+        "DSL surface ergonomics constraint",
+        "RPC schema variant payload size"
+      ],
+      "caveats_bullets": [
+        "Minimal underserves first dogfood widget styling needs",
+        "CSS-rich bloats type system and RPC payload",
+        "Layered most flexible but steepest learning curve"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Minimal",
+          "reason": "5-10 fields per variant; underserves first dogfood widget styling needs"
+        },
+        {
+          "alternative": "CSS-rich",
+          "reason": "30+ fields per variant; type system bloat and RPC payload weight"
+        }
+      ],
+      "impact_scope": [
+        "5.2",
+        "5.3",
+        "5.7"
+      ],
+      "decision_status": "active"
+    },
+    "5.12": {
+      "title": "RPC method shape (generic query vs typed-per-action vs hybrid)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: hybrid RPC shape (7 typed methods: query/click/dry_run/snapshot/rewind/waitFor/screenshot + path/filter sub-args); ratified Round 5, extended Round 7",
+      "rationale_bullets": [
+        "§2 names 6 methods; Round 7 adds 7th (screenshot) for pixel-level verification",
+        "Per-method param/return shape specified per §5.12 hybrid pattern",
+        "Affects AI client integration and schema discoverability",
+        "Symbolic-first primary path, screenshot opt-in fallback for render pipeline bugs"
+      ],
+      "inputs_bullets": [
+        "Option A generic query: single 'query' method + path arg + filter DSL",
+        "Option B typed-per-action: one method per intent (query_scene, click_widget, ...)",
+        "Option C hybrid: typed top-level + path/filter sub-args",
+        "MCP wraps JSON-RPC; AI tooling expects typed methods typically"
+      ],
+      "outputs_bullets": [
+        "JSON-RPC schema document covering 7 typed methods + path/filter sub-args",
+        "Server method dispatch table",
+        "AI client integration surface complexity",
+        "Pixel screenshot channel for symbolic-vs-rendered diff verification"
+      ],
+      "caveats_bullets": [
+        "Generic-query simpler server but path DSL becomes own language",
+        "Typed methods cleaner client but proliferate (6 base × N variants)",
+        "Hybrid pragmatic but two-paradigm cognitive cost"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Generic-query single method with path DSL",
+          "reason": "DSL becomes own language; client complex"
+        },
+        {
+          "alternative": "Typed-per-action one method per intent",
+          "reason": "proliferates to N variants per base method"
+        }
+      ],
+      "impact_scope": [
+        "2",
+        "5.7"
+      ],
+      "decision_status": "active"
+    },
+    "5.13": {
+      "title": "Event model (closed enum vs open registry vs core+opaque)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: closed core Event + opaque External event + logical DPI-aware coords; ratified Round 5",
+      "rationale_bullets": [
+        "§2 commits to event-with-input but variant set unspecified",
+        "Affects view-fn input shape, RPC click method (§5.12), dry_run replay (§5.8)",
+        "Coordinate system (logical vs physical) must be part of decision"
+      ],
+      "inputs_bullets": [
+        "Option A closed Event enum (Click/Key/Touch/Gesture/Focus/Scroll/...)",
+        "Option B open registry (user-extensible trait per §5.2 extensible parallel)",
+        "Option C closed core + opaque External event (parallels §3 escape pattern)",
+        "winit event surface; AccessKit event taxonomy reference"
+      ],
+      "outputs_bullets": [
+        "Event Rust enum definition",
+        "Input data per-variant shape (coords, modifiers, keycode, ...)",
+        "view-fn signature input type"
+      ],
+      "caveats_bullets": [
+        "Coordinate system: logical DPI-aware vs physical pixel — must be settled here",
+        "Open registry weakens introspection like §5.2 reject did"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Open Event registry",
+          "reason": "weakens introspection like §5.2 closed-form reject pattern"
+        },
+        {
+          "alternative": "Closed enum without External escape",
+          "reason": "cannot handle IME/drag-drop/OS-specific events"
+        },
+        {
+          "alternative": "Physical pixel coords",
+          "reason": "HiDPI requires 2x/3x handling everywhere; accessibility weak"
+        }
+      ],
+      "impact_scope": [
+        "2",
+        "5.8",
+        "5.12"
+      ],
+      "decision_status": "active"
+    },
+    "5.14": {
+      "title": "State containment topology (single root vs per-widget vs hierarchical)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: hierarchical SCE topology (root + scoped child SCEs); ratified Round 5",
+      "rationale_bullets": [
+        "§5.4 chose SCE Forge Rust emit embedding; topology still open",
+        "Affects state sharing, transition semantics, dry_run scope (§5.8)"
+      ],
+      "inputs_bullets": [
+        "Option A single app-level SCE root (centralized state, simple dry_run)",
+        "Option B per-widget SCE instance (composition, complex dry_run aggregation)",
+        "Option C hierarchical (root + scoped child SCEs) — Xilem-style",
+        "SCE Forge supports nested statechart kind natively"
+      ],
+      "outputs_bullets": [
+        "Widget instantiation pattern (own state vs derived)",
+        "dry_run scope semantics (whole app vs subtree)",
+        "RPC snapshot/rewind granularity (§5.7 method shape impact)"
+      ],
+      "caveats_bullets": [
+        "Single root limits per-widget reusability",
+        "Per-widget complicates global transitions",
+        "Hierarchical most flexible but boundary rules need clear spec"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Single app-level SCE root",
+          "reason": "Redux-style; widget reusability loss; dry_run always app-wide"
+        },
+        {
+          "alternative": "Per-widget SCE instance",
+          "reason": "global state share difficult; widget-to-widget comm awkward"
+        }
+      ],
+      "impact_scope": [
+        "5.4",
+        "5.8",
+        "5.12"
+      ],
+      "decision_status": "active"
+    },
+    "5.15": {
+      "title": "External primitive integration contract",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: 8-point integration contract for External primitives (backend/repaint/thread/lifecycle/input/DPI/async/introspection); ratified Round 7",
+      "rationale_bullets": [
+        "§3 declared Effect/External as opaque escape but left integration contract unspecified",
+        "Without contract, External authors implement ad-hoc → incompatible across projects",
+        "Contract spans GUI/TUI dispatch, lifecycle, threading, repaint, input, DPI, async, introspection",
+        "Game viewport, video player, PDF, native widget all share same general contract"
+      ],
+      "inputs_bullets": [
+        "§3 boundary declaration (Effect/External opaque) without integration spec",
+        "§5.9 trait-based Renderer needs backend dispatch info from External",
+        "§5.14 hierarchical SCE allows External as scoped child node",
+        "§5.12 RPC introspection extends optionally into External symbolic state"
+      ],
+      "outputs_bullets": [
+        "1. Backend support declaration (Gui/Tui/Rpc dispatch with fallback policy)",
+        "2. Repaint trigger ownership (framework layout vs External own render loop)",
+        "3. Thread ownership (UI thread sync vs own thread + sync channel)",
+        "4. Lifecycle event callbacks (mount/unmount/visibility/focus change)",
+        "5. Input forwarding policy (which events framework forwards vs External handles)",
+        "6. DPI/scale change notification + window resize",
+        "7. Async state change channel (External → framework state push)",
+        "8. Optional symbolic introspection (schema + query/intervene callbacks; opt-in)"
+      ],
+      "caveats_bullets": [
+        "Contracts 1-7 mandatory; contract 8 (symbolic introspection) opt-in per External",
+        "Non-conforming External rejected at scene composition time, not silently broken",
+        "Game viewport is one consumer; video/PDF/native widget share same contract"
+      ],
+      "impact_scope": [
+        "3",
+        "5.9",
+        "5.10",
+        "5.12",
+        "5.14"
+      ],
+      "decision_status": "active"
+    },
+    "5.2": {
+      "title": "Scene primitive type set (closed-form vs extensible)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: closed-form primitive type set (Box/Text/Path/Image/Container/Effect/External); slot ratified Round 3",
+      "rationale_bullets": [
+        "§2 commits to structured scene mandatory; §3 commits to 2 opaque escapes (Effect/External)",
+        "Closed-form set itself is unspecified in Round 1; binding scope contract pending",
+        "Axis-slot inference from §2 invariants; ratify or supersede in Round 3",
+        "Determines RPC schema discriminant union shape downstream of §2"
+      ],
+      "inputs_bullets": [
+        "Option A closed-form: fixed type set (Box/Text/Path/Image/Container/Effect/External)",
+        "Option B extensible: registry with Tier-2 declared primitives at framework boundary",
+        "Xilem primitive set, Vello scene primitives, AccessKit role taxonomy as references"
+      ],
+      "outputs_bullets": [
+        "Type set defines RPC schema discriminant union (query/snapshot return shape)",
+        "Constrains author surface in §5.3 DSL form"
+      ],
+      "caveats_bullets": [
+        "Closed-form binds scope forever; expanding requires major version",
+        "Extensible weakens introspection guarantees per §3 capability boundaries",
+        "Slot #2 inferred from §2 invariants; sub-section title may be relabeled in Round 3 ratify"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Extensible registry with Tier-2 declared primitives",
+          "reason": "weakens introspection per §3 boundary"
+        },
+        {
+          "alternative": "Free-form paint callback API",
+          "reason": "rejected in Round 1 §3 alternatives"
+        }
+      ],
+      "impact_scope": [
+        "2",
+        "3",
+        "5.3"
+      ],
+      "decision_status": "active"
+    },
+    "5.3": {
+      "title": "DSL surface form (file-based vs macro vs view-fn)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: view function literal (Xilem-style); plain Rust functions, no separate DSL surface; ratified Round 3",
+      "rationale_bullets": [
+        "§1 mentions structured-scene DSL but surface form is unspecified",
+        "Decision shape depends on §5.1 (framework-first frees DSL; slice-first constrains)",
+        "Affects cascade-emit feasibility (§5.6) and tooling burden"
+      ],
+      "inputs_bullets": [
+        "Option A file-based DSL (RON/YAML/custom syntax) — extern parser maintenance",
+        "Option B Rust macro view!{} — compile-time check, Rust-only authoring",
+        "Option C view function literal (Xilem-style) — no DSL, just Rust functions",
+        "SCE Forge cascade-emit pattern; Xilem view-fn precedent"
+      ],
+      "outputs_bullets": [
+        "Author-facing API surface (declarative vs imperative-feel)",
+        "Tooling burden (LSP, syntax highlighting, formatter)",
+        "Cascade-emit feasibility constraint (file-based easiest, view-fn hardest)"
+      ],
+      "caveats_bullets": [
+        "File-based adds parser/LSP maintenance cost",
+        "Macro-based ties to Rust-only authoring (no cascade to other langs)"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "File-based DSL (RON/YAML)",
+          "reason": "too early hardening; parser/LSP maintenance cost"
+        },
+        {
+          "alternative": "Rust macro view!{}",
+          "reason": "Rust-only authoring; blocks cascade-emit to other langs"
+        },
+        {
+          "alternative": "Imperative paint callback",
+          "reason": "already rejected in Round 1 §3"
+        }
+      ],
+      "impact_scope": [
+        "1",
+        "5.1",
+        "5.6"
+      ],
+      "decision_status": "active"
+    },
+    "5.4": {
+      "title": "SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: embed SCE Forge Rust emit directly via vendor/sce submodule; slot ratified Round 3",
+      "rationale_bullets": [
+        "§2 commits to SCE state but embedding form is unspecified",
+        "Determines build complexity, MCU compatibility, version pinning strategy",
+        "Axis-slot inference from §2 invariants; ratify or supersede in Round 3",
+        "Tightly coupled with §5.5 MCU scope (FFI route enables shared source)"
+      ],
+      "inputs_bullets": [
+        "Option A embed SCE Forge Rust emit (vendor copy in tree, no_std variant possible)",
+        "Option B FFI to SCE C11 emit (one source, AP and MCU share via C ABI)",
+        "Option C cargo dep on official sce-rust crate (loose coupling, requires publish)",
+        "vendor/sce submodule branch=main already wired (Round 1 scaffold)"
+      ],
+      "outputs_bullets": [
+        "Build pipeline complexity (Rust-only vs Rust+C cross-compile)",
+        "Version pinning surface (submodule SHA vs crate semver)",
+        "MCU compatibility constraint (FFI most portable)"
+      ],
+      "caveats_bullets": [
+        "FFI adds C boundary, debug overhead, but enables MCU shared source",
+        "Rust-native simplest but ties to AP-only or no_std Rust target",
+        "Slot #4 inferred from §2 SCE invariant; relabel possible in Round 3"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "FFI to SCE C11 emit",
+          "reason": "boundary overhead; MCU shared-source value moot under AP-only v1 (§5.5)"
+        },
+        {
+          "alternative": "Cargo dep on sce-rust crate",
+          "reason": "publish dependency; unsuitable for greenfield AP-only kickoff"
+        }
+      ],
+      "impact_scope": [
+        "2",
+        "5.5"
+      ],
+      "decision_status": "active"
+    },
+    "5.5": {
+      "title": "MCU v1 backend scope (AP-only vs MCU-included)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: AP-only v1 (Linux/Mac/Win); MCU deferred to v2+; ratified Round 3",
+      "rationale_bullets": [
+        "Round 1 carry-forward explicitly recommends AP-only first cut",
+        "Defines no_std boundary and std::collections vs heapless choice",
+        "MCU-first risk: Rust embedded GUI ecosystem too thin for greenfield MVP"
+      ],
+      "inputs_bullets": [
+        "Option A AP-only v1 (Linux/Mac/Win; MCU deferred to v2 or later)",
+        "Option B MCU-included v1 (Cortex-M class; no_std and heapless required)",
+        "Rust ecosystem maturity: vello/winit/taffy AP-targeted; embedded-graphics for MCU",
+        "Qt commercial-only MCU GUI track demand (§1 rationale) is real but later"
+      ],
+      "outputs_bullets": [
+        "no_std boundary location in code",
+        "Memory allocator strategy (std::alloc vs heapless vs custom)",
+        "v1 deliverable surface (AP-only stack)"
+      ],
+      "caveats_bullets": [
+        "AP-only does not preclude MCU later but binds early DI to std collections",
+        "Switching to no_std post-MVP is a major refactor, not incremental"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "MCU-first v1",
+          "reason": "Rust embedded GUI ecosystem too thin for greenfield MVP per Round 1"
+        }
+      ],
+      "impact_scope": [
+        "5.4"
+      ],
+      "decision_status": "active"
+    },
+    "5.6": {
+      "title": "Reuse path (early cascade-emit vs Rust-native then port)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: Rust-native MVP first, SCE-Forge-style cascade-emit layer added after canonical kind settles; ratified Round 3",
+      "rationale_bullets": [
+        "§1 outputs mention cascade-emit GUI/TUI/RPC backends; timing unspecified",
+        "Watching-zenoh precedent succeeded with cascade from Round 15 onward",
+        "Early cascade forces type-system perfection up front; late cascade risks ossification"
+      ],
+      "inputs_bullets": [
+        "Option A cascade-emit from day 1 (force 6-backend byte-golden parity early)",
+        "Option B Rust-native MVP then SCE-Forge-style codegen layer added later",
+        "SCE Forge 6-backend byte-golden pattern as reference template",
+        "First dogfood is Rust-only deliverable; cascade not on critical path"
+      ],
+      "outputs_bullets": [
+        "Initial impl complexity multiplier (cascade ~3x effort up front)",
+        "Multi-backend timing (when does C/Python/Kotlin emit come online)",
+        "Type-system rigor required at scene primitive layer"
+      ],
+      "caveats_bullets": [
+        "Early cascade demands all primitives translatable to lowest-common-denom backend",
+        "Late cascade risks Rust-specific patterns leaking into canonical kind"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Cascade-emit from day 1",
+          "reason": "narrows design space to multi-lang common denom too early"
+        }
+      ],
+      "impact_scope": [
+        "1",
+        "5.1"
+      ],
+      "decision_status": "active"
+    },
+    "5.7": {
+      "title": "RPC headless protocol (MCP-native vs JSON-RPC vs gRPC)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: JSON-RPC 2.0 transport; MCP and other AI tooling wrap on top; ratified Round 3",
+      "rationale_bullets": [
+        "§2 commits to RPC headless as AI primary path but protocol unspecified",
+        "Protocol determines AI client compatibility surface",
+        "MCP becoming standard for AI tooling integrations"
+      ],
+      "inputs_bullets": [
+        "Option A MCP-native (Model Context Protocol direct; Anthropic SDK lifecycle)",
+        "Option B JSON-RPC 2.0 (universal transport, simple schema)",
+        "Option C gRPC (proto schema, strict typing, enterprise familiarity)",
+        "Existing MCP servers in this project (Mnemosyne, Serena) — coupling precedent"
+      ],
+      "outputs_bullets": [
+        "AI client compatibility surface",
+        "Schema enforcement strictness (proto > JSON-RPC > MCP-loose)",
+        "Tooling integration burden"
+      ],
+      "caveats_bullets": [
+        "MCP-native couples to Anthropic SDK lifecycle, evolves with their protocol",
+        "gRPC adds proto build dep and discovery complexity",
+        "JSON-RPC simplest but weak schema enforcement"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "MCP-native direct",
+          "reason": "couples to Anthropic SDK lifecycle; MCP wraps JSON-RPC anyway"
+        },
+        {
+          "alternative": "gRPC",
+          "reason": "proto build dep and discovery complexity overweight for v1"
+        },
+        {
+          "alternative": "REST/HTTP",
+          "reason": "too stateless for interactive query/click/waitFor flow"
+        }
+      ],
+      "impact_scope": [
+        "2"
+      ],
+      "decision_status": "active"
+    },
+    "5.8": {
+      "title": "dry_run hook site (engine-level vs scene snapshot vs view rewind)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: SCE engine-level hook for dry_run (intercept step function before commit); ratified Round 3",
+      "rationale_bullets": [
+        "§2 commits to dry_run via SCE determinism; mechanism unspecified",
+        "Defines RPC dry_run API shape (input parameters and return)",
+        "Couples to §5.4 SCE embedding (engine-level requires SCE internals access)"
+      ],
+      "inputs_bullets": [
+        "Option A SCE engine-level hook (intercept SCE step function before commit)",
+        "Option B scene-graph snapshot/restore (mutate then rollback)",
+        "Option C view-fn rewind (re-run view with simulated event, diff result)",
+        "SCE state determinism guarantee from watching-zenoh R15"
+      ],
+      "outputs_bullets": [
+        "RPC dry_run API parameter shape (event + context vs scene-mutator)",
+        "Performance characteristic (engine cheap, snapshot moderate, rewind expensive)"
+      ],
+      "caveats_bullets": [
+        "Engine-level cleanest but couples to SCE internals (§5.4 impact)",
+        "Rewind costliest but most modular (no SCE access required)",
+        "Snapshot middle ground but scene-graph mutation cost unknown"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Scene-graph snapshot/restore",
+          "reason": "bypasses SCE determinism guarantee"
+        },
+        {
+          "alternative": "View-fn rewind",
+          "reason": "modular but cannot simulate engine-level steps reliably"
+        }
+      ],
+      "impact_scope": [
+        "2",
+        "5.4"
+      ],
+      "decision_status": "active"
+    },
+    "5.9": {
+      "title": "GUI/TUI renderer split (trait-based vs separate pipelines)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Decision: trait-based Renderer abstraction (one scene → GUI/TUI via dispatch); ratified Round 3",
+      "rationale_bullets": [
+        "§2 commits to GUI/TUI dual but structural split is unspecified",
+        "Determines code-share factor between GUI and TUI",
+        "Affects scene-as-data query uniformity (single scene, two renders)"
+      ],
+      "inputs_bullets": [
+        "Option A trait-based Renderer abstraction (one scene → both via dispatch)",
+        "Option B separate pipelines sharing scene structure but distinct render passes",
+        "Vello for GPU GUI; ratatui or custom for TUI"
+      ],
+      "outputs_bullets": [
+        "Code-share factor (% logic reused between GUI and TUI)",
+        "Performance ceiling per backend",
+        "Author API uniformity across modes"
+      ],
+      "caveats_bullets": [
+        "Trait-based easier code-share but performance ceiling capped by abstraction",
+        "Separate pipelines max perf but code-duplication risk"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Separate pipelines",
+          "reason": "code duplication risk; weakens scene-as-data uniformity"
+        }
+      ],
+      "impact_scope": [
+        "2"
+      ],
+      "decision_status": "active"
+    },
+    "6": {
+      "title": "Bootstrap implementation choices (Tier 1 auto-ratified)",
+      "parent_doc": "docs/GENERATED.md",
+      "intent": "Tier 1 implementation choices auto-ratified Round 4 without axis split (ceremonial bloat avoidance); D/E/F/G handled as §5.11-§5.14 axes",
+      "rationale_bullets": [
+        "Tier 1 split into auto-ratified (A/B/C clear) vs axis-worthy (D/E/F/G genuinely open)",
+        "Ceremonial axis decomposition for self-evident choices adds bloat without audit value",
+        "Audit grain still preserved: each ratified choice gets own section (§6.1-§6.3)"
+      ],
+      "inputs_bullets": [
+        "Round 3 ratified axes constrain choices (§5.1 framework-first, §5.5 AP-only, §5.7 JSON-RPC)",
+        "Existing pinion-gui repo state (vendor/sce wired, no Cargo.toml yet)",
+        "Mnemosyne audit-grain pattern: one section per discrete decision"
+      ],
+      "outputs_bullets": [
+        "Workspace skeleton ready for first commit (§5.1 framework-first)",
+        "Toolchain pinning for reproducible builds",
+        "Async model boundary clarified per §2 view-fn purity invariant"
+      ],
+      "impact_scope": [
+        "5.1",
+        "5.5",
+        "5.7"
+      ],
+      "decision_status": "active"
+    },
+    "6.1": {
+      "title": "Crate workspace structure",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "6",
+      "intent": "Decision: Cargo workspace with initial 4 crates (pinion-core, pinion-runtime, pinion-rpc, pinion-cli); pinion-* prefix; ratified Round 4",
+      "rationale_bullets": [
+        "Single crate would become monolith given §5.6 cascade-emit + §5.4 SCE embed scope",
+        "4 initial crates split by §5.1 framework layer + §5.7 RPC + §5.10 runtime",
+        "Further split deferred until concrete crate boundaries surface from impl"
+      ],
+      "inputs_bullets": [
+        "Option A: single crate (monolith risk for §5.4 + §5.6 scope)",
+        "Option B (chosen): minimal workspace (pinion-core, runtime, rpc, cli)",
+        "Option C: pre-emptive deep split (over-engineered before impl)"
+      ],
+      "outputs_bullets": [
+        "Workspace root Cargo.toml with [workspace.members]",
+        "Naming convention: pinion-* prefix for all crates",
+        "Initial 4-crate skeleton committed in Round 5 implementation"
+      ],
+      "caveats_bullets": [
+        "Inter-crate dep graph debugging cost; start shallow, deepen as boundaries emerge"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Single crate",
+          "reason": "would become monolith per §5.6 cascade and §5.4 SCE embed scope"
+        },
+        {
+          "alternative": "Pre-emptive deep split",
+          "reason": "over-engineered before concrete boundaries emerge"
+        }
+      ],
+      "impact_scope": [
+        "5.1",
+        "5.4",
+        "5.6",
+        "5.7",
+        "5.10"
+      ],
+      "decision_status": "active"
+    },
+    "6.2": {
+      "title": "Rust toolchain (MSRV + edition)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "6",
+      "intent": "Decision: stable Rust, MSRV 1.85.0, edition 2024; ratified Round 4",
+      "rationale_bullets": [
+        "Stable Rust required for production framework distribution to downstream users",
+        "Edition 2024 mature as of 2026; async closures and gen blocks aligned with §5.7 RPC",
+        "1.85.0 is minimum for edition 2024 support"
+      ],
+      "inputs_bullets": [
+        "Stable vs nightly trade-off (nightly blocks downstream stable users)",
+        "Edition 2024 feature surface (async closures, gen blocks, improved lifetimes)",
+        "vello/winit current MSRV (typically lag latest stable by 1-2 versions)"
+      ],
+      "outputs_bullets": [
+        "rust-toolchain.toml pinning stable channel + version",
+        "Cargo.toml package.edition = '2024' across workspace",
+        "MSRV documented in workspace metadata"
+      ],
+      "caveats_bullets": [
+        "vello/winit may need nightly features; narrow-scope feature gate when encountered"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Nightly toolchain",
+          "reason": "blocks downstream stable users; not viable for framework distribution"
+        },
+        {
+          "alternative": "Edition 2021",
+          "reason": "older feature surface; less aligned with current Rust async story"
+        }
+      ],
+      "decision_status": "active"
+    },
+    "6.3": {
+      "title": "Async model",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "6",
+      "intent": "Decision: view-fn sync (purity invariant), RPC and IO async via tokio; ratified Round 4",
+      "rationale_bullets": [
+        "view-fn purity enables dry_run/diff guarantees per §2 invariant and §5.8 engine-level hook",
+        "JSON-RPC server inherently async per §5.7 transport decision",
+        "tokio is de-facto Rust async runtime with broadest ecosystem coverage"
+      ],
+      "inputs_bullets": [
+        "view-fn sync vs async (sync chosen to preserve §2 dry_run purity)",
+        "tokio vs smol vs async-std (tokio chosen for ecosystem and interop)",
+        "Edition 2024 async features unlock cleaner pinion-rpc patterns"
+      ],
+      "outputs_bullets": [
+        "tokio dep in pinion-rpc (default features narrow per IO needs)",
+        "view-fn signature: fn(&State) -> Scene (no async, no I/O)",
+        "Async boundary at RPC server entry; view layer remains sync"
+      ],
+      "caveats_bullets": [
+        "Async view-fn could enable streaming/lazy scenes; defer until concrete need"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Async view-fn",
+          "reason": "breaks dry_run purity (§2); complicates §5.8 SCE engine hook"
+        },
+        {
+          "alternative": "smol/async-std",
+          "reason": "smaller ecosystem; tokio interop required anyway for downstream"
+        }
+      ],
+      "impact_scope": [
+        "2",
+        "5.7",
+        "5.8"
       ],
       "decision_status": "active"
     }
@@ -146,9 +943,681 @@
         "Initial git commit (SCE submodule + Mnemosyne workspace + license + atomic + Round 1)",
         "Open axis #5 MCU v1 backend decision (recommend AP-only first cut)",
         "Open axis #7-#10 AI-native core invariants (RPC headless, dry_run, TUI dual)"
+      ],
+      "publishable_decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold",
+      "publishable_changes_bullets": [
+        "§1 Vision: AI-native cross-platform GUI framework via SCE statechart + structured scene",
+        "§2 Settled invariants: 7 binding rules (scene, RPC headless, dry_run, mode, SCE, dual, DSL)",
+        "§3 Capability boundaries: Effect/External opaque escape; WebEngine/codec out of scope",
+        "§4 First dogfood: target application (autonomous, no deadline, real widget surface)",
+        "Project scaffold: SCE submodule branch=main, Mnemosyne workspace, .githooks copy",
+        "License files: LICENSE + LICENSE-COMMERCIAL + LGPL-3 verbatim + GPL-3 verbatim",
+        ".gitignore: GENERATED.md committed (greenfield doc surface, atomic-first design)",
+        ".mcp.json: mnemosyne-mcp pointing at /home/coin/pinion-gui workspace"
+      ],
+      "publishable_verification_bullets": [
+        "validate-workspace baseline: docs=1/1, T1 orphan=0, round-trip=1/1, GENERATED.md=sync",
+        "Pre-commit hook smoke test: exit=0 on clean baseline",
+        "SCE submodule fetch: vendor/sce populated, .gitmodules branch=main tracking confirmed",
+        "core.hooksPath set to .githooks, 3 hooks executable (commit-msg, pre-commit, pre-push)",
+        "4 atomic sections (§1-§4) authored via mnemosyne-cli with full required fields",
+        "Sidecar writes verified: docs/.atomic/workspace.atomic.json grows monotonically per primitive"
+      ],
+      "publishable_impact_refs": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "§5.X open axes formal decomposition (Round 2) with refined option sets",
+        "Dependent axes clustering: #3 DSL depends on #1 first cut, #6 reuse follows #1",
+        "Axis #1 decision (framework-first vs dogfood-slice-first) gating for #3 and #6",
+        "CLAUDE.md authoring for pinion-gui (SSOT contract + auto-kickoff trigger)",
+        "Initial git commit (SCE submodule + Mnemosyne workspace + license + atomic + Round 1)",
+        "Open axis #5 MCU v1 backend decision (recommend AP-only first cut)",
+        "Open axis #7-#10 AI-native core invariants (RPC headless, dry_run, TUI dual)"
+      ]
+    },
+    "Round 2": {
+      "decision_summary": "Round 2 open axes decomposition: §5 + §5.1-§5.10 enumerate options, trade-offs, deps; §5.2/§5.4 slots inferred from §2 invariants",
+      "changes_bullets": [
+        "§5 parent: open implementation axes container with rationale/inputs/outputs/caveats",
+        "§5.1 strategic kickoff: framework-first vs Analyzer-slice-first; gates §5.3 and §5.6",
+        "§5.2 scene primitive type set: closed-form vs extensible (slot inferred from §2)",
+        "§5.3 DSL form: file-based vs Rust macro vs view-fn literal; depends on §5.1",
+        "§5.4 SCE engine embedding: Forge-emit vs FFI to C11 vs sce-rust crate (slot inferred)",
+        "§5.5 MCU v1 backend: AP-only first cut recommended; MCU-included v1 rejected",
+        "§5.6 reuse path: cascade-emit from day 1 vs Rust-native MVP then port",
+        "§5.7 RPC headless protocol: MCP-native vs JSON-RPC vs gRPC; REST rejected",
+        "§5.8 dry_run hook site: SCE engine-level vs scene snapshot vs view-fn rewind",
+        "§5.9 GUI/TUI renderer split: trait-based vs separate pipelines",
+        "§5.10 mode toggle API: runtime flag vs build feature vs per-view annotation",
+        "Cross-ref graph wired via impact_scope across §1-§4 and §5.X"
+      ],
+      "verification_bullets": [
+        "11 add_section calls (§5 + §5.1-§5.10) executed without T1 reject",
+        "Atomic store grew monotonically from 8357 bytes to ~25K bytes",
+        "Each axis populated with intent/rationale/inputs/outputs/caveats",
+        "5 axes (§5.1 §5.2 §5.3 §5.5 §5.7) carry alternatives_rejected",
+        "11 impact_scope cross-refs set via typed primitive (T1 pre-write)",
+        "Pending: validate_workspace re-run + verify_generated GENERATED.md sync"
+      ],
+      "impact_refs": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "5.1",
+        "5.2",
+        "5.3",
+        "5.4",
+        "5.5",
+        "5.6",
+        "5.7",
+        "5.8",
+        "5.9",
+        "5.10"
+      ],
+      "carry_forward_bullets": [
+        "Axis §5.1 decision: framework-first vs Analyzer-slice-first; gates §5.3 and §5.6",
+        "Axis §5.5 decision: AP-only v1 recommended; ratify or revise in Round 3",
+        "Axes §5.2 §5.4 inferred slots: confirm or rename in Round 3 ratify pass",
+        "Axes §5.7-§5.10 follow §2 invariants implementation: protocol/hook-site/split/binding",
+        "CLAUDE.md authoring for pinion-gui (SSOT contract + auto-kickoff trigger)",
+        "Round 2 git commit (§5 atomic decomposition + settings.local.json bypass mode)",
+        "Bash(*) and bypassPermissions added to .claude/settings.local.json this session"
+      ],
+      "publishable_decision_summary": "Round 2 open axes decomposition: §5 + §5.1-§5.10 enumerate options, trade-offs, deps; §5.2/§5.4 slots inferred from §2 invariants",
+      "publishable_changes_bullets": [
+        "§5 parent: open implementation axes container with rationale/inputs/outputs/caveats",
+        "§5.1 strategic kickoff: framework-first vs dogfood-slice-first; gates §5.3 and §5.6",
+        "§5.2 scene primitive type set: closed-form vs extensible (slot inferred from §2)",
+        "§5.3 DSL form: file-based vs Rust macro vs view-fn literal; depends on §5.1",
+        "§5.4 SCE engine embedding: Forge-emit vs FFI to C11 vs sce-rust crate (slot inferred)",
+        "§5.5 MCU v1 backend: AP-only first cut recommended; MCU-included v1 rejected",
+        "§5.6 reuse path: cascade-emit from day 1 vs Rust-native MVP then port",
+        "§5.7 RPC headless protocol: MCP-native vs JSON-RPC vs gRPC; REST rejected",
+        "§5.8 dry_run hook site: SCE engine-level vs scene snapshot vs view-fn rewind",
+        "§5.9 GUI/TUI renderer split: trait-based vs separate pipelines",
+        "§5.10 mode toggle API: runtime flag vs build feature vs per-view annotation",
+        "Cross-ref graph wired via impact_scope across §1-§4 and §5.X"
+      ],
+      "publishable_verification_bullets": [
+        "11 add_section calls (§5 + §5.1-§5.10) executed without T1 reject",
+        "Atomic store grew monotonically from 8357 bytes to ~25K bytes",
+        "Each axis populated with intent/rationale/inputs/outputs/caveats",
+        "5 axes (§5.1 §5.2 §5.3 §5.5 §5.7) carry alternatives_rejected",
+        "11 impact_scope cross-refs set via typed primitive (T1 pre-write)",
+        "Pending: validate_workspace re-run + verify_generated GENERATED.md sync"
+      ],
+      "publishable_impact_refs": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "5.1",
+        "5.2",
+        "5.3",
+        "5.4",
+        "5.5",
+        "5.6",
+        "5.7",
+        "5.8",
+        "5.9",
+        "5.10"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Axis §5.1 decision: framework-first vs dogfood-slice-first; gates §5.3 and §5.6",
+        "Axis §5.5 decision: AP-only v1 recommended; ratify or revise in Round 3",
+        "Axes §5.2 §5.4 inferred slots: confirm or rename in Round 3 ratify pass",
+        "Axes §5.7-§5.10 follow §2 invariants implementation: protocol/hook-site/split/binding",
+        "CLAUDE.md authoring for pinion-gui (SSOT contract + auto-kickoff trigger)",
+        "Round 2 git commit (§5 atomic decomposition + settings.local.json bypass mode)",
+        "Bash(*) and bypassPermissions added to .claude/settings.local.json this session"
+      ]
+    },
+    "Round 3": {
+      "decision_summary": "Round 3 — 9 axes ratified to single options; §5.2 §5.4 slot names confirmed; framework-first kickoff path locked",
+      "changes_bullets": [
+        "§5.1 ratified: framework-first kickoff; common substrate before first widget",
+        "§5.2 ratified: closed-form primitive type set (Box/Text/Path/Image/Container/Effect/External)",
+        "§5.3 ratified: view function literal (Xilem-style); plain Rust functions, no separate DSL",
+        "§5.4 ratified: embed SCE Forge Rust emit via vendor/sce submodule",
+        "§5.5 ratified: AP-only v1; MCU deferred to v2+",
+        "§5.6 ratified: Rust-native MVP first; cascade-emit layer after canonical kind settles",
+        "§5.7 ratified: JSON-RPC 2.0 transport; MCP wraps on top",
+        "§5.8 ratified: SCE engine-level hook for dry_run",
+        "§5.9 ratified: trait-based Renderer abstraction (one scene → GUI/TUI dispatch)",
+        "§5.10 ratified: runtime flag for immediate vs retained mode toggle",
+        "§5.2 §5.4 slot names confirmed (Round 2 inferences ratified, not renamed)"
+      ],
+      "verification_bullets": [
+        "10 set_section_intent + 9 set_section_alternatives mutations via typed primitive",
+        "Atomic store grew monotonically; T1 pre-write passed on all 19 calls",
+        "Each axis intent now reads 'Decision: X; ratified Round 3'",
+        "Pending: validate_workspace + verify_generated post-Round 3 sync confirmation"
+      ],
+      "impact_refs": [
+        "5.1",
+        "5.2",
+        "5.3",
+        "5.4",
+        "5.5",
+        "5.6",
+        "5.7",
+        "5.8",
+        "5.9",
+        "5.10"
+      ],
+      "carry_forward_bullets": [
+        "CLAUDE.md authoring for pinion-gui (SSOT contract + auto-kickoff trigger)",
+        "Round 3 git commit covering §5 decisions + settings.local.json defaultMode=auto",
+        "Initial Cargo workspace layout per framework-first §5.1 decision",
+        "vendor/sce embed wiring per §5.4 (Rust emit subset, no_std-aware later)",
+        "Scene primitive type set Rust enum sketch per §5.2 closed-form decision",
+        "Author-facing view function API sketch per §5.3 decision",
+        "JSON-RPC 2.0 schema draft per §5.7 decision (query/click/dry_run/snapshot/rewind/waitFor)"
+      ],
+      "publishable_decision_summary": "Round 3 — 9 axes ratified to single options; §5.2 §5.4 slot names confirmed; framework-first kickoff path locked",
+      "publishable_changes_bullets": [
+        "§5.1 ratified: framework-first kickoff; common substrate before first widget",
+        "§5.2 ratified: closed-form primitive type set (Box/Text/Path/Image/Container/Effect/External)",
+        "§5.3 ratified: view function literal (Xilem-style); plain Rust functions, no separate DSL",
+        "§5.4 ratified: embed SCE Forge Rust emit via vendor/sce submodule",
+        "§5.5 ratified: AP-only v1; MCU deferred to v2+",
+        "§5.6 ratified: Rust-native MVP first; cascade-emit layer after canonical kind settles",
+        "§5.7 ratified: JSON-RPC 2.0 transport; MCP wraps on top",
+        "§5.8 ratified: SCE engine-level hook for dry_run",
+        "§5.9 ratified: trait-based Renderer abstraction (one scene → GUI/TUI dispatch)",
+        "§5.10 ratified: runtime flag for immediate vs retained mode toggle",
+        "§5.2 §5.4 slot names confirmed (Round 2 inferences ratified, not renamed)"
+      ],
+      "publishable_verification_bullets": [
+        "10 set_section_intent + 9 set_section_alternatives mutations via typed primitive",
+        "Atomic store grew monotonically; T1 pre-write passed on all 19 calls",
+        "Each axis intent now reads 'Decision: X; ratified Round 3'",
+        "Pending: validate_workspace + verify_generated post-Round 3 sync confirmation"
+      ],
+      "publishable_impact_refs": [
+        "5.1",
+        "5.2",
+        "5.3",
+        "5.4",
+        "5.5",
+        "5.6",
+        "5.7",
+        "5.8",
+        "5.9",
+        "5.10"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CLAUDE.md authoring for pinion-gui (SSOT contract + auto-kickoff trigger)",
+        "Round 3 git commit covering §5 decisions + settings.local.json defaultMode=auto",
+        "Initial Cargo workspace layout per framework-first §5.1 decision",
+        "vendor/sce embed wiring per §5.4 (Rust emit subset, no_std-aware later)",
+        "Scene primitive type set Rust enum sketch per §5.2 closed-form decision",
+        "Author-facing view function API sketch per §5.3 decision",
+        "JSON-RPC 2.0 schema draft per §5.7 decision (query/click/dry_run/snapshot/rewind/waitFor)"
+      ]
+    },
+    "Round 4": {
+      "decision_summary": "Round 4 — Tier 1 bootstrap auto-ratified (§6 workspace/toolchain/async); 4 new open axes §5.11-§5.14 enumerated for next round decision",
+      "changes_bullets": [
+        "§6 parent: Tier 1 implementation choices auto-ratified group (ceremonial bloat avoidance)",
+        "§6.1 ratified: Cargo workspace, 4 initial crates (pinion-core/runtime/rpc/cli)",
+        "§6.2 ratified: stable Rust, MSRV 1.85.0, edition 2024",
+        "§6.3 ratified: view-fn sync (purity), RPC and IO async via tokio",
+        "§5.11 axis added: scene primitive variant shape (minimal vs CSS-rich vs layered)",
+        "§5.12 axis added: RPC method shape (generic-query vs typed-per-action vs hybrid)",
+        "§5.13 axis added: event model (closed enum vs open registry vs core+opaque) + coord system",
+        "§5.14 axis added: state containment topology (single root vs per-widget vs hierarchical)",
+        "Cross-ref graph extended: §6 → §5.{1,4,5,6,7,10}; §5.11-14 → prior §5.X deps"
+      ],
+      "verification_bullets": [
+        "8 new sections added (§6 + §6.1-§6.3 + §5.11-§5.14)",
+        "§6.1-§6.3 carry alternatives_rejected for ratified choices (audit-traceable)",
+        "§5.11-§5.14 carry option sets in inputs (still open, Round 5+ decision)",
+        "Tier classification preserved: §6.X auto-ratified, §5.11-14 axis-worthy",
+        "Pending: validate_workspace + verify_generated post-Round 4 sync"
+      ],
+      "impact_refs": [
+        "2",
+        "5.1",
+        "5.2",
+        "5.3",
+        "5.4",
+        "5.6",
+        "5.7",
+        "5.8",
+        "5.10",
+        "6",
+        "6.1",
+        "6.2",
+        "6.3",
+        "5.11",
+        "5.12",
+        "5.13",
+        "5.14"
+      ],
+      "carry_forward_bullets": [
+        "§5.11 decision (Round 5): scene primitive variant shape — layered likely",
+        "§5.12 decision (Round 5): RPC method shape — hybrid likely",
+        "§5.13 decision (Round 5): event model + coordinate system (logical DPI-aware)",
+        "§5.14 decision (Round 5): state containment topology — hierarchical likely",
+        "Implementation Round 6: Cargo workspace skeleton commit per §6.1",
+        "Implementation Round 6: rust-toolchain.toml + workspace Cargo.toml per §6.2",
+        "CLAUDE.md authoring still outstanding (Round 3 carry-forward unresolved)",
+        "Tier 2 axes inventory if needed (AccessKit, i18n, animation, hot reload, diagnostics)"
+      ],
+      "publishable_decision_summary": "Round 4 — Tier 1 bootstrap auto-ratified (§6 workspace/toolchain/async); 4 new open axes §5.11-§5.14 enumerated for next round decision",
+      "publishable_changes_bullets": [
+        "§6 parent: Tier 1 implementation choices auto-ratified group (ceremonial bloat avoidance)",
+        "§6.1 ratified: Cargo workspace, 4 initial crates (pinion-core/runtime/rpc/cli)",
+        "§6.2 ratified: stable Rust, MSRV 1.85.0, edition 2024",
+        "§6.3 ratified: view-fn sync (purity), RPC and IO async via tokio",
+        "§5.11 axis added: scene primitive variant shape (minimal vs CSS-rich vs layered)",
+        "§5.12 axis added: RPC method shape (generic-query vs typed-per-action vs hybrid)",
+        "§5.13 axis added: event model (closed enum vs open registry vs core+opaque) + coord system",
+        "§5.14 axis added: state containment topology (single root vs per-widget vs hierarchical)",
+        "Cross-ref graph extended: §6 → §5.{1,4,5,6,7,10}; §5.11-14 → prior §5.X deps"
+      ],
+      "publishable_verification_bullets": [
+        "8 new sections added (§6 + §6.1-§6.3 + §5.11-§5.14)",
+        "§6.1-§6.3 carry alternatives_rejected for ratified choices (audit-traceable)",
+        "§5.11-§5.14 carry option sets in inputs (still open, Round 5+ decision)",
+        "Tier classification preserved: §6.X auto-ratified, §5.11-14 axis-worthy",
+        "Pending: validate_workspace + verify_generated post-Round 4 sync"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.1",
+        "5.2",
+        "5.3",
+        "5.4",
+        "5.6",
+        "5.7",
+        "5.8",
+        "5.10",
+        "6",
+        "6.1",
+        "6.2",
+        "6.3",
+        "5.11",
+        "5.12",
+        "5.13",
+        "5.14"
+      ],
+      "publishable_carry_forward_bullets": [
+        "§5.11 decision (Round 5): scene primitive variant shape — layered likely",
+        "§5.12 decision (Round 5): RPC method shape — hybrid likely",
+        "§5.13 decision (Round 5): event model + coordinate system (logical DPI-aware)",
+        "§5.14 decision (Round 5): state containment topology — hierarchical likely",
+        "Implementation Round 6: Cargo workspace skeleton commit per §6.1",
+        "Implementation Round 6: rust-toolchain.toml + workspace Cargo.toml per §6.2",
+        "CLAUDE.md authoring still outstanding (Round 3 carry-forward unresolved)",
+        "Tier 2 axes inventory if needed (AccessKit, i18n, animation, hot reload, diagnostics)"
+      ]
+    },
+    "Round 5": {
+      "decision_summary": "Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology",
+      "changes_bullets": [
+        "§5.11 ratified: layered primitive shape (core variant + Style trait + Modifier composition)",
+        "§5.12 ratified: hybrid RPC (6 typed top-level methods + path/filter sub-args)",
+        "§5.13 ratified: closed core Event + opaque External event; logical DPI-aware coords",
+        "§5.14 ratified: hierarchical SCE topology (root + scoped child SCEs)",
+        "All 4 decisions align with Option C pattern: closed-form + opaque escape + Xilem/SCE hierarchical"
+      ],
+      "verification_bullets": [
+        "4 set_section_intent + 4 set_section_alternatives mutations via typed primitive",
+        "T1 pre-write passed on all 8 calls",
+        "Each axis intent now reads 'Decision: X; ratified Round 5'",
+        "Pending: validate_workspace + verify_generated post-Round 5"
+      ],
+      "impact_refs": [
+        "2",
+        "5.2",
+        "5.3",
+        "5.4",
+        "5.7",
+        "5.8",
+        "5.11",
+        "5.12",
+        "5.13",
+        "5.14"
+      ],
+      "carry_forward_bullets": [
+        "Spec phase complete: all §5.X axes ratified (§5.1-§5.10 Round 3, §5.11-§5.14 Round 5)",
+        "Implementation Round 6: Cargo workspace skeleton per §6.1 (pinion-core/runtime/rpc/cli)",
+        "Implementation Round 6: rust-toolchain.toml + workspace Cargo.toml per §6.2",
+        "Implementation Round 6+: scene primitive enum + Style trait per §5.2 §5.11",
+        "Implementation Round 6+: JSON-RPC server skeleton per §5.7 §5.12",
+        "Implementation Round 6+: Event enum + External opaque per §5.13",
+        "Implementation Round 6+: SCE hierarchical embedding per §5.4 §5.14",
+        "CLAUDE.md authoring (multi-round carry-over from Round 1 §1)",
+        "ivis WP5 Analyzer dogfood sequencing (§4) — after framework MVP shape",
+        "Tier 2 axes inventory check (AccessKit, i18n, animation, hot reload, diagnostics)"
+      ],
+      "publishable_decision_summary": "Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology",
+      "publishable_changes_bullets": [
+        "§5.11 ratified: layered primitive shape (core variant + Style trait + Modifier composition)",
+        "§5.12 ratified: hybrid RPC (6 typed top-level methods + path/filter sub-args)",
+        "§5.13 ratified: closed core Event + opaque External event; logical DPI-aware coords",
+        "§5.14 ratified: hierarchical SCE topology (root + scoped child SCEs)",
+        "All 4 decisions align with Option C pattern: closed-form + opaque escape + Xilem/SCE hierarchical"
+      ],
+      "publishable_verification_bullets": [
+        "4 set_section_intent + 4 set_section_alternatives mutations via typed primitive",
+        "T1 pre-write passed on all 8 calls",
+        "Each axis intent now reads 'Decision: X; ratified Round 5'",
+        "Pending: validate_workspace + verify_generated post-Round 5"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.2",
+        "5.3",
+        "5.4",
+        "5.7",
+        "5.8",
+        "5.11",
+        "5.12",
+        "5.13",
+        "5.14"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Spec phase complete: all §5.X axes ratified (§5.1-§5.10 Round 3, §5.11-§5.14 Round 5)",
+        "Implementation Round 6: Cargo workspace skeleton per §6.1 (pinion-core/runtime/rpc/cli)",
+        "Implementation Round 6: rust-toolchain.toml + workspace Cargo.toml per §6.2",
+        "Implementation Round 6+: scene primitive enum + Style trait per §5.2 §5.11",
+        "Implementation Round 6+: JSON-RPC server skeleton per §5.7 §5.12",
+        "Implementation Round 6+: Event enum + External opaque per §5.13",
+        "Implementation Round 6+: SCE hierarchical embedding per §5.4 §5.14",
+        "CLAUDE.md authoring (multi-round carry-over from Round 1 §1)",
+        "First dogfood sequencing (§4) — after framework MVP shape",
+        "Tier 2 axes inventory check (AccessKit, i18n, animation, hot reload, diagnostics)"
+      ]
+    },
+    "Round 6": {
+      "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
+      "changes_bullets": [
+        "Cargo.toml workspace root: resolver=3, 4 members, workspace.package shared",
+        "rust-toolchain.toml: stable channel 1.85.0 + rustfmt + clippy",
+        "crates/pinion-core: scene/style/view types stub (lib.rs empty for now)",
+        "crates/pinion-runtime: render+SCE state stub; depends on pinion-core",
+        "crates/pinion-rpc: JSON-RPC server stub; depends on pinion-core",
+        "crates/pinion-cli: binary entry; depends on all three lib crates",
+        "workspace.lints: unsafe_code=forbid, clippy::pedantic=warn"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace: Finished dev profile in 0.40s with no warnings",
+        "All 4 crates compile from empty source (skeleton baseline)",
+        "Cargo 1.94.1 / rustc 1.94.1 confirmed for edition 2024 + resolver 3"
+      ],
+      "impact_refs": [
+        "6.1",
+        "6.2",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "Round 7+: scene primitive enum + Style trait + Modifier per §5.2 §5.11 in pinion-core",
+        "Round 7+: Event enum + External opaque per §5.13 in pinion-core",
+        "Round 7+: view-fn signature types per §5.3 in pinion-core",
+        "Round 7+: SCE hierarchical embedding per §5.4 §5.14 in pinion-runtime",
+        "Round 7+: JSON-RPC server skeleton with 6 typed methods per §5.7 §5.12 in pinion-rpc",
+        "Round 7+: tokio dep + async boundary per §6.3 (pinion-rpc only)",
+        "Round 6 git commit: workspace skeleton + Round 6 atomic update",
+        "CLAUDE.md still outstanding"
+      ],
+      "publishable_decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
+      "publishable_changes_bullets": [
+        "Cargo.toml workspace root: resolver=3, 4 members, workspace.package shared",
+        "rust-toolchain.toml: stable channel 1.85.0 + rustfmt + clippy",
+        "crates/pinion-core: scene/style/view types stub (lib.rs empty for now)",
+        "crates/pinion-runtime: render+SCE state stub; depends on pinion-core",
+        "crates/pinion-rpc: JSON-RPC server stub; depends on pinion-core",
+        "crates/pinion-cli: binary entry; depends on all three lib crates",
+        "workspace.lints: unsafe_code=forbid, clippy::pedantic=warn"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace: Finished dev profile in 0.40s with no warnings",
+        "All 4 crates compile from empty source (skeleton baseline)",
+        "Cargo 1.94.1 / rustc 1.94.1 confirmed for edition 2024 + resolver 3"
+      ],
+      "publishable_impact_refs": [
+        "6.1",
+        "6.2",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Round 7+: scene primitive enum + Style trait + Modifier per §5.2 §5.11 in pinion-core",
+        "Round 7+: Event enum + External opaque per §5.13 in pinion-core",
+        "Round 7+: view-fn signature types per §5.3 in pinion-core",
+        "Round 7+: SCE hierarchical embedding per §5.4 §5.14 in pinion-runtime",
+        "Round 7+: JSON-RPC server skeleton with 6 typed methods per §5.7 §5.12 in pinion-rpc",
+        "Round 7+: tokio dep + async boundary per §6.3 (pinion-rpc only)",
+        "Round 6 git commit: workspace skeleton + Round 6 atomic update",
+        "CLAUDE.md still outstanding"
+      ]
+    },
+    "Round 7": {
+      "decision_summary": "Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification",
+      "changes_bullets": [
+        "§5.15 new: External primitive integration contract (8 items)",
+        "§5.15.1 backend support declaration (Gui/Tui/Rpc dispatch with fallback)",
+        "§5.15.2 repaint trigger ownership (framework vs External own loop)",
+        "§5.15.3 thread ownership (UI thread vs own thread + sync channel)",
+        "§5.15.4 lifecycle event callbacks (mount/unmount/visibility/focus)",
+        "§5.15.5 input forwarding policy (split between framework and External)",
+        "§5.15.6 DPI/scale change + resize notification",
+        "§5.15.7 async state change channel (External → framework push)",
+        "§5.15.8 optional symbolic introspection (schema + query/intervene; opt-in)",
+        "§5.12 extended: 7th RPC method screenshot for pixel-level verification",
+        "Game viewport pattern emerges naturally without §1 vision change"
+      ],
+      "verification_bullets": [
+        "1 add_section + 8 set/add mutations for §5.15",
+        "3 set_section_* updates for §5.12 (intent/rationale/outputs)",
+        "T1 pre-write passed on all calls; round-trip preserved",
+        "Pending: validate_workspace + verify_generated post-Round 7"
+      ],
+      "impact_refs": [
+        "3",
+        "5.9",
+        "5.10",
+        "5.12",
+        "5.14",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "§1 vision update consideration: extend to 'introspection protocol for interactive apps' (Round 8+)",
+        "External author example widgets (game / video / PDF) as reference impl (Round 8+)",
+        "Tier 2 streaming axes: screenshot video, partial repaint subscription (Round 8+)",
+        "Round 6 + Round 7 git commit covering workspace skeleton and External contract",
+        "CLAUDE.md authoring (long-standing carry-over)",
+        "pinion-core: External primitive type definition per §5.15 (Round 8+ impl)"
+      ],
+      "publishable_decision_summary": "Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification",
+      "publishable_changes_bullets": [
+        "§5.15 new: External primitive integration contract (8 items)",
+        "§5.15.1 backend support declaration (Gui/Tui/Rpc dispatch with fallback)",
+        "§5.15.2 repaint trigger ownership (framework vs External own loop)",
+        "§5.15.3 thread ownership (UI thread vs own thread + sync channel)",
+        "§5.15.4 lifecycle event callbacks (mount/unmount/visibility/focus)",
+        "§5.15.5 input forwarding policy (split between framework and External)",
+        "§5.15.6 DPI/scale change + resize notification",
+        "§5.15.7 async state change channel (External → framework push)",
+        "§5.15.8 optional symbolic introspection (schema + query/intervene; opt-in)",
+        "§5.12 extended: 7th RPC method screenshot for pixel-level verification",
+        "Game viewport pattern emerges naturally without §1 vision change"
+      ],
+      "publishable_verification_bullets": [
+        "1 add_section + 8 set/add mutations for §5.15",
+        "3 set_section_* updates for §5.12 (intent/rationale/outputs)",
+        "T1 pre-write passed on all calls; round-trip preserved",
+        "Pending: validate_workspace + verify_generated post-Round 7"
+      ],
+      "publishable_impact_refs": [
+        "3",
+        "5.9",
+        "5.10",
+        "5.12",
+        "5.14",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "§1 vision update consideration: extend to 'introspection protocol for interactive apps' (Round 8+)",
+        "External author example widgets (game / video / PDF) as reference impl (Round 8+)",
+        "Tier 2 streaming axes: screenshot video, partial repaint subscription (Round 8+)",
+        "Round 6 + Round 7 git commit covering workspace skeleton and External contract",
+        "CLAUDE.md authoring (long-standing carry-over)",
+        "pinion-core: External primitive type definition per §5.15 (Round 8+ impl)"
+      ]
+    },
+    "Round 8": {
+      "decision_summary": "Round 8 — spec phase closing artifacts: CLAUDE.md AI-agent guide authored; git author scoped to repo-local override",
+      "changes_bullets": [
+        "CLAUDE.md authored: quick-start order, invariants, audit-trail summary, repo map, working contract",
+        "CLAUDE.md resolves Round 3-7 long-standing carry-forward (AI agent operational guide)",
+        "git config --local user.name newmassrael / user.email newmassrael@gmail.com (repo-scoped)",
+        "Round 1 initial scaffold commit amended with --reset-author (SHA: 320fdb0 → eded7e0)",
+        "Pre-commit hook verified active during amend (mnemosyne verify-generated passed)"
+      ],
+      "verification_bullets": [
+        "CLAUDE.md follows reading-order pattern; references §2 §3 §5.15 invariants explicitly",
+        "git log shows single commit by newmassrael <newmassrael@gmail.com>",
+        "git config --local scoped; global config untouched per Round 8 audit pass",
+        "Pre-commit hook executed mnemosyne validate (T1=0 T2=1/1 GENERATED.md=sync) during amend",
+        "Pending: validate_workspace + verify_generated post-Round 8"
+      ],
+      "impact_refs": [
+        "1",
+        "2",
+        "3",
+        "5.15",
+        "6.1",
+        "6.2",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "Round 9+: pinion-core scene primitive enum + Style trait + Modifier impl per §5.2 §5.11",
+        "Round 9+: Event enum + External opaque per §5.13 in pinion-core",
+        "Round 9+: JSON-RPC server skeleton + 7 typed methods per §5.7 §5.12 in pinion-rpc",
+        "Round 9+: SCE hierarchical embedding per §5.4 §5.14 in pinion-runtime",
+        "Round 9+: Tier 2 streaming axes (video screenshot, partial repaint subscription)",
+        "Round 9+: External example widget (game viewport reference impl per §5.15)",
+        "Round 6 + 7 + 8 git commit covering workspace skeleton + External contract + CLAUDE.md",
+        "ivis WP5 Analyzer dogfood sequencing per §4"
+      ],
+      "publishable_decision_summary": "Round 8 — spec phase closing artifacts: CLAUDE.md AI-agent guide authored; git author scoped to repo-local override",
+      "publishable_changes_bullets": [
+        "CLAUDE.md authored: quick-start order, invariants, audit-trail summary, repo map, working contract",
+        "CLAUDE.md resolves Round 3-7 long-standing carry-forward (AI agent operational guide)",
+        "git config --local user.name newmassrael / user.email newmassrael@gmail.com (repo-scoped)",
+        "Round 1 initial scaffold commit amended with --reset-author (SHA: 320fdb0 → eded7e0)",
+        "Pre-commit hook verified active during amend (mnemosyne verify-generated passed)"
+      ],
+      "publishable_verification_bullets": [
+        "CLAUDE.md follows reading-order pattern; references §2 §3 §5.15 invariants explicitly",
+        "git log shows single commit by newmassrael <newmassrael@gmail.com>",
+        "git config --local scoped; global config untouched per Round 8 audit pass",
+        "Pre-commit hook executed mnemosyne validate (T1=0 T2=1/1 GENERATED.md=sync) during amend",
+        "Pending: validate_workspace + verify_generated post-Round 8"
+      ],
+      "publishable_impact_refs": [
+        "1",
+        "2",
+        "3",
+        "5.15",
+        "6.1",
+        "6.2",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Round 9+: pinion-core scene primitive enum + Style trait + Modifier impl per §5.2 §5.11",
+        "Round 9+: Event enum + External opaque per §5.13 in pinion-core",
+        "Round 9+: JSON-RPC server skeleton + 7 typed methods per §5.7 §5.12 in pinion-rpc",
+        "Round 9+: SCE hierarchical embedding per §5.4 §5.14 in pinion-runtime",
+        "Round 9+: Tier 2 streaming axes (video screenshot, partial repaint subscription)",
+        "Round 9+: External example widget (game viewport reference impl per §5.15)",
+        "Round 6 + 7 + 8 git commit covering workspace skeleton + External contract + CLAUDE.md",
+        "First dogfood sequencing per §4"
+      ]
+    },
+    "Round 9": {
+      "decision_summary": "Round 9 — third-party identifier privacy redaction via mnemosyne R297 redact-term; publishable surface scrubbed; audit half retained per R294 design",
+      "changes_bullets": [
+        "§4 Section title/intent/inputs/outputs/caveats abstracted to generic 'first dogfood' requirements",
+        "§1 §5.1 §5.6 §5.11 Section bullets abstracted (set_section_inputs, set_section_alternatives)",
+        "§5.1 title retitled (Strategic kickoff direction (framework-first vs dogfood-slice-first))",
+        "§4 §5.11 caveats edited directly in atomic JSON (no set_section_caveats primitive in 3ff92f3)",
+        "Changelog publishable half redacted: Round 1/2/5/8 via 5 redact-term passes",
+        "6 [[publishable_override_ledger]] rows added to mnemosyne.toml with SHA256 anchors",
+        "CLAUDE.md lines 55, 124 edited (human-facing artifact, direct edit)",
+        "Audit half (Round 1/2/5/8 audit_*) retained per R294 design — frozen body preserved"
+      ],
+      "verification_bullets": [
+        "mnemosyne-cli rebuilt from HEAD 3ff92f3 (76581f68 → 3ff92f32 binary swap)",
+        "validate-workspace: T1=0 / T2 round-trip=1/1 / GENERATED.md=sync",
+        "publishable / audit divergence: entries=4 ledger_rows=6 (all SHA256 match)",
+        "GENERATED.md grep for ivis|WP5|Analyzer|Work Package: 0 hits",
+        "CLAUDE.md grep: 0 hits",
+        "mnemosyne.toml grep: 0 hits (history comment cleaned)",
+        "watching-zenoh / Zenoh protocol retained per separate ecosystem reference (not in scope)"
+      ],
+      "impact_refs": [
+        "1",
+        "4",
+        "5.1",
+        "5.6",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "Section caveats setter primitive (set_section_caveats) not in mnemosyne 3ff92f3 — RFC follow-up",
+        "Audit half retains identifiers per R294 design; atomic JSON inspection intentional surface",
+        "watching-zenoh / Zenoh protocol retained (not in ivis scope); broader redaction would need new round",
+        "Round 9 git commit (audit-traceable diff with redaction history)",
+        "pinion-core implementation phase (carry-over from Round 7+)",
+        "RFC follow-ups for mnemosyne: set_section_caveats, content-hash chaining clarity on multi-step redact"
+      ],
+      "publishable_decision_summary": "Round 9 — third-party identifier privacy redaction via mnemosyne R297 redact-term; publishable surface scrubbed; audit half retained per R294 design",
+      "publishable_changes_bullets": [
+        "§4 Section title/intent/inputs/outputs/caveats abstracted to generic 'first dogfood' requirements",
+        "§1 §5.1 §5.6 §5.11 Section bullets abstracted (set_section_inputs, set_section_alternatives)",
+        "§5.1 title retitled (Strategic kickoff direction (framework-first vs dogfood-slice-first))",
+        "§4 §5.11 caveats edited directly in atomic JSON (no set_section_caveats primitive in 3ff92f3)",
+        "Changelog publishable half redacted: Round 1/2/5/8 via 5 redact-term passes",
+        "6 [[publishable_override_ledger]] rows added to mnemosyne.toml with SHA256 anchors",
+        "CLAUDE.md lines 55, 124 edited (human-facing artifact, direct edit)",
+        "Audit half (Round 1/2/5/8 audit_*) retained per R294 design — frozen body preserved"
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne-cli rebuilt from HEAD 3ff92f3 (76581f68 → 3ff92f32 binary swap)",
+        "validate-workspace: T1=0 / T2 round-trip=1/1 / GENERATED.md=sync",
+        "publishable / audit divergence: entries=4 ledger_rows=6 (all SHA256 match)",
+        "GENERATED.md grep for third-party identifier patterns: 0 hits",
+        "CLAUDE.md grep: 0 hits",
+        "mnemosyne.toml grep: 0 hits (history comment cleaned)",
+        "watching-zenoh / Zenoh protocol retained per separate ecosystem reference (not in scope)"
+      ],
+      "publishable_impact_refs": [
+        "1",
+        "4",
+        "5.1",
+        "5.6",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Section caveats setter primitive (set_section_caveats) not in mnemosyne 3ff92f3 — RFC follow-up",
+        "Audit half retains identifiers per R294 design; atomic JSON inspection intentional surface",
+        "watching-zenoh / Zenoh protocol retained (not in this scope); broader redaction would need new round",
+        "Round 9 git commit (audit-traceable diff with redaction history)",
+        "pinion-core implementation phase (carry-over from Round 7+)",
+        "RFC follow-ups for mnemosyne: set_section_caveats, content-hash clarity for multi-step redact"
       ]
     }
   },
   "inventory_entries": {},
-  "schema_version": 3
+  "schema_version": 4
 }

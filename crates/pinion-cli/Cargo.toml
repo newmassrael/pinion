@@ -1,0 +1,16 @@
+[package]
+name = "pinion-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Developer CLI entry point for pinion-gui"
+
+[dependencies]
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
+pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
+
+[lints]
+workspace = true
