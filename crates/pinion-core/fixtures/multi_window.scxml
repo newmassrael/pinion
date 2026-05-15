@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.17 §5.18 R16 slice 4 — multi-window topology fixture.
+
+     <parallel> root: all three child <state>s are active simultaneously,
+     modelling the multi-window-open semantic per §5.17 ratify. SCE Forge
+     emit will set HAS_PARALLEL_STATES = true; the generated AppState-like
+     enum carries one variant per declared window.
+
+     This file is NOT an app.scxml (§5.19 convention reserves that name for
+     the consumer crate's actual application). It is a build-time fixture
+     used to stress the reverse-map and per-window dispatch idiom under
+     N > 1 windows.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="root">
+
+  <parallel id="root">
+    <state id="main"/>
+    <state id="settings"/>
+    <state id="debug"/>
+  </parallel>
+
+</scxml>

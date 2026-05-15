@@ -30,6 +30,8 @@ mod sm {
 
 use sce_rust_runtime::{Engine, StatePolicy};
 
+use crate::topology;
+
 pub use sm::{AppEvent, AppState};
 use sm::AppPolicy;
 
@@ -61,9 +63,12 @@ impl App {
     }
 
     /// Initial window — §5.18 absent-prefix short-circuit target.
+    ///
+    /// Delegates to [`topology::initial_window`]; works under both flat
+    /// (current `app.scxml`) and `<parallel>` roots without API change.
     #[must_use]
     pub fn initial_window() -> AppState {
-        <AppPolicy as StatePolicy>::initial_state()
+        topology::initial_window::<AppPolicy>()
     }
 
     /// Forward map: state → SCE-emit id string (§5.18 RPC path token).
@@ -73,19 +78,10 @@ impl App {
     }
 
     /// Reverse map: SCE-emit id string → state. Returns `None` if `name`
-    /// is not a declared window.
-    ///
-    /// Single-window today: linear compare against `initial_window`. The
-    /// §5.18 perfect-hash dispatch lands when `<parallel>` root brings
-    /// multi-window declarations (later R16 slice).
+    /// is not a declared window. Linear-scan today per §5.18 caveat.
     #[must_use]
     pub fn window_from_name(name: &str) -> Option<AppState> {
-        let initial = Self::initial_window();
-        if Self::window_name(initial) == name {
-            Some(initial)
-        } else {
-            None
-        }
+        topology::window_from_name::<AppPolicy>(name)
     }
 }
 

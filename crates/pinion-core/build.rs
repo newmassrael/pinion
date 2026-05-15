@@ -1,8 +1,13 @@
 fn main() {
     // SCXML inputs compiled by sce-build (§5.4 + §5.19):
-    //   widgets/button.scxml -> button_sm.rs (R12 widget statechart)
-    //   app.scxml            -> app_sm.rs    (R16 §5.19 window topology)
-    let scxml_inputs = ["widgets/button.scxml", "app.scxml"];
+    //   widgets/button.scxml         -> button_sm.rs       (R12 widget statechart)
+    //   app.scxml                    -> app_sm.rs          (R16 §5.19 window topology)
+    //   fixtures/multi_window.scxml  -> multi_window_sm.rs (R16 §5.17 parallel-root fixture)
+    let scxml_inputs = [
+        "widgets/button.scxml",
+        "app.scxml",
+        "fixtures/multi_window.scxml",
+    ];
     sce_build::compile_scxml(&scxml_inputs);
 
     // Post-process: strip inner attributes (#![...]) and inner doc comments (//!).

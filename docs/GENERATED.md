@@ -661,6 +661,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Window id strings are SCE-emit const; runtime cannot register new window names
 - Perfect-hash collision impossible; SCE-emit guarantees unique state ids in app.scxml
 - Window-scoped ops (snapshot/rewind/dry_run) implicitly per-window when prefix present
+- Interim reverse-map is linear scan over regions; perfect-hash codegen lands in pinion-core build.rs
 
 
 
@@ -712,6 +713,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - view-fn purity preserved: app.scxml declares topology only; onentry/onexit must not call view-fn
 - Generated app_sm.rs needs same inner-attr strip as button_sm.rs (include! disallows #![...])
 - Convention is opt-in: crates without app.scxml skip build.rs invocation (no auto-discovery panic)
+- Windows enumeration: get_parallel_regions(initial_state()) under parallel root; sole state otherwise
 
 
 
