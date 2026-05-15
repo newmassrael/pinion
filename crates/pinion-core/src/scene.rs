@@ -99,14 +99,26 @@ impl BoxNode {
 }
 
 /// Styled text primitive.
+///
+/// v0 §5.11 shape: `content: String` carries the raw string payload
+/// (cosmic-text rasterizer integration deferred); `rect: Rect` gives
+/// absolute bounds in the same u32 coordinate space as `BoxNode`.
+/// Font / size / colour and the layout-relative positioning come
+/// with the §5.3 DSL alongside the rasterizer slice.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
-pub struct TextNode {}
+pub struct TextNode {
+    pub content: String,
+    pub rect: Rect,
+}
 
 impl TextNode {
     #[must_use]
-    pub const fn new() -> Self {
-        Self {}
+    pub fn new(content: impl Into<String>, rect: Rect) -> Self {
+        Self {
+            content: content.into(),
+            rect,
+        }
     }
 }
 
@@ -199,7 +211,7 @@ mod tests {
     #[test]
     fn all_seven_variants_construct() {
         let _ = Scene::Box(BoxNode::new(0, Rect::default()));
-        let _ = Scene::Text(TextNode::new());
+        let _ = Scene::Text(TextNode::new("", Rect::default()));
         let _ = Scene::Path(PathNode::new());
         let _ = Scene::Image(ImageNode::new());
         let _ = Scene::Container(ContainerNode::new(vec![]));
@@ -246,6 +258,22 @@ mod tests {
         match scene {
             Scene::Box(node) => assert_eq!(node.rect, rect),
             _ => panic!("expected Box variant"),
+        }
+    }
+
+    #[test]
+    fn text_node_content_and_rect_round_trip_through_scene() {
+        // v0 §5.11 Text shape: content (String) + rect (Rect) survive
+        // round-trip through Scene::Text. Locks the minimal schema
+        // before the cosmic-text rasterizer slice fills in style.
+        let node = TextNode::new("Click me!", Rect::new(96, 84, 128, 32));
+        let scene = Scene::Text(node);
+        match scene {
+            Scene::Text(t) => {
+                assert_eq!(t.content, "Click me!");
+                assert_eq!(t.rect, Rect::new(96, 84, 128, 32));
+            }
+            _ => panic!("expected Text variant"),
         }
     }
 

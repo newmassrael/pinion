@@ -3,17 +3,18 @@
 //! Opens a winit window and pipes real pointer input into the R12
 //! `Button` SCXML statechart (`pinion_core::widgets::button::Button`).
 //! A sync `view(state, &Frame) -> Scene` (§6.3 view-fn signature, §2
-//! purity invariant) builds a `Scene::Container` of two `Scene::Box`
-//! children — a dark navy background covering the window and a
-//! centered button whose fill reflects `ButtonState` (§5.2 enum +
-//! §5.11 v0 `BoxNode` `fill`+`rect` schema). A recursive `paint`
-//! walks the scene tree and writes each `BoxNode` into the
-//! softbuffer pixel slice, with the §5.16 RHI still pending.
+//! purity invariant) builds a `Scene::Container` carrying a dark
+//! navy background `Scene::Box`, a centered button `Scene::Box`
+//! whose fill reflects `ButtonState`, and a `Scene::Text` label
+//! (§5.2 enum + §5.11 v0 `BoxNode`/`TextNode` schemas). A recursive
+//! `paint` walks the tree and writes `BoxNode`s into the softbuffer
+//! pixel slice; `TextNode` is intentionally present-but-unrasterized
+//! until the cosmic-text slice, with the §5.16 RHI still pending.
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
-use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::widgets::button::{Button, ButtonEvent, ButtonState};
 use pinion_core::{Frame, Scene};
 use softbuffer::{Context, Surface};
@@ -45,17 +46,30 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         ButtonState::Pressed => 0x0050_5050,  // dark grey
         ButtonState::Disabled => 0x00b0_2020, // muted red
     };
+    let label = match state {
+        ButtonState::Disabled => "Disabled",
+        _ => "Click me!",
+    };
+    // Label rect is centered inside BTN_RECT — height 24px font slot.
+    let label_rect = Rect::new(
+        BTN_RECT.x,
+        BTN_RECT.y + BTN_RECT.h / 2 - 12,
+        BTN_RECT.w,
+        24,
+    );
     Scene::Container(ContainerNode::new(vec![
         Scene::Box(BoxNode::new(BG_FILL, Rect::new(0, 0, WIN_W, WIN_H))),
         Scene::Box(BoxNode::new(btn_fill, BTN_RECT)),
+        Scene::Text(TextNode::new(label, label_rect)),
     ]))
 }
 
 /// Recursive Scene-tree paint into the softbuffer pixel slice. v0
-/// interprets `Scene::Box` (the only variant with a concrete v0
-/// payload per §5.11) and `Scene::Container` (recurse over
-/// children); other variants are deliberately skipped until their
-/// §5.11 shape lands.
+/// interprets `Scene::Box` (rect-fill) and `Scene::Container`
+/// (recurse over children); `Scene::Text` is explicitly skipped
+/// until the cosmic-text rasterizer slice lands, even though its
+/// §5.11 schema (`content`+`rect`) is already in the scene tree
+/// for RPC introspection. Other variants are reserved.
 fn paint(scene: &Scene, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
     match scene {
         Scene::Box(node) => paint_box(node, buffer, buf_w, buf_h),
@@ -64,6 +78,8 @@ fn paint(scene: &Scene, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
                 paint(child, buffer, buf_w, buf_h);
             }
         }
+        // v0: `Scene::Text` rasterizer (cosmic-text) deferred;
+        // Path/Image/Effect/External not yet wired into paint.
         _ => {}
     }
 }
