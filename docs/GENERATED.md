@@ -359,6 +359,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Typed methods cleaner client but proliferate (6 base × N variants)
 - Hybrid pragmatic but two-paradigm cognitive cost
 - v0 query path: /[window[id]/]external/<introspect_path>; full scene addressing pending §5.3 DSL
+- v0 click: synthesize PointerEvent::Down at (x,y) and probe External::handles_event policy
 
 
 

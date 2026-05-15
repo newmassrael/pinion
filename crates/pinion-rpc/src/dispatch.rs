@@ -25,6 +25,7 @@ use pinion_core::Scene;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::click::{click, ClickError, ClickOutcome};
 use crate::query::{query, QueryError};
 
 /// JSON-RPC 2.0 request envelope.
@@ -108,6 +109,7 @@ pub fn dispatch(scene: &Scene, request_json: &str) -> Option<String> {
 
     let outcome = match request.method.as_str() {
         "scene/query" => handle_scene_query(scene, request.params.as_ref()),
+        "scene/click" => handle_scene_click(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -148,6 +150,47 @@ fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, Rp
     match query(scene, path) {
         Ok(value) => Ok(introspect_value_to_json(value)),
         Err(err) => Err(query_error_to_rpc(err)),
+    }
+}
+
+fn handle_scene_click(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+    let Some(x) = params.get("x").and_then(Value::as_f64) else {
+        return Err(invalid_params("params.x missing or not a number"));
+    };
+    let Some(y) = params.get("y").and_then(Value::as_f64) else {
+        return Err(invalid_params("params.y missing or not a number"));
+    };
+
+    #[allow(clippy::cast_possible_truncation)]
+    let outcome = click(scene, path, x as f32, y as f32);
+    match outcome {
+        Ok(outcome) => Ok(click_outcome_to_json(outcome)),
+        Err(err) => Err(click_error_to_rpc(err)),
+    }
+}
+
+fn click_outcome_to_json(outcome: ClickOutcome) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("handled".to_string(), Value::Bool(outcome.handled));
+    Value::Object(map)
+}
+
+fn click_error_to_rpc(err: ClickError) -> RpcError {
+    let variant = match err {
+        ClickError::Path(_) => "Path",
+        ClickError::UnsupportedPath => "UnsupportedPath",
+        ClickError::NoExternalAtPath => "NoExternalAtPath",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
     }
 }
 
@@ -300,5 +343,26 @@ mod tests {
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("Path".to_string())));
+    }
+
+    #[test]
+    fn scene_click_success_returns_handled_false() {
+        // StubExternal's handles_event default returns false. The
+        // dispatch round-trips that into result.handled.
+        let scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"/external","x":1.0,"y":2.0},"id":9}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("handled"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn scene_click_missing_x_param_is_invalid() {
+        let scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"/external","y":2.0},"id":10}"#;
+        let resp = parse_response(&dispatch(&scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
     }
 }
