@@ -1,35 +1,44 @@
 //! `hello-button` — §4 first dogfood.
 //!
 //! Opens a winit window and pipes real pointer input into the R12
-//! Button SCXML statechart (`pinion_core::widgets::button::Button`),
-//! filling the window with a colour that reflects the current
-//! `ButtonState`.
-//!
-//! Pre-`Scene` / pre-view-fn intentionally: the scene primitive enum
-//! variants are empty markers today (§5.2 skeleton landed R16), so a
-//! `view-fn -> Scene` path would return shapes with no visible field.
-//! Going winit -> Button directly anchors that *real* input flows into
-//! the SCE-emitted state machine before the rendering pipeline (§5.16
-//! RHI) lands.
+//! Button SCXML statechart (`pinion_core::widgets::button::Button`).
+//! A sync `view(state, &Frame) -> Scene` (§6.3 view-fn signature, §2
+//! purity invariant) then maps `ButtonState` to `Scene::Box(BoxNode
+//! { fill })` (§5.2 enum + §5.11 v0 field schema). The softbuffer
+//! pixel loop reads `BoxNode.fill` directly — proving the view-fn →
+//! Scene → present chain end-to-end with the §5.16 RHI still pending.
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
+use pinion_core::scene::BoxNode;
 use pinion_core::widgets::button::{Button, ButtonEvent, ButtonState};
+use pinion_core::{Frame, Scene};
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-/// 0xAARRGGBB packed colour per `ButtonState`.
-fn fill_colour(state: ButtonState) -> u32 {
-    match state {
+/// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
+/// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, readied
+/// for `dt`/`frame_index` without a `SemVer` major. Purity here is
+/// the §2 `dry_run` invariant: same `(state, frame)` always yields
+/// the same `Scene`.
+//
+// `&Frame` is intentional per the §6.3 signature contract even
+// though `Frame` is presently a ZST: once real per-frame fields
+// land, passing by value would force a `SemVer` major on every
+// view-fn. Allow the lint at the view-fn boundary.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn view(state: ButtonState, _frame: &Frame) -> Scene {
+    let fill: u32 = match state {
         ButtonState::Idle => 0x00ff_ffff,     // white
         ButtonState::Hover => 0x00d0_d0d0,    // light grey
         ButtonState::Pressed => 0x0050_5050,  // dark grey
         ButtonState::Disabled => 0x00b0_2020, // muted red
-    }
+    };
+    Scene::Box(BoxNode::new(fill))
 }
 
 struct App {
@@ -86,7 +95,15 @@ impl App {
         let Ok(mut buffer) = surface.buffer_mut() else {
             return;
         };
-        let colour = fill_colour(self.button.state());
+        // §6.3 view-fn first real call; pattern-match the Scene::Box
+        // payload for the v0 fill. `_` arm is required by `Scene`'s
+        // `#[non_exhaustive]` even though v0 view-fn only returns Box.
+        let frame = Frame::new();
+        let colour = if let Scene::Box(node) = view(self.button.state(), &frame) {
+            node.fill
+        } else {
+            0
+        };
         for pixel in buffer.iter_mut() {
             *pixel = colour;
         }
@@ -99,11 +116,15 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
+        eprintln!("hello-button: resumed() fired; creating window...");
         let attrs = Window::default_attributes()
             .with_title("pinion hello-button (§4 first dogfood)")
             .with_inner_size(winit::dpi::LogicalSize::new(320.0, 200.0));
         let window = match event_loop.create_window(attrs) {
-            Ok(w) => Rc::new(w),
+            Ok(w) => {
+                eprintln!("hello-button: window created id={:?}", w.id());
+                Rc::new(w)
+            }
             Err(e) => {
                 eprintln!("hello-button: failed to create window: {e}");
                 event_loop.exit();

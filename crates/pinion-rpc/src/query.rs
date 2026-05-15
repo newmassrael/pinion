@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn box_at_root_reports_no_external() {
-        let scene = Scene::Box(BoxNode::new());
+        let scene = Scene::Box(BoxNode::new(0));
         assert_eq!(
             query(&scene, "/external/count").unwrap_err(),
             QueryError::NoExternalAtPath,

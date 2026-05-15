@@ -55,14 +55,22 @@ impl Modifier {
 }
 
 /// Rectangular primitive — the layout-and-fill workhorse.
+///
+/// `fill` is the v0 minimal field: a `0x00AARRGGBB` packed colour
+/// matching the softbuffer presentation format used by the §4 first
+/// dogfood. Geometry (rect/insets) and `Style`-carried properties
+/// (border, gradient, shadow) settle with the §5.3 DSL — see the
+/// §5.11 caveat for the v0 field-schema scope.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
-pub struct BoxNode {}
+pub struct BoxNode {
+    pub fill: u32,
+}
 
 impl BoxNode {
     #[must_use]
-    pub const fn new() -> Self {
-        Self {}
+    pub const fn new(fill: u32) -> Self {
+        Self { fill }
     }
 }
 
@@ -158,7 +166,7 @@ mod tests {
 
     #[test]
     fn all_seven_variants_construct() {
-        let _ = Scene::Box(BoxNode::new());
+        let _ = Scene::Box(BoxNode::new(0));
         let _ = Scene::Text(TextNode::new());
         let _ = Scene::Path(PathNode::new());
         let _ = Scene::Image(ImageNode::new());
@@ -172,7 +180,7 @@ mod tests {
         // Inside the defining crate `#[non_exhaustive]` does not force a
         // wildcard arm, so this exhaustive match doubles as a guard: if
         // someone adds a Scene variant they must touch this test.
-        let s = Scene::Box(BoxNode::new());
+        let s = Scene::Box(BoxNode::new(0));
         match s {
             Scene::Box(_)
             | Scene::Text(_)
@@ -181,6 +189,19 @@ mod tests {
             | Scene::Container(_)
             | Scene::Effect(_)
             | Scene::External(_) => {}
+        }
+    }
+
+    #[test]
+    fn box_node_fill_round_trips_through_scene() {
+        // Construction stores the packed ARGB fill; pattern-match
+        // extracts it bit-for-bit. Guards the v0 §5.11 field schema
+        // before §5.3 DSL settles geometry/style.
+        let argb = 0x00ab_cdef;
+        let scene = Scene::Box(BoxNode::new(argb));
+        match scene {
+            Scene::Box(node) => assert_eq!(node.fill, argb),
+            _ => panic!("expected Box variant"),
         }
     }
 

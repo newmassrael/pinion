@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn box_root_snapshots_as_box() {
-        let scene = Scene::Box(BoxNode::new());
+        let scene = Scene::Box(BoxNode::new(0));
         assert_eq!(snapshot(&scene, "").unwrap(), SnapshotNode::Box);
     }
 

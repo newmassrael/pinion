@@ -310,6 +310,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Minimal underserves first dogfood widget styling needs
 - CSS-rich bloats type system and RPC payload
 - Layered most flexible but steepest learning curve
+- R17 BoxNode v0 schema: fill: u32 ARGB only; geometry/style settled by §5.3 DSL
 
 
 

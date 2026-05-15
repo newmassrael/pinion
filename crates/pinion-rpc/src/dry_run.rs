@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn box_at_root_rejected() {
-        let mut scene = Scene::Box(BoxNode::new());
+        let mut scene = Scene::Box(BoxNode::new(0));
         let err = dry_run(&mut scene, "/external/count", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, DryRunError::NoExternalAtPath);
     }
