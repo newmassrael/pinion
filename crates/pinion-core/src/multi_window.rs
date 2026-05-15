@@ -31,7 +31,7 @@ use sce_rust_runtime::StatePolicy;
 
 use crate::topology;
 
-pub use sm::{MultiWindowEvent, MultiWindowState};
+pub use sm::MultiWindowState;
 use sm::MultiWindowPolicy;
 
 /// Parallel-root window fixture exposing the same topology surface as
