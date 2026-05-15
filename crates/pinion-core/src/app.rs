@@ -28,7 +28,7 @@ mod sm {
     include!(concat!(env!("OUT_DIR"), "/app_sm.rs"));
 }
 
-use sce_rust_runtime::Engine;
+use sce_rust_runtime::{Engine, StatePolicy};
 
 pub use sm::{AppEvent, AppState};
 use sm::AppPolicy;
@@ -59,6 +59,34 @@ impl App {
     pub fn state(&self) -> AppState {
         self.engine.get_current_state()
     }
+
+    /// Initial window — §5.18 absent-prefix short-circuit target.
+    #[must_use]
+    pub fn initial_window() -> AppState {
+        <AppPolicy as StatePolicy>::initial_state()
+    }
+
+    /// Forward map: state → SCE-emit id string (§5.18 RPC path token).
+    #[must_use]
+    pub fn window_name(state: AppState) -> &'static str {
+        <AppPolicy as StatePolicy>::get_state_name(state)
+    }
+
+    /// Reverse map: SCE-emit id string → state. Returns `None` if `name`
+    /// is not a declared window.
+    ///
+    /// Single-window today: linear compare against `initial_window`. The
+    /// §5.18 perfect-hash dispatch lands when `<parallel>` root brings
+    /// multi-window declarations (later R16 slice).
+    #[must_use]
+    pub fn window_from_name(name: &str) -> Option<AppState> {
+        let initial = Self::initial_window();
+        if Self::window_name(initial) == name {
+            Some(initial)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for App {
@@ -75,5 +103,15 @@ mod tests {
     fn initial_state_is_main() {
         let app = App::new();
         assert_eq!(app.state(), AppState::Main);
+    }
+
+    #[test]
+    fn topology_accessors_round_trip() {
+        let initial = App::initial_window();
+        assert_eq!(initial, AppState::Main);
+        let name = App::window_name(initial);
+        assert_eq!(name, "main");
+        assert_eq!(App::window_from_name(name), Some(initial));
+        assert_eq!(App::window_from_name("unknown"), None);
     }
 }
