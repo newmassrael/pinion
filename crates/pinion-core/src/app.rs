@@ -4,8 +4,9 @@
 //! included here. The wrapping `mod sm` block absorbs the inner attributes
 //! that `include!()` does not permit in expansion position.
 //!
-//! Re-exports surface the SCE-emitted topology types (`AppState`, etc.)
-//! so `pinion-runtime` can consume them once R16 wires the routing layer.
+//! `App` wraps `Engine<AppPolicy>` (Button widget pattern from R12) so
+//! callers do not touch `sce_rust_runtime::Engine` directly. `pinion-runtime`
+//! consumes this for window routing per §5.17 §5.18.
 
 #[allow(
     unsafe_code,
@@ -27,4 +28,52 @@ mod sm {
     include!(concat!(env!("OUT_DIR"), "/app_sm.rs"));
 }
 
+use sce_rust_runtime::Engine;
+
 pub use sm::{AppEvent, AppState};
+use sm::AppPolicy;
+
+/// Application-level state machine driving window topology.
+///
+/// Per §5.17, the root state set declares window topology and SCE Forge
+/// emits routing/lifecycle from it. Single root state → single-window app
+/// (§5.18 short-circuit). Multi-window is declared via a `<parallel>` root
+/// with N child states; that path is exercised in a later R16 slice.
+pub struct App {
+    engine: Engine<AppPolicy>,
+}
+
+impl App {
+    #[must_use]
+    pub fn new() -> Self {
+        let mut engine = Engine::new(AppPolicy::new());
+        engine.initialize();
+        Self { engine }
+    }
+
+    pub fn send(&mut self, event: AppEvent) {
+        self.engine.process_event(event);
+    }
+
+    #[must_use]
+    pub fn state(&self) -> AppState {
+        self.engine.get_current_state()
+    }
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_state_is_main() {
+        let app = App::new();
+        assert_eq!(app.state(), AppState::Main);
+    }
+}
