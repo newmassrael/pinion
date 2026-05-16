@@ -17,5 +17,6 @@ pub use frame::Frame;
 pub use intent::{Intent, IntentTag};
 pub use scene::Scene;
 pub use style::{
-    Align, Border, BoxStyle, Color, Fit, ImageStyle, PathStyle, Stroke, StrokeCap, TextStyle,
+    Align, AlignItems, Border, BoxStyle, Color, Display, Fit, FlexDirection, ImageStyle,
+    JustifyContent, LayoutStyle, PathStyle, Size, SizeValue, Stroke, StrokeCap, TextStyle,
 };

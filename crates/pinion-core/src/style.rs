@@ -322,6 +322,172 @@ pub enum Align {
     BottomRight,
 }
 
+// ---------------------------------------------------------------------------
+// §5.21 R23/R24 layout system: LayoutStyle + flex enums.
+// pinion-core stays free of any layout-engine dependency; pinion-runtime
+// translates these types to taffy::Style at compute_layout time.
+// ---------------------------------------------------------------------------
+
+/// Top-level display mode per §5.21 R23.
+/// `Block` (default) opts out of flex — node occupies its parent-given
+/// rect as-is. `Flex` activates the §5.21 flex layout pass over the
+/// children.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Display {
+    #[default]
+    Block,
+    Flex,
+}
+
+/// Main-axis direction for flex children per §5.21.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum FlexDirection {
+    #[default]
+    Row,
+    Column,
+}
+
+/// Main-axis distribution per §5.21.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum JustifyContent {
+    #[default]
+    Start,
+    Center,
+    End,
+    SpaceBetween,
+    SpaceAround,
+}
+
+/// Cross-axis alignment per §5.21.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum AlignItems {
+    #[default]
+    Stretch,
+    Start,
+    Center,
+    End,
+}
+
+/// Length value for [`Size`] / `flex_basis` / etc. per §5.21.
+///
+/// `Auto` defers to taffy's intrinsic sizing (e.g. text measures its
+/// own rasterized width); `Px(n)` pins a pixel size; `Percent(n)`
+/// expresses a fraction of the parent container (0–100).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum SizeValue {
+    #[default]
+    Auto,
+    Px(u32),
+    Percent(u8),
+}
+
+/// Width / height pair per §5.21.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Size {
+    pub width: SizeValue,
+    pub height: SizeValue,
+}
+
+impl Size {
+    /// Fixed pixel width and height.
+    #[must_use]
+    pub const fn px(width: u32, height: u32) -> Self {
+        Self {
+            width: SizeValue::Px(width),
+            height: SizeValue::Px(height),
+        }
+    }
+}
+
+/// Layout sidecar — companion to [`BoxStyle`] / [`TextStyle`] / etc.
+///
+/// Carries the flex + sizing information the §5.21 R23 layout pass
+/// (`pinion-runtime::layout::compute_layout`) translates into taffy
+/// style. Every Scene primitive (including the opaque `External`)
+/// carries one; default is `Display::Block` which means "use the
+/// rect I was given" — backward-compatible with R17 manual placement.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LayoutStyle {
+    pub display: Display,
+    pub flex_direction: FlexDirection,
+    pub justify_content: JustifyContent,
+    pub align_items: AlignItems,
+    pub gap: u32,
+    pub size: Size,
+    pub flex_grow: f32,
+}
+
+impl LayoutStyle {
+    /// Identity layout: `Block`, auto sizing, no gap.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            display: Display::Block,
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::Start,
+            align_items: AlignItems::Stretch,
+            gap: 0,
+            size: Size {
+                width: SizeValue::Auto,
+                height: SizeValue::Auto,
+            },
+            flex_grow: 0.0,
+        }
+    }
+
+    /// Builder: switch this node into flex mode (children are
+    /// arranged along [`FlexDirection`]).
+    #[must_use]
+    pub const fn flex(mut self, direction: FlexDirection) -> Self {
+        self.display = Display::Flex;
+        self.flex_direction = direction;
+        self
+    }
+
+    /// Builder: main-axis distribution.
+    #[must_use]
+    pub const fn with_justify(mut self, justify: JustifyContent) -> Self {
+        self.justify_content = justify;
+        self
+    }
+
+    /// Builder: cross-axis alignment.
+    #[must_use]
+    pub const fn with_align_items(mut self, align: AlignItems) -> Self {
+        self.align_items = align;
+        self
+    }
+
+    /// Builder: gap between children (pixels).
+    #[must_use]
+    pub const fn with_gap(mut self, gap: u32) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    /// Builder: pin the node's size (overrides `Auto`).
+    #[must_use]
+    pub const fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Builder: flex-grow factor (`0.0` = don't expand, `1.0` =
+    /// take remaining main-axis space).
+    #[must_use]
+    pub const fn with_flex_grow(mut self, grow: f32) -> Self {
+        self.flex_grow = grow;
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,6 +659,50 @@ mod tests {
     #[test]
     fn align_default_is_top_left() {
         assert_eq!(Align::default(), Align::TopLeft);
+    }
+
+    #[test]
+    fn layout_style_default_is_block_auto() {
+        let l = LayoutStyle::default();
+        assert_eq!(l.display, Display::Block);
+        assert_eq!(l.flex_direction, FlexDirection::Row);
+        assert_eq!(l.justify_content, JustifyContent::Start);
+        assert_eq!(l.align_items, AlignItems::Stretch);
+        assert_eq!(l.gap, 0);
+        assert_eq!(l.size.width, SizeValue::Auto);
+        assert_eq!(l.size.height, SizeValue::Auto);
+        assert!((l.flex_grow - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn layout_style_flex_builder_switches_display() {
+        let l = LayoutStyle::new().flex(FlexDirection::Column);
+        assert_eq!(l.display, Display::Flex);
+        assert_eq!(l.flex_direction, FlexDirection::Column);
+    }
+
+    #[test]
+    fn layout_style_chained_builders() {
+        let l = LayoutStyle::new()
+            .flex(FlexDirection::Row)
+            .with_justify(JustifyContent::Center)
+            .with_align_items(AlignItems::Center)
+            .with_gap(8)
+            .with_size(Size::px(320, 200))
+            .with_flex_grow(1.0);
+        assert_eq!(l.display, Display::Flex);
+        assert_eq!(l.justify_content, JustifyContent::Center);
+        assert_eq!(l.align_items, AlignItems::Center);
+        assert_eq!(l.gap, 8);
+        assert_eq!(l.size, Size::px(320, 200));
+        assert!((l.flex_grow - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn size_px_helper_sets_both_dims() {
+        let s = Size::px(160, 80);
+        assert_eq!(s.width, SizeValue::Px(160));
+        assert_eq!(s.height, SizeValue::Px(80));
     }
 
     #[test]

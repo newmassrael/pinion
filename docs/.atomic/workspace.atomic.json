@@ -909,6 +909,12 @@
           "reason": "premature; flex must prove out before two-engine maintenance burden"
         }
       ],
+      "implementations": [
+        {
+          "file": "crates/pinion-core/src/style.rs",
+          "symbol": "LayoutStyle"
+        }
+      ],
       "decision_status": "active"
     },
     "5.3": {

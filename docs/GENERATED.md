@@ -950,6 +950,10 @@ fn main() {
 
 
 
+**Implementations**:
+- crates/pinion-core/src/style.rs:LayoutStyle
+
+
 
 ### §5.3. DSL surface form (file-based vs macro vs view-fn)
 
