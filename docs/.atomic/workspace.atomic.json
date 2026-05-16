@@ -799,6 +799,23 @@
         "Runtime intent queue + per-frame drain (sync polling, view-fn purity preserved)",
         "Tag convention: <widget>.<kind> e.g. save_btn.click; IntentKind enum dropped"
       ],
+      "caveats_bullets": [
+        "R18 slice 1: Intent + IntentTag in pinion-core::intent; pinion-derive macro (scalar variants)."
+      ],
+      "implementations": [
+        {
+          "file": "crates/pinion-core/src/intent.rs",
+          "symbol": "Intent"
+        },
+        {
+          "file": "crates/pinion-core/src/intent.rs",
+          "symbol": "IntentTag"
+        },
+        {
+          "file": "crates/pinion-derive/src/lib.rs",
+          "symbol": "derive_intent_tag"
+        }
+      ],
       "decision_status": "active"
     },
     "5.3": {

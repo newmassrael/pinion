@@ -1199,6 +1199,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinion-derive"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "pinion-rpc"
 version = "0.0.1"
 dependencies = [
