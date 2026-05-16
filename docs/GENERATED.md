@@ -621,6 +621,14 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R41: §2#4 mode toggle = UI / 게임 모드 backend 분기 예약점 — Vello (UI) / pinion 3D pass 공존 자리
 - R41: 언리얼-class path B (3D engine pass 자체) = Phase 4+ 평가; Vello 채택은 B 포기 아님
 - R41: pinion 렌더 차별점 = AI-introspectable pipeline (typed scene→paint→pixel) — Qt/Compose 외
+- R45: SceneRenderer 표현 = pinion-forge renderer kind manifest + build codegen; runtime dispatch 0
+- R45: backend selection = manifest <pinion kind="renderer" backend="vello"/> compile-time per target
+- R45: backend 추가 = pinion-forge renderer kind 의 새 template (Vello/softbuffer/headless), Open-Closed
+- R45: R41 Phase 2/3/4 (thin-RHI/custom/언리얼-class) = renderer kind 의 새 template, 같은 codegen surface
+- R45: §5.16 R11 'zero unjustified abstraction overhead' + R31 'compile-time per target' 정합
+- R45: §2#6 'one scene, two render dispatch paths' invariant 가 codegen 의 single emitted path 로 표현됨
+- R45: pinion-forge 에 renderer kind 신설 (reactive 옆) — R37.7/R37.8 정합, SCE upstream 미요구
+- R45: build slice 1 = renderer kind + Vello first template + demo manifest; R46+ commits
 
 
 
@@ -2741,6 +2749,36 @@ fn main() {
 **Carry forward**:
 - AI client SDK helper — ApplyOutcome.emitted_intents 와 scene/intents drain 를 단일 stream 으로 reduce 하는 utility (선택적 client-side concern)
 - §5.20 scene/intents 의 timestamp / cause-effect chain id 추가 검토 — dual channel timeline 교사 필요 시
+
+
+
+### 416 — §5.16 SceneRenderer 표현 = pinion-forge renderer kind 빌드 코드젠 — backend manifest-driven, runtime 추상화 비용 0
+
+**Changes**:
+- §5.16 에 R45 caveat 8 추가 — SceneRenderer abstraction = pinion-forge renderer kind 의 build-time codegen 으로 정착
+- R11 zero-overhead invariant + R31 'compile-time per target' 와 정합하는 abstraction layer 결정
+- Phase 2/3/4 backend 교체 = renderer kind emit template 추가, caller 무변경 (Open-Closed)
+- spec only — code 0 줄 변경
+
+
+
+**Verification**:
+- mnemosyne validate_workspace: T1=0 T3=0 reject=0, GENERATED.md=sync
+- code 변경 부재 — cargo test 589 / clippy baseline 유지 (R44 이후 변경 없음)
+- R11 supersede 흐름과 정합: codegen 거절은 AAA dynamic dispatch 한정, abstraction codegen 자체는 §5.16 의 정통 패턴
+- sce-universal-meta-layer 정합 — pinion-forge 가 framework-side codegen 책임 (SCE upstream 미요구)
+
+
+
+**Impact**: §5.16, §2, §5.22, §5.12
+
+
+**Carry forward**:
+- R46 build slice 1 commit 1: pinion-forge 에 renderer kind parser + AST + diagnostic 추가 (reactive 옆)
+- R46 build slice 1 commit 2: renderer kind 의 Vello first emit template — wgpu/vello workspace dep + emit 본체
+- R46 build slice 1 commit 3: ai-introspect-demo 에 app.pinion.xml renderer manifest 추가; build.rs codegen 호출; softbuffer paint 함수가 codegen 된 SoftbufferRenderer 로 교체
+- R47+: Headless renderer template — §5.12 screenshot RPC 미해제 항목 진입
+- R47+: text path — cosmic-text glyph cache (R31 caveat 기존 결정 정통 이행)
 
 
 
