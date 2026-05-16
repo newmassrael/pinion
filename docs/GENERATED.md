@@ -386,6 +386,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R28 §5.24: scene/semantic = 11th method; returns SemanticProps tree (role/state/actions).
 - R29 §5.25: scene/modifiers = 12th method; returns ModifierOp chain per node path.
 - R30 §5.26: scene/layout = 13th method; queries cached Layout (rect/padding/border) per path.
+- R32 §5.27: scene/virtual_list = 14th method; count + visible range + window snapshot.
 
 
 
@@ -841,6 +842,7 @@ fn main() {
 - RPC discriminant union: open-set kind semantics; clients route unknown kinds via fallback handler
 - Hedge runtime cost: zero (match jump table identical); ergonomic tax: downstream forced _ arm
 - Hedge intent: future game-engine evolution (Mesh/Camera/Light) addable without v2 major bump
+- R32 §5.27: Scene closed enum extended to 8th variant VirtualList; non_exhaustive guard validated.
 
 
 
@@ -1285,6 +1287,68 @@ fn main() {
 - Manual dirty marking by user — error-prone; missed invalidations cause stale layout bugs
 - Constraint solver dirty propagation (Cassowary) — different algorithm; abandoned
 - Diff-based layout cache (React-style reconciliation) — adds VDOM overhead
+
+
+
+
+
+
+### §5.27. Virtualization (VirtualList Scene variant + windowed render)
+
+
+**Intent**: VirtualList<T> = 8th Scene variant; windowed rendering for 10K+ datasets. Materialize only visible_range items at layout; AI agent sees count + window + materialized items via scene/virtual_list RPC.
+
+
+**Rationale**:
+- Compose LazyColumn / SwiftUI List / Flutter ListView.builder all virtualize — industry standard
+- 10K-row table without virtualization = 10K Scene nodes per frame; impossible at AAA budget
+- Closed-form Scene IR (§5.2) extended with 8th variant; §5.2 caveat cross-ref needed
+- RPC introspection: total count + visible range + materialized window — AI sees enough to reason
+- Materialization happens at layout pass, not view-fn — view-fn returns template only
+- Scroll offset = Signal<f32>; reactive window update via §5.22 dependency tracking
+- Item size determinism (Px) v0; auto-size + variable height as carry-forward
+- Damage rect: window scroll marks whole list rect dirty; whole-list repaint single-pass
+
+
+
+**Inputs**:
+- §5.2 Scene closed-form: extended with 8th VirtualList variant
+- §5.22 Signal: scroll offset + visible range + item count Signal-backed
+- §5.26 Damage rect: window scroll triggers list-rect damage
+- §5.7 RPC: scene/virtual_list method for AI introspection
+
+
+
+**Outputs**:
+- Scene::VirtualList(VirtualListNode) variant added to closed enum
+- VirtualListNode {item_count, visible_range, item_fn, item_size, scroll_offset}
+- scene/virtual_list = 14th RPC method (count + range + materialized snapshot)
+- Layout pass materializes visible items only; O(window) per frame not O(total)
+- SCE schema: virtual_list block with source + template + size
+- Damage propagation: scroll change marks list rect dirty (no partial)
+
+
+
+**Caveats**:
+- R32: Scene::VirtualList = 8th variant; closed-form Scene enum extended; §5.2 cross-ref caveat.
+- R32: VirtualListNode {item_count, visible_range, item_fn, item_size, scroll_offset} fields.
+- R32: item_fn: Box<dyn Fn(usize) -> Scene>; sync pure callable producing per-index Scene.
+- R32: Materialization at layout pass per §5.26; not at view-fn rebuild; O(window) per frame.
+- R32: scroll_offset = Signal<f32>; reactive window update via §5.22 dependency tracking.
+- R32: item_size = SizeValue::Px(n) v0; auto-size / variable height carry-forward.
+- R32: scene/virtual_list = 14th RPC method; returns count + visible range + window snapshot.
+- R32: Damage rect: scroll change marks whole list rect dirty; no partial damage v0.
+- R32: SCE schema: virtual_list block {source, template, size}; Forge emits VirtualListNode.
+- R32: dry_run on VirtualList materializes hypothetical visible_range; not full count.
+
+
+
+**Alternatives rejected**:
+- Full materialization (no virtualization) — impossible at 10K+; AAA target violation
+- Recycler pattern (Android RecyclerView) — stateful pool; view-fn purity violation
+- Window via filter in app code — user-implemented; non-canonical; AI introspection lost
+- Lazy iterator pattern — functional but materialization timing unclear
+- Streaming Scene tree — adds incremental API; over-engineered for v0
 
 
 
@@ -2663,6 +2727,38 @@ fn main() {
 - R35 §5.30 Accessibility (AccessKit bridge)
 - R36 §5.31 Hot reload (signal serialization)
 - Implementation rounds for §5.16 thin RHI + display list cache later; large effort
+
+
+
+### Round 32 — Round 32 — §5.27 new section: Virtualization (VirtualList<T> 8th Scene variant); windowed rendering for 10K+ datasets
+
+**Changes**:
+- New §5.27 section: Virtualization under §5 parent (Compose LazyColumn / SwiftUI List industry standard)
+- Scene closed enum extended to 8th variant: VirtualList(VirtualListNode); §5.2 caveat cross-ref
+- VirtualListNode {item_count, visible_range, item_fn, item_size, scroll_offset}
+- Materialization at layout pass per §5.26 (O(window) not O(total))
+- scene/virtual_list = 14th RPC method (§5.12 caveat cross-ref)
+- 10 §5.27 caveats lock variant fields + materialization + scroll Signal + dry_run + damage
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 36 → 37; entries 31 → 32
+- no code changes (spec-only); R33+ axis batch continues
+- atomic mutations: 1 add_section + 5 set_section_* + 12 add_section_caveat
+
+
+
+**Impact**: §5.2, §5.12, §5.22, §5.26, §5.27
+
+
+**Carry forward**:
+- R33 §5.28 Animation (spring physics)
+- R34 §5.29 Structured concurrency
+- R35 §5.30 Accessibility (AccessKit bridge)
+- R36 §5.31 Hot reload
+- Auto-size / variable height for VirtualList items (R32 v0 fixed Px only)
+- Partial damage rect within VirtualList scroll (R32 v0 marks whole rect)
 
 
 
