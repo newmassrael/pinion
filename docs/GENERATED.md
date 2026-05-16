@@ -1922,6 +1922,7 @@ fn main() {
 - R40.6: Proposal trait gains apply(scene) method; vtable dispatch per variant — Box&lt;dyn&gt; safe
 - R40.6: apply consumes entry on success AND failure (one-shot); conflict alone retains entry
 - R40.6: apply_preview self-bumps revision; excluded from mutates_scene_on_success (no double-bump)
+- R40.7: DispatchContext struct bundles &mut Scene + &PreviewLedger + &SceneRevision (single param)
 
 
 
@@ -1963,6 +1964,7 @@ fn main() {
 - crates/pinion-rpc/src/preview/apply.rs:apply_preview
 - crates/pinion-rpc/src/preview/apply.rs:ApplyOutcome
 - crates/pinion-rpc/src/dispatch.rs:handle_scene_apply_preview
+- crates/pinion-rpc/src/dispatch.rs:DispatchContext
 
 
 
@@ -4242,6 +4244,36 @@ fn main() {
 - R40.7+: TypedProposal::SetStyle / ReplaceView / DispatchIntent 순차 추가
 - AI agent dogfood: ai-introspect-demo 의 locate → propose → apply 디모 (선택)
 - DispatchContext 구조체 도입 — 파라미터 4개 도달, 추가 시 고려
+- existing: §5.16 GPU, hello-button reactive, overlay Controller promote
+
+
+
+### Round 40.7 — §5.34 DispatchContext struct refactor — 4-param dispatch collapsed to bundle (forward-compat)
+
+**Changes**:
+- dispatch.rs: DispatchContext<'a> struct { scene, previews, revision } + new()
+- dispatch 시그니처: dispatch(&mut DispatchContext, json) — 4개 파라미터 1개 한들
+- 향후 상태 추가 (event history, effect ledger 등) 시 시그니처 안정
+- test helper dispatch_t / dispatch_full 구조체 구축 + dispatch 호출 명시화
+- hello-button: ctx = DispatchContext::new(...) 구성 후 dispatch 호출
+- lib.rs: DispatchContext public 노출
+
+
+
+**Verification**:
+- cargo test --workspace: 516 pass (동일 — 순수 refactor)
+- cargo clippy --workspace --all-targets: 11 baseline only — 신규 0
+- Bloch / Hyrum — 향후 필드 추가는 비파괴적, public dispatch signature 고정
+
+
+
+**Impact**: §5.34, §5.7
+
+
+**Carry forward**:
+- R40.8+: TypedProposal::SetStyle / ReplaceView / DispatchIntent 순차 추가 (closed pattern 검증 됨)
+- ai-introspect-demo 에 propose/apply flow 통합 (visual end-to-end)
+- future state primitives (event history ring, effect ledger) → DispatchContext 필드 추가만 필요
 - existing: §5.16 GPU, hello-button reactive, overlay Controller promote
 
 

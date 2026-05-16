@@ -24,7 +24,7 @@ pub mod snapshot;
 pub mod wait_for;
 
 pub use click::{click, ClickError, ClickOutcome};
-pub use dispatch::{dispatch, Request, RequestId, Response, RpcError};
+pub use dispatch::{dispatch, DispatchContext, Request, RequestId, Response, RpcError};
 pub use dry_run::{dry_run, DryRunError};
 pub use intents::{drain_intents, IntentsError};
 pub use invoke::{invoke, InvokeError};

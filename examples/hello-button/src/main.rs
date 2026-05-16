@@ -48,7 +48,7 @@ use pinion_core::style::{
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Scene};
 use pinion_core::SceneRevision;
-use pinion_rpc::{dispatch, PreviewLedger};
+use pinion_rpc::{dispatch, DispatchContext, PreviewLedger};
 use pinion_runtime::{compute_layout, walk_scene_and_drain, IntentQueue};
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
@@ -430,7 +430,8 @@ impl App {
     /// `scene/invoke /external/send PointerEnter` (and friends) now
     /// drive the SCXML the same way a winit click would.
     fn dispatch_rpc(&mut self, request: &str) {
-        if let Some(resp) = dispatch(&mut self.scene, &self.previews, &self.revision, request) {
+        let mut ctx = DispatchContext::new(&mut self.scene, &self.previews, &self.revision);
+        if let Some(resp) = dispatch(&mut ctx, request) {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {
                 // stdout closed (downstream consumer gone) — silently
