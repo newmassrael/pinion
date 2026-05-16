@@ -371,7 +371,10 @@ mod tests {
             paths
         }
 
-        fn apply(&self, _scene: &mut pinion_core::Scene) -> Result<(), String> {
+        fn apply(
+            &self,
+            _ctx: &mut crate::preview::ApplyContext<'_>,
+        ) -> Result<(), String> {
             // The PreviewLedger unit tests exercise the lifecycle
             // primitives (propose / cancel / list / apply_extract);
             // `apply_preview` end-to-end coverage lives in

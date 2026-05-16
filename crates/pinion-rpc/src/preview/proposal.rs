@@ -1,6 +1,52 @@
 //! [`Proposal`] — abstract typed change descriptor stored in the ledger.
+//!
+//! Companion type [`ApplyContext`] is the per-apply runtime bundle
+//! every variant's [`Proposal::apply`] receives — introduced R40.9
+//! when the second-class variant (`DispatchIntent`) needed a side-
+//! effect target beyond the scene tree. The bundle pattern mirrors
+//! the R40.7 [`crate::DispatchContext`] decision: take one struct,
+//! grow fields non-breakingly per `#[non_exhaustive]`.
 
+use pinion_core::intent::Intent;
 use pinion_core::Scene;
+
+/// Per-apply runtime bundle handed to [`Proposal::apply`] (§5.34 R40.9).
+///
+/// `scene` is the mutable scene the variant mutates (signal write,
+/// style edit, view replace). `emitted_intents` is an accumulator
+/// the [`TypedProposal::DispatchIntent`](super::TypedProposal) variant
+/// pushes into — read back by [`apply_preview`](super::apply_preview)
+/// and surfaced in [`ApplyOutcome::emitted_intents`](super::ApplyOutcome).
+///
+/// `#[non_exhaustive]` so future variants (animation registry, effect
+/// ledger, sound system) gain their own borrowed handle here without
+/// touching the [`Proposal`] trait signature. Construct only via
+/// [`ApplyContext::new`].
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct ApplyContext<'a> {
+    /// Live scene the variant mutates. Borrowed mutably for the
+    /// duration of a single apply call.
+    pub scene: &'a mut Scene,
+    /// Intents the variant emits during apply. Accumulator-style:
+    /// variants `push` here; the caller drains it into the apply
+    /// outcome. Non-empty only when a variant explicitly emits
+    /// (currently `DispatchIntent`).
+    pub emitted_intents: Vec<Intent>,
+}
+
+impl<'a> ApplyContext<'a> {
+    /// Construct a fresh context wrapping `scene` with an empty
+    /// intent accumulator. Used by [`apply_preview`](super::apply_preview)
+    /// once per apply call.
+    #[must_use]
+    pub fn new(scene: &'a mut Scene) -> Self {
+        Self {
+            scene,
+            emitted_intents: Vec::new(),
+        }
+    }
+}
 
 /// A typed change the AI agent is proposing against the scene (§5.34).
 ///
@@ -38,15 +84,14 @@ pub trait Proposal: std::fmt::Debug + Send + Sync + 'static {
     /// set rather than the `target_path` alone.
     fn affected_paths(&self) -> Vec<String>;
 
-    /// Effect the proposed change against `scene`.
+    /// Effect the proposed change against `ctx`.
     ///
     /// Called once by [`crate::preview::apply_preview`] after the
     /// [`PreviewLedger`](super::PreviewLedger) has extracted this
-    /// entry (OCC base-revision already matched). Implementations
-    /// return `Ok(())` when the side-effect lands, or a short tag
-    /// string identifying the rejection class (`"UnsupportedPath"`,
-    /// `"TypeMismatch"`, etc.) intended for machine pattern-matching
-    /// in the AI agent's branch logic.
+    /// entry (OCC base-revision already matched). Variants mutate
+    /// `ctx.scene` (SetSignal / SetStyle / ReplaceView) or push into
+    /// `ctx.emitted_intents` (DispatchIntent) — or both, for hybrid
+    /// variants future R40.x sub-slices may introduce.
     ///
     /// # Errors
     ///
@@ -54,5 +99,5 @@ pub trait Proposal: std::fmt::Debug + Send + Sync + 'static {
     /// through `crate::rewind::rewind`, surfacing its
     /// `RewindError`-derived tags. Future variants document their
     /// own tag sets.
-    fn apply(&self, scene: &mut Scene) -> Result<(), String>;
+    fn apply(&self, ctx: &mut ApplyContext<'_>) -> Result<(), String>;
 }

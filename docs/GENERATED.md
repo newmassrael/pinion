@@ -1968,6 +1968,8 @@ fn main() {
 - crates/pinion-rpc/src/dispatch.rs:handle_scene_apply_preview
 - crates/pinion-rpc/src/dispatch.rs:DispatchContext
 - examples/ai-introspect-demo/src/main.rs
+- crates/pinion-rpc/src/preview/proposal.rs:ApplyContext
+- crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::DispatchIntent
 
 
 
@@ -2499,6 +2501,40 @@ fn main() {
 - §5.34 path walker 확장: nested External 주소 지정 (/segment/external/path) — query/rewind 가 root-only 제약 해제 시 demo 가 state/paint 분리 없이 작동 가능
 - overlay Controller promote (R39.4 v0 caveat) — locate_highlights state 관리는 현재 demo-local, controller 형태로 옮기면 multi-scene 재사용
 - hello-button reactive layer 통합 (R38.3 carry-forward; SCXML + Forge 공존 입증)
+
+
+
+### 409 — Round 40.9 — §5.34 TypedProposal::DispatchIntent — ApplyContext refactor + intent emission variant
+
+**Changes**:
+- pinion-rpc/preview/proposal.rs: ApplyContext struct (scene + emitted_intents) + Proposal::apply signature change (&mut ApplyContext<'_>)
+- pinion-rpc/preview/kinds.rs: TypedProposal::DispatchIntent { target_path, intent } 2번째 variant; SetSignal::apply 가 ctx.scene 사용으로 갱신
+- pinion-rpc/preview/apply.rs: ApplyOutcome.emitted_intents: Vec<Intent> 필드 추가; #[non_exhaustive] 적용 + Copy/Eq derive 제거 (Vec 비호환); apply_preview 가 ApplyContext::new 생성 → proposal.apply → ctx.emitted_intents 추출
+- pinion-rpc/preview/mod.rs + lib.rs: ApplyContext public 재내보내기
+- pinion-rpc/preview/ledger.rs: TestProposal::apply signature 갱신
+- pinion-rpc/dispatch.rs: parse_typed_proposal 가 DispatchIntent kind 처리 (target_path + intent{tag,payload} JSON deserialize); apply_outcome_to_json 가 emitted_intents 직렬화 (intent_to_json reuse); WireTestProposal::apply signature 갱신
+- DispatchIntent semantics: scene 비변경 / ctx.emitted_intents push만; intent 는 apply 응답 wire 로 즉시 노출 (scene/intents poll 분리)
+
+
+
+**Verification**:
+- cargo test --workspace: 527 pass (517 → 523 → 527, +10 새 test)
+- cargo clippy --workspace --all-targets: 신규 위반 0 (5 pre-existing baseline only)
+- TypedProposal variant 추가 = 4종 중 2종 완성 (SetSignal R40.5 + DispatchIntent R40.9)
+- ApplyContext = R40.7 DispatchContext 의 sibling — 향후 SetStyle/ReplaceView 가 추가 ctx field 비파괴 가능
+- ApplyOutcome.emitted_intents 가 모든 variant 응답에 (empty 라도) 포함 — AI client switch 단순화
+
+
+
+**Impact**: §5.34, §5.20
+
+
+**Carry forward**:
+- R40.10+: TypedProposal::SetStyle (BoxNode.style.fill mutation) — Scene::lookup_path_mut 워커 추가 필요
+- R40.11+: TypedProposal::ReplaceView (subtree replace) — 동일 워커 재사용
+- §5.20 intent 모델 재고: DispatchIntent 가 surface 한 intent 는 wire 즉시 노출이지만 scene/intents poll 과는 별 채널 — 통합 정책은 R41+ spec round 후보
+- ai-introspect-demo 에 DispatchIntent variant 동시 토글 (P/I 2 key) — R40.x dogfood 카드 확장 후보
+- ApplyContext future fields: animation registry, effect ledger — §5.23 R27 Effect/Command 완성 시 추가
 
 
 

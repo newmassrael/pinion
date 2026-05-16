@@ -1,23 +1,24 @@
 //! Concrete [`Proposal`] variants the JSON-RPC boundary materialises
-//! from wire payloads (§5.34 R40.5).
+//! from wire payloads (§5.34 R40.5 / R40.9).
 //!
 //! [`TypedProposal`] is the closed enum implementing the open
-//! [`Proposal`] trait. Variants are added one at a time per sub-slice;
-//! R40.5 lands `SetSignal` as the first since it is the smallest
-//! (scalar reactive write). `ReplaceView`, `SetStyle`, and
-//! `DispatchIntent` arrive in subsequent R40.x sub-slices.
+//! [`Proposal`] trait. Variants are added one at a time per sub-slice:
+//! R40.5 landed `SetSignal` (scalar reactive write); R40.9 adds
+//! `DispatchIntent` (intent-stream emission). `ReplaceView` and
+//! `SetStyle` arrive in subsequent R40.x sub-slices.
 //!
 //! The enum is `#[non_exhaustive]` so adding variants is non-breaking
 //! per Hyrum / Bloch API-evolution conventions.
 
+use pinion_core::intent::Intent;
 use pinion_core::Scene;
 
 use crate::rewind::{rewind, RewindError};
 
-use super::Proposal;
+use super::{ApplyContext, Proposal};
 
 /// Closed enum of typed proposals carried by the preview ledger
-/// (§5.34 R40.5). Each variant carries its own payload shape; the
+/// (§5.34 R40.5+). Each variant carries its own payload shape; the
 /// shared [`Proposal`] surface (`target_path` / `affected_paths`) is
 /// derived from the variant.
 #[non_exhaustive]
@@ -46,26 +47,58 @@ pub enum TypedProposal {
         /// coercion is the apply step's responsibility.
         value: serde_json::Value,
     },
+    /// Emit an [`Intent`] into the apply-time intent accumulator
+    /// (§5.34 R40.9). The intent is surfaced in
+    /// [`ApplyOutcome::emitted_intents`](super::ApplyOutcome) so the
+    /// wire caller observes it on the apply response without going
+    /// through the `scene/intents` poll path. `target_path` carries
+    /// the scene anchor the AI agent is reasoning about (which widget
+    /// the proposed intent is "for"); the intent's own
+    /// [`Intent::tag`] already encodes the receiver per §5.20 R22
+    /// (`<widget>.<kind>`).
+    ///
+    /// Unlike [`Self::SetSignal`], this variant does **not** mutate
+    /// the scene tree. `affected_paths` still returns `[target_path]`
+    /// so overlay-highlight / dirty-region consumers see the same
+    /// anchor a SetSignal at the same path would emit.
+    DispatchIntent {
+        /// Scene anchor the AI agent is reasoning about. Surfaced in
+        /// `list_previews` and used for overlay highlighting; does
+        /// not gate intent delivery.
+        target_path: String,
+        /// The intent payload to emit. Copied into
+        /// [`ApplyContext::emitted_intents`](super::ApplyContext)
+        /// once at apply time.
+        intent: Intent,
+    },
 }
 
 impl Proposal for TypedProposal {
     fn target_path(&self) -> &str {
         match self {
-            Self::SetSignal { target_path, .. } => target_path,
+            Self::SetSignal { target_path, .. } | Self::DispatchIntent { target_path, .. } => {
+                target_path
+            }
         }
     }
 
     fn affected_paths(&self) -> Vec<String> {
         match self {
-            Self::SetSignal { target_path, .. } => vec![target_path.clone()],
+            Self::SetSignal { target_path, .. } | Self::DispatchIntent { target_path, .. } => {
+                vec![target_path.clone()]
+            }
         }
     }
 
-    fn apply(&self, scene: &mut Scene) -> Result<(), String> {
+    fn apply(&self, ctx: &mut ApplyContext<'_>) -> Result<(), String> {
         match self {
             Self::SetSignal {
                 signal_path, value, ..
-            } => apply_set_signal(scene, signal_path, value),
+            } => apply_set_signal(ctx.scene, signal_path, value),
+            Self::DispatchIntent { intent, .. } => {
+                ctx.emitted_intents.push(intent.clone());
+                Ok(())
+            }
         }
     }
 }
@@ -111,6 +144,13 @@ fn json_to_introspect_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::external::IntrospectValue;
+    use pinion_core::scene::{BoxNode, Rect};
+    use pinion_core::Color;
+
+    fn dummy_scene() -> Scene {
+        Scene::Box(BoxNode::filled(Rect::default(), Color::default()))
+    }
 
     #[test]
     fn set_signal_target_path_is_borrowed() {
@@ -144,5 +184,74 @@ mod tests {
         // Ensure both still report the same paths after Clone.
         assert_eq!(p.target_path(), q.target_path());
         assert_eq!(p.affected_paths(), q.affected_paths());
+    }
+
+    #[test]
+    fn dispatch_intent_target_path_is_borrowed() {
+        let p = TypedProposal::DispatchIntent {
+            target_path: "/widget[counter]".to_string(),
+            intent: Intent::new_static("counter.click", IntrospectValue::Null),
+        };
+        assert_eq!(p.target_path(), "/widget[counter]");
+    }
+
+    #[test]
+    fn dispatch_intent_affected_paths_contains_target_only() {
+        // §5.34 R40.9: DispatchIntent does not mutate scene, so the
+        // anchor path is the entire affected set. Overlay/dirty
+        // consumers still get a single-entry list for consistency
+        // with SetSignal.
+        let p = TypedProposal::DispatchIntent {
+            target_path: "/btn".to_string(),
+            intent: Intent::new_static("btn.click", IntrospectValue::Null),
+        };
+        assert_eq!(p.affected_paths(), vec!["/btn".to_string()]);
+    }
+
+    #[test]
+    fn dispatch_intent_apply_pushes_into_emitted_intents() {
+        // apply receives an ApplyContext with an empty intent buffer;
+        // the variant must push exactly one intent and not touch
+        // ctx.scene.
+        let mut scene = dummy_scene();
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::DispatchIntent {
+            target_path: "/btn".to_string(),
+            intent: Intent::new_static("btn.click", IntrospectValue::Int(7)),
+        };
+        p.apply(&mut ctx).unwrap();
+        assert_eq!(ctx.emitted_intents.len(), 1);
+        assert_eq!(ctx.emitted_intents[0].tag_str(), "btn.click");
+        assert_eq!(ctx.emitted_intents[0].payload, IntrospectValue::Int(7));
+    }
+
+    #[test]
+    fn dispatch_intent_apply_does_not_mutate_scene() {
+        // Variant semantics guard: emitting an intent must leave the
+        // scene tree byte-identical. Constructed Box → Box equality
+        // works since BoxNode is Clone and the variant has no
+        // signal_path / rewind side-effect.
+        let initial = dummy_scene();
+        let mut scene = dummy_scene();
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::DispatchIntent {
+            target_path: "/btn".to_string(),
+            intent: Intent::new_static("btn.click", IntrospectValue::Null),
+        };
+        p.apply(&mut ctx).unwrap();
+        // Use Rect equality as a structural marker since Scene itself
+        // is not PartialEq.
+        assert_eq!(scene.rect(), initial.rect());
+        assert_eq!(scene.tag(), initial.tag());
+    }
+
+    #[test]
+    fn dispatch_intent_clones_cheaply_via_derive() {
+        let p = TypedProposal::DispatchIntent {
+            target_path: "/a".to_string(),
+            intent: Intent::new_owned("a.x".to_string(), IntrospectValue::Bool(true)),
+        };
+        let q = p.clone();
+        assert_eq!(p.target_path(), q.target_path());
     }
 }

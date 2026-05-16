@@ -33,9 +33,10 @@ pub use locate::{
 };
 pub use path::{resolve, PathError, ResolvedPath};
 pub use preview::{
-    apply_preview, cancel_preview, list_previews, propose_change, ApplyError, ApplyOutcome,
-    Entry as PreviewEntry, PreviewId, PreviewLedger, PreviewView, Proposal, ProposeError,
-    ProposeOutcome, SweepReport, TypedProposal, DEFAULT_CAPACITY, DEFAULT_TTL, MAX_TTL,
+    apply_preview, cancel_preview, list_previews, propose_change, ApplyContext, ApplyError,
+    ApplyOutcome, Entry as PreviewEntry, PreviewId, PreviewLedger, PreviewView, Proposal,
+    ProposeError, ProposeOutcome, SweepReport, TypedProposal, DEFAULT_CAPACITY, DEFAULT_TTL,
+    MAX_TTL,
 };
 pub use query::{query, QueryError};
 pub use rewind::{rewind, RewindError};

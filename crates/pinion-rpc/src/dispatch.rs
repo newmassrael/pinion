@@ -758,7 +758,7 @@ fn handle_scene_propose_change(
 fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
     let Some(kind) = params.get("kind").and_then(Value::as_str) else {
         return Err(invalid_params(
-            "params.kind missing or not a string (expected one of: SetSignal)",
+            "params.kind missing or not a string (expected one of: SetSignal, DispatchIntent)",
         ));
     };
     match kind {
@@ -782,6 +782,29 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
                 value: value.clone(),
             })
         }
+        "DispatchIntent" => {
+            let Some(target_path) = params.get("target_path").and_then(Value::as_str) else {
+                return Err(invalid_params(
+                    "params.target_path missing or not a string",
+                ));
+            };
+            let Some(intent_obj) = params.get("intent") else {
+                return Err(invalid_params("params.intent missing"));
+            };
+            let Some(tag) = intent_obj.get("tag").and_then(Value::as_str) else {
+                return Err(invalid_params(
+                    "params.intent.tag missing or not a string",
+                ));
+            };
+            let payload_value = intent_obj.get("payload").cloned().unwrap_or(Value::Null);
+            let payload = json_to_introspect_value(&payload_value).ok_or_else(|| {
+                invalid_params("params.intent.payload not a representable IntrospectValue shape")
+            })?;
+            Ok(TypedProposal::DispatchIntent {
+                target_path: target_path.to_owned(),
+                intent: Intent::new_owned(tag.to_owned(), payload),
+            })
+        }
         other => Err(RpcError {
             code: -32602,
             message: "Invalid params".to_string(),
@@ -789,6 +812,7 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
         }),
     }
 }
+
 
 fn propose_outcome_to_json(outcome: ProposeOutcome) -> Value {
     let mut map = serde_json::Map::new();
@@ -835,6 +859,14 @@ fn apply_outcome_to_json(outcome: ApplyOutcome) -> Value {
     map.insert(
         "new_revision".into(),
         Value::Number(outcome.new_revision.into()),
+    );
+    // §5.34 R40.9: DispatchIntent variants emit intents through the
+    // apply context's accumulator. Surface them on the wire as a
+    // structured array under "emitted_intents" reusing the same
+    // {tag, payload} shape `scene/intents` already returns.
+    map.insert(
+        "emitted_intents".into(),
+        Value::Array(outcome.emitted_intents.iter().map(intent_to_json).collect()),
     );
     Value::Object(map)
 }
@@ -1558,7 +1590,10 @@ mod tests {
         fn affected_paths(&self) -> Vec<String> {
             vec![self.target.clone()]
         }
-        fn apply(&self, _scene: &mut Scene) -> Result<(), String> {
+        fn apply(
+            &self,
+            _ctx: &mut crate::preview::ApplyContext<'_>,
+        ) -> Result<(), String> {
             // Used only by the wire-format tests for cancel /
             // list_previews; never reached because those flows do
             // not exercise apply_preview.
@@ -2032,5 +2067,91 @@ mod tests {
         assert_eq!(obj["preview_id"].as_u64().unwrap(), preview_id);
         assert_eq!(obj["target_path"].as_str().unwrap(), "/btn");
         assert!(obj["ttl_remaining_ms"].as_u64().unwrap() <= 5000);
+    }
+
+    // ---- R40.9: TypedProposal::DispatchIntent JSON-RPC wire ----
+
+    #[test]
+    fn scene_apply_preview_outcome_contains_empty_intents_for_set_signal() {
+        // R40.9 wire contract: every apply_preview response carries
+        // `emitted_intents: []`. SetSignal never emits, but the field
+        // must be present so AI clients can switch on its length
+        // unconditionally without `Option`-handling boilerplate.
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/external/count","signal_path":"/external/count","value":1},"id":701}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":702}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap());
+        let obj = apply_resp.result.unwrap();
+        let intents = obj.get("emitted_intents").unwrap().as_array().unwrap();
+        assert!(
+            intents.is_empty(),
+            "SetSignal does not emit; field must be present-and-empty (got {intents:?})"
+        );
+    }
+
+    #[test]
+    fn scene_propose_dispatch_intent_then_apply_surfaces_intent_on_wire() {
+        // End-to-end DispatchIntent: propose → apply → emitted_intents
+        // visible in apply outcome with the {tag, payload} shape
+        // `scene/intents` already uses.
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"DispatchIntent","target_path":"/save_btn","intent":{"tag":"save_btn.click","payload":42}},"id":703}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":704}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap());
+        let obj = apply_resp.result.unwrap();
+        let intents = obj.get("emitted_intents").unwrap().as_array().unwrap();
+        assert_eq!(intents.len(), 1);
+        let entry = intents[0].as_object().unwrap();
+        assert_eq!(entry["tag"].as_str().unwrap(), "save_btn.click");
+        assert_eq!(entry["payload"].as_i64().unwrap(), 42);
+        assert_eq!(obj["new_revision"].as_u64().unwrap(), 1);
+    }
+
+    #[test]
+    fn scene_propose_dispatch_intent_missing_intent_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"DispatchIntent","target_path":"/btn"},"id":705}"#;
+        let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_propose_dispatch_intent_missing_tag_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"DispatchIntent","target_path":"/btn","intent":{"payload":null}},"id":706}"#;
+        let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
     }
 }

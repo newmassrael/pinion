@@ -43,5 +43,5 @@ pub use ledger::{
     Entry, PreviewLedger, PreviewView, SweepReport, DEFAULT_CAPACITY, DEFAULT_TTL, MAX_TTL,
 };
 pub use list::list_previews;
-pub use proposal::Proposal;
+pub use proposal::{ApplyContext, Proposal};
 pub use propose::{propose_change, ProposeOutcome};

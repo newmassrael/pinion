@@ -1,8 +1,10 @@
-//! `scene/apply_preview` typed dispatcher (§5.34 R40.6).
+//! `scene/apply_preview` typed dispatcher (§5.34 R40.6 / R40.9).
 //!
 //! Closes the preview lifecycle: re-reads the live [`SceneRevision`]
 //! for an OCC check, extracts the proposal from the ledger, dispatches
-//! into the variant's own [`Proposal::apply`], and bumps the revision
+//! into the variant's own [`Proposal::apply`] through an
+//! [`ApplyContext`] (R40.9: bundle pattern so future variants can
+//! gain side-effect targets beyond the scene), and bumps the revision
 //! so any *other* still-active preview becomes detectably stale.
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) lives in
@@ -10,12 +12,18 @@
 
 use std::time::Instant;
 
+use pinion_core::intent::Intent;
 use pinion_core::{Scene, SceneRevision};
 
-use super::{ApplyError, PreviewId, PreviewLedger};
+use super::{ApplyContext, ApplyError, PreviewId, PreviewLedger};
 
 /// Successful outcome of [`apply_preview`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `#[non_exhaustive]` so further side-effect channels (animation
+/// registry receipts, effect ledger acknowledgements, …) can be
+/// added non-breakingly per Bloch / Hyrum API-evolution.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ApplyOutcome {
     /// Preview that was applied (now consumed; subsequent
     /// `apply_preview` / `cancel_preview` on the same id surface
@@ -25,6 +33,11 @@ pub struct ApplyOutcome {
     /// `revision.current()` upon return; surfaced here so the wire
     /// caller does not need a second RPC round-trip to read it.
     pub new_revision: u64,
+    /// Intents emitted by the proposal during apply (§5.34 R40.9).
+    /// Non-empty only when a variant explicitly emits — currently
+    /// just [`super::TypedProposal::DispatchIntent`]; other variants
+    /// (`SetSignal`, future `SetStyle`/`ReplaceView`) leave this empty.
+    pub emitted_intents: Vec<Intent>,
 }
 
 /// Apply a stored preview against `scene`, gated by OCC against
@@ -37,10 +50,13 @@ pub struct ApplyOutcome {
 ///    `base_revision`. On mismatch the entry stays put and
 ///    [`ApplyError::BaseRevisionConflict`] is returned.
 /// 2. On match, the entry is removed from the ledger and its
-///    proposal's [`crate::preview::Proposal::apply`] runs against
-///    `scene`. Variant-specific runtime rejections (signal type
-///    mismatch, unknown signal path, etc.) surface as
-///    [`ApplyError::ApplyRejected`] carrying a short tag string.
+///    proposal's [`crate::preview::Proposal::apply`] runs against a
+///    fresh [`ApplyContext`] wrapping `scene`. The context's
+///    [`emitted_intents`](ApplyContext::emitted_intents) accumulator
+///    is drained into [`ApplyOutcome::emitted_intents`]. Variant-
+///    specific runtime rejections (signal type mismatch, unknown
+///    signal path, etc.) surface as [`ApplyError::ApplyRejected`]
+///    carrying a short tag string.
 /// 3. On a successful side-effect, [`SceneRevision::bump`] runs so
 ///    any *other* preview with the now-stale `base_revision` will
 ///    detect the conflict on its own apply call.
@@ -63,18 +79,20 @@ pub fn apply_preview(
     let current = revision.current();
     let now = Instant::now();
     let proposal = ledger.apply_extract(id, current, now)?;
-    proposal.apply(scene).map_err(ApplyError::ApplyRejected)?;
+    let mut ctx = ApplyContext::new(scene);
+    proposal.apply(&mut ctx).map_err(ApplyError::ApplyRejected)?;
     let new_revision = revision.bump();
     Ok(ApplyOutcome {
         preview_id: id,
         new_revision,
+        emitted_intents: ctx.emitted_intents,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preview::{TypedProposal, propose_change};
+    use crate::preview::{propose_change, TypedProposal};
     use pinion_core::external::{CountedExternal, IntrospectValue};
     use pinion_core::scene::ExternalNode;
     use pinion_core::Scene;
@@ -108,6 +126,10 @@ mod tests {
         .unwrap();
         assert_eq!(applied.preview_id, outcome.preview_id);
         assert_eq!(applied.new_revision, 1, "apply bumps revision exactly once");
+        assert!(
+            applied.emitted_intents.is_empty(),
+            "SetSignal does not emit intents — only DispatchIntent does",
+        );
 
         // The CountedExternal slot now holds the proposed value.
         let observed = crate::query::query(&scene, "/external/count").unwrap();
@@ -189,5 +211,32 @@ mod tests {
         let outcome = propose_change(&ledger, &revision, proposal, None).unwrap();
         let err = apply_preview(&mut scene, &revision, &ledger, outcome.preview_id).unwrap_err();
         assert_eq!(err, ApplyError::ApplyRejected("Intervene".to_string()));
+    }
+
+    #[test]
+    fn apply_preview_dispatch_intent_surfaces_intent_in_outcome() {
+        // §5.34 R40.9 end-to-end: propose a DispatchIntent, apply,
+        // observe the emitted intent in ApplyOutcome.
+        let mut scene = counted_scene(0);
+        let ledger = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let intent =
+            pinion_core::intent::Intent::new_static("save_btn.click", IntrospectValue::Null);
+        let outcome = propose_change(
+            &ledger,
+            &revision,
+            TypedProposal::DispatchIntent {
+                target_path: "/save_btn".to_string(),
+                intent: intent.clone(),
+            },
+            None,
+        )
+        .unwrap();
+        let applied =
+            apply_preview(&mut scene, &revision, &ledger, outcome.preview_id).unwrap();
+        assert_eq!(applied.emitted_intents.len(), 1);
+        assert_eq!(applied.emitted_intents[0].tag_str(), "save_btn.click");
+        assert_eq!(applied.new_revision, 1, "apply bumps revision even for non-scene side-effects");
+        assert!(ledger.is_empty(), "DispatchIntent apply consumes the entry");
     }
 }
