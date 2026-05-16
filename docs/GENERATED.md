@@ -381,6 +381,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R17 scene/invoke 8th method (bidirectional RPC spec round); ratified 7-set extended
 - R18 §5.20 scene/intents 9th RPC method; poll-form single-consumer v0
 - R18 §5.20 slice 4: scene/intents 9th method (poll-form drain).
+- R27 §5.23: scene/commands = 10th method; lists pending Commands from Update return.
 
 
 
@@ -1020,6 +1021,69 @@ fn main() {
 - Iced full-rebuild — no derived state, perf ceiling at 1k+ nodes, no memo layer
 - Event sourcing only — orthogonal pattern, complements but doesn't replace fine-grained reactivity
 - Vue refs — API close to Signal but no explicit Owner tree (lifecycle implicit)
+
+
+
+
+
+
+### §5.23. Effect model (Effect / Command / handler)
+
+
+**Intent**: Two-layer effects: Effect = reactive scope subscribing to Signals; Command<Intent> = declarative async/IO; Handler = dispatch impl. dry_run collects Commands without executing.
+
+
+**Rationale**:
+- Effect = reactive scope sibling of Computed; subscribes to Signal reads; closure on dep change
+- Command<Intent> = Elm/Iced declarative async/IO description; serialize-friendly for inspection
+- Handler trait (Roc capability pattern) separates description from dispatch for testability
+- dry_run skips Command dispatch but collects pending for AI inspection — pinion-unique value
+- Solid createEffect proves Signal-based reactive scope viable as framework primitive
+- Conflating reactive scope + async (React useEffect) is anti-pattern; pinion separates the layers
+- Structured concurrency: Commands scoped to Owner; cancellation on drop prevents orphan futures
+- Update fn returns (new_model, Vec<Command>); framework dispatches outside Update purity
+
+
+
+**Inputs**:
+- §5.22 Signal: Effect subscribes to reads; Command may read for closure construction
+- §5.20 Intent: Command<Intent> dispatches Intent back to Update reducer
+- §5.3 view-fn: Effect cannot fire during view rebuild — read-only context
+- §2 #8 SCE meta: Effect blocks + Command type tables + handler bindings authored in SCE
+
+
+
+**Outputs**:
+- pinion-core::reactive::Effect primitive (subscription scope, no return value)
+- pinion-core::effect::Command<Intent> declarative struct
+- Handler trait + registry (boot-time registration; swappable for testing)
+- SCE schema: effect blocks + command type tables + handler bindings
+- Forge codegen: Effect → closure registration; Command → struct + handler dispatch
+- scene/commands RPC method addition (10th method; lists pending in-flight Commands)
+
+
+
+**Caveats**:
+- R27: Effect lazy registers on first Signal read inside scope; cleanup on Owner drop.
+- R27: dry_run skips Effect side-effect; subscription still tracked for memo invalidation.
+- R27: Command<Intent> requires Intent: Serialize for RPC inspection of in-flight commands.
+- R27: Handler trait: async fn handle(Command) -> Intent; registered at boot; swappable.
+- R27: Cancellation: new Command from same scope cancels prior in-flight (Solid pattern).
+- R27: Update fn signature: Update(&mut Model, Intent) -> Vec<Command<Intent>>.
+- R27: SCE schema: effect blocks within scope; command type tables; handler bindings.
+- R27: Forge codegen: Effect closure + Command struct + handler dispatch all emitted.
+- R27: scene/commands = 10th RPC method; lists pending in-flight Commands typed-introspectable.
+- R27: view-fn no Effect/Command access; read-only Signal context; writes go via Intent.
+- R27: Effect propagation = Owner tree topological order; sibling order = registration order.
+
+
+
+**Alternatives rejected**:
+- React useEffect — conflates reactive scope + async; positional lifecycle coupling
+- raw async/await in Update — breaks determinism; dry_run can't skip side effects
+- callback registration — imperative; not introspectable; orphan management hard
+- IO monad (Haskell) — too abstract for AI authoring surface
+- Free monad effects — powerful but compilation cost; over-engineered for GUI
 
 
 
@@ -2183,6 +2247,44 @@ fn main() {
 - Effect (reactive scope) primitive — sibling of Computed; R28 §5.23 candidate
 - Topological sort + glitch-free propagation algorithm — standard MobX/Solid pattern
 - Signal<T> equality opt-out (skip_eq) for expensive types — future ergonomic
+
+
+
+### Round 27 — Round 27 — §5.23 new section: Effect model (Effect / Command / Handler) spec lock; two-layer effect system separates reactive scope from declarative async
+
+**Changes**:
+- New §5.23 section: Effect model under §5 parent (Effect / Command<Intent> / Handler trio)
+- Intent: Effect = reactive scope; Command = declarative async/IO; Handler = dispatch impl
+- Rationale (8): Solid Effect + Iced Command + Roc Handler synthesis; React useEffect rejected as conflation
+- Update fn signature finalized: Update(&mut Model, Intent) -> Vec<Command<Intent>>
+- scene/commands ratified as 10th RPC method (§5.12 caveat cross-ref); dry_run-aware inspection
+- 11 §5.23 caveats: lazy Effect register + dry_run skip + Serialize Command + Handler trait + cancellation + Update sig + SCE schema + Forge codegen + scene/commands + view-fn no-write + Owner topological order
+- Textbook canonical: clean separation of reactive subscription (Effect) vs side-effect description (Command)
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 32 → 33; entries 26 → 27
+- no code changes this round (spec-only); R27+ axis batch continues in 3-tier SCE/Forge/Rust pattern
+- atomic mutations: 1 add_section + 5 set_section_* + 12 add_section_caveat (1 retry for 200-char intent cap)
+- Spec round pattern mirrors R20/R23/R26 (§5.X new section ratify) cadence
+
+
+
+**Impact**: §2, §5.3, §5.12, §5.20, §5.22, §5.23
+
+
+**Carry forward**:
+- R28 §5.24 Semantic tree (role/state/actions) — absorbs §5.20 tag into richer schema
+- R29 §5.25 Modifier composition (chain pattern) — Signal-reactive modifiers
+- R30 §5.26 Incremental layout + damage tracking — refines §5.21 taffy
+- R31 §5.16 GPU render backend (vello) — existing axis ratify
+- R32 §5.27 Virtualization Scene variant (VirtualList<T>)
+- R33 §5.28 Animation (spring physics) — Signal<f32> + Effect substrate
+- R34 §5.29 Structured concurrency — SyncSignal cross-thread + Owner scope
+- R35 §5.30 Accessibility (AccessKit bridge) — depends on §5.24 semantic tree
+- R36 §5.31 Hot reload — signal serialization protocol from §5.22
+- Effect equality opt-out, granular Handler retry policy, Command priority queueing — future ergonomics
 
 
 
