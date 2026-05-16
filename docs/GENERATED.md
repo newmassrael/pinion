@@ -1539,6 +1539,62 @@ fn main() {
 
 
 
+### §5.30. Accessibility (AccessKit bridge from SemanticProps)
+
+
+**Intent**: AccessKit bridge derives platform AT delegates (AT-SPI / UIA / NSAccessibility) from §5.24 SemanticProps. Focus management + keyboard nav 1st-class. No hand-written AT code.
+
+
+**Rationale**:
+- AccessKit is canonical Rust AT abstraction layer; egui/Druid/Slint adopt it
+- §5.24 SemanticProps already carries role/state/actions — perfect input for AccessKit
+- Platform AT bindings (AT-SPI/UIA/NSAccessibility) auto-derive; no manual per-OS code
+- Accessibility = legal requirement (ADA/EAA); not optional in long-term framework
+- Focus management = SemanticState::Focused bitflag toggled reactively via Signal
+- Keyboard nav = ModifierOp::Focus combined with Tab/arrow handlers
+- Live regions (§5.24 caveat) translate to AccessKit polite/assertive announcements
+- Screen reader testing = scene/semantic RPC inspection equivalent
+
+
+
+**Inputs**:
+- §5.24 SemanticProps: role + state + actions input shape
+- §5.22 Signal: state changes drive AT update events
+- §5.25 Modifier: Focus + Clickable map to AccessKit actions
+
+
+
+**Outputs**:
+- pinion-a11y crate wrapping accesskit + platform adapters
+- SemanticProps → AccessKit Node conversion (auto)
+- Focus state Signal-backed; tab/arrow nav dispatched as Intent
+- Platform delegates: AT-SPI (Linux), UIA (Windows), NSAccessibility (macOS), iOS UIAccessibility
+- Live region announcements derive from Signal-bound SemanticProps.live_region
+
+
+
+**Caveats**:
+- R35: pinion-a11y crate wraps accesskit; per-platform features (linux/windows/macos/ios).
+- R35: SemanticProps → accesskit::Node mapping auto-generated; closed Role/State translation table.
+- R35: Focus state Signal-backed (SemanticState::Focused bitflag); single focused node tree-wide.
+- R35: Live region: SemanticProps.live_region -> AccessKit polite/assertive announcement.
+- R35: Platform delegates per-OS feature-gated; pinion-a11y reexports accesskit::TreeUpdate.
+- R35: scene/semantic (§5.24) RPC = AT-equivalent introspection; AI agent + screen reader parity.
+- R35: AT updates throttled to once per frame; matches paint pipeline cadence.
+
+
+
+**Alternatives rejected**:
+- Hand-written platform bindings — per-OS work; AccessKit canonical Rust solution
+- Web-style ARIA (HTML attributes) — not applicable; pinion native
+- Ignore accessibility (egui historical) — not viable lifetime framework
+- Custom AT abstraction — duplicates AccessKit; reinvents wheel
+
+
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -2935,6 +2991,35 @@ fn main() {
 **Carry forward**:
 - R35 §5.30 Accessibility (AccessKit bridge)
 - R36 §5.31 Hot reload (signal serialization)
+
+
+
+### Round 35 — Round 35 — §5.30 new section: Accessibility (AccessKit bridge); platform AT delegates derive from §5.24 SemanticProps
+
+**Changes**:
+- New §5.30 section: Accessibility under §5 parent (AccessKit canonical Rust AT)
+- SemanticProps → AccessKit Node auto-conversion; closed translation table
+- Focus state Signal-backed; Tab/Shift+Tab/arrow nav as Intent::Focus(direction)
+- Live regions from SemanticProps.live_region polite/assertive announce
+- Per-OS feature gates: AT-SPI / UIA / NSAccessibility / iOS UIAccessibility
+- 8 §5.30 caveats lock pinion-a11y wrapper + focus management + throttling
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 39 → 40; entries 34 → 35
+- no code changes (spec-only)
+- atomic mutations: 1 add_section + 5 set_section_* + 8 add_section_caveat
+
+
+
+**Impact**: §5.22, §5.24, §5.25, §5.30
+
+
+**Carry forward**:
+- R36 §5.31 Hot reload (signal serialization)
+- Screen magnifier hooks, voice control — future a11y axes
+- WCAG conformance testing harness via scene/semantic RPC
 
 
 
