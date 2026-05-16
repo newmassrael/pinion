@@ -3182,6 +3182,34 @@ fn main() {
 
 
 
+### Round 37.8 — Round 37.8 — SCE RFC 001 closed (maintainer 응답 받음 + 6 revisions 적용); pinion-forge consumption policy 확정 (commit-pin + 별도 file + 자체 diagnostic)
+
+**Changes**:
+- SCE RFC 001 closed — maintainer 응답 (2026-05-16); 6 revisions 적용
+- pinion-forge dep 정책: sce-build commit-pin + private-by-policy 운영
+- Foreign-NS 안 쓰기 결정 — pinion DSL은 별도 파일 (.pinion.xml/유사)
+- pinion-forge 자체 diagnostic type 정의 (SCE DiagnosticCode 확장 안 함)
+
+
+
+**Verification**:
+- claudedocs/sce-rfc-001-{downstream-infra,response}.md — commit fe4cb79
+- Mnemosyne validate: T1=0 T3=0 RT=1/1 sync; entries 38→39
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R38 §5.22 재정의 진입: pinion-forge crate 명세 + Rust codegen 작성
+- Pinion DSL file extension 결정 (.pinion.xml vs .pscxml 등) — build round
+- pinion-forge를 §6 워크스페이스 멤버로 추가하는 build round
+- §2 invariant #8 표현 명확화 spec round 후보 (선택)
+- W3C SCXML local-name collision footgun 회피 정책 pinion-forge 단 적용
+
+
+
 ### Round 4 — Round 4 — Tier 1 bootstrap auto-ratified (§6 workspace/toolchain/async); 4 new open axes §5.11-§5.14 enumerated for next round decision
 
 **Changes**:
