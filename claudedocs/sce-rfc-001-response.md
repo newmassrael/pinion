@@ -80,16 +80,18 @@ From the new `SCE_FORGE.md` §3.1 subsection (paraphrased):
 | Stage | Behavior on foreign-NS |
 |-------|------------------------|
 | XSD validation | **Preserve** (`##any` / `##other`, `processContents="lax"`) — no diagnostic raised. |
-| SCXML → IR parsing | **Drop** — parser dispatches by local element name against the W3C SCXML vocabulary. Foreign-NS elements with non-W3C local names have no model slot and are silently skipped. |
+| SCXML → IR parsing | **Drop** — parser-helper functions filter children by both local element name AND namespace via `is_scxml_ns`. Foreign-NS elements are dropped uniformly, whether their local name is novel or collides with a W3C name. |
 | Forge kind parsing | **Drop** — explicit `Some(SCE_NAMESPACE)` filter. |
 
-So the answer to "behavior #1, #2, or #3?" is: **XSD = #2, IR = #1**. Not the unified #2 the RFC preferred.
+So the answer to "behavior #1, #2, or #3?" is: **XSD = #2 (preserve), IR = #1 (drop)**, with a consistent uniform drop at the IR boundary regardless of local-name choice.
 
-### 2.2 Caveat we documented
+### 2.2 Local-name collisions: fixed at the root, not documented as a caveat
 
-Local-name collisions are a real footgun. If pinion writes `<framework:state>`, the parser will match it as if it were the W3C `<state>` element because dispatch is by local name only. **Foreign-NS prefixes must avoid the W3C local-name set** (`state`, `transition`, `data`, `onentry`, `onexit`, `parallel`, `final`, `history`, `invoke`, `send`, `cancel`, `raise`, `if`, `elseif`, `else`, `foreach`, `log`, `assign`, `script`, `param`, `content`, `datamodel`, `donedata`, `initial`).
+The original land of this response carried a caveat row noting that a foreign-NS element whose local name collides with a W3C name (e.g. `<framework:onentry>`) would be matched as if it were the W3C element, because the parser dispatched by local name only. Pinion is a real foreign-NS consumer; under CLAUDE.md "Root cause only", deferring a documented footgun for a known consumer was the wrong call.
 
-This is current behavior. We are not fixing it pre-1.0 unless a real consumer hits it.
+The fix is a parser-helper hardening: `scxml_child` / `scxml_children` in `sce-build/src/parser.rs` now filter by both local name and namespace via a new `is_scxml_ns(node)` predicate (lenient on missing namespace declarations to preserve legacy fixtures). 32 call sites unchanged — the fix is entirely inside the two helpers. Full `cargo test -p sce-build` suite (1,043 + 863 + 38 integration crates) passes with zero regression.
+
+Practical implication for pinion: **no local-name reservation list applies.** `<framework:state>`, `<framework:onentry>`, `<framework:transition>` — all of these are correctly dropped from the IR. Pinion can use any foreign-NS local name without colliding with W3C SCXML semantics.
 
 ### 2.3 Why not behavior #2
 
