@@ -316,7 +316,13 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        let scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
+        // R22 §5.20: the scene-side `ExternalNode.tag` supplies the
+        // widget identifier used as the intent-tag prefix. The
+        // ButtonExternal itself only emits the "click" kind; the
+        // runtime walk composes `main_btn.click` on drain.
+        let scene = Scene::External(
+            ExternalNode::new(Box::new(ButtonExternal::new())).with_tag("main_btn"),
+        );
         // Initial state is whatever the freshly-constructed Button is
         // at — read it via the same introspect channel everything else
         // uses, so there is exactly one source of truth.

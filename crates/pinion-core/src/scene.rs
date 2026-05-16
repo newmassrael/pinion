@@ -399,18 +399,32 @@ impl EffectNode {
 /// `External` author's handle behind a `Box<dyn External>`; the §5.15
 /// 8-item contract governs the integration surface.
 ///
+/// `tag` is the §5.20 intent-system carrier. When set, the runtime
+/// [`walk_scene_and_drain`](../../pinion_runtime/fn.walk_scene_and_drain.html)
+/// prefixes every drained intent's tag with `<tag>.` — completing
+/// the `<widget>.<kind>` convention (R22).
+///
 /// Not `Clone` — `Box<dyn External>` has no generic clone strategy,
 /// see [`Scene`] doc for the introspection-based alternative.
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct ExternalNode {
     pub handle: Box<dyn crate::external::External>,
+    pub tag: Option<Cow<'static, str>>,
 }
 
 impl ExternalNode {
     #[must_use]
     pub fn new(handle: Box<dyn crate::external::External>) -> Self {
-        Self { handle }
+        Self { handle, tag: None }
+    }
+
+    /// Attach a §5.20 intent tag — drained intents from this node
+    /// will be prefixed with `<tag>.` by the runtime walk.
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 }
 

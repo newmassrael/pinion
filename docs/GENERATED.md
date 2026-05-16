@@ -876,6 +876,7 @@ fn main() {
 - R18 slice 3: External::drain_intents/is_dirty defaults + runtime IntentQueue walk.
 - R18 slice 5: ButtonExternal emits button.click intent on Pressed → Hover (PointerUp).
 - R18 slice 6: hello-button drains intents after each event; logs to stderr; scene/intents RPC live.
+- R22: ExternalNode.tag prefixes drained intent tag (widget.kind convention complete).
 
 
 
@@ -892,6 +893,7 @@ fn main() {
 - crates/pinion-rpc/src/intents.rs:IntentsError
 - crates/pinion-core/src/widgets/button.rs:ButtonExternal::send
 - examples/hello-button/src/main.rs:App::drain_intents
+- crates/pinion-core/src/scene.rs:ExternalNode
 
 
 

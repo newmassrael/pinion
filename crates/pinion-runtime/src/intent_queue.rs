@@ -12,6 +12,8 @@
 //! emission channel are dual sides of the bidirectional surface;
 //! both currently funnel through the UI thread.
 
+use std::borrow::Cow;
+
 use pinion_core::external::External;
 use pinion_core::intent::Intent;
 use pinion_core::Scene;
@@ -64,9 +66,19 @@ impl IntentQueue {
 /// (`Box`/`Text`/`Path`/`Image`/`Effect`) carry no intents. The
 /// `External::is_dirty` short-circuit avoids virtual dispatch into
 /// `drain_intents` for nodes with nothing pending.
+///
+/// §5.20 R22 tag prefix: when a `Scene::External` carries a `tag`,
+/// every drained intent's tag is prefixed with `<tag>.` so the
+/// final wire-form respects the `<widget>.<kind>` convention
+/// (e.g. `save_btn` + `click` → `save_btn.click`). Untagged
+/// External nodes pass intents through unchanged.
 pub fn walk_scene_and_drain(scene: &mut Scene, queue: &mut IntentQueue) {
     match scene {
-        Scene::External(node) => drain_one(node.handle.as_mut(), queue),
+        Scene::External(node) => {
+            // Capture the tag prefix before borrowing handle mutably.
+            let prefix = node.tag.as_deref().map(str::to_owned);
+            drain_one(node.handle.as_mut(), queue, prefix.as_deref());
+        }
         Scene::Container(container) => {
             for child in &mut container.children {
                 walk_scene_and_drain(child, queue);
@@ -80,11 +92,16 @@ pub fn walk_scene_and_drain(scene: &mut Scene, queue: &mut IntentQueue) {
     }
 }
 
-fn drain_one(handle: &mut dyn External, queue: &mut IntentQueue) {
+fn drain_one(handle: &mut dyn External, queue: &mut IntentQueue, prefix: Option<&str>) {
     if !handle.is_dirty() {
         return;
     }
-    handle.drain_intents(&mut |intent| queue.push(intent));
+    handle.drain_intents(&mut |mut intent| {
+        if let Some(prefix) = prefix {
+            intent.tag = Cow::Owned(format!("{prefix}.{}", intent.tag_str()));
+        }
+        queue.push(intent);
+    });
 }
 
 #[cfg(test)]
@@ -201,6 +218,45 @@ mod tests {
         let drained = q.drain();
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].tag_str(), "inner.click");
+    }
+
+    #[test]
+    fn external_node_tag_prefixes_drained_intent_tag() {
+        // §5.20 R22 convention: ExternalNode.tag = "save_btn" turns
+        // a widget-emitted `click` intent into wire-form
+        // `save_btn.click`. Lets one scene tagging pass serve both
+        // the visual identifier and the intent prefix.
+        let emitter: Box<dyn External> = Box::new(ArmedEmitter::with_one("click"));
+        let mut scene = Scene::External(ExternalNode::new(emitter).with_tag("save_btn"));
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain(&mut scene, &mut q);
+        let drained = q.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].tag_str(), "save_btn.click");
+    }
+
+    #[test]
+    fn external_node_without_tag_passes_intent_through_unchanged() {
+        let emitter: Box<dyn External> = Box::new(ArmedEmitter::with_one("custom.event"));
+        let mut scene = Scene::External(ExternalNode::new(emitter));
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain(&mut scene, &mut q);
+        let drained = q.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].tag_str(), "custom.event");
+    }
+
+    #[test]
+    fn external_node_tag_prefixes_through_container() {
+        let inner: Box<dyn External> = Box::new(ArmedEmitter::with_one("click"));
+        let scene_inner =
+            Scene::External(ExternalNode::new(inner).with_tag("toolbar_btn"));
+        let mut scene = Scene::Container(ContainerNode::new(vec![scene_inner]));
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain(&mut scene, &mut q);
+        let drained = q.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].tag_str(), "toolbar_btn.click");
     }
 
     #[test]

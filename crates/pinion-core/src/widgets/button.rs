@@ -84,17 +84,21 @@ impl ButtonExternal {
     }
 
     /// Drive a [`ButtonEvent`] through the wrapped SCXML and enqueue
-    /// any §5.20 intent the transition produces (e.g. `button.click`
-    /// when `Pressed` → `Hover` via `PointerUp`).
+    /// any §5.20 intent the transition produces.
+    ///
+    /// `Pressed` → `Hover` (via `PointerUp`) emits a `"click"` intent
+    /// with `IntrospectValue::Null` payload. The widget emits only
+    /// the *kind* — the §5.20 R22 runtime walk prefixes
+    /// `ExternalNode.tag` (e.g. `"save_btn"` → `"save_btn.click"`),
+    /// so widget-internal identity stays decoupled from the
+    /// user-chosen scene-side identifier.
     pub fn send(&mut self, event: ButtonEvent) {
         let before = self.inner.state();
         self.inner.send(event);
         let after = self.inner.state();
         if matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover) {
-            self.pending_intents.push(Intent::new_static(
-                "button.click",
-                IntrospectValue::Null,
-            ));
+            self.pending_intents
+                .push(Intent::new_static("click", IntrospectValue::Null));
         }
     }
 
@@ -510,8 +514,9 @@ mod tests {
 
     #[test]
     fn button_external_emits_click_intent_on_pressed_to_hover() {
-        // §5.20 click semantics: a full Enter → Down → Up cycle ends
-        // at Hover and emits one `button.click` intent.
+        // §5.20 R22: widget emits only the kind ("click"); the
+        // scene-side ExternalNode.tag supplies the widget prefix at
+        // walk time. This isolates widget identity from UI naming.
         let mut bx = ButtonExternal::new();
         assert!(!bx.is_dirty());
         bx.send(ButtonEvent::PointerEnter);
@@ -522,7 +527,7 @@ mod tests {
         let mut harvested: Vec<Intent> = Vec::new();
         bx.drain_intents(&mut |i| harvested.push(i));
         assert_eq!(harvested.len(), 1);
-        assert_eq!(harvested[0].tag_str(), "button.click");
+        assert_eq!(harvested[0].tag_str(), "click");
         assert_eq!(harvested[0].payload, IntrospectValue::Null);
         assert!(!bx.is_dirty(), "drain should leave the buffer empty");
     }
@@ -570,7 +575,7 @@ mod tests {
         let mut harvested: Vec<Intent> = Vec::new();
         bx.drain_intents(&mut |i| harvested.push(i));
         assert_eq!(harvested.len(), 1);
-        assert_eq!(harvested[0].tag_str(), "button.click");
+        assert_eq!(harvested[0].tag_str(), "click");
     }
 
     #[test]
