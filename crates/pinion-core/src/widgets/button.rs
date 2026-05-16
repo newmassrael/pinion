@@ -149,6 +149,93 @@ impl ExternalIntrospect for ButtonExternal {
     }
 }
 
+impl ButtonExternal {
+    /// Capture the current state as an owned, `Send`-friendly,
+    /// read-only RPC view (see [`ButtonStateSnapshot`]). Lets a live
+    /// app feed its current `ButtonState` to `dispatch` without
+    /// surrendering ownership of the wrapped SCXML engine.
+    #[must_use]
+    pub fn snapshot(&self) -> ButtonStateSnapshot {
+        ButtonStateSnapshot::new(self.state())
+    }
+}
+
+/// Read-only RPC view of a single `Button`'s state at a point in
+/// time. Implements [`External`] + [`ExternalIntrospect`] so it can
+/// be embedded in `Scene::External` and queried via the §5.12
+/// `scene/query` method, while remaining cheap (single enum field)
+/// and `Send` — the live `Button` itself stays on the UI thread.
+///
+/// `intervene` always errors with [`InterveneError::ReadOnly`]: this
+/// type is a *snapshot*, not a control surface. Live-mutating RPC
+/// (e.g. RPC-driven `ButtonEvent::PointerDown`) requires a `Box<dyn
+/// External>` downcast story that is carry-forward to a later spec
+/// round.
+#[derive(Debug, Clone, Copy)]
+pub struct ButtonStateSnapshot {
+    state: ButtonState,
+}
+
+impl ButtonStateSnapshot {
+    #[must_use]
+    pub const fn new(state: ButtonState) -> Self {
+        Self { state }
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> ButtonState {
+        self.state
+    }
+}
+
+impl External for ButtonStateSnapshot {
+    fn backends(&self) -> BackendSupport {
+        // RPC-only: snapshot does not paint or take input, it only
+        // surfaces state to the §5.12 query path.
+        BackendSupport::new(&[Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for ButtonStateSnapshot {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[("state", "string")])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "state" => Some(IntrospectValue::Text(
+                button_state_name(self.state).to_string(),
+            )),
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        _path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        // Snapshot is observation-only by design — see type doc.
+        Err(InterveneError::ReadOnly)
+    }
+}
+
 fn button_state_name(state: ButtonState) -> &'static str {
     match state {
         ButtonState::Idle => "Idle",
@@ -260,5 +347,31 @@ mod tests {
         let bx = ButtonExternal::new();
         let schema = bx.schema();
         assert_eq!(schema.fields, &[("state", "string")]);
+    }
+
+    #[test]
+    fn button_external_snapshot_captures_current_state() {
+        let mut bx = ButtonExternal::new();
+        bx.send(ButtonEvent::PointerEnter);
+        let snap = bx.snapshot();
+        assert_eq!(snap.state(), ButtonState::Hover);
+        let v = snap.query("state").unwrap();
+        assert_eq!(v, IntrospectValue::Text("Hover".to_string()));
+    }
+
+    #[test]
+    fn button_state_snapshot_intervene_is_always_read_only() {
+        let mut snap = ButtonStateSnapshot::new(ButtonState::Idle);
+        let r = snap.intervene("state", IntrospectValue::Text("Pressed".to_string()));
+        assert_eq!(r, Err(InterveneError::ReadOnly));
+        let r = snap.intervene("nope", IntrospectValue::Null);
+        assert_eq!(r, Err(InterveneError::ReadOnly));
+    }
+
+    #[test]
+    fn button_state_snapshot_clone_is_independent() {
+        let snap = ButtonStateSnapshot::new(ButtonState::Pressed);
+        let copy = snap;
+        assert_eq!(snap.state(), copy.state());
     }
 }

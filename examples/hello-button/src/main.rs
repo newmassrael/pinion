@@ -1,27 +1,47 @@
-//! `hello-button` — §4 first dogfood.
+//! `hello-button` — §4 first dogfood + first live §2 RPC dogfood.
 //!
 //! Opens a winit window and pipes real pointer input into the R12
-//! `Button` SCXML statechart (`pinion_core::widgets::button::Button`).
-//! A sync `view(state, &Frame) -> Scene` (§6.3 view-fn signature, §2
-//! purity invariant) builds a `Scene::Container` carrying a dark
-//! navy background `Scene::Box`, a centered button `Scene::Box`
-//! whose fill reflects `ButtonState`, and a `Scene::Text` label
-//! (§5.2 enum + §5.11 v0 `BoxNode`/`TextNode` schemas). A recursive
-//! `paint` walks the tree and writes `BoxNode`s into the softbuffer
-//! pixel slice; `TextNode` is intentionally present-but-unrasterized
-//! until the cosmic-text slice, with the §5.16 RHI still pending.
+//! `Button` SCXML statechart, wrapped in a `ButtonExternal` adapter
+//! (§5.15 reference impl). A sync `view(state, &Frame) -> Scene`
+//! (§6.3 view-fn signature, §2 purity invariant) builds a
+//! `Scene::Container` carrying a dark navy background `Scene::Box`,
+//! a centered button `Scene::Box` whose fill reflects `ButtonState`,
+//! and a `Scene::Text` label. A recursive `paint` walks the tree
+//! and writes `BoxNode`s into the softbuffer pixel slice;
+//! `TextNode` is present-but-unrasterized until the cosmic-text
+//! slice, with the §5.16 RHI still pending.
+//!
+//! In parallel, a background thread reads JSON-RPC 2.0 lines from
+//! `stdin`, forwards each as a winit user event, and the main
+//! thread dispatches it against a fresh `ButtonStateSnapshot` —
+//! the first live exercise of §2 invariant #2 ("RPC headless as AI
+//! primary path") against a running winit app. v0 is read-only:
+//! `scene/query /external/state` succeeds, `intervene`-class
+//! methods return `ReadOnly` per the snapshot contract. Bidirectional
+//! RPC (RPC-driven `ButtonEvent`) requires a `Box<dyn External>`
+//! downcast story and is carry-forward.
 
+use std::io::{BufRead, Write};
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::thread;
 
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
-use pinion_core::widgets::button::{Button, ButtonEvent, ButtonState};
+use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect, TextNode};
+use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene};
+use pinion_rpc::dispatch;
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
+
+/// Winit user-event variants — today only the stdin-fed RPC line.
+#[derive(Debug, Clone)]
+enum AppEvent {
+    /// One JSON-RPC 2.0 frame read from stdin, awaiting dispatch.
+    RpcRequest(String),
+}
 
 const WIN_W: u32 = 320;
 const WIN_H: u32 = 200;
@@ -100,13 +120,13 @@ struct App {
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
     context: Option<Context<Rc<Window>>>,
-    button: Button,
+    button: ButtonExternal,
     last_logged_state: ButtonState,
 }
 
 impl App {
     fn new() -> Self {
-        let button = Button::new();
+        let button = ButtonExternal::new();
         let last_logged_state = button.state();
         eprintln!("button: initial state = {last_logged_state:?}");
         Self {
@@ -126,6 +146,23 @@ impl App {
             self.last_logged_state = now;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
+            }
+        }
+    }
+
+    /// Dispatch one JSON-RPC frame against a freshly snapshotted
+    /// `Scene::External(ButtonStateSnapshot)`. The live `ButtonExternal`
+    /// itself stays on the UI thread; only its `ButtonState` (a `Copy`
+    /// enum) crosses into the snapshot, so this stays sound without any
+    /// `Send`/`Sync` bound on `External`.
+    fn dispatch_rpc(&self, request: &str) {
+        let snap = self.button.snapshot();
+        let mut scene = Scene::External(ExternalNode::new(Box::new(snap)));
+        if let Some(resp) = dispatch(&mut scene, request) {
+            let mut out = std::io::stdout().lock();
+            if writeln!(out, "{resp}").is_err() {
+                // stdout closed (downstream consumer gone) — silently
+                // skip; do not abort the GUI loop on a broken pipe.
             }
         }
     }
@@ -164,7 +201,7 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -246,14 +283,47 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
+        match event {
+            AppEvent::RpcRequest(json) => self.dispatch_rpc(&json),
+        }
+    }
+}
+
+/// Background thread: read JSON-RPC 2.0 lines from stdin and
+/// forward each as an `AppEvent::RpcRequest` user event. Blank
+/// lines are skipped; EOF or any read error terminates the thread
+/// quietly (the GUI loop keeps running). The proxy `send_event`
+/// fails only after the event loop has shut down, in which case we
+/// also exit the thread.
+fn spawn_stdin_rpc_reader(proxy: EventLoopProxy<AppEvent>) {
+    thread::spawn(move || {
+        let stdin = std::io::stdin();
+        let handle = stdin.lock();
+        for line in handle.lines() {
+            let Ok(text) = line else {
+                break;
+            };
+            if text.trim().is_empty() {
+                continue;
+            }
+            if proxy.send_event(AppEvent::RpcRequest(text)).is_err() {
+                break;
+            }
+        }
+    });
 }
 
 fn main() {
-    let event_loop = EventLoop::new().expect("winit EventLoop::new failed");
+    let event_loop = EventLoop::<AppEvent>::with_user_event()
+        .build()
+        .expect("winit EventLoop::with_user_event failed");
     event_loop.set_control_flow(ControlFlow::Wait);
+    spawn_stdin_rpc_reader(event_loop.create_proxy());
     let mut app = App::new();
     eprintln!(
-        "hello-button: hover/click the window to drive the Button SCXML.\n           keys: d=Disable, e=Enable, Esc=quit"
+        "hello-button: hover/click the window to drive the Button SCXML.\n           keys: d=Disable, e=Enable, Esc=quit\n           RPC: pipe JSON-RPC 2.0 frames (one per line) on stdin"
     );
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("hello-button: event loop error: {e}");

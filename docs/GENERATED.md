@@ -522,6 +522,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Non-conforming External rejected at scene composition time, not silently broken
 - Game viewport is one consumer; video/PDF/native widget share same contract
 - Item 8 opt-in via External::introspect()/introspect_mut() returning Option<&dyn ExternalIntrospect>
+- R17 live RPC dogfood uses snapshot (read-only); bidirectional needs `Box<dyn External>` downcast
 
 
 
@@ -532,6 +533,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 **Implementations**:
 - crates/pinion-core/src/widgets/button.rs:ButtonExternal
+- crates/pinion-core/src/widgets/button.rs:ButtonStateSnapshot
 
 
 
