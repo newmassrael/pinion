@@ -11,9 +11,18 @@
 //! settles the per-variant field set in a later round; the skeleton here
 //! anchors only the closed enum + extension points.
 //!
+//! Each introspectable node (Box/Text/Path/Image/Container) carries an
+//! optional `tag: Option<Cow<'static, str>>` field per §5.20: the
+//! intent-system carrier that lets a widget identify which emitted
+//! intent a given scene node belongs to (e.g. `"save_btn"` on the box
+//! that paints the button). Tags live on data, not callbacks, so
+//! view-fn purity (§6.3) and `dry_run` (§2 #3) stay intact.
+//!
 //! `#[non_exhaustive]` propagates the R14 forward-compat hedge (§5.2
 //! caveat): future variants like `Mesh`/`Camera`/`Light` (game-engine
 //! evolution) are addable without a `SemVer` major bump.
+
+use std::borrow::Cow;
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
@@ -84,17 +93,33 @@ impl Rect {
 /// properties (border, gradient, shadow) and taffy-driven relative
 /// layout settle with the §5.3 DSL — see the §5.11 caveats for the
 /// v0 field-schema scope.
+///
+/// `tag` is the §5.20 intent-system carrier. `None` means "no
+/// symbolic identifier"; an attached tag lets a widget identify which
+/// emitted intent this node belongs to (e.g. `"save_btn"`).
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct BoxNode {
     pub fill: u32,
     pub rect: Rect,
+    pub tag: Option<Cow<'static, str>>,
 }
 
 impl BoxNode {
     #[must_use]
     pub const fn new(fill: u32, rect: Rect) -> Self {
-        Self { fill, rect }
+        Self {
+            fill,
+            rect,
+            tag: None,
+        }
+    }
+
+    /// Attach a §5.20 intent tag to this node (builder form).
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 }
 
@@ -105,11 +130,14 @@ impl BoxNode {
 /// absolute bounds in the same u32 coordinate space as `BoxNode`.
 /// Font / size / colour and the layout-relative positioning come
 /// with the §5.3 DSL alongside the rasterizer slice.
+///
+/// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct TextNode {
     pub content: String,
     pub rect: Rect,
+    pub tag: Option<Cow<'static, str>>,
 }
 
 impl TextNode {
@@ -118,7 +146,15 @@ impl TextNode {
         Self {
             content: content.into(),
             rect,
+            tag: None,
         }
+    }
+
+    /// Attach a §5.20 intent tag to this node (builder form).
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 }
 
@@ -130,11 +166,14 @@ impl TextNode {
 /// `rect: Rect` gives the absolute bounding box for layout/hit
 /// purposes. A structured command enum (`MoveTo`/`LineTo`/`CurveTo`/
 /// `Close`) plus stroke/fill `Style` lands with the §5.3 DSL.
+///
+/// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PathNode {
     pub data: String,
     pub rect: Rect,
+    pub tag: Option<Cow<'static, str>>,
 }
 
 impl PathNode {
@@ -143,7 +182,15 @@ impl PathNode {
         Self {
             data: data.into(),
             rect,
+            tag: None,
         }
+    }
+
+    /// Attach a §5.20 intent tag to this node (builder form).
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 }
 
@@ -154,11 +201,14 @@ impl PathNode {
 /// consumer loader resolves; `rect: Rect` gives the destination
 /// bounds. The codec / decoded-buffer cache and `Style`-level
 /// fit/cover/tile policy come with the §5.3 DSL.
+///
+/// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct ImageNode {
     pub source: String,
     pub rect: Rect,
+    pub tag: Option<Cow<'static, str>>,
 }
 
 impl ImageNode {
@@ -167,7 +217,15 @@ impl ImageNode {
         Self {
             source: source.into(),
             rect,
+            tag: None,
         }
+    }
+
+    /// Attach a §5.20 intent tag to this node (builder form).
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 }
 
@@ -178,16 +236,29 @@ impl ImageNode {
 /// arrives with the §5.3 DSL. `Clone` is intentionally *not* derived
 /// — `Scene` carries `ExternalNode` (`Box<dyn External>`) which has
 /// no general clone strategy, see [`Scene`] doc.
+///
+/// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
 #[derive(Debug, Default)]
 pub struct ContainerNode {
     pub children: Vec<Scene>,
+    pub tag: Option<Cow<'static, str>>,
 }
 
 impl ContainerNode {
     #[must_use]
     pub fn new(children: Vec<Scene>) -> Self {
-        Self { children }
+        Self {
+            children,
+            tag: None,
+        }
+    }
+
+    /// Attach a §5.20 intent tag to this node (builder form).
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 }
 
@@ -375,6 +446,54 @@ mod tests {
                 assert!(!support.supports(Backend::Tui));
             }
             _ => panic!("expected External variant"),
+        }
+    }
+
+    #[test]
+    fn box_node_tag_defaults_to_none() {
+        // v0 §5.20: a freshly constructed introspectable node carries
+        // no intent tag. `with_tag` is the opt-in carrier — guards
+        // against accidental default-tagging.
+        let node = BoxNode::new(0, Rect::default());
+        assert!(node.tag.is_none());
+    }
+
+    #[test]
+    fn box_node_with_tag_round_trips_through_scene() {
+        // §5.20 intent tag persistence: attaching `"save_btn"` on a
+        // BoxNode survives the Scene::Box wrap and pattern-match.
+        let scene = Scene::Box(BoxNode::new(0, Rect::default()).with_tag("save_btn"));
+        match scene {
+            Scene::Box(node) => assert_eq!(node.tag.as_deref(), Some("save_btn")),
+            _ => panic!("expected Box variant"),
+        }
+    }
+
+    #[test]
+    fn text_path_image_with_tag_round_trip() {
+        let t = TextNode::new("hi", Rect::default()).with_tag("title");
+        assert_eq!(t.tag.as_deref(), Some("title"));
+        let p = PathNode::new("M0 0", Rect::default()).with_tag("logo");
+        assert_eq!(p.tag.as_deref(), Some("logo"));
+        let i = ImageNode::new("file://x", Rect::default()).with_tag("avatar");
+        assert_eq!(i.tag.as_deref(), Some("avatar"));
+    }
+
+    #[test]
+    fn container_tag_persists_with_tagged_box_child() {
+        // §5.20 nesting: a tagged Box inside a tagged Container
+        // round-trips both tags through pattern-match.
+        let inner = Scene::Box(BoxNode::new(0, Rect::default()).with_tag("inner_btn"));
+        let scene = Scene::Container(ContainerNode::new(vec![inner]).with_tag("toolbar"));
+        match scene {
+            Scene::Container(c) => {
+                assert_eq!(c.tag.as_deref(), Some("toolbar"));
+                match &c.children[0] {
+                    Scene::Box(b) => assert_eq!(b.tag.as_deref(), Some("inner_btn")),
+                    _ => panic!("child not Box"),
+                }
+            }
+            _ => panic!("expected Container variant"),
         }
     }
 

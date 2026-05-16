@@ -800,7 +800,8 @@
         "Tag convention: <widget>.<kind> e.g. save_btn.click; IntentKind enum dropped"
       ],
       "caveats_bullets": [
-        "R18 slice 1: Intent + IntentTag in pinion-core::intent; pinion-derive macro (scalar variants)."
+        "R18 slice 1: Intent + IntentTag in pinion-core::intent; pinion-derive macro (scalar variants).",
+        "R18 slice 2: 5 introspectable Scene variants gain optional tag field + with_tag builder."
       ],
       "implementations": [
         {
@@ -814,6 +815,10 @@
         {
           "file": "crates/pinion-derive/src/lib.rs",
           "symbol": "derive_intent_tag"
+        },
+        {
+          "file": "crates/pinion-core/src/scene.rs",
+          "symbol": "BoxNode"
         }
       ],
       "decision_status": "active"

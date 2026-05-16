@@ -869,6 +869,7 @@ fn main() {
 
 **Caveats**:
 - R18 slice 1: Intent + IntentTag in pinion-core::intent; pinion-derive macro (scalar variants).
+- R18 slice 2: 5 introspectable Scene variants gain optional tag field + with_tag builder.
 
 
 
@@ -879,6 +880,7 @@ fn main() {
 - crates/pinion-core/src/intent.rs:Intent
 - crates/pinion-core/src/intent.rs:IntentTag
 - crates/pinion-derive/src/lib.rs:derive_intent_tag
+- crates/pinion-core/src/scene.rs:BoxNode
 
 
 
