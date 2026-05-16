@@ -24,11 +24,13 @@
 //! per §5.34) can be added without touching the ledger surface. The
 //! ledger only needs the trait's path-introspection methods.
 
+mod cancel;
 mod error;
 mod id;
 mod ledger;
 mod proposal;
 
+pub use cancel::cancel_preview;
 pub use error::{ApplyError, ProposeError};
 pub use id::PreviewId;
 pub use ledger::{

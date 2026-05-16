@@ -2,9 +2,13 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Today the only routed method is `scene/query`
-//! (§5.12 method 1 of 7); subsequent slices register `click`, `dry_run`,
-//! `snapshot`, `rewind`, `waitFor`, `screenshot`.
+//! response envelope. Registered methods (R40.2): `scene/query`,
+//! `scene/click`, `scene/rewind`, `scene/snapshot`, `scene/dry_run`,
+//! `scene/waitFor`, `scene/screenshot`, `scene/invoke`,
+//! `scene/intents`, `scene/locate`, `scene/locate_region`,
+//! `scene/bbox`, `scene/cancel_preview`. The preview-lifecycle
+//! methods take an additional `&PreviewLedger` argument that the
+//! dispatcher receives from its caller alongside the scene.
 //!
 //! Notifications (requests without `id`) elicit no response per the spec
 //! — [`dispatch`] returns `None` in that case. Errors map to the
@@ -33,6 +37,7 @@ use crate::invoke::{invoke, InvokeError};
 use crate::locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };
+use crate::preview::{cancel_preview, PreviewId, PreviewLedger};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
@@ -82,17 +87,23 @@ pub struct RpcError {
 
 const JSONRPC_V2: &str = "2.0";
 
-/// Dispatch one JSON-RPC 2.0 frame against `scene`.
+/// Dispatch one JSON-RPC 2.0 frame against `scene` and `previews`.
 ///
 /// Takes `&mut Scene` because some methods (e.g. `scene/rewind`) mutate
 /// External state through introspection. Read-only methods accept a
 /// reborrowed `&Scene` internally.
 ///
+/// `previews` is the §5.34 preview lifecycle ledger; methods such as
+/// `scene/cancel_preview` (and, in later R40 slices, `propose_change`
+/// / `list_previews` / `apply_preview`) read or mutate it through
+/// interior mutability. Methods that do not interact with the
+/// lifecycle simply ignore the argument.
+///
 /// Returns `Some(json)` for call requests (any with an `id`), `None`
 /// for notifications. Parse errors return a `Some(json)` carrying
 /// id=null per the spec.
 #[must_use]
-pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
+pub fn dispatch(scene: &mut Scene, previews: &PreviewLedger, request_json: &str) -> Option<String> {
     let parsed: Result<Request, _> = serde_json::from_str(request_json);
     let request = match parsed {
         Ok(r) => r,
@@ -135,6 +146,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
+        "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -605,6 +617,27 @@ fn bbox_error_to_rpc(err: BboxError) -> RpcError {
     }
 }
 
+fn handle_scene_cancel_preview(
+    previews: &PreviewLedger,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(raw_id) = params.get("preview_id").and_then(Value::as_u64) else {
+        return Err(invalid_params(
+            "params.preview_id missing or not a positive integer",
+        ));
+    };
+    let Some(id) = PreviewId::try_new(raw_id) else {
+        return Err(invalid_params("params.preview_id must be non-zero"));
+    };
+    let cancelled = cancel_preview(previews, id);
+    let mut map = serde_json::Map::new();
+    map.insert("cancelled".into(), Value::Bool(cancelled));
+    Ok(Value::Object(map))
+}
+
 fn invoke_error_to_rpc(err: InvokeError) -> RpcError {
     let variant = match err {
         InvokeError::Path(_) => "Path",
@@ -712,10 +745,18 @@ mod tests {
         serde_json::from_str(s).expect("dispatch produced invalid response JSON")
     }
 
+    /// Test helper — calls [`dispatch`] with a freshly-allocated
+    /// [`PreviewLedger`]. Used by tests that do not exercise the
+    /// preview lifecycle methods; preview-specific tests instead
+    /// declare a long-lived ledger and call [`dispatch`] directly.
+    fn dispatch_t(scene: &mut Scene, req: &str) -> Option<String> {
+        dispatch(scene, &PreviewLedger::default(), req)
+    }
+
     #[test]
     fn parse_error_on_invalid_json() {
         let mut scene = counted_scene(0);
-        let resp = parse_response(&dispatch(&mut scene, "{not json").unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, "{not json").unwrap());
         assert_eq!(resp.error.unwrap().code, -32700);
         assert_eq!(resp.id, None);
     }
@@ -724,7 +765,7 @@ mod tests {
     fn invalid_request_on_wrong_jsonrpc_version() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"1.0","method":"scene/query","id":1}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32600);
         assert_eq!(resp.id, Some(RequestId::Num(1)));
     }
@@ -733,7 +774,7 @@ mod tests {
     fn method_not_found() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/unknown","id":2}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32601);
     }
 
@@ -741,7 +782,7 @@ mod tests {
     fn invalid_params_when_path_missing() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{},"id":3}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32602);
     }
 
@@ -749,7 +790,7 @@ mod tests {
     fn success_query_with_id_num() {
         let mut scene = counted_scene(42);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":4}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         assert_eq!(resp.result.unwrap(), Value::Number(42.into()));
         assert_eq!(resp.id, Some(RequestId::Num(4)));
@@ -759,7 +800,7 @@ mod tests {
     fn success_query_with_id_string() {
         let mut scene = counted_scene(5);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":"req-a"}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert_eq!(resp.id, Some(RequestId::Str("req-a".to_string())));
     }
 
@@ -767,14 +808,14 @@ mod tests {
     fn notification_emits_no_response() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"}}"#;
-        assert!(dispatch(&mut scene, req).is_none());
+        assert!(dispatch_t(&mut scene, req).is_none());
     }
 
     #[test]
     fn query_error_maps_to_invalid_params_with_variant_tag() {
         let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/anything"},"id":7}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("IntrospectionOptedOut".to_string())));
@@ -784,7 +825,7 @@ mod tests {
     fn path_error_inside_query_also_maps_to_invalid_params() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/window[main/external/count"},"id":8}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("Path".to_string())));
@@ -796,7 +837,7 @@ mod tests {
         // dispatch round-trips that into result.handled.
         let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
         let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"/external","x":1.0,"y":2.0},"id":9}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         assert_eq!(result.get("handled"), Some(&Value::Bool(false)));
@@ -806,7 +847,7 @@ mod tests {
     fn scene_click_missing_x_param_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"/external","y":2.0},"id":10}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
@@ -815,11 +856,11 @@ mod tests {
     fn scene_rewind_writes_then_query_observes_new_value() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count","value":123},"id":11}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
 
         let req2 = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":12}"#;
-        let resp2 = parse_response(&dispatch(&mut scene, req2).unwrap());
+        let resp2 = parse_response(&dispatch_t(&mut scene, req2).unwrap());
         assert_eq!(resp2.result.unwrap(), Value::Number(123.into()));
     }
 
@@ -827,7 +868,7 @@ mod tests {
     fn scene_rewind_missing_value_param_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count"},"id":13}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
@@ -836,7 +877,7 @@ mod tests {
     fn scene_snapshot_returns_type_and_introspect_object() {
         let mut scene = counted_scene(99);
         let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":""},"id":14}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         assert_eq!(result.get("type"), Some(&Value::String("External".into())));
@@ -848,7 +889,7 @@ mod tests {
     fn scene_snapshot_missing_path_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{},"id":15}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
@@ -857,7 +898,7 @@ mod tests {
     fn scene_dry_run_returns_hypothetical_snapshot_and_rolls_back() {
         let mut scene = counted_scene(3);
         let req = r#"{"jsonrpc":"2.0","method":"scene/dry_run","params":{"path":"/external/count","value":77},"id":16}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         let intro = result.get("introspect").unwrap().as_object().unwrap();
@@ -865,7 +906,7 @@ mod tests {
 
         // Follow-up query confirms the scene was rolled back.
         let q_req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":17}"#;
-        let q_resp = parse_response(&dispatch(&mut scene, q_req).unwrap());
+        let q_resp = parse_response(&dispatch_t(&mut scene, q_req).unwrap());
         assert_eq!(q_resp.result.unwrap(), Value::Number(3.into()));
     }
 
@@ -873,7 +914,7 @@ mod tests {
     fn scene_dry_run_missing_value_param_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/dry_run","params":{"path":"/external/count"},"id":18}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
@@ -882,7 +923,7 @@ mod tests {
     fn scene_wait_for_returns_matched_when_target_equals_current() {
         let mut scene = counted_scene(42);
         let req = r#"{"jsonrpc":"2.0","method":"scene/waitFor","params":{"path":"/external/count","target":42,"max_attempts":3},"id":19}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         assert_eq!(result.get("matched"), Some(&Value::Bool(true)));
@@ -894,7 +935,7 @@ mod tests {
     fn scene_wait_for_missing_target_param_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/waitFor","params":{"path":"/external/count","max_attempts":1},"id":20}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
@@ -903,7 +944,7 @@ mod tests {
     fn scene_screenshot_returns_render_backend_unavailable_tag() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/screenshot","params":{"path":""},"id":21}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(
@@ -916,7 +957,7 @@ mod tests {
     fn scene_screenshot_missing_path_is_invalid() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/screenshot","params":{},"id":22}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
@@ -934,7 +975,7 @@ mod tests {
         bx.send(ButtonEvent::PointerEnter);
         let mut scene = Scene::External(ExternalNode::new(Box::new(bx)));
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":42}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
         let result = resp.result.expect("scene/query produced no result");
         // Hybrid query result: typed IntrospectValue serialized
@@ -952,7 +993,7 @@ mod tests {
         use pinion_core::widgets::button::ButtonExternal;
         let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
         let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/nope"},"id":43}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.expect("unknown path should error");
         assert_eq!(err.code, -32602);
         assert_eq!(
@@ -968,7 +1009,7 @@ mod tests {
     fn scene_invoke_increment_returns_new_total() {
         let mut scene = counted_scene(10);
         let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/increment","args":5},"id":50}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
         let result = resp.result.expect("scene/invoke produced no result");
         assert_eq!(result, Value::Number(15.into()));
@@ -979,7 +1020,7 @@ mod tests {
         use pinion_core::widgets::button::ButtonExternal;
         let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
         let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"PointerEnter"},"id":51}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
         let result = resp.result.expect("scene/invoke produced no result");
         let serialized = serde_json::to_string(&result).unwrap();
@@ -993,7 +1034,7 @@ mod tests {
     fn scene_invoke_missing_args_is_invalid_params() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/increment"},"id":52}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
@@ -1002,7 +1043,7 @@ mod tests {
     fn scene_invoke_unknown_action_path_is_invalid_params() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/ghost","args":1},"id":53}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(
@@ -1018,7 +1059,7 @@ mod tests {
     fn scene_intents_returns_empty_array_when_nothing_pending() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":60}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
         let result = resp.result.expect("scene/intents produced no result");
         let arr = result.as_array().expect("intents result is an array");
@@ -1033,10 +1074,10 @@ mod tests {
         let mut scene = counted_scene(0);
         let rewind_req =
             r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count","value":11},"id":61}"#;
-        let _ = dispatch(&mut scene, rewind_req).unwrap();
+        let _ = dispatch_t(&mut scene, rewind_req).unwrap();
 
         let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":62}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let result = resp.result.expect("scene/intents produced no result");
         let arr = result.as_array().expect("intents result is an array");
         assert_eq!(arr.len(), 1);
@@ -1052,8 +1093,8 @@ mod tests {
     fn scene_intents_drain_is_idempotent_on_clean_scene() {
         let mut scene = counted_scene(0);
         let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":63}"#;
-        let _ = parse_response(&dispatch(&mut scene, req).unwrap());
-        let resp2 = parse_response(&dispatch(&mut scene, req).unwrap());
+        let _ = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let resp2 = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let result = resp2.result.expect("scene/intents produced no result");
         assert!(result.as_array().unwrap().is_empty());
     }
@@ -1063,7 +1104,7 @@ mod tests {
         use pinion_core::widgets::button::ButtonExternal;
         let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
         let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"Teleport"},"id":54}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(
@@ -1084,7 +1125,7 @@ mod tests {
     fn scene_locate_returns_path_bbox_ancestors() {
         let mut scene = box_scene(10, 20, 50, 30);
         let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"x":20,"y":25},"id":100}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none(), "got error: {:?}", resp.error);
         let result = resp.result.expect("scene/locate produced no result");
         let obj = result.as_object().expect("result must be object");
@@ -1102,7 +1143,7 @@ mod tests {
     fn scene_locate_out_of_bounds_returns_invalid_params() {
         let mut scene = box_scene(10, 10, 5, 5);
         let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"x":99,"y":99},"id":101}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.expect("expected error");
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("OutOfBounds".to_string())));
@@ -1112,7 +1153,7 @@ mod tests {
     fn scene_locate_missing_x_is_invalid_params() {
         let mut scene = box_scene(0, 0, 10, 10);
         let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"y":5},"id":102}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.expect("expected error");
         assert_eq!(err.code, -32602);
     }
@@ -1123,7 +1164,7 @@ mod tests {
         // pass negative coords without a typed protocol error.
         let mut scene = box_scene(0, 0, 10, 10);
         let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"x":-1,"y":5},"id":103}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.expect("expected error");
         assert_eq!(err.code, -32602);
     }
@@ -1132,7 +1173,7 @@ mod tests {
     fn scene_locate_region_returns_paths_and_common_ancestor() {
         let mut scene = box_scene(0, 0, 100, 100);
         let req = r#"{"jsonrpc":"2.0","method":"scene/locate_region","params":{"x":0,"y":0,"w":50,"h":50},"id":104}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         let result = resp.result.expect("no result");
         let obj = result.as_object().expect("object");
@@ -1145,7 +1186,7 @@ mod tests {
     fn scene_locate_region_disjoint_returns_empty_paths() {
         let mut scene = box_scene(0, 0, 10, 10);
         let req = r#"{"jsonrpc":"2.0","method":"scene/locate_region","params":{"x":500,"y":500,"w":10,"h":10},"id":105}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none(), "disjoint never errors");
         let result = resp.result.expect("no result");
         let paths = result.get("paths").and_then(Value::as_array).expect("paths");
@@ -1156,7 +1197,7 @@ mod tests {
     fn scene_locate_region_missing_w_is_invalid_params() {
         let mut scene = box_scene(0, 0, 10, 10);
         let req = r#"{"jsonrpc":"2.0","method":"scene/locate_region","params":{"x":0,"y":0,"h":10},"id":106}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.expect("expected error");
         assert_eq!(err.code, -32602);
     }
@@ -1167,7 +1208,7 @@ mod tests {
     fn scene_bbox_returns_bbox_for_root_path() {
         let mut scene = box_scene(10, 20, 30, 40);
         let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/window[main]"},"id":107}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         assert!(resp.error.is_none());
         let bbox = resp.result.unwrap().get("bbox").cloned().unwrap();
         let obj = bbox.as_object().unwrap();
@@ -1181,7 +1222,7 @@ mod tests {
     fn scene_bbox_unknown_path_returns_invalid_params() {
         let mut scene = box_scene(0, 0, 10, 10);
         let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/window[main]/ghost"},"id":108}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.expect("expected error");
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("UnknownPath".to_string())));
@@ -1191,7 +1232,108 @@ mod tests {
     fn scene_bbox_missing_path_is_invalid_params() {
         let mut scene = box_scene(0, 0, 10, 10);
         let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{},"id":109}"#;
-        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    // ---- R40.2: scene/cancel_preview JSON-RPC wire ----
+
+    #[derive(Debug)]
+    struct WireTestProposal {
+        target: String,
+    }
+
+    impl WireTestProposal {
+        fn new() -> Self {
+            Self {
+                target: "/wire-test".to_string(),
+            }
+        }
+    }
+
+    impl crate::preview::Proposal for WireTestProposal {
+        fn target_path(&self) -> &str {
+            &self.target
+        }
+        fn affected_paths(&self) -> Vec<String> {
+            vec![self.target.clone()]
+        }
+    }
+
+    fn now_inst() -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    #[test]
+    fn scene_cancel_preview_returns_cancelled_true_for_active_id() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let id = previews
+            .propose(0, Box::new(WireTestProposal::new()), None, now_inst())
+            .expect("propose succeeds with default ledger");
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{{"preview_id":{}}},"id":201}}"#,
+            id.get()
+        );
+        let resp = parse_response(&dispatch(&mut scene, &previews, &req).unwrap());
+        assert!(resp.error.is_none());
+        let obj = resp.result.unwrap();
+        assert_eq!(obj.get("cancelled"), Some(&Value::Bool(true)));
+        assert!(previews.is_empty());
+    }
+
+    #[test]
+    fn scene_cancel_preview_returns_cancelled_false_for_unknown_id() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":9999},"id":202}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        assert!(resp.error.is_none());
+        let obj = resp.result.unwrap();
+        assert_eq!(obj.get("cancelled"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn scene_cancel_preview_is_idempotent_over_dispatch() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let id = previews
+            .propose(0, Box::new(WireTestProposal::new()), None, now_inst())
+            .unwrap();
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{{"preview_id":{}}},"id":203}}"#,
+            id.get()
+        );
+        let first = parse_response(&dispatch(&mut scene, &previews, &req).unwrap());
+        assert_eq!(first.result.unwrap().get("cancelled"), Some(&Value::Bool(true)));
+        let second = parse_response(&dispatch(&mut scene, &previews, &req).unwrap());
+        assert_eq!(second.result.unwrap().get("cancelled"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn scene_cancel_preview_missing_id_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{},"id":204}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn scene_cancel_preview_zero_id_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":0},"id":205}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn scene_cancel_preview_string_id_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":"abc"},"id":206}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32602);
     }
 }

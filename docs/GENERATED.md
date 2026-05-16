@@ -1914,6 +1914,7 @@ fn main() {
 - R40.1: conflict policy = independent ledger + OCC (base_revision token per entry, compared at apply)
 - R40.1: lazy eviction on propose — past-deadline entries reclaimed before capacity check
 - R40.1: Proposal as open trait; concrete variants R40.5 — ledger schema decoupled
+- R40.2: dispatch fn signature gained &PreviewLedger param — caller passes alongside &mut Scene
 
 
 
@@ -1940,6 +1941,9 @@ fn main() {
 - crates/pinion-rpc/src/preview/ledger.rs:Entry
 - crates/pinion-rpc/src/preview/ledger.rs:PreviewView
 - crates/pinion-rpc/src/preview/ledger.rs:SweepReport
+- crates/pinion-rpc/src/preview/cancel.rs:cancel_preview
+- crates/pinion-rpc/src/dispatch.rs:handle_scene_cancel_preview
+- crates/pinion-rpc/src/preview/id.rs:PreviewId::try_new
 
 
 
@@ -4061,6 +4065,38 @@ fn main() {
 - R40.4: scene/list_previews RPC method (15th)
 - R40.5: scene/apply_preview RPC + typed Proposal enum (SetSignal/ReplaceView/SetStyle/DispatchIntent)
 - R40.x: pinion-core Scene에 scene_revision counter 입히기 (OCC token source)
+- carry-forward existing: §5.16 GPU, hello-button reactive, overlay Controller promote
+
+
+
+### Round 40.2 — §5.34 scene/cancel_preview (13th RPC) + dispatch &PreviewLedger param + PreviewId::try_new
+
+**Changes**:
+- pinion-rpc dispatch fn signature: + &PreviewLedger 파라미터 주입
+- handle_scene_cancel_preview: -32602 invalid_params on missing/zero/non-numeric preview_id
+- preview/cancel.rs typed dispatcher — transport-agnostic wrapper around ledger.cancel
+- PreviewId::try_new(u64) -> Option<Self> — wire-side null-safe constructor
+- dispatch dispatch table 12 → 13 typed methods (scene/cancel_preview)
+- examples/hello-button: PreviewLedger field + dispatch call 입력 구조 업데이트
+
+
+
+**Verification**:
+- cargo test --workspace: 473 → 479 pass (+6 wire tests for cancel_preview)
+- cargo clippy --workspace --all-targets: 11 pre-existing baseline only — 신규 0
+- RPC test 시나리오: active cancel / unknown id / idempotency / 3 invalid_params
+- hello-button cargo check pass — ledger field PreviewLedger::default() 공존
+
+
+
+**Impact**: §5.34, §5.7, §5.12
+
+
+**Carry forward**:
+- R40.3: scene/list_previews RPC (14th) — PreviewView 직렬화 + ledger.list wire
+- R40.4: scene_revision counter pinion-core Scene 명시적 필드 또는 forward-compat field
+- R40.5: typed Proposal enum (SetSignal/etc) + scene/propose_change RPC (15th)
+- R40.6: scene/apply_preview RPC (16th) — OCC 검증 + runtime side-effect application
 - carry-forward existing: §5.16 GPU, hello-button reactive, overlay Controller promote
 
 

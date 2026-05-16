@@ -47,7 +47,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Scene};
-use pinion_rpc::dispatch;
+use pinion_rpc::{dispatch, PreviewLedger};
 use pinion_runtime::{compute_layout, walk_scene_and_drain, IntentQueue};
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
@@ -363,6 +363,12 @@ struct App {
     /// cosmic-text glyph rasterization cache. Reused across frames
     /// so the swash rasterizer skips re-rendering identical glyphs.
     swash_cache: SwashCache,
+    /// §5.34 preview lifecycle ledger — passed into every
+    /// `pinion_rpc::dispatch` call alongside the scene. The lifecycle
+    /// RPC methods (`scene/cancel_preview` today; more in R40.3+)
+    /// read or mutate it through interior mutability; non-lifecycle
+    /// methods ignore it.
+    previews: PreviewLedger,
 }
 
 impl App {
@@ -388,6 +394,7 @@ impl App {
             intent_queue: IntentQueue::new(),
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
+            previews: PreviewLedger::default(),
         }
     }
 
@@ -411,7 +418,7 @@ impl App {
     /// `scene/invoke /external/send PointerEnter` (and friends) now
     /// drive the SCXML the same way a winit click would.
     fn dispatch_rpc(&mut self, request: &str) {
-        if let Some(resp) = dispatch(&mut self.scene, request) {
+        if let Some(resp) = dispatch(&mut self.scene, &self.previews, request) {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {
                 // stdout closed (downstream consumer gone) — silently

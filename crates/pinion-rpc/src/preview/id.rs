@@ -22,12 +22,25 @@ use std::num::NonZeroU64;
 pub struct PreviewId(NonZeroU64);
 
 impl PreviewId {
-    /// Construct from a raw value. Crate-internal — callers obtain
-    /// `PreviewId`s by calling
-    /// [`crate::preview::PreviewLedger::propose`], never by minting
-    /// their own.
+    /// Construct from a raw value. Crate-internal — callers normally
+    /// obtain `PreviewId`s by calling
+    /// [`crate::preview::PreviewLedger::propose`]; this entry point
+    /// exists for the rare case of materializing an id from a typed
+    /// source that has already validated non-zero (counterpart to
+    /// `pub fn` [`try_new`] for the runtime-validated path).
+    ///
+    /// [`try_new`]: PreviewId::try_new
     pub(crate) fn from_raw(raw: NonZeroU64) -> Self {
         Self(raw)
+    }
+
+    /// Construct a `PreviewId` from a wire-side `u64`, returning `None`
+    /// when the value is zero. Use this at the JSON-RPC boundary
+    /// (where ids arrive as untyped numbers) to lift them into the
+    /// strongly-typed handle.
+    #[must_use]
+    pub fn try_new(raw: u64) -> Option<Self> {
+        NonZeroU64::new(raw).map(Self::from_raw)
     }
 
     /// Underlying numeric value, intended for wire serialization
