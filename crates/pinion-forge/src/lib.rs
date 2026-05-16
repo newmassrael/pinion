@@ -40,7 +40,9 @@ pub mod diagnostic;
 pub mod parser;
 pub mod wire;
 
-pub use ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl};
+pub use ast::{
+    ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl, UseDecl,
+};
 pub use build::{CompileError, compile_file, compile_str};
 pub use codegen::emit_rust;
 pub use diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic, Stage};
@@ -246,7 +248,7 @@ mod tests {
             .iter()
             .map(|c| match c {
                 PinionChild::Signal(s) => s.name.as_str(),
-                PinionChild::Computed(_) | PinionChild::Resource(_) => {
+                PinionChild::Computed(_) | PinionChild::Resource(_) | PinionChild::Use(_) => {
                     panic!("unexpected non-Signal variant")
                 }
             })
@@ -511,6 +513,122 @@ mod tests {
             d,
             PinionForgeDiagnostic::InvalidIdent { tag, attribute, .. }
                 if tag == "computed" && attribute == "name"
+        )));
+    }
+
+    // ---- R38.2d: <use> path import ----
+
+    #[test]
+    fn parses_single_use() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <use path="my_crate::widgets::Button"/>
+        </pinion>"#;
+        let doc = parse(xml).expect("happy path");
+        assert_eq!(doc.children.len(), 1);
+        let PinionChild::Use(u) = &doc.children[0] else {
+            panic!("expected Use variant");
+        };
+        assert_eq!(u.path, "my_crate::widgets::Button");
+    }
+
+    #[test]
+    fn parses_use_open_close_form_ignores_body() {
+        // <use path="..."> body </use> — body is silently skipped per
+        // R38.2d. The parser succeeds without diagnostic.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <use path="foo::Bar">whatever junk in body</use>
+        </pinion>"#;
+        let doc = parse(xml).expect("body silently ignored");
+        let PinionChild::Use(u) = &doc.children[0] else {
+            panic!("expected Use variant");
+        };
+        assert_eq!(u.path, "foo::Bar");
+    }
+
+    #[test]
+    fn emits_use_at_top_of_file() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Imports">
+            <use path="my_crate::widgets::Button"/>
+        </pinion>"#;
+        let rust = compile_str(xml, "imports.pinion.xml").expect("compile");
+        // `use` statement must come before `pub struct`.
+        let use_pos = rust.find("use my_crate::widgets::Button;").expect("use emitted");
+        let struct_pos = rust.find("pub struct Imports").expect("struct emitted");
+        assert!(use_pos < struct_pos, "use must precede struct");
+    }
+
+    #[test]
+    fn emits_multiple_use_statements_in_order() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Multi">
+            <use path="foo::A"/>
+            <use path="bar::{B, C}"/>
+            <use path="baz::D as RenamedD"/>
+        </pinion>"#;
+        let rust = compile_str(xml, "multi.pinion.xml").expect("compile");
+        let a = rust.find("use foo::A;").expect("A");
+        let b = rust.find("use bar::{B, C};").expect("B,C group");
+        let d = rust.find("use baz::D as RenamedD;").expect("rename");
+        assert!(a < b && b < d, "order preserved");
+    }
+
+    #[test]
+    fn use_alone_emits_unit_struct() {
+        // <use> children alone do not produce a binding — the struct
+        // collapses to unit form.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="OnlyImports">
+            <use path="my_crate::Foo"/>
+        </pinion>"#;
+        let rust = compile_str(xml, "onlyimports.pinion.xml").expect("compile");
+        assert!(rust.contains("use my_crate::Foo;"));
+        assert!(rust.contains("pub struct OnlyImports;"));
+        // unit-struct constructor returns plain `Self`
+        assert!(rust.contains("Self\n"));
+    }
+
+    #[test]
+    fn use_does_not_contribute_to_prior_names() {
+        // <use> before a <computed> must NOT appear in the capture
+        // tuple — module-level imports are visible without capture.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal name="count" ty="i32"><![CDATA[0]]></signal>
+            <use path="std::convert::From"/>
+            <computed name="doubled" ty="i32"><![CDATA[count.get() * 2]]></computed>
+        </pinion>"#;
+        let rust = compile_str(xml, "x.pinion.xml").expect("compile");
+        // Capture tuple must contain only `count`, not the use path.
+        assert!(rust.contains("let (count,) = (count.clone(),);"));
+        assert!(!rust.contains("From,)"));
+        assert!(!rust.contains("From.clone()"));
+    }
+
+    #[test]
+    fn rejects_use_missing_path() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <use/>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/missing-attribute")
+            .expect("missing-attribute");
+        let PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(tag, "use");
+        assert_eq!(attribute, "path");
+    }
+
+    #[test]
+    fn rejects_use_empty_path() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <use path=""/>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        // Empty after trim is treated as missing per require_nonempty_attr.
+        assert!(diags.iter().any(|d| matches!(
+            d,
+            PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. }
+                if tag == "use" && attribute == "path"
         )));
     }
 

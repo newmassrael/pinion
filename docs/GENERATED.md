@@ -1052,6 +1052,9 @@ fn main() {
 - R38.2c: new() signature widens to <S: LocalSpawner>(&Owner, &S) only when resource present
 - R38.2c: resource body authored as async move {} block; pinion-forge does not wrap
 - R38.2c: parse_resource_decl separate from parse_named_typed_body; 4-attr shape diverges
+- R38.2d: <use path="..."/> → module-level use statement at top of emitted file
+- R38.2d: use does not contribute to prior_names; imports visible via module scope
+- R38.2d: use body silently skipped; path attr only validation = non-empty; rustc owns syntax
 
 
 
@@ -1093,6 +1096,9 @@ fn main() {
 - crates/pinion-forge/src/parser.rs:ParseCtx::parse_resource
 - crates/pinion-forge/src/codegen.rs:emit_resource_into
 - crates/pinion-forge/src/codegen.rs:needs_spawner
+- crates/pinion-forge/src/ast.rs:UseDecl
+- crates/pinion-forge/src/parser.rs:ParseCtx::parse_use
+- crates/pinion-forge/src/codegen.rs:emit_use_block
 
 
 
@@ -3431,6 +3437,38 @@ fn main() {
 - R38.2x: syn::Expr visit for precise capture analysis (drop over-capture #[allow])
 - R38.2x: consistency vs minimum signature trade-off review (always-spawner option)
 - R38.2e: first dogfood .pinion.xml (hello-button) + integration test crate
+
+
+
+### Round 38.2d — §5.22 <use path/> child — module-level Rust use statement emitter
+
+**Changes**:
+- AST: PinionChild::Use(UseDecl{path}) closing the 4-variant child set
+- Parser: parse_use validates path attr non-empty; body silently skipped via skip_subtree
+- Codegen: emit_use_block emits top-level use lines + blank separator before struct
+- Codegen: is_binding_child gate — Use neither contributes prior_names nor struct field
+- child_name() helper removed (was tied to binding-children naming convention)
+
+
+
+**Verification**:
+- cargo test --workspace → 388 pass (380 baseline + 8 R38.2d new)
+- cargo clippy --workspace --all-targets → 12 pre-existing only, pinion-forge zero
+- Use-only doc emits unit struct + use block (test use_alone_emits_unit_struct)
+- Capture tuple regression verified: use sibling does not pollute prior_names
+- Group/rename/simple use forms all roundtrip (test emits_multiple_use_statements_in_order)
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R38.2e: first dogfood .pinion.xml authoring + integration test crate
+- R38.2x: syn::UseTree path validation (paired with broader syn adoption)
+- R38.2x: element-parser builder unification across signal/computed/resource/use
+- R38.2x: signature consistency review (always-spawner vs minimum)
+- R39: §5.22 split into §5.22.1/.2/.3/.4 if T4 body-length stays high
 
 
 

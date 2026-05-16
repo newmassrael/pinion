@@ -3,7 +3,7 @@
 //! than fail-fast so downstream tooling can show all errors at once
 //! (textbook contract for AOT compilers — surface every failure per run).
 //!
-//! ## R38.2c grammar (closed)
+//! ## R38.2d grammar (closed)
 //!
 //! ```text
 //! Document   ::= XmlDecl? Whitespace* PinionRoot Whitespace*
@@ -12,18 +12,23 @@
 //! RootAttr   ::= xmlns="https://pinion.dev/dsl/v1"
 //!             |  kind="reactive"
 //!             |  name=<Rust ident>
-//! Child      ::= Signal | Computed | Resource
+//! Child      ::= Signal | Computed | Resource | Use
 //! Signal     ::= '<signal' NamedTypedAttrs '>' BodyExpr '</signal>'
 //! Computed   ::= '<computed' NamedTypedAttrs '>' BodyExpr '</computed>'
 //! Resource   ::= '<resource' NamedTypedAttrs 'err'=<non-empty> '>'
 //!                BodyExpr '</resource>'
+//! Use        ::= '<use' 'path'=<non-empty> '/>'
+//!             |  '<use' 'path'=<non-empty> '>' (anything) '</use>'
 //! NamedTypedAttrs ::= 'name'=<Rust ident> 'ty'=<non-empty>
 //! BodyExpr   ::= CDATA / non-empty trimmed Text
 //! ```
 //!
-//! Signal/Computed share `(name, ty, body)`; Resource extends with an
-//! `err` attribute (E type) and a future-returning body. `<use>`
-//! lands in R38.2d.
+//! `<use>` is the only child that ignores its body — the path
+//! attribute is the entire payload. Any body content
+//! (text/CDATA/nested elements) is silently skipped so an author
+//! mistakenly closing the tag with `</use>` does not get spurious
+//! diagnostics. Validation strictness is a [carry-forward R38.2x]
+//! decision (syn-based path validation tied to broader syn adoption).
 
 use std::path::PathBuf;
 
@@ -31,7 +36,9 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 
-use crate::ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl};
+use crate::ast::{
+    ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl, UseDecl,
+};
 use crate::diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic};
 
 /// Entry point. `source` is the originating file path for diagnostic
@@ -313,6 +320,18 @@ impl<'a> ParseCtx<'a> {
                     children.push(PinionChild::Resource(decl));
                 }
             }
+            "use" => {
+                let decl = self.parse_use(start);
+                // <use> ignores body content (path attribute is the whole
+                // payload). Skip to the close tag regardless of whether
+                // the AST decl was constructed.
+                if !self_closing {
+                    self.skip_subtree();
+                }
+                if let Some(decl) = decl {
+                    children.push(PinionChild::Use(decl));
+                }
+            }
             _ => {
                 let location = self.current_location();
                 self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
@@ -407,6 +426,37 @@ impl<'a> ParseCtx<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Parse one `<use path="..."/>` element. Body content (if any) is
+    /// not consumed here — the dispatcher calls [`Self::skip_subtree`]
+    /// for the close-tag form. Returns `None` only if the required
+    /// `path` attribute is missing or empty.
+    fn parse_use(&mut self, start: &BytesStart<'_>) -> Option<UseDecl> {
+        let location = self.current_location();
+        let mut path_raw: Option<String> = None;
+
+        for attr in start.attributes().with_checks(false) {
+            let Ok(attr) = attr else {
+                self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
+                    message: "malformed attribute on <use>".into(),
+                    location: location.clone(),
+                });
+                continue;
+            };
+            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+            let value = String::from_utf8_lossy(&attr.value).into_owned();
+            if key == "path" {
+                path_raw = Some(value);
+            }
+            // Unknown attributes tolerated (SCE v1 forward-compat).
+        }
+
+        // `path` is a free-form Rust use-path, not a Rust identifier —
+        // can contain `::`, braces, `as`, `*`. R38.2d only enforces
+        // non-emptiness; rustc owns the path syntax.
+        let path = self.require_nonempty_attr("use", "path", path_raw, &location)?;
+        Some(UseDecl { path })
     }
 
     /// Generic parser for the `(name, ty, body)` element shape shared by

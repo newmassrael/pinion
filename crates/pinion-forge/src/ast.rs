@@ -3,8 +3,10 @@
 //! is closed (`<use>` / `<signal>` / `<computed>` / `<resource>` under
 //! `kind="reactive"`).
 //!
-//! R38.2a/b/c add `<signal>` / `<computed>` / `<resource>` to the child
-//! set. `<use>` lands in R38.2d.
+//! R38.2a/b/c/d add `<signal>` / `<computed>` / `<resource>` / `<use>`
+//! to the child set. R38.2a/b/c contribute a struct field and a `new`-
+//! body binding each; `<use>` (R38.2d) is purely a module-level import
+//! and contributes neither.
 
 /// Top-level `<pinion>` document. One file = one document = one emitted
 /// Rust struct (R38 ratify: "one file = one struct").
@@ -52,8 +54,7 @@ impl PinionKind {
     }
 }
 
-/// Closed child-element enum. R38.2a/b/c populate `Signal`, `Computed`,
-/// `Resource`; `<use>` lands in R38.2d.
+/// Closed child-element enum. R38.2a/b/c/d populate all four variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinionChild {
     /// `<signal name="..." ty="...">CDATA initial</signal>`. Compiles to
@@ -77,6 +78,12 @@ pub enum PinionChild {
     /// `&S: LocalSpawner` second argument; documents without resources
     /// keep the simpler one-argument `new`.
     Resource(ResourceDecl),
+    /// `<use path="..."/>`. Module-level `use` statement emitted above
+    /// the generated struct. Carries no field, no `new`-body binding,
+    /// and does not contribute to `prior_names` for over-capture — the
+    /// imported names are available to every closure body via Rust's
+    /// module-level scope automatically.
+    Use(UseDecl),
 }
 
 /// Parsed `<signal>` child. The body (CDATA or plain text) is the
@@ -117,6 +124,20 @@ pub struct ComputedDecl {
     /// the author can write either a single expression (`a.get() + 1`)
     /// or statements followed by an expression (`let x = a.get(); x * 2`).
     pub body: String,
+}
+
+/// Parsed `<use>` child. The `path` is emitted verbatim into a
+/// module-level `use <path>;` statement at the top of the generated
+/// Rust file. Validation at R38.2d is intentionally shallow
+/// (non-empty); `rustc` rejects malformed use paths and `syn::UseTree`-
+/// based deep validation is a [carry-forward R38.2x] decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UseDecl {
+    /// Rust use-path. Accepts any form `rustc` accepts: simple paths
+    /// (`my_crate::Foo`), groups (`my_crate::{a, b}`), renames
+    /// (`my_crate::Foo as Bar`), globs (`my_crate::*`). pinion-forge
+    /// does not interpret the path beyond non-emptiness.
+    pub path: String,
 }
 
 /// Parsed `<resource>` child. Carries the success/error type pair and

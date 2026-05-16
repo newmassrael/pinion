@@ -1,13 +1,16 @@
 //! Rust source emitter. R38 ratify (one file = one struct).
 //!
-//! ## R38.2c emission shape
+//! ## R38.2d emission shape
 //!
 //! ```rust,ignore
+//! use <path>;
+//! use <other_path>;
+//!
 //! pub struct <Name> {
 //!     pub <signal>: ::pinion_core::reactive::Signal<<ty>>,
 //!     pub <computed>: ::pinion_core::reactive::Computed<<ty>>,
 //!     pub <resource>: ::pinion_core::reactive::Resource<<ty>, <err>>,
-//!     // ... in declaration order
+//!     // ... binding children in declaration order
 //! }
 //!
 //! impl <Name> {
@@ -50,7 +53,9 @@
 //! authors must write `async move { ... }` explicitly inside `<resource>`
 //! when prior captures are referenced.
 
-use crate::ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl};
+use crate::ast::{
+    ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl, UseDecl,
+};
 
 const INDENT: &str = "    ";
 
@@ -65,10 +70,38 @@ pub fn emit_rust(doc: &PinionDoc) -> String {
 
 fn emit_reactive(doc: &PinionDoc) -> String {
     let name = &doc.name;
-    if doc.children.is_empty() {
-        return emit_unit_struct(name);
+    let use_block = emit_use_block(&doc.children);
+    let has_binding = doc.children.iter().any(is_binding_child);
+    let body = if has_binding {
+        emit_struct_with_children(name, &doc.children)
+    } else {
+        emit_unit_struct(name)
+    };
+    format!("{use_block}{body}")
+}
+
+/// Collect every `<use path="..."/>` into a single module-level
+/// `use ...;` block at the top of the file, followed by one blank line
+/// separating it from the struct definition. Returns an empty string
+/// when the document has no `<use>` children (no leading blank line).
+fn emit_use_block(children: &[PinionChild]) -> String {
+    let mut out = String::new();
+    for child in children {
+        if let PinionChild::Use(UseDecl { path }) = child {
+            out.push_str(&format!("use {path};\n"));
+        }
     }
-    emit_struct_with_children(name, &doc.children)
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
+fn is_binding_child(child: &PinionChild) -> bool {
+    matches!(
+        child,
+        PinionChild::Signal(_) | PinionChild::Computed(_) | PinionChild::Resource(_)
+    )
 }
 
 fn emit_unit_struct(name: &str) -> String {
@@ -96,15 +129,26 @@ fn emit_struct_with_children(name: &str, children: &[PinionChild]) -> String {
 
     for child in children {
         match child {
-            PinionChild::Signal(s) => emit_signal_into(s, &mut fields, &mut bindings, &mut self_inits),
+            PinionChild::Signal(s) => {
+                emit_signal_into(s, &mut fields, &mut bindings, &mut self_inits);
+                prior_names.push(s.name.clone());
+            }
             PinionChild::Computed(c) => {
                 emit_computed_into(c, &prior_names, &mut fields, &mut bindings, &mut self_inits);
+                prior_names.push(c.name.clone());
             }
             PinionChild::Resource(r) => {
                 emit_resource_into(r, &prior_names, &mut fields, &mut bindings, &mut self_inits);
+                prior_names.push(r.name.clone());
+            }
+            PinionChild::Use(_) => {
+                // <use> is emitted as a top-level `use` statement (see
+                // emit_use_block); it does not produce a struct field,
+                // a constructor binding, or a prior_names entry. The
+                // import is visible to every closure body via Rust's
+                // module-level scope, so over-capture is unnecessary.
             }
         }
-        prior_names.push(child_name(child).to_owned());
     }
 
     let signature = if needs_spawner(children) {
@@ -253,10 +297,3 @@ fn capture_tuple(prior_names: &[String]) -> (String, String) {
     }
 }
 
-fn child_name(child: &PinionChild) -> &str {
-    match child {
-        PinionChild::Signal(s) => &s.name,
-        PinionChild::Computed(c) => &c.name,
-        PinionChild::Resource(r) => &r.name,
-    }
-}
