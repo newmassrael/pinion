@@ -1797,6 +1797,65 @@ fn main() {
 
 
 
+### §5.33. AI overlay UX: event capture + highlight rendering
+
+
+**Intent**: pinion-overlay crate: AI mode event capture + scene-level highlight injection. §5.32 introspection 위에 user-facing surface 구축, 시각 선택과 AI 응답 highlight 의 first-class layer.
+
+
+**Rationale**:
+- §5.32 RPC primitives 가 protocol-level — user-facing visible value layer 필요
+- AI agent 의 highlight 응답을 scene 에 inject 하는 표준 surface
+- event interception transport-agnostic — winit/web/tui 등 backend 가 호출
+- framework axis 로 박아 모든 example/widget 이 공용 (재구현 부담 제거)
+- v0 함수형 API — immutable transform, dry_run 종함적 결정
+
+
+
+**Inputs**:
+- §5.32 scene/locate, locate_region, bbox — Scene ↔ path/bbox 변환 표면
+- §5.2 scene primitive — highlight 구조는 Box inject (Effect/External 안 쓰임)
+- §5.7 RPC envelope — AI ↔ overlay 양방향 message 표준 transport
+- §2 #1 structured scene — overlay 자체가 scene-as-data 로 query 가능
+- §5.20 intent tag — highlight Box 가 ai-overlay/<path> 형태 tag 부여
+
+
+
+**Outputs**:
+- 새 crate pinion-overlay (workspace member 추가)
+- OverlayEvent enum: Click {x,y}, Drag {x1,y1,x2,y2}, Escape, Acknowledge
+- inject_highlight(scene, path, style) → Scene 순수 함수
+- clear_highlights(scene) → Scene 순수 함수 (set semantics)
+- examples/ai-introspect-demo 신설 (dogfood with winit/softbuffer)
+
+
+
+**Caveats**:
+- v0 함수형 API; Controller pattern은 evidence 쌓인 후 R39.4.x carry-forward
+- event types transport-agnostic; winit/web/tui 매핑은 consumer (example/runtime) 책임
+- highlight = Scene::Box inject; tag prefix "ai-overlay/" 로 식별 (다른 Box 영향 없음)
+- inject_highlight = immutable transform; 새 Scene 반환; dry_run/snapshot 호환
+- multiple highlight 동시 가능; set semantics on tag suffix; 중복 inject = idempotent
+- clear_highlights = tag prefix 로 일괄 제거; 다른 ai-overlay/* 외 Box 영향 없음
+- v0 event capture mode 단순 toggle; modeless overlay 디자인은 R39.4.x
+- transport binding (winit event → OverlayEvent) 은 example/runtime consumer 책임
+
+
+
+**Alternatives rejected**:
+- pinion-runtime 안 직접 — runtime 미성숙; coupling 위험; 시기 부적절
+- examples/ 만 — framework axis 표면화 안 됨; 다음 example마다 재구현 부담
+- Scene::Effect 활용 — Effect opaque (§3); introspect 불가; AI 가 highlight query 못함
+- winit dep 직접 — transport-agnostic 원칙 위반; web/tui 차단
+- Controller struct v0 — state ownership 결정 premature; 함수형 v0 후 promote
+
+
+
+**Impact scope**: §5.32, §5.7, §5.2, §5.20, §2
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -3716,6 +3775,38 @@ fn main() {
 **Carry forward**:
 - R39.4: AI overlay UX mode — visual selection cursor + highlight rendering (first user-visible piece)
 - R39.x: spatial index (R-tree) when scenes ≥10k elements
+
+
+
+### Round 39.4 — §5.33 new — AI overlay UX axis (pinion-overlay crate ratify, functional v0 API)
+
+**Changes**:
+- New §5.33 section: pinion-overlay crate as framework axis (Option B)
+- Functional v0 API: inject_highlight / clear_highlights pure transforms
+- OverlayEvent enum: Click / Drag / Escape / Acknowledge (transport-agnostic)
+- Highlight = Scene::Box inject with ai-overlay/ tag prefix (introspect-friendly)
+- Alternatives rejected: pinion-runtime embed / examples-only / Effect / winit-dep / Controller-v0
+- Impact: §5.32 (introspection), §5.7 (RPC), §5.2 (primitives), §5.20 (tags)
+
+
+
+**Verification**:
+- 8 caveats authored covering v0 shape / transport / tag prefix / immutability / set semantics
+- 5 alternatives explicitly rejected with rationale
+- Cross-refs verified: §5.32 / §5.7 / §5.2 / §5.20 / §2 all exist
+- Build slices R39.4.1/.2/.3 queued for skeleton / transforms / dogfood demo
+
+
+
+**Impact**: §5.33, §5.32, §5.7, §5.2, §5.20, §2
+
+
+**Carry forward**:
+- R39.4.1: pinion-overlay crate skeleton + OverlayEvent + HighlightStyle
+- R39.4.2: inject_highlight + clear_highlights pure transforms + tests
+- R39.4.3: ai-introspect-demo example end-to-end (winit + RPC + overlay)
+- R39.4.x: Controller pattern promotion after dogfood evidence
+- R39.4.x: pinion-runtime integration hook (post runtime maturation)
 
 
 
