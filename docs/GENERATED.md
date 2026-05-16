@@ -1717,6 +1717,66 @@ fn main() {
 
 
 
+### §5.32. AI scene introspection: spatial-semantic locate
+
+
+**Intent**: xy → element path + region → element set + path → bbox 역방향 RPC. 스크린샷-OCR 없이 시각 선택을 semantic identity 로 변환, AI scene reasoning first-class input.
+
+
+**Rationale**:
+- §2 #7 scene-as-data 의 RPC 구현 — scene/query 의 역방향 (xy → path)
+- 사용자 시각 선택 → AI 가 path + state + ancestor chain 즉시 reasoning
+- 스크린샷+OCR 대비 토큰 ×100 감소, 정확도 100%, runtime state 가시성
+- Qt/Compose/Flutter 모두 screenshot-only — pinion 이 first-class AI 채널
+- hit-test statechart-aware → disabled/hidden 이유까지 single round-trip 노출
+- 역방향 bbox (path → xy) 가 AI highlight 응답에 필요 — 양방향 대칭
+
+
+
+**Inputs**:
+- §2 #1 structured scene mandatory — 모든 element 가 typed identity + path
+- §2 #7 scene-as-data — path 가 stable identity, 픽셀 없이 query 가능
+- §5.7 RPC envelope — 새 method 추가의 transport
+- §5.12 screenshot — fallback only; locate 가 primary AI input path
+- §5.2 scene primitive trait — 각 variant 가 hit_test impl 책임
+
+
+
+**Outputs**:
+- RPC scene/locate {x,y} → {path, element, ancestors[], bbox}
+- RPC scene/locate_region {x,y,w,h} → {paths[], common_ancestor}
+- RPC scene/bbox {path} → {bbox, viewport-relative}
+- pinion-rpc dispatch table 7 → 10 typed methods
+- pinion-core scene primitive trait gains hit_test() method
+
+
+
+**Caveats**:
+- coords = logical px (CSS px) DPI-independent; physical px 변환은 backend 책임
+- hit-test z-order; overlapping 시 topmost only; region 은 intersect 전부 반환
+- disabled/invisible element 도 path 반환 — AI 가 "왜 안 눌리는지" reasoning 위함
+- hit-test statechart-aware — SCE current state 가 element interactive 여부 surface
+- empty hit (외부 클릭) 시 root path "/" 반환, ancestors empty array
+- region paths 는 declaration order = UI tree DFS pre-order (z-order 아님)
+- v0 hit-test = naive scene-tree traversal; spatial index (R-tree 등) carry-forward
+- bbox = viewport-relative coords; window/screen 변환은 RPC client 책임
+
+
+
+**Alternatives rejected**:
+- screenshot + vision model — 토큰 ×100, OCR 부정확, state 없음, 결정성 없음
+- ARIA accessibility tree only — 모든 element 가 ARIA props 가지지 않음
+- IDE-specific protocol — 외부 AI agent 사용 불가; first-class RPC 가 필수
+- scene/query 만 — path→subtree 방향; 역방향 (xy→path) 도 명시적 axis 필요
+- spatial index v0 시점 — premature; naive DFS 로 수천 element 까지 충분
+
+
+
+**Impact scope**: §5.7, §5.12, §5.2, §2
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -3508,6 +3568,42 @@ fn main() {
 - R38.2x: signature consistency (always-spawner) review post-dogfood corpus
 - R38.3: hello-button reactive layer integration via .pinion.xml
 - R39: §5.22 split into §5.22.1/.2/.3/.4 if T4 body-length stays high
+
+
+
+### Round 39 — §5.32 new — AI scene introspection (spatial-semantic locate); 3 new RPC methods queued
+
+**Changes**:
+- New §5.32 section ratified: xy↔path bidirectional + region selection primitives
+- 3 new RPC methods queued: scene/locate, scene/locate_region, scene/bbox
+- pinion-rpc dispatch table will extend 7 → 10 typed methods (R39.1+ build)
+- pinion-core scene primitive trait gains hit_test() method (R39.1 build)
+- Statechart-aware hit-test surfaces disabled/hidden state to AI in one round-trip
+- Alternatives rejected: screenshot+OCR, ARIA-only, IDE-protocol, spatial-index-v0
+- Impact scope: §5.7 (RPC envelope), §5.12 (screenshot fallback), §5.2 (primitives), §2
+
+
+
+**Verification**:
+- validate_workspace pre-write T1 cross-ref guarded impact_scope [5.7,5.12,5.2,2]
+- All 4 cross-refs verified to exist (list_sections confirmed §5.2/§5.7/§5.12/§2)
+- 8 caveats authored covering coords/z-order/disabled/sce-aware/empty/order/v0/bbox
+- 5 alternatives rejected with explicit rationale (— separator)
+- intent ≤200 chars, all bullets ≤100 chars (T3 default)
+
+
+
+**Impact**: §5.32, §5.7, §5.12, §5.2, §2
+
+
+**Carry forward**:
+- R39.1: scene/locate RPC method build (parser/dispatch/wire/hit_test impl)
+- R39.2: scene/locate_region build
+- R39.3: scene/bbox build (path → viewport bbox)
+- R39.4: AI overlay UX mode — visual selection cursor + highlight rendering
+- R39.x: spatial index (R-tree) for scenes >10k elements
+- R40+: scene/propose_change + dry_run preview lifecycle (separate axis)
+- R40+: event_history ring buffer + RPC export (separate axis)
 
 
 
