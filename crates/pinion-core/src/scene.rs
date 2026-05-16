@@ -123,26 +123,51 @@ impl TextNode {
 }
 
 /// Vector path primitive.
+///
+/// v0 §5.11 shape: `data: String` carries an opaque path payload
+/// (SVG path-d notation is the natural carrier today, but the
+/// framework does not parse it — the consumer rasterizer does);
+/// `rect: Rect` gives the absolute bounding box for layout/hit
+/// purposes. A structured command enum (`MoveTo`/`LineTo`/`CurveTo`/
+/// `Close`) plus stroke/fill `Style` lands with the §5.3 DSL.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
-pub struct PathNode {}
+pub struct PathNode {
+    pub data: String,
+    pub rect: Rect,
+}
 
 impl PathNode {
     #[must_use]
-    pub const fn new() -> Self {
-        Self {}
+    pub fn new(data: impl Into<String>, rect: Rect) -> Self {
+        Self {
+            data: data.into(),
+            rect,
+        }
     }
 }
 
 /// Raster or vector image primitive.
+///
+/// v0 §5.11 shape: `source: String` carries an opaque locator
+/// (`file://`, `https://`, `memory://0xABCD`, etc.) that the
+/// consumer loader resolves; `rect: Rect` gives the destination
+/// bounds. The codec / decoded-buffer cache and `Style`-level
+/// fit/cover/tile policy come with the §5.3 DSL.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
-pub struct ImageNode {}
+pub struct ImageNode {
+    pub source: String,
+    pub rect: Rect,
+}
 
 impl ImageNode {
     #[must_use]
-    pub const fn new() -> Self {
-        Self {}
+    pub fn new(source: impl Into<String>, rect: Rect) -> Self {
+        Self {
+            source: source.into(),
+            rect,
+        }
     }
 }
 
@@ -212,8 +237,8 @@ mod tests {
     fn all_seven_variants_construct() {
         let _ = Scene::Box(BoxNode::new(0, Rect::default()));
         let _ = Scene::Text(TextNode::new("", Rect::default()));
-        let _ = Scene::Path(PathNode::new());
-        let _ = Scene::Image(ImageNode::new());
+        let _ = Scene::Path(PathNode::new("", Rect::default()));
+        let _ = Scene::Image(ImageNode::new("", Rect::default()));
         let _ = Scene::Container(ContainerNode::new(vec![]));
         let _ = Scene::Effect(EffectNode::new());
         let _ = Scene::External(ExternalNode::new(stub_handle()));
@@ -258,6 +283,39 @@ mod tests {
         match scene {
             Scene::Box(node) => assert_eq!(node.rect, rect),
             _ => panic!("expected Box variant"),
+        }
+    }
+
+    #[test]
+    fn path_node_data_and_rect_round_trip_through_scene() {
+        // v0 §5.11 Path shape: opaque `data` string + `rect`. The
+        // framework treats `data` as bytes-on-the-wire; the §5.3 DSL
+        // settles whether SVG path-d, a typed command enum, or both
+        // are the canonical input form.
+        let node = PathNode::new("M10 10 L20 20 Z", Rect::new(0, 0, 32, 32));
+        let scene = Scene::Path(node);
+        match scene {
+            Scene::Path(p) => {
+                assert_eq!(p.data, "M10 10 L20 20 Z");
+                assert_eq!(p.rect, Rect::new(0, 0, 32, 32));
+            }
+            _ => panic!("expected Path variant"),
+        }
+    }
+
+    #[test]
+    fn image_node_source_and_rect_round_trip_through_scene() {
+        // v0 §5.11 Image shape: opaque `source` locator + `rect`.
+        // The framework does not interpret the URI scheme; the
+        // consumer loader does (file://, https://, memory:// …).
+        let node = ImageNode::new("file:///tmp/icon.png", Rect::new(8, 8, 24, 24));
+        let scene = Scene::Image(node);
+        match scene {
+            Scene::Image(i) => {
+                assert_eq!(i.source, "file:///tmp/icon.png");
+                assert_eq!(i.rect, Rect::new(8, 8, 24, 24));
+            }
+            _ => panic!("expected Image variant"),
         }
     }
 

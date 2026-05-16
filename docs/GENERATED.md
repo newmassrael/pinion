@@ -314,6 +314,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R17 BoxNode adds `Rect { x,y,w,h: u32 }` geometry; full DSL deferred to §5.3
 - R17 ContainerNode v0 holds `children: Vec<Scene>`; taffy layout deferred to §5.3 DSL
 - R17 TextNode v0 holds `content: String` + `rect: Rect`; font/size/colour deferred to §5.3
+- R17 PathNode v0: `data: String` + `rect: Rect`; structured commands deferred to §5.3
+- R17 ImageNode v0: `source: String` + `rect: Rect`; codec/loader deferred to §5.3 DSL
 
 
 
