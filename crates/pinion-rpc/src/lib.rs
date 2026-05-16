@@ -16,6 +16,7 @@ pub mod intents;
 pub mod invoke;
 pub mod locate;
 pub mod path;
+pub mod preview;
 pub mod query;
 pub mod rewind;
 pub mod screenshot;
@@ -31,6 +32,10 @@ pub use locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };
 pub use path::{resolve, PathError, ResolvedPath};
+pub use preview::{
+    ApplyError, Entry as PreviewEntry, PreviewId, PreviewLedger, PreviewView, Proposal,
+    ProposeError, SweepReport, DEFAULT_CAPACITY, DEFAULT_TTL, MAX_TTL,
+};
 pub use query::{query, QueryError};
 pub use rewind::{rewind, RewindError};
 pub use screenshot::{screenshot, Screenshot, ScreenshotError};

@@ -1910,6 +1910,10 @@ fn main() {
 - preview state side-effect 0 — signal write sandbox, Effect/Command 실제 실행 안 함
 - timeout 자동 cancel — stale preview_id 사용 시 명시 error, ID 재사용 금지
 - 기존 dry_run RPC (one-shot) 유지 — propose_change 는 stateful 보강 axis
+- R40.1: capacity default=64, TTL default=60s, MAX_TTL=600s; configurable via with_config
+- R40.1: conflict policy = independent ledger + OCC (base_revision token per entry, compared at apply)
+- R40.1: lazy eviction on propose — past-deadline entries reclaimed before capacity check
+- R40.1: Proposal as open trait; concrete variants R40.5 — ledger schema decoupled
 
 
 
@@ -1924,6 +1928,18 @@ fn main() {
 
 **Impact scope**: §2, §5.7, §5.22, §5.32, §5.33
 
+
+
+**Implementations**:
+- crates/pinion-rpc/src/preview/mod.rs
+- crates/pinion-rpc/src/preview/id.rs:PreviewId
+- crates/pinion-rpc/src/preview/proposal.rs:Proposal
+- crates/pinion-rpc/src/preview/error.rs:ProposeError
+- crates/pinion-rpc/src/preview/error.rs:ApplyError
+- crates/pinion-rpc/src/preview/ledger.rs:PreviewLedger
+- crates/pinion-rpc/src/preview/ledger.rs:Entry
+- crates/pinion-rpc/src/preview/ledger.rs:PreviewView
+- crates/pinion-rpc/src/preview/ledger.rs:SweepReport
 
 
 
@@ -4010,6 +4026,42 @@ fn main() {
 - R40.2+: typed change enum 단계 impl — SetSignal 부터 ReplaceView/SetStyle/DispatchIntent 순
 - R40.3+: ai-introspect-demo 확장 — locate → propose → overlay preview → apply 시연
 - existing: §5.16 GPU render 진입; hello-button reactive 통합 (R38.3); overlay Controller promote
+
+
+
+### Round 40.1 — §5.34 PreviewLedger 모델-first slice — pinion-rpc/src/preview/ module + 19 tests
+
+**Changes**:
+- crates/pinion-rpc/src/preview/ 신규 디렉터리 모듈 (mod / id / proposal / error / ledger)
+- PreviewId(NonZeroU64) newtype + AtomicU64 monotonic ID + RwLock<BTreeMap> entries
+- PreviewLedger: with_config / propose / cancel / list / apply_extract / sweep_expired API
+- Proposal open trait (Send+Sync+Debug); Box<dyn Proposal> ledger storage; concrete variants R40.5
+- ProposeError::CapacityFull / ApplyError::{UnknownPreview,Expired,BaseRevisionConflict} 완전 surface
+- DEFAULT_TTL=60s / MAX_TTL=600s / DEFAULT_CAPACITY=64 — textbook AI workflow tuning
+- OCC (Q2=C) — base_revision token 각 entry, apply시 current_scene_revision 비교
+- lazy eviction on propose — past-deadline entries reclaimed before capacity check
+
+
+
+**Verification**:
+- cargo test --workspace: 454 → 473 pass (+19 preview ledger tests)
+- cargo clippy --workspace --all-targets: 12 pre-existing baseline only — preview/ 신규 0
+- OCC 경합 시나리오: revision mismatch → entry 유지 (cancel 가능), expired → entry 제거
+- concurrent propose test: 8 threads × 8 IDs = 64 unique (AtomicU64 monotonic)
+- Mnemosyne add_section_implementation: 9 file/symbol bindings under §5.34
+
+
+
+**Impact**: §5.34, §5.7
+
+
+**Carry forward**:
+- R40.2: scene/propose_change RPC method (13th method) — dispatch + JSON serialization
+- R40.3: scene/cancel_preview RPC method (14th)
+- R40.4: scene/list_previews RPC method (15th)
+- R40.5: scene/apply_preview RPC + typed Proposal enum (SetSignal/ReplaceView/SetStyle/DispatchIntent)
+- R40.x: pinion-core Scene에 scene_revision counter 입히기 (OCC token source)
+- carry-forward existing: §5.16 GPU, hello-button reactive, overlay Controller promote
 
 
 
