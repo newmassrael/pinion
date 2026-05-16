@@ -1707,6 +1707,74 @@
         "Pixel renderer: pinion-render-rhi delivery to unblock screenshot (§5.16)"
       ]
     },
+    "Round 18": {
+      "decision_summary": "Round 18 — R17 round close: §5.11 v0 schema 5/5 + §5.15 widget bridging + §5.12 scene/invoke bidirectional RPC + live hello-button dogfood (8 slices)",
+      "changes_bullets": [
+        "§5.11 v0 schemas locked: BoxNode/TextNode/PathNode/ImageNode/ContainerNode 5/5 introspectable",
+        "Rect{x,y,w,h:u32} geometry primitive added to scene; Box/Text/Path/Image carry it",
+        "ButtonExternal + ButtonStateSnapshot: first §5.15 widget-bridging reference impls",
+        "ExternalIntrospect.invoke trait method + InvokeError; query/intervene/invoke triad",
+        "scene/invoke 8th method extends §5.12 7-set; pinion-rpc/src/invoke.rs typed dispatcher",
+        "hello-button: §6.3 view-fn first live; bidirectional RPC — winit + JSON-RPC share invoke",
+        "§2 invariant #2 (RPC headless as AI primary path) literally validated against live SCXML"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 110 -> 149 (+39 across 8 slices; 0 regressions)",
+        "cargo clippy --workspace --all-targets: clean on every slice; pre-existing 9 untouched",
+        "validate_workspace per slice: T1=0 T3=0 RT=1/1 GENERATED.md=sync",
+        "Mnemosyne mutations: 8 caveat appends + 2 impl bindings across §5.11/§5.12/§5.15"
+      ],
+      "impact_refs": [
+        "2",
+        "5.2",
+        "5.11",
+        "5.12",
+        "5.15",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "cosmic-text Text rasterizer (Scene::Text currently skipped by paint)",
+        "§5.3 DSL: Style trait fields, taffy layout, structured Path/Image schemas",
+        "tokio stdio transport for production JSON-RPC framing/batching",
+        "multi-window WindowRouter live dogfood (fixture-only today)",
+        "vello/wgpu §5.16 first GPU backend; softbuffer eventual replacement",
+        "on_click callback / intent system new spec round (Elm-style messages)",
+        "SCE engine-level dry_run hook (replaces §5.8 v0 test-and-rollback)"
+      ],
+      "publishable_decision_summary": "Round 18 — R17 round close: §5.11 v0 schema 5/5 + §5.15 widget bridging + §5.12 scene/invoke bidirectional RPC + live hello-button dogfood (8 slices)",
+      "publishable_changes_bullets": [
+        "§5.11 v0 schemas locked: BoxNode/TextNode/PathNode/ImageNode/ContainerNode 5/5 introspectable",
+        "Rect{x,y,w,h:u32} geometry primitive added to scene; Box/Text/Path/Image carry it",
+        "ButtonExternal + ButtonStateSnapshot: first §5.15 widget-bridging reference impls",
+        "ExternalIntrospect.invoke trait method + InvokeError; query/intervene/invoke triad",
+        "scene/invoke 8th method extends §5.12 7-set; pinion-rpc/src/invoke.rs typed dispatcher",
+        "hello-button: §6.3 view-fn first live; bidirectional RPC — winit + JSON-RPC share invoke",
+        "§2 invariant #2 (RPC headless as AI primary path) literally validated against live SCXML"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 110 -> 149 (+39 across 8 slices; 0 regressions)",
+        "cargo clippy --workspace --all-targets: clean on every slice; pre-existing 9 untouched",
+        "validate_workspace per slice: T1=0 T3=0 RT=1/1 GENERATED.md=sync",
+        "Mnemosyne mutations: 8 caveat appends + 2 impl bindings across §5.11/§5.12/§5.15"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.2",
+        "5.11",
+        "5.12",
+        "5.15",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "cosmic-text Text rasterizer (Scene::Text currently skipped by paint)",
+        "§5.3 DSL: Style trait fields, taffy layout, structured Path/Image schemas",
+        "tokio stdio transport for production JSON-RPC framing/batching",
+        "multi-window WindowRouter live dogfood (fixture-only today)",
+        "vello/wgpu §5.16 first GPU backend; softbuffer eventual replacement",
+        "on_click callback / intent system new spec round (Elm-style messages)",
+        "SCE engine-level dry_run hook (replaces §5.8 v0 test-and-rollback)"
+      ]
+    },
     "Round 2": {
       "decision_summary": "Round 2 open axes decomposition: §5 + §5.1-§5.10 enumerate options, trade-offs, deps; §5.2/§5.4 slots inferred from §2 invariants",
       "changes_bullets": [
