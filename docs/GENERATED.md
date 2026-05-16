@@ -1047,6 +1047,14 @@ fn main() {
 
 
 
+**Implementations**:
+- crates/pinion-core/src/reactive/signal.rs
+- crates/pinion-core/src/reactive/owner.rs
+- crates/pinion-core/src/reactive/computed.rs
+- crates/pinion-core/src/reactive/resource.rs
+- crates/pinion-core/src/reactive/introspect.rs
+
+
 
 ### §5.23. Effect model (Effect / Command / handler)
 
@@ -3114,6 +3122,36 @@ fn main() {
 - TUI backend (§5.9 invariant #6) realization
 - Multi-window WindowRouter live dogfood
 - Forge integration tooling for SCE → Rust pipeline
+
+
+
+### Round 37 — Round 37 — §5.22 reactive Rust runtime: Signal/Computed/Resource + Owner snapshot/restore for dry_run
+
+**Changes**:
+- pinion-core::reactive::Signal<T> bound = Clone+PartialEq+Serialize+DeserializeOwned per R36 §5.31
+- Computed<T> lazy push-pull; Owner tree thread-local + cascade-drop; ReactiveNode shared trait
+- batch(fn) closure: PENDING_DIRTY defers cascade until outermost exit; idempotent dirty propagation
+- Resource<T,E>: Loading/Ready/Error state + FetchToken generation cancellation (sync API, no tokio dep)
+- SignalExternal<T> scalar RPC bridge + Owner snapshot/restore via SnapshotableSignal for dry_run
+
+
+
+**Verification**:
+- cargo test --workspace = 307 pass (baseline 235 + 72 new reactive across 7 slices)
+- cargo clippy --workspace --all-targets: 12 pre-existing only; zero new in reactive module
+- Mnemosyne validate-workspace: T1=0 T3=0 RT=1/1 sync; 5 §5.22 implementations registered
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R38 §5.22: SCE schema for signal graph + Forge codegen (Rust state struct + reactive wiring)
+- IntrospectValue Json variant for structured-T Signal RPC (currently scalar-only bridge)
+- Effect/Command (§5.23 R28) will wire Resource auto-refetch on dep change
+- §5.29 SyncSignal Rust runtime (Arc<RwLock<T>> wrapper) — cross-thread variant impl
+- §5.31 hot reload: snapshot/restore wire format + stable path key generation
 
 
 
