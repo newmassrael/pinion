@@ -1,53 +1,56 @@
 //! Rust source emitter. R38 ratify (one file = one struct).
 //!
-//! ## R38.2b emission shape
+//! ## R38.2c emission shape
 //!
 //! ```rust,ignore
 //! pub struct <Name> {
 //!     pub <signal>: ::pinion_core::reactive::Signal<<ty>>,
 //!     pub <computed>: ::pinion_core::reactive::Computed<<ty>>,
+//!     pub <resource>: ::pinion_core::reactive::Resource<<ty>, <err>>,
 //!     // ... in declaration order
 //! }
 //!
 //! impl <Name> {
-//!     pub fn new(_owner: &::pinion_core::reactive::Owner) -> Self {
-//!         let <signal> = ::pinion_core::reactive::Signal::new(<initial>);
-//!         let <computed> = {
-//!             #[allow(unused_variables, clippy::redundant_clone)]
-//!             let (<prior>,) = (<prior>.clone(),);
-//!             ::pinion_core::reactive::Computed::new(move || { <body> })
-//!         };
-//!         Self { <signal>, <computed> }
-//!     }
+//!     // signature variant A — no <resource> children:
+//!     pub fn new(_owner: &::pinion_core::reactive::Owner) -> Self { ... }
+//!
+//!     // signature variant B — at least one <resource> child:
+//!     pub fn new<S>(_owner: &::pinion_core::reactive::Owner, spawner: &S) -> Self
+//!     where S: ::pinion_core::reactive::LocalSpawner
+//!     { ... }
 //! }
 //! ```
 //!
+//! ## Signature policy
+//!
+//! `<resource>` requires a [`LocalSpawner`] handle at construction
+//! time to drive the initial fetch future. Documents with no
+//! `<resource>` keep the simpler one-argument `new` so a downstream
+//! that only uses signals/computeds is not forced to provide a
+//! dummy spawner. The presence of any `<resource>` element widens
+//! the signature; the choice is data-driven (children shape) rather
+//! than user-toggled.
+//!
+//! Trade-off vs. always-spawner signature: long-term consistency at
+//! the cost of a no-op argument. R38.2c keeps minimum surface; the
+//! consistency-first variant is a carry-forward decision to revisit
+//! once the dogfood corpus gives empirical signal.
+//!
 //! ## Capture policy
 //!
-//! `<computed>` closure capture is **over-capture by clone**: every
-//! prior child identifier in the same `<pinion>` document is shadowed
-//! by a `.clone()` binding right before the `move` closure, regardless
-//! of whether the body actually references it. The unused-variable
-//! warning is suppressed at the inner block.
+//! `<computed>` and `<resource>` bodies may reference prior child
+//! identifiers. The codegen emits an over-capture shadow block right
+//! before the constructor call so the Rust borrow checker accepts the
+//! body — runtime tracking (R26 push-pull) discovers the *actual*
+//! dependency set at first use.
 //!
-//! Rationale: the runtime reactive graph (R26 push-pull) discovers the
-//! *real* dependency set when the closure first calls `Signal::get()` /
-//! `Computed::get()`, so a static dependency list at codegen would be
-//! either redundant or a footgun. The over-capture is just what Rust's
-//! borrow checker needs — the closure must own its captures because
-//! `Self { ... }` afterwards moves the originals.
-//!
-//! Precise `syn::Expr` analysis to capture only the referenced
-//! identifiers is a [carry-forward R38.2x] decision; cost-benefit
-//! re-evaluated when `<resource>` lands and the closure shape grows.
-//!
-//! ## String formatting choice
-//!
-//! Source is string-formatted (not via `syn` / `quote`). Body
-//! expressions are *not* parsed — they pass through verbatim. Syntax
-//! validation is delegated to `rustc` at the consumer's `cargo build`.
+//! `<computed>` uses `move ||` closure capture; `<resource>` uses
+//! `async move { ... }` block capture — both rely on the caller body
+//! using `move` semantics. pinion-forge does not wrap the body, so
+//! authors must write `async move { ... }` explicitly inside `<resource>`
+//! when prior captures are referenced.
 
-use crate::ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, SignalDecl};
+use crate::ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl};
 
 const INDENT: &str = "    ";
 
@@ -86,9 +89,9 @@ fn emit_struct_with_children(name: &str, children: &[PinionChild]) -> String {
     let mut self_inits = String::new();
 
     // Names introduced by prior children — used as the over-capture set
-    // for each subsequent <computed> closure. Order matters: the user
-    // sees declarations evaluated top-to-bottom, so dependencies in a
-    // <computed> body must reference earlier children only.
+    // for each subsequent <computed>/<resource> body. Order matters: the
+    // user sees declarations evaluated top-to-bottom, so dependencies
+    // must reference earlier children only.
     let mut prior_names: Vec<String> = Vec::new();
 
     for child in children {
@@ -97,9 +100,23 @@ fn emit_struct_with_children(name: &str, children: &[PinionChild]) -> String {
             PinionChild::Computed(c) => {
                 emit_computed_into(c, &prior_names, &mut fields, &mut bindings, &mut self_inits);
             }
+            PinionChild::Resource(r) => {
+                emit_resource_into(r, &prior_names, &mut fields, &mut bindings, &mut self_inits);
+            }
         }
         prior_names.push(child_name(child).to_owned());
     }
+
+    let signature = if needs_spawner(children) {
+        format!(
+            "{INDENT}pub fn new<S>(_owner: &::pinion_core::reactive::Owner, spawner: &S) -> Self\n\
+             {INDENT}where\n\
+             {INDENT}{INDENT}S: ::pinion_core::reactive::LocalSpawner,\n\
+             {INDENT}{{\n"
+        )
+    } else {
+        format!("{INDENT}pub fn new(_owner: &::pinion_core::reactive::Owner) -> Self {{\n")
+    };
 
     format!(
         "pub struct {name} {{\n\
@@ -107,7 +124,7 @@ fn emit_struct_with_children(name: &str, children: &[PinionChild]) -> String {
          }}\n\
          \n\
          impl {name} {{\n\
-         {INDENT}pub fn new(_owner: &::pinion_core::reactive::Owner) -> Self {{\n\
+         {signature}\
          {bindings}\
          {INDENT}{INDENT}Self {{\n\
          {self_inits}\
@@ -115,6 +132,10 @@ fn emit_struct_with_children(name: &str, children: &[PinionChild]) -> String {
          {INDENT}}}\n\
          }}\n"
     )
+}
+
+fn needs_spawner(children: &[PinionChild]) -> bool {
+    children.iter().any(|c| matches!(c, PinionChild::Resource(_)))
 }
 
 fn emit_signal_into(s: &SignalDecl, fields: &mut String, bindings: &mut String, inits: &mut String) {
@@ -145,9 +166,6 @@ fn emit_computed_into(
     ));
 
     if prior_names.is_empty() {
-        // No prior children to capture — emit the plain closure form.
-        // `move ||` still allowed (and idiomatic) because the closure
-        // may later be passed to a `'static`-bounded scheduler.
         bindings.push_str(&format!(
             "{INDENT}{INDENT}let {field} = \
              ::pinion_core::reactive::Computed::new(move || {{ {body} }});\n",
@@ -155,13 +173,7 @@ fn emit_computed_into(
             body = c.body,
         ));
     } else {
-        // Tuple-shadow over-capture. Single-name tuples use the
-        // trailing-comma form to stay grammatically uniform with the
-        // multi-name case. See module docs for the capture-policy
-        // rationale.
-        let lhs = format_tuple(prior_names.iter().map(String::as_str));
-        let rhs =
-            format_tuple(prior_names.iter().map(|n| format!("{n}.clone()")).collect::<Vec<_>>().iter().map(String::as_str));
+        let (lhs, rhs) = capture_tuple(prior_names);
         bindings.push_str(&format!(
             "{INDENT}{INDENT}let {field} = {{\n\
              {INDENT}{INDENT}{INDENT}#[allow(unused_variables, clippy::redundant_clone)]\n\
@@ -176,19 +188,68 @@ fn emit_computed_into(
     inits.push_str(&format!("{INDENT}{INDENT}{INDENT}{field},\n", field = c.name));
 }
 
-/// Build a parenthesized tuple literal. Single-element tuples use
-/// `(x,)` form per Rust grammar; zero-element should never reach here
-/// (the caller guards with `is_empty`).
-fn format_tuple<'a, I>(items: I) -> String
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let collected: Vec<&str> = items.into_iter().collect();
-    debug_assert!(!collected.is_empty(), "format_tuple called with empty iter");
-    if collected.len() == 1 {
-        format!("({},)", collected[0])
+fn emit_resource_into(
+    r: &ResourceDecl,
+    prior_names: &[String],
+    fields: &mut String,
+    bindings: &mut String,
+    inits: &mut String,
+) {
+    fields.push_str(&format!(
+        "{INDENT}pub {field}: ::pinion_core::reactive::Resource<{ty}, {err}>,\n",
+        field = r.name,
+        ty = r.ty,
+        err = r.err,
+    ));
+
+    // Initial state is Loading; the fetch_with call kicks off the
+    // future immediately so the user's get() observes the eventual
+    // Ready/Error transition.
+    bindings.push_str(&format!(
+        "{INDENT}{INDENT}let {field} = \
+         ::pinion_core::reactive::Resource::<{ty}, {err}>::loading();\n",
+        field = r.name,
+        ty = r.ty,
+        err = r.err,
+    ));
+
+    if prior_names.is_empty() {
+        bindings.push_str(&format!(
+            "{INDENT}{INDENT}{field}.fetch_with(spawner, {body});\n",
+            field = r.name,
+            body = r.body,
+        ));
     } else {
-        format!("({})", collected.join(", "))
+        let (lhs, rhs) = capture_tuple(prior_names);
+        bindings.push_str(&format!(
+            "{INDENT}{INDENT}{{\n\
+             {INDENT}{INDENT}{INDENT}#[allow(unused_variables, clippy::redundant_clone)]\n\
+             {INDENT}{INDENT}{INDENT}let {lhs} = {rhs};\n\
+             {INDENT}{INDENT}{INDENT}{field}.fetch_with(spawner, {body});\n\
+             {INDENT}{INDENT}}}\n",
+            field = r.name,
+            body = r.body,
+        ));
+    }
+
+    inits.push_str(&format!("{INDENT}{INDENT}{INDENT}{field},\n", field = r.name));
+}
+
+/// Build the over-capture `let` LHS and RHS as a parenthesized tuple.
+/// Single-name uses the trailing-comma form (`(x,)`) for grammatical
+/// uniformity with the multi-name case.
+fn capture_tuple(prior_names: &[String]) -> (String, String) {
+    debug_assert!(!prior_names.is_empty(), "capture_tuple called with no priors");
+    if prior_names.len() == 1 {
+        let n = &prior_names[0];
+        (format!("({n},)"), format!("({n}.clone(),)"))
+    } else {
+        let lhs = format!("({})", prior_names.join(", "));
+        let rhs = format!(
+            "({})",
+            prior_names.iter().map(|n| format!("{n}.clone()")).collect::<Vec<_>>().join(", ")
+        );
+        (lhs, rhs)
     }
 }
 
@@ -196,5 +257,6 @@ fn child_name(child: &PinionChild) -> &str {
     match child {
         PinionChild::Signal(s) => &s.name,
         PinionChild::Computed(c) => &c.name,
+        PinionChild::Resource(r) => &r.name,
     }
 }

@@ -1048,6 +1048,10 @@ fn main() {
 - R38.2b: over-capture by clone; runtime R26 push-pull discovers real deps from body
 - R38.2b: parse_named_typed_body DRY helper unifies signal/computed surface shape
 - R38.2b: declaration order = init order; computed references must point to prior children
+- R38.2c: <resource name ty err>future body</resource> → Resource::loading() + fetch_with(spawner)
+- R38.2c: new() signature widens to <S: LocalSpawner>(&Owner, &S) only when resource present
+- R38.2c: resource body authored as async move {} block; pinion-forge does not wrap
+- R38.2c: parse_resource_decl separate from parse_named_typed_body; 4-attr shape diverges
 
 
 
@@ -1085,6 +1089,10 @@ fn main() {
 - crates/pinion-forge/src/ast.rs:ComputedDecl
 - crates/pinion-forge/src/parser.rs:ParseCtx::parse_named_typed_body
 - crates/pinion-forge/src/codegen.rs:emit_struct_with_children
+- crates/pinion-forge/src/ast.rs:ResourceDecl
+- crates/pinion-forge/src/parser.rs:ParseCtx::parse_resource
+- crates/pinion-forge/src/codegen.rs:emit_resource_into
+- crates/pinion-forge/src/codegen.rs:needs_spawner
 
 
 
@@ -3388,6 +3396,40 @@ fn main() {
 - R38.2d: <use crate=... path=.../> external module import + path validation
 - R38.2x: syn::Expr visit for precise capture analysis (drop over-capture #[allow])
 - R38.2x: syn-based ty validation if rustc error distance hurts UX
+- R38.2e: first dogfood .pinion.xml (hello-button) + integration test crate
+
+
+
+### Round 38.2c — §5.22 <resource> async child + dynamic new() signature (spawner only when resource present)
+
+**Changes**:
+- AST: PinionChild::Resource(ResourceDecl{name, ty, err, body}) variant
+- Parser: parse_resource (4-attr shape) separate from parse_named_typed_body
+- Codegen: emit_resource_into emits Resource::<T,E>::loading() + fetch_with(spawner, body)
+- Codegen: needs_spawner gate widens new() to <S: LocalSpawner>(&Owner, &S) on resource
+- Codegen: over-capture block reuses capture_tuple helper for resource priors
+- lib.rs: ResourceDecl re-exported alongside other AST types
+
+
+
+**Verification**:
+- cargo test --workspace → 380 pass (370 baseline + 10 R38.2c new)
+- cargo clippy --workspace --all-targets → 12 pre-existing only, pinion-forge zero
+- Signature variants verified: empty/signal-only doc keeps 1-arg new() (regression test)
+- Resource signature verified: <S: LocalSpawner>(&Owner, &S) emitted with where-clause
+- Three-way diagnostic accumulation (signal+computed+resource) verified
+- Over-capture block emitted for resource with prior signal (test resource_with_prior_signal)
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R38.2d: <use crate=... path=.../> external module import + path validation
+- R38.2x: element-parser builder unifying signal/computed/resource attribute collection
+- R38.2x: syn::Expr visit for precise capture analysis (drop over-capture #[allow])
+- R38.2x: consistency vs minimum signature trade-off review (always-spawner option)
 - R38.2e: first dogfood .pinion.xml (hello-button) + integration test crate
 
 

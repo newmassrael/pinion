@@ -3,7 +3,7 @@
 //! than fail-fast so downstream tooling can show all errors at once
 //! (textbook contract for AOT compilers — surface every failure per run).
 //!
-//! ## R38.2b grammar (closed)
+//! ## R38.2c grammar (closed)
 //!
 //! ```text
 //! Document   ::= XmlDecl? Whitespace* PinionRoot Whitespace*
@@ -12,17 +12,18 @@
 //! RootAttr   ::= xmlns="https://pinion.dev/dsl/v1"
 //!             |  kind="reactive"
 //!             |  name=<Rust ident>
-//! Child      ::= Signal | Computed
+//! Child      ::= Signal | Computed | Resource
 //! Signal     ::= '<signal' NamedTypedAttrs '>' BodyExpr '</signal>'
 //! Computed   ::= '<computed' NamedTypedAttrs '>' BodyExpr '</computed>'
+//! Resource   ::= '<resource' NamedTypedAttrs 'err'=<non-empty> '>'
+//!                BodyExpr '</resource>'
 //! NamedTypedAttrs ::= 'name'=<Rust ident> 'ty'=<non-empty>
 //! BodyExpr   ::= CDATA / non-empty trimmed Text
 //! ```
 //!
-//! Signal and Computed share the `(name, ty, body)` parse shape — the
-//! emitted runtime differs (Signal initial value vs Computed closure
-//! body), but the surface validation is identical. `<resource>` /
-//! `<use>` land in subsequent slices.
+//! Signal/Computed share `(name, ty, body)`; Resource extends with an
+//! `err` attribute (E type) and a future-returning body. `<use>`
+//! lands in R38.2d.
 
 use std::path::PathBuf;
 
@@ -30,7 +31,7 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 
-use crate::ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, SignalDecl};
+use crate::ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl};
 use crate::diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic};
 
 /// Entry point. `source` is the originating file path for diagnostic
@@ -294,9 +295,8 @@ impl<'a> ParseCtx<'a> {
         children: &mut Vec<PinionChild>,
     ) {
         let tag = local_name(start.name());
-        // Dispatch table on child element name. R38.2a/b recognize
-        // `<signal>` and `<computed>`; R38.2c/d add `<resource>` /
-        // `<use>` as additional arms.
+        // Dispatch table on child element name. R38.2a/b/c recognize
+        // `<signal>` / `<computed>` / `<resource>`; R38.2d adds `<use>`.
         match tag.as_str() {
             "signal" => {
                 if let Some(decl) = self.parse_signal(start, self_closing) {
@@ -306,6 +306,11 @@ impl<'a> ParseCtx<'a> {
             "computed" => {
                 if let Some(decl) = self.parse_computed(start, self_closing) {
                     children.push(PinionChild::Computed(decl));
+                }
+            }
+            "resource" => {
+                if let Some(decl) = self.parse_resource(start, self_closing) {
+                    children.push(PinionChild::Resource(decl));
                 }
             }
             _ => {
@@ -344,6 +349,64 @@ impl<'a> ParseCtx<'a> {
     ) -> Option<ComputedDecl> {
         self.parse_named_typed_body("computed", start, self_closing)
             .map(|(name, ty, body)| ComputedDecl { name, ty, body })
+    }
+
+    /// Parse one `<resource name="..." ty="..." err="...">body</resource>`
+    /// element. Distinct from `<signal>` / `<computed>` because of the
+    /// fourth required attribute (`err`) — the `(name, ty, err, body)`
+    /// shape doesn't fit [`Self::parse_named_typed_body`] without
+    /// over-generalizing the helper. A future builder-style refactor
+    /// (R38.2x) may collapse all three element parsers.
+    fn parse_resource(
+        &mut self,
+        start: &BytesStart<'_>,
+        self_closing: bool,
+    ) -> Option<ResourceDecl> {
+        let location = self.current_location();
+        let mut name_raw: Option<String> = None;
+        let mut ty_raw: Option<String> = None;
+        let mut err_raw: Option<String> = None;
+
+        for attr in start.attributes().with_checks(false) {
+            let Ok(attr) = attr else {
+                self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
+                    message: "malformed attribute on <resource>".into(),
+                    location: location.clone(),
+                });
+                continue;
+            };
+            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+            let value = String::from_utf8_lossy(&attr.value).into_owned();
+            match key.as_str() {
+                "name" => name_raw = Some(value),
+                "ty" => ty_raw = Some(value),
+                "err" => err_raw = Some(value),
+                _ => {
+                    // Unknown attributes tolerated per SCE v1 forward-
+                    // compat policy.
+                }
+            }
+        }
+
+        let name = self.require_ident_attr("resource", "name", name_raw, &location);
+        let ty = self.require_nonempty_attr("resource", "ty", ty_raw, &location);
+        let err = self.require_nonempty_attr("resource", "err", err_raw, &location);
+        let body = if self_closing {
+            self.diagnostics.push(PinionForgeDiagnostic::EmptyBody {
+                tag: "resource".into(),
+                location,
+            });
+            None
+        } else {
+            self.scan_text_body("resource")
+        };
+
+        match (name, ty, err, body) {
+            (Some(name), Some(ty), Some(err), Some(body)) => {
+                Some(ResourceDecl { name, ty, err, body })
+            }
+            _ => None,
+        }
     }
 
     /// Generic parser for the `(name, ty, body)` element shape shared by

@@ -3,8 +3,8 @@
 //! is closed (`<use>` / `<signal>` / `<computed>` / `<resource>` under
 //! `kind="reactive"`).
 //!
-//! R38.2a adds `<signal>` to the child set. R38.2b adds `<computed>`.
-//! `<resource>` / `<use>` land in subsequent slices.
+//! R38.2a/b/c add `<signal>` / `<computed>` / `<resource>` to the child
+//! set. `<use>` lands in R38.2d.
 
 /// Top-level `<pinion>` document. One file = one document = one emitted
 /// Rust struct (R38 ratify: "one file = one struct").
@@ -52,8 +52,8 @@ impl PinionKind {
     }
 }
 
-/// Closed child-element enum. R38.2a/b populate `Signal` and `Computed`;
-/// `<resource>` / `<use>` land in subsequent slices.
+/// Closed child-element enum. R38.2a/b/c populate `Signal`, `Computed`,
+/// `Resource`; `<use>` lands in R38.2d.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinionChild {
     /// `<signal name="..." ty="...">CDATA initial</signal>`. Compiles to
@@ -69,6 +69,14 @@ pub enum PinionChild {
     /// over-capture is only what Rust's borrow checker needs to make
     /// the closure type-check.
     Computed(ComputedDecl),
+    /// `<resource name="..." ty="..." err="...">CDATA future body</resource>`.
+    /// Compiles to a `pub <name>: ::pinion_core::reactive::Resource<<ty>, <err>>`
+    /// field plus `Resource::loading()` initialization and an immediate
+    /// `fetch_with(spawner, <body>)` call. The presence of any
+    /// `<resource>` widens the generated `new` signature to take a
+    /// `&S: LocalSpawner` second argument; documents without resources
+    /// keep the simpler one-argument `new`.
+    Resource(ResourceDecl),
 }
 
 /// Parsed `<signal>` child. The body (CDATA or plain text) is the
@@ -108,5 +116,28 @@ pub struct ComputedDecl {
     /// Closure body. Trimmed; emitted inside `move || { <body> }` so
     /// the author can write either a single expression (`a.get() + 1`)
     /// or statements followed by an expression (`let x = a.get(); x * 2`).
+    pub body: String,
+}
+
+/// Parsed `<resource>` child. Carries the success/error type pair and
+/// the future expression that drives the initial fetch. The body must
+/// evaluate to a value implementing
+/// `Future<Output = Result<<ty>, <err>>>` — either an `async move { ... }`
+/// block or a plain future-returning expression. pinion-forge does not
+/// inspect the body shape (rustc owns the future-trait check); it does
+/// over-clone every prior child identifier into the surrounding block
+/// so an `async move` body can capture them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceDecl {
+    /// Rust identifier — struct field name and local binding name.
+    pub name: String,
+    /// Success type `<T>` in `Resource<T, E>`. Non-empty string,
+    /// otherwise unvalidated (rustc owns soundness).
+    pub ty: String,
+    /// Error type `<E>` in `Resource<T, E>`. Non-empty string.
+    pub err: String,
+    /// Future expression. Trimmed; emitted verbatim as the second
+    /// argument to `Resource::fetch_with(spawner, <body>)`. Must satisfy
+    /// `Future<Output = Result<T, E>> + 'static` — checked by rustc.
     pub body: String,
 }

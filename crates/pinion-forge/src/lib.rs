@@ -40,7 +40,7 @@ pub mod diagnostic;
 pub mod parser;
 pub mod wire;
 
-pub use ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, SignalDecl};
+pub use ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl};
 pub use build::{CompileError, compile_file, compile_str};
 pub use codegen::emit_rust;
 pub use diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic, Stage};
@@ -246,7 +246,9 @@ mod tests {
             .iter()
             .map(|c| match c {
                 PinionChild::Signal(s) => s.name.as_str(),
-                PinionChild::Computed(_) => panic!("unexpected Computed variant"),
+                PinionChild::Computed(_) | PinionChild::Resource(_) => {
+                    panic!("unexpected non-Signal variant")
+                }
             })
             .collect();
         assert_eq!(names, vec!["a", "b", "c"]);
@@ -510,6 +512,154 @@ mod tests {
             PinionForgeDiagnostic::InvalidIdent { tag, attribute, .. }
                 if tag == "computed" && attribute == "name"
         )));
+    }
+
+    // ---- R38.2c: <resource> child element ----
+
+    #[test]
+    fn parses_single_resource() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="UserView">
+            <resource name="user" ty="String" err="String">
+                <![CDATA[async move { Ok::<String, String>("hi".into()) }]]>
+            </resource>
+        </pinion>"#;
+        let doc = parse(xml).expect("happy path");
+        assert_eq!(doc.children.len(), 1);
+        let PinionChild::Resource(r) = &doc.children[0] else {
+            panic!("expected Resource variant");
+        };
+        assert_eq!(r.name, "user");
+        assert_eq!(r.ty, "String");
+        assert_eq!(r.err, "String");
+        assert!(r.body.contains("async move"));
+    }
+
+    #[test]
+    fn emits_resource_struct_field_and_loading_init() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="U">
+            <resource name="user" ty="String" err="ApiError">
+                <![CDATA[async move { fetch_user().await }]]>
+            </resource>
+        </pinion>"#;
+        let rust = compile_str(xml, "u.pinion.xml").expect("compile");
+        assert!(rust.contains("pub user: ::pinion_core::reactive::Resource<String, ApiError>"));
+        assert!(rust.contains(
+            "let user = ::pinion_core::reactive::Resource::<String, ApiError>::loading();"
+        ));
+        assert!(rust.contains("user.fetch_with(spawner, async move { fetch_user().await });"));
+    }
+
+    #[test]
+    fn emits_resource_signature_takes_generic_spawner() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="U">
+            <resource name="r" ty="i32" err="String">
+                <![CDATA[async move { Ok(0) }]]>
+            </resource>
+        </pinion>"#;
+        let rust = compile_str(xml, "u.pinion.xml").expect("compile");
+        // Signature must mention the generic + bound + spawner parameter.
+        assert!(rust.contains("pub fn new<S>(_owner: &::pinion_core::reactive::Owner, spawner: &S) -> Self"));
+        assert!(rust.contains("S: ::pinion_core::reactive::LocalSpawner"));
+    }
+
+    #[test]
+    fn empty_doc_signature_does_not_take_spawner() {
+        // Regression: a doc with no <resource> child must keep the
+        // one-argument new() signature (R38.1 shape).
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Empty"/>"#;
+        let rust = compile_str(xml, "e.pinion.xml").expect("compile");
+        assert!(rust.contains("pub fn new(_owner: &::pinion_core::reactive::Owner) -> Self"));
+        assert!(!rust.contains("spawner"));
+        assert!(!rust.contains("LocalSpawner"));
+    }
+
+    #[test]
+    fn signal_only_signature_does_not_take_spawner() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="C">
+            <signal name="count" ty="i32"><![CDATA[0]]></signal>
+        </pinion>"#;
+        let rust = compile_str(xml, "c.pinion.xml").expect("compile");
+        assert!(!rust.contains("spawner"));
+        assert!(!rust.contains("LocalSpawner"));
+    }
+
+    #[test]
+    fn resource_with_prior_signal_emits_over_capture_block() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="View">
+            <signal name="id" ty="u64"><![CDATA[1]]></signal>
+            <resource name="data" ty="String" err="String">
+                <![CDATA[async move { Ok::<String, String>(id.get().to_string()) }]]>
+            </resource>
+        </pinion>"#;
+        let rust = compile_str(xml, "v.pinion.xml").expect("compile");
+        // The shadow block for the resource fetch must capture `id`.
+        assert!(rust.contains("#[allow(unused_variables, clippy::redundant_clone)]"));
+        assert!(rust.contains("let (id,) = (id.clone(),);"));
+        assert!(rust.contains("data.fetch_with(spawner,"));
+    }
+
+    #[test]
+    fn rejects_resource_missing_err() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <resource name="r" ty="i32"><![CDATA[async move { Ok(0) }]]></resource>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| matches!(
+            d,
+            PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. }
+                if tag == "resource" && attribute == "err"
+        )));
+    }
+
+    #[test]
+    fn rejects_resource_missing_name() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <resource ty="i32" err="String"><![CDATA[async move { Ok(0) }]]></resource>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| matches!(
+            d,
+            PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. }
+                if tag == "resource" && attribute == "name"
+        )));
+    }
+
+    #[test]
+    fn rejects_resource_empty_body() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <resource name="r" ty="i32" err="String"/>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/empty-body").expect("empty-body");
+        let PinionForgeDiagnostic::EmptyBody { tag, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(tag, "resource");
+    }
+
+    #[test]
+    fn accumulates_diagnostics_across_all_three_child_types() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal ty="i32"><![CDATA[0]]></signal>
+            <computed name="impl" ty="i32"><![CDATA[0]]></computed>
+            <resource name="r" ty="i32"><![CDATA[async move { Ok(0) }]]></resource>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let by_kind: std::collections::BTreeSet<_> = diags
+            .iter()
+            .filter_map(|d| match d {
+                PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. } => {
+                    Some(("missing", tag.as_str(), attribute.as_str()))
+                }
+                PinionForgeDiagnostic::InvalidIdent { tag, attribute, .. } => {
+                    Some(("invalid", tag.as_str(), attribute.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(by_kind.contains(&("missing", "signal", "name")));
+        assert!(by_kind.contains(&("invalid", "computed", "name")));
+        assert!(by_kind.contains(&("missing", "resource", "err")));
     }
 
     #[test]
