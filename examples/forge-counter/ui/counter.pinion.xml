@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R38.2e first dogfood for pinion-forge (§5.22).
+  Exercises 3 of the 4 R38.2x child variants:
+    * <use>     - module-level import (Rust scope visible to every body)
+    * <signal>  - eager value cell with set/get reactivity
+    * <computed> - memoized derived value, chained (display reads doubled)
+  <resource> is deferred to a follow-up dogfood that wires a LocalSpawner.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Counter">
+
+  <use path="std::format"/>
+
+  <signal name="count" ty="i32"><![CDATA[0]]></signal>
+
+  <computed name="doubled" ty="i32"><![CDATA[
+      count.get() * 2
+  ]]></computed>
+
+  <computed name="display" ty="String"><![CDATA[
+      format!("count={} doubled={}", count.get(), doubled.get())
+  ]]></computed>
+
+</pinion>

@@ -1014,7 +1014,10 @@
         "R38.2c: parse_resource_decl separate from parse_named_typed_body; 4-attr shape diverges",
         "R38.2d: <use path=\"...\"/> → module-level use statement at top of emitted file",
         "R38.2d: use does not contribute to prior_names; imports visible via module scope",
-        "R38.2d: use body silently skipped; path attr only validation = non-empty; rustc owns syntax"
+        "R38.2d: use body silently skipped; path attr only validation = non-empty; rustc owns syntax",
+        "R38.2e: first dogfood examples/forge-counter — <use>+<signal>+<computed> end-to-end",
+        "R38.2e: codegen emits #[must_use] on constructor matching Signal/Computed/Resource convention",
+        "R38.2e: build.rs pattern = compile_file → $OUT_DIR + include! at main.rs module scope"
       ],
       "alternatives_rejected": [
         {
@@ -1141,6 +1144,18 @@
         {
           "file": "crates/pinion-forge/src/codegen.rs",
           "symbol": "emit_use_block"
+        },
+        {
+          "file": "examples/forge-counter/Cargo.toml"
+        },
+        {
+          "file": "examples/forge-counter/build.rs"
+        },
+        {
+          "file": "examples/forge-counter/ui/counter.pinion.xml"
+        },
+        {
+          "file": "examples/forge-counter/src/main.rs"
         }
       ],
       "decision_status": "active"
@@ -4558,6 +4573,58 @@
         "R38.2x: syn::UseTree path validation (paired with broader syn adoption)",
         "R38.2x: element-parser builder unification across signal/computed/resource/use",
         "R38.2x: signature consistency review (always-spawner vs minimum)",
+        "R39: §5.22 split into §5.22.1/.2/.3/.4 if T4 body-length stays high"
+      ]
+    },
+    "Round 38.2e": {
+      "decision_summary": "First pinion-forge dogfood — examples/forge-counter exercises 3 of 4 child variants end-to-end",
+      "changes_bullets": [
+        "New examples/forge-counter crate: Cargo.toml + build.rs + ui/counter.pinion.xml + main.rs",
+        "Workspace members extended; build.rs invokes compile_file → $OUT_DIR/counter.rs",
+        "Codegen: emit #[must_use] on Counter::new matching pinion-core Signal/Computed convention",
+        "Three new tests assert #[must_use] across unit / binding / spawner signature variants",
+        "Resource dogfood deferred to R38.2e-2 (LocalSpawner impl + runtime choice TBD)"
+      ],
+      "verification_bullets": [
+        "cargo build -p forge-counter → codegen + rustc roundtrip clean",
+        "cargo run -p forge-counter → expected output: 0/0 → 5/10 → 10/20 → doubled=20",
+        "cargo test --workspace → 391 pass (388 baseline + 3 must_use tests)",
+        "cargo clippy --workspace --all-targets → 12 pre-existing only; forge-counter zero",
+        "R26 push-pull dependency tracking validated through chained Computed-of-Computed"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R38.2e-2: resource dogfood (LocalSpawner impl + async runtime selection)",
+        "R38.2x: syn-based path/ty/body validation broader sweep",
+        "R38.2x: signature consistency (always-spawner) review post-dogfood corpus",
+        "R38.3: hello-button reactive layer integration via .pinion.xml",
+        "R39: §5.22 split into §5.22.1/.2/.3/.4 if T4 body-length stays high"
+      ],
+      "publishable_decision_summary": "First pinion-forge dogfood — examples/forge-counter exercises 3 of 4 child variants end-to-end",
+      "publishable_changes_bullets": [
+        "New examples/forge-counter crate: Cargo.toml + build.rs + ui/counter.pinion.xml + main.rs",
+        "Workspace members extended; build.rs invokes compile_file → $OUT_DIR/counter.rs",
+        "Codegen: emit #[must_use] on Counter::new matching pinion-core Signal/Computed convention",
+        "Three new tests assert #[must_use] across unit / binding / spawner signature variants",
+        "Resource dogfood deferred to R38.2e-2 (LocalSpawner impl + runtime choice TBD)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo build -p forge-counter → codegen + rustc roundtrip clean",
+        "cargo run -p forge-counter → expected output: 0/0 → 5/10 → 10/20 → doubled=20",
+        "cargo test --workspace → 391 pass (388 baseline + 3 must_use tests)",
+        "cargo clippy --workspace --all-targets → 12 pre-existing only; forge-counter zero",
+        "R26 push-pull dependency tracking validated through chained Computed-of-Computed"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R38.2e-2: resource dogfood (LocalSpawner impl + async runtime selection)",
+        "R38.2x: syn-based path/ty/body validation broader sweep",
+        "R38.2x: signature consistency (always-spawner) review post-dogfood corpus",
+        "R38.3: hello-button reactive layer integration via .pinion.xml",
         "R39: §5.22 split into §5.22.1/.2/.3/.4 if T4 body-length stays high"
       ]
     },

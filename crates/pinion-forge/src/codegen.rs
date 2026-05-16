@@ -109,6 +109,7 @@ fn emit_unit_struct(name: &str) -> String {
         "pub struct {name};\n\
          \n\
          impl {name} {{\n\
+         {INDENT}#[must_use]\n\
          {INDENT}pub fn new(_owner: &::pinion_core::reactive::Owner) -> Self {{\n\
          {INDENT}{INDENT}Self\n\
          {INDENT}}}\n\
@@ -153,13 +154,17 @@ fn emit_struct_with_children(name: &str, children: &[PinionChild]) -> String {
 
     let signature = if needs_spawner(children) {
         format!(
-            "{INDENT}pub fn new<S>(_owner: &::pinion_core::reactive::Owner, spawner: &S) -> Self\n\
+            "{INDENT}#[must_use]\n\
+             {INDENT}pub fn new<S>(_owner: &::pinion_core::reactive::Owner, spawner: &S) -> Self\n\
              {INDENT}where\n\
              {INDENT}{INDENT}S: ::pinion_core::reactive::LocalSpawner,\n\
              {INDENT}{{\n"
         )
     } else {
-        format!("{INDENT}pub fn new(_owner: &::pinion_core::reactive::Owner) -> Self {{\n")
+        format!(
+            "{INDENT}#[must_use]\n\
+             {INDENT}pub fn new(_owner: &::pinion_core::reactive::Owner) -> Self {{\n"
+        )
     };
 
     format!(

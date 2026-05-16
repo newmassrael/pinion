@@ -80,6 +80,37 @@ mod tests {
     }
 
     #[test]
+    fn emits_must_use_on_unit_struct_constructor() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="E"/>"#;
+        let rust = compile_str(xml, "e.pinion.xml").expect("compile");
+        // #[must_use] precedes the constructor — matches pinion-core
+        // Signal/Computed/Resource convention for forwarding the
+        // builder-style return type.
+        let mu_pos = rust.find("#[must_use]").expect("must_use emitted");
+        let fn_pos = rust.find("pub fn new").expect("fn emitted");
+        assert!(mu_pos < fn_pos, "must_use must precede fn new");
+    }
+
+    #[test]
+    fn emits_must_use_on_struct_with_signals() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="C">
+            <signal name="x" ty="i32"><![CDATA[0]]></signal>
+        </pinion>"#;
+        let rust = compile_str(xml, "c.pinion.xml").expect("compile");
+        assert!(rust.contains("#[must_use]\n    pub fn new("));
+    }
+
+    #[test]
+    fn emits_must_use_on_struct_with_resources() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="R">
+            <resource name="r" ty="i32" err="String"><![CDATA[async move { Ok(0) }]]></resource>
+        </pinion>"#;
+        let rust = compile_str(xml, "r.pinion.xml").expect("compile");
+        // must_use precedes the generic-signature form
+        assert!(rust.contains("#[must_use]\n    pub fn new<S>"));
+    }
+
+    #[test]
     fn emits_constructor_for_empty_doc() {
         let doc = PinionDoc {
             name: "Foo".into(),

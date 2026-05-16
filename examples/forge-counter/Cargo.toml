@@ -1,0 +1,26 @@
+[package]
+name = "forge-counter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R38.2e dogfood: pinion-forge .pinion.xml → reactive struct end-to-end"
+publish = false
+
+[[bin]]
+name = "forge-counter"
+path = "src/main.rs"
+
+[dependencies]
+# Runtime side: the generated struct references ::pinion_core::reactive::*
+# directly, so the binary needs the same crate as a regular dependency.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+
+[build-dependencies]
+# Build-side codegen entrypoint. compile_file is invoked from build.rs;
+# the generated Rust is written to $OUT_DIR and `include!`d by main.rs.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
