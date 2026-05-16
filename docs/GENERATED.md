@@ -48,17 +48,18 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §2. Settled invariants
 
 
-**Intent**: v1 invariants: structured scene mandatory; RPC headless; dry_run; mode toggle; SCE state; GUI/TUI dual; scene-as-data
+**Intent**: v1 invariants: structured scene mandatory; RPC headless; dry_run; mode toggle; SCE-managed state; GUI/TUI dual; scene-as-data; SCE meta = AI authoring surface
 
 
 **Rationale**:
 - Structured scene enforced means AI introspect everywhere not pixel-blind
 - Event-with-input contract collapses Tier-2 hypothetical-input awkwardness
-- RPC headless = AI primary path; TUI dump = fallback; GUI = humans
+- RPC headless = AI read path; SCE meta = AI write path; together = AI 1st-class
 - dry_run primitive enables zero-cost scenario exploration via SCE determinism
 - Mode toggle immediate vs retained = same view fn, two execution strategies
-- SCE statechart kind already 6-backend byte-golden parity per watching-zenoh
+- SCE statechart kind has 6-backend byte-golden parity (watching-zenoh); other kinds extend the matrix
 - Visual state (geometry, z-order, opacity stack) queryable as text, no pixels
+- SCE-managed state spans statechart + signal/computed/resource + view-fn (statechart is one kind)
 
 
 
@@ -76,6 +77,10 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Scene primitive type set (closed-form, no escape except Effect/External)
 - Mode toggle runtime flag controlling diff vs full re-emit strategy
 
+
+
+**Caveats**:
+- R24.5: invariant #5 reworded (statechart → SCE-managed); #8 added (SCE as AI authoring surface).
 
 
 
@@ -2042,6 +2047,44 @@ fn main() {
 - EdgeInsets type if Rect-as-insets proves awkward in real layout code
 - Modifier struct removal (its fields now in LayoutStyle; struct is vestigial)
 - Sub-pixel rect coordinates (currently u32; taffy compute uses f32 but truncates back to u32)
+
+
+
+### Round 25 — Round 25 — §2 invariant expansion: #5 reworded (statechart → SCE-managed state); #8 ratified (SCE meta = AI authoring surface)
+
+**Changes**:
+- §2 invariant #5 wording: "SCE statechart state" → "SCE-managed state" — SCE not statechart-only
+- §2 invariant #8 ratified: "SCE meta = AI authoring surface" (write-side counterpart to RPC headless)
+- §2 rationale bullet #3 reworded: RPC = AI read path, SCE meta = AI write path, together = AI 1st-class
+- §2 rationale bullet #6 reworded: SCE statechart kind has byte-golden parity; other kinds extend matrix
+- §2 rationale bullet #8 added: SCE-managed state spans statechart + signal/computed/resource + view-fn
+- Unlocks R25+ multi-axis spec rounds (Signal/Effect/Semantic/Modifier/etc.) as SCE schema + Forge codegen + Rust runtime triples
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; entries 24 → 25; sections unchanged at 31
+- no code changes this round (invariant-only); pinion-core/runtime/rpc/derive untouched
+- atomic mutations: set_section_intent + set_section_rationale (replace) + add_section_caveat
+- Effect on existing axes: §5.20 tag stays valid (subset of §5.25 semantic tree); §5.21 taffy stays valid
+
+
+
+**Impact**: §2
+
+
+**Carry forward**:
+- R26 §5.22: Reactive primitives — Signal/Computed/Resource SCE schema + Forge codegen + Rust runtime
+- R27 §5.23: Effect model — Command/handler SCE schema
+- R28 §5.25: Semantic tree — role/state/actions SCE schema (§5.20 tag absorbed)
+- R29 §5.26: Modifier chain — composition SCE schema
+- R30 §5.27: Incremental layout + damage tracking (Rust-side primarily)
+- R31 §5.16: GPU render backend (vello)
+- R32 §5.28: Virtualization Scene variant
+- R33 §5.29: Animation (spring physics) SCE schema
+- R34 §5.30: Structured concurrency
+- R35 §5.31: Accessibility (AccessKit bridge)
+- R36 §5.32: Hot reload (signal serialization protocol)
 
 
 
