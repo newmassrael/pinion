@@ -913,6 +913,10 @@
         {
           "file": "crates/pinion-core/src/style.rs",
           "symbol": "LayoutStyle"
+        },
+        {
+          "file": "crates/pinion-runtime/src/layout.rs",
+          "symbol": "compute_layout"
         }
       ],
       "decision_status": "active"
