@@ -2229,6 +2229,14 @@
         {
           "file": "crates/pinion-rpc/src/preview/kinds.rs",
           "symbol": "TypedProposal::ReplaceView"
+        },
+        {
+          "file": "crates/pinion-core/src/scene.rs",
+          "symbol": "Scene::lookup_path_ref"
+        },
+        {
+          "file": "crates/pinion-rpc/src/path.rs",
+          "symbol": "split_at_external"
         }
       ],
       "decision_status": "active"
@@ -2961,6 +2969,60 @@
         "§5.34 ai-introspect-demo 에 SetStyle/ReplaceView/DispatchIntent dogfood 통합 — R40 4 variant 완성 이후",
         "R40.12+: hello-button 에 pinion-forge reactive layer 통합 (R38.3 carry-forward 계속)",
         "[[gui-now-engine-later]] 메모리 — Vello hybrid 결정으로 더 구체화; future game engine path 술명 추가 고려"
+      ]
+    },
+    "413": {
+      "decision_summary": "Round 42 — §5.34 path walker nested External addressing — R40.8 state/paint 분리 부채 상환",
+      "changes_bullets": [
+        "pinion-core/scene.rs: Scene::lookup_path_ref(&[String]) -> Option<&Scene> 이미접 버전 (lookup_path 는 Rect 반환, R42 는 nested External walk 용 세이워키 reference 필요)",
+        "pinion-rpc/path.rs: split_at_external(scene_path) -> Option<(Vec<String>, &str)> helper — \"/external/\" 리터럴 세퍼레이터 기준 split",
+        "pinion-rpc/query.rs + rewind.rs: \"/<scene_seg>/external/<intro>\" nested addressing 지원 — lookup_path_ref/_mut 으로 Container/Box 등단 개객",
+        "examples/ai-introspect-demo: state_scene/paint_scene 2 필드 제거 → single canonical scene; counter ExternalNode 가 scene 안에 태그 \"counter\" 로 등재; signal_path = \"/counter/external/count\" 로 nested addressing 사용",
+        "demo 에서 paint(scene, count) 이 info_panel 태그 일 때만 palette_color(count) 대체 — BoxStyle.fill 변경 없이 렌더 시 파생",
+        "demo refresh_overlays 가 std::mem::replace + Scene::Effect 센티넬 스왈 — Scene !Clone 제약 하에 in-place overlay 관리"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 580 pass (561 → 580, +19 새 test — 5 lookup_path_ref + 5 split_at_external + 5 query nested + 4 rewind nested)",
+        "cargo clippy --workspace --all-targets: 신규 위반 0 (5 pre-existing baseline only)",
+        "cargo build -p ai-introspect-demo: 통과",
+        "R40.8 의 textbook-long-term-correct 위반 (path walker 확장 회피) 부채 상환 완료 — demo 는 이제 single scene, nested addressing 사용",
+        "\"external\" 리터럴이 세퍼레이터로 예약 (Python __init__ / Rust crate:: 컨벤션) — 그 이름 태그는 축자적 인덱스 사용 필요"
+      ],
+      "impact_refs": [
+        "5.34",
+        "5.18",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "R43: ViewBlueprint 에 Text/Path/Image variants 추가 — Scene parity 완성 (Effect/External 은 wire 표현 부재로 제외)",
+        "R44: §5.34 caveat — DispatchIntent.emitted_intents (sync) ↔ scene/intents (async poll) dual channel 의도적 분리 정착",
+        "lookup_path/lookup_path_ref/lookup_path_mut 3명 불일치 — lookup_path 만 Rect 반환; 향후 lookup_path 도 &Scene 반환으로 일관 평가 후보 (bbox 은 .rect() 호출)"
+      ],
+      "publishable_decision_summary": "Round 42 — §5.34 path walker nested External addressing — R40.8 state/paint 분리 부채 상환",
+      "publishable_changes_bullets": [
+        "pinion-core/scene.rs: Scene::lookup_path_ref(&[String]) -> Option<&Scene> 이미접 버전 (lookup_path 는 Rect 반환, R42 는 nested External walk 용 세이워키 reference 필요)",
+        "pinion-rpc/path.rs: split_at_external(scene_path) -> Option<(Vec<String>, &str)> helper — \"/external/\" 리터럴 세퍼레이터 기준 split",
+        "pinion-rpc/query.rs + rewind.rs: \"/<scene_seg>/external/<intro>\" nested addressing 지원 — lookup_path_ref/_mut 으로 Container/Box 등단 개객",
+        "examples/ai-introspect-demo: state_scene/paint_scene 2 필드 제거 → single canonical scene; counter ExternalNode 가 scene 안에 태그 \"counter\" 로 등재; signal_path = \"/counter/external/count\" 로 nested addressing 사용",
+        "demo 에서 paint(scene, count) 이 info_panel 태그 일 때만 palette_color(count) 대체 — BoxStyle.fill 변경 없이 렌더 시 파생",
+        "demo refresh_overlays 가 std::mem::replace + Scene::Effect 센티넬 스왈 — Scene !Clone 제약 하에 in-place overlay 관리"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 580 pass (561 → 580, +19 새 test — 5 lookup_path_ref + 5 split_at_external + 5 query nested + 4 rewind nested)",
+        "cargo clippy --workspace --all-targets: 신규 위반 0 (5 pre-existing baseline only)",
+        "cargo build -p ai-introspect-demo: 통과",
+        "R40.8 의 textbook-long-term-correct 위반 (path walker 확장 회피) 부채 상환 완료 — demo 는 이제 single scene, nested addressing 사용",
+        "\"external\" 리터럴이 세퍼레이터로 예약 (Python __init__ / Rust crate:: 컨벤션) — 그 이름 태그는 축자적 인덱스 사용 필요"
+      ],
+      "publishable_impact_refs": [
+        "5.34",
+        "5.18",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R43: ViewBlueprint 에 Text/Path/Image variants 추가 — Scene parity 완성 (Effect/External 은 wire 표현 부재로 제외)",
+        "R44: §5.34 caveat — DispatchIntent.emitted_intents (sync) ↔ scene/intents (async poll) dual channel 의도적 분리 정착",
+        "lookup_path/lookup_path_ref/lookup_path_mut 3명 불일치 — lookup_path 만 Rect 반환; 향후 lookup_path 도 &Scene 반환으로 일관 평가 후보 (bbox 은 .rect() 호출)"
       ]
     },
     "Round 1": {

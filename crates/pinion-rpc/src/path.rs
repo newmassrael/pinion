@@ -35,6 +35,46 @@ pub enum PathError {
     UnknownWindow,
 }
 
+/// Split `scene_path` at the literal `/external/` separator (§5.34 R42).
+///
+/// Returns `Some((scene_segments, introspect_path))` when the
+/// separator is present — `scene_segments` is the chain of tag/index
+/// nodes to walk from the scene root to reach the addressed
+/// [`pinion_core::scene::ExternalNode`], and `introspect_path` is
+/// the per-External path the §5.15 introspect surface (`query` /
+/// `intervene`) consumes.
+///
+/// Examples (window prefix already stripped by [`resolve`]):
+///
+///   * `"/external/count"` → `(vec![], "count")` — scene root **is**
+///     the External (existing v0 behaviour).
+///   * `"/info_panel/external/count"` → `(vec!["info_panel"], "count")`
+///     — walk to the tagged `info_panel` node, then descend into its
+///     embedded External.
+///   * `"/0/1/external/foo"` → `(vec!["0", "1"], "foo")` — index-
+///     based walk.
+///
+/// Returns `None` when `/external/` does not appear; callers surface
+/// this as `QueryError::UnsupportedPath` / `RewindError::UnsupportedPath`.
+///
+/// The literal `external` is reserved as the path separator; scene
+/// nodes tagged `"external"` are addressable only via numeric index
+/// (collision avoidance — same convention as Python's `__init__` or
+/// Rust's `crate::`).
+#[must_use]
+pub fn split_at_external(scene_path: &str) -> Option<(Vec<String>, &str)> {
+    const SEP: &str = "/external/";
+    let idx = scene_path.find(SEP)?;
+    let prefix = &scene_path[..idx];
+    let suffix = &scene_path[idx + SEP.len()..];
+    let segments = prefix
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    Some((segments, suffix))
+}
+
 /// Resolve an RPC path against the app-level window topology.
 ///
 /// Absent `/window[...]/` prefix short-circuits to the initial window with
@@ -116,5 +156,48 @@ mod tests {
             resolve("/window[ghost]/scene"),
             Err(PathError::UnknownWindow)
         );
+    }
+
+    // ---- §5.34 R42: split_at_external ----
+
+    #[test]
+    fn split_at_external_root_external() {
+        let (segs, intro) = split_at_external("/external/count").expect("root external");
+        assert!(segs.is_empty());
+        assert_eq!(intro, "count");
+    }
+
+    #[test]
+    fn split_at_external_nested_external() {
+        let (segs, intro) =
+            split_at_external("/info_panel/external/count").expect("nested external");
+        assert_eq!(segs, vec!["info_panel".to_string()]);
+        assert_eq!(intro, "count");
+    }
+
+    #[test]
+    fn split_at_external_deeply_nested_external() {
+        let (segs, intro) =
+            split_at_external("/0/1/btn/external/value").expect("deep nested external");
+        assert_eq!(
+            segs,
+            vec!["0".to_string(), "1".to_string(), "btn".to_string()]
+        );
+        assert_eq!(intro, "value");
+    }
+
+    #[test]
+    fn split_at_external_missing_separator_returns_none() {
+        assert!(split_at_external("/some/other/path").is_none());
+        assert!(split_at_external("/external").is_none(), "needs trailing slash");
+        assert!(split_at_external("").is_none());
+    }
+
+    #[test]
+    fn split_at_external_multi_segment_introspect_path_preserved() {
+        let (segs, intro) =
+            split_at_external("/panel/external/nested/slot").expect("multi-seg introspect");
+        assert_eq!(segs, vec!["panel".to_string()]);
+        assert_eq!(intro, "nested/slot");
     }
 }

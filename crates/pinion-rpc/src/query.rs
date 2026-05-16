@@ -1,21 +1,23 @@
-//! `scene/query` RPC method dispatch (§5.12 hybrid query, R16 slice 9).
+//! `scene/query` RPC method dispatch (§5.12 hybrid query, R16 slice 9,
+//! R42 nested External addressing).
 //!
 //! Wires three pieces together:
 //!
 //!   1. **§5.18 path resolution** — `/[window[id]/]<scene_path>` with
 //!      single-window short-circuit (see [`crate::path`]).
-//!   2. **§5.2 scene tree walk** — currently only the *root* is
-//!      considered; full addressing of nested scene nodes lands when
-//!      §5.3 DSL settles a path syntax for the introspectable variants.
-//!   3. **§5.15 item 8 introspect dispatch** — when the path resolves to
-//!      a `Scene::External` root, the call descends through
+//!   2. **§5.2 scene tree walk** — R42: the `/external/` literal acts
+//!      as the separator between scene-walk segments and the introspect
+//!      path. `/external/<intro>` keeps the v0 root-External shape;
+//!      `/<seg>/.../external/<intro>` walks Container/Box descendants
+//!      to find an `ExternalNode` before descending.
+//!   3. **§5.15 item 8 introspect dispatch** — when the resolved
+//!      target is an `ExternalNode`, the call descends through
 //!      [`External::introspect`](pinion_core::external::External::introspect)
 //!      and consults the [`ExternalIntrospect`] surface.
 //!
-//! v0 scene-path syntax accepted today: `/external/<introspect_path>`
-//! (optionally preceded by `/window[id]/`). Other shapes return
-//! [`QueryError::UnsupportedPath`]; that error variant is the carry-forward
-//! marker for §5.3 DSL adding richer addressing.
+//! Scene-path syntax accepted (R42): `/[<scene_segments>/]external/<introspect_path>`,
+//! optionally preceded by `/window[id]/`. Other shapes return
+//! [`QueryError::UnsupportedPath`].
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) is a separate slice — this
 //! module exposes the typed dispatcher only.
@@ -65,12 +67,17 @@ pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryErro
     // *is* the resolved window's root, so we ignore the WindowId here.
     let _ = resolved.window;
 
-    let introspect_path = resolved
-        .scene_path
-        .strip_prefix("/external/")
-        .ok_or(QueryError::UnsupportedPath)?;
+    // R42: split at the `/external/` separator. Empty scene segments
+    // = root-External (v0 shape); non-empty = walk Container/Box
+    // chain to find a nested ExternalNode before introspecting.
+    let (scene_segments, introspect_path) =
+        path::split_at_external(resolved.scene_path).ok_or(QueryError::UnsupportedPath)?;
 
-    let Scene::External(node) = scene else {
+    let target = scene
+        .lookup_path_ref(&scene_segments)
+        .ok_or(QueryError::NoExternalAtPath)?;
+
+    let Scene::External(node) = target else {
         return Err(QueryError::NoExternalAtPath);
     };
 
@@ -155,6 +162,79 @@ mod tests {
         assert_eq!(
             query(&scene, "/window[main/external/count").unwrap_err(),
             QueryError::Path(PathError::MalformedPrefix),
+        );
+    }
+
+    // ---- §5.34 R42: nested External addressing ----
+
+    fn container_with_nested_counted(tag: &'static str, count: i64) -> Scene {
+        use pinion_core::scene::{ContainerNode, Rect};
+        let ext = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag),
+        );
+        let mut c = ContainerNode::new(vec![ext]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn query_nested_external_by_tag() {
+        // R42: scene root is a Container holding a tagged ExternalNode.
+        // /counter/external/count walks "counter" → finds External →
+        // introspect "count". Path walker extension prevents R40.8's
+        // state/paint scene workaround.
+        let scene = container_with_nested_counted("counter", 42);
+        assert_eq!(
+            query(&scene, "/counter/external/count").unwrap(),
+            IntrospectValue::Int(42),
+        );
+    }
+
+    #[test]
+    fn query_nested_external_with_window_prefix() {
+        let scene = container_with_nested_counted("counter", 7);
+        assert_eq!(
+            query(&scene, "/window[main]/counter/external/count").unwrap(),
+            IntrospectValue::Int(7),
+        );
+    }
+
+    #[test]
+    fn query_nested_external_by_index() {
+        // Untagged ExternalNode addressable via positional index.
+        use pinion_core::scene::{ContainerNode, ExternalNode as ExtNode, Rect};
+        let ext = Scene::External(ExtNode::new(Box::new(CountedExternal::new(5))));
+        let mut c = ContainerNode::new(vec![ext]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        let scene = Scene::Container(c);
+        assert_eq!(
+            query(&scene, "/0/external/count").unwrap(),
+            IntrospectValue::Int(5),
+        );
+    }
+
+    #[test]
+    fn query_nested_unknown_segment_is_no_external_at_path() {
+        let scene = container_with_nested_counted("counter", 0);
+        assert_eq!(
+            query(&scene, "/ghost/external/count").unwrap_err(),
+            QueryError::NoExternalAtPath,
+        );
+    }
+
+    #[test]
+    fn query_nested_non_external_target_is_no_external_at_path() {
+        // Walk lands on a Box (not External) → reject.
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+        let child = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default()).with_tag("info"),
+        );
+        let mut c = ContainerNode::new(vec![child]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        let scene = Scene::Container(c);
+        assert_eq!(
+            query(&scene, "/info/external/count").unwrap_err(),
+            QueryError::NoExternalAtPath,
         );
     }
 }

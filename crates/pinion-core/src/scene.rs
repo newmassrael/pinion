@@ -166,6 +166,38 @@ impl Scene {
         target.lookup_path(tail)
     }
 
+    /// (§5.34 R42) Immutable counterpart that returns `&Scene` at the
+    /// matched path. [`lookup_path`](Self::lookup_path) only exposes
+    /// the matched primitive's [`Rect`] (because §5.32 R39.3 `bbox`
+    /// only needs geometry); the by-reference shape is what the
+    /// `scene/query` / `scene/rewind` nested-External walker needs
+    /// to descend through Container/Box before reaching an
+    /// `ExternalNode`.
+    ///
+    /// Resolution rules identical to [`lookup_path`](Self::lookup_path)
+    /// and [`lookup_path_mut`](Self::lookup_path_mut): tag wins over
+    /// index, declaration order on ties, `Scene::Effect` never
+    /// resolves, non-container intermediates fail. Empty segment
+    /// slice returns `Some(self)`.
+    #[must_use]
+    pub fn lookup_path_ref(&self, segments: &[String]) -> Option<&Scene> {
+        if matches!(self, Scene::Effect(_)) {
+            return None;
+        }
+        let Some((head, tail)) = segments.split_first() else {
+            return Some(self);
+        };
+        let Scene::Container(c) = self else {
+            return None;
+        };
+        let target = c.children.iter().enumerate().find_map(|(idx, child)| {
+            let tag_match = child.tag().is_some_and(|t| t == head);
+            let index_match = idx.to_string() == *head;
+            (tag_match || index_match).then_some(child)
+        })?;
+        target.lookup_path_ref(tail)
+    }
+
     /// (§5.34 R40.10) Mutable counterpart to
     /// [`lookup_path`](Self::lookup_path). Walks the scene tree
     /// following `segments` and returns a `&mut Scene` to the matched
@@ -1280,6 +1312,45 @@ mod tests {
     fn lookup_path_mut_skips_effect_variant() {
         let mut s = Scene::Effect(EffectNode::new());
         assert!(s.lookup_path_mut(&[]).is_none(), "Effect never resolves, even at root");
+    }
+
+    // ---- §5.34 R42: Scene::lookup_path_ref ----
+
+    #[test]
+    fn lookup_path_ref_empty_segments_returns_root() {
+        let s = box_at(1, 2, 3, 4);
+        let node = s.lookup_path_ref(&[]).expect("root resolves");
+        assert!(matches!(node, Scene::Box(_)));
+    }
+
+    #[test]
+    fn lookup_path_ref_resolves_tag_segment() {
+        let s = container_at(0, 0, 200, 200, vec![tagged_box_at(0, 0, 10, 10, "btn")]);
+        let node = s.lookup_path_ref(&["btn".to_string()]).expect("tag");
+        assert!(matches!(node, Scene::Box(_)));
+        assert_eq!(node.tag(), Some("btn"));
+    }
+
+    #[test]
+    fn lookup_path_ref_nested_chain() {
+        let inner = container_at(0, 0, 100, 100, vec![box_at(10, 10, 50, 50)]);
+        let outer = container_at(0, 0, 200, 200, vec![inner]);
+        let node = outer
+            .lookup_path_ref(&["0".to_string(), "0".to_string()])
+            .expect("nested");
+        assert_eq!(node.rect(), Rect::new(10, 10, 50, 50));
+    }
+
+    #[test]
+    fn lookup_path_ref_unknown_returns_none() {
+        let s = container_at(0, 0, 100, 100, vec![box_at(0, 0, 10, 10)]);
+        assert!(s.lookup_path_ref(&["ghost".to_string()]).is_none());
+    }
+
+    #[test]
+    fn lookup_path_ref_skips_effect_variant() {
+        let s = Scene::Effect(EffectNode::new());
+        assert!(s.lookup_path_ref(&[]).is_none());
     }
 
     #[test]

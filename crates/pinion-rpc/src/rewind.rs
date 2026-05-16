@@ -1,8 +1,9 @@
-//! `scene/rewind` RPC method dispatch (§5.12 method 5 of 7, R16 slice 12).
+//! `scene/rewind` RPC method dispatch (§5.12 method 5 of 7, R16 slice 12,
+//! R42 nested External addressing).
 //!
 //! Mutating counterpart to [`crate::query`]: takes the same
-//! `/[window[id]/]external/<introspect_path>` shape and writes `value`
-//! to the addressed slot via
+//! `/[window[id]/][<scene_segments>/]external/<introspect_path>` shape
+//! (R42 nested) and writes `value` to the addressed slot via
 //! [`ExternalIntrospect::intervene`](pinion_core::external::ExternalIntrospect::intervene).
 //!
 //! Combined with `scene/query`, this is the symbolic snapshot/restore
@@ -54,13 +55,21 @@ pub fn rewind(
     let resolved = path::resolve(raw_path)?;
     let _ = resolved.window;
 
-    let introspect_path = resolved
-        .scene_path
-        .strip_prefix("/external/")
-        .ok_or(RewindError::UnsupportedPath)?
-        .to_string();
+    // R42: split at the `/external/` separator. Empty scene segments
+    // = root-External (v0 shape); non-empty = walk Container/Box
+    // chain through `lookup_path_mut` to reach the nested
+    // ExternalNode before intervening. introspect_path owned because
+    // the &mut borrow of scene below would otherwise outlive the
+    // resolved.scene_path borrow.
+    let (scene_segments, introspect_path) = path::split_at_external(resolved.scene_path)
+        .map(|(segs, intro)| (segs, intro.to_string()))
+        .ok_or(RewindError::UnsupportedPath)?;
 
-    let Scene::External(node) = scene else {
+    let target = scene
+        .lookup_path_mut(&scene_segments)
+        .ok_or(RewindError::NoExternalAtPath)?;
+
+    let Scene::External(node) = target else {
         return Err(RewindError::NoExternalAtPath);
     };
 
@@ -157,5 +166,75 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, RewindError::Path(PathError::MalformedPrefix));
+    }
+
+    // ---- §5.34 R42: nested External addressing ----
+
+    fn container_with_nested_counted(tag: &'static str, count: i64) -> Scene {
+        use pinion_core::scene::{ContainerNode, Rect};
+        let ext = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag),
+        );
+        let mut c = ContainerNode::new(vec![ext]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn rewind_nested_external_by_tag_then_query_round_trips() {
+        // R42 path walker debt repayment: scene root is Container
+        // holding a tagged ExternalNode. /counter/external/count
+        // walks the tree, finds External, intervenes. Query confirms.
+        let mut scene = container_with_nested_counted("counter", 0);
+        rewind(&mut scene, "/counter/external/count", IntrospectValue::Int(99)).unwrap();
+        assert_eq!(
+            query(&scene, "/counter/external/count").unwrap(),
+            IntrospectValue::Int(99),
+        );
+    }
+
+    #[test]
+    fn rewind_nested_external_with_window_prefix() {
+        let mut scene = container_with_nested_counted("counter", 0);
+        rewind(
+            &mut scene,
+            "/window[main]/counter/external/count",
+            IntrospectValue::Int(11),
+        )
+        .unwrap();
+        assert_eq!(
+            query(&scene, "/counter/external/count").unwrap(),
+            IntrospectValue::Int(11),
+        );
+    }
+
+    #[test]
+    fn rewind_nested_unknown_segment_is_no_external() {
+        let mut scene = container_with_nested_counted("counter", 0);
+        let err = rewind(
+            &mut scene,
+            "/ghost/external/count",
+            IntrospectValue::Int(0),
+        )
+        .unwrap_err();
+        assert_eq!(err, RewindError::NoExternalAtPath);
+    }
+
+    #[test]
+    fn rewind_nested_non_external_target_is_no_external() {
+        use pinion_core::scene::{BoxNode as BNode, ContainerNode, Rect};
+        let child = Scene::Box(
+            BNode::filled(Rect::default(), Color::default()).with_tag("info"),
+        );
+        let mut c = ContainerNode::new(vec![child]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        let mut scene = Scene::Container(c);
+        let err = rewind(
+            &mut scene,
+            "/info/external/count",
+            IntrospectValue::Int(0),
+        )
+        .unwrap_err();
+        assert_eq!(err, RewindError::NoExternalAtPath);
     }
 }
