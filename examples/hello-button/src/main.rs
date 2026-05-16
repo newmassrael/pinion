@@ -1,31 +1,35 @@
-//! `hello-button` — §4 first dogfood + first live §2 RPC dogfood.
+//! `hello-button` — §4 first dogfood + live §2 bidirectional RPC.
 //!
-//! Opens a winit window and pipes real pointer input into the R12
-//! `Button` SCXML statechart, wrapped in a `ButtonExternal` adapter
-//! (§5.15 reference impl). A sync `view(state, &Frame) -> Scene`
-//! (§6.3 view-fn signature, §2 purity invariant) builds a
-//! `Scene::Container` carrying a dark navy background `Scene::Box`,
-//! a centered button `Scene::Box` whose fill reflects `ButtonState`,
-//! and a `Scene::Text` label. A recursive `paint` walks the tree
-//! and writes `BoxNode`s into the softbuffer pixel slice;
-//! `TextNode` is present-but-unrasterized until the cosmic-text
-//! slice, with the §5.16 RHI still pending.
+//! Architecture (R17 bidirectional RPC spec round, live dogfood):
 //!
-//! In parallel, a background thread reads JSON-RPC 2.0 lines from
-//! `stdin`, forwards each as a winit user event, and the main
-//! thread dispatches it against a fresh `ButtonStateSnapshot` —
-//! the first live exercise of §2 invariant #2 ("RPC headless as AI
-//! primary path") against a running winit app. v0 is read-only:
-//! `scene/query /external/state` succeeds, `intervene`-class
-//! methods return `ReadOnly` per the snapshot contract. Bidirectional
-//! RPC (RPC-driven `ButtonEvent`) requires a `Box<dyn External>`
-//! downcast story and is carry-forward.
+//!   * The app owns the **state scene**:
+//!     `Scene::External(Box<ButtonExternal>)`. The live R12 `Button`
+//!     SCXML statechart is reachable via the §5.15 introspect
+//!     surface — there is no other copy of the state.
+//!   * **Input flows through a single channel**: both winit pointer
+//!     events and JSON-RPC frames hit `ExternalIntrospect::invoke
+//!     ("send", Text(<event name>))`. winit translates `WindowEvent`
+//!     to a `ButtonEvent` variant name; `pinion_rpc::dispatch` routes
+//!     `scene/invoke` to the same method. The §2 invariant #2 ("RPC
+//!     headless as AI primary path") is *literal* — the AI uses the
+//!     same channel a human would.
+//!   * The **paint scene** is separate: `view(state, &Frame) -> Scene`
+//!     (§6.3 pure sync) builds a `Scene::Container` (bg box +
+//!     centered button box + text label) from the current
+//!     `ButtonState` each frame. `paint` recurses over that.
+//!     Model/view split — state scene is authoritative, paint scene
+//!     is a derived view.
+//!   * A background thread reads JSON-RPC 2.0 lines from `stdin`
+//!     and forwards each as a winit `UserEvent`; the main thread
+//!     handles it on the UI thread, then refreshes the cached state
+//!     and requests a redraw if the RPC mutated anything.
 
 use std::io::{BufRead, Write};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::thread;
 
+use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect, TextNode};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene};
@@ -116,53 +120,121 @@ fn paint_box(node: &BoxNode, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
     }
 }
 
+/// Read the current `ButtonState` from the live state scene by
+/// going through the §5.15 introspect `state` slot — the same path
+/// an RPC `scene/query /external/state` request uses. Returns
+/// `Idle` defensively if the scene shape is unexpected (should not
+/// happen with the current `App::new` setup).
+fn read_state(scene: &Scene) -> ButtonState {
+    if let Scene::External(node) = scene {
+        if let Some(intro) = node.handle.introspect() {
+            if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+                return parse_button_state(&name);
+            }
+        }
+    }
+    ButtonState::Idle
+}
+
+fn parse_button_state(name: &str) -> ButtonState {
+    match name {
+        "Hover" => ButtonState::Hover,
+        "Pressed" => ButtonState::Pressed,
+        "Disabled" => ButtonState::Disabled,
+        // "Idle" + anything unexpected — defensive default.
+        _ => ButtonState::Idle,
+    }
+}
+
+/// Mirror of the `parse_button_event` table in `pinion-core` — the
+/// winit handler side. Converts a typed `ButtonEvent` to the string
+/// name the §5.15 `invoke("send", ...)` channel expects. The SCXML
+/// emit may carry internal variants (`Null`, `ButtonActivate`,
+/// future additions) that winit never produces; route those through
+/// the wildcard with a sentinel name that the parser rejects.
+fn button_event_name(event: ButtonEvent) -> &'static str {
+    match event {
+        ButtonEvent::PointerEnter => "PointerEnter",
+        ButtonEvent::PointerLeave => "PointerLeave",
+        ButtonEvent::PointerDown => "PointerDown",
+        ButtonEvent::PointerUp => "PointerUp",
+        ButtonEvent::Disable => "Disable",
+        ButtonEvent::Enable => "Enable",
+        _ => "__internal__",
+    }
+}
+
 struct App {
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
     context: Option<Context<Rc<Window>>>,
-    button: ButtonExternal,
-    last_logged_state: ButtonState,
+    /// Authoritative state scene — owns the live `ButtonExternal`
+    /// via `Box<dyn External>`. Both winit input and RPC dispatch
+    /// reach the SCXML statechart through this single scene.
+    scene: Scene,
+    /// Cached projection of the inner `ButtonState`, kept in sync
+    /// by `refresh_state` after every input. Drives change-detection
+    /// for the redraw request + the paint scene's fill mapping.
+    cached_state: ButtonState,
 }
 
 impl App {
     fn new() -> Self {
-        let button = ButtonExternal::new();
-        let last_logged_state = button.state();
-        eprintln!("button: initial state = {last_logged_state:?}");
+        let scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
+        // Initial state is whatever the freshly-constructed Button is
+        // at — read it via the same introspect channel everything else
+        // uses, so there is exactly one source of truth.
+        let cached_state = read_state(&scene);
+        eprintln!("button: initial state = {cached_state:?}");
         Self {
             window: None,
             surface: None,
             context: None,
-            button,
-            last_logged_state,
+            scene,
+            cached_state,
         }
     }
 
+    /// Translate a typed `ButtonEvent` (from a winit handler) into
+    /// the symbolic `invoke("send", Text(<name>))` call — the same
+    /// channel the RPC `scene/invoke` route uses. Failures from the
+    /// statechart (`InvokeError::Rejected` etc.) are swallowed: the
+    /// SCXML decides whether a given transition fires.
     fn forward(&mut self, event: ButtonEvent) {
-        self.button.send(event);
-        let now = self.button.state();
-        if now != self.last_logged_state {
-            eprintln!("button: {:?} -> {:?}", self.last_logged_state, now);
-            self.last_logged_state = now;
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
+        let name = button_event_name(event);
+        if let Scene::External(node) = &mut self.scene {
+            if let Some(intro) = node.handle.introspect_mut() {
+                let _ = intro.invoke("send", IntrospectValue::Text(name.to_string()));
             }
         }
+        self.refresh_state();
     }
 
-    /// Dispatch one JSON-RPC frame against a freshly snapshotted
-    /// `Scene::External(ButtonStateSnapshot)`. The live `ButtonExternal`
-    /// itself stays on the UI thread; only its `ButtonState` (a `Copy`
-    /// enum) crosses into the snapshot, so this stays sound without any
-    /// `Send`/`Sync` bound on `External`.
-    fn dispatch_rpc(&self, request: &str) {
-        let snap = self.button.snapshot();
-        let mut scene = Scene::External(ExternalNode::new(Box::new(snap)));
-        if let Some(resp) = dispatch(&mut scene, request) {
+    /// Dispatch one JSON-RPC frame against the LIVE state scene.
+    /// `scene/invoke /external/send PointerEnter` (and friends) now
+    /// drive the SCXML the same way a winit click would.
+    fn dispatch_rpc(&mut self, request: &str) {
+        if let Some(resp) = dispatch(&mut self.scene, request) {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {
                 // stdout closed (downstream consumer gone) — silently
                 // skip; do not abort the GUI loop on a broken pipe.
+            }
+        }
+        // The RPC frame may have mutated state — re-read, log the
+        // delta, and trigger a redraw if the visual changed.
+        self.refresh_state();
+    }
+
+    /// Re-read the cached `ButtonState` from the live scene; log
+    /// and repaint if it changed since the previous refresh.
+    fn refresh_state(&mut self) {
+        let now = read_state(&self.scene);
+        if now != self.cached_state {
+            eprintln!("button: {:?} -> {:?}", self.cached_state, now);
+            self.cached_state = now;
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
             }
         }
     }
@@ -188,15 +260,17 @@ impl App {
             return;
         };
         // §6.3 view-fn → §5.11 Scene tree → recursive paint into the
-        // softbuffer pixel slice. Clear-to-zero first so any pixels
+        // softbuffer pixel slice. The state scene (self.scene) is the
+        // model; `view` builds an ephemeral paint scene from the
+        // cached state each frame. Clear-to-zero first so any pixels
         // outside the v0 background rect (after window resize) read
         // as transparent black rather than stale frame data.
         let buf_w = width.get() as usize;
         let buf_h = height.get() as usize;
         let frame = Frame::new();
-        let scene = view(self.button.state(), &frame);
+        let paint_scene = view(self.cached_state, &frame);
         buffer.fill(0);
-        paint(&scene, &mut buffer, buf_w, buf_h);
+        paint(&paint_scene, &mut buffer, buf_w, buf_h);
         let _ = buffer.present();
     }
 }
@@ -253,7 +327,7 @@ impl ApplicationHandler<AppEvent> for App {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                eprintln!("button: final state = {:?}", self.button.state());
+                eprintln!("button: final state = {:?}", self.cached_state);
                 event_loop.exit();
             }
             WindowEvent::CursorEntered { .. } => self.forward(ButtonEvent::PointerEnter),

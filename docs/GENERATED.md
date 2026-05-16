@@ -529,6 +529,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Item 8 opt-in via External::introspect()/introspect_mut() returning Option<&dyn ExternalIntrospect>
 - R17 live RPC dogfood uses snapshot (read-only); bidirectional needs `Box<dyn External>` downcast
 - R17 ExternalIntrospect.invoke: action channel returning IntrospectValue; §5.12 scene/invoke
+- R17 hello-button: live bidirectional RPC via invoke; winit + JSON-RPC share one channel
 
 
 
