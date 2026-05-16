@@ -731,4 +731,44 @@ mod tests {
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
     }
+
+    /// `ButtonExternal` end-to-end: a real R12 widget reaches the
+    /// JSON-RPC envelope. Validates §5.15 item 8 dispatch chain
+    /// (`dispatch` → `scene/query` → `External::introspect` →
+    /// `ExternalIntrospect::query`) against widget state — the
+    /// `CountedExternal` fixture covers the trait mechanics, this
+    /// asserts the path also works for real-widget surfaces.
+    #[test]
+    fn scene_query_on_button_external_returns_state_text() {
+        use pinion_core::widgets::button::{ButtonEvent, ButtonExternal};
+        let mut bx = ButtonExternal::new();
+        bx.send(ButtonEvent::PointerEnter);
+        let mut scene = Scene::External(ExternalNode::new(Box::new(bx)));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":42}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.expect("scene/query produced no result");
+        // Hybrid query result: typed IntrospectValue serialized
+        // tagged-untagged; assert by matching the deserialized
+        // string contents.
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(
+            serialized.contains("Hover"),
+            "expected ButtonExternal to surface Hover state, got {serialized}"
+        );
+    }
+
+    #[test]
+    fn scene_query_on_button_external_unknown_path_is_invalid() {
+        use pinion_core::widgets::button::ButtonExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/nope"},"id":43}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.expect("unknown path should error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(
+            err.data,
+            Some(Value::String("UnknownIntrospectPath".to_string()))
+        );
+    }
 }

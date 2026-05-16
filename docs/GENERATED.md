@@ -528,6 +528,10 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+**Implementations**:
+- crates/pinion-core/src/widgets/button.rs:ButtonExternal
+
+
 
 ### §5.16. GPU renderer architecture (runtime abstraction vs build-time codegen)
 

@@ -458,6 +458,12 @@
         "5.12",
         "5.14"
       ],
+      "implementations": [
+        {
+          "file": "crates/pinion-core/src/widgets/button.rs",
+          "symbol": "ButtonExternal"
+        }
+      ],
       "decision_status": "active"
     },
     "5.16": {
