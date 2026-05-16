@@ -387,6 +387,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R29 §5.25: scene/modifiers = 12th method; returns ModifierOp chain per node path.
 - R30 §5.26: scene/layout = 13th method; queries cached Layout (rect/padding/border) per path.
 - R32 §5.27: scene/virtual_list = 14th method; count + visible range + window snapshot.
+- R36 §5.31: scene/reload = 15th method; protocol trigger + result counts.
 
 
 
@@ -1031,6 +1032,7 @@ fn main() {
 - R26: Computed<T> lazy + cached dirty flag; pure fn contract; propagate only on value change.
 - R26: RPC introspect = Signal<T:Serialize> via scene/query; rewind sets via deserialize.
 - R34 §5.29: SyncSignal cross-thread variant ratified; Arc<RwLock<T>> wrapper.
+- R36 §5.31: Signal<T> bound extended with T: Serialize + Deserialize for hot reload protocol.
 
 
 
@@ -1590,6 +1592,64 @@ fn main() {
 - Web-style ARIA (HTML attributes) — not applicable; pinion native
 - Ignore accessibility (egui historical) — not viable lifetime framework
 - Custom AT abstraction — duplicates AccessKit; reinvents wheel
+
+
+
+
+
+
+### §5.31. Hot reload (Signal serialization protocol)
+
+
+**Intent**: Hot reload via Signal<T: Serialize> snapshot/restore: code swap preserves state; new view-fn applies to existing Signals. Flutter hot reload + Compose Live Edit pattern.
+
+
+**Rationale**:
+- Flutter hot reload (2017+) + Compose Live Edit (2022+) prove industry expectation
+- Signal-based reactivity makes this natural: serialize all Signals, swap code, restore
+- view-fn purity means new view-fn produces same Scene given same Signals — trivial reload
+- §5.22 Signal<T> already requires T: Clone + PartialEq; adding Serialize bound minimal cost
+- Owner tree (§5.29) preserved across reload; only view-fn code module rebuilt
+- Effect / Command in-flight: cancelled on reload (clean slate for side effects)
+- Animation state (§5.28) preserved — spring continues from current position post-reload
+- SCXML statechart state preserved via serialize; transition runs fresh under new code
+
+
+
+**Inputs**:
+- §5.22 Signal<T>: T: Serialize bound addition for hot reload
+- §5.29 Owner tree: preserved across code swap
+- §6.3 dylib reload mechanism: per-target hot reload protocol
+
+
+
+**Outputs**:
+- Snapshot protocol: serialize all Signal<T> by Owner-tree traversal
+- Restore protocol: deserialize after code swap; map by stable path key
+- pinion-reload crate: dylib load/unload + state snapshot/restore
+- Stable path key generation via SCE-emitted identifiers
+- scene/reload = 15th RPC method: trigger reload + return result
+
+
+
+**Caveats**:
+- R36: Signal<T> requires T: Serialize + Deserialize; serde bound added per §5.22 caveat.
+- R36: Stable path key per Signal; SCE-emitted IDs; survives code refactor unless name changes.
+- R36: Signal removed in new code: snapshot value discarded silently; logged for inspection.
+- R36: Signal added in new code: initialized with default (per code); no snapshot value.
+- R36: Signal type-changed: deserialize fails → fall back to new default; warning logged.
+- R36: In-flight Command<Intent> cancelled on reload; clean slate for new code side effects.
+- R36: Animation state preserved; spring continues from current value/velocity post-reload.
+- R36: scene/reload = 15th RPC method; triggers protocol + returns added/removed/preserved counts.
+- R36: dylib reload mechanism via libloading or libabigail; per-target compile fingerprint check.
+
+
+
+**Alternatives rejected**:
+- Full restart (state lost) — worst dev experience; not viable lifetime framework
+- Snapshot specific values (manual #[reload_save]) — error-prone; user must remember
+- Process-level checkpointing (CRIU) — too heavy; OS-coupled
+- VM-level hot patching (Erlang/BEAM) — not feasible for native Rust
 
 
 
@@ -3021,6 +3081,39 @@ fn main() {
 - R36 §5.31 Hot reload (signal serialization)
 - Screen magnifier hooks, voice control — future a11y axes
 - WCAG conformance testing harness via scene/semantic RPC
+
+
+
+### Round 36 — Round 36 — §5.31 new section: Hot reload via Signal serialization; code swap preserves state; final spec batch close
+
+**Changes**:
+- New §5.31 section: Hot reload under §5 parent (Flutter + Compose industry standard)
+- Signal<T> bound extended: T: Serialize + Deserialize (§5.22 caveat cross-ref)
+- Snapshot/restore protocol via Owner-tree traversal; stable SCE-emitted path keys
+- Added/removed/type-changed Signal handling rules locked
+- scene/reload = 15th RPC method (§5.12 caveat cross-ref)
+- Animation/SCXML state preserved across reload; in-flight Commands cancelled
+- 9 §5.31 caveats + 2 cross-refs (§5.22 §5.12) ratify protocol
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 40 → 41; entries 35 → 36
+- no code changes (spec-only)
+- atomic mutations: 1 add_section + 5 set_section_* + 11 add_section_caveat
+- Spec batch close: R25§5.22 — R36§5.31 covers all textbook layered architecture axes
+
+
+
+**Impact**: §5.12, §5.22, §5.28, §5.31, §6.3
+
+
+**Carry forward**:
+- Implementation rounds for R26—R36 axes (each = 3-tier SCE schema + Forge codegen + Rust runtime)
+- Widget library buildout (TextField/Slider/Checkbox/List/Modal/etc.) atop locked architecture
+- TUI backend (§5.9 invariant #6) realization
+- Multi-window WindowRouter live dogfood
+- Forge integration tooling for SCE → Rust pipeline
 
 
 
