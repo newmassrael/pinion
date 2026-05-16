@@ -382,6 +382,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R18 §5.20 scene/intents 9th RPC method; poll-form single-consumer v0
 - R18 §5.20 slice 4: scene/intents 9th method (poll-form drain).
 - R27 §5.23: scene/commands = 10th method; lists pending Commands from Update return.
+- R28 §5.24: scene/semantic = 11th method; returns SemanticProps tree (role/state/actions).
 
 
 
@@ -883,6 +884,7 @@ fn main() {
 - R18 slice 5: ButtonExternal emits button.click intent on Pressed → Hover (PointerUp).
 - R18 slice 6: hello-button drains intents after each event; logs to stderr; scene/intents RPC live.
 - R22: ExternalNode.tag prefixes drained intent tag (widget.kind convention complete).
+- R28 §5.24: §5.20 tag absorbed into SemanticProps.tag (richer role/state/actions schema).
 
 
 
@@ -1084,6 +1086,68 @@ fn main() {
 - callback registration — imperative; not introspectable; orphan management hard
 - IO monad (Haskell) — too abstract for AI authoring surface
 - Free monad effects — powerful but compilation cost; over-engineered for GUI
+
+
+
+
+
+
+### §5.24. Semantic tree (role / state / actions)
+
+
+**Intent**: Semantic sidecar on every Scene node: role (button/text/list), state (enabled/focused), actions (invokable). Absorbs §5.20 tag; AccessKit/AT-SPI/UIA bridge target; AI agent 1st-class.
+
+
+**Rationale**:
+- Scene IR is already a semantic tree de facto; §5.20 tag was the first hint
+- ARIA/AccessKit/AT-SPI/UIA/iOS all converge on role+state+actions triple
+- AI agent needs semantic meaning (button), not visual (box with text)
+- Compose Semantics tree is industry proof; SwiftUI same accessibilityElement pattern
+- Single semantic surface drives accessibility AND AI introspection — no duplication
+- Action handlers first-class invocables; map naturally to §5.20 intents
+- Role enum closed-form per ARIA standard — textbook canonical taxonomy
+- Live regions derive from Signal subscriptions automatically
+
+
+
+**Inputs**:
+- §5.20 intent + tag (R22): semantic tree absorbs tag as one field of richer struct
+- §5.22 Signal: state fields backed by Signals enable reactive semantic updates
+- §5.23 Effect/Command: actions dispatched via Command<Intent> on invoke
+- ARIA spec (W3C) + AccessKit role taxonomy: canonical role enum source
+
+
+
+**Outputs**:
+- SemanticProps { role, state, actions, label, description } sidecar on every Scene node
+- Role enum: closed-form ARIA taxonomy (Button/Heading/List/TextInput/etc.; ~30 variants)
+- SemanticState bitflags (Enabled/Focused/Selected/Expanded/Checked/...)
+- SemanticAction enum: Invoke/Increment/SelectChild/ExpandCollapse/etc.
+- AccessKit bridge auto-generated from SemanticProps (later round impl)
+- SCE schema: semantic annotations on Scene declarations; Forge emits SemanticProps
+
+
+
+**Caveats**:
+- R28: SemanticProps replaces §5.20 tag; tag becomes Option<Cow<str>> field within SemanticProps.
+- R28: Role enum closed-form per ARIA; ~30 variants v0 (Button/Heading/List/TextInput/etc.).
+- R28: SemanticState bitflags: Enabled/Focused/Selected/Expanded/Checked/Disabled/Hidden.
+- R28: SemanticAction enum: Invoke/Increment/Decrement/SelectChild/Expand/Collapse/Custom.
+- R28: Action handler = Command<Intent>; invoking action dispatches Command per §5.23.
+- R28: SemanticProps {role, state, actions, label, description, tag}; default = Role::None.
+- R28: scene/semantic = 11th RPC method; returns full SemanticProps tree (subset of snapshot).
+- R28: Live region: SemanticProps.live_region: Polite/Assertive/Off; announces on Signal change.
+- R28: AccessKit bridge derives from SemanticProps; no manual AT-binding code needed.
+- R28: SCE schema: semantic block inline within Scene declaration; Forge emits SemanticProps init.
+
+
+
+**Alternatives rejected**:
+- String tag only (§5.20 R22) — too thin; AI must infer role from context
+- Free-form key/value bag — no enum constraint; AI agents inconsistent
+- Platform-native AT only (UIA/AT-SPI directly) — locks to one OS; misses AI use
+- Compose Modifier.semantics chain — works but pinion uses field-on-node (simpler)
+- Separate semantic tree parallel to Scene — two trees to sync; bug-prone
 
 
 
@@ -2285,6 +2349,42 @@ fn main() {
 - R35 §5.30 Accessibility (AccessKit bridge) — depends on §5.24 semantic tree
 - R36 §5.31 Hot reload — signal serialization protocol from §5.22
 - Effect equality opt-out, granular Handler retry policy, Command priority queueing — future ergonomics
+
+
+
+### Round 28 — Round 28 — §5.24 new section: Semantic tree (role/state/actions) spec lock; absorbs §5.20 tag into richer ARIA-aligned schema
+
+**Changes**:
+- New §5.24 section: Semantic tree under §5 parent (role+state+actions triple)
+- SemanticProps sidecar on every Scene node: role + state + actions + label + description + tag
+- Role enum closed-form per ARIA: ~30 variants v0 (Button/Heading/List/TextInput/etc.)
+- SemanticState bitflags + SemanticAction enum for AT + AI introspection alike
+- scene/semantic = 11th RPC method ratified (§5.12 caveat cross-ref)
+- §5.20 tag absorbed into SemanticProps.tag (caveat cross-ref); semantic tree richer surface
+- 10 §5.24 caveats lock concrete schema; AccessKit bridge derivation path established
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 33 → 34; entries 27 → 28
+- no code changes this round (spec-only); R29+ axis batch continues
+- atomic mutations: 1 add_section + 5 set_section_* + 12 add_section_caveat (3 retries for caps; 1 orphan fix)
+- Single semantic surface drives accessibility AND AI introspection — no two-tree sync bugs
+
+
+
+**Impact**: §2, §5.12, §5.20, §5.22, §5.23, §5.24
+
+
+**Carry forward**:
+- R29 §5.25 Modifier composition (chain pattern) — Signal-reactive modifiers
+- R30 §5.26 Incremental layout + damage tracking — refines §5.21 taffy
+- R31 §5.16 GPU render backend (vello) — existing axis ratify
+- R32 §5.27 Virtualization Scene variant (VirtualList<T>)
+- R33 §5.28 Animation (spring physics)
+- R34 §5.29 Structured concurrency
+- R35 §5.30 Accessibility (AccessKit bridge from §5.24)
+- R36 §5.31 Hot reload (signal serialization)
 
 
 
