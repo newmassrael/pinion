@@ -27,15 +27,19 @@
 mod cancel;
 mod error;
 mod id;
+mod kinds;
 mod ledger;
 mod list;
 mod proposal;
+mod propose;
 
 pub use cancel::cancel_preview;
 pub use error::{ApplyError, ProposeError};
 pub use id::PreviewId;
+pub use kinds::TypedProposal;
 pub use ledger::{
     Entry, PreviewLedger, PreviewView, SweepReport, DEFAULT_CAPACITY, DEFAULT_TTL, MAX_TTL,
 };
 pub use list::list_previews;
 pub use proposal::Proposal;
+pub use propose::{propose_change, ProposeOutcome};

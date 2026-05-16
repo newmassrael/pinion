@@ -2,14 +2,15 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R40.3): `scene/query`,
+//! response envelope. Registered methods (R40.5): `scene/query`,
 //! `scene/click`, `scene/rewind`, `scene/snapshot`, `scene/dry_run`,
 //! `scene/waitFor`, `scene/screenshot`, `scene/invoke`,
 //! `scene/intents`, `scene/locate`, `scene/locate_region`,
-//! `scene/bbox`, `scene/cancel_preview`, `scene/list_previews`. The
-//! preview-lifecycle methods take an additional `&PreviewLedger`
-//! argument that the dispatcher receives from its caller alongside
-//! the scene.
+//! `scene/bbox`, `scene/cancel_preview`, `scene/list_previews`,
+//! `scene/propose_change`. The preview-lifecycle methods take an
+//! additional `&PreviewLedger` argument that the dispatcher receives
+//! from its caller alongside the scene, plus a `&SceneRevision` for
+//! OCC bookkeeping.
 //!
 //! Notifications (requests without `id`) elicit no response per the spec
 //! — [`dispatch`] returns `None` in that case. Errors map to the
@@ -38,7 +39,10 @@ use crate::invoke::{invoke, InvokeError};
 use crate::locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };
-use crate::preview::{cancel_preview, list_previews, PreviewId, PreviewLedger, PreviewView};
+use crate::preview::{
+    cancel_preview, list_previews, propose_change, PreviewId, PreviewLedger, PreviewView,
+    ProposeError, ProposeOutcome, TypedProposal,
+};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
@@ -164,8 +168,12 @@ pub fn dispatch(
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
         "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
         "scene/list_previews" => handle_scene_list_previews(previews),
-        // R40.5+: scene/propose_change, scene/apply_preview land here
-        // and will likewise be tagged in `mutates_scene_on_success`.
+        "scene/propose_change" => {
+            handle_scene_propose_change(previews, revision, request.params.as_ref())
+        }
+        // R40.6: scene/apply_preview lands here and will be tagged in
+        // `mutates_scene_on_success` since it commits a stored
+        // proposal against the live scene.
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -678,6 +686,91 @@ fn handle_scene_cancel_preview(
     let mut map = serde_json::Map::new();
     map.insert("cancelled".into(), Value::Bool(cancelled));
     Ok(Value::Object(map))
+}
+
+fn handle_scene_propose_change(
+    previews: &PreviewLedger,
+    revision: &SceneRevision,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let proposal = parse_typed_proposal(params)?;
+    let ttl_hint = match params.get("ttl_ms") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let Some(ms) = v.as_u64() else {
+                return Err(invalid_params(
+                    "params.ttl_ms must be a non-negative integer (ms)",
+                ));
+            };
+            Some(std::time::Duration::from_millis(ms))
+        }
+    };
+    match propose_change(previews, revision, proposal, ttl_hint) {
+        Ok(outcome) => Ok(propose_outcome_to_json(outcome)),
+        Err(err) => Err(propose_error_to_rpc(&err)),
+    }
+}
+
+fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
+    let Some(kind) = params.get("kind").and_then(Value::as_str) else {
+        return Err(invalid_params(
+            "params.kind missing or not a string (expected one of: SetSignal)",
+        ));
+    };
+    match kind {
+        "SetSignal" => {
+            let Some(target_path) = params.get("target_path").and_then(Value::as_str) else {
+                return Err(invalid_params(
+                    "params.target_path missing or not a string",
+                ));
+            };
+            let Some(signal_path) = params.get("signal_path").and_then(Value::as_str) else {
+                return Err(invalid_params(
+                    "params.signal_path missing or not a string",
+                ));
+            };
+            let Some(value) = params.get("value") else {
+                return Err(invalid_params("params.value missing"));
+            };
+            Ok(TypedProposal::SetSignal {
+                target_path: target_path.to_owned(),
+                signal_path: signal_path.to_owned(),
+                value: value.clone(),
+            })
+        }
+        other => Err(RpcError {
+            code: -32602,
+            message: "Invalid params".to_string(),
+            data: Some(Value::String(format!("UnknownProposalKind: {other}"))),
+        }),
+    }
+}
+
+fn propose_outcome_to_json(outcome: ProposeOutcome) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "preview_id".into(),
+        Value::Number(outcome.preview_id.get().into()),
+    );
+    map.insert(
+        "base_revision".into(),
+        Value::Number(outcome.base_revision.into()),
+    );
+    Value::Object(map)
+}
+
+fn propose_error_to_rpc(err: &ProposeError) -> RpcError {
+    let variant = match err {
+        ProposeError::CapacityFull { .. } => "CapacityFull",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
 }
 
 // `Result<_, _>` shape kept for dispatcher consistency — every match
@@ -1574,5 +1667,128 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":406}"#;
         let _ = dispatch(&mut scene, &previews, &revision, req);
         assert_eq!(revision.current(), 0);
+    }
+
+    // ---- R40.5: scene/propose_change JSON-RPC wire ----
+
+    #[test]
+    fn scene_propose_change_set_signal_returns_id_and_base_rev() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        revision.bump();
+        revision.bump();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/w/c","signal_path":"/w/c/count","value":42},"id":501}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let obj = resp.result.unwrap();
+        assert!(obj.get("preview_id").and_then(Value::as_u64).is_some());
+        assert_eq!(obj.get("base_revision"), Some(&Value::Number(2.into())));
+        assert_eq!(previews.len(), 1);
+    }
+
+    #[test]
+    fn scene_propose_change_does_not_bump_revision() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/a","signal_path":"/a/s","value":1},"id":502}"#;
+        let _ = dispatch(&mut scene, &previews, &revision, req);
+        assert_eq!(
+            revision.current(),
+            0,
+            "propose_change mutates ledger only — must not bump scene revision"
+        );
+    }
+
+    #[test]
+    fn scene_propose_change_unknown_kind_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"Bogus","target_path":"/a","signal_path":"/a/s","value":1},"id":503}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.unwrap();
+        assert!(
+            data.as_str().unwrap().contains("UnknownProposalKind"),
+            "expected UnknownProposalKind tag, got {data:?}"
+        );
+    }
+
+    #[test]
+    fn scene_propose_change_missing_kind_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"target_path":"/a","signal_path":"/a/s","value":1},"id":504}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn scene_propose_change_set_signal_missing_target_path_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","signal_path":"/a/s","value":1},"id":505}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn scene_propose_change_set_signal_missing_value_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/a","signal_path":"/a/s"},"id":506}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn scene_propose_change_capacity_full_surfaces_as_invalid_params() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::with_config(
+            1,
+            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(600),
+        );
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/a","signal_path":"/a/s","value":1},"id":507}"#;
+        let first = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        assert!(first.error.is_none());
+        let second = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        let err = second.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("CapacityFull".to_string())));
+    }
+
+    #[test]
+    fn scene_propose_change_round_trips_through_list_previews() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/btn","signal_path":"/btn/count","value":99,"ttl_ms":5000},"id":508}"#;
+        let propose_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, propose_req).unwrap());
+        let preview_id = propose_resp
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
+
+        let list_req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":509}"#;
+        let list_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, list_req).unwrap());
+        let arr = list_resp.result.unwrap().get("previews").cloned().unwrap();
+        let entries = arr.as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        let obj = entries[0].as_object().unwrap();
+        assert_eq!(obj["preview_id"].as_u64().unwrap(), preview_id);
+        assert_eq!(obj["target_path"].as_str().unwrap(), "/btn");
+        assert!(obj["ttl_remaining_ms"].as_u64().unwrap() <= 5000);
     }
 }

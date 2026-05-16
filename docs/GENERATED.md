@@ -1917,6 +1917,8 @@ fn main() {
 - R40.2: dispatch fn signature gained &PreviewLedger param — caller passes alongside &mut Scene
 - R40.4: SceneRevision = AtomicU64 OCC token; dispatch auto-bumps on click/rewind/invoke success
 - R40.4: non-dispatcher mutation paths (winit direct) must bump revision — conservative policy
+- R40.5: TypedProposal #[non_exhaustive] enum; SetSignal first variant; SetStyle/etc R40.x sub-slices
+- R40.5: SetSignal value carried as serde_json::Value; type coercion to T deferred to R40.6 apply
 
 
 
@@ -1951,6 +1953,10 @@ fn main() {
 - crates/pinion-rpc/src/dispatch.rs:preview_view_to_json
 - crates/pinion-core/src/revision.rs:SceneRevision
 - crates/pinion-rpc/src/dispatch.rs:mutates_scene_on_success
+- crates/pinion-rpc/src/preview/kinds.rs:TypedProposal
+- crates/pinion-rpc/src/preview/propose.rs:propose_change
+- crates/pinion-rpc/src/preview/propose.rs:ProposeOutcome
+- crates/pinion-rpc/src/dispatch.rs:handle_scene_propose_change
 
 
 
@@ -4164,6 +4170,38 @@ fn main() {
 - R40.5: typed Proposal enum (SetSignal initial) + scene/propose_change (15th RPC)
 - R40.6: scene/apply_preview (16th) — revision.current() vs entry.base_revision 교차 + side-effect
 - DispatchContext 구조체 refactor 후보 — 파라미터 4개 도달, 추가 시 고려
+- existing: §5.16 GPU, hello-button reactive, overlay Controller promote
+
+
+
+### Round 40.5 — §5.34 TypedProposal::SetSignal + scene/propose_change (15th RPC) — captures OCC base_revision
+
+**Changes**:
+- preview/kinds.rs TypedProposal #[non_exhaustive] enum (SetSignal first variant)
+- preview/propose.rs propose_change typed dispatcher — captures revision.current() as base_revision
+- ProposeOutcome { preview_id, base_revision } typed result struct
+- handle_scene_propose_change + parse_typed_proposal JSON 고수 파싱
+- wire: kind/target_path/signal_path/value (+optional ttl_ms) → {preview_id, base_revision}
+- UnknownProposalKind / CapacityFull / missing-field invalid_params surface
+- propose_change 는 revision 안 bump — ledger 명시 않은 OCC token capture only
+
+
+
+**Verification**:
+- cargo test --workspace: 493 → 507 pass (+14 wire/typed tests)
+- cargo clippy --workspace --all-targets: 11 baseline only — 신규 0
+- round-trip test: propose_change → list_previews 에 ttl_remaining_ms / target_path 계속
+- OCC: base_revision = revision.current() at propose time
+
+
+
+**Impact**: §5.34, §5.7, §5.12
+
+
+**Carry forward**:
+- R40.6: scene/apply_preview (16th) — OCC 검증 + Signal::set 적용 + revision.bump()
+- R40.7+: TypedProposal::SetStyle / ReplaceView / DispatchIntent 순차 추가
+- scene_revision 동기화 to signal writes — R40.6 결정 (auto bump in apply?)
 - existing: §5.16 GPU, hello-button reactive, overlay Controller promote
 
 
