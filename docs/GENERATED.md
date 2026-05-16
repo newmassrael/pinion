@@ -1705,6 +1705,45 @@ fn main() {
 
 
 
+### Round 19 — Round 19 — R18 round close: §5.20 intent system implementation; bidirectional event channel realized (6 slices)
+
+**Changes**:
+- pinion-derive crate added: #[derive(IntentTag)] macro for unit + scalar tuple variants (String/i64/f64/bool)
+- pinion-core::intent module: Intent envelope (Cow tag + IntrospectValue payload) + IntentTag trait
+- Scene tag fields: 5 introspectable variants gain Option<Cow<'static,str>> + with_tag builder per §5.20
+- External::drain_intents + is_dirty defaults; CountedExternal + ButtonExternal opt in
+- pinion-runtime::intent_queue: IntentQueue + walk_scene_and_drain recursive scene walker
+- pinion-rpc::intents: scene/intents 9th JSON-RPC method (poll-form drain, single-consumer v0)
+- ButtonExternal emits button.click intent on Pressed → Hover (PointerUp); winit + RPC share path
+- hello-button live dogfood: walk_scene_and_drain after each event; intents log to stderr
+
+
+
+**Verification**:
+- cargo test --workspace: 149 → 194 (+45 across 6 slices; 0 regressions)
+- cargo clippy --workspace --all-targets: clean on every slice; pre-existing 12 warnings untouched
+- validate_workspace per slice: T1=0 T3=0 RT=1/1 GENERATED.md=sync throughout
+- Mnemosyne mutations: 7 impl bindings + 5 caveats across §5.12 + §5.20; entries unchanged at 18
+
+
+
+**Impact**: §2, §5.2, §5.11, §5.12, §5.15, §5.20, §6.3
+
+
+**Carry forward**:
+- async stream intent channel (sync poll v0 today)
+- multi-consumer subscribe (single-consumer v0)
+- interactivity layer separation (intents currently coupled to External drain)
+- IntrospectValue::Object/Array expansion → struct + multi-field tuple variants in derive
+- complex payload macro for compound (multi-field) intent variants
+- cosmic-text Text rasterizer (Scene::Text still skipped by paint)
+- §5.3 DSL: Style trait fields, taffy layout, structured Path/Image schemas
+- vello/wgpu §5.16 first GPU backend; softbuffer eventual replacement
+- tokio stdio transport for production JSON-RPC framing/batching
+- multi-window WindowRouter live dogfood (fixture-only today)
+
+
+
 ### Round 2 — Round 2 open axes decomposition: §5 + §5.1-§5.10 enumerate options, trade-offs, deps; §5.2/§5.4 slots inferred from §2 invariants
 
 **Changes**:
