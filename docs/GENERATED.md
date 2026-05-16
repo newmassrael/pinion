@@ -3155,6 +3155,33 @@ fn main() {
 
 
 
+### Round 37.7 — Round 37.7 — SCE 범용성 확정; pinion-forge crate 신설 결정으로 R26+ axis들의 SCE upstream 항목 철회 (3단→2단 세트)
+
+**Changes**:
+- SCE = universal codegen infrastructure; framework-specific kind는 upstream 안 함
+- pinion-forge crate 신설 — R26+ codegen은 framework 측 (3단→2단 세트)
+- R37 carry-forward 정정: 'SCE schema + Forge codegen' 항목 → pinion-forge로 대체
+- memory sce-universal-meta-layer textbook 정정 반영 (infra ≠ authoring)
+
+
+
+**Verification**:
+- atomic-store entries 37→38; sections 41 (변경 없음); 정정-only commit
+- Mnemosyne validate-workspace: T1=0 T3=0 RT=1/1 sync
+
+
+
+**Impact**: §2, §5.22
+
+
+**Carry forward**:
+- R38 §5.22 재정의: SCE Forge codegen → pinion-forge DSL + Rust emit
+- pinion-forge crate를 §6 워크스페이스 멤버로 추가 build round 필요
+- §2 invariant #8 표현 명확화 spec round 후보 (R37.8 또는 R38 직전)
+- SCE 측 RFC: sce-build library API + custom namespace tolerance 두 항목
+
+
+
 ### Round 4 — Round 4 — Tier 1 bootstrap auto-ratified (§6 workspace/toolchain/async); 4 new open axes §5.11-§5.14 enumerated for next round decision
 
 **Changes**:
