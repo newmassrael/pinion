@@ -4,6 +4,7 @@ pub mod external;
 pub mod frame;
 pub mod intent;
 pub mod scene;
+pub mod style;
 pub mod topology;
 pub mod widgets;
 
@@ -15,3 +16,4 @@ pub use external::External;
 pub use frame::Frame;
 pub use intent::{Intent, IntentTag};
 pub use scene::Scene;
+pub use style::Color;

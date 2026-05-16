@@ -24,6 +24,8 @@
 
 use std::borrow::Cow;
 
+use crate::style::Color;
+
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
 ///
@@ -88,11 +90,11 @@ impl Rect {
 
 /// Rectangular primitive — the layout-and-fill workhorse.
 ///
-/// `fill` is the v0 ARGB colour (`0x00AARRGGBB`, softbuffer-native);
-/// `rect` is the v0 absolute pixel geometry. `Style`-carried
-/// properties (border, gradient, shadow) and taffy-driven relative
-/// layout settle with the §5.3 DSL — see the §5.11 caveats for the
-/// v0 field-schema scope.
+/// `fill` is the typed §5.3 R20 [`Color`] (sRGB + alpha); `rect` is
+/// the v0 absolute pixel geometry. Border / gradient / shadow and
+/// taffy-driven relative layout settle with the rest of the §5.3
+/// schema (later R21 slices add `BoxStyle` here for border + corner
+/// radius; gradients/shadows are carry-forward).
 ///
 /// `tag` is the §5.20 intent-system carrier. `None` means "no
 /// symbolic identifier"; an attached tag lets a widget identify which
@@ -100,14 +102,14 @@ impl Rect {
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct BoxNode {
-    pub fill: u32,
+    pub fill: Color,
     pub rect: Rect,
     pub tag: Option<Cow<'static, str>>,
 }
 
 impl BoxNode {
     #[must_use]
-    pub const fn new(fill: u32, rect: Rect) -> Self {
+    pub const fn new(fill: Color, rect: Rect) -> Self {
         Self {
             fill,
             rect,
@@ -306,7 +308,7 @@ mod tests {
 
     #[test]
     fn all_seven_variants_construct() {
-        let _ = Scene::Box(BoxNode::new(0, Rect::default()));
+        let _ = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
         let _ = Scene::Text(TextNode::new("", Rect::default()));
         let _ = Scene::Path(PathNode::new("", Rect::default()));
         let _ = Scene::Image(ImageNode::new("", Rect::default()));
@@ -320,7 +322,7 @@ mod tests {
         // Inside the defining crate `#[non_exhaustive]` does not force a
         // wildcard arm, so this exhaustive match doubles as a guard: if
         // someone adds a Scene variant they must touch this test.
-        let s = Scene::Box(BoxNode::new(0, Rect::default()));
+        let s = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
         match s {
             Scene::Box(_)
             | Scene::Text(_)
@@ -338,9 +340,9 @@ mod tests {
         // extracts it bit-for-bit. Guards the v0 §5.11 field schema
         // before §5.3 DSL settles geometry/style.
         let argb = 0x00ab_cdef;
-        let scene = Scene::Box(BoxNode::new(argb, Rect::default()));
+        let scene = Scene::Box(BoxNode::new(Color::from_argb(argb), Rect::default()));
         match scene {
-            Scene::Box(node) => assert_eq!(node.fill, argb),
+            Scene::Box(node) => assert_eq!(node.fill.to_argb(), argb),
             _ => panic!("expected Box variant"),
         }
     }
@@ -350,7 +352,7 @@ mod tests {
         // v0 §5.11 geometry: Rect carries x/y/w/h as u32, lossless
         // round-trip through Scene::Box.
         let rect = Rect::new(10, 20, 160, 80);
-        let scene = Scene::Box(BoxNode::new(0, rect));
+        let scene = Scene::Box(BoxNode::new(Color::default(), rect));
         match scene {
             Scene::Box(node) => assert_eq!(node.rect, rect),
             _ => panic!("expected Box variant"),
@@ -411,15 +413,21 @@ mod tests {
         // v0 §5.11 Container shape: Vec<Scene> children preserve
         // order and variant identity through pattern-match.
         let children = vec![
-            Scene::Box(BoxNode::new(0x00ff_0000, Rect::new(0, 0, 10, 10))),
-            Scene::Box(BoxNode::new(0x0000_ff00, Rect::new(20, 20, 5, 5))),
+            Scene::Box(BoxNode::new(
+                Color::from_argb(0x00ff_0000),
+                Rect::new(0, 0, 10, 10),
+            )),
+            Scene::Box(BoxNode::new(
+                Color::from_argb(0x0000_ff00),
+                Rect::new(20, 20, 5, 5),
+            )),
         ];
         let scene = Scene::Container(ContainerNode::new(children));
         match scene {
             Scene::Container(node) => {
                 assert_eq!(node.children.len(), 2);
                 match &node.children[0] {
-                    Scene::Box(b) => assert_eq!(b.fill, 0x00ff_0000),
+                    Scene::Box(b) => assert_eq!(b.fill, Color::from_argb(0x00ff_0000)),
                     _ => panic!("child 0 not Box"),
                 }
             }
@@ -454,7 +462,7 @@ mod tests {
         // v0 §5.20: a freshly constructed introspectable node carries
         // no intent tag. `with_tag` is the opt-in carrier — guards
         // against accidental default-tagging.
-        let node = BoxNode::new(0, Rect::default());
+        let node = BoxNode::new(Color::default(), Rect::default());
         assert!(node.tag.is_none());
     }
 
@@ -462,7 +470,7 @@ mod tests {
     fn box_node_with_tag_round_trips_through_scene() {
         // §5.20 intent tag persistence: attaching `"save_btn"` on a
         // BoxNode survives the Scene::Box wrap and pattern-match.
-        let scene = Scene::Box(BoxNode::new(0, Rect::default()).with_tag("save_btn"));
+        let scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()).with_tag("save_btn"));
         match scene {
             Scene::Box(node) => assert_eq!(node.tag.as_deref(), Some("save_btn")),
             _ => panic!("expected Box variant"),
@@ -483,7 +491,7 @@ mod tests {
     fn container_tag_persists_with_tagged_box_child() {
         // §5.20 nesting: a tagged Box inside a tagged Container
         // round-trips both tags through pattern-match.
-        let inner = Scene::Box(BoxNode::new(0, Rect::default()).with_tag("inner_btn"));
+        let inner = Scene::Box(BoxNode::new(Color::default(), Rect::default()).with_tag("inner_btn"));
         let scene = Scene::Container(ContainerNode::new(vec![inner]).with_tag("toolbar"));
         match scene {
             Scene::Container(c) => {

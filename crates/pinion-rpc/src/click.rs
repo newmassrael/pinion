@@ -92,6 +92,7 @@ mod tests {
         StubExternal, ThreadOwnership,
     };
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
+    use pinion_core::Color;
 
     /// Test fixture: an `External` that *claims* every event via
     /// `handles_event`. Lets us exercise the `handled=true` path of the
@@ -149,7 +150,7 @@ mod tests {
 
     #[test]
     fn box_at_root_reports_no_external() {
-        let scene = Scene::Box(BoxNode::new(0, Rect::default()));
+        let scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
         let err = click(&scene, "/external", 0.0, 0.0).unwrap_err();
         assert_eq!(err, ClickError::NoExternalAtPath);
     }

@@ -95,6 +95,7 @@ mod tests {
         RepaintOwner, StubExternal, ThreadOwnership,
     };
     use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect};
+    use pinion_core::Color;
 
     /// Test fixture proving the trait surface without any
     /// state-mutation side effects: a single static `Intent` armed
@@ -181,7 +182,7 @@ mod tests {
 
     #[test]
     fn walk_skips_non_external_primitives() {
-        let mut scene = Scene::Box(BoxNode::new(0, Rect::default()).with_tag("just_a_box"));
+        let mut scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()).with_tag("just_a_box"));
         let mut q = IntentQueue::new();
         walk_scene_and_drain(&mut scene, &mut q);
         assert!(q.is_empty());

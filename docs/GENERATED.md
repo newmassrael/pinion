@@ -948,6 +948,10 @@ fn main() {
 
 
 
+**Implementations**:
+- crates/pinion-core/src/style.rs:Color
+
+
 
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 

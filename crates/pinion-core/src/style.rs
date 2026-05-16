@@ -1,0 +1,131 @@
+//! Styling primitives (§5.3 v0 schema lock, R20).
+//!
+//! Houses the typed style sidecars consumed by [`Scene`](crate::Scene)
+//! variants per the §5.11 layered shape decision: each variant carries
+//! its minimal payload (rect, content, etc.) plus a `*Style` sidecar
+//! that names the rendering details. R21 builds these out incrementally
+//! — slice 1 introduces [`Color`]; subsequent slices add `BoxStyle`,
+//! `TextStyle`, `PathStyle`, `ImageStyle`, plus the `Border` / `Stroke`
+//! / `Fit` / `Align` companions per §5.3.
+//!
+//! `taffy` flexbox/grid integration is explicitly carry-forward
+//! (§5.3 R20 caveat) and *not* part of this module.
+
+/// 8-bit-per-channel sRGB color with separate alpha.
+///
+/// v0 §5.3 lock: `Color { r, g, b, a: u8 }` is the typed replacement
+/// for the previous raw `u32` ARGB literals carried in
+/// [`BoxNode.fill`](crate::scene::BoxNode). Bit-exact compatibility
+/// with the softbuffer-native `0xAARRGGBB` layout is preserved via
+/// [`Color::from_argb`] / [`Color::to_argb`].
+///
+/// Future color-space extensions (HSL / LAB / sRGB-linear) lay on
+/// top via `#[non_exhaustive]`-shape methods, not by changing this
+/// in-memory representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+impl Color {
+    /// Construct from raw channels in sRGB.
+    #[must_use]
+    pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self { r, g, b, a }
+    }
+
+    /// Construct from RGB triplet with fully-opaque alpha.
+    #[must_use]
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self::rgba(r, g, b, 0xff)
+    }
+
+    /// Decode a softbuffer-style `0xAARRGGBB` ARGB literal.
+    ///
+    /// The R17 / R18 `BoxNode.fill` field carried this exact layout
+    /// (top byte = alpha, then R/G/B). Round-trip with [`Color::to_argb`].
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub const fn from_argb(argb: u32) -> Self {
+        let a = ((argb >> 24) & 0xff) as u8;
+        let r = ((argb >> 16) & 0xff) as u8;
+        let g = ((argb >> 8) & 0xff) as u8;
+        let b = (argb & 0xff) as u8;
+        Self { r, g, b, a }
+    }
+
+    /// Encode back into the softbuffer-style `0xAARRGGBB` literal.
+    #[must_use]
+    pub const fn to_argb(self) -> u32 {
+        ((self.a as u32) << 24)
+            | ((self.r as u32) << 16)
+            | ((self.g as u32) << 8)
+            | (self.b as u32)
+    }
+
+    /// Fully-transparent (a=0) ARGB literal `0x0000_0000` decoded.
+    /// Same bit layout as the previous default `BoxNode.fill = 0`.
+    pub const TRANSPARENT: Self = Self::rgba(0, 0, 0, 0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rgba_constructor_preserves_channels() {
+        let c = Color::rgba(0x12, 0x34, 0x56, 0x78);
+        assert_eq!(c.r, 0x12);
+        assert_eq!(c.g, 0x34);
+        assert_eq!(c.b, 0x56);
+        assert_eq!(c.a, 0x78);
+    }
+
+    #[test]
+    fn rgb_helper_sets_opaque_alpha() {
+        let c = Color::rgb(0xff, 0x00, 0x00);
+        assert_eq!(c.a, 0xff);
+    }
+
+    #[test]
+    fn from_argb_decodes_softbuffer_layout() {
+        // 0xAARRGGBB → {r, g, b, a}
+        let c = Color::from_argb(0x8012_3456);
+        assert_eq!(c.a, 0x80);
+        assert_eq!(c.r, 0x12);
+        assert_eq!(c.g, 0x34);
+        assert_eq!(c.b, 0x56);
+    }
+
+    #[test]
+    fn to_argb_round_trips_with_from_argb() {
+        let argb = 0xff_ab_cd_ef;
+        let c = Color::from_argb(argb);
+        assert_eq!(c.to_argb(), argb);
+    }
+
+    #[test]
+    fn round_trip_a_full_sweep() {
+        // Bit-exact compat across the previously-used hello-button
+        // palette ensures no visual regression when call sites swap
+        // raw u32 fills for typed Color.
+        for argb in [0x0020_3040_u32, 0x00ff_ffff, 0x00d0_d0d0, 0x0050_5050, 0x00b0_2020] {
+            let c = Color::from_argb(argb);
+            assert_eq!(c.to_argb(), argb);
+        }
+    }
+
+    #[test]
+    fn transparent_round_trips_through_argb_zero() {
+        assert_eq!(Color::TRANSPARENT.to_argb(), 0);
+        assert_eq!(Color::from_argb(0), Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn default_is_transparent() {
+        assert_eq!(Color::default(), Color::TRANSPARENT);
+    }
+}

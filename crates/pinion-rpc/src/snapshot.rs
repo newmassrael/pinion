@@ -110,6 +110,7 @@ mod tests {
     use super::*;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
+    use pinion_core::Color;
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -117,7 +118,7 @@ mod tests {
 
     #[test]
     fn box_root_snapshots_as_box() {
-        let scene = Scene::Box(BoxNode::new(0, Rect::default()));
+        let scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
         assert_eq!(snapshot(&scene, "").unwrap(), SnapshotNode::Box);
     }
 

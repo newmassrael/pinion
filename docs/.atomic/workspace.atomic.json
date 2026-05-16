@@ -904,6 +904,12 @@
         "5.1",
         "5.6"
       ],
+      "implementations": [
+        {
+          "file": "crates/pinion-core/src/style.rs",
+          "symbol": "Color"
+        }
+      ],
       "decision_status": "active"
     },
     "5.4": {

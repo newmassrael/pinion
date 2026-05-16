@@ -40,7 +40,7 @@ use std::thread;
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect, TextNode};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Frame, Scene};
+use pinion_core::{Color, Frame, Scene};
 use pinion_rpc::dispatch;
 use pinion_runtime::{walk_scene_and_drain, IntentQueue};
 use softbuffer::{Context, Surface};
@@ -58,7 +58,7 @@ enum AppEvent {
 
 const WIN_W: u32 = 320;
 const WIN_H: u32 = 200;
-const BG_FILL: u32 = 0x0020_3040; // dark navy
+const BG_FILL: Color = Color::from_argb(0x0020_3040); // dark navy
 const BTN_RECT: Rect = Rect::new(80, 60, 160, 80);
 
 /// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
@@ -73,11 +73,11 @@ const BTN_RECT: Rect = Rect::new(80, 60, 160, 80);
 // view-fn. Allow the lint at the view-fn boundary.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ButtonState, _frame: &Frame) -> Scene {
-    let btn_fill: u32 = match state {
-        ButtonState::Idle => 0x00ff_ffff,     // white
-        ButtonState::Hover => 0x00d0_d0d0,    // light grey
-        ButtonState::Pressed => 0x0050_5050,  // dark grey
-        ButtonState::Disabled => 0x00b0_2020, // muted red
+    let btn_fill: Color = match state {
+        ButtonState::Idle => Color::from_argb(0x00ff_ffff),     // white
+        ButtonState::Hover => Color::from_argb(0x00d0_d0d0),    // light grey
+        ButtonState::Pressed => Color::from_argb(0x0050_5050),  // dark grey
+        ButtonState::Disabled => Color::from_argb(0x00b0_2020), // muted red
     };
     let label = match state {
         ButtonState::Disabled => "Disabled",
@@ -125,7 +125,9 @@ fn paint_box(node: &BoxNode, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
     let y_end = (r.y.saturating_add(r.h) as usize).min(buf_h);
     for y in y_start..y_end {
         let row = y * buf_w;
-        buffer[row + x_start..row + x_end].fill(node.fill);
+        // Softbuffer wants `0xAARRGGBB` u32 layout; the typed Color
+        // round-trips through `to_argb` bit-exact (§5.3 R20 R21 slice 1).
+        buffer[row + x_start..row + x_end].fill(node.fill.to_argb());
     }
 }
 

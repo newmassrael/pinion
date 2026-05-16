@@ -131,6 +131,7 @@ mod tests {
     use super::*;
     use pinion_core::external::{CountedExternal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
+    use pinion_core::Color;
 
     use crate::query::query;
     use crate::snapshot::ExternalSnapshot;
@@ -182,7 +183,7 @@ mod tests {
 
     #[test]
     fn box_at_root_rejected() {
-        let mut scene = Scene::Box(BoxNode::new(0, Rect::default()));
+        let mut scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
         let err = dry_run(&mut scene, "/external/count", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, DryRunError::NoExternalAtPath);
     }

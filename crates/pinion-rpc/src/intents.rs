@@ -58,6 +58,7 @@ mod tests {
         CountedExternal, External, IntrospectValue, StubExternal,
     };
     use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect};
+    use pinion_core::Color;
 
     fn counted_scene(n: i64) -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(n))))
@@ -65,7 +66,7 @@ mod tests {
 
     #[test]
     fn empty_scene_returns_empty_batch() {
-        let mut scene = Scene::Box(BoxNode::new(0, Rect::default()));
+        let mut scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
         let drained = drain_intents(&mut scene).unwrap();
         assert!(drained.is_empty());
     }
