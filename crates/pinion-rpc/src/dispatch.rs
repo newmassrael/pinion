@@ -28,6 +28,7 @@
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
+use pinion_core::style::{Border, BoxStyle, Color};
 use pinion_core::{Scene, SceneRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -758,7 +759,7 @@ fn handle_scene_propose_change(
 fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
     let Some(kind) = params.get("kind").and_then(Value::as_str) else {
         return Err(invalid_params(
-            "params.kind missing or not a string (expected one of: SetSignal, DispatchIntent)",
+            "params.kind missing or not a string (expected one of: SetSignal, DispatchIntent, SetStyle)",
         ));
     };
     match kind {
@@ -805,6 +806,21 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
                 intent: Intent::new_owned(tag.to_owned(), payload),
             })
         }
+        "SetStyle" => {
+            let Some(target_path) = params.get("target_path").and_then(Value::as_str) else {
+                return Err(invalid_params(
+                    "params.target_path missing or not a string",
+                ));
+            };
+            let Some(style_obj) = params.get("style") else {
+                return Err(invalid_params("params.style missing"));
+            };
+            let style = parse_box_style(style_obj)?;
+            Ok(TypedProposal::SetStyle {
+                target_path: target_path.to_owned(),
+                style,
+            })
+        }
         other => Err(RpcError {
             code: -32602,
             message: "Invalid params".to_string(),
@@ -813,6 +829,50 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
     }
 }
 
+
+/// Wire→[`BoxStyle`] coercion for `SetStyle` payloads (R40.10).
+///
+/// Required: `fill` (u32 ARGB). Optional: `border_color` (u32 ARGB),
+/// `border_width` (u32), `corner_radius` (u32). Missing optionals
+/// default per [`BoxStyle::filled`]. Unknown keys are ignored so the
+/// wire stays forward-compatible with future BoxStyle additions.
+fn parse_box_style(style: &Value) -> Result<BoxStyle, RpcError> {
+    let Some(fill) = style.get("fill").and_then(Value::as_u64) else {
+        return Err(invalid_params(
+            "params.style.fill missing or not an unsigned integer",
+        ));
+    };
+    // u32 ARGB is the wire shape; clamp to u32 explicitly so callers
+    // cannot smuggle high bits past the BoxStyle field type.
+    let fill_argb = u32::try_from(fill)
+        .map_err(|_| invalid_params("params.style.fill exceeds u32 range"))?;
+    let mut out = BoxStyle::filled(Color::from_argb(fill_argb));
+    if let Some(corner) = style.get("corner_radius").and_then(Value::as_u64) {
+        let radius = u32::try_from(corner)
+            .map_err(|_| invalid_params("params.style.corner_radius exceeds u32 range"))?;
+        out = out.with_corner_radius(radius);
+    }
+    // Border requires both color + width; either alone is incoherent
+    // and surfaces as invalid params rather than partial application.
+    let border_color = style.get("border_color").and_then(Value::as_u64);
+    let border_width = style.get("border_width").and_then(Value::as_u64);
+    match (border_color, border_width) {
+        (Some(c), Some(w)) => {
+            let c = u32::try_from(c)
+                .map_err(|_| invalid_params("params.style.border_color exceeds u32 range"))?;
+            let w = u32::try_from(w)
+                .map_err(|_| invalid_params("params.style.border_width exceeds u32 range"))?;
+            out = out.with_border(Border::new(Color::from_argb(c), w));
+        }
+        (None, None) => {}
+        _ => {
+            return Err(invalid_params(
+                "params.style.border_color and border_width must be provided together",
+            ));
+        }
+    }
+    Ok(out)
+}
 
 fn propose_outcome_to_json(outcome: ProposeOutcome) -> Value {
     let mut map = serde_json::Map::new();
@@ -2150,6 +2210,144 @@ mod tests {
         let previews = PreviewLedger::default();
         let revision = SceneRevision::default();
         let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"DispatchIntent","target_path":"/btn","intent":{"payload":null}},"id":706}"#;
+        let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    // ---- R40.10: TypedProposal::SetStyle JSON-RPC wire ----
+
+    fn box_container_scene_for_set_style() -> Scene {
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        let child = Scene::Box(
+            BoxNode::filled(
+                pinion_core::scene::Rect::new(0, 0, 10, 10),
+                Color::default(),
+            )
+            .with_tag("btn"),
+        );
+        let mut c = ContainerNode::new(vec![child]);
+        c.rect = pinion_core::scene::Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn scene_propose_set_style_then_apply_changes_box_fill_end_to_end() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        // Wire ARGB 0x00ff_00ff = magenta, fits in u32.
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/btn","style":{"fill":16711935}},"id":710}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":711}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap());
+        assert!(
+            apply_resp.error.is_none(),
+            "unexpected error: {:?}",
+            apply_resp.error
+        );
+        // BoxNode.style.fill now matches the proposed value.
+        if let Scene::Container(c) = &scene {
+            if let Scene::Box(b) = &c.children[0] {
+                assert_eq!(b.style.fill, Color::from_argb(16_711_935));
+            } else {
+                panic!("child 0 not Box");
+            }
+        } else {
+            panic!("root not Container");
+        }
+    }
+
+    #[test]
+    fn scene_propose_set_style_unknown_target_surfaces_apply_rejected() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/ghost","style":{"fill":255}},"id":712}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":713}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap());
+        let err = apply_resp.error.unwrap();
+        let data = err.data.unwrap();
+        assert_eq!(
+            data.get("variant"),
+            Some(&Value::String("ApplyRejected".to_string()))
+        );
+        assert_eq!(
+            data.get("reason"),
+            Some(&Value::String("UnknownTarget".to_string()))
+        );
+    }
+
+    #[test]
+    fn scene_propose_set_style_missing_fill_is_invalid_params() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/btn","style":{}},"id":714}"#;
+        let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_propose_set_style_with_border_round_trips() {
+        // Optional border_color + border_width together must reach
+        // apply intact — guards against the parse_box_style XOR check
+        // accidentally rejecting a valid border-bearing request.
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/btn","style":{"fill":0,"border_color":255,"border_width":3,"corner_radius":4}},"id":715}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":716}}"#
+        );
+        let _ = dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap();
+        if let Scene::Container(c) = &scene {
+            if let Scene::Box(b) = &c.children[0] {
+                let border = b.style.border.expect("border installed");
+                assert_eq!(border.color, Color::from_argb(255));
+                assert_eq!(border.width, 3);
+                assert_eq!(b.style.corner_radius, 4);
+            }
+        }
+    }
+
+    #[test]
+    fn scene_propose_set_style_partial_border_is_invalid_params() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        // Only border_color, no border_width — incoherent.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetStyle","target_path":"/btn","style":{"fill":0,"border_color":255}},"id":717}"#;
         let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);

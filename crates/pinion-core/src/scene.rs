@@ -166,6 +166,40 @@ impl Scene {
         target.lookup_path(tail)
     }
 
+    /// (§5.34 R40.10) Mutable counterpart to
+    /// [`lookup_path`](Self::lookup_path). Walks the scene tree
+    /// following `segments` and returns a `&mut Scene` to the matched
+    /// primitive — the addressing substrate the
+    /// `TypedProposal::SetStyle` / `TypedProposal::ReplaceView`
+    /// variants need to mutate a non-root node.
+    ///
+    /// Resolution rules match `lookup_path` exactly: tag wins over
+    /// index, declaration order on ties, `Scene::Effect` never
+    /// resolves, non-container intermediates fail.
+    ///
+    /// An empty segment slice returns `Some(self)` so callers can
+    /// uniformly handle the root case (e.g. `SetStyle` on
+    /// `/window[main]/` mutates the root).
+    pub fn lookup_path_mut(&mut self, segments: &[String]) -> Option<&mut Scene> {
+        if matches!(self, Scene::Effect(_)) {
+            return None;
+        }
+        let Some((head, tail)) = segments.split_first() else {
+            return Some(self);
+        };
+        let Scene::Container(c) = self else {
+            return None;
+        };
+        // Two-phase to satisfy the borrow checker: pick the matching
+        // index immutably, then re-borrow that slot mutably.
+        let target_idx = c.children.iter().enumerate().find_map(|(idx, child)| {
+            let tag_match = child.tag().is_some_and(|t| t == head);
+            let index_match = idx.to_string() == *head;
+            (tag_match || index_match).then_some(idx)
+        })?;
+        c.children[target_idx].lookup_path_mut(tail)
+    }
+
     /// Recursive helper for [`Self::hit_test_region`]. Maintains a
     /// segment stack representing the current path from the root.
     fn collect_intersections(
@@ -1178,6 +1212,74 @@ mod tests {
         // Box at root + segment "0" — Box has no children, lookup fails.
         let s = box_at(0, 0, 10, 10);
         assert!(s.lookup_path(&["0".to_string()]).is_none());
+    }
+
+    // ---- §5.34 R40.10: Scene::lookup_path_mut ----
+
+    #[test]
+    fn lookup_path_mut_empty_segments_returns_root() {
+        let mut s = box_at(1, 2, 3, 4);
+        let node = s.lookup_path_mut(&[]).expect("root resolves");
+        assert!(matches!(node, Scene::Box(_)));
+    }
+
+    #[test]
+    fn lookup_path_mut_resolves_tag_segment_and_allows_mutation() {
+        // Walking by tag returns &mut to the matched child; mutating
+        // it through the returned reference must persist after the
+        // borrow ends.
+        let mut s = container_at(0, 0, 200, 200, vec![tagged_box_at(0, 0, 10, 10, "btn")]);
+        {
+            let node = s
+                .lookup_path_mut(&["btn".to_string()])
+                .expect("tag resolves");
+            if let Scene::Box(b) = node {
+                b.rect = Rect::new(99, 99, 99, 99);
+            }
+        }
+        // Confirm the mutation landed via the immutable counterpart.
+        assert_eq!(s.lookup_path(&["btn".to_string()]), Some(Rect::new(99, 99, 99, 99)));
+    }
+
+    #[test]
+    fn lookup_path_mut_resolves_index_segment() {
+        let mut s = container_at(
+            0, 0, 200, 200,
+            vec![box_at(10, 10, 20, 20), box_at(50, 50, 30, 30)],
+        );
+        let node = s
+            .lookup_path_mut(&["1".to_string()])
+            .expect("index 1 resolves");
+        assert!(matches!(node, Scene::Box(_)));
+    }
+
+    #[test]
+    fn lookup_path_mut_nested_chain() {
+        let inner = container_at(0, 0, 100, 100, vec![box_at(10, 10, 50, 50)]);
+        let mut outer = container_at(0, 0, 200, 200, vec![inner]);
+        let node = outer
+            .lookup_path_mut(&["0".to_string(), "0".to_string()])
+            .expect("nested resolves");
+        assert!(matches!(node, Scene::Box(_)));
+    }
+
+    #[test]
+    fn lookup_path_mut_unknown_segment_returns_none() {
+        let mut s = container_at(0, 0, 100, 100, vec![box_at(0, 0, 10, 10)]);
+        assert!(s.lookup_path_mut(&["ghost".to_string()]).is_none());
+        assert!(s.lookup_path_mut(&["99".to_string()]).is_none());
+    }
+
+    #[test]
+    fn lookup_path_mut_through_non_container_returns_none() {
+        let mut s = box_at(0, 0, 10, 10);
+        assert!(s.lookup_path_mut(&["0".to_string()]).is_none());
+    }
+
+    #[test]
+    fn lookup_path_mut_skips_effect_variant() {
+        let mut s = Scene::Effect(EffectNode::new());
+        assert!(s.lookup_path_mut(&[]).is_none(), "Effect never resolves, even at root");
     }
 
     #[test]

@@ -11,6 +11,7 @@
 //! per Hyrum / Bloch API-evolution conventions.
 
 use pinion_core::intent::Intent;
+use pinion_core::style::BoxStyle;
 use pinion_core::Scene;
 
 use crate::rewind::{rewind, RewindError};
@@ -71,22 +72,46 @@ pub enum TypedProposal {
         /// once at apply time.
         intent: Intent,
     },
+    /// Replace the [`BoxStyle`] sidecar of a `Scene::Box` or
+    /// `Scene::Container` at `target_path` (§5.34 R40.10).
+    ///
+    /// The walk goes through [`Scene::lookup_path_mut`]; segments
+    /// resolve by tag-first / index-second per
+    /// [`Scene::hit_test`](pinion_core::Scene::hit_test) conventions.
+    /// Non-stylable variants (`Text`, `Path`, `Image`, `Effect`,
+    /// `External`) at the resolved path surface
+    /// `"UnsupportedStyleTarget"` via [`ApplyError::ApplyRejected`].
+    ///
+    /// v0 carries a full [`BoxStyle`] — every field (`fill`, `border`,
+    /// `corner_radius`) is replaced atomically. A partial-patch shape
+    /// (`SetStyleField` / per-field deltas) is future R40.x territory;
+    /// stays consistent with the §5.34 "all-or-nothing apply" caveat.
+    SetStyle {
+        /// Scene path the proposal walks to locate the target node.
+        /// Same shape as `SetSignal::target_path` but here the walk
+        /// is the side-effect, not just an anchor.
+        target_path: String,
+        /// Full replacement style. Variants that already have a
+        /// `BoxStyle` (`Box`, `Container`) overwrite their sidecar;
+        /// other variants fail apply with `"UnsupportedStyleTarget"`.
+        style: BoxStyle,
+    },
 }
 
 impl Proposal for TypedProposal {
     fn target_path(&self) -> &str {
         match self {
-            Self::SetSignal { target_path, .. } | Self::DispatchIntent { target_path, .. } => {
-                target_path
-            }
+            Self::SetSignal { target_path, .. }
+            | Self::DispatchIntent { target_path, .. }
+            | Self::SetStyle { target_path, .. } => target_path,
         }
     }
 
     fn affected_paths(&self) -> Vec<String> {
         match self {
-            Self::SetSignal { target_path, .. } | Self::DispatchIntent { target_path, .. } => {
-                vec![target_path.clone()]
-            }
+            Self::SetSignal { target_path, .. }
+            | Self::DispatchIntent { target_path, .. }
+            | Self::SetStyle { target_path, .. } => vec![target_path.clone()],
         }
     }
 
@@ -99,8 +124,57 @@ impl Proposal for TypedProposal {
                 ctx.emitted_intents.push(intent.clone());
                 Ok(())
             }
+            Self::SetStyle {
+                target_path, style, ..
+            } => apply_set_style(ctx.scene, target_path, *style),
         }
     }
+}
+
+fn apply_set_style(
+    scene: &mut Scene,
+    target_path: &str,
+    style: BoxStyle,
+) -> Result<(), String> {
+    let segments = scene_segments(target_path);
+    let Some(node) = scene.lookup_path_mut(&segments) else {
+        return Err("UnknownTarget".to_string());
+    };
+    match node {
+        Scene::Box(b) => {
+            b.style = style;
+            Ok(())
+        }
+        Scene::Container(c) => {
+            c.style = style;
+            Ok(())
+        }
+        // Text / Path / Image carry their own style sidecar shape;
+        // Effect / External have no BoxStyle. Stay variant-aware so a
+        // future SetStyle widening (Text colour, Path stroke, etc.)
+        // remains an additive R40.x sub-slice.
+        _ => Err("UnsupportedStyleTarget".to_string()),
+    }
+}
+
+/// Split a `target_path` into segments, stripping any leading
+/// `/window[<id>]/` prefix. Mirrors the helper in
+/// [`crate::path::resolve`] but without window-topology resolution —
+/// the caller already trusts the path is in-window; only the segment
+/// list is needed for `lookup_path_mut`.
+fn scene_segments(target_path: &str) -> Vec<String> {
+    let scene_path = match target_path.strip_prefix("/window[") {
+        Some(rest) => match rest.find(']') {
+            Some(close) => &rest[close + 1..],
+            None => target_path,
+        },
+        None => target_path,
+    };
+    scene_path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn apply_set_signal(
@@ -253,5 +327,135 @@ mod tests {
         };
         let q = p.clone();
         assert_eq!(p.target_path(), q.target_path());
+    }
+
+    // ---- R40.10: SetStyle ----
+
+    fn red_style() -> BoxStyle {
+        BoxStyle::filled(Color::from_argb(0x00ff_0000))
+    }
+
+    fn green_style() -> BoxStyle {
+        BoxStyle::filled(Color::from_argb(0x0000_ff00))
+    }
+
+    fn tagged_box_scene(tag: &'static str, fill: Color) -> Scene {
+        Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), fill).with_tag(tag))
+    }
+
+    fn container_with(children: Vec<Scene>) -> Scene {
+        use pinion_core::scene::ContainerNode;
+        let mut c = ContainerNode::new(children);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn set_style_target_and_affected_paths() {
+        let p = TypedProposal::SetStyle {
+            target_path: "/info_panel".to_string(),
+            style: red_style(),
+        };
+        assert_eq!(p.target_path(), "/info_panel");
+        assert_eq!(p.affected_paths(), vec!["/info_panel".to_string()]);
+    }
+
+    #[test]
+    fn set_style_mutates_tagged_box_fill() {
+        // Walk by tag → BoxNode at /btn → style replaced wholesale.
+        let mut scene = container_with(vec![tagged_box_scene("btn", Color::default())]);
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::SetStyle {
+            target_path: "/btn".to_string(),
+            style: green_style(),
+        };
+        p.apply(&mut ctx).unwrap();
+        if let Scene::Container(c) = &scene {
+            if let Scene::Box(b) = &c.children[0] {
+                assert_eq!(b.style.fill, Color::from_argb(0x0000_ff00));
+            } else {
+                panic!("child not Box");
+            }
+        } else {
+            panic!("scene not Container");
+        }
+    }
+
+    #[test]
+    fn set_style_with_window_prefix_works() {
+        // §5.18 window-prefixed path resolves the same way as the
+        // implicit form — the wire caller does not need to know
+        // whether to strip the prefix.
+        let mut scene = container_with(vec![tagged_box_scene("btn", Color::default())]);
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::SetStyle {
+            target_path: "/window[main]/btn".to_string(),
+            style: red_style(),
+        };
+        p.apply(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn set_style_unknown_path_returns_unknown_target() {
+        let mut scene = container_with(vec![tagged_box_scene("btn", Color::default())]);
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::SetStyle {
+            target_path: "/ghost".to_string(),
+            style: red_style(),
+        };
+        assert_eq!(p.apply(&mut ctx).unwrap_err(), "UnknownTarget");
+    }
+
+    #[test]
+    fn set_style_on_unsupported_variant_returns_unsupported() {
+        // External does not carry BoxStyle — apply must reject so a
+        // future widening (Text colour, etc.) stays an additive
+        // sub-slice rather than a silent corruption.
+        use pinion_core::external::StubExternal;
+        use pinion_core::scene::ExternalNode;
+        let mut scene = container_with(vec![Scene::External(ExternalNode::new(Box::new(
+            StubExternal::new(),
+        )))
+        .with_tag_unused_placeholder()]);
+        // No tag on the ExternalNode → addressed by index "0".
+        // (with_tag_unused_placeholder is a fluent no-op; written
+        // this way to make the intent clear: the External lacks a
+        // BoxStyle slot and SetStyle must refuse it.)
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::SetStyle {
+            target_path: "/0".to_string(),
+            style: red_style(),
+        };
+        assert_eq!(p.apply(&mut ctx).unwrap_err(), "UnsupportedStyleTarget");
+    }
+
+    /// Tiny ergonomics shim used inside the unsupported-variant test
+    /// to make the call site read as a single chain. Returns the
+    /// scene unchanged.
+    trait FluentScene {
+        fn with_tag_unused_placeholder(self) -> Scene;
+    }
+    impl FluentScene for Scene {
+        fn with_tag_unused_placeholder(self) -> Scene {
+            self
+        }
+    }
+
+    #[test]
+    fn set_style_mutates_container_style() {
+        // Container also carries BoxStyle (R24 slice 5). SetStyle at
+        // the container's path must update its sidecar.
+        let mut scene = container_with(vec![]);
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::SetStyle {
+            target_path: "/".to_string(),
+            style: red_style(),
+        };
+        p.apply(&mut ctx).unwrap();
+        if let Scene::Container(c) = &scene {
+            assert_eq!(c.style.fill, Color::from_argb(0x00ff_0000));
+        } else {
+            panic!("root not container");
+        }
     }
 }

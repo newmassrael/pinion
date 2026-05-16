@@ -1970,6 +1970,8 @@ fn main() {
 - examples/ai-introspect-demo/src/main.rs
 - crates/pinion-rpc/src/preview/proposal.rs:ApplyContext
 - crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::DispatchIntent
+- crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::SetStyle
+- crates/pinion-core/src/scene.rs:Scene::lookup_path_mut
 
 
 
@@ -2535,6 +2537,38 @@ fn main() {
 - §5.20 intent 모델 재고: DispatchIntent 가 surface 한 intent 는 wire 즉시 노출이지만 scene/intents poll 과는 별 채널 — 통합 정책은 R41+ spec round 후보
 - ai-introspect-demo 에 DispatchIntent variant 동시 토글 (P/I 2 key) — R40.x dogfood 카드 확장 후보
 - ApplyContext future fields: animation registry, effect ledger — §5.23 R27 Effect/Command 완성 시 추가
+
+
+
+### 410 — Round 40.10 — §5.34 TypedProposal::SetStyle — Scene::lookup_path_mut + BoxStyle 변종
+
+**Changes**:
+- pinion-core/scene.rs: Scene::lookup_path_mut(&mut self, &[String]) -> Option<&mut Scene> — lookup_path 의 mutable counterpart, two-phase 차용 으로 borrow checker 회피
+- pinion-rpc/preview/kinds.rs: TypedProposal::SetStyle { target_path, style: BoxStyle } 3번째 variant
+- apply_set_style: scene_segments(target_path) 구성 → lookup_path_mut → Box/Container 이면 style 교체, 아니면 "UnsupportedStyleTarget", path miss 면 "UnknownTarget"
+- scene_segments: /window[id]/ prefix strip 후 세그먼트 분해 (path::resolve 의 재구현 아닌 변종)
+- pinion-rpc/dispatch.rs: parse_typed_proposal 가 SetStyle kind 처리; parse_box_style helper — fill 필수, border_color+border_width 쌍으로 선택, corner_radius 선택
+- BoxStyle wire shape forward-compat: 알 수 없는 key 무시, 미래 BoxStyle 필드 추가 시 additive
+
+
+
+**Verification**:
+- cargo test --workspace: 545 pass (527 → 540 → 545, +18 새 test)
+- cargo clippy --workspace --all-targets: 신규 위반 0 (5 pre-existing baseline only)
+- TypedProposal variant 완성도 4종 중 3종 (SetSignal R40.5 + DispatchIntent R40.9 + SetStyle R40.10)
+- lookup_path_mut = lookup_path 의 대입 — borrow checker two-phase pattern 입증 (향후 ReplaceView 동일 재사용)
+- BoxStyle JSON wire = §5.34 제안 의 "closed-form·but-extensible primitive" 입증 — future fields 추가 시 구문 안정
+
+
+
+**Impact**: §5.34, §5.2, §5.3
+
+
+**Carry forward**:
+- R40.11+: TypedProposal::ReplaceView — lookup_path_mut 재사용 (subtree 교체) — 4종 variant 완성
+- SetStyle 확장: Text/Path/Image style 변종 는 별 sub-slice (각 variant 서로 다른 style 구조)
+- BoxStyle wire shape 공식 문서화 — §5.34 spec body 에 wire example 추가 후보
+- ai-introspect-demo 에 SetStyle dogfood 통합 — 명시적 color picker 는 future
 
 
 
