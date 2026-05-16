@@ -1884,6 +1884,36 @@ fn main() {
 
 
 
+### Round 22 — Round 22 — §5.20 R18 polish: ExternalNode tag prefixes drained intent tag (widget.kind convention complete)
+
+**Changes**:
+- ExternalNode gains tag: Option<Cow<'static,str>> + with_tag builder (mirrors the 5 introspectable variants)
+- walk_scene_and_drain prefixes drained intent.tag with <scene-tag>.<intent-tag> when ExternalNode.tag is present
+- ButtonExternal emits bare "click" (was "button.click"); widget identity decoupled from UI naming
+- hello-button tags its ButtonExternal as "main_btn" — stderr log shows main_btn.click on full click cycle
+- R22 caveat on §5.20: widget.kind tag convention fully wired (was "hardcoded" prefix before)
+
+
+
+**Verification**:
+- cargo test --workspace: 220 → 223 (+3 prefix-walk tests; 2 button tests updated for new "click" kind)
+- cargo clippy --workspace --all-targets: clean; pre-existing 12 warnings untouched
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; entries 21 → 22
+- Mnemosyne mutations: 1 impl binding (ExternalNode) + 1 caveat on §5.20
+
+
+
+**Impact**: §5.20
+
+
+**Carry forward**:
+- Container.tag propagation to nested External (today only direct ExternalNode.tag prefixes)
+- Tag concatenation policy for nested prefix chains (e.g. panel.toolbar.save_btn.click) — currently single-level
+- IntrospectValue::Object payload — enables structured intent data beyond scalar kinds
+- Async stream intent channel (sync poll v0 still in place)
+
+
+
 ### Round 3 — Round 3 — 9 axes ratified to single options; §5.2 §5.4 slot names confirmed; framework-first kickoff path locked
 
 **Changes**:
