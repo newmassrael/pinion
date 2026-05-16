@@ -16,7 +16,7 @@ use pinion_core::Scene;
 
 use crate::rewind::{rewind, RewindError};
 
-use super::{ApplyContext, Proposal};
+use super::{ApplyContext, Proposal, ViewBlueprint};
 
 /// Closed enum of typed proposals carried by the preview ledger
 /// (§5.34 R40.5+). Each variant carries its own payload shape; the
@@ -96,6 +96,31 @@ pub enum TypedProposal {
         /// other variants fail apply with `"UnsupportedStyleTarget"`.
         style: BoxStyle,
     },
+    /// Swap the scene subtree at `target_path` for the materialised
+    /// form of `replacement` (§5.34 R40.11). Closes the §5.34 four-
+    /// variant set (`SetSignal` / `DispatchIntent` / `SetStyle` /
+    /// `ReplaceView`).
+    ///
+    /// The replacement is carried as a [`ViewBlueprint`] (not a
+    /// `Scene`) because `Scene` is intentionally `!Send + !Sync +
+    /// !Clone` — `ExternalNode` owns a `Box<dyn External>` without
+    /// those bounds. A blueprint is the textbook bridge: closed-form
+    /// description that materialises into a `Scene` exactly once at
+    /// apply time, preserving the [`Proposal`] trait's `Send + Sync +
+    /// 'static` bound.
+    ///
+    /// Walks through [`Scene::lookup_path_mut`]. An empty/root path
+    /// (`/window[main]`) replaces the whole scene; non-existent
+    /// paths surface `"UnknownTarget"` via
+    /// [`ApplyError::ApplyRejected`](super::ApplyError::ApplyRejected).
+    ReplaceView {
+        /// Scene path identifying the subtree to swap. Same walk
+        /// semantics as `SetStyle` (tag-first, index-second).
+        target_path: String,
+        /// New subtree description. Consumed exactly once by
+        /// [`ViewBlueprint::materialize`] at apply time.
+        replacement: ViewBlueprint,
+    },
 }
 
 impl Proposal for TypedProposal {
@@ -103,7 +128,8 @@ impl Proposal for TypedProposal {
         match self {
             Self::SetSignal { target_path, .. }
             | Self::DispatchIntent { target_path, .. }
-            | Self::SetStyle { target_path, .. } => target_path,
+            | Self::SetStyle { target_path, .. }
+            | Self::ReplaceView { target_path, .. } => target_path,
         }
     }
 
@@ -111,7 +137,8 @@ impl Proposal for TypedProposal {
         match self {
             Self::SetSignal { target_path, .. }
             | Self::DispatchIntent { target_path, .. }
-            | Self::SetStyle { target_path, .. } => vec![target_path.clone()],
+            | Self::SetStyle { target_path, .. }
+            | Self::ReplaceView { target_path, .. } => vec![target_path.clone()],
         }
     }
 
@@ -127,8 +154,25 @@ impl Proposal for TypedProposal {
             Self::SetStyle {
                 target_path, style, ..
             } => apply_set_style(ctx.scene, target_path, *style),
+            Self::ReplaceView {
+                target_path,
+                replacement,
+            } => apply_replace_view(ctx.scene, target_path, replacement.clone()),
         }
     }
+}
+
+fn apply_replace_view(
+    scene: &mut Scene,
+    target_path: &str,
+    replacement: ViewBlueprint,
+) -> Result<(), String> {
+    let segments = scene_segments(target_path);
+    let Some(node) = scene.lookup_path_mut(&segments) else {
+        return Err("UnknownTarget".to_string());
+    };
+    *node = replacement.materialize();
+    Ok(())
 }
 
 fn apply_set_style(
@@ -457,5 +501,112 @@ mod tests {
         } else {
             panic!("root not container");
         }
+    }
+
+    // ---- R40.11: ReplaceView ----
+
+    fn box_blueprint(tag: &str, fill: u32) -> ViewBlueprint {
+        ViewBlueprint::Box {
+            rect: Rect::new(0, 0, 10, 10),
+            style: BoxStyle::filled(Color::from_argb(fill)),
+            tag: Some(tag.to_string()),
+        }
+    }
+
+    #[test]
+    fn replace_view_target_and_affected_paths() {
+        let p = TypedProposal::ReplaceView {
+            target_path: "/info_panel".to_string(),
+            replacement: box_blueprint("replaced", 0x00ff_0000),
+        };
+        assert_eq!(p.target_path(), "/info_panel");
+        assert_eq!(p.affected_paths(), vec!["/info_panel".to_string()]);
+    }
+
+    #[test]
+    fn replace_view_swaps_tagged_subtree() {
+        let mut scene =
+            container_with(vec![tagged_box_scene("old_btn", Color::from_argb(0x0000_0000))]);
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::ReplaceView {
+            target_path: "/old_btn".to_string(),
+            replacement: box_blueprint("new_btn", 0x00ab_cdef),
+        };
+        p.apply(&mut ctx).unwrap();
+        if let Scene::Container(c) = &scene {
+            if let Scene::Box(b) = &c.children[0] {
+                assert_eq!(b.tag.as_deref(), Some("new_btn"));
+                assert_eq!(b.style.fill, Color::from_argb(0x00ab_cdef));
+            } else {
+                panic!("child 0 not Box");
+            }
+        }
+    }
+
+    #[test]
+    fn replace_view_swaps_root_when_target_is_empty() {
+        // Empty / root target → lookup_path_mut returns the scene
+        // itself; replacing it must rewrite the root in place.
+        let mut scene = container_with(vec![]);
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::ReplaceView {
+            target_path: "/".to_string(),
+            replacement: box_blueprint("brand_new_root", 0x0011_2233),
+        };
+        p.apply(&mut ctx).unwrap();
+        assert!(matches!(scene, Scene::Box(_)));
+        assert_eq!(scene.tag(), Some("brand_new_root"));
+    }
+
+    #[test]
+    fn replace_view_unknown_path_returns_unknown_target() {
+        let mut scene =
+            container_with(vec![tagged_box_scene("btn", Color::from_argb(0x0000_0000))]);
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::ReplaceView {
+            target_path: "/ghost".to_string(),
+            replacement: box_blueprint("ignored", 0),
+        };
+        assert_eq!(p.apply(&mut ctx).unwrap_err(), "UnknownTarget");
+    }
+
+    #[test]
+    fn replace_view_with_nested_container_blueprint_materializes() {
+        let mut scene =
+            container_with(vec![tagged_box_scene("placeholder", Color::default())]);
+        let mut ctx = ApplyContext::new(&mut scene);
+        let p = TypedProposal::ReplaceView {
+            target_path: "/placeholder".to_string(),
+            replacement: ViewBlueprint::Container {
+                rect: Rect::new(0, 0, 40, 40),
+                style: BoxStyle::default(),
+                tag: Some("new_panel".to_string()),
+                children: vec![box_blueprint("inner", 0x00ff_ff00)],
+            },
+        };
+        p.apply(&mut ctx).unwrap();
+        if let Scene::Container(c) = &scene {
+            if let Scene::Container(inner) = &c.children[0] {
+                assert_eq!(inner.tag.as_deref(), Some("new_panel"));
+                assert_eq!(inner.children.len(), 1);
+                assert_eq!(inner.children[0].tag(), Some("inner"));
+            } else {
+                panic!("not Container");
+            }
+        }
+    }
+
+    #[test]
+    fn replace_view_clones_via_derive() {
+        // TypedProposal must retain its Clone derive — the ledger
+        // does not rely on Clone, but downstream code may (and the
+        // existing variants test for it). ViewBlueprint::Clone bound
+        // is what makes this still hold after R40.11.
+        let p = TypedProposal::ReplaceView {
+            target_path: "/x".to_string(),
+            replacement: box_blueprint("y", 0),
+        };
+        let q = p.clone();
+        assert_eq!(p.target_path(), q.target_path());
     }
 }

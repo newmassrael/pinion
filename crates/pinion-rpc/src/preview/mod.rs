@@ -25,6 +25,7 @@
 //! ledger only needs the trait's path-introspection methods.
 
 mod apply;
+mod blueprint;
 mod cancel;
 mod error;
 mod id;
@@ -35,6 +36,7 @@ mod proposal;
 mod propose;
 
 pub use apply::{apply_preview, ApplyOutcome};
+pub use blueprint::ViewBlueprint;
 pub use cancel::cancel_preview;
 pub use error::{ApplyError, ProposeError};
 pub use id::PreviewId;

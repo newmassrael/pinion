@@ -2214,6 +2214,14 @@
         {
           "file": "crates/pinion-core/src/scene.rs",
           "symbol": "Scene::lookup_path_mut"
+        },
+        {
+          "file": "crates/pinion-rpc/src/preview/blueprint.rs",
+          "symbol": "ViewBlueprint"
+        },
+        {
+          "file": "crates/pinion-rpc/src/preview/kinds.rs",
+          "symbol": "TypedProposal::ReplaceView"
         }
       ],
       "decision_status": "active"
@@ -2834,6 +2842,64 @@
         "SetStyle 확장: Text/Path/Image style 변종 는 별 sub-slice (각 variant 서로 다른 style 구조)",
         "BoxStyle wire shape 공식 문서화 — §5.34 spec body 에 wire example 추가 후보",
         "ai-introspect-demo 에 SetStyle dogfood 통합 — 명시적 color picker 는 future"
+      ]
+    },
+    "411": {
+      "decision_summary": "Round 40.11 — §5.34 TypedProposal::ReplaceView + ViewBlueprint — 4종 variant 완성",
+      "changes_bullets": [
+        "pinion-rpc/preview/blueprint.rs (new): ViewBlueprint enum {Box, Container} — Send+Sync+Clone wire-friendly Scene 설명자; Scene 자체는 !Send+!Sync+!Clone 따라 Proposal trait 경곽에 들어갈 수 없이서 우회구",
+        "ViewBlueprint::materialize(self) -> Scene — once-only consumption; 재귀적 children materialise",
+        "pinion-rpc/preview/kinds.rs: TypedProposal::ReplaceView {target_path, replacement: ViewBlueprint} 4번째 variant",
+        "apply_replace_view: scene_segments → lookup_path_mut → *node = replacement.materialize(); root-replace 지원 (empty path 시 self 반환)",
+        "pinion-rpc/preview/mod.rs + lib.rs: ViewBlueprint public 노출",
+        "pinion-rpc/dispatch.rs: parse_typed_proposal가 ReplaceView kind 처리; parse_view_blueprint 재귀 파서 (Box/Container kind discriminate, tag optional, children optional); parse_rect helper",
+        "Scene !Clone 제약 해소 아님 — ViewBlueprint::Clone 로 TypedProposal::Clone derive 유지 — 기존 Clone 의 관찰 계약 Hyrum-safe"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 561 pass (540 → 545 → 561, +21 새 test — ViewBlueprint unit 5 + kinds 6 + dispatch 5 + Scene compile-time check 5)",
+        "cargo clippy --workspace --all-targets: 신규 위반 0 (5 pre-existing baseline only)",
+        "TypedProposal variant 4종 완성: SetSignal (R40.5) + DispatchIntent (R40.9) + SetStyle (R40.10) + ReplaceView (R40.11) — §5.34 원안 closed pattern 완성",
+        "ViewBlueprint = closed-form mini-DSL = textbook bridge between wire (JSON) 와 runtime (Scene); !Send+!Sync+!Clone Scene 경곽에서 우회구 없는 정답",
+        "JSON wire 재귀 파서 — nested Container 구조 round-trip 검증"
+      ],
+      "impact_refs": [
+        "5.34",
+        "5.2"
+      ],
+      "carry_forward_bullets": [
+        "R41 후보: §5.16 GPU/Vello 결정 spec ratify round (큰 architectural lock)",
+        "ViewBlueprint variants 확장: Text/Path/Image — 워이어 차용 시 각 변종별 style sidecar + content payload 추가 (additive)",
+        "Scene륾 direct 다루는 future variants (e.g. ReplaceViewWithSubtree) 는 ExternalNode 처리 설계 필요 — R42+ axis 후보",
+        "ai-introspect-demo 에 SetStyle/ReplaceView 2 추가 toggle — R40.x 4 variant 모두 visible dogfood 후보",
+        "§5.34 list_previews 가 ViewBlueprint kind 표시 — PreviewView 에 variant tag 필드 추가 검토"
+      ],
+      "publishable_decision_summary": "Round 40.11 — §5.34 TypedProposal::ReplaceView + ViewBlueprint — 4종 variant 완성",
+      "publishable_changes_bullets": [
+        "pinion-rpc/preview/blueprint.rs (new): ViewBlueprint enum {Box, Container} — Send+Sync+Clone wire-friendly Scene 설명자; Scene 자체는 !Send+!Sync+!Clone 따라 Proposal trait 경곽에 들어갈 수 없이서 우회구",
+        "ViewBlueprint::materialize(self) -> Scene — once-only consumption; 재귀적 children materialise",
+        "pinion-rpc/preview/kinds.rs: TypedProposal::ReplaceView {target_path, replacement: ViewBlueprint} 4번째 variant",
+        "apply_replace_view: scene_segments → lookup_path_mut → *node = replacement.materialize(); root-replace 지원 (empty path 시 self 반환)",
+        "pinion-rpc/preview/mod.rs + lib.rs: ViewBlueprint public 노출",
+        "pinion-rpc/dispatch.rs: parse_typed_proposal가 ReplaceView kind 처리; parse_view_blueprint 재귀 파서 (Box/Container kind discriminate, tag optional, children optional); parse_rect helper",
+        "Scene !Clone 제약 해소 아님 — ViewBlueprint::Clone 로 TypedProposal::Clone derive 유지 — 기존 Clone 의 관찰 계약 Hyrum-safe"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 561 pass (540 → 545 → 561, +21 새 test — ViewBlueprint unit 5 + kinds 6 + dispatch 5 + Scene compile-time check 5)",
+        "cargo clippy --workspace --all-targets: 신규 위반 0 (5 pre-existing baseline only)",
+        "TypedProposal variant 4종 완성: SetSignal (R40.5) + DispatchIntent (R40.9) + SetStyle (R40.10) + ReplaceView (R40.11) — §5.34 원안 closed pattern 완성",
+        "ViewBlueprint = closed-form mini-DSL = textbook bridge between wire (JSON) 와 runtime (Scene); !Send+!Sync+!Clone Scene 경곽에서 우회구 없는 정답",
+        "JSON wire 재귀 파서 — nested Container 구조 round-trip 검증"
+      ],
+      "publishable_impact_refs": [
+        "5.34",
+        "5.2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R41 후보: §5.16 GPU/Vello 결정 spec ratify round (큰 architectural lock)",
+        "ViewBlueprint variants 확장: Text/Path/Image — 워이어 차용 시 각 변종별 style sidecar + content payload 추가 (additive)",
+        "Scene륾 direct 다루는 future variants (e.g. ReplaceViewWithSubtree) 는 ExternalNode 처리 설계 필요 — R42+ axis 후보",
+        "ai-introspect-demo 에 SetStyle/ReplaceView 2 추가 toggle — R40.x 4 variant 모두 visible dogfood 후보",
+        "§5.34 list_previews 가 ViewBlueprint kind 표시 — PreviewView 에 variant tag 필드 추가 검토"
       ]
     },
     "Round 1": {

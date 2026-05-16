@@ -43,6 +43,7 @@ use crate::locate::{
 use crate::preview::{
     apply_preview, cancel_preview, list_previews, propose_change, ApplyError, ApplyOutcome,
     PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome, TypedProposal,
+    ViewBlueprint,
 };
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
@@ -759,7 +760,7 @@ fn handle_scene_propose_change(
 fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
     let Some(kind) = params.get("kind").and_then(Value::as_str) else {
         return Err(invalid_params(
-            "params.kind missing or not a string (expected one of: SetSignal, DispatchIntent, SetStyle)",
+            "params.kind missing or not a string (expected one of: SetSignal, DispatchIntent, SetStyle, ReplaceView)",
         ));
     };
     match kind {
@@ -821,6 +822,21 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
                 style,
             })
         }
+        "ReplaceView" => {
+            let Some(target_path) = params.get("target_path").and_then(Value::as_str) else {
+                return Err(invalid_params(
+                    "params.target_path missing or not a string",
+                ));
+            };
+            let Some(replacement_obj) = params.get("replacement") else {
+                return Err(invalid_params("params.replacement missing"));
+            };
+            let replacement = parse_view_blueprint(replacement_obj)?;
+            Ok(TypedProposal::ReplaceView {
+                target_path: target_path.to_owned(),
+                replacement,
+            })
+        }
         other => Err(RpcError {
             code: -32602,
             message: "Invalid params".to_string(),
@@ -829,6 +845,83 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
     }
 }
 
+
+/// Wire→[`ViewBlueprint`] coercion for `ReplaceView` payloads
+/// (R40.11). Recursive: `Container.children` invokes the same parser
+/// per child. `kind` discriminates between blueprint variants;
+/// `tag` is optional everywhere.
+fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
+    let Some(kind) = v.get("kind").and_then(Value::as_str) else {
+        return Err(invalid_params(
+            "params.replacement.kind missing or not a string (expected one of: Box, Container)",
+        ));
+    };
+    let rect = parse_rect(v.get("rect"))?;
+    let style = parse_box_style(
+        v.get("style").ok_or_else(|| invalid_params("params.replacement.style missing"))?,
+    )?;
+    let tag = match v.get("tag") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.clone()),
+        _ => {
+            return Err(invalid_params(
+                "params.replacement.tag must be a string or null",
+            ));
+        }
+    };
+    match kind {
+        "Box" => Ok(ViewBlueprint::Box { rect, style, tag }),
+        "Container" => {
+            let children_value = v.get("children").unwrap_or(&Value::Null);
+            let children = match children_value {
+                Value::Null => Vec::new(),
+                Value::Array(arr) => arr
+                    .iter()
+                    .map(parse_view_blueprint)
+                    .collect::<Result<Vec<_>, _>>()?,
+                _ => {
+                    return Err(invalid_params(
+                        "params.replacement.children must be an array",
+                    ));
+                }
+            };
+            Ok(ViewBlueprint::Container {
+                rect,
+                style,
+                tag,
+                children,
+            })
+        }
+        other => Err(invalid_params(&format!(
+            "params.replacement.kind unrecognised: {other} (expected Box or Container)"
+        ))),
+    }
+}
+
+/// Wire→[`pinion_core::scene::Rect`] coercion. Required fields
+/// `x` / `y` / `w` / `h` as u32-bounded numbers. Used by
+/// [`parse_view_blueprint`].
+fn parse_rect(v: Option<&Value>) -> Result<pinion_core::scene::Rect, RpcError> {
+    let Some(obj) = v else {
+        return Err(invalid_params("params.replacement.rect missing"));
+    };
+    let read = |field: &str| -> Result<u32, RpcError> {
+        let n = obj.get(field).and_then(Value::as_u64).ok_or_else(|| {
+            invalid_params(&format!(
+                "params.replacement.rect.{field} missing or not an unsigned integer"
+            ))
+        })?;
+        u32::try_from(n).map_err(|_| {
+            invalid_params(&format!("params.replacement.rect.{field} exceeds u32 range"))
+        })
+    };
+    Ok(pinion_core::scene::Rect::new(
+        read("x")?,
+        read("y")?,
+        read("w")?,
+        read("h")?,
+    ))
+}
 
 /// Wire→[`BoxStyle`] coercion for `SetStyle` payloads (R40.10).
 ///
@@ -2351,5 +2444,115 @@ mod tests {
         let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
+    }
+
+    // ---- R40.11: TypedProposal::ReplaceView JSON-RPC wire ----
+
+    #[test]
+    fn scene_propose_replace_view_then_apply_swaps_box_end_to_end() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        // Replace /btn (untagged after swap) with a fresh tagged Box.
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Box","rect":{"x":0,"y":0,"w":20,"h":20},"style":{"fill":3735928559},"tag":"new_btn"}},"id":720}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":721}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap());
+        assert!(
+            apply_resp.error.is_none(),
+            "unexpected error: {:?}",
+            apply_resp.error
+        );
+        // The /btn slot now carries the new tag + rect.
+        if let Scene::Container(c) = &scene {
+            if let Scene::Box(b) = &c.children[0] {
+                assert_eq!(b.tag.as_deref(), Some("new_btn"));
+                assert_eq!(b.rect, pinion_core::scene::Rect::new(0, 0, 20, 20));
+            } else {
+                panic!("child 0 not Box");
+            }
+        }
+    }
+
+    #[test]
+    fn scene_propose_replace_view_with_nested_container_round_trips() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Container","rect":{"x":0,"y":0,"w":50,"h":50},"style":{"fill":0},"tag":"panel","children":[{"kind":"Box","rect":{"x":5,"y":5,"w":10,"h":10},"style":{"fill":255},"tag":"inner"}]}},"id":722}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":723}}"#
+        );
+        let _ = dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap();
+        if let Scene::Container(outer) = &scene {
+            if let Scene::Container(inner) = &outer.children[0] {
+                assert_eq!(inner.tag.as_deref(), Some("panel"));
+                assert_eq!(inner.children[0].tag(), Some("inner"));
+            }
+        }
+    }
+
+    #[test]
+    fn scene_propose_replace_view_unknown_kind_is_invalid_params() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Pyramid","rect":{"x":0,"y":0,"w":1,"h":1},"style":{"fill":0}}},"id":724}"#;
+        let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn scene_propose_replace_view_missing_rect_is_invalid_params() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Box","style":{"fill":0}}},"id":725}"#;
+        let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn scene_propose_replace_view_unknown_target_surfaces_apply_rejected() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/ghost","replacement":{"kind":"Box","rect":{"x":0,"y":0,"w":1,"h":1},"style":{"fill":0}}},"id":726}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":727}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap());
+        let data = apply_resp.error.unwrap().data.unwrap();
+        assert_eq!(
+            data.get("reason"),
+            Some(&Value::String("UnknownTarget".to_string()))
+        );
     }
 }
