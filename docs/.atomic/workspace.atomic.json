@@ -256,7 +256,8 @@
         "R17 TextNode v0 holds `content: String` + `rect: Rect`; font/size/colour deferred to §5.3",
         "R17 PathNode v0: `data: String` + `rect: Rect`; structured commands deferred to §5.3",
         "R17 ImageNode v0: `source: String` + `rect: Rect`; codec/loader deferred to §5.3 DSL",
-        "R18 §5.20 adds tag: Option<Cow<'static, str>> to introspectable Scene variants"
+        "R18 §5.20 adds tag: Option<Cow<'static, str>> to introspectable Scene variants",
+        "R20 §5.3 lock: BoxNode.fill u32 → Color; PathNode.data → Vec<PathCommand>; *Style structs added."
       ],
       "alternatives_rejected": [
         {
@@ -874,7 +875,15 @@
       ],
       "caveats_bullets": [
         "File-based adds parser/LSP maintenance cost",
-        "Macro-based ties to Rust-only authoring (no cascade to other langs)"
+        "Macro-based ties to Rust-only authoring (no cascade to other langs)",
+        "R20 §5.3 v0 schema lock: Color {r,g,b,a:u8} typed; ARGB u32 compat via from_argb/to_argb helpers.",
+        "R20 §5.3: TextStyle {font_family:Option<Cow<str>>, font_size_px:u32, fg_color:Color}.",
+        "R20 §5.3: ImageStyle {fit:Fit, tint:Option<Color>}; Fit enum {Fill,Contain,Cover,Tile}.",
+        "R20 §5.3: taffy flexbox/grid integration deferred to follow-up spec round (carry-forward).",
+        "R20 §5.3: BoxStyle {fill:Color, border:Border?, corner_radius:u32}; Border {color,width:u32}.",
+        "R20 §5.3: PathCommand enum {MoveTo,LineTo,CurveTo,Close}; PathNode.data: Vec<PathCommand>.",
+        "R20 §5.3: PathStyle {stroke:Stroke?, fill:Color?}; Stroke {color, width:u32, cap:StrokeCap}.",
+        "R20 §5.3: Modifier {margin:Rect, padding:Rect, align:Align}; Align 9-pos (corners/edges/center)."
       ],
       "alternatives_rejected": [
         {
@@ -2035,6 +2044,72 @@
         "CLAUDE.md authoring for pinion (SSOT contract + auto-kickoff trigger)",
         "Round 2 git commit (§5 atomic decomposition + settings.local.json bypass mode)",
         "Bash(*) and bypassPermissions added to .claude/settings.local.json this session"
+      ]
+    },
+    "Round 20": {
+      "decision_summary": "Round 20 — §5.3 DSL v0 concrete schema lock: Color, BoxStyle, TextStyle, PathCommand, PathStyle, ImageStyle, Modifier (taffy deferred)",
+      "changes_bullets": [
+        "Color {r,g,b,a:u8} typed; ARGB u32 compat via from_argb/to_argb (replaces raw u32 fill)",
+        "BoxStyle {fill, border, corner_radius}; Border {color, width:u32}",
+        "TextStyle {font_family, font_size_px, fg_color} — unlocks cosmic-text rasterizer slice",
+        "PathCommand enum {MoveTo, LineTo, CurveTo, Close}; PathNode.data: String → Vec<PathCommand>",
+        "PathStyle {stroke, fill}; Stroke {color, width, cap:StrokeCap}",
+        "ImageStyle {fit, tint}; Fit enum {Fill, Contain, Cover, Tile}",
+        "Modifier {margin, padding, align}; Align 9-pos (corners/edges/center)",
+        "8 caveats on §5.3 + 1 cross-ref caveat on §5.11 capturing BoxNode/PathNode field shape evolution"
+      ],
+      "verification_bullets": [
+        "validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; entries 19 → 20",
+        "atomic mutations: 9 add_section_caveat (8 on §5.3 + 1 on §5.11); 5 initial drafts rejected by 100-char cap, retried tightened",
+        "no code changes this round (spec-only); R21 implementation follows",
+        "section count unchanged at 30; §5.3 caveats grow from 0 → 8 capturing the v0 schema decisions"
+      ],
+      "impact_refs": [
+        "5.2",
+        "5.3",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "taffy flexbox/grid integration (next spec round) — explicitly deferred from R20",
+        "R21 implementation: typed Color in Scene; cosmic-text rasterizer; PathCommand/Fit/Style structs",
+        "Modifier full layout model (offsets+alignment+constraints) — v0 covers margin/padding/align only",
+        "Bold/italic/underline text style fields (font_weight/style) deferred; cosmic-text supports them",
+        "Gradient + shadow fills on BoxStyle deferred",
+        "StrokeCap variants beyond Butt/Round/Square (e.g. Square+offset, dash patterns) deferred",
+        "Image codec/loader policy + decoded buffer cache strategy deferred",
+        "BoxNode.fill u32 → Color migration affects 5+ test sites and hello-button view"
+      ],
+      "publishable_decision_summary": "Round 20 — §5.3 DSL v0 concrete schema lock: Color, BoxStyle, TextStyle, PathCommand, PathStyle, ImageStyle, Modifier (taffy deferred)",
+      "publishable_changes_bullets": [
+        "Color {r,g,b,a:u8} typed; ARGB u32 compat via from_argb/to_argb (replaces raw u32 fill)",
+        "BoxStyle {fill, border, corner_radius}; Border {color, width:u32}",
+        "TextStyle {font_family, font_size_px, fg_color} — unlocks cosmic-text rasterizer slice",
+        "PathCommand enum {MoveTo, LineTo, CurveTo, Close}; PathNode.data: String → Vec<PathCommand>",
+        "PathStyle {stroke, fill}; Stroke {color, width, cap:StrokeCap}",
+        "ImageStyle {fit, tint}; Fit enum {Fill, Contain, Cover, Tile}",
+        "Modifier {margin, padding, align}; Align 9-pos (corners/edges/center)",
+        "8 caveats on §5.3 + 1 cross-ref caveat on §5.11 capturing BoxNode/PathNode field shape evolution"
+      ],
+      "publishable_verification_bullets": [
+        "validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; entries 19 → 20",
+        "atomic mutations: 9 add_section_caveat (8 on §5.3 + 1 on §5.11); 5 initial drafts rejected by 100-char cap, retried tightened",
+        "no code changes this round (spec-only); R21 implementation follows",
+        "section count unchanged at 30; §5.3 caveats grow from 0 → 8 capturing the v0 schema decisions"
+      ],
+      "publishable_impact_refs": [
+        "5.2",
+        "5.3",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "taffy flexbox/grid integration (next spec round) — explicitly deferred from R20",
+        "R21 implementation: typed Color in Scene; cosmic-text rasterizer; PathCommand/Fit/Style structs",
+        "Modifier full layout model (offsets+alignment+constraints) — v0 covers margin/padding/align only",
+        "Bold/italic/underline text style fields (font_weight/style) deferred; cosmic-text supports them",
+        "Gradient + shadow fills on BoxStyle deferred",
+        "StrokeCap variants beyond Butt/Round/Square (e.g. Square+offset, dash patterns) deferred",
+        "Image codec/loader policy + decoded buffer cache strategy deferred",
+        "BoxNode.fill u32 → Color migration affects 5+ test sites and hello-button view"
       ]
     },
     "Round 3": {
