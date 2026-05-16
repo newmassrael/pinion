@@ -13,6 +13,14 @@
 //!     `scene/invoke` to the same method. The §2 invariant #2 ("RPC
 //!     headless as AI primary path") is *literal* — the AI uses the
 //!     same channel a human would.
+//!   * **Output flows through the §5.20 intent channel** (R18 live
+//!     dogfood): after every winit event or RPC dispatch, the app
+//!     walks the scene through `pinion_runtime::walk_scene_and_drain`,
+//!     pulls any pending `Intent` (e.g. `button.click` on `Pressed` →
+//!     `Hover` via `PointerUp`), and logs them to stderr. The same
+//!     intents stay reachable through the `scene/intents` RPC method
+//!     so AI agents see the same emission stream a human observer
+//!     would.
 //!   * The **paint scene** is separate: `view(state, &Frame) -> Scene`
 //!     (§6.3 pure sync) builds a `Scene::Container` (bg box +
 //!     centered button box + text label) from the current
@@ -34,6 +42,7 @@ use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect, TextNode};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene};
 use pinion_rpc::dispatch;
+use pinion_runtime::{walk_scene_and_drain, IntentQueue};
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -176,6 +185,12 @@ struct App {
     /// by `refresh_state` after every input. Drives change-detection
     /// for the redraw request + the paint scene's fill mapping.
     cached_state: ButtonState,
+    /// §5.20 intent harvest buffer. Refilled by `drain_intents` after
+    /// every winit / RPC event; consumed by stderr logging plus any
+    /// future on-frame app hook. The `scene/intents` RPC method
+    /// drains the same source independently, since the underlying
+    /// `External::pending_intents` is the single queue.
+    intent_queue: IntentQueue,
 }
 
 impl App {
@@ -192,6 +207,7 @@ impl App {
             context: None,
             scene,
             cached_state,
+            intent_queue: IntentQueue::new(),
         }
     }
 
@@ -208,6 +224,7 @@ impl App {
             }
         }
         self.refresh_state();
+        self.drain_intents();
     }
 
     /// Dispatch one JSON-RPC frame against the LIVE state scene.
@@ -224,6 +241,24 @@ impl App {
         // The RPC frame may have mutated state — re-read, log the
         // delta, and trigger a redraw if the visual changed.
         self.refresh_state();
+        self.drain_intents();
+    }
+
+    /// §5.20 live dogfood: walk the scene, drain any pending intents
+    /// into the local queue, log each one to stderr. The `scene/intents`
+    /// RPC method races with this drain — whichever caller harvests
+    /// first wins (poll-form, single-consumer v0). The log line shape
+    /// (`intent: <tag> payload=<value>`) is informational; production
+    /// consumers should parse the RPC response, not stderr.
+    fn drain_intents(&mut self) {
+        walk_scene_and_drain(&mut self.scene, &mut self.intent_queue);
+        for intent in self.intent_queue.drain() {
+            eprintln!(
+                "intent: {} payload={:?}",
+                intent.tag_str(),
+                intent.payload,
+            );
+        }
     }
 
     /// Re-read the cached `ButtonState` from the live scene; log
@@ -397,7 +432,7 @@ fn main() {
     spawn_stdin_rpc_reader(event_loop.create_proxy());
     let mut app = App::new();
     eprintln!(
-        "hello-button: hover/click the window to drive the Button SCXML.\n           keys: d=Disable, e=Enable, Esc=quit\n           RPC: pipe JSON-RPC 2.0 frames (one per line) on stdin"
+        "hello-button: hover/click the window to drive the Button SCXML.\n           keys: d=Disable, e=Enable, Esc=quit\n           RPC: pipe JSON-RPC 2.0 frames (one per line) on stdin\n           §5.20: button.click intents log to stderr after each event"
     );
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("hello-button: event loop error: {e}");
