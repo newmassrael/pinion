@@ -400,6 +400,11 @@ impl ImageNode {
 pub struct ContainerNode {
     pub children: Vec<Scene>,
     pub rect: Rect,
+    /// R24 slice 5: containers can carry their own visual style
+    /// (fill / border / corner radius) so they double as "div" —
+    /// the natural carrier for backgrounds without absolute
+    /// positioning.
+    pub style: BoxStyle,
     pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
 }
@@ -410,6 +415,7 @@ impl ContainerNode {
         Self {
             children,
             rect: Rect::default(),
+            style: BoxStyle::default(),
             layout: LayoutStyle::new(),
             tag: None,
         }
@@ -426,6 +432,15 @@ impl ContainerNode {
     #[must_use]
     pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
+        self
+    }
+
+    /// Attach a §5.3 [`BoxStyle`] — the container paints its own fill /
+    /// border before recursing into children. v0 covers fill +
+    /// `corner_radius` via the same shape as `BoxNode`.
+    #[must_use]
+    pub const fn with_style(mut self, style: BoxStyle) -> Self {
+        self.style = style;
         self
     }
 }

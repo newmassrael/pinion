@@ -917,6 +917,10 @@
         {
           "file": "crates/pinion-runtime/src/layout.rs",
           "symbol": "compute_layout"
+        },
+        {
+          "file": "examples/hello-button/src/main.rs",
+          "symbol": "view"
         }
       ],
       "decision_status": "active"

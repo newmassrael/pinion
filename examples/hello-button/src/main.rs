@@ -42,10 +42,13 @@ use cosmic_text::{
 };
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect, TextNode};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Scene};
 use pinion_rpc::dispatch;
-use pinion_runtime::{walk_scene_and_drain, IntentQueue};
+use pinion_runtime::{compute_layout, walk_scene_and_drain, IntentQueue};
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -62,13 +65,19 @@ enum AppEvent {
 const WIN_W: u32 = 320;
 const WIN_H: u32 = 200;
 const BG_FILL: Color = Color::from_argb(0x0020_3040); // dark navy
-const BTN_RECT: Rect = Rect::new(80, 60, 160, 80);
+const BTN_W: u32 = 160;
+const BTN_H: u32 = 80;
 
 /// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
 /// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, readied
 /// for `dt`/`frame_index` without a `SemVer` major. Purity here is
 /// the §2 `dry_run` invariant: same `(state, frame)` always yields
 /// the same `Scene`.
+///
+/// R24 §5.21 migration: hardcoded `BTN_RECT` is gone. The root
+/// container does flex centering; the button container has a fixed
+/// `Size::px(160, 80)`. `compute_layout` (called from `render`)
+/// resolves every node's pixel rect each frame.
 //
 // `&Frame` is intentional per the §6.3 signature contract even
 // though `Frame` is presently a ZST: once real per-frame fields
@@ -86,18 +95,34 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         ButtonState::Disabled => "Disabled",
         _ => "Click me!",
     };
-    // Label rect is centered inside BTN_RECT — height 24px font slot.
-    let label_rect = Rect::new(
-        BTN_RECT.x,
-        BTN_RECT.y + BTN_RECT.h / 2 - 12,
-        BTN_RECT.w,
-        24,
+    let label_text = Scene::Text(TextNode::styled(
+        label,
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(18)
+            .with_fg(Color::rgb(0, 0, 0)),
+    ));
+    let button = Scene::Container(
+        ContainerNode::new(vec![label_text])
+            .with_style(BoxStyle::filled(btn_fill))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Center)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(BTN_W, BTN_H)),
+            ),
     );
-    Scene::Container(ContainerNode::new(vec![
-        Scene::Box(BoxNode::filled(Rect::new(0, 0, WIN_W, WIN_H), BG_FILL)),
-        Scene::Box(BoxNode::filled(BTN_RECT, btn_fill)),
-        Scene::Text(TextNode::new(label, label_rect)),
-    ]))
+    Scene::Container(
+        ContainerNode::new(vec![button])
+            .with_style(BoxStyle::filled(BG_FILL))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_justify(JustifyContent::Center)
+                    .with_align_items(AlignItems::Center),
+            ),
+    )
 }
 
 /// Recursive Scene-tree paint into the softbuffer pixel slice. v0
@@ -116,12 +141,38 @@ fn paint(
         Scene::Box(node) => paint_box(node, buffer, buf_w, buf_h),
         Scene::Text(node) => paint_text(node, buffer, buf_w, buf_h, font_system, swash_cache),
         Scene::Container(node) => {
+            // R24 slice 5: paint the container's own fill (background)
+            // before recursing into children so the fill sits behind
+            // them — mirrors the BoxNode painter.
+            paint_container_fill(node, buffer, buf_w, buf_h);
             for child in &node.children {
                 paint(child, buffer, buf_w, buf_h, font_system, swash_cache);
             }
         }
         // v0: Path/Image/Effect/External not yet wired into paint.
         _ => {}
+    }
+}
+
+fn paint_container_fill(
+    node: &ContainerNode,
+    buffer: &mut [u32],
+    buf_w: usize,
+    buf_h: usize,
+) {
+    // Skip fully-transparent fills — saves a write loop and avoids
+    // overwriting whatever the parent painted underneath.
+    if node.style.fill == Color::TRANSPARENT {
+        return;
+    }
+    let r = node.rect;
+    let x_start = (r.x as usize).min(buf_w);
+    let y_start = (r.y as usize).min(buf_h);
+    let x_end = (r.x.saturating_add(r.w) as usize).min(buf_w);
+    let y_end = (r.y.saturating_add(r.h) as usize).min(buf_h);
+    for y in y_start..y_end {
+        let row = y * buf_w;
+        buffer[row + x_start..row + x_end].fill(node.style.fill.to_argb());
     }
 }
 
@@ -432,7 +483,11 @@ impl App {
         let buf_w = width.get() as usize;
         let buf_h = height.get() as usize;
         let frame = Frame::new();
-        let paint_scene = view(self.cached_state, &frame);
+        let mut paint_scene = view(self.cached_state, &frame);
+        // R24 §5.21: taffy resolves every node's pixel rect before
+        // paint. Pure function of (scene, viewport); no per-frame
+        // cache needed at this scale.
+        compute_layout(&mut paint_scene, width.get(), height.get());
         buffer.fill(0);
         paint(
             &paint_scene,
