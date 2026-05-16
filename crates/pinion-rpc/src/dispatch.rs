@@ -2,13 +2,14 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R40.2): `scene/query`,
+//! response envelope. Registered methods (R40.3): `scene/query`,
 //! `scene/click`, `scene/rewind`, `scene/snapshot`, `scene/dry_run`,
 //! `scene/waitFor`, `scene/screenshot`, `scene/invoke`,
 //! `scene/intents`, `scene/locate`, `scene/locate_region`,
-//! `scene/bbox`, `scene/cancel_preview`. The preview-lifecycle
-//! methods take an additional `&PreviewLedger` argument that the
-//! dispatcher receives from its caller alongside the scene.
+//! `scene/bbox`, `scene/cancel_preview`, `scene/list_previews`. The
+//! preview-lifecycle methods take an additional `&PreviewLedger`
+//! argument that the dispatcher receives from its caller alongside
+//! the scene.
 //!
 //! Notifications (requests without `id`) elicit no response per the spec
 //! — [`dispatch`] returns `None` in that case. Errors map to the
@@ -37,7 +38,7 @@ use crate::invoke::{invoke, InvokeError};
 use crate::locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };
-use crate::preview::{cancel_preview, PreviewId, PreviewLedger};
+use crate::preview::{cancel_preview, list_previews, PreviewId, PreviewLedger, PreviewView};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
@@ -147,6 +148,7 @@ pub fn dispatch(scene: &mut Scene, previews: &PreviewLedger, request_json: &str)
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
         "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
+        "scene/list_previews" => handle_scene_list_previews(previews),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -636,6 +638,55 @@ fn handle_scene_cancel_preview(
     let mut map = serde_json::Map::new();
     map.insert("cancelled".into(), Value::Bool(cancelled));
     Ok(Value::Object(map))
+}
+
+// `Result<_, _>` shape kept for dispatcher consistency — every match
+// arm in [`dispatch`] expects `Result<Value, RpcError>`. `list_previews`
+// happens to be infallible today, but future filters / pagination
+// would introduce error variants.
+#[allow(clippy::unnecessary_wraps)]
+fn handle_scene_list_previews(previews: &PreviewLedger) -> Result<Value, RpcError> {
+    let now = std::time::Instant::now();
+    let views = list_previews(previews, now);
+    let mut map = serde_json::Map::new();
+    let arr: Vec<Value> = views.iter().map(|v| preview_view_to_json(v, now)).collect();
+    map.insert("previews".into(), Value::Array(arr));
+    Ok(Value::Object(map))
+}
+
+fn preview_view_to_json(view: &PreviewView, now: std::time::Instant) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("preview_id".into(), Value::Number(view.id.get().into()));
+    obj.insert(
+        "base_revision".into(),
+        Value::Number(view.base_revision.into()),
+    );
+    obj.insert(
+        "target_path".into(),
+        Value::String(view.target_path.clone()),
+    );
+    obj.insert(
+        "affected_paths".into(),
+        Value::Array(
+            view.affected_paths
+                .iter()
+                .map(|p| Value::String(p.clone()))
+                .collect(),
+        ),
+    );
+    let age = now.saturating_duration_since(view.created_at).as_millis();
+    let ttl = view.deadline.saturating_duration_since(now).as_millis();
+    // Wire shape uses u64; `as_millis() -> u128` truncates only beyond
+    // ~584 million years — safely under all real-world TTLs.
+    obj.insert(
+        "age_ms".into(),
+        Value::Number((u64::try_from(age).unwrap_or(u64::MAX)).into()),
+    );
+    obj.insert(
+        "ttl_remaining_ms".into(),
+        Value::Number((u64::try_from(ttl).unwrap_or(u64::MAX)).into()),
+    );
+    Value::Object(obj)
 }
 
 fn invoke_error_to_rpc(err: InvokeError) -> RpcError {
@@ -1335,5 +1386,85 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":"abc"},"id":206}"#;
         let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    // ---- R40.3: scene/list_previews JSON-RPC wire ----
+
+    #[test]
+    fn scene_list_previews_empty_ledger_returns_empty_array() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":301}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        assert!(resp.error.is_none());
+        let arr = resp
+            .result
+            .unwrap()
+            .get("previews")
+            .cloned()
+            .unwrap();
+        assert_eq!(arr.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn scene_list_previews_single_entry_surfaces_all_fields() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let id = previews
+            .propose(7, Box::new(WireTestProposal::new()), None, now_inst())
+            .unwrap();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":302}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let arr = resp.result.unwrap().get("previews").cloned().unwrap();
+        let entries = arr.as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        let obj = entries[0].as_object().unwrap();
+        assert_eq!(obj.get("preview_id"), Some(&Value::Number(id.get().into())));
+        assert_eq!(obj.get("base_revision"), Some(&Value::Number(7.into())));
+        assert_eq!(
+            obj.get("target_path"),
+            Some(&Value::String("/wire-test".to_string()))
+        );
+        assert_eq!(
+            obj.get("affected_paths"),
+            Some(&Value::Array(vec![Value::String("/wire-test".to_string())]))
+        );
+        // age/ttl present, non-negative, ttl roughly 60s (default TTL).
+        assert!(obj.get("age_ms").and_then(Value::as_u64).is_some());
+        assert!(obj.get("ttl_remaining_ms").and_then(Value::as_u64).is_some());
+    }
+
+    #[test]
+    fn scene_list_previews_in_id_order() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let a = previews
+            .propose(0, Box::new(WireTestProposal::new()), None, now_inst())
+            .unwrap();
+        let b = previews
+            .propose(0, Box::new(WireTestProposal::new()), None, now_inst())
+            .unwrap();
+        let c = previews
+            .propose(0, Box::new(WireTestProposal::new()), None, now_inst())
+            .unwrap();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":303}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let arr = resp.result.unwrap().get("previews").cloned().unwrap();
+        let entries = arr.as_array().unwrap();
+        let ids: Vec<u64> = entries
+            .iter()
+            .map(|e| e.as_object().unwrap()["preview_id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![a.get(), b.get(), c.get()]);
+    }
+
+    #[test]
+    fn scene_list_previews_omits_params_ok() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        // Empty params object should be equivalent to omitted params.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","params":{},"id":304}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        assert!(resp.error.is_none());
     }
 }

@@ -28,6 +28,7 @@ mod cancel;
 mod error;
 mod id;
 mod ledger;
+mod list;
 mod proposal;
 
 pub use cancel::cancel_preview;
@@ -36,4 +37,5 @@ pub use id::PreviewId;
 pub use ledger::{
     Entry, PreviewLedger, PreviewView, SweepReport, DEFAULT_CAPACITY, DEFAULT_TTL, MAX_TTL,
 };
+pub use list::list_previews;
 pub use proposal::Proposal;

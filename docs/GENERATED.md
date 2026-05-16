@@ -1944,6 +1944,9 @@ fn main() {
 - crates/pinion-rpc/src/preview/cancel.rs:cancel_preview
 - crates/pinion-rpc/src/dispatch.rs:handle_scene_cancel_preview
 - crates/pinion-rpc/src/preview/id.rs:PreviewId::try_new
+- crates/pinion-rpc/src/preview/list.rs:list_previews
+- crates/pinion-rpc/src/dispatch.rs:handle_scene_list_previews
+- crates/pinion-rpc/src/dispatch.rs:preview_view_to_json
 
 
 
@@ -4098,6 +4101,35 @@ fn main() {
 - R40.5: typed Proposal enum (SetSignal/etc) + scene/propose_change RPC (15th)
 - R40.6: scene/apply_preview RPC (16th) — OCC 검증 + runtime side-effect application
 - carry-forward existing: §5.16 GPU, hello-button reactive, overlay Controller promote
+
+
+
+### Round 40.3 — §5.34 scene/list_previews (14th RPC) — PreviewView wire serialization + age/ttl ms
+
+**Changes**:
+- preview/list.rs typed dispatcher — transport-agnostic wrapper around ledger.list
+- handle_scene_list_previews + preview_view_to_json — JSON shape with age_ms/ttl_remaining_ms
+- Instant 안적 대신 relative ms 직렬화 (saturating_duration_since)
+- wire result: {"previews": [{preview_id, base_revision, target_path, affected_paths, age_ms, ttl_remaining_ms}]}
+- dispatch table 13 → 14 typed methods (scene/list_previews)
+
+
+
+**Verification**:
+- cargo test --workspace: 479 → 483 pass (+4 list_previews wire tests)
+- cargo clippy: 11 baseline only — #[allow(unnecessary_wraps)] on infallible handler with rationale
+- empty ledger → empty array; multi-entry ID order; field shape covered
+
+
+
+**Impact**: §5.34, §5.7, §5.12
+
+
+**Carry forward**:
+- R40.4: scene_revision counter pinion-core Scene (OCC token source for apply)
+- R40.5: typed Proposal enum (SetSignal initial) + scene/propose_change (15th)
+- R40.6: scene/apply_preview (16th) — OCC 검증 + runtime side-effect
+- existing: §5.16 GPU, hello-button reactive, overlay Controller promote
 
 
 

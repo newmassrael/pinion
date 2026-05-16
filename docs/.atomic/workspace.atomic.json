@@ -2127,6 +2127,18 @@
         {
           "file": "crates/pinion-rpc/src/preview/id.rs",
           "symbol": "PreviewId::try_new"
+        },
+        {
+          "file": "crates/pinion-rpc/src/preview/list.rs",
+          "symbol": "list_previews"
+        },
+        {
+          "file": "crates/pinion-rpc/src/dispatch.rs",
+          "symbol": "handle_scene_list_previews"
+        },
+        {
+          "file": "crates/pinion-rpc/src/dispatch.rs",
+          "symbol": "preview_view_to_json"
         }
       ],
       "decision_status": "active"
@@ -5625,6 +5637,56 @@
         "R40.5: typed Proposal enum (SetSignal/etc) + scene/propose_change RPC (15th)",
         "R40.6: scene/apply_preview RPC (16th) — OCC 검증 + runtime side-effect application",
         "carry-forward existing: §5.16 GPU, hello-button reactive, overlay Controller promote"
+      ]
+    },
+    "Round 40.3": {
+      "decision_summary": "§5.34 scene/list_previews (14th RPC) — PreviewView wire serialization + age/ttl ms",
+      "changes_bullets": [
+        "preview/list.rs typed dispatcher — transport-agnostic wrapper around ledger.list",
+        "handle_scene_list_previews + preview_view_to_json — JSON shape with age_ms/ttl_remaining_ms",
+        "Instant 안적 대신 relative ms 직렬화 (saturating_duration_since)",
+        "wire result: {\"previews\": [{preview_id, base_revision, target_path, affected_paths, age_ms, ttl_remaining_ms}]}",
+        "dispatch table 13 → 14 typed methods (scene/list_previews)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 479 → 483 pass (+4 list_previews wire tests)",
+        "cargo clippy: 11 baseline only — #[allow(unnecessary_wraps)] on infallible handler with rationale",
+        "empty ledger → empty array; multi-entry ID order; field shape covered"
+      ],
+      "impact_refs": [
+        "5.34",
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "R40.4: scene_revision counter pinion-core Scene (OCC token source for apply)",
+        "R40.5: typed Proposal enum (SetSignal initial) + scene/propose_change (15th)",
+        "R40.6: scene/apply_preview (16th) — OCC 검증 + runtime side-effect",
+        "existing: §5.16 GPU, hello-button reactive, overlay Controller promote"
+      ],
+      "publishable_decision_summary": "§5.34 scene/list_previews (14th RPC) — PreviewView wire serialization + age/ttl ms",
+      "publishable_changes_bullets": [
+        "preview/list.rs typed dispatcher — transport-agnostic wrapper around ledger.list",
+        "handle_scene_list_previews + preview_view_to_json — JSON shape with age_ms/ttl_remaining_ms",
+        "Instant 안적 대신 relative ms 직렬화 (saturating_duration_since)",
+        "wire result: {\"previews\": [{preview_id, base_revision, target_path, affected_paths, age_ms, ttl_remaining_ms}]}",
+        "dispatch table 13 → 14 typed methods (scene/list_previews)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 479 → 483 pass (+4 list_previews wire tests)",
+        "cargo clippy: 11 baseline only — #[allow(unnecessary_wraps)] on infallible handler with rationale",
+        "empty ledger → empty array; multi-entry ID order; field shape covered"
+      ],
+      "publishable_impact_refs": [
+        "5.34",
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R40.4: scene_revision counter pinion-core Scene (OCC token source for apply)",
+        "R40.5: typed Proposal enum (SetSignal initial) + scene/propose_change (15th)",
+        "R40.6: scene/apply_preview (16th) — OCC 검증 + runtime side-effect",
+        "existing: §5.16 GPU, hello-button reactive, overlay Controller promote"
       ]
     },
     "Round 5": {

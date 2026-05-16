@@ -33,8 +33,8 @@ pub use locate::{
 };
 pub use path::{resolve, PathError, ResolvedPath};
 pub use preview::{
-    cancel_preview, ApplyError, Entry as PreviewEntry, PreviewId, PreviewLedger, PreviewView,
-    Proposal, ProposeError, SweepReport, DEFAULT_CAPACITY, DEFAULT_TTL, MAX_TTL,
+    cancel_preview, list_previews, ApplyError, Entry as PreviewEntry, PreviewId, PreviewLedger,
+    PreviewView, Proposal, ProposeError, SweepReport, DEFAULT_CAPACITY, DEFAULT_TTL, MAX_TTL,
 };
 pub use query::{query, QueryError};
 pub use rewind::{rewind, RewindError};
