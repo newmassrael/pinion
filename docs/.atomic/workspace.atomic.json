@@ -255,7 +255,8 @@
         "R17 ContainerNode v0 holds `children: Vec<Scene>`; taffy layout deferred to §5.3 DSL",
         "R17 TextNode v0 holds `content: String` + `rect: Rect`; font/size/colour deferred to §5.3",
         "R17 PathNode v0: `data: String` + `rect: Rect`; structured commands deferred to §5.3",
-        "R17 ImageNode v0: `source: String` + `rect: Rect`; codec/loader deferred to §5.3 DSL"
+        "R17 ImageNode v0: `source: String` + `rect: Rect`; codec/loader deferred to §5.3 DSL",
+        "R18 §5.20 adds tag: Option<Cow<'static, str>> to introspectable Scene variants"
       ],
       "alternatives_rejected": [
         {
@@ -308,7 +309,8 @@
         "v0 dry_run: save -> intervene -> snapshot -> rollback at /[window[id]/]external/<path>",
         "v0 waitFor: sync poll N attempts; deterministic across iterations until async event injection lands",
         "v0 screenshot: typed placeholder; RenderBackendUnavailable until §5.16 RHI/wgpu wires",
-        "R17 scene/invoke 8th method (bidirectional RPC spec round); ratified 7-set extended"
+        "R17 scene/invoke 8th method (bidirectional RPC spec round); ratified 7-set extended",
+        "R18 §5.20 scene/intents 9th RPC method; poll-form single-consumer v0"
       ],
       "alternatives_rejected": [
         {
@@ -360,7 +362,8 @@
         "Future variant slots: Gamepad/HID/Pointer3D addable without v2 bump; runtime zero-cost",
         "CoordSpace decoupled from variant: per-variant coord enum (Logical/World3D) for future 3D pointer",
         "R15: WindowEvent variants (Close/Focus/Resize/DpiChange) addable via R14 non_exhaustive hedge",
-        "Window routing resolved at runtime layer; Event variants stay window-agnostic per §5.17"
+        "Window routing resolved at runtime layer; Event variants stay window-agnostic per §5.17",
+        "R18 §5.20 Intent dual to Event: Event=input (winit→app), Intent=output (widget→app/RPC)"
       ],
       "alternatives_rejected": [
         {
@@ -461,7 +464,8 @@
         "Item 8 opt-in via External::introspect()/introspect_mut() returning Option<&dyn ExternalIntrospect>",
         "R17 live RPC dogfood uses snapshot (read-only); bidirectional needs `Box<dyn External>` downcast",
         "R17 ExternalIntrospect.invoke: action channel returning IntrospectValue; §5.12 scene/invoke",
-        "R17 hello-button: live bidirectional RPC via invoke; winit + JSON-RPC share one channel"
+        "R17 hello-button: live bidirectional RPC via invoke; winit + JSON-RPC share one channel",
+        "R18 §5.20 External adds drain_intents+is_dirty (9-point contract); default no-op"
       ],
       "impact_scope": [
         "3",
@@ -764,6 +768,36 @@
         "2",
         "3",
         "5.3"
+      ],
+      "decision_status": "active"
+    },
+    "5.20": {
+      "title": "Intent system & bidirectional event flow",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Bidirectional symbolic event channel: widgets emit Intent (tag+payload), runtime queue drains to app and RPC subscriber per-frame; one channel for human + AI input.",
+      "rationale_bullets": [
+        "view-fn purity (§6.3) + dry_run (§2 #3) require Intent be data, not callback",
+        "Closed Scene (§5.2/§5.11) preserved: Scene non-generic; tag is Cow<'static, str> field",
+        "AI-native bet (§2 #2): symbolic tag lets RPC introspect/replay without type knowledge",
+        "Bidirectional symmetry: input via invoke (R17), output via Intent (R18 v0)",
+        "dirty-poll + sink: avoid O(n_widgets x n_events) and 0-allocation per intent emit",
+        "Derive macro (pinion-derive) bridges typed app enum <-> symbolic tag at compile time"
+      ],
+      "inputs_bullets": [
+        "§5.13 Event enum (input channel from winit)",
+        "§5.15 External 8-point contract (becomes 9-point with drain_intents/is_dirty)",
+        "§5.12 RPC method set 8/8 -> 9 with scene/intents",
+        "§5.11 Scene variant shape (gains tag: Option<Cow<'static, str>>)",
+        "§6.3 view-fn purity (Intent values are pure data)"
+      ],
+      "outputs_bullets": [
+        "Intent { tag: Cow<'static, str>, payload: IntrospectValue } closed shape v0",
+        "External::drain_intents(sink) + is_dirty (default no-op; opt-in per External)",
+        "scene/intents 9th RPC method (poll-form, single-consumer v0)",
+        "pinion-derive crate: #[derive(IntentTag)] compile-time exhaustive at app boundary",
+        "Runtime intent queue + per-frame drain (sync polling, view-fn purity preserved)",
+        "Tag convention: <widget>.<kind> e.g. save_btn.click; IntentKind enum dropped"
       ],
       "decision_status": "active"
     },
