@@ -1030,6 +1030,7 @@ fn main() {
 - R26: view-fn read-only on Signals; Signal.get() inside view-fn auto-subscribes; writes forbidden.
 - R26: Computed<T> lazy + cached dirty flag; pure fn contract; propagate only on value change.
 - R26: RPC introspect = Signal<T:Serialize> via scene/query; rewind sets via deserialize.
+- R34 §5.29: SyncSignal cross-thread variant ratified; Arc<RwLock<T>> wrapper.
 
 
 
@@ -1406,6 +1407,62 @@ fn main() {
 - Curve-based easing (Material Design) — supported by spring as special case
 - Frame-perfect coroutines (Compose Coroutine) — works but spring physics canonical now
 - ImGui per-frame interpolation — immediate mode; pinion data-first violation
+
+
+
+
+
+
+### §5.29. Structured concurrency (Owner scope + Tokio + SyncSignal)
+
+
+
+**Rationale**:
+- Compose coroutineScope + Swift structured concurrency 2020s+ industry standard
+- Orphan tasks (un-scoped futures) cause memory leaks + UI freezes; eliminated by structure
+- §5.22 Owner tree already provides scope hierarchy; concurrency extends it
+- Tokio multi-thread runtime for IO/compute; UI thread for view-fn/paint
+- SyncSignal<T> = Arc<RwLock<T>> wrapper for cross-thread Signal
+- Cancellation: Owner drop → abort all child tasks → transitively
+- §5.23 Command<Intent> dispatch in async; result piped back as Intent on UI thread
+- Deadlock prevention: locks never held across await; UI thread never blocks
+
+
+
+**Inputs**:
+- §5.22 Owner: scope tree substrate for task ownership
+- §5.23 Command: async dispatch path
+- §6.3 tokio: workspace async runtime baseline
+
+
+
+**Outputs**:
+- TaskScope per Owner; spawn/spawn_local/spawn_blocking methods
+- SyncSignal<T> = Arc<RwLock<T>> cross-thread variant; lockless Read path
+- AbortHandle on every spawned task; auto-aborted on Owner drop
+- Channels: mpsc UI bridge for cross-thread Intent delivery
+- Tokio multi-thread runtime owned by app; UI thread distinct from worker pool
+- Lock discipline: never hold lock across await; rustc + clippy lint enforced
+
+
+
+**Caveats**:
+- R34: TaskScope per Owner; spawn returns AbortHandle; cancel on scope drop transitive.
+- R34: SyncSignal<T> = Arc<RwLock<T>> + version counter; read lock-free path for hot reads.
+- R34: Tokio multi-thread runtime app-owned; UI thread distinct from worker pool.
+- R34: Cross-thread Intent delivery via mpsc channel; UI thread polls per frame.
+- R34: No locks held across await; rustc + clippy::await_holding_lock lint enforced.
+- R34: spawn_blocking for compute-heavy work; workers in tokio pool; not on UI thread.
+- R34: §5.23 Handler trait async fn dispatched on TaskScope; cancel propagates per scope.
+- R34: SCE schema: scope blocks may declare cross-thread tasks; Forge emits spawn boilerplate.
+
+
+
+**Alternatives rejected**:
+- Unstructured spawn (tokio::spawn raw) — orphan task risk; no scope cleanup
+- Thread-per-task — OS overhead unacceptable at AAA scale
+- async-std runtime — tokio more battle-tested + ecosystem
+- Custom executor — 3+ year work; tokio canonical
 
 
 
@@ -2848,6 +2905,34 @@ fn main() {
 - R36 §5.31 Hot reload (signal serialization)
 - Tween animations as special case of spring (carry-forward)
 - Custom easing curves (carry-forward)
+
+
+
+### Round 34 — Round 34 — §5.29 new section: Structured concurrency (Owner scope + Tokio + SyncSignal); orphan tasks eliminated
+
+**Changes**:
+- New §5.29 section: Structured concurrency under §5 parent
+- TaskScope per Owner; spawn returns AbortHandle; cancel propagates on drop
+- SyncSignal<T> = Arc<RwLock<T>> + version counter for cross-thread reactive state
+- Tokio multi-thread runtime app-owned; UI thread distinct from worker pool
+- Cross-thread Intent via mpsc; lock discipline (clippy lint enforced)
+- 8 §5.29 caveats + 1 §5.22 cross-ref ratify SyncSignal addition
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 38 → 39; entries 33 → 34
+- no code changes (spec-only)
+- atomic mutations: 1 add_section + 5 set_section_* + 9 add_section_caveat
+
+
+
+**Impact**: §5.22, §5.23, §5.29, §6.3
+
+
+**Carry forward**:
+- R35 §5.30 Accessibility (AccessKit bridge)
+- R36 §5.31 Hot reload (signal serialization)
 
 
 

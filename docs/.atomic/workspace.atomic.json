@@ -989,7 +989,8 @@
         "R26: Concurrency v0 single-threaded; SyncSignal cross-thread variant carry-forward to later round.",
         "R26: view-fn read-only on Signals; Signal.get() inside view-fn auto-subscribes; writes forbidden.",
         "R26: Computed<T> lazy + cached dirty flag; pure fn contract; propagate only on value change.",
-        "R26: RPC introspect = Signal<T:Serialize> via scene/query; rewind sets via deserialize."
+        "R26: RPC introspect = Signal<T:Serialize> via scene/query; rewind sets via deserialize.",
+        "R34 §5.29: SyncSignal cross-thread variant ratified; Arc<RwLock<T>> wrapper."
       ],
       "alternatives_rejected": [
         {
@@ -1387,6 +1388,63 @@
         {
           "alternative": "ImGui per-frame interpolation",
           "reason": "immediate mode; pinion data-first violation"
+        }
+      ],
+      "decision_status": "active"
+    },
+    "5.29": {
+      "title": "Structured concurrency (Owner scope + Tokio + SyncSignal)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "rationale_bullets": [
+        "Compose coroutineScope + Swift structured concurrency 2020s+ industry standard",
+        "Orphan tasks (un-scoped futures) cause memory leaks + UI freezes; eliminated by structure",
+        "§5.22 Owner tree already provides scope hierarchy; concurrency extends it",
+        "Tokio multi-thread runtime for IO/compute; UI thread for view-fn/paint",
+        "SyncSignal<T> = Arc<RwLock<T>> wrapper for cross-thread Signal",
+        "Cancellation: Owner drop → abort all child tasks → transitively",
+        "§5.23 Command<Intent> dispatch in async; result piped back as Intent on UI thread",
+        "Deadlock prevention: locks never held across await; UI thread never blocks"
+      ],
+      "inputs_bullets": [
+        "§5.22 Owner: scope tree substrate for task ownership",
+        "§5.23 Command: async dispatch path",
+        "§6.3 tokio: workspace async runtime baseline"
+      ],
+      "outputs_bullets": [
+        "TaskScope per Owner; spawn/spawn_local/spawn_blocking methods",
+        "SyncSignal<T> = Arc<RwLock<T>> cross-thread variant; lockless Read path",
+        "AbortHandle on every spawned task; auto-aborted on Owner drop",
+        "Channels: mpsc UI bridge for cross-thread Intent delivery",
+        "Tokio multi-thread runtime owned by app; UI thread distinct from worker pool",
+        "Lock discipline: never hold lock across await; rustc + clippy lint enforced"
+      ],
+      "caveats_bullets": [
+        "R34: TaskScope per Owner; spawn returns AbortHandle; cancel on scope drop transitive.",
+        "R34: SyncSignal<T> = Arc<RwLock<T>> + version counter; read lock-free path for hot reads.",
+        "R34: Tokio multi-thread runtime app-owned; UI thread distinct from worker pool.",
+        "R34: Cross-thread Intent delivery via mpsc channel; UI thread polls per frame.",
+        "R34: No locks held across await; rustc + clippy::await_holding_lock lint enforced.",
+        "R34: spawn_blocking for compute-heavy work; workers in tokio pool; not on UI thread.",
+        "R34: §5.23 Handler trait async fn dispatched on TaskScope; cancel propagates per scope.",
+        "R34: SCE schema: scope blocks may declare cross-thread tasks; Forge emits spawn boilerplate."
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Unstructured spawn (tokio::spawn raw)",
+          "reason": "orphan task risk; no scope cleanup"
+        },
+        {
+          "alternative": "Thread-per-task",
+          "reason": "OS overhead unacceptable at AAA scale"
+        },
+        {
+          "alternative": "async-std runtime",
+          "reason": "tokio more battle-tested + ecosystem"
+        },
+        {
+          "alternative": "Custom executor",
+          "reason": "3+ year work; tokio canonical"
         }
       ],
       "decision_status": "active"
@@ -3608,6 +3666,56 @@
         "R36 §5.31 Hot reload (signal serialization)",
         "Tween animations as special case of spring (carry-forward)",
         "Custom easing curves (carry-forward)"
+      ]
+    },
+    "Round 34": {
+      "decision_summary": "Round 34 — §5.29 new section: Structured concurrency (Owner scope + Tokio + SyncSignal); orphan tasks eliminated",
+      "changes_bullets": [
+        "New §5.29 section: Structured concurrency under §5 parent",
+        "TaskScope per Owner; spawn returns AbortHandle; cancel propagates on drop",
+        "SyncSignal<T> = Arc<RwLock<T>> + version counter for cross-thread reactive state",
+        "Tokio multi-thread runtime app-owned; UI thread distinct from worker pool",
+        "Cross-thread Intent via mpsc; lock discipline (clippy lint enforced)",
+        "8 §5.29 caveats + 1 §5.22 cross-ref ratify SyncSignal addition"
+      ],
+      "verification_bullets": [
+        "validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 38 → 39; entries 33 → 34",
+        "no code changes (spec-only)",
+        "atomic mutations: 1 add_section + 5 set_section_* + 9 add_section_caveat"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.23",
+        "5.29",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "R35 §5.30 Accessibility (AccessKit bridge)",
+        "R36 §5.31 Hot reload (signal serialization)"
+      ],
+      "publishable_decision_summary": "Round 34 — §5.29 new section: Structured concurrency (Owner scope + Tokio + SyncSignal); orphan tasks eliminated",
+      "publishable_changes_bullets": [
+        "New §5.29 section: Structured concurrency under §5 parent",
+        "TaskScope per Owner; spawn returns AbortHandle; cancel propagates on drop",
+        "SyncSignal<T> = Arc<RwLock<T>> + version counter for cross-thread reactive state",
+        "Tokio multi-thread runtime app-owned; UI thread distinct from worker pool",
+        "Cross-thread Intent via mpsc; lock discipline (clippy lint enforced)",
+        "8 §5.29 caveats + 1 §5.22 cross-ref ratify SyncSignal addition"
+      ],
+      "publishable_verification_bullets": [
+        "validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 38 → 39; entries 33 → 34",
+        "no code changes (spec-only)",
+        "atomic mutations: 1 add_section + 5 set_section_* + 9 add_section_caveat"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.23",
+        "5.29",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R35 §5.30 Accessibility (AccessKit bridge)",
+        "R36 §5.31 Hot reload (signal serialization)"
       ]
     },
     "Round 4": {
