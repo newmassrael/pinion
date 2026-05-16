@@ -16,4 +16,4 @@ pub use external::External;
 pub use frame::Frame;
 pub use intent::{Intent, IntentTag};
 pub use scene::Scene;
-pub use style::{Border, BoxStyle, Color, PathStyle, Stroke, StrokeCap, TextStyle};
+pub use style::{Border, BoxStyle, Color, Fit, ImageStyle, PathStyle, Stroke, StrokeCap, TextStyle};

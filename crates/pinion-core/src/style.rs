@@ -258,6 +258,52 @@ impl PathStyle {
     }
 }
 
+/// Image fit policy per §5.3 R20. Names follow the common CSS
+/// `object-fit` vocabulary so authors with web background pick them
+/// up without translation.
+///
+///   * `Fill` — stretch to exactly fill `rect`, ignoring aspect ratio.
+///   * `Contain` — letter-box: largest centered image that fits inside
+///     `rect`, preserving aspect.
+///   * `Cover` — fill `rect` entirely, cropping overflow, preserving
+///     aspect.
+///   * `Tile` — repeat the image at its native size across `rect`.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Fit {
+    #[default]
+    Fill,
+    Contain,
+    Cover,
+    Tile,
+}
+
+/// Sidecar style for [`ImageNode`](crate::scene::ImageNode) per §5.3
+/// R20. `tint` is an optional multiply-blend overlay (e.g. icon
+/// recoloring); `None` paints the source as-is.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct ImageStyle {
+    pub fit: Fit,
+    pub tint: Option<Color>,
+}
+
+impl ImageStyle {
+    /// Builder: override the fit policy.
+    #[must_use]
+    pub const fn with_fit(mut self, fit: Fit) -> Self {
+        self.fit = fit;
+        self
+    }
+
+    /// Builder: attach a tint overlay.
+    #[must_use]
+    pub const fn with_tint(mut self, tint: Color) -> Self {
+        self.tint = Some(tint);
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,5 +451,24 @@ mod tests {
         let s = PathStyle::default();
         assert!(s.stroke.is_none());
         assert!(s.fill.is_none());
+    }
+
+    #[test]
+    fn image_style_default_is_fill_no_tint() {
+        let s = ImageStyle::default();
+        assert_eq!(s.fit, Fit::Fill);
+        assert!(s.tint.is_none());
+    }
+
+    #[test]
+    fn image_style_with_fit_builder() {
+        let s = ImageStyle::default().with_fit(Fit::Contain);
+        assert_eq!(s.fit, Fit::Contain);
+    }
+
+    #[test]
+    fn image_style_with_tint_builder() {
+        let s = ImageStyle::default().with_tint(Color::rgb(0xff, 0, 0));
+        assert_eq!(s.tint, Some(Color::rgb(0xff, 0, 0)));
     }
 }

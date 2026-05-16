@@ -24,7 +24,7 @@
 
 use std::borrow::Cow;
 
-use crate::style::{BoxStyle, Color, PathStyle, TextStyle};
+use crate::style::{BoxStyle, Color, ImageStyle, PathStyle, TextStyle};
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
@@ -263,11 +263,11 @@ impl PathNode {
 
 /// Raster or vector image primitive.
 ///
-/// v0 §5.11 shape: `source: String` carries an opaque locator
-/// (`file://`, `https://`, `memory://0xABCD`, etc.) that the
-/// consumer loader resolves; `rect: Rect` gives the destination
-/// bounds. The codec / decoded-buffer cache and `Style`-level
-/// fit/cover/tile policy come with the §5.3 DSL.
+/// v0 §5.3 R20 shape: `source: String` is the opaque locator
+/// (`file://`, `https://`, `memory://0xABCD`, etc.); `rect: Rect`
+/// gives the destination bounds; `style: ImageStyle` carries the fit
+/// policy and optional tint. The codec / decoded-buffer cache is
+/// carry-forward and resolved by the consumer rasterizer.
 ///
 /// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
@@ -275,15 +275,26 @@ impl PathNode {
 pub struct ImageNode {
     pub source: String,
     pub rect: Rect,
+    pub style: ImageStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
 impl ImageNode {
+    /// Construct an image node with the default [`ImageStyle`]
+    /// (`Fit::Fill`, no tint). Use [`ImageNode::styled`] when an
+    /// explicit style is needed.
     #[must_use]
     pub fn new(source: impl Into<String>, rect: Rect) -> Self {
+        Self::styled(source, rect, ImageStyle::default())
+    }
+
+    /// Construct with a fully-specified [`ImageStyle`].
+    #[must_use]
+    pub fn styled(source: impl Into<String>, rect: Rect, style: ImageStyle) -> Self {
         Self {
             source: source.into(),
             rect,
+            style,
             tag: None,
         }
     }

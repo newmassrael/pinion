@@ -928,6 +928,10 @@
         {
           "file": "crates/pinion-core/src/scene.rs",
           "symbol": "PathCommand"
+        },
+        {
+          "file": "crates/pinion-core/src/style.rs",
+          "symbol": "ImageStyle"
         }
       ],
       "decision_status": "active"
