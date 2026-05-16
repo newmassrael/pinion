@@ -1,0 +1,34 @@
+[package]
+name = "pinion-forge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "pinion DSL (.pinion.xml) parser + Rust codegen per §5.22 (R38)"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Path dep on vendored SCE per R37.8 RFC 001 closed policy. Submodule SHA
+# in .gitmodules is the single source of truth for the pinned SCE revision;
+# Cargo path resolution inherits the pin. sce-build is consumed for its
+# v1 NDJSON diagnostic format as a reference pattern (per R38 §5.22
+# "SCE v1 pattern reference only"); pinion-forge owns its own diagnostic
+# namespace and does not extend SCE's closed `DiagnosticCode` enum.
+sce-build = { path = "../../vendor/sce/sce-build" }
+
+# Event-driven XML parser. Chosen over roxmltree (used by sce-build) because
+# pinion-forge handles a closed schema (one root, fixed child set) where the
+# zero-copy event model fits better than a full DOM. quick-xml is the de-facto
+# standard Rust XML parser in 2026, maintained, and pulls in zero transitives
+# beyond memchr.
+quick-xml = "0.36"
+
+# Derive macros for std::error::Error. Used by `diagnostic::PinionForgeDiagnostic`
+# so downstream consumers can `?`-propagate without manual Display/Error impls.
+thiserror = "2"
+
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -6,6 +6,7 @@ members = [
     "crates/pinion-runtime",
     "crates/pinion-rpc",
     "crates/pinion-cli",
+    "crates/pinion-forge",
     "examples/hello-button",
 ]
 exclude = ["vendor/sce"]

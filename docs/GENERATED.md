@@ -1063,6 +1063,14 @@ fn main() {
 - crates/pinion-core/src/reactive/computed.rs
 - crates/pinion-core/src/reactive/resource.rs
 - crates/pinion-core/src/reactive/introspect.rs
+- crates/pinion-forge/src/lib.rs
+- crates/pinion-forge/src/ast.rs
+- crates/pinion-forge/src/parser.rs
+- crates/pinion-forge/src/codegen.rs
+- crates/pinion-forge/src/diagnostic.rs
+- crates/pinion-forge/src/wire.rs
+- crates/pinion-forge/src/build.rs
+- crates/pinion-forge/Cargo.toml
 
 
 
@@ -3265,6 +3273,41 @@ fn main() {
 **Carry forward**:
 - R38.1 build: crates/pinion-forge skeleton — sce-build commit-pin dep
 - Future §5.23/§5.24/§5.25/§5.27/§5.28 also need pinion-forge codegen redefinition
+
+
+
+### Round 38.1 — crates/pinion-forge skeleton — empty <pinion kind=reactive> parse + emit + diagnostic NDJSON wire
+
+**Changes**:
+- Added crates/pinion-forge to workspace; path dep on vendor/sce/sce-build per R37.8
+- AST: PinionDoc + PinionKind::Reactive + uninhabited PinionChild (R38.2+ variants)
+- Parser: quick-xml event scan; accumulates every Parse/Validate diagnostic per run
+- Codegen: pub struct Name + impl Name::new(_: &::pinion_core::reactive::Owner)
+- Diagnostic: 9-variant PinionForgeDiagnostic enum with code()/stage()/location()
+- Wire: SCE v1 NDJSON pattern (v=1, fnv1a id, code, stage, message, location)
+- PINION_DSL_NS = https://pinion.dev/dsl/v1 (canonical xmlns)
+- build.rs helper: compile_str + compile_file with CompileError(Io | Diagnostics)
+
+
+
+**Verification**:
+- cargo check -p pinion-forge → clean
+- cargo test --workspace → 347 pass (328 baseline + 19 new)
+- cargo clippy --workspace --all-targets → 12 pre-existing warnings (pinion-forge zero)
+- Wire id stable across rewording verified (test wire_id_is_stable_under_message_rewording)
+- Multi-diagnostic accumulation verified (test accumulates_multiple_attribute_diagnostics)
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R38.2: <signal name ty>/<computed>/<resource>/<use> AST + parser + codegen
+- R38.2: <ty> child element + CDATA code embedding
+- R38.2: first dogfood .pinion.xml authoring (hello-button widget)
+- R38.2: integration test crate that consumes pinion-forge from build.rs
+- R38.2: prettyplease or syn round-trip for emitted source validation
 
 
 

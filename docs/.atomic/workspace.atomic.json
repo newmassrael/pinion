@@ -1050,6 +1050,30 @@
         },
         {
           "file": "crates/pinion-core/src/reactive/introspect.rs"
+        },
+        {
+          "file": "crates/pinion-forge/src/lib.rs"
+        },
+        {
+          "file": "crates/pinion-forge/src/ast.rs"
+        },
+        {
+          "file": "crates/pinion-forge/src/parser.rs"
+        },
+        {
+          "file": "crates/pinion-forge/src/codegen.rs"
+        },
+        {
+          "file": "crates/pinion-forge/src/diagnostic.rs"
+        },
+        {
+          "file": "crates/pinion-forge/src/wire.rs"
+        },
+        {
+          "file": "crates/pinion-forge/src/build.rs"
+        },
+        {
+          "file": "crates/pinion-forge/Cargo.toml"
         }
       ],
       "decision_status": "active"
@@ -4192,6 +4216,64 @@
       "publishable_carry_forward_bullets": [
         "R38.1 build: crates/pinion-forge skeleton — sce-build commit-pin dep",
         "Future §5.23/§5.24/§5.25/§5.27/§5.28 also need pinion-forge codegen redefinition"
+      ]
+    },
+    "Round 38.1": {
+      "decision_summary": "crates/pinion-forge skeleton — empty <pinion kind=reactive> parse + emit + diagnostic NDJSON wire",
+      "changes_bullets": [
+        "Added crates/pinion-forge to workspace; path dep on vendor/sce/sce-build per R37.8",
+        "AST: PinionDoc + PinionKind::Reactive + uninhabited PinionChild (R38.2+ variants)",
+        "Parser: quick-xml event scan; accumulates every Parse/Validate diagnostic per run",
+        "Codegen: pub struct Name + impl Name::new(_: &::pinion_core::reactive::Owner)",
+        "Diagnostic: 9-variant PinionForgeDiagnostic enum with code()/stage()/location()",
+        "Wire: SCE v1 NDJSON pattern (v=1, fnv1a id, code, stage, message, location)",
+        "PINION_DSL_NS = https://pinion.dev/dsl/v1 (canonical xmlns)",
+        "build.rs helper: compile_str + compile_file with CompileError(Io | Diagnostics)"
+      ],
+      "verification_bullets": [
+        "cargo check -p pinion-forge → clean",
+        "cargo test --workspace → 347 pass (328 baseline + 19 new)",
+        "cargo clippy --workspace --all-targets → 12 pre-existing warnings (pinion-forge zero)",
+        "Wire id stable across rewording verified (test wire_id_is_stable_under_message_rewording)",
+        "Multi-diagnostic accumulation verified (test accumulates_multiple_attribute_diagnostics)"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R38.2: <signal name ty>/<computed>/<resource>/<use> AST + parser + codegen",
+        "R38.2: <ty> child element + CDATA code embedding",
+        "R38.2: first dogfood .pinion.xml authoring (hello-button widget)",
+        "R38.2: integration test crate that consumes pinion-forge from build.rs",
+        "R38.2: prettyplease or syn round-trip for emitted source validation"
+      ],
+      "publishable_decision_summary": "crates/pinion-forge skeleton — empty <pinion kind=reactive> parse + emit + diagnostic NDJSON wire",
+      "publishable_changes_bullets": [
+        "Added crates/pinion-forge to workspace; path dep on vendor/sce/sce-build per R37.8",
+        "AST: PinionDoc + PinionKind::Reactive + uninhabited PinionChild (R38.2+ variants)",
+        "Parser: quick-xml event scan; accumulates every Parse/Validate diagnostic per run",
+        "Codegen: pub struct Name + impl Name::new(_: &::pinion_core::reactive::Owner)",
+        "Diagnostic: 9-variant PinionForgeDiagnostic enum with code()/stage()/location()",
+        "Wire: SCE v1 NDJSON pattern (v=1, fnv1a id, code, stage, message, location)",
+        "PINION_DSL_NS = https://pinion.dev/dsl/v1 (canonical xmlns)",
+        "build.rs helper: compile_str + compile_file with CompileError(Io | Diagnostics)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check -p pinion-forge → clean",
+        "cargo test --workspace → 347 pass (328 baseline + 19 new)",
+        "cargo clippy --workspace --all-targets → 12 pre-existing warnings (pinion-forge zero)",
+        "Wire id stable across rewording verified (test wire_id_is_stable_under_message_rewording)",
+        "Multi-diagnostic accumulation verified (test accumulates_multiple_attribute_diagnostics)"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R38.2: <signal name ty>/<computed>/<resource>/<use> AST + parser + codegen",
+        "R38.2: <ty> child element + CDATA code embedding",
+        "R38.2: first dogfood .pinion.xml authoring (hello-button widget)",
+        "R38.2: integration test crate that consumes pinion-forge from build.rs",
+        "R38.2: prettyplease or syn round-trip for emitted source validation"
       ]
     },
     "Round 4": {
