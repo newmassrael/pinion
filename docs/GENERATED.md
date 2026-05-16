@@ -958,6 +958,7 @@ fn main() {
 - crates/pinion-core/src/style.rs:ImageStyle
 - crates/pinion-core/src/style.rs:Align
 - crates/pinion-core/src/scene.rs:Modifier
+- examples/hello-button/src/main.rs:paint_text
 
 
 

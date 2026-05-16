@@ -18,6 +18,9 @@ pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
 pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
 winit = { workspace = true }
 softbuffer = { workspace = true }
+# R21 §5.3 slice 7: cosmic-text Text rasterizer (Scene::Text → softbuffer).
+# Example-scope only — pinion-core stays free of any rasterizer dep.
+cosmic-text = "0.12"
 
 [lints]
 workspace = true

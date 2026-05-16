@@ -37,6 +37,9 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::thread;
 
+use cosmic_text::{
+    Attrs, Buffer as CtBuffer, Color as CtColor, Family, FontSystem, Metrics, Shaping, SwashCache,
+};
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect, TextNode};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
@@ -98,21 +101,26 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 }
 
 /// Recursive Scene-tree paint into the softbuffer pixel slice. v0
-/// interprets `Scene::Box` (rect-fill) and `Scene::Container`
-/// (recurse over children); `Scene::Text` is explicitly skipped
-/// until the cosmic-text rasterizer slice lands, even though its
-/// §5.11 schema (`content`+`rect`) is already in the scene tree
-/// for RPC introspection. Other variants are reserved.
-fn paint(scene: &Scene, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
+/// interprets `Scene::Box` (rect-fill), `Scene::Container` (recurse
+/// over children), and `Scene::Text` (cosmic-text rasterizer, R21
+/// slice 7). Path/Image/Effect/External are reserved.
+fn paint(
+    scene: &Scene,
+    buffer: &mut [u32],
+    buf_w: usize,
+    buf_h: usize,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+) {
     match scene {
         Scene::Box(node) => paint_box(node, buffer, buf_w, buf_h),
+        Scene::Text(node) => paint_text(node, buffer, buf_w, buf_h, font_system, swash_cache),
         Scene::Container(node) => {
             for child in &node.children {
-                paint(child, buffer, buf_w, buf_h);
+                paint(child, buffer, buf_w, buf_h, font_system, swash_cache);
             }
         }
-        // v0: `Scene::Text` rasterizer (cosmic-text) deferred;
-        // Path/Image/Effect/External not yet wired into paint.
+        // v0: Path/Image/Effect/External not yet wired into paint.
         _ => {}
     }
 }
@@ -128,6 +136,110 @@ fn paint_box(node: &BoxNode, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
         // Softbuffer wants `0xAARRGGBB` u32 layout; the typed Color
         // round-trips through `to_argb` bit-exact (§5.3 R20 R21 slice 1).
         buffer[row + x_start..row + x_end].fill(node.style.fill.to_argb());
+    }
+}
+
+/// Rasterize one `Scene::Text` via cosmic-text into the softbuffer
+/// pixel slice (§5.3 R20 R21 slice 7).
+///
+/// The `TextStyle` fields settled in slice 3 (`font_family`,
+/// `font_size_px`, `fg_color`) feed into cosmic-text's `Attrs` +
+/// `Metrics`. Each glyph rectangle returned by `Buffer::draw` lands
+/// at `node.rect.{x,y}` offset and blends over the existing pixel
+/// using standard source-over alpha math.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+)]
+fn paint_text(
+    node: &TextNode,
+    buffer: &mut [u32],
+    buf_w: usize,
+    buf_h: usize,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+) {
+    let metrics = Metrics::new(
+        node.style.font_size_px as f32,
+        node.style.font_size_px as f32 * 1.25,
+    );
+    let mut ct_buf = CtBuffer::new(font_system, metrics);
+    ct_buf.set_size(
+        font_system,
+        Some(node.rect.w as f32),
+        Some(node.rect.h as f32),
+    );
+
+    let family = node
+        .style
+        .font_family
+        .as_deref()
+        .map_or(Family::SansSerif, Family::Name);
+    let attrs = Attrs::new().family(family);
+    ct_buf.set_text(font_system, &node.content, attrs, Shaping::Advanced);
+    ct_buf.shape_until_scroll(font_system, false);
+
+    let fg = node.style.fg_color;
+    let ct_color = CtColor::rgba(fg.r, fg.g, fg.b, fg.a);
+    let dst_x = node.rect.x as i32;
+    let dst_y = node.rect.y as i32;
+
+    ct_buf.draw(font_system, swash_cache, ct_color, |x, y, w, h, color| {
+        blend_span(
+            buffer, buf_w, buf_h, dst_x + x, dst_y + y, w, h, color,
+        );
+    });
+}
+
+/// Source-over alpha blend of a single rectangular span from
+/// cosmic-text into the softbuffer pixel slice. `color` is the
+/// rasterizer-emitted RGBA; existing softbuffer pixels are the
+/// `0xAARRGGBB` u32 layout. Out-of-bounds spans clip cleanly.
+#[allow(
+    clippy::too_many_arguments,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+)]
+fn blend_span(
+    buffer: &mut [u32],
+    buf_w: usize,
+    buf_h: usize,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    color: CtColor,
+) {
+    let src_a = u32::from(color.a());
+    if src_a == 0 {
+        return;
+    }
+    let src_r = u32::from(color.r());
+    let src_g = u32::from(color.g());
+    let src_b = u32::from(color.b());
+    let one_minus_a = 255 - src_a;
+
+    let x_start = x.max(0) as usize;
+    let y_start = y.max(0) as usize;
+    let x_end = (x.saturating_add(w as i32).max(0) as usize).min(buf_w);
+    let y_end = (y.saturating_add(h as i32).max(0) as usize).min(buf_h);
+    for py in y_start..y_end {
+        let row = py * buf_w;
+        for px in x_start..x_end {
+            let idx = row + px;
+            let dst = buffer[idx];
+            let dst_r = (dst >> 16) & 0xff;
+            let dst_g = (dst >> 8) & 0xff;
+            let dst_b = dst & 0xff;
+            // (src * a + dst * (255 - a)) / 255, with +127 rounding.
+            let out_r = (src_r * src_a + dst_r * one_minus_a + 127) / 255;
+            let out_g = (src_g * src_a + dst_g * one_minus_a + 127) / 255;
+            let out_b = (src_b * src_a + dst_b * one_minus_a + 127) / 255;
+            buffer[idx] = (0xff << 24) | (out_r << 16) | (out_g << 8) | out_b;
+        }
     }
 }
 
@@ -193,6 +305,13 @@ struct App {
     /// drains the same source independently, since the underlying
     /// `External::pending_intents` is the single queue.
     intent_queue: IntentQueue,
+    /// cosmic-text font system — discovers + caches system fonts.
+    /// Held across frames per cosmic-text's documented usage pattern
+    /// (fontdb scan is expensive at startup, cheap thereafter).
+    font_system: FontSystem,
+    /// cosmic-text glyph rasterization cache. Reused across frames
+    /// so the swash rasterizer skips re-rendering identical glyphs.
+    swash_cache: SwashCache,
 }
 
 impl App {
@@ -210,6 +329,8 @@ impl App {
             scene,
             cached_state,
             intent_queue: IntentQueue::new(),
+            font_system: FontSystem::new(),
+            swash_cache: SwashCache::new(),
         }
     }
 
@@ -307,7 +428,14 @@ impl App {
         let frame = Frame::new();
         let paint_scene = view(self.cached_state, &frame);
         buffer.fill(0);
-        paint(&paint_scene, &mut buffer, buf_w, buf_h);
+        paint(
+            &paint_scene,
+            &mut buffer,
+            buf_w,
+            buf_h,
+            &mut self.font_system,
+            &mut self.swash_cache,
+        );
         let _ = buffer.present();
     }
 }

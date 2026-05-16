@@ -940,6 +940,10 @@
         {
           "file": "crates/pinion-core/src/scene.rs",
           "symbol": "Modifier"
+        },
+        {
+          "file": "examples/hello-button/src/main.rs",
+          "symbol": "paint_text"
         }
       ],
       "decision_status": "active"
