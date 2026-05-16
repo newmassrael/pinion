@@ -986,7 +986,7 @@ fn main() {
 ### §5.22. Reactive primitives (Signal / Computed / Resource)
 
 
-**Intent**: Signal/Computed/Resource as fine-grained reactive state primitives; SCE meta declares signal graph; Forge generates Rust runtime; AI agent reads via scene/query and writes via Intent dispatch.
+**Intent**: Signal/Computed/Resource fine-grained reactive primitives; pinion-forge DSL (.pinion.xml + <pinion> root) emits Rust struct + Owner-rooted constructor; AI reads via scene/query
 
 
 **Rationale**:
@@ -1002,19 +1002,20 @@ fn main() {
 
 
 **Inputs**:
-- §2 #8: SCE meta as AI authoring surface — Signal graph declared in SCE
 - §5.20 intent system: Intent dispatch is the Signal write trigger via Update fn
 - §5.3 view-fn: pure read of Signal/Computed values during scene rebuild
 - §5.12 RPC: scene/query reads Signal value; rewind sets it; snapshot dumps graph
+- pinion-forge DSL = .pinion.xml + <pinion xmlns kind=reactive> root; SCE infra reused
+- R37.7+R37.8: SCE upstream rejected pinion-specific kind; pinion-forge owns codegen
 
 
 
 **Outputs**:
 - pinion-core::reactive: Signal<T>, Computed<T>, Resource<T> primitives
 - Owner/scope hierarchical lifecycle tree (thread-local v0)
-- SCE schema: declarative signal graph with nested scope structure
-- Forge codegen: SCE → Rust state struct + reactive wiring + introspect bindings
+- pinion-forge crate: parse .pinion.xml → Rust struct + Owner-rooted constructor emit
 - ExternalIntrospect auto-generated for Signal values exposed at RPC paths
+- pinion-forge diagnostic: pinion::dsl::* namespace, NDJSON wire (SCE v1 pattern reference)
 
 
 
@@ -1034,6 +1035,11 @@ fn main() {
 - R26: RPC introspect = Signal<T:Serialize> via scene/query; rewind sets via deserialize.
 - R34 §5.29: SyncSignal cross-thread variant ratified; Arc<RwLock<T>> wrapper.
 - R36 §5.31: Signal<T> bound extended with T: Serialize + Deserialize for hot reload protocol.
+- R38: file ext = .pinion.xml; root = <pinion xmlns kind name>; one file = one struct
+- R38: kind=reactive children = <use>/<signal name ty>/<computed name ty>/<resource name ty>
+- R38: code embedding = <![CDATA[...]]> in body; generic types via <ty> child element
+- R38: codegen = pub struct Name + impl Name { pub fn new(owner: &Owner) -> Self }
+- R38: diagnostic = pinion::dsl::* enum + NDJSON wire; SCE v1 pattern reference only
 
 
 
@@ -1041,8 +1047,11 @@ fn main() {
 - React hooks — positional state breaks determinism; rules-of-hooks anti-pattern
 - Compose Snapshot — thread-local context breaks out-of-process RPC introspection
 - Iced full-rebuild — no derived state, perf ceiling at 1k+ nodes, no memo layer
-- Event sourcing only — orthogonal pattern, complements but doesn't replace fine-grained reactivity
+- Event sourcing only — orthogonal pattern, complements but does not replace fine-grained reactivity
 - Vue refs — API close to Signal but no explicit Owner tree (lifecycle implicit)
+- R38 KDL — modern XML alternative; SCE infra not reusable, parser maintenance burden
+- R38 proc-macro DSL — Leptos/Dioxus style; AI introspection harder, no codegen file step
+- R38 SFC single file — Vue/Svelte pattern; largest impl burden, custom parser+lexer
 
 
 
@@ -3231,6 +3240,31 @@ fn main() {
 **Carry forward**:
 - R38: pinion-forge DSL 명세 (file extension + element schema + diagnostic catalog)
 - R38.1: crates/pinion-forge skeleton — sce-build commit-pin dep 추가
+
+
+
+### Round 38 — §5.22 redefined: pinion-forge DSL spec — .pinion.xml + <pinion> root; codegen + diagnostic
+
+**Changes**:
+- intent: SCE meta references removed; pinion-forge DSL framing
+- inputs/outputs: SCE schema/Forge codegen → pinion-forge DSL + codegen emit
+- 5 R38 caveats added (file ext / root / children / CDATA embed / codegen / diagnostic)
+- alternatives: 3 R38 DSL alternatives rejected (KDL / proc-macro / SFC)
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1, GENERATED.md=sync
+- decisions: file=.pinion.xml; root=<pinion>; CDATA body; pinion::dsl::* diag
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R38.1 build: crates/pinion-forge skeleton — sce-build commit-pin dep
+- Future §5.23/§5.24/§5.25/§5.27/§5.28 also need pinion-forge codegen redefinition
 
 
 
