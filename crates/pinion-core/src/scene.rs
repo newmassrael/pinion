@@ -24,7 +24,7 @@
 
 use std::borrow::Cow;
 
-use crate::style::{Align, BoxStyle, Color, ImageStyle, PathStyle, TextStyle};
+use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, TextStyle};
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
@@ -145,6 +145,7 @@ impl Rect {
 pub struct BoxNode {
     pub rect: Rect,
     pub style: BoxStyle,
+    pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
@@ -155,6 +156,7 @@ impl BoxNode {
         Self {
             rect,
             style,
+            layout: LayoutStyle::new(),
             tag: None,
         }
     }
@@ -174,6 +176,13 @@ impl BoxNode {
         self.tag = Some(tag.into());
         self
     }
+
+    /// Attach a §5.21 layout style (builder form).
+    #[must_use]
+    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
+        self
+    }
 }
 
 /// Styled text primitive.
@@ -191,6 +200,7 @@ pub struct TextNode {
     pub content: String,
     pub rect: Rect,
     pub style: TextStyle,
+    pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
@@ -210,6 +220,7 @@ impl TextNode {
             content: content.into(),
             rect,
             style,
+            layout: LayoutStyle::new(),
             tag: None,
         }
     }
@@ -218,6 +229,13 @@ impl TextNode {
     #[must_use]
     pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    /// Attach a §5.21 layout style (builder form).
+    #[must_use]
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
         self
     }
 }
@@ -274,6 +292,7 @@ pub struct PathNode {
     pub commands: Vec<PathCommand>,
     pub rect: Rect,
     pub style: PathStyle,
+    pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
@@ -285,6 +304,7 @@ impl PathNode {
             commands,
             rect,
             style,
+            layout: LayoutStyle::new(),
             tag: None,
         }
     }
@@ -300,6 +320,13 @@ impl PathNode {
     #[must_use]
     pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    /// Attach a §5.21 layout style (builder form).
+    #[must_use]
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
         self
     }
 }
@@ -319,6 +346,7 @@ pub struct ImageNode {
     pub source: String,
     pub rect: Rect,
     pub style: ImageStyle,
+    pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
@@ -338,6 +366,7 @@ impl ImageNode {
             source: source.into(),
             rect,
             style,
+            layout: LayoutStyle::new(),
             tag: None,
         }
     }
@@ -346,6 +375,13 @@ impl ImageNode {
     #[must_use]
     pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    /// Attach a §5.21 layout style (builder form).
+    #[must_use]
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
         self
     }
 }
@@ -363,6 +399,8 @@ impl ImageNode {
 #[derive(Debug, Default)]
 pub struct ContainerNode {
     pub children: Vec<Scene>,
+    pub rect: Rect,
+    pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
@@ -371,6 +409,8 @@ impl ContainerNode {
     pub fn new(children: Vec<Scene>) -> Self {
         Self {
             children,
+            rect: Rect::default(),
+            layout: LayoutStyle::new(),
             tag: None,
         }
     }
@@ -379,6 +419,13 @@ impl ContainerNode {
     #[must_use]
     pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    /// Attach a §5.21 layout style (builder form).
+    #[must_use]
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
         self
     }
 }
@@ -410,13 +457,20 @@ impl EffectNode {
 #[derive(Debug)]
 pub struct ExternalNode {
     pub handle: Box<dyn crate::external::External>,
+    pub rect: Rect,
+    pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
 impl ExternalNode {
     #[must_use]
     pub fn new(handle: Box<dyn crate::external::External>) -> Self {
-        Self { handle, tag: None }
+        Self {
+            handle,
+            rect: Rect::default(),
+            layout: LayoutStyle::new(),
+            tag: None,
+        }
     }
 
     /// Attach a §5.20 intent tag — drained intents from this node
@@ -424,6 +478,13 @@ impl ExternalNode {
     #[must_use]
     pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    /// Attach a §5.21 layout style (builder form).
+    #[must_use]
+    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
         self
     }
 }
@@ -586,6 +647,32 @@ mod tests {
         assert_eq!(m.align, Align::TopLeft);
         let d = Modifier::default();
         assert_eq!(m.margin, d.margin);
+    }
+
+    #[test]
+    fn box_with_layout_round_trips_through_scene() {
+        // R24 slice 2 §5.21: introspectable variants carry a
+        // LayoutStyle sidecar. Default is `Display::Block`; opt-in
+        // builders switch to flex.
+        use crate::style::{Display, FlexDirection};
+        let layout = LayoutStyle::new().flex(FlexDirection::Column);
+        let scene = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default()).with_layout(layout),
+        );
+        match scene {
+            Scene::Box(node) => {
+                assert_eq!(node.layout.display, Display::Flex);
+                assert_eq!(node.layout.flex_direction, FlexDirection::Column);
+            }
+            _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
+    fn container_layout_defaults_to_block() {
+        use crate::style::Display;
+        let c = ContainerNode::new(vec![]);
+        assert_eq!(c.layout.display, Display::Block);
     }
 
     #[test]
