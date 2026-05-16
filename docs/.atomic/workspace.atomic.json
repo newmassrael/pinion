@@ -801,7 +801,8 @@
       ],
       "caveats_bullets": [
         "R18 slice 1: Intent + IntentTag in pinion-core::intent; pinion-derive macro (scalar variants).",
-        "R18 slice 2: 5 introspectable Scene variants gain optional tag field + with_tag builder."
+        "R18 slice 2: 5 introspectable Scene variants gain optional tag field + with_tag builder.",
+        "R18 slice 3: External::drain_intents/is_dirty defaults + runtime IntentQueue walk."
       ],
       "implementations": [
         {
@@ -819,6 +820,14 @@
         {
           "file": "crates/pinion-core/src/scene.rs",
           "symbol": "BoxNode"
+        },
+        {
+          "file": "crates/pinion-core/src/external.rs",
+          "symbol": "External::drain_intents"
+        },
+        {
+          "file": "crates/pinion-runtime/src/intent_queue.rs",
+          "symbol": "walk_scene_and_drain"
         }
       ],
       "decision_status": "active"

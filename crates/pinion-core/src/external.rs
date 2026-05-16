@@ -26,6 +26,7 @@
 //! UI-thread synchronous. It exists to anchor the contract semantically
 //! and to give tests/examples a baseline.
 
+use crate::intent::Intent;
 use crate::Event;
 
 /// Render backends an `External` may declare support for (§5.15 item 1).
@@ -290,6 +291,23 @@ pub trait External: core::fmt::Debug {
         None
     }
 
+    // --- §5.20 intent channel (R18; complements item 7's state-update
+    //     poll with a symbolic event stream). ---
+
+    /// Drain any pending [`Intent`]s into `sink`. Default no-op so
+    /// existing `External` authors are unaffected. Implementors that
+    /// emit intents (e.g. a button whose state machine just clicked)
+    /// override this to flush their internal queue.
+    fn drain_intents(&mut self, _sink: &mut dyn FnMut(Intent)) {}
+
+    /// Return `true` when this `External` has pending intents the
+    /// runtime should drain on the current frame. Default `false`.
+    /// Used to skip the [`drain_intents`](Self::drain_intents) virtual
+    /// call when there is nothing to harvest.
+    fn is_dirty(&self) -> bool {
+        false
+    }
+
     // --- 8. Optional symbolic introspection (opt-in per §5.15 caveat) ---
 
     /// Surface the [`ExternalIntrospect`] view of this `External`, when
@@ -337,15 +355,25 @@ impl External for StubExternal {
 /// item 8). Exposes a single `count: int` slot via the [`ExternalIntrospect`]
 /// trait; useful as a worked example and as a fixture for the §5.12
 /// `query` / `rewind` RPC methods once they wire up.
-#[derive(Debug, Clone, Copy, Default)]
+///
+/// Additionally demonstrates the §5.20 intent channel: every successful
+/// `intervene` write enqueues a `"counted.changed"` intent carrying the
+/// new value, which `drain_intents` / `is_dirty` flush into the runtime
+/// queue. Keeps the existing fixture role intact (no `Copy` removal
+/// breaks any test using `Box<dyn External>` storage).
+#[derive(Debug, Clone, Default)]
 pub struct CountedExternal {
     pub count: i64,
+    pending_intents: Vec<Intent>,
 }
 
 impl CountedExternal {
     #[must_use]
     pub const fn new(count: i64) -> Self {
-        Self { count }
+        Self {
+            count,
+            pending_intents: Vec::new(),
+        }
     }
 }
 
@@ -369,6 +397,16 @@ impl External for CountedExternal {
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
     }
+
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        for intent in self.pending_intents.drain(..) {
+            sink(intent);
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        !self.pending_intents.is_empty()
+    }
 }
 
 impl ExternalIntrospect for CountedExternal {
@@ -388,6 +426,10 @@ impl ExternalIntrospect for CountedExternal {
             "count" => match value {
                 IntrospectValue::Int(n) => {
                     self.count = n;
+                    self.pending_intents.push(Intent::new_static(
+                        "counted.changed",
+                        IntrospectValue::Int(n),
+                    ));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -558,6 +600,77 @@ mod tests {
             .invoke("ghost", IntrospectValue::Int(1))
             .unwrap_err();
         assert_eq!(err, InvokeError::UnknownPath);
+    }
+
+    #[test]
+    fn stub_is_dirty_default_is_false() {
+        // §5.20 default contract: an External that doesn't opt in to
+        // the intent channel reports clean — `walk_scene_and_drain`
+        // can skip the drain virtual call.
+        let stub = StubExternal::new();
+        assert!(!stub.is_dirty());
+    }
+
+    #[test]
+    fn stub_drain_intents_default_is_noop() {
+        // Default `drain_intents` must not emit even when the runtime
+        // calls it anyway. Guards against accidental drain-through-
+        // unrelated-state-changes.
+        let mut stub = StubExternal::new();
+        let mut harvested = Vec::new();
+        stub.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty());
+    }
+
+    #[test]
+    fn counted_intervene_marks_dirty_and_drains_intent() {
+        let mut counted = CountedExternal::new(0);
+        assert!(!counted.is_dirty());
+        counted
+            .introspect_mut()
+            .unwrap()
+            .intervene("count", IntrospectValue::Int(7))
+            .unwrap();
+        assert!(counted.is_dirty());
+        let mut harvested: Vec<Intent> = Vec::new();
+        counted.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "counted.changed");
+        assert_eq!(harvested[0].payload, IntrospectValue::Int(7));
+        assert!(!counted.is_dirty());
+    }
+
+    #[test]
+    fn counted_multiple_intervenes_accumulate_intents() {
+        // Each successful intervene pushes one intent; drain flushes
+        // them in insertion order so subscribers observe the same
+        // sequence the state actually traversed.
+        let mut counted = CountedExternal::new(0);
+        counted
+            .introspect_mut()
+            .unwrap()
+            .intervene("count", IntrospectValue::Int(1))
+            .unwrap();
+        counted
+            .introspect_mut()
+            .unwrap()
+            .intervene("count", IntrospectValue::Int(2))
+            .unwrap();
+        let mut harvested: Vec<Intent> = Vec::new();
+        counted.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 2);
+        assert_eq!(harvested[0].payload, IntrospectValue::Int(1));
+        assert_eq!(harvested[1].payload, IntrospectValue::Int(2));
+    }
+
+    #[test]
+    fn counted_failed_intervene_does_not_mark_dirty() {
+        let mut counted = CountedExternal::new(0);
+        let _ = counted
+            .introspect_mut()
+            .unwrap()
+            .intervene("count", IntrospectValue::Bool(true));
+        assert!(!counted.is_dirty());
     }
 
     #[test]

@@ -870,6 +870,7 @@ fn main() {
 **Caveats**:
 - R18 slice 1: Intent + IntentTag in pinion-core::intent; pinion-derive macro (scalar variants).
 - R18 slice 2: 5 introspectable Scene variants gain optional tag field + with_tag builder.
+- R18 slice 3: External::drain_intents/is_dirty defaults + runtime IntentQueue walk.
 
 
 
@@ -881,6 +882,8 @@ fn main() {
 - crates/pinion-core/src/intent.rs:IntentTag
 - crates/pinion-derive/src/lib.rs:derive_intent_tag
 - crates/pinion-core/src/scene.rs:BoxNode
+- crates/pinion-core/src/external.rs:External::drain_intents
+- crates/pinion-runtime/src/intent_queue.rs:walk_scene_and_drain
 
 
 
