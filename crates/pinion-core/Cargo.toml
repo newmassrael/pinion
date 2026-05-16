@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 sce-rust-runtime = { path = "../../vendor/sce/sce-rust-runtime", default-features = false, features = ["no-script"] }
+serde = { workspace = true }
 
 [build-dependencies]
 sce-build = { path = "../../vendor/sce/sce-build" }

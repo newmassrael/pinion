@@ -1284,6 +1284,7 @@ version = "0.0.1"
 dependencies = [
  "sce-build",
  "sce-rust-runtime",
+ "serde",
 ]
 
 [[package]]

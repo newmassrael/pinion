@@ -3,6 +3,7 @@ pub mod event;
 pub mod external;
 pub mod frame;
 pub mod intent;
+pub mod reactive;
 pub mod scene;
 pub mod style;
 pub mod topology;
@@ -15,6 +16,10 @@ pub use event::Event;
 pub use external::External;
 pub use frame::Frame;
 pub use intent::{Intent, IntentTag};
+pub use reactive::{
+    Computed, FetchToken, IntoIntrospectValue, Owner, OwnerSnapshot, Resource, ResourceState,
+    Signal, SignalExternal, SnapshotableSignal, batch,
+};
 pub use scene::Scene;
 pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, Display, Fit, FlexDirection, ImageStyle,
