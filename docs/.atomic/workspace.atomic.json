@@ -932,6 +932,14 @@
         {
           "file": "crates/pinion-core/src/style.rs",
           "symbol": "ImageStyle"
+        },
+        {
+          "file": "crates/pinion-core/src/style.rs",
+          "symbol": "Align"
+        },
+        {
+          "file": "crates/pinion-core/src/scene.rs",
+          "symbol": "Modifier"
         }
       ],
       "decision_status": "active"

@@ -956,6 +956,8 @@ fn main() {
 - crates/pinion-core/src/style.rs:PathStyle
 - crates/pinion-core/src/scene.rs:PathCommand
 - crates/pinion-core/src/style.rs:ImageStyle
+- crates/pinion-core/src/style.rs:Align
+- crates/pinion-core/src/scene.rs:Modifier
 
 
 

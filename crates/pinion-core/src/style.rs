@@ -304,6 +304,24 @@ impl ImageStyle {
     }
 }
 
+/// Nine-position alignment grid per §5.3 R20 Modifier expansion.
+/// `TopLeft` is the default to match the top-left-origin coordinate
+/// space pinion uses for [`Rect`](crate::scene::Rect).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Align {
+    #[default]
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,5 +488,35 @@ mod tests {
     fn image_style_with_tint_builder() {
         let s = ImageStyle::default().with_tint(Color::rgb(0xff, 0, 0));
         assert_eq!(s.tint, Some(Color::rgb(0xff, 0, 0)));
+    }
+
+    #[test]
+    fn align_default_is_top_left() {
+        assert_eq!(Align::default(), Align::TopLeft);
+    }
+
+    #[test]
+    fn align_nine_variants_distinct() {
+        let all = [
+            Align::TopLeft,
+            Align::TopCenter,
+            Align::TopRight,
+            Align::CenterLeft,
+            Align::Center,
+            Align::CenterRight,
+            Align::BottomLeft,
+            Align::BottomCenter,
+            Align::BottomRight,
+        ];
+        // Sanity: nine distinct values.
+        for (i, a) in all.iter().enumerate() {
+            for (j, b) in all.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a, b);
+                }
+            }
+        }
     }
 }

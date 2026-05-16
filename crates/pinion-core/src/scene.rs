@@ -24,7 +24,7 @@
 
 use std::borrow::Cow;
 
-use crate::style::{BoxStyle, Color, ImageStyle, PathStyle, TextStyle};
+use crate::style::{Align, BoxStyle, Color, ImageStyle, PathStyle, TextStyle};
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
@@ -51,17 +51,60 @@ pub enum Scene {
 /// trait is the agreed extension point.
 pub trait Style {}
 
-/// Composition modifier (§5.11 layered shape). Layout/transform
-/// adjustments that wrap any [`Scene`] variant. The §5.3 DSL settles the
-/// concrete operations; this skeleton anchors the type.
+/// Composition modifier (§5.11 layered shape, §5.3 R20 expansion).
+///
+/// Layout adjustments that wrap any [`Scene`] variant. v0 covers
+/// margin / padding / alignment; transforms (translate / rotate /
+/// scale) and full taffy flex/grid integration are carry-forward
+/// per the §5.3 R20 caveat.
+///
+/// `margin` and `padding` reuse the [`Rect`] shape as a four-tuple of
+/// `u32` insets — field mapping:
+///
+/// | `Rect` field | Inset side |
+/// |---|---|
+/// | `x` | left |
+/// | `y` | top |
+/// | `w` | right |
+/// | `h` | bottom |
 #[non_exhaustive]
-#[derive(Debug, Clone, Default)]
-pub struct Modifier {}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Modifier {
+    pub margin: Rect,
+    pub padding: Rect,
+    pub align: Align,
+}
 
 impl Modifier {
+    /// Identity modifier: zero margin / padding, `Align::TopLeft`.
     #[must_use]
     pub const fn new() -> Self {
-        Self {}
+        Self {
+            margin: Rect::new(0, 0, 0, 0),
+            padding: Rect::new(0, 0, 0, 0),
+            align: Align::TopLeft,
+        }
+    }
+
+    /// Builder: set margin insets.
+    #[must_use]
+    pub const fn with_margin(mut self, insets: Rect) -> Self {
+        self.margin = insets;
+        self
+    }
+
+    /// Builder: set padding insets.
+    #[must_use]
+    pub const fn with_padding(mut self, insets: Rect) -> Self {
+        self.padding = insets;
+        self
+    }
+
+    /// Builder: set the alignment anchor.
+    #[must_use]
+    pub const fn with_align(mut self, align: Align) -> Self {
+        self.align = align;
+        self
     }
 }
 
@@ -522,9 +565,26 @@ mod tests {
     }
 
     #[test]
-    fn modifier_default_constructs() {
-        let _ = Modifier::new();
-        let _ = Modifier::default();
+    fn modifier_default_is_identity() {
+        let m = Modifier::new();
+        assert_eq!(m.margin, Rect::new(0, 0, 0, 0));
+        assert_eq!(m.padding, Rect::new(0, 0, 0, 0));
+        assert_eq!(m.align, Align::TopLeft);
+        let d = Modifier::default();
+        assert_eq!(m.margin, d.margin);
+    }
+
+    #[test]
+    fn modifier_with_margin_padding_align_builders() {
+        // R20 §5.3: Rect field reused as 4-tuple inset (x=left,
+        // y=top, w=right, h=bottom).
+        let m = Modifier::new()
+            .with_margin(Rect::new(4, 8, 4, 8))
+            .with_padding(Rect::new(2, 2, 2, 2))
+            .with_align(Align::Center);
+        assert_eq!(m.margin, Rect::new(4, 8, 4, 8));
+        assert_eq!(m.padding, Rect::new(2, 2, 2, 2));
+        assert_eq!(m.align, Align::Center);
     }
 
     #[test]
