@@ -1839,6 +1839,9 @@ fn main() {
 - clear_highlights = tag prefix 로 일괄 제거; 다른 ai-overlay/* 외 Box 영향 없음
 - v0 event capture mode 단순 toggle; modeless overlay 디자인은 R39.4.x
 - transport binding (winit event → OverlayEvent) 은 example/runtime consumer 책임
+- R39.4.3: ai-introspect-demo dogfood; right-click → locate; left-click/Esc → clear
+- R39.4.3: in-process pinion-rpc call; AI-native path/bbox/ancestors printed to stdout
+- R39.4.3: border rendered as 4 thin filled rects (paint_border helper, scoped to demo)
 
 
 
@@ -1861,6 +1864,8 @@ fn main() {
 - crates/pinion-overlay/src/event.rs:OverlayEvent
 - crates/pinion-overlay/src/highlight.rs:inject_highlight
 - crates/pinion-overlay/src/highlight.rs:clear_highlights
+- examples/ai-introspect-demo/Cargo.toml
+- examples/ai-introspect-demo/src/main.rs
 
 
 
@@ -3847,6 +3852,37 @@ fn main() {
 - R39.4.3: ai-introspect-demo example with winit/softbuffer + RPC + overlay
 - R39.4.x: Controller pattern promotion (post-demo evidence)
 - R39.4.x: pinion-runtime integration hook (post runtime maturation)
+
+
+
+### Round 39.4.3 — §5.33 first visual dogfood — ai-introspect-demo proves AI-native xy↔path UX end-to-end
+
+**Changes**:
+- New examples/ai-introspect-demo: winit + softbuffer + in-process pinion-rpc + pinion-overlay
+- Static demo scene: 3 tagged buttons + info_panel + tinted container background
+- Right-click → locate → inject_highlight; Left-click/Esc → clear; Esc-twice exits
+- Stdout prints path + bbox + ancestors for every locate — zero pixels in the AI input
+- paint_border helper (4 thin rects) renders the highlight outline at demo scope
+- Scene-tree pretty-printer (R key) for live introspection during demo
+
+
+
+**Verification**:
+- cargo build -p ai-introspect-demo → clean compile
+- cargo test --workspace → 454 pass (no new tests; runtime-only feature)
+- cargo clippy --workspace --all-targets → 12 pre-existing only; demo zero
+- End-to-end protocol verified: locate → path → lookup_path → inject succeeds in-process
+
+
+
+**Impact**: §5.33, §5.32, §5.2, §5.20
+
+
+**Carry forward**:
+- R39.4.x: Controller pattern promotion with dogfood evidence collected
+- R39.4.x: pinion-runtime integration so hello-button gets overlay for free
+- R39.4.x: scene/locate_region demo hook (region-select drag UX)
+- R39.5+: AI agent transport (stdin/HTTP JSON-RPC binding) connecting overlay to real LLM
 
 
 

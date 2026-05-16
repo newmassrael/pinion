@@ -41,6 +41,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-introspect-demo"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+ "pinion-overlay",
+ "pinion-rpc",
+ "softbuffer",
+ "winit",
+]
+
+[[package]]
 name = "android-activity"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

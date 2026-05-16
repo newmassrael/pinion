@@ -1,0 +1,29 @@
+[package]
+name = "ai-introspect-demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R39.4.3 dogfood: §5.32 locate + §5.33 overlay end-to-end with winit/softbuffer"
+publish = false
+
+[[bin]]
+name = "ai-introspect-demo"
+path = "src/main.rs"
+
+[dependencies]
+# Scene primitives + Color/Border style + hit_test for the in-process
+# RPC call.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# scene/locate typed dispatcher (we call directly, not through the
+# JSON-RPC envelope, since this is in-process).
+pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
+# inject_highlight / clear_highlights / OverlayEvent.
+pinion-overlay = { path = "../../crates/pinion-overlay", version = "0.0.1" }
+# Window + input. Matches the workspace pin used by hello-button.
+winit = { workspace = true }
+softbuffer = { workspace = true }
+
+[lints]
+workspace = true
