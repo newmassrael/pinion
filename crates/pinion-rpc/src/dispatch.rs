@@ -21,12 +21,14 @@
 //! pattern-match without parsing prose.
 
 use pinion_core::external::IntrospectValue;
+use pinion_core::intent::Intent;
 use pinion_core::Scene;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::click::{click, ClickError, ClickOutcome};
 use crate::dry_run::{dry_run, DryRunError};
+use crate::intents::{drain_intents, IntentsError};
 use crate::invoke::{invoke, InvokeError};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
@@ -126,6 +128,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/waitFor" => handle_scene_wait_for(scene, request.params.as_ref()),
         "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
         "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
+        "scene/intents" => handle_scene_intents(scene),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -458,6 +461,33 @@ fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Valu
         Ok(value) => Ok(introspect_value_to_json(value)),
         Err(err) => Err(invoke_error_to_rpc(err)),
     }
+}
+
+fn handle_scene_intents(scene: &mut Scene) -> Result<Value, RpcError> {
+    // §5.20 scene/intents: poll-form drain, no params consumed in v0.
+    // A `path` filter / per-window scoping land as carry-forward when
+    // multi-window scene addressing settles.
+    drain_intents(scene)
+        .map(|batch| Value::Array(batch.iter().map(intent_to_json).collect()))
+        .map_err(intents_error_to_rpc)
+}
+
+fn intent_to_json(intent: &Intent) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("tag".to_string(), Value::String(intent.tag_str().to_string()));
+    obj.insert(
+        "payload".to_string(),
+        introspect_value_to_json(intent.payload.clone()),
+    );
+    Value::Object(obj)
+}
+
+fn intents_error_to_rpc(err: IntentsError) -> RpcError {
+    // `IntentsError` is `#[non_exhaustive]` with no v0 variants; the
+    // match is exhaustive over the empty set via `match err {}`. The
+    // wildcard guard preserves a clean error surface when future
+    // variants land.
+    match err {}
 }
 
 fn invoke_error_to_rpc(err: InvokeError) -> RpcError {
@@ -861,6 +891,53 @@ mod tests {
             err.data,
             Some(Value::String("UnknownInvokePath".to_string()))
         );
+    }
+
+    /// `scene/intents` end-to-end through the JSON-RPC envelope.
+    /// First wire-form exercise of the R18 §5.20 intent system 9th
+    /// method.
+    #[test]
+    fn scene_intents_returns_empty_array_when_nothing_pending() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":60}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.expect("scene/intents produced no result");
+        let arr = result.as_array().expect("intents result is an array");
+        assert!(arr.is_empty());
+    }
+
+    #[test]
+    fn scene_intents_drains_counted_changed_after_rewind() {
+        // Drive `intervene` indirectly via `scene/rewind`, which is
+        // wired through the dispatcher; the resulting intent surfaces
+        // through `scene/intents` on the next call.
+        let mut scene = counted_scene(0);
+        let rewind_req =
+            r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count","value":11},"id":61}"#;
+        let _ = dispatch(&mut scene, rewind_req).unwrap();
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":62}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let result = resp.result.expect("scene/intents produced no result");
+        let arr = result.as_array().expect("intents result is an array");
+        assert_eq!(arr.len(), 1);
+        let entry = arr[0].as_object().unwrap();
+        assert_eq!(
+            entry.get("tag"),
+            Some(&Value::String("counted.changed".into()))
+        );
+        assert_eq!(entry.get("payload"), Some(&Value::Number(11.into())));
+    }
+
+    #[test]
+    fn scene_intents_drain_is_idempotent_on_clean_scene() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":63}"#;
+        let _ = parse_response(&dispatch(&mut scene, req).unwrap());
+        let resp2 = parse_response(&dispatch(&mut scene, req).unwrap());
+        let result = resp2.result.expect("scene/intents produced no result");
+        assert!(result.as_array().unwrap().is_empty());
     }
 
     #[test]

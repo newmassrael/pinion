@@ -310,7 +310,8 @@
         "v0 waitFor: sync poll N attempts; deterministic across iterations until async event injection lands",
         "v0 screenshot: typed placeholder; RenderBackendUnavailable until §5.16 RHI/wgpu wires",
         "R17 scene/invoke 8th method (bidirectional RPC spec round); ratified 7-set extended",
-        "R18 §5.20 scene/intents 9th RPC method; poll-form single-consumer v0"
+        "R18 §5.20 scene/intents 9th RPC method; poll-form single-consumer v0",
+        "R18 §5.20 slice 4: scene/intents 9th method (poll-form drain)."
       ],
       "alternatives_rejected": [
         {
@@ -330,6 +331,10 @@
         {
           "file": "crates/pinion-rpc/src/invoke.rs",
           "symbol": "invoke"
+        },
+        {
+          "file": "crates/pinion-rpc/src/intents.rs",
+          "symbol": "drain_intents"
         }
       ],
       "decision_status": "active"
@@ -828,6 +833,10 @@
         {
           "file": "crates/pinion-runtime/src/intent_queue.rs",
           "symbol": "walk_scene_and_drain"
+        },
+        {
+          "file": "crates/pinion-rpc/src/intents.rs",
+          "symbol": "IntentsError"
         }
       ],
       "decision_status": "active"

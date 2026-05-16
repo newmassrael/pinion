@@ -374,6 +374,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - v0 screenshot: typed placeholder; RenderBackendUnavailable until §5.16 RHI/wgpu wires
 - R17 scene/invoke 8th method (bidirectional RPC spec round); ratified 7-set extended
 - R18 §5.20 scene/intents 9th RPC method; poll-form single-consumer v0
+- R18 §5.20 slice 4: scene/intents 9th method (poll-form drain).
 
 
 
@@ -389,6 +390,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 **Implementations**:
 - crates/pinion-rpc/src/invoke.rs:invoke
+- crates/pinion-rpc/src/intents.rs:drain_intents
 
 
 
@@ -884,6 +886,7 @@ fn main() {
 - crates/pinion-core/src/scene.rs:BoxNode
 - crates/pinion-core/src/external.rs:External::drain_intents
 - crates/pinion-runtime/src/intent_queue.rs:walk_scene_and_drain
+- crates/pinion-rpc/src/intents.rs:IntentsError
 
 
 

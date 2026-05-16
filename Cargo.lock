@@ -1213,6 +1213,7 @@ name = "pinion-rpc"
 version = "0.0.1"
 dependencies = [
  "pinion-core",
+ "pinion-runtime",
  "serde",
  "serde_json",
 ]
