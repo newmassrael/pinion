@@ -27,6 +27,7 @@ use serde_json::Value;
 
 use crate::click::{click, ClickError, ClickOutcome};
 use crate::dry_run::{dry_run, DryRunError};
+use crate::invoke::{invoke, InvokeError};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
@@ -124,6 +125,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/dry_run" => handle_scene_dry_run(scene, request.params.as_ref()),
         "scene/waitFor" => handle_scene_wait_for(scene, request.params.as_ref()),
         "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
+        "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -428,6 +430,45 @@ fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
         ScreenshotError::Path(_) => "Path",
         ScreenshotError::UnsupportedPath => "UnsupportedPath",
         ScreenshotError::RenderBackendUnavailable => "RenderBackendUnavailable",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+    let Some(args_json) = params.get("args") else {
+        return Err(invalid_params("params.args missing"));
+    };
+    let Some(args) = json_to_introspect_value(args_json) else {
+        return Err(invalid_params(
+            "params.args is not a representable IntrospectValue",
+        ));
+    };
+
+    match invoke(scene, path, args) {
+        Ok(value) => Ok(introspect_value_to_json(value)),
+        Err(err) => Err(invoke_error_to_rpc(err)),
+    }
+}
+
+fn invoke_error_to_rpc(err: InvokeError) -> RpcError {
+    let variant = match err {
+        InvokeError::Path(_) => "Path",
+        InvokeError::UnsupportedPath => "UnsupportedPath",
+        InvokeError::NoExternalAtPath => "NoExternalAtPath",
+        InvokeError::IntrospectionOptedOut => "IntrospectionOptedOut",
+        InvokeError::UnknownInvokePath => "UnknownInvokePath",
+        InvokeError::InvokeTypeMismatch => "InvokeTypeMismatch",
+        InvokeError::InvokeRejected => "InvokeRejected",
     };
     RpcError {
         code: -32602,
@@ -769,6 +810,70 @@ mod tests {
         assert_eq!(
             err.data,
             Some(Value::String("UnknownIntrospectPath".to_string()))
+        );
+    }
+
+    /// `scene/invoke` end-to-end through the JSON-RPC envelope.
+    /// First wire-form exercise of the R17 bidirectional RPC spec
+    /// round 8th method.
+    #[test]
+    fn scene_invoke_increment_returns_new_total() {
+        let mut scene = counted_scene(10);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/increment","args":5},"id":50}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.expect("scene/invoke produced no result");
+        assert_eq!(result, Value::Number(15.into()));
+    }
+
+    #[test]
+    fn scene_invoke_on_button_external_drives_transition() {
+        use pinion_core::widgets::button::ButtonExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"PointerEnter"},"id":51}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let result = resp.result.expect("scene/invoke produced no result");
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(
+            serialized.contains("Hover"),
+            "expected ButtonExternal to transition to Hover, got {serialized}"
+        );
+    }
+
+    #[test]
+    fn scene_invoke_missing_args_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/increment"},"id":52}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_invoke_unknown_action_path_is_invalid_params() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/ghost","args":1},"id":53}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(
+            err.data,
+            Some(Value::String("UnknownInvokePath".to_string()))
+        );
+    }
+
+    #[test]
+    fn scene_invoke_rejected_event_returns_invoke_rejected() {
+        use pinion_core::widgets::button::ButtonExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"Teleport"},"id":54}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(
+            err.data,
+            Some(Value::String("InvokeRejected".to_string()))
         );
     }
 }

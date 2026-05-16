@@ -371,6 +371,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - v0 dry_run: save -> intervene -> snapshot -> rollback at /[window[id]/]external/<path>
 - v0 waitFor: sync poll N attempts; deterministic across iterations until async event injection lands
 - v0 screenshot: typed placeholder; RenderBackendUnavailable until §5.16 RHI/wgpu wires
+- R17 scene/invoke 8th method (bidirectional RPC spec round); ratified 7-set extended
 
 
 
@@ -382,6 +383,10 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 **Impact scope**: §2, §5.7
 
+
+
+**Implementations**:
+- crates/pinion-rpc/src/invoke.rs:invoke
 
 
 
@@ -523,6 +528,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - Game viewport is one consumer; video/PDF/native widget share same contract
 - Item 8 opt-in via External::introspect()/introspect_mut() returning Option<&dyn ExternalIntrospect>
 - R17 live RPC dogfood uses snapshot (read-only); bidirectional needs `Box<dyn External>` downcast
+- R17 ExternalIntrospect.invoke: action channel returning IntrospectValue; §5.12 scene/invoke
 
 
 

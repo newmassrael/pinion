@@ -25,7 +25,8 @@ use sm::ButtonPolicy;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
+    ThreadOwnership,
 };
 
 pub struct Button {
@@ -123,7 +124,11 @@ impl External for ButtonExternal {
 
 impl ExternalIntrospect for ButtonExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("state", "string")])
+        // `state` — read-only slot (query). `send` — action channel
+        // accepting a `ButtonEvent` variant name (invoke); §5.15
+        // schema does not yet distinguish state slots from actions
+        // syntactically, that classification lands with §5.3 DSL.
+        IntrospectSchema::new(&[("state", "string"), ("send", "string")])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -140,11 +145,36 @@ impl ExternalIntrospect for ButtonExternal {
         path: &str,
         _value: IntrospectValue,
     ) -> Result<(), InterveneError> {
-        // v0: state is observed-only via introspect. Drive transitions
-        // through `send(ButtonEvent)`, not direct slot intervention.
+        // State is observed-only via intervene; mutation flows through
+        // the `send` action on the invoke channel (R17 bidirectional
+        // RPC spec round) — see `invoke` below.
         match path {
             "state" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // Action: drive a `ButtonEvent` symbolically by name.
+            // Returns the resulting `ButtonState` as `Text`, so the
+            // caller (winit handler or RPC client) sees the transition
+            // outcome in a single round-trip.
+            "send" => match args {
+                IntrospectValue::Text(ref name) => {
+                    let ev = parse_button_event(name).ok_or(InvokeError::Rejected)?;
+                    self.send(ev);
+                    Ok(IntrospectValue::Text(
+                        button_state_name(self.state()).to_string(),
+                    ))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
         }
     }
 }
@@ -234,6 +264,16 @@ impl ExternalIntrospect for ButtonStateSnapshot {
         // Snapshot is observation-only by design — see type doc.
         Err(InterveneError::ReadOnly)
     }
+
+    fn invoke(
+        &mut self,
+        _path: &str,
+        _args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        // Snapshot has no action channel — the live `ButtonExternal`
+        // is where transitions land.
+        Err(InvokeError::Rejected)
+    }
 }
 
 fn button_state_name(state: ButtonState) -> &'static str {
@@ -242,6 +282,21 @@ fn button_state_name(state: ButtonState) -> &'static str {
         ButtonState::Hover => "Hover",
         ButtonState::Pressed => "Pressed",
         ButtonState::Disabled => "Disabled",
+    }
+}
+
+/// Parse a `ButtonEvent` variant from its name (e.g. `"PointerEnter"`).
+/// `None` if the name is not a known variant — bidirectional RPC
+/// callers see this as `InvokeError::Rejected`.
+fn parse_button_event(name: &str) -> Option<ButtonEvent> {
+    match name {
+        "PointerEnter" => Some(ButtonEvent::PointerEnter),
+        "PointerLeave" => Some(ButtonEvent::PointerLeave),
+        "PointerDown" => Some(ButtonEvent::PointerDown),
+        "PointerUp" => Some(ButtonEvent::PointerUp),
+        "Disable" => Some(ButtonEvent::Disable),
+        "Enable" => Some(ButtonEvent::Enable),
+        _ => None,
     }
 }
 
@@ -343,10 +398,10 @@ mod tests {
     }
 
     #[test]
-    fn button_external_schema_declares_state() {
+    fn button_external_schema_declares_state_slot() {
         let bx = ButtonExternal::new();
         let schema = bx.schema();
-        assert_eq!(schema.fields, &[("state", "string")]);
+        assert!(schema.fields.iter().any(|f| f == &("state", "string")));
     }
 
     #[test]
@@ -373,5 +428,55 @@ mod tests {
         let snap = ButtonStateSnapshot::new(ButtonState::Pressed);
         let copy = snap;
         assert_eq!(snap.state(), copy.state());
+    }
+
+    #[test]
+    fn button_external_invoke_send_drives_transition_and_returns_new_state() {
+        let mut bx = ButtonExternal::new();
+        let out = bx
+            .invoke("send", IntrospectValue::Text("PointerEnter".to_string()))
+            .expect("PointerEnter is a known ButtonEvent variant");
+        assert_eq!(out, IntrospectValue::Text("Hover".to_string()));
+        assert_eq!(bx.state(), ButtonState::Hover);
+    }
+
+    #[test]
+    fn button_external_invoke_unknown_event_name_is_rejected() {
+        let mut bx = ButtonExternal::new();
+        let r = bx.invoke("send", IntrospectValue::Text("Teleport".to_string()));
+        assert_eq!(r, Err(InvokeError::Rejected));
+        // State unchanged because the action did not fire.
+        assert_eq!(bx.state(), ButtonState::Idle);
+    }
+
+    #[test]
+    fn button_external_invoke_wrong_arg_type_is_type_mismatch() {
+        let mut bx = ButtonExternal::new();
+        let r = bx.invoke("send", IntrospectValue::Int(42));
+        assert_eq!(r, Err(InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn button_external_invoke_unknown_path_is_unknown_path() {
+        let mut bx = ButtonExternal::new();
+        let r = bx.invoke("nope", IntrospectValue::Null);
+        assert_eq!(r, Err(InvokeError::UnknownPath));
+    }
+
+    #[test]
+    fn button_state_snapshot_invoke_always_rejects() {
+        let mut snap = ButtonStateSnapshot::new(ButtonState::Idle);
+        let r = snap.invoke("send", IntrospectValue::Text("PointerEnter".to_string()));
+        assert_eq!(r, Err(InvokeError::Rejected));
+    }
+
+    #[test]
+    fn button_external_schema_includes_send_action() {
+        let bx = ButtonExternal::new();
+        let schema = bx.schema();
+        assert_eq!(
+            schema.fields,
+            &[("state", "string"), ("send", "string")]
+        );
     }
 }

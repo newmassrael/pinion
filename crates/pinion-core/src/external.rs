@@ -162,19 +162,47 @@ pub enum InterveneError {
     ReadOnly,
 }
 
+/// Failure modes for [`ExternalIntrospect::invoke`] (R17 bidirectional
+/// RPC spec round — symbolic action channel, third leg of the
+/// query / intervene / invoke triad).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvokeError {
+    /// Path is not declared as an action in the schema.
+    UnknownPath,
+    /// Args variant does not match the action's declared argument
+    /// type.
+    TypeMismatch,
+    /// Path exists and args type matches, but the action refused to
+    /// fire (preconditions unmet, statechart in a forbidding state,
+    /// etc.). Distinct from `TypeMismatch` because retrying with
+    /// different args may succeed.
+    Rejected,
+}
+
 /// Opt-in symbolic introspection (§5.15 item 8). An `External` exposes
 /// this sub-trait by overriding [`External::introspect`] /
 /// [`External::introspect_mut`] to return `Some(self)`.
 ///
-/// The three operations:
+/// The triad of operations (R17 bidirectional RPC spec round):
 ///   * [`schema`](Self::schema): declare which paths exist.
-///   * [`query`](Self::query): read a value at a path.
-///   * [`intervene`](Self::intervene): write a value at a path.
+///   * [`query`](Self::query): read a value at a path (`&self`).
+///   * [`intervene`](Self::intervene): write a value to a slot
+///     (`&mut self`, returns `()`).
+///   * [`invoke`](Self::invoke): trigger an action with args
+///     (`&mut self`, returns `IntrospectValue`).
+///
+/// The split: `intervene` writes a *slot* (idempotent assignment),
+/// `invoke` calls an *action* (event-shaped, may return a computed
+/// value such as the resulting state). Schemas may declare a path as
+/// either a state slot (write via intervene) or an action (call via
+/// invoke); §5.3 DSL settles whether the schema distinguishes them
+/// explicitly.
 ///
 /// Designed dyn-safe (all methods take `&self` or `&mut self`,
 /// no associated items, no `Self`-returning methods) so the framework
 /// can hold `&dyn ExternalIntrospect` for path-driven dispatch under
-/// the §5.12 `query` / `snapshot` / `rewind` RPC methods.
+/// the §5.12 `query` / `snapshot` / `rewind` / `invoke` RPC methods.
 pub trait ExternalIntrospect {
     /// Schema of introspectable state.
     fn schema(&self) -> IntrospectSchema;
@@ -190,6 +218,23 @@ pub trait ExternalIntrospect {
     ///
     /// Returns [`InterveneError`] per the variants above.
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError>;
+
+    /// Trigger the action at `path` with `args`, returning a typed
+    /// result value (e.g. the new state after a state-machine
+    /// transition). Default impl returns `Err(InvokeError::UnknownPath)`
+    /// so existing `External` impls remain valid without opting in to
+    /// the action channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvokeError`] per the variants above.
+    fn invoke(
+        &mut self,
+        _path: &str,
+        _args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        Err(InvokeError::UnknownPath)
+    }
 }
 
 /// The 8-point integration contract (§5.15). Items 1-3 are required;
@@ -350,6 +395,26 @@ impl ExternalIntrospect for CountedExternal {
             _ => Err(InterveneError::UnknownPath),
         }
     }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // Action: add the integer arg to the running count and
+            // return the new total. Demos the §5.15 invoke triad with
+            // a minimal mutating action that returns a computed value.
+            "increment" => match args {
+                IntrospectValue::Int(delta) => {
+                    self.count = self.count.saturating_add(delta);
+                    Ok(IntrospectValue::Int(self.count))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -467,5 +532,66 @@ mod tests {
     fn introspect_sub_trait_is_dyn_safe() {
         let counted = CountedExternal::new(0);
         let _: &dyn ExternalIntrospect = &counted;
+    }
+
+    #[test]
+    fn counted_invoke_increment_returns_new_total() {
+        let mut counted = CountedExternal::new(10);
+        let out = counted.invoke("increment", IntrospectValue::Int(5)).unwrap();
+        assert_eq!(out, IntrospectValue::Int(15));
+        assert_eq!(counted.count, 15);
+    }
+
+    #[test]
+    fn counted_invoke_increment_with_wrong_type_is_type_mismatch() {
+        let mut counted = CountedExternal::new(0);
+        let err = counted
+            .invoke("increment", IntrospectValue::Text("nope".to_string()))
+            .unwrap_err();
+        assert_eq!(err, InvokeError::TypeMismatch);
+    }
+
+    #[test]
+    fn counted_invoke_unknown_path_is_unknown_path() {
+        let mut counted = CountedExternal::new(0);
+        let err = counted
+            .invoke("ghost", IntrospectValue::Int(1))
+            .unwrap_err();
+        assert_eq!(err, InvokeError::UnknownPath);
+    }
+
+    #[test]
+    fn stub_invoke_default_is_unknown_path() {
+        // `StubExternal` does not opt in to invoke beyond the default
+        // impl — assertion guards against accidental future override
+        // that would change the contract.
+        let mut stub = StubExternal::new();
+        // StubExternal doesn't implement ExternalIntrospect; reach the
+        // default via the trait-bound dispatch path by constructing an
+        // ad-hoc impl-of-the-trait.
+        struct NullIntrospect;
+        impl ExternalIntrospect for NullIntrospect {
+            fn schema(&self) -> IntrospectSchema {
+                IntrospectSchema::new(&[])
+            }
+            fn query(&self, _: &str) -> Option<IntrospectValue> {
+                None
+            }
+            fn intervene(
+                &mut self,
+                _: &str,
+                _: IntrospectValue,
+            ) -> Result<(), InterveneError> {
+                Err(InterveneError::UnknownPath)
+            }
+            // invoke uses default impl
+        }
+        let mut null = NullIntrospect;
+        let err = null
+            .invoke("anything", IntrospectValue::Null)
+            .unwrap_err();
+        assert_eq!(err, InvokeError::UnknownPath);
+        // Silence the unused stub binding.
+        let _ = &mut stub;
     }
 }
