@@ -1845,6 +1845,43 @@ fn main() {
 
 
 
+### Round 21 — Round 21 — R20 round close: §5.3 v0 schema implementation + cosmic-text Text rasterizer (7 slices)
+
+**Changes**:
+- pinion-core::style module: Color, Border, BoxStyle, TextStyle, Stroke, StrokeCap, PathStyle, Fit, ImageStyle, Align
+- BoxNode refactored: {rect, style:BoxStyle, tag}; BoxNode::filled(rect,color) shorthand; 21 call sites migrated
+- TextNode gains style:TextStyle; new() defaults, styled() explicit
+- PathNode rewritten: data:String → commands:Vec<PathCommand>; PathPoint(f32) sub-pixel space
+- ImageNode gains style:ImageStyle; Fit policy {Fill,Contain,Cover,Tile}; optional tint
+- Modifier expanded {margin, padding, align}; Align 9-pos enum (TopLeft default)
+- hello-button paints Scene::Text via cosmic-text 0.12 (FontSystem/SwashCache held in App, source-over blend)
+- cosmic-text dep limited to examples/hello-button — pinion-core stays free of rasterizer dependencies
+
+
+
+**Verification**:
+- cargo test --workspace: 194 → 220 (+26 across 7 slices; 0 regressions)
+- cargo clippy --workspace --all-targets: clean on every slice; pre-existing 12 warnings untouched
+- validate_workspace per slice: T1=0 T3=0 RT=1/1 GENERATED.md=sync throughout
+- Mnemosyne mutations: 11 impl bindings on §5.3 (Color/BoxStyle/Border/TextStyle/PathStyle/PathCommand/ImageStyle/Align/Modifier/paint_text)
+
+
+
+**Impact**: §5.2, §5.3, §5.11
+
+
+**Carry forward**:
+- taffy flexbox/grid integration spec round (still deferred from R20)
+- Bold/italic/underline TextStyle fields (cosmic-text supports them; v0 covers font/size/color only)
+- Gradient + shadow fills on BoxStyle deferred
+- Path/Image actual painting (Path — vello/lyon rasterizer slice; Image — codec + cache)
+- Modifier integration into paint (margin/padding/align affect Box and Container placement)
+- cosmic-text font cache invalidation across DPI / scale changes
+- Sub-pixel rect coordinates (currently Rect is u32; PathPoint already f32)
+- EdgeInsets type if Rect-as-insets proves awkward in real layout code
+
+
+
 ### Round 3 — Round 3 — 9 axes ratified to single options; §5.2 §5.4 slot names confirmed; framework-first kickoff path locked
 
 **Changes**:
