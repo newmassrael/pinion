@@ -41,6 +41,21 @@ pub struct LocateOutcome {
     pub ancestor_paths: Vec<String>,
 }
 
+/// Successful region-select outcome (§5.32 R39.2). Aggregates all
+/// primitives whose rect intersects the query rect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocateRegionOutcome {
+    /// Fully-qualified paths of every intersecting primitive,
+    /// declaration order (DFS pre-order through the scene tree).
+    pub paths: Vec<String>,
+    /// Fully-qualified path of the deepest common ancestor — the
+    /// longest segment-prefix shared by every entry in `paths`. When
+    /// `paths` is empty this is the root path
+    /// (`"/window[<name>]/"`); when `paths` has a single entry, the
+    /// ancestor is that entry itself.
+    pub common_ancestor: String,
+}
+
 /// Reasons the typed [`locate`] dispatcher can fail.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +88,57 @@ pub fn locate(scene: &Scene, x: u32, y: u32) -> Result<LocateOutcome, LocateErro
         .collect();
 
     Ok(LocateOutcome { path: leaf_path, bbox: hit.bbox, ancestor_paths })
+}
+
+/// Resolve a region select against `scene`. Unlike [`locate`], a region
+/// query never errors — an empty intersection returns
+/// [`LocateRegionOutcome`] with empty `paths` and the root as
+/// `common_ancestor`.
+///
+/// Coordinates are in the same viewport-relative logical pixel space
+/// as [`locate`].
+#[must_use]
+pub fn locate_region(scene: &Scene, x: u32, y: u32, w: u32, h: u32) -> LocateRegionOutcome {
+    let hits = scene.hit_test_region(x, y, w, h);
+    let window = App::initial_window();
+    let window_name = App::window_name(window);
+
+    let paths: Vec<String> = hits
+        .iter()
+        .map(|hit| format_path(window_name, &hit.segments))
+        .collect();
+
+    // Longest common prefix across the segment vectors.
+    let common_segments = longest_common_prefix(hits.iter().map(|h| h.segments.as_slice()));
+    let common_ancestor = format_path(window_name, &common_segments);
+
+    LocateRegionOutcome { paths, common_ancestor }
+}
+
+/// Compute the longest segment-wise common prefix across an iterator
+/// of segment slices. Returns an empty `Vec` when the iterator is
+/// empty *or* when no prefix is shared.
+fn longest_common_prefix<'a, I>(slices: I) -> Vec<String>
+where
+    I: IntoIterator<Item = &'a [String]>,
+{
+    let mut iter = slices.into_iter();
+    let Some(first) = iter.next() else {
+        return Vec::new();
+    };
+    let mut prefix: Vec<String> = first.to_vec();
+    for s in iter {
+        let common_len = prefix
+            .iter()
+            .zip(s.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        prefix.truncate(common_len);
+        if prefix.is_empty() {
+            break;
+        }
+    }
+    prefix
 }
 
 /// Build a fully-qualified path string. Empty `segments` yields
@@ -155,6 +221,71 @@ mod tests {
     fn locate_out_of_bounds_returns_error() {
         let s = box_at(10, 10, 50, 30);
         assert_eq!(locate(&s, 5, 5).unwrap_err(), LocateError::OutOfBounds);
+    }
+
+    // ---- R39.2: locate_region ----
+
+    #[test]
+    fn locate_region_disjoint_query_returns_empty_paths_and_root_ancestor() {
+        let s = box_at(10, 10, 20, 20);
+        let out = locate_region(&s, 500, 500, 50, 50);
+        assert!(out.paths.is_empty());
+        assert!(out.common_ancestor.ends_with('/'), "ancestor falls back to root");
+    }
+
+    #[test]
+    fn locate_region_full_overlap_collects_all_paths() {
+        let s = container_at(
+            0, 0, 200, 200,
+            vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
+        );
+        let out = locate_region(&s, 0, 0, 200, 200);
+        assert_eq!(out.paths.len(), 3, "container + 2 children");
+        assert!(out.paths[0].ends_with('/'));
+        assert!(out.paths[1].ends_with("/0"));
+        assert!(out.paths[2].ends_with("/1"));
+    }
+
+    #[test]
+    fn locate_region_common_ancestor_single_branch() {
+        // Two children of the same container both intersect.
+        let s = container_at(
+            0, 0, 200, 200,
+            vec![box_at(0, 0, 50, 50), box_at(100, 100, 50, 50)],
+        );
+        let out = locate_region(&s, 0, 0, 200, 200);
+        // All three entries share the empty prefix (root container),
+        // so the common ancestor is the root.
+        assert!(out.common_ancestor.ends_with('/'));
+    }
+
+    #[test]
+    fn locate_region_common_ancestor_nested_chain() {
+        // Outer → inner → 2 boxes; query covers both boxes only.
+        let inner = container_at(
+            0, 0, 100, 100,
+            vec![box_at(10, 10, 20, 20), box_at(50, 50, 20, 20)],
+        );
+        let outer = container_at(0, 0, 200, 200, vec![inner]);
+        let out = locate_region(&outer, 10, 10, 80, 80);
+        // 4 entries: outer (empty), inner (0), box0 (0/0), box1 (0/1)
+        assert_eq!(out.paths.len(), 4);
+        // Common prefix across [], [0], [0,0], [0,1] is [] → root.
+        assert!(out.common_ancestor.ends_with('/'));
+    }
+
+    #[test]
+    fn locate_region_uses_tag_in_paths() {
+        let s = container_at(0, 0, 200, 200, vec![tagged_box_at(10, 10, 50, 50, "btn")]);
+        let out = locate_region(&s, 0, 0, 200, 200);
+        assert!(out.paths.iter().any(|p| p.ends_with("/btn")));
+    }
+
+    #[test]
+    fn locate_region_zero_area_query_returns_empty() {
+        let s = box_at(0, 0, 100, 100);
+        let out = locate_region(&s, 50, 50, 0, 0);
+        assert!(out.paths.is_empty(), "zero-area query never intersects");
     }
 
     #[test]

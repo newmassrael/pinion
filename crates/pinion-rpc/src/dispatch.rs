@@ -30,7 +30,7 @@ use crate::click::{click, ClickError, ClickOutcome};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::intents::{drain_intents, IntentsError};
 use crate::invoke::{invoke, InvokeError};
-use crate::locate::{locate, LocateError, LocateOutcome};
+use crate::locate::{locate, locate_region, LocateError, LocateOutcome, LocateRegionOutcome};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
@@ -131,6 +131,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
         "scene/intents" => handle_scene_intents(scene),
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
+        "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -529,6 +530,36 @@ fn bbox_to_json(r: &pinion_core::scene::Rect) -> Value {
     m.insert("w".into(), Value::from(r.w));
     m.insert("h".into(), Value::from(r.h));
     Value::Object(m)
+}
+
+fn handle_scene_locate_region(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let read_u32 = |k: &str| -> Result<u32, RpcError> {
+        let raw = params
+            .get(k)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| invalid_params(&format!("params.{k} missing or not a non-negative integer")))?;
+        u32::try_from(raw).map_err(|_| invalid_params(&format!("params.{k} exceeds u32 range")))
+    };
+    let x = read_u32("x")?;
+    let y = read_u32("y")?;
+    let w = read_u32("w")?;
+    let h = read_u32("h")?;
+
+    let outcome = locate_region(scene, x, y, w, h);
+    Ok(locate_region_outcome_to_json(&outcome))
+}
+
+fn locate_region_outcome_to_json(out: &LocateRegionOutcome) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "paths".into(),
+        Value::Array(out.paths.iter().cloned().map(Value::String).collect()),
+    );
+    map.insert("common_ancestor".into(), Value::String(out.common_ancestor.clone()));
+    Value::Object(map)
 }
 
 fn locate_error_to_rpc(err: LocateError) -> RpcError {
@@ -1060,6 +1091,39 @@ mod tests {
         // pass negative coords without a typed protocol error.
         let mut scene = box_scene(0, 0, 10, 10);
         let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"x":-1,"y":5},"id":103}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.expect("expected error");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_locate_region_returns_paths_and_common_ancestor() {
+        let mut scene = box_scene(0, 0, 100, 100);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/locate_region","params":{"x":0,"y":0,"w":50,"h":50},"id":104}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none());
+        let result = resp.result.expect("no result");
+        let obj = result.as_object().expect("object");
+        let paths = obj.get("paths").and_then(Value::as_array).expect("paths");
+        assert_eq!(paths.len(), 1, "single root box hit");
+        assert!(obj.get("common_ancestor").is_some());
+    }
+
+    #[test]
+    fn scene_locate_region_disjoint_returns_empty_paths() {
+        let mut scene = box_scene(0, 0, 10, 10);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/locate_region","params":{"x":500,"y":500,"w":10,"h":10},"id":105}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "disjoint never errors");
+        let result = resp.result.expect("no result");
+        let paths = result.get("paths").and_then(Value::as_array).expect("paths");
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn scene_locate_region_missing_w_is_invalid_params() {
+        let mut scene = box_scene(0, 0, 10, 10);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/locate_region","params":{"x":0,"y":0,"h":10},"id":106}"#;
         let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.expect("expected error");
         assert_eq!(err.code, -32602);

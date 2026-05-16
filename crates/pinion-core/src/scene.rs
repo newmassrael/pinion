@@ -116,6 +116,53 @@ impl Scene {
         }
         Some(HitPath { segments: Vec::new(), bbox: self.rect() })
     }
+
+    /// (§5.32 R39.2 v0) Collect every primitive whose rect intersects
+    /// the query rect `(x, y, w, h)`. Walks the scene tree in
+    /// declaration order (DFS pre-order); each match appears once,
+    /// with its full path from the root. Containers themselves count
+    /// as hits (a region-select on a tagged container is meaningful
+    /// for AI reasoning).
+    ///
+    /// Zero-area query rects return an empty vec (per [`rects_intersect`]
+    /// semantics). [`EffectNode`] is skipped — both at the leaf level
+    /// and as a child during traversal.
+    ///
+    /// Path segments follow [`Self::hit_test`]: tag wins over index.
+    #[must_use]
+    pub fn hit_test_region(&self, x: u32, y: u32, w: u32, h: u32) -> Vec<HitPath> {
+        let query = Rect::new(x, y, w, h);
+        let mut acc = Vec::new();
+        self.collect_intersections(query, &mut Vec::new(), &mut acc);
+        acc
+    }
+
+    /// Recursive helper for [`Self::hit_test_region`]. Maintains a
+    /// segment stack representing the current path from the root.
+    fn collect_intersections(
+        &self,
+        query: Rect,
+        path: &mut Vec<String>,
+        out: &mut Vec<HitPath>,
+    ) {
+        if matches!(self, Scene::Effect(_)) {
+            return;
+        }
+        if !rects_intersect(self.rect(), query) {
+            return;
+        }
+        out.push(HitPath { segments: path.clone(), bbox: self.rect() });
+        if let Scene::Container(c) = self {
+            for (idx, child) in c.children.iter().enumerate() {
+                let seg = child
+                    .tag()
+                    .map_or_else(|| idx.to_string(), String::from);
+                path.push(seg);
+                child.collect_intersections(query, path, out);
+                path.pop();
+            }
+        }
+    }
 }
 
 /// Result of a successful [`Scene::hit_test`] (§5.32 R39 v0). Carries
@@ -143,6 +190,20 @@ fn rect_contains(r: Rect, x: u32, y: u32) -> bool {
     let right = r.x.saturating_add(r.w);
     let bottom = r.y.saturating_add(r.h);
     x >= r.x && y >= r.y && x < right && y < bottom
+}
+
+/// Half-open rectangle intersection: returns `true` when `a` and `b`
+/// share at least one pixel. Two zero-area rects never intersect, and
+/// saturating-add prevents overflow at the `u32` ceiling.
+fn rects_intersect(a: Rect, b: Rect) -> bool {
+    let a_right = a.x.saturating_add(a.w);
+    let a_bottom = a.y.saturating_add(a.h);
+    let b_right = b.x.saturating_add(b.w);
+    let b_bottom = b.y.saturating_add(b.h);
+    if a.w == 0 || a.h == 0 || b.w == 0 || b.h == 0 {
+        return false;
+    }
+    a.x < b_right && b.x < a_right && a.y < b_bottom && b.y < a_bottom
 }
 
 /// Stylistic trait carried by [`Scene`] variants (§5.11 layered shape).
@@ -988,6 +1049,78 @@ mod tests {
         assert_eq!(Scene::Image(ImageNode::new("file://", r)).rect(), r);
         // Effect has no rect — default
         assert_eq!(Scene::Effect(EffectNode::new()).rect(), Rect::default());
+    }
+
+    // ---- §5.32 R39.2: Scene::hit_test_region ----
+
+    #[test]
+    fn hit_test_region_empty_query_returns_empty() {
+        let s = container_at(
+            0, 0, 200, 200,
+            vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
+        );
+        // Zero-area query never intersects.
+        assert!(s.hit_test_region(50, 50, 0, 0).is_empty());
+    }
+
+    #[test]
+    fn hit_test_region_covering_everything_returns_root_plus_children() {
+        let s = container_at(
+            0, 0, 200, 200,
+            vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
+        );
+        let hits = s.hit_test_region(0, 0, 200, 200);
+        // 1 container + 2 boxes = 3 entries
+        assert_eq!(hits.len(), 3);
+        // First entry is the container itself (empty segments)
+        assert!(hits[0].segments.is_empty());
+        // Children follow in declaration order
+        assert_eq!(hits[1].segments, vec!["0".to_string()]);
+        assert_eq!(hits[2].segments, vec!["1".to_string()]);
+    }
+
+    #[test]
+    fn hit_test_region_partial_overlap_returns_only_intersecting() {
+        let s = container_at(
+            0, 0, 200, 200,
+            vec![box_at(10, 10, 50, 50), box_at(100, 100, 30, 30)],
+        );
+        // Region covers only the second child + container.
+        let hits = s.hit_test_region(90, 90, 50, 50);
+        assert_eq!(hits.len(), 2, "container + box1, not box0");
+        assert!(hits[0].segments.is_empty());
+        assert_eq!(hits[1].segments, vec!["1".to_string()]);
+    }
+
+    #[test]
+    fn hit_test_region_skips_effect_variant() {
+        let s = container_at(
+            0, 0, 100, 100,
+            vec![Scene::Effect(EffectNode::new()), box_at(10, 10, 20, 20)],
+        );
+        let hits = s.hit_test_region(0, 0, 100, 100);
+        // Container + box; Effect (index 0) skipped, so box's index is still 1.
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[1].segments, vec!["1".to_string()]);
+    }
+
+    #[test]
+    fn hit_test_region_uses_tag_in_path() {
+        let s = container_at(
+            0, 0, 200, 200,
+            vec![tagged_box_at(10, 10, 50, 50, "save_btn")],
+        );
+        let hits = s.hit_test_region(0, 0, 200, 200);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[1].segments, vec!["save_btn".to_string()]);
+    }
+
+    #[test]
+    fn hit_test_region_disjoint_returns_empty() {
+        let s = container_at(0, 0, 100, 100, vec![box_at(10, 10, 50, 50)]);
+        // Query far away from any rect.
+        let hits = s.hit_test_region(500, 500, 50, 50);
+        assert!(hits.is_empty());
     }
 
     #[test]

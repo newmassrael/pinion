@@ -1763,6 +1763,9 @@ fn main() {
 - R39.1: Scene::hit_test impl + HitPath{segments, bbox}; tag overrides index segment
 - R39.1: scene/locate RPC method active; pinion-rpc dispatch 9 → 10 methods
 - R39.1: half-open rect containment via saturating_add; zero-area rects never hit
+- R39.2: Scene::hit_test_region + rects_intersect; container + leaves both included
+- R39.2: scene/locate_region never errors — disjoint returns empty paths + root ancestor
+- R39.2: common_ancestor = longest segment-prefix shared by all paths; root when none
 
 
 
@@ -1784,6 +1787,8 @@ fn main() {
 - crates/pinion-core/src/scene.rs:HitPath
 - crates/pinion-rpc/src/locate.rs
 - crates/pinion-rpc/src/dispatch.rs:handle_scene_locate
+- crates/pinion-core/src/scene.rs:Scene::hit_test_region
+- crates/pinion-rpc/src/locate.rs:locate_region
 
 
 
@@ -3644,6 +3649,36 @@ fn main() {
 
 **Carry forward**:
 - R39.2: scene/locate_region {x,y,w,h} build — reuse hit_test, collect intersect set
+- R39.3: scene/bbox {path} build — path → viewport bbox lookup
+- R39.4: AI overlay UX mode — visual selection cursor + highlight rendering
+
+
+
+### Round 39.2 — §5.32 scene/locate_region impl — region select with common_ancestor; 11th RPC method
+
+**Changes**:
+- pinion-core: Scene::hit_test_region(x,y,w,h) DFS pre-order intersect collect
+- pinion-core: rects_intersect half-open + saturating_add overflow guard
+- pinion-rpc: locate_region + LocateRegionOutcome{paths, common_ancestor}
+- pinion-rpc: longest_common_prefix helper for ancestor computation
+- pinion-rpc: dispatch handler scene/locate_region {x,y,w,h}
+- Method count: 10 → 11 typed JSON-RPC methods
+
+
+
+**Verification**:
+- cargo test --workspace → 427 pass (412 baseline + 15 R39.2 new)
+- cargo clippy --workspace --all-targets → 12 pre-existing only
+- Container + leaves both included; Effect skipped; tag-takes-precedence
+- Disjoint query returns empty paths + root common_ancestor (never errors)
+- Zero-area query rejected at intersection level (returns empty)
+
+
+
+**Impact**: §5.32, §5.7
+
+
+**Carry forward**:
 - R39.3: scene/bbox {path} build — path → viewport bbox lookup
 - R39.4: AI overlay UX mode — visual selection cursor + highlight rendering
 
