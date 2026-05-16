@@ -1932,6 +1932,11 @@ fn main() {
 - R40.6: apply consumes entry on success AND failure (one-shot); conflict alone retains entry
 - R40.6: apply_preview self-bumps revision; excluded from mutates_scene_on_success (no double-bump)
 - R40.7: DispatchContext struct bundles &mut Scene + &PreviewLedger + &SceneRevision (single param)
+- R44: DispatchIntent emit channel = synchronous apply response (ApplyOutcome.emitted_intents)
+- R44: scene/intents emit channel = asynchronous poll (External pending_intents drain via §5.20)
+- R44: AI client switch — apply 응답의 emitted_intents 와 scene/intents 결과를 합쳐 단일 stream 으로 reduce 가능
+- R44: 통합 reject 사유 — 단일 channel 시 cause-effect 시점 / poll timing 분리 불가; Brooks conceptual integrity 위반
+- R44: dual channel = AI cause-effect (apply→intent 같은 turn) vs widget SM emission (별도 turn)
 
 
 
@@ -2709,6 +2714,33 @@ fn main() {
 - External factory registry axis — ReplaceView 가 External 교체 가능하려면 author-side type registry 필요 (§5.15 와 연결)
 - Effect declarative wire shape axis — 셌더 소스 / preset enum / 파라미터 스키마 결정 필요 (§5.16 GPU pipeline 공의)
 - ViewBlueprint 는 wire surface 이므로 JSON serde-derive 추가 신중 검토 — 현재 수동 parser 가 forward-compat 좋음
+
+
+
+### 415 — Round 44 — §5.34 DispatchIntent ↔ scene/intents dual channel 정책 spec — R40.9 부채 상환
+
+**Changes**:
+- §5.34 에 R44 caveat 5 추가 — DispatchIntent emit 채널 (synchronous apply response) vs scene/intents (asynchronous poll) 두 채널 의도적 분리 정착
+- AI cause-effect (apply→intent 같은 turn) = ApplyOutcome.emitted_intents; widget state machine emission (별도 turn) = scene/intents poll
+- spec only — code 0 줄 변경; R40.9 의 '두 채널 모호함' 부채 가 '의도적 분리' 로 정답화
+- 통합 reject 사유 명시 — 단일 channel 시 cause-effect timing 구분 불가; Brooks conceptual integrity 위반
+
+
+
+**Verification**:
+- mnemosyne validate_workspace: T1=0 T3=0 reject=0, GENERATED.md=sync 유지
+- spec round — code 부재, cargo test 589 / cargo clippy baseline only 유지
+- R40.9 의 dual channel 이 이제 '의도적 sync/async 구분' 으로 spec 정착 — AI client switch 근거 명시
+- Bloch / Brooks textbook — cause-effect channel 과 emission stream 은 명령어 구조 어렬 (단일화 자체가 잘못)
+
+
+
+**Impact**: §5.34, §5.20
+
+
+**Carry forward**:
+- AI client SDK helper — ApplyOutcome.emitted_intents 와 scene/intents drain 를 단일 stream 으로 reduce 하는 utility (선택적 client-side concern)
+- §5.20 scene/intents 의 timestamp / cause-effect chain id 추가 검토 — dual channel timeline 교사 필요 시
 
 
 
