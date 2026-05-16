@@ -516,8 +516,10 @@ fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
             .map(IntrospectValue::Int)
             .or_else(|| n.as_f64().map(IntrospectValue::Float)),
         Value::String(s) => Some(IntrospectValue::Text(s.clone())),
-        // v0: Array/Object not yet represented in IntrospectValue.
-        Value::Array(_) | Value::Object(_) => None,
+        // Structured payloads round-trip via `IntrospectValue::Json`
+        // (R37.6 #11): the reactive bridge `Signal<T>` for non-scalar
+        // `T` reaches RPC through this variant.
+        Value::Array(_) | Value::Object(_) => Some(IntrospectValue::Json(v.clone())),
     }
 }
 
@@ -551,9 +553,10 @@ fn introspect_value_to_json(value: IntrospectValue) -> Value {
         IntrospectValue::Float(f) => serde_json::Number::from_f64(f)
             .map_or(Value::Null, Value::Number),
         IntrospectValue::Text(s) => Value::String(s),
+        IntrospectValue::Json(v) => v,
         // `IntrospectValue::Null` collapses into the non_exhaustive
-        // wildcard; future variants also land as JSON null until §5.12
-        // schema settles a richer projection.
+        // wildcard; future additive variants also land as JSON null
+        // until §5.12 schema settles a richer projection.
         _ => Value::Null,
     }
 }

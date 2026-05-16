@@ -116,6 +116,63 @@ impl IntoIntrospectValue for String {
     }
 }
 
+/// Newtype wrapper that lets any `Serialize + DeserializeOwned + Clone +
+/// PartialEq` `T` participate in the RPC bridge via the
+/// `IntrospectValue::Json` variant (R37.6 #11). Use it when the payload is
+/// a struct, vec, map, or anything else outside the scalar shapes.
+///
+/// ```ignore
+/// use pinion_core::{JsonValue, Signal, SignalExternal};
+/// #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+/// struct UserProfile { name: String, age: u32 }
+/// let s = Signal::new(JsonValue(UserProfile { name: "Ada".into(), age: 36 }));
+/// let ext = SignalExternal::new(s.clone());
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsonValue<T>(pub T);
+
+impl<T> serde::Serialize for JsonValue<T>
+where
+    T: serde::Serialize,
+{
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de, T> serde::Deserialize<'de> for JsonValue<T>
+where
+    T: serde::Deserialize<'de>,
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        T::deserialize(deserializer).map(JsonValue)
+    }
+}
+
+impl<T> IntoIntrospectValue for JsonValue<T>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + Clone + PartialEq,
+{
+    const TYPE_TAG: &'static str = "json";
+
+    fn to_introspect_value(&self) -> IntrospectValue {
+        IntrospectValue::Json(
+            serde_json::to_value(&self.0)
+                .expect("JsonValue<T>: T is Serialize by trait bound — to_value cannot fail"),
+        )
+    }
+
+    fn from_introspect_value(value: IntrospectValue) -> Result<Self, InterveneError> {
+        if let IntrospectValue::Json(v) = value {
+            serde_json::from_value(v)
+                .map(JsonValue)
+                .map_err(|_| InterveneError::TypeMismatch)
+        } else {
+            Err(InterveneError::TypeMismatch)
+        }
+    }
+}
+
 /// `External` node that surfaces a `Signal<T>` at the introspect path `value`.
 /// Drops into the `Scene` tree as `Scene::External(Box::new(SignalExternal::new(s)))`
 /// so `/external/value` query/rewind reads and writes the underlying signal.
@@ -212,6 +269,7 @@ fn schema_fields<T: IntoIntrospectValue>() -> &'static [(&'static str, &'static 
         "float" => &[("value", "float")],
         "bool" => &[("value", "bool")],
         "string" => &[("value", "string")],
+        "json" => &[("value", "json")],
         _ => &[],
     }
 }
@@ -341,5 +399,85 @@ mod tests {
             .intervene("value", IntrospectValue::Int(5))
             .unwrap();
         assert_eq!(s.get(), 5);
+    }
+
+    // ---- R37.6 #11: JsonValue<T> structured payload round-trip -----------
+
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct UserProfile {
+        name: String,
+        age: u32,
+    }
+
+    #[test]
+    fn json_value_query_returns_serialized_payload() {
+        let payload = UserProfile {
+            name: "Ada".into(),
+            age: 36,
+        };
+        let s = Signal::new(JsonValue(payload.clone()));
+        let ext = SignalExternal::new(s);
+        let value = ext.query("value").expect("opted in");
+        let IntrospectValue::Json(json) = value else {
+            panic!("expected Json variant");
+        };
+        let round: UserProfile = serde_json::from_value(json).unwrap();
+        assert_eq!(round, payload);
+    }
+
+    #[test]
+    fn json_value_intervene_round_trips_struct_payload() {
+        let s = Signal::new(JsonValue(UserProfile {
+            name: "Ada".into(),
+            age: 36,
+        }));
+        let mut ext = SignalExternal::new(s.clone());
+        let incoming = serde_json::json!({"name": "Grace", "age": 85});
+        ext.intervene("value", IntrospectValue::Json(incoming))
+            .unwrap();
+        assert_eq!(
+            s.get().0,
+            UserProfile {
+                name: "Grace".into(),
+                age: 85,
+            }
+        );
+    }
+
+    #[test]
+    fn json_value_intervene_with_wrong_variant_errors() {
+        let s = Signal::new(JsonValue(UserProfile {
+            name: "Ada".into(),
+            age: 36,
+        }));
+        let mut ext = SignalExternal::new(s);
+        assert_eq!(
+            ext.intervene("value", IntrospectValue::Int(7)),
+            Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn json_value_intervene_with_unparseable_json_errors() {
+        let s = Signal::new(JsonValue(UserProfile {
+            name: "Ada".into(),
+            age: 36,
+        }));
+        let mut ext = SignalExternal::new(s);
+        let bad = serde_json::json!({"name": 42, "age": "not-a-number"});
+        assert_eq!(
+            ext.intervene("value", IntrospectValue::Json(bad)),
+            Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn json_value_schema_declares_json_tag() {
+        let s = Signal::new(JsonValue(UserProfile {
+            name: "Ada".into(),
+            age: 36,
+        }));
+        let ext = SignalExternal::new(s);
+        assert_eq!(ext.schema().fields, &[("value", "json")]);
     }
 }

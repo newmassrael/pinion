@@ -137,10 +137,12 @@ impl IntrospectSchema {
     }
 }
 
-/// Opaque value payload for `query` / `intervene`. The variant set
-/// covers the minimum JSON-RPC scalar surface; structured values
-/// (arrays, objects) land when §5.12 RPC serialization wiring needs
-/// them.
+/// Opaque value payload for `query` / `intervene`. Scalar variants
+/// cover the JSON-RPC primitive surface; `Json` carries arbitrary
+/// structured payloads (objects, arrays, mixed scalars) for callers
+/// that round-trip through `serde_json::Value` — used by the §5.22
+/// reactive bridge for `Signal<T>` where `T` is a struct or sequence
+/// (R37.6 #11 extension).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum IntrospectValue {
@@ -149,6 +151,7 @@ pub enum IntrospectValue {
     Int(i64),
     Float(f64),
     Text(String),
+    Json(serde_json::Value),
 }
 
 /// Failure modes for [`ExternalIntrospect::intervene`].

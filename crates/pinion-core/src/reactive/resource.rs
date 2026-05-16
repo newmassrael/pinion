@@ -17,12 +17,29 @@
 //! `pinion-rpc` boundary.
 
 use std::cell::Cell;
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 
 use super::signal::Signal;
+
+/// Task-spawning hook for [`Resource::fetch_with`]. Implementors plug in
+/// their async runtime — typically `tokio::task::spawn_local`,
+/// `wasm_bindgen_futures::spawn_local`, or a single-thread test executor.
+///
+/// Single-thread by design (`!Send` future): the §5.22 v0 reactive runtime
+/// is thread-local so the spawned future runs on the same thread as the
+/// signal it will mutate. Cross-thread carry-forward to §5.29 (R34
+/// `SyncSignal`) will introduce a parallel `RemoteSpawner` trait.
+pub trait LocalSpawner {
+    /// Take ownership of `future` and arrange for it to be driven to
+    /// completion on the current thread. The future is `'static` because it
+    /// usually outlives this call.
+    fn spawn_local(&self, future: Pin<Box<dyn Future<Output = ()> + 'static>>);
+}
 
 /// State of an async-loaded resource.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +117,31 @@ where
         }
     }
 
+    /// Spawn `future` on `spawner`, marking this resource as `Loading` for
+    /// the duration. On completion the future writes `Ready(v)` or
+    /// `Error(e)` through a `FetchToken`; if a newer `invalidate` /
+    /// `fetch_with` runs in the meantime, the older future's eventual
+    /// completion becomes a no-op (cancellation per R26 caveat).
+    ///
+    /// The future is `'static` because it almost always outlives this call
+    /// — the spawner schedules it onto the runtime's task queue. The
+    /// runtime is expected to drive the future on the same thread that
+    /// owns this `Resource` (`!Send` payload).
+    pub fn fetch_with<F, S>(&self, spawner: &S, future: F)
+    where
+        F: Future<Output = Result<T, E>> + 'static,
+        S: LocalSpawner,
+    {
+        let token = self.invalidate();
+        let driver: Pin<Box<dyn Future<Output = ()> + 'static>> = Box::pin(async move {
+            match future.await {
+                Ok(value) => token.complete(value),
+                Err(err) => token.fail(err),
+            }
+        });
+        spawner.spawn_local(driver);
+    }
+
     /// Current generation. Each `invalidate` advances it by one.
     #[must_use]
     pub fn generation(&self) -> u64 {
@@ -164,6 +206,30 @@ where
 mod tests {
     use super::*;
     use super::super::owner::Owner;
+    use std::task::{Context, Poll, Waker};
+
+    /// Minimal `LocalSpawner` for tests: polls the future to completion on
+    /// the current thread using `Waker::noop` (stabilized in Rust 1.85).
+    /// Only immediately-ready futures are supported — anything that yields
+    /// `Pending` would imply a real executor is needed, which tests do not
+    /// provide. We panic on `Pending` so a misuse surfaces loudly.
+    struct BlockingSpawner;
+
+    impl LocalSpawner for BlockingSpawner {
+        fn spawn_local(&self, mut future: Pin<Box<dyn Future<Output = ()> + 'static>>) {
+            let waker: &Waker = Waker::noop();
+            let mut cx = Context::from_waker(waker);
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(()) => {}
+                Poll::Pending => {
+                    panic!(
+                        "BlockingSpawner only supports immediately-ready futures; \
+                         received Pending — use a real executor for awaiting work"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn loading_resource_starts_loading() {
@@ -271,5 +337,74 @@ mod tests {
         token.complete(20);
         assert_eq!(r.state(), ResourceState::Ready(20));
         assert_eq!(alias.state(), ResourceState::Ready(20));
+    }
+
+    // ---- R37.6 #12: fetch_with + LocalSpawner ----------------------------
+
+    #[test]
+    fn fetch_with_ready_future_transitions_to_ready() {
+        let r = Resource::<i32, String>::loading();
+        r.fetch_with(&BlockingSpawner, async { Ok::<i32, String>(99) });
+        assert_eq!(r.state(), ResourceState::Ready(99));
+        assert_eq!(r.generation(), 1);
+    }
+
+    #[test]
+    fn fetch_with_err_future_transitions_to_error() {
+        let r = Resource::<i32, String>::loading();
+        r.fetch_with(
+            &BlockingSpawner,
+            async { Err::<i32, _>(String::from("network down")) },
+        );
+        assert_eq!(r.state(), ResourceState::Error(String::from("network down")));
+    }
+
+    /// Test-only spawner that queues futures without polling them, so the
+    /// test can simulate "spawn, then drive later" runtime ordering and
+    /// observe `FetchToken` generation cancellation in action.
+    struct DeferredSpawner {
+        queue: std::cell::RefCell<Vec<Pin<Box<dyn Future<Output = ()> + 'static>>>>,
+    }
+
+    impl LocalSpawner for DeferredSpawner {
+        fn spawn_local(&self, fut: Pin<Box<dyn Future<Output = ()> + 'static>>) {
+            self.queue.borrow_mut().push(fut);
+        }
+    }
+
+    #[test]
+    fn fetch_with_overlapping_calls_only_keeps_latest() {
+        // Two fetch_with calls in a row: the first's effect must be voided
+        // because the second's `invalidate` advanced the generation before
+        // the spawner ran the first future.
+        let r = Resource::<i32, String>::loading();
+        let spawner = DeferredSpawner {
+            queue: std::cell::RefCell::new(Vec::new()),
+        };
+        r.fetch_with(&spawner, async { Ok::<i32, String>(1) });
+        r.fetch_with(&spawner, async { Ok::<i32, String>(2) });
+        assert_eq!(spawner.queue.borrow().len(), 2);
+        // Drive both queued futures synchronously. First completion's token
+        // is stale (gen 1 vs current 2), so its writes no-op; second
+        // completion (gen 2) lands.
+        let waker: &Waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        for mut fut in spawner.queue.into_inner() {
+            assert!(matches!(fut.as_mut().poll(&mut cx), Poll::Ready(())));
+        }
+        assert_eq!(r.state(), ResourceState::Ready(2));
+    }
+
+    #[test]
+    fn fetch_with_observer_sees_ready_after_completion() {
+        let r = Resource::<i32, String>::loading();
+        let owner = Owner::new();
+        owner.run(|| {
+            let _ = r.state();
+        });
+        assert!(!owner.is_dirty());
+        r.fetch_with(&BlockingSpawner, async { Ok::<i32, String>(7) });
+        assert!(owner.is_dirty());
+        assert_eq!(r.state(), ResourceState::Ready(7));
     }
 }

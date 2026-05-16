@@ -19,6 +19,32 @@
 //! the stack / depth counter. Cleanup closures are `catch_unwind`-wrapped so
 //! a single misbehaving subscription cannot abort the process via
 //! double-panic during `Drop`.
+//!
+//! ## Cleanup isolation policy
+//!
+//! Any `Box<dyn FnOnce()>` queued through `ReactiveNode::add_subscription_cleanup`
+//! is *untrusted code* from the runtime's perspective — it captures user
+//! state (closures over `RefCell`, `Rc`, etc.) and may panic. Every drain
+//! site must route the closures through [`run_cleanups_isolated`] (which
+//! wraps each in `catch_unwind(AssertUnwindSafe)`) so that one bad cleanup
+//! cannot:
+//!
+//! - abort the process via double-panic-during-`Drop`
+//! - leave sibling cleanups un-run, stranding observer links
+//! - poison the thread-local `CURRENT_OWNER` / `BATCH_DEPTH` state
+//!
+//! Authoritative drain sites today:
+//!
+//! | Site | Lives in | Drained by |
+//! | --- | --- | --- |
+//! | `OwnerInner::drop` cleanups | `OwnerInner::cleanups` | `run_cleanups_isolated` (this module) |
+//! | `BatchGuard::drop` `mark_dirty` cascade | `PENDING_DIRTY` (`SubscriberSet`) | inline `catch_unwind` per observer |
+//! | `Computed::recompute` source-cleanups | `ComputedInner::source_cleanups` | `run_cleanups_isolated` (computed.rs) |
+//!
+//! Adding a new cleanup-drain site *without* routing through one of the
+//! above helpers re-introduces the abort-on-panic landmine. Treat this as
+//! a checklist item for any future reactive primitive that owns cleanup
+//! closures.
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -30,7 +56,7 @@ thread_local! {
     static NEXT_NODE_ID: Cell<u64> = const { Cell::new(0) };
     static CURRENT_OWNER: RefCell<Vec<Weak<dyn ReactiveNode>>> = const { RefCell::new(Vec::new()) };
     static BATCH_DEPTH: Cell<u32> = const { Cell::new(0) };
-    static PENDING_DIRTY: RefCell<PendingSet> = RefCell::new(PendingSet::new());
+    static PENDING_DIRTY: RefCell<SubscriberSet> = RefCell::new(SubscriberSet::new());
 }
 
 pub(crate) fn next_node_id() -> u64 {
@@ -50,31 +76,78 @@ pub(crate) struct ObserverEntry {
     pub(crate) node: Weak<dyn ReactiveNode>,
 }
 
-/// Insertion-ordered deduplicated set of pending observers. `HashSet` keeps
-/// dedup at O(1) amortized; `Vec` keeps deterministic drain order for
-/// textbook topological propagation.
-struct PendingSet {
+/// Insertion-ordered deduplicated set of observers, used by both source
+/// subscriber lists (`Signal`/`Computed`) and the `PENDING_DIRTY` batch
+/// queue. `HashSet<u64>` indexes by `node_id` for O(1) amortized membership
+/// checks; `Vec<ObserverEntry>` preserves deterministic iteration order so
+/// cascade fires in subscribe order — the textbook topological propagation.
+pub(crate) struct SubscriberSet {
     seen: HashSet<u64>,
     entries: Vec<ObserverEntry>,
 }
 
-impl PendingSet {
-    fn new() -> Self {
+impl SubscriberSet {
+    pub(crate) fn new() -> Self {
         Self {
             seen: HashSet::new(),
             entries: Vec::new(),
         }
     }
 
-    fn insert(&mut self, entry: ObserverEntry) {
+    /// `true` iff `id` is already a member. O(1) amortized.
+    pub(crate) fn contains(&self, id: u64) -> bool {
+        self.seen.contains(&id)
+    }
+
+    /// Insert `entry`. Returns `true` when the entry is new; `false` when
+    /// `entry.id` was already present (idempotent dedup).
+    pub(crate) fn insert(&mut self, entry: ObserverEntry) -> bool {
         if self.seen.insert(entry.id) {
             self.entries.push(entry);
+            true
+        } else {
+            false
         }
     }
 
-    fn drain(&mut self) -> Vec<ObserverEntry> {
+    /// Remove the entry with `id`. No-op when absent.
+    pub(crate) fn remove(&mut self, id: u64) {
+        if self.seen.remove(&id) {
+            self.entries.retain(|e| e.id != id);
+        }
+    }
+
+    /// Drop entries whose `Weak<dyn ReactiveNode>` no longer upgrades
+    /// (subscriber dropped without running its cleanup). Called
+    /// opportunistically after a cascade — bounded house-keeping that
+    /// keeps observer lists from growing unboundedly with stale handles.
+    pub(crate) fn prune_dead(&mut self) {
+        let seen = &mut self.seen;
+        self.entries.retain(|entry| {
+            let alive = entry.node.strong_count() > 0;
+            if !alive {
+                seen.remove(&entry.id);
+            }
+            alive
+        });
+    }
+
+    /// Clone current entries into a `Vec` — used to release the `RefCell`
+    /// borrow before invoking subscriber callbacks that may re-enter the
+    /// source's lists.
+    pub(crate) fn snapshot(&self) -> Vec<ObserverEntry> {
+        self.entries.clone()
+    }
+
+    /// Drain into an owned `Vec` and reset the dedup index. Used by
+    /// `BatchGuard::drop` when emptying `PENDING_DIRTY`.
+    pub(crate) fn drain(&mut self) -> Vec<ObserverEntry> {
         self.seen.clear();
         std::mem::take(&mut self.entries)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
     }
 }
 
@@ -93,7 +166,25 @@ pub trait SnapshotableSignal {
     fn save_snapshot(&self) -> Box<dyn Any>;
 
     /// Restore from a payload previously produced by `save_snapshot`.
-    fn restore_snapshot(&self, snap: Box<dyn Any>);
+    ///
+    /// # Errors
+    /// Returns `Err(SnapshotRestoreError::TypeMismatch)` when the payload
+    /// cannot be downcast to the concrete `T` of this signal — typically
+    /// when a snapshot is fed into a foreign registry whose ids happen to
+    /// collide (e.g. across Forge-regenerated code with stable path keys
+    /// per §5.31). The signal is left untouched in that case.
+    fn restore_snapshot(&self, snap: Box<dyn Any>) -> Result<(), SnapshotRestoreError>;
+}
+
+/// Failure modes for [`SnapshotableSignal::restore_snapshot`] and the
+/// aggregate [`Owner::restore`] path.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotRestoreError {
+    /// Payload's concrete type does not match the signal's `T`. Caller
+    /// either mixed snapshots across distinct signal graphs or the signal
+    /// was re-typed by a hot-reload code swap (§5.31).
+    TypeMismatch,
 }
 
 /// Captured state of an `Owner`'s registered Signals at a moment in time.
@@ -238,13 +329,30 @@ impl Owner {
     /// Restore each tracked Signal whose id appears in `snapshot`. Signals
     /// added after `snapshot` was taken are left untouched (no entry to
     /// restore from); signals removed since then are silently skipped.
-    pub fn restore(&self, snapshot: OwnerSnapshot) {
+    /// Best-effort: per-signal `TypeMismatch` errors are collected and
+    /// returned without aborting the pass — every restorable signal still
+    /// rolls back.
+    ///
+    /// # Errors
+    /// Returns `Err(Vec<(signal_id, error)>)` carrying every failed restore
+    /// when at least one entry could not be downcast. Empty `Ok(())`
+    /// otherwise.
+    pub fn restore(&self, snapshot: OwnerSnapshot) -> Result<(), Vec<(u64, SnapshotRestoreError)>> {
         let mut by_id: std::collections::HashMap<u64, Box<dyn Any>> =
             snapshot.entries.into_iter().collect();
+        let mut errors: Vec<(u64, SnapshotRestoreError)> = Vec::new();
         for sig in self.inner.owned_signals.borrow().iter() {
-            if let Some(payload) = by_id.remove(&sig.snapshot_id()) {
-                sig.restore_snapshot(payload);
+            let id = sig.snapshot_id();
+            if let Some(payload) = by_id.remove(&id) {
+                if let Err(e) = sig.restore_snapshot(payload) {
+                    errors.push((id, e));
+                }
             }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
         }
     }
 
@@ -345,8 +453,9 @@ pub(crate) fn run_with_node<R>(node: &Rc<dyn ReactiveNode>, f: impl FnOnce() -> 
 /// Notify a set of observers that an upstream value changed.
 ///
 /// - Outside a `batch`: immediately calls `mark_dirty` on each live observer.
-/// - Inside a `batch`: collects entries (id-deduped via `PendingSet`) so the
-///   cascade fires exactly once per observer when the outermost `batch` exits.
+/// - Inside a `batch`: collects entries (id-deduped via `SubscriberSet`) so
+///   the cascade fires exactly once per observer when the outermost `batch`
+///   exits.
 ///
 /// This is the single dispatch point used by both `Signal::set` and
 /// `ComputedInner::mark_dirty` — keeps the deferral logic in one place.
@@ -659,7 +768,7 @@ mod tests {
         assert_eq!(snap.len(), 1);
         s.set(99);
         assert_eq!(s.get(), 99);
-        owner.restore(snap);
+        owner.restore(snap).expect("restore should succeed");
         assert_eq!(s.get(), 10);
     }
 
@@ -677,7 +786,7 @@ mod tests {
         a.set(99);
         b.set(String::from("world"));
         c.set(false);
-        owner.restore(snap);
+        owner.restore(snap).expect("restore should succeed");
         assert_eq!(a.get(), 1);
         assert_eq!(b.get(), "hello");
         assert!(c.get());
@@ -708,7 +817,7 @@ mod tests {
         s.set(10);
         assert!(observer.is_dirty());
         observer.clear_dirty();
-        owner.restore(snap);
+        owner.restore(snap).expect("restore should succeed");
         assert!(observer.is_dirty());
         assert_eq!(s.get(), 5);
     }
@@ -724,7 +833,7 @@ mod tests {
         observer.run(|| {
             let _ = s.get();
         });
-        owner.restore(snap);
+        owner.restore(snap).expect("restore should succeed");
         assert!(!observer.is_dirty());
         assert_eq!(s.get(), 7);
     }
@@ -735,6 +844,57 @@ mod tests {
         let snap = owner.snapshot();
         assert!(snap.is_empty());
         assert_eq!(snap.len(), 0);
+    }
+
+    #[test]
+    fn restore_type_mismatch_returns_error_and_leaves_signal_untouched() {
+        // Synthesize a mismatched payload: a Signal<i32> in the owner's
+        // tracked list, but the snapshot entry carries a payload typed as
+        // `String`. The restore must surface `TypeMismatch` and leave the
+        // signal at its current value.
+        use super::super::signal::Signal;
+        use std::any::Any;
+        let owner = Owner::new();
+        let s = Signal::new(1_i32);
+        owner.track(&s);
+        // Hand-craft a snapshot whose payload type does not match s's T.
+        let bogus_payload: Box<dyn Any> = Box::new(String::from("not an i32"));
+        let snap = OwnerSnapshot {
+            entries: vec![(s.id(), bogus_payload)],
+        };
+        s.set(42);
+        let result = owner.restore(snap);
+        let errors = result.expect_err("type mismatch should surface as error");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].0, s.id());
+        assert_eq!(errors[0].1, SnapshotRestoreError::TypeMismatch);
+        // Signal untouched by the failed restore.
+        assert_eq!(s.get(), 42);
+    }
+
+    #[test]
+    fn restore_partial_success_restores_what_it_can_and_reports_errors() {
+        use super::super::signal::Signal;
+        use std::any::Any;
+        let owner = Owner::new();
+        let a = Signal::new(1_i32);
+        let b = Signal::new(2_i32);
+        owner.track(&a);
+        owner.track(&b);
+        // Valid payload for a (i32), bogus payload (bool) for b.
+        let snap = OwnerSnapshot {
+            entries: vec![
+                (a.id(), Box::new(10_i32) as Box<dyn Any>),
+                (b.id(), Box::new(true) as Box<dyn Any>),
+            ],
+        };
+        a.set(99);
+        b.set(99);
+        let errors = owner.restore(snap).expect_err("b should fail");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].0, b.id());
+        assert_eq!(a.get(), 10, "a must roll back even though b failed");
+        assert_eq!(b.get(), 99, "b stays at post-mutation value on failed restore");
     }
 
     #[test]
@@ -751,7 +911,7 @@ mod tests {
         });
         observer.clear_dirty();
         batch(|| {
-            owner.restore(snap);
+            owner.restore(snap).expect("restore should succeed");
             assert!(!observer.is_dirty());
         });
         assert!(observer.is_dirty());

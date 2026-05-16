@@ -11,7 +11,7 @@ pub mod resource;
 pub mod signal;
 
 pub use computed::Computed;
-pub use introspect::{IntoIntrospectValue, SignalExternal};
-pub use owner::{Owner, OwnerSnapshot, SnapshotableSignal, batch};
-pub use resource::{FetchToken, Resource, ResourceState};
+pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
+pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
+pub use resource::{FetchToken, LocalSpawner, Resource, ResourceState};
 pub use signal::Signal;

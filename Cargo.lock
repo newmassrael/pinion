@@ -1285,6 +1285,7 @@ dependencies = [
  "sce-build",
  "sce-rust-runtime",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

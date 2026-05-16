@@ -20,8 +20,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use super::owner::{
-    ObserverEntry, ReactiveNode, dispatch_dirty, next_node_id, run_cleanups_isolated,
-    run_with_node, with_current_owner,
+    ObserverEntry, ReactiveNode, SubscriberSet, dispatch_dirty, next_node_id,
+    run_cleanups_isolated, run_with_node, with_current_owner,
 };
 
 /// Derived reactive value. Cloning yields a handle to the same memoized cell.
@@ -40,7 +40,7 @@ struct ComputedInner<T> {
     cached: RefCell<Option<T>>,
     compute: Box<dyn Fn() -> T>,
     source_cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
-    observers: RefCell<Vec<ObserverEntry>>,
+    observers: RefCell<SubscriberSet>,
 }
 
 /// RAII guard hoisted out of `recompute` so clippy's
@@ -71,7 +71,7 @@ where
         self.dirty.set(true);
         // Cascade dirty to downstream observers via the shared dispatch path
         // so batch deferral coalesces transitive cascades too.
-        let snapshot = self.observers.borrow().clone();
+        let snapshot = self.observers.borrow().snapshot();
         dispatch_dirty(&snapshot);
     }
 
@@ -102,7 +102,7 @@ where
                 cached: RefCell::new(None),
                 compute: Box::new(compute),
                 source_cleanups: RefCell::new(Vec::new()),
-                observers: RefCell::new(Vec::new()),
+                observers: RefCell::new(SubscriberSet::new()),
             }),
         }
     }
@@ -183,20 +183,17 @@ where
             // Observers were already marked dirty by upstream cascade; this
             // path is a no-op in the common case but keeps the invariant
             // explicit: when *our* value changed, downstream is stale.
-            let snapshot = self.inner.observers.borrow().clone();
+            let snapshot = self.inner.observers.borrow().snapshot();
             dispatch_dirty(&snapshot);
         }
     }
 
     fn subscribe_observer(&self, node: &Rc<dyn ReactiveNode>) {
         let node_id = node.node_id();
-        {
-            let observers = self.inner.observers.borrow();
-            if observers.iter().any(|entry| entry.id == node_id) {
-                return;
-            }
+        if self.inner.observers.borrow().contains(node_id) {
+            return;
         }
-        self.inner.observers.borrow_mut().push(ObserverEntry {
+        self.inner.observers.borrow_mut().insert(ObserverEntry {
             id: node_id,
             node: Rc::downgrade(node),
         });
@@ -206,10 +203,7 @@ where
         let inner_weak: Weak<ComputedInner<T>> = Rc::downgrade(&self.inner);
         node.add_subscription_cleanup(Box::new(move || {
             if let Some(inner) = inner_weak.upgrade() {
-                inner
-                    .observers
-                    .borrow_mut()
-                    .retain(|entry| entry.id != node_id);
+                inner.observers.borrow_mut().remove(node_id);
             }
         }));
     }

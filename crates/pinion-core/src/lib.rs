@@ -17,8 +17,9 @@ pub use external::External;
 pub use frame::Frame;
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
-    Computed, FetchToken, IntoIntrospectValue, Owner, OwnerSnapshot, Resource, ResourceState,
-    Signal, SignalExternal, SnapshotableSignal, batch,
+    Computed, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner, Owner, OwnerSnapshot,
+    Resource, ResourceState, Signal, SignalExternal, SnapshotRestoreError, SnapshotableSignal,
+    batch,
 };
 pub use scene::Scene;
 pub use style::{

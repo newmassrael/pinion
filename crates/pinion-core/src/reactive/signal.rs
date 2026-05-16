@@ -21,8 +21,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::owner::{
-    ObserverEntry, ReactiveNode, SnapshotableSignal, dispatch_dirty, next_node_id,
-    with_current_owner,
+    ObserverEntry, ReactiveNode, SnapshotRestoreError, SnapshotableSignal, SubscriberSet,
+    dispatch_dirty, next_node_id, with_current_owner,
 };
 
 /// Reactive value cell. Cloning yields a new handle to the same underlying
@@ -35,7 +35,7 @@ struct SignalInner<T> {
     id: u64,
     value: RefCell<T>,
     revision: Cell<u64>,
-    observers: RefCell<Vec<ObserverEntry>>,
+    observers: RefCell<SubscriberSet>,
 }
 
 impl<T> Signal<T>
@@ -50,7 +50,7 @@ where
                 id: next_node_id(),
                 value: RefCell::new(initial),
                 revision: Cell::new(0),
-                observers: RefCell::new(Vec::new()),
+                observers: RefCell::new(SubscriberSet::new()),
             }),
         }
     }
@@ -111,15 +111,11 @@ where
 
     fn subscribe(&self, node: &Rc<dyn ReactiveNode>) {
         let node_id = node.node_id();
-        {
-            let observers = self.inner.observers.borrow();
-            if observers.iter().any(|entry| entry.id == node_id) {
-                // Dedup: same node reading the same signal repeatedly in one
-                // pass should not register multiple notifications.
-                return;
-            }
+        // Fast dedup: O(1) membership check on the `SubscriberSet` index.
+        if self.inner.observers.borrow().contains(node_id) {
+            return;
         }
-        self.inner.observers.borrow_mut().push(ObserverEntry {
+        self.inner.observers.borrow_mut().insert(ObserverEntry {
             id: node_id,
             node: Rc::downgrade(node),
         });
@@ -132,10 +128,7 @@ where
         let signal_weak: Weak<SignalInner<T>> = Rc::downgrade(&self.inner);
         node.add_subscription_cleanup(Box::new(move || {
             if let Some(inner) = signal_weak.upgrade() {
-                inner
-                    .observers
-                    .borrow_mut()
-                    .retain(|entry| entry.id != node_id);
+                inner.observers.borrow_mut().remove(node_id);
             }
         }));
     }
@@ -143,14 +136,11 @@ where
     fn notify_observers(&self) {
         // Snapshot to release the immutable borrow before invoking subscriber
         // callbacks — those may recursively touch this signal's lists.
-        let snapshot = self.inner.observers.borrow().clone();
+        let snapshot = self.inner.observers.borrow().snapshot();
         dispatch_dirty(&snapshot);
         // Prune dead weaks opportunistically (cheap walk; cleanup closures
-        // already remove most entries, this catches owners that leaked).
-        self.inner
-            .observers
-            .borrow_mut()
-            .retain(|entry| entry.node.strong_count() > 0);
+        // already remove most entries, this catches subscribers that leaked).
+        self.inner.observers.borrow_mut().prune_dead();
     }
 
     #[cfg(test)]
@@ -179,17 +169,23 @@ where
         Box::new(self.inner.value.borrow().clone())
     }
 
-    fn restore_snapshot(&self, snap: Box<dyn Any>) {
+    fn restore_snapshot(&self, snap: Box<dyn Any>) -> Result<(), SnapshotRestoreError> {
+        // Downcast may fail when the snapshot was minted against a different
+        // signal graph that happened to share this id (cross-process / hot
+        // reload). Surface as `TypeMismatch` rather than panic so the caller
+        // can decide whether to log, retry, or abort the restore pass.
         let value: T = *snap
             .downcast::<T>()
-            .expect("snapshot payload must match the signal's T parameter");
+            .map_err(|_| SnapshotRestoreError::TypeMismatch)?;
         self.set(value);
+        Ok(())
     }
 }
 
 impl<T> std::fmt::Debug for Signal<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Signal")
+            .field("id", &self.inner.id)
             .field("revision", &self.inner.revision.get())
             .field("observers", &self.inner.observers.borrow().len())
             .finish_non_exhaustive()
