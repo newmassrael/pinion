@@ -1044,6 +1044,10 @@ fn main() {
 - R38.2a: Owner threaded into new() signature; binding lazy until <computed> in R38.2b
 - R38.2a: ty attr validated as non-empty; rustc owns type soundness, syn parse deferred
 - R38.2a: 3 new generic child diagnostics — missing-attribute/invalid-ident/empty-body
+- R38.2b: <computed name ty>CDATA body</computed> → Computed::new(move || { body })
+- R38.2b: over-capture by clone; runtime R26 push-pull discovers real deps from body
+- R38.2b: parse_named_typed_body DRY helper unifies signal/computed surface shape
+- R38.2b: declaration order = init order; computed references must point to prior children
 
 
 
@@ -1078,6 +1082,9 @@ fn main() {
 - crates/pinion-forge/src/ast.rs:SignalDecl
 - crates/pinion-forge/src/parser.rs:ParseCtx::parse_signal
 - crates/pinion-forge/src/codegen.rs:emit_struct_with_signals
+- crates/pinion-forge/src/ast.rs:ComputedDecl
+- crates/pinion-forge/src/parser.rs:ParseCtx::parse_named_typed_body
+- crates/pinion-forge/src/codegen.rs:emit_struct_with_children
 
 
 
@@ -3348,6 +3355,40 @@ fn main() {
 - R38.2c: <resource> async fetch + ResourceState enum wiring
 - R38.2d: <use crate path/> external module import + path resolution
 - R38.2x: syn-based <ty> validation if rustc error distance hurts UX
+
+
+
+### Round 38.2b — §5.22 <computed> child element — over-capture closure codegen + parser DRY refactor
+
+**Changes**:
+- AST: PinionChild::Computed(ComputedDecl{name, ty, body}) variant
+- Parser: parse_named_typed_body helper unifies signal+computed (name, ty, body) shape
+- Parser: scan_text_body generic over tag (was scan_signal_body)
+- Codegen: emit_struct_with_children walks prior_names for over-capture tuple shadow
+- Codegen: tuple-shadow uses trailing comma for 1-name uniformity; #[allow] silences unused
+- Codegen: empty prior_names path emits plain Computed::new(move || { body }) form
+
+
+
+**Verification**:
+- cargo test --workspace → 370 pass (359 baseline + 11 R38.2b new)
+- cargo clippy --workspace --all-targets → 12 pre-existing only, pinion-forge zero
+- Multi-element tuple capture verified (test emits_computed_with_multi_capture_tuple)
+- Chained dependency emit verified (test emits_chained_computed_captures_all_priors)
+- Empty-priors plain form path verified (test emits_computed_with_no_priors_no_capture_block)
+- Multi-tag diagnostic accumulation across signal+computed siblings verified
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R38.2c: <resource> async fetch + ResourceState wiring + LocalSpawner threading
+- R38.2d: <use crate=... path=.../> external module import + path validation
+- R38.2x: syn::Expr visit for precise capture analysis (drop over-capture #[allow])
+- R38.2x: syn-based ty validation if rustc error distance hurts UX
+- R38.2e: first dogfood .pinion.xml (hello-button) + integration test crate
 
 
 

@@ -3,7 +3,7 @@
 //! than fail-fast so downstream tooling can show all errors at once
 //! (textbook contract for AOT compilers — surface every failure per run).
 //!
-//! ## R38.2a grammar (closed)
+//! ## R38.2b grammar (closed)
 //!
 //! ```text
 //! Document   ::= XmlDecl? Whitespace* PinionRoot Whitespace*
@@ -12,15 +12,17 @@
 //! RootAttr   ::= xmlns="https://pinion.dev/dsl/v1"
 //!             |  kind="reactive"
 //!             |  name=<Rust ident>
-//! Child      ::= Signal
-//! Signal     ::= '<signal' 'name'=<Rust ident> 'ty'=<non-empty> '>'
-//!                InitialExpr '</signal>'
-//! InitialExpr ::= CDATA / non-empty trimmed Text
+//! Child      ::= Signal | Computed
+//! Signal     ::= '<signal' NamedTypedAttrs '>' BodyExpr '</signal>'
+//! Computed   ::= '<computed' NamedTypedAttrs '>' BodyExpr '</computed>'
+//! NamedTypedAttrs ::= 'name'=<Rust ident> 'ty'=<non-empty>
+//! BodyExpr   ::= CDATA / non-empty trimmed Text
 //! ```
 //!
-//! Any deviation produces one or more [`PinionForgeDiagnostic`] records
-//! and the parser returns `Err(Vec<_>)`. R38.2b+ extends the child set
-//! with `<computed>` / `<resource>` / `<use>`.
+//! Signal and Computed share the `(name, ty, body)` parse shape — the
+//! emitted runtime differs (Signal initial value vs Computed closure
+//! body), but the surface validation is identical. `<resource>` /
+//! `<use>` land in subsequent slices.
 
 use std::path::PathBuf;
 
@@ -28,7 +30,7 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 
-use crate::ast::{PinionChild, PinionDoc, PinionKind, SignalDecl};
+use crate::ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, SignalDecl};
 use crate::diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic};
 
 /// Entry point. `source` is the originating file path for diagnostic
@@ -292,15 +294,18 @@ impl<'a> ParseCtx<'a> {
         children: &mut Vec<PinionChild>,
     ) {
         let tag = local_name(start.name());
-        // Dispatch table on child element name. R38.2a recognizes only
-        // `<signal>`; R38.2b/c/d add `<computed>` / `<resource>` /
-        // `<use>` as additional arms. Kept as `match` (not `if`) so
-        // those slices grow the table additively.
-        #[allow(clippy::single_match_else)]
+        // Dispatch table on child element name. R38.2a/b recognize
+        // `<signal>` and `<computed>`; R38.2c/d add `<resource>` /
+        // `<use>` as additional arms.
         match tag.as_str() {
             "signal" => {
                 if let Some(decl) = self.parse_signal(start, self_closing) {
                     children.push(PinionChild::Signal(decl));
+                }
+            }
+            "computed" => {
+                if let Some(decl) = self.parse_computed(start, self_closing) {
+                    children.push(PinionChild::Computed(decl));
                 }
             }
             _ => {
@@ -316,16 +321,43 @@ impl<'a> ParseCtx<'a> {
         }
     }
 
-    /// Parse one `<signal name="..." ty="..." [body]/>` element. Returns
-    /// `None` when *any* part is malformed — every problem is recorded
-    /// in `self.diagnostics` so the multi-diagnostic accumulation
-    /// contract holds. A `None` from this method does not stop the
-    /// outer scan from continuing to the next sibling.
+    /// Parse one `<signal name="..." ty="...">body</signal>` element.
+    /// Returns `None` when any part is malformed — diagnostics
+    /// accumulate in `self.diagnostics`.
     fn parse_signal(
         &mut self,
         start: &BytesStart<'_>,
         self_closing: bool,
     ) -> Option<SignalDecl> {
+        self.parse_named_typed_body("signal", start, self_closing)
+            .map(|(name, ty, initial)| SignalDecl { name, ty, initial })
+    }
+
+    /// Parse one `<computed name="..." ty="...">body</computed>` element.
+    /// Surface validation is identical to `<signal>` — the divergence is
+    /// what [`crate::codegen`] does with `body` (closure body vs initial
+    /// value).
+    fn parse_computed(
+        &mut self,
+        start: &BytesStart<'_>,
+        self_closing: bool,
+    ) -> Option<ComputedDecl> {
+        self.parse_named_typed_body("computed", start, self_closing)
+            .map(|(name, ty, body)| ComputedDecl { name, ty, body })
+    }
+
+    /// Generic parser for the `(name, ty, body)` element shape shared by
+    /// `<signal>` and `<computed>` (R38.2a/b) and reused by future
+    /// child elements that carry the same surface contract. Returns
+    /// `None` if any of the three fields is missing or invalid;
+    /// individual diagnostics are pushed for each failure so a single
+    /// run surfaces every problem.
+    fn parse_named_typed_body(
+        &mut self,
+        tag: &'static str,
+        start: &BytesStart<'_>,
+        self_closing: bool,
+    ) -> Option<(String, String, String)> {
         let location = self.current_location();
         let mut name_raw: Option<String> = None;
         let mut ty_raw: Option<String> = None;
@@ -333,7 +365,7 @@ impl<'a> ParseCtx<'a> {
         for attr in start.attributes().with_checks(false) {
             let Ok(attr) = attr else {
                 self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
-                    message: "malformed attribute on <signal>".into(),
+                    message: format!("malformed attribute on <{tag}>"),
                     location: location.clone(),
                 });
                 continue;
@@ -344,45 +376,46 @@ impl<'a> ParseCtx<'a> {
                 "name" => name_raw = Some(value),
                 "ty" => ty_raw = Some(value),
                 _ => {
-                    // Unknown attributes on <signal> are tolerated per the
-                    // SCE v1 forward-compat policy. A future schema may
-                    // add e.g. `eager="false"`; older parsers must not
-                    // reject it.
+                    // Unknown attributes are tolerated per the SCE v1
+                    // forward-compat policy. A future schema revision
+                    // may add e.g. `eager="false"` to <signal> without
+                    // breaking older parsers.
                 }
             }
         }
 
-        let name = self.require_ident_attr("signal", "name", name_raw, &location);
-        let ty = self.require_nonempty_attr("signal", "ty", ty_raw, &location);
-        let initial = if self_closing {
+        let name = self.require_ident_attr(tag, "name", name_raw, &location);
+        let ty = self.require_nonempty_attr(tag, "ty", ty_raw, &location);
+        let body = if self_closing {
             self.diagnostics
-                .push(PinionForgeDiagnostic::EmptyBody { tag: "signal".into(), location });
+                .push(PinionForgeDiagnostic::EmptyBody { tag: tag.into(), location });
             None
         } else {
-            self.scan_signal_body()
+            self.scan_text_body(tag)
         };
 
-        match (name, ty, initial) {
-            (Some(name), Some(ty), Some(initial)) => Some(SignalDecl { name, ty, initial }),
+        match (name, ty, body) {
+            (Some(name), Some(ty), Some(body)) => Some((name, ty, body)),
             _ => None,
         }
     }
 
-    /// Collect the body of `<signal>...</signal>` as a trimmed initial-
-    /// value expression string. Accepts plain `Text` and `CDATA` nodes;
-    /// any nested element raises `UnsupportedElement`. Whitespace-only
-    /// bodies fail with `EmptyBody`.
-    fn scan_signal_body(&mut self) -> Option<String> {
+    /// Collect the body of a `<tag>...</tag>` element as a trimmed
+    /// expression-or-statements string. Accepts plain `Text` and
+    /// `CDATA`; nested elements raise `UnsupportedElement`. Whitespace-
+    /// only bodies fail with `EmptyBody`. `tag` flows into diagnostics
+    /// so the user sees `<signal>` vs `<computed>` in error messages.
+    fn scan_text_body(&mut self, tag: &'static str) -> Option<String> {
         let location = self.current_location();
-        let mut initial = String::new();
+        let mut body = String::new();
         let mut buf = Vec::new();
         loop {
             match self.reader.read_event_into(&mut buf) {
                 Ok(Event::End(_)) => {
-                    let trimmed = initial.trim().to_owned();
+                    let trimmed = body.trim().to_owned();
                     if trimmed.is_empty() {
                         self.diagnostics.push(PinionForgeDiagnostic::EmptyBody {
-                            tag: "signal".into(),
+                            tag: tag.into(),
                             location,
                         });
                         return None;
@@ -390,31 +423,31 @@ impl<'a> ParseCtx<'a> {
                     return Some(trimmed);
                 }
                 Ok(Event::CData(c)) => {
-                    initial.push_str(&String::from_utf8_lossy(c.as_ref()));
+                    body.push_str(&String::from_utf8_lossy(c.as_ref()));
                 }
                 Ok(Event::Text(t)) => {
-                    initial.push_str(&String::from_utf8_lossy(t.as_ref()));
+                    body.push_str(&String::from_utf8_lossy(t.as_ref()));
                 }
                 Ok(Event::Start(e)) => {
-                    let tag = local_name(e.name());
+                    let nested = local_name(e.name());
                     let loc_nested = self.current_location();
                     self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
-                        tag,
+                        tag: nested,
                         location: loc_nested,
                     });
                     self.skip_subtree();
                 }
                 Ok(Event::Empty(e)) => {
-                    let tag = local_name(e.name());
+                    let nested = local_name(e.name());
                     let loc_nested = self.current_location();
                     self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
-                        tag,
+                        tag: nested,
                         location: loc_nested,
                     });
                 }
                 Ok(Event::Eof) => {
                     self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
-                        message: "unexpected EOF inside <signal>".into(),
+                        message: format!("unexpected EOF inside <{tag}>"),
                         location,
                     });
                     return None;

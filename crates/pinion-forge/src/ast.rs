@@ -3,8 +3,8 @@
 //! is closed (`<use>` / `<signal>` / `<computed>` / `<resource>` under
 //! `kind="reactive"`).
 //!
-//! R38.2a adds `<signal>` to the child set. `<computed>` / `<resource>` /
-//! `<use>` land in subsequent slices.
+//! R38.2a adds `<signal>` to the child set. R38.2b adds `<computed>`.
+//! `<resource>` / `<use>` land in subsequent slices.
 
 /// Top-level `<pinion>` document. One file = one document = one emitted
 /// Rust struct (R38 ratify: "one file = one struct").
@@ -16,8 +16,10 @@ pub struct PinionDoc {
     /// DSL category — pins the codegen template chosen by
     /// [`crate::codegen`]. R38.1 supports only [`PinionKind::Reactive`].
     pub kind: PinionKind,
-    /// Closed child set. R38.2a populates [`PinionChild::Signal`];
-    /// `<computed>` / `<resource>` / `<use>` land in subsequent slices.
+    /// Closed child set in declaration order. Codegen preserves the
+    /// order so `<computed>` bodies authored after their `<signal>`
+    /// dependencies see those identifiers in scope at emit time.
+    /// `<resource>` / `<use>` land in subsequent slices.
     pub children: Vec<PinionChild>,
 }
 
@@ -50,14 +52,23 @@ impl PinionKind {
     }
 }
 
-/// Closed child-element enum. R38.2a populates the `Signal` variant;
-/// `<computed>` / `<resource>` / `<use>` land in subsequent slices.
+/// Closed child-element enum. R38.2a/b populate `Signal` and `Computed`;
+/// `<resource>` / `<use>` land in subsequent slices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinionChild {
     /// `<signal name="..." ty="...">CDATA initial</signal>`. Compiles to
     /// a `pub <name>: ::pinion_core::reactive::Signal<<ty>>` struct field
     /// plus `Signal::new(<initial>)` inside the generated `new`.
     Signal(SignalDecl),
+    /// `<computed name="..." ty="...">CDATA closure body</computed>`.
+    /// Compiles to a `pub <name>: ::pinion_core::reactive::Computed<<ty>>`
+    /// field plus `Computed::new(move || { <body> })` with all prior
+    /// child names over-cloned into the closure scope. Runtime
+    /// dependency tracking (R26 push-pull) discovers the real
+    /// dependency set from `<body>` at first `get()` — the codegen-side
+    /// over-capture is only what Rust's borrow checker needs to make
+    /// the closure type-check.
+    Computed(ComputedDecl),
 }
 
 /// Parsed `<signal>` child. The body (CDATA or plain text) is the
@@ -78,4 +89,24 @@ pub struct SignalDecl {
     pub ty: String,
     /// Initial-value expression. Trimmed of leading/trailing whitespace.
     pub initial: String,
+}
+
+/// Parsed `<computed>` child. Shares the `(name, ty, body)` shape with
+/// [`SignalDecl`] at parse time — the divergence is what codegen does
+/// with `body`: signals pass it straight into `Signal::new()` as an
+/// initial value, computed wraps it in `move || { ... }` and feeds the
+/// closure to `Computed::new()`. Prior child identifiers in the same
+/// `<pinion>` document are made available inside the closure via
+/// over-cloning (see [`PinionChild::Computed`] docs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComputedDecl {
+    /// Rust identifier — struct field name and local binding name.
+    pub name: String,
+    /// Rust type expression substituted into `Computed<...>`. Raw author
+    /// string, non-emptiness-checked only.
+    pub ty: String,
+    /// Closure body. Trimmed; emitted inside `move || { <body> }` so
+    /// the author can write either a single expression (`a.get() + 1`)
+    /// or statements followed by an expression (`let x = a.get(); x * 2`).
+    pub body: String,
 }

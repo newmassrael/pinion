@@ -40,7 +40,7 @@ pub mod diagnostic;
 pub mod parser;
 pub mod wire;
 
-pub use ast::{PinionChild, PinionDoc, PinionKind, SignalDecl};
+pub use ast::{ComputedDecl, PinionChild, PinionDoc, PinionKind, SignalDecl};
 pub use build::{CompileError, compile_file, compile_str};
 pub use codegen::emit_rust;
 pub use diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic, Stage};
@@ -210,7 +210,9 @@ mod tests {
         </pinion>"#;
         let doc = parse(xml).expect("happy path");
         assert_eq!(doc.children.len(), 1);
-        let PinionChild::Signal(sig) = &doc.children[0];
+        let PinionChild::Signal(sig) = &doc.children[0] else {
+            panic!("expected Signal variant");
+        };
         assert_eq!(sig.name, "count");
         assert_eq!(sig.ty, "i32");
         assert_eq!(sig.initial, "0");
@@ -224,7 +226,9 @@ mod tests {
             <signal name="count" ty="i32">42</signal>
         </pinion>"#;
         let doc = parse(xml).expect("plain-text body");
-        let PinionChild::Signal(sig) = &doc.children[0];
+        let PinionChild::Signal(sig) = &doc.children[0] else {
+            panic!("expected Signal variant");
+        };
         assert_eq!(sig.initial, "42");
     }
 
@@ -240,9 +244,9 @@ mod tests {
         let names: Vec<&str> = doc
             .children
             .iter()
-            .map(|c| {
-                let PinionChild::Signal(s) = c;
-                s.name.as_str()
+            .map(|c| match c {
+                PinionChild::Signal(s) => s.name.as_str(),
+                PinionChild::Computed(_) => panic!("unexpected Computed variant"),
             })
             .collect();
         assert_eq!(names, vec!["a", "b", "c"]);
@@ -256,8 +260,8 @@ mod tests {
         let rust = compile_str(xml, "counter.pinion.xml").expect("compile");
         assert!(rust.contains("pub struct Counter {"));
         assert!(rust.contains("pub count: ::pinion_core::reactive::Signal<i32>"));
-        assert!(rust.contains("count: ::pinion_core::reactive::Signal::new(0)"));
-        // The unit-struct form must NOT appear when signals are present.
+        assert!(rust.contains("let count = ::pinion_core::reactive::Signal::new(0);"));
+        // The unit-struct form must NOT appear when children are present.
         assert!(!rust.contains("pub struct Counter;"));
     }
 
@@ -357,6 +361,176 @@ mod tests {
         // are visible from a single run.
         assert!(diags.iter().any(|d| d.code() == "dsl/unsupported-element"));
         assert_eq!(diags.iter().filter(|d| d.code() == "dsl/unsupported-element").count(), 1);
+    }
+
+    // ---- R38.2b: <computed> child element ----
+
+    #[test]
+    fn parses_single_computed() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Greeter">
+            <computed name="msg" ty="String"><![CDATA[String::from("hi")]]></computed>
+        </pinion>"#;
+        let doc = parse(xml).expect("happy path");
+        assert_eq!(doc.children.len(), 1);
+        let PinionChild::Computed(c) = &doc.children[0] else {
+            panic!("expected Computed variant");
+        };
+        assert_eq!(c.name, "msg");
+        assert_eq!(c.ty, "String");
+        assert_eq!(c.body, r#"String::from("hi")"#);
+    }
+
+    #[test]
+    fn parses_computed_referencing_signal_preserves_order() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Counter">
+            <signal name="count" ty="i32"><![CDATA[0]]></signal>
+            <computed name="doubled" ty="i32"><![CDATA[count.get() * 2]]></computed>
+        </pinion>"#;
+        let doc = parse(xml).expect("signal + computed");
+        assert_eq!(doc.children.len(), 2);
+        assert!(matches!(doc.children[0], PinionChild::Signal(_)));
+        assert!(matches!(doc.children[1], PinionChild::Computed(_)));
+    }
+
+    #[test]
+    fn emits_computed_with_over_capture() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Counter">
+            <signal name="count" ty="i32"><![CDATA[0]]></signal>
+            <computed name="doubled" ty="i32"><![CDATA[count.get() * 2]]></computed>
+        </pinion>"#;
+        let rust = compile_str(xml, "counter.pinion.xml").expect("compile");
+        // Struct fields
+        assert!(rust.contains("pub count: ::pinion_core::reactive::Signal<i32>"));
+        assert!(rust.contains("pub doubled: ::pinion_core::reactive::Computed<i32>"));
+        // Body bindings
+        assert!(rust.contains("let count = ::pinion_core::reactive::Signal::new(0);"));
+        assert!(rust.contains("let doubled = {"));
+        assert!(rust.contains("#[allow(unused_variables, clippy::redundant_clone)]"));
+        // Single-name tuple form
+        assert!(rust.contains("let (count,) = (count.clone(),);"));
+        // Closure wraps user body verbatim
+        assert!(rust.contains("::pinion_core::reactive::Computed::new(move || { count.get() * 2 })"));
+    }
+
+    #[test]
+    fn emits_computed_with_multi_capture_tuple() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="State">
+            <signal name="a" ty="i32"><![CDATA[1]]></signal>
+            <signal name="b" ty="i32"><![CDATA[2]]></signal>
+            <computed name="sum" ty="i32"><![CDATA[a.get() + b.get()]]></computed>
+        </pinion>"#;
+        let rust = compile_str(xml, "state.pinion.xml").expect("compile");
+        // Multi-element tuple uses no trailing comma
+        assert!(rust.contains("let (a, b) = (a.clone(), b.clone());"));
+    }
+
+    #[test]
+    fn emits_computed_with_no_priors_no_capture_block() {
+        // A <computed> as the first child has no prior bindings to
+        // capture — the plain closure form (no shadow block) is emitted.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="C">
+            <computed name="forty_two" ty="i32"><![CDATA[42]]></computed>
+        </pinion>"#;
+        let rust = compile_str(xml, "c.pinion.xml").expect("compile");
+        assert!(rust.contains(
+            "let forty_two = ::pinion_core::reactive::Computed::new(move || { 42 });"
+        ));
+        // No shadow block when no priors
+        assert!(!rust.contains("let (forty_two,)"));
+        assert!(!rust.contains("#[allow(unused_variables"));
+    }
+
+    #[test]
+    fn emits_chained_computed_captures_all_priors() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Chain">
+            <signal name="a" ty="i32"><![CDATA[1]]></signal>
+            <computed name="b" ty="i32"><![CDATA[a.get() + 1]]></computed>
+            <computed name="c" ty="i32"><![CDATA[a.get() * b.get()]]></computed>
+        </pinion>"#;
+        let rust = compile_str(xml, "chain.pinion.xml").expect("compile");
+        // `b` captures only `a`
+        assert!(rust.contains("let b = {"));
+        assert!(rust.contains("let (a,) = (a.clone(),);"));
+        // `c` captures both `a` and `b`
+        assert!(rust.contains("let c = {"));
+        assert!(rust.contains("let (a, b) = (a.clone(), b.clone());"));
+    }
+
+    #[test]
+    fn rejects_computed_missing_name() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <computed ty="i32"><![CDATA[0]]></computed>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/missing-attribute")
+            .expect("missing-attribute");
+        let PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(tag, "computed");
+        assert_eq!(attribute, "name");
+    }
+
+    #[test]
+    fn rejects_computed_missing_ty() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <computed name="c"><![CDATA[0]]></computed>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| matches!(
+            d,
+            PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. }
+                if tag == "computed" && attribute == "ty"
+        )));
+    }
+
+    #[test]
+    fn rejects_computed_empty_body() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <computed name="c" ty="i32"/>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/empty-body").expect("empty-body");
+        let PinionForgeDiagnostic::EmptyBody { tag, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(tag, "computed");
+    }
+
+    #[test]
+    fn rejects_computed_invalid_name() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <computed name="fn" ty="i32"><![CDATA[0]]></computed>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| matches!(
+            d,
+            PinionForgeDiagnostic::InvalidIdent { tag, attribute, .. }
+                if tag == "computed" && attribute == "name"
+        )));
+    }
+
+    #[test]
+    fn accumulates_signal_and_computed_diagnostics_in_one_run() {
+        // A doc with one bad <signal> and one bad <computed> must
+        // surface both diagnostics in a single pass.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal ty="i32"><![CDATA[0]]></signal>
+            <computed name="impl" ty="i32"><![CDATA[0]]></computed>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let by_tag: std::collections::BTreeSet<_> = diags
+            .iter()
+            .filter_map(|d| match d {
+                PinionForgeDiagnostic::MissingAttribute { tag, .. } => Some(("missing", tag.as_str())),
+                PinionForgeDiagnostic::InvalidIdent { tag, .. } => Some(("invalid", tag.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert!(by_tag.contains(&("missing", "signal")));
+        assert!(by_tag.contains(&("invalid", "computed")));
     }
 
     #[test]
