@@ -24,7 +24,7 @@
 
 use std::borrow::Cow;
 
-use crate::style::{BoxStyle, Color, TextStyle};
+use crate::style::{BoxStyle, Color, PathStyle, TextStyle};
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
@@ -179,32 +179,78 @@ impl TextNode {
     }
 }
 
+/// Path control point in f32 sub-pixel space (§5.3 R20).
+///
+/// Path geometry uses floating-point coordinates because curve
+/// rasterizers (vello, lyon, cosmic-text glyph outlines) all operate
+/// in sub-pixel space; the integer-pixel [`Rect`] still serves as
+/// the layout / hit-test bounding box.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PathPoint {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl PathPoint {
+    #[must_use]
+    pub const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+}
+
+/// Structured path command per §5.3 R20.
+///
+/// Replaces the previous R17 opaque `data: String` (SVG-d payload).
+/// Curve commands use a single cubic Bézier; quadratic / arc / etc.
+/// are carry-forward.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PathCommand {
+    MoveTo(PathPoint),
+    LineTo(PathPoint),
+    CurveTo {
+        c1: PathPoint,
+        c2: PathPoint,
+        end: PathPoint,
+    },
+    Close,
+}
+
 /// Vector path primitive.
 ///
-/// v0 §5.11 shape: `data: String` carries an opaque path payload
-/// (SVG path-d notation is the natural carrier today, but the
-/// framework does not parse it — the consumer rasterizer does);
-/// `rect: Rect` gives the absolute bounding box for layout/hit
-/// purposes. A structured command enum (`MoveTo`/`LineTo`/`CurveTo`/
-/// `Close`) plus stroke/fill `Style` lands with the §5.3 DSL.
+/// v0 §5.3 R20 shape: `commands: Vec<PathCommand>` is the structured
+/// command stream the rasterizer consumes; `rect: Rect` is the
+/// absolute pixel bounding box for layout / hit-test; `style:
+/// PathStyle` carries stroke and fill specifications.
 ///
 /// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PathNode {
-    pub data: String,
+    pub commands: Vec<PathCommand>,
     pub rect: Rect,
+    pub style: PathStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
 impl PathNode {
+    /// Construct a path node from its rect, command stream, and style.
     #[must_use]
-    pub fn new(data: impl Into<String>, rect: Rect) -> Self {
+    pub fn new(rect: Rect, commands: Vec<PathCommand>, style: PathStyle) -> Self {
         Self {
-            data: data.into(),
+            commands,
             rect,
+            style,
             tag: None,
         }
+    }
+
+    /// Empty path with a bounding box only — primarily a fixture for
+    /// tests that need a `PathNode` without specifying commands.
+    #[must_use]
+    pub fn empty(rect: Rect) -> Self {
+        Self::new(rect, Vec::new(), PathStyle::default())
     }
 
     /// Attach a §5.20 intent tag to this node (builder form).
@@ -329,7 +375,7 @@ mod tests {
     fn all_seven_variants_construct() {
         let _ = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
         let _ = Scene::Text(TextNode::new("", Rect::default()));
-        let _ = Scene::Path(PathNode::new("", Rect::default()));
+        let _ = Scene::Path(PathNode::empty(Rect::default()));
         let _ = Scene::Image(ImageNode::new("", Rect::default()));
         let _ = Scene::Container(ContainerNode::new(vec![]));
         let _ = Scene::Effect(EffectNode::new());
@@ -379,17 +425,27 @@ mod tests {
     }
 
     #[test]
-    fn path_node_data_and_rect_round_trip_through_scene() {
-        // v0 §5.11 Path shape: opaque `data` string + `rect`. The
-        // framework treats `data` as bytes-on-the-wire; the §5.3 DSL
-        // settles whether SVG path-d, a typed command enum, or both
-        // are the canonical input form.
-        let node = PathNode::new("M10 10 L20 20 Z", Rect::new(0, 0, 32, 32));
+    fn path_node_commands_and_rect_round_trip_through_scene() {
+        // R20 §5.3 lock: PathNode carries a typed `Vec<PathCommand>`
+        // (replacing the prior opaque SVG-d `data: String`) plus
+        // `rect` for layout/hit and `style: PathStyle` for the
+        // stroke/fill spec the rasterizer consumes.
+        let commands = vec![
+            PathCommand::MoveTo(PathPoint::new(10.0, 10.0)),
+            PathCommand::LineTo(PathPoint::new(20.0, 20.0)),
+            PathCommand::Close,
+        ];
+        let node = PathNode::new(
+            Rect::new(0, 0, 32, 32),
+            commands.clone(),
+            PathStyle::filled(Color::from_argb(0x00ff_ffff)),
+        );
         let scene = Scene::Path(node);
         match scene {
             Scene::Path(p) => {
-                assert_eq!(p.data, "M10 10 L20 20 Z");
+                assert_eq!(p.commands, commands);
                 assert_eq!(p.rect, Rect::new(0, 0, 32, 32));
+                assert_eq!(p.style.fill, Some(Color::from_argb(0x00ff_ffff)));
             }
             _ => panic!("expected Path variant"),
         }
@@ -500,7 +556,7 @@ mod tests {
     fn text_path_image_with_tag_round_trip() {
         let t = TextNode::new("hi", Rect::default()).with_tag("title");
         assert_eq!(t.tag.as_deref(), Some("title"));
-        let p = PathNode::new("M0 0", Rect::default()).with_tag("logo");
+        let p = PathNode::empty(Rect::default()).with_tag("logo");
         assert_eq!(p.tag.as_deref(), Some("logo"));
         let i = ImageNode::new("file://x", Rect::default()).with_tag("avatar");
         assert_eq!(i.tag.as_deref(), Some("avatar"));

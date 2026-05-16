@@ -953,6 +953,8 @@ fn main() {
 - crates/pinion-core/src/style.rs:BoxStyle
 - crates/pinion-core/src/style.rs:Border
 - crates/pinion-core/src/style.rs:TextStyle
+- crates/pinion-core/src/style.rs:PathStyle
+- crates/pinion-core/src/scene.rs:PathCommand
 
 
 

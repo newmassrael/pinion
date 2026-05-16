@@ -187,6 +187,77 @@ impl Default for TextStyle {
     }
 }
 
+/// Stroke line-cap style per §5.3 R20. v0 covers the three canonical
+/// shapes; dash patterns and miter-join behaviour are carry-forward.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum StrokeCap {
+    #[default]
+    Butt,
+    Round,
+    Square,
+}
+
+/// Stroke description for [`PathNode`](crate::scene::PathNode). Width
+/// is in pixels matching the [`Rect`](crate::scene::Rect) coordinate
+/// space.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct Stroke {
+    pub color: Color,
+    pub width: u32,
+    pub cap: StrokeCap,
+}
+
+impl Stroke {
+    /// Default stroke: given colour, given width, [`StrokeCap::Butt`].
+    #[must_use]
+    pub const fn new(color: Color, width: u32) -> Self {
+        Self {
+            color,
+            width,
+            cap: StrokeCap::Butt,
+        }
+    }
+
+    /// Builder: override the cap style.
+    #[must_use]
+    pub const fn with_cap(mut self, cap: StrokeCap) -> Self {
+        self.cap = cap;
+        self
+    }
+}
+
+/// Sidecar style for [`PathNode`](crate::scene::PathNode) per §5.3 R20.
+/// Either the `stroke` or `fill` arm can be `None`; rasterizers must
+/// gracefully ignore an empty style (no-op).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct PathStyle {
+    pub stroke: Option<Stroke>,
+    pub fill: Option<Color>,
+}
+
+impl PathStyle {
+    /// Stroke-only style: `Stroke` present, no fill.
+    #[must_use]
+    pub const fn stroked(stroke: Stroke) -> Self {
+        Self {
+            stroke: Some(stroke),
+            fill: None,
+        }
+    }
+
+    /// Fill-only style: solid fill colour, no stroke.
+    #[must_use]
+    pub const fn filled(fill: Color) -> Self {
+        Self {
+            stroke: None,
+            fill: Some(fill),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +371,39 @@ mod tests {
     fn text_style_with_font_family_accepts_static_str() {
         let s = TextStyle::new().with_font_family("Inter");
         assert_eq!(s.font_family.as_deref(), Some("Inter"));
+    }
+
+    #[test]
+    fn stroke_default_is_butt_cap() {
+        let s = Stroke::new(Color::rgb(0, 0, 0), 2);
+        assert_eq!(s.cap, StrokeCap::Butt);
+        assert_eq!(s.width, 2);
+    }
+
+    #[test]
+    fn stroke_with_cap_builder() {
+        let s = Stroke::new(Color::rgb(0, 0, 0), 1).with_cap(StrokeCap::Round);
+        assert_eq!(s.cap, StrokeCap::Round);
+    }
+
+    #[test]
+    fn path_style_stroked_helper() {
+        let s = PathStyle::stroked(Stroke::new(Color::rgb(0xff, 0, 0), 3));
+        assert!(s.stroke.is_some());
+        assert!(s.fill.is_none());
+    }
+
+    #[test]
+    fn path_style_filled_helper() {
+        let s = PathStyle::filled(Color::rgb(0, 0xff, 0));
+        assert_eq!(s.fill, Some(Color::rgb(0, 0xff, 0)));
+        assert!(s.stroke.is_none());
+    }
+
+    #[test]
+    fn path_style_default_is_empty() {
+        let s = PathStyle::default();
+        assert!(s.stroke.is_none());
+        assert!(s.fill.is_none());
     }
 }
