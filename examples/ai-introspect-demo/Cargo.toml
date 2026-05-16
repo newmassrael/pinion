@@ -24,6 +24,10 @@ pinion-overlay = { path = "../../crates/pinion-overlay", version = "0.0.1" }
 # Window + input. Matches the workspace pin used by hello-button.
 winit = { workspace = true }
 softbuffer = { workspace = true }
+# R40.8 propose/apply payload: TypedProposal::SetSignal carries a
+# serde_json::Value so the example needs the same json crate the RPC
+# layer uses.
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

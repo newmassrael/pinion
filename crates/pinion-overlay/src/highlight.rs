@@ -63,6 +63,25 @@ impl HighlightStyle {
             stroke_width: 2,
         }
     }
+
+    /// Builder: override the stroke colour. Const-friendly so callers
+    /// can declare semantic styles (`PENDING_PREVIEW`, `REGION_SELECT`,
+    /// …) as compile-time constants alongside their own theme palette.
+    /// `#[non_exhaustive]` blocks struct-literal construction from
+    /// outside `pinion-overlay`; these builders are how downstream
+    /// crates and examples supply non-default values.
+    #[must_use]
+    pub const fn with_stroke(mut self, stroke: Color) -> Self {
+        self.stroke = stroke;
+        self
+    }
+
+    /// Builder: override the stroke width.
+    #[must_use]
+    pub const fn with_stroke_width(mut self, width: u32) -> Self {
+        self.stroke_width = width;
+        self
+    }
 }
 
 impl Default for HighlightStyle {
@@ -267,6 +286,18 @@ mod tests {
         let cleared2 = clear_highlights(cleared);
         let Scene::Container(c) = &cleared2 else { panic!("Container") };
         assert_eq!(c.children.len(), 1);
+    }
+
+    #[test]
+    fn with_stroke_overrides_color_const_safely() {
+        // const-friendly builder so downstream crates can declare
+        // semantic-tagged styles as compile-time constants. Sanity-
+        // checks that `with_stroke` actually replaces the default red.
+        const PENDING: HighlightStyle = HighlightStyle::new()
+            .with_stroke(Color::from_argb(0x00ff_d000))
+            .with_stroke_width(3);
+        assert_eq!(PENDING.stroke, Color::from_argb(0x00ff_d000));
+        assert_eq!(PENDING.stroke_width, 3);
     }
 
     #[test]

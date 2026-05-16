@@ -1866,6 +1866,8 @@ fn main() {
 - crates/pinion-overlay/src/highlight.rs:clear_highlights
 - examples/ai-introspect-demo/Cargo.toml
 - examples/ai-introspect-demo/src/main.rs
+- crates/pinion-overlay/src/highlight.rs:HighlightStyle::with_stroke
+- crates/pinion-overlay/src/highlight.rs:HighlightStyle::with_stroke_width
 
 
 
@@ -1965,6 +1967,7 @@ fn main() {
 - crates/pinion-rpc/src/preview/apply.rs:ApplyOutcome
 - crates/pinion-rpc/src/dispatch.rs:handle_scene_apply_preview
 - crates/pinion-rpc/src/dispatch.rs:DispatchContext
+- examples/ai-introspect-demo/src/main.rs
 
 
 
@@ -2459,6 +2462,45 @@ fn main() {
 
 
 ## Changelog (atomic ledger)
+
+### 408 — Round 40.8 — §5.34 ai-introspect-demo propose/apply visual dogfood — preview lifecycle end-to-end
+
+**Changes**:
+- examples/ai-introspect-demo/src/main.rs: state_scene (Scene::External(CountedExternal)) + paint_scene 분리 — RPC mutates state, paint derives from count
+- App: PreviewLedger + SceneRevision + last_preview: Option<PreviewId> + locate_highlights: Vec<String>
+- build_paint_scene(count): info_panel.fill = palette_color(count) — 5-entry palette 가 count 변화 visible
+- rebuild_paint_scene(): base + yellow PENDING_HIGHLIGHT (preview in flight) + red locate-highlights 합성
+- P key → propose_change(SetSignal {target_path:/info_panel, signal_path:/external/count, value:current+1})
+- A key → apply_preview against state_scene; revision bump; count visible 색 변경; conflict 시 preview 유지
+- C key → cancel_preview; preview 제거; 색 변경 없음 (apply 와 대비)
+- L key → list_previews stdout 출력 (id / base_revision / target / affected / ttl_remaining)
+- target_path != signal_path 의도적 분리 — AI 가 reasoning 하는 widget anchor 와 mutation slot 분리 입증
+- pinion-overlay HighlightStyle::with_stroke + with_stroke_width 빌더 — #[non_exhaustive] 회피, const-friendly 시맨틱 style 선언 지원
+- PENDING_HIGHLIGHT const = HighlightStyle::new().with_stroke(0xff_d000).with_stroke_width(3) — yellow 3px
+- examples/ai-introspect-demo/Cargo.toml: serde_json workspace dep 추가 (TypedProposal::SetSignal value)
+
+
+
+**Verification**:
+- cargo build -p ai-introspect-demo: 통과
+- cargo test --workspace: 517 pass (516 baseline + with_stroke_overrides_color_const_safely 신규 1)
+- cargo clippy --workspace --all-targets: 신규 위반 0 (5 pre-existing baseline only — pinion-core widgets/external/topology)
+- Bloch — API completeness: §5.34 lifecycle (propose/apply/cancel/list) 4 method 모두 user-driven visible path 확보
+- target_path/signal_path 분리 = §5.34 typed proposal 의 anchor/mutation slot separation textbook 입증
+
+
+
+**Impact**: §5.34, §5.33, §5.32
+
+
+**Carry forward**:
+- R40.9+: TypedProposal::SetStyle / ReplaceView / DispatchIntent 순차 추가 (§5.34 closed pattern 완성)
+- §5.16 GPU/Vello R&D 결정 ratify (큰 architectural lock; spec round 진입 후보)
+- §5.34 path walker 확장: nested External 주소 지정 (/segment/external/path) — query/rewind 가 root-only 제약 해제 시 demo 가 state/paint 분리 없이 작동 가능
+- overlay Controller promote (R39.4 v0 caveat) — locate_highlights state 관리는 현재 demo-local, controller 형태로 옮기면 multi-scene 재사용
+- hello-button reactive layer 통합 (R38.3 carry-forward; SCXML + Forge 공존 입증)
+
+
 
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 

@@ -47,6 +47,7 @@ dependencies = [
  "pinion-core",
  "pinion-overlay",
  "pinion-rpc",
+ "serde_json",
  "softbuffer",
  "winit",
 ]
