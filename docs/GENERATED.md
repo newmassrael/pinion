@@ -962,6 +962,70 @@ fn main() {
 
 
 
+### §5.22. Reactive primitives (Signal / Computed / Resource)
+
+
+**Intent**: Signal/Computed/Resource as fine-grained reactive state primitives; SCE meta declares signal graph; Forge generates Rust runtime; AI agent reads via scene/query and writes via Intent dispatch.
+
+
+**Rationale**:
+- view-fn purity (§5.3) requires sync read — Signal.get() is canonical pure access
+- AI agent RPC introspection (§5.7) needs queryable state — Signal value via scene/query path
+- dry_run (§2 #3) requires state snapshot — Signal clone for hypothetical exploration
+- rewind (§5.12) requires state restore — Signal set() roundtrips prior value
+- Solid/Vue3/SwiftUI consensus: fine-grained signal-based reactivity is textbook 2020s+
+- Compose Snapshot rejected: thread-local context breaks out-of-process RPC introspection
+- Hooks rejected: positional state breaks determinism + rules-of-hooks is anti-pattern
+- Iced full-rebuild rejected: no derived state, perf ceiling, missing memoization layer
+
+
+
+**Inputs**:
+- §2 #8: SCE meta as AI authoring surface — Signal graph declared in SCE
+- §5.20 intent system: Intent dispatch is the Signal write trigger via Update fn
+- §5.3 view-fn: pure read of Signal/Computed values during scene rebuild
+- §5.12 RPC: scene/query reads Signal value; rewind sets it; snapshot dumps graph
+
+
+
+**Outputs**:
+- pinion-core::reactive: Signal<T>, Computed<T>, Resource<T> primitives
+- Owner/scope hierarchical lifecycle tree (thread-local v0)
+- SCE schema: declarative signal graph with nested scope structure
+- Forge codegen: SCE → Rust state struct + reactive wiring + introspect bindings
+- ExternalIntrospect auto-generated for Signal values exposed at RPC paths
+
+
+
+**Caveats**:
+- R26: Signal<T> requires T: Clone + PartialEq; API = get()/set()/set_with(fn); eager init; sync read.
+- R26: Resource<T,E> enum {Loading, Ready(T), Error(E)}; auto-refetch on dep change; cancel old task.
+- R26: Owner tree thread-local v0; scope-based lifecycle; cleanup propagates to descendants on drop.
+- R26: Batching = explicit batch(fn) closure; writes inside coalesce; propagation defers until exit.
+- R26: Propagation = push-pull; push on write (mark dirty), pull lazy on read; topological order.
+- R26: SCE schema = nested scopes; signal/computed/resource declarations inside scope; hierarchical.
+- R26: Forge codegen target = Rust state struct + reactive wiring + introspect bindings auto-emitted.
+- R26: dry_run snapshots Signal graph via Clone; rollback restores all signals to pre-mutation state.
+- R26: Intent dispatch → Update mutates Signals; framework auto-propagates downstream Computed/Effect.
+- R26: Concurrency v0 single-threaded; SyncSignal cross-thread variant carry-forward to later round.
+- R26: view-fn read-only on Signals; Signal.get() inside view-fn auto-subscribes; writes forbidden.
+- R26: Computed<T> lazy + cached dirty flag; pure fn contract; propagate only on value change.
+- R26: RPC introspect = Signal<T:Serialize> via scene/query; rewind sets via deserialize.
+
+
+
+**Alternatives rejected**:
+- React hooks — positional state breaks determinism; rules-of-hooks anti-pattern
+- Compose Snapshot — thread-local context breaks out-of-process RPC introspection
+- Iced full-rebuild — no derived state, perf ceiling at 1k+ nodes, no memo layer
+- Event sourcing only — orthogonal pattern, complements but doesn't replace fine-grained reactivity
+- Vue refs — API close to Signal but no explicit Owner tree (lifecycle implicit)
+
+
+
+
+
+
 ### §5.3. DSL surface form (file-based vs macro vs view-fn)
 
 
@@ -2085,6 +2149,40 @@ fn main() {
 - R34 §5.30: Structured concurrency
 - R35 §5.31: Accessibility (AccessKit bridge)
 - R36 §5.32: Hot reload (signal serialization protocol)
+
+
+
+### Round 26 — Round 26 — §5.22 new section: Reactive primitives (Signal/Computed/Resource) spec lock; SCE schema + Forge codegen + Rust runtime triple
+
+**Changes**:
+- New §5.22 section: Reactive primitives (Signal / Computed / Resource) under §5 parent
+- Intent: fine-grained reactive state; SCE meta declares signal graph; Forge generates Rust runtime
+- Rationale (8): view-fn purity, RPC introspection, dry_run/rewind, Solid/Vue3 consensus; Hooks/Snapshot/Iced rejected
+- Inputs/outputs/alternatives populated; SCE schema design pattern established for R27+ axis batch
+- 13 §5.22 caveats: Signal API + Computed lazy + Resource 3-state + Owner tree + Batching + push-pull propagation + SCE nesting + Forge codegen + RPC introspect + dry_run snapshot + Intent dispatch + view-fn read-only + concurrency v0
+- Textbook canonical: signal-based fine-grained reactivity (Solid/Vue3/SwiftUI 2020s+ consensus)
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 31 → 32; entries 25 → 26
+- no code changes this round (spec-only); R27 implementation follows in 3-tier SCE/Forge/Rust pattern
+- atomic mutations: 1 add_section + 5 set_section_* + 13 add_section_caveat; 2 retries for 100-char cap
+- Spec round pattern mirrors R20 (§5.3) + R23 (§5.21) cadence
+
+
+
+**Impact**: §2, §5.3, §5.7, §5.12, §5.20, §5.22
+
+
+**Carry forward**:
+- R27 §5.22 impl: Signal<T> + Computed<T> + Resource<T,E> runtime (pinion-core::reactive)
+- R27 §5.22 impl: Owner / scope hierarchical tree (thread-local v0)
+- R27 §5.22 impl: SCE schema authoring + Forge codegen pipeline
+- SyncSignal cross-thread variant — v0 single-threaded; carry-forward to concurrency round
+- Effect (reactive scope) primitive — sibling of Computed; R28 §5.23 candidate
+- Topological sort + glitch-free propagation algorithm — standard MobX/Solid pattern
+- Signal<T> equality opt-out (skip_eq) for expensive types — future ergonomic
 
 
 
