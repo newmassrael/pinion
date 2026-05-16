@@ -2752,7 +2752,7 @@ fn main() {
 
 
 
-### 416 — §5.16 SceneRenderer 표현 = pinion-forge renderer kind 빌드 코드젠 — backend manifest-driven, runtime 추상화 비용 0
+### 416 — Round 45 — §5.16 SceneRenderer 표현 = pinion-forge renderer kind 빌드 코드젠 — backend manifest-driven, runtime 추상화 비용 0
 
 **Changes**:
 - §5.16 에 R45 caveat 8 추가 — SceneRenderer abstraction = pinion-forge renderer kind 의 build-time codegen 으로 정착
