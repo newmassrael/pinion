@@ -916,6 +916,10 @@
         {
           "file": "crates/pinion-core/src/style.rs",
           "symbol": "Border"
+        },
+        {
+          "file": "crates/pinion-core/src/style.rs",
+          "symbol": "TextStyle"
         }
       ],
       "decision_status": "active"

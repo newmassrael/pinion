@@ -129,6 +129,64 @@ impl BoxStyle {
     }
 }
 
+/// Sidecar style for [`TextNode`](crate::scene::TextNode) per §5.3 R20.
+///
+/// `font_family = None` means "use the system default" — cosmic-text /
+/// fontdb resolves an installed sans-serif fallback. `font_size_px`
+/// is in CSS-style pixel units (cosmic-text converts to font-units
+/// internally). `fg_color` defaults to opaque black so that a freshly
+/// constructed [`TextNode`](crate::scene::TextNode) is visible without
+/// requiring style configuration.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TextStyle {
+    pub font_family: Option<std::borrow::Cow<'static, str>>,
+    pub font_size_px: u32,
+    pub fg_color: Color,
+}
+
+impl TextStyle {
+    /// v0 default: system font, 16px, opaque black.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            font_family: None,
+            font_size_px: 16,
+            fg_color: Color::rgb(0, 0, 0),
+        }
+    }
+
+    /// Builder: override the font size in CSS pixels.
+    #[must_use]
+    pub const fn with_size_px(mut self, size: u32) -> Self {
+        self.font_size_px = size;
+        self
+    }
+
+    /// Builder: override the foreground color.
+    #[must_use]
+    pub const fn with_fg(mut self, color: Color) -> Self {
+        self.fg_color = color;
+        self
+    }
+
+    /// Builder: pin a font family (static or owned string).
+    #[must_use]
+    pub fn with_font_family(
+        mut self,
+        family: impl Into<std::borrow::Cow<'static, str>>,
+    ) -> Self {
+        self.font_family = Some(family.into());
+        self
+    }
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +274,31 @@ mod tests {
     fn box_style_with_corner_radius_builder() {
         let s = BoxStyle::filled(Color::TRANSPARENT).with_corner_radius(8);
         assert_eq!(s.corner_radius, 8);
+    }
+
+    #[test]
+    fn text_style_default_is_system_font_16px_black() {
+        let s = TextStyle::default();
+        assert!(s.font_family.is_none());
+        assert_eq!(s.font_size_px, 16);
+        assert_eq!(s.fg_color, Color::rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn text_style_with_size_builder_overrides_default() {
+        let s = TextStyle::new().with_size_px(24);
+        assert_eq!(s.font_size_px, 24);
+    }
+
+    #[test]
+    fn text_style_with_fg_builder_overrides_default() {
+        let s = TextStyle::new().with_fg(Color::rgb(0xff, 0xff, 0xff));
+        assert_eq!(s.fg_color, Color::rgb(0xff, 0xff, 0xff));
+    }
+
+    #[test]
+    fn text_style_with_font_family_accepts_static_str() {
+        let s = TextStyle::new().with_font_family("Inter");
+        assert_eq!(s.font_family.as_deref(), Some("Inter"));
     }
 }

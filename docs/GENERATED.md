@@ -952,6 +952,7 @@ fn main() {
 - crates/pinion-core/src/style.rs:Color
 - crates/pinion-core/src/style.rs:BoxStyle
 - crates/pinion-core/src/style.rs:Border
+- crates/pinion-core/src/style.rs:TextStyle
 
 
 

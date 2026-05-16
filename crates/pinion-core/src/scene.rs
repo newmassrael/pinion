@@ -24,7 +24,7 @@
 
 use std::borrow::Cow;
 
-use crate::style::{BoxStyle, Color};
+use crate::style::{BoxStyle, Color, TextStyle};
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
@@ -135,11 +135,11 @@ impl BoxNode {
 
 /// Styled text primitive.
 ///
-/// v0 §5.11 shape: `content: String` carries the raw string payload
-/// (cosmic-text rasterizer integration deferred); `rect: Rect` gives
-/// absolute bounds in the same u32 coordinate space as `BoxNode`.
-/// Font / size / colour and the layout-relative positioning come
-/// with the §5.3 DSL alongside the rasterizer slice.
+/// v0 §5.11 shape: `content: String` carries the raw string payload;
+/// `rect: Rect` gives absolute bounds in the same u32 coordinate
+/// space as `BoxNode`; `style: TextStyle` carries font + colour per
+/// §5.3 R20. The cosmic-text rasterizer lands in a later R21 slice
+/// and consumes `style` directly.
 ///
 /// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
@@ -147,15 +147,26 @@ impl BoxNode {
 pub struct TextNode {
     pub content: String,
     pub rect: Rect,
+    pub style: TextStyle,
     pub tag: Option<Cow<'static, str>>,
 }
 
 impl TextNode {
+    /// Construct a text node with the default [`TextStyle`] (system
+    /// font, 16px, opaque black). Use [`TextNode::styled`] when an
+    /// explicit style is needed.
     #[must_use]
     pub fn new(content: impl Into<String>, rect: Rect) -> Self {
+        Self::styled(content, rect, TextStyle::new())
+    }
+
+    /// Construct with a fully-specified [`TextStyle`].
+    #[must_use]
+    pub fn styled(content: impl Into<String>, rect: Rect, style: TextStyle) -> Self {
         Self {
             content: content.into(),
             rect,
+            style,
             tag: None,
         }
     }
