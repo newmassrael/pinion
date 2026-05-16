@@ -66,6 +66,25 @@ pub enum LocateError {
     OutOfBounds,
 }
 
+/// Reasons [`bbox`] can fail.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BboxError {
+    /// Path string did not start with `/`, did not contain a valid
+    /// `/window[id]/` prefix, or had a malformed prefix.
+    Path(crate::path::PathError),
+    /// Path syntax was valid but no primitive matched the segments
+    /// (out-of-range index, unknown tag, or descent through a non-
+    /// container).
+    UnknownPath,
+}
+
+impl From<crate::path::PathError> for BboxError {
+    fn from(err: crate::path::PathError) -> Self {
+        BboxError::Path(err)
+    }
+}
+
 /// Resolve `(x, y)` against `scene` to a [`LocateOutcome`].
 ///
 /// Coordinates are in the same viewport-relative logical pixel space
@@ -88,6 +107,40 @@ pub fn locate(scene: &Scene, x: u32, y: u32) -> Result<LocateOutcome, LocateErro
         .collect();
 
     Ok(LocateOutcome { path: leaf_path, bbox: hit.bbox, ancestor_paths })
+}
+
+/// Reverse-lookup (§5.32 R39.3): a fully-qualified path string back
+/// to its viewport-relative bounding rect. The complement of [`locate`]
+/// — used by AI agents to compute screen coordinates for a `highlight`
+/// overlay response after they've decided which element matters.
+///
+/// Accepts paths in either form:
+///   * `"/window[<name>]/seg1/seg2"` — explicit window prefix
+///   * `"/seg1/seg2"` — implicit prefix, resolved to the initial window
+///
+/// An empty path or a trailing slash after the prefix returns the
+/// scene root's outermost rect.
+///
+/// # Errors
+///
+/// * [`BboxError::Path`] when the window prefix is malformed.
+/// * [`BboxError::UnknownPath`] when the segments do not resolve.
+pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
+    let resolved = crate::path::resolve(raw_path)?;
+    let _ = resolved.window; // multi-window dispatch lands later
+    let segments = parse_segments(resolved.scene_path);
+    scene.lookup_path(&segments).ok_or(BboxError::UnknownPath)
+}
+
+/// Split a scene-path string into segments. `""`, `"/"`, and `"//"`
+/// all yield an empty segment list (root). Otherwise, splits on `/`
+/// and drops empty fragments.
+fn parse_segments(scene_path: &str) -> Vec<String> {
+    scene_path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Resolve a region select against `scene`. Unlike [`locate`], a region
@@ -279,6 +332,46 @@ mod tests {
         let s = container_at(0, 0, 200, 200, vec![tagged_box_at(10, 10, 50, 50, "btn")]);
         let out = locate_region(&s, 0, 0, 200, 200);
         assert!(out.paths.iter().any(|p| p.ends_with("/btn")));
+    }
+
+    // ---- R39.3: bbox reverse lookup ----
+
+    #[test]
+    fn bbox_empty_path_returns_root_rect() {
+        let s = box_at(5, 7, 11, 13);
+        assert_eq!(bbox(&s, "/window[main]").unwrap(), Rect::new(5, 7, 11, 13));
+    }
+
+    #[test]
+    fn bbox_resolves_indexed_child() {
+        let s = container_at(0, 0, 200, 200, vec![box_at(10, 10, 30, 30)]);
+        assert_eq!(bbox(&s, "/window[main]/0").unwrap(), Rect::new(10, 10, 30, 30));
+    }
+
+    #[test]
+    fn bbox_resolves_tagged_child() {
+        let s = container_at(0, 0, 200, 200, vec![tagged_box_at(20, 20, 40, 40, "btn")]);
+        assert_eq!(bbox(&s, "/window[main]/btn").unwrap(), Rect::new(20, 20, 40, 40));
+    }
+
+    #[test]
+    fn bbox_unknown_path_returns_error() {
+        let s = container_at(0, 0, 100, 100, vec![box_at(0, 0, 10, 10)]);
+        assert_eq!(bbox(&s, "/window[main]/ghost").unwrap_err(), BboxError::UnknownPath);
+    }
+
+    #[test]
+    fn bbox_implicit_window_prefix_short_circuits() {
+        let s = box_at(1, 2, 3, 4);
+        assert_eq!(bbox(&s, "").unwrap(), Rect::new(1, 2, 3, 4));
+    }
+
+    #[test]
+    fn bbox_roundtrip_with_locate_outcome_path() {
+        // locate → path; bbox(path) recovers the same rect.
+        let s = container_at(0, 0, 200, 200, vec![tagged_box_at(30, 40, 50, 60, "save")]);
+        let loc = locate(&s, 35, 45).expect("inside save");
+        assert_eq!(bbox(&s, &loc.path).unwrap(), loc.bbox);
     }
 
     #[test]

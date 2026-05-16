@@ -27,7 +27,9 @@ pub use dispatch::{dispatch, Request, RequestId, Response, RpcError};
 pub use dry_run::{dry_run, DryRunError};
 pub use intents::{drain_intents, IntentsError};
 pub use invoke::{invoke, InvokeError};
-pub use locate::{locate, locate_region, LocateError, LocateOutcome, LocateRegionOutcome};
+pub use locate::{
+    bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
+};
 pub use path::{resolve, PathError, ResolvedPath};
 pub use query::{query, QueryError};
 pub use rewind::{rewind, RewindError};

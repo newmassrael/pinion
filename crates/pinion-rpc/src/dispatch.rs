@@ -30,7 +30,9 @@ use crate::click::{click, ClickError, ClickOutcome};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::intents::{drain_intents, IntentsError};
 use crate::invoke::{invoke, InvokeError};
-use crate::locate::{locate, locate_region, LocateError, LocateOutcome, LocateRegionOutcome};
+use crate::locate::{
+    bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
+};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
@@ -132,6 +134,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/intents" => handle_scene_intents(scene),
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
+        "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -565,6 +568,35 @@ fn locate_region_outcome_to_json(out: &LocateRegionOutcome) -> Value {
 fn locate_error_to_rpc(err: LocateError) -> RpcError {
     let variant = match err {
         LocateError::OutOfBounds => "OutOfBounds",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+fn handle_scene_bbox(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(invalid_params("params.path missing or not a string"));
+    };
+    match bbox(scene, path) {
+        Ok(r) => {
+            let mut map = serde_json::Map::new();
+            map.insert("bbox".into(), bbox_to_json(&r));
+            Ok(Value::Object(map))
+        }
+        Err(err) => Err(bbox_error_to_rpc(err)),
+    }
+}
+
+fn bbox_error_to_rpc(err: BboxError) -> RpcError {
+    let variant = match err {
+        BboxError::Path(_) => "Path",
+        BboxError::UnknownPath => "UnknownPath",
     };
     RpcError {
         code: -32602,
@@ -1127,5 +1159,39 @@ mod tests {
         let resp = parse_response(&dispatch(&mut scene, req).unwrap());
         let err = resp.error.expect("expected error");
         assert_eq!(err.code, -32602);
+    }
+
+    // ---- R39.3: scene/bbox JSON-RPC wire ----
+
+    #[test]
+    fn scene_bbox_returns_bbox_for_root_path() {
+        let mut scene = box_scene(10, 20, 30, 40);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/window[main]"},"id":107}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none());
+        let bbox = resp.result.unwrap().get("bbox").cloned().unwrap();
+        let obj = bbox.as_object().unwrap();
+        assert_eq!(obj.get("x"), Some(&Value::Number(10.into())));
+        assert_eq!(obj.get("y"), Some(&Value::Number(20.into())));
+        assert_eq!(obj.get("w"), Some(&Value::Number(30.into())));
+        assert_eq!(obj.get("h"), Some(&Value::Number(40.into())));
+    }
+
+    #[test]
+    fn scene_bbox_unknown_path_returns_invalid_params() {
+        let mut scene = box_scene(0, 0, 10, 10);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/window[main]/ghost"},"id":108}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.expect("expected error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("UnknownPath".to_string())));
+    }
+
+    #[test]
+    fn scene_bbox_missing_path_is_invalid_params() {
+        let mut scene = box_scene(0, 0, 10, 10);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{},"id":109}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert_eq!(resp.error.unwrap().code, -32602);
     }
 }

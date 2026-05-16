@@ -137,6 +137,35 @@ impl Scene {
         acc
     }
 
+    /// (§5.32 R39.3 v0) Reverse lookup: walk the scene tree following
+    /// `segments` and return the matched primitive's bounding rect.
+    /// Returns [`None`] when the path does not resolve — either an
+    /// out-of-range index, an unknown tag, or a non-container
+    /// intermediate that cannot be descended.
+    ///
+    /// An empty segment slice returns the root primitive's rect (the
+    /// caller asked for `/window[...]/` itself).
+    #[must_use]
+    pub fn lookup_path(&self, segments: &[String]) -> Option<Rect> {
+        if matches!(self, Scene::Effect(_)) {
+            return None;
+        }
+        let Some((head, tail)) = segments.split_first() else {
+            return Some(self.rect());
+        };
+        let Scene::Container(c) = self else {
+            return None;
+        };
+        // Tag match first (a tagged child wins over an index that
+        // happens to share its name). Among ties, declaration order.
+        let target = c.children.iter().enumerate().find_map(|(idx, child)| {
+            let tag_match = child.tag().is_some_and(|t| t == head);
+            let index_match = idx.to_string() == *head;
+            (tag_match || index_match).then_some(child)
+        })?;
+        target.lookup_path(tail)
+    }
+
     /// Recursive helper for [`Self::hit_test_region`]. Maintains a
     /// segment stack representing the current path from the root.
     fn collect_intersections(
@@ -1102,6 +1131,53 @@ mod tests {
         // Container + box; Effect (index 0) skipped, so box's index is still 1.
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[1].segments, vec!["1".to_string()]);
+    }
+
+    // ---- §5.32 R39.3: Scene::lookup_path ----
+
+    #[test]
+    fn lookup_path_empty_segments_returns_root_rect() {
+        let s = box_at(5, 7, 11, 13);
+        assert_eq!(s.lookup_path(&[]), Some(Rect::new(5, 7, 11, 13)));
+    }
+
+    #[test]
+    fn lookup_path_resolves_index_segment() {
+        let s = container_at(
+            0, 0, 200, 200,
+            vec![box_at(10, 10, 20, 20), box_at(50, 50, 30, 30)],
+        );
+        assert_eq!(s.lookup_path(&["1".to_string()]), Some(Rect::new(50, 50, 30, 30)));
+    }
+
+    #[test]
+    fn lookup_path_resolves_tag_segment() {
+        let s = container_at(0, 0, 200, 200, vec![tagged_box_at(10, 10, 20, 20, "btn")]);
+        assert_eq!(s.lookup_path(&["btn".to_string()]), Some(Rect::new(10, 10, 20, 20)));
+    }
+
+    #[test]
+    fn lookup_path_nested_chain() {
+        let inner = container_at(0, 0, 100, 100, vec![box_at(10, 10, 50, 50)]);
+        let outer = container_at(0, 0, 200, 200, vec![inner]);
+        assert_eq!(
+            outer.lookup_path(&["0".to_string(), "0".to_string()]),
+            Some(Rect::new(10, 10, 50, 50)),
+        );
+    }
+
+    #[test]
+    fn lookup_path_unknown_segment_returns_none() {
+        let s = container_at(0, 0, 100, 100, vec![box_at(0, 0, 10, 10)]);
+        assert!(s.lookup_path(&["ghost".to_string()]).is_none());
+        assert!(s.lookup_path(&["99".to_string()]).is_none());
+    }
+
+    #[test]
+    fn lookup_path_through_non_container_returns_none() {
+        // Box at root + segment "0" — Box has no children, lookup fails.
+        let s = box_at(0, 0, 10, 10);
+        assert!(s.lookup_path(&["0".to_string()]).is_none());
     }
 
     #[test]

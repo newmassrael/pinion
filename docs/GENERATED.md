@@ -1766,6 +1766,9 @@ fn main() {
 - R39.2: Scene::hit_test_region + rects_intersect; container + leaves both included
 - R39.2: scene/locate_region never errors — disjoint returns empty paths + root ancestor
 - R39.2: common_ancestor = longest segment-prefix shared by all paths; root when none
+- R39.3: Scene::lookup_path reverse-walks segments; tag wins over index on collision
+- R39.3: bbox accepts both /window[id]/seg and /seg implicit forms; round-trips with locate
+- R39.3: scene/bbox 12th RPC method; bidirectional locate↔bbox completes §5.32 surface
 
 
 
@@ -1789,6 +1792,8 @@ fn main() {
 - crates/pinion-rpc/src/dispatch.rs:handle_scene_locate
 - crates/pinion-core/src/scene.rs:Scene::hit_test_region
 - crates/pinion-rpc/src/locate.rs:locate_region
+- crates/pinion-core/src/scene.rs:Scene::lookup_path
+- crates/pinion-rpc/src/locate.rs:bbox
 
 
 
@@ -3681,6 +3686,36 @@ fn main() {
 **Carry forward**:
 - R39.3: scene/bbox {path} build — path → viewport bbox lookup
 - R39.4: AI overlay UX mode — visual selection cursor + highlight rendering
+
+
+
+### Round 39.3 — §5.32 scene/bbox impl — path→bbox reverse lookup completes bidirectional surface
+
+**Changes**:
+- pinion-core: Scene::lookup_path traverses segments → Option<Rect>
+- pinion-core: tag wins over index on collision; declaration order tiebreak
+- pinion-rpc: bbox(scene, path) + BboxError{Path, UnknownPath}
+- pinion-rpc: parse_segments splits scene_path; empty / // /// all mean root
+- pinion-rpc: dispatch handler scene/bbox {path} → {bbox}
+- Method count: 11 → 12 typed JSON-RPC methods; locate ↔ bbox now round-trip
+
+
+
+**Verification**:
+- cargo test --workspace → 442 pass (427 baseline + 15 R39.3 new)
+- cargo clippy --workspace --all-targets → 12 pre-existing only
+- Round-trip verified: locate → path; bbox(path) → same rect (test)
+- Non-container descent rejected; unknown segments → UnknownPath
+- Empty/short-circuit paths return root rect
+
+
+
+**Impact**: §5.32, §5.7
+
+
+**Carry forward**:
+- R39.4: AI overlay UX mode — visual selection cursor + highlight rendering (first user-visible piece)
+- R39.x: spatial index (R-tree) when scenes ≥10k elements
 
 
 
