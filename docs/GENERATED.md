@@ -385,6 +385,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R27 §5.23: scene/commands = 10th method; lists pending Commands from Update return.
 - R28 §5.24: scene/semantic = 11th method; returns SemanticProps tree (role/state/actions).
 - R29 §5.25: scene/modifiers = 12th method; returns ModifierOp chain per node path.
+- R30 §5.26: scene/layout = 13th method; queries cached Layout (rect/padding/border) per path.
 
 
 
@@ -947,6 +948,7 @@ fn main() {
 - R23: pinion-runtime::layout::compute_layout(&mut Scene, viewport_w, viewport_h) entry point.
 - R23: Modifier {margin, padding} fold into taffy padding/margin; Modifier.align retained for anchor.
 - R23: Grid display + transforms (translate/rotate/scale) explicit carry-forward; flex-only v0.
+- R30 §5.26: full-recompute (§5.21 R24) refined to incremental + damage tracking for AAA perf.
 
 
 
@@ -1212,6 +1214,67 @@ fn main() {
 - Trait-based modifier wrappers — expressive but introspection-hostile (Rust trait objects)
 - Inline closures per Scene node — breaks dry_run determinism; not serializable
 - HOC pattern (React) — positional wrapping; not data-first
+
+
+
+
+
+
+### §5.26. Incremental layout + damage tracking
+
+
+**Intent**: Layout cache by node identity + Signal dep dirty tracking; subtree-only reflow; damage rect to paint; optional off-thread compute. Refines §5.21 full-recompute for AAA perf.
+
+
+**Rationale**:
+- §5.21 R24 full-recompute caps at ~1000 nodes; AAA perf needs subtree caching
+- Compose layout pass + Flutter RenderObject + iOS UIView all cache layout per node identity
+- Signal subscription naturally tags which layouts depend on which state — free dirty tracking
+- Damage rect propagates upward; paint pipeline skips unchanged regions
+- Off-thread layout (worker pool) industry standard since Chrome 2018 / Servo 2017
+- view-fn purity preserved: scene rebuilds full; layout/paint only touch damaged subtree
+- Taffy already supports compute on subtree; just need cache + dirty propagation around it
+- Damage rect = union of dirty Rect per frame; sent to GPU/CPU paint as scissor box
+
+
+
+**Inputs**:
+- §5.21 R24 taffy compute_layout: full-recompute baseline being refined
+- §5.22 Signal: subscription substrate provides dirty-trigger pathway
+- §5.23 Effect: layout cache invalidation can be modeled as Effect
+- §5.2 Scene node identity: stable keys needed for cache hit
+
+
+
+**Outputs**:
+- LayoutCache per node identity (TaffyTree NodeId + computed Layout retained)
+- Dirty bitset propagating from Signal change → subtree invalidation
+- DamageRect = union of dirty regions; emitted from compute_layout for paint
+- Off-thread compute mode (opt-in): taffy on worker thread, apply back on main
+- compute_layout signature evolves: returns (updated rects, DamageRect)
+- scene/layout RPC method: query current cached Layout per node path (13th method)
+
+
+
+**Caveats**:
+- R30: Layout cache keyed by node identity (stable via SCE-emitted IDs); LayoutStyle hash as 2nd key.
+- R30: Dirty propagation: Signal change → all dependent layouts marked dirty in single pass.
+- R30: DamageRect = union of dirty rects per frame; passed to paint pipeline as scissor region.
+- R30: Cache invalidation triggers: LayoutStyle change, Signal-dep change, child add/remove.
+- R30: Off-thread layout opt-in; default single-thread (UI thread); same result deterministic.
+- R30: compute_layout sig evolves to (&mut Scene, viewport) -> DamageRect; rects mutated in place.
+- R30: scene/layout = 13th RPC method; queries cached Layout (rect/padding/border) per path.
+- R30: dry_run uses isolated cache; doesn't pollute production cache state.
+- R30: Cache eviction: LRU on size pressure; Owner drop triggers child cache cleanup.
+- R30: SCE schema: declare layout-affecting Signal deps; Forge emits dependency edges.
+
+
+
+**Alternatives rejected**:
+- Full re-layout per frame (§5.21 R24 status quo) — perf ceiling at ~1k nodes
+- Manual dirty marking by user — error-prone; missed invalidations cause stale layout bugs
+- Constraint solver dirty propagation (Cassowary) — different algorithm; abandoned
+- Diff-based layout cache (React-style reconciliation) — adds VDOM overhead
 
 
 
@@ -2523,6 +2586,40 @@ fn main() {
 - Scene primitive type set Rust enum sketch per §5.2 closed-form decision
 - Author-facing view function API sketch per §5.3 decision
 - JSON-RPC 2.0 schema draft per §5.7 decision (query/click/dry_run/snapshot/rewind/waitFor)
+
+
+
+### Round 30 — Round 30 — §5.26 new section: Incremental layout + damage tracking; refines §5.21 full-recompute baseline for AAA performance
+
+**Changes**:
+- New §5.26 section: Incremental layout + damage tracking under §5 parent
+- Layout cache by (node identity, LayoutStyle hash); Signal dep tracking marks subtrees dirty
+- DamageRect = union of dirty rects per frame; emitted to paint pipeline as scissor
+- Off-thread compute opt-in; default single-thread; deterministic result either way
+- compute_layout sig evolves to return DamageRect (§5.21 caveat cross-ref)
+- scene/layout = 13th RPC method ratified (§5.12 caveat cross-ref)
+- 10 §5.26 caveats lock cache keys + dirty propagation + invalidation triggers + LRU eviction
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 35 → 36; entries 29 → 30
+- no code changes this round (spec-only)
+- atomic mutations: 1 add_section + 5 set_section_* + 12 add_section_caveat (1 retry for intent cap)
+- Industry consensus: Compose layout pass + Flutter RenderObject + iOS UIView all cache per identity
+
+
+
+**Impact**: §5.12, §5.21, §5.22, §5.26
+
+
+**Carry forward**:
+- R31 §5.16 GPU render backend (vello) — existing axis ratify
+- R32 §5.27 Virtualization Scene variant (VirtualList<T>)
+- R33 §5.28 Animation (spring physics)
+- R34 §5.29 Structured concurrency
+- R35 §5.30 Accessibility (AccessKit bridge)
+- R36 §5.31 Hot reload (signal serialization)
 
 
 
