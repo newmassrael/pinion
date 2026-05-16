@@ -1980,6 +1980,26 @@
         "5.20",
         "2"
       ],
+      "implementations": [
+        {
+          "file": "crates/pinion-overlay/Cargo.toml"
+        },
+        {
+          "file": "crates/pinion-overlay/src/lib.rs"
+        },
+        {
+          "file": "crates/pinion-overlay/src/event.rs",
+          "symbol": "OverlayEvent"
+        },
+        {
+          "file": "crates/pinion-overlay/src/highlight.rs",
+          "symbol": "inject_highlight"
+        },
+        {
+          "file": "crates/pinion-overlay/src/highlight.rs",
+          "symbol": "clear_highlights"
+        }
+      ],
       "decision_status": "active"
     },
     "5.4": {
@@ -5087,6 +5107,64 @@
         "R39.4.2: inject_highlight + clear_highlights pure transforms + tests",
         "R39.4.3: ai-introspect-demo example end-to-end (winit + RPC + overlay)",
         "R39.4.x: Controller pattern promotion after dogfood evidence",
+        "R39.4.x: pinion-runtime integration hook (post runtime maturation)"
+      ]
+    },
+    "Round 39.4.1": {
+      "decision_summary": "§5.33 pinion-overlay crate skeleton + functional inject/clear transforms",
+      "changes_bullets": [
+        "New crate pinion-overlay added to workspace; deps pinion-core + pinion-rpc only",
+        "OverlayEvent enum: Click / Drag / Escape / Acknowledge (transport-agnostic)",
+        "Drag::drag_as_rect normaliser handles any corner-start direction",
+        "inject_highlight: lookup_path → add ai-overlay/<path> tagged Box sibling",
+        "clear_highlights: strip every ai-overlay/ tagged child; idempotent",
+        "Auto-wrap non-Container roots; HighlightStyle with default 2px red border"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-overlay → 12 pass (3 event + 9 highlight)",
+        "cargo test --workspace → 454 pass (442 baseline + 12 R39.4.1)",
+        "cargo clippy --workspace --all-targets → 12 pre-existing only",
+        "Idempotency verified (inject_is_idempotent_on_same_path)",
+        "Multiple accumulation verified (inject_different_paths_accumulate)",
+        "Silent no-op on unknown path (inject_on_unknown_path_is_silent_no_op)"
+      ],
+      "impact_refs": [
+        "5.33",
+        "5.32",
+        "5.2",
+        "5.20"
+      ],
+      "carry_forward_bullets": [
+        "R39.4.3: ai-introspect-demo example with winit/softbuffer + RPC + overlay",
+        "R39.4.x: Controller pattern promotion (post-demo evidence)",
+        "R39.4.x: pinion-runtime integration hook (post runtime maturation)"
+      ],
+      "publishable_decision_summary": "§5.33 pinion-overlay crate skeleton + functional inject/clear transforms",
+      "publishable_changes_bullets": [
+        "New crate pinion-overlay added to workspace; deps pinion-core + pinion-rpc only",
+        "OverlayEvent enum: Click / Drag / Escape / Acknowledge (transport-agnostic)",
+        "Drag::drag_as_rect normaliser handles any corner-start direction",
+        "inject_highlight: lookup_path → add ai-overlay/<path> tagged Box sibling",
+        "clear_highlights: strip every ai-overlay/ tagged child; idempotent",
+        "Auto-wrap non-Container roots; HighlightStyle with default 2px red border"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-overlay → 12 pass (3 event + 9 highlight)",
+        "cargo test --workspace → 454 pass (442 baseline + 12 R39.4.1)",
+        "cargo clippy --workspace --all-targets → 12 pre-existing only",
+        "Idempotency verified (inject_is_idempotent_on_same_path)",
+        "Multiple accumulation verified (inject_different_paths_accumulate)",
+        "Silent no-op on unknown path (inject_on_unknown_path_is_silent_no_op)"
+      ],
+      "publishable_impact_refs": [
+        "5.33",
+        "5.32",
+        "5.2",
+        "5.20"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R39.4.3: ai-introspect-demo example with winit/softbuffer + RPC + overlay",
+        "R39.4.x: Controller pattern promotion (post-demo evidence)",
         "R39.4.x: pinion-runtime integration hook (post runtime maturation)"
       ]
     },

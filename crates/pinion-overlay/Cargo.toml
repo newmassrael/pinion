@@ -1,0 +1,17 @@
+[package]
+name = "pinion-overlay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "AI overlay UX layer — event capture + scene highlight injection per §5.33"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Scene primitives + Rect; pinion-overlay transforms Scene values directly.
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# Path string parsing for highlight targeting reuses scene/locate helpers.
+pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }

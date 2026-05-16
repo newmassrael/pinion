@@ -1855,6 +1855,14 @@ fn main() {
 
 
 
+**Implementations**:
+- crates/pinion-overlay/Cargo.toml
+- crates/pinion-overlay/src/lib.rs
+- crates/pinion-overlay/src/event.rs:OverlayEvent
+- crates/pinion-overlay/src/highlight.rs:inject_highlight
+- crates/pinion-overlay/src/highlight.rs:clear_highlights
+
+
 
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
@@ -3806,6 +3814,38 @@ fn main() {
 - R39.4.2: inject_highlight + clear_highlights pure transforms + tests
 - R39.4.3: ai-introspect-demo example end-to-end (winit + RPC + overlay)
 - R39.4.x: Controller pattern promotion after dogfood evidence
+- R39.4.x: pinion-runtime integration hook (post runtime maturation)
+
+
+
+### Round 39.4.1 — §5.33 pinion-overlay crate skeleton + functional inject/clear transforms
+
+**Changes**:
+- New crate pinion-overlay added to workspace; deps pinion-core + pinion-rpc only
+- OverlayEvent enum: Click / Drag / Escape / Acknowledge (transport-agnostic)
+- Drag::drag_as_rect normaliser handles any corner-start direction
+- inject_highlight: lookup_path → add ai-overlay/<path> tagged Box sibling
+- clear_highlights: strip every ai-overlay/ tagged child; idempotent
+- Auto-wrap non-Container roots; HighlightStyle with default 2px red border
+
+
+
+**Verification**:
+- cargo test -p pinion-overlay → 12 pass (3 event + 9 highlight)
+- cargo test --workspace → 454 pass (442 baseline + 12 R39.4.1)
+- cargo clippy --workspace --all-targets → 12 pre-existing only
+- Idempotency verified (inject_is_idempotent_on_same_path)
+- Multiple accumulation verified (inject_different_paths_accumulate)
+- Silent no-op on unknown path (inject_on_unknown_path_is_silent_no_op)
+
+
+
+**Impact**: §5.33, §5.32, §5.2, §5.20
+
+
+**Carry forward**:
+- R39.4.3: ai-introspect-demo example with winit/softbuffer + RPC + overlay
+- R39.4.x: Controller pattern promotion (post-demo evidence)
 - R39.4.x: pinion-runtime integration hook (post runtime maturation)
 
 

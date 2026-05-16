@@ -1318,6 +1318,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinion-overlay"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+ "pinion-rpc",
+]
+
+[[package]]
 name = "pinion-rpc"
 version = "0.0.1"
 dependencies = [
