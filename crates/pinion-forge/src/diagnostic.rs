@@ -95,11 +95,32 @@ pub enum PinionForgeDiagnostic {
     #[error("<pinion name=\"{found}\"> in {}: name must be a valid Rust identifier", location.file.display())]
     InvalidName { found: String, location: Location },
 
-    /// Child element of `<pinion>` is not in the supported set. At R38.1
-    /// the supported set is empty; <signal>/<computed>/<resource>/<use>
-    /// land in R38.2+.
-    #[error("<{tag}> inside <pinion> in {}: unsupported element at R38.1 skeleton", location.file.display())]
+    /// Child element of `<pinion>` is not in the supported set. R38.2a
+    /// supports `<signal>`; `<computed>` / `<resource>` / `<use>` land
+    /// in subsequent slices.
+    #[error("<{tag}> inside <pinion> in {}: unsupported element", location.file.display())]
     UnsupportedElement { tag: String, location: Location },
+
+    /// Generic missing-attribute diagnostic for child elements (e.g.
+    /// `<signal name=...>` is required). The closed root attribute set
+    /// has dedicated variants ([`Self::MissingXmlns`] / [`Self::MissingKind`] /
+    /// [`Self::MissingName`]) because authoring guidance is different
+    /// there.
+    #[error("<{tag}> in {} missing required {attribute} attribute", location.file.display())]
+    MissingAttribute { tag: String, attribute: String, location: Location },
+
+    /// Generic invalid-identifier diagnostic for child-element attribute
+    /// values that must be valid Rust identifiers (`<signal name=...>`,
+    /// `<computed name=...>`, etc.). [`Self::InvalidName`] handles the
+    /// root-element `<pinion name=...>` case.
+    #[error("<{tag} {attribute}=\"{found}\"> in {}: must be a valid Rust identifier", location.file.display())]
+    InvalidIdent { tag: String, attribute: String, found: String, location: Location },
+
+    /// Required body content (text/CDATA) is missing or whitespace-only.
+    /// Used by elements that mandate an inline expression — e.g.
+    /// `<signal>` carries the initial-value expression in its body.
+    #[error("<{tag}> in {} missing required body content", location.file.display())]
+    EmptyBody { tag: String, location: Location },
 }
 
 /// Canonical pinion DSL namespace URI. `<pinion xmlns="...">` must match
@@ -125,6 +146,9 @@ impl PinionForgeDiagnostic {
             Self::MissingName { .. } => "dsl/missing-name",
             Self::InvalidName { .. } => "dsl/invalid-name",
             Self::UnsupportedElement { .. } => "dsl/unsupported-element",
+            Self::MissingAttribute { .. } => "dsl/missing-attribute",
+            Self::InvalidIdent { .. } => "dsl/invalid-ident",
+            Self::EmptyBody { .. } => "dsl/empty-body",
         }
     }
 
@@ -141,7 +165,10 @@ impl PinionForgeDiagnostic {
             | Self::UnknownKind { .. }
             | Self::MissingName { .. }
             | Self::InvalidName { .. }
-            | Self::UnsupportedElement { .. } => Stage::Validate,
+            | Self::UnsupportedElement { .. }
+            | Self::MissingAttribute { .. }
+            | Self::InvalidIdent { .. }
+            | Self::EmptyBody { .. } => Stage::Validate,
         }
     }
 
@@ -158,7 +185,10 @@ impl PinionForgeDiagnostic {
             | Self::UnknownKind { location, .. }
             | Self::MissingName { location, .. }
             | Self::InvalidName { location, .. }
-            | Self::UnsupportedElement { location, .. } => location,
+            | Self::UnsupportedElement { location, .. }
+            | Self::MissingAttribute { location, .. }
+            | Self::InvalidIdent { location, .. }
+            | Self::EmptyBody { location, .. } => location,
         }
     }
 }

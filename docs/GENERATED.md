@@ -1040,6 +1040,10 @@ fn main() {
 - R38: code embedding = <![CDATA[...]]> in body; generic types via <ty> child element
 - R38: codegen = pub struct Name + impl Name { pub fn new(owner: &Owner) -> Self }
 - R38: diagnostic = pinion::dsl::* enum + NDJSON wire; SCE v1 pattern reference only
+- R38.2a: <signal name ty>CDATA initial</signal> → pub field + Signal::new(initial) wiring
+- R38.2a: Owner threaded into new() signature; binding lazy until <computed> in R38.2b
+- R38.2a: ty attr validated as non-empty; rustc owns type soundness, syn parse deferred
+- R38.2a: 3 new generic child diagnostics — missing-attribute/invalid-ident/empty-body
 
 
 
@@ -1071,6 +1075,9 @@ fn main() {
 - crates/pinion-forge/src/wire.rs
 - crates/pinion-forge/src/build.rs
 - crates/pinion-forge/Cargo.toml
+- crates/pinion-forge/src/ast.rs:SignalDecl
+- crates/pinion-forge/src/parser.rs:ParseCtx::parse_signal
+- crates/pinion-forge/src/codegen.rs:emit_struct_with_signals
 
 
 
@@ -3308,6 +3315,39 @@ fn main() {
 - R38.2: first dogfood .pinion.xml authoring (hello-button widget)
 - R38.2: integration test crate that consumes pinion-forge from build.rs
 - R38.2: prettyplease or syn round-trip for emitted source validation
+
+
+
+### Round 38.2a — §5.22 <signal> child element — parser + codegen + 3 generic child diagnostics
+
+**Changes**:
+- AST: PinionChild::Signal(SignalDecl{name, ty, initial}) variant
+- Parser: dispatch_child + parse_signal + scan_signal_body + skip_subtree
+- Codegen: emit_struct_with_signals — pub field + Signal::new(initial) per child
+- Diagnostic: MissingAttribute / InvalidIdent / EmptyBody (generic over tag+attr)
+- Wire: key_fragments updated for new variants (tag/attr/found composition)
+- Parser body accepts CDATA or plain Text; whitespace-only → EmptyBody
+
+
+
+**Verification**:
+- cargo test --workspace → 359 pass (347 baseline + 12 R38.2a new)
+- cargo clippy --workspace --all-targets → 12 pre-existing only, pinion-forge zero
+- Multi-sibling accumulation verified (test accumulates_signal_diagnostics_across_siblings)
+- Unsupported sibling does not block valid signal parsing (test verified)
+- Wire id distinguishes MissingAttribute by tag+attribute hash fragments
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R38.2b: <computed name ty>CDATA body</computed> + Computed::new(owner, |_| ...)
+- R38.2b: owner usage in new() (no longer prefixed _) once Computed needs it
+- R38.2c: <resource> async fetch + ResourceState enum wiring
+- R38.2d: <use crate path/> external module import + path resolution
+- R38.2x: syn-based <ty> validation if rustc error distance hurts UX
 
 
 

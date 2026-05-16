@@ -40,7 +40,7 @@ pub mod diagnostic;
 pub mod parser;
 pub mod wire;
 
-pub use ast::{PinionChild, PinionDoc, PinionKind};
+pub use ast::{PinionChild, PinionDoc, PinionKind, SignalDecl};
 pub use build::{CompileError, compile_file, compile_str};
 pub use codegen::emit_rust;
 pub use diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic, Stage};
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn rejects_unsupported_child_element() {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
-            <signal name="count" ty="u32"/>
+            <effect name="e"/>
         </pinion>"#;
         let diags = parse_err(xml);
         let bad = diags
@@ -198,7 +198,183 @@ mod tests {
         let PinionForgeDiagnostic::UnsupportedElement { tag, .. } = bad else {
             panic!("variant mismatch");
         };
+        assert_eq!(tag, "effect");
+    }
+
+    // ---- R38.2a: <signal> child element ----
+
+    #[test]
+    fn parses_single_signal() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Counter">
+            <signal name="count" ty="i32"><![CDATA[0]]></signal>
+        </pinion>"#;
+        let doc = parse(xml).expect("happy path");
+        assert_eq!(doc.children.len(), 1);
+        let PinionChild::Signal(sig) = &doc.children[0];
+        assert_eq!(sig.name, "count");
+        assert_eq!(sig.ty, "i32");
+        assert_eq!(sig.initial, "0");
+    }
+
+    #[test]
+    fn parses_signal_with_plain_text_initial() {
+        // CDATA is the textbook form, but plain Text is semantically
+        // equivalent in XML — both must be accepted.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal name="count" ty="i32">42</signal>
+        </pinion>"#;
+        let doc = parse(xml).expect("plain-text body");
+        let PinionChild::Signal(sig) = &doc.children[0];
+        assert_eq!(sig.initial, "42");
+    }
+
+    #[test]
+    fn parses_multiple_signals_preserves_order() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="State">
+            <signal name="a" ty="i32"><![CDATA[1]]></signal>
+            <signal name="b" ty="String"><![CDATA[String::new()]]></signal>
+            <signal name="c" ty="bool"><![CDATA[true]]></signal>
+        </pinion>"#;
+        let doc = parse(xml).expect("multi-signal");
+        assert_eq!(doc.children.len(), 3);
+        let names: Vec<&str> = doc
+            .children
+            .iter()
+            .map(|c| {
+                let PinionChild::Signal(s) = c;
+                s.name.as_str()
+            })
+            .collect();
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn emits_struct_with_signal_fields() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Counter">
+            <signal name="count" ty="i32"><![CDATA[0]]></signal>
+        </pinion>"#;
+        let rust = compile_str(xml, "counter.pinion.xml").expect("compile");
+        assert!(rust.contains("pub struct Counter {"));
+        assert!(rust.contains("pub count: ::pinion_core::reactive::Signal<i32>"));
+        assert!(rust.contains("count: ::pinion_core::reactive::Signal::new(0)"));
+        // The unit-struct form must NOT appear when signals are present.
+        assert!(!rust.contains("pub struct Counter;"));
+    }
+
+    #[test]
+    fn rejects_signal_missing_name() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal ty="i32"><![CDATA[0]]></signal>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/missing-attribute")
+            .expect("missing-attribute");
+        let PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. } = bad else {
+            panic!("variant mismatch");
+        };
         assert_eq!(tag, "signal");
+        assert_eq!(attribute, "name");
+    }
+
+    #[test]
+    fn rejects_signal_missing_ty() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal name="count"><![CDATA[0]]></signal>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| {
+            matches!(d, PinionForgeDiagnostic::MissingAttribute { attribute, .. } if attribute == "ty")
+        }));
+    }
+
+    #[test]
+    fn rejects_signal_invalid_name() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal name="impl" ty="i32"><![CDATA[0]]></signal>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/invalid-ident").expect("invalid-ident");
+        let PinionForgeDiagnostic::InvalidIdent { tag, attribute, found, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(tag, "signal");
+        assert_eq!(attribute, "name");
+        assert_eq!(found, "impl");
+    }
+
+    #[test]
+    fn rejects_signal_empty_body_self_closing() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal name="count" ty="i32"/>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/empty-body").expect("empty-body");
+        let PinionForgeDiagnostic::EmptyBody { tag, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(tag, "signal");
+    }
+
+    #[test]
+    fn rejects_signal_empty_body_whitespace_only() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal name="count" ty="i32">
+            </signal>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| d.code() == "dsl/empty-body"));
+    }
+
+    #[test]
+    fn accumulates_signal_diagnostics_across_siblings() {
+        // Three sibling <signal>s, each with a different problem. The
+        // parser must surface all three without short-circuiting after
+        // the first failure.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal name="ok" ty="i32"><![CDATA[0]]></signal>
+            <signal ty="i32"><![CDATA[1]]></signal>
+            <signal name="impl" ty="i32"><![CDATA[2]]></signal>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| d.code() == "dsl/missing-attribute"));
+        assert!(diags.iter().any(|d| d.code() == "dsl/invalid-ident"));
+    }
+
+    #[test]
+    fn unsupported_sibling_does_not_block_signal_parsing() {
+        // <effect> is unsupported at R38.2a; parser must still accept
+        // the sibling <signal> rather than short-circuit. But because
+        // <effect> emits a diagnostic, the overall result is Err — the
+        // doc is unrenderable until the unsupported child is removed.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="X">
+            <signal name="count" ty="i32"><![CDATA[0]]></signal>
+            <effect name="e"/>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        // Both signal-parse-success and effect-unsupported diagnostics
+        // are visible from a single run.
+        assert!(diags.iter().any(|d| d.code() == "dsl/unsupported-element"));
+        assert_eq!(diags.iter().filter(|d| d.code() == "dsl/unsupported-element").count(), 1);
+    }
+
+    #[test]
+    fn wire_record_has_tag_and_attribute_in_id_for_missing_attribute() {
+        // Two MissingAttribute diagnostics on the same (tag, location)
+        // but different attributes must hash to different ids.
+        let loc = Location::new("a.pinion.xml");
+        let a = PinionForgeDiagnostic::MissingAttribute {
+            tag: "signal".into(),
+            attribute: "name".into(),
+            location: loc.clone(),
+        };
+        let b = PinionForgeDiagnostic::MissingAttribute {
+            tag: "signal".into(),
+            attribute: "ty".into(),
+            location: loc,
+        };
+        assert_ne!(to_json_value(&a)["id"], to_json_value(&b)["id"]);
     }
 
     #[test]

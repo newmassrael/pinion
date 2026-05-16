@@ -3,20 +3,24 @@
 //! than fail-fast so downstream tooling can show all errors at once
 //! (textbook contract for AOT compilers — surface every failure per run).
 //!
-//! ## R38.1 grammar (closed)
+//! ## R38.2a grammar (closed)
 //!
 //! ```text
 //! Document   ::= XmlDecl? Whitespace* PinionRoot Whitespace*
-//! PinionRoot ::= '<pinion' Attribute+ '/>'
-//!             |  '<pinion' Attribute+ '>' Whitespace* '</pinion>'
-//! Attribute  ::= xmlns="https://pinion.dev/dsl/v1"
+//! PinionRoot ::= '<pinion' RootAttr+ '/>'
+//!             |  '<pinion' RootAttr+ '>' Whitespace* Child* '</pinion>'
+//! RootAttr   ::= xmlns="https://pinion.dev/dsl/v1"
 //!             |  kind="reactive"
 //!             |  name=<Rust ident>
+//! Child      ::= Signal
+//! Signal     ::= '<signal' 'name'=<Rust ident> 'ty'=<non-empty> '>'
+//!                InitialExpr '</signal>'
+//! InitialExpr ::= CDATA / non-empty trimmed Text
 //! ```
 //!
 //! Any deviation produces one or more [`PinionForgeDiagnostic`] records
-//! and the parser returns `Err(Vec<_>)`. R38.2+ extends the child set;
-//! the grammar above is what R38.1 ratifies.
+//! and the parser returns `Err(Vec<_>)`. R38.2b+ extends the child set
+//! with `<computed>` / `<resource>` / `<use>`.
 
 use std::path::PathBuf;
 
@@ -24,7 +28,7 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 
-use crate::ast::{PinionDoc, PinionKind};
+use crate::ast::{PinionChild, PinionDoc, PinionKind, SignalDecl};
 use crate::diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic};
 
 /// Entry point. `source` is the originating file path for diagnostic
@@ -128,20 +132,20 @@ impl<'a> ParseCtx<'a> {
             return Err(std::mem::take(&mut self.diagnostics));
         }
 
-        let doc_if_attrs_ok = self
-            .parse_root_attrs(start)
-            .map(|(kind, name)| PinionDoc { name, kind, children: Vec::new() });
+        let attrs_ok = self.parse_root_attrs(start);
 
+        let mut children: Vec<PinionChild> = Vec::new();
         if !self_closing {
-            self.scan_root_body();
+            self.scan_root_body(&mut children);
         }
 
         if self.diagnostics.is_empty() {
-            // SAFETY (invariant): parse_root_attrs returned Some iff no
-            // attribute diagnostics were pushed; scan_root_body only
-            // pushes diagnostics. So an empty diagnostic vec implies
-            // doc_if_attrs_ok is Some.
-            Ok(doc_if_attrs_ok.expect("attrs-ok path must populate doc"))
+            // Invariant: parse_root_attrs returns Some iff no attribute
+            // diagnostics were pushed; scan_root_body either pushes
+            // diagnostics or appends a child. So an empty diagnostic
+            // vec implies attrs_ok is Some.
+            let (kind, name) = attrs_ok.expect("attrs-ok path must populate (kind, name)");
+            Ok(PinionDoc { name, kind, children })
         } else {
             Err(std::mem::take(&mut self.diagnostics))
         }
@@ -244,29 +248,17 @@ impl<'a> ParseCtx<'a> {
         }
     }
 
-    /// Scan from after `<pinion ...>` open through to `</pinion>`. Every
-    /// element child raises `UnsupportedElement` (R38.1: no children
-    /// allowed). Whitespace text and comments are ignored.
-    fn scan_root_body(&mut self) {
+    /// Scan from after `<pinion ...>` open through to `</pinion>`,
+    /// dispatching each child element to the appropriate handler.
+    /// Unsupported elements raise `UnsupportedElement` and their subtree
+    /// is skipped so the scan stays aligned with the close tag.
+    fn scan_root_body(&mut self, children: &mut Vec<PinionChild>) {
         let mut buf = Vec::new();
-        let mut depth: usize = 0;
         loop {
             match self.reader.read_event_into(&mut buf) {
-                Ok(Event::End(_)) if depth == 0 => return,
-                Ok(Event::End(_)) => depth -= 1,
-                Ok(Event::Start(e)) => {
-                    let tag = local_name(e.name());
-                    let location = self.current_location();
-                    self.diagnostics
-                        .push(PinionForgeDiagnostic::UnsupportedElement { tag, location });
-                    depth += 1;
-                }
-                Ok(Event::Empty(e)) => {
-                    let tag = local_name(e.name());
-                    let location = self.current_location();
-                    self.diagnostics
-                        .push(PinionForgeDiagnostic::UnsupportedElement { tag, location });
-                }
+                Ok(Event::End(_)) => return,
+                Ok(Event::Start(e)) => self.dispatch_child(&e, /*self_closing=*/ false, children),
+                Ok(Event::Empty(e)) => self.dispatch_child(&e, /*self_closing=*/ true, children),
                 Ok(Event::Eof) => {
                     let location = self.current_location();
                     self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
@@ -286,6 +278,242 @@ impl<'a> ParseCtx<'a> {
                 }
             }
             buf.clear();
+        }
+    }
+
+    /// Route a child element to its parser. The dispatch table is closed
+    /// per R38.2a — `<signal>` is the only recognized child. Anything
+    /// else surfaces an `UnsupportedElement` and is skipped subtree-deep
+    /// so the outer scan resumes at the correct close tag.
+    fn dispatch_child(
+        &mut self,
+        start: &BytesStart<'_>,
+        self_closing: bool,
+        children: &mut Vec<PinionChild>,
+    ) {
+        let tag = local_name(start.name());
+        // Dispatch table on child element name. R38.2a recognizes only
+        // `<signal>`; R38.2b/c/d add `<computed>` / `<resource>` /
+        // `<use>` as additional arms. Kept as `match` (not `if`) so
+        // those slices grow the table additively.
+        #[allow(clippy::single_match_else)]
+        match tag.as_str() {
+            "signal" => {
+                if let Some(decl) = self.parse_signal(start, self_closing) {
+                    children.push(PinionChild::Signal(decl));
+                }
+            }
+            _ => {
+                let location = self.current_location();
+                self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
+                    tag,
+                    location,
+                });
+                if !self_closing {
+                    self.skip_subtree();
+                }
+            }
+        }
+    }
+
+    /// Parse one `<signal name="..." ty="..." [body]/>` element. Returns
+    /// `None` when *any* part is malformed — every problem is recorded
+    /// in `self.diagnostics` so the multi-diagnostic accumulation
+    /// contract holds. A `None` from this method does not stop the
+    /// outer scan from continuing to the next sibling.
+    fn parse_signal(
+        &mut self,
+        start: &BytesStart<'_>,
+        self_closing: bool,
+    ) -> Option<SignalDecl> {
+        let location = self.current_location();
+        let mut name_raw: Option<String> = None;
+        let mut ty_raw: Option<String> = None;
+
+        for attr in start.attributes().with_checks(false) {
+            let Ok(attr) = attr else {
+                self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
+                    message: "malformed attribute on <signal>".into(),
+                    location: location.clone(),
+                });
+                continue;
+            };
+            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+            let value = String::from_utf8_lossy(&attr.value).into_owned();
+            match key.as_str() {
+                "name" => name_raw = Some(value),
+                "ty" => ty_raw = Some(value),
+                _ => {
+                    // Unknown attributes on <signal> are tolerated per the
+                    // SCE v1 forward-compat policy. A future schema may
+                    // add e.g. `eager="false"`; older parsers must not
+                    // reject it.
+                }
+            }
+        }
+
+        let name = self.require_ident_attr("signal", "name", name_raw, &location);
+        let ty = self.require_nonempty_attr("signal", "ty", ty_raw, &location);
+        let initial = if self_closing {
+            self.diagnostics
+                .push(PinionForgeDiagnostic::EmptyBody { tag: "signal".into(), location });
+            None
+        } else {
+            self.scan_signal_body()
+        };
+
+        match (name, ty, initial) {
+            (Some(name), Some(ty), Some(initial)) => Some(SignalDecl { name, ty, initial }),
+            _ => None,
+        }
+    }
+
+    /// Collect the body of `<signal>...</signal>` as a trimmed initial-
+    /// value expression string. Accepts plain `Text` and `CDATA` nodes;
+    /// any nested element raises `UnsupportedElement`. Whitespace-only
+    /// bodies fail with `EmptyBody`.
+    fn scan_signal_body(&mut self) -> Option<String> {
+        let location = self.current_location();
+        let mut initial = String::new();
+        let mut buf = Vec::new();
+        loop {
+            match self.reader.read_event_into(&mut buf) {
+                Ok(Event::End(_)) => {
+                    let trimmed = initial.trim().to_owned();
+                    if trimmed.is_empty() {
+                        self.diagnostics.push(PinionForgeDiagnostic::EmptyBody {
+                            tag: "signal".into(),
+                            location,
+                        });
+                        return None;
+                    }
+                    return Some(trimmed);
+                }
+                Ok(Event::CData(c)) => {
+                    initial.push_str(&String::from_utf8_lossy(c.as_ref()));
+                }
+                Ok(Event::Text(t)) => {
+                    initial.push_str(&String::from_utf8_lossy(t.as_ref()));
+                }
+                Ok(Event::Start(e)) => {
+                    let tag = local_name(e.name());
+                    let loc_nested = self.current_location();
+                    self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
+                        tag,
+                        location: loc_nested,
+                    });
+                    self.skip_subtree();
+                }
+                Ok(Event::Empty(e)) => {
+                    let tag = local_name(e.name());
+                    let loc_nested = self.current_location();
+                    self.diagnostics.push(PinionForgeDiagnostic::UnsupportedElement {
+                        tag,
+                        location: loc_nested,
+                    });
+                }
+                Ok(Event::Eof) => {
+                    self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
+                        message: "unexpected EOF inside <signal>".into(),
+                        location,
+                    });
+                    return None;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
+                        message: e.to_string(),
+                        location,
+                    });
+                    return None;
+                }
+            }
+            buf.clear();
+        }
+    }
+
+    /// Skip events until the matching close tag for the element just
+    /// opened. Used after an `UnsupportedElement` diagnostic to keep
+    /// the outer scan aligned with the document structure.
+    fn skip_subtree(&mut self) {
+        let mut buf = Vec::new();
+        let mut depth: usize = 1;
+        while depth > 0 {
+            match self.reader.read_event_into(&mut buf) {
+                Ok(Event::Start(_)) => depth += 1,
+                Ok(Event::End(_)) => depth -= 1,
+                Ok(Event::Eof) | Err(_) => return,
+                _ => {}
+            }
+            buf.clear();
+        }
+    }
+
+    /// Validate that a required child-element attribute is present and a
+    /// valid Rust identifier. Pushes the appropriate diagnostic on
+    /// failure and returns `None`; on success returns the trimmed value.
+    fn require_ident_attr(
+        &mut self,
+        tag: &str,
+        attribute: &str,
+        value: Option<String>,
+        location: &Location,
+    ) -> Option<String> {
+        match value {
+            None => {
+                self.diagnostics.push(PinionForgeDiagnostic::MissingAttribute {
+                    tag: tag.into(),
+                    attribute: attribute.into(),
+                    location: location.clone(),
+                });
+                None
+            }
+            Some(v) if is_rust_ident(&v) => Some(v),
+            Some(v) => {
+                self.diagnostics.push(PinionForgeDiagnostic::InvalidIdent {
+                    tag: tag.into(),
+                    attribute: attribute.into(),
+                    found: v,
+                    location: location.clone(),
+                });
+                None
+            }
+        }
+    }
+
+    /// Validate that a required child-element attribute is present and
+    /// non-empty (after trimming). Less strict than [`Self::require_ident_attr`] —
+    /// used for free-form attributes like `<signal ty="...">` where the
+    /// value is a Rust type expression rather than an identifier.
+    fn require_nonempty_attr(
+        &mut self,
+        tag: &str,
+        attribute: &str,
+        value: Option<String>,
+        location: &Location,
+    ) -> Option<String> {
+        match value {
+            None => {
+                self.diagnostics.push(PinionForgeDiagnostic::MissingAttribute {
+                    tag: tag.into(),
+                    attribute: attribute.into(),
+                    location: location.clone(),
+                });
+                None
+            }
+            Some(v) => {
+                let trimmed = v.trim().to_owned();
+                if trimmed.is_empty() {
+                    self.diagnostics.push(PinionForgeDiagnostic::MissingAttribute {
+                        tag: tag.into(),
+                        attribute: attribute.into(),
+                        location: location.clone(),
+                    });
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            }
         }
     }
 

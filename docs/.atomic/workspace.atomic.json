@@ -999,7 +999,11 @@
         "R38: kind=reactive children = <use>/<signal name ty>/<computed name ty>/<resource name ty>",
         "R38: code embedding = <![CDATA[...]]> in body; generic types via <ty> child element",
         "R38: codegen = pub struct Name + impl Name { pub fn new(owner: &Owner) -> Self }",
-        "R38: diagnostic = pinion::dsl::* enum + NDJSON wire; SCE v1 pattern reference only"
+        "R38: diagnostic = pinion::dsl::* enum + NDJSON wire; SCE v1 pattern reference only",
+        "R38.2a: <signal name ty>CDATA initial</signal> → pub field + Signal::new(initial) wiring",
+        "R38.2a: Owner threaded into new() signature; binding lazy until <computed> in R38.2b",
+        "R38.2a: ty attr validated as non-empty; rustc owns type soundness, syn parse deferred",
+        "R38.2a: 3 new generic child diagnostics — missing-attribute/invalid-ident/empty-body"
       ],
       "alternatives_rejected": [
         {
@@ -1074,6 +1078,18 @@
         },
         {
           "file": "crates/pinion-forge/Cargo.toml"
+        },
+        {
+          "file": "crates/pinion-forge/src/ast.rs",
+          "symbol": "SignalDecl"
+        },
+        {
+          "file": "crates/pinion-forge/src/parser.rs",
+          "symbol": "ParseCtx::parse_signal"
+        },
+        {
+          "file": "crates/pinion-forge/src/codegen.rs",
+          "symbol": "emit_struct_with_signals"
         }
       ],
       "decision_status": "active"
@@ -4274,6 +4290,60 @@
         "R38.2: first dogfood .pinion.xml authoring (hello-button widget)",
         "R38.2: integration test crate that consumes pinion-forge from build.rs",
         "R38.2: prettyplease or syn round-trip for emitted source validation"
+      ]
+    },
+    "Round 38.2a": {
+      "decision_summary": "§5.22 <signal> child element — parser + codegen + 3 generic child diagnostics",
+      "changes_bullets": [
+        "AST: PinionChild::Signal(SignalDecl{name, ty, initial}) variant",
+        "Parser: dispatch_child + parse_signal + scan_signal_body + skip_subtree",
+        "Codegen: emit_struct_with_signals — pub field + Signal::new(initial) per child",
+        "Diagnostic: MissingAttribute / InvalidIdent / EmptyBody (generic over tag+attr)",
+        "Wire: key_fragments updated for new variants (tag/attr/found composition)",
+        "Parser body accepts CDATA or plain Text; whitespace-only → EmptyBody"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace → 359 pass (347 baseline + 12 R38.2a new)",
+        "cargo clippy --workspace --all-targets → 12 pre-existing only, pinion-forge zero",
+        "Multi-sibling accumulation verified (test accumulates_signal_diagnostics_across_siblings)",
+        "Unsupported sibling does not block valid signal parsing (test verified)",
+        "Wire id distinguishes MissingAttribute by tag+attribute hash fragments"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R38.2b: <computed name ty>CDATA body</computed> + Computed::new(owner, |_| ...)",
+        "R38.2b: owner usage in new() (no longer prefixed _) once Computed needs it",
+        "R38.2c: <resource> async fetch + ResourceState enum wiring",
+        "R38.2d: <use crate path/> external module import + path resolution",
+        "R38.2x: syn-based <ty> validation if rustc error distance hurts UX"
+      ],
+      "publishable_decision_summary": "§5.22 <signal> child element — parser + codegen + 3 generic child diagnostics",
+      "publishable_changes_bullets": [
+        "AST: PinionChild::Signal(SignalDecl{name, ty, initial}) variant",
+        "Parser: dispatch_child + parse_signal + scan_signal_body + skip_subtree",
+        "Codegen: emit_struct_with_signals — pub field + Signal::new(initial) per child",
+        "Diagnostic: MissingAttribute / InvalidIdent / EmptyBody (generic over tag+attr)",
+        "Wire: key_fragments updated for new variants (tag/attr/found composition)",
+        "Parser body accepts CDATA or plain Text; whitespace-only → EmptyBody"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace → 359 pass (347 baseline + 12 R38.2a new)",
+        "cargo clippy --workspace --all-targets → 12 pre-existing only, pinion-forge zero",
+        "Multi-sibling accumulation verified (test accumulates_signal_diagnostics_across_siblings)",
+        "Unsupported sibling does not block valid signal parsing (test verified)",
+        "Wire id distinguishes MissingAttribute by tag+attribute hash fragments"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R38.2b: <computed name ty>CDATA body</computed> + Computed::new(owner, |_| ...)",
+        "R38.2b: owner usage in new() (no longer prefixed _) once Computed needs it",
+        "R38.2c: <resource> async fetch + ResourceState enum wiring",
+        "R38.2d: <use crate path/> external module import + path resolution",
+        "R38.2x: syn-based <ty> validation if rustc error distance hurts UX"
       ]
     },
     "Round 4": {

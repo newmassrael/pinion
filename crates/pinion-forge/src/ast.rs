@@ -3,9 +3,8 @@
 //! is closed (`<use>` / `<signal>` / `<computed>` / `<resource>` under
 //! `kind="reactive"`).
 //!
-//! At R38.1 the child set is empty (the variants land in R38.2+) — the
-//! AST shape is set now so adding variants is purely additive and not a
-//! breaking change for downstream codegen consumers.
+//! R38.2a adds `<signal>` to the child set. `<computed>` / `<resource>` /
+//! `<use>` land in subsequent slices.
 
 /// Top-level `<pinion>` document. One file = one document = one emitted
 /// Rust struct (R38 ratify: "one file = one struct").
@@ -17,8 +16,8 @@ pub struct PinionDoc {
     /// DSL category — pins the codegen template chosen by
     /// [`crate::codegen`]. R38.1 supports only [`PinionKind::Reactive`].
     pub kind: PinionKind,
-    /// Closed child set. Always empty at R38.1; populated in R38.2+ when
-    /// `<signal>` / `<computed>` / `<resource>` / `<use>` land.
+    /// Closed child set. R38.2a populates [`PinionChild::Signal`];
+    /// `<computed>` / `<resource>` / `<use>` land in subsequent slices.
     pub children: Vec<PinionChild>,
 }
 
@@ -51,11 +50,32 @@ impl PinionKind {
     }
 }
 
-/// Closed child-element enum. Uninhabited at R38.1 by design: the parser
-/// rejects every `<pinion>` child with
-/// `PinionForgeDiagnostic::UnsupportedElement` until R38.2 lands the real
-/// variants. The shape exists so adding `Signal { .. }`, `Computed { .. }`
-/// etc. in R38.2 is additive and downstream consumers can already
-/// `match` on the (empty) set.
+/// Closed child-element enum. R38.2a populates the `Signal` variant;
+/// `<computed>` / `<resource>` / `<use>` land in subsequent slices.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PinionChild {}
+pub enum PinionChild {
+    /// `<signal name="..." ty="...">CDATA initial</signal>`. Compiles to
+    /// a `pub <name>: ::pinion_core::reactive::Signal<<ty>>` struct field
+    /// plus `Signal::new(<initial>)` inside the generated `new`.
+    Signal(SignalDecl),
+}
+
+/// Parsed `<signal>` child. The body (CDATA or plain text) is the
+/// initial-value expression that pinion-forge passes directly into
+/// `Signal::new(...)` at codegen time. Surface validation is intentionally
+/// shallow (non-empty name = valid Rust ident; non-empty ty; non-empty
+/// initial) — `rustc` is the source of truth for type/expression
+/// soundness, and surfacing a forwarded syntax error there is acceptable
+/// at R38.2a. A deeper `syn`-based validation lands in a later slice if
+/// the rustc message proves too distant from the `.pinion.xml` source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalDecl {
+    /// Rust identifier used as both the struct field name and the local
+    /// binding inside the generated `new` body.
+    pub name: String,
+    /// Rust type expression substituted into `Signal<...>`. Stored as the
+    /// raw author string; never inspected beyond non-emptiness.
+    pub ty: String,
+    /// Initial-value expression. Trimmed of leading/trailing whitespace.
+    pub initial: String,
+}

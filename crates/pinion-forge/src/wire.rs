@@ -60,7 +60,14 @@ fn key_fragments(diag: &PinionForgeDiagnostic) -> String {
         | PinionForgeDiagnostic::WrongXmlns { found, .. }
         | PinionForgeDiagnostic::UnknownKind { found, .. }
         | PinionForgeDiagnostic::InvalidName { found, .. } => found.clone(),
-        PinionForgeDiagnostic::UnsupportedElement { tag, .. } => tag.clone(),
+        PinionForgeDiagnostic::UnsupportedElement { tag, .. }
+        | PinionForgeDiagnostic::EmptyBody { tag, .. } => tag.clone(),
+        PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. } => {
+            format!("{tag}\u{1f}{attribute}")
+        }
+        PinionForgeDiagnostic::InvalidIdent { tag, attribute, found, .. } => {
+            format!("{tag}\u{1f}{attribute}\u{1f}{found}")
+        }
         PinionForgeDiagnostic::XmlParseError { .. }
         | PinionForgeDiagnostic::MissingXmlns { .. }
         | PinionForgeDiagnostic::MissingKind { .. }
@@ -123,7 +130,8 @@ fn actual_of(diag: &PinionForgeDiagnostic) -> Option<String> {
         PinionForgeDiagnostic::InvalidRoot { found, .. }
         | PinionForgeDiagnostic::WrongXmlns { found, .. }
         | PinionForgeDiagnostic::UnknownKind { found, .. }
-        | PinionForgeDiagnostic::InvalidName { found, .. } => Some(found.clone()),
+        | PinionForgeDiagnostic::InvalidName { found, .. }
+        | PinionForgeDiagnostic::InvalidIdent { found, .. } => Some(found.clone()),
         PinionForgeDiagnostic::UnsupportedElement { tag, .. } => Some(tag.clone()),
         _ => None,
     }
