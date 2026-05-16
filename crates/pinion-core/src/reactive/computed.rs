@@ -17,10 +17,11 @@
 //! sources read during the closure re-subscribe this `Computed`.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use super::owner::{
-    ObserverEntry, ReactiveNode, dispatch_dirty, next_node_id, run_with_node, with_current_owner,
+    ObserverEntry, ReactiveNode, dispatch_dirty, next_node_id, run_cleanups_isolated,
+    run_with_node, with_current_owner,
 };
 
 /// Derived reactive value. Cloning yields a handle to the same memoized cell.
@@ -31,10 +32,25 @@ pub struct Computed<T> {
 struct ComputedInner<T> {
     id: u64,
     dirty: Cell<bool>,
+    /// Reentrancy flag: set while the user's compute closure is running.
+    /// Catches reactive cycles (a `Computed` reading itself, directly or
+    /// transitively via another `Computed::get()` chain) and surfaces them
+    /// as a panic instead of stack-overflowing the program (R37.5 #3).
+    in_compute: Cell<bool>,
     cached: RefCell<Option<T>>,
     compute: Box<dyn Fn() -> T>,
     source_cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
     observers: RefCell<Vec<ObserverEntry>>,
+}
+
+/// RAII guard hoisted out of `recompute` so clippy's
+/// `items_after_statements` does not fire on the inline definition.
+struct InComputeGuard<'a>(&'a Cell<bool>);
+
+impl Drop for InComputeGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
 }
 
 impl<T> ReactiveNode for ComputedInner<T>
@@ -82,6 +98,7 @@ where
             inner: Rc::new(ComputedInner {
                 id: next_node_id(),
                 dirty: Cell::new(true),
+                in_compute: Cell::new(false),
                 cached: RefCell::new(None),
                 compute: Box::new(compute),
                 source_cleanups: RefCell::new(Vec::new()),
@@ -129,13 +146,27 @@ where
     }
 
     fn recompute(&self) {
+        // Cycle detection (R37.5 #3): if a Computed reads itself transitively,
+        // `recompute` re-enters before the outer call finished. Catch it
+        // explicitly — otherwise the program stack-overflows.
+        assert!(
+            !self.inner.in_compute.get(),
+            "reactive cycle detected: Computed (id={}) read itself during compute",
+            self.inner.id
+        );
         // Drain stale source subscriptions before re-running so dependency
         // tracking reflects only the reads that happen in *this* pass. This
-        // is what makes branching `compute` bodies correct.
-        let drained: Vec<_> = std::mem::take(&mut *self.inner.source_cleanups.borrow_mut());
-        for cleanup in drained {
-            cleanup();
-        }
+        // is what makes branching `compute` bodies correct. Each cleanup is
+        // isolated so a panicking one cannot abort the recompute pass
+        // mid-state (R37.5 #4).
+        let drained: Vec<Box<dyn FnOnce()>> =
+            std::mem::take(&mut *self.inner.source_cleanups.borrow_mut());
+        run_cleanups_isolated(drained);
+
+        // RAII guard: clear `in_compute` even if the user closure panics,
+        // so the Computed is not stuck "in compute" forever.
+        self.inner.in_compute.set(true);
+        let _guard = InComputeGuard(&self.inner.in_compute);
 
         let strong: Rc<ComputedInner<T>> = Rc::clone(&self.inner);
         let self_as_node: Rc<dyn ReactiveNode> = strong;
@@ -169,12 +200,17 @@ where
             id: node_id,
             node: Rc::downgrade(node),
         });
-        let inner_clone: Rc<ComputedInner<T>> = Rc::clone(&self.inner);
+        // `Weak` capture: a subscriber dropping after us must not keep this
+        // Computed alive (R37.5 #2 leak fix). On upgrade-failure the cleanup
+        // is a no-op — Computed already gone, no observer list to prune.
+        let inner_weak: Weak<ComputedInner<T>> = Rc::downgrade(&self.inner);
         node.add_subscription_cleanup(Box::new(move || {
-            inner_clone
-                .observers
-                .borrow_mut()
-                .retain(|entry| entry.id != node_id);
+            if let Some(inner) = inner_weak.upgrade() {
+                inner
+                    .observers
+                    .borrow_mut()
+                    .retain(|entry| entry.id != node_id);
+            }
         }));
     }
 
@@ -399,6 +435,75 @@ mod tests {
         });
         // One recompute even though both b and c marked d dirty.
         assert_eq!(d.get(), 114);
+        assert_eq!(counter.get(), 2);
+    }
+
+    // ---- R37.5 #3: cycle detection ----------------------------------------
+
+    #[test]
+    #[should_panic(expected = "reactive cycle detected")]
+    fn self_referential_computed_panics_with_cycle_message() {
+        use std::cell::RefCell;
+        // A Computed that reads its own value through a shared handle slot.
+        // Without cycle detection this stack-overflows.
+        let slot: Rc<RefCell<Option<Computed<i32>>>> = Rc::new(RefCell::new(None));
+        let slot_for_compute = Rc::clone(&slot);
+        let c = Computed::new(move || {
+            if let Some(self_ref) = slot_for_compute.borrow().as_ref() {
+                self_ref.get() + 1
+            } else {
+                0
+            }
+        });
+        *slot.borrow_mut() = Some(c.clone());
+        // First read triggers recompute; closure attempts self-read → panic.
+        let _ = c.get();
+    }
+
+    #[test]
+    fn computed_recovers_after_panic_in_compute_closure() {
+        use std::cell::Cell as StdCell;
+        // The in_compute RAII guard must clear the flag on closure panic so a
+        // later get() is not poisoned with the panicked-during-compute state.
+        let trip = Rc::new(StdCell::new(true));
+        let trip_for_c = Rc::clone(&trip);
+        let c = Computed::new(move || {
+            assert!(!trip_for_c.get(), "compute fail");
+            42_i32
+        });
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.get()));
+        assert!(first.is_err());
+        // Flip the trip and confirm subsequent reads work.
+        trip.set(false);
+        // Computed remains dirty (recompute did not complete); next get retries.
+        assert_eq!(c.get(), 42);
+    }
+
+    // ---- R37.5 #5: batch dedup correctness regression ---------------------
+
+    #[test]
+    fn batch_with_many_writes_to_same_signal_dedups_in_pending_set() {
+        use super::super::owner::batch;
+        // Stress: 200 writes to the same signal during a batch should still
+        // produce exactly one observer notification at close.
+        let a = Signal::new(0_i32);
+        let a_for_c = a.clone();
+        let counter = Rc::new(Cell::new(0_u32));
+        let counter_for_c = Rc::clone(&counter);
+        let c = Computed::new(move || {
+            counter_for_c.set(counter_for_c.get() + 1);
+            a_for_c.get()
+        });
+        // Prime cache.
+        assert_eq!(c.get(), 0);
+        assert_eq!(counter.get(), 1);
+        batch(|| {
+            for i in 1..=200 {
+                a.set(i);
+            }
+        });
+        // Lazy: c not recomputed until read; one read = one recompute.
+        let _ = c.get();
         assert_eq!(counter.get(), 2);
     }
 }

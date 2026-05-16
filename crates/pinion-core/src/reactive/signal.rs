@@ -15,7 +15,7 @@
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -125,13 +125,18 @@ where
         });
         // Cleanup runs when the subscriber's subscription set tears down
         // (owner drop, or computed re-evaluation): remove this node from the
-        // observer list so a stale id is never notified.
-        let signal_inner = Rc::clone(&self.inner);
+        // observer list so a stale id is never notified. We capture a `Weak`
+        // — not a strong `Rc` — so a long-lived subscriber observing a
+        // short-lived signal does not pin the signal's storage forever
+        // (R37.5 #2 leak fix).
+        let signal_weak: Weak<SignalInner<T>> = Rc::downgrade(&self.inner);
         node.add_subscription_cleanup(Box::new(move || {
-            signal_inner
-                .observers
-                .borrow_mut()
-                .retain(|entry| entry.id != node_id);
+            if let Some(inner) = signal_weak.upgrade() {
+                inner
+                    .observers
+                    .borrow_mut()
+                    .retain(|entry| entry.id != node_id);
+            }
         }));
     }
 
@@ -443,5 +448,46 @@ mod tests {
             assert!(!owner.is_dirty());
         });
         assert!(owner.is_dirty());
+    }
+
+    // ---- R37.5 #2: Weak cleanup capture (no strong-Rc leak) ---------------
+
+    #[test]
+    fn long_lived_owner_does_not_pin_short_lived_signals() {
+        use std::rc::Rc;
+        // Hold a Weak to the signal's inner. After the user-side `Signal`
+        // handle is dropped, the Weak must fail to upgrade — confirming the
+        // owner does *not* anchor the source via its cleanup closure.
+        let owner = Owner::new();
+        let weak = {
+            let s = Signal::new(0_i32);
+            let inner_weak = Rc::downgrade(&s.inner);
+            owner.run(|| {
+                let _ = s.get();
+            });
+            // `s` drops here.
+            inner_weak
+        };
+        assert!(
+            weak.upgrade().is_none(),
+            "Signal inner must be freed once the user handle drops, even with owner alive"
+        );
+        // Owner stays alive — its cleanup closure now holds a stale Weak and
+        // safely no-ops on drop.
+        drop(owner);
+    }
+
+    #[test]
+    fn dropping_signal_then_owner_does_not_panic() {
+        let owner = Owner::new();
+        {
+            let s = Signal::new(0_i32);
+            owner.run(|| {
+                let _ = s.get();
+            });
+            // Drop the signal first.
+        }
+        // Owner drop must not panic when cleanup tries to upgrade a dead Weak.
+        drop(owner);
     }
 }
