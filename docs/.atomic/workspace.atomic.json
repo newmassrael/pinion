@@ -2011,6 +2011,72 @@
       ],
       "decision_status": "active"
     },
+    "5.34": {
+      "title": "AI scene change proposal: prepare/preview/apply/cancel lifecycle",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "AI 가 typed change 제안 → stable preview_id 발급 → dry_run 결정성으로 미리보기 → apply/cancel/timeout 으로 완료; §2#3 invariant 의 명시적 RPC lifecycle 층.",
+      "rationale_bullets": [
+        "§2 #3 dry_run invariant 를 RPC lifecycle 로 표면화 — stable handle 위 prepare/finalize textbook",
+        "§5.32 locate + §5.33 overlay 결합 — AI target 선택 → 제안 → visual preview → accept/reject",
+        "VSCode CodeAction / 2PC prepare-commit / SAGA — prepare→finalize lifecycle 패턴 textbook",
+        "preview_id 가 stable identity — locate / bbox / screenshot 모두 preview state 대상 query 가능",
+        "TTL + timeout 으로 bounded lifetime — leak 방지, 동시 preview 다수 허용",
+        "view-fn purity (§6.3) + signal snapshot/restore (§5.22 R37) 위에 자연 구현",
+        "preview state = post-apply state 동치 (SCE 결정성) — apply race 없음"
+      ],
+      "inputs_bullets": [
+        "proposal.kind: typed enum (SetSignal / ReplaceView / SetStyle / DispatchIntent — R40 초기 4종)",
+        "proposal.target: scene path (§5.32 locate 결과 또는 명시적 segment chain)",
+        "proposal.payload: kind 별 (Signal value / View ref / Modifier patch / Intent envelope)",
+        "ttl_hint_ms: optional preview lifetime 제안 (server clamp; default = R40.1 spec)"
+      ],
+      "outputs_bullets": [
+        "preview_id: opaque stable handle — server 발급, monotonic, TTL 만료 시 invalid",
+        "preview_scene_diff: 영향 path 집합 — locate / bbox 결합용",
+        "diagnostic: invalid 시 reason (target missing / type mismatch / TTL exceeded / capacity full)",
+        "lifecycle RPC 4종: propose_change / apply_preview / cancel_preview / list_previews"
+      ],
+      "caveats_bullets": [
+        "preview ledger 용량 bounded — max concurrent + max TTL server 결정 (R40.1+ spec)",
+        "동시 preview 충돌 — 동일 target path 두 preview 시 정책 R40.1 spec (last-write or reject)",
+        "apply atomicity — all-or-nothing; 부분 적용 없음; failure 시 ledger rollback",
+        "cancel idempotent — 중복 cancel safe; 이미 expired 도 동일 ok 반환",
+        "preview state side-effect 0 — signal write sandbox, Effect/Command 실제 실행 안 함",
+        "timeout 자동 cancel — stale preview_id 사용 시 명시 error, ID 재사용 금지",
+        "기존 dry_run RPC (one-shot) 유지 — propose_change 는 stateful 보강 axis"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "one-shot dry_run + manual replay",
+          "reason": "stable handle 없음; AI 가 preview introspect 불가"
+        },
+        {
+          "alternative": "text diff / LSP CodeAction 차용",
+          "reason": "pinion scene-as-data 모델과 mismatch; visual 단절"
+        },
+        {
+          "alternative": "implicit auto-commit",
+          "reason": "AI safety surface 깨짐; preview = apply 동치 위반"
+        },
+        {
+          "alternative": "snapshot/restore primitive 직접 노출",
+          "reason": "너무 low-level; lifecycle 부재"
+        },
+        {
+          "alternative": "diff-only return",
+          "reason": "visual preview 불가; §5.33 overlay 와 단절"
+        }
+      ],
+      "impact_scope": [
+        "2",
+        "5.7",
+        "5.22",
+        "5.32",
+        "5.33"
+      ],
+      "decision_status": "active"
+    },
     "5.4": {
       "title": "SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)",
       "parent_doc": "docs/GENERATED.md",
@@ -5329,6 +5395,64 @@
         "Implementation Round 6: rust-toolchain.toml + workspace Cargo.toml per §6.2",
         "CLAUDE.md authoring still outstanding (Round 3 carry-forward unresolved)",
         "Tier 2 axes inventory if needed (AccessKit, i18n, animation, hot reload, diagnostics)"
+      ]
+    },
+    "Round 40": {
+      "decision_summary": "§5.34 new — AI scene change proposal lifecycle axis ratify (prepare/preview/apply/cancel)",
+      "changes_bullets": [
+        "§5.34 new section: AI scene change proposal lifecycle (typed propose → preview_id → apply/cancel)",
+        "intent + 7 rationale + 4 inputs + 4 outputs + 7 caveats + 5 alternatives + impact_scope=[2,5.7,5.22,5.32,5.33]",
+        "lifecycle RPC 4종 queued: propose_change / apply_preview / cancel_preview / list_previews (R40.1+)",
+        "초기 typed change enum 4종 명시: SetSignal / ReplaceView / SetStyle / DispatchIntent",
+        "preview ledger TTL + side-effect sandbox 보증; §2#3 dry_run invariant 의 stateful lifecycle 층"
+      ],
+      "verification_bullets": [
+        "Mnemosyne validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync (post-mutation 확인 예정)",
+        "atomic entries 54→55 / sections 43→44 / orphan_refs 0+0",
+        "cargo test --workspace 454 pass 유지 (spec-only round, no code change)"
+      ],
+      "impact_refs": [
+        "2",
+        "5.7",
+        "5.22",
+        "5.32",
+        "5.33",
+        "5.34"
+      ],
+      "carry_forward_bullets": [
+        "R40.1: pinion-rpc dispatch 12 → 16 methods (propose/apply/cancel/list_previews)",
+        "R40.1: preview ledger 구조 spec — monotonic ID + TTL clamp + per-target conflict policy",
+        "R40.2+: typed change enum 단계 impl — SetSignal 부터 ReplaceView/SetStyle/DispatchIntent 순",
+        "R40.3+: ai-introspect-demo 확장 — locate → propose → overlay preview → apply 시연",
+        "existing: §5.16 GPU render 진입; hello-button reactive 통합 (R38.3); overlay Controller promote"
+      ],
+      "publishable_decision_summary": "§5.34 new — AI scene change proposal lifecycle axis ratify (prepare/preview/apply/cancel)",
+      "publishable_changes_bullets": [
+        "§5.34 new section: AI scene change proposal lifecycle (typed propose → preview_id → apply/cancel)",
+        "intent + 7 rationale + 4 inputs + 4 outputs + 7 caveats + 5 alternatives + impact_scope=[2,5.7,5.22,5.32,5.33]",
+        "lifecycle RPC 4종 queued: propose_change / apply_preview / cancel_preview / list_previews (R40.1+)",
+        "초기 typed change enum 4종 명시: SetSignal / ReplaceView / SetStyle / DispatchIntent",
+        "preview ledger TTL + side-effect sandbox 보증; §2#3 dry_run invariant 의 stateful lifecycle 층"
+      ],
+      "publishable_verification_bullets": [
+        "Mnemosyne validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync (post-mutation 확인 예정)",
+        "atomic entries 54→55 / sections 43→44 / orphan_refs 0+0",
+        "cargo test --workspace 454 pass 유지 (spec-only round, no code change)"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.7",
+        "5.22",
+        "5.32",
+        "5.33",
+        "5.34"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R40.1: pinion-rpc dispatch 12 → 16 methods (propose/apply/cancel/list_previews)",
+        "R40.1: preview ledger 구조 spec — monotonic ID + TTL clamp + per-target conflict policy",
+        "R40.2+: typed change enum 단계 impl — SetSignal 부터 ReplaceView/SetStyle/DispatchIntent 순",
+        "R40.3+: ai-introspect-demo 확장 — locate → propose → overlay preview → apply 시연",
+        "existing: §5.16 GPU render 진입; hello-button reactive 통합 (R38.3); overlay Controller promote"
       ]
     },
     "Round 5": {
