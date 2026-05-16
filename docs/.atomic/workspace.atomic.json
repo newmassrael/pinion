@@ -2404,6 +2404,76 @@
         "Text auto-sizing within taffy nodes — cosmic-text shape feeds intrinsic size hint"
       ]
     },
+    "Round 24": {
+      "decision_summary": "Round 24 — R23 round close: §5.21 taffy auto-layout flex v0 implementation (5 slices)",
+      "changes_bullets": [
+        "pinion-core::style: LayoutStyle + Display/FlexDirection/JustifyContent/AlignItems/Size/SizeValue types",
+        "Scene 7 variants (Box/Text/Path/Image/Container/External + Effect) gain layout: LayoutStyle sidecar",
+        "Container/External also gain rect: Rect for layout-pass output target (was Box-only before)",
+        "pinion-runtime depends on taffy 0.7; layout.rs translates LayoutStyle → taffy::Style + walk",
+        "LayoutStyle absorbs padding/margin (Modifier role unified — one sidecar drives the layout pass)",
+        "ContainerNode gains style: BoxStyle (containers double as visually-styled \"div\" for backgrounds)",
+        "hello-button BTN_RECT hardcode gone: root flex centers 160x80 button container",
+        "compute_layout(scene, viewport_w, viewport_h) called from render() each frame; pure / cache-free"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 223 → 235 (+12 across 5 slices; 0 regressions including 5 new layout tests)",
+        "cargo clippy --workspace --all-targets: clean on every slice; pre-existing 12 warnings untouched",
+        "validate_workspace per slice: T1=0 T3=0 RT=1/1 GENERATED.md=sync throughout",
+        "Mnemosyne mutations: 3 impl bindings on §5.21 (LayoutStyle/compute_layout/hello-button view)"
+      ],
+      "impact_refs": [
+        "5.2",
+        "5.3",
+        "5.11",
+        "5.21",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "Grid display variant + transforms (translate/rotate/scale) — next layout spec round",
+        "Position::Absolute support — useful for overlays, tooltips, modal dialogs",
+        "Layout cache invalidation strategy (per-frame recompute today; change-detection later)",
+        "Text auto-sizing via cosmic-text shape feeding taffy intrinsic measure callback",
+        "BorderStyle full implementation (currently fill only — corner_radius and border unread in paint)",
+        "EdgeInsets type if Rect-as-insets proves awkward in real layout code",
+        "Modifier struct removal (its fields now in LayoutStyle; struct is vestigial)",
+        "Sub-pixel rect coordinates (currently u32; taffy compute uses f32 but truncates back to u32)"
+      ],
+      "publishable_decision_summary": "Round 24 — R23 round close: §5.21 taffy auto-layout flex v0 implementation (5 slices)",
+      "publishable_changes_bullets": [
+        "pinion-core::style: LayoutStyle + Display/FlexDirection/JustifyContent/AlignItems/Size/SizeValue types",
+        "Scene 7 variants (Box/Text/Path/Image/Container/External + Effect) gain layout: LayoutStyle sidecar",
+        "Container/External also gain rect: Rect for layout-pass output target (was Box-only before)",
+        "pinion-runtime depends on taffy 0.7; layout.rs translates LayoutStyle → taffy::Style + walk",
+        "LayoutStyle absorbs padding/margin (Modifier role unified — one sidecar drives the layout pass)",
+        "ContainerNode gains style: BoxStyle (containers double as visually-styled \"div\" for backgrounds)",
+        "hello-button BTN_RECT hardcode gone: root flex centers 160x80 button container",
+        "compute_layout(scene, viewport_w, viewport_h) called from render() each frame; pure / cache-free"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 223 → 235 (+12 across 5 slices; 0 regressions including 5 new layout tests)",
+        "cargo clippy --workspace --all-targets: clean on every slice; pre-existing 12 warnings untouched",
+        "validate_workspace per slice: T1=0 T3=0 RT=1/1 GENERATED.md=sync throughout",
+        "Mnemosyne mutations: 3 impl bindings on §5.21 (LayoutStyle/compute_layout/hello-button view)"
+      ],
+      "publishable_impact_refs": [
+        "5.2",
+        "5.3",
+        "5.11",
+        "5.21",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Grid display variant + transforms (translate/rotate/scale) — next layout spec round",
+        "Position::Absolute support — useful for overlays, tooltips, modal dialogs",
+        "Layout cache invalidation strategy (per-frame recompute today; change-detection later)",
+        "Text auto-sizing via cosmic-text shape feeding taffy intrinsic measure callback",
+        "BorderStyle full implementation (currently fill only — corner_radius and border unread in paint)",
+        "EdgeInsets type if Rect-as-insets proves awkward in real layout code",
+        "Modifier struct removal (its fields now in LayoutStyle; struct is vestigial)",
+        "Sub-pixel rect coordinates (currently u32; taffy compute uses f32 but truncates back to u32)"
+      ]
+    },
     "Round 3": {
       "decision_summary": "Round 3 — 9 axes ratified to single options; §5.2 §5.4 slot names confirmed; framework-first kickoff path locked",
       "changes_bullets": [
