@@ -28,6 +28,7 @@ use crate::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
     ThreadOwnership,
 };
+use crate::intent::Intent;
 
 pub struct Button {
     engine: Engine<ButtonPolicy>,
@@ -66,6 +67,11 @@ impl Default for Button {
 /// machine round-trips through `dispatch`.
 pub struct ButtonExternal {
     inner: Button,
+    /// §5.20 intent buffer. Filled when the wrapped SCXML transitions
+    /// in a way the framework should report (e.g. Pressed → Hover
+    /// signals a completed click); drained by the runtime walk or the
+    /// `scene/intents` RPC method.
+    pending_intents: Vec<Intent>,
 }
 
 impl ButtonExternal {
@@ -73,11 +79,23 @@ impl ButtonExternal {
     pub fn new() -> Self {
         Self {
             inner: Button::new(),
+            pending_intents: Vec::new(),
         }
     }
 
+    /// Drive a [`ButtonEvent`] through the wrapped SCXML and enqueue
+    /// any §5.20 intent the transition produces (e.g. `button.click`
+    /// when `Pressed` → `Hover` via `PointerUp`).
     pub fn send(&mut self, event: ButtonEvent) {
+        let before = self.inner.state();
         self.inner.send(event);
+        let after = self.inner.state();
+        if matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover) {
+            self.pending_intents.push(Intent::new_static(
+                "button.click",
+                IntrospectValue::Null,
+            ));
+        }
     }
 
     #[must_use]
@@ -119,6 +137,16 @@ impl External for ButtonExternal {
 
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
+    }
+
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        for intent in self.pending_intents.drain(..) {
+            sink(intent);
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        !self.pending_intents.is_empty()
     }
 }
 
@@ -478,5 +506,81 @@ mod tests {
             schema.fields,
             &[("state", "string"), ("send", "string")]
         );
+    }
+
+    #[test]
+    fn button_external_emits_click_intent_on_pressed_to_hover() {
+        // §5.20 click semantics: a full Enter → Down → Up cycle ends
+        // at Hover and emits one `button.click` intent.
+        let mut bx = ButtonExternal::new();
+        assert!(!bx.is_dirty());
+        bx.send(ButtonEvent::PointerEnter);
+        bx.send(ButtonEvent::PointerDown);
+        assert!(!bx.is_dirty(), "PointerDown alone is not a click");
+        bx.send(ButtonEvent::PointerUp);
+        assert!(bx.is_dirty(), "PointerUp from Pressed should arm click");
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "button.click");
+        assert_eq!(harvested[0].payload, IntrospectValue::Null);
+        assert!(!bx.is_dirty(), "drain should leave the buffer empty");
+    }
+
+    #[test]
+    fn button_external_pointer_down_alone_emits_no_intent() {
+        // Mid-press without release should not signal a click —
+        // guards against premature emission.
+        let mut bx = ButtonExternal::new();
+        bx.send(ButtonEvent::PointerEnter);
+        bx.send(ButtonEvent::PointerDown);
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty());
+    }
+
+    #[test]
+    fn button_external_press_then_leave_cancels_click() {
+        // Pressed → Idle (via PointerLeave) is a *cancel*, not a
+        // click; nothing should land on the intent channel.
+        let mut bx = ButtonExternal::new();
+        bx.send(ButtonEvent::PointerEnter);
+        bx.send(ButtonEvent::PointerDown);
+        bx.send(ButtonEvent::PointerLeave);
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty());
+    }
+
+    #[test]
+    fn button_external_invoke_send_pointer_up_emits_click_intent() {
+        // §5.20 cross-channel: a click driven through the §5.15
+        // invoke action also queues the intent — same emission path
+        // whether the transition comes from winit or RPC.
+        let mut bx = ButtonExternal::new();
+        let _ = bx
+            .invoke("send", IntrospectValue::Text("PointerEnter".to_string()))
+            .unwrap();
+        let _ = bx
+            .invoke("send", IntrospectValue::Text("PointerDown".to_string()))
+            .unwrap();
+        let _ = bx
+            .invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .unwrap();
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "button.click");
+    }
+
+    #[test]
+    fn button_state_snapshot_emits_no_intents() {
+        // Snapshots are observation-only; the §5.20 channel must stay
+        // silent on them.
+        let mut snap = ButtonStateSnapshot::new(ButtonState::Hover);
+        assert!(!snap.is_dirty());
+        let mut harvested: Vec<Intent> = Vec::new();
+        snap.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty());
     }
 }

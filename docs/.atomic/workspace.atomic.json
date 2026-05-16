@@ -807,7 +807,8 @@
       "caveats_bullets": [
         "R18 slice 1: Intent + IntentTag in pinion-core::intent; pinion-derive macro (scalar variants).",
         "R18 slice 2: 5 introspectable Scene variants gain optional tag field + with_tag builder.",
-        "R18 slice 3: External::drain_intents/is_dirty defaults + runtime IntentQueue walk."
+        "R18 slice 3: External::drain_intents/is_dirty defaults + runtime IntentQueue walk.",
+        "R18 slice 5: ButtonExternal emits button.click intent on Pressed → Hover (PointerUp)."
       ],
       "implementations": [
         {
@@ -837,6 +838,10 @@
         {
           "file": "crates/pinion-rpc/src/intents.rs",
           "symbol": "IntentsError"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/button.rs",
+          "symbol": "ButtonExternal::send"
         }
       ],
       "decision_status": "active"
