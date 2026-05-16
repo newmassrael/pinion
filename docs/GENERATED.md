@@ -1919,6 +1919,9 @@ fn main() {
 - R40.4: non-dispatcher mutation paths (winit direct) must bump revision — conservative policy
 - R40.5: TypedProposal #[non_exhaustive] enum; SetSignal first variant; SetStyle/etc R40.x sub-slices
 - R40.5: SetSignal value carried as serde_json::Value; type coercion to T deferred to R40.6 apply
+- R40.6: Proposal trait gains apply(scene) method; vtable dispatch per variant — Box&lt;dyn&gt; safe
+- R40.6: apply consumes entry on success AND failure (one-shot); conflict alone retains entry
+- R40.6: apply_preview self-bumps revision; excluded from mutates_scene_on_success (no double-bump)
 
 
 
@@ -1957,6 +1960,9 @@ fn main() {
 - crates/pinion-rpc/src/preview/propose.rs:propose_change
 - crates/pinion-rpc/src/preview/propose.rs:ProposeOutcome
 - crates/pinion-rpc/src/dispatch.rs:handle_scene_propose_change
+- crates/pinion-rpc/src/preview/apply.rs:apply_preview
+- crates/pinion-rpc/src/preview/apply.rs:ApplyOutcome
+- crates/pinion-rpc/src/dispatch.rs:handle_scene_apply_preview
 
 
 
@@ -4202,6 +4208,40 @@ fn main() {
 - R40.6: scene/apply_preview (16th) — OCC 검증 + Signal::set 적용 + revision.bump()
 - R40.7+: TypedProposal::SetStyle / ReplaceView / DispatchIntent 순차 추가
 - scene_revision 동기화 to signal writes — R40.6 결정 (auto bump in apply?)
+- existing: §5.16 GPU, hello-button reactive, overlay Controller promote
+
+
+
+### Round 40.6 — §5.34 scene/apply_preview (16th RPC) — OCC + variant apply + revision bump; lifecycle complete
+
+**Changes**:
+- Proposal trait + apply(scene) method — vtable polymorphic side-effect dispatch
+- TypedProposal::SetSignal::apply — routes to rewind() with json→IntrospectValue 교차
+- preview/apply.rs apply_preview: extract → proposal.apply → revision.bump
+- ApplyOutcome { preview_id, new_revision } typed result
+- ApplyError + ApplyRejected(String) new variant; rejection tag for AI branch logic
+- handle_scene_apply_preview: wire JSON parsing + apply_error_to_rpc data shape
+- data: {variant, expected/actual for conflict, reason for ApplyRejected}
+- apply self-bumps revision (excluded from mutates_scene_on_success to avoid double-bump)
+
+
+
+**Verification**:
+- cargo test --workspace: 507 → 516 pass (+5 apply ledger +4 wire RPC)
+- cargo clippy --workspace --all-targets: 11 baseline only — 신규 0
+- end-to-end: propose → apply → query roundtrip writes 77 신호
+- OCC 경합: scene/rewind 으로 revision 이동 → apply서 BaseRevisionConflict
+- type mismatch: bool value vs Int slot → ApplyRejected(Intervene) tag
+
+
+
+**Impact**: §5.34, §5.7, §5.12, §5.22
+
+
+**Carry forward**:
+- R40.7+: TypedProposal::SetStyle / ReplaceView / DispatchIntent 순차 추가
+- AI agent dogfood: ai-introspect-demo 의 locate → propose → apply 디모 (선택)
+- DispatchContext 구조체 도입 — 파라미터 4개 도달, 추가 시 고려
 - existing: §5.16 GPU, hello-button reactive, overlay Controller promote
 
 

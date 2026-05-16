@@ -10,6 +10,10 @@
 //! The enum is `#[non_exhaustive]` so adding variants is non-breaking
 //! per Hyrum / Bloch API-evolution conventions.
 
+use pinion_core::Scene;
+
+use crate::rewind::{rewind, RewindError};
+
 use super::Proposal;
 
 /// Closed enum of typed proposals carried by the preview ledger
@@ -54,6 +58,52 @@ impl Proposal for TypedProposal {
     fn affected_paths(&self) -> Vec<String> {
         match self {
             Self::SetSignal { target_path, .. } => vec![target_path.clone()],
+        }
+    }
+
+    fn apply(&self, scene: &mut Scene) -> Result<(), String> {
+        match self {
+            Self::SetSignal {
+                signal_path, value, ..
+            } => apply_set_signal(scene, signal_path, value),
+        }
+    }
+}
+
+fn apply_set_signal(
+    scene: &mut Scene,
+    signal_path: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let intro_value = json_to_introspect_value(value)
+        .ok_or_else(|| "UnsupportedValueShape".to_string())?;
+    rewind(scene, signal_path, intro_value).map_err(rewind_error_tag)
+}
+
+fn rewind_error_tag(err: RewindError) -> String {
+    match err {
+        RewindError::Path(_) => "Path".to_string(),
+        RewindError::UnsupportedPath => "UnsupportedPath".to_string(),
+        RewindError::NoExternalAtPath => "NoExternalAtPath".to_string(),
+        RewindError::IntrospectionOptedOut => "IntrospectionOptedOut".to_string(),
+        RewindError::Intervene(_) => "Intervene".to_string(),
+    }
+}
+
+fn json_to_introspect_value(
+    v: &serde_json::Value,
+) -> Option<pinion_core::external::IntrospectValue> {
+    use pinion_core::external::IntrospectValue;
+    match v {
+        serde_json::Value::Null => Some(IntrospectValue::Null),
+        serde_json::Value::Bool(b) => Some(IntrospectValue::Bool(*b)),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(IntrospectValue::Int)
+            .or_else(|| n.as_f64().map(IntrospectValue::Float)),
+        serde_json::Value::String(s) => Some(IntrospectValue::Text(s.clone())),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            Some(IntrospectValue::Json(v.clone()))
         }
     }
 }

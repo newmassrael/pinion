@@ -370,6 +370,16 @@ mod tests {
             paths.extend(self.extra_affected.iter().cloned());
             paths
         }
+
+        fn apply(&self, _scene: &mut pinion_core::Scene) -> Result<(), String> {
+            // The PreviewLedger unit tests exercise the lifecycle
+            // primitives (propose / cancel / list / apply_extract);
+            // `apply_preview` end-to-end coverage lives in
+            // [`crate::preview::apply::tests`]. Here, a no-op apply
+            // keeps the ledger-level tests independent of the runtime
+            // side-effect layer.
+            Ok(())
+        }
     }
 
     fn t0() -> Instant {

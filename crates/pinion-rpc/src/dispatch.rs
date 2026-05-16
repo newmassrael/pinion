@@ -2,15 +2,15 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R40.5): `scene/query`,
-//! `scene/click`, `scene/rewind`, `scene/snapshot`, `scene/dry_run`,
-//! `scene/waitFor`, `scene/screenshot`, `scene/invoke`,
-//! `scene/intents`, `scene/locate`, `scene/locate_region`,
-//! `scene/bbox`, `scene/cancel_preview`, `scene/list_previews`,
-//! `scene/propose_change`. The preview-lifecycle methods take an
-//! additional `&PreviewLedger` argument that the dispatcher receives
-//! from its caller alongside the scene, plus a `&SceneRevision` for
-//! OCC bookkeeping.
+//! response envelope. Registered methods (R40.6 — 16 typed):
+//! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
+//! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
+//! `scene/invoke`, `scene/intents`, `scene/locate`,
+//! `scene/locate_region`, `scene/bbox`, `scene/cancel_preview`,
+//! `scene/list_previews`, `scene/propose_change`,
+//! `scene/apply_preview`. The preview-lifecycle methods take the
+//! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
+//! receives from its caller alongside the scene.
 //!
 //! Notifications (requests without `id`) elicit no response per the spec
 //! — [`dispatch`] returns `None` in that case. Errors map to the
@@ -40,8 +40,8 @@ use crate::locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };
 use crate::preview::{
-    cancel_preview, list_previews, propose_change, PreviewId, PreviewLedger, PreviewView,
-    ProposeError, ProposeOutcome, TypedProposal,
+    apply_preview, cancel_preview, list_previews, propose_change, ApplyError, ApplyOutcome,
+    PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome, TypedProposal,
 };
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
@@ -171,9 +171,9 @@ pub fn dispatch(
         "scene/propose_change" => {
             handle_scene_propose_change(previews, revision, request.params.as_ref())
         }
-        // R40.6: scene/apply_preview lands here and will be tagged in
-        // `mutates_scene_on_success` since it commits a stored
-        // proposal against the live scene.
+        "scene/apply_preview" => {
+            handle_scene_apply_preview(scene, revision, previews, request.params.as_ref())
+        }
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -215,10 +215,16 @@ pub fn dispatch(
 /// Single source of truth for "method mutates scene state on success".
 ///
 /// `scene/click` / `scene/rewind` / `scene/invoke` mutate via
-/// `External::invoke` semantics; `scene/dry_run` is explicitly
-/// non-mutating per §2#3; `scene/intents` drains a queue without
-/// affecting the rendered scene; the preview-lifecycle methods
-/// touch only the ledger; the introspection methods are read-only.
+/// `External::invoke` semantics and the dispatcher bumps the
+/// revision around them; `scene/dry_run` is explicitly non-mutating
+/// per §2#3; `scene/intents` drains a queue without affecting the
+/// rendered scene; the introspection methods are read-only.
+///
+/// `scene/propose_change` / `scene/cancel_preview` /
+/// `scene/list_previews` touch only the ledger and so do not bump.
+/// `scene/apply_preview` mutates the scene but bumps internally
+/// (via [`crate::preview::apply_preview`]), so it is intentionally
+/// **excluded** here to avoid a double-bump.
 fn mutates_scene_on_success(method: &str) -> bool {
     matches!(
         method,
@@ -760,6 +766,65 @@ fn propose_outcome_to_json(outcome: ProposeOutcome) -> Value {
         Value::Number(outcome.base_revision.into()),
     );
     Value::Object(map)
+}
+
+fn handle_scene_apply_preview(
+    scene: &mut Scene,
+    revision: &SceneRevision,
+    previews: &PreviewLedger,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(raw_id) = params.get("preview_id").and_then(Value::as_u64) else {
+        return Err(invalid_params(
+            "params.preview_id missing or not a positive integer",
+        ));
+    };
+    let Some(id) = PreviewId::try_new(raw_id) else {
+        return Err(invalid_params("params.preview_id must be non-zero"));
+    };
+    match apply_preview(scene, revision, previews, id) {
+        Ok(outcome) => Ok(apply_outcome_to_json(outcome)),
+        Err(err) => Err(apply_error_to_rpc(&err)),
+    }
+}
+
+fn apply_outcome_to_json(outcome: ApplyOutcome) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "preview_id".into(),
+        Value::Number(outcome.preview_id.get().into()),
+    );
+    map.insert(
+        "new_revision".into(),
+        Value::Number(outcome.new_revision.into()),
+    );
+    Value::Object(map)
+}
+
+fn apply_error_to_rpc(err: &ApplyError) -> RpcError {
+    let mut data_obj = serde_json::Map::new();
+    let variant = match err {
+        ApplyError::UnknownPreview => "UnknownPreview",
+        ApplyError::Expired => "Expired",
+        ApplyError::BaseRevisionConflict { expected, actual } => {
+            data_obj.insert("expected".into(), Value::Number((*expected).into()));
+            data_obj.insert("actual".into(), Value::Number((*actual).into()));
+            "BaseRevisionConflict"
+        }
+        ApplyError::ApplyRejected(tag) => {
+            data_obj.insert("reason".into(), Value::String(tag.clone()));
+            "ApplyRejected"
+        }
+    };
+    data_obj.insert("variant".into(), Value::String(variant.to_string()));
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::Object(data_obj)),
+    }
 }
 
 fn propose_error_to_rpc(err: &ProposeError) -> RpcError {
@@ -1448,6 +1513,12 @@ mod tests {
         fn affected_paths(&self) -> Vec<String> {
             vec![self.target.clone()]
         }
+        fn apply(&self, _scene: &mut Scene) -> Result<(), String> {
+            // Used only by the wire-format tests for cancel /
+            // list_previews; never reached because those flows do
+            // not exercise apply_preview.
+            Ok(())
+        }
     }
 
     fn now_inst() -> std::time::Instant {
@@ -1763,6 +1834,132 @@ mod tests {
         let err = second.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("CapacityFull".to_string())));
+    }
+
+    // ---- R40.6: scene/apply_preview JSON-RPC wire ----
+
+    #[test]
+    fn scene_apply_preview_writes_signal_end_to_end() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+
+        // 1) propose
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/external/count","signal_path":"/external/count","value":77},"id":601}"#;
+        let propose_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, propose_req).unwrap());
+        let preview_id = propose_resp
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
+
+        // 2) apply
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":602}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, &apply_req).unwrap());
+        assert!(apply_resp.error.is_none(), "unexpected error: {:?}", apply_resp.error);
+        let obj = apply_resp.result.unwrap();
+        assert_eq!(obj.get("preview_id"), Some(&Value::Number(preview_id.into())));
+        assert_eq!(obj.get("new_revision"), Some(&Value::Number(1.into())));
+
+        // 3) query confirms scene now reflects the apply.
+        let query_req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":603}"#;
+        let query_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, query_req).unwrap());
+        assert_eq!(query_resp.result.unwrap(), Value::Number(77.into()));
+        assert!(previews.is_empty());
+    }
+
+    #[test]
+    fn scene_apply_preview_unknown_id_surfaces_typed_variant() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/apply_preview","params":{"preview_id":9999},"id":604}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        let err = resp.error.unwrap();
+        let data = err.data.unwrap();
+        assert_eq!(
+            data.get("variant"),
+            Some(&Value::String("UnknownPreview".to_string()))
+        );
+    }
+
+    #[test]
+    fn scene_apply_preview_revision_conflict_keeps_entry() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        // Propose at base_revision = 0.
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/external/count","signal_path":"/external/count","value":42},"id":605}"#;
+        let propose_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, propose_req).unwrap());
+        let preview_id = propose_resp
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
+
+        // Scene mutates underneath the preview (rewind bumps revision).
+        let rewind_req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/count","value":1},"id":606}"#;
+        let _ = dispatch(&mut scene, &previews, &revision, rewind_req);
+
+        // Now apply must fail with BaseRevisionConflict.
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":607}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, &apply_req).unwrap());
+        let err = apply_resp.error.unwrap();
+        let data = err.data.unwrap();
+        assert_eq!(
+            data.get("variant"),
+            Some(&Value::String("BaseRevisionConflict".to_string()))
+        );
+        assert_eq!(data.get("expected"), Some(&Value::Number(0.into())));
+        assert_eq!(data.get("actual"), Some(&Value::Number(1.into())));
+        // Entry stays alive; revision still at 1 (apply did not bump on conflict).
+        assert_eq!(previews.len(), 1);
+        assert_eq!(revision.current(), 1);
+    }
+
+    #[test]
+    fn scene_apply_preview_type_mismatch_surfaces_apply_rejected() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        // bool against an Int slot → Intervene type mismatch.
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"SetSignal","target_path":"/external/count","signal_path":"/external/count","value":true},"id":608}"#;
+        let propose_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, propose_req).unwrap());
+        let preview_id = propose_resp
+            .result
+            .unwrap()
+            .get("preview_id")
+            .and_then(Value::as_u64)
+            .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":609}}"#
+        );
+        let apply_resp =
+            parse_response(&dispatch(&mut scene, &previews, &revision, &apply_req).unwrap());
+        let err = apply_resp.error.unwrap();
+        let data = err.data.unwrap();
+        assert_eq!(
+            data.get("variant"),
+            Some(&Value::String("ApplyRejected".to_string()))
+        );
+        assert_eq!(
+            data.get("reason"),
+            Some(&Value::String("Intervene".to_string()))
+        );
+        // Entry consumed even on apply failure (one-shot).
+        assert!(previews.is_empty());
     }
 
     #[test]

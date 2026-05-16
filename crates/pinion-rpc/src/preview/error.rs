@@ -33,12 +33,13 @@ impl std::fmt::Display for ProposeError {
 
 impl std::error::Error for ProposeError {}
 
-/// Reasons [`crate::preview::PreviewLedger::apply_extract`] can fail.
+/// Reasons [`crate::preview::PreviewLedger::apply_extract`] (and the
+/// higher-level [`crate::preview::apply_preview`]) can fail.
 ///
 /// Lifecycle invariants per §5.34: `cancel` is idempotent and total
 /// (no error surface), `list` is read-only and total (no error
-/// surface); only `apply_extract` can fail, with the categories
-/// enumerated here.
+/// surface); only `apply` can fail, with the categories enumerated
+/// here.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplyError {
@@ -61,6 +62,17 @@ pub enum ApplyError {
         /// The live scene revision the caller passed in.
         actual: u64,
     },
+    /// The proposal was successfully extracted from the ledger but
+    /// the runtime side-effect (signal write, intent dispatch, etc.)
+    /// failed. The entry has already been **removed** — applying a
+    /// proposal is a one-shot consume, so a recoverable retry needs
+    /// a fresh `propose_change`.
+    ///
+    /// The payload string carries a short reason tag intended for
+    /// machine pattern-matching (e.g. `"UnsupportedPath"`,
+    /// `"TypeMismatch"`, `"UnknownPath"`); the caller's AI agent
+    /// switches on it without parsing prose.
+    ApplyRejected(String),
 }
 
 impl std::fmt::Display for ApplyError {
@@ -72,6 +84,9 @@ impl std::fmt::Display for ApplyError {
                 f,
                 "preview base_revision={expected} but current scene revision={actual}"
             ),
+            Self::ApplyRejected(reason) => {
+                write!(f, "apply rejected at runtime: {reason}")
+            }
         }
     }
 }
