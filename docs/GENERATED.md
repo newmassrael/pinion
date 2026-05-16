@@ -897,6 +897,60 @@ fn main() {
 
 
 
+### §5.21. Layout system (taffy auto-layout, flex v0)
+
+
+**Intent**: Auto-layout via taffy flexbox: ContainerNode + every leaf node carries LayoutStyle sidecar; pinion-runtime computes final Rect per node each frame before paint.
+
+
+**Rationale**:
+- §5.3 §5.11 v0 used absolute Rect coords — hello-button hardcodes BTN_RECT; not viable for real apps
+- taffy is the de-facto Rust layout engine; same engine Iced/Dioxus/Floem use
+- flex covers ~80% of real UI; grid additive in a later round, no v0 hard dep
+- Auto-layout matches view-fn purity (§6.3): layout is a pure function of (LayoutStyle tree, viewport)
+- Modifier {margin, padding, align} (R21) maps 1:1 onto taffy padding/margin/align → no dead code
+- Single layout pass per frame populates rect; paint stays unchanged (reads rect like before)
+
+
+
+**Inputs**:
+- §5.2 Scene closed primitive set (5 introspectable variants gain layout sidecar)
+- §5.3 R20/R21 schemas (BoxStyle/TextStyle/etc. unchanged; Layout is a new orthogonal sidecar)
+- §5.11 layered shape decision (Layout is just another sidecar alongside Style + Modifier)
+- §6.3 view-fn purity (layout pass is pure: same tree + viewport → same rects)
+- Viewport dimensions from pinion-runtime WindowRouter (W, H per window)
+
+
+
+**Outputs**:
+- LayoutStyle { display: Flex, direction, justify, align, gap, size, padding } sidecar on every node
+- pinion-runtime::layout::compute_layout(scene, viewport) — mutates Rect tree in place
+- ContainerNode layout flows children top-down per taffy flexbox
+- Modifier {margin, padding} fields fold into taffy style (Modifier.align kept for cross-axis anchor)
+- hello-button BTN_RECT hardcoded coords removed; centered Button via flex justify_content=Center
+
+
+
+**Caveats**:
+- R23: LayoutStyle wraps taffy::Style — wrapper keeps taffy an impl detail, can swap if needed.
+- R23: Scene 5 introspectable variants gain layout: LayoutStyle field (parallels Style/tag sidecars).
+- R23: pinion-runtime::layout::compute_layout(&mut Scene, viewport_w, viewport_h) entry point.
+- R23: Modifier {margin, padding} fold into taffy padding/margin; Modifier.align retained for anchor.
+- R23: Grid display + transforms (translate/rotate/scale) explicit carry-forward; flex-only v0.
+
+
+
+**Alternatives rejected**:
+- Manual Rect-only (current R17) — non-starter at scale; hello-button already shows the brittleness
+- Custom layout engine — months of work for a worse taffy
+- morphorm / stretch — taffy succeeds both, no reason to revisit
+- Grid in v0 — premature; flex must prove out before two-engine maintenance burden
+
+
+
+
+
+
 ### §5.3. DSL surface form (file-based vs macro vs view-fn)
 
 
@@ -936,6 +990,7 @@ fn main() {
 - R20 §5.3: PathCommand enum {MoveTo,LineTo,CurveTo,Close}; PathNode.data: Vec<PathCommand>.
 - R20 §5.3: PathStyle {stroke:Stroke?, fill:Color?}; Stroke {color, width:u32, cap:StrokeCap}.
 - R20 §5.3: Modifier {margin:Rect, padding:Rect, align:Align}; Align 9-pos (corners/edges/center).
+- R23 §5.21 taffy lock: Modifier margin/padding consumed by layout pass; align retained.
 
 
 
@@ -1911,6 +1966,39 @@ fn main() {
 - Tag concatenation policy for nested prefix chains (e.g. panel.toolbar.save_btn.click) — currently single-level
 - IntrospectValue::Object payload — enables structured intent data beyond scalar kinds
 - Async stream intent channel (sync poll v0 still in place)
+
+
+
+### Round 23 — Round 23 — §5.21 new section: taffy auto-layout (flex v0) spec lock; auto-layout supersedes manual Rect
+
+**Changes**:
+- New §5.21 section: Layout system (taffy auto-layout, flex v0) under §5 parent
+- Intent: auto-layout via taffy; ContainerNode + every leaf node carries LayoutStyle sidecar
+- Rationale (6): real apps need flex; taffy is canonical Rust engine; Modifier R21 maps 1:1; pure pass per frame
+- Inputs/outputs/alternatives populated; rejects manual Rect, custom engine, morphorm, grid in v0
+- 5 §5.21 caveats: LayoutStyle wraps taffy::Style; 5 introspectable variants gain field; compute_layout entry
+- §5.3 cross-ref caveat: Modifier margin/padding consumed by R23 layout pass; align retained as anchor
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 30 → 31; entries 22 → 23
+- no code changes this round (spec only); R24 implementation follows
+- atomic mutations: 1 add_section + 5 set_section_* + 6 add_section_caveat; all pass T3 cap
+- spec round pattern mirrors R20 (§5.3 spec) + R21 (§5.3 impl) cadence
+
+
+
+**Impact**: §5.2, §5.3, §5.11, §5.21, §6.3
+
+
+**Carry forward**:
+- R24: taffy dep in pinion-runtime; LayoutStyle wrapper + Scene sidecar fields; compute_layout pass
+- R24: Modifier margin/padding → taffy mapping; hello-button auto-layout migration
+- Grid display variant in a later spec round (flex must prove out first)
+- Transform Modifier (translate/rotate/scale) future axis — not covered by taffy
+- Layout cache invalidation strategy (per-frame vs change-detection) deferred
+- Text auto-sizing within taffy nodes — cosmic-text shape feeds intrinsic size hint
 
 
 
