@@ -71,6 +71,64 @@ impl Color {
     pub const TRANSPARENT: Self = Self::rgba(0, 0, 0, 0);
 }
 
+/// Border for a [`BoxNode`](crate::scene::BoxNode) — §5.3 R20 lock.
+/// `width: u32` is in pixels in the same coordinate space as
+/// [`Rect`](crate::scene::Rect).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct Border {
+    pub color: Color,
+    pub width: u32,
+}
+
+impl Border {
+    /// Construct a border from a color and pixel width.
+    #[must_use]
+    pub const fn new(color: Color, width: u32) -> Self {
+        Self { color, width }
+    }
+}
+
+/// Sidecar style for [`BoxNode`](crate::scene::BoxNode) per the §5.11
+/// "layered" decision (§5.3 R20 lock).
+///
+/// `Default` produces a fully-transparent box with no border —
+/// drop-in compatible with the previous `BoxNode { fill: 0, .. }`
+/// shape.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct BoxStyle {
+    pub fill: Color,
+    pub border: Option<Border>,
+    pub corner_radius: u32,
+}
+
+impl BoxStyle {
+    /// Solid-fill `BoxStyle` with no border and no rounding.
+    #[must_use]
+    pub const fn filled(fill: Color) -> Self {
+        Self {
+            fill,
+            border: None,
+            corner_radius: 0,
+        }
+    }
+
+    /// Builder: attach a border.
+    #[must_use]
+    pub const fn with_border(mut self, border: Border) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    /// Builder: set the corner radius in pixels.
+    #[must_use]
+    pub const fn with_corner_radius(mut self, radius: u32) -> Self {
+        self.corner_radius = radius;
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +185,36 @@ mod tests {
     #[test]
     fn default_is_transparent() {
         assert_eq!(Color::default(), Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn box_style_default_is_transparent_fill_no_border() {
+        let s = BoxStyle::default();
+        assert_eq!(s.fill, Color::TRANSPARENT);
+        assert!(s.border.is_none());
+        assert_eq!(s.corner_radius, 0);
+    }
+
+    #[test]
+    fn box_style_filled_helper_sets_fill_only() {
+        let s = BoxStyle::filled(Color::rgb(0x10, 0x20, 0x30));
+        assert_eq!(s.fill, Color::rgb(0x10, 0x20, 0x30));
+        assert!(s.border.is_none());
+        assert_eq!(s.corner_radius, 0);
+    }
+
+    #[test]
+    fn box_style_with_border_builder_attaches() {
+        let s = BoxStyle::filled(Color::TRANSPARENT)
+            .with_border(Border::new(Color::rgb(0xff, 0, 0), 2));
+        let border = s.border.expect("border was attached");
+        assert_eq!(border.color, Color::rgb(0xff, 0, 0));
+        assert_eq!(border.width, 2);
+    }
+
+    #[test]
+    fn box_style_with_corner_radius_builder() {
+        let s = BoxStyle::filled(Color::TRANSPARENT).with_corner_radius(8);
+        assert_eq!(s.corner_radius, 8);
     }
 }

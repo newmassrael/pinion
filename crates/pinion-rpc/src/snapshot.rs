@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn box_root_snapshots_as_box() {
-        let scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
+        let scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
         assert_eq!(snapshot(&scene, "").unwrap(), SnapshotNode::Box);
     }
 

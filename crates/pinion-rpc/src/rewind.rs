@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn box_at_root_rejected() {
-        let mut scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
+        let mut scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
         let err = rewind(&mut scene, "/external/count", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, RewindError::NoExternalAtPath);
     }

@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn walk_skips_non_external_primitives() {
-        let mut scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()).with_tag("just_a_box"));
+        let mut scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("just_a_box"));
         let mut q = IntentQueue::new();
         walk_scene_and_drain(&mut scene, &mut q);
         assert!(q.is_empty());

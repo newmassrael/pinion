@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn box_at_root_reports_no_external() {
-        let scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
+        let scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
         let err = click(&scene, "/external", 0.0, 0.0).unwrap_err();
         assert_eq!(err, ClickError::NoExternalAtPath);
     }

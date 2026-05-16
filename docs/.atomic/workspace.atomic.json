@@ -908,6 +908,14 @@
         {
           "file": "crates/pinion-core/src/style.rs",
           "symbol": "Color"
+        },
+        {
+          "file": "crates/pinion-core/src/style.rs",
+          "symbol": "BoxStyle"
+        },
+        {
+          "file": "crates/pinion-core/src/style.rs",
+          "symbol": "Border"
         }
       ],
       "decision_status": "active"

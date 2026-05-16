@@ -950,6 +950,8 @@ fn main() {
 
 **Implementations**:
 - crates/pinion-core/src/style.rs:Color
+- crates/pinion-core/src/style.rs:BoxStyle
+- crates/pinion-core/src/style.rs:Border
 
 
 

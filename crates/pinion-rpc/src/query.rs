@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn box_at_root_reports_no_external() {
-        let scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
+        let scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
         assert_eq!(
             query(&scene, "/external/count").unwrap_err(),
             QueryError::NoExternalAtPath,

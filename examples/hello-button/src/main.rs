@@ -91,8 +91,8 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
         24,
     );
     Scene::Container(ContainerNode::new(vec![
-        Scene::Box(BoxNode::new(BG_FILL, Rect::new(0, 0, WIN_W, WIN_H))),
-        Scene::Box(BoxNode::new(btn_fill, BTN_RECT)),
+        Scene::Box(BoxNode::filled(Rect::new(0, 0, WIN_W, WIN_H), BG_FILL)),
+        Scene::Box(BoxNode::filled(BTN_RECT, btn_fill)),
         Scene::Text(TextNode::new(label, label_rect)),
     ]))
 }
@@ -127,7 +127,7 @@ fn paint_box(node: &BoxNode, buffer: &mut [u32], buf_w: usize, buf_h: usize) {
         let row = y * buf_w;
         // Softbuffer wants `0xAARRGGBB` u32 layout; the typed Color
         // round-trips through `to_argb` bit-exact (§5.3 R20 R21 slice 1).
-        buffer[row + x_start..row + x_end].fill(node.fill.to_argb());
+        buffer[row + x_start..row + x_end].fill(node.style.fill.to_argb());
     }
 }
 

@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn box_at_root_reports_no_external() {
-        let mut scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
+        let mut scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
         let err = invoke(
             &mut scene,
             "/external/x",

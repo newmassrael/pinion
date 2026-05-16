@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn empty_scene_returns_empty_batch() {
-        let mut scene = Scene::Box(BoxNode::new(Color::default(), Rect::default()));
+        let mut scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
         let drained = drain_intents(&mut scene).unwrap();
         assert!(drained.is_empty());
     }
