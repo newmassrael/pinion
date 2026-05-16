@@ -48,7 +48,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §2. Settled invariants
 
 
-**Intent**: v1 invariants: structured scene mandatory; RPC headless; dry_run; mode toggle; SCE-managed state; GUI/TUI dual; scene-as-data; SCE meta = AI authoring surface
+**Intent**: v1 invariants: structured scene mandatory; RPC headless; dry_run; mode toggle; SCE-managed state; GUI/TUI dual; scene-as-data; SCE meta = universal cross-framework pattern authoring surface
 
 
 **Rationale**:
@@ -81,6 +81,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 **Caveats**:
 - R24.5: invariant #5 reworded (statechart → SCE-managed); #8 added (SCE as AI authoring surface).
+- R37.9: #8 = universal cross-framework patterns; framework authoring (pinion-forge) out of scope
 
 
 
@@ -3207,6 +3208,29 @@ fn main() {
 - pinion-forge를 §6 워크스페이스 멤버로 추가하는 build round
 - §2 invariant #8 표현 명확화 spec round 후보 (선택)
 - W3C SCXML local-name collision footgun 회피 정책 pinion-forge 단 적용
+
+
+
+### Round 37.9 — §2 invariant #8 narrowed to universal cross-framework patterns; framework authoring out of scope
+
+**Changes**:
+- §2 intent: AI authoring surface → universal cross-framework pattern authoring
+- §2 caveat: R37.9 narrowing — framework authoring (pinion-forge) out of #8 scope
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1, GENERATED.md=sync
+- byte-length: intent=189 (≤200), caveat=95 (≤100)
+
+
+
+**Impact**: §2
+
+
+**Carry forward**:
+- R38: pinion-forge DSL 명세 (file extension + element schema + diagnostic catalog)
+- R38.1: crates/pinion-forge skeleton — sce-build commit-pin dep 추가
 
 
 

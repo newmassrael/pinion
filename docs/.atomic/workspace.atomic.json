@@ -29,7 +29,7 @@
     "2": {
       "title": "Settled invariants",
       "parent_doc": "docs/GENERATED.md",
-      "intent": "v1 invariants: structured scene mandatory; RPC headless; dry_run; mode toggle; SCE-managed state; GUI/TUI dual; scene-as-data; SCE meta = AI authoring surface",
+      "intent": "v1 invariants: structured scene mandatory; RPC headless; dry_run; mode toggle; SCE-managed state; GUI/TUI dual; scene-as-data; SCE meta = universal cross-framework pattern authoring surface",
       "rationale_bullets": [
         "Structured scene enforced means AI introspect everywhere not pixel-blind",
         "Event-with-input contract collapses Tier-2 hypothetical-input awkwardness",
@@ -53,7 +53,8 @@
         "Mode toggle runtime flag controlling diff vs full re-emit strategy"
       ],
       "caveats_bullets": [
-        "R24.5: invariant #5 reworded (statechart → SCE-managed); #8 added (SCE as AI authoring surface)."
+        "R24.5: invariant #5 reworded (statechart → SCE-managed); #8 added (SCE as AI authoring surface).",
+        "R37.9: #8 = universal cross-framework patterns; framework authoring (pinion-forge) out of scope"
       ],
       "decision_status": "active"
     },
@@ -4101,6 +4102,40 @@
         "pinion-forge를 §6 워크스페이스 멤버로 추가하는 build round",
         "§2 invariant #8 표현 명확화 spec round 후보 (선택)",
         "W3C SCXML local-name collision footgun 회피 정책 pinion-forge 단 적용"
+      ]
+    },
+    "Round 37.9": {
+      "decision_summary": "§2 invariant #8 narrowed to universal cross-framework patterns; framework authoring out of scope",
+      "changes_bullets": [
+        "§2 intent: AI authoring surface → universal cross-framework pattern authoring",
+        "§2 caveat: R37.9 narrowing — framework authoring (pinion-forge) out of #8 scope"
+      ],
+      "verification_bullets": [
+        "validate_workspace: T1=0 T3=0 RT=1/1, GENERATED.md=sync",
+        "byte-length: intent=189 (≤200), caveat=95 (≤100)"
+      ],
+      "impact_refs": [
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "R38: pinion-forge DSL 명세 (file extension + element schema + diagnostic catalog)",
+        "R38.1: crates/pinion-forge skeleton — sce-build commit-pin dep 추가"
+      ],
+      "publishable_decision_summary": "§2 invariant #8 narrowed to universal cross-framework patterns; framework authoring out of scope",
+      "publishable_changes_bullets": [
+        "§2 intent: AI authoring surface → universal cross-framework pattern authoring",
+        "§2 caveat: R37.9 narrowing — framework authoring (pinion-forge) out of #8 scope"
+      ],
+      "publishable_verification_bullets": [
+        "validate_workspace: T1=0 T3=0 RT=1/1, GENERATED.md=sync",
+        "byte-length: intent=189 (≤200), caveat=95 (≤100)"
+      ],
+      "publishable_impact_refs": [
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R38: pinion-forge DSL 명세 (file extension + element schema + diagnostic catalog)",
+        "R38.1: crates/pinion-forge skeleton — sce-build commit-pin dep 추가"
       ]
     },
     "Round 4": {
