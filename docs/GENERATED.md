@@ -323,6 +323,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R17 ImageNode v0: `source: String` + `rect: Rect`; codec/loader deferred to §5.3 DSL
 - R18 §5.20 adds tag: Option<Cow<'static, str>> to introspectable Scene variants
 - R20 §5.3 lock: BoxNode.fill u32 → Color; PathNode.data → Vec<PathCommand>; *Style structs added.
+- R29 §5.25: Modifier struct superseded by Vec<ModifierOp> chain (closed enum form).
 
 
 
@@ -383,6 +384,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R18 §5.20 slice 4: scene/intents 9th method (poll-form drain).
 - R27 §5.23: scene/commands = 10th method; lists pending Commands from Update return.
 - R28 §5.24: scene/semantic = 11th method; returns SemanticProps tree (role/state/actions).
+- R29 §5.25: scene/modifiers = 12th method; returns ModifierOp chain per node path.
 
 
 
@@ -1148,6 +1150,68 @@ fn main() {
 - Platform-native AT only (UIA/AT-SPI directly) — locks to one OS; misses AI use
 - Compose Modifier.semantics chain — works but pinion uses field-on-node (simpler)
 - Separate semantic tree parallel to Scene — two trees to sync; bug-prone
+
+
+
+
+
+
+### §5.25. Modifier composition (chain pattern)
+
+
+**Intent**: Modifier = ordered chain of closed ModifierOp variants per Scene node. Compose/SwiftUI pattern. Replaces R20 Modifier struct; carries event handlers + reactive overlays + ad-hoc styles.
+
+
+**Rationale**:
+- Compose Modifier.padding(8).background(red).clickable{} chain is textbook canonical
+- SwiftUI ViewModifier same pattern; ARIA semantics overlay same shape
+- Old §5.11 Modifier struct (margin/padding/align) vestigial after R24 slice 4 absorption
+- Closed-form ModifierOp enum keeps Forge codegen + RPC introspection tractable
+- Event handlers (Clickable) need a place to live; modifier chain is canonical home
+- Reactive modifiers (Signal-driven visual overlay) update without full view-fn rebuild
+- Chain order matters (outside-in); declarative composition mirrors CSS specificity
+
+
+
+**Inputs**:
+- §5.11 R20 vestigial Modifier struct (margin/padding/align) — superseded
+- §5.20 Intent: Clickable ModifierOp dispatches Intent on activation
+- §5.22 Signal: reactive modifiers depend on Signal subscriptions
+- §5.23 Effect/Command: OnAppear/OnSignalChange ModifierOp dispatches Command
+- §5.24 SemanticProps: Semantic ModifierOp overlays additional role/state/actions
+
+
+
+**Outputs**:
+- Modifier = Vec<ModifierOp> on every Scene node (replaces §5.11 Modifier struct)
+- ModifierOp closed enum v0: Padding/Background/Border/Clickable/Hover/Focus/Semantic/OnAppear
+- Each Scene variant gains modifiers: Modifier field; default = empty chain
+- Chain process order = declaration order, outside-in
+- SCE schema: modifier list inline within Scene node; Forge emits Vec<ModifierOp>
+- scene/modifiers RPC method: inspect chain per node path (12th method)
+
+
+
+**Caveats**:
+- R29: Modifier = Vec<ModifierOp>; processed declaration order; outside-in semantics.
+- R29: Clickable(Intent) dispatches Intent on activation; routes to §5.23 Command pipeline.
+- R29: Hover/Focus modifiers toggle SemanticState bitflags per §5.24; reactive.
+- R29: Padding ModifierOp overrides LayoutStyle.padding for that node (specificity wins).
+- R29: OnAppear/OnSignalChange take Command<Intent>; fire via §5.23 Effect substrate.
+- R29: Reactive modifiers (Signal<T> dependency) update visual without view-fn rebuild.
+- R29: SCE schema: modifier list inline within Scene node; ordered closed-enum sequence.
+- R29: Forge codegen target = Vec<ModifierOp> literal; Rust runtime processes outside-in.
+- R29: scene/modifiers = 12th RPC method; returns ModifierOp chain per node path.
+- R29: Old §5.11 Modifier struct deleted; fields absorbed earlier (R24 slice 4 LayoutStyle).
+- R29: ModifierOp closed enum #[non_exhaustive]; v0 = 9 variants Padding..OnSignalChange.
+
+
+
+**Alternatives rejected**:
+- Struct-of-fields (R20 original) — closed shape; no event handlers; no reactivity; abandoned
+- Trait-based modifier wrappers — expressive but introspection-hostile (Rust trait objects)
+- Inline closures per Scene node — breaks dry_run determinism; not serializable
+- HOC pattern (React) — positional wrapping; not data-first
 
 
 
@@ -2384,6 +2448,41 @@ fn main() {
 - R33 §5.28 Animation (spring physics)
 - R34 §5.29 Structured concurrency
 - R35 §5.30 Accessibility (AccessKit bridge from §5.24)
+- R36 §5.31 Hot reload (signal serialization)
+
+
+
+### Round 29 — Round 29 — §5.25 new section: Modifier composition (chain pattern, Vec<ModifierOp>); supersedes R20 vestigial Modifier struct
+
+**Changes**:
+- New §5.25 section: Modifier composition under §5 parent (Compose/SwiftUI chain pattern)
+- Modifier = Vec<ModifierOp> closed enum replaces R20 §5.11 struct (margin/padding/align absorbed earlier)
+- ModifierOp v0 = 9 variants: Padding/Background/Border/Clickable/Hover/Focus/Semantic/OnAppear/OnSignalChange
+- Clickable dispatches Intent via §5.23 Command; Hover/Focus toggle §5.24 SemanticState bits
+- Reactive modifiers (Signal dep) update visual without view-fn rebuild
+- scene/modifiers = 12th RPC method (§5.12 caveat cross-ref); §5.11 supersede caveat
+- 11 §5.25 caveats lock chain semantics + ModifierOp shape + Forge codegen + RPC inspect
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 34 → 35; entries 28 → 29
+- no code changes this round; R30+ axis batch continues
+- atomic mutations: 1 add_section + 5 set_section_* + 13 add_section_caveat (3 retries for caps)
+- Textbook: Compose Modifier.padding(8).background(red).clickable{} = direct precedent
+
+
+
+**Impact**: §5.11, §5.12, §5.20, §5.22, §5.23, §5.24, §5.25
+
+
+**Carry forward**:
+- R30 §5.26 Incremental layout + damage tracking
+- R31 §5.16 GPU render (vello)
+- R32 §5.27 Virtualization Scene variant
+- R33 §5.28 Animation (spring physics)
+- R34 §5.29 Structured concurrency
+- R35 §5.30 Accessibility (AccessKit bridge)
 - R36 §5.31 Hot reload (signal serialization)
 
 
