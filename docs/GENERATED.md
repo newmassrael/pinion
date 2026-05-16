@@ -1355,6 +1355,63 @@ fn main() {
 
 
 
+### §5.28. Animation (spring physics + interruptible)
+
+
+**Intent**: Spring-physics animation over Signals; Animated<T> wraps a Signal value with stiffness/damping/mass; interruptible (new target preserves velocity). SwiftUI Animation pattern.
+
+
+**Rationale**:
+- SwiftUI Animation + React Spring + Compose animateXxxAsState all use spring physics by default
+- Tween/keyframe animations brittle on interruption; springs natural interrupt-resume
+- Animated<T> wraps Signal<T>; framework ticks spring solver per frame
+- §5.23 Effect substrate drives animation tick; cancellation via Owner drop
+- §5.22 Signal subscription auto-updates dependents when animated value changes
+- Pure: same (target, velocity, config) -> same trajectory; dry_run can predict end state
+- Interruptibility: new target with current velocity = continuous, no jump
+- Time = f32 seconds elapsed; deterministic given fixed clock source
+
+
+
+**Inputs**:
+- §5.22 Signal: animated value reads/writes through Signal substrate
+- §5.23 Effect: animation tick is a framework-driven Effect
+- Frame ZST (§6.3): per-frame dt fed in via Frame field evolution
+
+
+
+**Outputs**:
+- Animated<T> wrapper over Signal<T>; tracks current value + velocity + target
+- SpringConfig {stiffness, damping, mass}; presets (Default/Gentle/Stiff/Wobbly)
+- Spring solver tick per frame; deterministic given dt + state
+- AnimationDriver Effect: framework registers tick scope; cancelable via Owner
+- SCE schema: animated value declarations with config; Forge emits Animated<T> init
+
+
+
+**Caveats**:
+- R33: Animated<T> wraps Signal<T>; T: Animatable trait (numeric, color, transform).
+- R33: SpringConfig {stiffness:f32, damping:f32, mass:f32}; presets Default/Gentle/Stiff/Wobbly.
+- R33: Spring solver semi-implicit Euler; deterministic given (current, velocity, target, dt, config).
+- R33: Interrupt: new target preserves current velocity; spring re-targets continuously.
+- R33: AnimationDriver = framework Effect; ticks all active Animated per frame; cancel on Owner drop.
+- R33: dry_run predicts steady-state (target value); does not simulate tick sequence.
+- R33: Frame.dt field added per §6.3 (Frame ZST evolves); deterministic time source.
+- R33: SCE schema: animated block declares Signal + config; Forge emits Animated<T> init.
+
+
+
+**Alternatives rejected**:
+- Tween / keyframe animations — brittle on interrupt; abandoned by SwiftUI/Compose 2020s
+- Curve-based easing (Material Design) — supported by spring as special case
+- Frame-perfect coroutines (Compose Coroutine) — works but spring physics canonical now
+- ImGui per-frame interpolation — immediate mode; pinion data-first violation
+
+
+
+
+
+
 ### §5.3. DSL surface form (file-based vs macro vs view-fn)
 
 
@@ -2759,6 +2816,38 @@ fn main() {
 - R36 §5.31 Hot reload
 - Auto-size / variable height for VirtualList items (R32 v0 fixed Px only)
 - Partial damage rect within VirtualList scroll (R32 v0 marks whole rect)
+
+
+
+### Round 33 — Round 33 — §5.28 new section: Animation (spring physics + interruptible); SwiftUI Animation pattern over Signal substrate
+
+**Changes**:
+- New §5.28 section: Animation (spring physics) under §5 parent
+- Animated<T> wrapper over Signal<T>; tracks value + velocity + target
+- SpringConfig {stiffness, damping, mass}; 4 presets (Default/Gentle/Stiff/Wobbly)
+- Interruptible: new target preserves velocity, no jump
+- Frame.dt field addition per §6.3 (Frame ZST evolves)
+- AnimationDriver Effect ticks active Animated per frame; cancel via Owner
+- 8 §5.28 caveats lock spring solver + interrupt + dry_run prediction + SCE schema
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections 37 → 38; entries 32 → 33
+- no code changes (spec-only)
+- atomic mutations: 1 add_section + 5 set_section_* + 8 add_section_caveat
+
+
+
+**Impact**: §5.22, §5.23, §5.28, §6.3
+
+
+**Carry forward**:
+- R34 §5.29 Structured concurrency
+- R35 §5.30 Accessibility (AccessKit bridge)
+- R36 §5.31 Hot reload (signal serialization)
+- Tween animations as special case of spring (carry-forward)
+- Custom easing curves (carry-forward)
 
 
 
