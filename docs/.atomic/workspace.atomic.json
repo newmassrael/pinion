@@ -1396,6 +1396,7 @@
       "title": "Structured concurrency (Owner scope + Tokio + SyncSignal)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "intent": "Structured concurrency: Owner scope (§5.22) + Tokio task scopes + SyncSignal cross-thread. Cancellation propagates on Owner drop; no orphan tasks. Compose/Swift industry standard.",
       "rationale_bullets": [
         "Compose coroutineScope + Swift structured concurrency 2020s+ industry standard",
         "Orphan tasks (un-scoped futures) cause memory leaks + UI freezes; eliminated by structure",

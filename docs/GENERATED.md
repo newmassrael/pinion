@@ -1416,6 +1416,8 @@ fn main() {
 ### §5.29. Structured concurrency (Owner scope + Tokio + SyncSignal)
 
 
+**Intent**: Structured concurrency: Owner scope (§5.22) + Tokio task scopes + SyncSignal cross-thread. Cancellation propagates on Owner drop; no orphan tasks. Compose/Swift industry standard.
+
 
 **Rationale**:
 - Compose coroutineScope + Swift structured concurrency 2020s+ industry standard
