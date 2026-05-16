@@ -47,6 +47,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Scene};
+use pinion_core::SceneRevision;
 use pinion_rpc::{dispatch, PreviewLedger};
 use pinion_runtime::{compute_layout, walk_scene_and_drain, IntentQueue};
 use softbuffer::{Context, Surface};
@@ -369,6 +370,11 @@ struct App {
     /// read or mutate it through interior mutability; non-lifecycle
     /// methods ignore it.
     previews: PreviewLedger,
+    /// §5.34 R40.4 OCC revision token. `dispatch` auto-bumps on
+    /// mutating RPC methods; [`forward`](App::forward) explicitly
+    /// bumps after the winit-side `invoke` since that path bypasses
+    /// the dispatcher entirely.
+    revision: SceneRevision,
 }
 
 impl App {
@@ -395,6 +401,7 @@ impl App {
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
             previews: PreviewLedger::default(),
+            revision: SceneRevision::default(),
         }
     }
 
@@ -410,6 +417,11 @@ impl App {
                 let _ = intro.invoke("send", IntrospectValue::Text(name.to_string()));
             }
         }
+        // §5.34 R40.4: winit-side input bypasses the RPC dispatcher,
+        // so bump the OCC revision token directly. Spurious bumps for
+        // SCXML-rejected events are acceptable per the
+        // conservative-bump policy.
+        self.revision.bump();
         self.refresh_state();
         self.drain_intents();
     }
@@ -418,7 +430,7 @@ impl App {
     /// `scene/invoke /external/send PointerEnter` (and friends) now
     /// drive the SCXML the same way a winit click would.
     fn dispatch_rpc(&mut self, request: &str) {
-        if let Some(resp) = dispatch(&mut self.scene, &self.previews, request) {
+        if let Some(resp) = dispatch(&mut self.scene, &self.previews, &self.revision, request) {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {
                 // stdout closed (downstream consumer gone) — silently

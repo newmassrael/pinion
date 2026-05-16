@@ -27,7 +27,7 @@
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
-use pinion_core::Scene;
+use pinion_core::{Scene, SceneRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -88,23 +88,37 @@ pub struct RpcError {
 
 const JSONRPC_V2: &str = "2.0";
 
-/// Dispatch one JSON-RPC 2.0 frame against `scene` and `previews`.
+/// Dispatch one JSON-RPC 2.0 frame against `scene`, `previews`, and
+/// `revision`.
 ///
 /// Takes `&mut Scene` because some methods (e.g. `scene/rewind`) mutate
 /// External state through introspection. Read-only methods accept a
 /// reborrowed `&Scene` internally.
 ///
 /// `previews` is the §5.34 preview lifecycle ledger; methods such as
-/// `scene/cancel_preview` (and, in later R40 slices, `propose_change`
-/// / `list_previews` / `apply_preview`) read or mutate it through
-/// interior mutability. Methods that do not interact with the
+/// `scene/cancel_preview` / `scene/list_previews` (and, in later R40
+/// slices, `propose_change` / `apply_preview`) read or mutate it
+/// through interior mutability. Methods that do not interact with the
 /// lifecycle simply ignore the argument.
+///
+/// `revision` is the §5.34 R40.4 OCC token for the scene. Mutating
+/// handlers (`scene/click`, `scene/rewind`, `scene/invoke`) bump it
+/// on success so an in-flight preview's `base_revision` can detect
+/// concurrent mutation at apply time. Callers that mutate the scene
+/// through channels other than the dispatcher (e.g. winit input
+/// forwarded straight to `External::invoke`) are responsible for
+/// calling [`SceneRevision::bump`] themselves.
 ///
 /// Returns `Some(json)` for call requests (any with an `id`), `None`
 /// for notifications. Parse errors return a `Some(json)` carrying
 /// id=null per the spec.
 #[must_use]
-pub fn dispatch(scene: &mut Scene, previews: &PreviewLedger, request_json: &str) -> Option<String> {
+pub fn dispatch(
+    scene: &mut Scene,
+    previews: &PreviewLedger,
+    revision: &SceneRevision,
+    request_json: &str,
+) -> Option<String> {
     let parsed: Result<Request, _> = serde_json::from_str(request_json);
     let request = match parsed {
         Ok(r) => r,
@@ -133,6 +147,7 @@ pub fn dispatch(scene: &mut Scene, previews: &PreviewLedger, request_json: &str)
 
     let is_notification = request.id.is_none();
     let id = request.id.clone();
+    let method_name = request.method.clone();
 
     let outcome = match request.method.as_str() {
         "scene/query" => handle_scene_query(scene, request.params.as_ref()),
@@ -149,12 +164,23 @@ pub fn dispatch(scene: &mut Scene, previews: &PreviewLedger, request_json: &str)
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
         "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
         "scene/list_previews" => handle_scene_list_previews(previews),
+        // R40.5+: scene/propose_change, scene/apply_preview land here
+        // and will likewise be tagged in `mutates_scene_on_success`.
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
             data: Some(Value::String(request.method.clone())),
         }),
     };
+
+    // §5.34 R40.4: bump the OCC token after any mutating handler
+    // succeeds. The match-on-method list is the single source of
+    // truth for "does this method change visible scene state?";
+    // conservative bumping (occasional spurious bump) is preferred
+    // to a missed bump, which would silently mask preview staleness.
+    if outcome.is_ok() && mutates_scene_on_success(method_name.as_str()) {
+        revision.bump();
+    }
 
     if is_notification {
         return None;
@@ -176,6 +202,20 @@ pub fn dispatch(scene: &mut Scene, previews: &PreviewLedger, request_json: &str)
     };
 
     Some(serialize(&resp))
+}
+
+/// Single source of truth for "method mutates scene state on success".
+///
+/// `scene/click` / `scene/rewind` / `scene/invoke` mutate via
+/// `External::invoke` semantics; `scene/dry_run` is explicitly
+/// non-mutating per §2#3; `scene/intents` drains a queue without
+/// affecting the rendered scene; the preview-lifecycle methods
+/// touch only the ledger; the introspection methods are read-only.
+fn mutates_scene_on_success(method: &str) -> bool {
+    matches!(
+        method,
+        "scene/click" | "scene/rewind" | "scene/invoke",
+    )
 }
 
 fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -797,11 +837,17 @@ mod tests {
     }
 
     /// Test helper — calls [`dispatch`] with a freshly-allocated
-    /// [`PreviewLedger`]. Used by tests that do not exercise the
-    /// preview lifecycle methods; preview-specific tests instead
-    /// declare a long-lived ledger and call [`dispatch`] directly.
+    /// [`PreviewLedger`] and [`SceneRevision`]. Used by tests that do
+    /// not exercise the preview lifecycle methods or revision bumping;
+    /// preview-specific and revision-specific tests instead declare
+    /// long-lived state and call [`dispatch`] directly.
     fn dispatch_t(scene: &mut Scene, req: &str) -> Option<String> {
-        dispatch(scene, &PreviewLedger::default(), req)
+        dispatch(
+            scene,
+            &PreviewLedger::default(),
+            &SceneRevision::default(),
+            req,
+        )
     }
 
     #[test]
@@ -1326,7 +1372,7 @@ mod tests {
             r#"{{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{{"preview_id":{}}},"id":201}}"#,
             id.get()
         );
-        let resp = parse_response(&dispatch(&mut scene, &previews, &req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), &req).unwrap());
         assert!(resp.error.is_none());
         let obj = resp.result.unwrap();
         assert_eq!(obj.get("cancelled"), Some(&Value::Bool(true)));
@@ -1338,7 +1384,7 @@ mod tests {
         let mut scene = counted_scene(0);
         let previews = PreviewLedger::default();
         let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":9999},"id":202}"#;
-        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
         assert!(resp.error.is_none());
         let obj = resp.result.unwrap();
         assert_eq!(obj.get("cancelled"), Some(&Value::Bool(false)));
@@ -1355,9 +1401,9 @@ mod tests {
             r#"{{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{{"preview_id":{}}},"id":203}}"#,
             id.get()
         );
-        let first = parse_response(&dispatch(&mut scene, &previews, &req).unwrap());
+        let first = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), &req).unwrap());
         assert_eq!(first.result.unwrap().get("cancelled"), Some(&Value::Bool(true)));
-        let second = parse_response(&dispatch(&mut scene, &previews, &req).unwrap());
+        let second = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), &req).unwrap());
         assert_eq!(second.result.unwrap().get("cancelled"), Some(&Value::Bool(false)));
     }
 
@@ -1366,7 +1412,7 @@ mod tests {
         let mut scene = counted_scene(0);
         let previews = PreviewLedger::default();
         let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{},"id":204}"#;
-        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32602);
     }
 
@@ -1375,7 +1421,7 @@ mod tests {
         let mut scene = counted_scene(0);
         let previews = PreviewLedger::default();
         let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":0},"id":205}"#;
-        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32602);
     }
 
@@ -1384,7 +1430,7 @@ mod tests {
         let mut scene = counted_scene(0);
         let previews = PreviewLedger::default();
         let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":"abc"},"id":206}"#;
-        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32602);
     }
 
@@ -1395,7 +1441,7 @@ mod tests {
         let mut scene = counted_scene(0);
         let previews = PreviewLedger::default();
         let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":301}"#;
-        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
         assert!(resp.error.is_none());
         let arr = resp
             .result
@@ -1414,7 +1460,7 @@ mod tests {
             .propose(7, Box::new(WireTestProposal::new()), None, now_inst())
             .unwrap();
         let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":302}"#;
-        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
         let arr = resp.result.unwrap().get("previews").cloned().unwrap();
         let entries = arr.as_array().unwrap();
         assert_eq!(entries.len(), 1);
@@ -1448,7 +1494,7 @@ mod tests {
             .propose(0, Box::new(WireTestProposal::new()), None, now_inst())
             .unwrap();
         let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":303}"#;
-        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
         let arr = resp.result.unwrap().get("previews").cloned().unwrap();
         let entries = arr.as_array().unwrap();
         let ids: Vec<u64> = entries
@@ -1464,7 +1510,69 @@ mod tests {
         let previews = PreviewLedger::default();
         // Empty params object should be equivalent to omitted params.
         let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","params":{},"id":304}"#;
-        let resp = parse_response(&dispatch(&mut scene, &previews, req).unwrap());
+        let resp = parse_response(&dispatch(&mut scene, &previews, &SceneRevision::default(), req).unwrap());
         assert!(resp.error.is_none());
+    }
+
+    // ---- R40.4: SceneRevision auto-bump on mutating dispatch ----
+
+    #[test]
+    fn dispatch_bumps_revision_on_invoke_success() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        assert_eq!(revision.current(), 0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/increment","args":3},"id":401}"#;
+        let resp = parse_response(&dispatch(&mut scene, &previews, &revision, req).unwrap());
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        assert_eq!(revision.current(), 1, "scene/invoke success bumps revision");
+    }
+
+    #[test]
+    fn dispatch_does_not_bump_revision_on_invoke_failure() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        // Missing params triggers invalid_params (-32602) before any
+        // mutation runs.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{},"id":402}"#;
+        let _ = dispatch(&mut scene, &previews, &revision, req);
+        assert_eq!(revision.current(), 0, "failed dispatch leaves revision");
+    }
+
+    #[test]
+    fn dispatch_does_not_bump_revision_on_read_only_methods() {
+        let mut scene = counted_scene(42);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":403}"#;
+        let _ = dispatch(&mut scene, &previews, &revision, req);
+        assert_eq!(revision.current(), 0, "scene/query is read-only");
+    }
+
+    #[test]
+    fn dispatch_does_not_bump_revision_on_preview_lifecycle_methods() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        // cancel_preview touches the ledger but not the scene tree.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/cancel_preview","params":{"preview_id":1},"id":404}"#;
+        let _ = dispatch(&mut scene, &previews, &revision, req);
+        assert_eq!(revision.current(), 0, "preview lifecycle does not bump scene revision");
+        let req = r#"{"jsonrpc":"2.0","method":"scene/list_previews","id":405}"#;
+        let _ = dispatch(&mut scene, &previews, &revision, req);
+        assert_eq!(revision.current(), 0);
+    }
+
+    #[test]
+    fn dispatch_does_not_bump_revision_on_intents_drain() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        // intents drain harvests events without changing the rendered
+        // scene tree; revision must stay put.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/intents","id":406}"#;
+        let _ = dispatch(&mut scene, &previews, &revision, req);
+        assert_eq!(revision.current(), 0);
     }
 }

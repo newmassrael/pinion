@@ -1915,6 +1915,8 @@ fn main() {
 - R40.1: lazy eviction on propose — past-deadline entries reclaimed before capacity check
 - R40.1: Proposal as open trait; concrete variants R40.5 — ledger schema decoupled
 - R40.2: dispatch fn signature gained &PreviewLedger param — caller passes alongside &mut Scene
+- R40.4: SceneRevision = AtomicU64 OCC token; dispatch auto-bumps on click/rewind/invoke success
+- R40.4: non-dispatcher mutation paths (winit direct) must bump revision — conservative policy
 
 
 
@@ -1947,6 +1949,8 @@ fn main() {
 - crates/pinion-rpc/src/preview/list.rs:list_previews
 - crates/pinion-rpc/src/dispatch.rs:handle_scene_list_previews
 - crates/pinion-rpc/src/dispatch.rs:preview_view_to_json
+- crates/pinion-core/src/revision.rs:SceneRevision
+- crates/pinion-rpc/src/dispatch.rs:mutates_scene_on_success
 
 
 
@@ -4129,6 +4133,37 @@ fn main() {
 - R40.4: scene_revision counter pinion-core Scene (OCC token source for apply)
 - R40.5: typed Proposal enum (SetSignal initial) + scene/propose_change (15th)
 - R40.6: scene/apply_preview (16th) — OCC 검증 + runtime side-effect
+- existing: §5.16 GPU, hello-button reactive, overlay Controller promote
+
+
+
+### Round 40.4 — §5.34 SceneRevision OCC token (pinion-core) + dispatch auto-bump on mutating methods
+
+**Changes**:
+- pinion-core/src/revision.rs: SceneRevision(AtomicU64) + new/current/bump/Default
+- Acquire/AcqRel 메모리 순서 — reader 가 mutator 결과 관측 보장
+- dispatch 시그니처 + &SceneRevision 파라미터 (Scene/PreviewLedger/Revision/json)
+- mutates_scene_on_success() single-source-of-truth (click/rewind/invoke)
+- scene/intents 드레인, scene/dry_run, preview lifecycle, 읽기 method 은 bump 안 함
+- hello-button: revision 필드 + forward()에서 bump() (winit 입력 bypass)
+
+
+
+**Verification**:
+- cargo test --workspace: 483 → 493 pass (+5 SceneRevision +5 dispatch bump tests)
+- cargo clippy: 11 baseline only — 신규 0
+- concurrent test: 8 threads × 8 bumps = 64 unique values 1..=64
+- invoke success bumps; invoke invalid_params Ⱶ stays; read-only & lifecycle stays
+
+
+
+**Impact**: §5.34, §5.7
+
+
+**Carry forward**:
+- R40.5: typed Proposal enum (SetSignal initial) + scene/propose_change (15th RPC)
+- R40.6: scene/apply_preview (16th) — revision.current() vs entry.base_revision 교차 + side-effect
+- DispatchContext 구조체 refactor 후보 — 파라미터 4개 도달, 추가 시 고려
 - existing: §5.16 GPU, hello-button reactive, overlay Controller promote
 
 
