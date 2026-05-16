@@ -847,31 +847,35 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
 
 
 /// Wire→[`ViewBlueprint`] coercion for `ReplaceView` payloads
-/// (R40.11). Recursive: `Container.children` invokes the same parser
-/// per child. `kind` discriminates between blueprint variants;
-/// `tag` is optional everywhere.
+/// (R40.11 / R43). Recursive: `Container.children` invokes the same
+/// parser per child. `kind` discriminates between blueprint variants;
+/// `tag` is optional everywhere. `style` shape depends on the variant
+/// (Box/Container → [`BoxStyle`], Text → text style, Path → stroke +
+/// fill, Image → fit + tint).
+///
+/// Closed-by-design: `kind` values `"Effect"` and `"External"` are
+/// rejected at this boundary — Effect has no declarative wire shape
+/// and External requires an author-side factory registry (out of
+/// scope for the JSON-RPC boundary).
 fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
     let Some(kind) = v.get("kind").and_then(Value::as_str) else {
         return Err(invalid_params(
-            "params.replacement.kind missing or not a string (expected one of: Box, Container)",
+            "params.replacement.kind missing or not a string (expected one of: Box, Container, Text, Path, Image)",
         ));
     };
     let rect = parse_rect(v.get("rect"))?;
-    let style = parse_box_style(
-        v.get("style").ok_or_else(|| invalid_params("params.replacement.style missing"))?,
-    )?;
-    let tag = match v.get("tag") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(s.clone()),
-        _ => {
-            return Err(invalid_params(
-                "params.replacement.tag must be a string or null",
-            ));
-        }
-    };
+    let tag = parse_optional_tag(v.get("tag"))?;
     match kind {
-        "Box" => Ok(ViewBlueprint::Box { rect, style, tag }),
+        "Box" => {
+            let style = parse_box_style(
+                v.get("style").ok_or_else(|| invalid_params("params.replacement.style missing"))?,
+            )?;
+            Ok(ViewBlueprint::Box { rect, style, tag })
+        }
         "Container" => {
+            let style = parse_box_style(
+                v.get("style").ok_or_else(|| invalid_params("params.replacement.style missing"))?,
+            )?;
             let children_value = v.get("children").unwrap_or(&Value::Null);
             let children = match children_value {
                 Value::Null => Vec::new(),
@@ -892,8 +896,201 @@ fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
                 children,
             })
         }
+        "Text" => {
+            let content = v
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    invalid_params("params.replacement.content missing or not a string")
+                })?
+                .to_owned();
+            let style = parse_text_style(v.get("style"))?;
+            Ok(ViewBlueprint::Text {
+                content,
+                rect,
+                style,
+                tag,
+            })
+        }
+        "Path" => {
+            let commands = parse_path_commands(v.get("commands"))?;
+            let style = parse_path_style(v.get("style"))?;
+            Ok(ViewBlueprint::Path {
+                commands,
+                rect,
+                style,
+                tag,
+            })
+        }
+        "Image" => {
+            let source = v
+                .get("source")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    invalid_params("params.replacement.source missing or not a string")
+                })?
+                .to_owned();
+            let style = parse_image_style(v.get("style"))?;
+            Ok(ViewBlueprint::Image {
+                source,
+                rect,
+                style,
+                tag,
+            })
+        }
+        "Effect" | "External" => Err(invalid_params(&format!(
+            "params.replacement.kind {kind} not supported by wire (closed-by-design — Effect lacks declarative shape; External needs factory registry)"
+        ))),
         other => Err(invalid_params(&format!(
-            "params.replacement.kind unrecognised: {other} (expected Box or Container)"
+            "params.replacement.kind unrecognised: {other} (expected one of: Box, Container, Text, Path, Image)"
+        ))),
+    }
+}
+
+/// Optional `tag` field shared by every `ViewBlueprint` variant.
+fn parse_optional_tag(v: Option<&Value>) -> Result<Option<String>, RpcError> {
+    match v {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        _ => Err(invalid_params(
+            "params.replacement.tag must be a string or null",
+        )),
+    }
+}
+
+/// Wire→[`pinion_core::style::TextStyle`] coercion. All fields
+/// optional with [`TextStyle::new`] defaults; `fg_color` as u32 ARGB.
+fn parse_text_style(v: Option<&Value>) -> Result<pinion_core::style::TextStyle, RpcError> {
+    let Some(obj) = v else {
+        return Ok(pinion_core::style::TextStyle::new());
+    };
+    let mut style = pinion_core::style::TextStyle::new();
+    if let Some(font_size) = obj.get("font_size_px").and_then(Value::as_u64) {
+        let n = u32::try_from(font_size)
+            .map_err(|_| invalid_params("params.replacement.style.font_size_px exceeds u32 range"))?;
+        style.font_size_px = n;
+    }
+    if let Some(fg) = obj.get("fg_color").and_then(Value::as_u64) {
+        let n = u32::try_from(fg)
+            .map_err(|_| invalid_params("params.replacement.style.fg_color exceeds u32 range"))?;
+        style.fg_color = Color::from_argb(n);
+    }
+    if let Some(family) = obj.get("font_family").and_then(Value::as_str) {
+        style.font_family = Some(std::borrow::Cow::Owned(family.to_owned()));
+    }
+    Ok(style)
+}
+
+/// Wire→[`pinion_core::style::PathStyle`] coercion. Both `stroke` /
+/// `fill` arms optional and independent. Empty style = no-op draw.
+fn parse_path_style(v: Option<&Value>) -> Result<pinion_core::style::PathStyle, RpcError> {
+    let Some(obj) = v else {
+        return Ok(pinion_core::style::PathStyle::default());
+    };
+    let mut style = pinion_core::style::PathStyle::default();
+    if let Some(fill) = obj.get("fill").and_then(Value::as_u64) {
+        let n = u32::try_from(fill)
+            .map_err(|_| invalid_params("params.replacement.style.fill exceeds u32 range"))?;
+        style.fill = Some(Color::from_argb(n));
+    }
+    if let Some(stroke_obj) = obj.get("stroke") {
+        let stroke_color = stroke_obj
+            .get("color")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                invalid_params("params.replacement.style.stroke.color missing or not u64")
+            })?;
+        let stroke_width = stroke_obj
+            .get("width")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                invalid_params("params.replacement.style.stroke.width missing or not u64")
+            })?;
+        let c = u32::try_from(stroke_color)
+            .map_err(|_| invalid_params("params.replacement.style.stroke.color exceeds u32 range"))?;
+        let w = u32::try_from(stroke_width)
+            .map_err(|_| invalid_params("params.replacement.style.stroke.width exceeds u32 range"))?;
+        style.stroke = Some(pinion_core::style::Stroke::new(Color::from_argb(c), w));
+    }
+    Ok(style)
+}
+
+/// Wire→[`pinion_core::style::ImageStyle`] coercion. `fit` is a
+/// string enum; `tint` is an optional u32 ARGB multiply overlay.
+fn parse_image_style(v: Option<&Value>) -> Result<pinion_core::style::ImageStyle, RpcError> {
+    let Some(obj) = v else {
+        return Ok(pinion_core::style::ImageStyle::default());
+    };
+    let mut style = pinion_core::style::ImageStyle::default();
+    if let Some(fit_str) = obj.get("fit").and_then(Value::as_str) {
+        style.fit = match fit_str {
+            "Fill" => pinion_core::style::Fit::Fill,
+            "Contain" => pinion_core::style::Fit::Contain,
+            "Cover" => pinion_core::style::Fit::Cover,
+            "Tile" => pinion_core::style::Fit::Tile,
+            other => {
+                return Err(invalid_params(&format!(
+                    "params.replacement.style.fit unrecognised: {other} (expected Fill/Contain/Cover/Tile)"
+                )));
+            }
+        };
+    }
+    if let Some(tint) = obj.get("tint").and_then(Value::as_u64) {
+        let n = u32::try_from(tint)
+            .map_err(|_| invalid_params("params.replacement.style.tint exceeds u32 range"))?;
+        style.tint = Some(Color::from_argb(n));
+    }
+    Ok(style)
+}
+
+/// Wire→`Vec<PathCommand>` coercion. Each command is an object
+/// `{op: "MoveTo"|"LineTo"|"CurveTo"|"Close", ...args}`.
+fn parse_path_commands(v: Option<&Value>) -> Result<Vec<pinion_core::scene::PathCommand>, RpcError> {
+    let Some(arr_val) = v else {
+        return Ok(Vec::new());
+    };
+    let Some(arr) = arr_val.as_array() else {
+        return Err(invalid_params(
+            "params.replacement.commands must be an array",
+        ));
+    };
+    arr.iter().map(parse_path_command).collect()
+}
+
+fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcError> {
+    use pinion_core::scene::{PathCommand, PathPoint};
+    let Some(op) = v.get("op").and_then(Value::as_str) else {
+        return Err(invalid_params(
+            "params.replacement.commands[].op missing or not a string",
+        ));
+    };
+    let read_point = |field: &str| -> Result<PathPoint, RpcError> {
+        let obj = v.get(field).ok_or_else(|| {
+            invalid_params(&format!("params.replacement.commands[].{field} missing"))
+        })?;
+        let x = obj.get("x").and_then(Value::as_f64).ok_or_else(|| {
+            invalid_params(&format!(
+                "params.replacement.commands[].{field}.x missing or not numeric"
+            ))
+        })?;
+        let y = obj.get("y").and_then(Value::as_f64).ok_or_else(|| {
+            invalid_params(&format!(
+                "params.replacement.commands[].{field}.y missing or not numeric"
+            ))
+        })?;
+        Ok(PathPoint::new(x as f32, y as f32))
+    };
+    match op {
+        "MoveTo" => Ok(PathCommand::MoveTo(read_point("point")?)),
+        "LineTo" => Ok(PathCommand::LineTo(read_point("point")?)),
+        "CurveTo" => Ok(PathCommand::CurveTo {
+            c1: read_point("c1")?,
+            c2: read_point("c2")?,
+            end: read_point("end")?,
+        }),
+        "Close" => Ok(PathCommand::Close),
+        other => Err(invalid_params(&format!(
+            "params.replacement.commands[].op unrecognised: {other} (expected MoveTo/LineTo/CurveTo/Close)"
         ))),
     }
 }
@@ -2528,6 +2725,132 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Box","style":{"fill":0}}},"id":725}"#;
         let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
         assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    // ---- R43: ViewBlueprint Text/Path/Image variants + closed kinds ----
+
+    #[test]
+    fn scene_propose_replace_view_with_text_round_trips() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Text","content":"Save","rect":{"x":0,"y":0,"w":40,"h":20},"style":{"font_size_px":18,"fg_color":255},"tag":"label"}},"id":740}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":741}}"#
+        );
+        let _ = dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap();
+        if let Scene::Container(c) = &scene {
+            if let Scene::Text(t) = &c.children[0] {
+                assert_eq!(t.content, "Save");
+                assert_eq!(t.style.font_size_px, 18);
+                assert_eq!(t.tag.as_deref(), Some("label"));
+            } else {
+                panic!("child 0 not Text");
+            }
+        }
+    }
+
+    #[test]
+    fn scene_propose_replace_view_with_path_round_trips() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Path","rect":{"x":0,"y":0,"w":32,"h":32},"style":{"fill":255},"commands":[{"op":"MoveTo","point":{"x":0,"y":0}},{"op":"LineTo","point":{"x":10,"y":10}},{"op":"Close"}],"tag":"logo"}},"id":742}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":743}}"#
+        );
+        let _ = dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap();
+        if let Scene::Container(c) = &scene {
+            if let Scene::Path(p) = &c.children[0] {
+                assert_eq!(p.commands.len(), 3);
+                assert_eq!(p.tag.as_deref(), Some("logo"));
+            } else {
+                panic!("child 0 not Path");
+            }
+        }
+    }
+
+    #[test]
+    fn scene_propose_replace_view_with_image_round_trips() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let propose_req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Image","source":"file:///tmp/icon.png","rect":{"x":0,"y":0,"w":24,"h":24},"style":{"fit":"Contain"},"tag":"avatar"}},"id":744}"#;
+        let preview_id = parse_response(
+            &dispatch_full(&mut scene, &previews, &revision, propose_req).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("preview_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let apply_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/apply_preview","params":{{"preview_id":{preview_id}}},"id":745}}"#
+        );
+        let _ = dispatch_full(&mut scene, &previews, &revision, &apply_req).unwrap();
+        if let Scene::Container(c) = &scene {
+            if let Scene::Image(i) = &c.children[0] {
+                assert_eq!(i.source, "file:///tmp/icon.png");
+                assert_eq!(i.style.fit, pinion_core::style::Fit::Contain);
+                assert_eq!(i.tag.as_deref(), Some("avatar"));
+            } else {
+                panic!("child 0 not Image");
+            }
+        }
+    }
+
+    #[test]
+    fn scene_propose_replace_view_effect_kind_rejected() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"Effect","rect":{"x":0,"y":0,"w":1,"h":1}}},"id":746}"#;
+        let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(
+            err.data
+                .as_ref()
+                .and_then(|d| d.as_str())
+                .is_some_and(|s| s.contains("Effect")),
+            "error data must mention rejected Effect kind: {:?}",
+            err.data
+        );
+    }
+
+    #[test]
+    fn scene_propose_replace_view_external_kind_rejected() {
+        let mut scene = box_container_scene_for_set_style();
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/propose_change","params":{"kind":"ReplaceView","target_path":"/btn","replacement":{"kind":"External","rect":{"x":0,"y":0,"w":1,"h":1}}},"id":747}"#;
+        let resp = parse_response(&dispatch_full(&mut scene, &previews, &revision, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(
+            err.data
+                .as_ref()
+                .and_then(|d| d.as_str())
+                .is_some_and(|s| s.contains("External")),
+            "error data must mention rejected External kind: {:?}",
+            err.data
+        );
     }
 
     #[test]

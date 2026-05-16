@@ -1,27 +1,49 @@
 //! [`ViewBlueprint`] — declarative scene description used by
-//! [`TypedProposal::ReplaceView`](super::TypedProposal) (§5.34 R40.11).
+//! [`TypedProposal::ReplaceView`](super::TypedProposal) (§5.34 R40.11
+//! / R43).
 //!
-//! A `Scene` value is intentionally `!Send + !Sync + !Clone`
-//! (`ExternalNode` carries `Box<dyn External>` without those bounds —
-//! [`Scene`] doc). The preview ledger stores `Box<dyn Proposal>` and
-//! [`Proposal`](super::Proposal) requires `Send + Sync + 'static`, so
-//! a proposal variant **cannot** carry a `Scene` directly.
+//! `ViewBlueprint` is the **wire-side description** of a scene
+//! subtree, not a parallel runtime representation. The two surfaces
+//! play different roles:
 //!
-//! `ViewBlueprint` is the textbook bridge: a closed-form, `Send +
-//! Sync + Clone` description that materialises into a `Scene` exactly
-//! once at apply time via [`ViewBlueprint::materialize`]. v0 covers
-//! the two introspectable primitives that anchor every other tag-
-//! addressable widget in the framework — `Box` and `Container` —
-//! which together let the AI agent swap any tagged scene region for
-//! a fresh sub-tree of styled boxes. `Text`, `Path`, `Image`, and
-//! the two opaque escapes (`Effect`, `External`) land as additive
-//! variants in subsequent R40.x sub-slices.
+//!   * [`Scene`] — runtime tree consumed by the renderer / RPC layer.
+//!     `!Send + !Sync + !Clone` because `ExternalNode` owns a
+//!     `Box<dyn External>` without those bounds.
+//!   * [`ViewBlueprint`] — JSON-RPC payload shape (`Send + Sync +
+//!     Clone`) carried inside `TypedProposal::ReplaceView`.
+//!     Materialises into a `Scene` exactly once at apply time via
+//!     [`ViewBlueprint::materialize`].
+//!
+//! Bloch "value objects" / Hickey "data is the API" pattern: a wire
+//! description owned by the wire surface, distinct from the runtime
+//! representation by design — not a workaround.
+//!
+//! ## Variant coverage (R43)
+//!
+//! R40.11 landed `Box` + `Container`. R43 adds the remaining
+//! introspectable variants — `Text` / `Path` / `Image` — for parity
+//! with [`Scene`]'s closed-form primitives. The two opaque escapes
+//! are intentionally **excluded** from the wire surface:
+//!
+//!   * `Scene::Effect` — opaque shader / GPU effect. No declarative
+//!     wire shape; embedding requires platform-specific shader bytes
+//!     out of scope for the JSON-RPC boundary.
+//!   * `Scene::External` — opaque embedded content (`Box<dyn
+//!     External>`). The author-side handle is unknown at wire-decode
+//!     time; injecting a new External via RPC needs a separate
+//!     primitive (future R-axis: per-External factory registry).
+//!
+//! Wire payloads asking for `kind: "Effect"` / `kind: "External"`
+//! surface as `Invalid params` at the [`dispatch`](crate::dispatch)
+//! boundary — the unsupported-kinds list is closed by design here.
 //!
 //! `#[non_exhaustive]` so every later variant addition stays a
 //! non-breaking enum extension per Bloch / Hyrum.
 
-use pinion_core::scene::{BoxNode, ContainerNode, Rect};
-use pinion_core::style::BoxStyle;
+use pinion_core::scene::{
+    BoxNode, ContainerNode, ImageNode, PathCommand, PathNode, Rect, TextNode,
+};
+use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
 use pinion_core::Scene;
 
 /// Wire-form scene description carried by
@@ -32,11 +54,10 @@ use pinion_core::Scene;
 /// Materialise into a concrete [`Scene`] by consuming with
 /// [`ViewBlueprint::materialize`].
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ViewBlueprint {
     /// Single styled rectangle (no children). Mirrors the v0 fields
-    /// of [`pinion_core::scene::BoxNode`]; `layout` / future style
-    /// extensions arrive as additive blueprint enrichments.
+    /// of [`BoxNode`].
     Box {
         /// Absolute pixel rect in the same `u32` coordinate frame
         /// the rest of the scene uses.
@@ -54,6 +75,35 @@ pub enum ViewBlueprint {
         style: BoxStyle,
         tag: Option<String>,
         children: Vec<ViewBlueprint>,
+    },
+    /// Text primitive — `content` is the raw string payload; cosmic-
+    /// text rasterisation happens at render time per `style` (§5.3
+    /// R20). v0 carries no layout-mode hints; future R-axes layer
+    /// those on as additive blueprint enrichments.
+    Text {
+        content: String,
+        rect: Rect,
+        style: TextStyle,
+        tag: Option<String>,
+    },
+    /// Vector path — `commands` is the structured command stream the
+    /// rasterizer consumes (§5.3 R20). `style` carries stroke / fill
+    /// per [`PathStyle`].
+    Path {
+        commands: Vec<PathCommand>,
+        rect: Rect,
+        style: PathStyle,
+        tag: Option<String>,
+    },
+    /// Raster or vector image — `source` is the opaque locator
+    /// (`file://`, `https://`, `memory://...`); the framework does
+    /// not interpret the URI scheme. `style` carries the fit policy
+    /// and optional tint per [`ImageStyle`].
+    Image {
+        source: String,
+        rect: Rect,
+        style: ImageStyle,
+        tag: Option<String>,
     },
 }
 
@@ -84,6 +134,36 @@ impl ViewBlueprint {
                 node.tag = tag.map(Into::into);
                 Scene::Container(node)
             }
+            Self::Text {
+                content,
+                rect,
+                style,
+                tag,
+            } => {
+                let mut node = TextNode::styled(content, rect, style);
+                node.tag = tag.map(Into::into);
+                Scene::Text(node)
+            }
+            Self::Path {
+                commands,
+                rect,
+                style,
+                tag,
+            } => {
+                let mut node = PathNode::new(rect, commands, style);
+                node.tag = tag.map(Into::into);
+                Scene::Path(node)
+            }
+            Self::Image {
+                source,
+                rect,
+                style,
+                tag,
+            } => {
+                let mut node = ImageNode::styled(source, rect, style);
+                node.tag = tag.map(Into::into);
+                Scene::Image(node)
+            }
         }
     }
 }
@@ -91,7 +171,8 @@ impl ViewBlueprint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::style::Color;
+    use pinion_core::scene::{PathCommand, PathPoint};
+    use pinion_core::style::{Color, Fit};
 
     #[test]
     fn materialize_box_preserves_rect_style_and_tag() {
@@ -200,5 +281,118 @@ mod tests {
         fn assert_clone<T: Clone>() {}
         assert_send_sync::<ViewBlueprint>();
         assert_clone::<ViewBlueprint>();
+    }
+
+    // ---- §5.34 R43: Text / Path / Image parity ----
+
+    #[test]
+    fn materialize_text_preserves_content_rect_style_and_tag() {
+        let bp = ViewBlueprint::Text {
+            content: "Save".to_string(),
+            rect: Rect::new(60, 80, 140, 60),
+            style: TextStyle::new(),
+            tag: Some("save_label".to_string()),
+        };
+        let scene = bp.materialize();
+        match scene {
+            Scene::Text(t) => {
+                assert_eq!(t.content, "Save");
+                assert_eq!(t.rect, Rect::new(60, 80, 140, 60));
+                assert_eq!(t.tag.as_deref(), Some("save_label"));
+            }
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn materialize_path_preserves_commands_rect_style_and_tag() {
+        let commands = vec![
+            PathCommand::MoveTo(PathPoint::new(0.0, 0.0)),
+            PathCommand::LineTo(PathPoint::new(10.0, 10.0)),
+            PathCommand::Close,
+        ];
+        let bp = ViewBlueprint::Path {
+            commands: commands.clone(),
+            rect: Rect::new(0, 0, 32, 32),
+            style: PathStyle::filled(Color::from_argb(0x00ff_ffff)),
+            tag: Some("logo".to_string()),
+        };
+        let scene = bp.materialize();
+        match scene {
+            Scene::Path(p) => {
+                assert_eq!(p.commands, commands);
+                assert_eq!(p.rect, Rect::new(0, 0, 32, 32));
+                assert_eq!(p.tag.as_deref(), Some("logo"));
+            }
+            _ => panic!("expected Path"),
+        }
+    }
+
+    #[test]
+    fn materialize_image_preserves_source_rect_style_and_tag() {
+        let bp = ViewBlueprint::Image {
+            source: "file:///tmp/icon.png".to_string(),
+            rect: Rect::new(8, 8, 24, 24),
+            style: ImageStyle::default().with_fit(Fit::Contain),
+            tag: Some("avatar".to_string()),
+        };
+        let scene = bp.materialize();
+        match scene {
+            Scene::Image(i) => {
+                assert_eq!(i.source, "file:///tmp/icon.png");
+                assert_eq!(i.rect, Rect::new(8, 8, 24, 24));
+                assert_eq!(i.style.fit, Fit::Contain);
+                assert_eq!(i.tag.as_deref(), Some("avatar"));
+            }
+            _ => panic!("expected Image"),
+        }
+    }
+
+    #[test]
+    fn container_can_hold_mixed_variants() {
+        // R43: parity check — Container child list accepts every
+        // closed-form variant (Box/Container/Text/Path/Image) so the
+        // AI agent can express any introspectable subtree.
+        let bp = ViewBlueprint::Container {
+            rect: Rect::new(0, 0, 100, 100),
+            style: BoxStyle::default(),
+            tag: None,
+            children: vec![
+                ViewBlueprint::Box {
+                    rect: Rect::default(),
+                    style: BoxStyle::default(),
+                    tag: None,
+                },
+                ViewBlueprint::Text {
+                    content: "hi".to_string(),
+                    rect: Rect::default(),
+                    style: TextStyle::new(),
+                    tag: None,
+                },
+                ViewBlueprint::Path {
+                    commands: vec![],
+                    rect: Rect::default(),
+                    style: PathStyle::default(),
+                    tag: None,
+                },
+                ViewBlueprint::Image {
+                    source: "memory://0xABCD".to_string(),
+                    rect: Rect::default(),
+                    style: ImageStyle::default(),
+                    tag: None,
+                },
+            ],
+        };
+        let scene = bp.materialize();
+        match scene {
+            Scene::Container(c) => {
+                assert_eq!(c.children.len(), 4);
+                assert!(matches!(c.children[0], Scene::Box(_)));
+                assert!(matches!(c.children[1], Scene::Text(_)));
+                assert!(matches!(c.children[2], Scene::Path(_)));
+                assert!(matches!(c.children[3], Scene::Image(_)));
+            }
+            _ => panic!("expected Container"),
+        }
     }
 }

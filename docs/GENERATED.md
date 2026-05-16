@@ -2680,6 +2680,38 @@ fn main() {
 
 
 
+### 414 — Round 43 — §5.34 ViewBlueprint Text/Path/Image variant parity — R40.11 평행 우주 부채 상환
+
+**Changes**:
+- pinion-rpc/preview/blueprint.rs: ViewBlueprint 에 Text/Path/Image 3 variants 추가 — Scene introspectable variants 5종 완전 parity (Box/Container/Text/Path/Image)
+- ViewBlueprint module doc: wire-side description (Scene !=parallel; wire-vs-runtime 의도적 분리, Bloch value objects / Hickey 'data is the API') 문서화
+- Effect/External 은 wire 제외 명시 — Effect 는 declarative shape 부재, External 은 Box<dyn External> factory registry 부재 (행상 R-axis)
+- dispatch.rs parse_view_blueprint: 5 kinds 지원 + Effect/External 명시적 reject (closed-by-design)
+- parse_text_style / parse_path_style / parse_image_style / parse_path_commands helpers — 각 style 구조별 wire 파서
+- parse_optional_tag: 이전 중복 해결; 5 variants 의 tag 처리 동일화
+
+
+
+**Verification**:
+- cargo test --workspace: 589 pass (580 → 589, +9 R43 test — 4 ViewBlueprint unit + 3 wire round-trip + 2 closed-kind rejection)
+- cargo clippy --workspace --all-targets: 신규 위반 0 (5 pre-existing baseline only)
+- ViewBlueprint Scene parity 5종 완성 (introspectable variants all covered); Effect/External wire 제외 = closed-by-design 철학 일관
+- R40.11 의 'Scene 평행 우주' 우려 해소 — ViewBlueprint = wire description, Scene = runtime; 서로 역할 다름 입증
+- Bloch value objects + Hickey 'data is the API' = JSON-RPC framework 의 textbook 분리 정답
+
+
+
+**Impact**: §5.34, §5.2, §5.3
+
+
+**Carry forward**:
+- R44: §5.34 caveat — DispatchIntent.emitted_intents (sync) vs scene/intents (async poll) dual channel 정책 정착
+- External factory registry axis — ReplaceView 가 External 교체 가능하려면 author-side type registry 필요 (§5.15 와 연결)
+- Effect declarative wire shape axis — 셌더 소스 / preset enum / 파라미터 스키마 결정 필요 (§5.16 GPU pipeline 공의)
+- ViewBlueprint 는 wire surface 이므로 JSON serde-derive 추가 신중 검토 — 현재 수동 parser 가 forward-compat 좋음
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
