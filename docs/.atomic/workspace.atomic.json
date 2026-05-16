@@ -533,7 +533,17 @@
         "Round 11 supersede: codegen caveats above (1-2, 5) no longer apply per Round 11",
         "pinion thin RHI maintenance burden permanent; per-driver workaround responsibility",
         "AAA scale dynamic dispatch optimization is runtime engineering, not spec phase",
-        "screenshot RPC method (§5.12 item 7) blocked on pinion-render-rhi delivery; v0 typed-only"
+        "screenshot RPC method (§5.12 item 7) blocked on pinion-render-rhi delivery; v0 typed-only",
+        "R31: §5.26 DamageRect consumed by paint pipeline as scissor box (incremental paint).",
+        "R31: Scene → display list intermediate; retained GPU command buffer cached across frames.",
+        "R31: §5.25 visual ModifierOps (Background/Border/Padding) emit display-list ops in chain order.",
+        "R31: §5.24 SemanticProps not rendered; logical layer above visual; for AT + AI only.",
+        "R31: Glyph atlas GPU texture; cosmic-text shaping cache keyed by (content, font, size, max_w).",
+        "R31: softbuffer = dev fallback only; thin RHI primary; backend chosen at compile time per target.",
+        "R31: §5.22 Signal-driven repaint: visual change propagates Damage via §5.26; no full repaint.",
+        "R31: Paint thread pool (worker per CPU core); RHI command submission on render thread.",
+        "R31: Per-target shader emit via naga (WGSL canonical source); SPIR-V/MSL/HLSL/DXIL backends.",
+        "R31: AAA budget 144 FPS = 6.94ms/frame; layout+paint pipeline must fit within budget."
       ],
       "alternatives_rejected": [
         {
@@ -3294,6 +3304,68 @@
         "R34 §5.29 Structured concurrency",
         "R35 §5.30 Accessibility (AccessKit bridge)",
         "R36 §5.31 Hot reload (signal serialization)"
+      ]
+    },
+    "Round 31": {
+      "decision_summary": "Round 31 — §5.16 GPU render integration ratify: §5.22/§5.24/§5.25/§5.26 cross-axis paint pipeline + glyph atlas + softbuffer dev fallback",
+      "changes_bullets": [
+        "§5.16 R11 thin RHI + Forge + naga decision unchanged; R31 adds integration caveats",
+        "10 §5.16 caveats lock cross-axis integration: §5.26 damage, §5.25 visual ops, §5.24 not rendered",
+        "Glyph atlas GPU texture + cosmic-text shaping cache (content, font, size, max_w) keyed",
+        "softbuffer demoted to dev fallback; thin RHI primary per target; backend at compile time",
+        "Per-target shader emit via naga (WGSL canonical) for SPIR-V/MSL/HLSL/DXIL",
+        "Scene → display list → GPU command buffer; retained across frames; AAA 144 FPS budget locked"
+      ],
+      "verification_bullets": [
+        "validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections unchanged; entries 30 → 31",
+        "no new section; §5.16 from R11 simply extended with 10 caveats",
+        "§5.16 vello rejection from R11 unchanged — thin RHI for AAA dynamic dispatch needs",
+        "atomic mutations: 10 add_section_caveat on §5.16"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.22",
+        "5.24",
+        "5.25",
+        "5.26"
+      ],
+      "carry_forward_bullets": [
+        "R32 §5.27 Virtualization Scene variant (VirtualList<T>)",
+        "R33 §5.28 Animation (spring physics)",
+        "R34 §5.29 Structured concurrency",
+        "R35 §5.30 Accessibility (AccessKit bridge)",
+        "R36 §5.31 Hot reload (signal serialization)",
+        "Implementation rounds for §5.16 thin RHI + display list cache later; large effort"
+      ],
+      "publishable_decision_summary": "Round 31 — §5.16 GPU render integration ratify: §5.22/§5.24/§5.25/§5.26 cross-axis paint pipeline + glyph atlas + softbuffer dev fallback",
+      "publishable_changes_bullets": [
+        "§5.16 R11 thin RHI + Forge + naga decision unchanged; R31 adds integration caveats",
+        "10 §5.16 caveats lock cross-axis integration: §5.26 damage, §5.25 visual ops, §5.24 not rendered",
+        "Glyph atlas GPU texture + cosmic-text shaping cache (content, font, size, max_w) keyed",
+        "softbuffer demoted to dev fallback; thin RHI primary per target; backend at compile time",
+        "Per-target shader emit via naga (WGSL canonical) for SPIR-V/MSL/HLSL/DXIL",
+        "Scene → display list → GPU command buffer; retained across frames; AAA 144 FPS budget locked"
+      ],
+      "publishable_verification_bullets": [
+        "validate_workspace: T1=0 T3=0 RT=1/1 GENERATED.md=sync; sections unchanged; entries 30 → 31",
+        "no new section; §5.16 from R11 simply extended with 10 caveats",
+        "§5.16 vello rejection from R11 unchanged — thin RHI for AAA dynamic dispatch needs",
+        "atomic mutations: 10 add_section_caveat on §5.16"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.22",
+        "5.24",
+        "5.25",
+        "5.26"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R32 §5.27 Virtualization Scene variant (VirtualList<T>)",
+        "R33 §5.28 Animation (spring physics)",
+        "R34 §5.29 Structured concurrency",
+        "R35 §5.30 Accessibility (AccessKit bridge)",
+        "R36 §5.31 Hot reload (signal serialization)",
+        "Implementation rounds for §5.16 thin RHI + display list cache later; large effort"
       ]
     },
     "Round 4": {
