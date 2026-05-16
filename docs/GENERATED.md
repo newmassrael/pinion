@@ -1581,6 +1581,7 @@ fn main() {
 - R35: Platform delegates per-OS feature-gated; pinion-a11y reexports accesskit::TreeUpdate.
 - R35: scene/semantic (§5.24) RPC = AT-equivalent introspection; AI agent + screen reader parity.
 - R35: AT updates throttled to once per frame; matches paint pipeline cadence.
+- R35: Tab/arrow nav dispatched as Intent::Focus(direction); app or framework default routes.
 
 
 
