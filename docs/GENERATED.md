@@ -1760,6 +1760,9 @@ fn main() {
 - region paths 는 declaration order = UI tree DFS pre-order (z-order 아님)
 - v0 hit-test = naive scene-tree traversal; spatial index (R-tree 등) carry-forward
 - bbox = viewport-relative coords; window/screen 변환은 RPC client 책임
+- R39.1: Scene::hit_test impl + HitPath{segments, bbox}; tag overrides index segment
+- R39.1: scene/locate RPC method active; pinion-rpc dispatch 9 → 10 methods
+- R39.1: half-open rect containment via saturating_add; zero-area rects never hit
 
 
 
@@ -1774,6 +1777,13 @@ fn main() {
 
 **Impact scope**: §5.7, §5.12, §5.2, §2
 
+
+
+**Implementations**:
+- crates/pinion-core/src/scene.rs:Scene::hit_test
+- crates/pinion-core/src/scene.rs:HitPath
+- crates/pinion-rpc/src/locate.rs
+- crates/pinion-rpc/src/dispatch.rs:handle_scene_locate
 
 
 
@@ -3604,6 +3614,38 @@ fn main() {
 - R39.x: spatial index (R-tree) for scenes >10k elements
 - R40+: scene/propose_change + dry_run preview lifecycle (separate axis)
 - R40+: event_history ring buffer + RPC export (separate axis)
+
+
+
+### Round 39.1 — §5.32 scene/locate impl — Scene::hit_test + LocateOutcome + JSON-RPC method 10
+
+**Changes**:
+- pinion-core: Scene::hit_test + HitPath{segments, bbox} + Scene::rect/Scene::tag accessors
+- pinion-core: rect_contains half-open + saturating_add overflow guard
+- pinion-rpc: locate.rs module with LocateOutcome + LocateError::OutOfBounds
+- pinion-rpc: window-prefixed path (/window[name]/...) + root-first ancestor chain
+- pinion-rpc: dispatch handler scene/locate {x,y} → {path, bbox, ancestors}
+- Method count: 9 → 10 typed JSON-RPC methods (carry-forward to §5.7 ledger)
+
+
+
+**Verification**:
+- cargo test --workspace → 412 pass (391 baseline + 21 R39.1 new)
+- cargo clippy --workspace --all-targets → 12 pre-existing only; no new warnings
+- Topmost-last-child overlap rule verified (test hit_test_overlapping_siblings)
+- Tag-takes-precedence over index segment verified (hit_test_tagged_child)
+- Effect variant skipped during traversal (hit_test_effect_variant_is_skipped)
+- JSON-RPC envelope round-trip: happy + oob + missing-x + negative-x all covered
+
+
+
+**Impact**: §5.32, §5.7, §5.2
+
+
+**Carry forward**:
+- R39.2: scene/locate_region {x,y,w,h} build — reuse hit_test, collect intersect set
+- R39.3: scene/bbox {path} build — path → viewport bbox lookup
+- R39.4: AI overlay UX mode — visual selection cursor + highlight rendering
 
 
 

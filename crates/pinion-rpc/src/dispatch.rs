@@ -30,6 +30,7 @@ use crate::click::{click, ClickError, ClickOutcome};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::intents::{drain_intents, IntentsError};
 use crate::invoke::{invoke, InvokeError};
+use crate::locate::{locate, LocateError, LocateOutcome};
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
@@ -129,6 +130,7 @@ pub fn dispatch(scene: &mut Scene, request_json: &str) -> Option<String> {
         "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
         "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
         "scene/intents" => handle_scene_intents(scene),
+        "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -488,6 +490,56 @@ fn intents_error_to_rpc(err: IntentsError) -> RpcError {
     // wildcard guard preserves a clean error surface when future
     // variants land.
     match err {}
+}
+
+fn handle_scene_locate(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(x) = params.get("x").and_then(Value::as_u64) else {
+        return Err(invalid_params("params.x missing or not a non-negative integer"));
+    };
+    let Some(y) = params.get("y").and_then(Value::as_u64) else {
+        return Err(invalid_params("params.y missing or not a non-negative integer"));
+    };
+    let x32 = u32::try_from(x).map_err(|_| invalid_params("params.x exceeds u32 range"))?;
+    let y32 = u32::try_from(y).map_err(|_| invalid_params("params.y exceeds u32 range"))?;
+
+    match locate(scene, x32, y32) {
+        Ok(outcome) => Ok(locate_outcome_to_json(&outcome)),
+        Err(err) => Err(locate_error_to_rpc(err)),
+    }
+}
+
+fn locate_outcome_to_json(out: &LocateOutcome) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("path".into(), Value::String(out.path.clone()));
+    map.insert("bbox".into(), bbox_to_json(&out.bbox));
+    map.insert(
+        "ancestors".into(),
+        Value::Array(out.ancestor_paths.iter().cloned().map(Value::String).collect()),
+    );
+    Value::Object(map)
+}
+
+fn bbox_to_json(r: &pinion_core::scene::Rect) -> Value {
+    let mut m = serde_json::Map::new();
+    m.insert("x".into(), Value::from(r.x));
+    m.insert("y".into(), Value::from(r.y));
+    m.insert("w".into(), Value::from(r.w));
+    m.insert("h".into(), Value::from(r.h));
+    Value::Object(m)
+}
+
+fn locate_error_to_rpc(err: LocateError) -> RpcError {
+    let variant = match err {
+        LocateError::OutOfBounds => "OutOfBounds",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
 }
 
 fn invoke_error_to_rpc(err: InvokeError) -> RpcError {
@@ -955,5 +1007,61 @@ mod tests {
             err.data,
             Some(Value::String("InvokeRejected".to_string()))
         );
+    }
+
+    // ---- §5.32 R39.1: scene/locate JSON-RPC wire ----
+
+    fn box_scene(x: u32, y: u32, w: u32, h: u32) -> Scene {
+        use pinion_core::scene::{BoxNode, Rect};
+        use pinion_core::Color;
+        Scene::Box(BoxNode::filled(Rect::new(x, y, w, h), Color::default()))
+    }
+
+    #[test]
+    fn scene_locate_returns_path_bbox_ancestors() {
+        let mut scene = box_scene(10, 20, 50, 30);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"x":20,"y":25},"id":100}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "got error: {:?}", resp.error);
+        let result = resp.result.expect("scene/locate produced no result");
+        let obj = result.as_object().expect("result must be object");
+        assert!(obj.contains_key("path"));
+        let bbox = obj.get("bbox").and_then(Value::as_object).expect("bbox object");
+        assert_eq!(bbox.get("x"), Some(&Value::Number(10.into())));
+        assert_eq!(bbox.get("y"), Some(&Value::Number(20.into())));
+        assert_eq!(bbox.get("w"), Some(&Value::Number(50.into())));
+        assert_eq!(bbox.get("h"), Some(&Value::Number(30.into())));
+        let ancestors = obj.get("ancestors").and_then(Value::as_array).expect("ancestors array");
+        assert!(ancestors.is_empty(), "root hit has no ancestors");
+    }
+
+    #[test]
+    fn scene_locate_out_of_bounds_returns_invalid_params() {
+        let mut scene = box_scene(10, 10, 5, 5);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"x":99,"y":99},"id":101}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.expect("expected error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("OutOfBounds".to_string())));
+    }
+
+    #[test]
+    fn scene_locate_missing_x_is_invalid_params() {
+        let mut scene = box_scene(0, 0, 10, 10);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"y":5},"id":102}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.expect("expected error");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_locate_negative_x_is_invalid_params() {
+        // u64-only param schema rejects signed values; AI agents can't
+        // pass negative coords without a typed protocol error.
+        let mut scene = box_scene(0, 0, 10, 10);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/locate","params":{"x":-1,"y":5},"id":103}"#;
+        let resp = parse_response(&dispatch(&mut scene, req).unwrap());
+        let err = resp.error.expect("expected error");
+        assert_eq!(err.code, -32602);
     }
 }

@@ -46,6 +46,105 @@ pub enum Scene {
     External(ExternalNode),
 }
 
+impl Scene {
+    /// Outermost rect of this primitive. [`EffectNode`] has no
+    /// geometry of its own and returns [`Rect::default`].
+    #[must_use]
+    pub fn rect(&self) -> Rect {
+        match self {
+            Scene::Box(n) => n.rect,
+            Scene::Text(n) => n.rect,
+            Scene::Path(n) => n.rect,
+            Scene::Image(n) => n.rect,
+            Scene::Container(n) => n.rect,
+            Scene::External(n) => n.rect,
+            Scene::Effect(_) => Rect::default(),
+        }
+    }
+
+    /// §5.20 intent tag carried by this primitive, when present.
+    /// [`EffectNode`] never carries a tag.
+    #[must_use]
+    pub fn tag(&self) -> Option<&str> {
+        match self {
+            Scene::Box(n) => n.tag.as_deref(),
+            Scene::Text(n) => n.tag.as_deref(),
+            Scene::Path(n) => n.tag.as_deref(),
+            Scene::Image(n) => n.tag.as_deref(),
+            Scene::Container(n) => n.tag.as_deref(),
+            Scene::External(n) => n.tag.as_deref(),
+            Scene::Effect(_) => None,
+        }
+    }
+
+    /// (§5.32 R39 v0) Find the deepest primitive whose rect contains
+    /// `(x, y)`. Returns [`None`] when the point falls outside this
+    /// scene's outermost rect — including the case where the rect has
+    /// zero area.
+    ///
+    /// Tie-breaking on overlapping siblings: among a `Container`'s
+    /// children, the last entry wins (drawn last, on top). [`EffectNode`]
+    /// is not hit-testable and is skipped — its parent receives the
+    /// hit if no other sibling claims it.
+    ///
+    /// Path segments are container-relative — either a child index
+    /// (`"3"`) or the child's §5.20 tag (`"save_btn"`) when present.
+    /// An untagged hit at the scene root returns an empty `segments`
+    /// vec, signalling the root primitive itself.
+    #[must_use]
+    pub fn hit_test(&self, x: u32, y: u32) -> Option<HitPath> {
+        // Effect has no introspectable geometry — skip entirely.
+        if matches!(self, Scene::Effect(_)) {
+            return None;
+        }
+        if !rect_contains(self.rect(), x, y) {
+            return None;
+        }
+        // Container: descend into the topmost (last) child that
+        // contains the point. If no child hits, the container itself
+        // is the deepest hit.
+        if let Scene::Container(c) = self {
+            for (idx, child) in c.children.iter().enumerate().rev() {
+                if let Some(mut child_hit) = child.hit_test(x, y) {
+                    let seg = child
+                        .tag()
+                        .map_or_else(|| idx.to_string(), String::from);
+                    child_hit.segments.insert(0, seg);
+                    return Some(child_hit);
+                }
+            }
+        }
+        Some(HitPath { segments: Vec::new(), bbox: self.rect() })
+    }
+}
+
+/// Result of a successful [`Scene::hit_test`] (§5.32 R39 v0). Carries
+/// the container-relative path from the root of the queried scene plus
+/// the bounding rect of the matched primitive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HitPath {
+    /// Path segments from the queried root toward the deepest match.
+    /// Each segment is either a positional index (`"3"`) or the
+    /// child's §5.20 tag when present (`"save_btn"`). Empty when the
+    /// root primitive itself is the deepest hit.
+    pub segments: Vec<String>,
+    /// Bounding rect of the deepest matched primitive. Same coordinate
+    /// frame as the queried `(x, y)` (viewport-relative for the v0
+    /// RPC method, see §5.32).
+    pub bbox: Rect,
+}
+
+/// Half-open containment check: `(x, y)` lies inside `r` when both
+/// coordinates fall in `[r.x, r.x + r.w)` × `[r.y, r.y + r.h)`. Uses
+/// saturating add so zero-area rects (`w == 0` or `h == 0`) never
+/// contain anything, and arithmetic overflow at the `u32` ceiling is
+/// pinned at saturation rather than wrapping.
+fn rect_contains(r: Rect, x: u32, y: u32) -> bool {
+    let right = r.x.saturating_add(r.w);
+    let bottom = r.y.saturating_add(r.h);
+    x >= r.x && y >= r.y && x < right && y < bottom
+}
+
 /// Stylistic trait carried by [`Scene`] variants (§5.11 layered shape).
 /// The §5.3 DSL settles the actual surface (colors, fonts, borders); this
 /// trait is the agreed extension point.
@@ -765,6 +864,139 @@ mod tests {
             }
             _ => panic!("expected Container variant"),
         }
+    }
+
+    // ---- §5.32 R39: Scene::hit_test ----
+
+    fn box_at(x: u32, y: u32, w: u32, h: u32) -> Scene {
+        Scene::Box(BoxNode::filled(Rect::new(x, y, w, h), Color::default()))
+    }
+
+    fn tagged_box_at(x: u32, y: u32, w: u32, h: u32, tag: &'static str) -> Scene {
+        Scene::Box(BoxNode::filled(Rect::new(x, y, w, h), Color::default()).with_tag(tag))
+    }
+
+    fn container_at(x: u32, y: u32, w: u32, h: u32, children: Vec<Scene>) -> Scene {
+        let mut node = ContainerNode::new(children);
+        node.rect = Rect::new(x, y, w, h);
+        Scene::Container(node)
+    }
+
+    #[test]
+    fn hit_test_inside_lone_box_returns_empty_segments() {
+        let s = box_at(10, 10, 50, 30);
+        let hit = s.hit_test(20, 15).expect("inside");
+        assert!(hit.segments.is_empty(), "root hit = empty segments");
+        assert_eq!(hit.bbox, Rect::new(10, 10, 50, 30));
+    }
+
+    #[test]
+    fn hit_test_outside_lone_box_returns_none() {
+        let s = box_at(10, 10, 50, 30);
+        assert!(s.hit_test(5, 5).is_none(), "left of rect");
+        assert!(s.hit_test(60, 40).is_none(), "right/below rect");
+        // Right edge is exclusive (half-open) — x = rect.x + rect.w is OUT.
+        assert!(s.hit_test(60, 20).is_none(), "right edge exclusive");
+    }
+
+    #[test]
+    fn hit_test_zero_area_rect_never_hits() {
+        let s = Scene::Box(BoxNode::filled(Rect::new(10, 10, 0, 0), Color::default()));
+        assert!(s.hit_test(10, 10).is_none(), "zero-area rect cannot contain");
+    }
+
+    #[test]
+    fn hit_test_container_with_unmatched_children_returns_root() {
+        // Container at (0,0,100,100); child at (200,200,10,10) — point
+        // inside container but outside all children. Hit returns the
+        // container itself (empty segments).
+        let s = container_at(
+            0,
+            0,
+            100,
+            100,
+            vec![box_at(200, 200, 10, 10)],
+        );
+        let hit = s.hit_test(50, 50).expect("inside container");
+        assert!(hit.segments.is_empty(), "container itself is the hit");
+    }
+
+    #[test]
+    fn hit_test_container_picks_matching_child_with_index_segment() {
+        // Container at (0,0,200,200); two untagged children. Hit lands
+        // on the second child → segment "1".
+        let s = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![box_at(0, 0, 50, 50), box_at(100, 100, 50, 50)],
+        );
+        let hit = s.hit_test(120, 120).expect("on child 1");
+        assert_eq!(hit.segments, vec!["1".to_string()]);
+        assert_eq!(hit.bbox, Rect::new(100, 100, 50, 50));
+    }
+
+    #[test]
+    fn hit_test_tagged_child_uses_tag_in_segment() {
+        let s = container_at(0, 0, 200, 200, vec![tagged_box_at(10, 10, 50, 50, "save_btn")]);
+        let hit = s.hit_test(20, 20).expect("on tagged child");
+        assert_eq!(hit.segments, vec!["save_btn".to_string()]);
+    }
+
+    #[test]
+    fn hit_test_overlapping_siblings_topmost_last_wins() {
+        // Two boxes covering the same point; the later index wins
+        // (drawn last = topmost in §5.2 paint order).
+        let s = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![box_at(50, 50, 100, 100), box_at(50, 50, 100, 100)],
+        );
+        let hit = s.hit_test(75, 75).expect("on overlap");
+        assert_eq!(hit.segments, vec!["1".to_string()]);
+    }
+
+    #[test]
+    fn hit_test_nested_containers_build_segment_chain() {
+        // Outer at (0,0,200,200) → inner at (0,0,100,100) → box at (10,10,50,50).
+        let inner = container_at(0, 0, 100, 100, vec![box_at(10, 10, 50, 50)]);
+        let outer = container_at(0, 0, 200, 200, vec![inner]);
+        let hit = outer.hit_test(20, 20).expect("deep nested");
+        assert_eq!(hit.segments, vec!["0".to_string(), "0".to_string()]);
+        assert_eq!(hit.bbox, Rect::new(10, 10, 50, 50));
+    }
+
+    #[test]
+    fn hit_test_effect_variant_is_skipped() {
+        // EffectNode has no geometry — never hit-testable. Wrap it in
+        // a container and verify the container itself catches the hit.
+        let s = container_at(0, 0, 100, 100, vec![Scene::Effect(EffectNode::new())]);
+        let hit = s.hit_test(50, 50).expect("container takes hit");
+        // Effect was skipped — container is the deepest match.
+        assert!(hit.segments.is_empty());
+    }
+
+    #[test]
+    fn scene_rect_accessor_returns_per_variant_rect() {
+        let r = Rect::new(5, 7, 11, 13);
+        assert_eq!(Scene::Box(BoxNode::filled(r, Color::default())).rect(), r);
+        assert_eq!(Scene::Text(TextNode::new("x", r)).rect(), r);
+        assert_eq!(Scene::Path(PathNode::empty(r)).rect(), r);
+        assert_eq!(Scene::Image(ImageNode::new("file://", r)).rect(), r);
+        // Effect has no rect — default
+        assert_eq!(Scene::Effect(EffectNode::new()).rect(), Rect::default());
+    }
+
+    #[test]
+    fn scene_tag_accessor_round_trips() {
+        let tagged = tagged_box_at(0, 0, 10, 10, "x");
+        assert_eq!(tagged.tag(), Some("x"));
+        let untagged = box_at(0, 0, 10, 10);
+        assert_eq!(untagged.tag(), None);
+        assert_eq!(Scene::Effect(EffectNode::new()).tag(), None);
     }
 
     #[test]

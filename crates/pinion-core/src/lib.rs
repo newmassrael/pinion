@@ -21,7 +21,7 @@ pub use reactive::{
     Resource, ResourceState, Signal, SignalExternal, SnapshotRestoreError, SnapshotableSignal,
     batch,
 };
-pub use scene::Scene;
+pub use scene::{HitPath, Scene};
 pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, Display, Fit, FlexDirection, ImageStyle,
     JustifyContent, LayoutStyle, PathStyle, Size, SizeValue, Stroke, StrokeCap, TextStyle,
