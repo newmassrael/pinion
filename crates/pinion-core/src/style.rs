@@ -412,6 +412,12 @@ impl Size {
 /// style. Every Scene primitive (including the opaque `External`)
 /// carries one; default is `Display::Block` which means "use the
 /// rect I was given" — backward-compatible with R17 manual placement.
+///
+/// `padding` / `margin` reuse [`Rect`](crate::scene::Rect) as a
+/// 4-inset (x=left, y=top, w=right, h=bottom) per the R20 §5.3
+/// Modifier shape. Slice 4 of R24 absorbed them out of the standalone
+/// Modifier struct directly into `LayoutStyle` so there is exactly one
+/// sidecar driving the taffy pass.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct LayoutStyle {
@@ -422,10 +428,12 @@ pub struct LayoutStyle {
     pub gap: u32,
     pub size: Size,
     pub flex_grow: f32,
+    pub padding: crate::scene::Rect,
+    pub margin: crate::scene::Rect,
 }
 
 impl LayoutStyle {
-    /// Identity layout: `Block`, auto sizing, no gap.
+    /// Identity layout: `Block`, auto sizing, no gap, zero insets.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -439,7 +447,23 @@ impl LayoutStyle {
                 height: SizeValue::Auto,
             },
             flex_grow: 0.0,
+            padding: crate::scene::Rect::new(0, 0, 0, 0),
+            margin: crate::scene::Rect::new(0, 0, 0, 0),
         }
+    }
+
+    /// Builder: padding insets (x=left, y=top, w=right, h=bottom).
+    #[must_use]
+    pub const fn with_padding(mut self, insets: crate::scene::Rect) -> Self {
+        self.padding = insets;
+        self
+    }
+
+    /// Builder: margin insets (x=left, y=top, w=right, h=bottom).
+    #[must_use]
+    pub const fn with_margin(mut self, insets: crate::scene::Rect) -> Self {
+        self.margin = insets;
+        self
     }
 
     /// Builder: switch this node into flex mode (children are
@@ -672,6 +696,18 @@ mod tests {
         assert_eq!(l.size.width, SizeValue::Auto);
         assert_eq!(l.size.height, SizeValue::Auto);
         assert!((l.flex_grow - 0.0).abs() < f32::EPSILON);
+        assert_eq!(l.padding, crate::scene::Rect::new(0, 0, 0, 0));
+        assert_eq!(l.margin, crate::scene::Rect::new(0, 0, 0, 0));
+    }
+
+    #[test]
+    fn layout_style_padding_margin_builders() {
+        use crate::scene::Rect;
+        let l = LayoutStyle::new()
+            .with_padding(Rect::new(4, 8, 4, 8))
+            .with_margin(Rect::new(2, 2, 2, 2));
+        assert_eq!(l.padding, Rect::new(4, 8, 4, 8));
+        assert_eq!(l.margin, Rect::new(2, 2, 2, 2));
     }
 
     #[test]

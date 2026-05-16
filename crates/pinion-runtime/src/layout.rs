@@ -17,7 +17,10 @@ use pinion_core::style::{
     AlignItems, Display, FlexDirection, JustifyContent, LayoutStyle, SizeValue,
 };
 use pinion_core::Scene;
-use taffy::prelude::{auto, length, percent, AvailableSpace, NodeId, Size as TaffySize, TaffyTree};
+use taffy::prelude::{
+    auto, length, percent, AvailableSpace, FromLength, LengthPercentage, NodeId,
+    Rect as TaffyRect, Size as TaffySize, TaffyTree,
+};
 use taffy::style::{
     AlignItems as TaffyAlign, Dimension, Display as TaffyDisplay,
     FlexDirection as TaffyFlexDir, JustifyContent as TaffyJustify, Style as TaffyStyle,
@@ -186,6 +189,21 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         height: to_dimension(layout.size.height),
     };
     s.flex_grow = layout.flex_grow;
+    // §5.21 R24 slice 4: Rect-as-4-inset (x=left, y=top, w=right,
+    // h=bottom) → taffy Rect<LengthPercentage>. taffy's padding /
+    // margin both take pixel lengths.
+    s.padding = TaffyRect {
+        left: LengthPercentage::from_length(layout.padding.x as f32),
+        right: LengthPercentage::from_length(layout.padding.w as f32),
+        top: LengthPercentage::from_length(layout.padding.y as f32),
+        bottom: LengthPercentage::from_length(layout.padding.h as f32),
+    };
+    s.margin = TaffyRect {
+        left: length(layout.margin.x as f32),
+        right: length(layout.margin.w as f32),
+        top: length(layout.margin.y as f32),
+        bottom: length(layout.margin.h as f32),
+    };
     s
 }
 
@@ -278,6 +296,31 @@ mod tests {
         assert_eq!(a.rect.h, 80);
         assert_eq!(b.rect.y, 90);
         assert_eq!(b.rect.h, 60);
+    }
+
+    #[test]
+    fn container_padding_offsets_child_origin() {
+        // R24 slice 4: LayoutStyle.padding feeds taffy padding;
+        // child rect.{x,y} shifts by the parent's left+top padding.
+        let layout = LayoutStyle::new()
+            .flex(FlexDirection::Row)
+            .with_padding(pinion_core::scene::Rect::new(10, 20, 10, 20));
+        let child = Scene::Box(
+            BoxNode::filled(pinion_core::scene::Rect::default(), Color::default())
+                .with_layout(LayoutStyle::new().with_size(Size::px(50, 30))),
+        );
+        let mut scene =
+            Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
+        compute_layout(&mut scene, 200, 200);
+        let Scene::Container(c) = &scene else {
+            panic!("container")
+        };
+        let Scene::Box(b) = &c.children[0] else {
+            panic!("box child")
+        };
+        // padding.x (left=10), padding.y (top=20) shift the child.
+        assert_eq!(b.rect.x, 10);
+        assert_eq!(b.rect.y, 20);
     }
 
     #[test]
