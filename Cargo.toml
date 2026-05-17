@@ -71,6 +71,12 @@ proc-macro2 = "1"
 parley = "0.9"
 swash = "0.2"
 
+# §5.36 R47.2 — LRU bounded backing for pinion-text LayoutCache.
+# Standard Rust LRU; consumer of NonZeroUsize at construction. Single
+# workspace-shared version so future cache consumers (R47.5+ GlyphCache,
+# §5.16 future damage cache, etc.) deduplicate transitively.
+lru = "0.18"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

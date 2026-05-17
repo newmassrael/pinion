@@ -24,3 +24,16 @@
 //! responsibility moves to parley for §5.16 R41 Vello ecosystem
 //! consistency; R31's glyph atlas / GPU texture intent is preserved
 //! through `GlyphCache` and Vello `draw_glyph` integration.
+
+mod cache;
+mod layout;
+
+pub use cache::LayoutCache;
+pub use layout::Layout;
+
+// Re-export parley so consumers (`paint_adapter::Text` arm, R47.3+
+// backend adapters) reach `StyleProperty`, `PositionedLayoutItem`,
+// `GlyphRun`, etc. without taking a second direct dep on parley. The
+// version stays workspace-pinned so all `pinion-text` consumers see
+// one parley surface.
+pub use parley;

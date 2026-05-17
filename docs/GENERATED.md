@@ -2137,6 +2137,8 @@ router.pointer_down(&mut state_scene);
 - pinion-text feature gate = parley default, advanced (RTL/complex) toggle 가능
 - 구현 단계: R47.2 = Layout+LayoutCache, R47.5+ = GlyphCache + Vello 통합 path
 - GlyphCache lifetime canonical = consumer GPU atlas (Vello roadmap_2023 미구현, AAA 144 FPS prereq)
+- 정정: 직전 'AAA 144 FPS prereq' caveat = framing 오류. 정통 frame = UI 모드 dense text (CJK/다국어) 성능 보강
+- parley = Phase 1 bridge; Phase 2+ lifetime canonical = pinion 자체 text engine (§5.16 R11 thin RHI 정합)
 
 
 
@@ -3387,6 +3389,40 @@ router.pointer_down(&mut state_scene);
 - R47.3 paint_adapter Text arm + Vello draw_glyphs 통합
 - R47.4 hello-button 라벨 시각 복원
 - R47.5+ GlyphCache (consumer GPU atlas) + Vello 통합 path (upstream PR / 우회 결정)
+
+
+
+### 436 — Round 47.2 — §5.36 pinion-text Layout + LayoutCache 구현 (parley + lru, +6 tests)
+
+**Changes**:
+- pinion-text::Layout — parley::Layout<Color> re-export (§5.36 R47.2 output)
+- pinion-text::LayoutCache — LRU bounded (text+style+max_width) → Layout cache
+- FontContext + LayoutContext lifecycle 내장 — single-thread (§6.3 view-fn purity)
+- DEFAULT_CAPACITY = NonZeroUsize const 256 (panic-free new())
+- workspace.dep + crate dep — lru 0.18 추가
+- +6 unit tests (cache hit/miss / 3가지 key 변경 / capacity evict)
+- §5.36 caveat × 2 추가 — AAA 144 FPS framing 정정 + Phase 2+ 자체 text engine carry
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 639 pass (633 baseline + 6 new)
+- cargo clippy 전체 = R46.5 baseline 정확 복원 (pinion-core 5 + pinion-runtime 1 / 나머지 0)
+- pinion-text introduced 3 warnings (doc_markdown + missing_panics_doc × 2) → same-commit textbook fix
+- fix: DEFAULT_CAPACITY → const NonZeroUsize (panic-free) + layout() # Panics doc 섹션
+
+
+
+**Impact**: §5.16, §5.36, §6.3
+
+
+**Carry forward**:
+- R47.3 paint_adapter Text arm 활성화 + vello::Scene::draw_glyphs 통합
+- R47.4 hello-button 라벨 시각 복원 검증
+- R47.5+ GlyphCache (consumer GPU atlas, UI 모드 dense text 보강)
+- R47.x TextStyle schema 확장 (font_family / weight / decoration)
+- R47.x fontique font fallback override API
+- Phase 2+ lifetime canonical = pinion 자체 text engine (§5.16 R11 thin RHI 정합)
 
 
 
