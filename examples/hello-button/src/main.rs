@@ -3,10 +3,10 @@
 //! R46.5 §5.16: Vello render path. Replaces the R21 softbuffer / cosmic-text
 //! paint pipeline; the GPU scene is built via the `paint_adapter` framework
 //! primitive (R46.3.1) and submitted through a pinion-forge-emitted
-//! `HelloButtonRenderer` (app.pinion.xml). Text labels currently render
-//! as no-ops on the Vello path — `paint_adapter` will gain the
-//! cosmic-text glyph cache integration in R47 (text framework primitive
-//! follow-up to `paint_adapter`).
+//! `HelloButtonRenderer` (app.pinion.xml). R47.3 §5.36 — text labels
+//! render through `paint_adapter`'s Text arm (parley-shaped glyph runs +
+//! `vello::Scene::draw_glyphs`); the `LayoutCache` owned by `App` keeps
+//! the shaping cost amortized across frames.
 //!
 //! Architecture (R17 bidirectional RPC spec round, live dogfood):
 //!
@@ -54,6 +54,7 @@ use pinion_core::{Color, Frame, Scene};
 use pinion_core::SceneRevision;
 use pinion_rpc::{dispatch, DispatchContext, PreviewLedger};
 use pinion_runtime::{compute_layout, paint_adapter, walk_scene_and_drain, InputRouter, IntentQueue};
+use pinion_text::LayoutCache;
 use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -94,10 +95,11 @@ const BTN_H: u32 = 80;
 /// `Size::px(160, 80)`. `compute_layout` (called from `render`)
 /// resolves every node's pixel rect each frame.
 ///
-/// R46.5 §5.16 — `paint_adapter::to_vello` walks the resulting tree;
-/// `Scene::Text` is a no-op on the Vello path until the R47 cosmic-text
-/// glyph cache lands. The label nodes stay in the scene tree (so the
-/// model survives the carry) but produce no glyphs on screen yet.
+/// R46.5 §5.16 — `paint_adapter::to_vello` walks the resulting tree.
+/// R47.3 §5.36 — `Scene::Text` is now live: each label is parley-shaped
+/// through `App::text_cache` (LRU 256 entries) and emitted as Vello
+/// glyph runs. Static labels ("Click me!" / "Disabled") shape once on
+/// first paint and hit the cache on every subsequent frame.
 //
 // `&Frame` is intentional per the §6.3 signature contract even
 // though `Frame` is presently a ZST: once real per-frame fields
@@ -253,6 +255,13 @@ struct App {
     /// start of each frame rather than reallocated. Vello's Scene API
     /// expects this pattern (Linebender Vello examples / Xilem).
     vello_scene: VelloScene,
+    /// R47.3 §5.36 — owned [`LayoutCache`] (LRU 256). `paint_adapter`'s
+    /// Text arm consults this cache for every `Scene::Text` it walks,
+    /// so the button's static labels shape once on first paint and hit
+    /// the cache on every subsequent frame. The cache also owns the
+    /// parley `FontContext` / `LayoutContext` so the App never holds
+    /// parley state directly.
+    text_cache: LayoutCache,
 }
 
 impl App {
@@ -278,6 +287,7 @@ impl App {
             router: InputRouter::new(),
             state: RenderState::Suspended(None),
             vello_scene: VelloScene::new(),
+            text_cache: LayoutCache::new(),
         }
     }
 
@@ -374,10 +384,18 @@ impl App {
         // R46.5 §5.16: framework-side Scene → vello::Scene walk via
         // paint_adapter (R46.3.1). hello-button has no app-specific
         // tag substitution, so the closure returns None unconditionally
-        // and every Box honours its native `style.fill`.
+        // and every Box honours its native `style.fill`. R47.3 §5.36 —
+        // the Text arm consults `self.text_cache` (parley shaping LRU)
+        // so the button's static labels shape once and hit the cache
+        // on every subsequent frame.
         self.vello_scene.reset();
         let base = paint_adapter::root_background(&paint_scene);
-        paint_adapter::to_vello(&paint_scene, &|_b: &BoxNode| None, &mut self.vello_scene);
+        paint_adapter::to_vello(
+            &paint_scene,
+            &|_b: &BoxNode| None,
+            &mut self.text_cache,
+            &mut self.vello_scene,
+        );
         if let Err(e) = renderer.render(&self.vello_scene, base) {
             eprintln!("hello-button: vello render: {e}");
         }

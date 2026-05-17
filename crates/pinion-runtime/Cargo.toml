@@ -11,9 +11,12 @@ description = "Render loop and SCE hierarchical state machinery"
 # Default = no GPU dep. `vello` enables the §5.16 R46.3.1 paint_adapter
 # module — Scene → vello::Scene walk for the Vello render path. Kept
 # behind a feature so non-GUI consumers (headless / TUI / future
-# pinion-render-* alternatives) don't pull wgpu transitively.
+# pinion-render-* alternatives) don't pull wgpu transitively. R47.3
+# §5.36 pulls pinion-text in alongside — `paint_adapter::to_vello`'s
+# Text arm consumes a `LayoutCache` to emit `vello::Scene::draw_glyphs`
+# from parley-shaped runs.
 default = []
-vello = ["dep:vello"]
+vello = ["dep:vello", "dep:pinion-text"]
 
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
@@ -25,6 +28,13 @@ taffy = "0.7"
 # Workspace pin matches Vello's transitive wgpu version (see workspace
 # Cargo.toml comment for the §5.16 R41 path C rationale).
 vello = { workspace = true, optional = true }
+# §5.36 R47.3 text shaping primitive — needed by paint_adapter's Text
+# arm. Same feature gate as `vello` because the only consumer of
+# `LayoutCache` from here is `paint_adapter::to_vello`. parley's
+# `FontData` is `peniko::FontData` (re-exported via
+# `linebender_resource_handle`), so vello's `draw_glyphs(&FontData)`
+# accepts it without any conversion.
+pinion-text = { path = "../pinion-text", version = "0.0.1", optional = true }
 
 [lints]
 workspace = true

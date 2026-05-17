@@ -22,6 +22,12 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # now it consumes the framework primitive so additional examples share
 # one translation path.
 pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", features = ["vello"] }
+# R47.3 §5.36 text shaping framework primitive. `paint_adapter::to_vello`
+# now takes a `&mut LayoutCache` so every Vello consumer threads one in
+# — even when, like this demo, the current scene tree carries zero
+# `Scene::Text` nodes the cache is owned by App so the type checks
+# without indirection.
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
 # scene/locate typed dispatcher (we call directly, not through the
 # JSON-RPC envelope, since this is in-process).
 pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }

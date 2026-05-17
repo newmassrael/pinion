@@ -23,13 +23,25 @@
 //! * `Center` — Vello's native stroke (half-width spills outside).
 //! * `Outside` — centred stroke offset by `width/2` outwards.
 //!
+//! R47.3 §5.36 — [`Scene::Text`] paints via parley-shaped glyph runs.
+//! The caller passes a `&mut pinion_text::LayoutCache` so steady-state
+//! frames hit the cache instead of re-shaping every label; the cache
+//! also owns the parley `FontContext` / `LayoutContext` so the
+//! framework module never holds parley state across calls.
+//! `parley::FontData = peniko::FontData` (re-exported via
+//! `linebender_resource_handle`), so the run's font feeds
+//! [`vello::Scene::draw_glyphs`] unchanged.
+//!
 //! Available only under the `vello` feature; non-GUI consumers
 //! (headless / TUI / future paint backends) compile without wgpu
 //! transitively.
 
 use pinion_core::Scene;
-use pinion_core::scene::{BoxNode, Rect};
+use pinion_core::scene::{BoxNode, Rect, TextNode};
 use pinion_core::style::{Border, BorderPlacement, Color};
+use pinion_text::LayoutCache;
+use pinion_text::parley::PositionedLayoutItem;
+use vello::Glyph;
 use vello::Scene as VelloScene;
 use vello::kurbo::{Affine, Rect as KurboRect, Stroke};
 use vello::peniko::{Color as PenikoColor, Fill};
@@ -39,25 +51,37 @@ use vello::peniko::{Color as PenikoColor, Fill};
 /// overrides the box's native `style.fill`, `None` keeps it. Pass
 /// `&|_: &BoxNode| None` when no tag-based substitution is needed.
 ///
-/// Walk semantics (matches the pre-R46.3.1 ai-introspect-demo `paint()`):
+/// `text_cache` is the per-application [`LayoutCache`] (R47.3 §5.36) —
+/// caching parley `Layout` values across frames so static labels do not
+/// re-shape every redraw. Pass `&mut LayoutCache::new()` only when the
+/// caller knows the scene contains zero `Scene::Text` (the cache is
+/// otherwise dormant); long-lived applications should own one.
+///
+/// Walk semantics (R47.3 §5.36):
 ///
 /// * [`Scene::Container`] — fill `rect` with `style.fill`, recurse
 ///   into `children`.
 /// * [`Scene::Box`] — fill `rect` with `fill_hook(b)` or
 ///   `b.style.fill`; stroke `b.style.border` when present.
-/// * [`Scene::External`] / [`Scene::Effect`] / [`Scene::Text`] /
-///   [`Scene::Path`] / [`Scene::Image`] — no-op. Text / Path / Image
-///   paint primitives attach in follow-up rounds (§5.X — cosmic-text
-///   glyph cache, R31 caveat).
-pub fn to_vello<F>(scene: &Scene, fill_hook: &F, out: &mut VelloScene)
-where
+/// * [`Scene::Text`] — shape via [`LayoutCache::layout`], walk
+///   `positioned_glyphs()` per [`parley::GlyphRun`], emit one
+///   [`vello::Scene::draw_glyphs`] call per run.
+/// * [`Scene::External`] / [`Scene::Effect`] / [`Scene::Path`] /
+///   [`Scene::Image`] — no-op. Path / Image paint primitives attach
+///   in follow-up rounds.
+pub fn to_vello<F>(
+    scene: &Scene,
+    fill_hook: &F,
+    text_cache: &mut LayoutCache,
+    out: &mut VelloScene,
+) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
     match scene {
         Scene::Container(c) => {
             fill_rect(out, c.rect, c.style.fill);
             for child in &c.children {
-                to_vello(child, fill_hook, out);
+                to_vello(child, fill_hook, text_cache, out);
             }
         }
         Scene::Box(b) => {
@@ -67,9 +91,9 @@ where
                 stroke_rect(out, b.rect, border);
             }
         }
-        // External / Effect / Text / Path / Image: no-op (matches
-        // pre-R46.3.1 paint() behaviour). Text+Path+Image attach in
-        // follow-up paint primitive rounds.
+        Scene::Text(t) => paint_text(out, t, text_cache),
+        // External / Effect / Path / Image: no-op. Path + Image paint
+        // primitives attach in follow-up rounds.
         _ => {}
     }
 }
@@ -153,11 +177,47 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border) {
     );
 }
 
+/// Emit one Vello glyph run per parley [`GlyphRun`] shaped from
+/// `t.content` + `t.style` (R47.3 §5.36). The text origin is
+/// `(t.rect.x, t.rect.y)`; `t.rect.w > 0` wraps at that pixel width,
+/// `w == 0` flows on a single unbounded line. `t.rect.h` is advisory —
+/// glyph emission does not clip to the rect (Vello's coarse rasterizer
+/// already culls off-screen draws).
+fn paint_text(out: &mut VelloScene, t: &TextNode, cache: &mut LayoutCache) {
+    if t.content.is_empty() {
+        return;
+    }
+    let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
+    let layout = cache.layout(&t.content, &t.style, max_width);
+    let transform = Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
+    for line in layout.lines() {
+        for item in line.items() {
+            let PositionedLayoutItem::GlyphRun(run) = item else { continue };
+            let parley_run = run.run();
+            let font = parley_run.font();
+            let font_size = parley_run.font_size();
+            let brush = to_peniko(run.style().brush);
+            out.draw_glyphs(font)
+                .transform(transform)
+                .font_size(font_size)
+                .brush(brush)
+                .draw(
+                    Fill::NonZero,
+                    run.positioned_glyphs().map(|g| Glyph {
+                        id: g.id,
+                        x: g.x,
+                        y: g.y,
+                    }),
+                );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::scene::{BoxNode, ContainerNode, Rect};
-    use pinion_core::style::{BoxStyle, Color};
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+    use pinion_core::style::{BoxStyle, Color, TextStyle};
     use std::cell::Cell;
 
     #[test]
@@ -217,6 +277,7 @@ mod tests {
             ),
         ]));
         let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
         let hits = Cell::new(0_u32);
         to_vello(
             &scene,
@@ -224,6 +285,7 @@ mod tests {
                 hits.set(hits.get() + 1);
                 None
             },
+            &mut cache,
             &mut vello,
         );
         assert_eq!(hits.get(), 2, "hook called once per BoxNode");
@@ -247,6 +309,7 @@ mod tests {
             ),
         ]));
         let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
         let overrides = Cell::new(0_u32);
         let passthroughs = Cell::new(0_u32);
         to_vello(
@@ -260,6 +323,7 @@ mod tests {
                     None
                 }
             },
+            &mut cache,
             &mut vello,
         );
         assert_eq!(overrides.get(), 1);
@@ -283,7 +347,8 @@ mod tests {
             let style = BoxStyle::filled(Color::TRANSPARENT).with_border(border);
             let scene = Scene::Box(BoxNode::new(Rect::new(10, 10, 100, 100), style));
             let mut vello = VelloScene::new();
-            to_vello(&scene, &|_| None, &mut vello);
+            let mut cache = LayoutCache::new();
+            to_vello(&scene, &|_| None, &mut cache, &mut vello);
         }
     }
 
@@ -300,6 +365,7 @@ mod tests {
         let outer = ContainerNode::new(vec![Scene::Container(inner)]);
         let scene = Scene::Container(outer);
         let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
         let saw_leaf = Cell::new(false);
         to_vello(
             &scene,
@@ -309,8 +375,45 @@ mod tests {
                 }
                 None
             },
+            &mut cache,
             &mut vello,
         );
         assert!(saw_leaf.get(), "nested leaf BoxNode must be visited");
+    }
+
+    #[test]
+    fn to_vello_text_arm_populates_cache() {
+        // R47.3 §5.36 — Scene::Text walks via paint_text which calls
+        // LayoutCache::layout; the cache should hold the entry after
+        // one walk, and a second walk over the same text should not
+        // grow the cache (steady-state cache hit).
+        let scene = Scene::Text(TextNode::styled(
+            "Hello",
+            Rect::new(0, 0, 200, 32),
+            TextStyle::new().with_size_px(16),
+        ));
+        let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        to_vello(&scene, &|_| None, &mut cache, &mut vello);
+        assert_eq!(cache.len(), 1, "first paint populates cache");
+        to_vello(&scene, &|_| None, &mut cache, &mut vello);
+        assert_eq!(cache.len(), 1, "repeat paint hits cache, no growth");
+    }
+
+    #[test]
+    fn to_vello_text_arm_skips_empty_content() {
+        // Empty `t.content` short-circuits before the cache is touched —
+        // parley would produce an empty layout but the walk has no
+        // glyphs to emit, so skipping early avoids the wasted shaping
+        // work.
+        let scene = Scene::Text(TextNode::styled(
+            "",
+            Rect::new(0, 0, 200, 32),
+            TextStyle::new().with_size_px(16),
+        ));
+        let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        to_vello(&scene, &|_| None, &mut cache, &mut vello);
+        assert_eq!(cache.len(), 0, "empty content does not populate cache");
     }
 }

@@ -5415,6 +5415,46 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 437 — §5.36 R47.3 paint_adapter Text arm 활성화 + Vello draw_glyphs 통합 — Round 437 — §5.36 R47.3 paint_adapter Text arm: paint_adapter::to_vello signature 에 &mut LayoutCache 추가 + Scene::Text arm 활성화 (parley GlyphRun → vello::Scene::draw_glyphs). 두 example (hello-button + ai-introspect-demo) caller 동시 update.
+
+**Changes**:
+- crates/pinion-runtime/Cargo.toml: vello feature gate 에 dep:pinion-text 추가 — paint_adapter 의 Text arm 이 LayoutCache 를 consume
+- crates/pinion-runtime/src/paint_adapter.rs: to_vello signature 확장 (&mut LayoutCache 4번째 arg) + paint_text() 신규 helper — parley PositionedLayoutItem::GlyphRun 순회 + vello::Scene::draw_glyphs(font).transform().font_size().brush().draw(Fill, positioned_glyphs) chain. parley::FontData = peniko::FontData (linebender_resource_handle 단일 소스) 라 zero-cost 호환.
+- crates/pinion-runtime/src/paint_adapter.rs: 기존 7 unit tests update (LayoutCache 추가 param 전달) + 2 신규 tests (to_vello_text_arm_populates_cache / to_vello_text_arm_skips_empty_content)
+- examples/hello-button/Cargo.toml + src/main.rs: pinion-text dep 추가, App.text_cache: LayoutCache 필드 + App::new 에서 LayoutCache::new() 초기화, render() 의 to_vello 호출에 &mut self.text_cache 전달. 모듈 doc + view() doc 의 'no-op' → 'R47.3 active' 정정.
+- examples/ai-introspect-demo/Cargo.toml + src/main.rs: 동일 패턴 caller update — 현재 scene 트리에 Scene::Text 없지만 framework-uniform signature 준수 위해 App.text_cache 보유
+- paint_text() empty content short-circuit: t.content.is_empty() 일 때 cache 미접촉 — 빈 layout shaping 비용 절약
+- clippy needless_borrows_for_generic_args same-commit fix: .brush(&brush) → .brush(brush) (PenikoColor: Into<BrushRef<'_>>)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello = clean
+- cargo test --workspace --features pinion-runtime/vello = 641 pass (R47.2 639 + R47.3 2 = 641)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 보존 (pinion-core 5 + pinion-runtime 1)
+- paint_adapter 신규 2 tests: cache 1 hit on 2nd paint (repeated paint hits cache, no growth) + empty content cache 0 unchanged
+- atomic build slice (R46.3 / R46.5 패턴): paint_adapter signature breaking 변경 + 두 caller 동시 update 한 commit
+- parley FontData ↔ vello FontData 호환 path 사전 검증: peniko v0.5.0 단일 / linebender_resource_handle v0.1.1 단일 — 같은 type
+
+
+
+**Impact**: §5.36, §5.16
+
+
+**Carry forward**:
+- R47.4 시각 검증: hello-button 실행 → 'Click me!' / 'Disabled' 라벨이 paint_adapter Text arm 통해 화면 렌더되는지 시각 확인 (사용자 환경 수동 cargo run 또는 screenshot)
+- R47.5+ GlyphCache (consumer GPU atlas) — UI 모드 dense text (CJK/다국어) 성능 보강. Vello 매 frame outline rasterize 보강. Vello upstream PR 또는 우회 path (custom shader) 결정
+- R47.x TextStyle schema 확장: font_family / weight / decoration → parley StyleProperty 친화 (현재 parley default font stack 만 사용)
+- R47.x fontique font fallback override API
+- R47.x GlyphCache evict 정책 (capacity / scope per-renderer vs shared)
+- Phase 2+ lifetime canonical text engine 결정 (pinion 자체 text engine, §5.16 R11 thin RHI 정합) — long-term carry
+- R46.4 carry: parse_path_command finite check NaN/±∞ unit test + pinion-core 5 / pinion-runtime 1 clippy sub-slice
+- R46.2 Concern 1 carry: RendererOptions surface policy (present_mode / use_cpu / num_init_threads / pipeline_cache build-time vs runtime 분류)
+- claudedocs/ SCE 3 파일 working-tree carry (사용자 명시 'carry'): sce-rfc-001-response.md (modified) + sce-status-report-2026-05-17-response.md (untracked) + sce-status-report-2026-05-17-supersede.md (untracked)
+- R297 false-positive commit↔ledger drift carry
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

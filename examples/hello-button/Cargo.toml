@@ -19,6 +19,13 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # Enabling the `vello` feature pulls in the to_vello/root_background
 # surface; without it pinion-runtime stays headless.
 pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", features = ["vello"] }
+# R47.3 §5.36 text shaping framework primitive. The `LayoutCache` is
+# owned by `App` and threaded into `paint_adapter::to_vello` so the
+# button label re-shapes only when its text / style / wrap width
+# changes (steady-state frames hit the LRU). The crate carries the
+# parley + swash + fontique transitive trio behind the same single
+# import — app code never touches the underlying shaper directly.
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
 pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
 winit = { workspace = true }
 # R46.5 §5.16: Vello-backed GPU paint replaces softbuffer. The

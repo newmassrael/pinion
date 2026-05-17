@@ -67,6 +67,7 @@ use pinion_rpc::{
     cancel_preview, list_previews, locate, propose_change, query,
 };
 use pinion_runtime::paint_adapter;
+use pinion_text::LayoutCache;
 
 // pinion-forge codegen output. Defines `pub struct DemoRenderer { ... }`
 // + `pub enum DemoRendererError` + async `new<W: Into<wgpu::SurfaceTarget<'static>>>`
@@ -207,6 +208,12 @@ struct App {
     /// start of each frame rather than reallocated. Vello's Scene API
     /// expects this pattern (see Linebender Vello examples / Xilem).
     vello_scene: VelloScene,
+    /// R47.3 §5.36 — owned [`LayoutCache`]. The demo's current scene
+    /// tree carries zero `Scene::Text` nodes (info_panel is a box), so
+    /// the cache is dormant today; it is owned by `App` because
+    /// `paint_adapter::to_vello`'s signature now requires a `&mut`
+    /// — every Vello consumer threads one in, framework-uniform.
+    text_cache: LayoutCache,
 }
 
 impl App {
@@ -221,6 +228,7 @@ impl App {
             pending_escape_exit: false,
             state: RenderState::Suspended(None),
             vello_scene: VelloScene::new(),
+            text_cache: LayoutCache::new(),
         }
     }
 
@@ -457,6 +465,7 @@ impl App {
                     None
                 }
             },
+            &mut self.text_cache,
             &mut self.vello_scene,
         );
         if let Err(e) = renderer.render(&self.vello_scene, base) {
