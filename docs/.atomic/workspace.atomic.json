@@ -326,7 +326,9 @@
         "R32 §5.27: scene/virtual_list = 14th method; count + visible range + window snapshot.",
         "R36 §5.31: scene/reload = 15th method; protocol trigger + result counts.",
         "R47.7 scene/layout implement: viewport + path 입력 → LayoutNode tree (rect, line_count, TextStyle) 응답",
-        "scene/layout optional viewport = dry_run paint side mirror (state 외부의 immediate paint snapshot)"
+        "scene/layout optional viewport = dry_run paint side mirror (state 외부의 immediate paint snapshot)",
+        "R47.7.4 scene/resize: AI 가 winit request_inner_size 트리거 → drag 시뮬레이션 (next frame async)",
+        "R47.7.4 scene/wait_for_frame: AI 가 다음 redraw 동기 대기 — scene/resize 결과 stable observation"
       ],
       "alternatives_rejected": [
         {
@@ -8288,6 +8290,62 @@
         "R47.x parley Ellipsis truncation pass",
         "R48 §5.3 별도 round = BoxStyle Figma-fidelity",
         "R46 carry / claudedocs / R297"
+      ]
+    },
+    "Round 445 — R47.7.4.0 §5.12 scene/resize + wait_for_frame spec entry": {
+      "decision_summary": "Round 445 — R47.7.4.0 §5.12 scene/resize + scene/wait_for_frame spec entry: AI 가 winit window resize event chain 직접 트리거 (request_inner_size) + 다음 redraw 동기 대기. R47.7.3 paint_producer hypothetical sweep 의 한계 (winit drag flow 미시뮬레이션) 보완 — §2 invariant #2 textbook 정통.",
+      "changes_bullets": [
+        "§5.12 caveat +1: scene/resize = AI winit request_inner_size 트리거 (next frame async)",
+        "§5.12 caveat +1: scene/wait_for_frame = AI 다음 redraw 동기 대기 — resize 결과 stable observation",
+        "R47.7.3 자동 진단 결과 정직 구축: 32 viewport hypothetical sweep 에서 wrap 0 확인. winit drag flow 자체 트리거 안 됨 — R47.7.4 가 그 격차 채움",
+        "§2 invariant #2 (RPC primary) 자기 이행 강화 — AI 가 click/invoke/layout 외 의 user interaction 채널 시뮬레이션 가능"
+      ],
+      "verification_bullets": [
+        "§5.12 caveats +2 (R47.7.4 scene/resize / wait_for_frame) 추가 완료",
+        "R47.7.3 sweep 결과: 32 viewport (50-500 × 50-200) text rect={h:26,w:78} 항상 1줄 — hypothetical path wrap 0",
+        "사용자 보고 vs sweep 결과 소광 — winit drag flow 명시적 시뮬레이션 필요, R47.7.4 구현 step"
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.7",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "R47.7.4.1 pinion-rpc scene/resize handler + DispatchContext.resize_request closure surface",
+        "R47.7.4.2 hello-button wire — window.request_inner_size + request_redraw (atomic build slice)",
+        "R47.7.4.3 실제 winit resize 기반 sweep — scene/resize+scene/layout 시퀀스 으로 wrap reproduce",
+        "R47.7.4.x scene/wait_for_frame implement (R47.7.4.1 과 같이 또는 별도 step)",
+        "R47.7.x framework primitive cleanup (trait Application surface)",
+        "R47.x parley Ellipsis truncation pass",
+        "R48 §5.3 별도 round = BoxStyle Figma-fidelity",
+        "R46 / claudedocs / R297 그대로"
+      ],
+      "publishable_decision_summary": "Round 445 — R47.7.4.0 §5.12 scene/resize + scene/wait_for_frame spec entry: AI 가 winit window resize event chain 직접 트리거 (request_inner_size) + 다음 redraw 동기 대기. R47.7.3 paint_producer hypothetical sweep 의 한계 (winit drag flow 미시뮬레이션) 보완 — §2 invariant #2 textbook 정통.",
+      "publishable_changes_bullets": [
+        "§5.12 caveat +1: scene/resize = AI winit request_inner_size 트리거 (next frame async)",
+        "§5.12 caveat +1: scene/wait_for_frame = AI 다음 redraw 동기 대기 — resize 결과 stable observation",
+        "R47.7.3 자동 진단 결과 정직 구축: 32 viewport hypothetical sweep 에서 wrap 0 확인. winit drag flow 자체 트리거 안 됨 — R47.7.4 가 그 격차 채움",
+        "§2 invariant #2 (RPC primary) 자기 이행 강화 — AI 가 click/invoke/layout 외 의 user interaction 채널 시뮬레이션 가능"
+      ],
+      "publishable_verification_bullets": [
+        "§5.12 caveats +2 (R47.7.4 scene/resize / wait_for_frame) 추가 완료",
+        "R47.7.3 sweep 결과: 32 viewport (50-500 × 50-200) text rect={h:26,w:78} 항상 1줄 — hypothetical path wrap 0",
+        "사용자 보고 vs sweep 결과 소광 — winit drag flow 명시적 시뮬레이션 필요, R47.7.4 구현 step"
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.7",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R47.7.4.1 pinion-rpc scene/resize handler + DispatchContext.resize_request closure surface",
+        "R47.7.4.2 hello-button wire — window.request_inner_size + request_redraw (atomic build slice)",
+        "R47.7.4.3 실제 winit resize 기반 sweep — scene/resize+scene/layout 시퀀스 으로 wrap reproduce",
+        "R47.7.4.x scene/wait_for_frame implement (R47.7.4.1 과 같이 또는 별도 step)",
+        "R47.7.x framework primitive cleanup (trait Application surface)",
+        "R47.x parley Ellipsis truncation pass",
+        "R48 §5.3 별도 round = BoxStyle Figma-fidelity",
+        "R46 / claudedocs / R297 그대로"
       ]
     },
     "Round 5": {
