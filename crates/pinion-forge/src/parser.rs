@@ -37,8 +37,8 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 
 use crate::ast::{
-    ComputedDecl, PinionChild, PinionDoc, PinionKind, PinionSpec, RendererBackend, ResourceDecl,
-    SignalDecl, UseDecl,
+    ComputedDecl, PinionChild, PinionDoc, PinionKind, PinionSpec, RendererBackend,
+    RendererBackendKind, ResourceDecl, SignalDecl, UseDecl, VelloAaMode,
 };
 use crate::diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic};
 
@@ -160,18 +160,22 @@ impl<'a> ParseCtx<'a> {
 
         // Kind-specific attribute validation runs after the core attrs
         // pass — only renderer has additional load-bearing attributes
-        // (backend) at R46. Reactive's only kind-specific surface is
-        // the child element set, validated during body scan.
-        let backend = match attrs_ok.as_ref().map(|(k, b, _)| (*k, b.clone())) {
-            Some((PinionKind::Renderer, backend_raw)) => {
-                self.validate_renderer_backend(backend_raw, &location)
-            }
-            _ => None,
+        // (backend + aa at R46.2.1). Reactive's only kind-specific
+        // surface is the child element set, validated during body scan.
+        let (backend_kind, aa) = match attrs_ok
+            .as_ref()
+            .map(|(k, b, a, _)| (*k, b.clone(), a.clone()))
+        {
+            Some((PinionKind::Renderer, backend_raw, aa_raw)) => (
+                self.validate_renderer_backend(backend_raw, &location),
+                self.validate_renderer_aa(aa_raw, &location),
+            ),
+            _ => (None, None),
         };
 
         let mut children: Vec<PinionChild> = Vec::new();
         if !self_closing {
-            match attrs_ok.as_ref().map(|(k, _, _)| *k) {
+            match attrs_ok.as_ref().map(|(k, _, _, _)| *k) {
                 Some(PinionKind::Renderer) => self.scan_renderer_body(),
                 // Reactive or unknown (kind failed) — fall back to the
                 // reactive child grammar so we surface every child-level
@@ -182,19 +186,23 @@ impl<'a> ParseCtx<'a> {
 
         if self.diagnostics.is_empty() {
             // Invariant: parse_root_attrs returns Some iff no attribute
-            // diagnostics were pushed; validate_renderer_backend returns
-            // Some iff no backend diagnostic was pushed; scan_*_body
+            // diagnostics were pushed; validate_renderer_* returns Some
+            // iff no kind-specific diagnostic was pushed; scan_*_body
             // pushes diagnostics on failure. So an empty diagnostic vec
-            // implies attrs_ok and the per-kind validation both succeeded.
-            let (kind, _, name) =
-                attrs_ok.expect("attrs-ok path must populate (kind, backend_raw, name)");
+            // implies attrs_ok and every per-kind validator succeeded.
+            let (kind, _, _, name) =
+                attrs_ok.expect("attrs-ok path must populate (kind, backend, aa, name)");
             let spec = match kind {
                 PinionKind::Reactive => PinionSpec::Reactive { children },
-                PinionKind::Renderer => PinionSpec::Renderer {
-                    backend: backend.expect(
-                        "renderer-ok path must populate backend (empty diagnostics implies validated)",
-                    ),
-                },
+                PinionKind::Renderer => {
+                    let backend_kind = backend_kind.expect(
+                        "renderer-ok path must populate backend_kind (empty diagnostics implies validated)",
+                    );
+                    let aa = aa.expect(
+                        "renderer-ok path must populate aa (validate_renderer_aa defaults to Area)",
+                    );
+                    PinionSpec::Renderer { backend: assemble_backend(backend_kind, aa) }
+                }
             };
             Ok(PinionDoc { name, spec })
         } else {
@@ -205,13 +213,15 @@ impl<'a> ParseCtx<'a> {
     /// Validate the `backend` attribute for `kind="renderer"`. Pushes
     /// [`PinionForgeDiagnostic::MissingBackend`] when the attribute is
     /// absent or whitespace-only, and [`PinionForgeDiagnostic::UnknownBackend`]
-    /// when the literal is not in [`RendererBackend::from_attr`]'s
-    /// accepted set. Returns the parsed [`RendererBackend`] on success.
+    /// when the literal is not in [`RendererBackendKind::from_attr`]'s
+    /// accepted set. Returns the parsed [`RendererBackendKind`] on
+    /// success; the kind-specific payload (e.g. `aa` for Vello) is
+    /// assembled separately in [`Self::parse_root_open`].
     fn validate_renderer_backend(
         &mut self,
         backend_raw: Option<String>,
         location: &Location,
-    ) -> Option<RendererBackend> {
+    ) -> Option<RendererBackendKind> {
         match backend_raw {
             None => {
                 self.diagnostics.push(PinionForgeDiagnostic::MissingBackend {
@@ -228,10 +238,41 @@ impl<'a> ParseCtx<'a> {
                         location: location.clone(),
                     });
                     None
-                } else if let Some(b) = RendererBackend::from_attr(trimmed) {
+                } else if let Some(b) = RendererBackendKind::from_attr(trimmed) {
                     Some(b)
                 } else {
                     self.diagnostics.push(PinionForgeDiagnostic::UnknownBackend {
+                        found: literal,
+                        location: location.clone(),
+                    });
+                    None
+                }
+            }
+        }
+    }
+
+    /// Validate the `aa` attribute for `kind="renderer"`. R46.2.1 §5.16
+    /// — the attribute is *optional* (absent = default [`VelloAaMode::Area`],
+    /// the UI canonical), so a `None`/whitespace-only input is not a
+    /// diagnostic. Only an unrecognized literal raises
+    /// [`PinionForgeDiagnostic::UnknownAa`]; returns `None` in that case
+    /// so the caller skips spec assembly. Backward-compat with R46.1
+    /// manifests (no `aa` attribute) is preserved by the default path.
+    fn validate_renderer_aa(
+        &mut self,
+        aa_raw: Option<String>,
+        location: &Location,
+    ) -> Option<VelloAaMode> {
+        match aa_raw {
+            None => Some(VelloAaMode::Area),
+            Some(literal) => {
+                let trimmed = literal.trim();
+                if trimmed.is_empty() {
+                    Some(VelloAaMode::Area)
+                } else if let Some(a) = VelloAaMode::from_attr(trimmed) {
+                    Some(a)
+                } else {
+                    self.diagnostics.push(PinionForgeDiagnostic::UnknownAa {
                         found: literal,
                         location: location.clone(),
                     });
@@ -304,12 +345,13 @@ impl<'a> ParseCtx<'a> {
     fn parse_root_attrs(
         &mut self,
         start: &BytesStart<'_>,
-    ) -> Option<(PinionKind, Option<String>, String)> {
+    ) -> Option<(PinionKind, Option<String>, Option<String>, String)> {
         let location = self.current_location();
         let mut xmlns: Option<String> = None;
         let mut kind_raw: Option<String> = None;
         let mut name_raw: Option<String> = None;
         let mut backend_raw: Option<String> = None;
+        let mut aa_raw: Option<String> = None;
 
         for attr in start.attributes().with_checks(false) {
             let Ok(attr) = attr else {
@@ -326,18 +368,18 @@ impl<'a> ParseCtx<'a> {
                 "kind" => kind_raw = Some(value),
                 "name" => name_raw = Some(value),
                 "backend" => backend_raw = Some(value),
+                "aa" => aa_raw = Some(value),
                 _ => {
                     // Unknown attributes on <pinion> are tolerated at R38.1
                     // for forward compatibility — additive attributes added
                     // in a future schema revision MUST not break older
                     // parsers. quick-xml gave us the chance to read them;
                     // we drop them silently per the SCE v1 wire policy
-                    // ("consumers MUST ignore unknown fields"). `backend`
-                    // is a known schema attribute (R46 §5.16) — it is
-                    // accepted on any kind here but only consumed by the
-                    // renderer kind; reactive silently drops it under the
-                    // same forward-compat policy, matching the lifetime
-                    // of the `xmlns` policy for `<pinion>` itself.
+                    // ("consumers MUST ignore unknown fields"). `backend` /
+                    // `aa` are known schema attributes (R46 §5.16, R46.2.1)
+                    // — they are accepted on any kind here but only
+                    // consumed by the renderer kind; reactive silently
+                    // drops them under the same forward-compat policy.
                 }
             }
         }
@@ -399,7 +441,7 @@ impl<'a> ParseCtx<'a> {
         };
 
         match (xmlns_ok, kind, name) {
-            (true, Some(k), Some(n)) => Some((k, backend_raw, n)),
+            (true, Some(k), Some(n)) => Some((k, backend_raw, aa_raw, n)),
             _ => None,
         }
     }
@@ -813,6 +855,18 @@ impl<'a> ParseCtx<'a> {
         let pos = self.reader.buffer_position();
         let (line, col) = byte_to_line_col(self.source_bytes, pos);
         Location::new(self.source_file.clone()).with_line_col(line, col)
+    }
+}
+
+/// Combine a [`RendererBackendKind`] tag with the parsed kind-specific
+/// payloads to produce the final [`RendererBackend`]. R46.2.1: only the
+/// Vello arm exists, carrying the `aa` payload. Future backends
+/// (Headless, Softbuffer, thin-RHI) will add arms that consume their
+/// own kind-specific attributes — keeping the match exhaustive ensures
+/// parser changes flag every assembly site at compile time.
+fn assemble_backend(kind: RendererBackendKind, aa: VelloAaMode) -> RendererBackend {
+    match kind {
+        RendererBackendKind::Vello => RendererBackend::Vello { aa },
     }
 }
 

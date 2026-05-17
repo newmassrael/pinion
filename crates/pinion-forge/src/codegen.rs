@@ -55,7 +55,7 @@
 
 use crate::ast::{
     ComputedDecl, PinionChild, PinionDoc, PinionSpec, RendererBackend, ResourceDecl, SignalDecl,
-    UseDecl,
+    UseDecl, VelloAaMode,
 };
 
 const INDENT: &str = "    ";
@@ -87,43 +87,73 @@ fn emit_reactive(name: &str, children: &[PinionChild]) -> String {
 }
 
 /// R46 §5.16 build slice 1 commit 2 — backend dispatch. Each backend
-/// variant routes to its own emit template. Adding a new
-/// [`RendererBackend`] variant (e.g. `Headless` for the §5.12 screenshot
-/// RPC, `Softbuffer` for a CPU dev path) is a single arm here plus the
-/// matching template function; existing arms keep their behavior.
+/// variant routes to its own emit template, consuming its variant-
+/// specific payload (e.g. `aa` for Vello, future Headless / Softbuffer
+/// arms attaching their own options). Adding a new variant is a single
+/// arm here plus the matching template function; existing arms keep
+/// their behavior.
 fn emit_renderer(name: &str, backend: RendererBackend) -> String {
     match backend {
-        RendererBackend::Vello => emit_renderer_vello(name),
+        RendererBackend::Vello { aa } => emit_renderer_vello(name, aa),
     }
 }
 
-/// R46.2 §5.16 Vello first emit template. Emits a self-contained Rust
-/// module wrapping `vello::util::RenderContext` + `RenderSurface` +
-/// `vello::Renderer` in a concrete type — zero virtual dispatch per
-/// §5.16 R45 (build-time codegen per target). The Vello 0.6 canonical
-/// pattern (Xilem reference impl): `render_to_texture` → `blitter.copy`
-/// → present. Async `new` because wgpu adapter+device acquisition is
-/// async; called once at app boot per §6.3 boundary.
+/// R46.2 §5.16 Vello emit template (R46.2.1 added `aa` parameter).
+/// Emits a self-contained Rust module wrapping
+/// `vello::util::RenderContext` + `RenderSurface` + `vello::Renderer`
+/// in a concrete type — zero virtual dispatch per §5.16 R45 (build-time
+/// codegen per target). Vello 0.6 canonical pattern (Xilem reference
+/// impl): `render_to_texture` → `blitter.copy` → present. Async `new`
+/// because wgpu adapter+device acquisition is async; called once at
+/// app boot per §6.3 boundary.
 ///
-/// Substitution: `__NAME__` and `__ERR_NAME__` placeholders are
-/// replaced with the manifest identifier and `<name>Error` respectively.
-/// The literal-replace shape (rather than `format!()`) keeps the
-/// template body addressable as a single const — the template itself
-/// is *data*, not a format string with embedded substitutions.
-fn emit_renderer_vello(name: &str) -> String {
+/// Substitutions: `__NAME__` / `__ERR_NAME__` (identifier + error type)
+/// and `__AA_SUPPORT__` / `__AA_METHOD__` (Vello `AaSupport` struct
+/// literal + `AaConfig` variant matching the manifest's `aa` attribute,
+/// R46.2.1 forward-compat for §2#4 mode toggle).
+fn emit_renderer_vello(name: &str, aa: VelloAaMode) -> String {
     let err_name = format!("{name}Error");
     VELLO_TEMPLATE
         .replace("__NAME__", name)
         .replace("__ERR_NAME__", &err_name)
+        .replace("__AA_SUPPORT__", aa_support_literal(aa))
+        .replace("__AA_METHOD__", aa_method_literal(aa))
 }
 
-/// Vello first emit template body. `__NAME__` and `__ERR_NAME__` are
-/// the only substitution placeholders (both Rust-ident shaped, can't
-/// collide with valid Rust syntax in the surrounding template). The
-/// emitted module compiles against the `vello` workspace dep (which
-/// re-exports `wgpu`); the consumer crate adds `vello = { workspace =
-/// true }` to its `Cargo.toml`. winit `Arc<Window>` is the canonical
-/// surface target — any `Into<wgpu::SurfaceTarget<'static>>` works.
+/// Map [`VelloAaMode`] to the [`vello::AaSupport`] struct literal that
+/// selects exactly one mode at build time (Vello compiles only that
+/// mode's shaders → smaller binary, faster init). Uses Vello 0.6's
+/// `AaSupport { area, msaa8, msaa16 }` pub-fields shape rather than the
+/// `area_only()` helper so all three modes get a uniform emission.
+fn aa_support_literal(aa: VelloAaMode) -> &'static str {
+    match aa {
+        VelloAaMode::Area => "AaSupport { area: true, msaa8: false, msaa16: false }",
+        VelloAaMode::Msaa8 => "AaSupport { area: false, msaa8: true, msaa16: false }",
+        VelloAaMode::Msaa16 => "AaSupport { area: false, msaa8: false, msaa16: true }",
+    }
+}
+
+/// Map [`VelloAaMode`] to the [`vello::AaConfig`] variant passed inside
+/// `RenderParams` at each `render_to_texture` call. Must agree with
+/// [`aa_support_literal`] — Vello panics at frame submission if the
+/// runtime method is outside the compiled support set.
+fn aa_method_literal(aa: VelloAaMode) -> &'static str {
+    match aa {
+        VelloAaMode::Area => "AaConfig::Area",
+        VelloAaMode::Msaa8 => "AaConfig::Msaa8",
+        VelloAaMode::Msaa16 => "AaConfig::Msaa16",
+    }
+}
+
+/// Vello emit template body. Placeholders are all double-underscore
+/// shaped (Rust-ident-style, can't collide with valid Rust syntax in
+/// the surrounding template): `__NAME__` (struct ident), `__ERR_NAME__`
+/// (error enum ident), `__AA_SUPPORT__` (Vello `AaSupport` struct
+/// literal), `__AA_METHOD__` (Vello `AaConfig` variant). The emitted
+/// module compiles against the `vello` workspace dep (which re-exports
+/// `wgpu`); the consumer crate adds `vello = { workspace = true }` to
+/// its `Cargo.toml`. winit `Arc<Window>` is the canonical surface
+/// target — any `Into<wgpu::SurfaceTarget<'static>>` works.
 const VELLO_TEMPLATE: &str = r#"//! Generated by pinion-forge — DO NOT EDIT.
 //! kind="renderer" backend="vello"
 //!
@@ -213,7 +243,7 @@ impl __NAME__ {
             &device_handle.device,
             RendererOptions {
                 use_cpu: false,
-                antialiasing_support: AaSupport::area_only(),
+                antialiasing_support: __AA_SUPPORT__,
                 num_init_threads: None,
                 pipeline_cache: None,
             },
@@ -241,7 +271,7 @@ impl __NAME__ {
                 base_color,
                 width: self.surface.config.width,
                 height: self.surface.config.height,
-                antialiasing_method: AaConfig::Area,
+                antialiasing_method: __AA_METHOD__,
             },
         )?;
         let surface_texture = self.surface.surface.get_current_texture()?;

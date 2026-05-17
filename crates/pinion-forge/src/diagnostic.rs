@@ -143,6 +143,15 @@ pub enum PinionForgeDiagnostic {
     /// attributes — so any child is a schema violation. R46 §5.16.
     #[error("<{tag}> inside <pinion kind=\"renderer\"> in {}: renderer kind takes no children", location.file.display())]
     RendererChildNotAllowed { tag: String, location: Location },
+
+    /// `<pinion kind="renderer" aa="...">` value is not in the supported
+    /// set. R46.2.1 §5.16: only `"area"` / `"msaa8"` / `"msaa16"` (Vello
+    /// 0.6 mode set). Future Vello releases may add modes; future
+    /// backends (Headless / Softbuffer / thin-RHI) may carry their own
+    /// `aa` set — a new diagnostic per backend is preferable to one
+    /// shared `UnknownAa`, since the supported-set message would diverge.
+    #[error("<pinion kind=\"renderer\" aa=\"{found}\"> in {}: only \"area\" / \"msaa8\" / \"msaa16\" supported", location.file.display())]
+    UnknownAa { found: String, location: Location },
 }
 
 /// Canonical pinion DSL namespace URI. `<pinion xmlns="...">` must match
@@ -174,6 +183,7 @@ impl PinionForgeDiagnostic {
             Self::MissingBackend { .. } => "dsl/missing-backend",
             Self::UnknownBackend { .. } => "dsl/unknown-backend",
             Self::RendererChildNotAllowed { .. } => "dsl/renderer-child-not-allowed",
+            Self::UnknownAa { .. } => "dsl/unknown-aa",
         }
     }
 
@@ -196,7 +206,8 @@ impl PinionForgeDiagnostic {
             | Self::EmptyBody { .. }
             | Self::MissingBackend { .. }
             | Self::UnknownBackend { .. }
-            | Self::RendererChildNotAllowed { .. } => Stage::Validate,
+            | Self::RendererChildNotAllowed { .. }
+            | Self::UnknownAa { .. } => Stage::Validate,
         }
     }
 
@@ -219,7 +230,8 @@ impl PinionForgeDiagnostic {
             | Self::EmptyBody { location, .. }
             | Self::MissingBackend { location, .. }
             | Self::UnknownBackend { location, .. }
-            | Self::RendererChildNotAllowed { location, .. } => location,
+            | Self::RendererChildNotAllowed { location, .. }
+            | Self::UnknownAa { location, .. } => location,
         }
     }
 }

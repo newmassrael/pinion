@@ -45,8 +45,8 @@ pub mod parser;
 pub mod wire;
 
 pub use ast::{
-    ComputedDecl, PinionChild, PinionDoc, PinionKind, PinionSpec, RendererBackend, ResourceDecl,
-    SignalDecl, UseDecl,
+    ComputedDecl, PinionChild, PinionDoc, PinionKind, PinionSpec, RendererBackend,
+    RendererBackendKind, ResourceDecl, SignalDecl, UseDecl, VelloAaMode,
 };
 pub use build::{CompileError, compile_file, compile_str};
 pub use codegen::emit_rust;
@@ -946,6 +946,8 @@ mod tests {
 
     #[test]
     fn parses_empty_renderer_self_closing() {
+        // R46.1 manifest shape (no `aa` attribute) → defaults to Area
+        // per R46.2.1 forward-compat.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello"/>"#;
         let doc = parse(xml).expect("happy path");
         assert_eq!(doc.name, "Scene");
@@ -953,7 +955,8 @@ mod tests {
         let PinionSpec::Renderer { backend } = doc.spec else {
             panic!("expected Renderer variant");
         };
-        assert_eq!(backend, RendererBackend::Vello);
+        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Area });
+        assert_eq!(backend.kind(), RendererBackendKind::Vello);
     }
 
     #[test]
@@ -964,7 +967,10 @@ mod tests {
         </pinion>"#;
         let doc = parse(xml).expect("renderer open-close body");
         assert_eq!(doc.name, "Scene");
-        assert!(matches!(doc.spec, PinionSpec::Renderer { backend: RendererBackend::Vello }));
+        assert!(matches!(
+            doc.spec,
+            PinionSpec::Renderer { backend: RendererBackend::Vello { aa: VelloAaMode::Area } }
+        ));
     }
 
     #[test]
@@ -1073,7 +1079,8 @@ mod tests {
         // The template must use Vello 0.6 canonical surface helpers
         // (RenderContext, RenderSurface, util re-exports) and the
         // render_to_texture + blitter.copy + present pattern — not a
-        // hand-rolled wgpu pipeline.
+        // hand-rolled wgpu pipeline. Default aa (no manifest attribute)
+        // resolves to Area per R46.2.1.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello"/>"#;
         let rust = compile_str(xml, "x.pinion.xml").expect("compile");
         assert!(rust.contains("use vello::util::{RenderContext, RenderSurface}"));
@@ -1088,9 +1095,145 @@ mod tests {
         assert!(rust.contains("surface_texture.present();"));
         // RenderContext::create_surface with AutoVsync (textbook default)
         assert!(rust.contains("wgpu::PresentMode::AutoVsync"));
-        // AaSupport::area_only matches AaConfig::Area in RenderParams
-        assert!(rust.contains("antialiasing_support: AaSupport::area_only()"));
+        // R46.2.1: AaSupport struct literal matches AaConfig variant
+        // (default = Area). Both placeholders must substitute uniformly.
+        assert!(rust.contains(
+            "antialiasing_support: AaSupport { area: true, msaa8: false, msaa16: false }"
+        ));
         assert!(rust.contains("antialiasing_method: AaConfig::Area"));
+    }
+
+    // ---- R46.2.1 §5.16: aa manifest attribute (Vello AA mode) ----
+
+    #[test]
+    fn parses_renderer_aa_msaa8_attribute() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello" aa="msaa8"/>"#;
+        let doc = parse(xml).expect("happy path");
+        let PinionSpec::Renderer { backend } = doc.spec else {
+            panic!("expected Renderer variant");
+        };
+        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Msaa8 });
+    }
+
+    #[test]
+    fn parses_renderer_aa_msaa16_attribute() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello" aa="msaa16"/>"#;
+        let doc = parse(xml).expect("happy path");
+        let PinionSpec::Renderer { backend } = doc.spec else {
+            panic!("expected Renderer variant");
+        };
+        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Msaa16 });
+    }
+
+    #[test]
+    fn parses_renderer_aa_area_attribute_explicit() {
+        // Explicitly opting into the default — must accept and produce
+        // the same AST as no-attribute case.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello" aa="area"/>"#;
+        let doc = parse(xml).expect("happy path");
+        let PinionSpec::Renderer { backend } = doc.spec else {
+            panic!("expected Renderer variant");
+        };
+        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Area });
+    }
+
+    #[test]
+    fn defaults_renderer_aa_to_area_when_absent() {
+        // R46.1 manifest shape (no `aa` attribute) must keep working —
+        // backward-compat with all R46.1-vintage manifests.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello"/>"#;
+        let doc = parse(xml).expect("R46.1 shape backward-compat");
+        let PinionSpec::Renderer { backend } = doc.spec else {
+            panic!("expected Renderer variant");
+        };
+        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Area });
+    }
+
+    #[test]
+    fn defaults_renderer_aa_to_area_when_whitespace_only() {
+        // Whitespace-only `aa` treated as absent (matches MissingBackend
+        // policy for whitespace-only `backend`) — defaults to Area
+        // rather than raising UnknownAa.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello" aa="   "/>"#;
+        let doc = parse(xml).expect("whitespace aa treated as absent");
+        let PinionSpec::Renderer { backend } = doc.spec else {
+            panic!("expected Renderer variant");
+        };
+        assert_eq!(backend, RendererBackend::Vello { aa: VelloAaMode::Area });
+    }
+
+    #[test]
+    fn rejects_renderer_unknown_aa() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello" aa="fxaa"/>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-aa").expect("unknown-aa");
+        let PinionForgeDiagnostic::UnknownAa { found, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(found, "fxaa");
+        assert_eq!(bad.stage(), Stage::Validate);
+    }
+
+    #[test]
+    fn renderer_wire_diagnostic_carries_aa_actual() {
+        // Like UnknownBackend, the wire `actual` field surfaces the
+        // offending literal so an agent can repair it without re-parsing
+        // the message text.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello" aa="taa"/>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-aa").expect("unknown-aa");
+        let value = to_json_value(bad);
+        assert_eq!(value["actual"], Value::from("taa"));
+    }
+
+    #[test]
+    fn aa_unknown_emits_only_aa_diagnostic_when_backend_is_valid() {
+        // Backend valid + aa unknown → only UnknownAa, not UnknownBackend.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello" aa="unknown"/>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| d.code() == "dsl/unknown-aa"));
+        assert!(!diags.iter().any(|d| d.code() == "dsl/unknown-backend"));
+    }
+
+    #[test]
+    fn emits_renderer_vello_aa_msaa16_substitutes_struct_literal() {
+        // Manifest aa="msaa16" must produce the matching AaSupport
+        // struct literal (only msaa16 = true) AND the matching
+        // AaConfig::Msaa16 runtime method. The pair must agree —
+        // Vello panics if RenderParams method is outside support set.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello" aa="msaa16"/>"#;
+        let rust = compile_str(xml, "x.pinion.xml").expect("compile");
+        assert!(rust.contains(
+            "antialiasing_support: AaSupport { area: false, msaa8: false, msaa16: true }"
+        ));
+        assert!(rust.contains("antialiasing_method: AaConfig::Msaa16"));
+        // Area + Msaa8 markers must NOT appear in the AaConfig position
+        // (substring on `AaConfig::` ensures we don't pick up doc text).
+        assert!(!rust.contains("antialiasing_method: AaConfig::Area"));
+        assert!(!rust.contains("antialiasing_method: AaConfig::Msaa8"));
+    }
+
+    #[test]
+    fn emits_renderer_vello_aa_msaa8_substitutes_struct_literal() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello" aa="msaa8"/>"#;
+        let rust = compile_str(xml, "x.pinion.xml").expect("compile");
+        assert!(rust.contains(
+            "antialiasing_support: AaSupport { area: false, msaa8: true, msaa16: false }"
+        ));
+        assert!(rust.contains("antialiasing_method: AaConfig::Msaa8"));
+    }
+
+    #[test]
+    fn emits_renderer_vello_aa_area_default_is_identical_to_explicit() {
+        // The default-aa path (no attribute) and explicit aa="area"
+        // must emit byte-identical Rust source — important for
+        // build-cache reproducibility and for the AST equality check
+        // in [`defaults_renderer_aa_to_area_when_absent`].
+        let xml_default = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello"/>"#;
+        let xml_explicit = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello" aa="area"/>"#;
+        let rust_default = compile_str(xml_default, "x.pinion.xml").expect("compile default");
+        let rust_explicit = compile_str(xml_explicit, "x.pinion.xml").expect("compile explicit");
+        assert_eq!(rust_default, rust_explicit);
     }
 
     #[test]
@@ -1103,10 +1246,13 @@ mod tests {
         assert!(rust.starts_with("//! Generated by pinion-forge"));
         assert!(rust.contains("DO NOT EDIT"));
         assert!(rust.contains("R46.2 §5.16 Vello first emit template"));
-        // No leftover `__NAME__` / `__ERR_NAME__` placeholders — the
-        // .replace() chain in emit_renderer_vello must substitute both.
+        // No leftover placeholders — the .replace() chain in
+        // emit_renderer_vello must substitute all four (R46.2 +
+        // R46.2.1).
         assert!(!rust.contains("__NAME__"));
         assert!(!rust.contains("__ERR_NAME__"));
+        assert!(!rust.contains("__AA_SUPPORT__"));
+        assert!(!rust.contains("__AA_METHOD__"));
         assert!(rust.ends_with('\n'));
     }
 

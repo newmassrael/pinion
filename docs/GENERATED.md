@@ -2913,6 +2913,39 @@ router.pointer_down(&mut state_scene);
 
 
 
+### 423 — Round 46.2.1 — §5.16 Vello aa manifest attribute forward-compat — RendererBackend::Vello { aa: VelloAaMode } ADT 확장, AaSupport/AaConfig 하드코딩 제거, R46.2 self-audit Concern 1 same-session 상환
+
+**Changes**:
+- ast.rs ADT 확장: RendererBackend::Vello → struct variant Vello { aa: VelloAaMode }. 새 enum VelloAaMode { Area, Msaa8, Msaa16 } + from_attr/as_attr. 새 enum RendererBackendKind tag-only (PinionKind ↔ PinionSpec 점롬). RendererBackend::from_attr/as_attr → RendererBackendKind 으로 이동 (concerns 분리 — tag parsing vs payload assembly)
+- parser.rs: parse_root_attrs 가 aa_raw 캐프처 + 4-tuple 반환 (kind, backend_raw, aa_raw, name). 새 validate_renderer_aa(aa_raw, location) -> Option<VelloAaMode> — None/whitespace-only 는 default Area (R46.1 manifest 구형 backward-compat 유지), unknown literal 만 UnknownAa diagnostic. 새 assemble_backend(kind, aa) -> RendererBackend 자유 함수 — 명시적 (kind, payload) → variant 조립 지점
+- diagnostic.rs: PinionForgeDiagnostic::UnknownAa { found, location } 추가. code = dsl/unknown-aa, stage = Validate. UnknownBackend 와 같은 (found, location) 패턴 — actual field 이 found 노출. 동일 구조 유지
+- wire.rs: key_fragments + actual_of 에 UnknownAa arm 추가 — (code, stage, file, found) tuple 로 id 안정 유지, agent dispatch 용 actual = 잘못된 literal
+- codegen.rs: emit_renderer({ aa }) 가 emit_renderer_vello(name, aa) 호출. VELLO_TEMPLATE 에 __AA_SUPPORT__ / __AA_METHOD__ placeholder 추가. 새 helper aa_support_literal(aa) 와 aa_method_literal(aa) — 각각 'AaSupport { area: X, msaa8: Y, msaa16: Z }' struct literal 과 'AaConfig::Area|Msaa8|Msaa16' 반환. struct literal 평을 선택한 이유 = Vello 가 주어진 mode 만 shader compile (binary smaller, init faster) — R45 'compile-time per target' 정합
+- lib.rs tests: 11 신규 추가 — aa parsing happy path ×3 (area/msaa8/msaa16) + default Area when absent (R46.1 backward-compat) + default Area when whitespace-only + UnknownAa diagnostic + wire actual carriage + UnknownAa only when backend valid + codegen substitution verify ×2 (msaa16/msaa8) + default vs explicit area emit byte-equality. 기존 2 테스트 패턴 업데이트 (RendererBackend::Vello { aa: VelloAaMode::Area }) + 테스트 1 개 module_header_no_pollution 에 __AA_SUPPORT__/__AA_METHOD__ leakage check 추가
+
+
+
+**Verification**:
+- cargo test --workspace = 622 pass (611 baseline + 11 신규 R46.2.1 tests in pinion-forge), 0 failed
+- cargo clippy --workspace --all-targets = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / ai-introspect-demo 4 / pinion-forge 0 (신규 4 doc-backtick warning 즉시 정정 — AaSupport/AaConfig 백틱 누락)
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync (generate_docs cascade)
+- workspace consumer 영향 0 — pinion-rpc / pinion-runtime / pinion-cli / examples 모두 RendererBackend API 미사용. R46.1 backward-compat 회귀 검증 — (kind="renderer" backend="vello") manifest 가 default aa=Area 로 처리 (parses_empty_renderer_self_closing + defaults_renderer_aa_to_area_when_absent test pass)
+
+
+
+**Impact**: §5.16, §5.22
+
+
+**Carry forward**:
+- R46.2 self-audit Concern 1 (RendererOptions 하드코딩 forward-compat 위반) — R46.2.1 에서 aa 와 우선 상환. 나머지 (present_mode / use_cpu / num_init_threads / pipeline_cache) 는 build-time vs runtime 분류가 ambiguous — 별도 axis
+- R46.2.x: present_mode + use_cpu surface policy spec round — build-time per target (manifest attribute) vs runtime selectable (builder method) 결정 필요. present_mode 는 §2#4 mode toggle (UI/game 전환) candidate 로 runtime selectable 가 더 textbook; use_cpu 는 WebGPU CPU fallback 을 build-time 이지 runtime 인지 환경 의존. spec round 로 분류 결정
+- R46.2 self-audit Concern 2 (컴파일 검증 부재) — R46.3 의 cargo check 가 첫 실증. 여전히 vello::Error / wgpu::SurfaceError / Into<wgpu::SurfaceTarget<'static>> 실제 존재 미검증. trybuild integration test = 별도 axis (R46.x carry, pinion-forge 전체 codegen 공통 격차)
+- R46.2 self-audit Concern 3 (resize fallibility) — Vello RenderContext::resize_surface 실제 fallible 여부 결정 후 정정. R46.3 cargo check 에서 파압 가능 (signature mismatch 시 컴파일 실패)
+- R46.3: ai-introspect-demo build slice — app.pinion.xml renderer manifest (kind="renderer" name="DemoRenderer" backend="vello") — aa 속성 생략 = default Area (UI 캐너니컬). build.rs 가 emit_rust() → OUT_DIR/<name>.rs + include! 로 main.rs 통합. softbuffer paint(...) 제거 → renderer.render(scene, base_color) 교체
+- R47+ 쪽 carry items 모두 유지 (Headless renderer template / cosmic-text glyph cache / 위젯 카탈로그 확장)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

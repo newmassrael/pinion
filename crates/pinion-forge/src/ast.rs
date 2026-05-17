@@ -117,19 +117,43 @@ impl PinionKind {
     }
 }
 
-/// Render backend selector for `kind="renderer"`. Closed enum — adding a
-/// new backend is a spec decision (R41 Phase 2/3/4 brings thin-RHI /
-/// custom-pass / B3). R46 commit 1 introduces only the Vello variant;
-/// commit 2 lands the matching emit template.
+/// Render backend selector for `kind="renderer"`. Closed sum type — each
+/// variant carries the backend-specific options it needs at codegen
+/// time. Adding a new backend (R41 Phase 2/3/4: thin-RHI / custom-pass /
+/// B3) is a single variant addition; existing `match` sites flag at
+/// compile time. R46.1 introduced the `Vello` variant; R46.2.1 added
+/// the `aa` payload (build-time AA mode selection per §5.16 R45
+/// "compile-time per target", forward-compat with §2#4 mode toggle —
+/// UI mode = Area / game mode candidates = Msaa8 / Msaa16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendererBackend {
-    /// Vello-backed renderer (R41 Phase 1, hybrid path C). UI mode uses
-    /// the embedded Vello renderer; codegen emits a backend manifest
-    /// entry consumed by build-time template selection.
+    /// Vello-backed renderer (R41 Phase 1, hybrid path C). Carries the
+    /// antialiasing mode selected at build time — Vello compiles only
+    /// the shaders for the requested mode (smaller binary, faster
+    /// init). Runtime AA toggle (e.g. quality-slider UX) is a separate
+    /// axis — would require all three modes compiled in.
+    Vello {
+        /// Compile-time antialiasing selector. Determines both the
+        /// emitted [`vello::AaSupport`] struct (which shaders compile)
+        /// and the [`vello::AaConfig`] passed at each
+        /// `render_to_texture` call (which shader runs per frame).
+        aa: VelloAaMode,
+    },
+}
+
+/// Wire / hash identity for [`RendererBackend`] variants. Tag-only
+/// twin — parallels [`PinionKind`] ↔ [`PinionSpec`]. The parser uses
+/// this enum to decode the `backend` attribute literal; the actual
+/// [`RendererBackend`] is then assembled with the kind-specific payload
+/// (e.g. `aa` for `Vello`). Codegen does not dispatch on this — that
+/// role belongs to [`RendererBackend`] pattern matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RendererBackendKind {
+    /// Vello (R41 hybrid path C, Phase 1).
     Vello,
 }
 
-impl RendererBackend {
+impl RendererBackendKind {
     /// Parse the `backend` attribute literal. Returns `None` for any
     /// value outside the closed set — the caller raises
     /// [`crate::diagnostic::PinionForgeDiagnostic::UnknownBackend`].
@@ -146,6 +170,66 @@ impl RendererBackend {
     pub fn as_attr(self) -> &'static str {
         match self {
             Self::Vello => "vello",
+        }
+    }
+}
+
+impl RendererBackend {
+    /// Variant tag identity — drops the payload, returns the
+    /// [`RendererBackendKind`] matching the wire `backend=...` literal.
+    /// Use for diagnostic / wire surfaces; codegen pattern-matches the
+    /// full variant directly.
+    #[must_use]
+    pub fn kind(self) -> RendererBackendKind {
+        match self {
+            Self::Vello { .. } => RendererBackendKind::Vello,
+        }
+    }
+}
+
+/// Vello antialiasing mode. Closed enum mapping to
+/// [`vello::AaSupport`] + [`vello::AaConfig`] pairs. R46.2.1 introduces
+/// all three Vello 0.6 modes; future Vello releases adding new modes
+/// (e.g. distance-field shading) attach as additional variants.
+///
+/// Default policy: `Area` — the cheapest analytic mode, canonical for
+/// UI workloads (Vello / Xilem documented default). The manifest's
+/// `aa` attribute is optional; absence resolves to [`Self::Area`] so
+/// R46.1-vintage manifests (with only `backend="vello"`) keep working.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VelloAaMode {
+    /// `aa="area"` — Vello's analytic-area antialiasing. UI mode
+    /// canonical (cheapest, single-pass, no MSAA buffer cost).
+    Area,
+    /// `aa="msaa8"` — 8× multisample antialiasing. Intermediate
+    /// quality / cost; suitable for mixed UI + light 3D scenes.
+    Msaa8,
+    /// `aa="msaa16"` — 16× multisample antialiasing. Highest quality;
+    /// game-mode candidate per §2#4 mode toggle, R41 Phase 2+ path.
+    Msaa16,
+}
+
+impl VelloAaMode {
+    /// Parse the `aa` attribute literal. Returns `None` for any value
+    /// outside the closed set — the caller raises
+    /// [`crate::diagnostic::PinionForgeDiagnostic::UnknownAa`].
+    #[must_use]
+    pub fn from_attr(literal: &str) -> Option<Self> {
+        match literal {
+            "area" => Some(Self::Area),
+            "msaa8" => Some(Self::Msaa8),
+            "msaa16" => Some(Self::Msaa16),
+            _ => None,
+        }
+    }
+
+    /// Inverse of [`Self::from_attr`]. Stable wire identity.
+    #[must_use]
+    pub fn as_attr(self) -> &'static str {
+        match self {
+            Self::Area => "area",
+            Self::Msaa8 => "msaa8",
+            Self::Msaa16 => "msaa16",
         }
     }
 }

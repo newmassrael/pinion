@@ -60,7 +60,8 @@ fn key_fragments(diag: &PinionForgeDiagnostic) -> String {
         | PinionForgeDiagnostic::WrongXmlns { found, .. }
         | PinionForgeDiagnostic::UnknownKind { found, .. }
         | PinionForgeDiagnostic::InvalidName { found, .. }
-        | PinionForgeDiagnostic::UnknownBackend { found, .. } => found.clone(),
+        | PinionForgeDiagnostic::UnknownBackend { found, .. }
+        | PinionForgeDiagnostic::UnknownAa { found, .. } => found.clone(),
         PinionForgeDiagnostic::UnsupportedElement { tag, .. }
         | PinionForgeDiagnostic::EmptyBody { tag, .. }
         | PinionForgeDiagnostic::RendererChildNotAllowed { tag, .. } => tag.clone(),
@@ -135,7 +136,8 @@ fn actual_of(diag: &PinionForgeDiagnostic) -> Option<String> {
         | PinionForgeDiagnostic::UnknownKind { found, .. }
         | PinionForgeDiagnostic::InvalidName { found, .. }
         | PinionForgeDiagnostic::InvalidIdent { found, .. }
-        | PinionForgeDiagnostic::UnknownBackend { found, .. } => Some(found.clone()),
+        | PinionForgeDiagnostic::UnknownBackend { found, .. }
+        | PinionForgeDiagnostic::UnknownAa { found, .. } => Some(found.clone()),
         PinionForgeDiagnostic::UnsupportedElement { tag, .. }
         | PinionForgeDiagnostic::RendererChildNotAllowed { tag, .. } => Some(tag.clone()),
         _ => None,
