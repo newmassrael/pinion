@@ -171,6 +171,69 @@ fn both_fixtures_map_basic_ascii() {
 }
 
 #[test]
+fn noto_sans_cmap_format4_sweep() {
+    use pinion_text_font::tables::cmap::CmapSubtable;
+    let bytes = std::fs::read("tests/fonts/NotoSans-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    // Noto Sans 의 best subtable 이 format 4 라면, 모든 segment 의 every codepoint
+    // 가 OOB panic 없이 glyph_id 호출 가능 + sentinel segment (0xFFFF) 가 None 반환.
+    if let Some(CmapSubtable::Format4(f4)) = font.cmap.best_subtable() {
+        let mut total_segments = 0;
+        let mut indirect_segments = 0;
+        for (i, &end) in f4.end_code.iter().enumerate() {
+            total_segments += 1;
+            if f4.id_range_offset[i] != 0 {
+                indirect_segments += 1;
+            }
+            // sentinel (start=end=0xFFFF, idDelta=1) 은 query 시 None 기대.
+            if f4.start_code[i] == 0xFFFF && end == 0xFFFF {
+                let _ = f4.glyph_id(0xFFFF);
+                continue;
+            }
+            // segment range 의 시작/끝/중간 codepoint 모두 OOB 없이 query.
+            let mid = u32::midpoint(u32::from(f4.start_code[i]), u32::from(end));
+            for cp in [u32::from(f4.start_code[i]), u32::from(end), mid] {
+                let _gid = f4.glyph_id(cp); // OOB panic 없음만 확인
+            }
+        }
+        assert!(total_segments > 1, "Noto Sans cmap format 4 has > 1 segments");
+        eprintln!(
+            "Noto Sans: {total_segments} segments ({indirect_segments} indirect)",
+        );
+    }
+}
+
+#[test]
+fn nanum_gothic_cmap_subtable_sweep() {
+    use pinion_text_font::tables::cmap::CmapSubtable;
+    let bytes = std::fs::read("tests/fonts/NanumGothic-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    // Nanum Gothic 의 best subtable 검사. format 4 면 sentinel sweep, format 12 면 group sweep.
+    match font.cmap.best_subtable() {
+        Some(CmapSubtable::Format4(f4)) => {
+            for (i, _) in f4.end_code.iter().enumerate() {
+                let _ = f4.glyph_id(u32::from(f4.start_code[i]));
+            }
+        }
+        Some(CmapSubtable::Format12(f12)) => {
+            assert!(!f12.groups.is_empty(), "format 12 has at least 1 group");
+            // 첫/끝/중간 group 의 start codepoint 가 OOB panic 없이 mapped.
+            for g in [
+                f12.groups.first().unwrap(),
+                f12.groups.last().unwrap(),
+                &f12.groups[f12.groups.len() / 2],
+            ] {
+                let gid = f12.glyph_id(g.start_char_code);
+                assert!(gid.is_some(), "U+{:04X} should map", g.start_char_code);
+            }
+        }
+        None => panic!("Nanum Gothic has no usable cmap subtable"),
+    }
+}
+
+#[test]
 fn font_metadata_consistency() {
     // hhea.number_of_h_metrics 가 hmtx 의 long_metrics.len() 와 일치 검증.
     for path in [

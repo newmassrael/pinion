@@ -95,11 +95,26 @@ impl Cmap {
         }
 
         // Read encoding records (3 fields × numTables — 8 bytes each).
+        // Spec: (platformID, encodingID) tuples must be unique within cmap —
+        // strict reject duplicates (a font cannot have two records claiming the
+        // same encoding; ambiguity violates AI introspect determinism).
         let mut prelim: Vec<(u16, u16, u32)> = Vec::with_capacity(usize::from(num_tables));
         for _ in 0..num_tables {
             let platform_id = r.read_u16()?;
             let encoding_id = r.read_u16()?;
             let subtable_offset = r.read_u32()?;
+            if prelim
+                .iter()
+                .any(|&(p, e, _)| p == platform_id && e == encoding_id)
+            {
+                return Err(ParseError::InvalidTableField {
+                    tag: CMAP_TAG,
+                    field: "encodingRecord/duplicate(platform,encoding)",
+                    value: FieldValue::Unsigned(
+                        (u64::from(platform_id) << 16) | u64::from(encoding_id),
+                    ),
+                });
+            }
             prelim.push((platform_id, encoding_id, subtable_offset));
         }
 
@@ -181,6 +196,43 @@ impl Cmap {
     }
 }
 
+/// Format 4 spec 공식 search params 검증.
+/// segCount ≥ 1 일 때만 호출 (segCountX2 0 reject 는 호출 전 처리).
+fn verify_format4_search_params(
+    seg_count: u16,
+    search_range: u16,
+    entry_selector: u16,
+    range_shift: u16,
+) -> Result<(), ParseError> {
+    debug_assert!(seg_count > 0, "verify_format4_search_params requires seg_count ≥ 1");
+
+    let lz = seg_count.leading_zeros();
+    let shift = 15u32.saturating_sub(lz);
+    let expected_entry_selector = u16::try_from(shift).unwrap_or(u16::MAX);
+    let largest_power_of_two: u16 = 1u16 << shift;
+    let expected_search_range = largest_power_of_two.saturating_mul(2);
+    let expected_range_shift = seg_count
+        .saturating_mul(2)
+        .saturating_sub(expected_search_range);
+
+    if search_range == expected_search_range
+        && entry_selector == expected_entry_selector
+        && range_shift == expected_range_shift
+    {
+        Ok(())
+    } else {
+        Err(ParseError::InvalidTableField {
+            tag: CMAP_TAG,
+            field: "format4/search-params-inconsistent",
+            value: FieldValue::Unsigned(
+                (u64::from(search_range) << 32)
+                    | (u64::from(entry_selector) << 16)
+                    | u64::from(range_shift),
+            ),
+        })
+    }
+}
+
 /// Microsoft Unicode UCS-4 (3, 10) or Unicode platform full (0, 4/6).
 fn is_preferred_unicode_full(platform_id: u16, encoding_id: u16) -> bool {
     (platform_id == 0 && (encoding_id == 4 || encoding_id == 6))
@@ -222,13 +274,15 @@ impl Format4 {
             });
         }
         let seg_count = seg_count_x2 / 2;
-        // searchRange / entrySelector / rangeShift — binary search hints,
-        // strictly derivable from segCount. spec mandates specific values
-        // but real-world fonts often have slop; consume + ignore here
-        // (Format 4 의 lookup 은 정확한 hint 없이도 동일 결과).
-        let _search_range = r.read_u16()?;
-        let _entry_selector = r.read_u16()?;
-        let _range_shift = r.read_u16()?;
+        let search_range = r.read_u16()?;
+        let entry_selector = r.read_u16()?;
+        let range_shift = r.read_u16()?;
+        // spec 정의 (Microsoft OpenType "cmap" format 4):
+        //   searchRange = 2 * (2^floor(log2(segCount)))
+        //   entrySelector = floor(log2(segCount))
+        //   rangeShift = 2*segCount - searchRange
+        // black-box tolerance 는 §2 invariant #2 (introspect) 위반 — strict reject.
+        verify_format4_search_params(seg_count, search_range, entry_selector, range_shift)?;
 
         let mut end_code = Vec::with_capacity(usize::from(seg_count));
         for _ in 0..seg_count {
@@ -241,6 +295,16 @@ impl Format4 {
                 value: FieldValue::from_u16(end_code.last().copied().unwrap_or(0)),
             });
         }
+        // spec: endCode array must be sorted ascending — binary search 의 전제.
+        for window in end_code.windows(2) {
+            if window[0] > window[1] {
+                return Err(ParseError::InvalidTableField {
+                    tag: CMAP_TAG,
+                    field: "format4/endCode/not-ascending",
+                    value: FieldValue::from_u16(window[0]),
+                });
+            }
+        }
         let reserved_pad = r.read_u16()?;
         if reserved_pad != 0 {
             return Err(ParseError::InvalidTableField {
@@ -252,6 +316,17 @@ impl Format4 {
         let mut start_code = Vec::with_capacity(usize::from(seg_count));
         for _ in 0..seg_count {
             start_code.push(r.read_u16()?);
+        }
+        // spec: per-segment startCode ≤ endCode 보장.
+        for (i, (&s, &e)) in start_code.iter().zip(end_code.iter()).enumerate() {
+            if s > e {
+                let _ = i;
+                return Err(ParseError::InvalidTableField {
+                    tag: CMAP_TAG,
+                    field: "format4/startCode>endCode",
+                    value: FieldValue::Unsigned((u64::from(s) << 16) | u64::from(e)),
+                });
+            }
         }
         let mut id_delta = Vec::with_capacity(usize::from(seg_count));
         for _ in 0..seg_count {
@@ -271,7 +346,16 @@ impl Format4 {
                 available: length,
             });
         }
-        let glyph_array_bytes = length.saturating_sub(header_end);
+        let glyph_array_bytes = length - header_end;
+        // spec: length 는 fixed header + arrays 이후 glyph_array_words × 2 = total.
+        // (length - header_end) 가 even 이어야 — glyph_id_array 는 u16 word array.
+        if glyph_array_bytes % 2 != 0 {
+            return Err(ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format4/length-not-aligned-to-u16",
+                value: FieldValue::Unsigned(length as u64),
+            });
+        }
         let glyph_array_words = glyph_array_bytes / 2;
         let mut glyph_id_array = Vec::with_capacity(glyph_array_words);
         for _ in 0..glyph_array_words {
@@ -366,16 +450,59 @@ impl Format12 {
                 value: FieldValue::from_u16(reserved),
             });
         }
-        let _length = r.read_u32()?;
+        let length = r.read_u32()?;
         let language = r.read_u32()?;
         let num_groups = r.read_u32()?;
+        // spec: length = 16 (header) + 12 (group bytes) × num_groups. strict check.
+        let expected_length = 16u32
+            .checked_add(num_groups.checked_mul(12).ok_or(
+                ParseError::InvalidTableField {
+                    tag: CMAP_TAG,
+                    field: "format12/numGroups",
+                    value: FieldValue::from_u32(num_groups),
+                },
+            )?)
+            .ok_or(ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format12/length-overflow",
+                value: FieldValue::from_u32(num_groups),
+            })?;
+        if length != expected_length {
+            return Err(ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format12/length-inconsistent",
+                value: FieldValue::from_u32(length),
+            });
+        }
         let cap = usize::try_from(num_groups).unwrap_or(usize::MAX);
         let mut groups = Vec::with_capacity(cap.min(1_000_000));
         for _ in 0..num_groups {
+            let start_char_code = r.read_u32()?;
+            let end_char_code = r.read_u32()?;
+            let start_glyph_id = r.read_u32()?;
+            // spec: start ≤ end per group.
+            if start_char_code > end_char_code {
+                return Err(ParseError::InvalidTableField {
+                    tag: CMAP_TAG,
+                    field: "format12/group/start>end",
+                    value: FieldValue::from_u32(start_char_code),
+                });
+            }
+            // spec: groups sorted ascending by start_char_code, no overlap with prev.
+            if let Some(prev) = groups.last() {
+                let prev_end: u32 = (prev as &SequentialMapGroup).end_char_code;
+                if start_char_code <= prev_end {
+                    return Err(ParseError::InvalidTableField {
+                        tag: CMAP_TAG,
+                        field: "format12/groups-not-sorted-or-overlap",
+                        value: FieldValue::from_u32(start_char_code),
+                    });
+                }
+            }
             groups.push(SequentialMapGroup {
-                start_char_code: r.read_u32()?,
-                end_char_code: r.read_u32()?,
-                start_glyph_id: r.read_u32()?,
+                start_char_code,
+                end_char_code,
+                start_glyph_id,
             });
         }
         Ok(Self { language, groups })
@@ -685,6 +812,184 @@ mod tests {
         assert_eq!(cmap.glyph_id(0x0042), Some(101));
         assert_eq!(cmap.glyph_id(0x0043), Some(102));
         assert_eq!(cmap.glyph_id(0x0044), None);
+    }
+
+    #[test]
+    fn reject_format4_search_params_inconsistent() {
+        // build_format4_simple uses canonical params. mutate searchRange.
+        let mut sub = build_format4_simple(0x0041, 0x005A, 35);
+        // searchRange offset = 8 (after format, length, language, segCountX2)
+        sub[8..10].copy_from_slice(&999u16.to_be_bytes());
+        let cmap_bytes = build_cmap_with_subtable(3, 1, &sub);
+        let err = Cmap::parse(&cmap_bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format4/search-params-inconsistent",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reject_format4_endcode_not_ascending() {
+        // Build a format 4 with 3 segments where endCode goes 0x40, 0x30, 0xFFFF (not sorted).
+        let seg_count: u16 = 3;
+        let length: u16 = 14 + 8 * seg_count + 2;
+        let mut sub = Vec::new();
+        sub.extend_from_slice(&4u16.to_be_bytes());
+        sub.extend_from_slice(&length.to_be_bytes());
+        sub.extend_from_slice(&0u16.to_be_bytes()); // language
+        sub.extend_from_slice(&(seg_count * 2).to_be_bytes());
+        // search params for segCount=3: largest_pow=2, searchRange=4, entrySelector=1, rangeShift=2
+        sub.extend_from_slice(&4u16.to_be_bytes());
+        sub.extend_from_slice(&1u16.to_be_bytes());
+        sub.extend_from_slice(&2u16.to_be_bytes());
+        // endCode: 0x40, 0x30, 0xFFFF — not ascending.
+        sub.extend_from_slice(&0x0040u16.to_be_bytes());
+        sub.extend_from_slice(&0x0030u16.to_be_bytes());
+        sub.extend_from_slice(&0xFFFFu16.to_be_bytes());
+        sub.extend_from_slice(&0u16.to_be_bytes()); // reservedPad
+        // startCode (don't matter for this test)
+        sub.extend_from_slice(&0x0030u16.to_be_bytes());
+        sub.extend_from_slice(&0x0020u16.to_be_bytes());
+        sub.extend_from_slice(&0xFFFFu16.to_be_bytes());
+        // idDelta
+        sub.extend_from_slice(&0i16.to_be_bytes());
+        sub.extend_from_slice(&0i16.to_be_bytes());
+        sub.extend_from_slice(&1i16.to_be_bytes());
+        // idRangeOffset
+        sub.extend_from_slice(&0u16.to_be_bytes());
+        sub.extend_from_slice(&0u16.to_be_bytes());
+        sub.extend_from_slice(&0u16.to_be_bytes());
+
+        let cmap_bytes = build_cmap_with_subtable(3, 1, &sub);
+        let err = Cmap::parse(&cmap_bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format4/endCode/not-ascending",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reject_format4_startcode_gt_endcode() {
+        // build standard, then break: startCode[0] = 0x60 > endCode[0] = 0x5A.
+        let mut sub = build_format4_simple(0x0041, 0x005A, 35);
+        // startCode array starts at offset 14 + 2*seg_count (endCode) + 2 (pad) = 14 + 4 + 2 = 20
+        sub[20..22].copy_from_slice(&0x0060u16.to_be_bytes());
+        let cmap_bytes = build_cmap_with_subtable(3, 1, &sub);
+        let err = Cmap::parse(&cmap_bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format4/startCode>endCode",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reject_format12_length_inconsistent() {
+        // build a valid format 12, mutate length field to wrong value.
+        let group = SequentialMapGroup {
+            start_char_code: 0xAC00,
+            end_char_code: 0xD7A3,
+            start_glyph_id: 5000,
+        };
+        let mut sub = build_format12_simple(&[group]);
+        // length offset = 4 (after format + reserved)
+        sub[4..8].copy_from_slice(&999u32.to_be_bytes());
+        let cmap_bytes = build_cmap_with_subtable(3, 10, &sub);
+        let err = Cmap::parse(&cmap_bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format12/length-inconsistent",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reject_format12_group_start_gt_end() {
+        let group = SequentialMapGroup {
+            start_char_code: 0xD000,
+            end_char_code: 0xAC00, // start > end
+            start_glyph_id: 100,
+        };
+        let sub = build_format12_simple(&[group]);
+        let cmap_bytes = build_cmap_with_subtable(3, 10, &sub);
+        let err = Cmap::parse(&cmap_bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format12/group/start>end",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reject_format12_groups_not_sorted() {
+        let groups = [
+            SequentialMapGroup {
+                start_char_code: 0xD000,
+                end_char_code: 0xD0FF,
+                start_glyph_id: 200,
+            },
+            SequentialMapGroup {
+                start_char_code: 0xAC00, // before previous group
+                end_char_code: 0xAC0F,
+                start_glyph_id: 100,
+            },
+        ];
+        let sub = build_format12_simple(&groups);
+        let cmap_bytes = build_cmap_with_subtable(3, 10, &sub);
+        let err = Cmap::parse(&cmap_bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "format12/groups-not-sorted-or-overlap",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reject_duplicate_encoding_record() {
+        // 두 EncodingRecord 가 same (3, 1) — duplicate reject.
+        let sub = build_format4_simple(0x0041, 0x005A, 35);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u16.to_be_bytes()); // version
+        bytes.extend_from_slice(&2u16.to_be_bytes()); // numTables = 2
+        // record 0: (3, 1) → offset 4 + 16 = 20
+        bytes.extend_from_slice(&3u16.to_be_bytes());
+        bytes.extend_from_slice(&1u16.to_be_bytes());
+        bytes.extend_from_slice(&20u32.to_be_bytes());
+        // record 1: (3, 1) again → same offset (duplicate)
+        bytes.extend_from_slice(&3u16.to_be_bytes());
+        bytes.extend_from_slice(&1u16.to_be_bytes());
+        bytes.extend_from_slice(&20u32.to_be_bytes());
+        bytes.extend_from_slice(&sub);
+
+        let err = Cmap::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag: CMAP_TAG,
+                field: "encodingRecord/duplicate(platform,encoding)",
+                ..
+            }
+        ));
     }
 
     #[test]

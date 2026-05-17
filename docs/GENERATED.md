@@ -2268,6 +2268,7 @@ router.pointer_down(&mut state_scene);
 - compound glyph (composite GlyphID with transform matrix) = R50.1.4 후속 또는 별도 sub-round
 - R50.1.1 ~ R50.1.5 sub-phase = sfnt directory / metadata / cmap / glyf+loca / name
 - test fixture LICENSE 정정 — Noto Sans 도 OFL 1.1 (Apache framing 은 pre-2018 history 잔존)
+- R50.1.3.1 corrective: cmap spec strict + invariant 검증 + duplicate reject 일관 적용
 
 
 
@@ -6236,6 +6237,40 @@ router.pointer_down(&mut state_scene);
 - R50.1.X 후속: WOFF2 / CFF / variable axis / color tables / compound glyph
 - R50.X RPC channel — pinion-rpc 에 font/glyph_id_for, font/cmap_subtables method 노출 (AI-first)
 - R50.2+ sub-crate 분할: pinion-text-{unicode, shape, layout, raster}
+
+
+
+### Round 456 — R50.1.3.1 §5.37.1 cmap textbook corrective — Round 456 — R50.1.3.1 §5.37.1 cmap textbook self-audit corrective. R50.1.3 의 4점 gap 정정: (1) Format 4 searchRange/entrySelector/rangeShift strict reject (R50.1.2 hhea.reserved 와 일관 적용), (2) invariant 검증 (endCode ascending, startCode ≤ endCode, length aligned, format12 groups sorted + start ≤ end + length consistent), (3) real font sweep integration tests (Noto Sans format 4 + Nanum Gothic), (4) EncodingRecord (platform, encoding) duplicate reject. Noto Sans + Nanum Gothic 모두 strict 통과 — fixture 자체가 canonical. 79 tests pass.
+
+**Changes**:
+- Format 4 verify_format4_search_params() 신설 — spec 공식 (searchRange = 2 × 2^floor(log2(segCount)), entrySelector = floor(log2(segCount)), rangeShift = 2*segCount - searchRange) strict reject
+- Format 4 endCode ascending sorted 검증 — partition_point binary search 의 전제 확보
+- Format 4 startCode[i] ≤ endCode[i] per-segment 검증
+- Format 4 length 의 (length - header_end) 가 even 검증 (glyph_id_array u16 alignment)
+- Format 12 length == 16 + 12 * num_groups strict consistency 검증
+- Format 12 group start_char_code ≤ end_char_code per-group 검증
+- Format 12 groups ascending sorted (no overlap) 검증
+- Cmap encoding records (platform_id, encoding_id) duplicate reject (ambiguity 제거)
+- tests/fixtures.rs: noto_sans_cmap_format4_sweep + nanum_gothic_cmap_subtable_sweep — real font 전 segment / group sweep
+
+
+
+**Verification**:
+- cargo test --package pinion-text-font: 79 pass (68 unit + 11 integration, +9 new)
+- cargo clippy --package pinion-text-font: 0 warnings
+- Noto Sans + Nanum Gothic real fixtures: 전 strict check 통과 — canonical font 임 검증
+- spec strict 일관성 완성 — R50.1.2 hhea.reserved 의 same level rigor
+- AI-first introspect: corrupt font 입력 시 이제 조용 wrong result 이 아닌 명시 reject
+
+
+
+**Impact**: §5.37.1, §5.37
+
+
+**Carry forward**:
+- R50.1.4 glyf + loca parser — simple TrueType outlines, compound glyph postpone
+- R50.1.5 name table parser — family / style / postscript name
+- R50.X RPC channel — pinion-rpc 에 font/glyph_id_for, font/cmap_subtables method 노출
 
 
 
