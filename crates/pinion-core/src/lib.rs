@@ -25,6 +25,7 @@ pub use reactive::{
 pub use revision::SceneRevision;
 pub use scene::{HitPath, Scene};
 pub use style::{
-    Align, AlignItems, Border, BoxStyle, Color, Display, Fit, FlexDirection, ImageStyle,
-    JustifyContent, LayoutStyle, PathStyle, Size, SizeValue, Stroke, StrokeCap, TextStyle,
+    Align, AlignItems, Border, BoxStyle, Color, Display, Fit, FlexDirection, FontStyle,
+    FontWeight, ImageStyle, JustifyContent, LayoutStyle, LineHeight, PathStyle, Size, SizeValue,
+    Stroke, StrokeCap, TextAlign, TextDecoration, TextOverflow, TextStyle,
 };

@@ -7983,6 +7983,72 @@
         "R297 false-positive commit↔ledger drift carry"
       ]
     },
+    "Round 440 — §5.36 R47.5 TextStyle Figma-fidelity 확장 (7 새 field + 5 새 type)": {
+      "decision_summary": "Round 440 — §5.36 R47.5 TextStyle 확장 (schema only): font_weight / font_style / line_height / letter_spacing / text_align / decoration / overflow 추가. 5 신규 type (FontWeight u16 + 11 const / FontStyle / LineHeight / TextAlign / TextDecoration / TextOverflow). Hash+Eq+integer 기반으로 LayoutCache key 분리. parley wire 는 R47.6 carry.",
+      "changes_bullets": [
+        "pinion-core/src/style.rs: TextStyle 에 7 신규 field 추가 + 11 신규 with_* const builder + Default 정확 보존",
+        "pinion-core/src/style.rs: 5 신규 type (FontWeight newtype u16 + 11 const / FontStyle / LineHeight / TextAlign / TextDecoration / TextOverflow). 모두 Hash+Eq+Default+non_exhaustive",
+        "pinion-core/src/lib.rs: 6 신규 type re-export (FontStyle / FontWeight / LineHeight / TextAlign / TextDecoration / TextOverflow)",
+        "pinion-core/src/style.rs: +10 unit tests (named const / builder ×7 / variant Hash 분리 ×2 + decoration 4 조합 hash)",
+        "clippy doc_markdown same-commit fix: paint_text 백틱"
+      ],
+      "verification_bullets": [
+        "cargo test --features pinion-runtime/vello = 652 pass (643 → 652, +9 R47.5 schema)",
+        "cargo clippy = baseline 보존 (pinion-core 5 + pinion-runtime 1)",
+        "LayoutCache key 분리 검증: 8 different field variants 모두 distinct hash 확인",
+        "TextDecoration::{none/underline/strikethrough/both} 4 조합 distinct hash",
+        "TextStyle default = pre-R47.5 동일 (NORMAL/Normal/Normal/0/Start/none/Visible)"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.3"
+      ],
+      "carry_forward_bullets": [
+        "R47.6 parley wire: paint_text + LayoutCache::shape 의 새 TextStyle 필드 전달 (StyleProperty::FontWeight/FontStyle/LineHeight/LetterSpacing/Underline/Strikethrough, parley::Alignment, line truncation)",
+        "R47.6 §5.36 round close 상태 확정",
+        "R48 §5.3 별도 round = BoxStyle Figma-fidelity (per-corner / shadow / gradient / blend / opacity)",
+        "R47.5+ GlyphCache (consumer GPU atlas) — Vello roadmap_2023 upstream PR 또는 우회 path",
+        "R47.x fontique font fallback override API + GlyphCache evict 정책",
+        "R47.x TextDecoration offset/brush per-decoration tuning",
+        "Phase 2+ lifetime canonical text engine (§5.16 R11 thin RHI 정합) — long-term",
+        "R46.4 carry: parse_path_command finite check NaN/±∞ unit test + clippy sub-slice",
+        "R46.2 Concern 1 carry: RendererOptions surface policy",
+        "claudedocs/ SCE 3 파일 working-tree carry",
+        "R297 false-positive commit↔ledger drift carry"
+      ],
+      "publishable_decision_summary": "Round 440 — §5.36 R47.5 TextStyle 확장 (schema only): font_weight / font_style / line_height / letter_spacing / text_align / decoration / overflow 추가. 5 신규 type (FontWeight u16 + 11 const / FontStyle / LineHeight / TextAlign / TextDecoration / TextOverflow). Hash+Eq+integer 기반으로 LayoutCache key 분리. parley wire 는 R47.6 carry.",
+      "publishable_changes_bullets": [
+        "pinion-core/src/style.rs: TextStyle 에 7 신규 field 추가 + 11 신규 with_* const builder + Default 정확 보존",
+        "pinion-core/src/style.rs: 5 신규 type (FontWeight newtype u16 + 11 const / FontStyle / LineHeight / TextAlign / TextDecoration / TextOverflow). 모두 Hash+Eq+Default+non_exhaustive",
+        "pinion-core/src/lib.rs: 6 신규 type re-export (FontStyle / FontWeight / LineHeight / TextAlign / TextDecoration / TextOverflow)",
+        "pinion-core/src/style.rs: +10 unit tests (named const / builder ×7 / variant Hash 분리 ×2 + decoration 4 조합 hash)",
+        "clippy doc_markdown same-commit fix: paint_text 백틱"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --features pinion-runtime/vello = 652 pass (643 → 652, +9 R47.5 schema)",
+        "cargo clippy = baseline 보존 (pinion-core 5 + pinion-runtime 1)",
+        "LayoutCache key 분리 검증: 8 different field variants 모두 distinct hash 확인",
+        "TextDecoration::{none/underline/strikethrough/both} 4 조합 distinct hash",
+        "TextStyle default = pre-R47.5 동일 (NORMAL/Normal/Normal/0/Start/none/Visible)"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R47.6 parley wire: paint_text + LayoutCache::shape 의 새 TextStyle 필드 전달 (StyleProperty::FontWeight/FontStyle/LineHeight/LetterSpacing/Underline/Strikethrough, parley::Alignment, line truncation)",
+        "R47.6 §5.36 round close 상태 확정",
+        "R48 §5.3 별도 round = BoxStyle Figma-fidelity (per-corner / shadow / gradient / blend / opacity)",
+        "R47.5+ GlyphCache (consumer GPU atlas) — Vello roadmap_2023 upstream PR 또는 우회 path",
+        "R47.x fontique font fallback override API + GlyphCache evict 정책",
+        "R47.x TextDecoration offset/brush per-decoration tuning",
+        "Phase 2+ lifetime canonical text engine (§5.16 R11 thin RHI 정합) — long-term",
+        "R46.4 carry: parse_path_command finite check NaN/±∞ unit test + clippy sub-slice",
+        "R46.2 Concern 1 carry: RendererOptions surface policy",
+        "claudedocs/ SCE 3 파일 working-tree carry",
+        "R297 false-positive commit↔ledger drift carry"
+      ]
+    },
     "Round 5": {
       "decision_summary": "Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology",
       "changes_bullets": [

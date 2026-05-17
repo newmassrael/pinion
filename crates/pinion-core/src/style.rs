@@ -175,30 +175,248 @@ impl BoxStyle {
     }
 }
 
+/// CSS / OpenType font-weight axis value (§5.36 R47.5 Figma-fidelity).
+///
+/// Newtype over `u16` for CSS-style integer values in `[1, 1000]`. The
+/// 11 named constants (`THIN`..`EXTRA_BLACK`) cover the common variable
+/// font instances; other values are accepted for variable axis tuning.
+/// fontique's `FontWeight` is `f32` for `wght` axis fidelity — pinion
+/// keeps `u16` so the value participates in `Hash` / `Eq` (cache key
+/// stability), then `pinion-text` widens to `f32` at the parley wire
+/// in R47.6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FontWeight(pub u16);
+
+impl FontWeight {
+    /// Weight 100 — Thin / Hairline.
+    pub const THIN: Self = Self(100);
+    /// Weight 200 — Extra Light / Ultra Light.
+    pub const EXTRA_LIGHT: Self = Self(200);
+    /// Weight 300 — Light.
+    pub const LIGHT: Self = Self(300);
+    /// Weight 350 — Semi Light.
+    pub const SEMI_LIGHT: Self = Self(350);
+    /// Weight 400 — Regular / Normal (default).
+    pub const NORMAL: Self = Self(400);
+    /// Weight 500 — Medium.
+    pub const MEDIUM: Self = Self(500);
+    /// Weight 600 — Semi Bold / Demi Bold.
+    pub const SEMI_BOLD: Self = Self(600);
+    /// Weight 700 — Bold.
+    pub const BOLD: Self = Self(700);
+    /// Weight 800 — Extra Bold / Ultra Bold.
+    pub const EXTRA_BOLD: Self = Self(800);
+    /// Weight 900 — Black / Heavy.
+    pub const BLACK: Self = Self(900);
+    /// Weight 950 — Extra Black / Ultra Black.
+    pub const EXTRA_BLACK: Self = Self(950);
+}
+
+impl Default for FontWeight {
+    fn default() -> Self {
+        Self::NORMAL
+    }
+}
+
+/// CSS / OpenType font-style axis value (§5.36 R47.5 Figma-fidelity).
+///
+/// Mirrors fontique's `FontStyle` with one simplification: the oblique
+/// angle (when supplied) is `Option<i16>` degrees rather than `f32`, so
+/// the enum stays `Hash + Eq` — required by `LayoutCache::LayoutKey`.
+/// `None` inside `Oblique` means "let the font default" (parley reads
+/// `slnt` axis); `Some(deg)` pins a custom slant. R47.6 widens to
+/// `f32` at the parley wire.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FontStyle {
+    /// Upright / "roman" form. Default.
+    #[default]
+    Normal,
+    /// Slanted style with its own glyph forms (semi-cursive history).
+    Italic,
+    /// Algorithmically-slanted upright glyphs; degrees CCW from vertical.
+    Oblique(Option<i16>),
+}
+
+/// Line-height policy (§5.36 R47.5 Figma-fidelity).
+///
+/// `Normal` defers to the font's preferred line height (parley
+/// `MetricsRelative(1.0)` equivalent). `Px` pins absolute pixels;
+/// `MultiplierX100` is a CSS-style unitless number × 100 fixed point
+/// (e.g. `MultiplierX100(150)` = 1.5× font size). Fixed point keeps
+/// the enum `Hash + Eq`; R47.6 widens to `f32` at the parley wire.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LineHeight {
+    /// Use the font's preferred line height (= parley `MetricsRelative(1.0)`).
+    #[default]
+    Normal,
+    /// Absolute line height in CSS pixels.
+    Px(u32),
+    /// Multiplier of font size, in 1/100 units (e.g. `150` = `1.5×`).
+    MultiplierX100(u16),
+}
+
+/// Inline text alignment along the writing-mode main axis (§5.36 R47.5).
+///
+/// `Start` / `End` resolve to left / right in LTR text (and reverse in
+/// RTL). `Center` centres each line. `Justify` distributes inter-word
+/// space to fill the line — meaningful only with multi-line layout.
+/// Maps to `parley::Alignment` at the R47.6 wire (`paint_text` honour
+/// + `LayoutCache::shape` alignment argument).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextAlign {
+    /// Writing-mode start (default — left in LTR, right in RTL).
+    #[default]
+    Start,
+    /// Centre each line.
+    Center,
+    /// Writing-mode end (right in LTR, left in RTL).
+    End,
+    /// Distribute inter-word space to fill the line (multi-line only).
+    Justify,
+}
+
+/// Inline text decoration (§5.36 R47.5 Figma-fidelity).
+///
+/// Both `underline` and `strikethrough` may be `true` simultaneously
+/// (Figma allows this combination). R47.6 wires each into parley as
+/// `StyleProperty::Underline(bool)` + `StyleProperty::Strikethrough(bool)`;
+/// offset / brush per-decoration tuning is R47.x carry.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TextDecoration {
+    pub underline: bool,
+    pub strikethrough: bool,
+}
+
+impl TextDecoration {
+    /// All-off (default — no decoration). `const`-fn for zero-cost
+    /// composition in const contexts.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            underline: false,
+            strikethrough: false,
+        }
+    }
+
+    /// Both `underline` and `strikethrough` enabled — Figma allows
+    /// this combination.
+    #[must_use]
+    pub const fn both() -> Self {
+        Self {
+            underline: true,
+            strikethrough: true,
+        }
+    }
+
+    /// Set only `underline = true`.
+    #[must_use]
+    pub const fn underline() -> Self {
+        Self {
+            underline: true,
+            strikethrough: false,
+        }
+    }
+
+    /// Set only `strikethrough = true`.
+    #[must_use]
+    pub const fn strikethrough() -> Self {
+        Self {
+            underline: false,
+            strikethrough: true,
+        }
+    }
+
+    /// Builder: toggle the underline flag.
+    #[must_use]
+    pub const fn with_underline(mut self, on: bool) -> Self {
+        self.underline = on;
+        self
+    }
+
+    /// Builder: toggle the strikethrough flag.
+    #[must_use]
+    pub const fn with_strikethrough(mut self, on: bool) -> Self {
+        self.strikethrough = on;
+        self
+    }
+}
+
+/// Behaviour when text content exceeds the layout box (§5.36 R47.5).
+///
+/// `Visible` (default) — glyphs render beyond the rect. `Clip` — paint
+/// adapter scissors against the box edge. `Ellipsis` — parley
+/// truncates the last line and appends "…". R47.6 wires `Clip` /
+/// `Ellipsis` at the `paint_text` + parley line-break interaction.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextOverflow {
+    /// Paint glyphs beyond `rect` edge (default — legacy R47.3 behaviour).
+    #[default]
+    Visible,
+    /// Scissor paint to `rect` edge.
+    Clip,
+    /// Truncate to fit + append `…` on the last line.
+    Ellipsis,
+}
+
 /// Sidecar style for [`TextNode`](crate::scene::TextNode) per §5.3 R20.
 ///
-/// `font_family = None` means "use the system default" — cosmic-text /
-/// fontdb resolves an installed sans-serif fallback. `font_size_px`
-/// is in CSS-style pixel units (cosmic-text converts to font-units
-/// internally). `fg_color` defaults to opaque black so that a freshly
-/// constructed [`TextNode`](crate::scene::TextNode) is visible without
-/// requiring style configuration.
+/// R47.5 §5.36 Figma-fidelity expansion: `font_weight`, `font_style`,
+/// `line_height`, `letter_spacing`, `text_align`, `decoration`,
+/// `overflow` join `font_family` / `font_size_px` / `fg_color` in the
+/// schema. All new fields are `Hash + Eq` (integer-based) so the
+/// `LayoutCache::LayoutKey` continues to deduplicate stable inputs;
+/// any field change (including weight / line-height / alignment)
+/// produces a fresh cache entry on the next shape pass.
+///
+/// `pinion-core` carries the schema only — no parley dependency. The
+/// `pinion-text` crate wires each field into the corresponding
+/// `parley::StyleProperty` / `parley::Alignment` at R47.6 (`paint_text`
+/// + `LayoutCache::shape`).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TextStyle {
     pub font_family: Option<std::borrow::Cow<'static, str>>,
     pub font_size_px: u32,
     pub fg_color: Color,
+    /// CSS `font-weight` (R47.5). Default = [`FontWeight::NORMAL`] (400).
+    pub font_weight: FontWeight,
+    /// CSS `font-style` (R47.5). Default = [`FontStyle::Normal`].
+    pub font_style: FontStyle,
+    /// CSS `line-height` (R47.5). Default = [`LineHeight::Normal`].
+    pub line_height: LineHeight,
+    /// CSS `letter-spacing` in px (signed) (R47.5). Default = `0`.
+    pub letter_spacing: i32,
+    /// CSS `text-align` (R47.5). Default = [`TextAlign::Start`].
+    pub text_align: TextAlign,
+    /// CSS `text-decoration` (R47.5). Default = both `false`.
+    pub decoration: TextDecoration,
+    /// CSS `text-overflow` (R47.5). Default = [`TextOverflow::Visible`].
+    pub overflow: TextOverflow,
 }
 
 impl TextStyle {
-    /// v0 default: system font, 16px, opaque black.
+    /// v0 default: system font, 16px, opaque black, Figma-fidelity
+    /// fields all at their CSS defaults (Normal weight, Normal style,
+    /// Normal line height, 0 letter-spacing, Start align, no
+    /// decoration, Visible overflow).
     #[must_use]
     pub const fn new() -> Self {
         Self {
             font_family: None,
             font_size_px: 16,
             fg_color: Color::rgb(0, 0, 0),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: LineHeight::Normal,
+            letter_spacing: 0,
+            text_align: TextAlign::Start,
+            decoration: TextDecoration::none(),
+            overflow: TextOverflow::Visible,
         }
     }
 
@@ -223,6 +441,55 @@ impl TextStyle {
         family: impl Into<std::borrow::Cow<'static, str>>,
     ) -> Self {
         self.font_family = Some(family.into());
+        self
+    }
+
+    /// Builder: override the font weight (R47.5).
+    #[must_use]
+    pub const fn with_weight(mut self, weight: FontWeight) -> Self {
+        self.font_weight = weight;
+        self
+    }
+
+    /// Builder: override the font style (R47.5).
+    #[must_use]
+    pub const fn with_style(mut self, style: FontStyle) -> Self {
+        self.font_style = style;
+        self
+    }
+
+    /// Builder: override the line height (R47.5).
+    #[must_use]
+    pub const fn with_line_height(mut self, line_height: LineHeight) -> Self {
+        self.line_height = line_height;
+        self
+    }
+
+    /// Builder: override the letter-spacing (px, signed) (R47.5).
+    #[must_use]
+    pub const fn with_letter_spacing(mut self, px: i32) -> Self {
+        self.letter_spacing = px;
+        self
+    }
+
+    /// Builder: override the text alignment (R47.5).
+    #[must_use]
+    pub const fn with_align(mut self, align: TextAlign) -> Self {
+        self.text_align = align;
+        self
+    }
+
+    /// Builder: override the text decoration (R47.5).
+    #[must_use]
+    pub const fn with_decoration(mut self, decoration: TextDecoration) -> Self {
+        self.decoration = decoration;
+        self
+    }
+
+    /// Builder: override the overflow policy (R47.5).
+    #[must_use]
+    pub const fn with_overflow(mut self, overflow: TextOverflow) -> Self {
+        self.overflow = overflow;
         self
     }
 }
@@ -679,6 +946,16 @@ mod tests {
         assert!(s.font_family.is_none());
         assert_eq!(s.font_size_px, 16);
         assert_eq!(s.fg_color, Color::rgb(0, 0, 0));
+        // R47.5 Figma-fidelity defaults — every new field at its CSS
+        // default so that a freshly-constructed TextStyle behaves
+        // identically to the pre-R47.5 shape.
+        assert_eq!(s.font_weight, FontWeight::NORMAL);
+        assert_eq!(s.font_style, FontStyle::Normal);
+        assert_eq!(s.line_height, LineHeight::Normal);
+        assert_eq!(s.letter_spacing, 0);
+        assert_eq!(s.text_align, TextAlign::Start);
+        assert_eq!(s.decoration, TextDecoration::none());
+        assert_eq!(s.overflow, TextOverflow::Visible);
     }
 
     #[test]
@@ -697,6 +974,116 @@ mod tests {
     fn text_style_with_font_family_accepts_static_str() {
         let s = TextStyle::new().with_font_family("Inter");
         assert_eq!(s.font_family.as_deref(), Some("Inter"));
+    }
+
+    #[test]
+    fn font_weight_named_constants_match_css_integers() {
+        // The 11 named constants map to the CSS Fonts Level 4 integer
+        // weights. Variable axis fidelity (350 / 950) is preserved.
+        assert_eq!(FontWeight::THIN.0, 100);
+        assert_eq!(FontWeight::EXTRA_LIGHT.0, 200);
+        assert_eq!(FontWeight::LIGHT.0, 300);
+        assert_eq!(FontWeight::SEMI_LIGHT.0, 350);
+        assert_eq!(FontWeight::NORMAL.0, 400);
+        assert_eq!(FontWeight::MEDIUM.0, 500);
+        assert_eq!(FontWeight::SEMI_BOLD.0, 600);
+        assert_eq!(FontWeight::BOLD.0, 700);
+        assert_eq!(FontWeight::EXTRA_BOLD.0, 800);
+        assert_eq!(FontWeight::BLACK.0, 900);
+        assert_eq!(FontWeight::EXTRA_BLACK.0, 950);
+        assert_eq!(FontWeight::default(), FontWeight::NORMAL);
+    }
+
+    #[test]
+    fn text_style_with_weight_builder_overrides_default() {
+        let s = TextStyle::new().with_weight(FontWeight::BOLD);
+        assert_eq!(s.font_weight, FontWeight::BOLD);
+    }
+
+    #[test]
+    fn text_style_with_style_builder_accepts_italic_and_oblique() {
+        let s = TextStyle::new().with_style(FontStyle::Italic);
+        assert_eq!(s.font_style, FontStyle::Italic);
+        let o = TextStyle::new().with_style(FontStyle::Oblique(Some(12)));
+        assert_eq!(o.font_style, FontStyle::Oblique(Some(12)));
+        let auto = TextStyle::new().with_style(FontStyle::Oblique(None));
+        assert_eq!(auto.font_style, FontStyle::Oblique(None));
+    }
+
+    #[test]
+    fn text_style_with_line_height_variants_distinguish_for_hash() {
+        // Each LineHeight variant is a distinct cache key (R47.5 →
+        // R47.6 cache hit/miss boundary). Hash + Eq must separate them.
+        use std::collections::HashMap;
+        let mut m: HashMap<TextStyle, &'static str> = HashMap::new();
+        m.insert(TextStyle::new().with_line_height(LineHeight::Normal), "normal");
+        m.insert(TextStyle::new().with_line_height(LineHeight::Px(20)), "px20");
+        m.insert(
+            TextStyle::new().with_line_height(LineHeight::MultiplierX100(150)),
+            "x1.5",
+        );
+        assert_eq!(m.len(), 3);
+    }
+
+    #[test]
+    fn text_style_with_letter_spacing_accepts_signed_values() {
+        let s = TextStyle::new().with_letter_spacing(-2);
+        assert_eq!(s.letter_spacing, -2);
+        let s = TextStyle::new().with_letter_spacing(4);
+        assert_eq!(s.letter_spacing, 4);
+    }
+
+    #[test]
+    fn text_style_with_align_builder_overrides_default() {
+        for a in [TextAlign::Start, TextAlign::Center, TextAlign::End, TextAlign::Justify] {
+            let s = TextStyle::new().with_align(a);
+            assert_eq!(s.text_align, a);
+        }
+    }
+
+    #[test]
+    fn text_decoration_combinations_distinguish_for_hash() {
+        use std::collections::HashSet;
+        let mut s = HashSet::new();
+        s.insert(TextDecoration::none());
+        s.insert(TextDecoration::underline());
+        s.insert(TextDecoration::strikethrough());
+        s.insert(TextDecoration::both());
+        assert_eq!(s.len(), 4, "all 4 decoration combinations hash distinctly");
+        // Builder composition matches the named constructors.
+        let composed = TextDecoration::none().with_underline(true).with_strikethrough(true);
+        assert_eq!(composed, TextDecoration::both());
+    }
+
+    #[test]
+    fn text_style_with_overflow_builder_overrides_default() {
+        for o in [TextOverflow::Visible, TextOverflow::Clip, TextOverflow::Ellipsis] {
+            let s = TextStyle::new().with_overflow(o);
+            assert_eq!(s.overflow, o);
+        }
+    }
+
+    #[test]
+    fn text_style_variant_styles_produce_distinct_hashes() {
+        // R47.5 — different Figma-fidelity field values must produce
+        // distinct cache keys so LayoutCache shapes them independently.
+        // R47.6 wires each into parley; the cache-key distinction is
+        // the prereq.
+        use std::collections::HashSet;
+        let mut s = HashSet::new();
+        s.insert(TextStyle::new());
+        s.insert(TextStyle::new().with_weight(FontWeight::BOLD));
+        s.insert(TextStyle::new().with_style(FontStyle::Italic));
+        s.insert(TextStyle::new().with_line_height(LineHeight::MultiplierX100(120)));
+        s.insert(TextStyle::new().with_letter_spacing(2));
+        s.insert(TextStyle::new().with_align(TextAlign::Center));
+        s.insert(TextStyle::new().with_decoration(TextDecoration::underline()));
+        s.insert(TextStyle::new().with_overflow(TextOverflow::Ellipsis));
+        assert_eq!(
+            s.len(),
+            8,
+            "every R47.5 axis variant must hash distinctly from default"
+        );
     }
 
     #[test]
