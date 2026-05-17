@@ -3332,6 +3332,33 @@ router.pointer_down(&mut state_scene);
 
 
 
+### 434 — Round 47.1.1 — MSRV 1.88 노출 clippy::large_enum_variant fix (hello-button + ai-introspect-demo RenderState Box 우회)
+
+**Changes**:
+- examples/hello-button RenderState::Active.renderer → Box<HelloButtonRenderer>
+- examples/ai-introspect-demo RenderState::Active.renderer → Box<DemoRenderer>
+- Active 생성 지점에 Box::new(renderer) wrap
+- doc 주석 이유 명시 — ~1576 bytes vs 8 bytes variant 크기 차 해소
+
+
+
+**Verification**:
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = R46.5 baseline 복원
+- per-crate: pinion-core 5 + pinion-runtime 1 / pinion-text 0 / pinion-rpc 0 / pinion-forge 0 / examples 0
+- cargo test --workspace --features pinion-runtime/vello = 633 pass 유지
+
+
+
+**Impact**: §5.16, §5.36
+
+
+**Carry forward**:
+- R47.2 GlyphCache struct (LRU bounded, private fields, Hyrum-immune schema)
+- R47.3 Layout builder + paint_adapter Text arm 활성화 + Vello draw_glyph
+- R47.4 hello-button 라벨 시각 복원 검증
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -3994,6 +3994,50 @@
         "R47.x GlyphCache evict 정책 + fontique font fallback override API"
       ]
     },
+    "434": {
+      "decision_summary": "Round 47.1.1 — MSRV 1.88 노출 clippy::large_enum_variant fix (hello-button + ai-introspect-demo RenderState Box 우회)",
+      "changes_bullets": [
+        "examples/hello-button RenderState::Active.renderer → Box<HelloButtonRenderer>",
+        "examples/ai-introspect-demo RenderState::Active.renderer → Box<DemoRenderer>",
+        "Active 생성 지점에 Box::new(renderer) wrap",
+        "doc 주석 이유 명시 — ~1576 bytes vs 8 bytes variant 크기 차 해소"
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = R46.5 baseline 복원",
+        "per-crate: pinion-core 5 + pinion-runtime 1 / pinion-text 0 / pinion-rpc 0 / pinion-forge 0 / examples 0",
+        "cargo test --workspace --features pinion-runtime/vello = 633 pass 유지"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "R47.2 GlyphCache struct (LRU bounded, private fields, Hyrum-immune schema)",
+        "R47.3 Layout builder + paint_adapter Text arm 활성화 + Vello draw_glyph",
+        "R47.4 hello-button 라벨 시각 복원 검증"
+      ],
+      "publishable_decision_summary": "Round 47.1.1 — MSRV 1.88 노출 clippy::large_enum_variant fix (hello-button + ai-introspect-demo RenderState Box 우회)",
+      "publishable_changes_bullets": [
+        "examples/hello-button RenderState::Active.renderer → Box<HelloButtonRenderer>",
+        "examples/ai-introspect-demo RenderState::Active.renderer → Box<DemoRenderer>",
+        "Active 생성 지점에 Box::new(renderer) wrap",
+        "doc 주석 이유 명시 — ~1576 bytes vs 8 bytes variant 크기 차 해소"
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = R46.5 baseline 복원",
+        "per-crate: pinion-core 5 + pinion-runtime 1 / pinion-text 0 / pinion-rpc 0 / pinion-forge 0 / examples 0",
+        "cargo test --workspace --features pinion-runtime/vello = 633 pass 유지"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R47.2 GlyphCache struct (LRU bounded, private fields, Hyrum-immune schema)",
+        "R47.3 Layout builder + paint_adapter Text arm 활성화 + Vello draw_glyph",
+        "R47.4 hello-button 라벨 시각 복원 검증"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

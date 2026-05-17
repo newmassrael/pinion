@@ -173,7 +173,11 @@ enum RenderState {
     /// here.
     Active {
         window: Arc<Window>,
-        renderer: DemoRenderer,
+        /// Boxed because `DemoRenderer` is ~1.5 KiB (wgpu / vello
+        /// state) while `Suspended` is two words; without the
+        /// indirection the whole enum would pay the larger size
+        /// (clippy `large_enum_variant`, R47.1.1 §5.36 MSRV 1.88 fix).
+        renderer: Box<DemoRenderer>,
     },
     /// Window is not currently visible. The `Option` carries the
     /// cached winit window when the previous `Active` state torn down;
@@ -511,7 +515,10 @@ impl ApplicationHandler for App {
                 return;
             }
         };
-        self.state = RenderState::Active { window, renderer };
+        self.state = RenderState::Active {
+            window,
+            renderer: Box::new(renderer),
+        };
         println!(
             "R46.3.4 §5.16 Vello dogfood — §5.32 locate + §5.33 overlay + §5.34 lifecycle"
         );

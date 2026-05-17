@@ -204,7 +204,11 @@ fn button_event_name(event: ButtonEvent) -> &'static str {
 enum RenderState {
     Active {
         window: Arc<Window>,
-        renderer: HelloButtonRenderer,
+        /// Boxed because `HelloButtonRenderer` is ~1.5 KiB (wgpu /
+        /// vello state) while `Suspended` is two words; without the
+        /// indirection the whole enum would pay the larger size
+        /// (clippy `large_enum_variant`, R47.1.1 §5.36 MSRV 1.88 fix).
+        renderer: Box<HelloButtonRenderer>,
     },
     Suspended(Option<Arc<Window>>),
 }
@@ -436,7 +440,10 @@ impl ApplicationHandler<AppEvent> for App {
                 return;
             }
         };
-        self.state = RenderState::Active { window, renderer };
+        self.state = RenderState::Active {
+            window,
+            renderer: Box::new(renderer),
+        };
         eprintln!(
             "hello-button: hover/click the window to drive the Button SCXML.\n           keys: d=Disable, e=Enable, Esc=quit\n           RPC: pipe JSON-RPC 2.0 frames (one per line) on stdin\n           §5.20: button.click intents log to stderr after each event"
         );
