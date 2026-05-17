@@ -389,6 +389,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R30 §5.26: scene/layout = 13th method; queries cached Layout (rect/padding/border) per path.
 - R32 §5.27: scene/virtual_list = 14th method; count + visible range + window snapshot.
 - R36 §5.31: scene/reload = 15th method; protocol trigger + result counts.
+- R47.7 scene/layout implement: viewport + path 입력 → LayoutNode tree (rect, line_count, TextStyle) 응답
+- scene/layout optional viewport = dry_run paint side mirror (state 외부의 immediate paint snapshot)
 
 
 
@@ -5608,6 +5610,41 @@ router.pointer_down(&mut state_scene);
 - R46.2 Concern 1 carry: RendererOptions surface policy
 - claudedocs/ SCE 3 파일 working-tree carry
 - R297 false-positive commit↔ledger drift carry
+
+
+
+### Round 442 — R47.7.0 §5.12 scene/layout implement 시점 spec amend — Round 442 — R47.7.0 §5.12 scene/layout (R30 ratified, 미구현) implement 시점 spec amend. input = optional viewport + optional path. output = LayoutNode tree (rect, line_count, TextStyle). optional viewport = dry_run paint side mirror. AI-first paint introspect primitive 의 §2 invariant #2 정통화.
+
+**Changes**:
+- §5.12 caveat +1: R47.7 scene/layout implement = viewport + path 입력 → LayoutNode tree (rect, line_count, TextStyle) 응답
+- §5.12 caveat +1: optional viewport = dry_run paint side mirror (state 외부 immediate paint snapshot)
+- §2 invariant #2 (RPC primary) 자기 이행 — paint scene introspect 의 RPC 노출
+- R47.7.1 이후 구현: pinion-rpc 측 handler + LayoutNode response + application view-fn closure surface
+
+
+
+**Verification**:
+- §5.12 ratified vocabulary 원래 R30 = scene/layout 13th method 확인 (implement 부재, R47.7 = implement 시점)
+- 사용자 지적 = AI-first GUI framework 에서 stderr printf debugging = 자기 위반; AI agent 가 RPC 로 직접 reproduce + 진단 가능해야 함
+- validate_workspace baseline 보존
+
+
+
+**Impact**: §5.12, §5.7, §2
+
+
+**Carry forward**:
+- R47.7.1 pinion-rpc scene/layout typed handler + LayoutNode response struct + application view-fn closure surface
+- R47.7.2 hello-button dispatcher wire — view-fn closure 를 framework 에 등록
+- R47.7.3 AI 직접 진단 — cargo run 백그라운드 + JSON-RPC viewport sweep 으로 wrap 변동 reproduce
+- R47.7.x wrap fix (진단 결과 따라 TextStyle.wrap attribute / measure logic / paint_text 로직)
+- R47.7.x framework primitive cleanup — application view-fn 등록 surface 을 trait 또는 closure registry 로 정리 (§5.18 또는 신규 §5.X)
+- R47.x parley Ellipsis truncation pass (기존 carry)
+- R47.x TextDecoration offset/brush per-decoration tuning
+- R47.x GlyphCache (consumer GPU atlas)
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity
+- R46.4 / R46.2 기존 carry 그대로
+- claudedocs/ SCE 3 파일 carry
 
 
 
