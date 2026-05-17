@@ -2097,6 +2097,59 @@ router.pointer_down(&mut state_scene);
 
 
 
+### §5.36. Text shaping & glyph cache — Linebender parley + glyph atlas primitive
+
+
+**Intent**: 모든 backend(Vello/Headless/TUI/미래) 공유 backend-orthogonal text layout+shaping+glyph cache framework primitive — 위젯 카탈로그 universal prereq
+
+
+**Rationale**:
+- R41 Vello (Linebender) 채택 = parley layout primary ecosystem 정통 가입
+- swash (shaping) + fontique (font mgmt) = parley 자연 동반 = 단일 vendor stack
+- SOLID single responsibility: layout/glyph cache/paint dispatch 분리 = backend-orthogonal
+- 위젯 카탈로그 (TextField/IME/Slider value/Toggle label) universal prereq
+- R31 'glyph atlas GPU texture' 정신 보존 — GlyphCache + Vello draw_glyph 통합으로 실현
+
+
+
+**Inputs**:
+- pinion-core::scene::TextNode (content / TextStyle)
+- pinion-core::style::TextStyle (font_family / size / weight / style / color / decoration)
+- DPI scale factor (HiDPI sub-pixel positioning)
+- viewport width (single-line: None, multi-line: Some(w) — parley break_all_lines)
+
+
+
+**Outputs**:
+- pinion-text::Layout — positioned glyph runs (run.font / glyph.id / glyph.x / glyph.advance)
+- pinion-text::GlyphCache — LRU bounded glyph data, GPU-uploadable
+- backend adapter helper — glyph run → backend draw (paint_adapter Text arm 통합)
+
+
+
+**Caveats**:
+- R21 cosmic-text 결정 partial supersede — layout=parley, glyph atlas 정신 보존
+- TextField / IME / text selection / clipboard 은 R49+ widget catalog 별도 axis
+- RTL / bidi / complex script = parley 의 swash 기본 지원, 별도 caveat 없음
+- Font fallback 정책 = fontique system enum + override API (R47.x sub-decision)
+- GlyphCache evict 정책 = LRU bounded; capacity/scope per-renderer vs shared (R47.x)
+- pinion-text feature gate = parley default, advanced (RTL/complex) toggle 가능
+
+
+
+**Alternatives rejected**:
+- cosmic-text (R21 ratified) — System76 COSMIC fork; R41 Vello 채택 후 ecosystem mismatch
+- glyphon — cosmic-text wrapper, 종속
+- swash 직접 사용 (parley 없이) — layout 직접 구현 = reinventing parley
+- HarfBuzz/FreeType FFI — Rust-native ecosystem 정합 부족, build dep 무거움
+
+
+
+**Impact scope**: §5.3, §5.16, §5.20, §5.30, §6.3
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -3211,6 +3264,38 @@ router.pointer_down(&mut state_scene);
 - R47+ mobile/Android target 검증 — RenderState ADT 가 ai-introspect-demo (R46.3.4) + hello-button (R46.5) 두 consumer 에서 정착. 실제 Android event loop 통합 + suspend 이벤트 실증은 별도. 현재 데스크탑 compile clean
 - R46.4 carry 그대로: parse_path_command finite check NaN/±∞ unit test 추가 + pinion-core 5 / pinion-runtime 1 clippy sub-slice
 - R297 false-positive (mnemosyne 주 라운드, pinion atomic 무관) — 10-commit carry 무시 가능
+
+
+
+### 432 — Round 47 — §5.36 new — text shaping & glyph cache framework primitive (parley + swash + fontique); R21 cosmic-text partial supersede
+
+**Changes**:
+- §5.36 신설 — Linebender parley text shaping + GlyphCache + paint_adapter Text arm 활성화 primitive
+- library 결정 — parley (Linebender layout primary) + swash + fontique = R41 Vello ecosystem 정합
+- R21 cosmic-text 결정 partial supersede — layout 책임이 parley 로 이동
+- R31 glyph atlas GPU texture 정신 보존 — GlyphCache + Vello draw_glyph 통합으로 실현
+- crate 배치 — 별도 pinion-text crate 신설 (SOLID single responsibility, backend-orthogonal)
+
+
+
+**Verification**:
+- atomic store add_section + setter chain 7개 + add_section_caveat × 6 = 14 mutations
+- 구현은 R47.1+ build slice (crate skeleton → parley wire → GlyphCache → paint_adapter Text arm 활성화 → hello-button 라벨 복원)
+- validate_workspace 통과 후 baseline 갱신 (entries 86→87, sections 45→46 expected)
+
+
+
+**Impact**: §5.3, §5.16, §5.20, §5.30, §5.36, §6.3
+
+
+**Carry forward**:
+- R47.1 pinion-text crate skeleton + parley/swash/fontique workspace dep 추가
+- R47.2 GlyphCache struct (LRU bounded, private fields, Hyrum-immune schema)
+- R47.3 paint_adapter Text arm 활성화 + vello::Scene::draw_glyph 통합
+- R47.4 hello-button 라벨 시각 복원 검증 + ai-introspect-demo 텍스트 노드 확인
+- R47.x TextStyle schema 확장 (font_family / weight / decoration — parley StyleProperty 친화)
+- R47.x GlyphCache evict 정책 (LRU capacity, per-renderer vs shared scope)
+- R47.x fontique font fallback override API
 
 
 
