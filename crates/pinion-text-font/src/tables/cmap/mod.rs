@@ -151,38 +151,16 @@ impl Cmap {
 
     /// Pick the best subtable for character lookup.
     ///
-    /// Priority order: see module-level docs.
+    /// Priority order: see module-level docs. Implementation 은
+    /// [`selection_score`] + `min_by_key` 1-pass — 4-pass duplicate 회피.
     #[must_use]
     pub fn best_subtable(&self) -> Option<&CmapSubtable> {
-        // Pass 1 — format 12 with preferred Unicode encoding.
-        for (rec, sub) in self.encodings.iter().zip(self.subtables.iter()) {
-            if matches!(sub, Some(CmapSubtable::Format12(_)))
-                && is_preferred_unicode_full(rec.platform_id, rec.encoding_id)
-            {
-                return sub.as_ref();
-            }
-        }
-        // Pass 2 — any format 12.
-        for sub in &self.subtables {
-            if matches!(sub, Some(CmapSubtable::Format12(_))) {
-                return sub.as_ref();
-            }
-        }
-        // Pass 3 — format 4 with preferred Unicode BMP encoding.
-        for (rec, sub) in self.encodings.iter().zip(self.subtables.iter()) {
-            if matches!(sub, Some(CmapSubtable::Format4(_)))
-                && is_preferred_unicode_bmp(rec.platform_id, rec.encoding_id)
-            {
-                return sub.as_ref();
-            }
-        }
-        // Pass 4 — any format 4.
-        for sub in &self.subtables {
-            if matches!(sub, Some(CmapSubtable::Format4(_))) {
-                return sub.as_ref();
-            }
-        }
-        None
+        self.encodings
+            .iter()
+            .zip(self.subtables.iter())
+            .filter_map(|(rec, sub)| sub.as_ref().map(|s| (rec, s)))
+            .min_by_key(|(rec, sub)| selection_score(rec, sub))
+            .map(|(_, sub)| sub)
     }
 
     /// Map a Unicode codepoint to a glyph ID via the best subtable.
@@ -190,6 +168,30 @@ impl Cmap {
     #[must_use]
     pub fn glyph_id(&self, codepoint: u32) -> Option<u16> {
         self.best_subtable()?.glyph_id(codepoint)
+    }
+}
+
+/// Subtable selection priority — lower = better.
+///
+/// 0. Format 12 with Microsoft Unicode UCS-4 (3, 10) or Unicode full (0, 4/6)
+/// 1. Format 12 with any other platform/encoding
+/// 2. Format 4 with Microsoft Unicode BMP (3, 1) or Unicode BMP (0, 3)
+/// 3. Format 4 with any other platform/encoding
+///
+/// Function 형태 — R50.X RPC introspect 시 AI agent 가 자체 score 계산
+/// 가능하도록 priority 표현체 직접 노출 friendly.
+fn selection_score(rec: &EncodingRecord, sub: &CmapSubtable) -> u8 {
+    match sub {
+        CmapSubtable::Format12(_)
+            if is_preferred_unicode_full(rec.platform_id, rec.encoding_id) =>
+        {
+            0
+        }
+        CmapSubtable::Format12(_) => 1,
+        CmapSubtable::Format4(_) if is_preferred_unicode_bmp(rec.platform_id, rec.encoding_id) => {
+            2
+        }
+        CmapSubtable::Format4(_) => 3,
     }
 }
 
@@ -238,6 +240,77 @@ mod tests {
         assert_eq!(cmap.glyph_id(0xAC70), Some(5000 + 0x70));
         assert_eq!(cmap.glyph_id(0xABFF), None);
         assert_eq!(cmap.glyph_id(0xD7A4), None);
+    }
+
+    #[test]
+    fn selection_score_priority_ordering() {
+        use super::format12::SequentialMapGroup;
+        let f4 = CmapSubtable::Format4(
+            Format4::parse(&build_format4_simple(0x41, 0x5A, 35)).unwrap(),
+        );
+        let f12 = CmapSubtable::Format12(
+            Format12::parse(&build_format12_simple(&[SequentialMapGroup {
+                start_char_code: 0x41,
+                end_char_code: 0x5A,
+                start_glyph_id: 100,
+            }]))
+            .unwrap(),
+        );
+
+        // priority 0: format 12 + preferred (3, 10)
+        let rec_f12_preferred = EncodingRecord {
+            platform_id: 3,
+            encoding_id: 10,
+            subtable_offset: 0,
+            subtable_format: 12,
+        };
+        assert_eq!(selection_score(&rec_f12_preferred, &f12), 0);
+
+        // priority 1: format 12 + any non-preferred
+        let rec_f12_other = EncodingRecord {
+            platform_id: 1,
+            encoding_id: 0,
+            subtable_offset: 0,
+            subtable_format: 12,
+        };
+        assert_eq!(selection_score(&rec_f12_other, &f12), 1);
+
+        // priority 2: format 4 + preferred (3, 1)
+        let rec_f4_preferred = EncodingRecord {
+            platform_id: 3,
+            encoding_id: 1,
+            subtable_offset: 0,
+            subtable_format: 4,
+        };
+        assert_eq!(selection_score(&rec_f4_preferred, &f4), 2);
+
+        // priority 3: format 4 + any non-preferred
+        let rec_f4_other = EncodingRecord {
+            platform_id: 1,
+            encoding_id: 0,
+            subtable_offset: 0,
+            subtable_format: 4,
+        };
+        assert_eq!(selection_score(&rec_f4_other, &f4), 3);
+
+        // Unicode platform variants for preferred:
+        // (0, 4) and (0, 6) preferred full Unicode.
+        let rec_unicode_full = EncodingRecord {
+            platform_id: 0,
+            encoding_id: 4,
+            subtable_offset: 0,
+            subtable_format: 12,
+        };
+        assert_eq!(selection_score(&rec_unicode_full, &f12), 0);
+
+        // (0, 3) preferred BMP.
+        let rec_unicode_bmp = EncodingRecord {
+            platform_id: 0,
+            encoding_id: 3,
+            subtable_offset: 0,
+            subtable_format: 4,
+        };
+        assert_eq!(selection_score(&rec_unicode_bmp, &f4), 2);
     }
 
     #[test]

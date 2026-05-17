@@ -2270,6 +2270,7 @@ router.pointer_down(&mut state_scene);
 - test fixture LICENSE 정정 — Noto Sans 도 OFL 1.1 (Apache framing 은 pre-2018 history 잔존)
 - R50.1.3.1 corrective: cmap spec strict + invariant 검증 + duplicate reject 일관 적용
 - R50.1.3.2 cmap/ 디렉토리 분리 — format4/format12/test_helpers per industry precedent
+- R50.1.3.3 best_subtable refactor — selection_score + min_by_key 1-pass
 
 
 
@@ -6304,6 +6305,35 @@ router.pointer_down(&mut state_scene);
 - R50.1.4 glyf + loca parser — glyf/{mod, simple, compound} 패턴 적용 계획
 - R50.1.5 name table parser
 - R50.X RPC channel — pinion-rpc 에 font/glyph_id_for method 노출
+
+
+
+### Round 458 — R50.1.3.3 §5.37.1 best_subtable score function refactor — Round 458 — R50.1.3.3 §5.37.1 cmap best_subtable() 4-pass O(4n) duplicate → selection_score() + min_by_key 1-pass O(n). DRY 정통 + RPC introspect friendly (priority 표현체 직접 노출). 4 priority order 동일 (format 12 preferred → format 12 any → format 4 preferred → format 4 any). selection_score 자체 priority ordering unit test 추가 (4 case + Unicode platform variants).
+
+**Changes**:
+- cmap/mod.rs best_subtable() rewrite — 4-pass O(4n) duplicate → 1-pass O(n) min_by_key
+- selection_score() free fn 신설 — priority 0/1/2/3 explicit 표현체
+- matches macro 안의 if guard 으로 platform/encoding 조건 디스패치
+- selection_score_priority_ordering unit test 신설 (6 case: 4 priority + Unicode platform 2 variants)
+- AI-first 강화: R50.X RPC 에서 selection_score 자체 노출 가능 — AI agent priority 계산 가능
+
+
+
+**Verification**:
+- cargo test --package pinion-text-font: 80 pass (+1 선택 score 테스트)
+- cargo clippy --package pinion-text-font: 0 warnings
+- format12_preferred_over_format4 기존 test 동일 통과 — priority order 행동 변화 없음
+- Noto Sans + Nanum Gothic real fixture sweep 동일 통과
+
+
+
+**Impact**: §5.37.1, §5.37
+
+
+**Carry forward**:
+- R50.1.4 glyf + loca parser — glyf/{mod, simple, compound} 패턴 계속
+- R50.1.5 name table parser
+- R50.X RPC channel — selection_score 도 noeul (AI-first priority introspect)
 
 
 
