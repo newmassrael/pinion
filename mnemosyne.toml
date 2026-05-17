@@ -156,3 +156,16 @@ fields = ["publishable_decision_summary", "publishable_carry_forward_bullets"]
 reason = "R47.3 framing 정정 — paint primitive part only 명시 + R47.4-6 axis chain (layout MeasureFunc / TextStyle Figma-fidelity / §5.36 round close) carry + R48 §5.3 BoxStyle 별도 round carry"
 applied_in = "pinion R47.3.1+"
 content_hash_after = "40a4c7297b99dc75359ccecfb2ad222645d60b81c33bf091968d057e63cafa49"
+
+# R47.7.4.3.1 incident — entry 447 의 framing 정정. R47.7.4.3 sweep 의
+# "wrap 0 확정" 표현이 hypothetical paint_producer path 한정 임을 명시.
+# winit actual frame paint 측정은 안 됨 — scene/layout viewport mandatory
+# 한계 명시 + R47.7.5 carry. audit half 보존.
+
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "Round 447 — §5.12 R47.7.4.3 sweep 결과 + R47.7.x scene/layout viewport optional carry"
+fields = ["publishable_decision_summary", "publishable_verification_bullets"]
+reason = "R47.7.4.3 framing 정정 — 'wrap 0 확정' = hypothetical paint_producer path 한정 명시. winit actual frame 측정 X (viewport mandatory) + R47.7.5 carry"
+applied_in = "pinion R47.7.4.3.1+"
+content_hash_after = "ac59aa7cb7df26db3bfb6007e714dc0001db97874bcd4cea236065db95182d96"

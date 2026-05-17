@@ -8427,7 +8427,7 @@
         "R48 §5.3 별도 round = BoxStyle Figma-fidelity",
         "R46 / claudedocs / R297"
       ],
-      "publishable_decision_summary": "Round 447 — §5.12 R47.7.4.3 자동 sweep 결과: scene/resize 가 winit request_inner_size 트리거 동작 확인. 다만 scene/layout viewport=mandatory 라 actual winit frame 측정 안 됨 — 둘 다 hypothetical path. 39 viewport sweep wrap 0 확정. winit actual frame 측정 channel = R47.7.x carry (viewport optional + last_paint_scene cache).",
+      "publishable_decision_summary": "Round 447 — R47.7.4.3 sweep: hypothetical paint_producer 한정 (46 sweep). scene/resize → winit request_inner_size trigger. winit actual frame 측정 X (viewport mandatory). R47.7.5 carry.",
       "publishable_changes_bullets": [
         "R47.7.4.3 sweep: scene/resize {300,200} 호출 → requested:true 확인 (winit request_inner_size 트리거됨)",
         "sweep 결과: hypothetical paint path 39 viewport 모두 text rect={h:26,w:78} 1line — wrap 0 확정",
@@ -8436,8 +8436,8 @@
       ],
       "publishable_verification_bullets": [
         "scene/resize → scene/intents (tick) → scene/layout 시퀀스 정상 작동, requested:true 응답",
-        "hypothetical paint sweep wrap 0 / actual winit frame 측정 = R47.7.x carry",
-        "39 + 7 = 46 sweep 누적 wrap 0 — hypothetical path 의 wrap 0 결론 확정"
+        "hypothetical paint_producer path: 39 + 7 = 46 sweep wrap 0 — paint_producer 자체는 wrap 안 일으키는 것 확인",
+        "winit actual frame paint 측정 안 됨 — scene/layout viewport mandatory 한계, R47.7.5 carry 로 실제 채널 필요"
       ],
       "publishable_impact_refs": [
         "5.12"
@@ -8451,6 +8451,58 @@
         "R47.7.x tag-keyed path syntax / path filter 구현",
         "R47.x parley Ellipsis truncation pass",
         "R48 §5.3 별도 round = BoxStyle Figma-fidelity",
+        "R46 / claudedocs / R297"
+      ]
+    },
+    "Round 448 — R47.7.4.3.1 entry 447 supersede": {
+      "decision_summary": "Round 448 — R47.7.4.3.1 entry 447 publishable supersede. 'wrap 0 확정' framing 이 hypothetical paint_producer path 한정 임을 명시. winit actual frame paint 측정 안 됨 (viewport mandatory). 사용자 지적 자기 정정.",
+      "changes_bullets": [
+        "entry 447 publishable_decision_summary set: hypothetical paint_producer 한정 명시 + winit actual frame X",
+        "entry 447 publishable_verification_bullets set: 3 bullets reword (hypothetical 명시 + R47.7.5 carry)",
+        "mnemosyne.toml [[publishable_override_ledger]] row 추가 (target=447, fields=2, kind=typo_fix)",
+        "audit half 보존 — R47.7.4.3 원본 framing 영구 보존"
+      ],
+      "verification_bullets": [
+        "validate_workspace: entries=102 ledger_rows=15 (R47.7.4.3.1 row 추가 반영)",
+        "T1=0 T3=0 RT=1/1 GENERATED=sync",
+        "사용자 지적 반영 — 'winit 실제 변동 테스트' framing"
+      ],
+      "impact_refs": [
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "R47.7.5 scene/layout viewport optional + last_paint_layout cache — winit actual frame 채널",
+        "R47.7.5+ scene/wait_for_frame implement",
+        "R47.7.x scene/screenshot pixel readback (§5.16 RHI 대기)",
+        "R47.7.x trait Application surface",
+        "사용자 환경 검증 carry: HiDPI / OS / drag 시퀀스",
+        "R47.x parley Ellipsis truncation pass",
+        "R48 §5.3 BoxStyle Figma-fidelity 별도 round",
+        "R46 / claudedocs / R297"
+      ],
+      "publishable_decision_summary": "Round 448 — R47.7.4.3.1 entry 447 publishable supersede. 'wrap 0 확정' framing 이 hypothetical paint_producer path 한정 임을 명시. winit actual frame paint 측정 안 됨 (viewport mandatory). 사용자 지적 자기 정정.",
+      "publishable_changes_bullets": [
+        "entry 447 publishable_decision_summary set: hypothetical paint_producer 한정 명시 + winit actual frame X",
+        "entry 447 publishable_verification_bullets set: 3 bullets reword (hypothetical 명시 + R47.7.5 carry)",
+        "mnemosyne.toml [[publishable_override_ledger]] row 추가 (target=447, fields=2, kind=typo_fix)",
+        "audit half 보존 — R47.7.4.3 원본 framing 영구 보존"
+      ],
+      "publishable_verification_bullets": [
+        "validate_workspace: entries=102 ledger_rows=15 (R47.7.4.3.1 row 추가 반영)",
+        "T1=0 T3=0 RT=1/1 GENERATED=sync",
+        "사용자 지적 반영 — 'winit 실제 변동 테스트' framing"
+      ],
+      "publishable_impact_refs": [
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R47.7.5 scene/layout viewport optional + last_paint_layout cache — winit actual frame 채널",
+        "R47.7.5+ scene/wait_for_frame implement",
+        "R47.7.x scene/screenshot pixel readback (§5.16 RHI 대기)",
+        "R47.7.x trait Application surface",
+        "사용자 환경 검증 carry: HiDPI / OS / drag 시퀀스",
+        "R47.x parley Ellipsis truncation pass",
+        "R48 §5.3 BoxStyle Figma-fidelity 별도 round",
         "R46 / claudedocs / R297"
       ]
     },
