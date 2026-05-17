@@ -2269,6 +2269,7 @@ router.pointer_down(&mut state_scene);
 - R50.1.1 ~ R50.1.5 sub-phase = sfnt directory / metadata / cmap / glyf+loca / name
 - test fixture LICENSE 정정 — Noto Sans 도 OFL 1.1 (Apache framing 은 pre-2018 history 잔존)
 - R50.1.3.1 corrective: cmap spec strict + invariant 검증 + duplicate reject 일관 적용
+- R50.1.3.2 cmap/ 디렉토리 분리 — format4/format12/test_helpers per industry precedent
 
 
 
@@ -2300,10 +2301,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-font/src/tables/os2.rs:Os2
 - crates/pinion-text-font/src/tables/post.rs:Post
 - crates/pinion-text-font/src/error.rs:FieldValue
-- crates/pinion-text-font/src/tables/cmap.rs:Cmap
-- crates/pinion-text-font/src/tables/cmap.rs:CmapSubtable
-- crates/pinion-text-font/src/tables/cmap.rs:Format4
-- crates/pinion-text-font/src/tables/cmap.rs:Format12
+- crates/pinion-text-font/src/tables/cmap/mod.rs:Cmap
+- crates/pinion-text-font/src/tables/cmap/mod.rs:CmapSubtable
+- crates/pinion-text-font/src/tables/cmap/format4.rs:Format4
+- crates/pinion-text-font/src/tables/cmap/format12.rs:Format12
 
 
 
@@ -6271,6 +6272,38 @@ router.pointer_down(&mut state_scene);
 - R50.1.4 glyf + loca parser — simple TrueType outlines, compound glyph postpone
 - R50.1.5 name table parser — family / style / postscript name
 - R50.X RPC channel — pinion-rpc 에 font/glyph_id_for, font/cmap_subtables method 노출
+
+
+
+### Round 457 — R50.1.3.2 §5.37.1 cmap/ 디렉토리 분리 — Round 457 — R50.1.3.2 §5.37.1 cmap module 폴더 구조 분리. tables/cmap.rs (1003 LOC) → tables/cmap/{mod.rs (339), format4.rs (366), format12.rs (196), test_helpers.rs (63)}. industry precedent (read-fonts, ttf-parser) 정합 — format 별 module + 공유 test builder. 79 tests 동일 (split reorganization only), 0 clippy warnings.
+
+**Changes**:
+- tables/cmap.rs 삭제 → tables/cmap/ 디렉토리 4 파일 분리
+- cmap/mod.rs: Cmap + EncodingRecord + CmapSubtable enum + dispatch + best_subtable + CMAP_TAG const
+- cmap/format4.rs: Format4 struct + glyph_id + verify_search_params + format 4 specific tests
+- cmap/format12.rs: Format12 + SequentialMapGroup + glyph_id + format 12 specific tests
+- cmap/test_helpers.rs: build_format4_simple / build_format12_simple / build_cmap_with_subtable 공유 builder
+- test_helpers pub(super) gating — cmap module family 안 에서만 노출
+- R50.1.4 glyf+loca 진입 시 같은 패턴 (glyf/{mod, simple, compound}) 적용 가능
+
+
+
+**Verification**:
+- cargo test --package pinion-text-font: 79 pass (split 이전 동일 — reorganization only)
+- cargo clippy --package pinion-text-font: 0 warnings
+- cargo test --workspace --features pinion-runtime/vello: 743 (변동 없음)
+- 각 파일 < 400 LOC — textbook readability (기존 1003 LOC 단일 파일 해소)
+- industry precedent (read-fonts/src/tables/cmap/, ttf-parser/src/tables/cmap/) 정합
+
+
+
+**Impact**: §5.37.1, §5.37
+
+
+**Carry forward**:
+- R50.1.4 glyf + loca parser — glyf/{mod, simple, compound} 패턴 적용 계획
+- R50.1.5 name table parser
+- R50.X RPC channel — pinion-rpc 에 font/glyph_id_for method 노출
 
 
 
