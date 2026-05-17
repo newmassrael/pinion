@@ -4633,6 +4633,37 @@ fn main() {
 
 
 
+### Round 418 — Round 47 — hello-button hit-test fix — Scene::hit_test 기반 cursor↔button rect routing (window-boundary → button-boundary 정정)
+
+**Changes**:
+- App struct 3 field 추가 — last_paint_scene: Option<Scene> (post-layout, render() 끝에서 보존), cursor: Option<(f64, f64)> (winit CursorMoved 갱신), cursor_on_button: bool (cached hit-test 결과)
+- update_cursor_hit helper — Scene::hit_test (§5.32 R39 v0) 호출, segments.is_empty() 여부로 button rect 내외 판단, transition 시 PointerEnter/Leave forward + cursor_on_button 갱신
+- Event handler 재설계 — CursorEntered no-op (winit 가 CursorMoved 로 곧 real coord 제공), CursorMoved 신규 (cursor 위치 저장 + hit-test), CursorLeft (cursor=None + Pressed/Hover rollback), MouseInput Pressed/Released cursor_on_button gate (background 클릭은 SCXML 미doseq) forward)
+- render() 끝 — last_paint_scene = Some(paint_scene) (Scene !Clone 이지만 paint scene 은 External 미포함으로 move-store), update_cursor_hit() 재호출 (window resize 가 button rect 이동 시 자동 주의)
+- floor_clamp_u32 helper — winit f64 cursor coord → Scene::hit_test 의 u32 saturating cast, allow(cast_possible_truncation, cast_sign_loss) 의 최소스코프 하위
+- hit-test 을 single non-empty segments 기준 (R47 single button view) — 위젯 카탈로그 확장 (다중 widget) 시 segment tag 로 disambiguate 필요 (carry-forward)
+
+
+
+**Verification**:
+- cargo test --workspace = 599 pass (no regression), 0 failed
+- cargo clippy -p hello-button --all-targets = clean (cast_possible_truncation / cast_sign_loss / match_same_arms warnings 해소, hello-button-specific 0 warnings)
+- cargo check -p hello-button = compile clean
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+- 수동 검증: button rect 밖 hover/click 시 SCXML 전이 없음 (background 클릭 무시), button rect 안에서만 Idle↔Hover↔Pressed 이동 — 사용자 catch 된 버그 해소
+
+
+
+**Impact**: §5.32
+
+
+**Carry forward**:
+- 위젯 카탈로그 확장 (Slider/Toggle/TextField, R47+) 시 hit_test segments 가 어느 widget tag 인지 disambiguate 필요 — 현재 구현은 single button view 의 'segments non-empty = button hit' assumption
+- R46 carry items 그대로 (Vello first emit template / ai-introspect-demo manifest+codegen / Headless renderer / cosmic-text glyph cache)
+- ai-introspect-demo 는 이미 hit_test 사용 (R39.4.3 dogfood) — forge-counter 는 GUI 아니믰로 부해수 없음. R47 는 hello-button 단독 fix 입장
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
