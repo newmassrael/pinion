@@ -224,7 +224,14 @@ fn read_coordinates(
             (false, true) => 0,
             (false, false) => i32::from(r.read_i16()?),
         };
-        accum = accum.wrapping_add(delta);
+        // i32 overflow 도 spec 위반 — wrap-around silent acceptance 회피.
+        accum = accum
+            .checked_add(delta)
+            .ok_or(ParseError::InvalidTableField {
+                tag: GLYF_TAG,
+                field: "simple/coordinate-i32-overflow",
+                value: FieldValue::Signed(i64::from(accum) + i64::from(delta)),
+            })?;
         // glyph coordinate 는 i16 range. 누적합이 범위 벗어나면 spec 위반.
         let clamped = i16::try_from(accum).map_err(|_| ParseError::InvalidTableField {
             tag: GLYF_TAG,
@@ -391,6 +398,33 @@ mod tests {
             ParseError::InvalidTableField {
                 tag,
                 field: "simple/numberOfContours",
+                ..
+            } if tag == GLYF_TAG
+        ));
+    }
+
+    #[test]
+    fn reject_i16_coordinate_overflow() {
+        // 누적 delta 가 i16 range (-32768..=32767) 벗어나면 spec 위반.
+        // 2 points, p0.x = 30000, p1.x = 30000 + 30000 = 60000 (i16 overflow).
+        let mut b = Vec::new();
+        b.extend_from_slice(&1u16.to_be_bytes()); // endPts = 1 → 2 points
+        b.extend_from_slice(&0u16.to_be_bytes());
+        // 두 point 모두 long-form i16 delta.
+        b.push(FLAG_ON_CURVE_POINT);
+        b.push(FLAG_ON_CURVE_POINT);
+        b.extend_from_slice(&30_000i16.to_be_bytes()); // p0.x delta
+        b.extend_from_slice(&30_000i16.to_be_bytes()); // p1.x delta → 누적 60000
+        // y both 0 long-form
+        b.extend_from_slice(&0i16.to_be_bytes());
+        b.extend_from_slice(&0i16.to_be_bytes());
+        let mut r = Reader::new(&b, *b"glyf");
+        let err = parse_simple(&mut r, header_dummy(), 1).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag,
+                field: "simple/coordinate-overflow",
                 ..
             } if tag == GLYF_TAG
         ));

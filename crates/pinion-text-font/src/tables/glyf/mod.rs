@@ -50,27 +50,46 @@ pub struct GlyphPoint {
     pub on_curve: bool,
 }
 
-/// Composite glyph — R50.1.4.1 에서는 header + raw body 만 보존.
+/// Composite glyph — header + raw body bytes.
 ///
-/// R50.1.4.2 에서 `components: Vec<Component>` field 추가 + body parse. 현재는
-/// body 가 `raw_body: Vec<u8>` 로 그대로 — real font integration sweep 시
-/// composite glyph 만나도 panic 없이 통과.
+/// `raw_body` 는 source-of-truth 로 항구 보존 — R50.1.4.2 진입 시 옆에
+/// `components: Vec<Component>` field 가 additive 추가됨 (`raw_body` 는 그대로
+/// 유지, parsed view 의 source + invariant 재검증 용). public API breaking
+/// 없는 evolution.
+///
+/// R50.1.4.1 시점에서는 components parser 가 아직 없어 raw bytes 만 노출 —
+/// real font integration sweep 시 composite glyph 만나도 panic 없이 통과.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CompositeGlyph {
     pub header: GlyphHeader,
-    /// glyph header (10 byte) 뒤의 나머지 raw bytes. R50.1.4.2 에서 component
-    /// records / transform matrix 로 변환.
+    /// glyph header (10 byte) 뒤의 나머지 raw bytes. 항구 보존 — R50.1.4.2
+    /// 가 이 bytes 의 parsed view 를 추가하되 source 는 그대로.
     pub raw_body: Vec<u8>,
 }
 
-/// Glyph data variant — empty / simple / composite-unparsed.
+/// Glyph data variant — empty / simple / composite.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Glyph {
     /// `loca[i] == loca[i+1]` — glyph 가 시각적 표현 없음.
     Empty,
     Simple(SimpleGlyph),
-    /// R50.1.4.1 placeholder — header 만 parse, body 는 R50.1.4.2 에서 합치.
+    /// R50.1.4.1: header + raw body 보존. R50.1.4.2 가 components/transform
+    /// parsed view 를 additive 로 채움 (`raw_body` 항구 유지).
     Composite(CompositeGlyph),
+}
+
+impl Glyph {
+    /// Glyph 의 bounding box header — `Empty` 에는 header 없음 (`None`),
+    /// `Simple` / `Composite` 는 `Some(header)`. caller 가 variant 패턴매칭
+    /// 없이 bbox 정보 빨리 추출용.
+    #[must_use]
+    pub fn header(&self) -> Option<GlyphHeader> {
+        match self {
+            Self::Empty => None,
+            Self::Simple(s) => Some(s.header),
+            Self::Composite(c) => Some(c.header),
+        }
+    }
 }
 
 /// `glyf` table — `num_glyphs` 개의 Glyph (index = glyph id).
@@ -101,6 +120,7 @@ impl Glyf {
                 continue;
             }
             // start <= end 는 loca parser 가 이미 단조성 검증 — 여기서 추가 검증 불필요.
+            // u32 → usize widening cast: 32-bit 플랫폼에서도 usize ≥ u32 이므로 안전.
             let start_usize = start as usize;
             let end_usize = end as usize;
             if end_usize > bytes.len() {
@@ -148,21 +168,31 @@ fn parse_glyph(bytes: &[u8]) -> Result<Glyph, ParseError> {
         });
     }
 
-    if num_contours_raw >= 0 {
-        // simple glyph
-        #[allow(clippy::cast_sign_loss)]
-        let num_contours = num_contours_raw as u16;
-        Ok(Glyph::Simple(simple::parse_simple(
-            &mut r,
-            header,
-            num_contours,
-        )?))
-    } else {
-        // composite glyph — R50.1.4.1 placeholder: header 만 parse, body 보존.
-        // R50.1.4.2 에서 numberOfContours == -1 strict check + component parse.
-        let body_start = r.position();
-        let raw_body = bytes[body_start..].to_vec();
-        Ok(Glyph::Composite(CompositeGlyph { header, raw_body }))
+    // spec: numberOfContours >= 0 → simple, -1 → composite. -2 이하는 spec
+    // violation (silent acceptance = R50.1.2 hhea reserved 와 일관 strict reject
+    // 정신 위반). textbook canonical = exact -1 match.
+    match num_contours_raw {
+        n if n >= 0 => {
+            #[allow(clippy::cast_sign_loss)] // n >= 0 → 캐스트 안전
+            let num_contours = n as u16;
+            Ok(Glyph::Simple(simple::parse_simple(
+                &mut r,
+                header,
+                num_contours,
+            )?))
+        }
+        -1 => {
+            // composite glyph — R50.1.4.1 placeholder: header 만 parse, body 보존.
+            // R50.1.4.2 에서 raw_body 의 parsed view (components + transform) 추가.
+            let body_start = r.position();
+            let raw_body = bytes[body_start..].to_vec();
+            Ok(Glyph::Composite(CompositeGlyph { header, raw_body }))
+        }
+        other => Err(ParseError::InvalidTableField {
+            tag: GLYF_TAG,
+            field: "header/numberOfContours-invalid",
+            value: FieldValue::Signed(i64::from(other)),
+        }),
     }
 }
 
@@ -269,6 +299,57 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn reject_numberofcontours_minus_two() {
+        // -1 만 composite spec 정합. -2 / -3 등은 spec violation.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(-2i16).to_be_bytes()); // numberOfContours = -2
+        bytes.extend_from_slice(&0i16.to_be_bytes());
+        bytes.extend_from_slice(&0i16.to_be_bytes());
+        bytes.extend_from_slice(&100i16.to_be_bytes());
+        bytes.extend_from_slice(&100i16.to_be_bytes());
+        let loca = Loca {
+            format: LocaFormat::Long,
+            offsets: vec![0, u32::try_from(bytes.len()).unwrap()],
+        };
+        let err = Glyf::parse(&bytes, &loca).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag,
+                field: "header/numberOfContours-invalid",
+                value: FieldValue::Signed(-2),
+            } if tag == GLYF_TAG
+        ));
+    }
+
+    #[test]
+    fn glyph_header_accessor() {
+        // Empty → None / Simple → Some / Composite → Some.
+        let empty = Glyph::Empty;
+        assert_eq!(empty.header(), None);
+
+        let simple = Glyph::Simple(SimpleGlyph {
+            header: GlyphHeader { x_min: 1, y_min: 2, x_max: 3, y_max: 4 },
+            end_pts_of_contours: vec![],
+            instructions: vec![],
+            points: vec![],
+        });
+        assert_eq!(
+            simple.header(),
+            Some(GlyphHeader { x_min: 1, y_min: 2, x_max: 3, y_max: 4 })
+        );
+
+        let composite = Glyph::Composite(CompositeGlyph {
+            header: GlyphHeader { x_min: -10, y_min: -20, x_max: 100, y_max: 200 },
+            raw_body: vec![],
+        });
+        assert_eq!(
+            composite.header(),
+            Some(GlyphHeader { x_min: -10, y_min: -20, x_max: 100, y_max: 200 })
+        );
     }
 
     #[test]

@@ -18,6 +18,12 @@
 /// Rectangle 4 corners (counter-clockwise from lower-left, design units):
 /// `(x_min, y_min) → (x_max, y_min) → (x_max, y_max) → (x_min, y_max)`.
 pub(super) fn build_simple_rectangle(x_min: i16, x_max: i16, y_min: i16, y_max: i16) -> Vec<u8> {
+    // bbox 정규화 invariant — `x_max < x_min` 또는 `y_max < y_min` 이면
+    // (x_max - x_min) 가 i16 underflow panic. 호출자 정합성 강제.
+    debug_assert!(
+        x_max >= x_min && y_max >= y_min,
+        "bbox must be normalized: x_min={x_min} <= x_max={x_max}, y_min={y_min} <= y_max={y_max}"
+    );
     let mut bytes = Vec::with_capacity(34);
     // header
     bytes.extend_from_slice(&1i16.to_be_bytes());

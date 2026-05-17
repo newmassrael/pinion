@@ -9377,6 +9377,64 @@
         "R47-class InputRouter SCE migration carry — SCE audit 결과 framework primitive 영역 gesture state 가 inline Rust (§2 invariant #5 부분 미충족); R50 시리즈 마감 후 별도 axis 고려"
       ]
     },
+    "Round 460": {
+      "decision_summary": "Round 460 — R50.1.4.1.1 §5.37.1 loca + glyf simple parser textbook corrective. R50.1.4.1 self-audit gap 6점 정정: (1) coordinate accumulation wrapping_add → checked_add (i32 overflow strict reject), (2) composite numberOfContours == -1 strict match (-2 이하 InvalidTableField reject — R50.1.2 hhea reserved bit 와 일관 strict 정신), (3) Glyph::header() accessor 추가 (variant 패턴매칭 없이 bbox 추출), (4) CompositeGlyph::raw_body doc framing 정정 (placeholder framing → source-of-truth 항구 보존 + R50.1.4.2 additive components evolution 명시), (5) test_helpers::build_simple_rectangle debug_assert!(x_max >= x_min) invariant 강화, (6) Glyf::parse u32 → usize cast intent inline comment. 3 new tests (composite -2 reject + Glyph::header / 3 variant + i16 coordinate overflow reject). workspace 772 → 775, pinion-text-font clippy 0 유지.",
+      "changes_bullets": [
+        "simple.rs read_coordinates — wrapping_add → checked_add 이후 InvalidTableField {field: \"simple/coordinate-i32-overflow\"} 반환 (i16 try_from 이전 단계에서 먼저 reject)",
+        "glyf/mod.rs parse_glyph — `if num_contours_raw >= 0 else composite` 패턴 제거, match arm 3개 (`n if n >= 0` → simple, `-1` → composite, `other` → InvalidTableField {field: \"header/numberOfContours-invalid\"}). spec exact -1 mandate 일관 적용",
+        "glyf/mod.rs Glyph::header() — Empty → None, Simple/Composite → Some(GlyphHeader) accessor (must_use). caller 가 variant 패턴매칭 없이 bbox 조금 추출",
+        "glyf/mod.rs CompositeGlyph + Glyph::Composite doc — \"R50.1.4.1 placeholder\" framing 제거, raw_body 가 source-of-truth 로 항구 보존 + R50.1.4.2 additive components evolution 명시 (public API breaking 없음)",
+        "test_helpers.rs build_simple_rectangle — debug_assert!(x_max >= x_min && y_max >= y_min) caller invariant 강화 (i16 underflow panic 회피)",
+        "glyf/mod.rs Glyf::parse — u32 → usize cast intent inline comment (32-bit 플랫폼 동일 안전 widening)",
+        "test 추가 3건: reject_numberofcontours_minus_two (composite -2 → InvalidTableField) + glyph_header_accessor (3 variant 교차검증) + reject_i16_coordinate_overflow (눌적 30000 + 30000 → simple/coordinate-overflow reject)",
+        "test cast intent: u32::try_from(bytes.len()).unwrap() — reject_numberofcontours_minus_two 에도 일관 적용 (clippy cast_possible_truncation 회피)"
+      ],
+      "verification_bullets": [
+        "workspace 775 tests pass (R50.1.4.1 772 → +3 new)",
+        "pinion-text-font clippy --all-targets 0 warnings (baseline 유지); workspace clippy baseline 변화 없음 (pinion-core 5 + pinion-runtime 1)",
+        "real font integration sweep 4건 여전 통과 (Noto Sans + Nanum Gothic 모든 glyph parse panic 0) — composite strict reject 강화 이후에도 real font 은 numberOfContours == -1 만 사용",
+        "spec strict 일관성 보완: i32/i16 coordinate overflow + composite numberOfContours range — R50.1.2 hhea reserved bit / R50.1.3.1 cmap searchParams 와 동일 정신",
+        "API ergonomics: Glyph::header() unified accessor — ttf-parser / read-fonts 의 bounding_box() industry precedent 정합",
+        "doc 정확성: CompositeGlyph::raw_body 가 항구 보존 source-of-truth 임을 명시 — R50.1.4.2 진입 시 public API breaking 0 을 commit-time guarantee"
+      ],
+      "impact_refs": [
+        "5.37.1"
+      ],
+      "carry_forward_bullets": [
+        "R50.1.4.2 glyf compound parser — subglyph references + 4-byte / 2-byte arg pair + 4 transform variant (scale / x-y scale / 2x2 matrix) + 12 component flags + cycle detection (max depth + ancestor set). raw_body 는 source 로 유지 상태에서 components: Vec<Component> additive field",
+        "R50.1.5 name table parser (family / style / postscript / copyright + platform encoding dispatch)",
+        "R50.1.X 후속: cmap format 0/2/6/8/10/13/14, WOFF2, CFF/CFF2, variable axis, color tables, GSUB/GPOS raw store",
+        "R47-class InputRouter SCE migration carry — R50 시리즈 마감 후 별도 axis"
+      ],
+      "publishable_decision_summary": "Round 460 — R50.1.4.1.1 §5.37.1 loca + glyf simple parser textbook corrective. R50.1.4.1 self-audit gap 6점 정정: (1) coordinate accumulation wrapping_add → checked_add (i32 overflow strict reject), (2) composite numberOfContours == -1 strict match (-2 이하 InvalidTableField reject — R50.1.2 hhea reserved bit 와 일관 strict 정신), (3) Glyph::header() accessor 추가 (variant 패턴매칭 없이 bbox 추출), (4) CompositeGlyph::raw_body doc framing 정정 (placeholder framing → source-of-truth 항구 보존 + R50.1.4.2 additive components evolution 명시), (5) test_helpers::build_simple_rectangle debug_assert!(x_max >= x_min) invariant 강화, (6) Glyf::parse u32 → usize cast intent inline comment. 3 new tests (composite -2 reject + Glyph::header / 3 variant + i16 coordinate overflow reject). workspace 772 → 775, pinion-text-font clippy 0 유지.",
+      "publishable_changes_bullets": [
+        "simple.rs read_coordinates — wrapping_add → checked_add 이후 InvalidTableField {field: \"simple/coordinate-i32-overflow\"} 반환 (i16 try_from 이전 단계에서 먼저 reject)",
+        "glyf/mod.rs parse_glyph — `if num_contours_raw >= 0 else composite` 패턴 제거, match arm 3개 (`n if n >= 0` → simple, `-1` → composite, `other` → InvalidTableField {field: \"header/numberOfContours-invalid\"}). spec exact -1 mandate 일관 적용",
+        "glyf/mod.rs Glyph::header() — Empty → None, Simple/Composite → Some(GlyphHeader) accessor (must_use). caller 가 variant 패턴매칭 없이 bbox 조금 추출",
+        "glyf/mod.rs CompositeGlyph + Glyph::Composite doc — \"R50.1.4.1 placeholder\" framing 제거, raw_body 가 source-of-truth 로 항구 보존 + R50.1.4.2 additive components evolution 명시 (public API breaking 없음)",
+        "test_helpers.rs build_simple_rectangle — debug_assert!(x_max >= x_min && y_max >= y_min) caller invariant 강화 (i16 underflow panic 회피)",
+        "glyf/mod.rs Glyf::parse — u32 → usize cast intent inline comment (32-bit 플랫폼 동일 안전 widening)",
+        "test 추가 3건: reject_numberofcontours_minus_two (composite -2 → InvalidTableField) + glyph_header_accessor (3 variant 교차검증) + reject_i16_coordinate_overflow (눌적 30000 + 30000 → simple/coordinate-overflow reject)",
+        "test cast intent: u32::try_from(bytes.len()).unwrap() — reject_numberofcontours_minus_two 에도 일관 적용 (clippy cast_possible_truncation 회피)"
+      ],
+      "publishable_verification_bullets": [
+        "workspace 775 tests pass (R50.1.4.1 772 → +3 new)",
+        "pinion-text-font clippy --all-targets 0 warnings (baseline 유지); workspace clippy baseline 변화 없음 (pinion-core 5 + pinion-runtime 1)",
+        "real font integration sweep 4건 여전 통과 (Noto Sans + Nanum Gothic 모든 glyph parse panic 0) — composite strict reject 강화 이후에도 real font 은 numberOfContours == -1 만 사용",
+        "spec strict 일관성 보완: i32/i16 coordinate overflow + composite numberOfContours range — R50.1.2 hhea reserved bit / R50.1.3.1 cmap searchParams 와 동일 정신",
+        "API ergonomics: Glyph::header() unified accessor — ttf-parser / read-fonts 의 bounding_box() industry precedent 정합",
+        "doc 정확성: CompositeGlyph::raw_body 가 항구 보존 source-of-truth 임을 명시 — R50.1.4.2 진입 시 public API breaking 0 을 commit-time guarantee"
+      ],
+      "publishable_impact_refs": [
+        "5.37.1"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R50.1.4.2 glyf compound parser — subglyph references + 4-byte / 2-byte arg pair + 4 transform variant (scale / x-y scale / 2x2 matrix) + 12 component flags + cycle detection (max depth + ancestor set). raw_body 는 source 로 유지 상태에서 components: Vec<Component> additive field",
+        "R50.1.5 name table parser (family / style / postscript / copyright + platform encoding dispatch)",
+        "R50.1.X 후속: cmap format 0/2/6/8/10/13/14, WOFF2, CFF/CFF2, variable axis, color tables, GSUB/GPOS raw store",
+        "R47-class InputRouter SCE migration carry — R50 시리즈 마감 후 별도 axis"
+      ]
+    },
     "Round 5": {
       "decision_summary": "Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology",
       "changes_bullets": [
