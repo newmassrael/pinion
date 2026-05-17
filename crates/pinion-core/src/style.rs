@@ -71,21 +71,67 @@ impl Color {
     pub const TRANSPARENT: Self = Self::rgba(0, 0, 0, 0);
 }
 
-/// Border for a [`BoxNode`](crate::scene::BoxNode) — §5.3 R20 lock.
-/// `width: u32` is in pixels in the same coordinate space as
-/// [`Rect`](crate::scene::Rect).
+/// Where the border is drawn relative to the [`BoxNode`]'s `rect`.
+/// R46.3.2 §5.3 — the legacy softbuffer paint helper drew the border
+/// strips *inside* the rect bounds (a 4-strip approximation of CSS
+/// `box-sizing: border-box`). The Vello `paint_adapter` reproduces
+/// this via centered-stroke + width/2 inset, so the default stays
+/// `Inside` for visual continuity. `Center` matches Vello's native
+/// stroke semantics; `Outside` matches CSS `box-sizing: content-box`.
+///
+/// Each render backend (softbuffer, Vello, future thin-RHI) must
+/// honour this enum so a tagged scene round-trips identically across
+/// targets — placement is a Scene-level concern, not a renderer
+/// implementation detail.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum BorderPlacement {
+    /// Border drawn entirely inside `rect` bounds (CSS border-box
+    /// equivalent). Default — preserves R20-vintage softbuffer
+    /// behaviour where `paint_border` stripped 4 inset rects.
+    #[default]
+    Inside,
+    /// Border centred on `rect` edges — Vello's native stroke
+    /// geometry. Half the stroke width spills outside `rect`.
+    Center,
+    /// Border drawn entirely outside `rect` bounds (CSS
+    /// content-box equivalent).
+    Outside,
+}
+
+/// Border for a [`BoxNode`](crate::scene::BoxNode) — §5.3 R20 lock,
+/// R46.3.2 added `placement`. `width: u32` is in pixels in the same
+/// coordinate space as [`Rect`](crate::scene::Rect).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Border {
     pub color: Color,
     pub width: u32,
+    /// Where the border is drawn relative to the box's `rect`. R46.3.2
+    /// promoted the implicit "Inside" choice (legacy softbuffer paint
+    /// helper baked it into the stroke geometry) into an explicit
+    /// scene-level field so different backends paint identically.
+    pub placement: BorderPlacement,
 }
 
 impl Border {
-    /// Construct a border from a color and pixel width.
+    /// Construct a border from a color and pixel width. Placement
+    /// defaults to [`BorderPlacement::Inside`] (R46.3.2 — legacy
+    /// softbuffer-compatible).
     #[must_use]
     pub const fn new(color: Color, width: u32) -> Self {
-        Self { color, width }
+        Self {
+            color,
+            width,
+            placement: BorderPlacement::Inside,
+        }
+    }
+
+    /// Builder: override the placement policy. R46.3.2 §5.3.
+    #[must_use]
+    pub const fn with_placement(mut self, placement: BorderPlacement) -> Self {
+        self.placement = placement;
+        self
     }
 }
 
@@ -593,6 +639,32 @@ mod tests {
         let border = s.border.expect("border was attached");
         assert_eq!(border.color, Color::rgb(0xff, 0, 0));
         assert_eq!(border.width, 2);
+    }
+
+    #[test]
+    fn border_default_placement_is_inside() {
+        // R46.3.2 — `Border::new` defaults to the legacy softbuffer
+        // "drawn inside the rect bounds" placement so existing code
+        // (R20 vintage call sites, pinion-overlay highlights, etc.)
+        // keeps its visual identity after the field addition.
+        let b = Border::new(Color::rgb(0xff, 0, 0), 2);
+        assert_eq!(b.placement, BorderPlacement::Inside);
+    }
+
+    #[test]
+    fn border_with_placement_builder_overrides_default() {
+        let b = Border::new(Color::rgb(0xff, 0, 0), 2)
+            .with_placement(BorderPlacement::Outside);
+        assert_eq!(b.placement, BorderPlacement::Outside);
+    }
+
+    #[test]
+    fn border_placement_three_variants_distinct() {
+        assert_ne!(BorderPlacement::Inside, BorderPlacement::Center);
+        assert_ne!(BorderPlacement::Center, BorderPlacement::Outside);
+        assert_ne!(BorderPlacement::Inside, BorderPlacement::Outside);
+        // Default = Inside matches Default::default()
+        assert_eq!(BorderPlacement::default(), BorderPlacement::Inside);
     }
 
     #[test]

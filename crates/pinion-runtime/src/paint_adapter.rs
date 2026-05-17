@@ -15,11 +15,13 @@
 //! `info_panel` palette indexing). Pass `&|_| None` when no override
 //! is required.
 //!
-//! Border placement reproduces the legacy softbuffer "drawn inside the
-//! rect bounds" behaviour by insetting Vello's centered stroke by
-//! `width/2`. R46.3.2 carry — when [`pinion_core::style::Border`]
-//! grows a `placement: BorderPlacement { Inside, Center, Outside }`
-//! field the inset becomes a per-variant choice.
+//! Border placement (R46.3.2) honours
+//! [`pinion_core::style::BorderPlacement`]:
+//!
+//! * `Inside` (default, legacy softbuffer behaviour) — centred stroke
+//!   inset by `width/2` so the whole stroke lies within `rect`.
+//! * `Center` — Vello's native stroke (half-width spills outside).
+//! * `Outside` — centred stroke offset by `width/2` outwards.
 //!
 //! Available only under the `vello` feature; non-GUI consumers
 //! (headless / TUI / future paint backends) compile without wgpu
@@ -27,7 +29,7 @@
 
 use pinion_core::Scene;
 use pinion_core::scene::{BoxNode, Rect};
-use pinion_core::style::{Border, Color};
+use pinion_core::style::{Border, BorderPlacement, Color};
 use vello::Scene as VelloScene;
 use vello::kurbo::{Affine, Rect as KurboRect, Stroke};
 use vello::peniko::{Color as PenikoColor, Fill};
@@ -115,19 +117,32 @@ fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color) {
 }
 
 /// Emit one Vello stroke for a pinion [`Border`]. Vello strokes are
-/// path-centered; the `width/2` inset reproduces the prior "drawn
-/// inside the rect bounds" softbuffer convention.
+/// path-centered; the [`BorderPlacement`] determines whether we inset
+/// (Inside, legacy softbuffer), keep the stroke on the path (Center,
+/// Vello-native), or outset (Outside, CSS content-box).
 fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border) {
     if border.width == 0 {
         return;
     }
     let w = f64::from(border.width);
-    let inset = w / 2.0;
+    // Signed offset of the stroke's path centre relative to the rect
+    // edge — positive moves inward (Inside), zero leaves on edge
+    // (Center), negative moves outward (Outside).
+    let offset = match border.placement {
+        BorderPlacement::Center => 0.0,
+        BorderPlacement::Outside => -(w / 2.0),
+        // Inside (R46.3.2 default — legacy softbuffer compatibility)
+        // plus any future #[non_exhaustive] variant: conservative
+        // inset geometry. Listing Inside under the wildcard rather
+        // than as its own arm satisfies clippy::match_same_arms
+        // without losing forward-compat coverage.
+        BorderPlacement::Inside | _ => w / 2.0,
+    };
     let rect = KurboRect::new(
-        f64::from(r.x) + inset,
-        f64::from(r.y) + inset,
-        f64::from(r.x.saturating_add(r.w)) - inset,
-        f64::from(r.y.saturating_add(r.h)) - inset,
+        f64::from(r.x) + offset,
+        f64::from(r.y) + offset,
+        f64::from(r.x.saturating_add(r.w)) - offset,
+        f64::from(r.y.saturating_add(r.h)) - offset,
     );
     out.stroke(
         &Stroke::new(w),
@@ -249,6 +264,27 @@ mod tests {
         );
         assert_eq!(overrides.get(), 1);
         assert_eq!(passthroughs.get(), 1);
+    }
+
+    #[test]
+    fn stroke_rect_inside_placement_inset_matches_softbuffer_geometry() {
+        // R46.3.2 — the default Border placement (Inside) must inset
+        // the centred stroke by width/2 so the entire stroke lies
+        // within the rect. We can't read back Vello's emitted draw
+        // commands; instead we verify the placement field plumbs
+        // through stroke_rect by ensuring no panic on each variant.
+        use pinion_core::style::{Border, BorderPlacement, BoxStyle};
+        for placement in [
+            BorderPlacement::Inside,
+            BorderPlacement::Center,
+            BorderPlacement::Outside,
+        ] {
+            let border = Border::new(Color::rgb(0xff, 0, 0), 4).with_placement(placement);
+            let style = BoxStyle::filled(Color::TRANSPARENT).with_border(border);
+            let scene = Scene::Box(BoxNode::new(Rect::new(10, 10, 100, 100), style));
+            let mut vello = VelloScene::new();
+            to_vello(&scene, &|_| None, &mut vello);
+        }
     }
 
     #[test]

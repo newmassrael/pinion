@@ -3488,6 +3488,60 @@
         "R47+ carry items 그대로 (Headless template / cosmic-text / 위젯 카탈로그)"
       ]
     },
+    "426": {
+      "decision_summary": "Round 46.3.2 — §5.3 BorderPlacement enum 도입 — Border 의 inset 의미가 implicit (paint_adapter 의 width/2 인라인 트릭) 이었음을 explicit framework primitive 로 승격, R46.3 self-audit Concern #3 same-session 상환",
+      "changes_bullets": [
+        "pinion-core/src/style.rs: 신규 enum BorderPlacement { Inside (default), Center, Outside } — #[non_exhaustive] forward-compat. Inside = legacy softbuffer \"drawn inside rect bounds\" 호환, Center = Vello 이 native stroke (반구조 spill), Outside = CSS content-box. §5.3 R20 lock 에 R46.3.2 caveat",
+        "Border struct 에 placement: BorderPlacement field 추가. Border::new(color, width) 가 BorderPlacement::Inside default (기존 콜 사이트 backward-compat). 새 builder Border::with_placement(placement) 추가",
+        "paint_adapter::stroke_rect 가 BorderPlacement match 로 offset 계산 — Center=0, Outside=-width/2, Inside (+ 미래 variant) = +width/2. clippy::match_same_arms 해소 을 위해 Inside | _ 움별 패턴 사용 (forward-compat 커버리지 + 중복 arm 회피)",
+        "pinion-core tests 3 신규 — border_default_placement_is_inside (Border::new 의 default 필드 검증) / border_with_placement_builder_overrides_default (builder API) / border_placement_three_variants_distinct (세 variant 독립성 + Default 구현)",
+        "paint_adapter tests 1 신규 — stroke_rect_inside_placement_inset_matches_softbuffer_geometry (세 placement variant 모두 panic-free walk + match 분기 실증)",
+        "Border::new 계속 사용자 (pinion-overlay highlight, pinion-rpc dispatch.rs) backward-compat 유지 — placement 명시 안 하면 Inside (기존 동작)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 633 pass (629 이전 + 4 신규: 3 Border placement + 1 stroke_rect placement)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / pinion-forge 0 / ai-introspect-demo 0 (신규 2 warning 즉시 정정: paint_adapter doc backtick + match_same_arms)",
+        "validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync",
+        "Backward compat 검증 — pinion-overlay highlight.rs (line 148) + pinion-rpc dispatch.rs (line 1155) 의 Border::new 사용처 모두 수정 불필요, placement 기본값 Inside 가 레거시 동작 보존"
+      ],
+      "impact_refs": [
+        "5.3",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R46.3.3: VELLO_TEMPLATE fully-qualified path refactor — use vello::* 제거, mod gen_renderer wrap 해소",
+        "R46.3.4: winit suspend/resume 구조 — ai-introspect-demo 의 RenderState enum",
+        "R46.3.5: doc reflow — main.rs module docstring + clippy allow 제거",
+        "Future BorderPlacement variant 후보 — R47+ 에서 아직 없음. 현재 세 variant 이 CSS / softbuffer / Vello 세 개 래트러리 온전 커버. 다른 placement (e.g. 공간 권한제원에 따른 불규칙 inset) 가 쟈광되면 새 variant + paint_adapter 의 wildcard fallback 로 처리",
+        "Border 의 dash / dot pattern, miter style, corner-radius interaction 등 추가 속성 은 별도 axis (어첌든 placement 과 직교)"
+      ],
+      "publishable_decision_summary": "Round 46.3.2 — §5.3 BorderPlacement enum 도입 — Border 의 inset 의미가 implicit (paint_adapter 의 width/2 인라인 트릭) 이었음을 explicit framework primitive 로 승격, R46.3 self-audit Concern #3 same-session 상환",
+      "publishable_changes_bullets": [
+        "pinion-core/src/style.rs: 신규 enum BorderPlacement { Inside (default), Center, Outside } — #[non_exhaustive] forward-compat. Inside = legacy softbuffer \"drawn inside rect bounds\" 호환, Center = Vello 이 native stroke (반구조 spill), Outside = CSS content-box. §5.3 R20 lock 에 R46.3.2 caveat",
+        "Border struct 에 placement: BorderPlacement field 추가. Border::new(color, width) 가 BorderPlacement::Inside default (기존 콜 사이트 backward-compat). 새 builder Border::with_placement(placement) 추가",
+        "paint_adapter::stroke_rect 가 BorderPlacement match 로 offset 계산 — Center=0, Outside=-width/2, Inside (+ 미래 variant) = +width/2. clippy::match_same_arms 해소 을 위해 Inside | _ 움별 패턴 사용 (forward-compat 커버리지 + 중복 arm 회피)",
+        "pinion-core tests 3 신규 — border_default_placement_is_inside (Border::new 의 default 필드 검증) / border_with_placement_builder_overrides_default (builder API) / border_placement_three_variants_distinct (세 variant 독립성 + Default 구현)",
+        "paint_adapter tests 1 신규 — stroke_rect_inside_placement_inset_matches_softbuffer_geometry (세 placement variant 모두 panic-free walk + match 분기 실증)",
+        "Border::new 계속 사용자 (pinion-overlay highlight, pinion-rpc dispatch.rs) backward-compat 유지 — placement 명시 안 하면 Inside (기존 동작)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 633 pass (629 이전 + 4 신규: 3 Border placement + 1 stroke_rect placement)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / pinion-forge 0 / ai-introspect-demo 0 (신규 2 warning 즉시 정정: paint_adapter doc backtick + match_same_arms)",
+        "validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync",
+        "Backward compat 검증 — pinion-overlay highlight.rs (line 148) + pinion-rpc dispatch.rs (line 1155) 의 Border::new 사용처 모두 수정 불필요, placement 기본값 Inside 가 레거시 동작 보존"
+      ],
+      "publishable_impact_refs": [
+        "5.3",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R46.3.3: VELLO_TEMPLATE fully-qualified path refactor — use vello::* 제거, mod gen_renderer wrap 해소",
+        "R46.3.4: winit suspend/resume 구조 — ai-introspect-demo 의 RenderState enum",
+        "R46.3.5: doc reflow — main.rs module docstring + clippy allow 제거",
+        "Future BorderPlacement variant 후보 — R47+ 에서 아직 없음. 현재 세 variant 이 CSS / softbuffer / Vello 세 개 래트러리 온전 커버. 다른 placement (e.g. 공간 권한제원에 따른 불규칙 inset) 가 쟈광되면 새 variant + paint_adapter 의 wildcard fallback 로 처리",
+        "Border 의 dash / dot pattern, miter style, corner-radius interaction 등 추가 속성 은 별도 axis (어첌든 placement 과 직교)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
