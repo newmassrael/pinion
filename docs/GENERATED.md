@@ -2299,6 +2299,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-font/src/tables/os2.rs:Os2
 - crates/pinion-text-font/src/tables/post.rs:Post
 - crates/pinion-text-font/src/error.rs:FieldValue
+- crates/pinion-text-font/src/tables/cmap.rs:Cmap
+- crates/pinion-text-font/src/tables/cmap.rs:CmapSubtable
+- crates/pinion-text-font/src/tables/cmap.rs:Format4
+- crates/pinion-text-font/src/tables/cmap.rs:Format12
 
 
 
@@ -6193,6 +6197,44 @@ router.pointer_down(&mut state_scene);
 - R50.1.5 name table parser — family / style / postscript name
 - R50.1.X 후속: WOFF2 / CFF / variable axis / color tables / compound glyph
 - R50.X RPC channel — pinion-rpc 에 font/parse, font/metrics, font/glyph_metrics method 노출 (AI-first 완성)
+- R50.2+ sub-crate 분할: pinion-text-{unicode, shape, layout, raster}
+
+
+
+### Round 455 — R50.1.3 §5.37.1 cmap parser (format 4 BMP + format 12 UCS-4) — Round 455 — R50.1.3 §5.37.1 cmap parser: format 4 (segment mapping for BMP) + format 12 (sequential coverage for full Unicode). EncodingRecord 보존 + subtable dispatch + best_subtable selection (format 12 > format 4, Microsoft Unicode platform 우선). Font::glyph_id_for(codepoint) 통합. Noto Sans ASCII / Nanum Gothic 한글 음절 real fixture 검증. workspace 734 tests (+13), 0 clippy warnings.
+
+**Changes**:
+- tables/cmap.rs 신설 — Cmap / EncodingRecord / CmapSubtable enum (Format4 + Format12)
+- Format 4 (BMP segment mapping): endCode/startCode/idDelta/idRangeOffset arrays + glyph_id_array, indirect lookup 수식 구현
+- Format 12 (UCS-4 sequential coverage): SequentialMapGroup binary-search lookup
+- best_subtable() priority: format 12 + Unicode platform > format 12 any > format 4 + Unicode platform > format 4 any
+- Font::glyph_id_for(codepoint: u32) → Option<u16> integration
+- spec strict reject: version != 0 / numTables == 0 / format4.endCode[last] != 0xFFFF / format4.reservedPad != 0 / format12.reserved != 0
+- unsupported format (0/2/6/8/10/13/14) — EncodingRecord 보존 + subtables[i] = None (silent skip, future R50.1.X)
+- integration tests: Noto Sans ASCII letters/digits + Nanum Gothic 한글 음절 [U+AC00, U+D7A3]
+
+
+
+**Verification**:
+- cargo test --package pinion-text-font: 70 pass (61 unit + 9 integration)
+- cargo test --workspace --features pinion-runtime/vello: 721 → 734 (+13)
+- cargo clippy --package pinion-text-font: 0 warnings
+- Format 4 indirect lookup (id_range_offset != 0) spec 수식 정확 구현 (i + range_off/2 + cp_off - seg_count)
+- Format 12 binary search via partition_point — log(n) lookup
+- Noto Sans U+0041..U+005A 'A'..'Z' 모두 mapped (non-zero glyph)
+- Nanum Gothic U+AC00..U+AC0F + U+D7A3 한글 음절 모두 mapped
+
+
+
+**Impact**: §5.37.1, §5.37
+
+
+**Carry forward**:
+- R50.1.4 glyf + loca parser — simple TrueType outlines, compound glyph postpone
+- R50.1.5 name table parser — family / style / postscript name
+- R50.1.X 후속: cmap format 0/2/6/8/10/13/14 (Unicode variation selector 등)
+- R50.1.X 후속: WOFF2 / CFF / variable axis / color tables / compound glyph
+- R50.X RPC channel — pinion-rpc 에 font/glyph_id_for, font/cmap_subtables method 노출 (AI-first)
 - R50.2+ sub-crate 분할: pinion-text-{unicode, shape, layout, raster}
 
 

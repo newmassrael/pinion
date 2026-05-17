@@ -117,6 +117,60 @@ fn parse_nanum_gothic_font_full() {
 }
 
 #[test]
+fn noto_sans_cmap_ascii_letters() {
+    let bytes = std::fs::read("tests/fonts/NotoSans-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    // ASCII letters (U+0041 'A' .. U+005A 'Z') 모두 mapped (non-zero glyph).
+    for cp in 0x0041u32..=0x005A {
+        let gid = font.glyph_id_for(cp);
+        assert!(gid.is_some(), "U+{cp:04X} not mapped in Noto Sans");
+        assert_ne!(gid, Some(0), "U+{cp:04X} maps to .notdef");
+    }
+    // ASCII digits.
+    for cp in 0x0030u32..=0x0039 {
+        let gid = font.glyph_id_for(cp).unwrap_or(0);
+        assert_ne!(gid, 0, "U+{cp:04X} not mapped");
+    }
+    // Unassigned codepoint (private use area) → None or .notdef.
+    let gid = font.glyph_id_for(0x10_FFFE);
+    assert!(gid.is_none() || gid == Some(0), "unexpected mapping for U+10FFFE");
+}
+
+#[test]
+fn nanum_gothic_cmap_hangul_block() {
+    let bytes = std::fs::read("tests/fonts/NanumGothic-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    // 한글 음절 blocks (U+AC00 '가' .. U+AC0F) 모두 mapped — Nanum Gothic 의
+    // 핵심 coverage area.
+    for cp in 0xAC00u32..=0xAC0F {
+        let gid = font.glyph_id_for(cp);
+        assert!(gid.is_some(), "U+{cp:04X} not mapped in Nanum Gothic");
+        assert_ne!(gid, Some(0), "U+{cp:04X} maps to .notdef");
+    }
+
+    // 한글 음절 마지막 '힣' (U+D7A3) 도 mapped.
+    let gid = font.glyph_id_for(0xD7A3);
+    assert!(gid.is_some());
+    assert_ne!(gid, Some(0));
+}
+
+#[test]
+fn both_fixtures_map_basic_ascii() {
+    for path in [
+        "tests/fonts/NotoSans-Regular.ttf",
+        "tests/fonts/NanumGothic-Regular.ttf",
+    ] {
+        let bytes = std::fs::read(path).expect("fixture present");
+        let font = Font::from_bytes(bytes).expect("valid Font");
+        // 'A' = U+0041 maps to non-zero glyph in both fonts.
+        let gid = font.glyph_id_for(0x0041);
+        assert!(gid.is_some() && gid != Some(0), "{path}: 'A' not mapped");
+    }
+}
+
+#[test]
 fn font_metadata_consistency() {
     // hhea.number_of_h_metrics 가 hmtx 의 long_metrics.len() 와 일치 검증.
     for path in [

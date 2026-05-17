@@ -7,6 +7,7 @@
 
 use crate::error::ParseError;
 use crate::sfnt::{OffsetTable, TableRecord, find_table, parse_sfnt};
+use crate::tables::cmap::Cmap;
 use crate::tables::head::Head;
 use crate::tables::hhea::Hhea;
 use crate::tables::hmtx::Hmtx;
@@ -29,6 +30,7 @@ pub struct Font {
     pub maxp: Maxp,
     pub os2: Os2,
     pub post: Post,
+    pub cmap: Cmap,
 }
 
 impl Font {
@@ -53,6 +55,7 @@ impl Font {
         )?;
         let os2 = Os2::parse(find_table(&bytes, &records, *b"OS/2")?)?;
         let post = Post::parse(find_table(&bytes, &records, *b"post")?)?;
+        let cmap = Cmap::parse(find_table(&bytes, &records, *b"cmap")?)?;
 
         Ok(Self {
             bytes,
@@ -64,6 +67,7 @@ impl Font {
             maxp,
             os2,
             post,
+            cmap,
         })
     }
 
@@ -125,5 +129,12 @@ impl Font {
     #[must_use]
     pub fn is_monospace(&self) -> bool {
         self.post.is_monospace()
+    }
+
+    /// Map a Unicode codepoint to a glyph ID via the best cmap subtable.
+    /// Returns `None` if the codepoint isn't mapped.
+    #[must_use]
+    pub fn glyph_id_for(&self, codepoint: u32) -> Option<u16> {
+        self.cmap.glyph_id(codepoint)
     }
 }
