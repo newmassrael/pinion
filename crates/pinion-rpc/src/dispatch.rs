@@ -37,6 +37,9 @@ use crate::click::{click, ClickError, ClickOutcome};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::intents::{drain_intents, IntentsError};
 use crate::invoke::{invoke, InvokeError};
+use crate::layout_query::{
+    layout_query, LayoutQueryError, LayoutQueryParams,
+};
 use crate::locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };
@@ -113,10 +116,22 @@ pub struct DispatchContext<'a> {
     pub previews: &'a PreviewLedger,
     /// §5.34 R40.4 OCC revision token.
     pub revision: &'a SceneRevision,
+    /// R47.7.1 §5.12 — application-supplied paint scene producer.
+    /// Invoked by `scene/layout` with the request's hypothetical
+    /// viewport `(width, height)` to obtain a freshly-laid paint
+    /// scene. `None` causes `scene/layout` to fail with
+    /// `LayoutQueryError::PaintProducerUnavailable`; non-layout
+    /// methods ignore the field. The application is expected to run
+    /// `compute_layout` inside the closure so the returned `Scene`
+    /// carries measured rects.
+    pub paint_producer: Option<&'a mut (dyn FnMut(u32, u32) -> Scene + 'a)>,
 }
 
 impl<'a> DispatchContext<'a> {
     /// Build a context from the three borrowed runtime handles.
+    /// `paint_producer` starts unset — callers that want
+    /// `scene/layout` to succeed register one via
+    /// [`Self::with_paint_producer`].
     #[must_use]
     pub fn new(
         scene: &'a mut Scene,
@@ -127,7 +142,22 @@ impl<'a> DispatchContext<'a> {
             scene,
             previews,
             revision,
+            paint_producer: None,
         }
+    }
+
+    /// Builder: attach the paint scene producer closure (R47.7.1
+    /// §5.12). The closure is invoked by `scene/layout` with the
+    /// request's hypothetical `(viewport_w, viewport_h)`; it must
+    /// return a `Scene` whose nodes already carry measured `rect`
+    /// values (i.e. it should call `compute_layout` internally).
+    #[must_use]
+    pub fn with_paint_producer(
+        mut self,
+        producer: &'a mut (dyn FnMut(u32, u32) -> Scene + 'a),
+    ) -> Self {
+        self.paint_producer = Some(producer);
+        self
     }
 }
 
@@ -160,6 +190,12 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     let scene: &mut Scene = &mut *ctx.scene;
     let previews: &PreviewLedger = ctx.previews;
     let revision: &SceneRevision = ctx.revision;
+    // R47.7.1 §5.12 — `scene/layout` consumes the paint producer
+    // closure exactly once per dispatch. Take it out of the context so
+    // the (split-borrow) main match below can dispatch other methods
+    // against `&mut Scene` without colliding on the producer slot. The
+    // caller registers a fresh producer before each dispatch.
+    let mut paint_producer = ctx.paint_producer.take();
     let parsed: Result<Request, _> = serde_json::from_str(request_json);
     let request = match parsed {
         Ok(r) => r,
@@ -203,6 +239,19 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
+        "scene/layout" => {
+            // `Option<&mut &mut dyn FnMut>` → `Option<&mut dyn FnMut>`.
+            // clippy::option_as_ref_deref suggests `.as_deref_mut()`,
+            // but `dyn FnMut` does not implement `DerefMut`, so the
+            // explicit reborrow is required; the lint fires on the
+            // surface shape, not the type-check semantics.
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            handle_scene_layout(producer, request.params.as_ref())
+        }
         "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
         "scene/list_previews" => handle_scene_list_previews(previews),
         "scene/propose_change" => {
@@ -702,6 +751,47 @@ fn bbox_error_to_rpc(err: BboxError) -> RpcError {
     let variant = match err {
         BboxError::Path(_) => "Path",
         BboxError::UnknownPath => "UnknownPath",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+/// R47.7.1 §5.12 — `scene/layout` typed dispatcher entry. Deserializes
+/// the request params into [`LayoutQueryParams`], invokes the
+/// application's paint producer with the hypothetical viewport, and
+/// serializes the resulting `LayoutNode` tree.
+///
+/// Generic over the producer type so a `dyn FnMut(u32, u32) -> Scene`
+/// trait object (the canonical caller shape from `DispatchContext`) and
+/// concrete closures both compile through `F: ?Sized` — the lifetime
+/// of the inner trait object is elided into `F`'s bound.
+fn handle_scene_layout<F>(
+    paint_producer: Option<&mut F>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let typed: LayoutQueryParams = serde_json::from_value(params.clone())
+        .map_err(|e| invalid_params(&format!("params shape: {e}")))?;
+    match layout_query(&typed, paint_producer) {
+        Ok(node) => serde_json::to_value(&node)
+            .map_err(|e| invalid_params(&format!("serialize: {e}"))),
+        Err(err) => Err(layout_query_error_to_rpc(err)),
+    }
+}
+
+fn layout_query_error_to_rpc(err: LayoutQueryError) -> RpcError {
+    let variant = match err {
+        LayoutQueryError::Path(_) => "Path",
+        LayoutQueryError::PaintProducerUnavailable => "PaintProducerUnavailable",
+        LayoutQueryError::InvalidViewport => "InvalidViewport",
     };
     RpcError {
         code: -32602,

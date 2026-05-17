@@ -14,6 +14,7 @@ pub mod dispatch;
 pub mod dry_run;
 pub mod intents;
 pub mod invoke;
+pub mod layout_query;
 pub mod locate;
 pub mod path;
 pub mod preview;
@@ -28,6 +29,10 @@ pub use dispatch::{dispatch, DispatchContext, Request, RequestId, Response, RpcE
 pub use dry_run::{dry_run, DryRunError};
 pub use intents::{drain_intents, IntentsError};
 pub use invoke::{invoke, InvokeError};
+pub use layout_query::{
+    layout_query, LayoutKind, LayoutNode, LayoutQueryError, LayoutQueryParams, LayoutRect,
+    ViewportSize,
+};
 pub use locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };

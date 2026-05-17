@@ -5648,6 +5648,42 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 443 — §5.12 R47.7.1 pinion-rpc scene/layout 핸들러 + LayoutNode 응답 — Round 443 — §5.12 R47.7.1 scene/layout typed dispatcher implement. pinion-rpc::layout_query module (LayoutNode tree + LayoutKind + LayoutRect + ViewportSize + LayoutQueryParams + LayoutQueryError). DispatchContext 에 paint_producer field 추가 (&mut dyn FnMut(u32, u32) -> Scene). dispatch.rs match arm 추가.
+
+**Changes**:
+- crates/pinion-rpc/src/layout_query.rs 신규 module: LayoutNode (path/kind/rect/tag/content/children) + LayoutKind + LayoutRect + ViewportSize + LayoutQueryParams + LayoutQueryError + layout_query() entry
+- crates/pinion-rpc/src/dispatch.rs: DispatchContext +paint_producer field (Option<&'a mut dyn FnMut(u32,u32) -> Scene + 'a>) + with_paint_producer builder
+- crates/pinion-rpc/src/dispatch.rs: scene/layout match arm (paint_producer.take + as_mut/reborrow + handle_scene_layout generic over F: FnMut + ?Sized)
+- crates/pinion-rpc/src/dispatch.rs: handle_scene_layout + layout_query_error_to_rpc 함수 추가
+- crates/pinion-rpc/src/lib.rs: layout_query module + re-exports (layout_query, LayoutKind, LayoutNode, LayoutQueryError, LayoutQueryParams, LayoutRect, ViewportSize)
+- +5 unit tests (paint producer 부재 / zero viewport / root container path / text content & rect / viewport invocation)
+- clippy same-commit: doc_markdown / lifetime elide / redundant_closure 6 / pass_by_value (Copy 추가) / option_as_ref_deref allow + reason
+
+
+
+**Verification**:
+- cargo test --features pinion-runtime/vello = 659 pass (654 → 659, +5 layout_query)
+- cargo clippy = baseline 완전 보존 (pinion-core 5 + pinion-runtime 1, pinion-rpc 0 신규 warning — clippy 9 same-commit fix)
+- validate_workspace baseline 보존 예정
+
+
+
+**Impact**: §5.12, §5.7
+
+
+**Carry forward**:
+- R47.7.2 hello-button dispatch_rpc wire — view_fn closure 를 with_paint_producer 로 framework 에 전달
+- R47.7.3 AI 자동 진단 — cargo run -p hello-button background + JSON-RPC viewport sweep + wrap 변동 reproduce
+- R47.7.x wrap fix (진단 결과 따라)
+- R47.7.x framework primitive cleanup — application view-fn 등록 surface 을 trait Application 로 정리 (§5.18 또는 신규 §5.X)
+- R47.7.x tag-keyed path syntax (현재 index-based "/0/1/0" 만 지원; tag-keyed "/main_btn/label" 는 §5.18 정합)
+- R47.7.x path filter 구현 (sub-tree filter 현재 no-op, full tree 반환)
+- R47.x parley Ellipsis truncation pass
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity
+- R46 carry / claudedocs / R297 그대로
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
