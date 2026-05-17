@@ -5782,6 +5782,39 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 447 — §5.12 R47.7.4.3 sweep 결과 + R47.7.x scene/layout viewport optional carry — Round 447 — §5.12 R47.7.4.3 자동 sweep 결과: scene/resize 가 winit request_inner_size 트리거 동작 확인. 다만 scene/layout viewport=mandatory 라 actual winit frame 측정 안 됨 — 둘 다 hypothetical path. 39 viewport sweep wrap 0 확정. winit actual frame 측정 channel = R47.7.x carry (viewport optional + last_paint_scene cache).
+
+**Changes**:
+- R47.7.4.3 sweep: scene/resize {300,200} 호출 → requested:true 확인 (winit request_inner_size 트리거됨)
+- sweep 결과: hypothetical paint path 39 viewport 모두 text rect={h:26,w:78} 1line — wrap 0 확정
+- AI-first 진단 자동화 success: stdin/stdout pipe + RPC sequence 로 사용자 개입 없이 reproduce + 결과 받음
+- 사용자 보고 vs sweep disconnect 정직 인정: winit actual frame 측정 channel 없음 — R47.7.x 격차
+
+
+
+**Verification**:
+- scene/resize → scene/intents (tick) → scene/layout 시퀀스 정상 작동, requested:true 응답
+- hypothetical paint sweep wrap 0 / actual winit frame 측정 = R47.7.x carry
+- 39 + 7 = 46 sweep 누적 wrap 0 — hypothetical path 의 wrap 0 결론 확정
+
+
+
+**Impact**: §5.12
+
+
+**Carry forward**:
+- R47.7.x scene/layout viewport optional + application last_paint_scene cache (winit actual frame 측정)
+- R47.7.x scene/wait_for_frame implement (next redraw 동기 대기, scene/resize stable observation)
+- R47.7.x scene/screenshot pixel readback (§5.16 RHI 가 ratify 시 wire) — 가장 정확한 visual diff
+- 사용자 환경 검증 carry: HiDPI scale_factor / OS / 정확한 drag 시퀀스 정보 — anomaly reproduce 추가 input
+- R47.7.x framework primitive cleanup: trait Application surface (closure registration 정리)
+- R47.7.x tag-keyed path syntax / path filter 구현
+- R47.x parley Ellipsis truncation pass
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity
+- R46 / claudedocs / R297
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
