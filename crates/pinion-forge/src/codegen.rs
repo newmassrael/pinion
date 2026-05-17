@@ -54,30 +54,61 @@
 //! when prior captures are referenced.
 
 use crate::ast::{
-    ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl, UseDecl,
+    ComputedDecl, PinionChild, PinionDoc, PinionSpec, RendererBackend, ResourceDecl, SignalDecl,
+    UseDecl,
 };
 
 const INDENT: &str = "    ";
 
 /// Render `doc` to a self-contained Rust source string. Output is
 /// valid `rustc` input and `cargo fmt`-stable (single trailing newline).
+///
+/// Dispatch is exhaustive on [`PinionSpec`]: adding a new kind variant
+/// makes the compiler flag every callsite missing the new arm
+/// (textbook ADT closure, mirrors `syn::Expr` / `serde_json::Value`
+/// match-exhaustiveness usage).
 #[must_use]
 pub fn emit_rust(doc: &PinionDoc) -> String {
-    match doc.kind {
-        PinionKind::Reactive => emit_reactive(doc),
+    match &doc.spec {
+        PinionSpec::Reactive { children } => emit_reactive(&doc.name, children),
+        PinionSpec::Renderer { backend } => emit_renderer_stub(&doc.name, *backend),
     }
 }
 
-fn emit_reactive(doc: &PinionDoc) -> String {
-    let name = &doc.name;
-    let use_block = emit_use_block(&doc.children);
-    let has_binding = doc.children.iter().any(is_binding_child);
+fn emit_reactive(name: &str, children: &[PinionChild]) -> String {
+    let use_block = emit_use_block(children);
+    let has_binding = children.iter().any(is_binding_child);
     let body = if has_binding {
-        emit_struct_with_children(name, &doc.children)
+        emit_struct_with_children(name, children)
     } else {
         emit_unit_struct(name)
     };
     format!("{use_block}{body}")
+}
+
+/// R46 §5.16 build slice 1 commit 1 stub. Emits a comment-only Rust
+/// module so a `build.rs` that calls [`emit_rust`] on a renderer doc
+/// stays compilable — the real Vello emit template lands in R46
+/// commit 2. The stub records `name` + `backend.as_attr()` so a future
+/// debug build can grep the `OUT_DIR` module for the pending manifest
+/// entry without re-parsing the source.
+///
+/// The shape is deliberately a comment block rather than `unimplemented!()`
+/// — the latter would panic at build time on the first renderer doc
+/// reached, masking compile errors elsewhere; the former leaves the
+/// Rust file valid and produces an empty module visible to `include!`
+/// callsites authored ahead of commit 2.
+fn emit_renderer_stub(name: &str, backend: RendererBackend) -> String {
+    format!(
+        "// pinion-forge: renderer kind codegen stub.\n\
+         // R46 §5.16 build slice 1 commit 1 — parser scaffold only.\n\
+         // R46 commit 2 lands the {backend} emit template for this manifest entry.\n\
+         //\n\
+         // name    = {name}\n\
+         // backend = {backend}\n",
+        backend = backend.as_attr(),
+        name = name,
+    )
 }
 
 /// Collect every `<use path="..."/>` into a single module-level

@@ -37,7 +37,8 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 
 use crate::ast::{
-    ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl, UseDecl,
+    ComputedDecl, PinionChild, PinionDoc, PinionKind, PinionSpec, RendererBackend, ResourceDecl,
+    SignalDecl, UseDecl,
 };
 use crate::diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic};
 
@@ -130,6 +131,15 @@ impl<'a> ParseCtx<'a> {
     /// not meaningful. If only attributes are wrong, accumulate every
     /// per-attribute diagnostic, then continue scanning for child-level
     /// diagnostics so a single run surfaces them all.
+    ///
+    /// Kind dispatch: after the core attribute checks, the kind selects
+    /// which body scanner runs and which kind-specific attribute rule
+    /// applies. `reactive` validates / scans children per R38.2a-d;
+    /// `renderer` validates the `backend` attribute and rejects any
+    /// child element (R46 §5.16). When `attrs_ok` is `None` (one of
+    /// xmlns / kind / name failed), the scanner falls back to the
+    /// reactive child grammar so a single run still surfaces every
+    /// child-level problem alongside the attribute failure.
     fn parse_root_open(
         &mut self,
         start: &BytesStart<'_>,
@@ -142,34 +152,164 @@ impl<'a> ParseCtx<'a> {
             return Err(std::mem::take(&mut self.diagnostics));
         }
 
+        // Capture the root-tag location once for any kind-specific
+        // diagnostics raised below (e.g. MissingBackend points to the
+        // root, not to the first child).
+        let location = self.current_location();
         let attrs_ok = self.parse_root_attrs(start);
+
+        // Kind-specific attribute validation runs after the core attrs
+        // pass — only renderer has additional load-bearing attributes
+        // (backend) at R46. Reactive's only kind-specific surface is
+        // the child element set, validated during body scan.
+        let backend = match attrs_ok.as_ref().map(|(k, b, _)| (*k, b.clone())) {
+            Some((PinionKind::Renderer, backend_raw)) => {
+                self.validate_renderer_backend(backend_raw, &location)
+            }
+            _ => None,
+        };
 
         let mut children: Vec<PinionChild> = Vec::new();
         if !self_closing {
-            self.scan_root_body(&mut children);
+            match attrs_ok.as_ref().map(|(k, _, _)| *k) {
+                Some(PinionKind::Renderer) => self.scan_renderer_body(),
+                // Reactive or unknown (kind failed) — fall back to the
+                // reactive child grammar so we surface every child-level
+                // issue alongside the attribute failure in a single run.
+                _ => self.scan_root_body(&mut children),
+            }
         }
 
         if self.diagnostics.is_empty() {
             // Invariant: parse_root_attrs returns Some iff no attribute
-            // diagnostics were pushed; scan_root_body either pushes
-            // diagnostics or appends a child. So an empty diagnostic
-            // vec implies attrs_ok is Some.
-            let (kind, name) = attrs_ok.expect("attrs-ok path must populate (kind, name)");
-            Ok(PinionDoc { name, kind, children })
+            // diagnostics were pushed; validate_renderer_backend returns
+            // Some iff no backend diagnostic was pushed; scan_*_body
+            // pushes diagnostics on failure. So an empty diagnostic vec
+            // implies attrs_ok and the per-kind validation both succeeded.
+            let (kind, _, name) =
+                attrs_ok.expect("attrs-ok path must populate (kind, backend_raw, name)");
+            let spec = match kind {
+                PinionKind::Reactive => PinionSpec::Reactive { children },
+                PinionKind::Renderer => PinionSpec::Renderer {
+                    backend: backend.expect(
+                        "renderer-ok path must populate backend (empty diagnostics implies validated)",
+                    ),
+                },
+            };
+            Ok(PinionDoc { name, spec })
         } else {
             Err(std::mem::take(&mut self.diagnostics))
         }
     }
 
-    /// Extract and validate the three required root attributes. Returns
-    /// `Some((kind, name))` only if all three checks pass — even one
+    /// Validate the `backend` attribute for `kind="renderer"`. Pushes
+    /// [`PinionForgeDiagnostic::MissingBackend`] when the attribute is
+    /// absent or whitespace-only, and [`PinionForgeDiagnostic::UnknownBackend`]
+    /// when the literal is not in [`RendererBackend::from_attr`]'s
+    /// accepted set. Returns the parsed [`RendererBackend`] on success.
+    fn validate_renderer_backend(
+        &mut self,
+        backend_raw: Option<String>,
+        location: &Location,
+    ) -> Option<RendererBackend> {
+        match backend_raw {
+            None => {
+                self.diagnostics.push(PinionForgeDiagnostic::MissingBackend {
+                    location: location.clone(),
+                });
+                None
+            }
+            Some(literal) => {
+                let trimmed = literal.trim();
+                if trimmed.is_empty() {
+                    // Whitespace-only treated as missing — matches the
+                    // require_nonempty_attr policy for child elements.
+                    self.diagnostics.push(PinionForgeDiagnostic::MissingBackend {
+                        location: location.clone(),
+                    });
+                    None
+                } else if let Some(b) = RendererBackend::from_attr(trimmed) {
+                    Some(b)
+                } else {
+                    self.diagnostics.push(PinionForgeDiagnostic::UnknownBackend {
+                        found: literal,
+                        location: location.clone(),
+                    });
+                    None
+                }
+            }
+        }
+    }
+
+    /// Scan the body of a `<pinion kind="renderer">` element. The
+    /// renderer kind takes no children — every encountered child raises
+    /// [`PinionForgeDiagnostic::RendererChildNotAllowed`] and the
+    /// subtree is skipped so the outer scan stays aligned with the
+    /// close tag. Comments / whitespace / processing instructions pass
+    /// through silently (the renderer kind has no body content to
+    /// collect either).
+    fn scan_renderer_body(&mut self) {
+        let mut buf = Vec::new();
+        loop {
+            match self.reader.read_event_into(&mut buf) {
+                Ok(Event::End(_)) => return,
+                Ok(Event::Start(e)) => {
+                    let tag = local_name(e.name());
+                    let location = self.current_location();
+                    self.diagnostics.push(PinionForgeDiagnostic::RendererChildNotAllowed {
+                        tag,
+                        location,
+                    });
+                    self.skip_subtree();
+                }
+                Ok(Event::Empty(e)) => {
+                    let tag = local_name(e.name());
+                    let location = self.current_location();
+                    self.diagnostics.push(PinionForgeDiagnostic::RendererChildNotAllowed {
+                        tag,
+                        location,
+                    });
+                }
+                Ok(Event::Eof) => {
+                    let location = self.current_location();
+                    self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
+                        message: "unexpected EOF inside <pinion>".into(),
+                        location,
+                    });
+                    return;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    let location = self.current_location();
+                    self.diagnostics.push(PinionForgeDiagnostic::XmlParseError {
+                        message: e.to_string(),
+                        location,
+                    });
+                    return;
+                }
+            }
+            buf.clear();
+        }
+    }
+
+    /// Extract and validate the three core required root attributes
+    /// (xmlns / kind / name) and collect the kind-specific raw `backend`
+    /// literal for downstream validation. Returns
+    /// `Some((kind, backend_raw, name))` only when xmlns / kind / name
+    /// all pass; `backend_raw` is the unvalidated author literal (or
+    /// `None` when the attribute is absent) and is interpreted by the
+    /// caller in [`Self::build_spec`] per the kind. Even one core
     /// failure makes the doc unrenderable, so we don't construct a
     /// partial AST.
-    fn parse_root_attrs(&mut self, start: &BytesStart<'_>) -> Option<(PinionKind, String)> {
+    fn parse_root_attrs(
+        &mut self,
+        start: &BytesStart<'_>,
+    ) -> Option<(PinionKind, Option<String>, String)> {
         let location = self.current_location();
         let mut xmlns: Option<String> = None;
         let mut kind_raw: Option<String> = None;
         let mut name_raw: Option<String> = None;
+        let mut backend_raw: Option<String> = None;
 
         for attr in start.attributes().with_checks(false) {
             let Ok(attr) = attr else {
@@ -185,13 +325,19 @@ impl<'a> ParseCtx<'a> {
                 "xmlns" => xmlns = Some(value),
                 "kind" => kind_raw = Some(value),
                 "name" => name_raw = Some(value),
+                "backend" => backend_raw = Some(value),
                 _ => {
                     // Unknown attributes on <pinion> are tolerated at R38.1
                     // for forward compatibility — additive attributes added
                     // in a future schema revision MUST not break older
                     // parsers. quick-xml gave us the chance to read them;
                     // we drop them silently per the SCE v1 wire policy
-                    // ("consumers MUST ignore unknown fields").
+                    // ("consumers MUST ignore unknown fields"). `backend`
+                    // is a known schema attribute (R46 §5.16) — it is
+                    // accepted on any kind here but only consumed by the
+                    // renderer kind; reactive silently drops it under the
+                    // same forward-compat policy, matching the lifetime
+                    // of the `xmlns` policy for `<pinion>` itself.
                 }
             }
         }
@@ -253,7 +399,7 @@ impl<'a> ParseCtx<'a> {
         };
 
         match (xmlns_ok, kind, name) {
-            (true, Some(k), Some(n)) => Some((k, n)),
+            (true, Some(k), Some(n)) => Some((k, backend_raw, n)),
             _ => None,
         }
     }

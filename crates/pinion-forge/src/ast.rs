@@ -1,60 +1,159 @@
 //! Parsed representation of a `.pinion.xml` document. Per R38 §5.22 the
-//! root is `<pinion xmlns="..." kind="..." name="...">` and the child set
-//! is closed (`<use>` / `<signal>` / `<computed>` / `<resource>` under
-//! `kind="reactive"`).
+//! root is `<pinion xmlns="..." kind="..." name="...">`; the kind-specific
+//! payload (child set for `reactive`, attributes for `renderer`, etc.) is
+//! captured in [`PinionSpec`] so illegal combinations
+//! (e.g. `kind="renderer"` carrying reactive children) are unrepresentable
+//! at the type level — make illegal states unrepresentable (Minsky, RWOC
+//! ch.6 "Variants"; Effective Rust Item 1).
 //!
-//! R38.2a/b/c/d add `<signal>` / `<computed>` / `<resource>` / `<use>`
-//! to the child set. R38.2a/b/c contribute a struct field and a `new`-
-//! body binding each; `<use>` (R38.2d) is purely a module-level import
-//! and contributes neither.
+//! R38.2a/b/c/d added `<signal>` / `<computed>` / `<resource>` / `<use>`
+//! under `kind="reactive"`. R46 §5.16 build slice 1 introduces the
+//! `kind="renderer"` variant whose payload is a single `backend` attribute
+//! (no children). Future kinds (effect / animation / view-fn) attach as
+//! additional [`PinionSpec`] variants; pattern-match exhaustiveness on
+//! [`PinionSpec`] ensures every codegen dispatch site picks up the new
+//! kind at compile time.
 
 /// Top-level `<pinion>` document. One file = one document = one emitted
-/// Rust struct (R38 ratify: "one file = one struct").
+/// Rust artifact (R38 ratify: "one file = one struct" for the reactive
+/// kind; the renderer kind emits a manifest entry consumed by R46
+/// commit 2 codegen).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinionDoc {
-    /// Name of the emitted Rust struct. Validated as a Rust identifier by
-    /// the parser (no keywords, ASCII `[A-Za-z_][A-Za-z0-9_]*`).
+    /// Name of the emitted Rust identifier. Validated as a Rust ident by
+    /// the parser (no keywords, ASCII `[A-Za-z_][A-Za-z0-9_]*`). The same
+    /// name is the struct name for `kind="reactive"` and the manifest key
+    /// for `kind="renderer"`.
     pub name: String,
-    /// DSL category — pins the codegen template chosen by
-    /// [`crate::codegen`]. R38.1 supports only [`PinionKind::Reactive`].
-    pub kind: PinionKind,
-    /// Closed child set in declaration order. Codegen preserves the
-    /// order so `<computed>` bodies authored after their `<signal>`
-    /// dependencies see those identifiers in scope at emit time.
-    /// `<resource>` / `<use>` land in subsequent slices.
-    pub children: Vec<PinionChild>,
+    /// Kind-specific payload. The variant is fixed by the `<pinion
+    /// kind="...">` attribute and carries every attribute / child set
+    /// the kind requires. Pattern-match this directly in codegen; do not
+    /// route through a separate [`PinionKind`] dispatch (that enum is
+    /// for wire / hash identity only).
+    pub spec: PinionSpec,
 }
 
-/// DSL category attribute (`<pinion kind="...">`). Closed enum — extending
-/// requires a spec round (the codegen template tree is keyed off this).
+/// Kind-specific document payload. Each variant carries the exact field
+/// set the kind needs at codegen time — no `Option<...>` placeholders, no
+/// "ignore this field for this kind" rules. Adding a new kind is a single
+/// `enum` variant addition; every existing `match` site flags up at
+/// compile time as a missing arm (textbook ADT pattern, mirrors
+/// `syn::Expr` / `serde_json::Value` / `proc_macro2::TokenTree`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinionSpec {
+    /// `<pinion kind="reactive" name="...">` — fine-grained reactive
+    /// primitives (Signal / Computed / Resource) plus module-level
+    /// `<use>` imports. The child set is closed (R38.2a/b/c/d). Codegen
+    /// emits one `pub struct <name>` with one field per binding child.
+    Reactive {
+        /// Closed child set in declaration order. Codegen preserves the
+        /// order so `<computed>` bodies authored after their `<signal>`
+        /// dependencies see those identifiers in scope at emit time.
+        children: Vec<PinionChild>,
+    },
+    /// `<pinion kind="renderer" name="..." backend="..."/>` — R46 §5.16
+    /// `SceneRenderer` manifest entry. The element is self-closing (no
+    /// children); the `backend` attribute selects the codegen template
+    /// chosen at build time. R46 commit 2 lands the Vello emit template;
+    /// future emit templates (thin-RHI, custom-pass, B3) attach as
+    /// additional [`RendererBackend`] variants per R41 phasing.
+    Renderer {
+        /// Render backend selected at build time. Compile-time per target
+        /// — runtime virtual dispatch is 0 (R11 zero-overhead, §2#6
+        /// scene-as-data invariant).
+        backend: RendererBackend,
+    },
+}
+
+impl PinionSpec {
+    /// Wire / hash identity for the kind. Pattern-match [`PinionSpec`]
+    /// directly when dispatching codegen; use this accessor only for
+    /// diagnostic messages, wire serialization, or the unknown-kind
+    /// error path (which has no `PinionSpec` to match on).
+    #[must_use]
+    pub fn kind(&self) -> PinionKind {
+        match self {
+            Self::Reactive { .. } => PinionKind::Reactive,
+            Self::Renderer { .. } => PinionKind::Renderer,
+        }
+    }
+}
+
+/// Wire / hash identity for [`PinionSpec`] variants. Closed enum, stable
+/// string form via [`Self::as_attr`]. Codegen does not dispatch on this
+/// — that role belongs to [`PinionSpec`] pattern matching. This enum
+/// exists for: (a) the `dsl/unknown-kind` diagnostic (raised before any
+/// `PinionSpec` is constructed) and (b) optional wire surfaces that
+/// echo the kind as a string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinionKind {
     /// Fine-grained reactive primitives (Signal / Computed / Resource).
     Reactive,
+    /// R46 §5.16 `SceneRenderer` manifest entry (renderer kind).
+    Renderer,
 }
 
 impl PinionKind {
     /// Parse the `kind` attribute literal. Returns `None` for any value
     /// not in the closed set — the caller raises
-    /// `PinionForgeDiagnostic::UnknownKind`.
+    /// [`crate::diagnostic::PinionForgeDiagnostic::UnknownKind`].
     #[must_use]
     pub fn from_attr(literal: &str) -> Option<Self> {
         match literal {
             "reactive" => Some(Self::Reactive),
+            "renderer" => Some(Self::Renderer),
             _ => None,
         }
     }
 
-    /// Inverse of [`Self::from_attr`]. Stable wire identity per R38 ratify.
+    /// Inverse of [`Self::from_attr`]. Stable wire identity per R38
+    /// ratify (reactive) and R46 §5.16 (renderer).
     #[must_use]
     pub fn as_attr(self) -> &'static str {
         match self {
             Self::Reactive => "reactive",
+            Self::Renderer => "renderer",
         }
     }
 }
 
-/// Closed child-element enum. R38.2a/b/c/d populate all four variants.
+/// Render backend selector for `kind="renderer"`. Closed enum — adding a
+/// new backend is a spec decision (R41 Phase 2/3/4 brings thin-RHI /
+/// custom-pass / B3). R46 commit 1 introduces only the Vello variant;
+/// commit 2 lands the matching emit template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RendererBackend {
+    /// Vello-backed renderer (R41 Phase 1, hybrid path C). UI mode uses
+    /// the embedded Vello renderer; codegen emits a backend manifest
+    /// entry consumed by build-time template selection.
+    Vello,
+}
+
+impl RendererBackend {
+    /// Parse the `backend` attribute literal. Returns `None` for any
+    /// value outside the closed set — the caller raises
+    /// [`crate::diagnostic::PinionForgeDiagnostic::UnknownBackend`].
+    #[must_use]
+    pub fn from_attr(literal: &str) -> Option<Self> {
+        match literal {
+            "vello" => Some(Self::Vello),
+            _ => None,
+        }
+    }
+
+    /// Inverse of [`Self::from_attr`]. Stable wire identity.
+    #[must_use]
+    pub fn as_attr(self) -> &'static str {
+        match self {
+            Self::Vello => "vello",
+        }
+    }
+}
+
+/// Closed child-element enum for the reactive kind. R38.2a/b/c/d
+/// populate all four variants. The renderer kind has no children — its
+/// payload lives entirely in root attributes — so this enum is only
+/// referenced from [`PinionSpec::Reactive`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinionChild {
     /// `<signal name="..." ty="...">CDATA initial</signal>`. Compiles to

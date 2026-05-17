@@ -59,9 +59,11 @@ fn key_fragments(diag: &PinionForgeDiagnostic) -> String {
         PinionForgeDiagnostic::InvalidRoot { found, .. }
         | PinionForgeDiagnostic::WrongXmlns { found, .. }
         | PinionForgeDiagnostic::UnknownKind { found, .. }
-        | PinionForgeDiagnostic::InvalidName { found, .. } => found.clone(),
+        | PinionForgeDiagnostic::InvalidName { found, .. }
+        | PinionForgeDiagnostic::UnknownBackend { found, .. } => found.clone(),
         PinionForgeDiagnostic::UnsupportedElement { tag, .. }
-        | PinionForgeDiagnostic::EmptyBody { tag, .. } => tag.clone(),
+        | PinionForgeDiagnostic::EmptyBody { tag, .. }
+        | PinionForgeDiagnostic::RendererChildNotAllowed { tag, .. } => tag.clone(),
         PinionForgeDiagnostic::MissingAttribute { tag, attribute, .. } => {
             format!("{tag}\u{1f}{attribute}")
         }
@@ -71,7 +73,8 @@ fn key_fragments(diag: &PinionForgeDiagnostic) -> String {
         PinionForgeDiagnostic::XmlParseError { .. }
         | PinionForgeDiagnostic::MissingXmlns { .. }
         | PinionForgeDiagnostic::MissingKind { .. }
-        | PinionForgeDiagnostic::MissingName { .. } => String::new(),
+        | PinionForgeDiagnostic::MissingName { .. }
+        | PinionForgeDiagnostic::MissingBackend { .. } => String::new(),
     }
 }
 
@@ -131,8 +134,10 @@ fn actual_of(diag: &PinionForgeDiagnostic) -> Option<String> {
         | PinionForgeDiagnostic::WrongXmlns { found, .. }
         | PinionForgeDiagnostic::UnknownKind { found, .. }
         | PinionForgeDiagnostic::InvalidName { found, .. }
-        | PinionForgeDiagnostic::InvalidIdent { found, .. } => Some(found.clone()),
-        PinionForgeDiagnostic::UnsupportedElement { tag, .. } => Some(tag.clone()),
+        | PinionForgeDiagnostic::InvalidIdent { found, .. }
+        | PinionForgeDiagnostic::UnknownBackend { found, .. } => Some(found.clone()),
+        PinionForgeDiagnostic::UnsupportedElement { tag, .. }
+        | PinionForgeDiagnostic::RendererChildNotAllowed { tag, .. } => Some(tag.clone()),
         _ => None,
     }
 }

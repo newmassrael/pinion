@@ -4600,6 +4600,39 @@ fn main() {
 
 
 
+### Round 417 — Round 46 — §5.16 build slice 1 commit 1 — pinion-forge renderer kind parser scaffold (PinionSpec ADT + RendererBackend, codegen stub)
+
+**Changes**:
+- ast.rs refactor: PinionDoc { name, spec: PinionSpec } — PinionSpec::Reactive { children } / PinionSpec::Renderer { backend } ADT 도입. RendererBackend::Vello 초기 variant. PinionKind { Reactive, Renderer } wire/hash identity 유지. textbook 'make illegal states unrepresentable' (Minsky RWOC, Effective Rust Item 1, syn::Expr / serde_json::Value precedent)
+- parser.rs: kind 별 분기 — validate_renderer_backend + scan_renderer_body 추가. parse_root_attrs 가 (PinionKind, Option<backend_raw>, name) tuple 반환. backend attribute 수집 시 reactive 에선 silent drop (SCE v1 forward-compat 정책 일관성)
+- diagnostic.rs: 신규 variant 3 — MissingBackend / UnknownBackend / RendererChildNotAllowed. wire code dsl/missing-backend / dsl/unknown-backend / dsl/renderer-child-not-allowed. stage = Validate. UnknownKind 메시지 갱신 (reactive + renderer 둘 다 enumerate)
+- codegen.rs: emit_rust 가 match &doc.spec 으로 exhaustive dispatch — 새 kind 추가시 모든 callsite compile error. PinionSpec::Renderer arm = comment-only Rust module stub (R46 commit 2 가 Vello emit template land). unimplemented!() 회피 — build.rs 사용자 panic 방지
+- wire.rs: key_fragments / actual_of 의 3 신규 variant arm. UnknownBackend = found (actual 노출), RendererChildNotAllowed = tag, MissingBackend = empty (no per-instance discriminator beyond location)
+- lib.rs tests: 10 신규 — renderer happy path (self-closing + open-close) / missing-backend / unknown-backend / empty-backend / renderer-child-not-allowed (specific code vs unsupported-element) / stub emit assertion / wire actual carriage / unknown-kind message coverage
+
+
+
+**Verification**:
+- cargo test --workspace = 599 pass (589 baseline + 10 신규 renderer tests in pinion-forge), 0 failed
+- cargo clippy --workspace --all-targets = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / ai-introspect-demo 4 / pinion-forge 0 (신규 3 doc-backtick warning 즉시 정정)
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync (generate_docs cascade)
+- workspace consumer 영향 0 — pinion-rpc / pinion-runtime / pinion-cli / examples 모두 PinionDoc API 미사용, cargo check workspace clean (한 commit 안에 ast breaking change 안전 land)
+
+
+
+**Impact**: §5.16, §5.22, §2
+
+
+**Carry forward**:
+- R45 prefix gap 정정 완료 audit — entry 416 publishable_decision_summary 가 'Round 45 — §5.16 ...' 형식으로 정정, mnemosyne.toml [[publishable_override_ledger]] target_id='416' row 추가 (mnemosyne R297 redact_term + R296 gate). 직전 세션 RFC 001 self-withdraw 후 정통 surface 처리 완료, 부채 청산
+- R46 build slice 1 commit 2: renderer kind 의 Vello first emit template — wgpu/vello workspace dep + emit 본체. commit 1 의 PinionSpec::Renderer { backend: Vello } 가 dispatch 진입, commit 2 가 emit 채움
+- R46 build slice 1 commit 3: ai-introspect-demo 에 app.pinion.xml renderer manifest 추가; build.rs codegen 호출; softbuffer paint 함수가 codegen 된 SoftbufferRenderer 로 교체. Vello path end-to-end visible
+- R47+: Headless renderer template — §5.12 screenshot RPC 미해제 항목 진입 (RendererBackend 에 Headless variant 추가, screenshot RPC 가 manifest entry 통해 dispatch)
+- R47+: text path — cosmic-text glyph cache (R31 caveat 기존 결정 정통 이행). renderer kind 의 첫 번째 horizontal axis (backend orthogonal 한 cross-cutting concern)
+- R47+: 위젯 카탈로그 확장 — Slider / Toggle / TextField. R41 sequence 명시 'R40 lifecycle → 위젯 카탈로그 → §5.16 build' 의 위젯 단계, build phase 정착 후 진입
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

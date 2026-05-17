@@ -83,8 +83,10 @@ pub enum PinionForgeDiagnostic {
     #[error("<pinion> in {} missing required kind attribute", location.file.display())]
     MissingKind { location: Location },
 
-    /// `kind="..."` value is not in the supported set.
-    #[error("<pinion kind=\"{found}\"> in {}: only \"reactive\" is supported at R38.1", location.file.display())]
+    /// `kind="..."` value is not in the supported set. R38.1 introduced
+    /// `"reactive"`; R46 §5.16 added `"renderer"`. Future kinds attach
+    /// here as additional accepted literals (spec round per addition).
+    #[error("<pinion kind=\"{found}\"> in {}: only \"reactive\" / \"renderer\" supported", location.file.display())]
     UnknownKind { found: String, location: Location },
 
     /// `<pinion>` root is missing the required `name` attribute.
@@ -121,6 +123,26 @@ pub enum PinionForgeDiagnostic {
     /// `<signal>` carries the initial-value expression in its body.
     #[error("<{tag}> in {} missing required body content", location.file.display())]
     EmptyBody { tag: String, location: Location },
+
+    /// `<pinion kind="renderer">` is missing the required `backend`
+    /// attribute. R46 §5.16: the renderer kind selects its codegen
+    /// template by `backend` (no default — the choice is load-bearing
+    /// for build-time per-target selection per R11 zero-overhead).
+    #[error("<pinion kind=\"renderer\"> in {} missing required backend attribute", location.file.display())]
+    MissingBackend { location: Location },
+
+    /// `<pinion kind="renderer" backend="...">` value is not in the
+    /// supported set. R46 commit 1 introduces only `"vello"`; R41 Phase
+    /// 2/3/4 adds thin-RHI / custom-pass / B3 as additional accepted
+    /// literals (spec round per addition).
+    #[error("<pinion kind=\"renderer\" backend=\"{found}\"> in {}: only \"vello\" supported at R46", location.file.display())]
+    UnknownBackend { found: String, location: Location },
+
+    /// `<pinion kind="renderer">` carries a child element. The renderer
+    /// kind is self-closing — its payload is entirely in root
+    /// attributes — so any child is a schema violation. R46 §5.16.
+    #[error("<{tag}> inside <pinion kind=\"renderer\"> in {}: renderer kind takes no children", location.file.display())]
+    RendererChildNotAllowed { tag: String, location: Location },
 }
 
 /// Canonical pinion DSL namespace URI. `<pinion xmlns="...">` must match
@@ -149,6 +171,9 @@ impl PinionForgeDiagnostic {
             Self::MissingAttribute { .. } => "dsl/missing-attribute",
             Self::InvalidIdent { .. } => "dsl/invalid-ident",
             Self::EmptyBody { .. } => "dsl/empty-body",
+            Self::MissingBackend { .. } => "dsl/missing-backend",
+            Self::UnknownBackend { .. } => "dsl/unknown-backend",
+            Self::RendererChildNotAllowed { .. } => "dsl/renderer-child-not-allowed",
         }
     }
 
@@ -168,7 +193,10 @@ impl PinionForgeDiagnostic {
             | Self::UnsupportedElement { .. }
             | Self::MissingAttribute { .. }
             | Self::InvalidIdent { .. }
-            | Self::EmptyBody { .. } => Stage::Validate,
+            | Self::EmptyBody { .. }
+            | Self::MissingBackend { .. }
+            | Self::UnknownBackend { .. }
+            | Self::RendererChildNotAllowed { .. } => Stage::Validate,
         }
     }
 
@@ -188,7 +216,10 @@ impl PinionForgeDiagnostic {
             | Self::UnsupportedElement { location, .. }
             | Self::MissingAttribute { location, .. }
             | Self::InvalidIdent { location, .. }
-            | Self::EmptyBody { location, .. } => location,
+            | Self::EmptyBody { location, .. }
+            | Self::MissingBackend { location, .. }
+            | Self::UnknownBackend { location, .. }
+            | Self::RendererChildNotAllowed { location, .. } => location,
         }
     }
 }

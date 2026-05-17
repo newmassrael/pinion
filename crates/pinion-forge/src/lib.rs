@@ -1,35 +1,39 @@
 //! pinion-forge — pinion DSL (`.pinion.xml`) parser + Rust codegen per
-//! §5.22 (R38).
+//! §5.22 (R38) and §5.16 (R46).
 //!
 //! ## Scope
 //!
 //! pinion-forge consumes `.pinion.xml` files authored by humans or AI
-//! agents and emits Rust source that targets the [`pinion-core::reactive`]
-//! runtime. Each `.pinion.xml` compiles to exactly one `pub struct` plus
-//! an `impl <Name> { pub fn new(owner: &Owner) -> Self }` constructor.
+//! agents and emits Rust source that targets the pinion-core runtime.
+//! The root element is `<pinion xmlns="https://pinion.dev/dsl/v1"
+//! kind="..." name="...">`; the kind selects the codegen template.
 //!
-//! Per R38 ratify (§5.22 redefined): the file extension is fixed at
-//! `.pinion.xml`, the root element is `<pinion xmlns="..." kind="..."
-//! name="...">`, and the child set is closed (`<use>` / `<signal>` /
-//! `<computed>` / `<resource>` for `kind="reactive"`).
+//! - `kind="reactive"` (R38) compiles to one `pub struct <Name>` plus
+//!   `impl <Name> { pub fn new(owner: &Owner) -> Self }` with a closed
+//!   child set (`<use>` / `<signal>` / `<computed>` / `<resource>`).
+//! - `kind="renderer"` (R46 §5.16) emits a backend manifest entry
+//!   consumed by the build-time codegen template (commit 2 lands the
+//!   Vello first emit template). The element is self-closing; its
+//!   payload is the `backend` attribute.
 //!
-//! Per R37.7 + R37.8: pinion-forge owns its codegen. SCE upstream rejects
-//! framework-specific kinds (RFC 001 closed); the only SCE surface this
-//! crate consumes is the v1 NDJSON diagnostic *pattern* (`v` / `id` /
-//! `code` / `stage` / `message` shape — see `schemas/sce-diagnostic.v1
-//! .schema.json`). pinion's own diagnostic namespace lives in
-//! [`diagnostic::PinionForgeDiagnostic`] and is not an SCE
-//! `DiagnosticCode` extension.
+//! Per R37.7 + R37.8: pinion-forge owns its codegen. SCE upstream
+//! rejects framework-specific kinds (RFC 001 closed); the only SCE
+//! surface this crate consumes is the v1 NDJSON diagnostic *pattern*
+//! (`v` / `id` / `code` / `stage` / `message` shape — see
+//! `schemas/sce-diagnostic.v1.schema.json`). pinion's own diagnostic
+//! namespace lives in [`diagnostic::PinionForgeDiagnostic`] and is not
+//! an SCE `DiagnosticCode` extension.
 //!
-//! ## R38.1 status (this build round)
+//! ## Kind dispatch
 //!
-//! Skeleton only. The parser accepts the empty root
-//! `<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="..."/>`
-//! and rejects every child element with `dsl/unsupported-element`. The
-//! codegen emits the constructor body `Self` (no fields). R38.2+ lands
-//! the real `<signal>` / `<computed>` / `<resource>` AST + emit.
-//!
-//! [`pinion-core::reactive`]: ../pinion_core/reactive/index.html
+//! [`PinionDoc`] carries a [`PinionSpec`] enum whose variants capture
+//! the kind-specific payload (children for reactive, backend for
+//! renderer). Codegen pattern-matches `PinionSpec` directly so adding a
+//! new kind is a single `enum` variant addition — every existing
+//! dispatch site flags up at compile time as a missing arm. The
+//! parallel [`PinionKind`] enum exists for wire identity (the
+//! `dsl/unknown-kind` diagnostic and any wire surface that needs the
+//! kind as a string) and is not the dispatch axis.
 
 #![forbid(unsafe_code)]
 
@@ -41,7 +45,8 @@ pub mod parser;
 pub mod wire;
 
 pub use ast::{
-    ComputedDecl, PinionChild, PinionDoc, PinionKind, ResourceDecl, SignalDecl, UseDecl,
+    ComputedDecl, PinionChild, PinionDoc, PinionKind, PinionSpec, RendererBackend, ResourceDecl,
+    SignalDecl, UseDecl,
 };
 pub use build::{CompileError, compile_file, compile_str};
 pub use codegen::emit_rust;
@@ -62,13 +67,25 @@ mod tests {
         parse(xml).expect_err("expected diagnostic")
     }
 
+    /// Test helper — destructure `doc.spec` as `PinionSpec::Reactive`,
+    /// panicking with a clear message on a renderer doc. Keeps the test
+    /// bodies free of inline `let-else` boilerplate.
+    fn reactive_children(doc: &PinionDoc) -> &[PinionChild] {
+        match &doc.spec {
+            PinionSpec::Reactive { children } => children,
+            PinionSpec::Renderer { .. } => {
+                panic!("expected PinionSpec::Reactive, got Renderer")
+            }
+        }
+    }
+
     #[test]
     fn parses_empty_reactive_self_closing() {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="reactive" name="Empty"/>"#;
         let doc = parse(xml).expect("happy path");
         assert_eq!(doc.name, "Empty");
-        assert_eq!(doc.kind, PinionKind::Reactive);
-        assert!(doc.children.is_empty());
+        assert_eq!(doc.spec.kind(), PinionKind::Reactive);
+        assert!(reactive_children(&doc).is_empty());
     }
 
     #[test]
@@ -114,8 +131,7 @@ mod tests {
     fn emits_constructor_for_empty_doc() {
         let doc = PinionDoc {
             name: "Foo".into(),
-            kind: PinionKind::Reactive,
-            children: Vec::new(),
+            spec: PinionSpec::Reactive { children: Vec::new() },
         };
         let rust = emit_rust(&doc);
         assert!(rust.contains("pub struct Foo;"));
@@ -242,8 +258,9 @@ mod tests {
             <signal name="count" ty="i32"><![CDATA[0]]></signal>
         </pinion>"#;
         let doc = parse(xml).expect("happy path");
-        assert_eq!(doc.children.len(), 1);
-        let PinionChild::Signal(sig) = &doc.children[0] else {
+        let children = reactive_children(&doc);
+        assert_eq!(children.len(), 1);
+        let PinionChild::Signal(sig) = &children[0] else {
             panic!("expected Signal variant");
         };
         assert_eq!(sig.name, "count");
@@ -259,7 +276,7 @@ mod tests {
             <signal name="count" ty="i32">42</signal>
         </pinion>"#;
         let doc = parse(xml).expect("plain-text body");
-        let PinionChild::Signal(sig) = &doc.children[0] else {
+        let PinionChild::Signal(sig) = &reactive_children(&doc)[0] else {
             panic!("expected Signal variant");
         };
         assert_eq!(sig.initial, "42");
@@ -273,9 +290,9 @@ mod tests {
             <signal name="c" ty="bool"><![CDATA[true]]></signal>
         </pinion>"#;
         let doc = parse(xml).expect("multi-signal");
-        assert_eq!(doc.children.len(), 3);
-        let names: Vec<&str> = doc
-            .children
+        let children = reactive_children(&doc);
+        assert_eq!(children.len(), 3);
+        let names: Vec<&str> = children
             .iter()
             .map(|c| match c {
                 PinionChild::Signal(s) => s.name.as_str(),
@@ -406,8 +423,9 @@ mod tests {
             <computed name="msg" ty="String"><![CDATA[String::from("hi")]]></computed>
         </pinion>"#;
         let doc = parse(xml).expect("happy path");
-        assert_eq!(doc.children.len(), 1);
-        let PinionChild::Computed(c) = &doc.children[0] else {
+        let children = reactive_children(&doc);
+        assert_eq!(children.len(), 1);
+        let PinionChild::Computed(c) = &children[0] else {
             panic!("expected Computed variant");
         };
         assert_eq!(c.name, "msg");
@@ -422,9 +440,10 @@ mod tests {
             <computed name="doubled" ty="i32"><![CDATA[count.get() * 2]]></computed>
         </pinion>"#;
         let doc = parse(xml).expect("signal + computed");
-        assert_eq!(doc.children.len(), 2);
-        assert!(matches!(doc.children[0], PinionChild::Signal(_)));
-        assert!(matches!(doc.children[1], PinionChild::Computed(_)));
+        let children = reactive_children(&doc);
+        assert_eq!(children.len(), 2);
+        assert!(matches!(children[0], PinionChild::Signal(_)));
+        assert!(matches!(children[1], PinionChild::Computed(_)));
     }
 
     #[test]
@@ -555,8 +574,9 @@ mod tests {
             <use path="my_crate::widgets::Button"/>
         </pinion>"#;
         let doc = parse(xml).expect("happy path");
-        assert_eq!(doc.children.len(), 1);
-        let PinionChild::Use(u) = &doc.children[0] else {
+        let children = reactive_children(&doc);
+        assert_eq!(children.len(), 1);
+        let PinionChild::Use(u) = &children[0] else {
             panic!("expected Use variant");
         };
         assert_eq!(u.path, "my_crate::widgets::Button");
@@ -570,7 +590,7 @@ mod tests {
             <use path="foo::Bar">whatever junk in body</use>
         </pinion>"#;
         let doc = parse(xml).expect("body silently ignored");
-        let PinionChild::Use(u) = &doc.children[0] else {
+        let PinionChild::Use(u) = &reactive_children(&doc)[0] else {
             panic!("expected Use variant");
         };
         assert_eq!(u.path, "foo::Bar");
@@ -673,8 +693,9 @@ mod tests {
             </resource>
         </pinion>"#;
         let doc = parse(xml).expect("happy path");
-        assert_eq!(doc.children.len(), 1);
-        let PinionChild::Resource(r) = &doc.children[0] else {
+        let children = reactive_children(&doc);
+        assert_eq!(children.len(), 1);
+        let PinionChild::Resource(r) = &children[0] else {
             panic!("expected Resource variant");
         };
         assert_eq!(r.name, "user");
@@ -919,5 +940,130 @@ mod tests {
         let va = to_json_value(&a);
         let vb = to_json_value(&b);
         assert_ne!(va["id"], vb["id"]);
+    }
+
+    // ---- R46 §5.16: <pinion kind="renderer"> ----
+
+    #[test]
+    fn parses_empty_renderer_self_closing() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello"/>"#;
+        let doc = parse(xml).expect("happy path");
+        assert_eq!(doc.name, "Scene");
+        assert_eq!(doc.spec.kind(), PinionKind::Renderer);
+        let PinionSpec::Renderer { backend } = doc.spec else {
+            panic!("expected Renderer variant");
+        };
+        assert_eq!(backend, RendererBackend::Vello);
+    }
+
+    #[test]
+    fn parses_renderer_open_close_form_without_children() {
+        // Renderer accepts the open-close form as long as the body
+        // contains no child elements (whitespace only is fine).
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello">
+        </pinion>"#;
+        let doc = parse(xml).expect("renderer open-close body");
+        assert_eq!(doc.name, "Scene");
+        assert!(matches!(doc.spec, PinionSpec::Renderer { backend: RendererBackend::Vello }));
+    }
+
+    #[test]
+    fn rejects_renderer_missing_backend() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene"/>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/missing-backend").expect("missing-backend");
+        assert!(matches!(bad, PinionForgeDiagnostic::MissingBackend { .. }));
+        assert_eq!(bad.stage(), Stage::Validate);
+    }
+
+    #[test]
+    fn rejects_renderer_unknown_backend() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="wgpu"/>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-backend").expect("unknown-backend");
+        let PinionForgeDiagnostic::UnknownBackend { found, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(found, "wgpu");
+        assert_eq!(bad.stage(), Stage::Validate);
+    }
+
+    #[test]
+    fn rejects_renderer_empty_backend_treated_as_missing() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend=""/>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| d.code() == "dsl/missing-backend"));
+    }
+
+    #[test]
+    fn rejects_renderer_with_child_element() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello">
+            <signal name="x" ty="i32"><![CDATA[0]]></signal>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        let bad = diags
+            .iter()
+            .find(|d| d.code() == "dsl/renderer-child-not-allowed")
+            .expect("renderer-child-not-allowed");
+        let PinionForgeDiagnostic::RendererChildNotAllowed { tag, .. } = bad else {
+            panic!("variant mismatch");
+        };
+        assert_eq!(tag, "signal");
+        assert_eq!(bad.stage(), Stage::Validate);
+    }
+
+    #[test]
+    fn renderer_child_diagnostic_uses_renderer_code_not_unsupported() {
+        // The reactive grammar emits `dsl/unsupported-element` for unknown
+        // children; the renderer grammar emits `dsl/renderer-child-not-allowed`
+        // because the failure mode is different (any child is wrong vs
+        // this specific child is wrong). Authoring guidance follows the
+        // kind, so the codes are distinct.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello">
+            <effect name="e"/>
+        </pinion>"#;
+        let diags = parse_err(xml);
+        assert!(diags.iter().any(|d| d.code() == "dsl/renderer-child-not-allowed"));
+        assert!(!diags.iter().any(|d| d.code() == "dsl/unsupported-element"));
+    }
+
+    #[test]
+    fn emits_renderer_stub_records_name_and_backend() {
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="MainScene" backend="vello"/>"#;
+        let rust = compile_str(xml, "scene.pinion.xml").expect("compile");
+        // R46 commit 1 stub: comment-only Rust module. Commit 2 lands the
+        // Vello emit template.
+        assert!(rust.contains("renderer kind codegen stub"));
+        assert!(rust.contains("name    = MainScene"));
+        assert!(rust.contains("backend = vello"));
+        // The stub must be valid Rust source (a sequence of `// ...` line
+        // comments parses as an empty module). No `pub struct` is emitted
+        // for renderer at R46 commit 1.
+        assert!(!rust.contains("pub struct MainScene"));
+        assert!(!rust.contains("unimplemented!"));
+    }
+
+    #[test]
+    fn renderer_wire_diagnostic_carries_backend_actual() {
+        // UnknownBackend should surface the offending literal in the
+        // wire `actual` field so an agent can repair it without
+        // re-parsing the message text.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="ash"/>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-backend").expect("unknown-backend");
+        let value = to_json_value(bad);
+        assert_eq!(value["actual"], Value::from("ash"));
+    }
+
+    #[test]
+    fn unknown_kind_message_mentions_renderer() {
+        // After R46, the dsl/unknown-kind message must enumerate
+        // renderer as a supported value alongside reactive.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="view-fn" name="X"/>"#;
+        let diags = parse_err(xml);
+        let bad = diags.iter().find(|d| d.code() == "dsl/unknown-kind").expect("unknown-kind");
+        let msg = bad.to_string();
+        assert!(msg.contains("reactive"), "message should still list reactive");
+        assert!(msg.contains("renderer"), "message should list renderer");
     }
 }
