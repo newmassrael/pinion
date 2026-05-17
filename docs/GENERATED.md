@@ -2880,6 +2880,39 @@ router.pointer_down(&mut state_scene);
 
 
 
+### 422 — Round 46 — §5.16 build slice 1 commit 2 — pinion-forge Vello first emit template (RenderContext + RenderSurface + Renderer 래퍼 struct, wgpu/vello workspace dep)
+
+**Changes**:
+- workspace.dependencies: vello = "0.6" + wgpu = "26" (vello 0.6.0 → wgpu 26 transitive dedup). 코멘트로 §5.16 R41 hybrid path C / R46.2 first emit / forward-compat slot 명시. pinion-forge 자체 deps 무변경 — emit template 은 string-only, consumer crate (R46.3 demo) 가 vello = { workspace = true } 추가
+- codegen.rs: emit_renderer_stub 제거, emit_renderer(name, backend) backend-dispatch + emit_renderer_vello(name) Vello 전용 template 추가. RendererBackend 새 variant (Headless/Softbuffer/thin-RHI) = 새 arm + 새 emit 함수 Open-Closed
+- VELLO_TEMPLATE const (self-contained Rust 모듈 body) — pub struct <Name> { context: RenderContext, surface: RenderSurface<'static>, renderer: Renderer }, pub enum <Name>Error { Vello(vello::Error), Surface(wgpu::SurfaceError) } + Display + Error + From impls, async fn new<W: Into<wgpu::SurfaceTarget<'static>>>(target, w, h) -> Result<Self, _>, fn render(&mut, &Scene, Color) -> Result<(), _>, fn resize(&mut, u32, u32)
+- substitution: format!() 대신 .replace("__NAME__", name).replace("__ERR_NAME__", err_name) — template body 가 data 로 단일 const 표현 (textbook: codegen template = data, format string = small interpolation). placeholder 가 Rust ident shape 라 surrounding 코드와 충돌 X. clippy needless_raw_string_hashes + too_many_lines + uninlined_format_args 셋 동시 해소
+- Vello 0.6 canonical pattern (Xilem reference impl): RenderContext::create_surface(..., wgpu::PresentMode::AutoVsync) → Renderer::new(device, RendererOptions { use_cpu: false, antialiasing_support: AaSupport::area_only(), ... }) → render_to_texture(device, queue, scene, target_view, RenderParams { base_color, w, h, antialiasing_method: AaConfig::Area }) → blitter.copy(..., target_view, swapchain_view) → surface_texture.present(). AaSupport::area_only() ↔ AaConfig::Area 일치 (only-area path)
+- lib.rs tests: emits_renderer_stub_records_name_and_backend 제거 (stub 사라짐), 4 신규 추가 — emits_renderer_vello_struct_and_constructor_signature (pub struct + 3 field + 3 method signature) / emits_renderer_vello_error_enum_with_from_impls (closed enum + Display + Error + From×2) / emits_renderer_vello_uses_canonical_vello_api_surface (vello::util / vello::wgpu / render_to_texture / blitter / AutoVsync / area_only ↔ Area) / emits_renderer_vello_module_header_and_no_text_pollution (banner + DO NOT EDIT + __NAME__ / __ERR_NAME__ leak 0)
+
+
+
+**Verification**:
+- cargo test --workspace = 611 pass (608 baseline + 3 net pinion-forge: 76 unit = 73 + 4 신규 신호 - 1 removed stub test), 0 failed
+- cargo clippy --workspace --all-targets = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / ai-introspect-demo 4 / pinion-forge 0 (const refactor 가 needless_raw_string_hashes + too_many_lines + uninlined_format_args 셋 해소)
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync (generate_docs cascade)
+- workspace consumer 영향 0 — pinion-rpc / pinion-runtime / pinion-cli / examples 모두 R46.2 emit template 미사용; ai-introspect-demo / hello-button 통과 = R46.3 (다음 slice). vello/wgpu workspace.deps 추가 = lookup table 만, 어떤 member 도 workspace=true 인용 안 함 → cargo check 빌드 시간 변화 0
+
+
+
+**Impact**: §5.16, §5.22
+
+
+**Carry forward**:
+- R46.3: ai-introspect-demo build slice — examples/ai-introspect-demo 에 app.pinion.xml renderer manifest (kind="renderer" name="DemoRenderer" backend="vello") + build.rs 가 emit_rust() → OUT_DIR/<name>.rs + include! 로 main.rs 통합. softbuffer paint(...) 함수 제거 → renderer.render(scene, base_color) 교체. ai-introspect-demo Cargo.toml 에 vello = { workspace = true } + winit 0.30 (이미 있음) + pollster (async new 호출용)
+- R46.4+: vello::Scene 변환 어댑터 textbook 위치 — pinion-runtime 안 새 module (paint_adapter). Scene::Container/Box/External/Effect/Text/Path/Image 각 case 가 vello::Scene 의 fill / stroke / push_layer / pop_layer 호출로 매핑. ai-introspect-demo 의 R46.3 first dogfood = palette_color background 만 (Scene 전체 변환 X); full Scene tree 변환 = R46.4. hello-button 도 동일 adapter 사용 (R46.5+)
+- R47+: Headless renderer template — §5.12 screenshot RPC 미해제 항목 진입. RendererBackend::Headless variant 추가 + emit_renderer_headless 함수 (render_to_texture only, surface acquisition skip; render_to_texture target 가 owned wgpu::Texture). screenshot RPC dispatch = manifest entry 통해 closed-form, runtime virtual dispatch 0 유지
+- R47+: text path — cosmic-text glyph cache (R31 caveat 기존 결정 정통 이행). renderer kind 의 첫 번째 horizontal axis (backend orthogonal cross-cutting concern); Vello + Headless + Softbuffer 모두 공유. cosmic-text + vello::Scene::draw_glyph integration 점
+- R47+: 위젯 카탈로그 확장 — Slider / Toggle / TextField. R41 sequence 명시 'R40 lifecycle → 위젯 카탈로그 → §5.16 build' 의 위젯 단계, R46.3 build phase end-to-end 정착 후 진입. R48 InputRouter 와 multi-widget dispatch 실증
+- R297 false-positive hint mnemosyne round, pinion atomic 무관 — R46.2 commit 까지 4-commit carry, 무시 가능 (mnemosyne main HEAD 와 host build 차이 — 동기화 작업은 향후 별도 round)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

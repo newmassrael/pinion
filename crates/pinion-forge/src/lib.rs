@@ -1028,19 +1028,86 @@ mod tests {
     }
 
     #[test]
-    fn emits_renderer_stub_records_name_and_backend() {
+    fn emits_renderer_vello_struct_and_constructor_signature() {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="MainScene" backend="vello"/>"#;
         let rust = compile_str(xml, "scene.pinion.xml").expect("compile");
-        // R46 commit 1 stub: comment-only Rust module. Commit 2 lands the
-        // Vello emit template.
-        assert!(rust.contains("renderer kind codegen stub"));
-        assert!(rust.contains("name    = MainScene"));
-        assert!(rust.contains("backend = vello"));
-        // The stub must be valid Rust source (a sequence of `// ...` line
-        // comments parses as an empty module). No `pub struct` is emitted
-        // for renderer at R46 commit 1.
-        assert!(!rust.contains("pub struct MainScene"));
+        // R46.2: the renderer kind emits a concrete Rust type wrapping
+        // vello::Renderer + RenderSurface (no virtual dispatch). The
+        // R46.1 comment-only stub is gone.
+        assert!(rust.contains("pub struct MainScene {"));
+        assert!(rust.contains("context: RenderContext"));
+        assert!(rust.contains("surface: RenderSurface<'static>"));
+        assert!(rust.contains("renderer: Renderer"));
+        // async new<W: Into<wgpu::SurfaceTarget<'static>>>(...) -> Result<Self, MainSceneError>
+        assert!(rust.contains("pub async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, MainSceneError>"));
+        assert!(rust.contains("W: Into<wgpu::SurfaceTarget<'static>>"));
+        // sync render(scene, base_color) and resize(w, h)
+        assert!(rust.contains("pub fn render(&mut self, scene: &Scene, base_color: Color) -> Result<(), MainSceneError>"));
+        assert!(rust.contains("pub fn resize(&mut self, width: u32, height: u32)"));
+        // Stub markers absent
+        assert!(!rust.contains("renderer kind codegen stub"));
         assert!(!rust.contains("unimplemented!"));
+    }
+
+    #[test]
+    fn emits_renderer_vello_error_enum_with_from_impls() {
+        // The emitted module defines a closed error enum named
+        // `<Name>Error` carrying `vello::Error` and `wgpu::SurfaceError`
+        // with `From` conversions so `?` propagation works inside the
+        // generated `new` / `render` bodies.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Demo" backend="vello"/>"#;
+        let rust = compile_str(xml, "demo.pinion.xml").expect("compile");
+        assert!(rust.contains("pub enum DemoError {"));
+        assert!(rust.contains("Vello(vello::Error),"));
+        assert!(rust.contains("Surface(wgpu::SurfaceError),"));
+        // std::error::Error + Display impls
+        assert!(rust.contains("impl std::fmt::Display for DemoError"));
+        assert!(rust.contains("impl std::error::Error for DemoError"));
+        // From impls for ? propagation
+        assert!(rust.contains("impl From<vello::Error> for DemoError"));
+        assert!(rust.contains("impl From<wgpu::SurfaceError> for DemoError"));
+    }
+
+    #[test]
+    fn emits_renderer_vello_uses_canonical_vello_api_surface() {
+        // The template must use Vello 0.6 canonical surface helpers
+        // (RenderContext, RenderSurface, util re-exports) and the
+        // render_to_texture + blitter.copy + present pattern — not a
+        // hand-rolled wgpu pipeline.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello"/>"#;
+        let rust = compile_str(xml, "x.pinion.xml").expect("compile");
+        assert!(rust.contains("use vello::util::{RenderContext, RenderSurface}"));
+        assert!(rust.contains("use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene}"));
+        // wgpu is consumed via vello's re-export so consumers don't need
+        // a direct wgpu dep beyond the workspace pin (deduped against
+        // vello's transitive — see workspace Cargo.toml comment).
+        assert!(rust.contains("use vello::wgpu;"));
+        // Vello 0.6 canonical pattern: render_to_texture + blitter copy
+        assert!(rust.contains("render_to_texture("));
+        assert!(rust.contains("self.surface.blitter.copy("));
+        assert!(rust.contains("surface_texture.present();"));
+        // RenderContext::create_surface with AutoVsync (textbook default)
+        assert!(rust.contains("wgpu::PresentMode::AutoVsync"));
+        // AaSupport::area_only matches AaConfig::Area in RenderParams
+        assert!(rust.contains("antialiasing_support: AaSupport::area_only()"));
+        assert!(rust.contains("antialiasing_method: AaConfig::Area"));
+    }
+
+    #[test]
+    fn emits_renderer_vello_module_header_and_no_text_pollution() {
+        // The emitted file opens with a generated-source banner so a
+        // future reader looking at the OUT_DIR product knows not to
+        // hand-edit. The banner must cite the rounding context.
+        let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Y" backend="vello"/>"#;
+        let rust = compile_str(xml, "y.pinion.xml").expect("compile");
+        assert!(rust.starts_with("//! Generated by pinion-forge"));
+        assert!(rust.contains("DO NOT EDIT"));
+        assert!(rust.contains("R46.2 §5.16 Vello first emit template"));
+        // No leftover `__NAME__` / `__ERR_NAME__` placeholders — the
+        // .replace() chain in emit_renderer_vello must substitute both.
+        assert!(!rust.contains("__NAME__"));
+        assert!(!rust.contains("__ERR_NAME__"));
+        assert!(rust.ends_with('\n'));
     }
 
     #[test]
