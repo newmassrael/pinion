@@ -2228,6 +2228,62 @@ router.pointer_down(&mut state_scene);
 
 
 
+### §5.37.1. OpenType binary parser — sfnt foundation (R50.1 sub-scope)
+
+
+**Intent**: R50.1 OpenType binary parser sub-scope — sfnt Offset Table + 6 mandatory tables + glyf/loca + name. Latin-first foundation for §5.37 자체 text engine; CFF/variable/color/WOFF2 후속 sub-section.
+
+
+**Rationale**:
+- R50.1 = §5.37 의 foundation layer — R50.2 Unicode 이후 모든 layer 가 parser 출력 의존
+- 단일 layer 진입 = textbook 단계적 진입, Microsoft OpenType 1.9.x spec 정통 reference
+- sfnt header 부터 시작 = 모든 OpenType variant (TTF/OTF/TTC/Apple/Type1) 의 entry point
+- Latin-first = 초기 검증 단순화, multi-script (Nanum Gothic 한글) test fixture 로 forward-compat 확인
+- thiserror 같은 외부 lib 도 제거 = lifetime canonical 완전 적용, 자체 enum + Display impl
+
+
+
+**Inputs**:
+- TTF / OTF binary file (no WOFF2 — 압축 format, separate sub-section R50.1.X)
+- Latin script codepoint (BMP, U+0000-U+FFFF) — 초기 검증 범위
+- 한글 codepoint (U+AC00-U+D7A3) — Nanum Gothic fixture, forward-compat 검증용
+- OpenType 1.9.x spec compliant byte stream (big-endian, sfnt structure)
+
+
+
+**Outputs**:
+- Font struct — head/OS2/hhea/hmtx/maxp 출력 (units_per_em / ascent / descent / line_gap / advance)
+- cmap lookup table — codepoint → glyph index (format 4 BMP + format 12 UCS-4)
+- glyph outline data — glyf + loca parsed (simple TrueType glyph, compound postpone)
+- name table — family / style / postscript name (font fallback / introspection 용)
+- ParseError enum — 자체 Display impl, no thiserror
+
+
+
+**Caveats**:
+- WOFF2 / CFF / variable axis / color tables = R50.1.X 별도 sub-section, 후속 진입
+- GSUB / GPOS table = parser 는 raw table store 만 — execution 은 R50.3 shape sub-round 책임
+- test fixture = Noto Sans (Apache) + Nanum Gothic (OFL) — Latin + 한글 forward-compat 검증
+- error type = 자체 ParseError enum + Display impl, no thiserror dep — R50 정신 완전 적용
+- compound glyph (composite GlyphID with transform matrix) = R50.1.4 후속 또는 별도 sub-round
+- R50.1.1 ~ R50.1.5 sub-phase = sfnt directory / metadata / cmap / glyf+loca / name
+
+
+
+**Alternatives rejected**:
+- (a) sfnt + CFF + variable + color 동시 진입 — scope creep, 단계적 textbook 위반
+- (b) ttf-parser dep + 자체 shaping 만 — R50.0 정신 (외부 lib black box) 본질 위반
+- (c) HarfBuzz FFI + 자체 parser — C 의존, pure Rust lifetime canonical 이탈
+- (d) WOFF2 우선 — 압축 format 가 raw sfnt parser dependency, 순서 역전
+- (e) thiserror derive — 외부 dep, R50 정신 (외부 lib 완전 제거) 완전 적용 못 함
+
+
+
+**Impact scope**: §5.37, §5.16, §5.11, §5.3
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -6007,6 +6063,41 @@ router.pointer_down(&mut state_scene);
 - R50.10 parley/swash/fontique/ttf-parser 제거 — pinion-text 자체 implementation 완성
 - R47.7 시리즈 RPC channel (스스 layout/resize/last_paint) 유지 — R50 구현 증보 진단 channel
 - claudedocs / R297 / R46 / R48 carry
+
+
+
+### Round 452 — R50.1.0 §5.37.1 신설 (OpenType binary parser sub-scope) — Round 452 — R50.1.0 §5.37.1 신설 (OpenType binary parser — sfnt foundation). R50.1 sub-scope = Latin-first sfnt + 6 mandatory tables + glyf/loca + name. 자체 ParseError enum (no thiserror — R50 정신 완전 적용). 6 sub-crate 분할 결정 (pinion-text-{font, unicode, shape, layout, raster} + pinion-text facade). test fixture = Noto Sans + Nanum Gothic. WOFF2/CFF/variable/color/GSUB/GPOS 후속 sub-section.
+
+**Changes**:
+- §5.37.1 add_section + 7 atomic field (intent / rationale 5 / inputs 4 / outputs 5 / alternatives 5 / impact_scope 4 / caveat 6)
+- R50.1 sub-scope = sfnt Offset Table + head/OS2/hhea/hmtx/maxp/cmap + glyf/loca + name (Latin-first)
+- 6 sub-crate 분할 결정: pinion-text-{font, unicode, shape, layout, raster} + pinion-text facade
+- R50.1 진입 = pinion-text-font crate 신설 (R50.2+ 마다 sub-crate 추가)
+- test fixture = Noto Sans Regular + Nanum Gothic Regular — Latin + 한글 forward-compat 검증
+- error type = 자체 ParseError enum + Display impl (no thiserror) — R50 정신 완전 적용
+- R50.1.1 ~ R50.1.5 sub-phase chain = directory / metadata / cmap / glyf+loca / name
+
+
+
+**Verification**:
+- validate_workspace: entries=106 sections=48 T1=0 T3=0 RT=1/1 GENERATED=sync
+- §5.37.1 atomic field 7개 (intent/rationale/inputs/outputs/alternatives/impact_scope/caveats) 모두 설정
+- alternatives_rejected line format = ` -- ` separator 적용 (§5.37 pattern 정합)
+- caveat ≤ 100 char T3 threshold 준수 (test fixture caveat = 87 chars)
+
+
+
+**Impact**: §5.37.1, §5.37, §5.16, §5.11, §5.3
+
+
+**Carry forward**:
+- R50.1.1 sfnt Offset Table + Table Records parser (magic + 무결성 검증)
+- R50.1.2 head / OS2 / hhea / hmtx / maxp / post — font metadata + horizontal metrics
+- R50.1.3 cmap parser (format 4 BMP + format 12 UCS-4 priority)
+- R50.1.4 glyf + loca parser (simple TrueType outlines, compound glyph postpone)
+- R50.1.5 name table parser (family / style / postscript name)
+- R50.1.X 후속: WOFF2 / CFF / CFF2 / variable axis / color tables / compound glyph
+- C → A 다음: pinion-text-font crate 신설 + R50.1.1 첫 sfnt parser implementation
 
 
 
