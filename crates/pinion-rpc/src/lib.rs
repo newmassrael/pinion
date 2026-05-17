@@ -19,6 +19,7 @@ pub mod locate;
 pub mod path;
 pub mod preview;
 pub mod query;
+pub mod resize;
 pub mod rewind;
 pub mod screenshot;
 pub mod snapshot;
@@ -44,6 +45,7 @@ pub use preview::{
     DEFAULT_TTL, MAX_TTL,
 };
 pub use query::{query, QueryError};
+pub use resize::{resize, ResizeError, ResizeOutcome, ResizeParams};
 pub use rewind::{rewind, RewindError};
 pub use screenshot::{screenshot, Screenshot, ScreenshotError};
 pub use snapshot::{snapshot, ExternalSnapshot, SnapshotError, SnapshotNode};

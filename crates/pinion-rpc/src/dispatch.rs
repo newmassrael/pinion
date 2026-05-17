@@ -43,6 +43,7 @@ use crate::layout_query::{
 use crate::locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };
+use crate::resize::{resize, ResizeError, ResizeParams};
 use crate::preview::{
     apply_preview, cancel_preview, list_previews, propose_change, ApplyError, ApplyOutcome,
     PreviewId, PreviewLedger, PreviewView, ProposeError, ProposeOutcome, TypedProposal,
@@ -125,6 +126,14 @@ pub struct DispatchContext<'a> {
     /// `compute_layout` inside the closure so the returned `Scene`
     /// carries measured rects.
     pub paint_producer: Option<&'a mut (dyn FnMut(u32, u32) -> Scene + 'a)>,
+    /// R47.7.4 §5.12 — application-supplied resize request hook.
+    /// Invoked by `scene/resize` with the requested logical
+    /// `(width, height)`. The application typically calls
+    /// `winit::window::Window::request_inner_size` inside the
+    /// closure so winit emits a `Resized` event on the next loop
+    /// iteration. Asynchronous — AI clients pair with
+    /// `scene/wait_for_frame` for stable observation.
+    pub resize_request: Option<&'a mut (dyn FnMut(u32, u32) + 'a)>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -143,6 +152,7 @@ impl<'a> DispatchContext<'a> {
             previews,
             revision,
             paint_producer: None,
+            resize_request: None,
         }
     }
 
@@ -157,6 +167,20 @@ impl<'a> DispatchContext<'a> {
         producer: &'a mut (dyn FnMut(u32, u32) -> Scene + 'a),
     ) -> Self {
         self.paint_producer = Some(producer);
+        self
+    }
+
+    /// Builder: attach the window resize request closure (R47.7.4
+    /// §5.12). The closure is invoked by `scene/resize` with the
+    /// requested logical `(width, height)`; it typically calls
+    /// `winit::window::Window::request_inner_size` so winit emits a
+    /// `Resized` event on the next loop iteration.
+    #[must_use]
+    pub fn with_resize_request(
+        mut self,
+        request: &'a mut (dyn FnMut(u32, u32) + 'a),
+    ) -> Self {
+        self.resize_request = Some(request);
         self
     }
 }
@@ -196,6 +220,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     // against `&mut Scene` without colliding on the producer slot. The
     // caller registers a fresh producer before each dispatch.
     let mut paint_producer = ctx.paint_producer.take();
+    let mut resize_request = ctx.resize_request.take();
     let parsed: Result<Request, _> = serde_json::from_str(request_json);
     let request = match parsed {
         Ok(r) => r,
@@ -239,6 +264,16 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
+        "scene/resize" => {
+            // Same reborrow pattern as `scene/layout` — dyn FnMut is
+            // not DerefMut, so `.as_deref_mut()` cannot apply.
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let req = resize_request.as_mut().map(|p| &mut **p);
+            handle_scene_resize(req, request.params.as_ref())
+        }
         "scene/layout" => {
             // `Option<&mut &mut dyn FnMut>` → `Option<&mut dyn FnMut>`.
             // clippy::option_as_ref_deref suggests `.as_deref_mut()`,
@@ -792,6 +827,40 @@ fn layout_query_error_to_rpc(err: LayoutQueryError) -> RpcError {
         LayoutQueryError::Path(_) => "Path",
         LayoutQueryError::PaintProducerUnavailable => "PaintProducerUnavailable",
         LayoutQueryError::InvalidViewport => "InvalidViewport",
+    };
+    RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+/// R47.7.4 §5.12 — `scene/resize` dispatch entry. Invokes the
+/// application's `resize_request` closure with the requested logical
+/// `(width, height)`.
+fn handle_scene_resize<F>(
+    resize_request: Option<&mut F>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) + ?Sized,
+{
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let typed: ResizeParams = serde_json::from_value(params.clone())
+        .map_err(|e| invalid_params(&format!("params shape: {e}")))?;
+    match resize(typed, resize_request) {
+        Ok(outcome) => serde_json::to_value(outcome)
+            .map_err(|e| invalid_params(&format!("serialize: {e}"))),
+        Err(err) => Err(resize_error_to_rpc(err)),
+    }
+}
+
+fn resize_error_to_rpc(err: ResizeError) -> RpcError {
+    let variant = match err {
+        ResizeError::ClosureUnavailable => "ClosureUnavailable",
+        ResizeError::InvalidSize => "InvalidSize",
     };
     RpcError {
         code: -32602,

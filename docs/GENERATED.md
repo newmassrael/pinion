@@ -5750,6 +5750,38 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 446 — §5.12 R47.7.4.1+2 scene/resize handler + hello-button wire — Round 446 — §5.12 R47.7.4.1+2 scene/resize 구현 atomic build slice. pinion-rpc/src/resize.rs 신규 module (ResizeParams + ResizeOutcome + ResizeError + resize fn). DispatchContext.resize_request closure field + with_resize_request builder + dispatch.rs handler. hello-button 측 closure wire (Window.request_inner_size + request_redraw).
+
+**Changes**:
+- crates/pinion-rpc/src/resize.rs 신규 module: ResizeParams + ResizeOutcome + ResizeError + resize() entry + 3 unit tests
+- crates/pinion-rpc/src/dispatch.rs: DispatchContext.resize_request field + with_resize_request builder + handle_scene_resize generic handler + resize_error_to_rpc
+- crates/pinion-rpc/src/lib.rs: resize module + re-exports (resize, ResizeError, ResizeOutcome, ResizeParams)
+- examples/hello-button/src/main.rs: dispatch_rpc closure 2개 (produce + resize_req) — resize_req 가 state_ref 의 Window.request_inner_size(LogicalSize) + request_redraw 호출
+- clippy same-commit fix: needless_borrows + doc_markdown HiDPI 백틱
+
+
+
+**Verification**:
+- cargo test --features pinion-runtime/vello = 662 pass (659 → 662, +3 resize)
+- cargo clippy = baseline 완전 보존 (pinion-core 5 + pinion-runtime 1)
+- AI 가 scene/resize 로 winit window 실제 resize event chain 트리거 가능 — R47.7.4.3 sweep prereq 완료
+
+
+
+**Impact**: §5.12
+
+
+**Carry forward**:
+- R47.7.4.3 자동 sweep — scene/resize + scene/layout 시퀀스 으로 실제 winit drag flow 재현, wrap reproduce
+- R47.7.4.x scene/wait_for_frame implement — 다음 redraw 동기 대기 (resize 가 next frame async 라 안정 observation 필요)
+- R47.7.x trait Application surface (§5.18 정리 — closure registration cleanup)
+- R47.7.x tag-keyed path syntax / path filter 구현
+- R47.x parley Ellipsis truncation pass
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity
+- R46 / claudedocs / R297
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

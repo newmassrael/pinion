@@ -59,6 +59,7 @@ use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::dpi::LogicalSize;
 use winit::window::{Window, WindowId};
 
 // pinion-forge codegen output. Defines `pub struct HelloButtonRenderer`
@@ -332,14 +333,27 @@ impl App {
             let revision = &self.revision;
             let cached_state = self.cached_state;
             let text_cache_ptr = &mut self.text_cache;
+            let state_ref = &self.state;
             let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
                 let mut paint = view(cached_state, &frame);
                 compute_layout(&mut paint, text_cache_ptr, w, h);
                 paint
             };
+            // R47.7.4.2 — `scene/resize` reaches winit through this
+            // closure: `request_inner_size` queues a size change that
+            // winit emits as a `Resized` event on the next loop pass,
+            // and the explicit `request_redraw` shortens the gap to
+            // the new paint scene observation.
+            let mut resize_req = |w: u32, h: u32| {
+                if let RenderState::Active { window, .. } = state_ref {
+                    let _ = window.request_inner_size(LogicalSize::new(w, h));
+                    window.request_redraw();
+                }
+            };
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
-                .with_paint_producer(&mut produce);
+                .with_paint_producer(&mut produce)
+                .with_resize_request(&mut resize_req);
             dispatch(&mut ctx, request)
         };
         if let Some(resp) = resp {
