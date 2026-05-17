@@ -4800,6 +4800,41 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 420 — Round 48 — build slice 1: pinion-runtime InputRouter primitive (cursor/key → widget routing). R48.1 (paint scene tag-aware) verified pre-existing — R22 §5.20 부터 BoxNode/TextNode/ContainerNode/PathNode/ImageNode 모두 tag: Option<Cow<'static, str>> 보유, schema 확장 불필요
+
+**Changes**:
+- pinion-runtime 신규 module crates/pinion-runtime/src/input.rs — InputRouter struct (last_paint_scene + cursor + hover_target), update_paint_scene/cursor_moved/cursor_left/pointer_down/pointer_up public API
+- resolve_hover_tag helper — Scene::hit_test (§5.32 R39) → HitPath.segments → paint scene lookup_path_ref deepest-first walk → deepest tagged ancestor tag 반환 (background은 None)
+- dispatch_send helper — state scene DFS find_external_by_tag → introspect_mut().invoke('send', Text(event_name)) 호출. §5.15 item 5 input forwarding 의 framework-side router 구현
+- PointerLeave-후-PointerEnter 순서 (cursor 가 widget A → widget B 이동 시 consumer 가 leave-before-enter 보장)
+- lib.rs re-export: pub mod input + pub use input::InputRouter
+- 9 unit tests (5 hover-dispatch matrix + 2 boundary edge + 1 resize re-resolve + 1 missing-target silent + 1 floor_clamp); pinion-runtime 16→25 pass
+- CaptureExternal test stub — Arc<Mutex<Vec<String>>> shared-state pattern (Box<dyn External> downcast 우회)
+
+
+
+**Verification**:
+- cargo test --workspace = 608 pass (599 + 9 InputRouter), 0 failed
+- cargo clippy -p pinion-runtime --all-targets = clean (신규 backtick / clone_from / list-indent warnings 즉시 정정)
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+- R48.1 verify: BoxNode.tag (scene.rs:404), TextNode.tag (459), ContainerNode.tag (664), PathNode.tag, ImageNode.tag 모두 R22 §5.20 부터 존재 — 완전 시괄 pre-existing
+- InputRouter 의 dispatch 경로 검증 — PointerEnter/Leave/Down/Up 순서 정확, missing state tag 은 silent no-op (panic 없음)
+
+
+
+**Impact**: §5.35, §5.15, §5.20, §5.32
+
+
+**Carry forward**:
+- R48.2 (단일 commit) build slice 2: hello-button refactor — R47 의 application-level hit-test 코드 (App.cursor/last_paint_scene/cursor_on_button/update_cursor_hit/floor_clamp_u32) 제거 + InputRouter 사용, view fn 의 button container 에 .with_tag('main_btn') 부여
+- R49+ multi-target dispatch (capture/bubble) — 현재 single-target (deepest tagged ancestor)
+- R49+ focus tab order + key dispatch — v0 은 cursor only, TextField 진입 시 필수
+- R49+ Touch/gesture event — winit Touch 미지원, pinch/multi-finger 별도 axis 또는 carry
+- ai-introspect-demo 자체 hit-test 코드 도 InputRouter 로 refactor 가능 (동일 패턴, 별도 commit)
+- R46 carry items 그대로 (Vello first emit template / ai-introspect-demo manifest+codegen / Headless / cosmic-text glyph cache)
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
