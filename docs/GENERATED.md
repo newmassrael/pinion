@@ -2267,6 +2267,7 @@ router.pointer_down(&mut state_scene);
 - error type = 자체 ParseError enum + Display impl, no thiserror dep — R50 정신 완전 적용
 - compound glyph (composite GlyphID with transform matrix) = R50.1.4 후속 또는 별도 sub-round
 - R50.1.1 ~ R50.1.5 sub-phase = sfnt directory / metadata / cmap / glyf+loca / name
+- test fixture LICENSE 정정 — Noto Sans 도 OFL 1.1 (Apache framing 은 pre-2018 history 잔존)
 
 
 
@@ -2281,6 +2282,14 @@ router.pointer_down(&mut state_scene);
 
 **Impact scope**: §5.37, §5.16, §5.11, §5.3
 
+
+
+**Implementations**:
+- crates/pinion-text-font/src/sfnt.rs:parse_sfnt
+- crates/pinion-text-font/src/sfnt.rs:Flavor
+- crates/pinion-text-font/src/sfnt.rs:OffsetTable
+- crates/pinion-text-font/src/sfnt.rs:TableRecord
+- crates/pinion-text-font/src/error.rs:ParseError
 
 
 
@@ -6098,6 +6107,43 @@ router.pointer_down(&mut state_scene);
 - R50.1.5 name table parser (family / style / postscript name)
 - R50.1.X 후속: WOFF2 / CFF / CFF2 / variable axis / color tables / compound glyph
 - C → A 다음: pinion-text-font crate 신설 + R50.1.1 첫 sfnt parser implementation
+
+
+
+### Round 453 — R50.1.1 §5.37.1 sfnt parser + pinion-text-font crate 신설 — Round 453 — R50.1.1 §5.37.1 sfnt Offset Table + Table Records parser. pinion-text-font crate 신설 (6 sub-crate 분할 중 첫째). Latin (Noto Sans) + 한글 (Nanum Gothic) real font fixture pass. 13 tests pass, clippy 0 warning. 외부 dependency 0개 (자체 ParseError enum + Display impl, no thiserror). §5.37.1 corrective caveat (Noto Sans LICENSE = OFL 1.1, Apache framing 정정).
+
+**Changes**:
+- pinion-text-font crate 신설 (workspace member, Cargo.toml + src/{lib, error, sfnt})
+- sfnt parser: OffsetTable + TableRecord + Flavor 5종 (TrueType/OTTO/true/typ1/ttcf)
+- ParseError enum 6 variant + Display impl + core::error::Error — no thiserror dep
+- verify_search_params strict: searchRange/entrySelector/rangeShift spec 공식 정확 검증
+- 10 unit tests (hand-crafted byte buffers) + 3 integration tests (real font fixture)
+- tests/fonts/: NotoSans-Regular.ttf + NanumGothic-Regular.ttf + LICENSE × 2 + README
+- §5.37.1 corrective caveat: Noto Sans = OFL 1.1 (Apache framing pre-2018 잔존)
+- §5.37.1 implementation bindings 5: parse_sfnt / Flavor / OffsetTable / TableRecord / ParseError
+
+
+
+**Verification**:
+- cargo test --package pinion-text-font: 13 pass (10 unit + 3 integration)
+- cargo test --workspace --features pinion-runtime/vello: 664 → 677 (+13)
+- cargo clippy --package pinion-text-font: 0 warnings
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: baseline 6 lib warning 정합 (pinion-core 5 + pinion-runtime 1)
+- fixture parse: Noto Sans first table = GDEF, Nanum Gothic first = DSIG (alphabetical order 정합)
+- Required tables (cmap/glyf/head/hhea/hmtx/loca/maxp/name/post) two fixture 모두 보유 확인
+
+
+
+**Impact**: §5.37.1, §5.37
+
+
+**Carry forward**:
+- R50.1.2 head / OS2 / hhea / hmtx / maxp / post — font metadata + horizontal metrics (Font struct 등장 시점)
+- R50.1.3 cmap parser (format 4 BMP + format 12 UCS-4 priority)
+- R50.1.4 glyf + loca parser (simple TrueType outlines, compound glyph postpone)
+- R50.1.5 name table parser (family / style / postscript name)
+- R50.1.X 후속: WOFF2 / CFF / CFF2 / variable axis / color tables / compound glyph
+- R50.2+ sub-crate 분할 진행: pinion-text-{unicode, shape, layout, raster}
 
 
 

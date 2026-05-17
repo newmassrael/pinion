@@ -1,0 +1,14 @@
+[package]
+name = "pinion-text-font"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# R50.1 §5.37.1 — self-hosted OpenType binary parser.
+# 외부 dependency 0개 (thiserror 도 제거; 자체 ParseError + Display impl).
+# pinion-text 와의 의존 관계는 R50.10 통합 시점에 형성.
+
+[lints]
+workspace = true
