@@ -5499,6 +5499,42 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 439 — §5.36 R47.4 layout-text MeasureFunc wire (parley intrinsic) — Round 439 — §5.36 R47.4 compute_layout 에 &mut LayoutCache + taffy NodeContext<Text> + new_leaf_with_context + compute_layout_with_measure 등록. Scene::Text leaf intrinsic width/height parley 측정 → flex 중앙 정렬 동작.
+
+**Changes**:
+- crates/pinion-runtime/Cargo.toml: pinion-text default dep 승격 (vello feature gate 외) — layout primitive backend-orthogonal
+- crates/pinion-runtime/src/layout.rs: compute_layout signature 에 &mut LayoutCache 추가, NodeContext::Text { content, style } enum, build() 의 Scene::Text 명세 leaf 는 new_leaf_with_context 로 입력, compute_layout_with_measure 클로저 안 parley Layout::width/height 일으로 intrinsic measure
+- layout.rs +2 tests: text_leaf_intrinsic_measure_drives_flex_center / text_leaf_measure_populates_layout_cache
+- examples/hello-button/src/main.rs: compute_layout(&mut paint_scene, &mut self.text_cache, w, h) 호출 update — measure + paint 같은 cache 공유
+- clippy same-commit fix: layout.rs doc_markdown ×3 (Scene::Text/max_width 백틱) + len_zero ×1 (!is_empty)
+
+
+
+**Verification**:
+- cargo test --features pinion-runtime/vello = 643 pass (641 → 643, +2 R47.4 layout text)
+- cargo clippy = baseline 보존 (pinion-core 5 + pinion-runtime 1)
+- hello-button 3s smoke = panic 없음 — 사용자 cargo run -p hello-button 일로 시각 검증
+- validate_workspace: entries=93 (이후 94 에서 R47.4 entry 439 추가 예정) sections=46 T1=0 T3=0 RT=1/1
+
+
+
+**Impact**: §5.36, §5.21
+
+
+**Carry forward**:
+- R47.5 TextStyle 확장 (font_weight/style/line_height/letter_spacing/text_align/decoration/overflow)
+- R47.6 paint_text 의 모든 TextStyle 필드 honor + parley Alignment + §5.36 round close
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity (per-corner / shadow / gradient / blend / opacity)
+- R47.5+ GlyphCache (consumer GPU atlas) — Vello roadmap_2023 upstream PR 또는 우회 path
+- R47.x fontique font fallback override API + GlyphCache evict 정책
+- Phase 2+ lifetime canonical text engine (§5.16 R11 thin RHI 정합) — long-term
+- R46.4 carry: parse_path_command finite check NaN/±∞ unit test + clippy sub-slice
+- R46.2 Concern 1 carry: RendererOptions surface policy
+- claudedocs/ SCE 3 파일 working-tree carry
+- R297 false-positive commit↔ledger drift carry
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

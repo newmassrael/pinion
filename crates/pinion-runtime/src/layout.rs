@@ -7,16 +7,25 @@
 //! spec; the wrapper [`LayoutStyle`] enum set is what `pinion-core`
 //! exports, and this module owns the translation into `taffy::Style`.
 //!
+//! R47.4 §5.36 — `Scene::Text` leaves carry a parley measure context
+//! so taffy resolves their intrinsic width / height through the
+//! [`pinion_text::LayoutCache`] passed into [`compute_layout`]. The
+//! same cache is consumed by `paint_adapter::to_vello`'s Text arm on
+//! the same frame, so each label shapes once and the result is reused
+//! by both measure + paint passes.
+//!
 //! Single layout pass per frame; pure with respect to `(scene tree,
-//! viewport)` — same inputs produce identical rects. The §6.3 view-fn
-//! purity invariant is preserved because nothing in this module
-//! observes time or external state.
+//! cache contents, viewport)` — same inputs produce identical rects.
+//! The §6.3 view-fn purity invariant is preserved because nothing in
+//! this module observes time or external state; the cache is content-
+//! addressable (text + style + `max_width`), not time-keyed.
 
 use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, ImageNode, PathNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Display, FlexDirection, JustifyContent, LayoutStyle, SizeValue,
+    AlignItems, Display, FlexDirection, JustifyContent, LayoutStyle, SizeValue, TextStyle,
 };
 use pinion_core::Scene;
+use pinion_text::LayoutCache;
 use taffy::prelude::{
     auto, length, percent, AvailableSpace, FromLength, LengthPercentage, NodeId,
     Rect as TaffyRect, Size as TaffySize, TaffyTree,
@@ -26,9 +35,25 @@ use taffy::style::{
     FlexDirection as TaffyFlexDir, JustifyContent as TaffyJustify, Style as TaffyStyle,
 };
 
+/// R47.4 §5.36 — taffy `NodeContext` for leaves that need an intrinsic
+/// measure callback. `Scene::Text` is the only consumer today; future
+/// variants (image intrinsic / external opaque measure) extend this
+/// enum without changing the closure shape.
+pub enum NodeContext {
+    /// `Scene::Text` leaf measure source — content + style flow into
+    /// `LayoutCache::layout` to produce parley's intrinsic width /
+    /// height. The clone is necessary because the closure outlives the
+    /// `&Scene` ref used during build.
+    Text { content: String, style: TextStyle },
+}
+
 /// Compute the layout of `scene` against the given viewport extents.
 ///
-/// Mutates each node's `rect` field in place; nothing else is
+/// `cache` is the application-owned [`LayoutCache`] (the same instance
+/// the Vello paint adapter consults later in the frame). Shape work
+/// done here populates the LRU so the subsequent
+/// `paint_adapter::to_vello` call is a cache hit on every static
+/// label. Mutates each node's `rect` field in place; nothing else is
 /// touched. Safe to call every frame.
 ///
 /// # Panics
@@ -37,8 +62,13 @@ use taffy::style::{
 /// happen on internal logic bugs (passing invalid `NodeId`s, etc.),
 /// not on any user-supplied scene shape.
 #[allow(clippy::cast_precision_loss)]
-pub fn compute_layout(scene: &mut Scene, viewport_w: u32, viewport_h: u32) {
-    let mut tree: TaffyTree<()> = TaffyTree::new();
+pub fn compute_layout(
+    scene: &mut Scene,
+    cache: &mut LayoutCache,
+    viewport_w: u32,
+    viewport_h: u32,
+) {
+    let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
     let layout_tree = build(scene, &mut tree);
     // Force the root to fill the viewport. The user's declared size
     // on the root is ignored at the top level; child sizing is the
@@ -57,8 +87,41 @@ pub fn compute_layout(scene: &mut Scene, viewport_w: u32, viewport_h: u32) {
         width: AvailableSpace::Definite(viewport_w as f32),
         height: AvailableSpace::Definite(viewport_h as f32),
     };
-    tree.compute_layout(layout_tree.node, available)
-        .expect("taffy compute_layout failed");
+    // R47.4 §5.36 — measure callback. Scene::Text leaves consult parley
+    // (via `cache`) for intrinsic width / height; non-Text leaves
+    // return `Size::ZERO`, matching the pre-R47.4 `compute_layout`
+    // behaviour for variants without explicit `size` declarations.
+    tree.compute_layout_with_measure(
+        layout_tree.node,
+        available,
+        |known_dimensions, available_space, _node_id, node_context, _style| {
+            if let TaffySize { width: Some(width), height: Some(height) } = known_dimensions {
+                return TaffySize { width, height };
+            }
+            match node_context {
+                Some(NodeContext::Text { content, style }) => {
+                    // available_space.width.Definite → parley wrap point
+                    // (multi-line); MinContent / MaxContent → no wrap
+                    // (single line / unbounded), matching how taffy
+                    // probes the leaf during flex resolution.
+                    let max_width = match available_space.width {
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        AvailableSpace::Definite(w) if w.is_finite() && w >= 0.0 => {
+                            Some(w as u32)
+                        }
+                        _ => None,
+                    };
+                    let layout = cache.layout(content, style, max_width);
+                    TaffySize {
+                        width: layout.width(),
+                        height: layout.height(),
+                    }
+                }
+                None => TaffySize::ZERO,
+            }
+        },
+    )
+    .expect("taffy compute_layout failed");
     apply(scene, &layout_tree, &tree, 0.0, 0.0);
 }
 
@@ -69,18 +132,33 @@ struct LayoutShadow {
     children: Vec<LayoutShadow>,
 }
 
-fn build(scene: &Scene, tree: &mut TaffyTree<()>) -> LayoutShadow {
+fn build(scene: &Scene, tree: &mut TaffyTree<NodeContext>) -> LayoutShadow {
     let style = to_taffy_style(layout_style_of(scene));
     let children = match scene {
         Scene::Container(c) => c.children.iter().map(|s| build(s, tree)).collect(),
         _ => Vec::new(),
     };
     let child_ids: Vec<NodeId> = children.iter().map(|c| c.node).collect();
-    let node = if child_ids.is_empty() {
-        tree.new_leaf(style).expect("taffy new_leaf failed")
-    } else {
+    let node = if !child_ids.is_empty() {
         tree.new_with_children(style, &child_ids)
             .expect("taffy new_with_children failed")
+    } else if let Scene::Text(t) = scene {
+        // R47.4 §5.36 — Text leaves carry the parley measure context
+        // so the closure passed to `compute_layout_with_measure` can
+        // resolve their intrinsic size. Clone is unavoidable: the
+        // closure FnMut bound + node-context ownership semantics keep
+        // the context alive across the whole layout pass, beyond the
+        // `&Scene` borrow this `build` recurses with.
+        tree.new_leaf_with_context(
+            style,
+            NodeContext::Text {
+                content: t.content.clone(),
+                style: t.style.clone(),
+            },
+        )
+        .expect("taffy new_leaf_with_context failed")
+    } else {
+        tree.new_leaf(style).expect("taffy new_leaf failed")
     };
     LayoutShadow { node, children }
 }
@@ -89,7 +167,7 @@ fn build(scene: &Scene, tree: &mut TaffyTree<()>) -> LayoutShadow {
 fn apply(
     scene: &mut Scene,
     shadow: &LayoutShadow,
-    tree: &TaffyTree<()>,
+    tree: &TaffyTree<NodeContext>,
     parent_x: f32,
     parent_y: f32,
 ) {
@@ -222,14 +300,18 @@ mod tests {
     use super::*;
     use pinion_core::external::StubExternal;
     use pinion_core::scene::ExternalNode;
-    use pinion_core::style::{Color, FlexDirection, JustifyContent, Size};
+    use pinion_core::style::{Color, FlexDirection, JustifyContent, Size, TextStyle};
+
+    fn cache() -> LayoutCache {
+        LayoutCache::new()
+    }
 
     #[test]
     fn block_root_fills_viewport() {
         // A Container with Display::Block (default) and Auto size
         // expands to the viewport bounds taffy was given.
         let mut scene = Scene::Container(ContainerNode::new(vec![]));
-        compute_layout(&mut scene, 320, 200);
+        compute_layout(&mut scene, &mut cache(), 320, 200);
         let Scene::Container(c) = &scene else {
             panic!("expected container")
         };
@@ -251,7 +333,7 @@ mod tests {
             .with_justify(JustifyContent::Center)
             .with_align_items(AlignItems::Center);
         let mut scene = Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
-        compute_layout(&mut scene, 320, 200);
+        compute_layout(&mut scene, &mut cache(), 320, 200);
         let Scene::Container(c) = &scene else {
             panic!("expected container")
         };
@@ -282,7 +364,7 @@ mod tests {
         let mut scene = Scene::Container(
             ContainerNode::new(vec![leaf(80), leaf(60)]).with_layout(layout),
         );
-        compute_layout(&mut scene, 200, 200);
+        compute_layout(&mut scene, &mut cache(), 200, 200);
         let Scene::Container(c) = &scene else {
             panic!("container")
         };
@@ -311,7 +393,7 @@ mod tests {
         );
         let mut scene =
             Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
-        compute_layout(&mut scene, 200, 200);
+        compute_layout(&mut scene, &mut cache(), 200, 200);
         let Scene::Container(c) = &scene else {
             panic!("container")
         };
@@ -334,7 +416,7 @@ mod tests {
                 .with_layout(LayoutStyle::new().with_size(Size::px(64, 32))),
         );
         let mut scene = Scene::Container(ContainerNode::new(vec![ext]).with_layout(layout));
-        compute_layout(&mut scene, 200, 200);
+        compute_layout(&mut scene, &mut cache(), 200, 200);
         let Scene::Container(c) = &scene else {
             panic!("container")
         };
@@ -345,5 +427,68 @@ mod tests {
         assert_eq!(e.rect.h, 32);
         assert_eq!(e.rect.x, 68); // (200 - 64) / 2
         assert_eq!(e.rect.y, 84); // (200 - 32) / 2
+    }
+
+    #[test]
+    fn text_leaf_intrinsic_measure_drives_flex_center() {
+        // R47.4 §5.36 — Scene::Text leaf with no explicit Size resolves
+        // its width/height through parley measure (LayoutCache) and
+        // participates in flex Center/Center as a non-zero box. Without
+        // the MeasureFunc wire the leaf was 0×0 → a "centered" single
+        // point at viewport mid; the user-visible bug R47.3 left open.
+        let text = Scene::Text(TextNode::styled(
+            "Click me!",
+            Rect::default(),
+            TextStyle::new().with_size_px(18),
+        ));
+        let layout = LayoutStyle::new()
+            .flex(FlexDirection::Row)
+            .with_justify(JustifyContent::Center)
+            .with_align_items(AlignItems::Center);
+        let mut scene = Scene::Container(ContainerNode::new(vec![text]).with_layout(layout));
+        let mut c = cache();
+        compute_layout(&mut scene, &mut c, 320, 200);
+        let Scene::Container(container) = &scene else {
+            panic!("expected container")
+        };
+        let Scene::Text(t) = &container.children[0] else {
+            panic!("expected text child")
+        };
+        assert!(t.rect.w > 0, "text leaf width should be parley-measured");
+        assert!(t.rect.h > 0, "text leaf height should be parley-measured");
+        // flex Center → child rect.x ≈ (320 - w) / 2 and rect.y ≈
+        // (200 - h) / 2. Exact pixel depends on the system font width;
+        // we assert the offsets are non-trivial (not 0 = left/top edge).
+        assert!(
+            t.rect.x > 0,
+            "Center flex must shift text right of x=0 (got x={})",
+            t.rect.x
+        );
+        assert!(
+            t.rect.y > 0,
+            "Center flex must shift text below y=0 (got y={})",
+            t.rect.y
+        );
+    }
+
+    #[test]
+    fn text_leaf_measure_populates_layout_cache() {
+        // The measure pass should hit the same LayoutCache subsequent
+        // paint passes use; shape work amortizes across measure + paint
+        // within one frame.
+        let text = Scene::Text(TextNode::styled(
+            "Hello",
+            Rect::default(),
+            TextStyle::new().with_size_px(16),
+        ));
+        let mut scene = Scene::Container(ContainerNode::new(vec![text]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Center),
+        ));
+        let mut c = cache();
+        assert_eq!(c.len(), 0, "fresh cache is empty");
+        compute_layout(&mut scene, &mut c, 320, 200);
+        assert!(!c.is_empty(), "measure pass populates LayoutCache");
     }
 }

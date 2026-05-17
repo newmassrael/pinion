@@ -377,10 +377,12 @@ impl App {
         // ephemeral paint scene each frame.
         let frame = Frame::new();
         let mut paint_scene = view(self.cached_state, &frame);
-        // R24 §5.21: taffy resolves every node's pixel rect before
-        // paint. Pure function of (scene, viewport); no per-frame
-        // cache needed at this scale.
-        compute_layout(&mut paint_scene, w.get(), h.get());
+        // R24 §5.21 + R47.4 §5.36: taffy resolves every node's pixel
+        // rect before paint. Scene::Text leaves go through parley
+        // intrinsic measure via `self.text_cache`; the same cache is
+        // hit by the paint adapter below so shape work amortizes across
+        // measure + paint within one frame.
+        compute_layout(&mut paint_scene, &mut self.text_cache, w.get(), h.get());
         // R46.5 §5.16: framework-side Scene → vello::Scene walk via
         // paint_adapter (R46.3.1). hello-button has no app-specific
         // tag substitution, so the closure returns None unconditionally

@@ -11,15 +11,18 @@ description = "Render loop and SCE hierarchical state machinery"
 # Default = no GPU dep. `vello` enables the §5.16 R46.3.1 paint_adapter
 # module — Scene → vello::Scene walk for the Vello render path. Kept
 # behind a feature so non-GUI consumers (headless / TUI / future
-# pinion-render-* alternatives) don't pull wgpu transitively. R47.3
-# §5.36 pulls pinion-text in alongside — `paint_adapter::to_vello`'s
-# Text arm consumes a `LayoutCache` to emit `vello::Scene::draw_glyphs`
-# from parley-shaped runs.
+# pinion-render-* alternatives) don't pull wgpu transitively.
 default = []
-vello = ["dep:vello", "dep:pinion-text"]
+vello = ["dep:vello"]
 
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# §5.36 R47.4 text shaping primitive — backend-orthogonal: layout
+# (compute_layout MeasureFunc) + paint (`paint_adapter::to_vello`'s
+# Text arm) 양쪽이 같은 `LayoutCache` 인스턴스를 공유하여 shape work
+# amortize. headless / TUI 도 intrinsic measure 가 필요하므로 default
+# dep — vello feature gate 외부.
+pinion-text = { path = "../pinion-text", version = "0.0.1" }
 # §5.21 R23/R24 layout system. Confined to pinion-runtime per the
 # spec lock — pinion-core stays free of any layout-engine dep.
 taffy = "0.7"
@@ -28,13 +31,6 @@ taffy = "0.7"
 # Workspace pin matches Vello's transitive wgpu version (see workspace
 # Cargo.toml comment for the §5.16 R41 path C rationale).
 vello = { workspace = true, optional = true }
-# §5.36 R47.3 text shaping primitive — needed by paint_adapter's Text
-# arm. Same feature gate as `vello` because the only consumer of
-# `LayoutCache` from here is `paint_adapter::to_vello`. parley's
-# `FontData` is `peniko::FontData` (re-exported via
-# `linebender_resource_handle`), so vello's `draw_glyphs(&FontData)`
-# accepts it without any conversion.
-pinion-text = { path = "../pinion-text", version = "0.0.1", optional = true }
 
 [lints]
 workspace = true
