@@ -394,6 +394,9 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R47.7.4 scene/resize: AI 가 winit request_inner_size 트리거 → drag 시뮬레이션 (next frame async)
 - R47.7.4 scene/wait_for_frame: AI 가 다음 redraw 동기 대기 — scene/resize 결과 stable observation
 - R47.7.5 scene/layout viewport optional (None=last winit-actual frame) + last_paint_layout cache
+- R47.7.6 LayoutNode.text_metrics (line_count/natural_width/height) — AI sub-pixel wrap 정확 detect
+- R47.7.6 paint_producer signature: Fn(w,h) -> Scene → Fn(w,h) -> LayoutNode (application atomic)
+- R47.7.6 directly above retracted — LayoutNode.rect.h 가 이미 line_count×line_height = wrap signal
 
 
 
@@ -2151,6 +2154,7 @@ router.pointer_down(&mut state_scene);
 - R47.3 = paint primitive only; layout MeasureFunc + TextStyle Figma-fidelity = R47.4-6 carry
 - R47.6 = §5.36 close. R48 §5.3 별도 = BoxStyle Figma-fidelity (corner/shadow/gradient/blend/opacity)
 - R47.6 §5.36 round close = parley wire + decoration + Clip. Ellipsis = Clip fallback (R47.x carry)
+- R50 진입 = §5.36 의 parley/swash/fontique = Phase 1 bridge; §5.37 self-hosted text engine 으로 supersede
 
 
 
@@ -2162,7 +2166,64 @@ router.pointer_down(&mut state_scene);
 
 
 
-**Impact scope**: §5.3, §5.16, §5.20, §5.30, §6.3
+**Impact scope**: §5.3, §5.16, §5.20, §5.30, §6.3, §5.37
+
+
+
+
+### §5.37. Self-hosted text engine — full OpenType to GPU rasterization stack
+
+
+**Intent**: pinion 의 모든 text 동작 자체 구현 — parley/swash/fontique/ttf-parser 모두 제거, OpenType parser 부터 GPU rasterization 까지 full stack. lifetime canonical.
+
+
+**Rationale**:
+- 외부 lib (parley/swash/fontique) 의존 = black box 동작 / 비결정 결과 / 진단 격차
+- 사용자 보고 sub-pixel oscillation 원인 진짜 파악 불가 — parley wrap heuristic 내부 모름
+- lifetime project canonical = 모든 layer 정확 파악 + 제어 / black box 우회 허용 안 함
+- §2 invariant #1 (structured scene) 정합 — text 동작도 fully introspectable
+- 메모리 carry: 'Phase 2+ lifetime canonical = pinion 자체 text engine' R50 이 그 round
+
+
+
+**Inputs**:
+- TextNode (§5.11) + TextStyle (§5.3 + R47.5 Figma-fidelity schema)
+- TTF / OTF / WOFF2 binary (OpenType spec compliant)
+- Unicode codepoint sequence (NFC/NFD)
+- viewport / max_width (레이아웃 constraint)
+- DPI scale_factor (sub-pixel positioning)
+
+
+
+**Outputs**:
+- 자체 OpenType parser — sfnt + cmap + hmtx + glyf/CFF + GSUB/GPOS + variable + color
+- 자체 Unicode 정규화 (UAX #15 NFC/NFD/NFKC/NFKD)
+- 자체 BIDI algorithm (UAX #9) + script segmentation (UAX #24)
+- 자체 shaping rules per script (Latin/Arabic/Indic/CJK/Emoji ZWJ)
+- 자체 line break (UAX #14) + word break (UAX #29)
+- 자체 glyph positioning + sub-pixel integer-snap (비결정 제거)
+- 자체 glyph rasterization — vector outline → raster, hinting, anti-aliasing
+- 자체 font fallback + OS enumeration (fontconfig/DirectWrite/CoreText 대체)
+- 자체 GPU atlas + MSDF / SDF — §5.16 R11 thin RHI 정합
+
+
+
+**Caveats**:
+- R50.0 = spec round entry (axis ratify). implementation 은 multi-session/multi-month (R50.1+)
+- §5.36 (parley + swash + fontique) Phase 1 bridge → R50 진입 = §5.36 superseded by §5.37
+- implementation sub-round: parser/Unicode/BIDI/shaping/break/positioning/raster/atlas
+
+
+
+**Alternatives rejected**:
+- parley/swash/fontique 유지 (R47 현행) — black box 의존 잸류, lifetime canonical 위반
+- ttf-parser dep 허용 + 그 외 자체 — OpenType binary parsing 도 대량 black box, 제공 거부
+- HarfBuzz (C) FFI + 자체 layout — FFI 채널 + C 의존, pure Rust lifetime canonical 이탈
+- 단계적 Phase A/B/C — implementation 은 자연 단계적, axis 결정은 Maximal 1회 — 안 하면 광범위 타협 위험
+
+
+
+**Impact scope**: §5.36, §5.16, §5.11, §5.3, §2
 
 
 
@@ -5909,6 +5970,43 @@ router.pointer_down(&mut state_scene);
 - R47.x parley Ellipsis truncation pass
 - R48 §5.3 BoxStyle Figma-fidelity 별도 round
 - R46 / claudedocs / R297
+
+
+
+### Round 451 — R50.0 §5.37 신설 + §5.36 supersede (자체 text engine axis ratify) — Round 451 — R50.0 §5.37 신설 (Self-hosted text engine — full OpenType to GPU rasterization stack). parley/swash/fontique/ttf-parser 모두 제거 — lifetime canonical. §5.36 (parley Phase 1 bridge) supersede caveat. implementation R50.1+ multi-session/multi-month carry.
+
+**Changes**:
+- §5.37 add_section + 7 atomic field (intent / rationale / inputs / outputs / alternatives / impact / caveats)
+- §5.36 supersede caveat 추가 — parley Phase 1 bridge 명시 + R50 lifetime canonical 진입
+- 외부 lib (parley/swash/fontique) 의존 제거 = lifetime project canonical / textbook 정통
+- 사용자 지적 자기 이행: text width 77↔78 sub-pixel oscillation = parley wrap heuristic black box, 자체 engine 만 근본 fix
+- R50.0 = axis ratify only (atomic store mutation), implementation R50.1+ sub-round chain carry
+
+
+
+**Verification**:
+- validate_workspace: entries=105 sections=47 T1=0 T3=0 RT=1/1 GENERATED=sync
+- §5.37 atomic field 7개 + caveat 4개 설정 완료
+- §2 invariant #1 (structured scene fully introspectable) 자기 이행 강화 — text 동작 도 black box 제거
+
+
+
+**Impact**: §5.37, §5.36, §5.16, §5.11, §5.3, §2
+
+
+**Carry forward**:
+- R50.1 자체 OpenType parser (sfnt + cmap + hmtx + glyf/CFF + GSUB/GPOS + variable + color)
+- R50.2 자체 Unicode 정규화 (UAX #15)
+- R50.3 자체 BIDI algorithm (UAX #9) + script segmentation (UAX #24)
+- R50.4 자체 shaping rules per script (Latin/Arabic/Indic/CJK/Emoji)
+- R50.5 자체 line break (UAX #14) + word break (UAX #29)
+- R50.6 자체 glyph positioning + sub-pixel integer-snap
+- R50.7 자체 glyph rasterization + hinting + anti-aliasing
+- R50.8 자체 font fallback + OS enumeration
+- R50.9 자체 GPU atlas + MSDF/SDF (§5.16 R11 thin RHI 정합)
+- R50.10 parley/swash/fontique/ttf-parser 제거 — pinion-text 자체 implementation 완성
+- R47.7 시리즈 RPC channel (스스 layout/resize/last_paint) 유지 — R50 구현 증보 진단 channel
+- claudedocs / R297 / R46 / R48 carry
 
 
 
