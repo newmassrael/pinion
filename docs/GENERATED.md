@@ -2121,8 +2121,9 @@ router.pointer_down(&mut state_scene);
 
 
 **Outputs**:
-- pinion-text::Layout — positioned glyph runs (run.font / glyph.id / glyph.x / glyph.advance)
-- pinion-text::GlyphCache — LRU bounded glyph data, GPU-uploadable
+- pinion-text::Layout — parley::Layout re-export (positioned glyph runs)
+- pinion-text::LayoutCache — LRU bounded text+style → Layout cache (CPU, R47.2)
+- pinion-text::GlyphCache — LRU bounded rasterized glyph atlas (GPU, R47.5+ AAA prereq)
 - backend adapter helper — glyph run → backend draw (paint_adapter Text arm 통합)
 
 
@@ -2134,6 +2135,8 @@ router.pointer_down(&mut state_scene);
 - Font fallback 정책 = fontique system enum + override API (R47.x sub-decision)
 - GlyphCache evict 정책 = LRU bounded; capacity/scope per-renderer vs shared (R47.x)
 - pinion-text feature gate = parley default, advanced (RTL/complex) toggle 가능
+- 구현 단계: R47.2 = Layout+LayoutCache, R47.5+ = GlyphCache + Vello 통합 path
+- GlyphCache lifetime canonical = consumer GPU atlas (Vello roadmap_2023 미구현, AAA 144 FPS prereq)
 
 
 
@@ -3356,6 +3359,34 @@ router.pointer_down(&mut state_scene);
 - R47.2 GlyphCache struct (LRU bounded, private fields, Hyrum-immune schema)
 - R47.3 Layout builder + paint_adapter Text arm 활성화 + Vello draw_glyph
 - R47.4 hello-button 라벨 시각 복원 검증
+
+
+
+### 435 — Round 47.2.0 — §5.36 outputs amend: Layout / LayoutCache / GlyphCache 세 책임 분리 + 단계별 진화 명시
+
+**Changes**:
+- §5.36 outputs 정확화 — Layout (parley re-export) + LayoutCache (R47.2) + GlyphCache (R47.5+) + adapter
+- GlyphCache 책임 명확화 — consumer GPU rasterized atlas (Vello consumer-side 위임 명시, AAA 144 FPS prereq)
+- 단계별 진화 caveat 2건 추가 — R47.2 = LayoutCache, R47.5+ = GlyphCache + Vello 통합 path
+- Vello 0.6 draw_glyphs 의 (font + glyph_id) 입력 모델 과 정합 — atlas 책임 consumer
+
+
+
+**Verification**:
+- Mnemosyne set_section_outputs + add_section_caveat × 2 = 3 mutations
+- validate_workspace 통과 예상 (entries 89→90 / sections 46 / T1=0 / GENERATED.md=sync)
+- 구현 변경 없음 — spec amend only (atomic + GENERATED.md)
+
+
+
+**Impact**: §5.16, §5.36
+
+
+**Carry forward**:
+- R47.2 Layout + LayoutCache 진입 (parley reuse cache)
+- R47.3 paint_adapter Text arm + Vello draw_glyphs 통합
+- R47.4 hello-button 라벨 시각 복원
+- R47.5+ GlyphCache (consumer GPU atlas) + Vello 통합 path (upstream PR / 우회 결정)
 
 
 
