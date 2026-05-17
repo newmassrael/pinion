@@ -4,38 +4,35 @@
 //! retargeted from `softbuffer` to a pinion-forge-generated Vello
 //! renderer. The renderer struct (`DemoRenderer`) is emitted by
 //! `build.rs` from `app.pinion.xml` (`kind="renderer" backend="vello"`,
-//! `aa` default = Area per R46.2.1) into `$OUT_DIR/app.rs`; this file
-//! pulls it in via `include!` inside a private `gen_renderer` module
-//! so the codegen's `use vello::*` imports don't collide with this
-//! module's `use pinion_core::style::Color`.
+//! `aa` default = Area per R46.2.1) into `$OUT_DIR/app.rs`. R46.3.3
+//! switched the emit template to fully-qualified paths so this file
+//! pulls the codegen in via a bare `include!()` without namespace
+//! collision.
 //!
 //! ## Single canonical scene (R42 textbook recovery, preserved)
 //!
-//! One [`Scene`] holds buttons + `info_panel` + `counter` (External)
-//! + overlay highlights. RPC mutations and rendering target the same
-//! tree. The pre-R46.3 `paint()` function that drew rects into a
-//! softbuffer u32 buffer has been replaced by [`build_vello_scene`],
-//! which walks the same [`Scene`] tree and emits `vello::Scene` fill /
-//! stroke commands; the rest of the demo (R39.4.3 locate, R40.x
-//! preview lifecycle) is unchanged.
+//! One [`Scene`] holds buttons, the `info_panel` rect, the embedded
+//! `counter` External, plus overlay highlights. RPC mutations and
+//! rendering target the same tree. The pre-R46.3 `paint()` function
+//! that drew rects into a softbuffer u32 buffer has been replaced by
+//! the framework-side `paint_adapter::to_vello` walker (R46.3.1),
+//! which emits the equivalent `vello::Scene` fill / stroke commands;
+//! the rest of the demo (R39.4.3 locate, R40.x preview lifecycle) is
+//! unchanged.
 //!
-//! Controls (unchanged from R42):
+//! ## Controls (unchanged from R42)
 //!
-//!   * **Right-click** — `scene/locate` (§5.32) + red outline
-//!   * **Left-click**  — clear all overlay highlights
-//!   * **Escape**      — clear highlights; second press exits
-//!   * **R**           — print the canonical scene tree to stdout
-//!   * **P**           — `scene/propose_change`: cycle `info_panel`'s
-//!                       fill to the next palette entry. Yellow
-//!                       border appears around `info_panel` while
-//!                       the preview is in flight.
-//!   * **A**           — `scene/apply_preview`: commit the most-
-//!                       recent preview. `info_panel` colour shifts;
-//!                       yellow overlay disappears.
-//!   * **C**           — `scene/cancel_preview`: drop the most-
-//!                       recent preview without mutating state.
-//!   * **L**           — `scene/list_previews`: print every in-flight
-//!                       preview to stdout.
+//! * **Right-click** — `scene/locate` (§5.32) + red outline.
+//! * **Left-click** — clear all overlay highlights.
+//! * **Escape** — clear highlights; second press exits.
+//! * **R** — print the canonical scene tree to stdout.
+//! * **P** — `scene/propose_change`: cycle the `info_panel` fill to
+//!   the next palette entry; yellow border marks the in-flight preview.
+//! * **A** — `scene/apply_preview`: commit the most-recent preview.
+//!   The `info_panel` colour shifts; the yellow overlay disappears.
+//! * **C** — `scene/cancel_preview`: drop the most-recent preview
+//!   without mutating state.
+//! * **L** — `scene/list_previews`: print every in-flight preview.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -47,12 +44,6 @@
     // discipline as cast_possible_truncation above.
     clippy::cast_possible_wrap,
     clippy::doc_markdown,
-    // Demo-narrative doc comments use visual alignment (continuation
-    // lines indented to match the `**Key** — ` prefix). Rust 1.86
-    // tightened doc-list lints to flag this as ambiguous markdown.
-    // Example-scope prose, not framework API documentation.
-    clippy::doc_overindented_list_items,
-    clippy::doc_lazy_continuation,
 )]
 
 use std::sync::Arc;
@@ -118,10 +109,11 @@ fn palette_color(count: i64) -> Color {
     PALETTE[idx]
 }
 
-/// Build the canonical scene: 3 tagged buttons + `info_panel` (Box
-/// whose fill is *derived* at paint time from the embedded counter)
-/// + `counter` (tagged ExternalNode holding the CountedExternal). One
-/// tree, addressable end-to-end by both RPC and the renderer.
+/// Build the canonical scene: three tagged buttons, an `info_panel`
+/// (Box whose fill is *derived* at paint time from the embedded
+/// counter), and a `counter` tagged ExternalNode that holds the
+/// CountedExternal. One tree, addressable end-to-end by both RPC and
+/// the renderer.
 fn build_initial_scene() -> Scene {
     let mut root = ContainerNode::new(vec![
         Scene::Box(

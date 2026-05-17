@@ -3111,6 +3111,38 @@ router.pointer_down(&mut state_scene);
 
 
 
+### 429 — Round 46.3.5 — §5.16 ai-introspect-demo doc reflow + clippy allow 2개 제거 — example narrative 가 lifetime project framework 의 example 으로도 textbook 깨끗해야, R46.3 self-audit Concern #7 same-session 상환 (R46.3 부채 청산 최종 step)
+
+**Changes**:
+- main.rs module docstring reflow — R42-vintage 'aligned-to-dash' 다중라인 bullet (col ~25 에서 이어지는 패턴) 을 single-line bullet (col 5 으로 reflow) 으로 교체. 각 bullet 이 자체-완결 적으로 구성
+- module docstring section header 추가 — ## Single canonical scene + ## Controls (R42 보존) markdown H2 으로 구조화, prose flow 더 읽기 쉬움
+- build_initial_scene doc 변경 — '+' 로 시작하는 line 없애기 위해 prose 재구성. clippy::doc_lazy_continuation 의 '+ counter' (markdown list marker 해석) 해소
+- #![allow] 에서 clippy::doc_overindented_list_items + clippy::doc_lazy_continuation 두 항목 제거. R46.3 에서 MVP framing 으로 추가했던 차선책 — textbook = doc 자체를 clippy-clean 하게 이제 수정. cast_possible_truncation / cast_sign_loss / cast_possible_wrap / doc_markdown 4 개 allow 는 유지 (각각 이유 명시 주석 있음)
+- module doc 에서 R46.3.3 (fully-qualified template) + R46.3.1 (paint_adapter) 언급 추가 — R46.3 carry forward 'gen_renderer wrap' / 'build_vello_scene inline' 언급 제거 (이제 outdated)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 633 pass (변화 없음)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / pinion-forge 0 / ai-introspect-demo 0
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+- R46.3 self-audit 7 개 concern 전부 same-session 상환 완료 — #1 paint_adapter framework primitive (R46.3.1) / #2 callback hook (R46.3.1) / #3 BorderPlacement enum (R46.3.2) / #4 Color alpha semantic (R46.3.1) / #5 winit suspend RenderState (R46.3.4) / #6 fully-qualified template (R46.3.3) / #7 doc reflow + allow 제거 (R46.3.5)
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- R46.5+: hello-button softbuffer → Vello 교체. R46.3.1 paint_adapter 의 두 번째 consumer. R46.3.4 RenderState 패턴 그대로 적용. R48 InputRouter 결합 가능
+- R46.x: pinion-rpc 13 개 clippy 경고 감사 (pre-MSRV-bump 이전부터 있었음). cast_possible_truncation (dispatch.rs:1081 f64→f32) / needless_pass_by_value (1203, 1307) / missing_errors_doc (path.rs:84) / doc_markdown (multiple) 분류 후 수정 vs allow 결정. 별도 round
+- R46.2 Concern 1 (RendererOptions 전체 노출) carry 유지 — R46.2.1 에서 aa 만 상환. present_mode / use_cpu / num_init_threads / pipeline_cache 는 build-time vs runtime 분류 spec round 대기
+- R47+ Headless renderer template (§5.12 screenshot RPC) — RendererBackend::Headless variant 추가 + emit_renderer_headless 함수. R46.3.3 fully-qualified path 표준 적용
+- R47+ cosmic-text glyph cache — R31 caveat 행이. paint_adapter 의 Scene::Text 쟬이 no-op 에서 실제 렌더링으로 확장
+- R297 false-positive hint 그대로 — R46.3.5 commit 까지 9-commit carry
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
