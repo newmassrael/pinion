@@ -144,3 +144,15 @@ reason = "R45 round prefix 누락 정정 — 직전 412-415 entry 와 prefix 일
 applied_in = "pinion R46+"
 content_hash_before = "cfd485e96d36f359a7f7706b5030aa9a869eb9740f95fd89613bb178d8f7ca95"
 content_hash_after = "5f810b0f18b8bd10f61328d38c2888e01cc8e1bb986b73db26e0f09aaa0a51f0"
+
+# R47.3.1 incident — entry 437 framing 정정. R47.3 = paint primitive part
+# only 명시 + R47.4-6 axis chain (layout MeasureFunc / TextStyle Figma-fidelity
+# / §5.36 round close) carry 명시. audit half 미접촉.
+
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "Round 437 — §5.36 R47.3 paint_adapter Text arm 활성화 + Vello draw_glyphs 통합"
+fields = ["publishable_decision_summary", "publishable_carry_forward_bullets"]
+reason = "R47.3 framing 정정 — paint primitive part only 명시 + R47.4-6 axis chain (layout MeasureFunc / TextStyle Figma-fidelity / §5.36 round close) carry + R48 §5.3 BoxStyle 별도 round carry"
+applied_in = "pinion R47.3.1+"
+content_hash_after = "40a4c7297b99dc75359ccecfb2ad222645d60b81c33bf091968d057e63cafa49"

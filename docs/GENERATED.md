@@ -2123,7 +2123,11 @@ router.pointer_down(&mut state_scene);
 **Outputs**:
 - pinion-text::Layout — parley::Layout re-export (positioned glyph runs)
 - pinion-text::LayoutCache — LRU bounded text+style → Layout cache (CPU, R47.2)
-- pinion-text::GlyphCache — LRU bounded rasterized glyph atlas (GPU, R47.5+ AAA prereq)
+- paint_adapter Text arm — Scene::Text → vello::Scene::draw_glyphs (R47.3, paint primitive part)
+- compute_layout Scene::Text MeasureFunc — parley intrinsic width/height (R47.4)
+- TextStyle 확장 — font_weight/style/line_height/letter_spacing/align/decoration/overflow (R47.5)
+- paint_text TextStyle 모든 필드 honor — parley StyleProperty + Alignment (R47.6, §5.36 close)
+- pinion-text::GlyphCache — LRU bounded rasterized glyph atlas (GPU, R47.x+ UI dense text 보강)
 - backend adapter helper — glyph run → backend draw (paint_adapter Text arm 통합)
 
 
@@ -2139,6 +2143,8 @@ router.pointer_down(&mut state_scene);
 - GlyphCache lifetime canonical = consumer GPU atlas (Vello roadmap_2023 미구현, AAA 144 FPS prereq)
 - 정정: 직전 'AAA 144 FPS prereq' caveat = framing 오류. 정통 frame = UI 모드 dense text (CJK/다국어) 성능 보강
 - parley = Phase 1 bridge; Phase 2+ lifetime canonical = pinion 자체 text engine (§5.16 R11 thin RHI 정합)
+- R47.3 = paint primitive only; layout MeasureFunc + TextStyle Figma-fidelity = R47.4-6 carry
+- R47.6 = §5.36 close. R48 §5.3 별도 = BoxStyle Figma-fidelity (corner/shadow/gradient/blend/opacity)
 
 
 
@@ -5415,7 +5421,7 @@ router.pointer_down(&mut state_scene);
 
 
 
-### Round 437 — §5.36 R47.3 paint_adapter Text arm 활성화 + Vello draw_glyphs 통합 — Round 437 — §5.36 R47.3 paint_adapter Text arm: paint_adapter::to_vello signature 에 &mut LayoutCache 추가 + Scene::Text arm 활성화 (parley GlyphRun → vello::Scene::draw_glyphs). 두 example (hello-button + ai-introspect-demo) caller 동시 update.
+### Round 437 — §5.36 R47.3 paint_adapter Text arm 활성화 + Vello draw_glyphs 통합 — Round 437 — §5.36 R47.3 paint_adapter Text arm 활성화 (paint primitive part only — layout-text MeasureFunc 및 Figma-fidelity TextStyle 확장 = R47.4-6 carry). to_vello + &mut LayoutCache + Scene::Text arm.
 
 **Changes**:
 - crates/pinion-runtime/Cargo.toml: vello feature gate 에 dep:pinion-text 추가 — paint_adapter 의 Text arm 이 LayoutCache 를 consume
@@ -5442,15 +5448,53 @@ router.pointer_down(&mut state_scene);
 
 
 **Carry forward**:
-- R47.4 시각 검증: hello-button 실행 → 'Click me!' / 'Disabled' 라벨이 paint_adapter Text arm 통해 화면 렌더되는지 시각 확인 (사용자 환경 수동 cargo run 또는 screenshot)
-- R47.5+ GlyphCache (consumer GPU atlas) — UI 모드 dense text (CJK/다국어) 성능 보강. Vello 매 frame outline rasterize 보강. Vello upstream PR 또는 우회 path (custom shader) 결정
-- R47.x TextStyle schema 확장: font_family / weight / decoration → parley StyleProperty 친화 (현재 parley default font stack 만 사용)
+- R47.4 layout-text MeasureFunc wire (compute_layout +&mut LayoutCache, Scene::Text taffy measure)
+- R47.5 TextStyle 확장 (font_weight/style/line_height/letter_spacing/text_align/decoration/overflow)
+- R47.6 paint_text 의 모든 TextStyle 필드 honor + parley Alignment + §5.36 round close
+- R47.5+ GlyphCache (consumer GPU atlas) — Vello roadmap_2023 upstream PR 또는 우회 path
 - R47.x fontique font fallback override API
 - R47.x GlyphCache evict 정책 (capacity / scope per-renderer vs shared)
-- Phase 2+ lifetime canonical text engine 결정 (pinion 자체 text engine, §5.16 R11 thin RHI 정합) — long-term carry
-- R46.4 carry: parse_path_command finite check NaN/±∞ unit test + pinion-core 5 / pinion-runtime 1 clippy sub-slice
-- R46.2 Concern 1 carry: RendererOptions surface policy (present_mode / use_cpu / num_init_threads / pipeline_cache build-time vs runtime 분류)
-- claudedocs/ SCE 3 파일 working-tree carry (사용자 명시 'carry'): sce-rfc-001-response.md (modified) + sce-status-report-2026-05-17-response.md (untracked) + sce-status-report-2026-05-17-supersede.md (untracked)
+- Phase 2+ lifetime canonical text engine (§5.16 R11 thin RHI 정합) — long-term carry
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity (per-corner / shadow / gradient / blend / opacity)
+- R46.4 carry: parse_path_command finite check NaN/±∞ unit test + clippy sub-slice
+- R46.2 Concern 1 carry: RendererOptions surface policy (present_mode/use_cpu/threads/pipeline_cache)
+- claudedocs/ SCE 3 파일 working-tree carry (사용자 명시 그대로)
+- R297 false-positive commit↔ledger drift carry
+
+
+
+### Round 438 — R47.3.1 §5.36 framing 정정 + outputs amend (R47.4-6 axis chain) — Round 438 — R47.3.1 §5.36 framing 정정: R47.3 = paint primitive part only 명시 + R47.4 layout MeasureFunc / R47.5 TextStyle Figma-fidelity / R47.6 §5.36 close axis chain. R48 §5.3 BoxStyle Figma-fidelity 별도 round carry.
+
+**Changes**:
+- entry 437 publishable_decision_summary set: paint primitive part only 명시 + R47.4-6 carry
+- entry 437 publishable_carry_forward set: R47.4 / R47.5 / R47.6 / R48 axis chain
+- mnemosyne.toml [[publishable_override_ledger]] row 추가 (target=437, fields=2, kind=typo_fix)
+- §5.36 outputs amend: paint_adapter Text arm + compute_layout MeasureFunc + TextStyle 확장 + paint_text honor
+- §5.36 caveats +2: R47.3 = paint primitive only / R47.6 = §5.36 close + R48 §5.3 별도 round
+
+
+
+**Verification**:
+- validate_workspace: entries=92 sections=46 T1=0 T3=0 RT=1/1 GENERATED=sync
+- publishable / audit divergence: entries 8 → 9 ledger_rows 13 → 14 (R47.3.1 row 추가 반영)
+- 사용자 시각 검증 결과 원인: t.rect=0×0 (compute_layout MeasureFunc 부재) → R47.4 즉시 진행
+
+
+
+**Impact**: §5.36
+
+
+**Carry forward**:
+- R47.4 layout-text MeasureFunc wire (compute_layout +&mut LayoutCache, Scene::Text taffy measure)
+- R47.5 TextStyle 확장 (font_weight/style/line_height/letter_spacing/text_align/decoration/overflow)
+- R47.6 paint_text 의 모든 TextStyle 필드 honor + parley Alignment + §5.36 round close
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity (per-corner / shadow / gradient / blend / opacity)
+- R47.5+ GlyphCache (consumer GPU atlas) — Vello roadmap_2023 upstream PR 또는 우회 path
+- R47.x fontique font fallback override API + GlyphCache evict 정책
+- Phase 2+ lifetime canonical text engine (§5.16 R11 thin RHI 정합) — long-term
+- R46.4 carry: parse_path_command finite check NaN/±∞ unit test + clippy sub-slice
+- R46.2 Concern 1 carry: RendererOptions surface policy
+- claudedocs/ SCE 3 파일 working-tree carry
 - R297 false-positive commit↔ledger drift carry
 
 
