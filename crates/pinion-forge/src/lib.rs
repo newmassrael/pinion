@@ -1038,17 +1038,18 @@ mod tests {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="MainScene" backend="vello"/>"#;
         let rust = compile_str(xml, "scene.pinion.xml").expect("compile");
         // R46.2: the renderer kind emits a concrete Rust type wrapping
-        // vello::Renderer + RenderSurface (no virtual dispatch). The
-        // R46.1 comment-only stub is gone.
+        // vello::Renderer + RenderSurface (no virtual dispatch). R46.3.3:
+        // all Vello types reference fully-qualified `::vello::*` paths
+        // so include!() is namespace-safe at any consumer scope.
         assert!(rust.contains("pub struct MainScene {"));
-        assert!(rust.contains("context: RenderContext"));
-        assert!(rust.contains("surface: RenderSurface<'static>"));
-        assert!(rust.contains("renderer: Renderer"));
-        // async new<W: Into<wgpu::SurfaceTarget<'static>>>(...) -> Result<Self, MainSceneError>
-        assert!(rust.contains("pub async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, MainSceneError>"));
-        assert!(rust.contains("W: Into<wgpu::SurfaceTarget<'static>>"));
+        assert!(rust.contains("context: ::vello::util::RenderContext"));
+        assert!(rust.contains("surface: ::vello::util::RenderSurface<'static>"));
+        assert!(rust.contains("renderer: ::vello::Renderer"));
+        // async new<W: Into<::vello::wgpu::SurfaceTarget<'static>>>(...) -> Result<Self, MainSceneError>
+        assert!(rust.contains("pub async fn new<W>(target: W, width: u32, height: u32) -> ::std::result::Result<Self, MainSceneError>"));
+        assert!(rust.contains("W: ::std::convert::Into<::vello::wgpu::SurfaceTarget<'static>>"));
         // sync render(scene, base_color) and resize(w, h)
-        assert!(rust.contains("pub fn render(&mut self, scene: &Scene, base_color: Color) -> Result<(), MainSceneError>"));
+        assert!(rust.contains("pub fn render(\n        &mut self,\n        scene: &::vello::Scene,\n        base_color: ::vello::peniko::Color,\n    ) -> ::std::result::Result<(), MainSceneError>"));
         assert!(rust.contains("pub fn resize(&mut self, width: u32, height: u32)"));
         // Stub markers absent
         assert!(!rust.contains("renderer kind codegen stub"));
@@ -1058,20 +1059,21 @@ mod tests {
     #[test]
     fn emits_renderer_vello_error_enum_with_from_impls() {
         // The emitted module defines a closed error enum named
-        // `<Name>Error` carrying `vello::Error` and `wgpu::SurfaceError`
-        // with `From` conversions so `?` propagation works inside the
-        // generated `new` / `render` bodies.
+        // `<Name>Error` carrying `::vello::Error` and
+        // `::vello::wgpu::SurfaceError` with `From` conversions so `?`
+        // propagation works inside the generated `new` / `render`
+        // bodies. R46.3.3 fully-qualified paths.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Demo" backend="vello"/>"#;
         let rust = compile_str(xml, "demo.pinion.xml").expect("compile");
         assert!(rust.contains("pub enum DemoError {"));
-        assert!(rust.contains("Vello(vello::Error),"));
-        assert!(rust.contains("Surface(wgpu::SurfaceError),"));
-        // std::error::Error + Display impls
-        assert!(rust.contains("impl std::fmt::Display for DemoError"));
-        assert!(rust.contains("impl std::error::Error for DemoError"));
-        // From impls for ? propagation
-        assert!(rust.contains("impl From<vello::Error> for DemoError"));
-        assert!(rust.contains("impl From<wgpu::SurfaceError> for DemoError"));
+        assert!(rust.contains("Vello(::vello::Error),"));
+        assert!(rust.contains("Surface(::vello::wgpu::SurfaceError),"));
+        // std::error::Error + Display impls (fully-qualified)
+        assert!(rust.contains("impl ::std::fmt::Display for DemoError"));
+        assert!(rust.contains("impl ::std::error::Error for DemoError"));
+        // From impls for ? propagation (fully-qualified)
+        assert!(rust.contains("impl ::std::convert::From<::vello::Error> for DemoError"));
+        assert!(rust.contains("impl ::std::convert::From<::vello::wgpu::SurfaceError> for DemoError"));
     }
 
     #[test]
@@ -1079,28 +1081,25 @@ mod tests {
         // The template must use Vello 0.6 canonical surface helpers
         // (RenderContext, RenderSurface, util re-exports) and the
         // render_to_texture + blitter.copy + present pattern — not a
-        // hand-rolled wgpu pipeline. Default aa (no manifest attribute)
-        // resolves to Area per R46.2.1.
+        // hand-rolled wgpu pipeline. R46.3.3: fully-qualified paths
+        // (no `use vello::*` items in the emitted file).
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello"/>"#;
         let rust = compile_str(xml, "x.pinion.xml").expect("compile");
-        assert!(rust.contains("use vello::util::{RenderContext, RenderSurface}"));
-        assert!(rust.contains("use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene}"));
-        // wgpu is consumed via vello's re-export so consumers don't need
-        // a direct wgpu dep beyond the workspace pin (deduped against
-        // vello's transitive — see workspace Cargo.toml comment).
-        assert!(rust.contains("use vello::wgpu;"));
-        // Vello 0.6 canonical pattern: render_to_texture + blitter copy
+        // No `use vello::*` items — R46.3.3 namespace contract.
+        assert!(!rust.contains("use vello::"), "R46.3.3: no `use vello::*` imports in emitted code");
+        // Vello 0.6 canonical pattern markers (fully-qualified)
+        assert!(rust.contains("::vello::util::RenderContext::new()"));
         assert!(rust.contains("render_to_texture("));
         assert!(rust.contains("self.surface.blitter.copy("));
         assert!(rust.contains("surface_texture.present();"));
-        // RenderContext::create_surface with AutoVsync (textbook default)
-        assert!(rust.contains("wgpu::PresentMode::AutoVsync"));
-        // R46.2.1: AaSupport struct literal matches AaConfig variant
-        // (default = Area). Both placeholders must substitute uniformly.
+        // RenderContext::create_surface with AutoVsync (textbook default, fully-qualified)
+        assert!(rust.contains("::vello::wgpu::PresentMode::AutoVsync"));
+        // R46.2.1 + R46.3.3: AaSupport struct literal matches AaConfig variant
+        // (default = Area). Both placeholders fully-qualified.
         assert!(rust.contains(
-            "antialiasing_support: AaSupport { area: true, msaa8: false, msaa16: false }"
+            "antialiasing_support: ::vello::AaSupport { area: true, msaa8: false, msaa16: false }"
         ));
-        assert!(rust.contains("antialiasing_method: AaConfig::Area"));
+        assert!(rust.contains("antialiasing_method: ::vello::AaConfig::Area"));
     }
 
     // ---- R46.2.1 §5.16: aa manifest attribute (Vello AA mode) ----
@@ -1201,16 +1200,16 @@ mod tests {
         // struct literal (only msaa16 = true) AND the matching
         // AaConfig::Msaa16 runtime method. The pair must agree —
         // Vello panics if RenderParams method is outside support set.
+        // R46.3.3 fully-qualified paths.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello" aa="msaa16"/>"#;
         let rust = compile_str(xml, "x.pinion.xml").expect("compile");
         assert!(rust.contains(
-            "antialiasing_support: AaSupport { area: false, msaa8: false, msaa16: true }"
+            "antialiasing_support: ::vello::AaSupport { area: false, msaa8: false, msaa16: true }"
         ));
-        assert!(rust.contains("antialiasing_method: AaConfig::Msaa16"));
-        // Area + Msaa8 markers must NOT appear in the AaConfig position
-        // (substring on `AaConfig::` ensures we don't pick up doc text).
-        assert!(!rust.contains("antialiasing_method: AaConfig::Area"));
-        assert!(!rust.contains("antialiasing_method: AaConfig::Msaa8"));
+        assert!(rust.contains("antialiasing_method: ::vello::AaConfig::Msaa16"));
+        // Area + Msaa8 markers must NOT appear in the AaConfig position.
+        assert!(!rust.contains("antialiasing_method: ::vello::AaConfig::Area"));
+        assert!(!rust.contains("antialiasing_method: ::vello::AaConfig::Msaa8"));
     }
 
     #[test]
@@ -1218,9 +1217,9 @@ mod tests {
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="X" backend="vello" aa="msaa8"/>"#;
         let rust = compile_str(xml, "x.pinion.xml").expect("compile");
         assert!(rust.contains(
-            "antialiasing_support: AaSupport { area: false, msaa8: true, msaa16: false }"
+            "antialiasing_support: ::vello::AaSupport { area: false, msaa8: true, msaa16: false }"
         ));
-        assert!(rust.contains("antialiasing_method: AaConfig::Msaa8"));
+        assert!(rust.contains("antialiasing_method: ::vello::AaConfig::Msaa8"));
     }
 
     #[test]

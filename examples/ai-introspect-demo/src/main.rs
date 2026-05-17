@@ -80,12 +80,11 @@ use pinion_runtime::paint_adapter;
 // pinion-forge codegen output. Defines `pub struct DemoRenderer { ... }`
 // + `pub enum DemoRendererError` + async `new<W: Into<wgpu::SurfaceTarget<'static>>>`
 // + sync `render(&vello::Scene, peniko::Color)` + sync `resize(u32, u32)`.
-// Wrapped in a module so the generated `use vello::*` imports stay
-// scoped to the codegen output — bindgen / prost convention.
-mod gen_renderer {
-    include!(concat!(env!("OUT_DIR"), "/app.rs"));
-}
-use gen_renderer::DemoRenderer;
+// R46.3.3 — the template uses fully-qualified `::vello::*` paths (no
+// `use` items), so include!() at module scope no longer needs the
+// previous `mod gen_renderer { ... }` namespace-isolation wrap.
+// Matches the forge-counter reactive-emit consumer pattern.
+include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 const WIN_W: u32 = 640;
 const WIN_H: u32 = 360;

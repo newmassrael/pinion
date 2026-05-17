@@ -3050,6 +3050,36 @@ router.pointer_down(&mut state_scene);
 
 
 
+### 427 — Round 46.3.3 — §5.16 §5.22 VELLO_TEMPLATE fully-qualified path refactor — emit template 의 use vello::* 전체 제거 → ::vello::* 인라인, reactive emit 의 ::pinion_core::reactive::* 패턴과 일관성 확보, R46.3 self-audit Concern #6 same-session 상환
+
+**Changes**:
+- pinion-forge/src/codegen.rs VELLO_TEMPLATE 재작성 — use vello::peniko::Color / use vello::util::{RenderContext, RenderSurface} / use vello::wgpu / use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene} 4 개 use 항목 전부 제거. 모든 Vello/wgpu 타입 경로가 ::vello::* / ::vello::wgpu::* / ::std::* 으로 절대 경로 인라인
+- aa_support_literal / aa_method_literal helper 의 반환 문자열도 ::vello::AaSupport / ::vello::AaConfig fully-qualified 로 교체. RenderParams field positions 일치 유지
+- ai-introspect-demo/src/main.rs mod gen_renderer { include!(...) } wrap 제거 → bare include!() (forge-counter reactive-emit consumer 패턴 복구). 더 이상 namespace 충돌 isolation 움별각 필요 없음
+- lib.rs renderer tests 6 개 업데이트 — emits_renderer_vello_struct_and_constructor_signature / emits_renderer_vello_error_enum_with_from_impls / emits_renderer_vello_uses_canonical_vello_api_surface / emits_renderer_vello_aa_msaa16_substitutes_struct_literal / emits_renderer_vello_aa_msaa8_substitutes_struct_literal. 이제 절대 경로 (::vello::*, ::std::*) marker 검증. canonical_api_surface 테스트 에 'no use vello::* items' 부정 assert 추가 (R46.3.3 namespace 계약 보장)
+- reactive emit (::pinion_core::reactive::Signal/Computed/Resource) 과 일관성 획득 — R38 이후 reactive template 이 채택한 fully-qualified 패턴 을 Vello template 도 따름. 추후 backend (Headless / Softbuffer / thin-RHI) 도 동일 귀약 적용 예정
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 633 pass (같은 수 유지, 6 테스트 업데이트 = identical 수 테스트 파일). 0 failed
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / pinion-forge 0 / ai-introspect-demo 0
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+- ai-introspect-demo cargo check 통과 — bare include!() 에서 emit 결과 자동 경로 충돌 없이 컴파일. main.rs 의 use pinion_core::style::Color (typed) 와 emit 의 ::vello::peniko::Color (절대경로) 제대로 분리
+
+
+
+**Impact**: §5.16, §5.22
+
+
+**Carry forward**:
+- R46.3.4: winit suspend/resume RenderState enum — ai-introspect-demo mobile/Wayland forward-compat
+- R46.3.5: doc reflow + clippy allow 제거
+- R47+ Headless backend template (§5.12 screenshot RPC) 추가 시 동일 fully-qualified 컨벤션 적용 필수 — R46.3.3 이 명시적 표준 설정
+- future codegen template 의 namespace 계약 = 모든 emit 는 fully-qualified path + no use items. consumer 는 module wrap 없이 include!() 가능. forge-counter / ai-introspect-demo / hello-button (R46.5+) 머스트 바 consume convention
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
