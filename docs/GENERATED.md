@@ -2290,6 +2290,15 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-font/src/sfnt.rs:OffsetTable
 - crates/pinion-text-font/src/sfnt.rs:TableRecord
 - crates/pinion-text-font/src/error.rs:ParseError
+- crates/pinion-text-font/src/font.rs:Font
+- crates/pinion-text-font/src/reader.rs:Reader
+- crates/pinion-text-font/src/tables/head.rs:Head
+- crates/pinion-text-font/src/tables/hhea.rs:Hhea
+- crates/pinion-text-font/src/tables/hmtx.rs:Hmtx
+- crates/pinion-text-font/src/tables/maxp.rs:Maxp
+- crates/pinion-text-font/src/tables/os2.rs:Os2
+- crates/pinion-text-font/src/tables/post.rs:Post
+- crates/pinion-text-font/src/error.rs:FieldValue
 
 
 
@@ -6144,6 +6153,47 @@ router.pointer_down(&mut state_scene);
 - R50.1.5 name table parser (family / style / postscript name)
 - R50.1.X 후속: WOFF2 / CFF / CFF2 / variable axis / color tables / compound glyph
 - R50.2+ sub-crate 분할 진행: pinion-text-{unicode, shape, layout, raster}
+
+
+
+### Round 454 — R50.1.2 §5.37.1 head/OS2/hhea/hmtx/maxp/post + Font struct — Round 454 — R50.1.2 §5.37.1 head/OS2/hhea/hmtx/maxp/post 6 metadata table parsers + Font struct 통합. textbook self-audit 4점 정정: Reader fail-clean (Result 반환, OOB panic 제거) + FieldValue sign-preserving enum + spec "must" 일관 strict reject + maxp.num_glyphs 검증. 57 tests pass (51 unit + 6 integration), 0 clippy warnings on pinion-text-font.
+
+**Changes**:
+- tables/{head, hhea, hmtx, maxp, os2, post}.rs — 6 metadata table parsers (Microsoft OpenType 1.9.x spec)
+- Font struct (font.rs) — 6 table 통합 + accessor (units_per_em, ascender, descender, glyph_advance_width, weight_class)
+- Reader (reader.rs) — tag-aware fail-clean Result 반환, AI-first introspect 보장 (panic 제거)
+- ParseError 4 신규 variant: TableNotFound / TableTooShort / InvalidTableField / UnsupportedTableVersion
+- FieldValue enum (Unsigned/Signed) — sign-preserving error payload, `as u64` cast 안티패턴 회피
+- find_table(bytes, records, tag) helper (sfnt.rs)
+- OS/2 multi-version (v0/v1/v2/v3/v4/v5) — v1/v2/v5 extras Option 으로 분리
+- post v1.0/v2.0/v3.0 accept, v2.5/v4.0/unknown UnsupportedTableVersion reject
+- spec strict: head.magic + units_per_em range + hhea.reserved[0..4] + metric_data_format + maxp.num_glyphs reject
+- tests/fixtures.rs — Noto Sans + Nanum Gothic Font::from_bytes 광범위 검증
+
+
+
+**Verification**:
+- cargo test --package pinion-text-font: 57 pass (51 unit + 6 integration)
+- cargo test --workspace --features pinion-runtime/vello: 677 → 721 (+44)
+- cargo clippy --package pinion-text-font: 0 warnings
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: baseline 6 lib warning 정합 (pinion-core 5 + pinion-runtime 1)
+- Noto Sans Regular Font::from_bytes: units_per_em=1000, weight=400, proportional
+- Nanum Gothic Regular Font::from_bytes: glyph count > 10,000 (한글 + 한자)
+- hhea.number_of_h_metrics ↔ hmtx.long_metrics.len() 일치 + maxp.num_glyphs ↔ hmtx.num_glyphs() 일치 검증
+- textbook self-audit 4점 정정 완료 (Reader / FieldValue / spec strict / maxp validation)
+
+
+
+**Impact**: §5.37.1, §5.37
+
+
+**Carry forward**:
+- R50.1.3 cmap parser (format 4 BMP + format 12 UCS-4 priority) — codepoint → glyph index
+- R50.1.4 glyf + loca parser — simple TrueType outlines, compound glyph postpone
+- R50.1.5 name table parser — family / style / postscript name
+- R50.1.X 후속: WOFF2 / CFF / variable axis / color tables / compound glyph
+- R50.X RPC channel — pinion-rpc 에 font/parse, font/metrics, font/glyph_metrics method 노출 (AI-first 완성)
+- R50.2+ sub-crate 분할: pinion-text-{unicode, shape, layout, raster}
 
 
 

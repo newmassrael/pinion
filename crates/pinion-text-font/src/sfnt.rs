@@ -222,6 +222,28 @@ fn verify_search_params(
     }
 }
 
+/// `records` 안에서 `tag` 매칭하는 `TableRecord` 의 byte slice 를 반환.
+///
+/// `parse_sfnt` 가 이미 `bytes` 범위를 검증했음을 전제 — offset+length 가
+/// `bytes` 안에 있음 보장. 매치하는 tag 없으면 [`ParseError::TableNotFound`].
+///
+/// # Errors
+///
+/// * [`ParseError::TableNotFound`] — `tag` 매칭하는 record 없음.
+pub fn find_table<'a>(
+    bytes: &'a [u8],
+    records: &[TableRecord],
+    tag: [u8; 4],
+) -> Result<&'a [u8], ParseError> {
+    let record = records
+        .iter()
+        .find(|r| r.tag == tag)
+        .ok_or(ParseError::TableNotFound { tag })?;
+    let start = record.offset as usize;
+    let end = start + record.length as usize;
+    Ok(&bytes[start..end])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +383,22 @@ mod tests {
             err,
             ParseError::InconsistentSearchParams { num_tables: 1, .. }
         ));
+    }
+
+    #[test]
+    fn find_table_returns_matching_slice() {
+        let bytes = build_minimal_sfnt();
+        let (_, records) = parse_sfnt(&bytes).expect("valid sfnt");
+        let head_data = find_table(&bytes, &records, *b"head").expect("table present");
+        assert_eq!(head_data, &[0x00, 0x01, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn find_table_rejects_missing_tag() {
+        let bytes = build_minimal_sfnt();
+        let (_, records) = parse_sfnt(&bytes).expect("valid sfnt");
+        let err = find_table(&bytes, &records, *b"ZZZZ").unwrap_err();
+        assert_eq!(err, ParseError::TableNotFound { tag: *b"ZZZZ" });
     }
 
     #[test]

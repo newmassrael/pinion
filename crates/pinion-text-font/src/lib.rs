@@ -16,7 +16,11 @@
 //! parser sub-scope → R50.1.1 sfnt foundation (this).
 
 mod error;
+mod font;
+mod reader;
 mod sfnt;
+pub mod tables;
 
-pub use error::ParseError;
-pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, parse_sfnt};
+pub use error::{FieldValue, ParseError};
+pub use font::Font;
+pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};

@@ -1,13 +1,14 @@
-//! R50.1.1 §5.37.1 — real font fixture integration tests.
+//! R50.1.1+R50.1.2 §5.37.1 — real font fixture integration tests.
 //!
 //! Latin (Noto Sans Regular, OFL 1.1) + 한글 (Nanum Gothic Regular, OFL 1.1).
-//! sfnt parser 가 production-grade 두 family 모두 정확히 parse 함을 확인.
+//! sfnt + 6 metadata tables (head/maxp/hhea/hmtx/OS2/post) production-grade
+//! 두 family 모두 정확히 parse 함을 확인.
 
-use pinion_text_font::{SfntFlavor, parse_sfnt};
+use pinion_text_font::{Font, SfntFlavor, parse_sfnt};
 use std::fs;
 
 #[test]
-fn parse_noto_sans_regular() {
+fn parse_noto_sans_regular_sfnt() {
     let bytes = fs::read("tests/fonts/NotoSans-Regular.ttf").expect("fixture present");
     let (header, records) = parse_sfnt(&bytes).expect("valid sfnt");
 
@@ -27,7 +28,7 @@ fn parse_noto_sans_regular() {
 }
 
 #[test]
-fn parse_nanum_gothic_regular() {
+fn parse_nanum_gothic_regular_sfnt() {
     let bytes = fs::read("tests/fonts/NanumGothic-Regular.ttf").expect("fixture present");
     let (header, records) = parse_sfnt(&bytes).expect("valid sfnt");
 
@@ -62,5 +63,77 @@ fn both_fixtures_have_common_required_tables() {
         for tag in required {
             assert!(tags.contains(*tag), "{path}: required table {tag:?} missing");
         }
+    }
+}
+
+#[test]
+fn parse_noto_sans_font_full() {
+    let bytes = fs::read("tests/fonts/NotoSans-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    // Noto Sans Regular has units_per_em = 1000 (Google default for Noto family).
+    assert_eq!(font.units_per_em(), 1000);
+
+    // glyph count > 0 + within u16 range.
+    assert!(font.num_glyphs() > 0);
+
+    // ascender > 0, descender < 0 (typographic convention).
+    assert!(font.ascender() > 0);
+    assert!(font.descender() < 0);
+
+    // glyph 0 (.notdef) — every TrueType font 의 첫 glyph. advance width 존재.
+    assert!(font.glyph_advance_width(0).is_some());
+
+    // out-of-range glyph — None.
+    assert!(font.glyph_advance_width(font.num_glyphs()).is_none());
+
+    // weight class — Noto Sans Regular = 400.
+    assert_eq!(font.weight_class(), 400);
+
+    // Noto Sans 는 proportional (not monospace).
+    assert!(!font.is_monospace());
+}
+
+#[test]
+fn parse_nanum_gothic_font_full() {
+    let bytes = fs::read("tests/fonts/NanumGothic-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    // Nanum Gothic units_per_em (Naver: 1000 default).
+    assert_eq!(font.units_per_em(), 1000);
+
+    // 한글 family — glyph count 가 Latin family 보다 훨씬 많음 (한자 + 한글 음절 다수).
+    assert!(font.num_glyphs() > 10_000);
+
+    assert!(font.ascender() > 0);
+    assert!(font.descender() < 0);
+
+    // 한글 음절 '가' (U+AC00) 의 glyph index 는 cmap 통해서 (R50.1.3) — 다만
+    // glyph_id=1 (.notdef 다음 glyph) 의 advance 는 존재.
+    assert!(font.glyph_advance_width(1).is_some());
+
+    // weight class — Nanum Gothic Regular = 400.
+    assert_eq!(font.weight_class(), 400);
+}
+
+#[test]
+fn font_metadata_consistency() {
+    // hhea.number_of_h_metrics 가 hmtx 의 long_metrics.len() 와 일치 검증.
+    for path in [
+        "tests/fonts/NotoSans-Regular.ttf",
+        "tests/fonts/NanumGothic-Regular.ttf",
+    ] {
+        let bytes = fs::read(path).expect("fixture present");
+        let font = Font::from_bytes(bytes).expect("valid Font");
+        assert_eq!(
+            font.hmtx.long_metrics.len(),
+            font.hhea.number_of_h_metrics as usize,
+            "{path}: hmtx.long_metrics 와 hhea.number_of_h_metrics 불일치",
+        );
+        assert_eq!(
+            font.hmtx.num_glyphs(),
+            font.maxp.num_glyphs as usize,
+            "{path}: hmtx total glyph count 와 maxp.num_glyphs 불일치",
+        );
     }
 }
