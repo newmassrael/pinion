@@ -3080,6 +3080,37 @@ router.pointer_down(&mut state_scene);
 
 
 
+### 428 — Round 46.3.4 — §5.16 ai-introspect-demo winit suspend/resume RenderState enum — mobile/Wayland forward-compat: 두 Option field (window / renderer) 의 implicit-sync 패턴을 explicit RenderState { Active, Suspended } enum 으로 승격, R46.3 self-audit Concern #5 same-session 상환
+
+**Changes**:
+- examples/ai-introspect-demo/src/main.rs: 신규 enum RenderState { Active { window: Arc<Window>, renderer: DemoRenderer }, Suspended(Option<Arc<Window>>) } 도입. Linebender Vello 0.6 canonical pattern (Xilem reference impl) 그대로 따름
+- App struct: window: Option<Arc<Window>> + renderer: Option<DemoRenderer> 두 field 제거 → state: RenderState 단일 field. App::new() 가 Suspended(None) 으로 시작. 두 Option 의 implicit 상관관계 제거 — typed ADT 가 illegal states unrepresentable
+- resumed() 해들러: 이메 Active 는 no-op. Suspended(cached) 에서 cached window 재사용 (있으면) 또는 create_window. DemoRenderer::new 호출 실패 시 cached window 는 보존 (다음 resumed 재시도 가능) — std::mem::replace 로 안전한 state 전환
+- suspended() 해들러 신규 — Active 에서 window 만 따서 Suspended(Some(window)) 으로 전환. renderer 는 드롭 (wgpu Surface 해제, OS 가 reclaim 가능). 데스크탑 platform 은 suspended 미호출 (no-op forward-compat slot)
+- request_redraw() / render() / Resized handler 가 RenderState pattern matching 으로 재작성. Active 에서만 renderer 접근, 나머지 모두 no-op. clippy::single_match_else 해소 을 위해 if let 패턴 사용 (조기 return 있는 None branch)
+- App.cursor / pending_escape_exit / scene / revision / ledger / vello_scene 등 lifecycle-무관 필드는 이동 안 함 — 상태와 있는 window+renderer 만 state 안으로 캡쇄
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 633 pass (R46.3.3 이전과 동일, demo binary unit test 추가 없음)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / pinion-forge 0 / ai-introspect-demo 0 (신규 single_match_else warning 즉시 정정)
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+- Desktop 만 가능한 smoke test — cargo check 통과, RenderState enum dispatch 경로 컴파일 clean. Mobile/Wayland 테스트는 R47+ Android target 적곰 이후 가능
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- R46.3.5: ai-introspect-demo doc reflow + clippy allow 제거 — 마지막 R46.3 self-audit concern (#7) 상환
+- R47+ mobile/Android target 검증 — winit Android 통합 시 R46.3.4 의 RenderState 패턴 실증. 현재 데스크탑만 compile clean, 실제 suspend 이벤트 테스트 필요
+- R47+ Wayland-compositor focus change 테스트 — GNOME/Sway 에서 app focus loss 시 winit 의 suspended/resumed 이벤트 fire 패턴 검증
+- Renderer drop 의 GPU resource cleanup 타이밍 — wgpu Surface drop 은 RAII 로 즉시, 다음 resume 가 fresh device handle 획득. 현재 구현 의 unwrap path 제한적 (e.g. DemoRenderer::new 실패 시 cached window 도 drop)— textbook 극도는 재시도 로직 (R47+ exponential backoff 등)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

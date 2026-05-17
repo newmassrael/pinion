@@ -165,6 +165,30 @@ fn read_count(scene: &Scene) -> i64 {
     }
 }
 
+/// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.6
+/// canonical `RenderState` enum (Linebender examples / Xilem) so the
+/// demo survives the Android / Wayland suspend → resume cycle where
+/// the wgpu surface backing must be dropped and re-created. Desktop
+/// targets fire `resumed` once at boot and never `suspended`; mobile
+/// targets fire it on every focus change.
+///
+/// `Suspended(Some(window))` caches the winit `Window` across the
+/// drop-and-recreate cycle so the user's window position / OS handle
+/// survives, while the GPU-side `DemoRenderer` (which transitively
+/// owns a `wgpu::Surface`) is released for the OS to reclaim.
+enum RenderState {
+    /// Window is on-screen + renderer is alive. The application paints
+    /// here.
+    Active {
+        window: Arc<Window>,
+        renderer: DemoRenderer,
+    },
+    /// Window is not currently visible. The `Option` carries the
+    /// cached winit window when the previous `Active` state torn down;
+    /// `None` is the initial state before `resumed` fires.
+    Suspended(Option<Arc<Window>>),
+}
+
 struct App {
     /// **The** scene. Single canonical tree holding visible widgets,
     /// the embedded `counter` External, and any active overlay
@@ -178,13 +202,11 @@ struct App {
     locate_highlights: Vec<String>,
     cursor: (u32, u32),
     pending_escape_exit: bool,
-    /// Window handle. `Arc` (not `Rc`) because Vello hands it to wgpu
-    /// for surface acquisition, and wgpu's `SurfaceTarget<'static>`
-    /// requires `Send + Sync`.
-    window: Option<Arc<Window>>,
-    /// pinion-forge-generated Vello wrapper. `None` until [`Self::resumed`]
-    /// boots it via `pollster::block_on(DemoRenderer::new(...))`.
-    renderer: Option<DemoRenderer>,
+    /// Suspend / resume lifecycle (R46.3.4). Replaces the previous
+    /// `window: Option<Arc<Window>>` + `renderer: Option<DemoRenderer>`
+    /// pair — keeping the two `Option`s in sync was error-prone and
+    /// missed the mobile-suspend forward-compat requirement.
+    state: RenderState,
     /// Reusable Vello scene buffer — reset (`scene.reset()`) at the
     /// start of each frame rather than reallocated. Vello's Scene API
     /// expects this pattern (see Linebender Vello examples / Xilem).
@@ -201,8 +223,7 @@ impl App {
             locate_highlights: Vec::new(),
             cursor: (0, 0),
             pending_escape_exit: false,
-            window: None,
-            renderer: None,
+            state: RenderState::Suspended(None),
             vello_scene: VelloScene::new(),
         }
     }
@@ -408,8 +429,8 @@ impl App {
     }
 
     fn request_redraw(&self) {
-        if let Some(w) = &self.window {
-            w.request_redraw();
+        if let RenderState::Active { window, .. } = &self.state {
+            window.request_redraw();
         }
     }
 
@@ -425,8 +446,9 @@ impl App {
     /// `pinion_runtime::paint_adapter`. The closure passed to
     /// [`paint_adapter::to_vello`] supplies the only app-specific
     /// piece: the palette-indexed fill for the `info_panel` tag.
+    /// R46.3.4 — render is a no-op while the app is suspended.
     fn render(&mut self) {
-        let Some(renderer) = self.renderer.as_mut() else { return };
+        let RenderState::Active { renderer, .. } = &mut self.state else { return };
         self.vello_scene.reset();
         let count = read_count(&self.scene);
         let base = paint_adapter::root_background(&self.scene);
@@ -448,19 +470,36 @@ impl App {
 }
 
 impl ApplicationHandler for App {
+    /// R46.3.4 — winit may fire `resumed` more than once on platforms
+    /// that suspend (Android, Wayland-compositor focus changes). The
+    /// Vello canonical pattern caches the previous `Window` across the
+    /// drop-and-recreate cycle so the OS-side handle survives, while
+    /// the GPU `DemoRenderer` is freshly constructed each time.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        // Already on-screen — winit fired resumed twice in a row, no-op.
+        if matches!(self.state, RenderState::Active { .. }) {
             return;
         }
-        let attrs = Window::default_attributes()
-            .with_title("pinion ai-introspect-demo (R46.3 §5.16 Vello)")
-            .with_inner_size(LogicalSize::new(f64::from(WIN_W), f64::from(WIN_H)));
-        let window = match event_loop.create_window(attrs) {
-            Ok(w) => Arc::new(w),
-            Err(e) => {
-                eprintln!("ai-introspect-demo: window create failed: {e}");
-                event_loop.exit();
-                return;
+        // Take the cached window (if any) without dropping the
+        // surrounding state — `replace` keeps `self.state` valid
+        // even on the create-failed early return below.
+        let cached = match std::mem::replace(&mut self.state, RenderState::Suspended(None)) {
+            RenderState::Suspended(cached) => cached,
+            RenderState::Active { .. } => unreachable!("matched as non-Active above"),
+        };
+        let window = if let Some(w) = cached {
+            w
+        } else {
+            let attrs = Window::default_attributes()
+                .with_title("pinion ai-introspect-demo (R46.3.4 §5.16 Vello)")
+                .with_inner_size(LogicalSize::new(f64::from(WIN_W), f64::from(WIN_H)));
+            match event_loop.create_window(attrs) {
+                Ok(w) => Arc::new(w),
+                Err(e) => {
+                    eprintln!("ai-introspect-demo: window create failed: {e}");
+                    event_loop.exit();
+                    return;
+                }
             }
         };
         let size = window.inner_size();
@@ -473,20 +512,33 @@ impl ApplicationHandler for App {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("ai-introspect-demo: DemoRenderer::new: {e}");
+                // Keep the window cached so a subsequent resumed can
+                // retry — only the renderer creation failed.
+                self.state = RenderState::Suspended(Some(window));
                 event_loop.exit();
                 return;
             }
         };
-        self.window = Some(window);
-        self.renderer = Some(renderer);
+        self.state = RenderState::Active { window, renderer };
         println!(
-            "R46.3 §5.16 Vello dogfood — §5.32 locate + §5.33 overlay + §5.34 lifecycle"
+            "R46.3.4 §5.16 Vello dogfood — §5.32 locate + §5.33 overlay + §5.34 lifecycle"
         );
         println!("  right-click: locate + red highlight");
         println!("  left-click / Esc: clear highlights (Esc×2 exits)");
         println!("  R: print scene tree");
         println!("  P: propose count change (yellow outline marks pending)");
         println!("  A: apply preview, C: cancel preview, L: list previews");
+    }
+
+    /// R46.3.4 — release the GPU-side renderer on suspend so the OS
+    /// can reclaim the wgpu surface. The winit window itself is cached
+    /// for the next `resumed` so its handle / OS state survives.
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        if let RenderState::Active { window, .. } =
+            std::mem::replace(&mut self.state, RenderState::Suspended(None))
+        {
+            self.state = RenderState::Suspended(Some(window));
+        }
     }
 
     fn window_event(
@@ -499,8 +551,8 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => self.render(),
             WindowEvent::Resized(size) => {
-                if let Some(r) = self.renderer.as_mut() {
-                    r.resize(size.width.max(1), size.height.max(1));
+                if let RenderState::Active { renderer, .. } = &mut self.state {
+                    renderer.resize(size.width.max(1), size.height.max(1));
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
