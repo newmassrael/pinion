@@ -315,9 +315,34 @@ impl App {
     /// Dispatch one JSON-RPC frame against the LIVE state scene.
     /// `scene/invoke /external/send PointerEnter` (and friends) now
     /// drive the SCXML the same way a winit click would.
+    ///
+    /// R47.7.2 §5.12 — `scene/layout` requests reach the framework via
+    /// `DispatchContext::with_paint_producer`: the closure captures
+    /// `cached_state` (`Copy`) and `text_cache` (`&mut`), runs `view` +
+    /// `compute_layout` for the hypothetical viewport, and returns the
+    /// freshly-measured paint scene. The dispatch block scope releases
+    /// the split borrows before `self.refresh_state()` runs.
     fn dispatch_rpc(&mut self, request: &str) {
-        let mut ctx = DispatchContext::new(&mut self.scene, &self.previews, &self.revision);
-        if let Some(resp) = dispatch(&mut ctx, request) {
+        let resp = {
+            // Disjoint-field split mutable borrows so the producer
+            // closure can capture `cached_state` + `text_cache` while
+            // the dispatcher still gets `scene` + `previews` + `revision`.
+            let scene_ptr = &mut self.scene;
+            let previews = &self.previews;
+            let revision = &self.revision;
+            let cached_state = self.cached_state;
+            let text_cache_ptr = &mut self.text_cache;
+            let mut produce = |w: u32, h: u32| -> Scene {
+                let frame = Frame::new();
+                let mut paint = view(cached_state, &frame);
+                compute_layout(&mut paint, text_cache_ptr, w, h);
+                paint
+            };
+            let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
+                .with_paint_producer(&mut produce);
+            dispatch(&mut ctx, request)
+        };
+        if let Some(resp) = resp {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {
                 // stdout closed (downstream consumer gone) — silently

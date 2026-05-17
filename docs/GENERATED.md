@@ -5684,6 +5684,38 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 444 — §5.12 R47.7.2 hello-button paint_producer closure wire — Round 444 — §5.12 R47.7.2 hello-button dispatch_rpc 에 paint_producer closure 등록. cached_state (Copy) + text_cache (&mut) capture, view + compute_layout 호출 후 paint scene 반환. split-mutable-borrow + block scope 으로 self method 호출 가능.
+
+**Changes**:
+- examples/hello-button/src/main.rs: dispatch_rpc 의 ctx 구성 변경 — disjoint-field split borrows (scene/previews/revision/cached_state/text_cache) + paint_producer closure
+- closure: view(cached_state, &Frame::new()) + compute_layout(&mut paint, text_cache, w, h) → paint Scene 반환
+- DispatchContext::with_paint_producer builder 적용 — framework 측 RPC handler 가 closure 호출 가능
+- block scope (let resp = { ... };) 로 borrow lifetime 분리 — self.refresh_state() 호출 가능
+- clippy doc_lazy_continuation same-commit fix (doc 4 줄 reflow)
+
+
+
+**Verification**:
+- cargo test --features pinion-runtime/vello = 659 pass (R47.7.1 동일)
+- cargo clippy = baseline 보존 (pinion-core 5 + pinion-runtime 1, hello-button 0 신규 warning)
+- hello-button 3s smoke = panic 없음, button SCXML 자연 시작
+
+
+
+**Impact**: §5.12
+
+
+**Carry forward**:
+- R47.7.3 AI 자동 진단 — cargo run -p hello-button background + JSON-RPC viewport sweep + wrap 변동 reproduce → fix 결정
+- R47.7.x framework primitive cleanup — application view-fn 등록 에 trait Application surface (§5.18 정리)
+- R47.7.x tag-keyed path syntax (현재 index-based)
+- R47.7.x path filter 구현
+- R47.x parley Ellipsis truncation pass
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity
+- R46 carry / claudedocs / R297
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
