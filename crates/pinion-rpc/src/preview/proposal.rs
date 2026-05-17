@@ -89,8 +89,8 @@ pub trait Proposal: std::fmt::Debug + Send + Sync + 'static {
     /// Called once by [`crate::preview::apply_preview`] after the
     /// [`PreviewLedger`](super::PreviewLedger) has extracted this
     /// entry (OCC base-revision already matched). Variants mutate
-    /// `ctx.scene` (SetSignal / SetStyle / ReplaceView) or push into
-    /// `ctx.emitted_intents` (DispatchIntent) — or both, for hybrid
+    /// `ctx.scene` (`SetSignal` / `SetStyle` / `ReplaceView`) or push into
+    /// `ctx.emitted_intents` (`DispatchIntent`) — or both, for hybrid
     /// variants future R40.x sub-slices may introduce.
     ///
     /// # Errors

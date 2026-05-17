@@ -1,12 +1,12 @@
 //! RPC path resolution with single-window short-circuit (§5.18, R16 slice 3).
 //!
 //! Schema (§5.18 outputs):
-//!   /window[<id>]/<scene_path>
+//!   `/window[<id>]/<scene_path>`
 //! where `<id>` matches an SCE-emit `AppState` variant name. Absent prefix
 //! resolves to the first declared window via `App::initial_window` — the
 //! zero-parser-branch short-circuit ratified for v1 single-window compat.
 //!
-//! Multi-window perfect-hash dispatch on the WindowId enum lands when
+//! Multi-window perfect-hash dispatch on the `WindowId` enum lands when
 //! `<parallel>` root brings N states (later R16 slice); for now reverse
 //! lookup goes through `App::window_from_name` (linear under single-window).
 
@@ -81,6 +81,15 @@ pub fn split_at_external(scene_path: &str) -> Option<(Vec<String>, &str)> {
 /// the input passed through verbatim as `scene_path` — no string scan, no
 /// allocation. Explicit prefix triggers reverse lookup via
 /// [`App::window_from_name`].
+///
+/// # Errors
+///
+/// See [`PathError`]. Specifically:
+/// * [`PathError::MalformedPrefix`] — input started with `/window[` but had
+///   no closing `]`.
+/// * [`PathError::EmptyWindowId`] — window id between `[` and `]` was empty.
+/// * [`PathError::UnknownWindow`] — id parsed cleanly but did not match any
+///   SCE-declared window.
 pub fn resolve(input: &str) -> Result<ResolvedPath<'_>, PathError> {
     if let Some(rest) = input.strip_prefix("/window[") {
         let close = rest.find(']').ok_or(PathError::MalformedPrefix)?;

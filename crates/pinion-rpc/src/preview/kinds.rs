@@ -61,7 +61,7 @@ pub enum TypedProposal {
     /// Unlike [`Self::SetSignal`], this variant does **not** mutate
     /// the scene tree. `affected_paths` still returns `[target_path]`
     /// so overlay-highlight / dirty-region consumers see the same
-    /// anchor a SetSignal at the same path would emit.
+    /// anchor a `SetSignal` at the same path would emit.
     DispatchIntent {
         /// Scene anchor the AI agent is reasoning about. Surfaced in
         /// `list_previews` and used for overlay highlighting; does

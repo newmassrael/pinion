@@ -3143,6 +3143,39 @@ router.pointer_down(&mut state_scene);
 
 
 
+### 430 — R46.4 — §5.18 §5.20 §5.34 pinion-rpc clippy 13→0 청산: doc backtick 8 + missing_errors_doc 1 + cast_possible_truncation 2 + needless_pass_by_value 2 (finite-bounded f64→f32 narrowing 명시화 + apply_outcome/invoke_error by-reference signature 정통화)
+
+**Changes**:
+- path.rs (§5.18 RPC 경로 해석): 모듈 docstring 백틱 추가 — `/window[<id>]/<scene_path>` 메타구문 백틱 wrap + `WindowId` 타입 백틱 (clippy::doc_markdown 2건); resolve() 함수 공개 doc 에 `# Errors` 섹션 추가 — PathError 3 variants (MalformedPrefix / EmptyWindowId / UnknownWindow) 명시 (clippy::missing_errors_doc 1건)
+- dispatch.rs (§5.34 preview/intent pipeline + parse_box_style §5.20): parse_box_style doc 의 `BoxStyle` 백틱 (1건); apply_outcome_to_json(outcome: ApplyOutcome) → (outcome: &ApplyOutcome) signature 변경 + caller (handle_scene_apply_preview) 같이 `&outcome` 으로 변경; invoke_error_to_rpc(err: InvokeError) → (err: &InvokeError) signature + caller `&err` 변경 (clippy::needless_pass_by_value 2건). 두 함수 모두 match→variant 이름 추출만 — owned 가 불필요, by-reference 가 textbook canonical
+- dispatch.rs:parse_path_command 의 read_point closure 재구성 — 단일 read_coord(axis) 헬퍼로 x/y 공통 추출 + JSON f64 의 finite check (NaN/±∞ 거절 → invalid_params 에러), 그 후 `as f32` narrowing 에 `#[allow(clippy::cast_possible_truncation, reason="PathPoint stores f32 per §5.3; finite-bounded narrowing is the wire→scene contract")]` 명시 (clippy::cast_possible_truncation 2건). 단순 `as` 캐스트의 잠재 NaN/∞ 입력 UB-ish 행동을 invariant precondition 으로 승격
+- preview/kinds.rs:DispatchIntent doc 의 `SetSignal` 타입 백틱 (1건)
+- preview/proposal.rs:Proposal::apply doc 의 `SetSignal` / `SetStyle` / `ReplaceView` / `DispatchIntent` 4 타입 이름 백틱 (4건)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 633 pass / 0 fail (baseline 유지 — finite check 추가가 기존 테스트 invariant 보존)
+- cargo clippy -p pinion-rpc --all-targets --features pinion-runtime/vello = pinion-rpc 13 → 0. workspace baseline 잔존: pinion-core 5 / pinion-runtime 1 / pinion-forge 0 / ai-introspect-demo 0 / hello-button 0 / forge-counter 0
+- clippy::cast_possible_truncation allow attribute 에 `reason = ...` 명시 (Rust 1.81+ stable lint attribute syntax) — 미래 reader 가 narrowing 의 invariant 정당화를 grep 으로 즉시 발견 가능
+- finite check 신규 가드: 기존 unit test suite 가 NaN/±∞ 입력을 cover 하지 않음 — 다음 R46.x clippy round 의 sub-slice 로 test 케이스 추가 carry
+
+
+
+**Impact**: §5.18, §5.20, §5.34
+
+
+**Carry forward**:
+- R46.5 hello-button softbuffer → Vello 교체 — paint_adapter 두 번째 consumer 정착. R46.3.1 의 framework primitive boundary 가 multi-app 검증 완료되어야 R46.4 carry (paint_adapter generality) 청산. softbuffer dep workspace 전체에서 제거 가능
+- R46.6 RendererOptions surface policy spec round — R46.2 Concern 1 carry 청산. present_mode / use_cpu / num_init_threads / pipeline_cache 의 build-time (manifest attr) vs runtime (builder method) 분류 결정. §2#4 mode toggle invariant 와 정합
+- R47 Headless renderer template — §5.12 screenshot RPC 활성화. RendererBackend::Headless variant + emit_renderer_headless template + screenshot RPC schema 정합
+- R47 cosmic-text glyph cache + Scene::Text 렌더 path — backend-orthogonal cross-cutting concern. paint_adapter 의 Text arm 활성화 + cosmic-text font fallback / shaping + GPU glyph texture cache evict 정책
+- parse_path_command finite-check NaN/±∞ unit test 추가 — R46.4 의 외곽 invariant 검증 (다음 sub-slice). 단발 test 케이스 — invalid_params 에러 메시지 / 모든 axis (x, y) / 모든 op (MoveTo / LineTo / CurveTo c1/c2/end) 매트릭스
+- pinion-core 5 + pinion-runtime 1 clippy 경고 — items_after_statements / doc_markdown / must_use_candidate / missing_panics_doc. 별도 sub-slice (R46.4.x) 로 case-by-case. textbook: must_use_candidate 는 #[must_use] 명시 / items_after_statements 는 함수 추출 / missing_panics_doc 는 invariant doc 보강
+- R297 false-positive hint mnemosyne round, pinion atomic 무관 — 9-commit carry 무시 가능
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -570,7 +570,7 @@ fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Valu
 
     match invoke(scene, path, args) {
         Ok(value) => Ok(introspect_value_to_json(value)),
-        Err(err) => Err(invoke_error_to_rpc(err)),
+        Err(err) => Err(invoke_error_to_rpc(&err)),
     }
 }
 
@@ -1068,17 +1068,28 @@ fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcE
         let obj = v.get(field).ok_or_else(|| {
             invalid_params(&format!("params.replacement.commands[].{field} missing"))
         })?;
-        let x = obj.get("x").and_then(Value::as_f64).ok_or_else(|| {
-            invalid_params(&format!(
-                "params.replacement.commands[].{field}.x missing or not numeric"
-            ))
-        })?;
-        let y = obj.get("y").and_then(Value::as_f64).ok_or_else(|| {
-            invalid_params(&format!(
-                "params.replacement.commands[].{field}.y missing or not numeric"
-            ))
-        })?;
-        Ok(PathPoint::new(x as f32, y as f32))
+        let read_coord = |axis: &str| -> Result<f32, RpcError> {
+            let n = obj.get(axis).and_then(Value::as_f64).ok_or_else(|| {
+                invalid_params(&format!(
+                    "params.replacement.commands[].{field}.{axis} missing or not numeric"
+                ))
+            })?;
+            // `PathPoint` is f32 by §5.3 scene contract; the wire ships
+            // f64 for JSON portability. NaN/±∞ are rejected upfront so
+            // the f32 narrowing has explicit bounded-finite preconditions
+            // rather than relying on `as` truncation semantics.
+            if !n.is_finite() {
+                return Err(invalid_params(&format!(
+                    "params.replacement.commands[].{field}.{axis} must be finite"
+                )));
+            }
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "PathPoint stores f32 per §5.3; finite-bounded narrowing is the wire→scene contract."
+            )]
+            Ok(n as f32)
+        };
+        Ok(PathPoint::new(read_coord("x")?, read_coord("y")?))
     };
     match op {
         "MoveTo" => Ok(PathCommand::MoveTo(read_point("point")?)),
@@ -1125,7 +1136,7 @@ fn parse_rect(v: Option<&Value>) -> Result<pinion_core::scene::Rect, RpcError> {
 /// Required: `fill` (u32 ARGB). Optional: `border_color` (u32 ARGB),
 /// `border_width` (u32), `corner_radius` (u32). Missing optionals
 /// default per [`BoxStyle::filled`]. Unknown keys are ignored so the
-/// wire stays forward-compatible with future BoxStyle additions.
+/// wire stays forward-compatible with future `BoxStyle` additions.
 fn parse_box_style(style: &Value) -> Result<BoxStyle, RpcError> {
     let Some(fill) = style.get("fill").and_then(Value::as_u64) else {
         return Err(invalid_params(
@@ -1195,12 +1206,12 @@ fn handle_scene_apply_preview(
         return Err(invalid_params("params.preview_id must be non-zero"));
     };
     match apply_preview(scene, revision, previews, id) {
-        Ok(outcome) => Ok(apply_outcome_to_json(outcome)),
+        Ok(outcome) => Ok(apply_outcome_to_json(&outcome)),
         Err(err) => Err(apply_error_to_rpc(&err)),
     }
 }
 
-fn apply_outcome_to_json(outcome: ApplyOutcome) -> Value {
+fn apply_outcome_to_json(outcome: &ApplyOutcome) -> Value {
     let mut map = serde_json::Map::new();
     map.insert(
         "preview_id".into(),
@@ -1304,7 +1315,7 @@ fn preview_view_to_json(view: &PreviewView, now: std::time::Instant) -> Value {
     Value::Object(obj)
 }
 
-fn invoke_error_to_rpc(err: InvokeError) -> RpcError {
+fn invoke_error_to_rpc(err: &InvokeError) -> RpcError {
     let variant = match err {
         InvokeError::Path(_) => "Path",
         InvokeError::UnsupportedPath => "UnsupportedPath",
