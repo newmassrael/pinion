@@ -5,11 +5,16 @@
 //! collection (§5.20) lives in [`intent_queue`]; the §5.21 layout pass
 //! lives in [`layout`]; the §5.35 input dispatch primitive (R48) lives
 //! in [`input`] — its `InputRouter` is the framework-side surface that
-//! replaces application-level hit-test wiring.
+//! replaces application-level hit-test wiring. R46.3.1 added
+//! [`paint_adapter`] (feature `vello`) — the Scene → `vello::Scene`
+//! framework primitive that replaced inline paint walkers in
+//! consumer examples.
 
 pub mod input;
 pub mod intent_queue;
 pub mod layout;
+#[cfg(feature = "vello")]
+pub mod paint_adapter;
 pub mod window;
 
 pub use input::InputRouter;

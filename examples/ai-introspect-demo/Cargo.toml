@@ -16,6 +16,12 @@ path = "src/main.rs"
 # Scene primitives + Color/Border style + hit_test for the in-process
 # RPC call.
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R46.3.1 §5.16 paint_adapter Scene → vello::Scene walker. The `vello`
+# feature flag enables the GPU paint primitive — previously the demo
+# carried its own inline walker (build_vello_scene / fill_rect / ...);
+# now it consumes the framework primitive so additional examples share
+# one translation path.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", features = ["vello"] }
 # scene/locate typed dispatcher (we call directly, not through the
 # JSON-RPC envelope, since this is in-process).
 pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }

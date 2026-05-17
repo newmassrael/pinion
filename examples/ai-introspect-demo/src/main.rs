@@ -59,8 +59,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use vello::Scene as VelloScene;
-use vello::kurbo::{Affine, Rect as KurboRect, Stroke};
-use vello::peniko::{Color as PenikoColor, Fill};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -70,13 +68,14 @@ use winit::window::{Window, WindowId};
 
 use pinion_core::external::{CountedExternal, IntrospectValue};
 use pinion_core::scene::{BoxNode, ContainerNode, EffectNode, ExternalNode, Rect};
-use pinion_core::style::{Border, BoxStyle, Color};
+use pinion_core::style::{BoxStyle, Color};
 use pinion_core::{Scene, SceneRevision};
 use pinion_overlay::{HighlightStyle, clear_highlights, inject_highlight};
 use pinion_rpc::{
     ApplyError, PreviewId, PreviewLedger, ProposeError, TypedProposal, apply_preview,
     cancel_preview, list_previews, locate, propose_change, query,
 };
+use pinion_runtime::paint_adapter;
 
 // pinion-forge codegen output. Defines `pub struct DemoRenderer { ... }`
 // + `pub enum DemoRendererError` + async `new<W: Into<wgpu::SurfaceTarget<'static>>>`
@@ -94,25 +93,30 @@ const WIN_H: u32 = 360;
 /// Background-colour palette `info_panel` cycles through as the
 /// embedded `counter` External advances. Five entries keep the demo
 /// loop tight while still showing apply has visible effect.
-const PALETTE: &[u32] = &[
-    0x002a_2a2a, // grey  (count % 5 == 0, initial)
-    0x002a_5a8a, // blue
-    0x008a_5a2a, // brown
-    0x002a_8a5a, // green
-    0x008a_2a5a, // magenta
+///
+/// R46.3.1 — typed `&[Color]` (rgb opaque) replaces the pre-R46.3 raw
+/// `&[u32]` ARGB literals. The conversion through paint_adapter now
+/// preserves alpha verbatim, so the previous `0x00RR_GGBB` shape
+/// (alpha = 0) would render fully transparent on the Vello path.
+const PALETTE: &[Color] = &[
+    Color::rgb(0x2a, 0x2a, 0x2a), // grey  (count % 5 == 0, initial)
+    Color::rgb(0x2a, 0x5a, 0x8a), // blue
+    Color::rgb(0x8a, 0x5a, 0x2a), // brown
+    Color::rgb(0x2a, 0x8a, 0x5a), // green
+    Color::rgb(0x8a, 0x2a, 0x5a), // magenta
 ];
 
 /// Yellow border used to mark `info_panel` while a preview is in
 /// flight. Distinct from the default red used by locate-highlight.
 const PENDING_HIGHLIGHT: HighlightStyle = HighlightStyle::new()
-    .with_stroke(Color::from_argb(0x00ff_d000))
+    .with_stroke(Color::rgb(0xff, 0xd0, 0x00))
     .with_stroke_width(3);
 
 /// Map the introspectable `count` value to a palette colour.
 fn palette_color(count: i64) -> Color {
     let len = PALETTE.len() as i64;
     let idx = count.rem_euclid(len) as usize;
-    Color::from_argb(PALETTE[idx])
+    PALETTE[idx]
 }
 
 /// Build the canonical scene: 3 tagged buttons + `info_panel` (Box
@@ -122,15 +126,15 @@ fn palette_color(count: i64) -> Color {
 fn build_initial_scene() -> Scene {
     let mut root = ContainerNode::new(vec![
         Scene::Box(
-            BoxNode::filled(Rect::new(60, 80, 140, 60), Color::from_argb(0x00ff_3366))
+            BoxNode::filled(Rect::new(60, 80, 140, 60), Color::rgb(0xff, 0x33, 0x66))
                 .with_tag("save_btn"),
         ),
         Scene::Box(
-            BoxNode::filled(Rect::new(240, 80, 140, 60), Color::from_argb(0x0033_88ff))
+            BoxNode::filled(Rect::new(240, 80, 140, 60), Color::rgb(0x33, 0x88, 0xff))
                 .with_tag("cancel_btn"),
         ),
         Scene::Box(
-            BoxNode::filled(Rect::new(420, 80, 140, 60), Color::from_argb(0x00aa_aaaa))
+            BoxNode::filled(Rect::new(420, 80, 140, 60), Color::rgb(0xaa, 0xaa, 0xaa))
                 .with_tag("delete_btn"),
         ),
         // info_panel: fill at construction is a placeholder; the
@@ -148,7 +152,7 @@ fn build_initial_scene() -> Scene {
         Scene::External(ExternalNode::new(Box::new(CountedExternal::new(0))).with_tag("counter")),
     ]);
     root.rect = Rect::new(0, 0, WIN_W, WIN_H);
-    root.style = BoxStyle::filled(Color::from_argb(0x0011_1116));
+    root.style = BoxStyle::filled(Color::rgb(0x11, 0x11, 0x16));
     Scene::Container(root)
 }
 
@@ -417,12 +421,27 @@ impl App {
     /// `Outdated`, the next `Resized` event will reconfigure the
     /// surface — the failure is logged and the frame is dropped, not
     /// retried, since winit will request another redraw shortly.
+    ///
+    /// R46.3.1 — the Scene → vello::Scene walk lives in
+    /// `pinion_runtime::paint_adapter`. The closure passed to
+    /// [`paint_adapter::to_vello`] supplies the only app-specific
+    /// piece: the palette-indexed fill for the `info_panel` tag.
     fn render(&mut self) {
         let Some(renderer) = self.renderer.as_mut() else { return };
         self.vello_scene.reset();
         let count = read_count(&self.scene);
-        let base = root_background(&self.scene);
-        build_vello_scene(&self.scene, count, &mut self.vello_scene);
+        let base = paint_adapter::root_background(&self.scene);
+        paint_adapter::to_vello(
+            &self.scene,
+            &|b: &BoxNode| {
+                if b.tag.as_deref() == Some("info_panel") {
+                    Some(palette_color(count))
+                } else {
+                    None
+                }
+            },
+            &mut self.vello_scene,
+        );
         if let Err(e) = renderer.render(&self.vello_scene, base) {
             eprintln!("ai-introspect-demo: vello render: {e}");
         }
@@ -532,110 +551,6 @@ fn path_suffix(full: &str) -> &str {
         None => rest,
     };
     after_bracket.trim_start_matches('/')
-}
-
-/// Background colour shown by Vello *before* any scene draws happen
-/// (the `RenderParams.base_color` field). We use the canonical root
-/// container's fill so a resized window outside the 640×360 root rect
-/// stays visually consistent with the inside.
-fn root_background(scene: &Scene) -> PenikoColor {
-    match scene {
-        Scene::Container(c) => pinion_to_peniko(c.style.fill),
-        _ => PenikoColor::BLACK,
-    }
-}
-
-/// Walk the canonical pinion [`Scene`] tree and emit equivalent Vello
-/// fill / stroke commands. R46.3 inline first cut — matches the
-/// pre-R46.3 softbuffer `paint()` behaviour exactly:
-///
-///   * [`Scene::Container`] → fill rect + recurse into children
-///   * [`Scene::Box`] → fill rect (palette-substituted for `info_panel`)
-///                       + stroke border when present
-///   * Everything else → no-op (External holds state; Effect / Text /
-///                       Path / Image not yet painted by this demo)
-///
-/// R46.4 carry — promote to `pinion-runtime::paint_adapter` once a
-/// second consumer (hello-button switch from softbuffer to Vello)
-/// validates the boundary.
-fn build_vello_scene(scene: &Scene, count: i64, out: &mut VelloScene) {
-    match scene {
-        Scene::Container(c) => {
-            fill_rect(out, c.rect, c.style.fill);
-            for child in &c.children {
-                build_vello_scene(child, count, out);
-            }
-        }
-        Scene::Box(b) => {
-            let fill = if b.tag.as_deref() == Some("info_panel") {
-                palette_color(count)
-            } else {
-                b.style.fill
-            };
-            fill_rect(out, b.rect, fill);
-            if let Some(border) = b.style.border {
-                stroke_rect(out, b.rect, border);
-            }
-        }
-        // External / Effect / Text / Path / Image: invisible at this
-        // demo's scope. External holds the counter state but is not
-        // rendered itself; matches pre-R46.3 paint() behaviour.
-        _ => {}
-    }
-}
-
-/// Emit one Vello filled-rectangle path for the pinion [`Rect`] +
-/// [`Color`] pair. Transparent fills are skipped (matches the
-/// pre-R46.3 `paint_filled_rect` early-exit on `Color::TRANSPARENT`).
-fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color) {
-    if fill == Color::TRANSPARENT {
-        return;
-    }
-    let rect = KurboRect::new(
-        f64::from(r.x),
-        f64::from(r.y),
-        f64::from(r.x.saturating_add(r.w)),
-        f64::from(r.y.saturating_add(r.h)),
-    );
-    out.fill(Fill::NonZero, Affine::IDENTITY, pinion_to_peniko(fill), None, &rect);
-}
-
-/// Emit one Vello stroke for a pinion [`Border`]. Vello strokes are
-/// path-centred; insetting by `width/2` reproduces the pre-R46.3
-/// "drawn inside the rect bounds" convention from the softbuffer
-/// `paint_border` helper.
-fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border) {
-    if border.width == 0 {
-        return;
-    }
-    let w = f64::from(border.width);
-    let inset = w / 2.0;
-    let rect = KurboRect::new(
-        f64::from(r.x) + inset,
-        f64::from(r.y) + inset,
-        f64::from(r.x.saturating_add(r.w)) - inset,
-        f64::from(r.y.saturating_add(r.h)) - inset,
-    );
-    out.stroke(
-        &Stroke::new(w),
-        Affine::IDENTITY,
-        pinion_to_peniko(border.color),
-        None,
-        &rect,
-    );
-}
-
-/// Convert a pinion [`Color`] (softbuffer-style packed `0x00RRGGBB`,
-/// alpha byte ignored by the prior softbuffer paint path) to a
-/// `peniko::Color` opaque RGB. R46.3 treats every pinion colour as
-/// opaque on Vello — adding semi-transparent overlays is a R46.4+
-/// concern that requires deciding pinion's Color alpha semantics.
-fn pinion_to_peniko(c: Color) -> PenikoColor {
-    let argb = c.to_argb();
-    let r = ((argb >> 16) & 0xff) as u8;
-    let g = ((argb >> 8) & 0xff) as u8;
-    let b = (argb & 0xff) as u8;
-    PenikoColor::from_rgb8(r, g, b)
 }
 
 fn main() {

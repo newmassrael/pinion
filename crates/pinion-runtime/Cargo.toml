@@ -7,11 +7,24 @@ license.workspace = true
 authors.workspace = true
 description = "Render loop and SCE hierarchical state machinery"
 
+[features]
+# Default = no GPU dep. `vello` enables the §5.16 R46.3.1 paint_adapter
+# module — Scene → vello::Scene walk for the Vello render path. Kept
+# behind a feature so non-GUI consumers (headless / TUI / future
+# pinion-render-* alternatives) don't pull wgpu transitively.
+default = []
+vello = ["dep:vello"]
+
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
 # §5.21 R23/R24 layout system. Confined to pinion-runtime per the
 # spec lock — pinion-core stays free of any layout-engine dep.
 taffy = "0.7"
+# §5.16 R46.3.1 paint_adapter Scene → vello::Scene walker. Optional —
+# only consumers building the Vello render path enable this feature.
+# Workspace pin matches Vello's transitive wgpu version (see workspace
+# Cargo.toml comment for the §5.16 R41 path C rationale).
+vello = { workspace = true, optional = true }
 
 [lints]
 workspace = true

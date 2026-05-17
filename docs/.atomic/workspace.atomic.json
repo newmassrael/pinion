@@ -3430,6 +3430,64 @@
         "R297 false-positive hint 그대로 (mnemosyne round, pinion atomic 무관). pinion R46.3 commit 이후 5-commit carry"
       ]
     },
+    "425": {
+      "decision_summary": "Round 46.3.1 — §5.16 paint_adapter framework primitive — Scene→vello::Scene 변환 inline 어댑터를 ai-introspect-demo 에서 pinion-runtime 으로 승격 (R47/R48 패턴: application-level workaround → framework primitive), R46.3 self-audit Concern #1 #2 #4 (partial) same-session 상환",
+      "changes_bullets": [
+        "pinion-runtime/Cargo.toml: features.vello = [\"dep:vello\"] (default 비활성), vello = { workspace = true, optional = true } 추가. 고레대 구조 유지 — 디폴트 pinion-runtime 는 wgpu 의존 없음 (headless / TUI / 미래 pinion-render-* 백엔드 forward-compat)",
+        "pinion-runtime/src/paint_adapter.rs 신규 (#[cfg(feature = \"vello\")]) — pub fn to_vello<F: Fn(&BoxNode) -> Option<Color>>(scene, hook, out) + pub fn root_background(scene) -> PenikoColor + pub fn to_peniko(c) -> PenikoColor + fill_rect/stroke_rect private helpers. Scene::Container/Box walking, alpha-preserving from_rgba8, transparent Color skip, border inset = width/2 (R46.3.2 carry note for placement enum)",
+        "ai-introspect-demo/Cargo.toml: pinion-runtime = { path = \"...\", features = [\"vello\"] } 의존 추가. 이제 demo 는 framework primitive 소비자",
+        "ai-introspect-demo/src/main.rs: build_vello_scene / fill_rect / stroke_rect / pinion_to_peniko / root_background 5 개 인라인 함수 전체 제거 (약 90 LOC). use pinion_runtime::paint_adapter. render() 이 paint_adapter::root_background + paint_adapter::to_vello (info_panel 태그 치환을 closure 로 노출) 호출",
+        "ai-introspect-demo Color migration — PALETTE 가 &[u32] → &[Color] (Color::rgb(r,g,b) opaque constructor). build_initial_scene 의 6 개 Color::from_argb(0x00...) → Color::rgb(...) (알파 byte = 0 이 이제 framework 에서 제대로 투명으로 렌더링됨 — R46.3 inline 이 강제 알파=255 hardcode 로 버그 은폐하던 것을 수정). PENDING_HIGHLIGHT 동일 적용",
+        "paint_adapter tests 7 신규 — to_peniko_preserves_all_channels_including_alpha (R46.3 alpha=255 hardcode 회귀 방지) / to_peniko_alpha_zero_is_transparent (legacy 0x00RR_GGBB 명시적 동작) / root_background_extracts_root_container_fill / root_background_falls_back_to_black_for_non_container / to_vello_walks_container_and_box_children (Cell-based hook counting) / to_vello_hook_some_overrides_box_native_fill (info_panel 패턴 검증) / to_vello_nested_container_recurses (2-level nest)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 629 pass (622 R46.3 baseline + 7 paint_adapter unit tests), 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 (신규 2 doc-backtick warning 즉시 정정) / pinion-forge 0 / ai-introspect-demo 0",
+        "validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync",
+        "cargo check -p ai-introspect-demo 통과 — paint_adapter 교체 후 demo 컴파일 clean. binary smoke: paint_adapter::to_vello 가 generic Fn 좌표 다석적으로 (move 아닌 &-bind), info_panel 태그 분기 일치",
+        "R46.3 Concern #1 (paint_adapter framework primitive) ✅ 완료 — R47/R48 패턴 (애플리케이션 workaround → framework) 적용; #2 (info_panel callback hook) ✅ closure 노출; #4 (Color alpha semantic) ✅ partial — paint_adapter 가 alpha 보존 + demo migration. #3 (Border placement) → R46.3.2, #5 winit suspend → R46.3.4, #6 fully-qualified template → R46.3.3, #7 doc reflow → R46.3.5"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.3"
+      ],
+      "carry_forward_bullets": [
+        "R46.3.2: Border placement spec — pinion_core::style::Border 에 placement: BorderPlacement { Inside (legacy softbuffer behavior, default), Center, Outside } 필드 추가. paint_adapter::stroke_rect 가 placement 별 inset 계산 — Inside = +width/2 (현재), Center = 0, Outside = -width/2. §5.3 caveat 추가",
+        "R46.3.3: VELLO_TEMPLATE fully-qualified path refactor — use vello::* 제거 → 모든 타입 ::vello::* 인라인. reactive emit (::pinion_core::reactive::*) 와 일관성. ai-introspect-demo 의 mod gen_renderer wrap 제거 가능",
+        "R46.3.4: winit suspend/resume — ai-introspect-demo 에 RenderState enum { Active{surface,window}, Suspended(Option<Arc<Window>>) } 도입. mobile/Wayland forward-compat",
+        "R46.3.5: doc reflow — main.rs module docstring 을 clippy-clean indentation 으로 재정렬, clippy::doc_overindented_list_items + doc_lazy_continuation allow 제거",
+        "R46.5+: hello-button 가 paint_adapter 의 두 번째 consumer. softbuffer 교체 + InputRouter (R48) 결합 가능",
+        "R47+ carry items 그대로 (Headless template / cosmic-text / 위젯 카탈로그)"
+      ],
+      "publishable_decision_summary": "Round 46.3.1 — §5.16 paint_adapter framework primitive — Scene→vello::Scene 변환 inline 어댑터를 ai-introspect-demo 에서 pinion-runtime 으로 승격 (R47/R48 패턴: application-level workaround → framework primitive), R46.3 self-audit Concern #1 #2 #4 (partial) same-session 상환",
+      "publishable_changes_bullets": [
+        "pinion-runtime/Cargo.toml: features.vello = [\"dep:vello\"] (default 비활성), vello = { workspace = true, optional = true } 추가. 고레대 구조 유지 — 디폴트 pinion-runtime 는 wgpu 의존 없음 (headless / TUI / 미래 pinion-render-* 백엔드 forward-compat)",
+        "pinion-runtime/src/paint_adapter.rs 신규 (#[cfg(feature = \"vello\")]) — pub fn to_vello<F: Fn(&BoxNode) -> Option<Color>>(scene, hook, out) + pub fn root_background(scene) -> PenikoColor + pub fn to_peniko(c) -> PenikoColor + fill_rect/stroke_rect private helpers. Scene::Container/Box walking, alpha-preserving from_rgba8, transparent Color skip, border inset = width/2 (R46.3.2 carry note for placement enum)",
+        "ai-introspect-demo/Cargo.toml: pinion-runtime = { path = \"...\", features = [\"vello\"] } 의존 추가. 이제 demo 는 framework primitive 소비자",
+        "ai-introspect-demo/src/main.rs: build_vello_scene / fill_rect / stroke_rect / pinion_to_peniko / root_background 5 개 인라인 함수 전체 제거 (약 90 LOC). use pinion_runtime::paint_adapter. render() 이 paint_adapter::root_background + paint_adapter::to_vello (info_panel 태그 치환을 closure 로 노출) 호출",
+        "ai-introspect-demo Color migration — PALETTE 가 &[u32] → &[Color] (Color::rgb(r,g,b) opaque constructor). build_initial_scene 의 6 개 Color::from_argb(0x00...) → Color::rgb(...) (알파 byte = 0 이 이제 framework 에서 제대로 투명으로 렌더링됨 — R46.3 inline 이 강제 알파=255 hardcode 로 버그 은폐하던 것을 수정). PENDING_HIGHLIGHT 동일 적용",
+        "paint_adapter tests 7 신규 — to_peniko_preserves_all_channels_including_alpha (R46.3 alpha=255 hardcode 회귀 방지) / to_peniko_alpha_zero_is_transparent (legacy 0x00RR_GGBB 명시적 동작) / root_background_extracts_root_container_fill / root_background_falls_back_to_black_for_non_container / to_vello_walks_container_and_box_children (Cell-based hook counting) / to_vello_hook_some_overrides_box_native_fill (info_panel 패턴 검증) / to_vello_nested_container_recurses (2-level nest)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 629 pass (622 R46.3 baseline + 7 paint_adapter unit tests), 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 유지 — pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 (신규 2 doc-backtick warning 즉시 정정) / pinion-forge 0 / ai-introspect-demo 0",
+        "validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync",
+        "cargo check -p ai-introspect-demo 통과 — paint_adapter 교체 후 demo 컴파일 clean. binary smoke: paint_adapter::to_vello 가 generic Fn 좌표 다석적으로 (move 아닌 &-bind), info_panel 태그 분기 일치",
+        "R46.3 Concern #1 (paint_adapter framework primitive) ✅ 완료 — R47/R48 패턴 (애플리케이션 workaround → framework) 적용; #2 (info_panel callback hook) ✅ closure 노출; #4 (Color alpha semantic) ✅ partial — paint_adapter 가 alpha 보존 + demo migration. #3 (Border placement) → R46.3.2, #5 winit suspend → R46.3.4, #6 fully-qualified template → R46.3.3, #7 doc reflow → R46.3.5"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R46.3.2: Border placement spec — pinion_core::style::Border 에 placement: BorderPlacement { Inside (legacy softbuffer behavior, default), Center, Outside } 필드 추가. paint_adapter::stroke_rect 가 placement 별 inset 계산 — Inside = +width/2 (현재), Center = 0, Outside = -width/2. §5.3 caveat 추가",
+        "R46.3.3: VELLO_TEMPLATE fully-qualified path refactor — use vello::* 제거 → 모든 타입 ::vello::* 인라인. reactive emit (::pinion_core::reactive::*) 와 일관성. ai-introspect-demo 의 mod gen_renderer wrap 제거 가능",
+        "R46.3.4: winit suspend/resume — ai-introspect-demo 에 RenderState enum { Active{surface,window}, Suspended(Option<Arc<Window>>) } 도입. mobile/Wayland forward-compat",
+        "R46.3.5: doc reflow — main.rs module docstring 을 clippy-clean indentation 으로 재정렬, clippy::doc_overindented_list_items + doc_lazy_continuation allow 제거",
+        "R46.5+: hello-button 가 paint_adapter 의 두 번째 consumer. softbuffer 교체 + InputRouter (R48) 결합 가능",
+        "R47+ carry items 그대로 (Headless template / cosmic-text / 위젯 카탈로그)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
