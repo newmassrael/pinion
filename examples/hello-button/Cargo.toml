@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "First dogfood (§4): winit window + R12 Button SCXML statechart end-to-end"
+description = "First dogfood (§4): winit window + R12 Button SCXML statechart end-to-end (R46.5 Vello path)"
 publish = false
 
 [[bin]]
@@ -14,13 +14,29 @@ path = "src/main.rs"
 
 [dependencies]
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
-pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+# R46.5 §5.16: paint_adapter framework primitive (R46.3.1) is the
+# Scene → vello::Scene walker shared by all Vello-backed examples.
+# Enabling the `vello` feature pulls in the to_vello/root_background
+# surface; without it pinion-runtime stays headless.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", features = ["vello"] }
 pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
 winit = { workspace = true }
-softbuffer = { workspace = true }
-# R21 §5.3 slice 7: cosmic-text Text rasterizer (Scene::Text → softbuffer).
-# Example-scope only — pinion-core stays free of any rasterizer dep.
-cosmic-text = "0.12"
+# R46.5 §5.16: Vello-backed GPU paint replaces softbuffer. The
+# `HelloButtonRenderer` struct emitted by `build.rs` references
+# `vello::*` and `vello::wgpu::*` directly so the binary needs vello
+# at run-time. Mirrors the ai-introspect-demo R46.3 migration.
+vello = { workspace = true }
+# Block on Vello's async `RenderContext::create_surface` at app boot —
+# pinion-core/runtime are sync (§6.3); this example wraps the one-shot
+# init future at the boundary so view-fn purity stays intact.
+pollster = { workspace = true }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `HelloButtonRenderer` Vello
+# wrapper. `build.rs` calls `compile_file` on `app.pinion.xml`; the
+# emitted Rust is written to `$OUT_DIR/app.rs` and `include!`d by
+# main.rs (one-file-one-struct shape per R38 ratify).
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
 
 [lints]
 workspace = true

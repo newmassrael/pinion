@@ -28,10 +28,13 @@ authors = ["pinion contributors"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# §4 first dogfood (examples/hello-button): winit window + softbuffer paint.
-# Not consumed by the core/runtime/rpc crates — example-scope only.
+# §4 first dogfood (examples/hello-button + ai-introspect-demo): winit
+# window. The pre-R46.5 softbuffer paint backend has been retired in
+# favour of the Vello GPU path (R46.2 emit template + R46.3 first
+# consumer + R46.5 second consumer); workspace softbuffer dep removed
+# along with the last caller. Not consumed by the core/runtime/rpc
+# crates — example-scope only.
 winit = "0.30"
-softbuffer = "0.4"
 
 # §5.16 R46.3 ai-introspect-demo — block on Vello's async `new` at app
 # boot per §6.3 boundary. Example-scope only; pinion-core/runtime stay

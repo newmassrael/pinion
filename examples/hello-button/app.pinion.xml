@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R46.5 §5.16 second build-slice consumer for pinion-forge renderer
+  kind (after R46.3 ai-introspect-demo). Emits a `HelloButtonRenderer`
+  Vello-backed struct that wraps Vello 0.6's RenderContext +
+  RenderSurface + Renderer. `aa` attribute omitted → defaults to Area
+  per R46.2.1 (UI-canonical mode; Vello/Xilem documented default).
+  Same manifest shape as the ai-introspect-demo `DemoRenderer` — the
+  emit template is single-source-of-truth, this example just changes
+  the struct name.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloButtonRenderer"
+        backend="vello"/>

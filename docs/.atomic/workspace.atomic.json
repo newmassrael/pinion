@@ -3752,6 +3752,70 @@
         "R297 false-positive hint mnemosyne round, pinion atomic 무관 — 9-commit carry 무시 가능"
       ]
     },
+    "431": {
+      "decision_summary": "R46.5 — §5.16 hello-button softbuffer → Vello (paint_adapter 두 번째 consumer 정착 + softbuffer workspace dep 제거 + R46.3.4 RenderState ADT 패턴 적용; cosmic-text 라벨은 R47 carry 로 임시 no-op)",
+      "changes_bullets": [
+        "examples/hello-button/Cargo.toml: softbuffer (workspace) + cosmic-text 0.12 직접 의존 제거; vello (workspace) + pollster (workspace) 추가; pinion-runtime features = [\"vello\"]; build-dependencies = pinion-forge (workspace path) 추가. ai-introspect-demo R46.3 마이그레이션 패턴 동일",
+        "examples/hello-button/app.pinion.xml 신설 — `<pinion kind=\"renderer\" name=\"HelloButtonRenderer\" backend=\"vello\"/>` (ai-introspect-demo DemoRenderer 와 동일 manifest 셍셐, name 만 변경). aa attr 생략 → R46.2.1 default = Area",
+        "examples/hello-button/build.rs 신설 — ai-introspect-demo R46.3 build.rs 와 동일 (`pinion_forge::compile_file` + `cargo:rerun-if-changed`). forge-counter R382e 첫 dogfood 패턴 계승",
+        "examples/hello-button/src/main.rs 대수술: paint() / paint_box() / paint_container_fill() / paint_text() / blend_span() 5 함수 전면 제거 (~145 LOC 접소) → pinion_runtime::paint_adapter::to_vello + root_background 호출 (R46.3.1 framework primitive consumer). App struct field surface / context / window: Option (단일 Option장) + font_system + swash_cache 4 field → state: RenderState ADT (R46.3.4 pattern) + vello_scene: VelloScene reusable buffer 2 field. resumed() → RenderState::Suspended cache + HelloButtonRenderer::new (pollster::block_on async). suspended() → Active drop + window cache. WindowEvent::Resized → renderer.resize. softbuffer / cosmic-text / FontSystem / SwashCache / Context / Surface use 문 제거",
+        "Color migration — BG_FILL (0x0020_3040 dark navy) + btn_fill 4 상태 (Idle 0xff_ffff / Hover 0xd0_d0d0 / Pressed 0x50_5050 / Disabled 0xb0_2020) 모두 `Color::from_argb(0x00...)` → `Color::rgb(...)` 정통화. alpha 0 → Vello transparent 함정 회피 (R46.3.1 PALETTE migration 동일 패턴; paint_adapter::to_peniko_alpha_zero_is_transparent test 공고)",
+        "label TextNode (\"Click me!\" / \"Disabled\") 은 view() scene tree 에 그대로 보존 — model survives, paint_adapter::to_vello Text arm 이 현재 no-op 이므로 일시 화면 표시 안 됨. R47 cosmic-text framework primitive 활성화 시 렌더링 복원. carry_forward 명시",
+        "main.rs doc 의 `paint_adapter` 백틱 추가 (clippy::doc_markdown 1 동일-commit 청산)",
+        "workspace Cargo.toml: `softbuffer = \"0.4\"` 제거 + 주석 갱신 (R46.2 emit template + R46.3 첫 consumer + R46.5 두 번째 consumer chain 종료 대이어레트 명시). hello-button 이 마지막 caller 였으므로 last-consumer-retire pattern",
+        "ai-introspect-demo 의 R46.3.x carry forward 7 항목 중 \"R46.5 hello-button Vello 교체\" 단독 청산 — paint_adapter 의 multi-app boundary 증명"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 633 pass / 0 fail (baseline 유지)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 동일 — pinion-core 5 + pinion-runtime 1 (R46.4 서 별도 sub-slice carry); pinion-rpc 0 / pinion-forge 0 / hello-button 0 / ai-introspect-demo 0 / forge-counter 0. hello-button R46.5 main.rs 는 doc_markdown 1 신규 발생 → same-commit 정통 청산",
+        "cargo check --workspace --features pinion-runtime/vello = green (softbuffer dep 제거 후도 transitive resolve 이상 없음)",
+        "paint_adapter 두 번째 consumer (ai-introspect-demo + hello-button) 검증 — single-consumer over-fit 위험 해소. framework primitive boundary 다양 widget 구조 (R39.4.3 introspect 3 button + overlay vs R12 button widget) 에 점검 완료",
+        "softbuffer workspace dep 완전 제거 — R46.4 carry-forward 청산. deprecated paint path workspace 전체에서 사라짐. 다음 예제 / widget 카탈로그 추가 시 Vello-only path 강제"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R47 cosmic-text glyph cache + paint_adapter::to_vello Text arm 활성화 — hello-button \"Click me!\" / \"Disabled\" 라벨 복원 의존. backend-orthogonal cross-cutting concern (Vello + 미래 Headless 공유). cosmic-text font fallback / shaping + vello::Scene::draw_glyph 통합 + GPU glyph texture cache evict 정책. textbook: framework primitive (paint_adapter 내) — [[r47-class-incident-prevention]] 정신",
+        "R46.6 RendererOptions surface policy spec round (R46.2 Concern 1 carry) — present_mode / use_cpu / num_init_threads / pipeline_cache build-time (manifest attr) vs runtime (builder method) 분류 결정. §2#4 mode toggle invariant 정합",
+        "R47 Headless renderer template — §5.12 screenshot RPC 활성화. RendererBackend::Headless variant + emit_renderer_headless template + screenshot RPC schema 정합",
+        "R47+ 위젯 카탈로그 확장 — Slider / Toggle / TextField. paint_adapter + InputRouter framework primitive 둘 다 정착 완료, prereq 증명 끝난 상태. R47 cosmic-text land 후 widget 라벨 렌더링 가능",
+        "R47+ mobile/Android target 검증 — RenderState ADT 가 ai-introspect-demo (R46.3.4) + hello-button (R46.5) 두 consumer 에서 정착. 실제 Android event loop 통합 + suspend 이벤트 실증은 별도. 현재 데스크탑 compile clean",
+        "R46.4 carry 그대로: parse_path_command finite check NaN/±∞ unit test 추가 + pinion-core 5 / pinion-runtime 1 clippy sub-slice",
+        "R297 false-positive (mnemosyne 주 라운드, pinion atomic 무관) — 10-commit carry 무시 가능"
+      ],
+      "publishable_decision_summary": "R46.5 — §5.16 hello-button softbuffer → Vello (paint_adapter 두 번째 consumer 정착 + softbuffer workspace dep 제거 + R46.3.4 RenderState ADT 패턴 적용; cosmic-text 라벨은 R47 carry 로 임시 no-op)",
+      "publishable_changes_bullets": [
+        "examples/hello-button/Cargo.toml: softbuffer (workspace) + cosmic-text 0.12 직접 의존 제거; vello (workspace) + pollster (workspace) 추가; pinion-runtime features = [\"vello\"]; build-dependencies = pinion-forge (workspace path) 추가. ai-introspect-demo R46.3 마이그레이션 패턴 동일",
+        "examples/hello-button/app.pinion.xml 신설 — `<pinion kind=\"renderer\" name=\"HelloButtonRenderer\" backend=\"vello\"/>` (ai-introspect-demo DemoRenderer 와 동일 manifest 셍셐, name 만 변경). aa attr 생략 → R46.2.1 default = Area",
+        "examples/hello-button/build.rs 신설 — ai-introspect-demo R46.3 build.rs 와 동일 (`pinion_forge::compile_file` + `cargo:rerun-if-changed`). forge-counter R382e 첫 dogfood 패턴 계승",
+        "examples/hello-button/src/main.rs 대수술: paint() / paint_box() / paint_container_fill() / paint_text() / blend_span() 5 함수 전면 제거 (~145 LOC 접소) → pinion_runtime::paint_adapter::to_vello + root_background 호출 (R46.3.1 framework primitive consumer). App struct field surface / context / window: Option (단일 Option장) + font_system + swash_cache 4 field → state: RenderState ADT (R46.3.4 pattern) + vello_scene: VelloScene reusable buffer 2 field. resumed() → RenderState::Suspended cache + HelloButtonRenderer::new (pollster::block_on async). suspended() → Active drop + window cache. WindowEvent::Resized → renderer.resize. softbuffer / cosmic-text / FontSystem / SwashCache / Context / Surface use 문 제거",
+        "Color migration — BG_FILL (0x0020_3040 dark navy) + btn_fill 4 상태 (Idle 0xff_ffff / Hover 0xd0_d0d0 / Pressed 0x50_5050 / Disabled 0xb0_2020) 모두 `Color::from_argb(0x00...)` → `Color::rgb(...)` 정통화. alpha 0 → Vello transparent 함정 회피 (R46.3.1 PALETTE migration 동일 패턴; paint_adapter::to_peniko_alpha_zero_is_transparent test 공고)",
+        "label TextNode (\"Click me!\" / \"Disabled\") 은 view() scene tree 에 그대로 보존 — model survives, paint_adapter::to_vello Text arm 이 현재 no-op 이므로 일시 화면 표시 안 됨. R47 cosmic-text framework primitive 활성화 시 렌더링 복원. carry_forward 명시",
+        "main.rs doc 의 `paint_adapter` 백틱 추가 (clippy::doc_markdown 1 동일-commit 청산)",
+        "workspace Cargo.toml: `softbuffer = \"0.4\"` 제거 + 주석 갱신 (R46.2 emit template + R46.3 첫 consumer + R46.5 두 번째 consumer chain 종료 대이어레트 명시). hello-button 이 마지막 caller 였으므로 last-consumer-retire pattern",
+        "ai-introspect-demo 의 R46.3.x carry forward 7 항목 중 \"R46.5 hello-button Vello 교체\" 단독 청산 — paint_adapter 의 multi-app boundary 증명"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 633 pass / 0 fail (baseline 유지)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = baseline 동일 — pinion-core 5 + pinion-runtime 1 (R46.4 서 별도 sub-slice carry); pinion-rpc 0 / pinion-forge 0 / hello-button 0 / ai-introspect-demo 0 / forge-counter 0. hello-button R46.5 main.rs 는 doc_markdown 1 신규 발생 → same-commit 정통 청산",
+        "cargo check --workspace --features pinion-runtime/vello = green (softbuffer dep 제거 후도 transitive resolve 이상 없음)",
+        "paint_adapter 두 번째 consumer (ai-introspect-demo + hello-button) 검증 — single-consumer over-fit 위험 해소. framework primitive boundary 다양 widget 구조 (R39.4.3 introspect 3 button + overlay vs R12 button widget) 에 점검 완료",
+        "softbuffer workspace dep 완전 제거 — R46.4 carry-forward 청산. deprecated paint path workspace 전체에서 사라짐. 다음 예제 / widget 카탈로그 추가 시 Vello-only path 강제"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R47 cosmic-text glyph cache + paint_adapter::to_vello Text arm 활성화 — hello-button \"Click me!\" / \"Disabled\" 라벨 복원 의존. backend-orthogonal cross-cutting concern (Vello + 미래 Headless 공유). cosmic-text font fallback / shaping + vello::Scene::draw_glyph 통합 + GPU glyph texture cache evict 정책. textbook: framework primitive (paint_adapter 내) — [[r47-class-incident-prevention]] 정신",
+        "R46.6 RendererOptions surface policy spec round (R46.2 Concern 1 carry) — present_mode / use_cpu / num_init_threads / pipeline_cache build-time (manifest attr) vs runtime (builder method) 분류 결정. §2#4 mode toggle invariant 정합",
+        "R47 Headless renderer template — §5.12 screenshot RPC 활성화. RendererBackend::Headless variant + emit_renderer_headless template + screenshot RPC schema 정합",
+        "R47+ 위젯 카탈로그 확장 — Slider / Toggle / TextField. paint_adapter + InputRouter framework primitive 둘 다 정착 완료, prereq 증명 끝난 상태. R47 cosmic-text land 후 widget 라벨 렌더링 가능",
+        "R47+ mobile/Android target 검증 — RenderState ADT 가 ai-introspect-demo (R46.3.4) + hello-button (R46.5) 두 consumer 에서 정착. 실제 Android event loop 통합 + suspend 이벤트 실증은 별도. 현재 데스크탑 compile clean",
+        "R46.4 carry 그대로: parse_path_command finite check NaN/±∞ unit test 추가 + pinion-core 5 / pinion-runtime 1 clippy sub-slice",
+        "R297 false-positive (mnemosyne 주 라운드, pinion atomic 무관) — 10-commit carry 무시 가능"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
