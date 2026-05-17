@@ -38,7 +38,7 @@ use crate::dry_run::{dry_run, DryRunError};
 use crate::intents::{drain_intents, IntentsError};
 use crate::invoke::{invoke, InvokeError};
 use crate::layout_query::{
-    layout_query, LayoutQueryError, LayoutQueryParams,
+    layout_query, LayoutNode, LayoutQueryError, LayoutQueryParams,
 };
 use crate::locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
@@ -134,6 +134,14 @@ pub struct DispatchContext<'a> {
     /// iteration. Asynchronous — AI clients pair with
     /// `scene/wait_for_frame` for stable observation.
     pub resize_request: Option<&'a mut (dyn FnMut(u32, u32) + 'a)>,
+    /// R47.7.5 §5.12 — application's most recent winit-rendered
+    /// frame snapshot. `scene/layout` with `viewport: null` returns
+    /// a clone of this value. The application refreshes the
+    /// snapshot at the end of each `render()` pass via
+    /// `layout_query::build_layout_node`. `None` until winit has
+    /// rendered the first frame — `scene/layout {viewport: null}`
+    /// errors with `NoLastPaintLayout` in that window.
+    pub last_paint_layout: Option<&'a LayoutNode>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -153,6 +161,7 @@ impl<'a> DispatchContext<'a> {
             revision,
             paint_producer: None,
             resize_request: None,
+            last_paint_layout: None,
         }
     }
 
@@ -181,6 +190,16 @@ impl<'a> DispatchContext<'a> {
         request: &'a mut (dyn FnMut(u32, u32) + 'a),
     ) -> Self {
         self.resize_request = Some(request);
+        self
+    }
+
+    /// Builder: attach the most recent winit-rendered frame snapshot
+    /// (R47.7.5 §5.12). `scene/layout {viewport: null}` returns a
+    /// clone; the application refreshes the snapshot at the end of
+    /// each `render()` pass.
+    #[must_use]
+    pub fn with_last_paint_layout(mut self, snapshot: &'a LayoutNode) -> Self {
+        self.last_paint_layout = Some(snapshot);
         self
     }
 }
@@ -221,6 +240,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     // caller registers a fresh producer before each dispatch.
     let mut paint_producer = ctx.paint_producer.take();
     let mut resize_request = ctx.resize_request.take();
+    // R47.7.5 — snapshot read-only; safe to copy the &LayoutNode out
+    // of the context for the dispatch lifetime.
+    let last_paint_layout = ctx.last_paint_layout;
     let parsed: Result<Request, _> = serde_json::from_str(request_json);
     let request = match parsed {
         Ok(r) => r,
@@ -285,7 +307,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
                 reason = "dyn FnMut is not DerefMut; manual reborrow required"
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
-            handle_scene_layout(producer, request.params.as_ref())
+            handle_scene_layout(producer, last_paint_layout, request.params.as_ref())
         }
         "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
         "scene/list_previews" => handle_scene_list_previews(previews),
@@ -805,6 +827,7 @@ fn bbox_error_to_rpc(err: BboxError) -> RpcError {
 /// of the inner trait object is elided into `F`'s bound.
 fn handle_scene_layout<F>(
     paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -815,7 +838,7 @@ where
     };
     let typed: LayoutQueryParams = serde_json::from_value(params.clone())
         .map_err(|e| invalid_params(&format!("params shape: {e}")))?;
-    match layout_query(&typed, paint_producer) {
+    match layout_query(&typed, paint_producer, last_paint_layout) {
         Ok(node) => serde_json::to_value(&node)
             .map_err(|e| invalid_params(&format!("serialize: {e}"))),
         Err(err) => Err(layout_query_error_to_rpc(err)),
@@ -827,6 +850,7 @@ fn layout_query_error_to_rpc(err: LayoutQueryError) -> RpcError {
         LayoutQueryError::Path(_) => "Path",
         LayoutQueryError::PaintProducerUnavailable => "PaintProducerUnavailable",
         LayoutQueryError::InvalidViewport => "InvalidViewport",
+        LayoutQueryError::NoLastPaintLayout => "NoLastPaintLayout",
     };
     RpcError {
         code: -32602,

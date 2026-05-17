@@ -5879,6 +5879,39 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 450 — R47.7.5.1+2 §5.12 viewport optional + last_paint_layout wire — Round 450 — R47.7.5.1+2 atomic build slice. LayoutQueryParams.viewport Option<ViewportSize>. layout_query() viewport=None → last_paint_layout 반환 (NoLastPaintLayout error 변종 추가). DispatchContext.last_paint_layout field + with_last_paint_layout builder. build_layout_node pub. hello-button render() 가 매 frame snapshot 갱신 + dispatch_rpc 가 ctx 에 전달.
+
+**Changes**:
+- pinion-rpc/src/layout_query.rs: LayoutQueryParams.viewport Option 계양 + layout_query 3번째 인자 last_paint_layout + NoLastPaintLayout variant
+- pinion-rpc/src/layout_query.rs: build_layout_node pub 승격 — application 안 paint Scene → LayoutNode tree build
+- pinion-rpc/src/dispatch.rs: DispatchContext.last_paint_layout field + with_last_paint_layout builder + handle_scene_layout 세 인자
+- pinion-rpc/src/lib.rs: build_layout_node re-export
+- examples/hello-button/src/main.rs: App.last_paint_layout field, render() 끝에 build_layout_node 호출, dispatch_rpc 는 if-let 으로 ctx.with_last_paint_layout 조건부 적용
+- +2 unit tests: viewport=None reads last_paint_layout / viewport=None without cache errors NoLastPaintLayout
+
+
+
+**Verification**:
+- cargo test --features pinion-runtime/vello = 664 pass (662 → 664, +2 R47.7.5 viewport optional)
+- cargo clippy = baseline 완전 보존 (pinion-core 5 + pinion-runtime 1)
+- AI 는 이제 scene/layout {viewport:null} 로 winit actual frame paint snapshot 접근 가능
+
+
+
+**Impact**: §5.12
+
+
+**Carry forward**:
+- R47.7.5.3 AI 자동 진단 v3 — scene/resize → tick → scene/layout {viewport:null} 시퀀스 으로 winit actual frame paint 결과 reproduce / fix
+- R47.7.5.x scene/wait_for_frame implement (redraw 동기 대기)
+- R47.7.x scene/screenshot pixel readback (§5.16 RHI 대기)
+- R47.7.x trait Application surface
+- R47.x parley Ellipsis truncation pass
+- R48 §5.3 BoxStyle Figma-fidelity 별도 round
+- R46 / claudedocs / R297
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

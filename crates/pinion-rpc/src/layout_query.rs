@@ -30,10 +30,14 @@ use crate::path::{self, PathError};
 /// Request params for `scene/layout`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LayoutQueryParams {
-    /// Hypothetical viewport dimensions. The handler invokes the
-    /// `paint_producer` closure with `(viewport.width, viewport.height)`
-    /// and `compute_layout` runs inside that closure.
-    pub viewport: ViewportSize,
+    /// R47.7.5 — viewport is now optional. `Some(viewport)` triggers
+    /// the hypothetical path (`paint_producer` closure invoked with
+    /// the requested dimensions, `dry_run` semantics). `None` returns
+    /// the last winit-actually-rendered frame's `LayoutNode` cache —
+    /// the application's `last_paint_layout` snapshot. Use `None`
+    /// after a `scene/resize` + tick to observe the actual winit frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<ViewportSize>,
     /// Optional sub-tree filter. `None` returns the whole paint scene
     /// rooted at the top-level node. R47.7.x carry — currently the
     /// full tree is always returned and the field is accepted for
@@ -99,13 +103,17 @@ pub struct LayoutRect {
 pub enum LayoutQueryError {
     /// The window-prefix portion of `path` failed to parse.
     Path(PathError),
-    /// The dispatcher was invoked without a `paint_producer` closure.
-    /// `DispatchContext::with_paint_producer` is the application-side
-    /// surface that registers one.
+    /// The dispatcher was invoked without a `paint_producer` closure
+    /// for a hypothetical-viewport request.
     PaintProducerUnavailable,
     /// `viewport.width` or `viewport.height` is zero — `compute_layout`
     /// requires non-zero extents.
     InvalidViewport,
+    /// R47.7.5 — `viewport=None` was supplied but the application has
+    /// not yet produced a `last_paint_layout` snapshot (winit has not
+    /// rendered a frame yet, or the application skipped registering
+    /// the snapshot via `DispatchContext::with_last_paint_layout`).
+    NoLastPaintLayout,
 }
 
 impl From<PathError> for LayoutQueryError {
@@ -114,12 +122,14 @@ impl From<PathError> for LayoutQueryError {
     }
 }
 
-/// Build the [`LayoutNode`] tree by invoking `paint_producer` with the
-/// requested viewport and walking the resulting [`Scene`].
+/// Build the [`LayoutNode`] tree for either the hypothetical
+/// (`viewport: Some`) or actual winit-rendered (`viewport: None`)
+/// path.
 ///
-/// Returns [`LayoutQueryError::PaintProducerUnavailable`] when the
-/// caller did not register a closure; this is a non-recoverable shape
-/// mismatch reported as `InvalidParams (-32602)` upstream.
+/// * `Some(viewport)` — invoke `paint_producer` with the requested
+///   dimensions and walk the resulting `Scene` (`dry_run` semantics).
+/// * `None` — return a clone of `last_paint_layout` (the application's
+///   most recent winit-rendered frame snapshot).
 ///
 /// # Errors
 ///
@@ -127,28 +137,42 @@ impl From<PathError> for LayoutQueryError {
 pub fn layout_query<F>(
     params: &LayoutQueryParams,
     paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
 ) -> Result<LayoutNode, LayoutQueryError>
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
 {
-    if params.viewport.width == 0 || params.viewport.height == 0 {
-        return Err(LayoutQueryError::InvalidViewport);
-    }
     if let Some(p) = &params.path {
         // Validate the window-prefix portion now so caller errors
         // surface uniformly. The remainder is R47.7.x carry — we drop
         // it for now and return the full tree.
         let _ = path::resolve(p)?;
     }
-    let producer = paint_producer.ok_or(LayoutQueryError::PaintProducerUnavailable)?;
-    let scene = producer(params.viewport.width, params.viewport.height);
-    Ok(build_layout_node(&scene, "/0"))
+    match params.viewport {
+        Some(viewport) => {
+            if viewport.width == 0 || viewport.height == 0 {
+                return Err(LayoutQueryError::InvalidViewport);
+            }
+            let producer =
+                paint_producer.ok_or(LayoutQueryError::PaintProducerUnavailable)?;
+            let scene = producer(viewport.width, viewport.height);
+            Ok(build_layout_node(&scene, "/0"))
+        }
+        None => last_paint_layout
+            .cloned()
+            .ok_or(LayoutQueryError::NoLastPaintLayout),
+    }
 }
 
 /// Recursive walk: turn a `Scene` sub-tree into a [`LayoutNode`].
 /// `path_prefix` is the address of `scene` within the response root
 /// (`"/0"` for top-level, `"/0/1"` for the second child of root, etc.).
-fn build_layout_node(scene: &Scene, path_prefix: &str) -> LayoutNode {
+///
+/// Public for R47.7.5 — applications call this once per winit frame
+/// to produce the `last_paint_layout` snapshot they register on
+/// `DispatchContext::with_last_paint_layout`.
+#[must_use]
+pub fn build_layout_node(scene: &Scene, path_prefix: &str) -> LayoutNode {
     let (kind, rect, tag, content, children_scenes) = describe_scene(scene);
     let children = children_scenes
         .iter()
@@ -254,28 +278,29 @@ mod tests {
 
     fn make_params(w: u32, h: u32) -> LayoutQueryParams {
         LayoutQueryParams {
-            viewport: ViewportSize { width: w, height: h },
+            viewport: Some(ViewportSize { width: w, height: h }),
             path: None,
         }
     }
 
     #[test]
-    fn layout_query_requires_paint_producer() {
+    fn layout_query_requires_paint_producer_for_hypothetical_path() {
         let params = make_params(320, 200);
-        let err = layout_query::<dyn FnMut(u32, u32) -> Scene>(&params, None).unwrap_err();
+        let err =
+            layout_query::<dyn FnMut(u32, u32) -> Scene>(&params, None, None).unwrap_err();
         assert_eq!(err, LayoutQueryError::PaintProducerUnavailable);
     }
 
     #[test]
     fn layout_query_rejects_zero_viewport() {
         let params = LayoutQueryParams {
-            viewport: ViewportSize { width: 0, height: 200 },
+            viewport: Some(ViewportSize { width: 0, height: 200 }),
             path: None,
         };
         let mut producer = |_w: u32, _h: u32| -> Scene {
             Scene::Container(ContainerNode::new(vec![]))
         };
-        let err = layout_query(&params, Some(&mut producer)).unwrap_err();
+        let err = layout_query(&params, Some(&mut producer), None).unwrap_err();
         assert_eq!(err, LayoutQueryError::InvalidViewport);
     }
 
@@ -291,7 +316,7 @@ mod tests {
                 .with_style(BoxStyle::filled(Color::rgb(0, 0, 0))),
             )
         };
-        let node = layout_query(&params, Some(&mut producer)).unwrap();
+        let node = layout_query(&params, Some(&mut producer), None).unwrap();
         assert_eq!(node.path, "/0");
         assert_eq!(node.kind, LayoutKind::Container);
         assert_eq!(node.children.len(), 1);
@@ -318,7 +343,7 @@ mod tests {
                 .with_tag("label"),
             )]))
         };
-        let node = layout_query(&params, Some(&mut producer)).unwrap();
+        let node = layout_query(&params, Some(&mut producer), None).unwrap();
         let text = &node.children[0];
         assert_eq!(text.kind, LayoutKind::Text);
         assert_eq!(text.content.as_deref(), Some("Click me!"));
@@ -339,7 +364,45 @@ mod tests {
                 LayoutStyle::new().with_size(Size::px(w, h)),
             ))
         };
-        let _ = layout_query(&params, Some(&mut producer)).unwrap();
+        let _ = layout_query(&params, Some(&mut producer), None).unwrap();
         assert_eq!(captured.get(), (345, 200));
+    }
+
+    #[test]
+    fn layout_query_viewport_none_returns_last_paint_layout() {
+        // R47.7.5 — viewport=None reads the application's
+        // `last_paint_layout` snapshot (winit-actual frame). The
+        // paint_producer closure is not invoked.
+        let params = LayoutQueryParams { viewport: None, path: None };
+        let last = LayoutNode {
+            path: "/0".to_string(),
+            kind: LayoutKind::Container,
+            rect: LayoutRect { x: 0, y: 0, w: 320, h: 200 },
+            tag: None,
+            content: None,
+            children: vec![],
+        };
+        let mut producer_called = false;
+        let mut producer = |_w: u32, _h: u32| -> Scene {
+            producer_called = true;
+            Scene::Container(ContainerNode::new(vec![]))
+        };
+        let node = layout_query(&params, Some(&mut producer), Some(&last)).unwrap();
+        assert_eq!(node, last);
+        // The producer must not have been invoked — viewport=None is
+        // the actual-frame path, not the hypothetical path.
+        assert!(!producer_called);
+    }
+
+    #[test]
+    fn layout_query_viewport_none_without_cache_errors() {
+        // R47.7.5 — when viewport=None is requested before winit has
+        // rendered a frame (or before the application registered the
+        // cache surface), surface NoLastPaintLayout so the AI client
+        // can retry after `scene/resize` + tick.
+        let params = LayoutQueryParams { viewport: None, path: None };
+        let err = layout_query::<dyn FnMut(u32, u32) -> Scene>(&params, None, None)
+            .unwrap_err();
+        assert_eq!(err, LayoutQueryError::NoLastPaintLayout);
     }
 }

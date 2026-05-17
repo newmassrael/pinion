@@ -52,7 +52,7 @@ use pinion_core::style::{
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Scene};
 use pinion_core::SceneRevision;
-use pinion_rpc::{dispatch, DispatchContext, PreviewLedger};
+use pinion_rpc::{build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger};
 use pinion_runtime::{compute_layout, paint_adapter, walk_scene_and_drain, InputRouter, IntentQueue};
 use pinion_text::LayoutCache;
 use vello::Scene as VelloScene;
@@ -263,6 +263,13 @@ struct App {
     /// parley `FontContext` / `LayoutContext` so the App never holds
     /// parley state directly.
     text_cache: LayoutCache,
+    /// R47.7.5 §5.12 — most recent winit-rendered frame's paint scene
+    /// projected into a [`LayoutNode`] tree. `render()` refreshes this
+    /// at the end of every paint pass; `dispatch_rpc` hands it to
+    /// `DispatchContext::with_last_paint_layout` so AI clients reach
+    /// the winit-actual frame via `scene/layout {viewport: null}`.
+    /// `None` until the first frame has rendered.
+    last_paint_layout: Option<LayoutNode>,
 }
 
 impl App {
@@ -289,6 +296,7 @@ impl App {
             state: RenderState::Suspended(None),
             vello_scene: VelloScene::new(),
             text_cache: LayoutCache::new(),
+            last_paint_layout: None,
         }
     }
 
@@ -334,6 +342,7 @@ impl App {
             let cached_state = self.cached_state;
             let text_cache_ptr = &mut self.text_cache;
             let state_ref = &self.state;
+            let last_paint = self.last_paint_layout.as_ref();
             let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
                 let mut paint = view(cached_state, &frame);
@@ -351,9 +360,16 @@ impl App {
                     window.request_redraw();
                 }
             };
+            // R47.7.5 §5.12 — surface the most recent winit-rendered
+            // frame to the dispatcher so `scene/layout {viewport: null}`
+            // returns the actual frame snapshot. Builder pattern keeps
+            // the `Option` wiring branchless at the AI-client level.
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_resize_request(&mut resize_req);
+            if let Some(snapshot) = last_paint {
+                ctx = ctx.with_last_paint_layout(snapshot);
+            }
             dispatch(&mut ctx, request)
         };
         if let Some(resp) = resp {
@@ -440,6 +456,12 @@ impl App {
         if let Err(e) = renderer.render(&self.vello_scene, base) {
             eprintln!("hello-button: vello render: {e}");
         }
+        // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
+        // into a `LayoutNode` tree so `scene/layout {viewport: null}`
+        // can return the *actual* winit-rendered frame on the next
+        // dispatch. Must run before `router.update_paint_scene` moves
+        // `paint_scene` out of scope.
+        self.last_paint_layout = Some(build_layout_node(&paint_scene, "/0"));
         // R48 §5.35: hand the post-layout paint scene to the framework
         // router. The router retains it for subsequent hit-tests and
         // re-resolves hover_target now (window resize may have moved

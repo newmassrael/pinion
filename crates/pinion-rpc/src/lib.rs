@@ -31,8 +31,8 @@ pub use dry_run::{dry_run, DryRunError};
 pub use intents::{drain_intents, IntentsError};
 pub use invoke::{invoke, InvokeError};
 pub use layout_query::{
-    layout_query, LayoutKind, LayoutNode, LayoutQueryError, LayoutQueryParams, LayoutRect,
-    ViewportSize,
+    build_layout_node, layout_query, LayoutKind, LayoutNode, LayoutQueryError,
+    LayoutQueryParams, LayoutRect, ViewportSize,
 };
 pub use locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
