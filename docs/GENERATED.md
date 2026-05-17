@@ -1999,6 +1999,104 @@ fn main() {
 
 
 
+### §5.35. Input dispatch — cursor/key → widget routing primitive
+
+
+**Intent**: input event → framework hit-test/focus → widget dispatch; application routing 0줄, §5.20 intent (output) 의 input 대칭 axis
+
+
+**Rationale**:
+- Xilem/Druid/Slint/Qt/GTK/iced 모두 input dispatch = framework primitive (textbook)
+- §5.32 scene/locate 의 pure hit-test infra 가 internal+external dispatch 공유
+- R47 hello-button hit-test fix 는 application-level workaround — 위젯 추가 시 같은 bug 반복
+- §5.15 item 5 input forwarding 이 protocol 만 명시, framework-side router 미spec
+- §5.20 intent (output) 대칭 axis 부재 — input path 의 framework primitive null
+
+
+
+**Inputs**:
+- Scene (post-layout paint scene, framework-retained)
+- input event (PointerMove/Down/Up, Key, Focus*)
+- state scene (ExternalNode.tag 기반 widget dispatch target)
+
+
+
+**Outputs**:
+- 0/1 dispatch → target widget invoke('send', Text(event_name))
+- Hover transition (PointerEnter/Leave) on cursor↔tag 변화
+- focus transition (click/key → next focusable tagged widget) [v1+]
+
+
+
+**Caveats**:
+- Single-target hit-test 가 R48.1 scope, multi-target (capture/bubble) 은 carry-forward
+- focus 모델 v0: click→focus pointer 만, key dispatch의 focus tab order 는 carry
+- Touch/gesture (pinch/multi-finger) 는 R48 scope 아님 — winit Touch event carry
+- paint scene Container/Box.tag 가 state scene ExternalNode.tag 와 매칭 — pinion-core schema 확장
+
+
+
+**Alternatives rejected**:
+- Application-level dispatch (R47 현재) — DRY 위반, 위젯마다 같은 bug 반복; 안 함
+- Per-widget input subscription (Qt signals/slots) — §5.15 External opaque + §6.3 view-fn purity 충돌
+- RPC-only dispatch — hot path serialize 오버헤드 (cursor 100Hz+); 안 함
+
+
+
+**Impact scope**: §5.13, §5.15, §5.20, §5.32
+
+
+**Examples**:
+
+```rust
+// hello-button view fn (R48.3 refactor 후) — application 의 hit-test 코드 0줄
+fn view(state: ButtonState, _frame: &Frame) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![bg_child])
+            .with_style(BoxStyle::filled(BG_FILL))
+            .with_layout(LayoutStyle::new().flex(...)),  // background
+    )
+    // inner button container 가 .with_tag("main_btn") 부여
+    // → InputRouter 가 자동 dispatch
+}
+
+// main event loop
+let mut router = InputRouter::new();
+// 매 render 후
+router.update_paint_scene(paint_scene, &mut state_scene);
+// winit CursorMoved
+router.cursor_moved(x, y, &mut state_scene);  // 자동 Enter/Leave dispatch
+// winit MouseInput Press
+router.pointer_down(&mut state_scene);  // hover_target 으로 자동 dispatch
+
+```
+
+```rust
+// 위젯 카탈로그 (Slider) — 같은 primitive, 코드 0줄 (R47-class bug 재발 불가)
+fn view(state: &AppState, _frame: &Frame) -> Scene {
+    Scene::Container(ContainerNode::new(vec![
+        Scene::Container(ContainerNode::new(vec![/* slider visuals */])
+            .with_tag("volume_slider")),  // ← 이게 전부
+        Scene::Container(ContainerNode::new(vec![/* button */])
+            .with_tag("save_btn")),
+    ]))
+}
+
+// state scene
+let state_scene = Scene::Container(ContainerNode::new(vec![
+    Scene::External(ExternalNode::new(SliderExternal::new()).with_tag("volume_slider")),
+    Scene::External(ExternalNode::new(ButtonExternal::new()).with_tag("save_btn")),
+]));
+
+// router 의 dispatch logic 은 단일 — 위젯 N개여도 코드 N배 안 됨
+router.cursor_moved(x, y, &mut state_scene);  // volume_slider vs save_btn 자동 선택
+router.pointer_down(&mut state_scene);
+
+```
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -4661,6 +4759,44 @@ fn main() {
 - 위젯 카탈로그 확장 (Slider/Toggle/TextField, R47+) 시 hit_test segments 가 어느 widget tag 인지 disambiguate 필요 — 현재 구현은 single button view 의 'segments non-empty = button hit' assumption
 - R46 carry items 그대로 (Vello first emit template / ai-introspect-demo manifest+codegen / Headless renderer / cosmic-text glyph cache)
 - ai-introspect-demo 는 이미 hit_test 사용 (R39.4.3 dogfood) — forge-counter 는 GUI 아니믰로 부해수 없음. R47 는 hello-button 단독 fix 입장
+
+
+
+### Round 419 — Round 48 — §5.35 new — input dispatch axis ratify: cursor/key → widget routing framework primitive (위젯 추가 시 R47-class hit-test bug 재발 방지)
+
+**Changes**:
+- §5.35 신규 section — input dispatch axis. Intent: input event → framework hit-test/focus → widget dispatch, application routing 0줄
+- Rationale 5 bullets — Xilem/Druid/Slint/Qt/GTK/iced textbook precedent, §5.32 hit-test infra 공유, R47 workaround 의 위젯 확장 취약성, §5.15 item 5 protocol 만 미spec, §5.20 (output) 대칭 axis null
+- Inputs: Scene (post-layout, framework-retained) / input event / state scene (ExternalNode.tag dispatch target)
+- Outputs: 0/1 invoke('send', Text(event_name)) dispatch / Hover transition / focus transition (v1+ carry)
+- Impact scope: §5.13 Event enum, §5.15 item 5 input forwarding, §5.20 intent (output) 대칭, §5.32 scene/locate hit-test infra
+- Alternatives rejected: application-level dispatch (DRY 위반), per-widget subscription (§5.15 + §6.3 충돌), RPC-only (hot path 오버헤드)
+- Caveats 4 — single-target hit-test scope, focus v0 click only, touch/gesture out of R48, paint scene Container/Box.tag schema 확장
+- Examples 2 — hello-button R48.3 refactor preview, 위젯 카탈로그 Slider+Button 다중 widget dispatch
+- spec only — code 0 줄 변경. R48.1 (pinion-core tag-aware) / R48.2 (InputRouter) / R48.3 (hello-button refactor) build slices 이어서
+
+
+
+**Verification**:
+- mnemosyne validate_workspace: T1=0 T3=0 reject=0, GENERATED.md=sync 예정 (아래 generate_docs 후 검증)
+- code 변경 부재 — cargo test 599 / clippy baseline 유지 (R47 이후 변경 없음)
+- §5.32 scene/locate (R39) hit-test infra 가 internal+external unified path 공유 가능성 예증
+- §5.20 intent (output) 와 대칭 axis 구조 — input path 의 missing primitive 명시
+
+
+
+**Impact**: §5.35, §5.13, §5.15, §5.20, §5.32
+
+
+**Carry forward**:
+- R48.1: pinion-core ContainerNode/BoxNode 에 tag: Option<String> field 추가 (paint scene tag-aware) — ExternalNode.tag 패턴 일관 적용
+- R48.2: pinion-runtime 에 input::InputRouter primitive — last_paint_scene retention + cursor tracking + tag→ExternalNode dispatch + unit tests
+- R48.3: hello-button main.rs 의 R47 application-level hit-test 코드 제거 + InputRouter 사용, view fn 의 button container 에 .with_tag('main_btn') 부여
+- R49+: multi-target dispatch (capture/bubble) — R48.1 은 single-target hit-test (deepest tagged ancestor) 으로 출발
+- R49+: focus tab order + key dispatch — v0 은 click→focus 만, 위젯 카탈로그 TextField 진입 시 필수
+- R49+: Touch/gesture event — winit Touch 지원, pinch/multi-finger 추가 axis 또는 어디 도 없는 명시 결정
+- ai-introspect-demo 의 자체 hit-test 코드 도 InputRouter 로 refactor 가능 (동일 패턴 — 별도 commit)
+- R46 carry items 그대로 (Vello first emit template / ai-introspect-demo manifest+codegen / Headless / cosmic-text glyph cache / 위젯 카탈로그)
 
 
 
