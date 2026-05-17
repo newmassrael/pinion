@@ -8,14 +8,16 @@
 use crate::error::ParseError;
 use crate::sfnt::{OffsetTable, TableRecord, find_table, parse_sfnt};
 use crate::tables::cmap::Cmap;
+use crate::tables::glyf::{Glyf, Glyph};
 use crate::tables::head::Head;
 use crate::tables::hhea::Hhea;
 use crate::tables::hmtx::Hmtx;
+use crate::tables::loca::{Loca, LocaFormat};
 use crate::tables::maxp::Maxp;
 use crate::tables::os2::Os2;
 use crate::tables::post::Post;
 
-/// 통합 Font view — sfnt + 6 metadata table.
+/// 통합 Font view — sfnt + 6 metadata + cmap + loca + glyf.
 ///
 /// `bytes` 는 raw font binary 의 owned copy. R50.1.3+ 의 cmap/glyf/name 추가
 /// 시 raw bytes 재참조 (offset/length 만 record 보관) 위함.
@@ -31,6 +33,8 @@ pub struct Font {
     pub os2: Os2,
     pub post: Post,
     pub cmap: Cmap,
+    pub loca: Loca,
+    pub glyf: Glyf,
 }
 
 impl Font {
@@ -56,6 +60,13 @@ impl Font {
         let os2 = Os2::parse(find_table(&bytes, &records, *b"OS/2")?)?;
         let post = Post::parse(find_table(&bytes, &records, *b"post")?)?;
         let cmap = Cmap::parse(find_table(&bytes, &records, *b"cmap")?)?;
+        let loca_format = LocaFormat::from_head_value(head.index_to_loc_format)?;
+        let loca = Loca::parse(
+            find_table(&bytes, &records, *b"loca")?,
+            loca_format,
+            maxp.num_glyphs,
+        )?;
+        let glyf = Glyf::parse(find_table(&bytes, &records, *b"glyf")?, &loca)?;
 
         Ok(Self {
             bytes,
@@ -68,6 +79,8 @@ impl Font {
             os2,
             post,
             cmap,
+            loca,
+            glyf,
         })
     }
 
@@ -136,5 +149,14 @@ impl Font {
     #[must_use]
     pub fn glyph_id_for(&self, codepoint: u32) -> Option<u16> {
         self.cmap.glyph_id(codepoint)
+    }
+
+    /// Parsed glyph outline by glyph ID. `Glyph::Empty` 가 빈 글리프 표현체,
+    /// `Glyph::Simple` 가 TrueType simple outline, `Glyph::Composite` 는
+    /// R50.1.4.1 시점 header-only placeholder (R50.1.4.2 에서 fully parse).
+    /// `glyph_id >= num_glyphs` 면 `None`.
+    #[must_use]
+    pub fn glyph_outline(&self, glyph_id: u16) -> Option<&Glyph> {
+        self.glyf.glyph(glyph_id)
     }
 }

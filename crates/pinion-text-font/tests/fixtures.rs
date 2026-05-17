@@ -1,10 +1,11 @@
-//! R50.1.1+R50.1.2 §5.37.1 — real font fixture integration tests.
+//! R50.1.1+R50.1.2+R50.1.3+R50.1.4.1 §5.37.1 — real font fixture
+//! integration tests.
 //!
 //! Latin (Noto Sans Regular, OFL 1.1) + 한글 (Nanum Gothic Regular, OFL 1.1).
-//! sfnt + 6 metadata tables (head/maxp/hhea/hmtx/OS2/post) production-grade
-//! 두 family 모두 정확히 parse 함을 확인.
+//! sfnt + 6 metadata tables + cmap + loca + glyf (simple/composite) production-
+//! grade 두 family 모두 정확히 parse 함을 확인.
 
-use pinion_text_font::{Font, SfntFlavor, parse_sfnt};
+use pinion_text_font::{Font, Glyph, LocaFormat, SfntFlavor, parse_sfnt};
 use std::fs;
 
 #[test]
@@ -231,6 +232,104 @@ fn nanum_gothic_cmap_subtable_sweep() {
         }
         None => panic!("Nanum Gothic has no usable cmap subtable"),
     }
+}
+
+#[test]
+fn noto_sans_glyf_loca_sweep() {
+    // Noto Sans 모든 glyph: parse panic 0, loca format == head.index_to_loc_format,
+    // glyph 0 (.notdef) = Simple, composite/empty 식별 통계.
+    let bytes = fs::read("tests/fonts/NotoSans-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    let expected_format = match font.head.index_to_loc_format {
+        0 => LocaFormat::Short,
+        1 => LocaFormat::Long,
+        other => panic!("invalid index_to_loc_format = {other}"),
+    };
+    assert_eq!(font.loca.format, expected_format);
+    assert_eq!(font.loca.num_glyphs(), usize::from(font.num_glyphs()));
+    assert_eq!(font.glyf.num_glyphs(), usize::from(font.num_glyphs()));
+
+    // glyph 0 (.notdef) — 모든 TrueType font 의 첫 glyph, 보통 simple rectangle 또는 hollow box.
+    let g0 = font.glyph_outline(0).expect("glyph 0 exists");
+    assert!(matches!(g0, Glyph::Simple(_)), ".notdef should be simple");
+
+    // 모든 glyph 를 순회하며 parse 검증 (panic 0).
+    let mut empty_count = 0;
+    let mut simple_count = 0;
+    let mut composite_count = 0;
+    let mut total_points = 0usize;
+    for gid in 0..font.num_glyphs() {
+        let glyph = font
+            .glyph_outline(gid)
+            .unwrap_or_else(|| panic!("glyph {gid} not found"));
+        match glyph {
+            Glyph::Empty => empty_count += 1,
+            Glyph::Simple(s) => {
+                simple_count += 1;
+                total_points += s.points.len();
+            }
+            Glyph::Composite(_) => composite_count += 1,
+        }
+    }
+    assert!(simple_count > 0, "Noto Sans 는 simple glyph 보유");
+    // Noto Sans Regular 는 Latin accented 글자 다수 → composite glyph 다수 보유.
+    assert!(composite_count > 0, "Noto Sans 는 composite glyph 보유");
+    eprintln!(
+        "Noto Sans: {simple_count} simple / {composite_count} composite / {empty_count} empty / {total_points} points total"
+    );
+}
+
+#[test]
+fn nanum_gothic_glyf_loca_sweep() {
+    let bytes = fs::read("tests/fonts/NanumGothic-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    let expected_format = match font.head.index_to_loc_format {
+        0 => LocaFormat::Short,
+        1 => LocaFormat::Long,
+        other => panic!("invalid index_to_loc_format = {other}"),
+    };
+    assert_eq!(font.loca.format, expected_format);
+    assert_eq!(font.glyf.num_glyphs(), usize::from(font.num_glyphs()));
+
+    let mut empty_count = 0;
+    let mut simple_count = 0;
+    let mut composite_count = 0;
+    for gid in 0..font.num_glyphs() {
+        match font.glyph_outline(gid).expect("glyph exists") {
+            Glyph::Empty => empty_count += 1,
+            Glyph::Simple(_) => simple_count += 1,
+            Glyph::Composite(_) => composite_count += 1,
+        }
+    }
+    assert!(simple_count > 0);
+    eprintln!(
+        "Nanum Gothic: {simple_count} simple / {composite_count} composite / {empty_count} empty"
+    );
+}
+
+#[test]
+fn noto_sans_letter_a_outline_present() {
+    // 'A' = U+0041 → glyph_id_for → glyph_outline → 반드시 Simple 또는 Composite.
+    let bytes = fs::read("tests/fonts/NotoSans-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+    let gid = font.glyph_id_for(0x0041).expect("'A' is mapped");
+    let glyph = font.glyph_outline(gid).expect("outline exists");
+    assert!(
+        !matches!(glyph, Glyph::Empty),
+        "'A' should not be empty glyph"
+    );
+}
+
+#[test]
+fn nanum_gothic_hangul_outline_present() {
+    let bytes = fs::read("tests/fonts/NanumGothic-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+    // '가' = U+AC00 — Nanum Gothic 의 핵심 한글 음절.
+    let gid = font.glyph_id_for(0xAC00).expect("'가' is mapped");
+    let glyph = font.glyph_outline(gid).expect("outline exists");
+    assert!(!matches!(glyph, Glyph::Empty), "'가' should not be empty");
 }
 
 #[test]

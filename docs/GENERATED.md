@@ -6337,6 +6337,41 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 459 — Round 459 — R50.1.4.1 §5.37.1 loca + glyf simple parser. tables/loca.rs (short/long format dispatch + monotonic 검증) + tables/glyf/{mod, simple, test_helpers} 처음부터 분리 (Glyph::{Empty, Simple, Composite}, simple body parse with REPEAT/short/same flag expansion + coordinate delta accumulation). Composite 는 R50.1.4.2 placeholder (header + raw_body 보존). Font::glyph_outline accessor 추가. Noto Sans + Nanum Gothic 모든 glyph (simple+composite+empty) parse panic 0. workspace 744 → 772 tests (+28), pinion-text-font clippy 0 (baseline 복원).
+
+**Changes**:
+- tables/loca.rs 신설 — LocaFormat enum (Short/Long) + Loca struct + parse (head.index_to_loc_format dispatch) + glyph_range accessor
+- tables/glyf/ 폴더 신설 (R50.1.3.2 cmap split 패턴 정합) — mod.rs (Glyf/Glyph/GlyphHeader/GlyphPoint/CompositeGlyph + parse_glyph dispatch + windows(2) panic-free iter) + simple.rs (parse_simple + FLAG_* 8 const + expand_flags REPEAT 풀기 + read_coordinates short/same 변환 + delta 누적) + test_helpers.rs (build_simple_rectangle fixture)
+- src/lib.rs — Loca/LocaFormat/Glyf/Glyph/GlyphHeader/GlyphPoint/CompositeGlyph/SimpleGlyph re-export 추가
+- src/tables/mod.rs — loca + glyf 모듈 추가
+- src/font.rs — Font 에 loca + glyf field 추가 + LocaFormat::from_head_value 통한 head/loca 동기화 + Font::glyph_outline(glyph_id) accessor
+- tests/fixtures.rs — Noto Sans + Nanum Gothic glyf/loca sweep 4 tests (.notdef simple 검증, 모든 glyph variant 통계, 'A' / '가' outline 존재)
+- spec strict reject: loca monotonic / bbox invariant / endPts ascending / reserved flag bit (0x80) / flag-expand exceed num_points / coordinate i16 overflow / numContours 0
+- composite glyph (numberOfContours == -1) = R50.1.4.1 placeholder — header 만 parse, raw_body Vec<u8> 보존. R50.1.4.2 에서 components/transform parse 로 elevation
+
+
+
+**Verification**:
+- workspace 772 tests pass (744 → 772, +28; pinion-text-font lib 93 + integration 15)
+- pinion-text-font clippy --all-targets 0 warnings (baseline 복원; Glyf::parse panic 제거 windows(2) + doc backticks + try_from 명시화 정정)
+- real font integration: Noto Sans Regular 모든 glyph (simple + composite + empty mix) parse panic 0 / Nanum Gothic Regular 동일 / .notdef = Simple 검증 / 'A' (U+0041) + '가' (U+AC00) glyph_id_for → glyph_outline 통합 path 검증
+- loca format dispatch — head.index_to_loc_format = 0 → Short / 1 → Long, real font 두 family 모두 정합 검증
+- Reader fail-clean (OOB panic 0) + FieldValue sign-preserving (loca/glyf 모든 InvalidTableField 일관)
+- self-audit 15 questions all pass (textbook canonical + framework primitive + spec strict + invariant + real font sweep + folder split + DRY)
+
+
+
+**Impact**: §5.37.1
+
+
+**Carry forward**:
+- R50.1.4.2 glyf compound parser — subglyph references + 4-byte / 2-byte arg pair + 4 transform variant (scale / x-y scale / 2x2 matrix) + 12 component flags + cycle detection (max depth + ancestor set)
+- R50.1.5 name table parser (family / style / postscript / copyright string + platform encoding dispatch)
+- R50.1.X 후속: cmap format 0/2/6/8/10/13/14, WOFF2 decompression, CFF/CFF2, variable axis (fvar/avar/gvar), color tables (COLR/CPAL/sbix), GSUB/GPOS raw store (execution 은 R50.3 shape)
+- R47-class InputRouter SCE migration carry — SCE audit 결과 framework primitive 영역 gesture state 가 inline Rust (§2 invariant #5 부분 미충족); R50 시리즈 마감 후 별도 axis 고려
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

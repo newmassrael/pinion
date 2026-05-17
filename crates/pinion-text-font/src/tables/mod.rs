@@ -4,9 +4,11 @@
 //! 또는 number-of-records 가 다른 table 에서 유도되는 variable-length.
 
 pub mod cmap;
+pub mod glyf;
 pub mod head;
 pub mod hhea;
 pub mod hmtx;
+pub mod loca;
 pub mod maxp;
 pub mod os2;
 pub mod post;
