@@ -4835,6 +4835,40 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 421 — Round 48 — build slice 2: hello-button refactor — R47 의 application-level hit-test 코드 전체 제거 + InputRouter 사용. view fn 의 button container 에 .with_tag('main_btn') 부여 — framework primitive 가 자동 dispatch
+
+**Changes**:
+- App struct: R47 의 3 field (last_paint_scene / cursor / cursor_on_button) 제거 → router: InputRouter 하나로 교체
+- App impl: update_cursor_hit method 제거, floor_clamp_u32 helper 제거 — 모두 InputRouter 안으로 이동
+- Event handler 4개 (CursorMoved/Left, MouseInput Pressed/Released): router.cursor_moved/left/pointer_down/up 호출 + refresh_state + drain_intents 묶음
+- view fn: button container 에 .with_tag('main_btn') 추가 — state scene 의 ExternalNode('main_btn') 와 동일 tag 로 framework 자동 매칭
+- render() 끝: router.update_paint_scene(paint_scene, &mut self.scene) + refresh_state + drain_intents — 이전 self.last_paint_scene = Some(...) + self.update_cursor_hit() 대체
+- import: pinion_runtime::InputRouter 추가. cosmic_text / softbuffer / winit 그대로
+
+
+
+**Verification**:
+- cargo check -p hello-button = clean
+- cargo clippy -p hello-button --all-targets = clean (hello-button-specific 0 warnings)
+- cargo test --workspace = 608 pass 유지 (코드 감소 외 테스트 regression 0)
+- validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+- 기능 보존: button hover/click 여전히 button rect 안에서만 설정 — R47 bug fix 의 행동적 동일성 (framework primitive 로 이동), d/e 키보드 Disable/Enable 그대로
+
+
+
+**Impact**: §5.35, §5.20
+
+
+**Carry forward**:
+- ai-introspect-demo 자체 hit-test 코드 도 InputRouter 로 refactor 가능 (별도 commit, R49 이후)
+- 위젯 카탈로그 (Slider/Toggle/TextField) 진입 시 framework primitive 에 자동 plug-in — R47-class bug 재발 불가 (input dispatch 코드 가 application 에 없음)
+- R49+ multi-target dispatch (capture/bubble)
+- R49+ focus tab order + key dispatch (TextField 진입 필수)
+- R49+ Touch/gesture event (winit Touch 미지원)
+- R46 carry items 그대로 (Vello first emit template / ai-introspect-demo manifest+codegen / Headless / cosmic-text glyph cache)
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

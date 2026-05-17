@@ -49,7 +49,7 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Scene};
 use pinion_core::SceneRevision;
 use pinion_rpc::{dispatch, DispatchContext, PreviewLedger};
-use pinion_runtime::{compute_layout, walk_scene_and_drain, IntentQueue};
+use pinion_runtime::{compute_layout, walk_scene_and_drain, InputRouter, IntentQueue};
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -105,6 +105,11 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     ));
     let button = Scene::Container(
         ContainerNode::new(vec![label_text])
+            // R48 §5.35: framework dispatch identifier. The InputRouter
+            // hit-tests the paint scene for this tag and routes pointer
+            // events to the state scene's ExternalNode("main_btn") —
+            // application code never sees the cursor coordinates.
+            .with_tag("main_btn")
             .with_style(BoxStyle::filled(btn_fill))
             .with_layout(
                 LayoutStyle::new()
@@ -375,25 +380,16 @@ struct App {
     /// bumps after the winit-side `invoke` since that path bypasses
     /// the dispatcher entirely.
     revision: SceneRevision,
-    /// R47 §5.32 hit-test gate. Last rendered paint scene (post-layout)
-    /// retained as the hit-test source for the next mouse event. `None`
-    /// until the first `render()` completes. `Scene` is `!Clone` (its
-    /// `ExternalNode` variant owns a `Box<dyn External>`), but the
-    /// paint scene built by `view()` here contains no `External` —
-    /// move-stored is sufficient.
-    last_paint_scene: Option<Scene>,
-    /// R47 §5.32 cached cursor position (physical pixel). Refreshed
-    /// on every winit `CursorMoved`; cleared on `CursorLeft`. Drives
-    /// [`Self::update_cursor_hit`] alongside `last_paint_scene`.
-    cursor: Option<(f64, f64)>,
-    /// R47 §5.32 cached hit-test result — `true` when the cursor is
-    /// over the button rect (not just the window background). Recomputed
-    /// from [`Scene::hit_test`] on `CursorMoved`, `CursorLeft`, and at
-    /// the tail of `render()` (window resize may shift the button rect
-    /// under a stationary cursor). Gates `PointerDown`/`PointerUp` and
-    /// drives `PointerEnter`/`PointerLeave` transitions — replacing the
-    /// pre-R47 reliance on winit's window-boundary `CursorEntered/Left`.
-    cursor_on_button: bool,
+    /// R48 §5.35 framework-side input dispatch primitive. Owns the
+    /// retained paint scene + cursor state + `hover_target` and routes
+    /// pointer events to the matching `ExternalNode` in `self.scene`.
+    /// Replaces R47's application-level `last_paint_scene` /
+    /// `cursor` / `cursor_on_button` / `update_cursor_hit` /
+    /// `floor_clamp_u32` — all of that lives in
+    /// [`pinion_runtime::InputRouter`] now, so adding a new widget
+    /// (`Slider` / `Toggle` / `TextField`) only requires tagging its
+    /// paint container, never re-implementing hit-test routing.
+    router: InputRouter,
 }
 
 impl App {
@@ -421,9 +417,7 @@ impl App {
             swash_cache: SwashCache::new(),
             previews: PreviewLedger::default(),
             revision: SceneRevision::default(),
-            last_paint_scene: None,
-            cursor: None,
-            cursor_on_button: false,
+            router: InputRouter::new(),
         }
     }
 
@@ -540,53 +534,17 @@ impl App {
             &mut self.swash_cache,
         );
         let _ = buffer.present();
-        // R47 §5.32: retain the post-layout paint scene so the next
-        // mouse event can hit-test cursor → button rect. Window
-        // resize may shift the button rect under a stationary
-        // cursor, so re-run the hit-test gate now too.
-        self.last_paint_scene = Some(paint_scene);
-        self.update_cursor_hit();
+        // R48 §5.35: hand the post-layout paint scene to the framework
+        // router. The router retains it for subsequent hit-tests and
+        // re-resolves hover_target now (window resize may have moved
+        // the button rect under a stationary cursor). Any
+        // PointerEnter/Leave transition flows through dispatch_send →
+        // ButtonExternal directly; refresh state + drain intents
+        // afterwards to surface the SCXML transition + emitted intents.
+        self.router.update_paint_scene(paint_scene, &mut self.scene);
+        self.refresh_state();
+        self.drain_intents();
     }
-
-    /// R47 §5.32 hit-test gate. Compute whether `self.cursor` lies
-    /// inside the button rect of `self.last_paint_scene` via
-    /// [`Scene::hit_test`]. Forwards `PointerEnter` / `PointerLeave`
-    /// to the Button SCXML on transition and updates the cached
-    /// `cursor_on_button`. A no-op when either source is `None`
-    /// (cursor outside window, or no paint scene yet) — in either
-    /// case the cursor is considered *off* the button.
-    ///
-    /// `Scene::hit_test` returns segments=[] for a root-only hit
-    /// (window background) and a non-empty segments path for any
-    /// child match (the inner button Container or its label Text).
-    /// Treating any non-empty segments as "on button" is correct for
-    /// the current single-button view; multi-widget views (R47+
-    /// widget catalog) will need to disambiguate by tag.
-    fn update_cursor_hit(&mut self) {
-        let now = match (self.cursor, &self.last_paint_scene) {
-            (Some((x, y)), Some(scene)) => scene
-                .hit_test(floor_clamp_u32(x), floor_clamp_u32(y))
-                .is_some_and(|hit| !hit.segments.is_empty()),
-            _ => false,
-        };
-        if self.cursor_on_button == now {
-            return;
-        }
-        self.cursor_on_button = now;
-        self.forward(if now { ButtonEvent::PointerEnter } else { ButtonEvent::PointerLeave });
-    }
-}
-
-/// Saturating cast from a winit cursor coordinate (`f64`) to the
-/// `u32` accepted by [`Scene::hit_test`]. Negative values clamp to 0
-/// (cursor can never hit at sub-zero coords); fractional precision
-/// is dropped (hit-test resolution is whole pixels at R47). The
-/// allow-list documents what the saturating clamp protects against,
-/// keeping the lint silenced only at this one call site rather than
-/// the whole hit-test path.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn floor_clamp_u32(v: f64) -> u32 {
-    v.max(0.0) as u32
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -644,51 +602,41 @@ impl ApplicationHandler<AppEvent> for App {
                 eprintln!("button: final state = {:?}", self.cached_state);
                 event_loop.exit();
             }
-            // R47 §5.32: CursorEntered/Left no longer drive Button
-            // SCXML directly — winit's window-boundary events were
-            // the wrong hover surface (every empty pixel of the
-            // background looked like a button hover). CursorMoved
-            // owns the hit-test gate; CursorLeft only clears the
-            // cached cursor and rolls back any in-flight Hover.
-            // CursorEntered is intentionally elided — winit guarantees
-            // a CursorMoved soon after entry, so the wildcard arm
-            // below handles it as a no-op until real coords arrive.
+            // R48 §5.35: all pointer routing flows through the framework
+            // InputRouter. The handler bodies just forward the winit
+            // event into the router; the router does the hit-test,
+            // emits PointerEnter/Leave/Down/Up to the matching
+            // ExternalNode, and the app only refreshes its cached
+            // state + drains intents afterwards. CursorEntered is a
+            // no-op (winit guarantees a CursorMoved follows, which
+            // resolves the real cursor position).
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor = Some((position.x, position.y));
-                self.update_cursor_hit();
+                self.router.cursor_moved(position.x, position.y, &mut self.scene);
+                self.refresh_state();
+                self.drain_intents();
             }
             WindowEvent::CursorLeft { .. } => {
-                self.cursor = None;
-                if self.cursor_on_button {
-                    self.cursor_on_button = false;
-                    self.forward(ButtonEvent::PointerLeave);
-                }
+                self.router.cursor_left(&mut self.scene);
+                self.refresh_state();
+                self.drain_intents();
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
             } => {
-                // R47 §5.32 hit-test gate: only forward PointerDown
-                // when the cursor is over the button rect. Clicks on
-                // the empty background no longer drive the SCXML.
-                if self.cursor_on_button {
-                    self.forward(ButtonEvent::PointerDown);
-                }
+                self.router.pointer_down(&mut self.scene);
+                self.refresh_state();
+                self.drain_intents();
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
             } => {
-                // Release while cursor is on the button completes a
-                // click cycle. Release while off-button is a no-op:
-                // the cursor must have left the button after press,
-                // and CursorMoved's PointerLeave already drove the
-                // SCXML out of Pressed back to Idle.
-                if self.cursor_on_button {
-                    self.forward(ButtonEvent::PointerUp);
-                }
+                self.router.pointer_up(&mut self.scene);
+                self.refresh_state();
+                self.drain_intents();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 use winit::keyboard::{Key, NamedKey};
