@@ -6,12 +6,12 @@
 //!   2. Repaint trigger ownership   — [`External::repaint_ownership`]
 //!   3. Thread ownership            — [`External::thread_ownership`]
 //!   4. Lifecycle event callbacks   — `on_mount` / `on_unmount` /
-//!                                    `on_visibility_change` / `on_focus_change`
+//!      `on_visibility_change` / `on_focus_change`
 //!   5. Input forwarding policy     — [`External::handles_event`]
 //!   6. DPI / resize notification   — `on_dpi_change` / `on_resize`
 //!   7. Async state change channel  — [`External::poll_state`] (pull form)
 //!   8. Symbolic introspection      — *opt-in*, lands as a separate
-//!                                    sub-trait in a later slice
+//!      sub-trait in a later slice
 //!
 //! Items 1-7 are mandatory; items 1-3 are required (no default), items
 //! 4-7 ship sensible no-op defaults so authors only override what they

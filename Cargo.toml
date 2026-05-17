@@ -17,7 +17,9 @@ exclude = ["vendor/sce"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85.0"
+# R46.3 §5.16 — Vello 0.6.0 transitively requires rustc 1.86. See
+# rust-toolchain.toml comment for the bump rationale.
+rust-version = "1.86.0"
 license = "LGPL-3.0-or-later"
 authors = ["pinion contributors"]
 
@@ -30,6 +32,12 @@ serde_json = "1"
 # Not consumed by the core/runtime/rpc crates — example-scope only.
 winit = "0.30"
 softbuffer = "0.4"
+
+# §5.16 R46.3 ai-introspect-demo — block on Vello's async `new` at app
+# boot per §6.3 boundary. Example-scope only; pinion-core/runtime stay
+# sync (view-fn purity). Sync wrapper around futures so the example
+# doesn't need a tokio runtime just for one-shot init.
+pollster = "0.4"
 
 # §5.16 R41 hybrid path C — Linebender Vello as the UI-mode 2D rasterizer
 # (Phase 1, 18-24mo). R46.2 lands the first pinion-forge emit template

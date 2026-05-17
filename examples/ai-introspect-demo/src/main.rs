@@ -1,32 +1,25 @@
-//! R40.8 / R42 — propose/apply visual dogfood for §5.34's preview
-//! lifecycle, simplified to a **single canonical scene** after R42's
-//! nested-External path walker landed.
+//! R46.3 §5.16 — ai-introspect-demo on the Vello render path.
 //!
-//! Closes the §5.34 R40.x series with the first user-visible round-trip
-//! through `scene/propose_change` → `scene/apply_preview`. Builds on
-//! R39.4.3's locate+highlight dogfood: the original right-click /
-//! locate / red-outline interaction is preserved verbatim, and four new
-//! keybindings (`P`/`A`/`C`/`L`) drive the preview lifecycle against an
-//! introspectable [`CountedExternal`] embedded **inside** the same
-//! scene as the visible widgets.
+//! Same RPC + locate + preview UX as the R42 single-scene dogfood,
+//! retargeted from `softbuffer` to a pinion-forge-generated Vello
+//! renderer. The renderer struct (`DemoRenderer`) is emitted by
+//! `build.rs` from `app.pinion.xml` (`kind="renderer" backend="vello"`,
+//! `aa` default = Area per R46.2.1) into `$OUT_DIR/app.rs`; this file
+//! pulls it in via `include!` inside a private `gen_renderer` module
+//! so the codegen's `use vello::*` imports don't collide with this
+//! module's `use pinion_core::style::Color`.
 //!
-//! ## Single canonical scene (R42 textbook recovery)
+//! ## Single canonical scene (R42 textbook recovery, preserved)
 //!
-//! R40.8's first cut held two scenes — `state_scene` for RPC mutation
-//! and `paint_scene` for rendering — because the v0 `rewind`/`query`
-//! path walker only resolved root-`External` scenes. R42 lifted that
-//! constraint: the `/external/` literal now acts as a separator
-//! between scene-walk segments and the introspect path, so a scene
-//! tree containing both visible widgets **and** a tagged
-//! `ExternalNode` becomes addressable as `/counter/external/count`.
+//! One [`Scene`] holds buttons + `info_panel` + `counter` (External)
+//! + overlay highlights. RPC mutations and rendering target the same
+//! tree. The pre-R46.3 `paint()` function that drew rects into a
+//! softbuffer u32 buffer has been replaced by [`build_vello_scene`],
+//! which walks the same [`Scene`] tree and emits `vello::Scene` fill /
+//! stroke commands; the rest of the demo (R39.4.3 locate, R40.x
+//! preview lifecycle) is unchanged.
 //!
-//! Result: one [`Scene`] field holds buttons + `info_panel` +
-//! `counter` (External) + overlay highlights. RPC mutations and
-//! rendering target the same tree. Overlay state is updated in-place
-//! via a sentinel-swap dance ([`Scene`] is `!Clone` because
-//! `ExternalNode` owns a `Box<dyn External>`).
-//!
-//! Controls (unchanged from R40.8):
+//! Controls (unchanged from R42):
 //!
 //!   * **Right-click** — `scene/locate` (§5.32) + red outline
 //!   * **Left-click**  — clear all overlay highlights
@@ -47,14 +40,27 @@
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
+    // R46.3 rustc 1.86 MSRV bump surfaced this on pre-existing R42
+    // `PALETTE.len() as i64` patterns at palette_color / on_propose /
+    // on_apply — usize→i64 cast on 64-bit targets can in principle
+    // wrap, but PALETTE.len() = 5 (always < i64::MAX). Same scope
+    // discipline as cast_possible_truncation above.
+    clippy::cast_possible_wrap,
     clippy::doc_markdown,
+    // Demo-narrative doc comments use visual alignment (continuation
+    // lines indented to match the `**Key** — ` prefix). Rust 1.86
+    // tightened doc-list lints to flag this as ambiguous markdown.
+    // Example-scope prose, not framework API documentation.
+    clippy::doc_overindented_list_items,
+    clippy::doc_lazy_continuation,
 )]
 
-use std::num::NonZeroU32;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 
-use softbuffer::{Context, Surface};
+use vello::Scene as VelloScene;
+use vello::kurbo::{Affine, Rect as KurboRect, Stroke};
+use vello::peniko::{Color as PenikoColor, Fill};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -66,11 +72,21 @@ use pinion_core::external::{CountedExternal, IntrospectValue};
 use pinion_core::scene::{BoxNode, ContainerNode, EffectNode, ExternalNode, Rect};
 use pinion_core::style::{Border, BoxStyle, Color};
 use pinion_core::{Scene, SceneRevision};
-use pinion_overlay::{clear_highlights, inject_highlight, HighlightStyle};
+use pinion_overlay::{HighlightStyle, clear_highlights, inject_highlight};
 use pinion_rpc::{
-    apply_preview, cancel_preview, list_previews, locate, propose_change, query, ApplyError,
-    PreviewId, PreviewLedger, ProposeError, TypedProposal,
+    ApplyError, PreviewId, PreviewLedger, ProposeError, TypedProposal, apply_preview,
+    cancel_preview, list_previews, locate, propose_change, query,
 };
+
+// pinion-forge codegen output. Defines `pub struct DemoRenderer { ... }`
+// + `pub enum DemoRendererError` + async `new<W: Into<wgpu::SurfaceTarget<'static>>>`
+// + sync `render(&vello::Scene, peniko::Color)` + sync `resize(u32, u32)`.
+// Wrapped in a module so the generated `use vello::*` imports stay
+// scoped to the codegen output — bindgen / prost convention.
+mod gen_renderer {
+    include!(concat!(env!("OUT_DIR"), "/app.rs"));
+}
+use gen_renderer::DemoRenderer;
 
 const WIN_W: u32 = 640;
 const WIN_H: u32 = 360;
@@ -159,9 +175,17 @@ struct App {
     locate_highlights: Vec<String>,
     cursor: (u32, u32),
     pending_escape_exit: bool,
-    window: Option<Rc<Window>>,
-    context: Option<Context<Rc<Window>>>,
-    surface: Option<Surface<Rc<Window>, Rc<Window>>>,
+    /// Window handle. `Arc` (not `Rc`) because Vello hands it to wgpu
+    /// for surface acquisition, and wgpu's `SurfaceTarget<'static>`
+    /// requires `Send + Sync`.
+    window: Option<Arc<Window>>,
+    /// pinion-forge-generated Vello wrapper. `None` until [`Self::resumed`]
+    /// boots it via `pollster::block_on(DemoRenderer::new(...))`.
+    renderer: Option<DemoRenderer>,
+    /// Reusable Vello scene buffer — reset (`scene.reset()`) at the
+    /// start of each frame rather than reallocated. Vello's Scene API
+    /// expects this pattern (see Linebender Vello examples / Xilem).
+    vello_scene: VelloScene,
 }
 
 impl App {
@@ -175,8 +199,8 @@ impl App {
             cursor: (0, 0),
             pending_escape_exit: false,
             window: None,
-            context: None,
-            surface: None,
+            renderer: None,
+            vello_scene: VelloScene::new(),
         }
     }
 
@@ -386,22 +410,22 @@ impl App {
         }
     }
 
+    /// Build a Vello scene from the canonical pinion [`Scene`] and
+    /// submit one frame. The Vello buffer is reset at frame start so
+    /// allocations amortize across the lifetime of the application
+    /// (Linebender canonical pattern). On `wgpu::SurfaceError::Lost` /
+    /// `Outdated`, the next `Resized` event will reconfigure the
+    /// surface — the failure is logged and the frame is dropped, not
+    /// retried, since winit will request another redraw shortly.
     fn render(&mut self) {
-        let Some(surface) = self.surface.as_mut() else { return };
-        let Some(window) = self.window.as_ref() else { return };
-        let size = window.inner_size();
-        let Some(w) = NonZeroU32::new(size.width) else { return };
-        let Some(h) = NonZeroU32::new(size.height) else { return };
-        if surface.resize(w, h).is_err() {
-            return;
-        }
-        let Ok(mut buffer) = surface.buffer_mut() else { return };
-        let buf_w = w.get() as usize;
-        let buf_h = h.get() as usize;
-        buffer.fill(0);
+        let Some(renderer) = self.renderer.as_mut() else { return };
+        self.vello_scene.reset();
         let count = read_count(&self.scene);
-        paint(&self.scene, count, &mut buffer, buf_w, buf_h);
-        let _ = buffer.present();
+        let base = root_background(&self.scene);
+        build_vello_scene(&self.scene, count, &mut self.vello_scene);
+        if let Err(e) = renderer.render(&self.vello_scene, base) {
+            eprintln!("ai-introspect-demo: vello render: {e}");
+        }
     }
 }
 
@@ -411,36 +435,35 @@ impl ApplicationHandler for App {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("pinion ai-introspect-demo (§5.32 + §5.33 + §5.34 + R42)")
+            .with_title("pinion ai-introspect-demo (R46.3 §5.16 Vello)")
             .with_inner_size(LogicalSize::new(f64::from(WIN_W), f64::from(WIN_H)));
         let window = match event_loop.create_window(attrs) {
-            Ok(w) => Rc::new(w),
+            Ok(w) => Arc::new(w),
             Err(e) => {
                 eprintln!("ai-introspect-demo: window create failed: {e}");
                 event_loop.exit();
                 return;
             }
         };
-        let context = match Context::new(Rc::clone(&window)) {
-            Ok(c) => c,
+        let size = window.inner_size();
+        let renderer = pollster::block_on(DemoRenderer::new(
+            Arc::clone(&window),
+            size.width.max(1),
+            size.height.max(1),
+        ));
+        let renderer = match renderer {
+            Ok(r) => r,
             Err(e) => {
-                eprintln!("ai-introspect-demo: softbuffer ctx failed: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
-        let surface = match Surface::new(&context, Rc::clone(&window)) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("ai-introspect-demo: softbuffer surface failed: {e}");
+                eprintln!("ai-introspect-demo: DemoRenderer::new: {e}");
                 event_loop.exit();
                 return;
             }
         };
         self.window = Some(window);
-        self.context = Some(context);
-        self.surface = Some(surface);
-        println!("R42 single-scene dogfood — §5.32 locate + §5.33 overlay + §5.34 lifecycle");
+        self.renderer = Some(renderer);
+        println!(
+            "R46.3 §5.16 Vello dogfood — §5.32 locate + §5.33 overlay + §5.34 lifecycle"
+        );
         println!("  right-click: locate + red highlight");
         println!("  left-click / Esc: clear highlights (Esc×2 exits)");
         println!("  R: print scene tree");
@@ -457,6 +480,11 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::Resized(size) => {
+                if let Some(r) = self.renderer.as_mut() {
+                    r.resize(size.width.max(1), size.height.max(1));
+                }
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x.max(0.0) as u32, position.y.max(0.0) as u32);
             }
@@ -506,17 +534,36 @@ fn path_suffix(full: &str) -> &str {
     after_bracket.trim_start_matches('/')
 }
 
-/// Minimal scene → pixels renderer. Handles fill + border (border is
-/// emitted by the overlay highlight). `info_panel` (tag-matched) is
-/// painted with the palette colour derived from `count` instead of
-/// its placeholder BoxStyle.fill. Other Scene variants are no-ops at
-/// this demo's scope.
-fn paint(scene: &Scene, count: i64, buf: &mut [u32], w: usize, h: usize) {
+/// Background colour shown by Vello *before* any scene draws happen
+/// (the `RenderParams.base_color` field). We use the canonical root
+/// container's fill so a resized window outside the 640×360 root rect
+/// stays visually consistent with the inside.
+fn root_background(scene: &Scene) -> PenikoColor {
+    match scene {
+        Scene::Container(c) => pinion_to_peniko(c.style.fill),
+        _ => PenikoColor::BLACK,
+    }
+}
+
+/// Walk the canonical pinion [`Scene`] tree and emit equivalent Vello
+/// fill / stroke commands. R46.3 inline first cut — matches the
+/// pre-R46.3 softbuffer `paint()` behaviour exactly:
+///
+///   * [`Scene::Container`] → fill rect + recurse into children
+///   * [`Scene::Box`] → fill rect (palette-substituted for `info_panel`)
+///                       + stroke border when present
+///   * Everything else → no-op (External holds state; Effect / Text /
+///                       Path / Image not yet painted by this demo)
+///
+/// R46.4 carry — promote to `pinion-runtime::paint_adapter` once a
+/// second consumer (hello-button switch from softbuffer to Vello)
+/// validates the boundary.
+fn build_vello_scene(scene: &Scene, count: i64, out: &mut VelloScene) {
     match scene {
         Scene::Container(c) => {
-            paint_filled_rect(c.rect, c.style.fill, buf, w, h);
+            fill_rect(out, c.rect, c.style.fill);
             for child in &c.children {
-                paint(child, count, buf, w, h);
+                build_vello_scene(child, count, out);
             }
         }
         Scene::Box(b) => {
@@ -525,55 +572,70 @@ fn paint(scene: &Scene, count: i64, buf: &mut [u32], w: usize, h: usize) {
             } else {
                 b.style.fill
             };
-            paint_filled_rect(b.rect, fill, buf, w, h);
+            fill_rect(out, b.rect, fill);
             if let Some(border) = b.style.border {
-                paint_border(b.rect, border, buf, w, h);
+                stroke_rect(out, b.rect, border);
             }
         }
         // External / Effect / Text / Path / Image: invisible at this
         // demo's scope. External holds the counter state but is not
-        // rendered itself.
+        // rendered itself; matches pre-R46.3 paint() behaviour.
         _ => {}
     }
 }
 
-fn paint_filled_rect(r: Rect, fill: Color, buf: &mut [u32], w: usize, h: usize) {
+/// Emit one Vello filled-rectangle path for the pinion [`Rect`] +
+/// [`Color`] pair. Transparent fills are skipped (matches the
+/// pre-R46.3 `paint_filled_rect` early-exit on `Color::TRANSPARENT`).
+fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color) {
     if fill == Color::TRANSPARENT {
         return;
     }
-    let x0 = (r.x as usize).min(w);
-    let y0 = (r.y as usize).min(h);
-    let x1 = (r.x.saturating_add(r.w) as usize).min(w);
-    let y1 = (r.y.saturating_add(r.h) as usize).min(h);
-    for y in y0..y1 {
-        let row = y * w;
-        buf[row + x0..row + x1].fill(fill.to_argb());
-    }
+    let rect = KurboRect::new(
+        f64::from(r.x),
+        f64::from(r.y),
+        f64::from(r.x.saturating_add(r.w)),
+        f64::from(r.y.saturating_add(r.h)),
+    );
+    out.fill(Fill::NonZero, Affine::IDENTITY, pinion_to_peniko(fill), None, &rect);
 }
 
-fn paint_border(r: Rect, border: Border, buf: &mut [u32], w: usize, h: usize) {
-    let tw = border.width;
-    if tw == 0 {
+/// Emit one Vello stroke for a pinion [`Border`]. Vello strokes are
+/// path-centred; insetting by `width/2` reproduces the pre-R46.3
+/// "drawn inside the rect bounds" convention from the softbuffer
+/// `paint_border` helper.
+fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border) {
+    if border.width == 0 {
         return;
     }
-    // Top / bottom strips
-    paint_filled_rect(Rect::new(r.x, r.y, r.w, tw), border.color, buf, w, h);
-    paint_filled_rect(
-        Rect::new(r.x, r.y.saturating_add(r.h).saturating_sub(tw), r.w, tw),
-        border.color,
-        buf,
-        w,
-        h,
+    let w = f64::from(border.width);
+    let inset = w / 2.0;
+    let rect = KurboRect::new(
+        f64::from(r.x) + inset,
+        f64::from(r.y) + inset,
+        f64::from(r.x.saturating_add(r.w)) - inset,
+        f64::from(r.y.saturating_add(r.h)) - inset,
     );
-    // Left / right strips
-    paint_filled_rect(Rect::new(r.x, r.y, tw, r.h), border.color, buf, w, h);
-    paint_filled_rect(
-        Rect::new(r.x.saturating_add(r.w).saturating_sub(tw), r.y, tw, r.h),
-        border.color,
-        buf,
-        w,
-        h,
+    out.stroke(
+        &Stroke::new(w),
+        Affine::IDENTITY,
+        pinion_to_peniko(border.color),
+        None,
+        &rect,
     );
+}
+
+/// Convert a pinion [`Color`] (softbuffer-style packed `0x00RRGGBB`,
+/// alpha byte ignored by the prior softbuffer paint path) to a
+/// `peniko::Color` opaque RGB. R46.3 treats every pinion colour as
+/// opaque on Vello — adding semi-transparent overlays is a R46.4+
+/// concern that requires deciding pinion's Color alpha semantics.
+fn pinion_to_peniko(c: Color) -> PenikoColor {
+    let argb = c.to_argb();
+    let r = ((argb >> 16) & 0xff) as u8;
+    let g = ((argb >> 8) & 0xff) as u8;
+    let b = (argb & 0xff) as u8;
+    PenikoColor::from_rgb8(r, g, b)
 }
 
 fn main() {

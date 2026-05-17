@@ -3364,6 +3364,72 @@
         "R47+ 쪽 carry items 모두 유지 (Headless renderer template / cosmic-text glyph cache / 위젯 카탈로그 확장)"
       ]
     },
+    "424": {
+      "decision_summary": "Round 46.3 — §5.16 ai-introspect-demo Vello path end-to-end + workspace rustc 1.86 MSRV bump (Vello 0.6 transitive); R46.2 Concern 2/3 self-audit 해소 — emit template 실증 컴파일 통과, Vello resize_surface 가 infallible 확인",
+      "changes_bullets": [
+        "rust-toolchain.toml 1.85.0 → 1.86.0 + workspace.package.rust-version 교체. Vello 0.6.0 transitive (vello_encoding / vello_shaders) 가 rustc 1.86 요구. 2025-04 릴리스, 현재 2026-05 — lifetime project 맥락 에서는 자연 이동",
+        "examples/ai-introspect-demo/Cargo.toml: vello + pollster 추가, softbuffer 제거 (더 이상 사용 안됨). build-dependencies 에 pinion-forge 추가. winit 은 workspace 유지",
+        "app.pinion.xml 신규 — kind=\"renderer\" name=\"DemoRenderer\" backend=\"vello\" (aa 세속성 생략 = R46.2.1 default Area). build.rs 가 pinion_forge::compile_file 호출 → OUT_DIR/app.rs. forge-counter 와 동일 패턴",
+        "src/main.rs 소프트버퍼 → Vello 전도: softbuffer Context/Surface + Rc<Window> 제거, Arc<Window> + DemoRenderer + VelloScene buffer (매 프레임 reset). resumed 이 pollster::block_on(DemoRenderer::new(Arc<Window>, w, h)) 호출. WindowEvent::Resized 가 renderer.resize(w, h) 호출. include!(\".../app.rs\") 가 mod gen_renderer { ... } 안으로 wrap — codegen 의 use vello::* 가 main 모듈의 pinion_core::style::Color namespace 와 충돌 안 함",
+        "build_vello_scene / fill_rect / stroke_rect / root_background / pinion_to_peniko helper 추가 — pinion Scene tree → vello::Scene (Container/Box 쪽만 paint, External/Effect/Text/Path/Image 는 이전 paint() 그대로 no-op). Border 는 vello::Stroke 로 전도 (이전 4-side fill 을 대체, inset=width/2 로 center-stroke ↔ inside-rect 일치). pinion Color (0x00RRGGBB) → peniko::Color::from_rgb8 (opaque) 변환",
+        "VELLO_TEMPLATE header `//!` → `//` 교체 (R46.3 컴파일 실증 시 서프라이즈 수정) — include!() 를 mod { ... } 내부에 쓰면 `//!` 가 부모 모듈의 inner doc 으로 해석되어 use 아이템 앞을 도철잘 거절. emits_renderer_vello_module_header_and_no_text_pollution 테스트 업데이트",
+        "pinion-forge codegen.rs format_push_string 재구조 — 워크스페이스 rustc 1.86 clippy::pedantic 가 13 곳 `string.push_str(&format!(...))` 을 플래그. textbook idiom 으로 writeln!(out, ...) (std::fmt::Write trait) 교체. 13 함수 내부 변경, byte-output 동일 (87 pinion-forge 테스트 그대로 통과)",
+        "pinion-core external.rs 의 2 doc list overindented 정정 — 서속 라인을 5-space 들여쓰기로 재정렬 (clippy::doc_overindented_list_items 권고)",
+        "ai-introspect-demo allow list 확장 — clippy::cast_possible_wrap (R42 pre-existing as i64 cast, PALETTE.len()=5 bounded) + clippy::doc_overindented_list_items + clippy::doc_lazy_continuation (rustc 1.86 새 doc lint, 예제-narrative 차원). 이유 주석 추가"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace = 622 pass (R46.2.1 baseline 유지, R46.3 는 demo binary 수정 만으로 신규 테스트 없음), 0 failed",
+        "cargo clippy --workspace --all-targets = pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / pinion-forge 0 / ai-introspect-demo 0 (R46.2 baseline 의 4 에서 개선 — allow list 가 1.86 strict doc lint 까지 포괄). hello-button / forge-counter / pinion-overlay / pinion-cli / pinion-derive 0",
+        "validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync",
+        "cargo check -p ai-introspect-demo 통과 — R46.2 Concern 2 (컴파일 검증 부재) 실증 완료. emit template 의 vello::Error / wgpu::SurfaceError / Into<wgpu::SurfaceTarget<'static>> / RenderContext::create_surface / Renderer::new / render_to_texture / blitter.copy / surface_texture.present() 모두 실제 API 와 일치. Concern 3 (resize fallibility) 실증 — Vello RenderContext::resize_surface 는 () 반환 (시그니처 fn resize_surface(&mut self, surface: &mut RenderSurface<'_>, width: u32, height: u32) — fallible 아님), 현재 signature 정합"
+      ],
+      "impact_refs": [
+        "5.16",
+        "6.4"
+      ],
+      "carry_forward_bullets": [
+        "R46.4: paint_adapter → pinion-runtime 로 이동 — ai-introspect-demo 의 inline build_vello_scene / fill_rect / stroke_rect / root_background / pinion_to_peniko 가 reusable runtime module 되어야. hello-button 의 softbuffer 교체 (R46.5+) 가 두 번째 consumer 로 경계 의 검증. Scene::Container/Box 명당 fill/stroke + tag-based palette substitution (info_panel) 은 운영 레이어의 framework primitive 후보. 단 'info_panel' tag substitution 이 애플리케이션-specific 이라 paint_adapter 이 callback (Scene → Color hook) 로 노출해야",
+        "R46.5+: hello-button softbuffer → Vello 교체. R46.3 자신의 build.rs + manifest 패턴 재사용. paint_adapter (R46.4) 의 두 번째 consumer. R48 InputRouter 의 multi-widget dispatch 실증 결합 가능",
+        "R46.x: pinion-rpc 의 13 clippy 경고 감사 (most are pre-existing pre-MSRV-bump; 1.85 부터 있었음). cast_possible_truncation (dispatch.rs:1081 f64→f32) / needless_pass_by_value (1203, 1307) / missing_errors_doc (path.rs:84) / doc_markdown (multiple) 명세 분류 후 수정 vs allow 결정. 별도 round",
+        "R46.2 Concern 1 (RendererOptions 전체 노출) carry 유지 — R46.2.1 에서 aa 만 상환. present_mode / use_cpu / num_init_threads / pipeline_cache 는 build-time vs runtime 분류 spec round 대기. R46.3 의 base_color = root container fill 을 PenikoColor::BLACK 대신 사용 한 결정과 동일 속성",
+        "R46.2 self-audit Concern 4 (식별 신규) — emit template 이 use vello::* 를 개별 use 로 채택, include!() 시 consumer 니임스페이스 충돌 가능. R46.3 에서 mod { ... } wrap 으로 해소. textbook canonical 은 fully-qualified path (::vello::*) 로 테플릿 재작성 — reactive emit 과 일관성. 별도 R46.x 후보",
+        "R46.3 surfaced 한 VELLO_TEMPLATE header `//!` 이슈 — 이미 본 commit 에서 정정 (// regular comments 로 교체). 추가 carry 항목 아님",
+        "R47+ carry items (Headless template / cosmic-text / 위젯 카탈로그) 그대로 유지",
+        "R297 false-positive hint 그대로 (mnemosyne round, pinion atomic 무관). pinion R46.3 commit 이후 5-commit carry"
+      ],
+      "publishable_decision_summary": "Round 46.3 — §5.16 ai-introspect-demo Vello path end-to-end + workspace rustc 1.86 MSRV bump (Vello 0.6 transitive); R46.2 Concern 2/3 self-audit 해소 — emit template 실증 컴파일 통과, Vello resize_surface 가 infallible 확인",
+      "publishable_changes_bullets": [
+        "rust-toolchain.toml 1.85.0 → 1.86.0 + workspace.package.rust-version 교체. Vello 0.6.0 transitive (vello_encoding / vello_shaders) 가 rustc 1.86 요구. 2025-04 릴리스, 현재 2026-05 — lifetime project 맥락 에서는 자연 이동",
+        "examples/ai-introspect-demo/Cargo.toml: vello + pollster 추가, softbuffer 제거 (더 이상 사용 안됨). build-dependencies 에 pinion-forge 추가. winit 은 workspace 유지",
+        "app.pinion.xml 신규 — kind=\"renderer\" name=\"DemoRenderer\" backend=\"vello\" (aa 세속성 생략 = R46.2.1 default Area). build.rs 가 pinion_forge::compile_file 호출 → OUT_DIR/app.rs. forge-counter 와 동일 패턴",
+        "src/main.rs 소프트버퍼 → Vello 전도: softbuffer Context/Surface + Rc<Window> 제거, Arc<Window> + DemoRenderer + VelloScene buffer (매 프레임 reset). resumed 이 pollster::block_on(DemoRenderer::new(Arc<Window>, w, h)) 호출. WindowEvent::Resized 가 renderer.resize(w, h) 호출. include!(\".../app.rs\") 가 mod gen_renderer { ... } 안으로 wrap — codegen 의 use vello::* 가 main 모듈의 pinion_core::style::Color namespace 와 충돌 안 함",
+        "build_vello_scene / fill_rect / stroke_rect / root_background / pinion_to_peniko helper 추가 — pinion Scene tree → vello::Scene (Container/Box 쪽만 paint, External/Effect/Text/Path/Image 는 이전 paint() 그대로 no-op). Border 는 vello::Stroke 로 전도 (이전 4-side fill 을 대체, inset=width/2 로 center-stroke ↔ inside-rect 일치). pinion Color (0x00RRGGBB) → peniko::Color::from_rgb8 (opaque) 변환",
+        "VELLO_TEMPLATE header `//!` → `//` 교체 (R46.3 컴파일 실증 시 서프라이즈 수정) — include!() 를 mod { ... } 내부에 쓰면 `//!` 가 부모 모듈의 inner doc 으로 해석되어 use 아이템 앞을 도철잘 거절. emits_renderer_vello_module_header_and_no_text_pollution 테스트 업데이트",
+        "pinion-forge codegen.rs format_push_string 재구조 — 워크스페이스 rustc 1.86 clippy::pedantic 가 13 곳 `string.push_str(&format!(...))` 을 플래그. textbook idiom 으로 writeln!(out, ...) (std::fmt::Write trait) 교체. 13 함수 내부 변경, byte-output 동일 (87 pinion-forge 테스트 그대로 통과)",
+        "pinion-core external.rs 의 2 doc list overindented 정정 — 서속 라인을 5-space 들여쓰기로 재정렬 (clippy::doc_overindented_list_items 권고)",
+        "ai-introspect-demo allow list 확장 — clippy::cast_possible_wrap (R42 pre-existing as i64 cast, PALETTE.len()=5 bounded) + clippy::doc_overindented_list_items + clippy::doc_lazy_continuation (rustc 1.86 새 doc lint, 예제-narrative 차원). 이유 주석 추가"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace = 622 pass (R46.2.1 baseline 유지, R46.3 는 demo binary 수정 만으로 신규 테스트 없음), 0 failed",
+        "cargo clippy --workspace --all-targets = pinion-core 5 / pinion-rpc 13 / pinion-runtime 1 / pinion-forge 0 / ai-introspect-demo 0 (R46.2 baseline 의 4 에서 개선 — allow list 가 1.86 strict doc lint 까지 포괄). hello-button / forge-counter / pinion-overlay / pinion-cli / pinion-derive 0",
+        "validate_workspace post-mutation: T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync",
+        "cargo check -p ai-introspect-demo 통과 — R46.2 Concern 2 (컴파일 검증 부재) 실증 완료. emit template 의 vello::Error / wgpu::SurfaceError / Into<wgpu::SurfaceTarget<'static>> / RenderContext::create_surface / Renderer::new / render_to_texture / blitter.copy / surface_texture.present() 모두 실제 API 와 일치. Concern 3 (resize fallibility) 실증 — Vello RenderContext::resize_surface 는 () 반환 (시그니처 fn resize_surface(&mut self, surface: &mut RenderSurface<'_>, width: u32, height: u32) — fallible 아님), 현재 signature 정합"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "6.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R46.4: paint_adapter → pinion-runtime 로 이동 — ai-introspect-demo 의 inline build_vello_scene / fill_rect / stroke_rect / root_background / pinion_to_peniko 가 reusable runtime module 되어야. hello-button 의 softbuffer 교체 (R46.5+) 가 두 번째 consumer 로 경계 의 검증. Scene::Container/Box 명당 fill/stroke + tag-based palette substitution (info_panel) 은 운영 레이어의 framework primitive 후보. 단 'info_panel' tag substitution 이 애플리케이션-specific 이라 paint_adapter 이 callback (Scene → Color hook) 로 노출해야",
+        "R46.5+: hello-button softbuffer → Vello 교체. R46.3 자신의 build.rs + manifest 패턴 재사용. paint_adapter (R46.4) 의 두 번째 consumer. R48 InputRouter 의 multi-widget dispatch 실증 결합 가능",
+        "R46.x: pinion-rpc 의 13 clippy 경고 감사 (most are pre-existing pre-MSRV-bump; 1.85 부터 있었음). cast_possible_truncation (dispatch.rs:1081 f64→f32) / needless_pass_by_value (1203, 1307) / missing_errors_doc (path.rs:84) / doc_markdown (multiple) 명세 분류 후 수정 vs allow 결정. 별도 round",
+        "R46.2 Concern 1 (RendererOptions 전체 노출) carry 유지 — R46.2.1 에서 aa 만 상환. present_mode / use_cpu / num_init_threads / pipeline_cache 는 build-time vs runtime 분류 spec round 대기. R46.3 의 base_color = root container fill 을 PenikoColor::BLACK 대신 사용 한 결정과 동일 속성",
+        "R46.2 self-audit Concern 4 (식별 신규) — emit template 이 use vello::* 를 개별 use 로 채택, include!() 시 consumer 니임스페이스 충돌 가능. R46.3 에서 mod { ... } wrap 으로 해소. textbook canonical 은 fully-qualified path (::vello::*) 로 테플릿 재작성 — reactive emit 과 일관성. 별도 R46.x 후보",
+        "R46.3 surfaced 한 VELLO_TEMPLATE header `//!` 이슈 — 이미 본 commit 에서 정정 (// regular comments 로 교체). 추가 carry 항목 아님",
+        "R47+ carry items (Headless template / cosmic-text / 위젯 카탈로그) 그대로 유지",
+        "R297 false-positive hint 그대로 (mnemosyne round, pinion atomic 무관). pinion R46.3 commit 이후 5-commit carry"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
