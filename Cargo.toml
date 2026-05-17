@@ -8,6 +8,7 @@ members = [
     "crates/pinion-cli",
     "crates/pinion-forge",
     "crates/pinion-overlay",
+    "crates/pinion-text",
     "examples/hello-button",
     "examples/forge-counter",
     "examples/ai-introspect-demo",
@@ -17,9 +18,9 @@ exclude = ["vendor/sce"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-# R46.3 §5.16 — Vello 0.6.0 transitively requires rustc 1.86. See
-# rust-toolchain.toml comment for the bump rationale.
-rust-version = "1.86.0"
+# R47.1 §5.36 — parley 0.9 transitively requires rustc 1.88 (was 1.86
+# R46.3 Vello 0.6 bump). See rust-toolchain.toml comment for the trigger.
+rust-version = "1.88.0"
 license = "LGPL-3.0-or-later"
 authors = ["pinion contributors"]
 
@@ -57,6 +58,18 @@ wgpu = "26"
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
+
+# §5.36 R47 — Linebender parley text layout + swash shaping / glyph
+# rasterization. Consumed by pinion-text (the framework primitive that
+# every paint backend uses for text). fontique (system font enumeration
+# + fallback) follows transitively via `parley::FontContext`; promoted
+# to a direct workspace dep only when pinion-text exposes fallback
+# override APIs. R21 cosmic-text decision partially superseded —
+# layout responsibility lives in parley for §5.16 R41 Vello ecosystem
+# consistency; R31 glyph atlas GPU texture intent is preserved through
+# pinion-text GlyphCache + Vello draw_glyph integration.
+parley = "0.9"
+swash = "0.2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

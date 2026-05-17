@@ -3299,6 +3299,39 @@ router.pointer_down(&mut state_scene);
 
 
 
+### 433 — Round 47.1 — §5.36 pinion-text crate skeleton + parley/swash workspace dep + MSRV 1.88 bump
+
+**Changes**:
+- crates/pinion-text/ 신설 — Cargo.toml + src/lib.rs doc skeleton (구현 R47.2+)
+- workspace.dependencies — parley 0.9 + swash 0.2 (fontique 0.9 transitive via parley::FontContext)
+- rust-toolchain channel 1.86 → 1.88 (parley 0.9 transitive 트리거, R46.3 패턴)
+- workspace.package rust-version 1.86 → 1.88 동기
+- workspace members 에 crates/pinion-text 추가
+- system dep 요구 — libfontconfig dev (fontique system feature default)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello = pass (rustc 1.88, fontconfig dev)
+- cargo test --workspace --features pinion-runtime/vello = 633 pass (baseline 유지)
+- cargo clippy pinion-text = 0 (introduced 3 doc_markdown → same-commit backtick fix)
+- MSRV 노출 기존 코드 clippy::large_enum_variant 2건 → R47.1.1 별도 sub-slice
+
+
+
+**Impact**: §5.16, §5.36, §6
+
+
+**Carry forward**:
+- R47.1.1 — MSRV-노출 clippy::large_enum_variant fix (hello-button + ai-introspect-demo RenderState)
+- R47.2 GlyphCache struct (LRU bounded, private fields, Hyrum-immune schema)
+- R47.3 Layout builder + paint_adapter Text arm 활성화 + Vello draw_glyph
+- R47.4 hello-button 라벨 시각 복원 검증 + ai-introspect-demo 텍스트 노드 확인
+- R47.x TextStyle schema 확장 (font_family / weight / decoration — parley StyleProperty 친화)
+- R47.x GlyphCache evict 정책 + fontique font fallback override API
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
