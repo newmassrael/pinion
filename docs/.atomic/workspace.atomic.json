@@ -328,7 +328,8 @@
         "R47.7 scene/layout implement: viewport + path 입력 → LayoutNode tree (rect, line_count, TextStyle) 응답",
         "scene/layout optional viewport = dry_run paint side mirror (state 외부의 immediate paint snapshot)",
         "R47.7.4 scene/resize: AI 가 winit request_inner_size 트리거 → drag 시뮬레이션 (next frame async)",
-        "R47.7.4 scene/wait_for_frame: AI 가 다음 redraw 동기 대기 — scene/resize 결과 stable observation"
+        "R47.7.4 scene/wait_for_frame: AI 가 다음 redraw 동기 대기 — scene/resize 결과 stable observation",
+        "R47.7.5 scene/layout viewport optional (None=last winit-actual frame) + last_paint_layout cache"
       ],
       "alternatives_rejected": [
         {
@@ -8501,6 +8502,56 @@
         "R47.7.x scene/screenshot pixel readback (§5.16 RHI 대기)",
         "R47.7.x trait Application surface",
         "사용자 환경 검증 carry: HiDPI / OS / drag 시퀀스",
+        "R47.x parley Ellipsis truncation pass",
+        "R48 §5.3 BoxStyle Figma-fidelity 별도 round",
+        "R46 / claudedocs / R297"
+      ]
+    },
+    "Round 449 — R47.7.5.0 §5.12 viewport optional + last_paint_layout spec": {
+      "decision_summary": "Round 449 — R47.7.5.0 §5.12 scene/layout viewport optional spec amend. viewport=None → last winit-rendered frame 의 LayoutNode 반환 (application last_paint_layout cache). winit actual frame path 측정 channel.",
+      "changes_bullets": [
+        "§5.12 caveat +1: scene/layout viewport optional (None=last winit-actual frame) + last_paint_layout cache",
+        "R47.7.4.3.1 framing 정정의 자연 후속 — winit actual frame 측정 channel 구축",
+        "§2 invariant #2 + #4 자기 이행 강화: hypothetical + actual 둘 다 RPC 노출",
+        "R47.7.5.1+ 구현: viewport Option, layout_query None 처리, DispatchContext field, hello-button cache wire"
+      ],
+      "verification_bullets": [
+        "§5.12 caveat 추가 완료",
+        "validate_workspace baseline 보존"
+      ],
+      "impact_refs": [
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "R47.7.5.1 pinion-rpc viewport optional + DispatchContext.last_paint_layout field",
+        "R47.7.5.2 hello-button App.last_paint_layout cache + render() 갱신 (atomic build slice)",
+        "R47.7.5.3 AI 자동 진단 v3 — winit actual frame path sweep",
+        "R47.7.5.x scene/wait_for_frame implement",
+        "R47.7.x trait Application surface",
+        "R47.x parley Ellipsis truncation pass",
+        "R48 §5.3 BoxStyle Figma-fidelity 별도 round",
+        "R46 / claudedocs / R297"
+      ],
+      "publishable_decision_summary": "Round 449 — R47.7.5.0 §5.12 scene/layout viewport optional spec amend. viewport=None → last winit-rendered frame 의 LayoutNode 반환 (application last_paint_layout cache). winit actual frame path 측정 channel.",
+      "publishable_changes_bullets": [
+        "§5.12 caveat +1: scene/layout viewport optional (None=last winit-actual frame) + last_paint_layout cache",
+        "R47.7.4.3.1 framing 정정의 자연 후속 — winit actual frame 측정 channel 구축",
+        "§2 invariant #2 + #4 자기 이행 강화: hypothetical + actual 둘 다 RPC 노출",
+        "R47.7.5.1+ 구현: viewport Option, layout_query None 처리, DispatchContext field, hello-button cache wire"
+      ],
+      "publishable_verification_bullets": [
+        "§5.12 caveat 추가 완료",
+        "validate_workspace baseline 보존"
+      ],
+      "publishable_impact_refs": [
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R47.7.5.1 pinion-rpc viewport optional + DispatchContext.last_paint_layout field",
+        "R47.7.5.2 hello-button App.last_paint_layout cache + render() 갱신 (atomic build slice)",
+        "R47.7.5.3 AI 자동 진단 v3 — winit actual frame path sweep",
+        "R47.7.5.x scene/wait_for_frame implement",
+        "R47.7.x trait Application surface",
         "R47.x parley Ellipsis truncation pass",
         "R48 §5.3 BoxStyle Figma-fidelity 별도 round",
         "R46 / claudedocs / R297"
