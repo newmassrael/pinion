@@ -2145,6 +2145,7 @@ router.pointer_down(&mut state_scene);
 - parley = Phase 1 bridge; Phase 2+ lifetime canonical = pinion 자체 text engine (§5.16 R11 thin RHI 정합)
 - R47.3 = paint primitive only; layout MeasureFunc + TextStyle Figma-fidelity = R47.4-6 carry
 - R47.6 = §5.36 close. R48 §5.3 별도 = BoxStyle Figma-fidelity (corner/shadow/gradient/blend/opacity)
+- R47.6 §5.36 round close = parley wire + decoration + Clip. Ellipsis = Clip fallback (R47.x carry)
 
 
 
@@ -5565,6 +5566,43 @@ router.pointer_down(&mut state_scene);
 - R47.5+ GlyphCache (consumer GPU atlas) — Vello roadmap_2023 upstream PR 또는 우회 path
 - R47.x fontique font fallback override API + GlyphCache evict 정책
 - R47.x TextDecoration offset/brush per-decoration tuning
+- Phase 2+ lifetime canonical text engine (§5.16 R11 thin RHI 정합) — long-term
+- R46.4 carry: parse_path_command finite check NaN/±∞ unit test + clippy sub-slice
+- R46.2 Concern 1 carry: RendererOptions surface policy
+- claudedocs/ SCE 3 파일 working-tree carry
+- R297 false-positive commit↔ledger drift carry
+
+
+
+### Round 441 — §5.36 R47.6 parley wire + decoration + Clip (round close) — Round 441 — §5.36 R47.6 round close: LayoutCache::shape 가 모든 R47.5 TextStyle 필드를 parley StyleProperty 로 wire (FontWeight/FontStyle/LineHeight/LetterSpacing/Underline/Strikethrough/FontFamily), align hard-coded Start → TextAlign 매핑. paint_text 가 underline/strikethrough decoration stroke + TextOverflow Clip layer wrap. Ellipsis = silent Clip fallback (parley 0.9 native API 없음, R47.x carry).
+
+**Changes**:
+- pinion-text/src/cache.rs: shape() 에 push_default chain 6개 추가 (FontWeight/FontStyle/LineHeight/LetterSpacing/Underline/Strikethrough) + font_family Some(_) 일 때 FontFamily::List(Named + SansSerif fallback)
+- pinion-text/src/cache.rs: align hard-coded Alignment::Start 제거 → map_text_align(style.text_align). 3 신규 map_* helper (map_font_style / map_line_height / map_text_align). i16/u16 fixed-point → f32 widen.
+- pinion-runtime/src/paint_adapter.rs: paint_text 분기 +1 (TextOverflow Clip/Ellipsis 일 때 push_clip_layer + pop_layer wrap). 신규 paint_decorations() helper — parley GlyphRun.style().underline/strikethrough → Vello horizontal Line stroke (run.offset + run.advance + baseline-offset).
+- paint_adapter +2 tests: decoration_no_panic (4 조합) + overflow_clip_pushes_layer_safely (3 variant)
+- §5.36 caveat +1: R47.6 round close = parley wire + decoration + Clip. Ellipsis = Clip fallback (R47.x carry)
+
+
+
+**Verification**:
+- cargo test --features pinion-runtime/vello = 654 pass (652 → 654, +2 paint_adapter R47.6)
+- cargo clippy = baseline 완전 보존 (pinion-core 5 + pinion-runtime 1) — R47.6 introduced 0 new
+- hello-button 3s smoke = panic 없음, button SCXML 자연 시작. 사용자 cargo run 시각 검증 가능
+- parley 0.9 line truncation native API 부재 확인 — Ellipsis fallback 론리 정확 (R47.x R48 carry)
+
+
+
+**Impact**: §5.36
+
+
+**Carry forward**:
+- R47.x parley Ellipsis truncation pass — parley 0.9 native API 부재, custom truncate 장치 구축 (Vello upstream 또는 우회)
+- R47.x TextDecoration offset/brush per-decoration tuning (parley Decoration.offset/size/brush 와 정합)
+- R47.x GlyphCache (consumer GPU atlas) — UI dense text (CJK/다국어) 성능 보강
+- R47.x fontique font fallback override API + GlyphCache evict 정책
+- R48 §5.3 별도 round = BoxStyle Figma-fidelity (per-corner / shadow / gradient / blend / opacity)
+- R49+ 위젯 카탈로그 (Slider / Toggle / TextField) — §5.36 close 가 prereq, 이제 진입 가능
 - Phase 2+ lifetime canonical text engine (§5.16 R11 thin RHI 정합) — long-term
 - R46.4 carry: parse_path_command finite check NaN/±∞ unit test + clippy sub-slice
 - R46.2 Concern 1 carry: RendererOptions surface policy

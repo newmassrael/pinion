@@ -15,8 +15,12 @@
 
 use crate::layout::Layout;
 use lru::LruCache;
-use parley::{Alignment, AlignmentOptions, FontContext, LayoutContext, StyleProperty};
-use pinion_core::style::{Color, TextStyle};
+use parley::{
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontFamilyName, GenericFamily,
+    LayoutContext, LineHeight as ParleyLineHeight, StyleProperty,
+};
+use pinion_core::style::{Color, FontStyle, LineHeight, TextAlign, TextStyle};
+use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
 /// Cache key. Captures the input that fully determines a parley
@@ -120,8 +124,39 @@ impl LayoutCache {
         let font_size = style.font_size_px as f32;
         builder.push_default(StyleProperty::FontSize(font_size));
         builder.push_default(StyleProperty::Brush(style.fg_color));
-        // R47.x carry — TextStyle.font_family → parley FontStack
-        // (currently parley's default font stack is used).
+        // R47.6 §5.36 — pinion-core's Figma-fidelity TextStyle fields
+        // map 1:1 into parley StyleProperty. Each push_default sets
+        // the base run style for the whole text (range overrides land
+        // in R47.x widget catalog).
+        builder.push_default(StyleProperty::FontWeight(parley::FontWeight::new(
+            f32::from(style.font_weight.0),
+        )));
+        builder.push_default(StyleProperty::FontStyle(map_font_style(style.font_style)));
+        builder.push_default(StyleProperty::LineHeight(map_line_height(style.line_height)));
+        // letter_spacing i32 → f32 px (signed). Realistic UI ranges
+        // (-32..=32) fit f32 exactly; the cast is loss-free.
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "letter_spacing |v| <= 2^24 in practice"
+        )]
+        let letter_spacing_px = style.letter_spacing as f32;
+        builder.push_default(StyleProperty::LetterSpacing(letter_spacing_px));
+        builder.push_default(StyleProperty::Underline(style.decoration.underline));
+        builder.push_default(StyleProperty::Strikethrough(style.decoration.strikethrough));
+        // R47.6 — pinned font family override; `None` keeps parley's
+        // default font stack (system fallback). When `Some`, route the
+        // requested family through `FontFamily::Named` and append the
+        // GenericFamily::SansSerif fallback so a missing name does not
+        // produce a "tofu" run.
+        if let Some(family) = style.font_family.as_deref() {
+            let families: Vec<FontFamilyName<'static>> = vec![
+                FontFamilyName::Named(Cow::Owned(family.to_owned())),
+                FontFamilyName::Generic(GenericFamily::SansSerif),
+            ];
+            builder.push_default(StyleProperty::FontFamily(FontFamily::List(Cow::Owned(
+                families,
+            ))));
+        }
         let mut layout = builder.build(text);
         #[allow(
             clippy::cast_precision_loss,
@@ -129,10 +164,55 @@ impl LayoutCache {
         )]
         let break_at = max_width.map(|w| w as f32);
         layout.break_all_lines(break_at);
-        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout.align(map_text_align(style.text_align), AlignmentOptions::default());
         layout
     }
 }
+
+/// R47.6 — pinion `FontStyle` → parley `FontStyle`. `Oblique` widens
+/// from `Option<i16>` (pinion: Hash-safe) to `Option<f32>` (parley:
+/// `slnt` axis).
+fn map_font_style(style: FontStyle) -> parley::FontStyle {
+    match style {
+        FontStyle::Italic => parley::FontStyle::Italic,
+        FontStyle::Oblique(angle) => parley::FontStyle::Oblique(angle.map(f32::from)),
+        // Normal + any future #[non_exhaustive] variant.
+        _ => parley::FontStyle::Normal,
+    }
+}
+
+/// R47.6 — pinion `LineHeight` → parley `LineHeight`. `MultiplierX100`
+/// widens from fixed-point u16 (pinion: Hash-safe) to `f32`.
+fn map_line_height(line_height: LineHeight) -> ParleyLineHeight {
+    match line_height {
+        LineHeight::Px(px) => {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "line_height px <= 2^24 in practice"
+            )]
+            ParleyLineHeight::Absolute(px as f32)
+        }
+        LineHeight::MultiplierX100(m) => {
+            ParleyLineHeight::FontSizeRelative(f32::from(m) / 100.0)
+        }
+        // Normal + any future #[non_exhaustive] variant → parley
+        // default (MetricsRelative(1.0)).
+        _ => ParleyLineHeight::MetricsRelative(1.0),
+    }
+}
+
+/// R47.6 — pinion `TextAlign` → parley `Alignment`. Both enums share
+/// the writing-mode-aware Start/End shape; Center / Justify map 1:1.
+fn map_text_align(align: TextAlign) -> Alignment {
+    match align {
+        TextAlign::Center => Alignment::Center,
+        TextAlign::End => Alignment::End,
+        TextAlign::Justify => Alignment::Justify,
+        // Start + any future #[non_exhaustive] variant.
+        _ => Alignment::Start,
+    }
+}
+
 
 impl Default for LayoutCache {
     fn default() -> Self {

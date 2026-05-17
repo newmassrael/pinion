@@ -38,12 +38,12 @@
 
 use pinion_core::Scene;
 use pinion_core::scene::{BoxNode, Rect, TextNode};
-use pinion_core::style::{Border, BorderPlacement, Color};
+use pinion_core::style::{Border, BorderPlacement, Color, TextOverflow};
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
 use vello::Glyph;
 use vello::Scene as VelloScene;
-use vello::kurbo::{Affine, Rect as KurboRect, Stroke};
+use vello::kurbo::{Affine, Line, Rect as KurboRect, Stroke};
 use vello::peniko::{Color as PenikoColor, Fill};
 
 /// Build a Vello scene from a pinion [`Scene`] tree. `fill_hook` is
@@ -178,11 +178,23 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border) {
 }
 
 /// Emit one Vello glyph run per parley [`GlyphRun`] shaped from
-/// `t.content` + `t.style` (R47.3 §5.36). The text origin is
-/// `(t.rect.x, t.rect.y)`; `t.rect.w > 0` wraps at that pixel width,
-/// `w == 0` flows on a single unbounded line. `t.rect.h` is advisory —
-/// glyph emission does not clip to the rect (Vello's coarse rasterizer
-/// already culls off-screen draws).
+/// `t.content` + `t.style` (R47.3 §5.36 + R47.6 Figma-fidelity wire).
+///
+/// The text origin is `(t.rect.x, t.rect.y)`; `t.rect.w > 0` wraps at
+/// that pixel width, `w == 0` flows on a single unbounded line.
+///
+/// R47.6 decoration: when [`TextStyle::decoration`] enables underline
+/// or strikethrough, parley populates each [`GlyphRun`]'s style with a
+/// `Decoration<Color>`. We stroke a horizontal [`Line`] at the
+/// font-metric-derived offset spanning the run's advance.
+///
+/// R47.6 overflow: [`TextOverflow::Clip`] wraps the whole emit in a
+/// Vello clip layer keyed to `t.rect`; out-of-rect glyphs are clipped
+/// before composition. [`TextOverflow::Ellipsis`] silently falls back
+/// to `Clip` — parley 0.9 does not expose a native line-truncation
+/// API, so the visual result is the same as `Clip` until R47.x lands
+/// the custom truncation pass. [`TextOverflow::Visible`] (default)
+/// skips the clip wrap entirely.
 fn paint_text(out: &mut VelloScene, t: &TextNode, cache: &mut LayoutCache) {
     if t.content.is_empty() {
         return;
@@ -190,6 +202,20 @@ fn paint_text(out: &mut VelloScene, t: &TextNode, cache: &mut LayoutCache) {
     let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
     let layout = cache.layout(&t.content, &t.style, max_width);
     let transform = Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
+    // R47.6 — Clip + Ellipsis (silent fallback to Clip until R47.x
+    // ellipsis pass) wrap the emit in a Vello clip layer keyed to
+    // `t.rect`. Visible skips the wrap entirely so a freshly-default
+    // TextNode pays no per-frame layer cost.
+    let needs_clip = matches!(t.style.overflow, TextOverflow::Clip | TextOverflow::Ellipsis);
+    if needs_clip {
+        let clip_rect = KurboRect::new(
+            f64::from(t.rect.x),
+            f64::from(t.rect.y),
+            f64::from(t.rect.x.saturating_add(t.rect.w)),
+            f64::from(t.rect.y.saturating_add(t.rect.h)),
+        );
+        out.push_clip_layer(Affine::IDENTITY, &clip_rect);
+    }
     for line in layout.lines() {
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(run) = item else { continue };
@@ -209,7 +235,65 @@ fn paint_text(out: &mut VelloScene, t: &TextNode, cache: &mut LayoutCache) {
                         y: g.y,
                     }),
                 );
+            // R47.6 — decoration strokes. parley emits `Some(Decoration)`
+            // on `style().underline / strikethrough` whenever the source
+            // TextStyle enabled them (see `LayoutCache::shape`'s
+            // `StyleProperty::Underline / Strikethrough` push). The
+            // offset / size are font-metric-defaulted (parley fills the
+            // Option with the run metric values); the brush defaults to
+            // the run's foreground brush.
+            paint_decorations(out, &run, transform);
         }
+    }
+    if needs_clip {
+        out.pop_layer();
+    }
+}
+
+/// R47.6 — emit underline + strikethrough strokes for one parley
+/// [`GlyphRun`]. Each decoration is a horizontal line at the
+/// font-metric-derived offset spanning the run advance; the brush is
+/// the run's foreground colour (matching parley's `Decoration.brush`
+/// default).
+fn paint_decorations(
+    out: &mut VelloScene,
+    run: &pinion_text::parley::GlyphRun<'_, Color>,
+    transform: Affine,
+) {
+    let parley_run = run.run();
+    let metrics = parley_run.metrics();
+    let baseline = run.baseline();
+    let start = f64::from(run.offset());
+    let end = f64::from(run.offset() + run.advance());
+    if let Some(deco) = run.style().underline.as_ref() {
+        let offset = deco.offset.unwrap_or(metrics.underline_offset);
+        let size = deco.size.unwrap_or(metrics.underline_size);
+        // parley's underline offset is measured upward from the baseline
+        // (positive = above); on screen Y the underline sits below the
+        // baseline, so subtract. The Y advances downward in our coord
+        // system, hence the `- offset`.
+        let y = f64::from(baseline - offset);
+        let line = Line::new((start, y), (end, y));
+        out.stroke(
+            &Stroke::new(f64::from(size).max(1.0)),
+            transform,
+            to_peniko(deco.brush),
+            None,
+            &line,
+        );
+    }
+    if let Some(deco) = run.style().strikethrough.as_ref() {
+        let offset = deco.offset.unwrap_or(metrics.strikethrough_offset);
+        let size = deco.size.unwrap_or(metrics.strikethrough_size);
+        let y = f64::from(baseline - offset);
+        let line = Line::new((start, y), (end, y));
+        out.stroke(
+            &Stroke::new(f64::from(size).max(1.0)),
+            transform,
+            to_peniko(deco.brush),
+            None,
+            &line,
+        );
     }
 }
 
@@ -415,5 +499,58 @@ mod tests {
         let mut cache = LayoutCache::new();
         to_vello(&scene, &|_| None, &mut cache, &mut vello);
         assert_eq!(cache.len(), 0, "empty content does not populate cache");
+    }
+
+    #[test]
+    fn to_vello_text_arm_decoration_no_panic() {
+        // R47.6 §5.36 — decoration wire emits parley StyleProperty::
+        // Underline + Strikethrough; paint_text walks parley's
+        // `style().underline / strikethrough` and strokes a horizontal
+        // line per decoration. Cannot inspect Vello's emitted draw
+        // commands from outside the crate; assert no panic on every
+        // combination instead.
+        use pinion_core::style::TextDecoration;
+        for deco in [
+            TextDecoration::none(),
+            TextDecoration::underline(),
+            TextDecoration::strikethrough(),
+            TextDecoration::both(),
+        ] {
+            let scene = Scene::Text(TextNode::styled(
+                "Hi",
+                Rect::new(0, 0, 200, 32),
+                TextStyle::new().with_size_px(16).with_decoration(deco),
+            ));
+            let mut vello = VelloScene::new();
+            let mut cache = LayoutCache::new();
+            to_vello(&scene, &|_| None, &mut cache, &mut vello);
+        }
+    }
+
+    #[test]
+    fn to_vello_text_arm_overflow_clip_pushes_layer_safely() {
+        // R47.6 — TextOverflow::Clip wraps paint_text in
+        // push_clip_layer / pop_layer. The wrap must balance (every
+        // push matched by a pop) so the Vello scene encoding stays
+        // valid; we cannot read the encoded layer stack from outside
+        // the crate, but the no-panic walk + Vello's own internal
+        // assertions (debug builds verify layer balance) cover this.
+        use pinion_core::style::TextOverflow;
+        for overflow in [
+            TextOverflow::Visible,
+            TextOverflow::Clip,
+            TextOverflow::Ellipsis,
+        ] {
+            let scene = Scene::Text(TextNode::styled(
+                "OverflowingContent",
+                Rect::new(0, 0, 50, 16), // intentionally tight
+                TextStyle::new()
+                    .with_size_px(16)
+                    .with_overflow(overflow),
+            ));
+            let mut vello = VelloScene::new();
+            let mut cache = LayoutCache::new();
+            to_vello(&scene, &|_| None, &mut cache, &mut vello);
+        }
     }
 }
