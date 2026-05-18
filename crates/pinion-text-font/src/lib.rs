@@ -31,3 +31,4 @@ pub use tables::glyf::{
     GlyphPoint, SimpleGlyph,
 };
 pub use tables::loca::{Loca, LocaFormat};
+pub use tables::name::{LangTagRecord, Name, NameId, NameRecord};

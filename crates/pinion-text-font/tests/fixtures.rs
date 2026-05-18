@@ -369,6 +369,40 @@ fn nanum_gothic_hangul_outline_present() {
 }
 
 #[test]
+fn noto_sans_name_strings() {
+    let bytes = fs::read("tests/fonts/NotoSans-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+    // Noto Sans Regular 의 표준 metadata.
+    assert_eq!(font.family_name().as_deref(), Some("Noto Sans"));
+    assert_eq!(font.subfamily_name().as_deref(), Some("Regular"));
+    assert!(
+        font.full_name()
+            .as_deref()
+            .is_some_and(|s| s.contains("Noto Sans")),
+        "full_name should contain 'Noto Sans'"
+    );
+    assert!(
+        font.postscript_name()
+            .as_deref()
+            .is_some_and(|s| s.starts_with("NotoSans")),
+        "postscript_name should start with 'NotoSans'"
+    );
+}
+
+#[test]
+fn nanum_gothic_name_strings() {
+    let bytes = fs::read("tests/fonts/NanumGothic-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+    // Nanum Gothic 의 family name (정확한 값은 font internal 에 따라 변동).
+    let family = font.family_name().expect("family present");
+    assert!(
+        family.contains("Nanum") || family.contains("나눔"),
+        "family name should contain Nanum/나눔, got: {family:?}"
+    );
+    assert_eq!(font.subfamily_name().as_deref(), Some("Regular"));
+}
+
+#[test]
 fn font_metadata_consistency() {
     // hhea.number_of_h_metrics 가 hmtx 의 long_metrics.len() 와 일치 검증.
     for path in [

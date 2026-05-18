@@ -14,6 +14,7 @@ use crate::tables::hhea::Hhea;
 use crate::tables::hmtx::Hmtx;
 use crate::tables::loca::{Loca, LocaFormat};
 use crate::tables::maxp::Maxp;
+use crate::tables::name::{Name, NameId};
 use crate::tables::os2::Os2;
 use crate::tables::post::Post;
 
@@ -35,6 +36,7 @@ pub struct Font {
     pub cmap: Cmap,
     pub loca: Loca,
     pub glyf: Glyf,
+    pub name: Name,
 }
 
 impl Font {
@@ -67,6 +69,7 @@ impl Font {
             maxp.num_glyphs,
         )?;
         let glyf = Glyf::parse(find_table(&bytes, &records, *b"glyf")?, &loca)?;
+        let name = Name::parse(find_table(&bytes, &records, *b"name")?)?;
 
         Ok(Self {
             bytes,
@@ -81,6 +84,7 @@ impl Font {
             cmap,
             loca,
             glyf,
+            name,
         })
     }
 
@@ -152,11 +156,36 @@ impl Font {
     }
 
     /// Parsed glyph outline by glyph ID. `Glyph::Empty` 가 빈 글리프 표현체,
-    /// `Glyph::Simple` 가 TrueType simple outline, `Glyph::Composite` 는
-    /// R50.1.4.1 시점 header-only placeholder (R50.1.4.2 에서 fully parse).
-    /// `glyph_id >= num_glyphs` 면 `None`.
+    /// `Glyph::Simple` 가 TrueType simple outline, `Glyph::Composite` 가
+    /// subglyph references + transform (header + parsed components + raw body
+    /// source-of-truth). `glyph_id >= num_glyphs` 면 `None`.
     #[must_use]
     pub fn glyph_outline(&self, glyph_id: u16) -> Option<&Glyph> {
         self.glyf.glyph(glyph_id)
+    }
+
+    /// Font family name (nameID = 1, Windows Unicode BMP en-US 우선).
+    #[must_use]
+    pub fn family_name(&self) -> Option<String> {
+        self.name.find_string(NameId::FontFamily)
+    }
+
+    /// Font subfamily / style (nameID = 2, 예: "Regular" / "Bold").
+    #[must_use]
+    pub fn subfamily_name(&self) -> Option<String> {
+        self.name.find_string(NameId::FontSubfamily)
+    }
+
+    /// Full font name (nameID = 4, 예: "Noto Sans Regular").
+    #[must_use]
+    pub fn full_name(&self) -> Option<String> {
+        self.name.find_string(NameId::FullName)
+    }
+
+    /// PostScript name (nameID = 6, 예: "NotoSans-Regular"). PDF/PS embedding
+    /// 표준 식별자.
+    #[must_use]
+    pub fn postscript_name(&self) -> Option<String> {
+        self.name.find_string(NameId::PostScriptName)
     }
 }

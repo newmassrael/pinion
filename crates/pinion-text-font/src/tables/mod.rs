@@ -10,5 +10,6 @@ pub mod hhea;
 pub mod hmtx;
 pub mod loca;
 pub mod maxp;
+pub mod name;
 pub mod os2;
 pub mod post;

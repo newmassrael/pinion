@@ -6473,6 +6473,45 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 463 — Round 463 — R50.1.5 §5.37.1 name table parser (family / style / postscript / copyright). tables/name.rs 신설 (single-file — version 0/1 header dispatch 단순, multi-format 아닌 records list). Name struct + NameRecord (platform/encoding/language/nameID + raw string bytes 보존) + LangTagRecord (v1) + NameId 26 semantic variant (+Other(u16) forward compat). UTF-16BE decode helper (Unicode platform 0/* + Windows platform 3/{0,1,10}). Name::find_string priority (Windows Unicode BMP en-US 우선 → any Unicode UTF-16BE). Font::family_name / subfamily_name / full_name / postscript_name accessor. spec strict: version 0/1 외 reject + storageOffset bounds + record string offset+length overflow. Noto Sans family="Noto Sans" subfamily="Regular", Nanum Gothic 동일 패턴 real font sweep. workspace 787 → 800 tests (+13).
+
+**Changes**:
+- tables/name.rs 신설 (single-file — cmap 과 다른 결정, name = records list 단일 surface) — Name + NameRecord + LangTagRecord + NameId enum (26 semantic + Other(u16) forward compat)
+- Name::parse — version 0/1 dispatch (v1 만 langTagCount + langTagRecord[] additive) + storageOffset bounds + record string offset+length overflow check
+- NameRecord::decode_utf16be — Unicode platform (0, *) 또는 Windows (3, 0/1/10) UTF-16BE 변환, char::decode_utf16 (std) lossless. odd-length 또는 invalid surrogate → None
+- Name::find_string — priority 1: Windows Unicode BMP en-US (3, 1, 0x0409), priority 2: 첫 UTF-16BE match (any lang). Microsoft typography reference 정합
+- tables/mod.rs — name 모듈 등록
+- src/lib.rs — Name / NameId / NameRecord / LangTagRecord re-export
+- src/font.rs — Font 에 name field 추가 + family_name / subfamily_name / full_name / postscript_name accessor 4개
+- tests/fixtures.rs — noto_sans_name_strings ("Noto Sans" / "Regular" / full / postscript) + nanum_gothic_name_strings (Nanum/나눔 + "Regular") real font sweep 2건
+- name::tests 10 unit — minimal v0 + NameId round-trip + Other unknown + version 2 reject + storageOffset OOB + record string OOB + Unicode UTF-16BE decode + Macintosh reject + odd-length reject + v1 langTagRecord
+- spec strict reject: version != 0/1 → InvalidTableField "version", storageOffset > bytes.len() → "storageOffset/out-of-bounds", record offset+length overflow → "nameRecord/offset+length-overflow"
+
+
+
+**Verification**:
+- workspace 800 tests pass (R50.1.4.2.1 787 → +13; pinion-text-font lib 108 → 118, integration 16 → 18)
+- pinion-text-font clippy --all-targets 0 warnings (baseline 유지)
+- real font sweep 정합: Noto Sans family="Noto Sans" subfamily="Regular" full_name contains "Noto Sans" postscript_name starts "NotoSans"; Nanum Gothic family contains Nanum/나눔 subfamily="Regular"
+- 외부 dep 0 정신 유지 — char::decode_utf16 는 std (core::char). non-std crate 추가 0
+- self-audit 15 questions all pass + single-file 결정 textbook (multi-format 아닌 때 폴더 분리 unnecessary; cmap = format dispatch 임) + NameId::Other forward compat (15 reserved 포함 26+ 모두 텍스트북 라우팅)
+
+
+
+**Impact**: §5.37.1
+
+
+**Carry forward**:
+- R50.1.5.X future: Macintosh platform 1 Mac Roman 변환 (자체 테이블, R50 정신 외부 dep 0 적용)
+- R50.1.5.X future: Font::copyright / trademark / license_description accessor (현재는 NameId enum 통해 caller find_string 가능)
+- R50.1.4.X cycle detection helper API (R50.X+ traversal layer)
+- R50.1.X 후속: cmap format 0/2/6/8/10/13/14, WOFF2, CFF/CFF2, variable axis, color tables, GSUB/GPOS raw store
+- R50.X RPC channel — pinion-rpc 에 font/* method (parse / glyph_id_for / cmap_subtables / metrics / family_name) 노출 — AI-first 완성
+- R50.2+ self-hosted Unicode (UAX #15), BIDI (UAX #9), shaping per script
+- R47-class InputRouter SCE migration carry
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
