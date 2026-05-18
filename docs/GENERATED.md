@@ -3043,6 +3043,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:AppShell::dispatch_access_action
 - crates/pinion-shell/src/lib.rs:AppShell::apply_a11y_key
 - crates/pinion-shell/src/lib.rs:build_tag_map
+- crates/pinion-a11y/tests/conformance.rs
 
 
 
@@ -5340,6 +5341,36 @@ router.pointer_down(&mut state_scene);
 - R51.68 — conformance integration test (Tree snapshot per widget + ActionRequest round-trip)
 - composite child action dispatch — widget-side per-index invoke surface (RadioGroup wire-format)
 - AccessAction::Default semantic difference (Enter vs widget-specific) — evidence 시
+
+
+
+### R51.68 — R51.68 §5.40 a11y conformance integration test — mixed scene Tree snapshot + ActionRequest round-trip
+
+**Changes**:
+- crates/pinion-a11y/tests/conformance.rs 신설 — end-to-end integration test
+- mixed scene fixture: Button + Switch + Slider + RadioGroup(3 children) = 7 widgets
+- 14 conformance test — tree topology / focus resolution / tag_map / ActionRequest round-trip
+- ActionRequest round-trip per kind (Click/Increment/Focus on root/unknown/composite child/unmapped)
+- TreeUpdate metadata invariant (initial=Some / subsequent=None) 결과 검증
+
+
+
+**Verification**:
+- cargo test -p pinion-a11y --test conformance — 14 pass / 0 fail
+- cargo test --workspace --features pinion-runtime/vello — 1418 pass / 0 fail (+14 from 1404)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- composite child action dispatch (widget-side wire-format) — evidence 시 장착
+- platform AT integration test (Windows Narrator / macOS VoiceOver / Linux Orca) — manual carry
+- accesskit_consumer crate 기반 mock AT (Tree walk 검증) — evidence 시
+- Modifier::aria_label hint surface (widget 내부 Text override) — evidence 시
 
 
 
