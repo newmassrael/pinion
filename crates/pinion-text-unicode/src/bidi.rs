@@ -267,7 +267,340 @@ impl<'a> Iterator for ParagraphIter<'a> {
     }
 }
 
+// ======================================================================
+// R51.18 §5.37.4 — X-rules (UAX #9 §3.3.2 explicit embedding/override)
+// ======================================================================
+//
+// Pipeline order: P-rules (paragraph_level / iter_paragraphs) → X-rules
+// (resolve_explicit_levels) → W / N / I / L rules. Each slice consumes
+// the previous slice's output and emits the substrate the next slice
+// reads. The X-rules turn a paragraph + paragraph_level into a per-
+// codepoint `(level, class)` pair after honoring the UAX #9
+// directional status stack semantics.
+
+/// UAX #9 §3.3.2 maximum embedding depth. Pushes beyond this depth are
+/// routed through the overflow counters instead so the algorithm
+/// tolerates pathological nesting without unbounded recursion.
+pub const MAX_DEPTH: u8 = 125;
+
+/// Per-entry override mode in the UAX #9 directional status stack.
+/// Drives the X6 class override — when an override is in effect every
+/// character processed at that stack level is re-classified to L
+/// (LTR override) or R (RTL override).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectionalOverride {
+    Neutral,
+    LeftToRight,
+    RightToLeft,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DirectionalStatusEntry {
+    embedding_level: u8,
+    directional_override: DirectionalOverride,
+    directional_isolate: bool,
+}
+
+/// UAX #9 §3.3.2 directional status stack — the runtime state every
+/// X-rule mutates.
+///
+/// The stack is bounded by [`MAX_DEPTH`]. Entries that would exceed
+/// that bound are routed through `overflow_isolate` /
+/// `overflow_embedding` counters so the algorithm tolerates
+/// pathological inputs without unbounded growth. `valid_isolate`
+/// tracks the number of isolate entries currently on the stack so
+/// X6a can decide between popping a matching isolate, decrementing
+/// the overflow counter, or treating a stray PDI as a no-op.
+struct DirectionalStatusStack {
+    entries: Vec<DirectionalStatusEntry>,
+    overflow_isolate: u32,
+    overflow_embedding: u32,
+    valid_isolate: u32,
+}
+
+impl DirectionalStatusStack {
+    fn new(paragraph_level: u8) -> Self {
+        Self {
+            entries: vec![DirectionalStatusEntry {
+                embedding_level: paragraph_level,
+                directional_override: DirectionalOverride::Neutral,
+                directional_isolate: false,
+            }],
+            overflow_isolate: 0,
+            overflow_embedding: 0,
+            valid_isolate: 0,
+        }
+    }
+
+    fn top(&self) -> DirectionalStatusEntry {
+        *self
+            .entries
+            .last()
+            .expect("X1 base entry guarantees the stack is never empty")
+    }
+
+    fn push(&mut self, entry: DirectionalStatusEntry) {
+        self.entries.push(entry);
+    }
+
+    /// Pop unless we are already at the X1 base entry — the base
+    /// entry must remain to satisfy [`Self::top`]'s invariant.
+    fn pop_one(&mut self) {
+        if self.entries.len() > 1 {
+            self.entries.pop();
+        }
+    }
+}
+
+/// "Least odd embedding level greater than `level`" per UAX #9 X2/X4
+/// /X5a. Saturates at `u8::MAX | 1` if `level` is near the top of
+/// `u8`; callers gate the result against [`MAX_DEPTH`] before
+/// pushing.
+const fn next_odd(level: u8) -> u8 {
+    level.saturating_add(1) | 1
+}
+
+/// "Least even embedding level greater than `level`" per UAX #9 X3/X5
+/// /X5b. Same saturation contract as [`next_odd`].
+const fn next_even(level: u8) -> u8 {
+    level.saturating_add(2) & !1u8
+}
+
+/// Per-codepoint output of [`resolve_explicit_levels`].
+///
+/// `levels[i]` is the resolved embedding level for the `i`-th
+/// codepoint of the input paragraph (always between `0` and
+/// [`MAX_DEPTH`] inclusive). `classes[i]` is the `Bidi_Class` after
+/// X6 override application; the X9 "removed" codes
+/// (RLE/LRE/RLO/LRO/PDF/BN) are reported as [`BidiClass::BN`] —
+/// preserving their level for layout while neutralizing them for
+/// the downstream W/N rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplicitLevels {
+    /// Embedding level per codepoint.
+    pub levels: Vec<u8>,
+    /// Possibly-overridden `Bidi_Class` per codepoint.
+    pub classes: Vec<BidiClass>,
+}
+
+/// UAX #9 §3.3.2 X-rules — turn a paragraph + `paragraph_level` into
+/// a per-codepoint `(level, class)` pair after applying explicit
+/// embeddings (X2-X5), overrides (X4/X5/X6), isolates (X5a/X5b/X5c
+/// /X6a), and the X7/X8/X9 cleanup. The output is the substrate the
+/// W-rules consume.
+///
+/// `paragraph_level` is typically obtained from [`paragraph_level`]
+/// applied to the same input; per UAX #9 P2/P3 it is either 0 (LTR)
+/// or 1 (RTL).
+///
+/// This function expects a single paragraph (typically a slice from
+/// [`iter_paragraphs`]). A `BidiClass::B` codepoint inside the input
+/// is assigned `paragraph_level` per X8 but the stack is not reset —
+/// the caller is responsible for splitting at paragraph boundaries.
+#[must_use]
+pub fn resolve_explicit_levels(paragraph: &str, paragraph_level: u8) -> ExplicitLevels {
+    let chars: Vec<char> = paragraph.chars().collect();
+    let mut stack = DirectionalStatusStack::new(paragraph_level);
+    let len = chars.len();
+    let mut levels = Vec::with_capacity(len);
+    let mut classes = Vec::with_capacity(len);
+
+    for (idx, &ch) in chars.iter().enumerate() {
+        let cls = bidi_class(ch);
+        let (level, out_cls) = match cls {
+            // X2 (RLE) / X3 (LRE) / X4 (RLO) / X5 (LRO) — embedding push.
+            BidiClass::RLE => push_embedding(&mut stack, true, DirectionalOverride::Neutral),
+            BidiClass::LRE => push_embedding(&mut stack, false, DirectionalOverride::Neutral),
+            BidiClass::RLO => push_embedding(&mut stack, true, DirectionalOverride::RightToLeft),
+            BidiClass::LRO => push_embedding(&mut stack, false, DirectionalOverride::LeftToRight),
+            // X5a (RLI) / X5b (LRI) — isolate push.
+            BidiClass::RLI => push_isolate(&mut stack, true, cls),
+            BidiClass::LRI => push_isolate(&mut stack, false, cls),
+            // X5c (FSI) — lookahead for first strong then push as RLI/LRI.
+            BidiClass::FSI => {
+                let is_rli = fsi_resolves_to_rli(&chars, idx);
+                push_isolate(&mut stack, is_rli, cls)
+            }
+            // X6a (PDI) / X7 (PDF).
+            BidiClass::PDI => pop_isolate(&mut stack),
+            BidiClass::PDF => pop_embedding(&mut stack),
+            // X8 — paragraph separator assigned paragraph_level.
+            BidiClass::B => (paragraph_level, BidiClass::B),
+            // X9 — boundary neutral keeps current top's level.
+            BidiClass::BN => (stack.top().embedding_level, BidiClass::BN),
+            // X6 — every remaining class (L / R / AL / EN / ES / ET /
+            // AN / CS / NSM / ON / S / WS).
+            _ => apply_x6(&stack, cls),
+        };
+        levels.push(level);
+        classes.push(out_cls);
+    }
+
+    ExplicitLevels { levels, classes }
+}
+
+/// X2-X5 — push an embedding entry for RLE/LRE/RLO/LRO. The
+/// formatting code itself becomes BN at the current top's level per
+/// X9 ("Remove all RLE, LRE, RLO, LRO, PDF, and BN codes").
+fn push_embedding(
+    stack: &mut DirectionalStatusStack,
+    is_rtl: bool,
+    override_mode: DirectionalOverride,
+) -> (u8, BidiClass) {
+    let top = stack.top();
+    let new_level = if is_rtl {
+        next_odd(top.embedding_level)
+    } else {
+        next_even(top.embedding_level)
+    };
+    if new_level <= MAX_DEPTH && stack.overflow_isolate == 0 && stack.overflow_embedding == 0 {
+        stack.push(DirectionalStatusEntry {
+            embedding_level: new_level,
+            directional_override: override_mode,
+            directional_isolate: false,
+        });
+    } else if stack.overflow_isolate == 0 {
+        stack.overflow_embedding = stack.overflow_embedding.saturating_add(1);
+    }
+    (top.embedding_level, BidiClass::BN)
+}
+
+/// X5a (RLI) / X5b (LRI) / X5c (FSI after resolution) — assign the
+/// initiator's level + override to the surrounding context's status
+/// entry, then push a fresh isolate entry. `initiator_cls` is the
+/// character's original class (RLI/LRI/FSI), preserved in the
+/// `classes` output for downstream introspection.
+fn push_isolate(
+    stack: &mut DirectionalStatusStack,
+    is_rtl: bool,
+    initiator_cls: BidiClass,
+) -> (u8, BidiClass) {
+    let top = stack.top();
+    let assigned = apply_override(top.directional_override, initiator_cls);
+    let outer_level = top.embedding_level;
+
+    let new_level = if is_rtl {
+        next_odd(outer_level)
+    } else {
+        next_even(outer_level)
+    };
+    if new_level <= MAX_DEPTH && stack.overflow_isolate == 0 && stack.overflow_embedding == 0 {
+        stack.push(DirectionalStatusEntry {
+            embedding_level: new_level,
+            directional_override: DirectionalOverride::Neutral,
+            directional_isolate: true,
+        });
+        stack.valid_isolate = stack.valid_isolate.saturating_add(1);
+    } else {
+        stack.overflow_isolate = stack.overflow_isolate.saturating_add(1);
+    }
+    (outer_level, assigned)
+}
+
+/// X6a — PDI pops the directional status stack back through (and
+/// including) the matching isolate entry, then assigns the PDI's
+/// level/class from the surrounding (post-pop) context. Stray PDIs
+/// (no matching initiator) are no-ops per UAX #9.
+fn pop_isolate(stack: &mut DirectionalStatusStack) -> (u8, BidiClass) {
+    if stack.overflow_isolate > 0 {
+        stack.overflow_isolate -= 1;
+    } else if stack.valid_isolate > 0 {
+        while stack.entries.len() > 1 && !stack.top().directional_isolate {
+            stack.pop_one();
+        }
+        if stack.entries.len() > 1 {
+            stack.pop_one();
+        }
+        stack.valid_isolate -= 1;
+        // Per UAX #9: "overflow_embedding count is reset to zero"
+        // because any pending embedding overflow lived inside the
+        // matching isolate's scope, which has just been closed.
+        stack.overflow_embedding = 0;
+    }
+    let top = stack.top();
+    let assigned = apply_override(top.directional_override, BidiClass::PDI);
+    (top.embedding_level, assigned)
+}
+
+/// X7 — PDF pops the top non-isolate embedding entry. PDF inside an
+/// embedding overflow only decrements the counter; PDF inside an
+/// isolate overflow is a no-op (the isolate's PDI will reset the
+/// embedding overflow). PDF that would pop an isolate entry is a
+/// no-op — only PDI can close an isolate.
+///
+/// The PDF's own level is the *pre-pop* top — i.e. the level of the
+/// embedding being closed. (UAX #9 X7 does not specify the PDF's
+/// level explicitly; this convention keeps the PDF aligned with its
+/// embedded run, matching `icu4c` / `unicode-bidi`. PDI takes the
+/// post-pop level instead, per the explicit X6a rule.)
+fn pop_embedding(stack: &mut DirectionalStatusStack) -> (u8, BidiClass) {
+    let pdf_level = stack.top().embedding_level;
+    if stack.overflow_isolate > 0 {
+        // ignore — only PDI clears overflow_isolate
+    } else if stack.overflow_embedding > 0 {
+        stack.overflow_embedding -= 1;
+    } else if stack.entries.len() >= 2 && !stack.top().directional_isolate {
+        stack.pop_one();
+    }
+    (pdf_level, BidiClass::BN)
+}
+
+/// X6 — apply the current stack top's level and override status to a
+/// non-formatting character.
+fn apply_x6(stack: &DirectionalStatusStack, cls: BidiClass) -> (u8, BidiClass) {
+    let top = stack.top();
+    (top.embedding_level, apply_override(top.directional_override, cls))
+}
+
+/// Override projection: if the current stack entry has an LTR or RTL
+/// override active, every character on that level is re-classified
+/// as the corresponding strong class. Neutral leaves the class
+/// untouched.
+const fn apply_override(mode: DirectionalOverride, cls: BidiClass) -> BidiClass {
+    match mode {
+        DirectionalOverride::Neutral => cls,
+        DirectionalOverride::LeftToRight => BidiClass::L,
+        DirectionalOverride::RightToLeft => BidiClass::R,
+    }
+}
+
+/// X5c first-strong lookahead — scan forward from `fsi_idx + 1` at
+/// depth 0 (skipping over nested LRI/RLI/FSI ... PDI pairs) looking
+/// for the first L/R/AL character. Returns `true` when the first
+/// strong is R or AL (so the FSI is treated as RLI), `false` for L
+/// or for the no-strong-found case (so the FSI is treated as LRI).
+fn fsi_resolves_to_rli(chars: &[char], fsi_idx: usize) -> bool {
+    let start = fsi_idx.saturating_add(1);
+    if start >= chars.len() {
+        return false;
+    }
+    let mut depth: u32 = 0;
+    for &ch in &chars[start..] {
+        match bidi_class(ch) {
+            BidiClass::LRI | BidiClass::RLI | BidiClass::FSI => {
+                depth = depth.saturating_add(1);
+            }
+            BidiClass::PDI => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            BidiClass::L if depth == 0 => return false,
+            BidiClass::R | BidiClass::AL if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 #[cfg(test)]
+#[allow(
+    clippy::similar_names,
+    reason = "UAX #9 format-control codepoints share canonical 3-letter abbreviations \
+              (LRE/LRI/LRO, PDF/PDI/PDF, RLE/RLI/RLO/RLM); the names are domain-mandated \
+              and renaming them away from the spec hurts readability."
+)]
 mod tests {
     use super::*;
 
@@ -470,5 +803,363 @@ mod tests {
             .collect();
         // LTR / RTL / LTR (no strong → default 0).
         assert_eq!(levels, vec![0, 1, 0]);
+    }
+
+    // ---- R51.18 §5.37.4 — X-rules (resolve_explicit_levels) ----
+
+    // UCD sanity: the format-control codepoints used below must map
+    // to the expected `Bidi_Class` in our codegen'd table. A failure
+    // here means the rest of the X-rule suite is testing the wrong
+    // characters, not the algorithm.
+    #[test]
+    fn ucd_format_control_classes() {
+        assert_eq!(bidi_class('\u{202A}'), BidiClass::LRE);
+        assert_eq!(bidi_class('\u{202B}'), BidiClass::RLE);
+        assert_eq!(bidi_class('\u{202C}'), BidiClass::PDF);
+        assert_eq!(bidi_class('\u{202D}'), BidiClass::LRO);
+        assert_eq!(bidi_class('\u{202E}'), BidiClass::RLO);
+        assert_eq!(bidi_class('\u{2066}'), BidiClass::LRI);
+        assert_eq!(bidi_class('\u{2067}'), BidiClass::RLI);
+        assert_eq!(bidi_class('\u{2068}'), BidiClass::FSI);
+        assert_eq!(bidi_class('\u{2069}'), BidiClass::PDI);
+        assert_eq!(bidi_class('\u{200C}'), BidiClass::BN);
+    }
+
+    #[test]
+    fn x_rules_empty_paragraph_yields_empty_output() {
+        let out = resolve_explicit_levels("", 0);
+        assert!(out.levels.is_empty());
+        assert!(out.classes.is_empty());
+    }
+
+    #[test]
+    fn x_rules_pure_ltr_keeps_level_zero() {
+        // X6: every char gets the base entry's level (0); no override.
+        let out = resolve_explicit_levels("abc", 0);
+        assert_eq!(out.levels, vec![0, 0, 0]);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L, BidiClass::L]);
+    }
+
+    #[test]
+    fn x_rules_pure_rtl_paragraph_keeps_level_one() {
+        // X6 with paragraph_level=1: every char gets level 1.
+        let out = resolve_explicit_levels("אבג", 1);
+        assert_eq!(out.levels, vec![1, 1, 1]);
+        assert_eq!(out.classes, vec![BidiClass::R, BidiClass::R, BidiClass::R]);
+    }
+
+    #[test]
+    fn x_rules_rle_pushes_level_one_at_zero() {
+        // RLE at paragraph_level=0 → next odd = 1. PDF pops back.
+        let rle = '\u{202B}';
+        let pdf = '\u{202C}';
+        let text = format!("a{rle}b{pdf}c");
+        let out = resolve_explicit_levels(&text, 0);
+        // 'a' (X6 lvl 0), RLE (X9 BN at lvl 0), 'b' (X6 lvl 1 inside
+        // embedding), PDF (X9 BN at lvl 1 — top before pop), 'c'
+        // (X6 lvl 0 after pop).
+        assert_eq!(out.levels, vec![0, 0, 1, 1, 0]);
+        assert_eq!(
+            out.classes,
+            vec![
+                BidiClass::L,
+                BidiClass::BN,
+                BidiClass::L,
+                BidiClass::BN,
+                BidiClass::L,
+            ],
+        );
+    }
+
+    #[test]
+    fn x_rules_lre_pushes_level_two_at_zero() {
+        // LRE at paragraph_level=0 → next even = 2.
+        let lre = '\u{202A}';
+        let pdf = '\u{202C}';
+        let text = format!("{lre}a{pdf}");
+        let out = resolve_explicit_levels(&text, 0);
+        assert_eq!(out.levels, vec![0, 2, 2]);
+    }
+
+    #[test]
+    fn x_rules_lre_at_rtl_paragraph_pushes_level_two() {
+        // LRE at paragraph_level=1 → next even = 2 (not 0).
+        let lre = '\u{202A}';
+        let pdf = '\u{202C}';
+        let text = format!("{lre}a{pdf}");
+        let out = resolve_explicit_levels(&text, 1);
+        // LRE BN at lvl 1, 'a' at lvl 2, PDF BN at lvl 2.
+        assert_eq!(out.levels, vec![1, 2, 2]);
+    }
+
+    #[test]
+    fn x_rules_rlo_overrides_l_to_r() {
+        // RLO pushes next odd (1) with RTL override; characters on
+        // the embedded level are re-classified as R.
+        let rlo = '\u{202E}';
+        let pdf = '\u{202C}';
+        let text = format!("{rlo}abc{pdf}");
+        let out = resolve_explicit_levels(&text, 0);
+        // 'a','b','c' are L originally; override to R.
+        assert_eq!(out.classes[1..=3], [BidiClass::R, BidiClass::R, BidiClass::R]);
+        assert_eq!(out.levels[1..=3], [1, 1, 1]);
+    }
+
+    #[test]
+    fn x_rules_lro_overrides_r_to_l() {
+        // LRO at paragraph_level=0 → level 2 with LTR override.
+        // Hebrew letters (R) get reclassified to L.
+        let lro = '\u{202D}';
+        let pdf = '\u{202C}';
+        let text = format!("{lro}אבג{pdf}");
+        let out = resolve_explicit_levels(&text, 0);
+        assert_eq!(out.classes[1..=3], [BidiClass::L, BidiClass::L, BidiClass::L]);
+        assert_eq!(out.levels[1..=3], [2, 2, 2]);
+    }
+
+    #[test]
+    fn x_rules_unmatched_pdf_is_no_op() {
+        // Stray PDF without a matching push: stack stays at base
+        // entry, PDF itself reports as BN at level 0.
+        let pdf = '\u{202C}';
+        let text = format!("a{pdf}b");
+        let out = resolve_explicit_levels(&text, 0);
+        assert_eq!(out.levels, vec![0, 0, 0]);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::BN, BidiClass::L]);
+    }
+
+    #[test]
+    fn x_rules_lri_isolates_content() {
+        // LRI pushes an isolate entry at level 2; PDI pops it.
+        // LRI/PDI themselves get the OUTER level per UAX #9 X5b/X6a.
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        let text = format!("a{lri}b{pdi}c");
+        let out = resolve_explicit_levels(&text, 0);
+        // 'a' lvl 0, LRI lvl 0 (outer), 'b' lvl 2 (inside isolate),
+        // PDI lvl 0 (outer after pop), 'c' lvl 0.
+        assert_eq!(out.levels, vec![0, 0, 2, 0, 0]);
+        // Isolate initiators keep their original class (no override
+        // applied here).
+        assert_eq!(out.classes[1], BidiClass::LRI);
+        assert_eq!(out.classes[3], BidiClass::PDI);
+    }
+
+    #[test]
+    fn x_rules_rli_isolates_at_odd_level() {
+        // RLI at paragraph_level=0 → next odd = 1.
+        let rli = '\u{2067}';
+        let pdi = '\u{2069}';
+        let text = format!("a{rli}b{pdi}");
+        let out = resolve_explicit_levels(&text, 0);
+        // 'a' lvl 0, RLI lvl 0 (outer), 'b' lvl 1 (inside), PDI lvl 0.
+        assert_eq!(out.levels, vec![0, 0, 1, 0]);
+    }
+
+    #[test]
+    fn x_rules_fsi_with_rtl_first_strong_acts_as_rli() {
+        // FSI followed by Hebrew → first strong is R → RLI semantics
+        // → inner level is odd (1 at paragraph_level=0).
+        let fsi = '\u{2068}';
+        let pdi = '\u{2069}';
+        let text = format!("{fsi}אb{pdi}");
+        let out = resolve_explicit_levels(&text, 0);
+        // FSI lvl 0 (outer), 'א' lvl 1, 'b' lvl 1, PDI lvl 0.
+        assert_eq!(out.levels, vec![0, 1, 1, 0]);
+        assert_eq!(out.classes[0], BidiClass::FSI);
+    }
+
+    #[test]
+    fn x_rules_fsi_with_ltr_first_strong_acts_as_lri() {
+        // FSI followed by ASCII letter → first strong is L → LRI.
+        let fsi = '\u{2068}';
+        let pdi = '\u{2069}';
+        let text = format!("{fsi}ab{pdi}");
+        let out = resolve_explicit_levels(&text, 0);
+        // FSI lvl 0, 'a' lvl 2, 'b' lvl 2, PDI lvl 0.
+        assert_eq!(out.levels, vec![0, 2, 2, 0]);
+    }
+
+    #[test]
+    fn x_rules_fsi_with_no_strong_defaults_to_lri() {
+        // FSI followed only by neutral chars → default LRI (level 2).
+        let fsi = '\u{2068}';
+        let pdi = '\u{2069}';
+        let text = format!("{fsi}123{pdi}");
+        let out = resolve_explicit_levels(&text, 0);
+        // Digits at level 2 (LRI), not 1 (RLI).
+        assert_eq!(out.levels[1..=3], [2, 2, 2]);
+    }
+
+    #[test]
+    fn x_rules_fsi_skips_nested_isolate_in_lookahead() {
+        // The FSI's lookahead must skip over an inner LRI...PDI pair
+        // so that the inner Hebrew does NOT determine the FSI's
+        // direction. The first strong at depth 0 here is 'a' (L) →
+        // LRI semantics.
+        let fsi = '\u{2068}';
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        let text = format!("{fsi}{lri}א{pdi}a{pdi}");
+        let out = resolve_explicit_levels(&text, 0);
+        // FSI resolves to LRI, so the FSI entry is at level 2.
+        // Inside the FSI: the LRI is itself an isolate initiator on
+        // level 2 → its inner is at level 4 (next even of 2).
+        // FSI(lvl0), LRI(lvl2), 'א'(lvl4), PDI(lvl2), 'a'(lvl2), PDI(lvl0).
+        assert_eq!(out.levels, vec![0, 2, 4, 2, 2, 0]);
+    }
+
+    #[test]
+    fn x_rules_unmatched_pdi_is_no_op() {
+        // PDI with no matching isolate initiator: stack untouched,
+        // PDI reports outer level.
+        let pdi = '\u{2069}';
+        let text = format!("a{pdi}b");
+        let out = resolve_explicit_levels(&text, 0);
+        assert_eq!(out.levels, vec![0, 0, 0]);
+    }
+
+    #[test]
+    fn x_rules_unmatched_lri_isolates_through_end() {
+        // LRI without PDI: stack stays pushed through EOP.
+        let lri = '\u{2066}';
+        let text = format!("a{lri}b");
+        let out = resolve_explicit_levels(&text, 0);
+        // 'a' lvl 0, LRI lvl 0 (outer), 'b' lvl 2 (inside isolate).
+        assert_eq!(out.levels, vec![0, 0, 2]);
+    }
+
+    #[test]
+    fn x_rules_b_class_assigned_paragraph_level() {
+        // LF (class B) always gets paragraph_level per X8, even when
+        // it appears at the end of an embedded run.
+        let rle = '\u{202B}';
+        let text = format!("{rle}a\n");
+        let out = resolve_explicit_levels(&text, 0);
+        // RLE BN lvl 0, 'a' lvl 1, LF (B) lvl 0 (paragraph_level).
+        assert_eq!(out.levels, vec![0, 1, 0]);
+        assert_eq!(out.classes[2], BidiClass::B);
+    }
+
+    #[test]
+    fn x_rules_bn_keeps_current_top_level() {
+        // ZWNJ (U+200C, class BN) inside an embedded run takes the
+        // current top's level; class is reported as BN per X9.
+        let lre = '\u{202A}';
+        let zwnj = '\u{200C}';
+        let pdf = '\u{202C}';
+        let text = format!("{lre}a{zwnj}b{pdf}");
+        let out = resolve_explicit_levels(&text, 0);
+        assert_eq!(out.levels, vec![0, 2, 2, 2, 2]);
+        assert_eq!(out.classes[2], BidiClass::BN);
+    }
+
+    #[test]
+    fn x_rules_pdf_does_not_pop_isolate_entry() {
+        // PDF must not pop an isolate entry — only PDI can. Here the
+        // PDF between LRI and PDI is a no-op, so 'b' stays at the
+        // isolate's level.
+        let lri = '\u{2066}';
+        let pdf = '\u{202C}';
+        let pdi = '\u{2069}';
+        let text = format!("{lri}{pdf}b{pdi}");
+        let out = resolve_explicit_levels(&text, 0);
+        // LRI lvl 0, PDF lvl 2 (top is isolate, no-op pop, current
+        // top is the isolate entry), 'b' lvl 2, PDI lvl 0.
+        assert_eq!(out.levels, vec![0, 2, 2, 0]);
+    }
+
+    #[test]
+    fn x_rules_nested_embedding_then_isolate() {
+        // RLE then LRI: stack grows by two; PDI pops the isolate,
+        // then PDF pops the embedding.
+        let rle = '\u{202B}';
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        let pdf = '\u{202C}';
+        let text = format!("a{rle}b{lri}c{pdi}d{pdf}e");
+        let out = resolve_explicit_levels(&text, 0);
+        // 'a' lvl 0, RLE BN lvl 0, 'b' lvl 1, LRI lvl 1 (outer of
+        // its push), 'c' lvl 2 (next even of 1), PDI lvl 1, 'd'
+        // lvl 1, PDF BN lvl 1, 'e' lvl 0.
+        assert_eq!(out.levels, vec![0, 0, 1, 1, 2, 1, 1, 1, 0]);
+    }
+
+    #[test]
+    fn x_rules_max_depth_triggers_overflow_embedding() {
+        // 63 consecutive RLEs at paragraph_level=0 push levels
+        // 1, 3, 5, ..., 125 (63 odd levels; the 63rd push lands at
+        // exactly MAX_DEPTH). A 64th RLE would compute level 127
+        // which exceeds MAX_DEPTH=125, so it must increment
+        // overflow_embedding instead. A character after the 64th
+        // RLE stays at the 63rd push's level (125), and the matching
+        // PDFs pop in reverse.
+        let rle = '\u{202B}';
+        let mut text = rle.to_string().repeat(63);
+        text.push(rle); // 64th RLE — overflow
+        text.push('a');
+        text.push_str(&'\u{202C}'.to_string().repeat(63)); // 63 PDFs
+        let out = resolve_explicit_levels(&text, 0);
+        assert_eq!(out.levels[63], 125); // 64th RLE itself: top is lvl 125
+        assert_eq!(out.levels[64], 125); // 'a' at lvl 125 (no further push)
+    }
+
+    #[test]
+    fn x_rules_pdf_clears_embedding_overflow_before_popping_stack() {
+        // After embedding overflow, the first PDF must decrement the
+        // counter (not pop the stack); the second PDF then pops the
+        // last valid embedding push.
+        let lre = '\u{202A}';
+        let pdf = '\u{202C}';
+        // Force one real push (level 2) then one overflow push
+        // (using 62 more LREs to climb to level 124, then one more
+        // overflow). Easier: directly construct the case where
+        // overflow_embedding=1 is reached.
+        let mut text = lre.to_string().repeat(62); // pushes 2,4,...,124
+        text.push(lre); // 63rd push: level 126 > MAX_DEPTH → overflow
+        text.push('a'); // at level 124
+        text.push(pdf); // PDF: clears overflow (counter -=1)
+        text.push('b'); // still at level 124
+        text.push(pdf); // PDF: now pops; back to level 122
+        text.push('c');
+        let out = resolve_explicit_levels(&text, 0);
+        // Index 62 = 'a' after 63 LREs; 'b' after first PDF still 124;
+        // 'c' after second PDF drops to 122.
+        assert_eq!(out.levels[63], 124); // 'a'
+        assert_eq!(out.levels[65], 124); // 'b'
+        assert_eq!(out.levels[67], 122); // 'c'
+    }
+
+    #[test]
+    fn x_rules_override_does_not_leak_past_pdf() {
+        // RLO active, then PDF pops, then another L char must NOT be
+        // overridden to R. Catches a bug where the override mode
+        // leaked from the popped entry to the surrounding context.
+        let rlo = '\u{202E}';
+        let pdf = '\u{202C}';
+        let text = format!("{rlo}a{pdf}b");
+        let out = resolve_explicit_levels(&text, 0);
+        assert_eq!(out.classes[1], BidiClass::R); // 'a' overridden
+        assert_eq!(out.classes[3], BidiClass::L); // 'b' NOT overridden
+    }
+
+    #[test]
+    fn x_rules_isolate_isolates_outer_overrides() {
+        // Outer LRO override re-classifies the LRI initiator to L
+        // per X6 (LRI is a regular character at the outer level),
+        // but does NOT propagate into the isolate's inner content
+        // (Neutral override pushed for the isolate entry).
+        let lro = '\u{202D}';
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        let pdf = '\u{202C}';
+        let text = format!("{lro}{lri}א{pdi}{pdf}");
+        let out = resolve_explicit_levels(&text, 0);
+        // LRO BN lvl 0, LRI overridden to L at lvl 2, 'א' at lvl 4
+        // (NOT overridden — isolate's new entry has Neutral
+        // override), PDI lvl 2, PDF lvl 2.
+        assert_eq!(out.classes[1], BidiClass::L); // LRI under outer LTR override
+        assert_eq!(out.classes[2], BidiClass::R); // 'א' inside isolate stays R
+        assert_eq!(out.levels[2], 4);
     }
 }

@@ -3066,6 +3066,18 @@
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
           "symbol": "ParagraphIter"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/bidi.rs",
+          "symbol": "resolve_explicit_levels"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/bidi.rs",
+          "symbol": "ExplicitLevels"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/bidi.rs",
+          "symbol": "MAX_DEPTH"
         }
       ],
       "decision_status": "active"
@@ -12305,6 +12317,54 @@
         "R51.x 다음 후보: BIDI X-rules (explicit embedding / override / isolate sequence build) — paragraph_level 의 신뢰 계층 위에 explicit-level stack 구축",
         "BIDI W-rules / N-rules / I-rules / L-rules 추후 slice 적용 — UAX #9 BidiTest.txt 수십만 수의 vector 계립으로 hand-test 대체 고려",
         "derive macro for WidgetTransition (improvement opportunity, 별도 라운드) / hello-toggle visual demo (paint-side validation)"
+      ]
+    },
+    "Round 507 — R51.18 §5.37.4 BIDI X-rules (UAX #9 §3.3.2) — explicit levels + status stack": {
+      "decision_summary": "UAX #9 §3.3.2 X1-X9 land — DirectionalStatusStack (entries + overflow_isolate/overflow_embedding/valid_isolate counters) + resolve_explicit_levels (per-codepoint level + class output) + FSI first-strong lookahead; R51.17 paragraph_level 위 두 번째 algorithm slice",
+      "changes_bullets": [
+        "crates/pinion-text-unicode/src/bidi.rs: resolve_explicit_levels(paragraph, paragraph_level) -> ExplicitLevels — UAX #9 X1-X9 single-pass per-codepoint (level, class) emission, X9 removed codes (RLE/LRE/RLO/LRO/PDF/BN) reported as BidiClass::BN",
+        "crates/pinion-text-unicode/src/bidi.rs: ExplicitLevels { levels: Vec<u8>, classes: Vec<BidiClass> } — substrate for downstream W/N/I/L rules; per-codepoint parallel arrays",
+        "crates/pinion-text-unicode/src/bidi.rs: MAX_DEPTH = 125 pub const (UAX #9 §3.3.2 bound) + DirectionalStatusStack/Entry/Override private substrate + next_odd/next_even const fn + fsi_resolves_to_rli helper (X5c first-strong lookahead, depth-tracked PDI matching)",
+        "PDF level convention = pre-pop (embedding being closed) per icu4c/unicode-bidi; PDI level = post-pop per UAX #9 X6a explicit rule (asymmetry doc-noted)",
+        "external lib 0 유지 — std + alloc + R51.11 bidi_class 만 의존, [[uax-semantic-spec-lock]] policy 일치"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1126 pass (+26 from 1100 — BIDI X-rules)",
+        "pinion-text-unicode: 146 tests pass (+26 X-rules incl. 1 UCD format-control sanity check)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline 유지: forbid unsafe / deny warnings / clippy::pedantic deny)",
+        "UAX #9 spec 준수 검증: X2-X5 embedding push (next_odd/next_even) / X4-X5 override (RLO/LRO) / X5a-X5b isolate push (RLI/LRI) / X5c FSI first-strong lookahead (RTL/LTR/none-default-LRI/nested-isolate-skip) / X6a PDI matched-pop + post-pop level / X7 PDF pre-pop level + isolate non-pop / X8 B = paragraph_level / X9 BN preserves level",
+        "edge cases: empty paragraph / unmatched PDF / unmatched PDI / unmatched LRI / MAX_DEPTH 125 overflow_embedding 진입 / PDF clears overflow before stack pop / override leak past PDF / outer override blocked by isolate (X5a Neutral override on new entry)"
+      ],
+      "impact_refs": [
+        "5.37.4"
+      ],
+      "carry_forward_bullets": [
+        "R51.x 다음 후보: BIDI W-rules (UAX #9 §3.3.3) — weak type resolution (W1 NSM / W2 EN-after-AL / W3 AL->R / W4 ES-CS between EN-AN / W5 ET adjacent EN / W6 leftover separators->ON / W7 EN context-strong); level run partitioning (X10) 필요할 가능성",
+        "BIDI X-rules → W/N/I/L 진행 후 UAX #9 BidiTest.txt 수십만 vector conformance 적용 (hand-tests + 대표 vector subset)",
+        "derive macro for WidgetTransition (improvement opportunity, 별도 라운드) / hello-toggle visual demo (paint-side validation) / serde Option<Value> JSON null RFC (small fix)"
+      ],
+      "publishable_decision_summary": "UAX #9 §3.3.2 X1-X9 land — DirectionalStatusStack (entries + overflow_isolate/overflow_embedding/valid_isolate counters) + resolve_explicit_levels (per-codepoint level + class output) + FSI first-strong lookahead; R51.17 paragraph_level 위 두 번째 algorithm slice",
+      "publishable_changes_bullets": [
+        "crates/pinion-text-unicode/src/bidi.rs: resolve_explicit_levels(paragraph, paragraph_level) -> ExplicitLevels — UAX #9 X1-X9 single-pass per-codepoint (level, class) emission, X9 removed codes (RLE/LRE/RLO/LRO/PDF/BN) reported as BidiClass::BN",
+        "crates/pinion-text-unicode/src/bidi.rs: ExplicitLevels { levels: Vec<u8>, classes: Vec<BidiClass> } — substrate for downstream W/N/I/L rules; per-codepoint parallel arrays",
+        "crates/pinion-text-unicode/src/bidi.rs: MAX_DEPTH = 125 pub const (UAX #9 §3.3.2 bound) + DirectionalStatusStack/Entry/Override private substrate + next_odd/next_even const fn + fsi_resolves_to_rli helper (X5c first-strong lookahead, depth-tracked PDI matching)",
+        "PDF level convention = pre-pop (embedding being closed) per icu4c/unicode-bidi; PDI level = post-pop per UAX #9 X6a explicit rule (asymmetry doc-noted)",
+        "external lib 0 유지 — std + alloc + R51.11 bidi_class 만 의존, [[uax-semantic-spec-lock]] policy 일치"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1126 pass (+26 from 1100 — BIDI X-rules)",
+        "pinion-text-unicode: 146 tests pass (+26 X-rules incl. 1 UCD format-control sanity check)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline 유지: forbid unsafe / deny warnings / clippy::pedantic deny)",
+        "UAX #9 spec 준수 검증: X2-X5 embedding push (next_odd/next_even) / X4-X5 override (RLO/LRO) / X5a-X5b isolate push (RLI/LRI) / X5c FSI first-strong lookahead (RTL/LTR/none-default-LRI/nested-isolate-skip) / X6a PDI matched-pop + post-pop level / X7 PDF pre-pop level + isolate non-pop / X8 B = paragraph_level / X9 BN preserves level",
+        "edge cases: empty paragraph / unmatched PDF / unmatched PDI / unmatched LRI / MAX_DEPTH 125 overflow_embedding 진입 / PDF clears overflow before stack pop / override leak past PDF / outer override blocked by isolate (X5a Neutral override on new entry)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.x 다음 후보: BIDI W-rules (UAX #9 §3.3.3) — weak type resolution (W1 NSM / W2 EN-after-AL / W3 AL->R / W4 ES-CS between EN-AN / W5 ET adjacent EN / W6 leftover separators->ON / W7 EN context-strong); level run partitioning (X10) 필요할 가능성",
+        "BIDI X-rules → W/N/I/L 진행 후 UAX #9 BidiTest.txt 수십만 vector conformance 적용 (hand-tests + 대표 vector subset)",
+        "derive macro for WidgetTransition (improvement opportunity, 별도 라운드) / hello-toggle visual demo (paint-side validation) / serde Option<Value> JSON null RFC (small fix)"
       ]
     },
     "Round 6": {
