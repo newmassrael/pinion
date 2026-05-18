@@ -20,9 +20,13 @@
 
 use crate::ordering::combining_class;
 use crate::tables::{
-    NFC_QC_FIRST_NON_YES_CP, NFC_QC_NON_YES, NFD_QC_FIRST_NO_CP, NFD_QC_NO,
-    NFKC_QC_FIRST_NON_YES_CP, NFKC_QC_NON_YES, NFKD_QC_FIRST_NO_CP,
-    NFKD_QC_NO,
+    NFC_QC_FIRST_NON_YES_CP, NFC_QC_NON_YES_BMP_DATA,
+    NFC_QC_NON_YES_BMP_INDEX, NFC_QC_NON_YES_SUPPLEMENTARY,
+    NFD_QC_FIRST_NO_CP, NFD_QC_NO_BMP_DATA, NFD_QC_NO_BMP_INDEX,
+    NFD_QC_NO_SUPPLEMENTARY, NFKC_QC_FIRST_NON_YES_CP,
+    NFKC_QC_NON_YES_BMP_DATA, NFKC_QC_NON_YES_BMP_INDEX,
+    NFKC_QC_NON_YES_SUPPLEMENTARY, NFKD_QC_FIRST_NO_CP,
+    NFKD_QC_NO_BMP_DATA, NFKD_QC_NO_BMP_INDEX, NFKD_QC_NO_SUPPLEMENTARY,
 };
 
 /// Ternary Quick-check verdict.
@@ -36,39 +40,50 @@ pub(crate) enum QuickCheck {
     Maybe,
 }
 
-/// `binary_search` membership probe for the `No`-only tables
-/// (`NFD_QC_NO` / `NFKD_QC_NO`). R50.2.9 — codepoints below the
-/// build-derived anchor return `false` without the search.
+/// R50.2.11 — shared 2-stage BMP trie lookup. Returns `None` for
+/// codepoints below the build-derived `anchor` (default value), uses
+/// the `(BMP_INDEX, BMP_DATA)` trie for BMP codepoints, and falls
+/// back to a sparse `binary_search` for supplementary-plane
+/// codepoints. Stage-2 value `0` encodes "not in table" (i.e. the
+/// default `Yes` for QC tables, mapped back to `None` here); NFD/
+/// NFKD callers convert any `Some(_)` to membership `true`.
+///
+/// All three branches (anchor / BMP / supplementary) live in one
+/// function and rely on the compiler's default inlining. Earlier
+/// R50.2.11 iterations tried hoisting the supplementary path into a
+/// `#[cold]` helper and into a plain free function; both layouts
+/// shifted regressions around without delivering a universal win on
+/// the 5-scenario bench. The single-function shape is the simplest
+/// textbook canonical and produced the best overall envelope.
 #[inline]
-fn lookup_no(table: &'static [u32], cp: u32, anchor: u32) -> bool {
-    cp >= anchor && table.binary_search(&cp).is_ok()
-}
-
-/// `binary_search_by_key` for the ternary tables
-/// (`NFC_QC_NON_YES` / `NFKC_QC_NON_YES`). Returns `None` when the
-/// codepoint is absent (default `Yes`); `Some(value)` otherwise.
-/// R50.2.9 — codepoints below the build-derived anchor return
-/// `None` without the search.
-#[inline]
-fn lookup_ynm(
-    table: &'static [(u32, u8)],
-    cp: u32,
+fn lookup_u8_trie(
+    index: &'static [u16; 256],
+    data: &'static [u8],
+    supplementary: &'static [(u32, u8)],
     anchor: u32,
+    cp: u32,
 ) -> Option<u8> {
     if cp < anchor {
         return None;
     }
-    table
+    if cp < 0x10000 {
+        let block = index[(cp >> 8) as usize] as usize;
+        let value = data[block * 256 + (cp & 0xFF) as usize];
+        return if value == 0 { None } else { Some(value) };
+    }
+    supplementary
         .binary_search_by_key(&cp, |(c, _)| *c)
         .ok()
-        .map(|idx| table[idx].1)
+        .map(|idx| supplementary[idx].1)
 }
 
 /// Quick-check for `Yes`/`No`-only forms (NFD, NFKD). Combining-
 /// class ordering violation is treated as `No`.
 fn quick_check_yn(
     s: &str,
-    table: &'static [u32],
+    index: &'static [u16; 256],
+    data: &'static [u8],
+    supplementary: &'static [(u32, u8)],
     anchor: u32,
 ) -> QuickCheck {
     let mut last_class: u8 = 0;
@@ -78,7 +93,7 @@ fn quick_check_yn(
         if last_class > class && class != 0 {
             return QuickCheck::No;
         }
-        if lookup_no(table, cp, anchor) {
+        if lookup_u8_trie(index, data, supplementary, anchor, cp).is_some() {
             return QuickCheck::No;
         }
         last_class = class;
@@ -89,7 +104,9 @@ fn quick_check_yn(
 /// Quick-check for ternary forms (NFC, NFKC).
 fn quick_check_ynm(
     s: &str,
-    table: &'static [(u32, u8)],
+    index: &'static [u16; 256],
+    data: &'static [u8],
+    supplementary: &'static [(u32, u8)],
     anchor: u32,
 ) -> QuickCheck {
     let mut last_class: u8 = 0;
@@ -100,7 +117,9 @@ fn quick_check_ynm(
         if last_class > class && class != 0 {
             return QuickCheck::No;
         }
-        if let Some(qc) = lookup_ynm(table, cp, anchor) {
+        if let Some(qc) =
+            lookup_u8_trie(index, data, supplementary, anchor, cp)
+        {
             match qc {
                 1 => return QuickCheck::No,
                 2 => result = QuickCheck::Maybe,
@@ -113,19 +132,43 @@ fn quick_check_ynm(
 }
 
 pub(crate) fn nfc_quick_check(s: &str) -> QuickCheck {
-    quick_check_ynm(s, NFC_QC_NON_YES, NFC_QC_FIRST_NON_YES_CP)
+    quick_check_ynm(
+        s,
+        NFC_QC_NON_YES_BMP_INDEX,
+        NFC_QC_NON_YES_BMP_DATA,
+        NFC_QC_NON_YES_SUPPLEMENTARY,
+        NFC_QC_FIRST_NON_YES_CP,
+    )
 }
 
 pub(crate) fn nfd_quick_check(s: &str) -> QuickCheck {
-    quick_check_yn(s, NFD_QC_NO, NFD_QC_FIRST_NO_CP)
+    quick_check_yn(
+        s,
+        NFD_QC_NO_BMP_INDEX,
+        NFD_QC_NO_BMP_DATA,
+        NFD_QC_NO_SUPPLEMENTARY,
+        NFD_QC_FIRST_NO_CP,
+    )
 }
 
 pub(crate) fn nfkc_quick_check(s: &str) -> QuickCheck {
-    quick_check_ynm(s, NFKC_QC_NON_YES, NFKC_QC_FIRST_NON_YES_CP)
+    quick_check_ynm(
+        s,
+        NFKC_QC_NON_YES_BMP_INDEX,
+        NFKC_QC_NON_YES_BMP_DATA,
+        NFKC_QC_NON_YES_SUPPLEMENTARY,
+        NFKC_QC_FIRST_NON_YES_CP,
+    )
 }
 
 pub(crate) fn nfkd_quick_check(s: &str) -> QuickCheck {
-    quick_check_yn(s, NFKD_QC_NO, NFKD_QC_FIRST_NO_CP)
+    quick_check_yn(
+        s,
+        NFKD_QC_NO_BMP_INDEX,
+        NFKD_QC_NO_BMP_DATA,
+        NFKD_QC_NO_SUPPLEMENTARY,
+        NFKD_QC_FIRST_NO_CP,
+    )
 }
 
 #[cfg(test)]

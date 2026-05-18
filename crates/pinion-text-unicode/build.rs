@@ -509,47 +509,78 @@ fn emit_decomp_table(
 }
 
 fn emit_ccc_table(s: &mut String, ccc: &[(u32, u8)]) {
-    let (bmp_index, bmp_data) = build_ccc_bmp_trie(ccc);
-    let supplementary: Vec<(u32, u8)> = ccc
+    emit_u8_bmp_trie_table(
+        s,
+        "CANONICAL_COMBINING_CLASS",
+        "Non-zero Canonical Combining Class values (UAX #44).",
+        ccc,
+    );
+}
+
+/// Emit a 2-stage BMP trie (Stage 1 `u16[256]` + deduplicated
+/// Stage 2 packed `u8` blocks) plus a sorted supplementary fallback
+/// for codepoints at or above `U+10000`. Shared by CCC (R50.2.10)
+/// and the four Quick-check tables (R50.2.11).
+fn emit_u8_bmp_trie_table(
+    s: &mut String,
+    name: &str,
+    purpose: &str,
+    entries: &[(u32, u8)],
+) {
+    let (bmp_index, bmp_data) = build_u8_bmp_trie(entries);
+    let supplementary: Vec<(u32, u8)> = entries
         .iter()
         .copied()
         .filter(|(cp, _)| *cp >= 0x10000)
         .collect();
 
-    s.push_str(
-        "/// R50.2.10 §5.37.3 — BMP CCC lookup via 2-stage trie\n///\n/// \
-         Stage 1 (`CANONICAL_COMBINING_CLASS_BMP_INDEX`) maps each\n/// \
-         high byte of a BMP codepoint to a Stage-2 block index. Stage 2\n/// \
-         (`CANONICAL_COMBINING_CLASS_BMP_DATA`) is a packed `u8` array\n/// \
-         where every 256-byte slice is one deduplicated block. The full\n/// \
-         lookup is `DATA[INDEX[c >> 8] * 256 + (c & 0xFF)]` — two memory\n/// \
-         accesses with no branches beyond the supplementary-plane test.\n/// \
-         Identical (mostly zero) blocks share a single Stage-2 entry,\n/// \
-         keeping the data table well under the 64 KiB worst case.\n",
-    );
-    s.push_str(
-        "pub(crate) static CANONICAL_COMBINING_CLASS_BMP_INDEX: &[u16; 256] = &[\n",
-    );
-    for (i, idx) in bmp_index.iter().enumerate() {
-        if i % 16 == 0 {
-            s.push_str("    ");
-        }
-        write!(s, "{idx}, ").expect("String write infallible");
-        if i % 16 == 15 {
-            s.push('\n');
-        }
-    }
+    writeln!(
+        s,
+        "/// {purpose}\n///\n/// R50.2.10/R50.2.11 \u{2014} BMP lookup via 2-stage trie\n/// \
+         (`Stage1[c >> 8]` selects a Stage-2 block;\n/// \
+         `Stage2[block * 256 + (c & 0xFF)]` returns the packed value).\n/// \
+         Identical 256-byte blocks share a single Stage-2 entry, so the\n/// \
+         data table is dramatically smaller than the 64 KiB worst case.\n/// \
+         Supplementary-plane codepoints (`cp >= 0x10000`) use the sorted\n/// \
+         `_SUPPLEMENTARY` sibling array.",
+    )
+    .expect("String write infallible");
+    writeln!(s, "pub(crate) static {name}_BMP_INDEX: &[u16; 256] = &[")
+        .expect("String write infallible");
+    emit_packed_row(s, &bmp_index);
     s.push_str("];\n\n");
 
-    s.push_str(
-        "/// Packed CCC `u8` blocks indexed by\n/// \
-         `CANONICAL_COMBINING_CLASS_BMP_INDEX`. See its doc for the\n/// \
-         2-stage trie layout (R50.2.10).\n",
-    );
-    s.push_str(
-        "pub(crate) static CANONICAL_COMBINING_CLASS_BMP_DATA: &[u8] = &[\n",
-    );
-    for (i, value) in bmp_data.iter().enumerate() {
+    writeln!(
+        s,
+        "/// Packed value blocks indexed by `{name}_BMP_INDEX`.",
+    )
+    .expect("String write infallible");
+    writeln!(s, "pub(crate) static {name}_BMP_DATA: &[u8] = &[")
+        .expect("String write infallible");
+    emit_packed_row(s, &bmp_data);
+    s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Supplementary-plane (`cp >= 0x10000`) entries for \
+         `{name}`\n/// \
+         (sparse, sorted by codepoint; served by `binary_search`).",
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "pub(crate) static {name}_SUPPLEMENTARY: &[(u32, u8)] = &[",
+    )
+    .expect("String write infallible");
+    for (cp, value) in &supplementary {
+        writeln!(s, "    (0x{cp:04X}, {value}),")
+            .expect("String write infallible");
+    }
+    s.push_str("];\n\n");
+}
+
+fn emit_packed_row<T: std::fmt::Display>(s: &mut String, items: &[T]) {
+    for (i, value) in items.iter().enumerate() {
         if i % 16 == 0 {
             s.push_str("    ");
         }
@@ -558,37 +589,25 @@ fn emit_ccc_table(s: &mut String, ccc: &[(u32, u8)]) {
             s.push('\n');
         }
     }
-    s.push_str("];\n\n");
-
-    s.push_str(
-        "/// Supplementary-plane (`cp >= 0x10000`) CCC entries — sparse,\n/// \
-         sorted by codepoint, served by binary search. The BMP trie\n/// \
-         deliberately omits this range to keep the Stage-2 table compact.\n",
-    );
-    s.push_str(
-        "pub(crate) static CANONICAL_COMBINING_CLASS_SUPPLEMENTARY: \
-         &[(u32, u8)] = &[\n",
-    );
-    for (cp, value) in &supplementary {
-        writeln!(s, "    (0x{cp:04X}, {value}),")
-            .expect("String write infallible");
+    if !items.is_empty() && items.len() % 16 != 0 {
+        s.push('\n');
     }
-    s.push_str("];\n\n");
 }
 
-/// R50.2.10 — build the BMP 2-stage trie for canonical combining
-/// class. Returns `(stage1, stage2)` where `stage1` has exactly 256
-/// entries (one per high byte) and `stage2` is the deduplicated
-/// 256-byte block table. Block 0 of Stage 2 is the all-zero "null"
-/// block, shared by every high byte with no non-default CCC entries
-/// in its range. Inputs with codepoint `>= 0x10000` are filtered out
-/// — supplementary entries land in a separate sorted array.
-fn build_ccc_bmp_trie(ccc: &[(u32, u8)]) -> (Vec<u16>, Vec<u8>) {
+/// R50.2.10/R50.2.11 — build the BMP 2-stage trie shared by CCC and
+/// the four Quick-check tables. Returns `(stage1, stage2)` where
+/// `stage1` has exactly 256 entries (one per high byte) and `stage2`
+/// is the deduplicated 256-byte block table. Block 0 of Stage 2 is
+/// the all-zero "null" block, shared by every high byte whose 256
+/// codepoint slice carries only default values. Inputs with codepoint
+/// `>= 0x10000` are filtered out — supplementary entries land in a
+/// separate sorted array.
+fn build_u8_bmp_trie(entries: &[(u32, u8)]) -> (Vec<u16>, Vec<u8>) {
     const BLOCK_SIZE: usize = 256;
     const NUM_BLOCKS: usize = 0x10000 / BLOCK_SIZE; // 256
 
     let mut blocks: Vec<[u8; BLOCK_SIZE]> = vec![[0; BLOCK_SIZE]; NUM_BLOCKS];
-    for &(cp, value) in ccc {
+    for &(cp, value) in entries {
         if cp >= 0x10000 {
             continue;
         }
@@ -609,7 +628,7 @@ fn build_ccc_bmp_trie(ccc: &[(u32, u8)]) -> (Vec<u16>, Vec<u8>) {
             stage1[i] = existing;
         } else {
             let idx = u16::try_from(stage2.len() / BLOCK_SIZE)
-                .expect("BMP CCC trie block index must fit in u16");
+                .expect("BMP u8 trie block index must fit in u16");
             stage2.extend_from_slice(blk);
             block_map.insert(*blk, idx);
             stage1[i] = idx;
@@ -658,26 +677,14 @@ fn emit_qc_ynm_table(
     doc: &str,
     table: &[(u32, u8)],
 ) {
-    s.push_str("/// ");
-    s.push_str(doc);
-    s.push_str("\n///\n/// Sorted by codepoint; use `binary_search_by_key`.\n");
-    writeln!(s, "pub(crate) static {name}: &[(u32, u8)] = &[")
-        .expect("String write infallible");
-    for (cp, qc) in table {
-        writeln!(s, "    (0x{cp:04X}, {qc}),")
-            .expect("String write infallible");
-    }
-    s.push_str("];\n\n");
+    emit_u8_bmp_trie_table(s, name, doc, table);
 }
 
+/// Promote a `Yes`/`No`-only QC table (NFD/NFKD) to the shared
+/// `(u32, u8)` shape used by [`emit_u8_bmp_trie_table`], with value
+/// `1` standing in for "member" (the lookup just tests non-zero).
 fn emit_qc_no_table(s: &mut String, name: &str, doc: &str, table: &[u32]) {
-    s.push_str("/// ");
-    s.push_str(doc);
-    s.push_str("\n///\n/// Sorted ascending; `binary_search` for membership.\n");
-    writeln!(s, "pub(crate) static {name}: &[u32] = &[")
-        .expect("String write infallible");
-    for cp in table {
-        writeln!(s, "    0x{cp:04X},").expect("String write infallible");
-    }
-    s.push_str("];\n\n");
+    let promoted: Vec<(u32, u8)> =
+        table.iter().copied().map(|cp| (cp, 1)).collect();
+    emit_u8_bmp_trie_table(s, name, doc, &promoted);
 }

@@ -7206,6 +7206,32 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 482 — R50.2.11 §5.37.3 4 QC tables BMP trie (build_u8_bmp_trie generic) — decomp/hangul/sample +13~55%
+
+**Changes**:
+- build.rs: build_u8_bmp_trie + emit_u8_bmp_trie_table generic (CCC + 4 QC 공유)
+- quick_check.rs lookup_u8_trie single inline (cold isolation 시도 후 textbook 정통)
+- emit doc fix — trailing \n 제거 + backtick wrap (clippy pedantic baseline guard)
+
+
+
+**Verification**:
+- cargo test --workspace = 961 pass (4 form conformance sweep 정상, regression 0)
+- bench MiB/s vs R50.2.10: decomp 48→55, hangul 99→123, sam 132→207, pre 2050→1800
+- cargo clippy baseline 6 유지 (pinion-text-unicode 0 warning)
+
+
+
+**Impact**: §5.37.3
+
+
+**Carry forward**:
+- R50.2.12 precomposed_nfc -20% regression 분석 (flamegraph + inlining heuristic)
+- R50.2.12 CANONICAL_DECOMPOSITION / COMPATIBILITY_DECOMPOSITION trie (indirect index)
+- R50.2.13 PRIMARY_COMPOSITES 2D key hash 또는 trie (anchor short-circuit 외 추가 가속)
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
