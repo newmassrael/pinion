@@ -128,3 +128,76 @@ impl<W: Default> Default for IntentEmitter<W> {
         Self::new(W::default())
     }
 }
+
+/// R51.12 §5.38 — transition contract that lets [`IntentEmitter`]
+/// automate the snapshot → drive → detect → push pattern shared by
+/// every Tier-1 widget adapter.
+///
+/// Before R51.12 each `*External::send` re-implemented the same five
+/// lines: capture the pre-state (and any value sidecar), drive the
+/// event, capture the post-state, compare the two by pattern, and
+/// push an [`Intent`] on the matching activate transition. The bodies
+/// only diverge in three places — the snapshot tuple, the
+/// pattern-match, and the intent payload — so the textbook
+/// abstraction is a trait whose associated types carry exactly those
+/// three pieces.
+///
+/// `Snapshot` must be `Copy` — the trait enforces the design rule
+/// that a snapshot is a cheap, value-typed projection of the widget
+/// (typically a state enum or `(State, value)` tuple). The engine
+/// state enums are `#[derive(Copy)]` and value sidecars are `bool`
+/// / `f32`, so every Tier-1 widget satisfies this trivially; future
+/// widgets that would need an expensive snapshot have a clear design
+/// signal to rework the snapshot shape rather than blow up the
+/// per-event cost.
+///
+/// `detect` is an associated function (not a method) because the
+/// detection logic is a pure projection of two snapshots — it never
+/// needs to re-borrow `self` after `drive` returns, and decoupling
+/// it from `&self` makes it trivially `Send` and unit-testable in
+/// isolation.
+pub trait WidgetTransition {
+    /// The event type the widget consumes (typically the SCXML
+    /// `*Event` enum the codegen emits, e.g. crate-scope
+    /// `ButtonEvent`).
+    type Event;
+    /// A cheap, owned view of everything the detection step needs
+    /// from the widget — usually the SCXML state, optionally tupled
+    /// with a value sidecar (`bool`, `f32`, ...).
+    type Snapshot: Copy;
+
+    /// Capture the current widget snapshot. Called before and after
+    /// each [`drive`](WidgetTransition::drive) call.
+    fn snapshot(&self) -> Self::Snapshot;
+
+    /// Drive `event` through the widget. Implementations forward to
+    /// the widget's own `send` so the value-sidecar mutation logic
+    /// (e.g. Toggle's `Pressed → Hover` flip) stays in one place.
+    fn drive(&mut self, event: Self::Event);
+
+    /// Decide whether the (`before`, `after`) snapshot pair signals
+    /// an emitting transition; return the intent to push or `None`
+    /// when the transition is silent on the §5.20 channel. Pure
+    /// function of the two snapshots — does not borrow widget state.
+    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent>;
+}
+
+impl<W: WidgetTransition> IntentEmitter<W> {
+    /// R51.12 §5.38 — drive `event` through the wrapped widget and
+    /// queue any [`Intent`] the transition produces.
+    ///
+    /// Encodes the textbook snapshot → drive → detect → push pipeline
+    /// once; every Tier-1 `*External::send` delegates to this method
+    /// instead of re-implementing the five-line dance. The
+    /// substrate-vs-application boundary stays clean: `IntentEmitter`
+    /// owns the pipeline shape, the widget owns its three
+    /// [`WidgetTransition`] associated items.
+    pub fn dispatch(&mut self, event: W::Event) {
+        let before = self.inner.snapshot();
+        self.inner.drive(event);
+        let after = self.inner.snapshot();
+        if let Some(intent) = W::detect(before, after) {
+            self.push(intent);
+        }
+    }
+}

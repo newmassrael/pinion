@@ -38,7 +38,7 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::{IntentEmitter, Widget};
+use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
 /// Checkbox widget state machine + Off/On value sidecar. Statechart
 /// identical to [`crate::widgets::Toggle`]; divergence is the
@@ -94,6 +94,40 @@ impl Default for Checkbox {
     }
 }
 
+/// R51.12 §5.38 — Checkbox transition contract. Mirror of Toggle's
+/// impl with the intent name swapped (`"checked"` vs `"toggle"`) —
+/// statechart + value semantics are identical, the kind discriminates
+/// at the listener layer so form-bound code can subscribe to
+/// checkboxes independently from settings switches.
+impl WidgetTransition for Checkbox {
+    type Event = CheckboxEvent;
+    type Snapshot = (CheckboxState, bool);
+
+    fn snapshot(&self) -> Self::Snapshot {
+        (self.state(), self.is_checked())
+    }
+
+    fn drive(&mut self, event: Self::Event) {
+        self.send(event);
+    }
+
+    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+        let (before_state, before_value) = before;
+        let (after_state, after_value) = after;
+        if matches!(before_state, CheckboxState::Pressed)
+            && matches!(after_state, CheckboxState::Hover)
+            && before_value != after_value
+        {
+            Some(Intent::new_static(
+                "checked",
+                IntrospectValue::Bool(after_value),
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 /// `External` adapter wrapping a [`Checkbox`]. Mirrors
 /// [`crate::widgets::ToggleExternal`] one-to-one with the intent name
 /// (`"checked"`) and schema label (`"checked"` instead of `"value"`)
@@ -110,21 +144,14 @@ impl CheckboxExternal {
     }
 
     /// Drive a [`CheckboxEvent`] and queue any `"checked"` intent the
-    /// transition produces. `Pressed → Hover` flips the value and
-    /// pushes an intent carrying the new boolean.
+    /// transition produces.
+    ///
+    /// R51.12 §5.38 refactor: pipeline on [`IntentEmitter::dispatch`],
+    /// detection rule on [`WidgetTransition`] impl for [`Checkbox`].
+    /// `Pressed → Hover` with value flip pushes a `"checked"` intent
+    /// carrying the new boolean as [`IntrospectValue::Bool`].
     pub fn send(&mut self, event: CheckboxEvent) {
-        let before_state = self.em.inner.state();
-        let before_value = self.em.inner.is_checked();
-        self.em.inner.send(event);
-        let after_state = self.em.inner.state();
-        let after_value = self.em.inner.is_checked();
-        if matches!(before_state, CheckboxState::Pressed)
-            && matches!(after_state, CheckboxState::Hover)
-            && before_value != after_value
-        {
-            self.em
-                .push(Intent::new_static("checked", IntrospectValue::Bool(after_value)));
-        }
+        self.em.dispatch(event);
     }
 
     /// Current interaction state.

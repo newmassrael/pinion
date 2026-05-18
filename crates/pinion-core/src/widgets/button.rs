@@ -30,13 +30,41 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::{IntentEmitter, Widget};
+use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
 /// R12 Button widget. R51.4 §5.38 refactor: a type alias over the
 /// shared [`Widget<P>`] facade — Button has no value sidecar, so the
 /// alias gives `Button::new` / `Button::send` / `Button::state` /
 /// `Button::default` for free via the generic impls.
 pub type Button = Widget<ButtonPolicy>;
+
+/// R51.12 §5.38 — Button transition contract. Snapshot is just the
+/// interaction state (no value sidecar); detect emits a `"click"`
+/// intent on the `Pressed → Hover` activate path with a [`Null`]
+/// payload — Button has no semantic value to carry, the kind alone
+/// is the signal.
+///
+/// [`Null`]: IntrospectValue::Null
+impl WidgetTransition for Button {
+    type Event = ButtonEvent;
+    type Snapshot = ButtonState;
+
+    fn snapshot(&self) -> Self::Snapshot {
+        self.state()
+    }
+
+    fn drive(&mut self, event: Self::Event) {
+        self.send(event);
+    }
+
+    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+        if matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover) {
+            Some(Intent::new_static("click", IntrospectValue::Null))
+        } else {
+            None
+        }
+    }
+}
 
 /// `External` adapter wrapping a [`Button`] SCXML widget. Surfaces
 /// the button's [`ButtonState`] to the §5.12 `scene/query` RPC
@@ -63,19 +91,16 @@ impl ButtonExternal {
     /// Drive a [`ButtonEvent`] through the wrapped SCXML and enqueue
     /// any §5.20 intent the transition produces.
     ///
-    /// `Pressed` → `Hover` (via `PointerUp`) emits a `"click"` intent
-    /// with `IntrospectValue::Null` payload. The widget emits only
-    /// the *kind* — the §5.20 R22 runtime walk prefixes
+    /// R51.12 §5.38 refactor: the snapshot → drive → detect → push
+    /// pipeline lives on [`IntentEmitter::dispatch`]; the detection
+    /// rule (Pressed → Hover ⇒ `"click"`/Null) lives on the
+    /// [`WidgetTransition`] impl for [`Button`]. The widget emits
+    /// only the kind — the §5.20 R22 runtime walk prefixes
     /// `ExternalNode.tag` (e.g. `"save_btn"` → `"save_btn.click"`),
     /// so widget-internal identity stays decoupled from the
     /// user-chosen scene-side identifier.
     pub fn send(&mut self, event: ButtonEvent) {
-        let before = self.em.inner.state();
-        self.em.inner.send(event);
-        let after = self.em.inner.state();
-        if matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover) {
-            self.em.push(Intent::new_static("click", IntrospectValue::Null));
-        }
+        self.em.dispatch(event);
     }
 
     #[must_use]

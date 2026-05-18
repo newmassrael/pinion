@@ -5,4 +5,4 @@ pub mod slider;
 pub mod toggle;
 pub mod widget;
 
-pub use widget::{IntentEmitter, Widget};
+pub use widget::{IntentEmitter, Widget, WidgetTransition};

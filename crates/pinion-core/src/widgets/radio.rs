@@ -39,7 +39,7 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::{IntentEmitter, Widget};
+use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
 /// Radio widget state machine + selection value sidecar. Activate
 /// (`Pressed → Hover`) sets the value to `true` unconditionally;
@@ -95,6 +95,43 @@ impl Default for Radio {
     }
 }
 
+/// R51.12 §5.38 — Radio transition contract. Same snapshot shape as
+/// Toggle / Checkbox (`(State, bool)`), but the detect rule is
+/// set-not-flip: emit `"selected"` only when the value transitions
+/// `false → true` (not on every activate). Re-activating an
+/// already-selected Radio is idempotent and silent — matches user
+/// expectation that "select the already-selected option" is a no-op.
+/// Payload is [`Null`]; the selection is identity-only, the
+/// scene-side `ExternalNode.tag` carries which option was picked.
+///
+/// [`Null`]: IntrospectValue::Null
+impl WidgetTransition for Radio {
+    type Event = RadioEvent;
+    type Snapshot = (RadioState, bool);
+
+    fn snapshot(&self) -> Self::Snapshot {
+        (self.state(), self.is_selected())
+    }
+
+    fn drive(&mut self, event: Self::Event) {
+        self.send(event);
+    }
+
+    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+        let (before_state, before_value) = before;
+        let (after_state, after_value) = after;
+        if matches!(before_state, RadioState::Pressed)
+            && matches!(after_state, RadioState::Hover)
+            && !before_value
+            && after_value
+        {
+            Some(Intent::new_static("selected", IntrospectValue::Null))
+        } else {
+            None
+        }
+    }
+}
+
 /// `External` adapter wrapping a [`Radio`]. Emits a `"selected"`
 /// intent on the activate path only when the value actually
 /// transitions `false → true` (so re-activating an already-selected
@@ -113,20 +150,12 @@ impl RadioExternal {
     /// Drive a [`RadioEvent`] and queue a `"selected"` intent only on
     /// `false → true` value transition; idempotent re-activation is
     /// silent.
+    ///
+    /// R51.12 §5.38 refactor: pipeline on [`IntentEmitter::dispatch`],
+    /// detection rule on [`WidgetTransition`] impl for [`Radio`] (the
+    /// set-not-flip variant — `false → true` activation only).
     pub fn send(&mut self, event: RadioEvent) {
-        let before_state = self.em.inner.state();
-        let before_value = self.em.inner.is_selected();
-        self.em.inner.send(event);
-        let after_state = self.em.inner.state();
-        let after_value = self.em.inner.is_selected();
-        if matches!(before_state, RadioState::Pressed)
-            && matches!(after_state, RadioState::Hover)
-            && !before_value
-            && after_value
-        {
-            self.em
-                .push(Intent::new_static("selected", IntrospectValue::Null));
-        }
+        self.em.dispatch(event);
     }
 
     /// Current interaction state.

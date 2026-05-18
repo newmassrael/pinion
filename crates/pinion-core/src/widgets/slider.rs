@@ -43,7 +43,7 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::{IntentEmitter, Widget};
+use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
 /// Slider widget state machine + `f32` value sidecar
 /// (0.0..=1.0 normalised). Interaction body mirrors Button R12;
@@ -101,6 +101,44 @@ impl Default for Slider {
     }
 }
 
+/// R51.12 §5.38 — Slider transition contract. Snapshot tuples the
+/// interaction state with the f32 value sidecar so detect can carry
+/// the committed value in the payload. The `Pressed → Hover`
+/// activate path (drag end via `PointerUp`) emits the
+/// `"value_committed"` intent carrying `after`'s value as
+/// [`IntrospectValue::Float`]; the live-preview `"value_changing"`
+/// stream is **not** part of this contract — those intents fire from
+/// [`SliderExternal::set_value`] (a direct value mutation, not a
+/// transition) and use [`IntentEmitter::push`] outside the
+/// `dispatch` pipeline.
+impl WidgetTransition for Slider {
+    type Event = SliderEvent;
+    type Snapshot = (SliderState, f32);
+
+    fn snapshot(&self) -> Self::Snapshot {
+        (self.state(), self.value())
+    }
+
+    fn drive(&mut self, event: Self::Event) {
+        self.send(event);
+    }
+
+    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+        let (before_state, _) = before;
+        let (after_state, after_value) = after;
+        if matches!(before_state, SliderState::Pressed)
+            && matches!(after_state, SliderState::Hover)
+        {
+            Some(Intent::new_static(
+                "value_committed",
+                IntrospectValue::Float(f64::from(after_value)),
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 /// `External` adapter wrapping a [`Slider`]. Emits two intent
 /// kinds:
 ///
@@ -120,18 +158,14 @@ impl SliderExternal {
 
     /// Drive a [`SliderEvent`] and queue a `"value_committed"`
     /// intent on drag-end (`Pressed → Hover`).
+    ///
+    /// R51.12 §5.38 refactor: pipeline on [`IntentEmitter::dispatch`],
+    /// detection rule on [`WidgetTransition`] impl for [`Slider`].
+    /// The live-preview `"value_changing"` channel still goes through
+    /// [`Self::set_value`] directly (direct value mutation, not a
+    /// state transition).
     pub fn send(&mut self, event: SliderEvent) {
-        let before_state = self.em.inner.state();
-        self.em.inner.send(event);
-        let after_state = self.em.inner.state();
-        if matches!(before_state, SliderState::Pressed)
-            && matches!(after_state, SliderState::Hover)
-        {
-            self.em.push(Intent::new_static(
-                "value_committed",
-                IntrospectValue::Float(f64::from(self.em.inner.value())),
-            ));
-        }
+        self.em.dispatch(event);
     }
 
     /// Set the value and queue a `"value_changing"` intent on

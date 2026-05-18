@@ -60,7 +60,7 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::{IntentEmitter, Widget};
+use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
 /// Toggle widget state machine + Off/On value sidecar. R51.4 §5.38
 /// refactor: the engine wrapping moves into the shared
@@ -121,6 +121,41 @@ impl Default for Toggle {
     }
 }
 
+/// R51.12 §5.38 — Toggle transition contract. Snapshot tuples the
+/// interaction state with the Off/On value sidecar; detect emits a
+/// `"toggle"` intent only on the `Pressed → Hover` activate path
+/// when the value actually flipped, carrying the new value as
+/// [`IntrospectValue::Bool`]. Re-arming on the cancel path or any
+/// non-activate transition stays silent on §5.20.
+impl WidgetTransition for Toggle {
+    type Event = ToggleEvent;
+    type Snapshot = (ToggleState, bool);
+
+    fn snapshot(&self) -> Self::Snapshot {
+        (self.state(), self.is_on())
+    }
+
+    fn drive(&mut self, event: Self::Event) {
+        self.send(event);
+    }
+
+    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+        let (before_state, before_value) = before;
+        let (after_state, after_value) = after;
+        if matches!(before_state, ToggleState::Pressed)
+            && matches!(after_state, ToggleState::Hover)
+            && before_value != after_value
+        {
+            Some(Intent::new_static(
+                "toggle",
+                IntrospectValue::Bool(after_value),
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 /// `External` adapter wrapping a [`Toggle`] SCXML widget. Surfaces
 /// the toggle's [`ToggleState`] and [`Toggle::is_on`] value to the
 /// §5.12 `scene/query` RPC path, and emits a `"toggle"` [`Intent`]
@@ -149,25 +184,16 @@ impl ToggleExternal {
     /// Drive a [`ToggleEvent`] through the wrapped SCXML and queue
     /// any §5.20 intent the transition produces.
     ///
-    /// `Pressed → Hover` (via `PointerUp`) flips the boolean value
-    /// and emits a `"toggle"` intent carrying the **new** value as
-    /// [`IntrospectValue::Bool`]. The §5.22 R22 runtime walk
-    /// prefixes the scene-side `ExternalNode.tag` so the wire form
-    /// becomes e.g. `"dark_mode.toggle"` without the widget needing
-    /// to know its parent identifier.
+    /// R51.12 §5.38 refactor: the snapshot → drive → detect → push
+    /// pipeline lives on [`IntentEmitter::dispatch`]; the detection
+    /// rule (`Pressed → Hover` with value flip ⇒ `"toggle"` carrying
+    /// the new value as [`IntrospectValue::Bool`]) lives on the
+    /// [`WidgetTransition`] impl for [`Toggle`]. The §5.22 R22
+    /// runtime walk prefixes the scene-side `ExternalNode.tag` so
+    /// the wire form becomes e.g. `"dark_mode.toggle"` without the
+    /// widget needing to know its parent identifier.
     pub fn send(&mut self, event: ToggleEvent) {
-        let before_state = self.em.inner.state();
-        let before_value = self.em.inner.is_on();
-        self.em.inner.send(event);
-        let after_state = self.em.inner.state();
-        let after_value = self.em.inner.is_on();
-        if matches!(before_state, ToggleState::Pressed)
-            && matches!(after_state, ToggleState::Hover)
-            && before_value != after_value
-        {
-            self.em
-                .push(Intent::new_static("toggle", IntrospectValue::Bool(after_value)));
-        }
+        self.em.dispatch(event);
     }
 
     /// Current interaction state.

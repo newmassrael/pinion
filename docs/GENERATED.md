@@ -2684,6 +2684,13 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/widgets/slider.scxml
 - crates/pinion-core/src/widgets/slider.rs:Slider
 - crates/pinion-core/src/widgets/slider.rs:SliderExternal
+- crates/pinion-core/src/widgets/widget.rs:WidgetTransition
+- crates/pinion-core/src/widgets/widget.rs:IntentEmitter::dispatch
+- crates/pinion-core/src/widgets/button.rs:&lt;Button as WidgetTransition&gt;
+- crates/pinion-core/src/widgets/toggle.rs:&lt;Toggle as WidgetTransition&gt;
+- crates/pinion-core/src/widgets/checkbox.rs:&lt;Checkbox as WidgetTransition&gt;
+- crates/pinion-core/src/widgets/radio.rs:&lt;Radio as WidgetTransition&gt;
+- crates/pinion-core/src/widgets/slider.rs:&lt;Slider as WidgetTransition&gt;
 
 
 
@@ -7899,6 +7906,36 @@ router.pointer_down(&mut state_scene);
 - CLAUDE.md authoring (multi-round carry-over from Round 1 §1)
 - First dogfood sequencing (§4) — after framework MVP shape
 - Tier 2 axes inventory check (AccessKit, i18n, animation, hot reload, diagnostics)
+
+
+
+### Round 500 — R51.12 §5.38 IntentEmitter::dispatch + WidgetTransition trait — 5-widget refactor — R51.12 §5.38 substrate generic 완성 — WidgetTransition trait + IntentEmitter::dispatch pipeline; 5 widget *External::send 의 snapshot→drive→detect→push boilerplate 1줄 dispatch 호출로 영구 청산
+
+**Changes**:
+- crates/pinion-core/src/widgets/widget.rs: WidgetTransition trait (Event / Snapshot:Copy / snapshot / drive / detect) — 5 widget 의 transition 감지 contract 를 trait 차원에서 표준화; Snapshot:Copy bound 으로 cheap-snapshot design rule 강제
+- crates/pinion-core/src/widgets/widget.rs: IntentEmitter::dispatch — substrate 측 snapshot→drive→detect→push pipeline; *External::send 5x 의 5-10 LOC boilerplate 가 self.em.dispatch(event) 1줄로 축약
+- crates/pinion-core/src/widgets/button.rs: impl WidgetTransition for Button — detect=Pressed→Hover ⇒ click/Null; ButtonExternal::send refactor (16 LOC → 1 LOC)
+- crates/pinion-core/src/widgets/toggle.rs: impl WidgetTransition for Toggle — Snapshot=(State,bool) detect=Pressed→Hover ∧ flip ⇒ toggle/Bool(after); ToggleExternal::send refactor
+- crates/pinion-core/src/widgets/checkbox.rs: impl WidgetTransition for Checkbox — Toggle 1:1 mirror, intent name 만 checked 로 swap; CheckboxExternal::send refactor
+- crates/pinion-core/src/widgets/radio.rs: impl WidgetTransition for Radio — set-not-flip variant (!before ∧ after) ⇒ selected/Null; RadioExternal::send refactor
+- crates/pinion-core/src/widgets/slider.rs: impl WidgetTransition for Slider — detect=Pressed→Hover ⇒ value_committed/Float(after); SliderExternal::send refactor; SliderExternal::set_value 직접 push 경로 유지 (transition 아닌 direct value mutation 으로 value_changing 발화)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1041 pass (refactor zero-delta — 모든 기존 widget test 통과)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints forbid/deny/pedantic strict baseline 유지)
+- 5 widget *External::send public API surface 불변 — RPC dispatch / scene/invoke 경로 영향 zero (Toggle e2e R51.8 suite 4 test 그대로 통과)
+- diff stat: +285 / -71 (7 file) — substrate 73 LOC 추가, 5 widget application 측 boilerplate 합 50+ LOC 감소
+
+
+
+**Impact**: §5.38, §5.20
+
+
+**Carry forward**:
+- R51.13+ 후보: SCE-002 (Event payload, vendor RFC) / RadioGroup primitive / Toggle 외 widget RPC e2e ×3 (Checkbox/Radio/Slider) / BIDI P-rules (R51.x algorithm slice) / Slider statechart cleanup / hello-toggle visual demo
+- future Tier-2 widget land 시 WidgetTransition impl 4-method 패턴 자동 적용 — application 측 *External::send 는 항상 1줄 dispatch 호출 (substrate 정통 완성 후 신규 widget 진입 cost 영구 축소)
 
 
 
