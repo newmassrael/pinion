@@ -47,12 +47,14 @@
 #![forbid(unsafe_code)]
 
 pub mod action;
+pub mod focus;
 pub mod node;
 pub mod role;
 pub mod scene_label;
 pub mod tree;
 
 pub use action::{translate_action, AccessAction, PinionAccessAction};
+pub use focus::AccessFocus;
 pub use node::{AccessNode, AccessState, AccessValue};
 pub use role::AriaRole;
 pub use scene_label::enrich_names_from_scene;

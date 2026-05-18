@@ -43,7 +43,7 @@ use pinion_core::style::{
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessAction, AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -335,18 +335,28 @@ impl WidgetView for RadioGroupView {
         nodes
     }
 
-    /// R51.66 §5.40 — redirect AT-side focus from the group tag to
-    /// the active descendant radio (the selected radio, or index 0
-    /// when nothing is selected — same fallback as the pointer /
-    /// keyboard activation paths). The pinion-shell focus ring and
-    /// key dispatch continue to address `"main_group"` itself; only
-    /// the AT-side `TreeUpdate::focus` is rerouted.
-    fn access_focus_target(state: &GroupState, focused: Option<&str>) -> Option<String> {
+    /// R51.66 / R51.71 §5.40 — composite focus model. When the
+    /// group itself is focused, return [`AccessFocus::composite`]
+    /// with the parent tag (`"main_group"`) as the
+    /// `TreeUpdate::focus` target and the active radio's sub-tag
+    /// as the `aria-activedescendant`. ARIA Authoring Practices
+    /// roving-tabindex model — the parent owns the tab stop and
+    /// the descendant is reported as the addressed item. Pinion-
+    /// shell focus ring and key dispatch continue to address
+    /// `"main_group"` itself; only AccessKit consumers see the
+    /// descendant hint.
+    fn access_focus_target(
+        state: &GroupState,
+        focused: Option<&str>,
+    ) -> Option<AccessFocus> {
         if focused == Some(Self::tag()) {
             let idx = active_radio_index(*state);
-            Some(format!("{PRIMARY_TAG}#{idx}"))
+            Some(AccessFocus::composite(
+                Self::tag(),
+                format!("{PRIMARY_TAG}#{idx}"),
+            ))
         } else {
-            focused.map(str::to_owned)
+            focused.map(AccessFocus::atomic)
         }
     }
 
@@ -591,30 +601,41 @@ mod a11y_tests {
     }
 
     #[test]
-    fn access_focus_target_redirects_to_active_radio() {
+    fn access_focus_target_composite_parent_focus_with_active_radio() {
         let target = RadioGroupView::access_focus_target(
             &selected_state(2),
             Some("main_group"),
-        );
-        assert_eq!(target.as_deref(), Some("main_group#2"));
+        )
+        .expect("group focused returns Some");
+        // R51.71 §5.40 — focus stays on the parent; active
+        // descendant is the selected radio's sub-tag.
+        assert_eq!(target.focus_tag, "main_group");
+        assert_eq!(target.active_descendant.as_deref(), Some("main_group#2"));
     }
 
     #[test]
-    fn access_focus_target_unselected_falls_back_to_first() {
+    fn access_focus_target_unselected_active_descendant_is_first() {
         let target = RadioGroupView::access_focus_target(
             &unselected_state(),
             Some("main_group"),
-        );
-        assert_eq!(target.as_deref(), Some("main_group#0"));
+        )
+        .expect("group focused returns Some");
+        assert_eq!(target.focus_tag, "main_group");
+        assert_eq!(target.active_descendant.as_deref(), Some("main_group#0"));
     }
 
     #[test]
-    fn access_focus_target_passthrough_when_other_focused() {
+    fn access_focus_target_atomic_when_sibling_focused() {
         let target = RadioGroupView::access_focus_target(
             &selected_state(1),
             Some("save_btn"),
-        );
-        assert_eq!(target.as_deref(), Some("save_btn"));
+        )
+        .expect("non-group focused returns Some(atomic)");
+        // R51.71 §5.40 — when a different widget owns focus, the
+        // composite contributes an atomic pass-through; no active
+        // descendant claim.
+        assert_eq!(target.focus_tag, "save_btn");
+        assert!(target.active_descendant.is_none());
     }
 
     #[test]

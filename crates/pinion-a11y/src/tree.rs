@@ -73,6 +73,7 @@ pub struct AccessTreeBuilder {
     nodes: HashMap<String, AccessNode>,
     insertion_order: Vec<String>,
     focused: Option<String>,
+    active_descendants: HashMap<String, String>,
     initial: bool,
 }
 
@@ -87,6 +88,7 @@ impl AccessTreeBuilder {
             nodes: HashMap::new(),
             insertion_order: Vec::new(),
             focused: None,
+            active_descendants: HashMap::new(),
             initial: true,
         }
     }
@@ -105,6 +107,28 @@ impl AccessTreeBuilder {
     /// Mark the currently focused widget tag (or clear with `None`).
     pub fn focused(&mut self, tag: Option<&str>) -> &mut Self {
         self.focused = tag.map(str::to_owned);
+        self
+    }
+
+    /// R51.71 §5.40 — declare the active descendant of `parent_tag`.
+    ///
+    /// ARIA Authoring Practices' roving-tabindex / `aria-active-
+    /// descendant` model: the parent widget owns the tab stop and
+    /// the AT reports the addressed child within. At build time, the
+    /// parent's lowered `accesskit::Node` receives
+    /// `set_active_descendant(NodeId(child_tag))`.
+    ///
+    /// Composite widgets call this from `AppShell::render` via the
+    /// `WidgetView::access_focus_target` return value (composite
+    /// variant of [`crate::AccessFocus`]). Atomic widgets do not
+    /// invoke it — their `TreeUpdate::focus` already lands on their
+    /// own `NodeId` and no descendant is meaningful.
+    ///
+    /// Later calls overwrite earlier ones for the same `parent_tag`
+    /// (one active descendant per parent).
+    pub fn active_descendant(&mut self, parent_tag: &str, child_tag: &str) -> &mut Self {
+        self.active_descendants
+            .insert(parent_tag.to_owned(), child_tag.to_owned());
         self
     }
 
@@ -161,7 +185,16 @@ impl AccessTreeBuilder {
         for tag in &self.insertion_order {
             let access = &self.nodes[tag];
             let node_id = tag_to_node_id(tag);
-            let node = lower_access_node(access);
+            let mut node = lower_access_node(access);
+            // R51.71 §5.40 — apply roving-tabindex active descendant
+            // when this tag was declared via `active_descendant`.
+            // Child tag is hashed through the same `tag_to_node_id`
+            // function so the AT sees a `NodeId` that resolves
+            // through the tree's own children list (no out-of-band
+            // node lookup needed at the AT side).
+            if let Some(child_tag) = self.active_descendants.get(tag) {
+                node.set_active_descendant(tag_to_node_id(child_tag));
+            }
             nodes.push((node_id, node));
         }
 
@@ -412,5 +445,55 @@ mod tests {
         b.add(node);
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 2);
+    }
+
+    #[test]
+    fn active_descendant_does_not_alter_focus_or_node_count() {
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            AccessNode::new("main_group", AriaRole::RadioGroup)
+                .with_child("main_group#0")
+                .with_child("main_group#1"),
+        );
+        b.add(AccessNode::new("main_group#0", AriaRole::RadioButton));
+        b.add(AccessNode::new("main_group#1", AriaRole::RadioButton));
+        b.focused(Some("main_group"));
+        b.active_descendant("main_group", "main_group#1");
+        let update = b.build(None);
+        // TreeUpdate.focus stays on the parent — ARIA Authoring
+        // Practices roving-tabindex model.
+        assert_eq!(update.focus, tag_to_node_id("main_group"));
+        // 1 root + group + 2 radios = 4 nodes; active_descendant is a
+        // node attribute, not a separate tree node.
+        assert_eq!(update.nodes.len(), 4);
+    }
+
+    #[test]
+    fn active_descendant_for_unknown_parent_is_silent() {
+        let mut b = AccessTreeBuilder::new();
+        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.active_descendant("nonexistent_parent", "main_btn");
+        let update = b.build(None);
+        // No panic, no spurious node — the declaration applies only
+        // to lowered nodes whose tag matches.
+        assert_eq!(update.nodes.len(), 2);
+    }
+
+    #[test]
+    fn active_descendant_last_call_wins_per_parent() {
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            AccessNode::new("g", AriaRole::RadioGroup)
+                .with_child("g#a")
+                .with_child("g#b"),
+        );
+        b.add(AccessNode::new("g#a", AriaRole::RadioButton));
+        b.add(AccessNode::new("g#b", AriaRole::RadioButton));
+        b.active_descendant("g", "g#a");
+        b.active_descendant("g", "g#b");
+        let update = b.build(None);
+        // Single-active-descendant per parent — overwriting is the
+        // documented semantic.
+        assert_eq!(update.nodes.len(), 4);
     }
 }

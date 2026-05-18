@@ -3001,6 +3001,7 @@ router.pointer_down(&mut state_scene);
 - composite child click dispatch = R51.x carry — widget-side wire-format invoke surface 필요
 - R51.69 — ContainerNode::aria_label + enrich_names_from_scene (WAI-ARIA name precedence land)
 - R51.70 — WidgetView::access_child_invoke + RadioGroup wire-format (WCAG 4.1.2 write 회복)
+- R51.71 — AccessFocus typed + accesskit Node::set_active_descendant (ARIA roving-tabindex 정통)
 
 
 
@@ -3052,6 +3053,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-a11y/src/scene_label.rs:enrich_names_from_scene
 - crates/pinion-shell/src/lib.rs:WidgetView::access_child_invoke
 - examples/hello-radio-group/src/main.rs:RadioGroupView::access_child_invoke
+- crates/pinion-a11y/src/focus.rs
+- crates/pinion-a11y/src/focus.rs:AccessFocus
+- crates/pinion-a11y/src/tree.rs:AccessTreeBuilder::active_descendant
 
 
 
@@ -5435,6 +5439,34 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - R51.71 accesskit::Node::set_active_descendant 채택 — focus redirect 폐기, ARIA Authoring Practices 정통
 - R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수
+
+
+
+### R51.71 — R51.71 §5.40 active_descendant 정통 — AccessFocus typed + accesskit Node::set_active_descendant (ARIA roving-tabindex)
+
+**Changes**:
+- crates/pinion-a11y/src/focus.rs 신설 — AccessFocus struct + atomic/composite constructor
+- crates/pinion-a11y/src/lib.rs — focus 모듈 등록 + AccessFocus re-export
+- crates/pinion-a11y/src/tree.rs — AccessTreeBuilder.active_descendants HashMap + active_descendant() setter, build() 시 accesskit::Node::set_active_descendant 호출
+- crates/pinion-shell/src/lib.rs — WidgetView::access_focus_target 시그니처 Option<String> → Option<AccessFocus>; render 의 builder.focused + builder.active_descendant 등록 경로 교체
+- examples/hello-radio-group/src/main.rs — access_focus_target composite 변형 반환 (parent + active descendant)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- cargo test --workspace --features pinion-runtime/vello — 1445 pass / 0 fail (+7 from 1438)
+- AccessFocus 3 unit + AccessTreeBuilder active_descendant 3 unit + conformance composite focus 1
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수
+- composite tabindex vs selection 구분 — ARIA radio-group 의 tabindex 가 selected_index 와 독립적이어야 함 (현재 pinion 은 결합, R51.x carry)
 
 
 

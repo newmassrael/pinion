@@ -105,17 +105,38 @@ fn focus_resolves_to_atomic_widget() {
 }
 
 #[test]
-fn focus_resolves_to_composite_child_via_redirect() {
+fn focus_resolves_to_arbitrary_present_tag() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
         builder.add(node);
     }
-    // The shell calls `access_focus_target` and passes the result
-    // here. For the RadioGroup, the redirect lands on the selected
-    // radio's sub-tag.
+    // The builder accepts whatever tag the shell passes and resolves
+    // to the matching `NodeId`. Composite focus now travels via
+    // `AccessFocus::composite` + `active_descendant`, but the
+    // builder-level `focused()` contract remains: any present tag
+    // becomes `TreeUpdate::focus`.
     builder.focused(Some("tier_group#1"));
     let update = builder.build(None);
     assert_eq!(update.focus, tag_to_node_id("tier_group#1"));
+}
+
+#[test]
+fn composite_focus_with_active_descendant_lands_on_parent() {
+    let mut builder = AccessTreeBuilder::new();
+    for node in mixed_scene() {
+        builder.add(node);
+    }
+    // R51.71 §5.40 — ARIA Authoring Practices roving-tabindex:
+    // parent owns the tab stop, child is the active descendant.
+    builder.focused(Some("tier_group"));
+    builder.active_descendant("tier_group", "tier_group#1");
+    let update = builder.build(None);
+    // `TreeUpdate::focus` lands on the parent group.
+    assert_eq!(update.focus, tag_to_node_id("tier_group"));
+    // Node count unchanged — active_descendant is a node attribute,
+    // not a separate tree node (1 root + 3 atomic + 1 group + 3
+    // composite children = 8).
+    assert_eq!(update.nodes.len(), 8);
 }
 
 #[test]

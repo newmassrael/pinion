@@ -58,8 +58,8 @@ use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_a11y::{
-    tag_to_node_id, translate_action, AccessAction, AccessNode, AccessTreeBuilder,
-    PinionAccessAction, ROOT_NODE_ID,
+    tag_to_node_id, translate_action, AccessAction, AccessFocus, AccessNode,
+    AccessTreeBuilder, PinionAccessAction, ROOT_NODE_ID,
 };
 use pinion_runtime::{
     compute_layout, paint_adapter, rect_for_tag, walk_scene_and_drain, FocusManager, InputRouter,
@@ -376,24 +376,39 @@ pub trait WidgetView: 'static {
         Vec::new()
     }
 
-    /// R51.66 §5.40 — composite focus redirect for AccessKit.
+    /// R51.66 §5.40 — composite focus model for AccessKit.
     ///
-    /// AccessKit's `TreeUpdate::focus` points at a single `NodeId`.
-    /// Atomic widgets (`Button`, `Switch`, `Slider`) use their own
-    /// `tag()` as that target. Composite widgets that maintain a
-    /// single tab stop at the parent (the ARIA Authoring Practices
-    /// roving-tabindex pattern, e.g. `RadioGroup`) override this
-    /// method so the AT-side focus instead points at the active
-    /// descendant — the sub-tag a real user would activate with
-    /// `Enter` / `Space`. The pinion-shell focus ring + key
-    /// dispatch continue to address the parent tag, so the visual
-    /// and key-routing semantics are unchanged.
+    /// AccessKit's `TreeUpdate::focus` points at a single `NodeId`,
+    /// and ARIA Authoring Practices' roving-tabindex pattern adds
+    /// a second piece: the focused composite parent's
+    /// `aria-activedescendant` (lowered as
+    /// `accesskit::Node::set_active_descendant`) names the currently
+    /// addressed child within that parent.
     ///
-    /// Default passes `focused` through unchanged. Returning `None`
-    /// leaves AccessKit's focus on the synthetic window root.
+    /// R51.71 §5.40 — return type switched from `Option<String>`
+    /// (a single tag, which conflated focus with active descendant
+    /// by addressing the child directly in `TreeUpdate::focus`) to
+    /// [`AccessFocus`] (typed parent + optional child carrier).
+    /// Now:
+    ///
+    /// * Atomic widgets (Button, Switch, Slider) return
+    ///   `Some(AccessFocus::atomic(tag))` — own `NodeId`, no
+    ///   descendant.
+    /// * Composite widgets (`RadioGroup`) return
+    ///   `Some(AccessFocus::composite(parent_tag, child_tag))` —
+    ///   parent `NodeId` becomes `TreeUpdate::focus`, parent
+    ///   `accesskit::Node` is annotated via
+    ///   `set_active_descendant(child_id)`.
+    ///
+    /// Default wraps `focused` as [`AccessFocus::atomic`].
+    /// Returning `None` leaves AccessKit's focus on the synthetic
+    /// window root.
     #[must_use]
-    fn access_focus_target(_state: &Self::State, focused: Option<&str>) -> Option<String> {
-        focused.map(str::to_owned)
+    fn access_focus_target(
+        _state: &Self::State,
+        focused: Option<&str>,
+    ) -> Option<AccessFocus> {
+        focused.map(AccessFocus::atomic)
     }
 
     /// R51.70 §5.40 — composite-side dispatch for an AT-driven action
@@ -855,10 +870,12 @@ impl<V: WidgetView> AppShell<V> {
             // consumes drives the AT exposed name — single source
             // of truth, no duplicate match blocks in widget impls.
             pinion_a11y::enrich_names_from_scene(&mut nodes, &paint_scene);
-            // R51.66 §5.40 — composite widgets (RadioGroup) redirect
-            // the AT-side focus from the group tag to the active
-            // descendant sub-tag via `access_focus_target`. Atomic
-            // widgets pass `focused` through unchanged.
+            // R51.66 / R51.71 §5.40 — composite widgets surface
+            // both the parent focus and the active descendant via
+            // `access_focus_target` returning `AccessFocus`. Atomic
+            // widgets default to `AccessFocus::atomic(focused)` so
+            // the parent tag becomes `TreeUpdate::focus` and no
+            // active descendant is set.
             let at_focus =
                 V::access_focus_target(&self.cached_state, focused.as_deref());
             let window_bounds =
@@ -868,7 +885,7 @@ impl<V: WidgetView> AppShell<V> {
             // to widget tags without recomputing the tree.
             self.last_access_tag_map = build_tag_map(&nodes);
             let paint_ref = &paint_scene;
-            let at_focus_ref = at_focus.as_deref();
+            let at_focus_ref = at_focus.as_ref();
             if let Some(adapter) = self.accesskit.as_mut() {
                 adapter.update_if_active(|| {
                     let mut builder = AccessTreeBuilder::new();
@@ -878,7 +895,21 @@ impl<V: WidgetView> AppShell<V> {
                         }
                         builder.add(node);
                     }
-                    builder.focused(at_focus_ref);
+                    if let Some(f) = at_focus_ref {
+                        builder.focused(Some(&f.focus_tag));
+                        if let Some(child) = &f.active_descendant {
+                            // R51.71 §5.40 — roving-tabindex active
+                            // descendant: parent's accesskit::Node
+                            // gets `set_active_descendant(child_id)`
+                            // at build time. The AT navigates into
+                            // the composite by reading this hint,
+                            // not by following a redirected
+                            // `TreeUpdate::focus`.
+                            builder.active_descendant(&f.focus_tag, child);
+                        }
+                    } else {
+                        builder.focused(None);
+                    }
                     builder.build(Some(window_bounds))
                 });
             }
