@@ -54,6 +54,7 @@ use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
 use crate::snapshot::{snapshot, ExternalSnapshot, SnapshotError, SnapshotNode};
+use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
 use crate::wait_for::{wait_for, WaitForError, WaitOutcome};
 
 /// JSON-RPC 2.0 request envelope.
@@ -252,7 +253,7 @@ impl<'a> DispatchContext<'a> {
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 16 scene/* + 9 font/*)"
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 16 scene/* + 11 font/* + 1 text/*)"
 )]
 pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
@@ -365,6 +366,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         }
         "font/dispose" => handle_font_dispose(font_registry, request.params.as_ref()),
         "font/list" => handle_font_list(font_registry),
+        "text/normalize" => handle_text_normalize(request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -1792,6 +1794,41 @@ fn handle_font_list(registry: Option<&FontRegistry>) -> Result<Value, RpcError> 
         Ok(outcome) => serialize_outcome(&outcome, "list"),
         Err(err) => Err(font_error_to_rpc(&err)),
     }
+}
+
+fn handle_text_normalize(params: Option<&Value>) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(text) = params.get("text").and_then(Value::as_str) else {
+        return Err(invalid_params(
+            "params.text missing or not a string",
+        ));
+    };
+    let Some(form_str) = params.get("form").and_then(Value::as_str) else {
+        return Err(invalid_params(
+            "params.form missing or not a string",
+        ));
+    };
+    let form = match form_str {
+        "NFC" => NormalizeForm::Nfc,
+        "NFD" => NormalizeForm::Nfd,
+        "NFKC" => NormalizeForm::Nfkc,
+        "NFKD" => NormalizeForm::Nfkd,
+        other => {
+            return Err(invalid_params(&format!(
+                "params.form must be NFC/NFD/NFKC/NFKD (got {other:?})"
+            )));
+        }
+    };
+    let outcome = text_normalize(text, form);
+    Ok(normalize_outcome_to_json(&outcome))
+}
+
+fn normalize_outcome_to_json(outcome: &NormalizeOutcome) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("text".to_string(), Value::String(outcome.text.clone()));
+    Value::Object(map)
 }
 
 /// Convert a serde-derived font outcome to a JSON `Value`. The
@@ -3841,5 +3878,145 @@ mod tests {
                 "method {method}",
             );
         }
+    }
+
+    // --- R50.2.X §5.37.2 text/normalize RPC E2E tests ---
+
+    /// Build a `text/normalize` JSON-RPC body. The input text is
+    /// hex-escaped (`\uXXXX`) so the dispatch.rs source stays pure
+    /// NFC ASCII and the test's input cannot drift from an
+    /// editor-side normalization pass.
+    fn text_normalize_body(text: &str, form: &str, id: u32) -> String {
+        use std::fmt::Write as _;
+        let mut escaped = String::with_capacity(text.chars().count() * 6);
+        for c in text.chars() {
+            write!(escaped, "\\u{:04X}", c as u32)
+                .expect("String write infallible");
+        }
+        format!(
+            r#"{{"jsonrpc":"2.0","method":"text/normalize","params":{{"text":"{escaped}","form":"{form}"}},"id":{id}}}"#
+        )
+    }
+
+    #[test]
+    fn text_normalize_nfc_recomposes_decomposed() {
+        let mut scene = counted_scene(0);
+        let body = text_normalize_body("A\u{0300}", "NFC", 1);
+        let resp = parse_response(&dispatch_t(&mut scene, &body).unwrap());
+        let text = resp
+            .result
+            .unwrap()
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text in result")
+            .to_owned();
+        assert_eq!(text, "\u{00C0}");
+    }
+
+    #[test]
+    fn text_normalize_nfd_decomposes_precomposed() {
+        let mut scene = counted_scene(0);
+        let body = text_normalize_body("\u{00C0}", "NFD", 2);
+        let resp = parse_response(&dispatch_t(&mut scene, &body).unwrap());
+        let text = resp
+            .result
+            .unwrap()
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text in result")
+            .to_owned();
+        assert_eq!(text, "A\u{0300}");
+    }
+
+    #[test]
+    fn text_normalize_nfkd_strips_ligature() {
+        let mut scene = counted_scene(0);
+        // ﬁ (U+FB01) → "fi" via compatibility decomposition.
+        let body = text_normalize_body("\u{FB01}", "NFKD", 3);
+        let resp = parse_response(&dispatch_t(&mut scene, &body).unwrap());
+        let text = resp
+            .result
+            .unwrap()
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned();
+        assert_eq!(text, "fi");
+    }
+
+    #[test]
+    fn text_normalize_hangul_jamo_compose() {
+        let mut scene = counted_scene(0);
+        // ᄒ ᅡ ᆫ → 한 (U+D55C) via algorithmic Hangul composition.
+        let body = text_normalize_body("\u{1112}\u{1161}\u{11AB}", "NFC", 4);
+        let resp = parse_response(&dispatch_t(&mut scene, &body).unwrap());
+        let text = resp
+            .result
+            .unwrap()
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned();
+        assert_eq!(text, "\u{D55C}");
+    }
+
+    #[test]
+    fn text_normalize_missing_text_param() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"text/normalize","params":{"form":"NFC"},"id":5}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(
+            err.data
+                .as_ref()
+                .and_then(|d| d.as_str())
+                .is_some_and(|s| s.contains("text")),
+            "expected text-missing message, got {:?}",
+            err.data
+        );
+    }
+
+    #[test]
+    fn text_normalize_missing_form_param() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"text/normalize","params":{"text":"abc"},"id":6}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(err
+            .data
+            .as_ref()
+            .and_then(|d| d.as_str())
+            .is_some_and(|s| s.contains("form")));
+    }
+
+    #[test]
+    fn text_normalize_unknown_form_rejected() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"text/normalize","params":{"text":"abc","form":"NFXC"},"id":7}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(err
+            .data
+            .as_ref()
+            .and_then(|d| d.as_str())
+            .is_some_and(|s| s.contains("NFC/NFD/NFKC/NFKD")));
+    }
+
+    #[test]
+    fn text_normalize_ascii_passthrough() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"text/normalize","params":{"text":"hello","form":"NFC"},"id":8}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let text = resp
+            .result
+            .unwrap()
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned();
+        assert_eq!(text, "hello");
     }
 }

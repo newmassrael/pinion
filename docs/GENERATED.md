@@ -2388,6 +2388,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/font.rs:GlyphOutlineOutcome
 - crates/pinion-rpc/src/font.rs:dispose
 - crates/pinion-rpc/src/font.rs:list
+- crates/pinion-rpc/src/text.rs:text_normalize
+- crates/pinion-rpc/src/dispatch.rs:handle_text_normalize
 
 
 
@@ -7095,6 +7097,32 @@ router.pointer_down(&mut state_scene);
 - R50.2.X text/normalize RPC method (§5.37.2 channel)
 - 2-stage table 2-level lookup 가속 (high-byte index) — perf 부채 잔존
 - criterion bench harness (성능 회귀 가드)
+
+
+
+### Round 478 — Round 478 — R50.2.X §5.37.2 text/normalize RPC method (pinion-text-unicode wired)
+
+**Changes**:
+- pinion-rpc Cargo.toml pinion-text-unicode dep + text.rs 신설 (NormalizeForm serde 'NFC/NFD/NFKC/NFKD' rename + Outcome)
+- dispatch.rs text/normalize routing + handle_text_normalize + NFC-safe body helper
+- 9 typed test + 8 JSON-RPC E2E test (compose / decompose / ligature / Hangul / error cases)
+
+
+
+**Verification**:
+- cargo test -p pinion-rpc text_normalize = 17 pass (typed 9 + E2E 8)
+- cargo test --workspace --features pinion-runtime/vello = 958 pass (855 + 103)
+- cargo clippy -p pinion-rpc --all-targets = 0 warning (workspace baseline 유지)
+
+
+
+**Impact**: §5.37, §5.37.2, §5.37.3
+
+
+**Carry forward**:
+- criterion bench harness (성능 회귀 가드)
+- 2-stage table 가속 (high-byte index → 2nd table)
+- tables FULL_COMPOSITION_EXCLUSION RPC 노출 (text/composition_exclusion_member 등)
 
 
 
