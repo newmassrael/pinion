@@ -187,6 +187,9 @@ mod nfd;
 mod nfkc;
 mod nfkd;
 
+pub mod bidi;
+pub use bidi::{bidi_class, BidiClass};
+
 #[cfg(test)]
 mod test_fixture;
 

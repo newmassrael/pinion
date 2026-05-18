@@ -2556,6 +2556,13 @@ router.pointer_down(&mut state_scene);
 
 
 
+**Implementations**:
+- crates/pinion-text-unicode/ucd/DerivedBidiClass.txt
+- crates/pinion-text-unicode/build.rs:parse_bidi_class
+- crates/pinion-text-unicode/src/bidi.rs:BidiClass
+- crates/pinion-text-unicode/src/bidi.rs:bidi_class
+
+
 
 ### §5.37.5. Script analysis (UCD Script property) — carry placeholder
 
@@ -7834,6 +7841,28 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.37.4, §5.37
+
+
+
+### Round 499 — R51.11 §5.37.4 BIDI scaffold — BidiClass enum + UCD lookup table — UAX #9 BIDI first impl slice: UCD 16.0 DerivedBidiClass.txt vendor + build.rs codegen sorted ranges + BidiClass enum (23 variants) + bidi_class(char) binary-search lookup. external lib 0 (R50.2.x NFC 패턴 일관). 6-stage algorithm (P/X/W/N/I/L) 은 후속 slice carry.
+
+**Changes**:
+- ucd/DerivedBidiClass.txt vendor (UCD 16.0.0, 2579 라인)
+- build.rs +parse_bidi_class + emit_bidi_tables → OUT_DIR/bidi_tables.rs (sorted &[(u32,u32,u8)] ranges)
+- src/bidi.rs 신설: BidiClass 23 variant enum + from_index + ucd_name + bidi_class(char) binary-search
+- lib.rs pub mod bidi + pub use BidiClass / bidi_class re-export
+- atomic add_section_implementation ×4 (UCD file / build.rs symbol / 2 × bidi.rs symbol)
+
+
+
+**Verification**:
+- cargo test 1031 → 1041 (+10 bidi tests — ASCII L/EN, Hebrew R, Arabic AL/AN, WS, B/S, isolate markers, ucd_name round-trip, PUA fallback)
+- cargo clippy 0 warning (generated tables.rs 의 unreadable_literal 의 module-level allow)
+- external dep 0 유지 (pinion-text-unicode 의 std + alloc only)
+
+
+
+**Impact**: §5.37.4, §5.37.3
 
 
 
