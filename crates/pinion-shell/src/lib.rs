@@ -56,7 +56,8 @@ use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
-    compute_layout, paint_adapter, walk_scene_and_drain, InputRouter, IntentQueue, PointerId,
+    compute_layout, paint_adapter, walk_scene_and_drain, FocusManager, InputRouter, IntentQueue,
+    PointerId,
 };
 use pinion_text::LayoutCache;
 use vello::peniko::Color as PenikoColor;
@@ -65,7 +66,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 /// Winit user-event variant carrying one stdin-fed JSON-RPC 2.0
@@ -261,14 +262,39 @@ pub trait WidgetView: 'static {
         None
     }
 
-    /// R51.37 §5.35 — escape hatch for keyboard affordances that the
-    /// enum-typed [`keybinding`](Self::keybinding) channel cannot
-    /// express. The shell consults this AFTER `keybinding` returns
-    /// `None` for [`Key::Character`] presses, and as the *only* hook
-    /// for non-character named keys (`ArrowLeft`, `ArrowRight`,
+    /// R51.53 §5.39 — focusable tag enumeration in Tab order.
+    /// Returned tags must match either `Self::tag()` (the top-level
+    /// widget) or a sub-tag the view fn paints inside the widget
+    /// (composite widgets like `RadioGroup` register the group's
+    /// `tag()` as a single tab stop and roving-tabindex among its
+    /// children internally).
+    ///
+    /// Default returns a single-entry list containing `Self::tag()`,
+    /// which is the right shape for every Tier-1 single-widget
+    /// example. Composite widget bindings or multi-widget views
+    /// override to enumerate all focusable children.
+    #[must_use]
+    fn focusable_tags() -> Vec<&'static str> {
+        vec![Self::tag()]
+    }
+
+    /// R51.37 §5.35 / R51.53 §5.39 — escape hatch for keyboard
+    /// affordances that the enum-typed
+    /// [`keybinding`](Self::keybinding) channel cannot express. The
+    /// shell consults this AFTER `keybinding` returns `None` for
+    /// [`Key::Character`] presses, and as the *only* hook for
+    /// non-character named keys (`ArrowLeft`, `ArrowRight`,
     /// `ArrowUp`, `ArrowDown`, `Home`, `End`, `PageUp`, `PageDown`,
-    /// `Tab`, `Enter`, `Space`). `Escape` remains shell-reserved
-    /// (window quit) and is not threaded through this hook.
+    /// `Enter`, `Space`). `Escape` and `Tab` / `Shift+Tab` are
+    /// shell-reserved — `Escape` quits the window, `Tab` advances
+    /// the [`FocusManager`] (§5.39), neither reaches this hook.
+    ///
+    /// R51.53 added the `focused` argument carrying the
+    /// [`FocusManager::focused`] tag at dispatch time. Widgets that
+    /// match against `focused` route keys only when their own tag
+    /// is focused; the previous broadcast model (every keypress
+    /// fired every widget's `apply_key`) caused aliasing with
+    /// multiple focusable widgets on screen.
     ///
     /// Implementations receive the authoritative state scene `&mut`
     /// and may walk it to the matching [`Scene::External`] to call
@@ -287,12 +313,8 @@ pub trait WidgetView: 'static {
     ///
     /// Default returns `false` for every key — widgets without
     /// keyboard affordances beyond `keybinding` need no override.
-    /// The five `examples/hello-*` paint-side amortization binaries
-    /// (button / toggle / checkbox / radio) all rely on the default;
-    /// `hello-slider` overrides to wire arrow + page + home/end to
-    /// `intervene("value", Float(...))`.
     #[must_use]
-    fn apply_key(_scene: &mut Scene, _key: &str) -> bool {
+    fn apply_key(_scene: &mut Scene, _focused: Option<&str>, _key: &str) -> bool {
         false
     }
 
@@ -360,6 +382,21 @@ pub struct AppShell<V: WidgetView> {
     /// routes pointer events to the matching `ExternalNode` in
     /// `self.scene` (the one tagged `V::tag()`).
     router: InputRouter,
+    /// R51.53 §5.39 framework-side focus state owner. Tab/Shift+Tab
+    /// traverses [`FocusManager::tab_order`] (seeded from
+    /// `V::focusable_tags()` at boot); click on a tagged widget
+    /// aliases [`FocusManager::focus_set`]; click on background
+    /// aliases [`FocusManager::focus_clear`]. The shell consults the
+    /// manager on every key dispatch so `apply_key` runs only when
+    /// the widget's own tag is focused (eliminating the broadcast
+    /// aliasing the pre-R51.53 design carried).
+    focus: FocusManager,
+    /// R51.53 §5.39 — winit [`ModifiersState`] cache. Refreshed by
+    /// `WindowEvent::ModifiersChanged`; consulted on every
+    /// `KeyboardInput` for Shift detection (Shift+Tab = `focus_prev`).
+    /// winit emits `KeyEvent` without modifier state, so the shell
+    /// has to track it out-of-band.
+    modifiers: ModifiersState,
     /// R46.5 §5.16 suspend / resume lifecycle (R46.3.4 pattern).
     render: RenderState<V::Renderer>,
     /// Reusable Vello scene buffer — reset at the start of each frame
@@ -404,6 +441,18 @@ impl<V: WidgetView> AppShell<V> {
             "shell: initial state = {}",
             V::fmt_state_log(&cached_state),
         );
+        // R51.53 §5.39 — seed FocusManager with the binding's
+        // `focusable_tags()` enumeration. The default impl returns
+        // `vec![V::tag()]` (single tab stop), which is the right
+        // shape for every single-widget example; composite widgets
+        // (`RadioGroup`, multi-widget views) override to enumerate
+        // sub-tags or sibling widget tags.
+        let mut focus = FocusManager::new();
+        let tags: Vec<String> = V::focusable_tags()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        focus.update_focusable_tags(tags);
         Self {
             scene,
             cached_state,
@@ -411,6 +460,8 @@ impl<V: WidgetView> AppShell<V> {
             previews: PreviewLedger::default(),
             revision: SceneRevision::default(),
             router: InputRouter::new(),
+            focus,
+            modifiers: ModifiersState::empty(),
             render: RenderState::Suspended(None),
             vello_scene: VelloScene::new(),
             text_cache: LayoutCache::new(),
@@ -449,6 +500,7 @@ impl<V: WidgetView> AppShell<V> {
                     &mut self.scene,
                 );
                 self.router.pointer_down(pid, &mut self.scene);
+                self.click_to_focus(pid);
             }
             TouchPhase::Moved => {
                 self.router.cursor_moved(
@@ -493,10 +545,31 @@ impl<V: WidgetView> AppShell<V> {
     /// change), drain pending intents. Unhandled keys are swallowed
     /// quietly (same shape as an unmatched [`WidgetView::keybinding`]).
     fn apply_key(&mut self, key: &str) {
-        if V::apply_key(&mut self.scene, key) {
+        if V::apply_key(&mut self.scene, self.focus.focused(), key) {
             self.revision.bump();
             self.refresh_state();
             self.drain_intents();
+        }
+    }
+
+    /// R51.53 §5.39 — click → focus auto-set / background → clear.
+    /// Called after every `pointer_down` (mouse Left press or touch
+    /// `TouchPhase::Started`). Mirrors the W3C HTML convention:
+    /// pressing on a tagged focusable widget focuses it; pressing
+    /// on background blurs the focused widget. Non-focusable tagged
+    /// widgets (decoration regions that respond to hover but aren't
+    /// `focusable_tags()` members) leave focus unchanged — the
+    /// [`FocusManager::focus_set`] guard rejects unknown tags so
+    /// the no-op falls out naturally.
+    fn click_to_focus(&mut self, pid: PointerId) {
+        if let Some(target) = self.router.hover_target(pid).map(str::to_owned) {
+            if !self.focus.focus_set(&target) {
+                // Tagged but non-focusable (decoration) — leave focus
+                // unchanged. The W3C HTML convention says only
+                // focusable elements receive focus on mousedown.
+            }
+        } else {
+            self.focus.focus_clear();
         }
     }
 
@@ -770,6 +843,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 ..
             } => {
                 self.router.pointer_down(PointerId::MOUSE, &mut self.scene);
+                self.click_to_focus(PointerId::MOUSE);
                 self.refresh_state();
                 self.drain_intents();
             }
@@ -790,10 +864,31 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 self.refresh_state();
                 self.drain_intents();
             }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                // R51.53 §5.39 — winit emits `KeyEvent` without
+                // modifier state, so cache the most-recent value
+                // out-of-band for Shift+Tab detection.
+                self.modifiers = modifiers.state();
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     match event.logical_key.as_ref() {
                         Key::Named(NamedKey::Escape) => event_loop.exit(),
+                        // R51.53 §5.39 — Tab / Shift+Tab swallow by
+                        // FocusManager. Does not reach `apply_key`;
+                        // widgets see `Tab` only via the
+                        // (sub-)widget-internal arrow / direction
+                        // hooks the §5.39 caveat documents.
+                        Key::Named(NamedKey::Tab) => {
+                            let changed = if self.modifiers.shift_key() {
+                                self.focus.focus_prev()
+                            } else {
+                                self.focus.focus_next()
+                            };
+                            if changed {
+                                self.request_redraw();
+                            }
+                        }
                         Key::Character(c) => {
                             if let Some(ev) = V::keybinding(c) {
                                 self.forward(ev);
@@ -832,9 +927,10 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
 /// [`WidgetView::apply_key`] contract speaks. Only the keys with
 /// established cross-platform widget meanings are surfaced;
 /// `NamedKey::Escape` is filtered upstream (shell-reserved quit),
-/// and unmapped variants return `None` so the shell stays silent on
-/// keys no widget cares about. The ASCII / W3C names match the
-/// strings Material / `SwiftUI` / Qt / W3C ARIA Slider authoring
+/// `NamedKey::Tab` is filtered upstream (R51.53 §5.39 `FocusManager`
+/// swallow), and unmapped variants return `None` so the shell stays
+/// silent on keys no widget cares about. The ASCII / W3C names match
+/// the strings Material / `SwiftUI` / Qt / W3C ARIA Slider authoring
 /// patterns specify, so a widget implementation can match against
 /// the same identifiers a browser-side application would consume.
 fn named_key_str(named: NamedKey) -> Option<&'static str> {
@@ -847,7 +943,6 @@ fn named_key_str(named: NamedKey) -> Option<&'static str> {
         NamedKey::End => Some("End"),
         NamedKey::PageUp => Some("PageUp"),
         NamedKey::PageDown => Some("PageDown"),
-        NamedKey::Tab => Some("Tab"),
         NamedKey::Enter => Some("Enter"),
         NamedKey::Space => Some("Space"),
         _ => None,

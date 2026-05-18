@@ -3687,6 +3687,26 @@
         {
           "file": "crates/pinion-runtime/src/focus.rs",
           "symbol": "FocusManager::restore"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "WidgetView::focusable_tags"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "WidgetView::apply_key"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "AppShell::click_to_focus"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "AppShell::focus"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "AppShell::modifiers"
         }
       ],
       "decision_status": "active"
@@ -6497,6 +6517,64 @@
         "R51.54-R51.57 — widget-side activation + roving tabindex first-clients",
         "R51.58 — paint-time focus ring rendering",
         "R51.59 — Window blur/restore wiring (save/restore 메서드 이미 land)"
+      ]
+    },
+    "R51.53": {
+      "decision_summary": "R51.53 §5.39 Shell focus wiring + WidgetView trait extension (apply_key broadcast → focused-only breaking)",
+      "changes_bullets": [
+        "WidgetView::focusable_tags() 신설 — default vec![tag()], composite override gateway",
+        "WidgetView::apply_key signature breaking — (scene, focused: Option<&str>, key) 인자 추가",
+        "AppShell::focus + modifiers field 신설 — FocusManager + winit ModifiersState 캠시",
+        "Tab/Shift+Tab swallow by FocusManager (named_key_str 에서 Tab 제거, apply_key forward 차단)",
+        "AppShell::click_to_focus 신설 — mouse Left Pressed + touch Started 후 focus auto-set",
+        "WindowEvent::ModifiersChanged handler + Key::Named(Tab) match arm 명시 처리",
+        "3 examples (slider/slider-vertical/radio-group) apply_key signature 동시 update — _focused 일단 무시",
+        "16 example unit test 호출에 Some(\"main_slider\") 인자 추가 (R51.56 focused-only refactor future-proof)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1302 pass / 0 fail (test count unchanged, signature 만 확장)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R51.54 — hello-button Space/Enter apply_key first-client (ARIA activation)",
+        "R51.55 — Toggle/Checkbox/Radio Space activation 3-in-1 first-client",
+        "R51.56 — Slider/SliderVertical _focused 인자를 실제 결정에 사용 (broadcast → focused-only)",
+        "R51.57 — RadioGroup roving tabindex composite focus",
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring"
+      ],
+      "publishable_decision_summary": "R51.53 §5.39 Shell focus wiring + WidgetView trait extension (apply_key broadcast → focused-only breaking)",
+      "publishable_changes_bullets": [
+        "WidgetView::focusable_tags() 신설 — default vec![tag()], composite override gateway",
+        "WidgetView::apply_key signature breaking — (scene, focused: Option<&str>, key) 인자 추가",
+        "AppShell::focus + modifiers field 신설 — FocusManager + winit ModifiersState 캠시",
+        "Tab/Shift+Tab swallow by FocusManager (named_key_str 에서 Tab 제거, apply_key forward 차단)",
+        "AppShell::click_to_focus 신설 — mouse Left Pressed + touch Started 후 focus auto-set",
+        "WindowEvent::ModifiersChanged handler + Key::Named(Tab) match arm 명시 처리",
+        "3 examples (slider/slider-vertical/radio-group) apply_key signature 동시 update — _focused 일단 무시",
+        "16 example unit test 호출에 Some(\"main_slider\") 인자 추가 (R51.56 focused-only refactor future-proof)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1302 pass / 0 fail (test count unchanged, signature 만 확장)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.54 — hello-button Space/Enter apply_key first-client (ARIA activation)",
+        "R51.55 — Toggle/Checkbox/Radio Space activation 3-in-1 first-client",
+        "R51.56 — Slider/SliderVertical _focused 인자를 실제 결정에 사용 (broadcast → focused-only)",
+        "R51.57 — RadioGroup roving tabindex composite focus",
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring"
       ]
     },
     "Round 1": {

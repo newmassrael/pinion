@@ -249,7 +249,7 @@ impl WidgetView for SliderVerticalView {
     /// branch on `aria-orientation` to decide the activation
     /// direction. Disabled state ignores keyboard input per the
     /// same ARIA contract.
-    fn apply_key(scene: &mut Scene, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, _focused: Option<&str>, key: &str) -> bool {
         let Scene::External(node) = scene else {
             return false;
         };
@@ -338,28 +338,28 @@ mod tests {
     #[test]
     fn vertical_arrow_up_increments() {
         let mut scene = scene_at(0.5);
-        assert!(SliderVerticalView::apply_key(&mut scene, "ArrowUp"));
+        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "ArrowUp"));
         assert!((current_value(&scene) - 0.55).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_arrow_down_decrements() {
         let mut scene = scene_at(0.5);
-        assert!(SliderVerticalView::apply_key(&mut scene, "ArrowDown"));
+        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "ArrowDown"));
         assert!((current_value(&scene) - 0.45).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_home_jumps_to_minimum() {
         let mut scene = scene_at(0.7);
-        assert!(SliderVerticalView::apply_key(&mut scene, "Home"));
+        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "Home"));
         assert!((current_value(&scene) - 0.0).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_end_jumps_to_maximum() {
         let mut scene = scene_at(0.3);
-        assert!(SliderVerticalView::apply_key(&mut scene, "End"));
+        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "End"));
         assert!((current_value(&scene) - 1.0).abs() < 1e-5);
     }
 

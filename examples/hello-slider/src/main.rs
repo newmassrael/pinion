@@ -294,7 +294,7 @@ impl WidgetView for SliderView {
     /// projection: the cached state lags one shell tick behind a
     /// just-arrived `Disable` SCXML transition, and the AI-client
     /// contract uses the live introspect channel.
-    fn apply_key(scene: &mut Scene, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, _focused: Option<&str>, key: &str) -> bool {
         let Scene::External(node) = scene else {
             return false;
         };
@@ -382,56 +382,56 @@ mod tests {
     #[test]
     fn arrow_right_increments_by_small_step() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, "ArrowRight"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight"));
         assert!((current_value(&scene) - 0.55).abs() < 1e-5);
     }
 
     #[test]
     fn arrow_left_decrements_by_small_step() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, "ArrowLeft"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowLeft"));
         assert!((current_value(&scene) - 0.45).abs() < 1e-5);
     }
 
     #[test]
     fn arrow_up_aliases_arrow_right() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, "ArrowUp"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowUp"));
         assert!((current_value(&scene) - 0.55).abs() < 1e-5);
     }
 
     #[test]
     fn arrow_down_aliases_arrow_left() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, "ArrowDown"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowDown"));
         assert!((current_value(&scene) - 0.45).abs() < 1e-5);
     }
 
     #[test]
     fn home_jumps_to_minimum() {
         let mut scene = scene_at(0.7);
-        assert!(SliderView::apply_key(&mut scene, "Home"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "Home"));
         assert!((current_value(&scene) - 0.0).abs() < 1e-5);
     }
 
     #[test]
     fn end_jumps_to_maximum() {
         let mut scene = scene_at(0.3);
-        assert!(SliderView::apply_key(&mut scene, "End"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "End"));
         assert!((current_value(&scene) - 1.0).abs() < 1e-5);
     }
 
     #[test]
     fn page_up_increments_by_large_step() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, "PageUp"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "PageUp"));
         assert!((current_value(&scene) - 0.60).abs() < 1e-5);
     }
 
     #[test]
     fn page_down_decrements_by_large_step() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, "PageDown"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "PageDown"));
         assert!((current_value(&scene) - 0.40).abs() < 1e-5);
     }
 
@@ -441,14 +441,14 @@ mod tests {
         // ARIA: handled (consumed key) even when the result is the
         // same value — analogous to a browser's Slider keyboard
         // dispatcher returning a stateful event.
-        assert!(SliderView::apply_key(&mut scene, "ArrowLeft"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowLeft"));
         assert!((current_value(&scene) - 0.0).abs() < 1e-5);
     }
 
     #[test]
     fn arrow_right_clamps_at_maximum() {
         let mut scene = scene_at(1.0);
-        assert!(SliderView::apply_key(&mut scene, "ArrowRight"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight"));
         assert!((current_value(&scene) - 1.0).abs() < 1e-5);
     }
 
@@ -464,14 +464,14 @@ mod tests {
                 .expect("Disable invoke succeeds");
         }
         // ARIA: a disabled slider does not consume keyboard input.
-        assert!(!SliderView::apply_key(&mut scene, "ArrowRight"));
+        assert!(!SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight"));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 
     #[test]
     fn unknown_key_returns_false() {
         let mut scene = scene_at(0.5);
-        assert!(!SliderView::apply_key(&mut scene, "F1"));
+        assert!(!SliderView::apply_key(&mut scene, Some("main_slider"), "F1"));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 }

@@ -250,7 +250,7 @@ impl WidgetView for RadioGroupView {
         None
     }
 
-    fn apply_key(scene: &mut Scene, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, _focused: Option<&str>, key: &str) -> bool {
         let Scene::External(node) = scene else {
             return false;
         };
