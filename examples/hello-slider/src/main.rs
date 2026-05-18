@@ -1,0 +1,290 @@
+//! `hello-slider` — R51.35 §5.38 paint-side N=5 amortization on the
+//! pinion-shell substrate (R51.30), and the first visual demo that
+//! consumes the R51.34 §5.15 + §5.35 pointer-capture + `pointer_move`
+//! forward substrate. The widget body has no drag-specific code —
+//! the framework's [`InputRouter`](pinion_runtime::InputRouter)
+//! routes the cursor X through `External::pointer_move` and the
+//! `SliderExternal` impl rewrites the value sidecar on every
+//! effective change. Click-to-position (Material precedent) is free
+//! out of the substrate's R51.35.a click-point patch.
+//!
+//! Visual contract: Material-style horizontal slider with a 200×8
+//! pill track split into a filled-portion / thumb / unfilled-portion
+//! triple. The thumb (16×16 circle with `corner_radius = 8`) sits at
+//! the value position; the filled portion is the blue accent left of
+//! the thumb, the unfilled portion is the dim grey right of it. The
+//! whole row carries the `main_slider` tag so the shell's
+//! `InputRouter` routes pointer events to the matching
+//! `Scene::External("main_slider")`.
+//!
+//! State / colour cross product:
+//!
+//! * Idle: white thumb, grey-blue filled, no extra affordance
+//! * Hover: brighter thumb (the cursor is *over* the rect but not
+//!   yet pressed)
+//! * Dragging: light-violet thumb (visual cue that capture is in
+//!   flight — Material's "pressed" affordance)
+//! * Disabled: muted brown-grey thumb + muted brown-grey filled
+//!
+//! Keybindings: `d` / `e` Disable / Enable. There is no `,` / `.`
+//! decrement / increment binding because the R51.34 `WidgetView`
+//! trait's `keybinding(key) -> Option<Self::Event>` slot only
+//! carries typed events, and `SliderEvent` has no `Decrement` /
+//! `Increment` variants — value mutation flows through the
+//! framework's drag path (mouse) or the RPC `intervene
+//! /external/value` path (AI client). Adding a key-driven
+//! intervene hook is a future substrate axis; not blocking the
+//! click-and-drag UX this binary demonstrates.
+
+use pinion_core::external::{External, IntrospectValue};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+};
+use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
+use pinion_core::{Color, Frame, Scene};
+use pinion_shell::{vello_renderer_impl, WidgetView};
+
+include!(concat!(env!("OUT_DIR"), "/app.rs"));
+vello_renderer_impl!(HelloSliderRenderer, HelloSliderRendererError);
+
+const WIN_W: u32 = 360;
+const WIN_H: u32 = 220;
+const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
+// Track is 200×8 — the thin Material rail. The track's pill radius
+// is 4 (= TRACK_H / 2) so its ends round flush with the thumb.
+const TRACK_W: u32 = 200;
+const TRACK_H: u32 = 8;
+const TRACK_RADIUS: u32 = 4;
+// Thumb is 16×16 — twice the track height per the Material spec
+// thumb-to-track ratio. corner_radius = THUMB_SIZE / 2 inscribes a
+// perfect circle.
+const THUMB_SIZE: u32 = 16;
+const THUMB_RADIUS: u32 = 8;
+// Available drag range = track width minus thumb width. Value 0.0
+// puts the thumb at the left edge (= 0 leading pixels); value 1.0
+// puts it at the right edge (= 184 leading pixels). Outside this
+// range the thumb would clip past the track edges.
+const RANGE: u32 = TRACK_W - THUMB_SIZE;
+const ROW_GAP: u32 = 16;
+
+/// view-fn (§6.3): pure sync mapping `(SliderState, f32) -> Scene`.
+///
+/// Layout (top-to-bottom, centred):
+///
+/// 1. "Volume" label (18 px white) — descriptive caption.
+/// 2. Slider track (`main_slider` tag, 200×16 row to vertically
+///    centre the thumb against the 8-px rail): the
+///    `[filled | thumb | unfilled]` triple. `filled` is value*RANGE
+///    wide, `unfilled` is the remainder; the thumb sits between.
+/// 3. Status line — `"<state> | <value:0.42>"` — text mirror so the
+///    AI side can verify by reading the scene tree even when the
+///    screenshot path is unavailable.
+///
+/// R48 + R51.34 §5.35: the `main_slider` tag on the track row is the
+/// shell's `InputRouter` hit-test handle. The router resolves
+/// pointer events to that node, hands them to the matching
+/// `Scene::External("main_slider")` in the state scene, and (because
+/// `SliderExternal::wants_pointer_capture` returns true) pins the
+/// cursor across the drag while forwarding cursor X to
+/// `External::pointer_move` for value mutation.
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
+    // Filled-portion blue accent: the canonical Material "active"
+    // colour ramp through the state axis, plus the muted-brown
+    // Disabled cell shared with hello-toggle / hello-checkbox /
+    // hello-radio so users can read disabled state at a glance.
+    let filled_color: Color = match state {
+        SliderState::Idle => Color::rgb(0x30, 0x70, 0xd0),
+        SliderState::Hover => Color::rgb(0x40, 0x80, 0xe0),
+        SliderState::Dragging => Color::rgb(0x20, 0x50, 0xa0),
+        SliderState::Disabled => Color::rgb(0x70, 0x66, 0x58),
+    };
+    // Unfilled portion: chromatic-neutral track rail. Disabled cell
+    // muted-brown again.
+    let unfilled_color: Color = match state {
+        SliderState::Disabled => Color::rgb(0x4a, 0x42, 0x38),
+        _ => Color::rgb(0x40, 0x40, 0x40),
+    };
+    // Thumb fill: bright white in active states, light violet when
+    // dragging (Material's pressed-thumb affordance — visual feedback
+    // that capture is in flight), muted grey when disabled.
+    let thumb_fill: Color = match state {
+        SliderState::Idle => Color::rgb(0xf0, 0xf0, 0xf0),
+        SliderState::Hover => Color::rgb(0xff, 0xff, 0xff),
+        SliderState::Dragging => Color::rgb(0xe0, 0xe0, 0xff),
+        SliderState::Disabled => Color::rgb(0xa0, 0xa0, 0xa0),
+    };
+    // Position: value * RANGE → leading-pixel width of the filled
+    // portion. Clamp before the cast so floating-point drift doesn't
+    // overflow u32 if value sneaks past 1.0 (shouldn't, but defensive).
+    let value_clamped = value.clamp(0.0, 1.0);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let filled_w = (value_clamped * RANGE as f32) as u32;
+    let unfilled_w = RANGE.saturating_sub(filled_w);
+    let filled = Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::filled(filled_color).with_corner_radius(TRACK_RADIUS),
+        )
+        .with_layout(LayoutStyle::new().with_size(Size::px(filled_w, TRACK_H))),
+    );
+    let unfilled = Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::filled(unfilled_color).with_corner_radius(TRACK_RADIUS),
+        )
+        .with_layout(LayoutStyle::new().with_size(Size::px(unfilled_w, TRACK_H))),
+    );
+    let thumb = Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::filled(thumb_fill).with_corner_radius(THUMB_RADIUS),
+        )
+        .with_layout(LayoutStyle::new().with_size(Size::px(THUMB_SIZE, THUMB_SIZE))),
+    );
+    // Track row: [filled | thumb | unfilled] vertically centred so
+    // the 8-px rail aligns with the 16-px thumb's midline. Tag
+    // applies to the *row* (the full 200×16 hit-test surface) so
+    // clicking anywhere on the track jumps the thumb (Material
+    // click-to-position UX, enabled by R51.34 → R51.35.a click-point
+    // forward in InputRouter::pointer_down).
+    let track_row = Scene::Container(
+        ContainerNode::new(vec![filled, thumb, unfilled])
+            .with_tag("main_slider")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(TRACK_W, THUMB_SIZE)),
+            ),
+    );
+    let label = Scene::Text(TextNode::styled(
+        "Volume",
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(18)
+            .with_fg(Color::rgb(0xe0, 0xe0, 0xe0)),
+    ));
+    let status_str = format!(
+        "{} | {value_clamped:.2}",
+        slider_state_name(state),
+    );
+    let status = Scene::Text(TextNode::styled(
+        status_str,
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(12)
+            .with_fg(Color::rgb(0x90, 0x90, 0x90)),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![label, track_row, status])
+            .with_style(BoxStyle::filled(BG_FILL))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_justify(JustifyContent::Center)
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(ROW_GAP),
+            ),
+    )
+}
+
+struct SliderView;
+
+impl WidgetView for SliderView {
+    type State = (SliderState, f32);
+    type Event = SliderEvent;
+    type Renderer = HelloSliderRenderer;
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(SliderExternal::new())
+    }
+
+    fn tag() -> &'static str {
+        "main_slider"
+    }
+
+    fn read_state(scene: &Scene) -> (SliderState, f32) {
+        if let Scene::External(node) = scene {
+            if let Some(intro) = node.handle.introspect() {
+                let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+                    parse_slider_state(&name)
+                } else {
+                    SliderState::Idle
+                };
+                #[allow(clippy::cast_possible_truncation)]
+                let value = if let Some(IntrospectValue::Float(v)) = intro.query("value") {
+                    v as f32
+                } else {
+                    0.0
+                };
+                return (state, value);
+            }
+        }
+        (SliderState::Idle, 0.0)
+    }
+
+    fn view(state: (SliderState, f32), frame: &Frame) -> Scene {
+        view(state.0, state.1, frame)
+    }
+
+    fn event_name(event: SliderEvent) -> &'static str {
+        match event {
+            SliderEvent::PointerEnter => "PointerEnter",
+            SliderEvent::PointerLeave => "PointerLeave",
+            SliderEvent::PointerDown => "PointerDown",
+            SliderEvent::PointerUp => "PointerUp",
+            SliderEvent::Disable => "Disable",
+            SliderEvent::Enable => "Enable",
+            _ => "__internal__",
+        }
+    }
+
+    fn title() -> &'static str {
+        "pinion hello-slider (R51.35 §5.38 pinion-shell + R51.34 capture)"
+    }
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
+    }
+
+    fn keybinding(key: &str) -> Option<SliderEvent> {
+        match key {
+            "d" => Some(SliderEvent::Disable),
+            "e" => Some(SliderEvent::Enable),
+            _ => None,
+        }
+    }
+
+    fn fmt_state_log(state: &(SliderState, f32)) -> String {
+        format!("{} / {:.2}", slider_state_name(state.0), state.1)
+    }
+}
+
+fn parse_slider_state(name: &str) -> SliderState {
+    match name {
+        "Hover" => SliderState::Hover,
+        "Dragging" => SliderState::Dragging,
+        "Disabled" => SliderState::Disabled,
+        _ => SliderState::Idle,
+    }
+}
+
+fn slider_state_name(state: SliderState) -> &'static str {
+    match state {
+        SliderState::Idle => "Idle",
+        SliderState::Hover => "Hover",
+        SliderState::Dragging => "Dragging",
+        SliderState::Disabled => "Disabled",
+    }
+}
+
+fn main() {
+    pinion_shell::run::<SliderView>();
+}

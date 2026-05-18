@@ -3448,6 +3448,25 @@
         {
           "file": "examples/hello-radio/src/main.rs",
           "symbol": "RadioView"
+        },
+        {
+          "file": "examples/hello-slider/app.pinion.xml"
+        },
+        {
+          "file": "examples/hello-slider/src/main.rs",
+          "symbol": "view"
+        },
+        {
+          "file": "examples/hello-slider/src/main.rs",
+          "symbol": "SliderView"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/slider.rs",
+          "symbol": "SliderExternal::wants_pointer_capture"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/slider.rs",
+          "symbol": "SliderExternal::pointer_move"
         }
       ],
       "decision_status": "active"
@@ -5326,6 +5345,60 @@
         "R51.35 Slider visual demo can now consume this substrate: SliderExternal overrides wants_pointer_capture=true + pointer_move(x_rel, _) → set_value(x_rel.clamp(0.0, 1.0)) — mouse-drag UX with capture lock across stray paths",
         "RadioGroup visual demo (R51.x) still blocked on the separate pinion-shell multi-External / multi-tag dispatch substrate (this round only addresses single-widget drag-forward)",
         "captured_target is single-target v0; multi-touch / capture queue is a future axis (carry to a later substrate round when a real second use case surfaces)"
+      ]
+    },
+    "R51.35": {
+      "decision_summary": "R51.35 §5.38 hello-slider paint-side N=5 with real drag UX on R51.34 capture substrate",
+      "changes_bullets": [
+        "examples/hello-slider (new binary, 290 LOC main.rs): Material-style 200x8 pill track + 16x16 thumb + filled/unfilled portion encoding state x value; same pinion-core + pinion-shell + vello deps as the four sibling visual binaries",
+        "Cargo.toml workspace.members += examples/hello-slider",
+        "SliderExternal: wants_pointer_capture override = true + pointer_move(x_rel, _) override that clamps x_rel into Slider::set_value (gate-by-effect value_changing emission preserved)",
+        "InputRouter::pointer_down patch: after capture entry, forward the press-time cursor through forward_pointer_move so a click-without-drag still seeds the value at the click point (Material click-to-position UX)",
+        "5 new tests: 4 SliderExternal (wants_capture / pointer_move clamp / value_changing intent on effective change / drag-end value_committed via pointer_move) + 1 InputRouter (pointer_down_forwards_initial_cursor); updates to capture_lock_forwards_pointer_move_normalized + capture_lock_allows_coords_outside_rect to expect the new press-time entry",
+        "§5.38 implementations += {examples/hello-slider/app.pinion.xml + view + SliderView + slider.rs:SliderExternal::wants_pointer_capture + slider.rs:SliderExternal::pointer_move}"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello = 0 errors",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (clippy::pedantic deny baseline preserved; localised cast allows scoped to view fn and read_state f64 narrowing)",
+        "cargo test --workspace --features pinion-runtime/vello = 1243 pass / 0 fail / 6 ignored (1238 + 5 new)",
+        "hello-slider 290 LOC main + 24 + 27 + 12 = 353 LOC scaffolding; 5 binaries main.rs total 1218 LOC (203 button + 269 toggle + 221 checkbox + 235 radio + 290 slider) — substrate amortization holds (pinion-shell crate unchanged)",
+        "Tier-1 widget visual coverage now 5/6 (Button / Toggle / Checkbox / Radio / Slider); RadioGroup remains blocked on pinion-shell multi-External / multi-tag substrate"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.35",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "RadioGroup visual demo needs pinion-shell multi-External / multi-tag dispatch (single WidgetView::tag() insufficient for N siblings) — next substrate round candidate",
+        "Keyboard value step (decrement / increment via arrow keys) not wired: WidgetView::keybinding(key) -> Option<Self::Event> is enum-only; a key-driven intervene hook would need a separate trait extension. Carry until a clear N=2 case shows up",
+        "ai-introspect-demo migration to pinion-shell still blocked on multi-External support (same gap as RadioGroup)"
+      ],
+      "publishable_decision_summary": "R51.35 §5.38 hello-slider paint-side N=5 with real drag UX on R51.34 capture substrate",
+      "publishable_changes_bullets": [
+        "examples/hello-slider (new binary, 290 LOC main.rs): Material-style 200x8 pill track + 16x16 thumb + filled/unfilled portion encoding state x value; same pinion-core + pinion-shell + vello deps as the four sibling visual binaries",
+        "Cargo.toml workspace.members += examples/hello-slider",
+        "SliderExternal: wants_pointer_capture override = true + pointer_move(x_rel, _) override that clamps x_rel into Slider::set_value (gate-by-effect value_changing emission preserved)",
+        "InputRouter::pointer_down patch: after capture entry, forward the press-time cursor through forward_pointer_move so a click-without-drag still seeds the value at the click point (Material click-to-position UX)",
+        "5 new tests: 4 SliderExternal (wants_capture / pointer_move clamp / value_changing intent on effective change / drag-end value_committed via pointer_move) + 1 InputRouter (pointer_down_forwards_initial_cursor); updates to capture_lock_forwards_pointer_move_normalized + capture_lock_allows_coords_outside_rect to expect the new press-time entry",
+        "§5.38 implementations += {examples/hello-slider/app.pinion.xml + view + SliderView + slider.rs:SliderExternal::wants_pointer_capture + slider.rs:SliderExternal::pointer_move}"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello = 0 errors",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (clippy::pedantic deny baseline preserved; localised cast allows scoped to view fn and read_state f64 narrowing)",
+        "cargo test --workspace --features pinion-runtime/vello = 1243 pass / 0 fail / 6 ignored (1238 + 5 new)",
+        "hello-slider 290 LOC main + 24 + 27 + 12 = 353 LOC scaffolding; 5 binaries main.rs total 1218 LOC (203 button + 269 toggle + 221 checkbox + 235 radio + 290 slider) — substrate amortization holds (pinion-shell crate unchanged)",
+        "Tier-1 widget visual coverage now 5/6 (Button / Toggle / Checkbox / Radio / Slider); RadioGroup remains blocked on pinion-shell multi-External / multi-tag substrate"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.35",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RadioGroup visual demo needs pinion-shell multi-External / multi-tag dispatch (single WidgetView::tag() insufficient for N siblings) — next substrate round candidate",
+        "Keyboard value step (decrement / increment via arrow keys) not wired: WidgetView::keybinding(key) -> Option<Self::Event> is enum-only; a key-driven intervene hook would need a separate trait extension. Carry until a clear N=2 case shows up",
+        "ai-introspect-demo migration to pinion-shell still blocked on multi-External support (same gap as RadioGroup)"
       ]
     },
     "Round 1": {

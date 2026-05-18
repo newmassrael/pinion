@@ -226,6 +226,32 @@ impl External for SliderExternal {
         ThreadOwnership::UiThreadSync
     }
 
+    /// R51.35 §5.15 + §5.35 — opt in to capture lock so the
+    /// framework's [`InputRouter`](pinion_runtime::InputRouter) keeps
+    /// the cursor pinned to this Slider for the duration of the
+    /// `pointer_down` → `pointer_up` span, even when the cursor
+    /// strays outside the widget's track rect. Required for the
+    /// canonical drag UX (Material / `SwiftUI` / Qt): the user can
+    /// drag past the track ends without the press cancelling.
+    fn wants_pointer_capture(&self) -> bool {
+        true
+    }
+
+    /// R51.35 §5.15 + §5.35 — feed widget-relative cursor X (`x_rel`)
+    /// into the f32 value sidecar, clamping to the [`Slider`]'s
+    /// `0.0..=1.0` range. `y_rel` is ignored — this is a horizontal
+    /// slider. The framework forwards both press-time
+    /// (click-to-position) and drag-time motion through this hook.
+    ///
+    /// The clamping is intentional: `x_rel` may exceed `[0.0, 1.0]`
+    /// or go negative when the cursor strays off the track rect
+    /// under capture lock (R51.34 design point). Clamping here
+    /// preserves the `value_changing` intent's gate-by-effect
+    /// semantics — strays past the saturated value are silent.
+    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
+        self.set_value(x_rel.clamp(0.0, 1.0));
+    }
+
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
         Some(self)
     }
@@ -465,5 +491,67 @@ mod tests {
             schema.fields,
             &[("state", "string"), ("value", "float"), ("send", "string")]
         );
+    }
+
+    #[test]
+    fn external_wants_pointer_capture() {
+        // R51.35 §5.15 + §5.35 — Slider opts in so the framework's
+        // InputRouter pins the cursor across the drag.
+        let sx = SliderExternal::new();
+        assert!(sx.wants_pointer_capture());
+    }
+
+    #[test]
+    fn external_pointer_move_sets_value_clamped() {
+        // R51.35 §5.35 — widget-relative cursor X drives the value.
+        // y_rel is ignored (horizontal slider). Coordinates outside
+        // [0, 1] clamp.
+        let mut sx = SliderExternal::new();
+        sx.pointer_move(0.25, 0.99);
+        assert!((sx.value() - 0.25).abs() < 1e-4);
+        sx.pointer_move(1.7, -0.4); // x clamps to 1.0
+        assert!((sx.value() - 1.0).abs() < 1e-4);
+        sx.pointer_move(-0.3, 0.5); // x clamps to 0.0
+        assert!((sx.value() - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn external_pointer_move_emits_value_changing_intent() {
+        // Each effective pointer_move (post-clamp value actually
+        // changed) emits one value_changing intent on the §5.20
+        // channel — same gate-by-effect path as intervene("value", ...)
+        // because both flow through set_value.
+        let mut sx = SliderExternal::new();
+        sx.pointer_move(0.3, 0.0);
+        sx.pointer_move(0.7, 0.0);
+        sx.pointer_move(0.7, 0.0); // no-op (same value)
+        let mut harvested = Vec::new();
+        sx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 2);
+        assert!(harvested.iter().all(|i| i.tag_str() == "value_changing"));
+    }
+
+    #[test]
+    fn external_pointer_move_then_pointer_up_commits_value() {
+        // End-to-end drag-end via the R51.34 + R51.35 path: capture
+        // entered on PointerDown, value flows through pointer_move,
+        // PointerUp triggers the Dragging→Hover transition that
+        // emits value_committed carrying the final value.
+        let mut sx = SliderExternal::new();
+        sx.send(SliderEvent::PointerEnter);
+        sx.send(SliderEvent::PointerDown);
+        sx.pointer_move(0.42, 0.0);
+        sx.send(SliderEvent::PointerUp);
+        let mut harvested = Vec::new();
+        sx.drain_intents(&mut |i| harvested.push(i));
+        // Two intents: value_changing on the move, value_committed on
+        // the drag-end transition.
+        assert_eq!(harvested.len(), 2);
+        assert_eq!(harvested[0].tag_str(), "value_changing");
+        assert_eq!(harvested[1].tag_str(), "value_committed");
+        let IntrospectValue::Float(v) = harvested[1].payload else {
+            panic!("expected Float payload");
+        };
+        assert!((v - 0.42_f64).abs() < 1e-4, "committed {v}");
     }
 }

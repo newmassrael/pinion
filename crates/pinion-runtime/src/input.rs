@@ -207,7 +207,17 @@ impl InputRouter {
         if let Some(tag) = self.hover_target.clone() {
             dispatch_send(state_scene, &tag, "PointerDown");
             if widget_wants_capture(state_scene, &tag) {
-                self.captured_target = Some(tag);
+                self.captured_target = Some(tag.clone());
+                // R51.35 §5.35 — click-to-position: forward the
+                // press-time cursor as the initial `pointer_move` so
+                // a click-without-drag still seeds the widget's
+                // value at the click point (Material / `SwiftUI` / Qt
+                // Slider click-jumps-to-position UX). Without this
+                // forward the value would not update unless the user
+                // also dragged the cursor at least one pixel.
+                if let Some((x, y)) = self.cursor {
+                    self.forward_pointer_move(state_scene, &tag, x, y);
+                }
             }
         }
     }
@@ -894,41 +904,69 @@ mod tests {
         // During capture, cursor_moved must forward the cursor as
         // widget-relative normalised coords. Rect (80, 80, 40, 40)
         // means cursor (100, 100) → ((100 - 80) / 40, (100 - 80) / 40)
-        // = (0.5, 0.5).
+        // = (0.5, 0.5). The R51.35 click-to-position patch makes
+        // pointer_down forward the press-time cursor too, so the
+        // press at (100, 100) emits a (0.5, 0.5) entry before the
+        // three drag-time moves below.
         let mut router = InputRouter::new();
         let (mut state, _events, moves) = state_with_slider();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(100.0, 100.0, &mut state); // PointerEnter (not capture-mode yet)
         assert!(read_moves(&moves).is_empty());
-        router.pointer_down(&mut state); // enter capture
+        router.pointer_down(&mut state); // enter capture + click-point forward (0.5, 0.5)
         router.cursor_moved(80.0, 80.0, &mut state); // top-left
         router.cursor_moved(120.0, 120.0, &mut state); // bottom-right
         router.cursor_moved(100.0, 100.0, &mut state); // centre
         let log = read_moves(&moves);
-        assert_eq!(log.len(), 3);
-        assert!((log[0].0 - 0.0).abs() < 1e-4 && (log[0].1 - 0.0).abs() < 1e-4);
-        assert!((log[1].0 - 1.0).abs() < 1e-4 && (log[1].1 - 1.0).abs() < 1e-4);
-        assert!((log[2].0 - 0.5).abs() < 1e-4 && (log[2].1 - 0.5).abs() < 1e-4);
+        assert_eq!(log.len(), 4);
+        assert!((log[0].0 - 0.5).abs() < 1e-4 && (log[0].1 - 0.5).abs() < 1e-4);
+        assert!((log[1].0 - 0.0).abs() < 1e-4 && (log[1].1 - 0.0).abs() < 1e-4);
+        assert!((log[2].0 - 1.0).abs() < 1e-4 && (log[2].1 - 1.0).abs() < 1e-4);
+        assert!((log[3].0 - 0.5).abs() < 1e-4 && (log[3].1 - 0.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn pointer_down_forwards_initial_cursor() {
+        // R51.35 §5.35 — click-without-drag still updates the
+        // widget's value. The Slider UX precedent: clicking on the
+        // track jumps the thumb to the click point even if the user
+        // releases without moving the mouse.
+        let mut router = InputRouter::new();
+        let (mut state, _events, moves) = state_with_slider();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        // Click at x = 110 → x_rel = (110 - 80) / 40 = 0.75.
+        router.cursor_moved(110.0, 100.0, &mut state);
+        router.pointer_down(&mut state);
+        router.pointer_up(&mut state);
+        let log = read_moves(&moves);
+        // Exactly one pointer_move (the click-point); no drag moves
+        // because the cursor never moved between down and up.
+        assert_eq!(log.len(), 1);
+        assert!((log[0].0 - 0.75).abs() < 1e-4);
+        assert!((log[0].1 - 0.5).abs() < 1e-4);
     }
 
     #[test]
     fn capture_lock_allows_coords_outside_rect() {
         // Stray off the widget under capture lock — coords may exceed
         // [0, 1] or be negative; the consumer (Slider) clamps in its
-        // own pointer_move impl.
+        // own pointer_move impl. R51.35 click-to-position prepends a
+        // (0.5, 0.5) press-time entry; the two strays follow.
         let mut router = InputRouter::new();
         let (mut state, _events, moves) = state_with_slider();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_down(&mut state);
+        router.pointer_down(&mut state); // click-point (0.5, 0.5)
         router.cursor_moved(40.0, 100.0, &mut state); // x = -1.0
         router.cursor_moved(160.0, 100.0, &mut state); // x = 2.0
         let log = read_moves(&moves);
-        assert_eq!(log.len(), 2);
-        assert!((log[0].0 - (-1.0)).abs() < 1e-4);
-        assert!((log[1].0 - 2.0).abs() < 1e-4);
+        assert_eq!(log.len(), 3);
+        assert!((log[0].0 - 0.5).abs() < 1e-4);
+        assert!((log[1].0 - (-1.0)).abs() < 1e-4);
+        assert!((log[2].0 - 2.0).abs() < 1e-4);
     }
 
     #[test]
