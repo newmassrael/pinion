@@ -370,6 +370,26 @@ pub trait WidgetView: 'static {
     fn access_node(_state: &Self::State, _focused: Option<&str>) -> Vec<AccessNode> {
         Vec::new()
     }
+
+    /// R51.66 §5.40 — composite focus redirect for AccessKit.
+    ///
+    /// AccessKit's `TreeUpdate::focus` points at a single `NodeId`.
+    /// Atomic widgets (`Button`, `Switch`, `Slider`) use their own
+    /// `tag()` as that target. Composite widgets that maintain a
+    /// single tab stop at the parent (the ARIA Authoring Practices
+    /// roving-tabindex pattern, e.g. `RadioGroup`) override this
+    /// method so the AT-side focus instead points at the active
+    /// descendant — the sub-tag a real user would activate with
+    /// `Enter` / `Space`. The pinion-shell focus ring + key
+    /// dispatch continue to address the parent tag, so the visual
+    /// and key-routing semantics are unchanged.
+    ///
+    /// Default passes `focused` through unchanged. Returning `None`
+    /// leaves AccessKit's focus on the synthetic window root.
+    #[must_use]
+    fn access_focus_target(_state: &Self::State, focused: Option<&str>) -> Option<String> {
+        focused.map(str::to_owned)
+    }
 }
 
 /// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.6
@@ -777,10 +797,16 @@ impl<V: WidgetView> AppShell<V> {
         if let Some(adapter) = self.accesskit.as_mut() {
             let focused = self.focus.focused().map(str::to_owned);
             let nodes = V::access_node(&self.cached_state, focused.as_deref());
+            // R51.66 §5.40 — composite widgets (RadioGroup) redirect
+            // the AT-side focus from the group tag to the active
+            // descendant sub-tag via `access_focus_target`. Atomic
+            // widgets pass `focused` through unchanged.
+            let at_focus =
+                V::access_focus_target(&self.cached_state, focused.as_deref());
             let window_bounds =
                 pinion_core::scene::Rect::new(0, 0, size.width, size.height);
             let paint_ref = &paint_scene;
-            let focused_ref = focused.as_deref();
+            let at_focus_ref = at_focus.as_deref();
             adapter.update_if_active(|| {
                 let mut builder = AccessTreeBuilder::new();
                 for mut node in nodes {
@@ -789,7 +815,7 @@ impl<V: WidgetView> AppShell<V> {
                     }
                     builder.add(node);
                 }
-                builder.focused(focused_ref);
+                builder.focused(at_focus_ref);
                 builder.build(Some(window_bounds))
             });
         }

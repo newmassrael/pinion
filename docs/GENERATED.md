@@ -2997,6 +2997,7 @@ router.pointer_down(&mut state_scene);
 - live region = role=Log/Status/Alert + AccessKit live property (R51.x carry, framework 미요구)
 - platform AT test = Windows Narrator / macOS VoiceOver / Linux Orca / Android TalkBack (carry)
 - custom widget = access_node override 필수, default None = AT 무시 (intent declaration)
+- composite focus redirect = WidgetView::access_focus_target (default passthrough) per R51.66
 
 
 
@@ -3034,6 +3035,9 @@ router.pointer_down(&mut state_scene);
 - examples/hello-radio/src/main.rs:RadioView::access_node
 - examples/hello-slider/src/main.rs:SliderView::access_node
 - examples/hello-slider-vertical/src/main.rs:SliderVerticalView::access_node
+- crates/pinion-shell/src/lib.rs:WidgetView::access_focus_target
+- examples/hello-radio-group/src/main.rs:RadioGroupView::access_node
+- examples/hello-radio-group/src/main.rs:RadioGroupView::access_focus_target
 
 
 
@@ -5269,6 +5273,37 @@ router.pointer_down(&mut state_scene);
 - R51.67 — ActionRequested dispatch (Click/Focus/Increment/Decrement 실제 디스패치)
 - R51.68 — conformance test (Tree snapshot + ActionRequest round-trip)
 - AccessNode 의 orientation field 캴 (Slider vertical/horizontal 구분) — evidence 시
+
+
+
+### R51.66 — R51.66 §5.40 RadioGroup composite access_node + WidgetView::access_focus_target trait method
+
+**Changes**:
+- WidgetView::access_focus_target trait method 신설 — composite focus redirect (default passthrough)
+- AppShell::render 의 builder.focused() = access_focus_target 결과 사용 (atomic widget 은 그대로)
+- RadioGroupView::access_node 신설 — N+1 nodes (RadioGroup parent + N RadioButton children)
+- RadioGroupView::access_focus_target 신설 — 'main_group' focus → 'main_group#active_idx' redirect
+- active_radio_index helper — selected radio 또는 fallback 0 (arrow_step 과 일관)
+- hello-radio-group Cargo.toml 의 pinion-a11y 의존성 추가
+- 11 unit test 추가 (N+1 노드 / children / label / checked / focus redirect / passthrough)
+
+
+
+**Verification**:
+- cargo test -p hello-radio-group — 15 pass / 0 fail (a11y_tests 11 + tests 4)
+- cargo test --workspace --features pinion-runtime/vello — 1404 pass / 0 fail (+11 from 1393)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.67 — ActionRequested dispatch (translate_action → focus/click/increment 실제 수행)
+- R51.68 — conformance test (Tree snapshot per widget + ActionRequest round-trip)
+- accesskit Node::set_active_descendant (현재 focus redirect 으로 대체) — evidence 시 강화
 
 
 

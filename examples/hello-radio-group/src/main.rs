@@ -43,6 +43,7 @@ use pinion_core::style::{
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -290,6 +291,58 @@ impl WidgetView for RadioGroupView {
         true
     }
 
+    /// R51.66 §5.40 — composite AccessKit semantic tree contribution.
+    /// Emits N+1 nodes: one `AriaRole::RadioGroup` parent holding
+    /// every radio's sub-tag as a child, plus one
+    /// `AriaRole::RadioButton` per index. Each radio carries its
+    /// own role, label, selected state, and interaction state
+    /// flags. The parent claims the children via
+    /// [`AccessNode::with_child`] so the tree builder routes them
+    /// under the group instead of the synthetic root.
+    fn access_node(state: &GroupState, focused: Option<&str>) -> Vec<AccessNode> {
+        let group_focused = focused == Some(Self::tag());
+        let active_idx = active_radio_index(*state);
+        let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
+        let mut group = AccessNode::new(Self::tag(), AriaRole::RadioGroup)
+            .with_name("Subscription tier");
+        for i in 0..N {
+            group = group.with_child(format!("{PRIMARY_TAG}#{i}"));
+        }
+        nodes.push(group);
+        for (i, (radio_state, selected)) in state.iter().copied().enumerate() {
+            let radio_tag = format!("{PRIMARY_TAG}#{i}");
+            let radio_access_state = AccessState {
+                focused: group_focused && i == active_idx,
+                disabled: matches!(radio_state, RadioState::Disabled),
+                hovered: matches!(radio_state, RadioState::Hover),
+                pressed: matches!(radio_state, RadioState::Pressed),
+                checked: Some(selected),
+            };
+            nodes.push(
+                AccessNode::new(&radio_tag, AriaRole::RadioButton)
+                    .with_name(tier_label(i))
+                    .with_value(AccessValue::Bool(selected))
+                    .with_state(radio_access_state),
+            );
+        }
+        nodes
+    }
+
+    /// R51.66 §5.40 — redirect AT-side focus from the group tag to
+    /// the active descendant radio (the selected radio, or index 0
+    /// when nothing is selected — same fallback as the pointer /
+    /// keyboard activation paths). The pinion-shell focus ring and
+    /// key dispatch continue to address `"main_group"` itself; only
+    /// the AT-side `TreeUpdate::focus` is rerouted.
+    fn access_focus_target(state: &GroupState, focused: Option<&str>) -> Option<String> {
+        if focused == Some(Self::tag()) {
+            let idx = active_radio_index(*state);
+            Some(format!("{PRIMARY_TAG}#{idx}"))
+        } else {
+            focused.map(str::to_owned)
+        }
+    }
+
     fn fmt_state_log(state: &GroupState) -> String {
         state
             .iter()
@@ -353,6 +406,15 @@ fn arrow_step(
     }
 }
 
+/// R51.66 §5.40 — active radio index (selected radio, or `0` when
+/// nothing is selected). Mirrors `arrow_step`'s fallback so the
+/// keyboard activation path, the visual focus indication, and the
+/// AccessKit `access_focus_target` redirect all agree on which
+/// radio is the active descendant.
+fn active_radio_index(state: GroupState) -> usize {
+    state.iter().position(|(_, sel)| *sel).unwrap_or(0)
+}
+
 fn parse_radio_state(name: &str) -> RadioState {
     match name {
         "Hover" => RadioState::Hover,
@@ -373,6 +435,117 @@ fn radio_state_short(state: RadioState) -> &'static str {
 
 fn main() {
     pinion_shell::run::<RadioGroupView>();
+}
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    fn unselected_state() -> GroupState {
+        [
+            (RadioState::Idle, false),
+            (RadioState::Idle, false),
+            (RadioState::Idle, false),
+        ]
+    }
+
+    fn selected_state(idx: usize) -> GroupState {
+        let mut s = unselected_state();
+        s[idx].1 = true;
+        s
+    }
+
+    #[test]
+    fn emits_one_group_plus_n_radio_nodes() {
+        let nodes = RadioGroupView::access_node(&unselected_state(), None);
+        assert_eq!(nodes.len(), N + 1);
+        assert_eq!(nodes[0].role, AriaRole::RadioGroup);
+        assert_eq!(nodes[0].name.as_deref(), Some("Subscription tier"));
+        for i in 0..N {
+            assert_eq!(nodes[i + 1].role, AriaRole::RadioButton);
+        }
+    }
+
+    #[test]
+    fn group_lists_all_children_in_order() {
+        let nodes = RadioGroupView::access_node(&unselected_state(), None);
+        assert_eq!(nodes[0].children.len(), N);
+        for i in 0..N {
+            assert_eq!(nodes[0].children[i], format!("main_group#{i}"));
+        }
+    }
+
+    #[test]
+    fn each_radio_has_tier_label() {
+        let nodes = RadioGroupView::access_node(&unselected_state(), None);
+        assert_eq!(nodes[1].name.as_deref(), Some("Tier 0  (a)"));
+        assert_eq!(nodes[2].name.as_deref(), Some("Tier 1  (b)"));
+        assert_eq!(nodes[3].name.as_deref(), Some("Tier 2  (c)"));
+    }
+
+    #[test]
+    fn selected_radio_carries_checked_true() {
+        let nodes = RadioGroupView::access_node(&selected_state(1), None);
+        assert_eq!(nodes[2].state.checked, Some(true));
+        assert_eq!(nodes[2].value, Some(AccessValue::Bool(true)));
+        assert_eq!(nodes[1].state.checked, Some(false));
+        assert_eq!(nodes[3].state.checked, Some(false));
+    }
+
+    #[test]
+    fn group_focused_marks_active_radio_focused() {
+        let nodes = RadioGroupView::access_node(&selected_state(1), Some("main_group"));
+        assert!(nodes[2].state.focused);
+        assert!(!nodes[1].state.focused);
+        assert!(!nodes[3].state.focused);
+    }
+
+    #[test]
+    fn unselected_group_focuses_first_radio() {
+        let nodes = RadioGroupView::access_node(&unselected_state(), Some("main_group"));
+        assert!(nodes[1].state.focused);
+    }
+
+    #[test]
+    fn unfocused_group_no_radio_focused() {
+        let nodes = RadioGroupView::access_node(&selected_state(1), None);
+        for radio in nodes.iter().skip(1).take(N) {
+            assert!(!radio.state.focused);
+        }
+    }
+
+    #[test]
+    fn access_focus_target_redirects_to_active_radio() {
+        let target = RadioGroupView::access_focus_target(
+            &selected_state(2),
+            Some("main_group"),
+        );
+        assert_eq!(target.as_deref(), Some("main_group#2"));
+    }
+
+    #[test]
+    fn access_focus_target_unselected_falls_back_to_first() {
+        let target = RadioGroupView::access_focus_target(
+            &unselected_state(),
+            Some("main_group"),
+        );
+        assert_eq!(target.as_deref(), Some("main_group#0"));
+    }
+
+    #[test]
+    fn access_focus_target_passthrough_when_other_focused() {
+        let target = RadioGroupView::access_focus_target(
+            &selected_state(1),
+            Some("save_btn"),
+        );
+        assert_eq!(target.as_deref(), Some("save_btn"));
+    }
+
+    #[test]
+    fn access_focus_target_none_when_no_focus() {
+        let target = RadioGroupView::access_focus_target(&unselected_state(), None);
+        assert!(target.is_none());
+    }
 }
 
 #[cfg(test)]
