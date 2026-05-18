@@ -2884,6 +2884,12 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/widget.rs:WidgetTransition::detect
 - crates/pinion-core/src/widgets/button.rs:Button::detect (keyboard_click branch)
 - examples/hello-button/src/main.rs:ButtonView::apply_key
+- crates/pinion-core/src/widgets/toggle.rs:Toggle::send (keyboard_activate branch)
+- crates/pinion-core/src/widgets/checkbox.rs:Checkbox::send (keyboard_activate branch)
+- crates/pinion-core/src/widgets/radio.rs:Radio::send (keyboard_activate branch)
+- examples/hello-toggle/src/main.rs:ToggleView::apply_key
+- examples/hello-checkbox/src/main.rs:CheckboxView::apply_key
+- examples/hello-radio/src/main.rs:RadioView::apply_key
 
 
 
@@ -4845,6 +4851,35 @@ router.pointer_down(&mut state_scene);
 - R51.55 — Toggle/Checkbox/Radio parse_*_event 에 KeyboardActivate 추가 + apply_key 3-in-1 first-client
 - R51.56 — Slider/SliderVertical focused-only routing
 - R51.57 — RadioGroup roving tabindex
+- R51.58 — paint-time focus ring rendering
+- R51.59 — Window blur/restore wiring
+
+
+
+### R51.55 — R51.55 §5.39 Toggle/Checkbox/Radio Space activation 3-in-1 — value sidecar flip on internal transition
+
+**Changes**:
+- Toggle/Checkbox/Radio::send 이 KeyboardActivate 시 value sidecar flip (단 disabled 는 침묵)
+- Toggle/Checkbox/Radio::detect 가 keyboard_activate branch 추가 — state-stable internal 에서 동일 intent
+- parse_toggle_event / parse_checkbox_event / parse_radio_event 에 KeyboardActivate 매핑 추가
+- ToggleView / CheckboxView / RadioView apply_key 3-in-1 (toggle = Space|Enter, checkbox/radio = Space only)
+- Toggle 4 + Checkbox 3 + Radio 3 = 10 unit test 추가 — idle/disabled/invoke 경로
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello — 1306 → 1316 pass / 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.38, §5.39
+
+
+**Carry forward**:
+- R51.56 — Slider/SliderVertical focused-only routing (apply_key focused 인자 실제 결정)
+- R51.57 — RadioGroup roving tabindex composite focus
 - R51.58 — paint-time focus ring rendering
 - R51.59 — Window blur/restore wiring
 

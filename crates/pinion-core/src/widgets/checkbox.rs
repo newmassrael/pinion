@@ -57,13 +57,26 @@ impl Checkbox {
         Self { inner: Widget::new(), value: false }
     }
 
-    /// Drive a [`CheckboxEvent`] through the SCXML. `Pressed → Hover`
-    /// flips the `value` field (mirror of Toggle).
+    /// Drive a [`CheckboxEvent`] through the SCXML. The `value`
+    /// field flips Off ↔ On on either activation path:
+    ///
+    /// * `Pressed → Hover` — pointer click (release on widget).
+    /// * `KeyboardActivate` from `Idle`/`Hover` — R51.55 §5.39 ARIA
+    ///   Space keyboard activation; the SCXML internal transition
+    ///   leaves state unchanged so the sidecar mutation lands here.
+    ///
+    /// `Disabled` ignores both paths (the SCXML template has no
+    /// activation transitions from the disabled state).
     pub fn send(&mut self, event: CheckboxEvent) {
         let before = self.state();
+        let is_keyboard_activate = matches!(event, CheckboxEvent::KeyboardActivate);
         self.inner.send(event);
         let after = self.state();
-        if matches!(before, CheckboxState::Pressed) && matches!(after, CheckboxState::Hover) {
+        let pointer_activate =
+            matches!(before, CheckboxState::Pressed) && matches!(after, CheckboxState::Hover);
+        let keyboard_activate =
+            is_keyboard_activate && !matches!(before, CheckboxState::Disabled);
+        if pointer_activate || keyboard_activate {
             self.value = !self.value;
         }
     }
@@ -113,15 +126,20 @@ impl WidgetTransition for Checkbox {
 
     fn detect(
         before: Self::Snapshot,
-        _event: Self::Event,
+        event: Self::Event,
         after: Self::Snapshot,
     ) -> Option<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
-        if matches!(before_state, CheckboxState::Pressed)
+        let pointer_check = matches!(before_state, CheckboxState::Pressed)
             && matches!(after_state, CheckboxState::Hover)
-            && before_value != after_value
-        {
+            && before_value != after_value;
+        // R51.55 §5.39 — keyboard activation 은 state-stable internal
+        // transition. before_value != after_value 검증으로 disabled
+        // (mutation skipped in send) 무시 자동 보장.
+        let keyboard_check =
+            matches!(event, CheckboxEvent::KeyboardActivate) && before_value != after_value;
+        if pointer_check || keyboard_check {
             Some(Intent::new_static(
                 "checked",
                 IntrospectValue::Bool(after_value),
@@ -289,6 +307,8 @@ fn parse_checkbox_event(name: &str) -> Option<CheckboxEvent> {
         "PointerLeave" => Some(CheckboxEvent::PointerLeave),
         "PointerDown" => Some(CheckboxEvent::PointerDown),
         "PointerUp" => Some(CheckboxEvent::PointerUp),
+        // R51.55 §5.39 — ARIA Space keyboard activation.
+        "KeyboardActivate" => Some(CheckboxEvent::KeyboardActivate),
         "Disable" => Some(CheckboxEvent::Disable),
         "Enable" => Some(CheckboxEvent::Enable),
         _ => None,
@@ -408,5 +428,41 @@ mod tests {
             schema.fields,
             &[("state", "string"), ("checked", "bool"), ("send", "string")]
         );
+    }
+
+    // ----- R51.55 §5.39 keyboard activation -----
+
+    #[test]
+    fn keyboard_activate_from_idle_flips_value_and_emits_checked_intent() {
+        let mut bx = CheckboxExternal::new();
+        assert!(!bx.is_checked());
+        bx.send(CheckboxEvent::KeyboardActivate);
+        assert_eq!(bx.state(), CheckboxState::Idle, "state-stable internal");
+        assert!(bx.is_checked());
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "checked");
+        assert_eq!(harvested[0].payload, IntrospectValue::Bool(true));
+    }
+
+    #[test]
+    fn keyboard_activate_from_disabled_emits_no_intent() {
+        let mut bx = CheckboxExternal::new();
+        bx.send(CheckboxEvent::Disable);
+        bx.send(CheckboxEvent::KeyboardActivate);
+        assert!(!bx.is_checked());
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty());
+    }
+
+    #[test]
+    fn keyboard_activate_via_invoke_send_flips() {
+        let mut bx = CheckboxExternal::new();
+        let _ = bx
+            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .unwrap();
+        assert!(bx.is_checked());
     }
 }

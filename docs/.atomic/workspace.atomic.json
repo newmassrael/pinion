@@ -3723,6 +3723,30 @@
         {
           "file": "examples/hello-button/src/main.rs",
           "symbol": "ButtonView::apply_key"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/toggle.rs",
+          "symbol": "Toggle::send (keyboard_activate branch)"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/checkbox.rs",
+          "symbol": "Checkbox::send (keyboard_activate branch)"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/radio.rs",
+          "symbol": "Radio::send (keyboard_activate branch)"
+        },
+        {
+          "file": "examples/hello-toggle/src/main.rs",
+          "symbol": "ToggleView::apply_key"
+        },
+        {
+          "file": "examples/hello-checkbox/src/main.rs",
+          "symbol": "CheckboxView::apply_key"
+        },
+        {
+          "file": "examples/hello-radio/src/main.rs",
+          "symbol": "RadioView::apply_key"
         }
       ],
       "decision_status": "active"
@@ -6641,6 +6665,54 @@
         "R51.55 — Toggle/Checkbox/Radio parse_*_event 에 KeyboardActivate 추가 + apply_key 3-in-1 first-client",
         "R51.56 — Slider/SliderVertical focused-only routing",
         "R51.57 — RadioGroup roving tabindex",
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring"
+      ]
+    },
+    "R51.55": {
+      "decision_summary": "R51.55 §5.39 Toggle/Checkbox/Radio Space activation 3-in-1 — value sidecar flip on internal transition",
+      "changes_bullets": [
+        "Toggle/Checkbox/Radio::send 이 KeyboardActivate 시 value sidecar flip (단 disabled 는 침묵)",
+        "Toggle/Checkbox/Radio::detect 가 keyboard_activate branch 추가 — state-stable internal 에서 동일 intent",
+        "parse_toggle_event / parse_checkbox_event / parse_radio_event 에 KeyboardActivate 매핑 추가",
+        "ToggleView / CheckboxView / RadioView apply_key 3-in-1 (toggle = Space|Enter, checkbox/radio = Space only)",
+        "Toggle 4 + Checkbox 3 + Radio 3 = 10 unit test 추가 — idle/disabled/invoke 경로"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1306 → 1316 pass / 0 fail",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R51.56 — Slider/SliderVertical focused-only routing (apply_key focused 인자 실제 결정)",
+        "R51.57 — RadioGroup roving tabindex composite focus",
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring"
+      ],
+      "publishable_decision_summary": "R51.55 §5.39 Toggle/Checkbox/Radio Space activation 3-in-1 — value sidecar flip on internal transition",
+      "publishable_changes_bullets": [
+        "Toggle/Checkbox/Radio::send 이 KeyboardActivate 시 value sidecar flip (단 disabled 는 침묵)",
+        "Toggle/Checkbox/Radio::detect 가 keyboard_activate branch 추가 — state-stable internal 에서 동일 intent",
+        "parse_toggle_event / parse_checkbox_event / parse_radio_event 에 KeyboardActivate 매핑 추가",
+        "ToggleView / CheckboxView / RadioView apply_key 3-in-1 (toggle = Space|Enter, checkbox/radio = Space only)",
+        "Toggle 4 + Checkbox 3 + Radio 3 = 10 unit test 추가 — idle/disabled/invoke 경로"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1306 → 1316 pass / 0 fail",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.56 — Slider/SliderVertical focused-only routing (apply_key focused 인자 실제 결정)",
+        "R51.57 — RadioGroup roving tabindex composite focus",
         "R51.58 — paint-time focus ring rendering",
         "R51.59 — Window blur/restore wiring"
       ]

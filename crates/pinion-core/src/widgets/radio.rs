@@ -58,13 +58,29 @@ impl Radio {
         Self { inner: Widget::new(), selected: false }
     }
 
-    /// Drive a [`RadioEvent`] through the SCXML. `Pressed → Hover`
-    /// sets `selected = true` (no-op if already selected).
+    /// Drive a [`RadioEvent`] through the SCXML. `selected` is set
+    /// to `true` (set-not-flip, idempotent) on either activation
+    /// path:
+    ///
+    /// * `Pressed → Hover` — pointer click (release on widget).
+    /// * `KeyboardActivate` from `Idle`/`Hover` — R51.55 §5.39 ARIA
+    ///   Space keyboard activation; the SCXML internal transition
+    ///   leaves state unchanged so the sidecar mutation lands here.
+    ///
+    /// `Disabled` ignores both paths. Sibling deselection is the
+    /// group's responsibility (`RadioGroup::send` calls
+    /// `set_selected(false)` on the previously-selected child after
+    /// any new selection lands).
     pub fn send(&mut self, event: RadioEvent) {
         let before = self.state();
+        let is_keyboard_activate = matches!(event, RadioEvent::KeyboardActivate);
         self.inner.send(event);
         let after = self.state();
-        if matches!(before, RadioState::Pressed) && matches!(after, RadioState::Hover) {
+        let pointer_activate =
+            matches!(before, RadioState::Pressed) && matches!(after, RadioState::Hover);
+        let keyboard_activate =
+            is_keyboard_activate && !matches!(before, RadioState::Disabled);
+        if pointer_activate || keyboard_activate {
             self.selected = true;
         }
     }
@@ -119,16 +135,23 @@ impl WidgetTransition for Radio {
 
     fn detect(
         before: Self::Snapshot,
-        _event: Self::Event,
+        event: Self::Event,
         after: Self::Snapshot,
     ) -> Option<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
-        if matches!(before_state, RadioState::Pressed)
+        let pointer_select = matches!(before_state, RadioState::Pressed)
             && matches!(after_state, RadioState::Hover)
             && !before_value
-            && after_value
-        {
+            && after_value;
+        // R51.55 §5.39 — keyboard activation is a state-stable
+        // internal transition. !before_value && after_value covers
+        // disabled (mutation skipped in send) and already-selected
+        // (idempotent set-not-flip) both silently.
+        let keyboard_select = matches!(event, RadioEvent::KeyboardActivate)
+            && !before_value
+            && after_value;
+        if pointer_select || keyboard_select {
             Some(Intent::new_static("selected", IntrospectValue::Null))
         } else {
             None
@@ -293,6 +316,8 @@ pub(crate) fn parse_radio_event(name: &str) -> Option<RadioEvent> {
         "PointerLeave" => Some(RadioEvent::PointerLeave),
         "PointerDown" => Some(RadioEvent::PointerDown),
         "PointerUp" => Some(RadioEvent::PointerUp),
+        // R51.55 §5.39 — ARIA Space keyboard activation.
+        "KeyboardActivate" => Some(RadioEvent::KeyboardActivate),
         "Disable" => Some(RadioEvent::Disable),
         "Enable" => Some(RadioEvent::Enable),
         _ => None,
@@ -424,5 +449,46 @@ mod tests {
             schema.fields,
             &[("state", "string"), ("selected", "bool"), ("send", "string")]
         );
+    }
+
+    // ----- R51.55 §5.39 keyboard activation -----
+
+    #[test]
+    fn keyboard_activate_from_idle_selects_and_emits_selected_intent() {
+        let mut bx = RadioExternal::new();
+        assert!(!bx.is_selected());
+        bx.send(RadioEvent::KeyboardActivate);
+        assert_eq!(bx.state(), RadioState::Idle, "state-stable internal");
+        assert!(bx.is_selected());
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "selected");
+    }
+
+    #[test]
+    fn keyboard_activate_when_already_selected_is_idempotent_silent() {
+        let mut bx = RadioExternal::new();
+        bx.send(RadioEvent::KeyboardActivate);
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        // second activation while already selected — set-not-flip,
+        // no new intent.
+        bx.send(RadioEvent::KeyboardActivate);
+        assert!(bx.is_selected());
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1, "second activation must stay silent");
+    }
+
+    #[test]
+    fn keyboard_activate_from_disabled_emits_no_intent() {
+        let mut bx = RadioExternal::new();
+        bx.send(RadioEvent::Disable);
+        bx.send(RadioEvent::KeyboardActivate);
+        assert!(!bx.is_selected());
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty());
     }
 }

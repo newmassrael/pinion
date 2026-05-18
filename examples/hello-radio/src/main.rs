@@ -203,6 +203,31 @@ impl WidgetView for RadioView {
         }
     }
 
+    /// R51.55 §5.39 — ARIA Radio keyboard activation. Space on the
+    /// focused radio fires `KeyboardActivate`, which sets selected
+    /// to `true` (set-not-flip) and emits the `"selected"` intent
+    /// in parity with a pointer click. Already-selected radios stay
+    /// silent (idempotent). The group-context arrow navigation that
+    /// also activates the new radio lives in `hello-radio-group`
+    /// (composite widget, R51.57 roving tabindex).
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        if focused != Some(Self::tag()) {
+            return false;
+        }
+        if key != "Space" {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        intro
+            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .is_ok()
+    }
+
     fn fmt_state_log(state: &(RadioState, bool)) -> String {
         format!(
             "{} / {}",

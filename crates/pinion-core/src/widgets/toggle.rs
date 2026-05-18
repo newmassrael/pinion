@@ -80,14 +80,26 @@ impl Toggle {
         Self { inner: Widget::new(), value: false }
     }
 
-    /// Drive a [`ToggleEvent`] through the SCXML. If the event causes
-    /// a `Pressed → Hover` transition (the activate path), the
-    /// `value` field flips Off ↔ On.
+    /// Drive a [`ToggleEvent`] through the SCXML. The `value` field
+    /// flips Off ↔ On on either activation path:
+    ///
+    /// * `Pressed → Hover` — pointer click (release on widget).
+    /// * `KeyboardActivate` from `Idle`/`Hover` — R51.55 §5.39 ARIA
+    ///   keyboard activation; the SCXML internal transition leaves
+    ///   state unchanged so the sidecar mutation lands here.
+    ///
+    /// `Disabled` ignores both paths (the SCXML template has no
+    /// activation transitions from the disabled state).
     pub fn send(&mut self, event: ToggleEvent) {
         let before = self.state();
+        let is_keyboard_activate = matches!(event, ToggleEvent::KeyboardActivate);
         self.inner.send(event);
         let after = self.state();
-        if matches!(before, ToggleState::Pressed) && matches!(after, ToggleState::Hover) {
+        let pointer_activate =
+            matches!(before, ToggleState::Pressed) && matches!(after, ToggleState::Hover);
+        let keyboard_activate =
+            is_keyboard_activate && !matches!(before, ToggleState::Disabled);
+        if pointer_activate || keyboard_activate {
             self.value = !self.value;
         }
     }
@@ -141,15 +153,20 @@ impl WidgetTransition for Toggle {
 
     fn detect(
         before: Self::Snapshot,
-        _event: Self::Event,
+        event: Self::Event,
         after: Self::Snapshot,
     ) -> Option<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
-        if matches!(before_state, ToggleState::Pressed)
+        let pointer_toggle = matches!(before_state, ToggleState::Pressed)
             && matches!(after_state, ToggleState::Hover)
-            && before_value != after_value
-        {
+            && before_value != after_value;
+        // R51.55 §5.39 — keyboard activation 은 state-stable internal
+        // transition. before_value != after_value 검증으로 disabled
+        // (mutation skipped in send) 무시 자동 보장.
+        let keyboard_toggle =
+            matches!(event, ToggleEvent::KeyboardActivate) && before_value != after_value;
+        if pointer_toggle || keyboard_toggle {
             Some(Intent::new_static(
                 "toggle",
                 IntrospectValue::Bool(after_value),
@@ -446,6 +463,8 @@ fn parse_toggle_event(name: &str) -> Option<ToggleEvent> {
         "PointerLeave" => Some(ToggleEvent::PointerLeave),
         "PointerDown" => Some(ToggleEvent::PointerDown),
         "PointerUp" => Some(ToggleEvent::PointerUp),
+        // R51.55 §5.39 — ARIA Space keyboard activation.
+        "KeyboardActivate" => Some(ToggleEvent::KeyboardActivate),
         "Disable" => Some(ToggleEvent::Disable),
         "Enable" => Some(ToggleEvent::Enable),
         _ => None,
@@ -672,5 +691,56 @@ mod tests {
             snap.invoke("send", IntrospectValue::Text("PointerEnter".to_string())),
             Err(InvokeError::Rejected)
         );
+    }
+
+    // ----- R51.55 §5.39 keyboard activation -----
+
+    #[test]
+    fn keyboard_activate_from_idle_flips_value_and_emits_toggle_intent() {
+        let mut bx = ToggleExternal::new();
+        assert_eq!(bx.state(), ToggleState::Idle);
+        assert!(!bx.is_on());
+        bx.send(ToggleEvent::KeyboardActivate);
+        assert_eq!(bx.state(), ToggleState::Idle, "state-stable internal");
+        assert!(bx.is_on(), "value must flip Off → On");
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "toggle");
+        assert_eq!(harvested[0].payload, IntrospectValue::Bool(true));
+    }
+
+    #[test]
+    fn keyboard_activate_from_hover_flips_value_and_emits_toggle_intent() {
+        let mut bx = ToggleExternal::new();
+        bx.send(ToggleEvent::PointerEnter);
+        assert_eq!(bx.state(), ToggleState::Hover);
+        bx.send(ToggleEvent::KeyboardActivate);
+        assert_eq!(bx.state(), ToggleState::Hover);
+        assert!(bx.is_on());
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "toggle");
+    }
+
+    #[test]
+    fn keyboard_activate_from_disabled_emits_no_intent() {
+        let mut bx = ToggleExternal::new();
+        bx.send(ToggleEvent::Disable);
+        bx.send(ToggleEvent::KeyboardActivate);
+        assert!(!bx.is_on(), "disabled toggle must not flip");
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty());
+    }
+
+    #[test]
+    fn keyboard_activate_via_invoke_send_flips() {
+        let mut bx = ToggleExternal::new();
+        let _ = bx
+            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .unwrap();
+        assert!(bx.is_on());
     }
 }

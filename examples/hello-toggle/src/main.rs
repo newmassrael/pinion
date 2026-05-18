@@ -236,6 +236,30 @@ impl WidgetView for ToggleView {
         }
     }
 
+    /// R51.55 §5.39 — ARIA Toggle Button keyboard activation. Space
+    /// and Enter on the focused toggle fire `KeyboardActivate`,
+    /// which flips the Off ↔ On sidecar and emits the `"toggle"`
+    /// intent in parity with a pointer click. ARIA toggle buttons
+    /// accept both keys; pure ARIA checkboxes accept only Space —
+    /// `hello-toggle` is a toggle button so both land here.
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        if focused != Some(Self::tag()) {
+            return false;
+        }
+        if !matches!(key, "Space" | "Enter") {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        intro
+            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .is_ok()
+    }
+
     fn fmt_state_log(state: &(ToggleState, bool)) -> String {
         format!(
             "{} / {}",

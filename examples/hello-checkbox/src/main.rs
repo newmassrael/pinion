@@ -189,6 +189,30 @@ impl WidgetView for CheckboxView {
         }
     }
 
+    /// R51.55 §5.39 — ARIA Checkbox keyboard activation. Space on
+    /// the focused checkbox fires `KeyboardActivate`, which flips
+    /// the checked sidecar and emits the `"checked"` intent in
+    /// parity with a pointer click. Pure ARIA checkboxes accept
+    /// only Space (Enter is reserved for form submit in the broader
+    /// ARIA model) — Enter does not reach this hook.
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        if focused != Some(Self::tag()) {
+            return false;
+        }
+        if key != "Space" {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        intro
+            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .is_ok()
+    }
+
     fn fmt_state_log(state: &(CheckboxState, bool)) -> String {
         format!(
             "{} / {}",
