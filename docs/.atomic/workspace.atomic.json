@@ -538,6 +538,14 @@
         {
           "file": "crates/pinion-core/src/widgets/button.rs",
           "symbol": "ButtonStateSnapshot"
+        },
+        {
+          "file": "crates/pinion-core/src/external.rs",
+          "symbol": "External::wants_pointer_capture"
+        },
+        {
+          "file": "crates/pinion-core/src/external.rs",
+          "symbol": "External::pointer_move"
         }
       ],
       "decision_status": "active"
@@ -2362,6 +2370,28 @@
         {
           "language": "rust",
           "code": "// 위젯 카탈로그 (Slider) — 같은 primitive, 코드 0줄 (R47-class bug 재발 불가)\nfn view(state: &AppState, _frame: &Frame) -> Scene {\n    Scene::Container(ContainerNode::new(vec![\n        Scene::Container(ContainerNode::new(vec![/* slider visuals */])\n            .with_tag(\"volume_slider\")),  // ← 이게 전부\n        Scene::Container(ContainerNode::new(vec![/* button */])\n            .with_tag(\"save_btn\")),\n    ]))\n}\n\n// state scene\nlet state_scene = Scene::Container(ContainerNode::new(vec![\n    Scene::External(ExternalNode::new(SliderExternal::new()).with_tag(\"volume_slider\")),\n    Scene::External(ExternalNode::new(ButtonExternal::new()).with_tag(\"save_btn\")),\n]));\n\n// router 의 dispatch logic 은 단일 — 위젯 N개여도 코드 N배 안 됨\nrouter.cursor_moved(x, y, &mut state_scene);  // volume_slider vs save_btn 자동 선택\nrouter.pointer_down(&mut state_scene);\n"
+        }
+      ],
+      "implementations": [
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "InputRouter::captured_target"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "InputRouter::forward_pointer_move"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "rect_for_tag"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "normalize_cursor"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "widget_wants_capture"
         }
       ],
       "decision_status": "active"
@@ -5246,6 +5276,56 @@
         "Slider visual demo needs InputRouter PointerMove cursor-X forwarding + WidgetView drag-position / key-intervene hook — substrate gap surfaced when R51.33 path A was selected over Slider-first; next round candidate",
         "RadioGroup visual demo needs pinion-shell multi-External / multi-tag dispatch — single WidgetView::tag() insufficient for N siblings; substrate round candidate",
         "Tier-1 widget visual coverage now 4/6 (button / toggle / checkbox / radio); Slider + RadioGroup remain blocked on the two substrate gaps above"
+      ]
+    },
+    "R51.34": {
+      "decision_summary": "R51.34 §5.15 + §5.35 pointer-capture opt-in + pointer_move forward substrate for drag-aware widgets",
+      "changes_bullets": [
+        "pinion-core External trait: new default-false fn wants_pointer_capture and new default-noop fn pointer_move(x_rel, y_rel) under §5.15 item-5 input-forwarding policy; existing impls unaffected (Button / Toggle / Checkbox / Radio keep cancel-by-leave)",
+        "pinion-runtime InputRouter: new captured_target field + capture-mode branch in cursor_moved / cursor_left / pointer_up; pointer_down opt-in on wants_pointer_capture = true; forward_pointer_move method normalises cursor over the widget's post-layout rect",
+        "free helpers rect_for_tag / normalize_cursor / widget_wants_capture / widget_wants_capture_walk added; clippy::cast_possible_truncation + cast_precision_loss localised to normalize_cursor only",
+        "InputRouter::captured_target() accessor + DragCaptureExternal test fixture (wants_pointer_capture=true + pointer_move logging) + 8 new capture-lock unit tests + 2 new pinion-core stub trait tests",
+        "§5.15 += External::wants_pointer_capture + External::pointer_move; §5.35 += InputRouter::captured_target + InputRouter::forward_pointer_move + rect_for_tag + normalize_cursor + widget_wants_capture"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello = 0 errors",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict baseline preserved: forbid unsafe + deny warnings + clippy::pedantic deny)",
+        "cargo test --workspace --features pinion-runtime/vello = 1238 pass / 0 fail / 6 ignored (1226 + 12 new: 2 pinion-core stub trait + 10 InputRouter capture-lock)",
+        "regression coverage: button_like_widget_preserves_pre_r51_34_cancel_by_leave proves Button / Toggle / Checkbox / Radio UX unchanged with default wants_pointer_capture = false",
+        "mnemosyne validate_workspace pending after entry append — expect entries=179 / sections=55 / T1=0 / RT=1/1 / GENERATED.md=sync"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "R51.35 Slider visual demo can now consume this substrate: SliderExternal overrides wants_pointer_capture=true + pointer_move(x_rel, _) → set_value(x_rel.clamp(0.0, 1.0)) — mouse-drag UX with capture lock across stray paths",
+        "RadioGroup visual demo (R51.x) still blocked on the separate pinion-shell multi-External / multi-tag dispatch substrate (this round only addresses single-widget drag-forward)",
+        "captured_target is single-target v0; multi-touch / capture queue is a future axis (carry to a later substrate round when a real second use case surfaces)"
+      ],
+      "publishable_decision_summary": "R51.34 §5.15 + §5.35 pointer-capture opt-in + pointer_move forward substrate for drag-aware widgets",
+      "publishable_changes_bullets": [
+        "pinion-core External trait: new default-false fn wants_pointer_capture and new default-noop fn pointer_move(x_rel, y_rel) under §5.15 item-5 input-forwarding policy; existing impls unaffected (Button / Toggle / Checkbox / Radio keep cancel-by-leave)",
+        "pinion-runtime InputRouter: new captured_target field + capture-mode branch in cursor_moved / cursor_left / pointer_up; pointer_down opt-in on wants_pointer_capture = true; forward_pointer_move method normalises cursor over the widget's post-layout rect",
+        "free helpers rect_for_tag / normalize_cursor / widget_wants_capture / widget_wants_capture_walk added; clippy::cast_possible_truncation + cast_precision_loss localised to normalize_cursor only",
+        "InputRouter::captured_target() accessor + DragCaptureExternal test fixture (wants_pointer_capture=true + pointer_move logging) + 8 new capture-lock unit tests + 2 new pinion-core stub trait tests",
+        "§5.15 += External::wants_pointer_capture + External::pointer_move; §5.35 += InputRouter::captured_target + InputRouter::forward_pointer_move + rect_for_tag + normalize_cursor + widget_wants_capture"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello = 0 errors",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict baseline preserved: forbid unsafe + deny warnings + clippy::pedantic deny)",
+        "cargo test --workspace --features pinion-runtime/vello = 1238 pass / 0 fail / 6 ignored (1226 + 12 new: 2 pinion-core stub trait + 10 InputRouter capture-lock)",
+        "regression coverage: button_like_widget_preserves_pre_r51_34_cancel_by_leave proves Button / Toggle / Checkbox / Radio UX unchanged with default wants_pointer_capture = false",
+        "mnemosyne validate_workspace pending after entry append — expect entries=179 / sections=55 / T1=0 / RT=1/1 / GENERATED.md=sync"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.35 Slider visual demo can now consume this substrate: SliderExternal overrides wants_pointer_capture=true + pointer_move(x_rel, _) → set_value(x_rel.clamp(0.0, 1.0)) — mouse-drag UX with capture lock across stray paths",
+        "RadioGroup visual demo (R51.x) still blocked on the separate pinion-shell multi-External / multi-tag dispatch substrate (this round only addresses single-widget drag-forward)",
+        "captured_target is single-target v0; multi-touch / capture queue is a future axis (carry to a later substrate round when a real second use case surfaces)"
       ]
     },
     "Round 1": {

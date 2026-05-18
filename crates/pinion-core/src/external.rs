@@ -280,6 +280,46 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R51.34 §5.15 + §5.35 — pointer-capture opt-in. When `true`, the
+    /// framework's [`InputRouter`](crate#) keeps the cursor lock on
+    /// this widget across the `pointer_down` → `pointer_up` span
+    /// even when the cursor strays outside the widget rect (Material
+    /// / `SwiftUI` / Qt gesture-recognizer convention). Default
+    /// `false` preserves the pre-R51.34 cancel-by-leave behaviour
+    /// for button-like widgets (Button / Toggle / Checkbox / Radio):
+    /// if the cursor strays off the widget during press the SCXML
+    /// receives `PointerLeave` and the press cancels.
+    ///
+    /// Drag-aware widgets (Slider in R51.35, drag-to-resize, range
+    /// pickers) override to `true`. The router still dispatches
+    /// `PointerDown` / `PointerUp` symbolic events to the widget via
+    /// `ExternalIntrospect::invoke("send", ...)`; the difference is
+    /// purely in the cursor-leave handling.
+    fn wants_pointer_capture(&self) -> bool {
+        false
+    }
+
+    /// R51.34 §5.15 + §5.35 — pointer-move forward during drag. The
+    /// framework's [`InputRouter`](crate#) calls this whenever the
+    /// cursor moves while this widget holds capture (i.e. after a
+    /// `pointer_down` on a `wants_pointer_capture` = true widget and
+    /// before the matching `pointer_up`). `x_rel` / `y_rel` are
+    /// normalised over the widget's post-layout rect: `0.0` is the
+    /// left / top edge, `1.0` is the right / bottom edge.
+    ///
+    /// Coordinates may exceed `[0.0, 1.0]` (or be negative) when the
+    /// cursor strays outside the rect under capture lock — the
+    /// implementor decides whether to clamp (Slider does, since its
+    /// value is `0.0..=1.0` normalised) or extrapolate (a future
+    /// fling / overscroll gesture might not).
+    ///
+    /// Default no-op; widgets that need cursor-position state
+    /// override. Non-drag widgets must not override — capture-lock
+    /// without `pointer_move` is a valid stance (e.g. a future
+    /// long-press widget that only cares about the dwell time, not
+    /// the cursor X).
+    fn pointer_move(&mut self, _x_rel: f32, _y_rel: f32) {}
+
     // --- 6. DPI / resize notification ---
 
     fn on_dpi_change(&mut self, _scale: f32) {}
@@ -506,6 +546,22 @@ mod tests {
     fn stub_poll_state_is_none() {
         let mut stub = StubExternal::new();
         assert!(stub.poll_state().is_none());
+    }
+
+    #[test]
+    fn stub_does_not_want_pointer_capture() {
+        let stub = StubExternal::new();
+        assert!(!stub.wants_pointer_capture());
+    }
+
+    #[test]
+    fn stub_pointer_move_default_is_noop() {
+        let mut stub = StubExternal::new();
+        // Default impl drops both coords — exercising it is the
+        // assertion that the trait signature remains dyn-safe and
+        // the no-op body compiles for the StubExternal baseline.
+        stub.pointer_move(0.5, 0.5);
+        stub.pointer_move(-0.1, 1.3);
     }
 
     #[test]
