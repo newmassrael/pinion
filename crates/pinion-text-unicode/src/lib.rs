@@ -15,6 +15,13 @@
 //! assert_eq!(normalize("\u{FB01}",  NormForm::Nfkd), "fi");
 //! ```
 //!
+//! [`normalize`] returns `Cow<'a, str>`: already-normalized input is
+//! returned as `Cow::Borrowed` (zero allocation, validated by
+//! UAX #15 §5 Quick-check); only inputs that actually transform
+//! cost an allocation. Internally the composition stage runs in
+//! `O(n)` via a two-pointer in-place compact (R50.2.7 textbook
+//! debt repayment over the earlier `O(n²)` `Vec::remove` pattern).
+//!
 //! # Crate roadmap (§5.37.3)
 //!
 //! * R50.2.0 — atomic-only §5.37.3 ratify (spec round, no impl).
@@ -24,7 +31,8 @@
 //! * R50.2.4 — NFC algorithm (Canonical Composition).
 //! * R50.2.5 — NFKD / NFKC algorithms (Compatibility Decomposition).
 //! * R50.2.6 — `pub fn normalize` + `pub UCD_VERSION` re-export.
-//! * R50.2.7 — Quick-check optimization (UAX #15 §5).
+//! * R50.2.7 — Quick-check fast path + `O(n)` compose-write +
+//!   `Cow<str>` return type (3-debt repayment).
 //! * R50.2.X — `text/normalize` RPC method (§5.37.2 channel).
 
 /// UCD version pinned at build time (Unicode 16.0.0 = current).
@@ -64,6 +72,11 @@ pub enum NormForm {
 
 /// Normalize `s` to the requested Unicode normalization form.
 ///
+/// Returns `Cow::Borrowed(s)` when UAX #15 §5 Quick-check confirms
+/// the input is already in the requested form (zero-copy fast
+/// path); otherwise returns `Cow::Owned(...)` containing the
+/// normalized result.
+///
 /// The four supported forms are UAX #15 NFD, NFC, NFKD, and NFKC.
 /// Each is fully conformant against UCD 16.0.0's
 /// `NormalizationTest.txt` (~20000 invariant tuples) per the per-
@@ -85,14 +98,58 @@ pub enum NormForm {
 ///
 /// // Compatibility Composition: ligature ﬁ → "fi" (no recomposition).
 /// assert_eq!(normalize("\u{FB01}", NormForm::Nfkc), "fi");
+///
+/// // Already-normalized ASCII: zero-copy fast path.
+/// use std::borrow::Cow;
+/// assert!(matches!(
+///     normalize("hello", NormForm::Nfc),
+///     Cow::Borrowed("hello"),
+/// ));
 /// ```
 #[must_use]
-pub fn normalize(s: &str, form: NormForm) -> String {
+pub fn normalize(s: &str, form: NormForm) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
     match form {
-        NormForm::Nfc => nfc::nfc(s),
-        NormForm::Nfd => nfd::nfd(s),
-        NormForm::Nfkc => nfkc::nfkc(s),
-        NormForm::Nfkd => nfkd::nfkd(s),
+        NormForm::Nfc => {
+            if matches!(
+                quick_check::nfc_quick_check(s),
+                quick_check::QuickCheck::Yes
+            ) {
+                Cow::Borrowed(s)
+            } else {
+                Cow::Owned(nfc::nfc(s))
+            }
+        }
+        NormForm::Nfd => {
+            if matches!(
+                quick_check::nfd_quick_check(s),
+                quick_check::QuickCheck::Yes
+            ) {
+                Cow::Borrowed(s)
+            } else {
+                Cow::Owned(nfd::nfd(s))
+            }
+        }
+        NormForm::Nfkc => {
+            if matches!(
+                quick_check::nfkc_quick_check(s),
+                quick_check::QuickCheck::Yes
+            ) {
+                Cow::Borrowed(s)
+            } else {
+                Cow::Owned(nfkc::nfkc(s))
+            }
+        }
+        NormForm::Nfkd => {
+            if matches!(
+                quick_check::nfkd_quick_check(s),
+                quick_check::QuickCheck::Yes
+            ) {
+                Cow::Borrowed(s)
+            } else {
+                Cow::Owned(nfkd::nfkd(s))
+            }
+        }
     }
 }
 
@@ -113,6 +170,7 @@ mod hangul;
 mod decompose;
 mod ordering;
 mod composition;
+mod quick_check;
 mod nfc;
 mod nfd;
 mod nfkc;
@@ -153,6 +211,45 @@ mod tests {
     #[test]
     fn public_normalize_nfkc_strips_then_no_recompose() {
         assert_eq!(normalize("\u{00B2}", NormForm::Nfkc), "2");
+    }
+
+    #[test]
+    fn ascii_nfc_fast_path_returns_borrowed_pointer() {
+        use std::borrow::Cow;
+        let s = "the quick brown fox";
+        match normalize(s, NormForm::Nfc) {
+            Cow::Borrowed(b) => assert_eq!(b.as_ptr(), s.as_ptr()),
+            Cow::Owned(_) => {
+                panic!("ASCII NFC must take the Quick-check fast path")
+            }
+        }
+    }
+
+    #[test]
+    fn precomposed_nfc_fast_path_returns_borrowed_pointer() {
+        use std::borrow::Cow;
+        // À is already NFC — Quick-check must return Yes.
+        let s = "caf\u{00E9}";
+        match normalize(s, NormForm::Nfc) {
+            Cow::Borrowed(b) => assert_eq!(b.as_ptr(), s.as_ptr()),
+            Cow::Owned(_) => {
+                panic!("precomposed NFC must take the fast path")
+            }
+        }
+    }
+
+    #[test]
+    fn decomposed_nfc_takes_owned_path() {
+        use std::borrow::Cow;
+        // A + combining grave: Quick-check returns Maybe (grave is
+        // a maybe-composer), so the full pipeline runs.
+        let s = "A\u{0300}";
+        match normalize(s, NormForm::Nfc) {
+            Cow::Owned(o) => assert_eq!(o, "\u{00C0}"),
+            Cow::Borrowed(_) => {
+                panic!("decomposed input must take the Owned path")
+            }
+        }
     }
 
     #[test]

@@ -12,6 +12,14 @@
 //! no `CCC == 0` intermediates between two starters, so the check
 //! reduces to comparing `CCC(C)` against the maximum CCC observed
 //! since `L`.
+//!
+//! **Complexity**: `O(n)` — the implementation uses a `read` /
+//! `write` two-pointer in-place compact pattern. Consumed
+//! codepoints (those merged into a composite) are simply skipped
+//! by the read pointer; the write pointer trails behind, never
+//! emitting an array shift. The earlier `Vec::remove(i)` variant
+//! was `O(n²)` for long combining-mark runs (R50.2.7 textbook
+//! debt repayment).
 
 use crate::hangul::compose_hangul;
 use crate::ordering::combining_class;
@@ -31,46 +39,59 @@ fn compose_pair(a: u32, b: u32) -> Option<u32> {
         .map(|idx| PRIMARY_COMPOSITES[idx].1)
 }
 
-/// Apply the Canonical Composition Algorithm to `buf` in place. The
-/// input must already be in canonical decomposition + canonical
-/// ordering form (i.e. the output of [`crate::nfd::nfd`]'s pipeline
-/// up to but not including this stage).
+/// Apply the Canonical Composition Algorithm to `buf` in place.
+/// The input must already be in canonical decomposition +
+/// canonical ordering form (i.e. the output of
+/// [`crate::nfd::nfd`]'s pipeline up to but not including this
+/// stage). Runs in `O(n)`: a `read` cursor walks the buffer once
+/// while a `write` cursor trails — composed codepoints overwrite
+/// their starter in place, retained codepoints are copied down to
+/// the write position.
 pub(crate) fn canonical_composition(buf: &mut Vec<u32>) {
     if buf.is_empty() {
         return;
     }
 
-    // Find the first starter (CCC == 0). A composition base must be a
-    // starter; pre-leading non-starters are left untouched.
-    let mut starter_pos = 0;
-    while starter_pos < buf.len() && combining_class(buf[starter_pos]) != 0 {
-        starter_pos += 1;
+    // Leading non-starters (CCC > 0 before the first starter) are
+    // copied through untouched; composition starts from the first
+    // starter.
+    let mut first_starter = 0;
+    while first_starter < buf.len() && combining_class(buf[first_starter]) != 0
+    {
+        first_starter += 1;
     }
-    if starter_pos >= buf.len() {
-        return;
+    if first_starter >= buf.len() {
+        return; // All non-starters; nothing to compose.
     }
 
+    // `starter_pos` indexes the most recent starter in the output
+    // (the "compose-into" target). `read` walks input; `write`
+    // emits retained output. They start one past the first
+    // starter, which itself occupies `first_starter` in both.
+    let mut starter_pos = first_starter;
     let mut max_class_since_starter: u8 = 0;
     let mut has_intermediate = false;
-    let mut i = starter_pos + 1;
+    let mut read = first_starter + 1;
+    let mut write = first_starter + 1;
 
-    while i < buf.len() {
-        let c = buf[i];
+    while read < buf.len() {
+        let c = buf[read];
         let c_class = combining_class(c);
-        let composed = compose_pair(buf[starter_pos], c);
         let blocked =
             has_intermediate && max_class_since_starter >= c_class;
 
-        if let Some(p) = composed {
-            if !blocked {
+        if !blocked {
+            if let Some(p) = compose_pair(buf[starter_pos], c) {
                 buf[starter_pos] = p;
-                buf.remove(i);
+                read += 1; // consume c; `write` stays
                 continue;
             }
         }
 
         if c_class == 0 {
-            starter_pos = i;
+            // c becomes the new composition target. After we
+            // write it to `write`, that position is the starter.
+            starter_pos = write;
             max_class_since_starter = 0;
             has_intermediate = false;
         } else {
@@ -79,8 +100,11 @@ pub(crate) fn canonical_composition(buf: &mut Vec<u32>) {
                 max_class_since_starter = c_class;
             }
         }
-        i += 1;
+        buf[write] = c;
+        write += 1;
+        read += 1;
     }
+    buf.truncate(write);
 }
 
 #[cfg(test)]

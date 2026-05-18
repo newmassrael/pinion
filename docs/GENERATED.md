@@ -2467,6 +2467,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/nfkd.rs:nfkd
 - crates/pinion-text-unicode/src/nfkc.rs:nfkc
 - crates/pinion-text-unicode/src/lib.rs:normalize
+- crates/pinion-text-unicode/src/quick_check.rs:nfc_quick_check
 
 
 
@@ -7068,6 +7069,32 @@ router.pointer_down(&mut state_scene);
 - R50.2.7 Quick-check optimization (UAX #15 §5 QC tables + fast path)
 - R50.2.X text/normalize RPC method (§5.37.2 channel, pinion-rpc 측 wrap)
 - tables FULL_COMPOSITION_EXCLUSION allow(dead_code) — RPC introspect 시 해제
+
+
+
+### Round 477 — Round 477 — R50.2.7 §5.37.3 perf 부채 3종 상환 (Quick-check + compose-write O(n) + Cow API + static)
+
+**Changes**:
+- build.rs 4 QC table emit (NFC/NFD/NFKC/NFKD_QC) + 전체 table const→static migration
+- quick_check.rs 신설 + composition.rs read/write pointer O(n) refactor (Vec::remove O(n²) 제거)
+- normalize() -> Cow<'_, str> + Quick-check Yes 시 borrow fast path
+
+
+
+**Verification**:
+- cargo test -p pinion-text-unicode = 84 unit + 2 doctest pass (4 form sweep 유지)
+- cargo test --workspace --features pinion-runtime/vello = 941 pass (855 + 86)
+- cargo clippy -p pinion-text-unicode --all-targets = 0 warning (workspace baseline 유지)
+
+
+
+**Impact**: §5.37, §5.37.3
+
+
+**Carry forward**:
+- R50.2.X text/normalize RPC method (§5.37.2 channel)
+- 2-stage table 2-level lookup 가속 (high-byte index) — perf 부채 잔존
+- criterion bench harness (성능 회귀 가드)
 
 
 
