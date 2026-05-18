@@ -2742,6 +2742,69 @@
       ],
       "decision_status": "active"
     },
+    "5.37.3": {
+      "title": "Unicode self-hosted normalization — UAX #15 NFC/NFD/NFKC/NFKD (R50.2 sub-scope)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5.37",
+      "intent": "§5.37 text engine 의 Unicode codepoint normalization sub-scope — UAX #15 NFC/NFD/NFKC/NFKD 4 form 자체 구현. UCD decomposition + canonical combining class 직접 embed. 외부 lib 0.",
+      "rationale_bullets": [
+        "UAX #15 normalization = §5.37 text engine 의 input layer — BIDI/shape/break 모두 의존",
+        "4 form (NFC/NFD/NFKC/NFKD) self-hosted — unicode-normalization crate 의 black box 거부",
+        "UCD decomposition + canonical_combining_class table 직접 embed — 결정성 + introspect",
+        "Unicode 16.x version pin = deterministic + Hyrum's Law 정합 — ID stability",
+        "§5.37.1 parser 다음 layer (BIDI → shape → break) 의 codepoint 입력 정규화 stage"
+      ],
+      "inputs_bullets": [
+        "TextNode codepoint sequence (§5.37 input) — String 또는 Vec<char>",
+        "UCD 16.x: UnicodeData.txt + DerivedNormalizationProps.txt + CompositionExclusions.txt",
+        "UAX #15 algorithm spec (Canonical Decomposition + Canonical Composition + Quick-check)"
+      ],
+      "outputs_bullets": [
+        "pinion-text-unicode crate (또는 pinion-text/unicode/ module) — normalize() entry",
+        "embedded UCD table: decomposition / compatibility_decomposition / canonical_combining_class",
+        "normalize(codepoints, form: NormForm) -> Result<String, NormalizeError>",
+        "quick-check helper (UAX #15 §5) — already-normalized fast path",
+        "NormForm enum: NFC / NFD / NFKC / NFKD"
+      ],
+      "caveats_bullets": [
+        "R50.2.0 = spec round entry (atomic-only ratify). implementation = R50.2.1+ separate",
+        "UCD version pin = 16.x (현재 stable) — codegen 시 version 명시 + Hyrum's Law",
+        "impl sub-round: R50.2.1 table embed / R50.2.2 NFD / R50.2.3 NFC / R50.2.4 NFKD / R50.2.5 NFKC",
+        "pinion-text-unicode (별도 crate) vs pinion-text/unicode/ module 결정 = R50.2.1",
+        "UCD ~3MB raw → build.rs codegen 압축 권장 (~500KB 압축, 결정성 유지)",
+        "layer chain: §5.37.3 (Unicode) → BIDI (UAX #9) → shape → break (UAX #14) → positioning → raster",
+        "Quick-check optimization (UAX #15 §5) — already-normalized input 의 fast path",
+        "§5.37.2 RPC channel 의 text/normalize 후속 method 추가 가능 — AI introspect 정합"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "(a) unicode-normalization crate dep",
+          "reason": "black box, §5.37 외부 lib 0 정신 위반"
+        },
+        {
+          "alternative": "(b) ICU4C FFI",
+          "reason": "C 의존, pure Rust 정롬 이탈"
+        },
+        {
+          "alternative": "(c) NFC 만 구현 (다른 form skip)",
+          "reason": "incomplete, NFKD 필요 (fingerprint 계산)"
+        },
+        {
+          "alternative": "(d) UCD runtime download",
+          "reason": "startup 비결정성, build-time embed 정통"
+        },
+        {
+          "alternative": "(e) UCD 전체 raw embed (~3MB)",
+          "reason": "binary size, codegen 키 reduce 정통"
+        }
+      ],
+      "impact_scope": [
+        "5.37",
+        "5.37.1",
+        "5.37.2"
+      ],
+      "decision_status": "active"
+    },
     "5.4": {
       "title": "SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)",
       "parent_doc": "docs/GENERATED.md",
@@ -10120,6 +10183,72 @@
         "font_advance_width / left_side_bearing accessor RPC (hmtx 세분 access) — R50.X.4 후보",
         "concurrency stress test — multi-thread RwLock contention pattern (현재까지 single-thread test 만)",
         "InputRouter SCE migration (§2 invariant #5 부채 청산) carry 그대로"
+      ]
+    },
+    "Round 470 — R50.2.0 §5.37.3 신설 (Unicode UAX #15 normalization sub-scope ratify)": {
+      "decision_summary": "Round 470 — R50.2.0 §5.37.3 신설. §5.37 text engine 의 Unicode codepoint normalization sub-scope ratify — UAX #15 NFC/NFD/NFKC/NFKD 4 form 자체 구현. UCD decomposition + canonical combining class table 직접 embed. 외부 lib 0 (unicode-normalization / ICU FFI 모두 거부). §5.37 layer chain 의 input layer 위치 — §5.37.1 parser 결과를 받아 §5.37.4+ BIDI/shape 에게 정규화된 codepoint sequence 공급. Unicode 16.x version pin (Hyrum's Law 정합). atomic-only round — code 변경 0, implementation R50.2.1+ separate.",
+      "changes_bullets": [
+        "§5.37.3 신규 (parent §5.37). title 의 'Unicode self-hosted normalization — UAX #15 NFC/NFD/NFKC/NFKD (R50.2 sub-scope)'",
+        "intent (≤ 200 char): §5.37 의 Unicode codepoint normalization sub-scope, UAX #15 4 form, UCD direct embed, 외부 lib 0",
+        "rationale 5 bullet: UAX #15 input layer / 4 form self-hosted / UCD embed / Unicode 16.x version pin / layer chain",
+        "inputs 3 bullet: TextNode codepoint / UCD 16.x table source / UAX #15 algorithm spec",
+        "outputs 5 bullet: pinion-text-unicode crate / UCD embedded table / normalize() entry / quick-check helper / NormForm enum",
+        "alternatives 5 rejected: unicode-normalization dep / ICU4C FFI / NFC 만 / runtime UCD download / raw 3MB embed",
+        "impact_scope: §5.37 / §5.37.1 / §5.37.2 — parent + parser dep + RPC channel 정합",
+        "caveat 8 bullet: spec entry / UCD 16.x pin / impl sub-round / crate vs module / codegen 압축 / layer chain / quick-check / RPC text/normalize 후보"
+      ],
+      "verification_bullets": [
+        "atomic mutation chain: add_section + intent (재제 1회 210→195 char) + rationale + inputs + outputs (재제 1회 101→98 char) + alternatives + impact_scope + 8 caveat",
+        "validate_workspace: entries 124→125 / sections 49→50 / T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync",
+        "code 변경 0 — cargo test 855 / clippy baseline (pinion-core 5+1 / pinion-runtime 1 / pinion-rpc 0) 유지",
+        "§5.37.2 caveat #8 forward-compat anchor (Unicode/BIDI sibling sub-scope) 가 §5.37.3 신규로 구체화"
+      ],
+      "impact_refs": [
+        "5.37.3",
+        "5.37",
+        "5.37.1",
+        "5.37.2"
+      ],
+      "carry_forward_bullets": [
+        "R50.2.1: UCD 16.x table embed (decomposition + canonical_combining_class + compatibility_decomposition) 설계 + build.rs codegen 결정",
+        "R50.2.1: pinion-text-unicode crate vs pinion-text/unicode/ module 결정 — 별도 crate (separation of concerns) 후보",
+        "R50.2.2: NFD (canonical decomposition) algorithm + canonical reordering",
+        "R50.2.3: NFC (canonical composition) algorithm + composition exclusion table",
+        "R50.2.4 + R50.2.5: NFKD + NFKC (compatibility) 후속",
+        "R50.2.6: Quick-check optimization (already-normalized fast path)",
+        "§5.37.2 RPC channel 에 text/normalize method 추가 — R50.2.X RPC channel (별도 round)"
+      ],
+      "publishable_decision_summary": "Round 470 — R50.2.0 §5.37.3 신설. §5.37 text engine 의 Unicode codepoint normalization sub-scope ratify — UAX #15 NFC/NFD/NFKC/NFKD 4 form 자체 구현. UCD decomposition + canonical combining class table 직접 embed. 외부 lib 0 (unicode-normalization / ICU FFI 모두 거부). §5.37 layer chain 의 input layer 위치 — §5.37.1 parser 결과를 받아 §5.37.4+ BIDI/shape 에게 정규화된 codepoint sequence 공급. Unicode 16.x version pin (Hyrum's Law 정합). atomic-only round — code 변경 0, implementation R50.2.1+ separate.",
+      "publishable_changes_bullets": [
+        "§5.37.3 신규 (parent §5.37). title 의 'Unicode self-hosted normalization — UAX #15 NFC/NFD/NFKC/NFKD (R50.2 sub-scope)'",
+        "intent (≤ 200 char): §5.37 의 Unicode codepoint normalization sub-scope, UAX #15 4 form, UCD direct embed, 외부 lib 0",
+        "rationale 5 bullet: UAX #15 input layer / 4 form self-hosted / UCD embed / Unicode 16.x version pin / layer chain",
+        "inputs 3 bullet: TextNode codepoint / UCD 16.x table source / UAX #15 algorithm spec",
+        "outputs 5 bullet: pinion-text-unicode crate / UCD embedded table / normalize() entry / quick-check helper / NormForm enum",
+        "alternatives 5 rejected: unicode-normalization dep / ICU4C FFI / NFC 만 / runtime UCD download / raw 3MB embed",
+        "impact_scope: §5.37 / §5.37.1 / §5.37.2 — parent + parser dep + RPC channel 정합",
+        "caveat 8 bullet: spec entry / UCD 16.x pin / impl sub-round / crate vs module / codegen 압축 / layer chain / quick-check / RPC text/normalize 후보"
+      ],
+      "publishable_verification_bullets": [
+        "atomic mutation chain: add_section + intent (재제 1회 210→195 char) + rationale + inputs + outputs (재제 1회 101→98 char) + alternatives + impact_scope + 8 caveat",
+        "validate_workspace: entries 124→125 / sections 49→50 / T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync",
+        "code 변경 0 — cargo test 855 / clippy baseline (pinion-core 5+1 / pinion-runtime 1 / pinion-rpc 0) 유지",
+        "§5.37.2 caveat #8 forward-compat anchor (Unicode/BIDI sibling sub-scope) 가 §5.37.3 신규로 구체화"
+      ],
+      "publishable_impact_refs": [
+        "5.37.3",
+        "5.37",
+        "5.37.1",
+        "5.37.2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R50.2.1: UCD 16.x table embed (decomposition + canonical_combining_class + compatibility_decomposition) 설계 + build.rs codegen 결정",
+        "R50.2.1: pinion-text-unicode crate vs pinion-text/unicode/ module 결정 — 별도 crate (separation of concerns) 후보",
+        "R50.2.2: NFD (canonical decomposition) algorithm + canonical reordering",
+        "R50.2.3: NFC (canonical composition) algorithm + composition exclusion table",
+        "R50.2.4 + R50.2.5: NFKD + NFKC (compatibility) 후속",
+        "R50.2.6: Quick-check optimization (already-normalized fast path)",
+        "§5.37.2 RPC channel 에 text/normalize method 추가 — R50.2.X RPC channel (별도 round)"
       ]
     },
     "Round 5": {
