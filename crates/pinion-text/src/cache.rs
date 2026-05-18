@@ -112,9 +112,21 @@ impl LayoutCache {
     }
 
     fn shape(&mut self, text: &str, style: &TextStyle, max_width: Option<u32>) -> Layout {
+        // R51.31 §5.37.4 — UAX #9 L4 mirroring is applied here, at the
+        // cache boundary, so paint_adapter sees `cache.layout(raw)` and
+        // the single LRU entry covers both the mirror substitution and
+        // the parley shape pass. `mirror_paired_brackets` short-circuits
+        // to `Cow::Borrowed` for LTR / bracket-free content (the common
+        // case for static UI labels), so the integration is allocation-
+        // free on the hot path. Pre-R51.31 the call lived in
+        // `paint_adapter::paint_text` and ran per-frame even on shape
+        // cache hits; folding it in here lets a cache hit skip both
+        // the BIDI pipeline and the shape engine.
+        let mirrored = pinion_text_unicode::bidi::mirror_paired_brackets(text);
+        let shape_input = mirrored.as_ref();
         let mut builder = self
             .layout_cx
-            .ranged_builder(&mut self.font_cx, text, 1.0, true);
+            .ranged_builder(&mut self.font_cx, shape_input, 1.0, true);
         // u32 → f32: font_size_px fits f32 mantissa losslessly up to
         // 2^24 px, which is far beyond any realistic UI font size.
         #[allow(
@@ -157,7 +169,7 @@ impl LayoutCache {
                 families,
             ))));
         }
-        let mut layout = builder.build(text);
+        let mut layout = builder.build(shape_input);
         #[allow(
             clippy::cast_precision_loss,
             reason = "max_width <= 2^24 px in practice"

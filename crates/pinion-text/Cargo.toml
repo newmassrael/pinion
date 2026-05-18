@@ -8,6 +8,14 @@ authors.workspace = true
 
 [dependencies]
 pinion-core = { path = "../pinion-core" }
+# §5.37.4 R51.31 — UAX #9 BIDI substrate for the L4 mirroring pass.
+# `LayoutCache::shape` calls `mirror_paired_brackets` on the raw text
+# before handing it to parley so the cache key (raw text) maps to a
+# Layout whose shape input is the post-mirror string. Single-cache
+# lookup covers mirror + shape; paint_adapter sees `cache.layout(raw)`
+# and never invokes the BIDI helper directly. `Cow::Borrowed` fast
+# path keeps LTR / bracket-free content allocation-free.
+pinion-text-unicode = { path = "../pinion-text-unicode" }
 parley = { workspace = true }
 swash = { workspace = true }
 lru = { workspace = true }

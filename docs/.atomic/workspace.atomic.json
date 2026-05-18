@@ -13102,6 +13102,56 @@
         "pinion-shell follow-up: doc-tested example builds via `cargo test --doc -p pinion-shell` (today the //! example is `rust,ignore` — a tested smoke would lock the macro + run signature against accidental SemVer breaks)"
       ]
     },
+    "Round 520 — R51.31 §5.36 + §5.37.4 BIDI L4 mirroring substrate move into LayoutCache": {
+      "decision_summary": "Move `mirror_paired_brackets` invocation from `paint_adapter::paint_text` into `pinion_text::LayoutCache::shape` so a single LRU lookup (keyed on raw `TextNode.content`) covers both the BIDI L4 mirror substitution and the parley shape pass; paint_adapter sees `cache.layout(&t.content, ...)` and never touches the BIDI helper directly. Static UI labels skip the mirror recomputation entirely on steady-state frames; pinion-runtime sheds its direct `pinion-text-unicode` dep.",
+      "changes_bullets": [
+        "crates/pinion-text/Cargo.toml: add pinion-text-unicode dep (LayoutCache needs the BIDI helper now)",
+        "crates/pinion-text/src/cache.rs::shape: call mirror_paired_brackets(text) at the top, pass the Cow result to ranged_builder + builder.build; Cow::Borrowed fast path for LTR/bracket-free content keeps the integration allocation-free on the hot path",
+        "crates/pinion-runtime/Cargo.toml: drop pinion-text-unicode dep (no longer directly used; transitively pulled via pinion-text)",
+        "crates/pinion-runtime/src/paint_adapter.rs::paint_text: drop explicit `let mirrored = mirror_paired_brackets(&t.content); cache.layout(mirrored.as_ref(), ...)` -> `cache.layout(&t.content, ...)`. Comment updated to point at LayoutCache as the new mirror integration site"
+      ],
+      "verification_bullets": [
+        "cargo build --workspace --features pinion-runtime/vello: ok",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (forbid unsafe / deny warnings / clippy::pedantic deny strict baseline preserved)",
+        "cargo test --workspace --features pinion-runtime/vello: 1226 passed; 0 failed; 6 ignored (unchanged from R51.30 — pure refactor; existing LayoutCache tests cover key-by-raw-text invariant; existing mirror_paired_brackets conformance sweeps cover algorithm correctness)",
+        "cache-hit behaviour: LayoutKey continues to hash raw text (no schema change); cache hit now amortizes both BIDI helper + parley shape, where pre-R51.31 the BIDI helper recomputed even on cache hit"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.37.4"
+      ],
+      "carry_forward_bullets": [
+        "L4 alternative impl RFC: render-time GlyphRun.is_rtl substitute vs pre-substitute (R51.27 / R51.31) — the LayoutCache integration locks the pre-substitute path; an alt that operates on parley GlyphRun.is_rtl would now require unwinding the cache layer too",
+        "Phase 2 axis ratify per R41 §5.16 4-phase plan",
+        "derive macro WidgetTransition partial — evaluated this session as premature at N=6 widgets (~5 LOC saved per widget vs ~150 LOC proc-macro infra); revisit at N=15+ widgets",
+        "pinion-shell doc-tested example smoke (R51.30 carry)",
+        "pinion-shell extension to cover ai-introspect-demo's multi-control single-canonical-scene pattern (overlays + previews + Character keybindings like R/P/A/C/L)"
+      ],
+      "publishable_decision_summary": "Move `mirror_paired_brackets` invocation from `paint_adapter::paint_text` into `pinion_text::LayoutCache::shape` so a single LRU lookup (keyed on raw `TextNode.content`) covers both the BIDI L4 mirror substitution and the parley shape pass; paint_adapter sees `cache.layout(&t.content, ...)` and never touches the BIDI helper directly. Static UI labels skip the mirror recomputation entirely on steady-state frames; pinion-runtime sheds its direct `pinion-text-unicode` dep.",
+      "publishable_changes_bullets": [
+        "crates/pinion-text/Cargo.toml: add pinion-text-unicode dep (LayoutCache needs the BIDI helper now)",
+        "crates/pinion-text/src/cache.rs::shape: call mirror_paired_brackets(text) at the top, pass the Cow result to ranged_builder + builder.build; Cow::Borrowed fast path for LTR/bracket-free content keeps the integration allocation-free on the hot path",
+        "crates/pinion-runtime/Cargo.toml: drop pinion-text-unicode dep (no longer directly used; transitively pulled via pinion-text)",
+        "crates/pinion-runtime/src/paint_adapter.rs::paint_text: drop explicit `let mirrored = mirror_paired_brackets(&t.content); cache.layout(mirrored.as_ref(), ...)` -> `cache.layout(&t.content, ...)`. Comment updated to point at LayoutCache as the new mirror integration site"
+      ],
+      "publishable_verification_bullets": [
+        "cargo build --workspace --features pinion-runtime/vello: ok",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (forbid unsafe / deny warnings / clippy::pedantic deny strict baseline preserved)",
+        "cargo test --workspace --features pinion-runtime/vello: 1226 passed; 0 failed; 6 ignored (unchanged from R51.30 — pure refactor; existing LayoutCache tests cover key-by-raw-text invariant; existing mirror_paired_brackets conformance sweeps cover algorithm correctness)",
+        "cache-hit behaviour: LayoutKey continues to hash raw text (no schema change); cache hit now amortizes both BIDI helper + parley shape, where pre-R51.31 the BIDI helper recomputed even on cache hit"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.37.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "L4 alternative impl RFC: render-time GlyphRun.is_rtl substitute vs pre-substitute (R51.27 / R51.31) — the LayoutCache integration locks the pre-substitute path; an alt that operates on parley GlyphRun.is_rtl would now require unwinding the cache layer too",
+        "Phase 2 axis ratify per R41 §5.16 4-phase plan",
+        "derive macro WidgetTransition partial — evaluated this session as premature at N=6 widgets (~5 LOC saved per widget vs ~150 LOC proc-macro infra); revisit at N=15+ widgets",
+        "pinion-shell doc-tested example smoke (R51.30 carry)",
+        "pinion-shell extension to cover ai-introspect-demo's multi-control single-canonical-scene pattern (overlays + previews + Character keybindings like R/P/A/C/L)"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

@@ -2062,7 +2062,6 @@ version = "0.0.1"
 dependencies = [
  "pinion-core",
  "pinion-text",
- "pinion-text-unicode",
  "taffy",
  "vello",
 ]
@@ -2087,6 +2086,7 @@ dependencies = [
  "lru",
  "parley",
  "pinion-core",
+ "pinion-text-unicode",
  "swash",
 ]
 

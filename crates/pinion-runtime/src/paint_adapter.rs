@@ -199,16 +199,15 @@ fn paint_text(out: &mut VelloScene, t: &TextNode, cache: &mut LayoutCache) {
     if t.content.is_empty() {
         return;
     }
-    // R51.27 §5.37.4 — UAX #9 L4 mirroring. Substitute paired bracket
-    // codepoints at an odd resolved embedding level with their
-    // `Bidi_Mirroring_Glyph` before parley shapes the text, so the
-    // shape engine sees the visually-correct glyph identity. The
-    // helper is `Cow::Borrowed` fast-pathed for the common
-    // LTR / bracket-free case; only inputs that actually need
-    // mirroring allocate.
-    let mirrored = pinion_text_unicode::bidi::mirror_paired_brackets(&t.content);
+    // R51.27 §5.37.4 — UAX #9 L4 mirroring is applied inside
+    // `LayoutCache::shape` (R51.31 substrate move). paint_adapter
+    // passes the raw `TextNode.content` and the cache key (raw text)
+    // maps to a Layout whose shape input is the post-mirror string —
+    // single LRU lookup covers both the BIDI helper and the parley
+    // shape pass, so static labels skip mirror recomputation entirely
+    // on steady-state frames.
     let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
-    let layout = cache.layout(mirrored.as_ref(), &t.style, max_width);
+    let layout = cache.layout(&t.content, &t.style, max_width);
     let transform = Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
     // R47.6 — Clip + Ellipsis (silent fallback to Clip until R47.x
     // ellipsis pass) wrap the emit in a Vello clip layer keyed to
