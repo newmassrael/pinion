@@ -4019,4 +4019,97 @@ mod tests {
             .to_owned();
         assert_eq!(text, "hello");
     }
+
+    // ---- R51.8 §5.38 — Toggle widget e2e through JSON-RPC envelope ----
+    //
+    // Mirrors the ButtonExternal R12 e2e suite above for the R51.2
+    // Toggle widget. Validates the full §5.15 8-item contract over
+    // the wire (`scene/query` state+value, `scene/rewind` value
+    // intervene, `scene/invoke` send action, `scene/intents` drain)
+    // plus the R51.4 IntentEmitter integration: a complete activate
+    // cycle queues exactly one `"toggle"` intent with the new bool
+    // value as `IntrospectValue::Bool` payload.
+
+    #[test]
+    fn scene_query_on_toggle_external_returns_initial_state_and_value() {
+        use pinion_core::widgets::toggle::ToggleExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ToggleExternal::new())));
+        let req_state = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_state).unwrap());
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains("Idle"), "got {s}");
+
+        let req_value = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":2}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_value).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("false"), "got {v}");
+    }
+
+    #[test]
+    fn scene_rewind_on_toggle_external_sets_value_without_intent() {
+        use pinion_core::widgets::toggle::ToggleExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ToggleExternal::new())));
+        let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/value","value":true},"id":10}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
+        assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":11}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("true"), "got {v}");
+
+        // intervene-set must NOT fire a `"toggle"` intent — only
+        // activate transitions do. Confirms the §5.20 channel stays
+        // discriminating: model-driven sets cannot accidentally
+        // forge user activate signals.
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":12}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert!(arr.is_empty(), "intervene must not queue intents");
+    }
+
+    #[test]
+    fn scene_invoke_on_toggle_external_drives_transition() {
+        use pinion_core::widgets::toggle::ToggleExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ToggleExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"PointerEnter"},"id":20}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "invoke error: {:?}", resp.error);
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains("Hover"), "got {s}");
+    }
+
+    #[test]
+    fn scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent() {
+        use pinion_core::widgets::toggle::ToggleExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(ToggleExternal::new())));
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"{ev}"}},"id":30}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "invoke {ev} error: {:?}", resp.error);
+        }
+
+        // Drain intents — full activate cycle should produce
+        // exactly one "toggle" intent carrying the flipped value.
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":31}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert_eq!(arr.len(), 1, "expected exactly one toggle intent");
+        let entry = arr[0].as_object().unwrap();
+        // §5.20 R22: widget emits only the kind; runtime walk
+        // prefixes ExternalNode.tag if any. Bare ExternalNode here
+        // has no tag, so the wire form is just "toggle".
+        assert_eq!(entry.get("tag").and_then(Value::as_str), Some("toggle"));
+        assert_eq!(entry.get("payload"), Some(&Value::Bool(true)));
+
+        // Final state observation through the same envelope.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":32}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("true"), "value after activate should be true: {v}");
+    }
 }

@@ -423,6 +423,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - crates/pinion-core/src/scene.rs:TextNode::line_count
 - crates/pinion-runtime/src/layout.rs:compute_layout::text_lines
 - examples/hello-button/src/main.rs:App::resumed::request_redraw
+- crates/pinion-rpc/src/dispatch.rs:tests::scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent
 
 
 
@@ -7753,6 +7754,25 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.20
+
+
+
+### Round 497 — R51.8 §5.38/§5.12 Toggle e2e RPC dispatch — wire-form 검증 — ToggleExternal R51.2 widget 의 §5.15 8-item contract 를 JSON-RPC envelope 통해 wire-form 검증: scene/query (state+value), scene/rewind (value intervene), scene/invoke (send action), scene/intents (drain) 4 path. full activate cycle 시 "toggle" intent + bool(true) payload 정확 emit. ButtonExternal R12 e2e suite mirror. visual demo 는 별도 carry (hello-toggle binary, 큰 작업).
+
+**Changes**:
+- pinion-rpc/src/dispatch.rs inline tests +4: scene_query_on_toggle_external + scene_rewind_on_toggle_external (인텐트 silent) + scene_invoke_on_toggle_external + scene_invoke_full_cycle (toggle intent + Bool(true))
+- atomic add_section_implementation §5.12 — dispatch.rs:tests Toggle e2e binding
+
+
+
+**Verification**:
+- cargo test 1027 → 1031 pass (+4 toggle e2e)
+- cargo clippy 0 warning
+- wire-form contract validation: intervene-set 이 "toggle" intent 을 forge 하지 않음 (사용자 activate 와 model write 채널 분리 유지)
+
+
+
+**Impact**: §5.38, §5.12, §5.15, §5.20
 
 
 
