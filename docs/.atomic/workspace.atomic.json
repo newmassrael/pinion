@@ -3082,6 +3082,18 @@
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
           "symbol": "resolve_weak_types"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/bidi.rs",
+          "symbol": "paired_bracket"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/bidi.rs",
+          "symbol": "BracketType"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "parse_bidi_brackets"
         }
       ],
       "decision_status": "active"
@@ -12421,6 +12433,54 @@
         "BIDI I-rules + L-rules 그 다음 장 — 레벨 재조정 (I1/I2) + level run reorder (L1-L4)",
         "BidiTest.txt 수십만 vector conformance applied subset 머지마지 장 (W/N 완료 후)",
         "derive macro for WidgetTransition (별도 라운드) / hello-toggle visual demo / serde Option<Value> JSON null RFC — BIDI 완성 후 돌아볼 부채"
+      ]
+    },
+    "Round 509 — R51.20 §5.37.4 BD16 paired bracket substrate (UCD BidiBrackets.txt)": {
+      "decision_summary": "UCD 16.0 BidiBrackets.txt 적재 + build.rs codegen + paired_bracket(cp) public lookup + BracketType enum — R51.21 N0 rule의 foundation; 64 bracket pairs (128 entries) sorted binary-search 가능",
+      "changes_bullets": [
+        "crates/pinion-text-unicode/ucd/BidiBrackets.txt: UCD 16.0.0 적재 (128 entries / 64 pairs, Date 2024-02-02)",
+        "crates/pinion-text-unicode/build.rs: parse_bidi_brackets (BPT_o/BPT_c discrimination + cp-sorted) + emit_bidi_tables 시그니쳐 확장 (두 번째 table BIDI_BRACKET_PAIRS 추가, 기존 BIDI_CLASS_RANGES 병존)",
+        "crates/pinion-text-unicode/src/bidi.rs: BracketType { Open, Close } pub enum + paired_bracket(cp: char) -> Option<(char, BracketType)> binary-search lookup, # Panics doc-section (codegen invariant)",
+        "external lib 0 유지 — std + alloc 만 의존; binary_search over &[(u32, u32, u8)] table"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1164 pass (+7 from 1157 — BD16)",
+        "pinion-text-unicode: 184 tests pass (+7 BD16: ASCII () [] {} pair / 4 round-trip / non-bracket / Tibetan + math BMP)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline 유지)",
+        "round-trip invariant test: paired_bracket(matching) 은 원본 코드포인트 + 반대 kind 돌려줌 (BMP sweep '(', '[', '{', U+0F3A Tibetan, U+27E6 수학, U+2983 dotted curly bracket 교차)",
+        "UCD format 검증: line parser '#' comment skip / 3-column split / o|c|n discrimination (n is no-op continue) / hex 16 구분"
+      ],
+      "impact_refs": [
+        "5.37.4"
+      ],
+      "carry_forward_bullets": [
+        "R51.x 다음 후보: R51.21 N0 rule (UAX #9 §3.3.4) — isolating run sequence 단위로 bracket pair (BD16) matching stack + enclosed-strong scan + sos-context-fallback direction 항을 적용; paired_bracket 을 substrate 로 사용",
+        "R51.22 N1 + N2 — N0 그림 후 neutral resolution (neutral between strong→surrounding, residual→sos-equivalent direction)",
+        "BIDI I-rules + L-rules 그 다음 장 — 레벨 재조정 (I1/I2) + level run reorder (L1-L4)",
+        "BD16 N0 stack max-depth 63 이 UAX #9 명시 — R51.21 에서 overflow case 처리"
+      ],
+      "publishable_decision_summary": "UCD 16.0 BidiBrackets.txt 적재 + build.rs codegen + paired_bracket(cp) public lookup + BracketType enum — R51.21 N0 rule의 foundation; 64 bracket pairs (128 entries) sorted binary-search 가능",
+      "publishable_changes_bullets": [
+        "crates/pinion-text-unicode/ucd/BidiBrackets.txt: UCD 16.0.0 적재 (128 entries / 64 pairs, Date 2024-02-02)",
+        "crates/pinion-text-unicode/build.rs: parse_bidi_brackets (BPT_o/BPT_c discrimination + cp-sorted) + emit_bidi_tables 시그니쳐 확장 (두 번째 table BIDI_BRACKET_PAIRS 추가, 기존 BIDI_CLASS_RANGES 병존)",
+        "crates/pinion-text-unicode/src/bidi.rs: BracketType { Open, Close } pub enum + paired_bracket(cp: char) -> Option<(char, BracketType)> binary-search lookup, # Panics doc-section (codegen invariant)",
+        "external lib 0 유지 — std + alloc 만 의존; binary_search over &[(u32, u32, u8)] table"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1164 pass (+7 from 1157 — BD16)",
+        "pinion-text-unicode: 184 tests pass (+7 BD16: ASCII () [] {} pair / 4 round-trip / non-bracket / Tibetan + math BMP)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline 유지)",
+        "round-trip invariant test: paired_bracket(matching) 은 원본 코드포인트 + 반대 kind 돌려줌 (BMP sweep '(', '[', '{', U+0F3A Tibetan, U+27E6 수학, U+2983 dotted curly bracket 교차)",
+        "UCD format 검증: line parser '#' comment skip / 3-column split / o|c|n discrimination (n is no-op continue) / hex 16 구분"
+      ],
+      "publishable_impact_refs": [
+        "5.37.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.x 다음 후보: R51.21 N0 rule (UAX #9 §3.3.4) — isolating run sequence 단위로 bracket pair (BD16) matching stack + enclosed-strong scan + sos-context-fallback direction 항을 적용; paired_bracket 을 substrate 로 사용",
+        "R51.22 N1 + N2 — N0 그림 후 neutral resolution (neutral between strong→surrounding, residual→sos-equivalent direction)",
+        "BIDI I-rules + L-rules 그 다음 장 — 레벨 재조정 (I1/I2) + level run reorder (L1-L4)",
+        "BD16 N0 stack max-depth 63 이 UAX #9 명시 — R51.21 에서 overflow case 처리"
       ]
     },
     "Round 6": {

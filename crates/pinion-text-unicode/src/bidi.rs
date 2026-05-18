@@ -177,6 +177,71 @@ pub fn bidi_class(cp: char) -> BidiClass {
 }
 
 // ======================================================================
+// R51.20 §5.37.4 — BD16 paired bracket substrate (UCD `BidiBrackets.txt`)
+// ======================================================================
+//
+// The N0 rule (UAX #9 §3.3.4) operates on *paired brackets* — pairs
+// of opening / closing brackets whose enclosed strong-type evidence
+// determines the bracket pair's resolved direction. The matching
+// pair table is published by Unicode as `BidiBrackets.txt` (UCD
+// 16.0.0, 64 pairs / 128 entries). This slice lands the codepoint →
+// matching codepoint + Open/Close kind lookup; the N0 rule itself
+// follows in R51.21.
+
+/// `Bidi_Paired_Bracket_Type` (UAX #9 BD16). `Open` corresponds to
+/// the UCD `o` value (an opening bracket whose `Bidi_Paired_Bracket`
+/// points to the matching close); `Close` is the inverse. Codepoints
+/// outside the published bracket pair list have neither type and are
+/// reported as `None` by [`paired_bracket`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BracketType {
+    /// `BPT_o` — opening bracket. The matching codepoint reported by
+    /// [`paired_bracket`] is the corresponding closing bracket.
+    Open,
+    /// `BPT_c` — closing bracket. The matching codepoint reported by
+    /// [`paired_bracket`] is the corresponding opening bracket.
+    Close,
+}
+
+/// UAX #9 BD16 lookup — given a codepoint, return its matching
+/// bracket and the kind (Open or Close) when the codepoint is a
+/// paired bracket. Codepoints not present in `BidiBrackets.txt`
+/// return `None`.
+///
+/// The matching codepoint is the other half of the bracket pair (so
+/// `paired_bracket('(') = Some((')', Open))` and conversely
+/// `paired_bracket(')') = Some(('(', Close))`). For non-BMP brackets
+/// the matching value is decoded via [`char::from_u32`]; UCD entries
+/// are guaranteed valid scalar values.
+///
+/// # Panics
+///
+/// Panics if the codegen layer emits a bracket pair with an invalid
+/// matching codepoint or an unknown `Bidi_Paired_Bracket_Type`
+/// discriminant — both are build-time invariants asserted by
+/// [`crate::bidi::tests::bd16_round_trip_invariant`] and the
+/// `parse_bidi_brackets` codegen, so a panic here indicates a
+/// generator / UCD version skew.
+#[must_use]
+pub fn paired_bracket(cp: char) -> Option<(char, BracketType)> {
+    let key = cp as u32;
+    let pairs = tables::BIDI_BRACKET_PAIRS;
+    let idx = pairs.binary_search_by_key(&key, |&(k, _, _)| k).ok()?;
+    let (_, matching, kind) = pairs[idx];
+    let matching_char = char::from_u32(matching)
+        .expect("BidiBrackets.txt entries are valid scalar values");
+    let bt = match kind {
+        0 => BracketType::Open,
+        1 => BracketType::Close,
+        other => unreachable!(
+            "unexpected Bidi_Paired_Bracket_Type discriminant {other} \
+             — build.rs invariant violated"
+        ),
+    };
+    Some((matching_char, bt))
+}
+
+// ======================================================================
 // R51.17 §5.37.4 — P-rules (UAX #9 §3.3.1 paragraph level resolution)
 // ======================================================================
 //
@@ -1868,5 +1933,83 @@ mod tests {
         //  - Final: [R, AN].
         let out = resolve_pipeline("ا5", 1);
         assert_eq!(out.classes, vec![BidiClass::R, BidiClass::AN]);
+    }
+
+    // ---- R51.20 §5.37.4 — BD16 paired bracket lookup ----
+
+    #[test]
+    fn bd16_ascii_parenthesis_pair() {
+        assert_eq!(paired_bracket('('), Some((')', BracketType::Open)));
+        assert_eq!(paired_bracket(')'), Some(('(', BracketType::Close)));
+    }
+
+    #[test]
+    fn bd16_ascii_square_bracket_pair() {
+        assert_eq!(paired_bracket('['), Some((']', BracketType::Open)));
+        assert_eq!(paired_bracket(']'), Some(('[', BracketType::Close)));
+    }
+
+    #[test]
+    fn bd16_ascii_curly_brace_pair() {
+        assert_eq!(paired_bracket('{'), Some(('}', BracketType::Open)));
+        assert_eq!(paired_bracket('}'), Some(('{', BracketType::Close)));
+    }
+
+    #[test]
+    fn bd16_letter_is_not_a_paired_bracket() {
+        assert_eq!(paired_bracket('a'), None);
+        assert_eq!(paired_bracket('Z'), None);
+        assert_eq!(paired_bracket('5'), None);
+        assert_eq!(paired_bracket('א'), None);
+    }
+
+    #[test]
+    fn bd16_mathematical_bracket_pair() {
+        // U+27E6 MATHEMATICAL LEFT WHITE SQUARE BRACKET / U+27E7
+        // matching close. Confirms non-Latin BMP brackets are
+        // looked up correctly.
+        assert_eq!(
+            paired_bracket('\u{27E6}'),
+            Some(('\u{27E7}', BracketType::Open)),
+        );
+        assert_eq!(
+            paired_bracket('\u{27E7}'),
+            Some(('\u{27E6}', BracketType::Close)),
+        );
+        // U+2030 PER MILLE SIGN — in the U+2000 punctuation range
+        // but not a paired bracket. Verifies the binary search
+        // correctly reports None for near-neighbors.
+        assert_eq!(paired_bracket('\u{2030}'), None);
+    }
+
+    #[test]
+    fn bd16_tibetan_bracket_pair() {
+        // U+0F3A TIBETAN MARK GUG RTAGS GYON / U+0F3B GYAS — first
+        // non-ASCII pair in the BidiBrackets table; confirms BMP
+        // lookup beyond the basic Latin range.
+        assert_eq!(
+            paired_bracket('\u{0F3A}'),
+            Some(('\u{0F3B}', BracketType::Open)),
+        );
+        assert_eq!(
+            paired_bracket('\u{0F3B}'),
+            Some(('\u{0F3A}', BracketType::Close)),
+        );
+    }
+
+    #[test]
+    fn bd16_round_trip_invariant() {
+        // For every paired bracket, paired_bracket(matching) must
+        // report the original character back, with the inverse kind.
+        // Sample several pairs across the table to catch any
+        // sort/parse regression in the codegen layer.
+        for ch in ['(', '[', '{', '\u{0F3A}', '\u{27E6}', '\u{2983}'] {
+            let (matching, kind) = paired_bracket(ch).expect("paired bracket");
+            assert_eq!(kind, BracketType::Open);
+            let (back, back_kind) =
+                paired_bracket(matching).expect("inverse paired bracket");
+            assert_eq!(back, ch);
+            assert_eq!(back_kind, BracketType::Close);
+        }
     }
 }
