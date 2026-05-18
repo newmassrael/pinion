@@ -301,6 +301,17 @@ fn emit_tables(
     );
     s.push_str("pub static UCD_VERSION: &str = \"16.0.0\";\n\n");
 
+    emit_fast_path_anchors(
+        &mut s,
+        parsed,
+        exclusions,
+        primary_composites,
+        nfc_qc,
+        nfd_qc_no,
+        nfkc_qc,
+        nfkd_qc_no,
+    );
+
     emit_decomp_table(
         &mut s,
         "CANONICAL_DECOMPOSITION",
@@ -345,6 +356,130 @@ fn emit_tables(
     );
 
     fs::write(out_path, s).expect("failed to write tables.rs");
+}
+
+/// Emit the R50.2.9 short-circuit codepoint anchors. Each constant
+/// is the smallest (or for `PRIMARY_COMPOSITES_LAST_A_CP`, largest)
+/// codepoint with a non-trivial entry in the corresponding table,
+/// derived automatically from the already-sorted vectors. Codepoints
+/// outside the anchor range are guaranteed by UAX #44 §3 stability
+/// policy to remain absent from these tables across Unicode
+/// versions, so the short-circuit branches added in `quick_check.rs`,
+/// `ordering.rs`, `decompose.rs`, and `composition.rs` skip the
+/// `binary_search` entirely on ASCII / Latin-1 input.
+#[allow(
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    reason = "anchor const block parallels the UCD-derived table inputs by design"
+)]
+fn emit_fast_path_anchors(
+    s: &mut String,
+    parsed: &UnicodeDataTables,
+    exclusions: &[u32],
+    primary_composites: &[((u32, u32), u32)],
+    nfc_qc: &[(u32, u8)],
+    nfd_qc_no: &[u32],
+    nfkc_qc: &[(u32, u8)],
+    nfkd_qc_no: &[u32],
+) {
+    let canonical_first = parsed.canonical_decomposition[0].0;
+    let compatibility_first = parsed.compatibility_decomposition[0].0;
+    let ccc_first = parsed.canonical_combining_class[0].0;
+    let exclusion_first = exclusions[0];
+    let primary_first_a = primary_composites[0].0 .0;
+    let primary_last_a = primary_composites
+        .iter()
+        .map(|((a, _), _)| *a)
+        .max()
+        .expect("primary composite table is non-empty");
+    let nfc_qc_first = nfc_qc[0].0;
+    let nfd_qc_first = nfd_qc_no[0];
+    let nfkc_qc_first = nfkc_qc[0].0;
+    let nfkd_qc_first = nfkd_qc_no[0];
+
+    s.push_str(
+        "// R50.2.9 §5.37.3 fast-path codepoint anchors — UCD-derived\n\
+         // smallest codepoint with a non-trivial table entry. UAX #44\n\
+         // §3 stability policy forbids back-porting entries below an\n\
+         // existing anchor, so these constants are forward-stable.\n\n",
+    );
+    writeln!(
+        s,
+        "/// Smallest codepoint in `CANONICAL_DECOMPOSITION` \
+         (UCD-derived).\n\
+         pub(crate) const CANONICAL_DECOMPOSITION_FIRST_CP: u32 = \
+         0x{canonical_first:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Smallest codepoint in `COMPATIBILITY_DECOMPOSITION` \
+         (UCD-derived).\n\
+         pub(crate) const COMPATIBILITY_DECOMPOSITION_FIRST_CP: u32 = \
+         0x{compatibility_first:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Smallest codepoint with non-zero \
+         `Canonical_Combining_Class`.\n\
+         pub(crate) const CANONICAL_COMBINING_CLASS_FIRST_CP: u32 = \
+         0x{ccc_first:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Smallest codepoint in `FULL_COMPOSITION_EXCLUSION`.\n\
+         pub(crate) const FULL_COMPOSITION_EXCLUSION_FIRST_CP: u32 = \
+         0x{exclusion_first:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Smallest `a` codepoint appearing as the first half of a\n\
+         /// `PRIMARY_COMPOSITES` `(a, b)` key.\n\
+         pub(crate) const PRIMARY_COMPOSITES_FIRST_A_CP: u32 = \
+         0x{primary_first_a:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Largest `a` codepoint appearing as the first half of a\n\
+         /// `PRIMARY_COMPOSITES` `(a, b)` key. Composition probes\n\
+         /// with `a > LAST_A_CP` short-circuit to the algorithmic\n\
+         /// Hangul branch without a table search.\n\
+         pub(crate) const PRIMARY_COMPOSITES_LAST_A_CP: u32 = \
+         0x{primary_last_a:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Smallest codepoint in `NFC_QC_NON_YES`.\n\
+         pub(crate) const NFC_QC_FIRST_NON_YES_CP: u32 = \
+         0x{nfc_qc_first:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Smallest codepoint in `NFD_QC_NO`.\n\
+         pub(crate) const NFD_QC_FIRST_NO_CP: u32 = \
+         0x{nfd_qc_first:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Smallest codepoint in `NFKC_QC_NON_YES`.\n\
+         pub(crate) const NFKC_QC_FIRST_NON_YES_CP: u32 = \
+         0x{nfkc_qc_first:04X};"
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "/// Smallest codepoint in `NFKD_QC_NO`.\n\
+         pub(crate) const NFKD_QC_FIRST_NO_CP: u32 = \
+         0x{nfkd_qc_first:04X};\n"
+    )
+    .expect("String write infallible");
 }
 
 fn emit_decomp_table(

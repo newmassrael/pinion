@@ -7,12 +7,27 @@
 //! realise this by recursive walk on each table-hit child.
 
 use crate::hangul::decompose_hangul_syllable;
-use crate::tables::{CANONICAL_DECOMPOSITION, COMPATIBILITY_DECOMPOSITION};
+use crate::tables::{
+    CANONICAL_DECOMPOSITION, CANONICAL_DECOMPOSITION_FIRST_CP,
+    COMPATIBILITY_DECOMPOSITION, COMPATIBILITY_DECOMPOSITION_FIRST_CP,
+};
 
 /// Append the fully-decomposed canonical form of `c` to `out`. Non-
 /// decomposable codepoints (including Hangul jamo and CJK
 /// ideographs) are pushed unchanged.
+///
+/// R50.2.9 — codepoints below
+/// [`CANONICAL_DECOMPOSITION_FIRST_CP`] (build-time derived) are
+/// pushed unchanged without consulting the table or the Hangul
+/// algorithm. The anchor sits below the Hangul syllable block
+/// (`U+AC00..U+D7A3`), so ordering the short-circuit before
+/// [`decompose_hangul_syllable`] is sound — any codepoint passing
+/// the short-circuit is by construction outside the Hangul range.
 pub(crate) fn decompose_canonical(c: u32, out: &mut Vec<u32>) {
+    if c < CANONICAL_DECOMPOSITION_FIRST_CP {
+        out.push(c);
+        return;
+    }
     if decompose_hangul_syllable(c, out) {
         return;
     }
@@ -31,7 +46,15 @@ pub(crate) fn decompose_canonical(c: u32, out: &mut Vec<u32>) {
 /// `COMPATIBILITY_DECOMPOSITION` (which contains both canonical and
 /// compatibility one-step entries, tag stripped). Hangul is handled
 /// algorithmically.
+///
+/// R50.2.9 — same short-circuit policy as
+/// [`decompose_canonical`], anchored on
+/// [`COMPATIBILITY_DECOMPOSITION_FIRST_CP`].
 pub(crate) fn decompose_compatibility(c: u32, out: &mut Vec<u32>) {
+    if c < COMPATIBILITY_DECOMPOSITION_FIRST_CP {
+        out.push(c);
+        return;
+    }
     if decompose_hangul_syllable(c, out) {
         return;
     }

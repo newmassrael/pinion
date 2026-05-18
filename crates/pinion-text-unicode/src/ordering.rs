@@ -5,11 +5,27 @@
 //! codepoints (`CCC == 0`) act as boundaries — they are never moved,
 //! and the algorithm never crosses a starter.
 
-use crate::tables::CANONICAL_COMBINING_CLASS;
+use crate::tables::{
+    CANONICAL_COMBINING_CLASS, CANONICAL_COMBINING_CLASS_FIRST_CP,
+};
 
 /// Canonical combining class of `c`. Codepoints absent from the
 /// table have CCC 0 (the default per UAX #44).
+///
+/// R50.2.9 — codepoints below
+/// [`CANONICAL_COMBINING_CLASS_FIRST_CP`] (build-time derived from
+/// the sorted UCD table) bypass the `binary_search` and return 0
+/// immediately. UAX #44 §3 stability policy forbids back-porting
+/// new non-zero CCC entries below the existing minimum, so the
+/// short-circuit is forward-stable across Unicode versions. The
+/// branch is the dominant win for ASCII / Latin-1 text where
+/// [`canonical_ordering`] would otherwise call `binary_search` once
+/// per character.
+#[inline]
 pub(crate) fn combining_class(c: u32) -> u8 {
+    if c < CANONICAL_COMBINING_CLASS_FIRST_CP {
+        return 0;
+    }
     match CANONICAL_COMBINING_CLASS.binary_search_by_key(&c, |(cp, _)| *cp) {
         Ok(idx) => CANONICAL_COMBINING_CLASS[idx].1,
         Err(_) => 0,

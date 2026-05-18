@@ -23,15 +23,31 @@
 
 use crate::hangul::compose_hangul;
 use crate::ordering::combining_class;
-use crate::tables::PRIMARY_COMPOSITES;
+use crate::tables::{
+    PRIMARY_COMPOSITES, PRIMARY_COMPOSITES_FIRST_A_CP,
+    PRIMARY_COMPOSITES_LAST_A_CP,
+};
 
 /// Attempt to compose `(a, b)` into a single codepoint using
 /// algorithmic Hangul composition first, then the UCD-derived
 /// `PRIMARY_COMPOSITES` table. Returns `None` when no composite
 /// exists.
+///
+/// R50.2.9 — when `a` falls outside the `[FIRST_A_CP, LAST_A_CP]`
+/// envelope of the primary-composite table, the table search is
+/// skipped entirely (Hangul composition stays in-band because the
+/// Hangul leading-jamo range U+1100..U+1112 sits inside the
+/// envelope). UAX #44 §3 stability forbids extending the
+/// `PRIMARY_COMPOSITES` `a`-range beyond the existing envelope, so
+/// the short-circuit is forward-stable.
 fn compose_pair(a: u32, b: u32) -> Option<u32> {
     if let Some(h) = compose_hangul(a, b) {
         return Some(h);
+    }
+    if !(PRIMARY_COMPOSITES_FIRST_A_CP..=PRIMARY_COMPOSITES_LAST_A_CP)
+        .contains(&a)
+    {
+        return None;
     }
     PRIMARY_COMPOSITES
         .binary_search_by_key(&(a, b), |(k, _)| *k)

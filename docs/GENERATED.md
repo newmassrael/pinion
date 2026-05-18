@@ -7154,6 +7154,32 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 480 — R50.2.9 §5.37.3 fast-path short-circuit anchors (UCD-derived) — ASCII/Latin-1 NFC throughput +70~90x
+
+**Changes**:
+- build.rs: 10 const anchor emit (UCD first/last codepoint per table)
+- 4 lookup module short-circuit (ordering / decompose / quick_check / composition)
+- manual_range_contains 정통 idiom — composition.rs `(FIRST..=LAST).contains(&a)`
+
+
+
+**Verification**:
+- cargo test pinion-text-unicode = 84 unit + 2 doctest (4 form UAX #15 conformance 정상)
+- bench MiB/s: ascii 28→2562, pre 31→2050, dec 9→35, han 21→80, sam 31→112
+- cargo test --workspace = 958 pass; clippy baseline 6 warning 유지
+
+
+
+**Impact**: §5.37.3
+
+
+**Carry forward**:
+- R50.2.10 후속: 2-stage trie table replace binary_search (direct index lookup)
+- R50.2.11 후속: hangul / CJK plane block anchor 확장 (현재 ASCII/Latin-1 위주)
+- UAX #44 §3 stability forward-stable guarantee anchor refresh on UCD bump
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
