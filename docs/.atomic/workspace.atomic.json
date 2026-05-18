@@ -11429,6 +11429,38 @@
         "§5.37.4 BIDI / §5.37.5 script / §5.37.6 shape 정통 ratify (multi-session axis chain)"
       ]
     },
+    "Round 491 — chore(vendor): SCE submodule bump 7ec6721d → 75c80a03 + sce-rust-runtime features cascade": {
+      "decision_summary": "vendor/sce main fast-forward 75c80a03 (127 commits); SCE-001 (compile_scxml deps emit) upstream fix 가져오고 sce-rust-runtime no-script feature 제거에 따라 pinion-core Cargo.toml 동기화.",
+      "changes_bullets": [
+        "vendor/sce submodule HEAD 7ec6721d → 75c80a03 (main fast-forward, 127 commits)",
+        "crates/pinion-core/Cargo.toml: sce-rust-runtime features=[\"no-script\"] 제거 → default-features=false 만 유지 (SCE 측 489e1922 ScriptEngineProvider singleton 삭제 + script-engine-{lua,quickjs} feature 제거 cascade)",
+        "SCE-001 (compile_scxml 의 preprocessor_deps 미emit) upstream 75c80a03 fix: Surface preprocessor deps on compile_scxml rerun-if-changed 으로 청산 — pinion 측 issue 제출 불필요"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello: 993 pass (회귀 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning",
+        "sce-upstream-debts memory SCE-001 entry status open → fixed in upstream 75c80a03 (2026-05-18) 갱신"
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.38"
+      ],
+      "publishable_decision_summary": "vendor/sce main fast-forward 75c80a03 (127 commits); SCE-001 (compile_scxml deps emit) upstream fix 가져오고 sce-rust-runtime no-script feature 제거에 따라 pinion-core Cargo.toml 동기화.",
+      "publishable_changes_bullets": [
+        "vendor/sce submodule HEAD 7ec6721d → 75c80a03 (main fast-forward, 127 commits)",
+        "crates/pinion-core/Cargo.toml: sce-rust-runtime features=[\"no-script\"] 제거 → default-features=false 만 유지 (SCE 측 489e1922 ScriptEngineProvider singleton 삭제 + script-engine-{lua,quickjs} feature 제거 cascade)",
+        "SCE-001 (compile_scxml 의 preprocessor_deps 미emit) upstream 75c80a03 fix: Surface preprocessor deps on compile_scxml rerun-if-changed 으로 청산 — pinion 측 issue 제출 불필요"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello: 993 pass (회귀 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning",
+        "sce-upstream-debts memory SCE-001 entry status open → fixed in upstream 75c80a03 (2026-05-18) 갱신"
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.38"
+      ]
+    },
     "Round 5": {
       "decision_summary": "Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology",
       "changes_bullets": [

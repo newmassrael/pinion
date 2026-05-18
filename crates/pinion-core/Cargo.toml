@@ -11,7 +11,7 @@ description = "Core scene primitives, Style trait, and view-fn types"
 workspace = true
 
 [dependencies]
-sce-rust-runtime = { path = "../../vendor/sce/sce-rust-runtime", default-features = false, features = ["no-script"] }
+sce-rust-runtime = { path = "../../vendor/sce/sce-rust-runtime", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
