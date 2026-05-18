@@ -2141,6 +2141,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/input.rs:InputRouter::hover_targets
 - crates/pinion-runtime/src/input.rs:InputRouter::captured_targets
 - crates/pinion-runtime/src/input.rs:InputRouter::hover_wants_capture
+- crates/pinion-runtime/src/input.rs:split_subindex
 
 
 
@@ -4354,6 +4355,37 @@ router.pointer_down(&mut state_scene);
 - vertical-axis 시각 예제 hello-slider-vertical N=6 도달 시 substrate amortization 검증 후보
 - winit Touch event 와이어링 at pinion-shell layer (R51.38 follow-up)
 - '#' suffix collision 위험 모니터링 — application 측에서 tag literal 에 '#' 사용 금지 도큐먼트화 carry
+
+
+
+### R51.42 — R51.42 §5.35 InputRouter sub-index split + dispatch_send wire-format land
+
+**Changes**:
+- crates/pinion-runtime/src/input.rs: split_subindex helper 신설 — 'tag#idx' → (primary, Some(idx)), 'tag' / 'tag#' → (primary, None) collapse, empty primary 보존
+- crates/pinion-runtime/src/input.rs: dispatch_send 가 split_subindex 적용 — primary 로 state-scene ExternalNode lookup, sub_index 존재 시 wire payload 를 'idx:EventName' 으로 재작성 (radio_group.rs:357 split_once(':') 의 mirror)
+- crates/pinion-runtime/src/input.rs: widget_wants_capture 가 primary 로 state lookup — 합성 widget 의 capture 는 sub-region 이 아닌 composite handle 의 결정
+- crates/pinion-runtime/src/input.rs: forward_pointer_move 가 raw 페인트 tag 로 rect 조회 + primary 로 state lookup — 드래그 합성 widget 미래 호환 (RadioGroup 은 wants_pointer_capture=false 라 미사용)
+- tests +5: sub_index_dispatch_forwards_idx_prefixed_event_name / single_tag_backwards_compat / sub_index_capture_wires_to_primary / empty_subindex_treated_as_unsplit / split_subindex_helper_covers_all_shapes
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1276 pass / 0 fail (+5 from 1271)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict — forbid unsafe / deny warnings / clippy::pedantic deny)
+- R51.34/R51.37/R51.38/R51.40 회규 0 — single-tag backwards-compat test + button_like_widget_preserves_pre_r51_34_cancel_by_leave + 14 capture/multi-pointer tests 모두 통과
+- radio_group.rs invoke('send', 'idx:Event') wire format (line 357) 와 dispatch_send 출력 정확 정합 — RadioGroup external_invoke_send_drives_specified_radio test 의 reverse path
+- mnemosyne-cli validate-workspace = T1=0 / T3=0 / T4=99 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.35
+
+
+**Carry forward**:
+- R51.43 examples/hello-radio-group first-client — substrate-first 3-round 의 3/3, paint N 'main_group#0..2' tags + state 1 'main_group' RadioGroupExternal, keybinding a/b/c → 0/1/2 + ARIA radio-group ArrowDown/Up navigation
+- External trait segregation RFC (부채 5) — R51.34/.37/.38 누적 trait 확장 정리, InputForwarding / Lifecycle / Introspection sub-trait 분리 design only
+- R41 §5.16 Phase 2 thin RHI 3D pass axis spec round (부채 9)
+- winit Touch event 와이어링 (PointerId::touch 수용 ready, shell call site 남음)
 
 
 

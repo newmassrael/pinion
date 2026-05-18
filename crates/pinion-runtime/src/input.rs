@@ -374,6 +374,15 @@ impl InputRouter {
     /// [`External::pointer_move`](pinion_core::external::External::pointer_move).
     /// Silent no-op when the paint scene is unset (cursor moved
     /// before the first frame) or the tag is unmappable to a rect.
+    ///
+    /// R51.42 §5.35 — composite hit-target paint tags (`"group#i"`)
+    /// resolve the rect on the raw paint tag (the sub-region under
+    /// the pointer) and the state-scene `External` on the primary
+    /// half (the single composite handle). Capture-aware composite
+    /// widgets are out of scope for the R51.41 RFC — `RadioGroup`
+    /// returns `wants_pointer_capture = false` — but the wiring is
+    /// kept symmetric so any future drag-aware composite slots in
+    /// without revisiting the input router.
     fn forward_pointer_move(
         &self,
         state_scene: &mut Scene,
@@ -388,7 +397,8 @@ impl InputRouter {
             return;
         };
         let (x_rel, y_rel) = normalize_cursor(rect, cursor_x, cursor_y);
-        let Some(external) = find_external_by_tag(state_scene, target_tag) else {
+        let (primary, _) = split_subindex(target_tag);
+        let Some(external) = find_external_by_tag(state_scene, primary) else {
             return;
         };
         external.handle.pointer_move(x_rel, y_rel);
@@ -464,14 +474,45 @@ fn resolve_hover_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
 /// matching node is found — application's view-scene tag and
 /// state-scene tag are out of sync, but routing keeps running rather
 /// than panic.
+///
+/// R51.42 §5.35 — when `target_tag` carries a `'#'` sub-index suffix
+/// (paint `"group#2"` for the composite hit-target convention), the
+/// state-scene lookup uses the primary half (`"group"`) and the wire
+/// payload is rewritten to the `"<idx>:<EventName>"` format
+/// (`"2:PointerEnter"`) that composite widgets like `RadioGroup`
+/// parse in their own `invoke("send", ...)` handler.
 fn dispatch_send(state_scene: &mut Scene, target_tag: &str, event_name: &str) {
-    let Some(external) = find_external_by_tag(state_scene, target_tag) else {
+    let (primary, sub_index) = split_subindex(target_tag);
+    let Some(external) = find_external_by_tag(state_scene, primary) else {
         return;
     };
     let Some(intro) = external.handle.introspect_mut() else {
         return;
     };
-    let _ = intro.invoke("send", IntrospectValue::Text(event_name.to_string()));
+    let payload = match sub_index {
+        Some(idx) => format!("{idx}:{event_name}"),
+        None => event_name.to_string(),
+    };
+    let _ = intro.invoke("send", IntrospectValue::Text(payload));
+}
+
+/// R51.42 §5.35 — split a paint tag into `(primary, sub_index)`
+/// according to the composite hit-target convention. Paint
+/// `"group#2"` → `("group", Some("2"))` — state-scene `ExternalNode`
+/// lookup uses `"group"`; the sub-index prefixes the wire payload to
+/// `invoke("send", ...)` per the R51.41 RFC. Plain tag `"main_btn"`
+/// → `("main_btn", None)` — backwards-compatible single-tag flow.
+/// Degenerate `"tag#"` (trailing `#` with empty sub-index) collapses
+/// to `("tag", None)` so the dispatch path does not forward a
+/// malformed `":<EventName>"` payload that composite widgets would
+/// reject; the application's paint-tag schema is treated as opaque
+/// and the router never panics on a degenerate input.
+fn split_subindex(tag: &str) -> (&str, Option<&str>) {
+    match tag.split_once('#') {
+        Some((primary, idx)) if !idx.is_empty() => (primary, Some(idx)),
+        Some((primary, _)) => (primary, None),
+        None => (tag, None),
+    }
 }
 
 /// Depth-first search for an [`ExternalNode`] whose tag matches
@@ -561,8 +602,15 @@ fn normalize_cursor(rect: Rect, cursor_x: f64, cursor_y: f64) -> (f32, f32) {
 /// `false` when no matching node is found (out-of-sync paint and
 /// state tags) so the router never claims capture on a phantom
 /// widget.
+///
+/// R51.42 §5.35 — composite hit-target paint tags (`"group#i"`)
+/// route the state-scene lookup through the primary half so the
+/// single composite `External` decides capture once for the whole
+/// hit-region. The sub-index is discarded here because capture is
+/// a property of the composite handle, not of any one sub-region.
 fn widget_wants_capture(state_scene: &Scene, target_tag: &str) -> bool {
-    widget_wants_capture_walk(state_scene, target_tag).unwrap_or(false)
+    let (primary, _) = split_subindex(target_tag);
+    widget_wants_capture_walk(state_scene, primary).unwrap_or(false)
 }
 
 /// Recursive helper for [`widget_wants_capture`]. Returns
@@ -1467,6 +1515,229 @@ mod tests {
         // lock on press.
         router2.pointer_down(PointerId::MOUSE, &mut state2);
         assert_eq!(router2.captured_target(PointerId::MOUSE), None);
+    }
+
+    // ─── R51.42 §5.35 sub-index dispatch fixtures + tests ─────
+
+    /// Paint scene with a single composite hit-target carrying the
+    /// `"<primary>#<sub_index>"` tag convention from the R51.41 RFC.
+    /// One container, fixed rect — mirrors the per-radio rect a real
+    /// `RadioGroup` would lay out for index `sub_index` under primary
+    /// `primary`.
+    fn paint_with_subindex_tag(
+        viewport_w: u32,
+        viewport_h: u32,
+        rect: Rect,
+        primary: &str,
+        sub_index: &str,
+    ) -> Scene {
+        let composite_tag = format!("{primary}#{sub_index}");
+        let inner = {
+            let mut s = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag(composite_tag)
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut s {
+                c.rect = rect;
+            }
+            s
+        };
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![inner])
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, viewport_w, viewport_h);
+        }
+        root
+    }
+
+    /// State scene with one `CaptureExternal` tagged by the primary
+    /// half of the composite hit-target convention (no `'#'`). Tests
+    /// inspect `captures` to assert the wire payload the router
+    /// forwards through `invoke("send", ...)`.
+    fn state_with_primary_external(primary: &str) -> (Scene, Arc<Mutex<Vec<String>>>) {
+        let (capture, captures) = CaptureExternal::new();
+        let scene = Scene::External(
+            ExternalNode::new(Box::new(capture)).with_tag(primary.to_string()),
+        );
+        (scene, captures)
+    }
+
+    /// State scene with one `DragCaptureExternal` tagged by the
+    /// primary half. Tests use this to verify the wiring of
+    /// `widget_wants_capture` and `forward_pointer_move` through
+    /// the sub-index split — even though `RadioGroup` itself returns
+    /// `wants_pointer_capture = false`, a future composite drag
+    /// widget would rely on the symmetric path landing here.
+    fn state_with_primary_drag(primary: &str) -> (Scene, EventLog, MoveLog) {
+        let (drag, events, moves) = DragCaptureExternal::new();
+        let scene = Scene::External(
+            ExternalNode::new(Box::new(drag)).with_tag(primary.to_string()),
+        );
+        (scene, events, moves)
+    }
+
+    #[test]
+    fn sub_index_dispatch_forwards_idx_prefixed_event_name() {
+        // Paint `main_group#2` + state `main_group` → cursor on the
+        // sub-region drives the composite External with the
+        // `"2:<EventName>"` wire payload the RadioGroup invoke
+        // handler parses (radio_group.rs:357 `split_once(':')`).
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_primary_external("main_group");
+        let paint = paint_with_subindex_tag(
+            200,
+            200,
+            Rect::new(80, 80, 40, 40),
+            "main_group",
+            "2",
+        );
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            read(&captures),
+            vec![
+                "2:PointerEnter".to_string(),
+                "2:PointerDown".into(),
+                "2:PointerUp".into(),
+            ],
+        );
+        // The router stores the raw paint tag (with `#`) in its
+        // hover map so subsequent leave-on-stray still routes to
+        // the right sub-region.
+        assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_group#2"));
+    }
+
+    #[test]
+    fn single_tag_backwards_compat() {
+        // Plain `main_btn` tag (no `'#'`) routes verbatim — the
+        // R51.34 / .37 / .38 / .40 fixtures all use this shape; this
+        // test re-asserts the unsplit path under the R51.42 splitter
+        // to lock in backwards compatibility.
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_button();
+        let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            read(&captures),
+            vec![
+                "PointerEnter".to_string(),
+                "PointerDown".into(),
+                "PointerUp".into(),
+            ],
+        );
+    }
+
+    #[test]
+    fn sub_index_capture_wires_to_primary() {
+        // Composite drag-aware widget (paint `composite#0`, state
+        // `composite` drag-capture). `widget_wants_capture` looks up
+        // the primary half and returns `true`; `pointer_down` locks
+        // capture on the *raw* paint tag (so the leave-deferred
+        // refresh can find the sub-region rect again); the captured
+        // `forward_pointer_move` normalises via the raw rect but
+        // routes the call to the primary `External`. R51.41
+        // composite hit-target convention is symmetric for drag-
+        // aware composites even though `RadioGroup` itself opts out.
+        let mut router = InputRouter::new();
+        let (mut state, _events, moves) = state_with_primary_drag("composite");
+        let paint = paint_with_subindex_tag(
+            200,
+            200,
+            Rect::new(80, 80, 40, 40),
+            "composite",
+            "0",
+        );
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        // Captured target stores the raw paint tag (with `#`) so a
+        // subsequent stray off the sub-region keeps the drag alive.
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            Some("composite#0"),
+        );
+        // Click-to-position forwarded one normalised entry — rect is
+        // (80, 80, 40, 40) so cursor (100, 100) maps to (0.5, 0.5).
+        let log = read_moves(&moves);
+        assert_eq!(log.len(), 1);
+        assert!((log[0].0 - 0.5).abs() < 1e-4 && (log[0].1 - 0.5).abs() < 1e-4);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(router.captured_target(PointerId::MOUSE), None);
+    }
+
+    #[test]
+    fn empty_subindex_treated_as_unsplit() {
+        // Degenerate paint tag `main_btn#` (trailing `'#'` with empty
+        // sub-index). The router must collapse to the unsplit path
+        // so the wire payload is `PointerEnter`, not the malformed
+        // `:PointerEnter` that composite widgets would reject. The
+        // application's paint-tag schema is treated as opaque: the
+        // router never panics, and the dispatch payload is well-
+        // formed under either convention.
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_button(); // tag = "main_btn"
+        let paint = {
+            // Hand-build a paint scene whose tagged container ends
+            // with a literal `'#'` — `paint_with_button` uses the
+            // plain tag so we inline the construction here.
+            let mut inner = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag("main_btn#")
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut inner {
+                c.rect = Rect::new(80, 80, 40, 40);
+            }
+            let mut root = Scene::Container(
+                ContainerNode::new(vec![inner])
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut root {
+                c.rect = Rect::new(0, 0, 200, 200);
+            }
+            root
+        };
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        // Unsplit path: payload is the raw event name, no `'<empty>:'`
+        // prefix.
+        assert_eq!(
+            read(&captures),
+            vec![
+                "PointerEnter".to_string(),
+                "PointerDown".into(),
+                "PointerUp".into(),
+            ],
+        );
+    }
+
+    #[test]
+    fn split_subindex_helper_covers_all_shapes() {
+        // Pure helper coverage: the dispatch path tests exercise the
+        // common shapes end-to-end, but the corner cases (empty
+        // primary, multiple `'#'`) deserve their own assertion so a
+        // future refactor cannot regress them silently.
+        assert_eq!(split_subindex("main_btn"), ("main_btn", None));
+        assert_eq!(split_subindex("group#0"), ("group", Some("0")));
+        assert_eq!(split_subindex("group#42"), ("group", Some("42")));
+        assert_eq!(split_subindex("group#"), ("group", None));
+        // Empty primary — state-scene lookup will silently fail, but
+        // the split itself is well-defined.
+        assert_eq!(split_subindex("#0"), ("", Some("0")));
+        // Multiple `'#'` — `split_once` stops at the first; the
+        // remainder is opaque to the router (a future schema may
+        // give it meaning, e.g. nested sub-indexing).
+        assert_eq!(split_subindex("a#b#c"), ("a", Some("b#c")));
     }
 
     #[test]
