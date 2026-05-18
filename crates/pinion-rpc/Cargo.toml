@@ -10,6 +10,7 @@ description = "JSON-RPC 2.0 server with typed-hybrid method shape"
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
 pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
+pinion-text-font = { path = "../pinion-text-font", version = "0.0.1" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

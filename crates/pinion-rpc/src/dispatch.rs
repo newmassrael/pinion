@@ -35,6 +35,7 @@ use serde_json::Value;
 
 use crate::click::{click, ClickError, ClickOutcome};
 use crate::dry_run::{dry_run, DryRunError};
+use crate::font::{self, FontError, FontRegistry};
 use crate::intents::{drain_intents, IntentsError};
 use crate::invoke::{invoke, InvokeError};
 use crate::layout_query::{
@@ -142,6 +143,14 @@ pub struct DispatchContext<'a> {
     /// rendered the first frame — `scene/layout {viewport: null}`
     /// errors with `NoLastPaintLayout` in that window.
     pub last_paint_layout: Option<&'a LayoutNode>,
+    /// R50.X.1 §5.37.2 — text engine font handle store. AI agents
+    /// register OpenType binaries through `font/parse` and address
+    /// them by `font_id` in follow-up `font/*` calls. `None` causes
+    /// every `font/*` method to fail with
+    /// `FontRpcError::RegistryUnavailable`; non-text methods ignore
+    /// the field. Lifetime is server-scoped; the embedder owns the
+    /// registry and `DispatchContext` only borrows.
+    pub font_registry: Option<&'a FontRegistry>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -162,6 +171,7 @@ impl<'a> DispatchContext<'a> {
             paint_producer: None,
             resize_request: None,
             last_paint_layout: None,
+            font_registry: None,
         }
     }
 
@@ -200,6 +210,17 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_last_paint_layout(mut self, snapshot: &'a LayoutNode) -> Self {
         self.last_paint_layout = Some(snapshot);
+        self
+    }
+
+    /// Builder: attach the text engine font registry (R50.X.1
+    /// §5.37.2). `font/*` methods resolve handles through the
+    /// registry; non-text methods ignore the field. Lifetime is
+    /// server-scoped — the embedder constructs the registry once and
+    /// reattaches the borrow on each dispatch.
+    #[must_use]
+    pub fn with_font_registry(mut self, registry: &'a FontRegistry) -> Self {
+        self.font_registry = Some(registry);
         self
     }
 }
@@ -243,6 +264,10 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     // R47.7.5 — snapshot read-only; safe to copy the &LayoutNode out
     // of the context for the dispatch lifetime.
     let last_paint_layout = ctx.last_paint_layout;
+    // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
+    // copy the optional reference out for the dispatch lifetime so
+    // the registry slot itself is not consumed.
+    let font_registry = ctx.font_registry;
     let parsed: Result<Request, _> = serde_json::from_str(request_json);
     let request = match parsed {
         Ok(r) => r,
@@ -317,6 +342,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/apply_preview" => {
             handle_scene_apply_preview(scene, revision, previews, request.params.as_ref())
         }
+        "font/parse" => handle_font_parse(font_registry, request.params.as_ref()),
+        "font/family_name" => handle_font_family_name(font_registry, request.params.as_ref()),
+        "font/glyph_id_for" => handle_font_glyph_id_for(font_registry, request.params.as_ref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -1511,6 +1539,132 @@ fn invoke_error_to_rpc(err: &InvokeError) -> RpcError {
     RpcError {
         code: -32602,
         message: "Invalid params".to_string(),
+        data: Some(Value::String(variant.to_string())),
+    }
+}
+
+fn handle_font_parse(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(bytes_arr) = params.get("bytes").and_then(Value::as_array) else {
+        return Err(invalid_params("params.bytes missing or not an array"));
+    };
+    let mut bytes: Vec<u8> = Vec::with_capacity(bytes_arr.len());
+    for (i, v) in bytes_arr.iter().enumerate() {
+        let Some(n) = v.as_u64() else {
+            return Err(invalid_params(&format!(
+                "params.bytes[{i}] not an unsigned integer"
+            )));
+        };
+        let byte = u8::try_from(n).map_err(|_| {
+            invalid_params(&format!("params.bytes[{i}] = {n} out of u8 range"))
+        })?;
+        bytes.push(byte);
+    }
+    match font::parse(registry, bytes) {
+        Ok(outcome) => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "font_id".to_string(),
+                Value::Number(outcome.font_id.into()),
+            );
+            Ok(Value::Object(map))
+        }
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_family_name(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    match font::family_name(registry, font_id) {
+        Ok(outcome) => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "name".to_string(),
+                outcome.name.map_or(Value::Null, Value::String),
+            );
+            Ok(Value::Object(map))
+        }
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_glyph_id_for(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    let Some(params) = params else {
+        // unreachable: font_id_from_params already rejected None.
+        return Err(invalid_params("missing params"));
+    };
+    let Some(codepoint) = params.get("codepoint").and_then(Value::as_u64) else {
+        return Err(invalid_params(
+            "params.codepoint missing or not an unsigned integer",
+        ));
+    };
+    let codepoint = u32::try_from(codepoint)
+        .map_err(|_| invalid_params("params.codepoint out of u32 range"))?;
+    match font::glyph_id_for(registry, font_id, codepoint) {
+        Ok(outcome) => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "glyph_id".to_string(),
+                outcome
+                    .glyph_id
+                    .map_or(Value::Null, |g| Value::Number(g.into())),
+            );
+            Ok(Value::Object(map))
+        }
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn font_id_from_params(params: Option<&Value>) -> Result<u32, RpcError> {
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(font_id) = params.get("font_id").and_then(Value::as_u64) else {
+        return Err(invalid_params(
+            "params.font_id missing or not an unsigned integer",
+        ));
+    };
+    u32::try_from(font_id)
+        .map_err(|_| invalid_params("params.font_id out of u32 range"))
+}
+
+fn font_registry_unavailable() -> RpcError {
+    RpcError {
+        code: -32603,
+        message: "Internal error".to_string(),
+        data: Some(Value::String("FontRegistryUnavailable".to_string())),
+    }
+}
+
+fn font_error_to_rpc(err: &FontError) -> RpcError {
+    let (code, message, variant): (i32, &str, &str) = match err {
+        FontError::NotFound { .. } => (-32602, "Invalid params", "NotFound"),
+        FontError::Parse(_) => (-32602, "Invalid params", "Parse"),
+        FontError::RegistryExhausted => {
+            (-32603, "Internal error", "RegistryExhausted")
+        }
+        FontError::RegistryPoisoned => {
+            (-32603, "Internal error", "RegistryPoisoned")
+        }
+    };
+    RpcError {
+        code,
+        message: message.to_string(),
         data: Some(Value::String(variant.to_string())),
     }
 }
@@ -3070,6 +3224,205 @@ mod tests {
         assert_eq!(
             data.get("reason"),
             Some(&Value::String("UnknownTarget".to_string()))
+        );
+    }
+
+    // --- R50.X.1 §5.37.2 font/* RPC routing tests ---
+
+    const NOTO_SANS_FONT: &[u8] =
+        include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+
+    /// Build a JSON array literal of `bytes` for embedding in a
+    /// `font/parse` request body.
+    fn bytes_as_json_array(bytes: &[u8]) -> String {
+        let mut s = String::from("[");
+        for (i, b) in bytes.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&b.to_string());
+        }
+        s.push(']');
+        s
+    }
+
+    /// Dispatch helper with a font registry attached (R50.X.1 §5.37.2).
+    fn dispatch_with_font(
+        scene: &mut Scene,
+        registry: &FontRegistry,
+        req: &str,
+    ) -> Option<String> {
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut ctx = DispatchContext::new(scene, &previews, &revision)
+            .with_font_registry(registry);
+        dispatch(&mut ctx, req)
+    }
+
+    #[test]
+    fn font_parse_without_registry_returns_registry_unavailable() {
+        let mut scene = counted_scene(0);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"font/parse","params":{"bytes":[0]},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32603);
+        assert_eq!(
+            err.data.as_ref().and_then(|d| d.as_str()),
+            Some("FontRegistryUnavailable"),
+        );
+    }
+
+    #[test]
+    fn font_parse_noto_sans_returns_font_id() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/parse","params":{{"bytes":{bytes}}},"id":1}}"#,
+            bytes = bytes_as_json_array(NOTO_SANS_FONT),
+        );
+        let resp =
+            parse_response(&dispatch_with_font(&mut scene, &registry, &body).unwrap());
+        let font_id = resp
+            .result
+            .unwrap()
+            .get("font_id")
+            .and_then(Value::as_u64)
+            .expect("font_id present in result");
+        assert!(font_id >= 1, "font_id starts at 1, got {font_id}");
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn font_parse_rejects_non_byte_in_array() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let req = r#"{"jsonrpc":"2.0","method":"font/parse","params":{"bytes":[0,1,256]},"id":1}"#;
+        let resp =
+            parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(
+            err.data
+                .as_ref()
+                .and_then(|d| d.as_str())
+                .is_some_and(|s| s.contains("out of u8 range")),
+            "expected u8 range message, got {:?}",
+            err.data,
+        );
+    }
+
+    #[test]
+    fn font_parse_rejects_empty_bytes() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let req =
+            r#"{"jsonrpc":"2.0","method":"font/parse","params":{"bytes":[]},"id":1}"#;
+        let resp =
+            parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(
+            err.data.as_ref().and_then(|d| d.as_str()),
+            Some("Parse"),
+        );
+    }
+
+    #[test]
+    fn font_family_name_round_trip_noto_sans() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let parse_body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/parse","params":{{"bytes":{bytes}}},"id":1}}"#,
+            bytes = bytes_as_json_array(NOTO_SANS_FONT),
+        );
+        let parsed = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &parse_body).unwrap(),
+        );
+        let font_id = parsed
+            .result
+            .unwrap()
+            .get("font_id")
+            .and_then(Value::as_u64)
+            .unwrap();
+        let family_body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/family_name","params":{{"font_id":{font_id}}},"id":2}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &family_body).unwrap(),
+        );
+        let name = resp
+            .result
+            .unwrap()
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap();
+        assert_eq!(name, "Noto Sans");
+    }
+
+    #[test]
+    fn font_family_name_rejects_zero_id() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let req = r#"{"jsonrpc":"2.0","method":"font/family_name","params":{"font_id":0},"id":1}"#;
+        let resp =
+            parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(
+            err.data.as_ref().and_then(|d| d.as_str()),
+            Some("NotFound"),
+        );
+    }
+
+    #[test]
+    fn font_glyph_id_for_letter_a_round_trip() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let parse_body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/parse","params":{{"bytes":{bytes}}},"id":1}}"#,
+            bytes = bytes_as_json_array(NOTO_SANS_FONT),
+        );
+        let font_id = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &parse_body).unwrap(),
+        )
+        .result
+        .unwrap()
+        .get("font_id")
+        .and_then(Value::as_u64)
+        .unwrap();
+        let glyph_body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/glyph_id_for","params":{{"font_id":{font_id},"codepoint":65}},"id":2}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &glyph_body).unwrap(),
+        );
+        let gid = resp
+            .result
+            .unwrap()
+            .get("glyph_id")
+            .and_then(Value::as_u64)
+            .expect("glyph_id present");
+        assert_ne!(gid, 0, "'A' must not fall back to .notdef");
+    }
+
+    #[test]
+    fn font_glyph_id_for_codepoint_out_of_u32_range() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let req = r#"{"jsonrpc":"2.0","method":"font/glyph_id_for","params":{"font_id":1,"codepoint":4294967296},"id":1}"#;
+        let resp =
+            parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(
+            err.data
+                .as_ref()
+                .and_then(|d| d.as_str())
+                .is_some_and(|s| s.contains("codepoint")),
+            "expected codepoint range error, got {:?}",
+            err.data,
         );
     }
 }

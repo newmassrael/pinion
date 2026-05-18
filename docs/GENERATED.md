@@ -2369,6 +2369,18 @@ router.pointer_down(&mut state_scene);
 
 
 
+**Implementations**:
+- crates/pinion-rpc/src/font.rs:FontRegistry
+- crates/pinion-rpc/src/font.rs:parse
+- crates/pinion-rpc/src/font.rs:family_name
+- crates/pinion-rpc/src/font.rs:glyph_id_for
+- crates/pinion-rpc/src/font.rs:FontError
+- crates/pinion-rpc/src/dispatch.rs:handle_font_parse
+- crates/pinion-rpc/src/dispatch.rs:handle_font_family_name
+- crates/pinion-rpc/src/dispatch.rs:handle_font_glyph_id_for
+- crates/pinion-rpc/src/dispatch.rs:font_error_to_rpc
+
+
 
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
@@ -6668,6 +6680,45 @@ router.pointer_down(&mut state_scene);
 - real font roundtrip test — Noto Sans byte stream 로 font/parse → font/family_name 검증
 - R50.X.2 extended method (font/glyph_outline / font/cmap_subtables / font/metrics) — R50.X.1 이후
 - R50.X.3 lifecycle (font/dispose / font/list) — registry cleanup 정리
+
+
+
+### Round 467 — R50.X.1 §5.37.2 minimal 3 font/* method + FontRegistry — Round 467 — R50.X.1 §5.37.2 minimal 3 font/* method 구현. pinion-rpc/src/font.rs 신설 — FontRegistry (RwLock<HashMap<u32, Arc<Font>>> + AtomicU32 counter, 1-indexed, 0 reserved invalid sentinel) + parse / family_name / glyph_id_for typed fn. DispatchContext 에 font_registry: Option<&FontRegistry> 추가 + with_font_registry builder. dispatch fn 의 method routing 에 font/parse / font/family_name / font/glyph_id_for 분기. handle_font_* 3 + font_error_to_rpc + font_registry_unavailable helper. 외부 lib 0 — pinion-text-font + std::sync 만. real font fixture (Noto Sans Regular) include_bytes! 내장 — 10 typed fn test + 8 JSON-RPC E2E test = 18 신규 pass.
+
+**Changes**:
+- pinion-rpc/Cargo.toml — pinion-text-font path dependency 추가 (workspace internal, 외부 lib 0)
+- pinion-rpc/src/font.rs 신설 — FontRegistry / parse / family_name / glyph_id_for / FontError (245 LOC)
+- pinion-rpc/src/lib.rs — pub mod font + re-export (font_parse/font_family_name/font_glyph_id_for alias + Params/Outcome/FontRegistry/FontError)
+- pinion-rpc/src/dispatch.rs — DispatchContext.font_registry: Option<&FontRegistry> 새 field
+- pinion-rpc/src/dispatch.rs — with_font_registry builder (R47.7.5 last_paint_layout 패턴 정합)
+- pinion-rpc/src/dispatch.rs — dispatch fn 의 font_registry borrow 추출 + 3 routing 분기 (font/parse / font/family_name / font/glyph_id_for)
+- pinion-rpc/src/dispatch.rs — handle_font_parse / handle_font_family_name / handle_font_glyph_id_for + font_id_from_params helper + font_error_to_rpc + font_registry_unavailable
+- JSON-RPC error mapping: NotFound/Parse=-32602 Invalid params, RegistryExhausted/RegistryPoisoned=-32603 Internal, registry missing=-32603 FontRegistryUnavailable
+- wire shape: ParseParams { bytes: Vec<u8> } JSON array of u8 (pure JSON, no base64 lib) — payload 4x verbose but AI-first 정통
+- typed fn 은 direct args (bytes/font_id/codepoint) — Params struct 는 serde 와이어 shape 만, click/screenshot/query 패턴 정합 + clippy 정합
+- FontRegistry concurrency = RwLock (read-heavy AI introspect workload) + AtomicU32 (counter), u32::MAX exhaustion strict check
+- Noto Sans Regular include_bytes! — font.rs 10 typed test + dispatch.rs 8 JSON-RPC E2E test 모두 real font 검증
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 807 → 825 (+18 new font tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: pinion-rpc 0 new warnings (baseline 유지: pinion-core 5+1 / pinion-runtime 1)
+- Params struct 의 needless_pass_by_value clippy 가 발견 → typed fn direct args 로 refactor (기존 crate convention 정합)
+- pinion-rpc lib tests: 270 pass (이전 252 + 18 신규 font area)
+- validate_workspace: entries 121→122 / sections 49 (no change) / T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.37.2, §5.7, §5.12, §5.37.1
+
+
+**Carry forward**:
+- R50.X.2 extended method: font/glyph_outline / font/cmap_subtables / font/metrics / font/subfamily_name / font/full_name / font/postscript_name (pinion-text-font 의 6 accessor + glyph_outline 매핑)
+- Glyph variant (Empty / Simple / Composite) JSON 직렬화 — pinion-text-font 에 serde dep 추가 vs RPC layer manual 직렬화 결정 필요
+- R50.X.3 lifecycle: font/dispose (registry cleanup) + font/list (active font_id 들 enumerate)
+- font_registry concurrency stress test — multi-thread RwLock contention pattern 검증 (R50.X.2+ 시점)
+- method namespace = font/* 만 — text/* (shape/layout/break) 는 R50.4+ shape 후 별도 sub-scope (§5.37.3 후보)
 
 
 

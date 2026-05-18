@@ -12,6 +12,7 @@
 pub mod click;
 pub mod dispatch;
 pub mod dry_run;
+pub mod font;
 pub mod intents;
 pub mod invoke;
 pub mod layout_query;
@@ -28,6 +29,11 @@ pub mod wait_for;
 pub use click::{click, ClickError, ClickOutcome};
 pub use dispatch::{dispatch, DispatchContext, Request, RequestId, Response, RpcError};
 pub use dry_run::{dry_run, DryRunError};
+pub use font::{
+    family_name as font_family_name, glyph_id_for as font_glyph_id_for, parse as font_parse,
+    FamilyNameOutcome, FamilyNameParams, FontError, FontRegistry, GlyphIdForOutcome,
+    GlyphIdForParams, ParseOutcome, ParseParams,
+};
 pub use intents::{drain_intents, IntentsError};
 pub use invoke::{invoke, InvokeError};
 pub use layout_query::{
