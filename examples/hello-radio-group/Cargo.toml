@@ -1,0 +1,24 @@
+[package]
+name = "hello-radio-group"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.44 §5.38 composite hit-target first-client: N=3 Radio group via paint 'main_group#0..2' tags + state RadioGroupExternal — substrate-first 3-round (R51.41 RFC + R51.42 InputRouter '#' split + R51.43 introspect per-radio) end-to-end visual evidence"
+publish = false
+
+[[bin]]
+name = "hello-radio-group"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

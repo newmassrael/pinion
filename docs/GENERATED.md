@@ -2142,6 +2142,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/input.rs:InputRouter::captured_targets
 - crates/pinion-runtime/src/input.rs:InputRouter::hover_wants_capture
 - crates/pinion-runtime/src/input.rs:split_subindex
+- examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key
 
 
 
@@ -2779,6 +2780,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/slider.rs:slider_axis_name
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/state.&lt;index&gt;
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/selected.&lt;index&gt;
+- examples/hello-radio-group/src/main.rs:RadioGroupView
 
 
 
@@ -4419,6 +4421,38 @@ router.pointer_down(&mut state_scene);
 - External trait segregation RFC (부채 5)
 - R41 §5.16 Phase 2 thin RHI 3D pass axis spec round (부채 9)
 - winit Touch event 와이어링 (PointerId::touch 수용 ready, shell call site 남음)
+
+
+
+### R51.44 — R51.44 §5.38+§5.35 hello-radio-group composite hit-target first-client land
+
+**Changes**:
+- examples/hello-radio-group/{Cargo.toml, build.rs, app.pinion.xml, src/main.rs} 신설 — workspace.members 등록, pinion-forge codegen 시작점 + HelloRadioGroupRenderer manifest
+- examples/hello-radio-group/src/main.rs: RadioGroupView WidgetView impl — type State=[(RadioState,bool);3], paint N=3 vertical Column rows tagged 'main_group#0..2', state RadioGroupExternal::new(3) with_tag('main_group')
+- RadioGroupView::read_state 가 state.<i>/selected.<i> (R51.43) per-radio query 로 구성 — introspect single source of truth, AI scene/query 와 동일 경로
+- RadioGroupView::apply_key (R51.37 escape hatch) 가 ARIA radio-group keyboard navigation 구현 — a/b/c → 0/1/2, Home/End → first/last, ArrowDown/Right + ArrowUp/Left → wrap-step, 전체 activation cycle (Enter/Down/Up/Leave) wire-format 으로 forward 해 '"selected"' intent emission 보장
+- Cargo.toml workspace.members 에 examples/hello-radio-group 추가
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1280 pass / 0 fail (no test change — binary client)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict)
+- cargo check -p hello-radio-group 성공 — forge codegen pipeline 정상 wire
+- InputRouter R51.42 '#' split + RadioGroupExternal R51.43 per-radio introspect 의 시각 end-to-end 검증 substrate — visual evidence (hello-radio-group binary)
+- substrate-first 3-round (R51.41 RFC → R51.42 InputRouter → R51.43 introspect) + this first-client 의 4/4 completion — Tier-1 visual coverage 6/6
+
+
+
+**Impact**: §5.38, §5.35
+
+
+**Carry forward**:
+- External trait segregation RFC (부채 5) — R51.34/.37/.38 누적 trait 확장 정리, InputForwarding / Lifecycle / Introspection sub-trait 분리 design
+- R41 §5.16 Phase 2 thin RHI 3D pass axis spec round (부채 9)
+- R51.31 L4 alternative impl path RFC (부채 10) — pre-substitute path lock spec
+- winit Touch event 와이어링 (PointerId::touch 수용 ready, shell call site 남음)
+- hello-radio-group N=3 구조 — Vec/array 관례 제한 없이 dynamic-N first-client (e.g. settings binary) 는 명시 spec round 일면 추가 ratify 필요
 
 
 
