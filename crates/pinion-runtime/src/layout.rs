@@ -112,9 +112,17 @@ pub fn compute_layout(
                         _ => None,
                     };
                     let layout = cache.layout(content, style, max_width);
+                    // R47.7.6 — integer pixel snapping. parley returns
+                    // sub-pixel f32 widths; without `ceil` the value
+                    // oscillates `77.0`/`77.8` between adjacent
+                    // viewport widths, producing a visible 1-px text
+                    // jitter on mouse-drag resize. `ceil` rounds toward
+                    // "fits inside taffy's bound" so the result snaps
+                    // monotonically and the cached `rect.w` stays stable
+                    // across consecutive frames at the same content.
                     TaffySize {
-                        width: layout.width(),
-                        height: layout.height(),
+                        width: layout.width().ceil(),
+                        height: layout.height().ceil(),
                     }
                 }
                 None => TaffySize::ZERO,

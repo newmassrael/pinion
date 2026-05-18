@@ -525,6 +525,11 @@ impl ApplicationHandler<AppEvent> for App {
             window,
             renderer: Box::new(renderer),
         };
+        // R47.7.5 — winit does not auto-emit `RedrawRequested` on
+        // `resumed` (platform-dependent). Explicitly request the
+        // first redraw so `last_paint_layout` populates before the
+        // first AI client `scene/layout {viewport: null}` lands.
+        self.request_redraw();
         eprintln!(
             "hello-button: hover/click the window to drive the Button SCXML.\n           keys: d=Disable, e=Enable, Esc=quit\n           RPC: pipe JSON-RPC 2.0 frames (one per line) on stdin\n           §5.20: button.click intents log to stderr after each event"
         );
