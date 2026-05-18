@@ -249,7 +249,15 @@ impl WidgetView for SliderVerticalView {
     /// branch on `aria-orientation` to decide the activation
     /// direction. Disabled state ignores keyboard input per the
     /// same ARIA contract.
-    fn apply_key(scene: &mut Scene, _focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        // R51.56 §5.39 — focused-only routing (parity with horizontal
+        // `hello-slider`). Orientation is decoupled from the focus
+        // contract: a vertical slider routes the same way as a
+        // horizontal one — the W3C ARIA Slider keyboard contract is
+        // orientation-invariant.
+        if focused != Some(Self::tag()) {
+            return false;
+        }
         let Scene::External(node) = scene else {
             return false;
         };
@@ -378,5 +386,29 @@ mod tests {
             intro.query("orientation"),
             Some(IntrospectValue::Text("vertical".to_string())),
         );
+    }
+
+    // ----- R51.56 §5.39 focused-only routing -----
+
+    #[test]
+    fn no_focus_returns_false_and_leaves_value() {
+        let mut scene = scene_at(0.5);
+        assert!(!SliderVerticalView::apply_key(
+            &mut scene,
+            None,
+            "ArrowUp"
+        ));
+        assert!((current_value(&scene) - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn other_widget_focused_returns_false_and_leaves_value() {
+        let mut scene = scene_at(0.5);
+        assert!(!SliderVerticalView::apply_key(
+            &mut scene,
+            Some("save_btn"),
+            "ArrowUp"
+        ));
+        assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 }

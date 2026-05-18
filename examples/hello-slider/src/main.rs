@@ -294,7 +294,18 @@ impl WidgetView for SliderView {
     /// projection: the cached state lags one shell tick behind a
     /// just-arrived `Disable` SCXML transition, and the AI-client
     /// contract uses the live introspect channel.
-    fn apply_key(scene: &mut Scene, _focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        // R51.56 §5.39 — focused-only routing. The pre-R51.53
+        // broadcast model fired Arrow / Home / End / Page* on every
+        // `WidgetView::apply_key` regardless of focus, which aliased
+        // the slider with any sibling widget that consumed the same
+        // keys (Slider arrows + RadioGroup arrows on the same screen
+        // would step both). Gating on `focused == Self::tag()`
+        // restricts dispatch to the focused slider — matches the
+        // W3C ARIA Slider keyboard contract verbatim.
+        if focused != Some(Self::tag()) {
+            return false;
+        }
         let Scene::External(node) = scene else {
             return false;
         };
@@ -472,6 +483,30 @@ mod tests {
     fn unknown_key_returns_false() {
         let mut scene = scene_at(0.5);
         assert!(!SliderView::apply_key(&mut scene, Some("main_slider"), "F1"));
+        assert!((current_value(&scene) - 0.5).abs() < 1e-5);
+    }
+
+    // ----- R51.56 §5.39 focused-only routing -----
+
+    #[test]
+    fn no_focus_returns_false_and_leaves_value() {
+        // `FocusManager::focused()` returns `None` between Tab
+        // boundaries; the slider must stay silent.
+        let mut scene = scene_at(0.5);
+        assert!(!SliderView::apply_key(&mut scene, None, "ArrowRight"));
+        assert!((current_value(&scene) - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn other_widget_focused_returns_false_and_leaves_value() {
+        // A sibling focusable widget (`save_btn`, etc.) holding focus
+        // must not route slider arrow keys.
+        let mut scene = scene_at(0.5);
+        assert!(!SliderView::apply_key(
+            &mut scene,
+            Some("save_btn"),
+            "ArrowRight"
+        ));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 }

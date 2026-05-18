@@ -2890,6 +2890,8 @@ router.pointer_down(&mut state_scene);
 - examples/hello-toggle/src/main.rs:ToggleView::apply_key
 - examples/hello-checkbox/src/main.rs:CheckboxView::apply_key
 - examples/hello-radio/src/main.rs:RadioView::apply_key
+- examples/hello-slider/src/main.rs:SliderView::apply_key
+- examples/hello-slider-vertical/src/main.rs:SliderVerticalView::apply_key
 
 
 
@@ -4879,6 +4881,32 @@ router.pointer_down(&mut state_scene);
 
 **Carry forward**:
 - R51.56 — Slider/SliderVertical focused-only routing (apply_key focused 인자 실제 결정)
+- R51.57 — RadioGroup roving tabindex composite focus
+- R51.58 — paint-time focus ring rendering
+- R51.59 — Window blur/restore wiring
+
+
+
+### R51.56 — R51.56 §5.39 Slider/SliderVertical focused-only routed — broadcast aliasing 폐기
+
+**Changes**:
+- SliderView::apply_key / SliderVerticalView::apply_key 가 focused == Self::tag() gate 추가
+- broadcast → focused-only — sibling widget 간 Arrow / Home / End / Page* aliasing 제거
+- 4 unit test 추가 (2 widget 각 None + other-focus = false)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello — 1316 → 1320 pass / 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.39
+
+
+**Carry forward**:
 - R51.57 — RadioGroup roving tabindex composite focus
 - R51.58 — paint-time focus ring rendering
 - R51.59 — Window blur/restore wiring

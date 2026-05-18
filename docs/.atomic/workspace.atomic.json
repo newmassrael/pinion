@@ -3747,6 +3747,14 @@
         {
           "file": "examples/hello-radio/src/main.rs",
           "symbol": "RadioView::apply_key"
+        },
+        {
+          "file": "examples/hello-slider/src/main.rs",
+          "symbol": "SliderView::apply_key"
+        },
+        {
+          "file": "examples/hello-slider-vertical/src/main.rs",
+          "symbol": "SliderVerticalView::apply_key"
         }
       ],
       "decision_status": "active"
@@ -6712,6 +6720,46 @@
       ],
       "publishable_carry_forward_bullets": [
         "R51.56 — Slider/SliderVertical focused-only routing (apply_key focused 인자 실제 결정)",
+        "R51.57 — RadioGroup roving tabindex composite focus",
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring"
+      ]
+    },
+    "R51.56": {
+      "decision_summary": "R51.56 §5.39 Slider/SliderVertical focused-only routed — broadcast aliasing 폐기",
+      "changes_bullets": [
+        "SliderView::apply_key / SliderVerticalView::apply_key 가 focused == Self::tag() gate 추가",
+        "broadcast → focused-only — sibling widget 간 Arrow / Home / End / Page* aliasing 제거",
+        "4 unit test 추가 (2 widget 각 None + other-focus = false)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1316 → 1320 pass / 0 fail",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R51.57 — RadioGroup roving tabindex composite focus",
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring"
+      ],
+      "publishable_decision_summary": "R51.56 §5.39 Slider/SliderVertical focused-only routed — broadcast aliasing 폐기",
+      "publishable_changes_bullets": [
+        "SliderView::apply_key / SliderVerticalView::apply_key 가 focused == Self::tag() gate 추가",
+        "broadcast → focused-only — sibling widget 간 Arrow / Home / End / Page* aliasing 제거",
+        "4 unit test 추가 (2 widget 각 None + other-focus = false)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1316 → 1320 pass / 0 fail",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
         "R51.57 — RadioGroup roving tabindex composite focus",
         "R51.58 — paint-time focus ring rendering",
         "R51.59 — Window blur/restore wiring"
