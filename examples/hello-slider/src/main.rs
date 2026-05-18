@@ -1,9 +1,11 @@
 //! `hello-slider` — R51.35 §5.38 paint-side N=5 amortization on the
-//! pinion-shell substrate (R51.30), and the first visual demo that
+//! pinion-shell substrate (R51.30), the first visual demo that
 //! consumes the R51.34 §5.15 + §5.35 pointer-capture + `pointer_move`
-//! forward substrate. The widget body has no drag-specific code —
-//! the framework's [`InputRouter`](pinion_runtime::InputRouter)
-//! routes the cursor X through `External::pointer_move` and the
+//! forward substrate, and the first client of the R51.37 §5.35
+//! [`WidgetView::apply_key`] hook (W3C/ARIA Slider keyboard
+//! accessibility). The widget body has no drag-specific code — the
+//! framework's [`InputRouter`](pinion_runtime::InputRouter) routes
+//! the cursor X through `External::pointer_move` and the
 //! `SliderExternal` impl rewrites the value sidecar on every
 //! effective change. Click-to-position (Material precedent) is free
 //! out of the substrate's R51.35.a click-point patch.
@@ -26,15 +28,27 @@
 //!   flight — Material's "pressed" affordance)
 //! * Disabled: muted brown-grey thumb + muted brown-grey filled
 //!
-//! Keybindings: `d` / `e` Disable / Enable. There is no `,` / `.`
-//! decrement / increment binding because the R51.34 `WidgetView`
-//! trait's `keybinding(key) -> Option<Self::Event>` slot only
-//! carries typed events, and `SliderEvent` has no `Decrement` /
-//! `Increment` variants — value mutation flows through the
-//! framework's drag path (mouse) or the RPC `intervene
-//! /external/value` path (AI client). Adding a key-driven
-//! intervene hook is a future substrate axis; not blocking the
-//! click-and-drag UX this binary demonstrates.
+//! Keybindings (typed-event channel): `d` / `e` Disable / Enable —
+//! routed through [`WidgetView::keybinding`] because both map to
+//! existing `SliderEvent` variants.
+//!
+//! Keybindings (R51.37 §5.35 `apply_key` channel, W3C/ARIA Slider
+//! accessibility):
+//!
+//! * `ArrowLeft` / `ArrowDown` — value − 5% (small step)
+//! * `ArrowRight` / `ArrowUp` — value + 5% (small step)
+//! * `Home` — value 0.0 (minimum)
+//! * `End` — value 1.0 (maximum)
+//! * `PageDown` — value − 10% (large step)
+//! * `PageUp` — value + 10% (large step)
+//!
+//! ARIA convention: the Disabled state ignores keyboard input, so
+//! the override returns `false` (unhandled) while disabled — the
+//! same shape a screen-reader-aware browser would observe via
+//! `aria-disabled`. Value mutation flows through the same
+//! `intervene("value", Float)` channel the RPC `scene/intervene`
+//! route uses, so the AI client and the keyboard path see the
+//! identical observable state transitions.
 
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
@@ -262,6 +276,53 @@ impl WidgetView for SliderView {
         }
     }
 
+    /// W3C/ARIA Slider keyboard accessibility — wires the six
+    /// standard navigation keys (arrows, Home/End, PageUp/PageDown)
+    /// to value mutation via the §5.15 introspect channel. Walks the
+    /// authoritative state scene to the root [`Scene::External`]
+    /// (the `SliderExternal` opt-in to [`ExternalIntrospect`]),
+    /// reads the current value via `query("value")`, computes the
+    /// next clamped value, and writes it back through
+    /// `intervene("value", Float)` — the same side door the RPC
+    /// `scene/intervene` route uses, so the AI client observes
+    /// keyboard mutations identically to drag-driven mutations.
+    ///
+    /// ARIA convention: a disabled slider ignores keyboard input,
+    /// so the override returns `false` (unhandled) while the state
+    /// machine is in [`SliderState::Disabled`]. The disabled gate
+    /// reads `query("state")` rather than checking the cached
+    /// projection: the cached state lags one shell tick behind a
+    /// just-arrived `Disable` SCXML transition, and the AI-client
+    /// contract uses the live introspect channel.
+    fn apply_key(scene: &mut Scene, key: &str) -> bool {
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+            if name == "Disabled" {
+                return false;
+            }
+        }
+        let Some(IntrospectValue::Float(current)) = intro.query("value") else {
+            return false;
+        };
+        let new_value = match key {
+            "ArrowLeft" | "ArrowDown" => (current - 0.05).clamp(0.0, 1.0),
+            "ArrowRight" | "ArrowUp" => (current + 0.05).clamp(0.0, 1.0),
+            "Home" => 0.0,
+            "End" => 1.0,
+            "PageDown" => (current - 0.10).clamp(0.0, 1.0),
+            "PageUp" => (current + 0.10).clamp(0.0, 1.0),
+            _ => return false,
+        };
+        intro
+            .intervene("value", IntrospectValue::Float(new_value))
+            .is_ok()
+    }
+
     fn fmt_state_log(state: &(SliderState, f32)) -> String {
         format!("{} / {:.2}", slider_state_name(state.0), state.1)
     }
@@ -287,4 +348,130 @@ fn slider_state_name(state: SliderState) -> &'static str {
 
 fn main() {
     pinion_shell::run::<SliderView>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pinion_core::scene::ExternalNode;
+
+    /// Build a fresh slider scene at a given starting value. Mirrors
+    /// the shape `WidgetView::create_external` wraps the
+    /// `SliderExternal` into at shell startup so `apply_key` walks
+    /// exactly the same scene topology the live binary observes.
+    fn scene_at(start_value: f32) -> Scene {
+        let mut ext = SliderExternal::new();
+        ext.set_value(start_value);
+        Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_slider"))
+    }
+
+    fn current_value(scene: &Scene) -> f32 {
+        let Scene::External(node) = scene else {
+            panic!("expected External root");
+        };
+        let intro = node.handle.introspect().expect("introspect opted in");
+        let Some(IntrospectValue::Float(v)) = intro.query("value") else {
+            panic!("value path returns Float");
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            v as f32
+        }
+    }
+
+    #[test]
+    fn arrow_right_increments_by_small_step() {
+        let mut scene = scene_at(0.5);
+        assert!(SliderView::apply_key(&mut scene, "ArrowRight"));
+        assert!((current_value(&scene) - 0.55).abs() < 1e-5);
+    }
+
+    #[test]
+    fn arrow_left_decrements_by_small_step() {
+        let mut scene = scene_at(0.5);
+        assert!(SliderView::apply_key(&mut scene, "ArrowLeft"));
+        assert!((current_value(&scene) - 0.45).abs() < 1e-5);
+    }
+
+    #[test]
+    fn arrow_up_aliases_arrow_right() {
+        let mut scene = scene_at(0.5);
+        assert!(SliderView::apply_key(&mut scene, "ArrowUp"));
+        assert!((current_value(&scene) - 0.55).abs() < 1e-5);
+    }
+
+    #[test]
+    fn arrow_down_aliases_arrow_left() {
+        let mut scene = scene_at(0.5);
+        assert!(SliderView::apply_key(&mut scene, "ArrowDown"));
+        assert!((current_value(&scene) - 0.45).abs() < 1e-5);
+    }
+
+    #[test]
+    fn home_jumps_to_minimum() {
+        let mut scene = scene_at(0.7);
+        assert!(SliderView::apply_key(&mut scene, "Home"));
+        assert!((current_value(&scene) - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn end_jumps_to_maximum() {
+        let mut scene = scene_at(0.3);
+        assert!(SliderView::apply_key(&mut scene, "End"));
+        assert!((current_value(&scene) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn page_up_increments_by_large_step() {
+        let mut scene = scene_at(0.5);
+        assert!(SliderView::apply_key(&mut scene, "PageUp"));
+        assert!((current_value(&scene) - 0.60).abs() < 1e-5);
+    }
+
+    #[test]
+    fn page_down_decrements_by_large_step() {
+        let mut scene = scene_at(0.5);
+        assert!(SliderView::apply_key(&mut scene, "PageDown"));
+        assert!((current_value(&scene) - 0.40).abs() < 1e-5);
+    }
+
+    #[test]
+    fn arrow_left_clamps_at_minimum() {
+        let mut scene = scene_at(0.0);
+        // ARIA: handled (consumed key) even when the result is the
+        // same value — analogous to a browser's Slider keyboard
+        // dispatcher returning a stateful event.
+        assert!(SliderView::apply_key(&mut scene, "ArrowLeft"));
+        assert!((current_value(&scene) - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn arrow_right_clamps_at_maximum() {
+        let mut scene = scene_at(1.0);
+        assert!(SliderView::apply_key(&mut scene, "ArrowRight"));
+        assert!((current_value(&scene) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn disabled_state_ignores_keyboard() {
+        let mut scene = scene_at(0.5);
+        // Drive into the Disabled cell via the typed event channel,
+        // mirroring the `keybinding("d")` route at runtime.
+        if let Scene::External(node) = &mut scene {
+            let intro = node.handle.introspect_mut().expect("opted in");
+            intro
+                .invoke("send", IntrospectValue::Text("Disable".to_string()))
+                .expect("Disable invoke succeeds");
+        }
+        // ARIA: a disabled slider does not consume keyboard input.
+        assert!(!SliderView::apply_key(&mut scene, "ArrowRight"));
+        assert!((current_value(&scene) - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn unknown_key_returns_false() {
+        let mut scene = scene_at(0.5);
+        assert!(!SliderView::apply_key(&mut scene, "F1"));
+        assert!((current_value(&scene) - 0.5).abs() < 1e-5);
+    }
 }

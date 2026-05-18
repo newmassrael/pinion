@@ -2395,6 +2395,14 @@
         {
           "file": "crates/pinion-runtime/src/input.rs",
           "symbol": "widget_wants_capture"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "AppShell::apply_key"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "named_key_str"
         }
       ],
       "decision_status": "active"
@@ -3470,6 +3478,14 @@
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
           "symbol": "SliderExternal::pointer_move"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "WidgetView::apply_key"
+        },
+        {
+          "file": "examples/hello-slider/src/main.rs",
+          "symbol": "SliderView::apply_key"
         }
       ],
       "decision_status": "active"
@@ -5446,6 +5462,78 @@
       "publishable_carry_forward_bullets": [
         "docstring //! example blocks at crates/pinion-shell/src/lib.rs:7 and :141 remain rust,ignore (visual snippets) — textbook escape hatch for async + Into<SurfaceTarget> bounds whose hidden-line stubs would be unwieldy; smoke fixture covers the compile guarantee instead",
         "RadioGroup visual demo still blocked on multi-External / multi-tag substrate; first-client evidence (RadioGroup land) needed before substrate refactor per [[substrate-incompleteness-signal]] discipline"
+      ]
+    },
+    "R51.37": {
+      "decision_summary": "R51.37 §5.35+§5.38 WidgetView::apply_key substrate + Slider arrow-keys a11y first-class — W3C/ARIA Slider keyboard accessibility 표준 도달",
+      "changes_bullets": [
+        "crates/pinion-shell/src/lib.rs: WidgetView trait 에 apply_key(scene: &mut Scene, key: &str) -> bool default false 추가 — 응용이 enum-typed keybinding 채널로 표현 못 하는 임의 키 처리를 §5.15 introspect 채널(intervene)로 라우팅, escape hatch 패턴, default 보존 시 4개 hello-* 위젯 동작 0 회규",
+        "crates/pinion-shell/src/lib.rs: AppShell::apply_key 신규 — V::apply_key 가 true 반환 시 §5.34 revision bump + refresh_state + drain_intents (forward 와 동일 post-input 부킹)",
+        "crates/pinion-shell/src/lib.rs: named_key_str(NamedKey) -> Option<&'static str> 신규 — winit NamedKey → W3C KeyboardEvent.key 문자열 매핑(ArrowLeft/Right/Up/Down/Home/End/PageUp/PageDown/Tab/Enter/Space); Escape 는 상류에서 quit 으로 필터",
+        "crates/pinion-shell/src/lib.rs: KeyboardInput 핸들러 확장 — Character 는 keybinding 우선·실패 시 apply_key 로 폴백, Named 는 named_key_str 변환 후 apply_key 로 라우팅, Escape 동작 불변",
+        "examples/hello-slider/src/main.rs: SliderView::apply_key override — 6개 키(ArrowLeft/Down=-5%, ArrowRight/Up=+5%, Home=0.0, End=1.0, PageDown=-10%, PageUp=+10%) 를 query+intervene 사이클로 wire, clamp(0.0..=1.0), Disabled 상태에서는 false 반환(ARIA aria-disabled 의 키보드 무시 규약)",
+        "examples/hello-slider/src/main.rs: #[cfg(test)] mod tests 12개 — Arrow/Home/End/Page 6개 키 + ArrowUp=Right·ArrowDown=Left alias + 양끝 clamp + Disabled gate + unknown-key swallow 까지 ARIA Slider 키보드 패턴 전수 검증",
+        "examples/hello-slider/src/main.rs: 파일 docstring 갱신 — keybinding 의 R51.34 carry 문장(decrement/increment carry-forward) 제거 후 R51.37 apply_key 8키 표 정식 명시",
+        "§5.35 implementations += crates/pinion-shell/src/lib.rs:AppShell::apply_key + named_key_str",
+        "§5.38 implementations += crates/pinion-shell/src/lib.rs:WidgetView::apply_key + examples/hello-slider/src/main.rs:SliderView::apply_key"
+      ],
+      "verification_bullets": [
+        "cargo build --workspace --features pinion-runtime/vello = 0 errors (substrate + slider override + shell handler 동시 통과)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict 유지 — forbid unsafe_code / deny warnings / deny clippy::pedantic; doc_markdown SwiftIU 백틱 + manual_let_else 1회 정정)",
+        "cargo test --workspace --features pinion-runtime/vello = 1256 pass / 0 fail / 8 ignored (직전 1244 → +12 SliderView::apply_key unit tests)",
+        "cargo test -p hello-slider = 12/12 pass (arrow_right_increments / arrow_left_decrements / arrow_up·down alias / home·end jumps / page_up·down large step / 양끝 clamp / disabled_state_ignores_keyboard / unknown_key_returns_false)",
+        "cargo test -p pinion-shell --test smoke = 1/1 pass (SmokeView 가 apply_key default false 그대로 → 트레잇 surface 회규 가드 유지)",
+        "cargo test -p pinion-runtime button_like_widget_preserves_pre_r51_34_cancel_by_leave = 1/1 pass (R51.34 opt-in capture 패턴 0 회규 재확인)",
+        "Mnemosyne validate_workspace: entries=182 / sections=55 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync / commit↔ledger drift cited=1 ledger=129 missing=0"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "부채 2: multi-pointer / multi-touch v0 제한 — InputRouter::captured_target HashMap<PointerId, String> 화 + cursor_moved/pointer_down/pointer_up 시그니처에 PointerId 합류 (~150 LOC)",
+        "부채 3: RadioGroup substrate-chicken-and-egg — substrate-first 3-round (RFC + sub-index routing + first-client hello-radio-group), Tier-1 visual 6/6 도달 (~300+280 LOC)",
+        "부채 4: Slider vertical axis future-proof — SliderState/SliderEvent 에 axis 추가, SliderExternal::pointer_move axis 분기 (~50 LOC)",
+        "부채 5: External trait surface 비대화 검토 — InputForwarding/Lifecycle/Introspection sub-trait 분리 RFC (design only)",
+        "부채 6: widget_wants_capture O(N) walk — multi-External 환경 frame-마다 비용, last hover_target 의 wants_capture early-cache (~50 LOC)",
+        "부채 9: R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)",
+        "부채 10: R51.31 L4 alternative impl path RFC (spec round)",
+        "메모리 신설 후보: design-phase-industry-ux-checklist.md (R51.34 click-to-position 누락 lesson + R51.35 keyboard a11y 누락 lesson), a11y-first-class-requirement.md (carry deferred 가 ARIA 답 아님 lesson), opt-in-pattern-textbook-merit.md (wants_pointer_capture default false 4-widget 0 회규 검증)"
+      ],
+      "publishable_decision_summary": "R51.37 §5.35+§5.38 WidgetView::apply_key substrate + Slider arrow-keys a11y first-class — W3C/ARIA Slider keyboard accessibility 표준 도달",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/lib.rs: WidgetView trait 에 apply_key(scene: &mut Scene, key: &str) -> bool default false 추가 — 응용이 enum-typed keybinding 채널로 표현 못 하는 임의 키 처리를 §5.15 introspect 채널(intervene)로 라우팅, escape hatch 패턴, default 보존 시 4개 hello-* 위젯 동작 0 회규",
+        "crates/pinion-shell/src/lib.rs: AppShell::apply_key 신규 — V::apply_key 가 true 반환 시 §5.34 revision bump + refresh_state + drain_intents (forward 와 동일 post-input 부킹)",
+        "crates/pinion-shell/src/lib.rs: named_key_str(NamedKey) -> Option<&'static str> 신규 — winit NamedKey → W3C KeyboardEvent.key 문자열 매핑(ArrowLeft/Right/Up/Down/Home/End/PageUp/PageDown/Tab/Enter/Space); Escape 는 상류에서 quit 으로 필터",
+        "crates/pinion-shell/src/lib.rs: KeyboardInput 핸들러 확장 — Character 는 keybinding 우선·실패 시 apply_key 로 폴백, Named 는 named_key_str 변환 후 apply_key 로 라우팅, Escape 동작 불변",
+        "examples/hello-slider/src/main.rs: SliderView::apply_key override — 6개 키(ArrowLeft/Down=-5%, ArrowRight/Up=+5%, Home=0.0, End=1.0, PageDown=-10%, PageUp=+10%) 를 query+intervene 사이클로 wire, clamp(0.0..=1.0), Disabled 상태에서는 false 반환(ARIA aria-disabled 의 키보드 무시 규약)",
+        "examples/hello-slider/src/main.rs: #[cfg(test)] mod tests 12개 — Arrow/Home/End/Page 6개 키 + ArrowUp=Right·ArrowDown=Left alias + 양끝 clamp + Disabled gate + unknown-key swallow 까지 ARIA Slider 키보드 패턴 전수 검증",
+        "examples/hello-slider/src/main.rs: 파일 docstring 갱신 — keybinding 의 R51.34 carry 문장(decrement/increment carry-forward) 제거 후 R51.37 apply_key 8키 표 정식 명시",
+        "§5.35 implementations += crates/pinion-shell/src/lib.rs:AppShell::apply_key + named_key_str",
+        "§5.38 implementations += crates/pinion-shell/src/lib.rs:WidgetView::apply_key + examples/hello-slider/src/main.rs:SliderView::apply_key"
+      ],
+      "publishable_verification_bullets": [
+        "cargo build --workspace --features pinion-runtime/vello = 0 errors (substrate + slider override + shell handler 동시 통과)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict 유지 — forbid unsafe_code / deny warnings / deny clippy::pedantic; doc_markdown SwiftIU 백틱 + manual_let_else 1회 정정)",
+        "cargo test --workspace --features pinion-runtime/vello = 1256 pass / 0 fail / 8 ignored (직전 1244 → +12 SliderView::apply_key unit tests)",
+        "cargo test -p hello-slider = 12/12 pass (arrow_right_increments / arrow_left_decrements / arrow_up·down alias / home·end jumps / page_up·down large step / 양끝 clamp / disabled_state_ignores_keyboard / unknown_key_returns_false)",
+        "cargo test -p pinion-shell --test smoke = 1/1 pass (SmokeView 가 apply_key default false 그대로 → 트레잇 surface 회규 가드 유지)",
+        "cargo test -p pinion-runtime button_like_widget_preserves_pre_r51_34_cancel_by_leave = 1/1 pass (R51.34 opt-in capture 패턴 0 회규 재확인)",
+        "Mnemosyne validate_workspace: entries=182 / sections=55 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync / commit↔ledger drift cited=1 ledger=129 missing=0"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "부채 2: multi-pointer / multi-touch v0 제한 — InputRouter::captured_target HashMap<PointerId, String> 화 + cursor_moved/pointer_down/pointer_up 시그니처에 PointerId 합류 (~150 LOC)",
+        "부채 3: RadioGroup substrate-chicken-and-egg — substrate-first 3-round (RFC + sub-index routing + first-client hello-radio-group), Tier-1 visual 6/6 도달 (~300+280 LOC)",
+        "부채 4: Slider vertical axis future-proof — SliderState/SliderEvent 에 axis 추가, SliderExternal::pointer_move axis 분기 (~50 LOC)",
+        "부채 5: External trait surface 비대화 검토 — InputForwarding/Lifecycle/Introspection sub-trait 분리 RFC (design only)",
+        "부채 6: widget_wants_capture O(N) walk — multi-External 환경 frame-마다 비용, last hover_target 의 wants_capture early-cache (~50 LOC)",
+        "부채 9: R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)",
+        "부채 10: R51.31 L4 alternative impl path RFC (spec round)",
+        "메모리 신설 후보: design-phase-industry-ux-checklist.md (R51.34 click-to-position 누락 lesson + R51.35 keyboard a11y 누락 lesson), a11y-first-class-requirement.md (carry deferred 가 ARIA 답 아님 lesson), opt-in-pattern-textbook-merit.md (wants_pointer_capture default false 4-widget 0 회규 검증)"
       ]
     },
     "Round 1": {

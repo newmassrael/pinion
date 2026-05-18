@@ -261,6 +261,41 @@ pub trait WidgetView: 'static {
         None
     }
 
+    /// R51.37 §5.35 — escape hatch for keyboard affordances that the
+    /// enum-typed [`keybinding`](Self::keybinding) channel cannot
+    /// express. The shell consults this AFTER `keybinding` returns
+    /// `None` for [`Key::Character`] presses, and as the *only* hook
+    /// for non-character named keys (`ArrowLeft`, `ArrowRight`,
+    /// `ArrowUp`, `ArrowDown`, `Home`, `End`, `PageUp`, `PageDown`,
+    /// `Tab`, `Enter`, `Space`). `Escape` remains shell-reserved
+    /// (window quit) and is not threaded through this hook.
+    ///
+    /// Implementations receive the authoritative state scene `&mut`
+    /// and may walk it to the matching [`Scene::External`] to call
+    /// [`ExternalIntrospect::intervene`](pinion_core::external::ExternalIntrospect::intervene)
+    /// — the same side door the RPC `scene/intervene` route uses.
+    /// This closes the W3C/ARIA Slider keyboard-accessibility gap
+    /// where arrow / Home / End / Page* must mutate the slider value
+    /// but no [`SliderEvent`](pinion_core::widgets::slider::SliderEvent)
+    /// variant carries the new float (event payloads are unit-only).
+    ///
+    /// Returns `true` if the key was handled (the shell bumps the
+    /// §5.34 revision, re-reads state, drains intents, and repaints
+    /// on visible change). Returns `false` to defer to whatever
+    /// fallback the shell adds next (none today; same swallow
+    /// semantics as an unmatched `keybinding`).
+    ///
+    /// Default returns `false` for every key — widgets without
+    /// keyboard affordances beyond `keybinding` need no override.
+    /// The five `examples/hello-*` paint-side amortization binaries
+    /// (button / toggle / checkbox / radio) all rely on the default;
+    /// `hello-slider` overrides to wire arrow + page + home/end to
+    /// `intervene("value", Float(...))`.
+    #[must_use]
+    fn apply_key(_scene: &mut Scene, _key: &str) -> bool {
+        false
+    }
+
     /// Format the cached state for stderr logging on the transition
     /// path (`from -> to`) and the final-state line. Default falls
     /// back to `Debug`; widgets with composite state can format a
@@ -402,6 +437,20 @@ impl<V: WidgetView> AppShell<V> {
         self.revision.bump();
         self.refresh_state();
         self.drain_intents();
+    }
+
+    /// R51.37 §5.35 — route a key string through
+    /// [`WidgetView::apply_key`] and, on handled (`true`), run the
+    /// same post-input bookkeeping as [`Self::forward`]: bump the
+    /// §5.34 revision, re-read cached state (paint on visible
+    /// change), drain pending intents. Unhandled keys are swallowed
+    /// quietly (same shape as an unmatched [`WidgetView::keybinding`]).
+    fn apply_key(&mut self, key: &str) {
+        if V::apply_key(&mut self.scene, key) {
+            self.revision.bump();
+            self.refresh_state();
+            self.drain_intents();
+        }
     }
 
     /// Dispatch one JSON-RPC frame against the LIVE state scene.
@@ -682,6 +731,13 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                         Key::Character(c) => {
                             if let Some(ev) = V::keybinding(c) {
                                 self.forward(ev);
+                            } else {
+                                self.apply_key(c);
+                            }
+                        }
+                        Key::Named(named) => {
+                            if let Some(key_str) = named_key_str(named) {
+                                self.apply_key(key_str);
                             }
                         }
                         _ => {}
@@ -702,6 +758,33 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         match event {
             AppEvent::RpcRequest(json) => self.dispatch_rpc(&json),
         }
+    }
+}
+
+/// R51.37 §5.35 — bridge from winit's [`NamedKey`] enum to the
+/// W3C-aligned `KeyboardEvent.key` strings the
+/// [`WidgetView::apply_key`] contract speaks. Only the keys with
+/// established cross-platform widget meanings are surfaced;
+/// `NamedKey::Escape` is filtered upstream (shell-reserved quit),
+/// and unmapped variants return `None` so the shell stays silent on
+/// keys no widget cares about. The ASCII / W3C names match the
+/// strings Material / `SwiftUI` / Qt / W3C ARIA Slider authoring
+/// patterns specify, so a widget implementation can match against
+/// the same identifiers a browser-side application would consume.
+fn named_key_str(named: NamedKey) -> Option<&'static str> {
+    match named {
+        NamedKey::ArrowLeft => Some("ArrowLeft"),
+        NamedKey::ArrowRight => Some("ArrowRight"),
+        NamedKey::ArrowUp => Some("ArrowUp"),
+        NamedKey::ArrowDown => Some("ArrowDown"),
+        NamedKey::Home => Some("Home"),
+        NamedKey::End => Some("End"),
+        NamedKey::PageUp => Some("PageUp"),
+        NamedKey::PageDown => Some("PageDown"),
+        NamedKey::Tab => Some("Tab"),
+        NamedKey::Enter => Some("Enter"),
+        NamedKey::Space => Some("Space"),
+        _ => None,
     }
 }
 
