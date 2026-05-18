@@ -23,6 +23,13 @@ pinion-core = { path = "../pinion-core", version = "0.0.1" }
 # amortize. headless / TUI 도 intrinsic measure 가 필요하므로 default
 # dep — vello feature gate 외부.
 pinion-text = { path = "../pinion-text", version = "0.0.1" }
+# §5.37.4 R51.27 — UAX #9 BIDI substrate for the L4 mirroring pass.
+# `paint_adapter::paint_text` calls `mirror_paired_brackets` on the
+# TextNode content before handing it to parley so the shape input
+# already carries mirrored glyphs at odd embedding levels. Default dep
+# (no feature gate) — the helper is `Cow::Borrowed` fast-pathed for
+# LTR / bracket-free content, so headless / TUI builds pay nothing.
+pinion-text-unicode = { path = "../pinion-text-unicode", version = "0.0.1" }
 # §5.21 R23/R24 layout system. Confined to pinion-runtime per the
 # spec lock — pinion-core stays free of any layout-engine dep.
 taffy = "0.7"

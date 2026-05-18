@@ -2427,6 +2427,10 @@
         {
           "file": "crates/pinion-runtime/src/layout.rs",
           "symbol": "compute_layout::ceil"
+        },
+        {
+          "file": "crates/pinion-runtime/src/paint_adapter.rs",
+          "symbol": "paint_text"
         }
       ],
       "decision_status": "active"
@@ -3156,6 +3160,10 @@
         {
           "file": "crates/pinion-text-unicode/src/test_fixture.rs",
           "symbol": "parse_bidi_test"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/bidi.rs",
+          "symbol": "mirror_paired_brackets"
         }
       ],
       "decision_status": "active"
@@ -12865,6 +12873,52 @@
       "publishable_carry_forward_bullets": [
         "BIDI algorithm 완성도: 100% — UCD 16.0 두 구조 모두 100% pass; L3 적용 마찠 + L4 mirroring substrate 제공; pinion-text-unicode BIDI layer 의 algorithm 측 부채 챠ƹ",
         "R51.x 다음 후보: (a) L4 mirroring renderer-side 통합 — mirroring_glyph substrate 제공 되어있으나 render-layer slice 이 아직 없음 / (b) Phase 2 axis (통 RHI 3D pass §5.x 신설) 시작 / (c) hello-toggle visual demo (paint-side N=2) / (d) derive macro for WidgetTransition (~135 LOC boilerplate 청산, partial derive 보다 application detect logic 하이레 소용섭 하자 baseline 50%) / (e) framework primitive 추가 신설"
+      ]
+    },
+    "Round 516 — R51.27 §5.37.4 + §5.36 BIDI L4 mirroring renderer-side (paint_adapter wire)": {
+      "decision_summary": "pinion-text-unicode 의 `mirror_paired_brackets` pub helper + pinion-runtime 의 paint_adapter::paint_text 가 parley shape 전에 그 helper 호출 — UAX #9 L4 mirroring substrate 완성 (R51.23 carry 청산)",
+      "changes_bullets": [
+        "crates/pinion-text-unicode/src/bidi.rs: pub fn mirror_paired_brackets(text) -> Cow<'_, str> 신규 — paragraphs 분할 + 각 paragraph 의 P→X→W→N→I→L1 파이프라인 실행 후 odd resolved-level + paired bracket 위치의 mirroring_glyph substitute. 2-pass (검출+구성) 구조 이고 LTR/bracket-free 경우 1패스 종료 후 Cow::Borrowed",
+        "crates/pinion-text-unicode/src/bidi.rs: resolved_levels_for_paragraph private helper — P→X→W→N→I→L1 캤스케이드 을 mirror_paired_brackets 의 두 패스에서 공유",
+        "crates/pinion-runtime/Cargo.toml: pinion-text-unicode dep 신규 (default, no feature gate — Cow::Borrowed fast path 때문에 headless/TUI 도 비용 0)",
+        "crates/pinion-runtime/src/paint_adapter.rs: paint_text 가 t.content 을 cache.layout 에 넘기기 전에 mirror_paired_brackets 호출, parley 는 mirror substituted 문자열로 shape — L4 substitute 는 shape engine 이 소모하는 source codepoints 계층에서 적용",
+        "crates/pinion-text-unicode/src/bidi.rs: 5 unit tests — LTR Borrowed fast path / pure RTL no brackets Borrowed / RTL paired brackets swap / LTR brackets keep / multi-paragraph independent"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1220 pass (+5 from 1215 — mirror_paired_brackets 5 경계 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "BIDI conformance 유지: UCD BidiCharacterTest 91 707/91 707 (100%) + BidiTest 490 846/490 846 (100%) — R51.27 의 substrate 추가 가 R51.26 모든 vector 통과 세트 유지",
+        "L4 완성도: R51.23 mirroring_glyph substrate 제공 + R51.27 렼타이옥-side wire — pinion-text-unicode 의 BIDI algorithm + paint_adapter 의 mirror substitute (paint-side first client) 완결"
+      ],
+      "impact_refs": [
+        "5.37.4",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "mirror_paired_brackets 은 매 paint frame 마다 BIDI pipeline 재계산 — LayoutCache 와 같은 cache 계층 future round 에서 고려 (R51.x perf substrate)",
+        "R51.x 다음 후보: (a) hello-toggle visual demo (paint-side N=2, ~500-700 LOC) — [[substrate-incompleteness-signal]] paint 측 검증 / (b) Phase 2 axis ratify (thin RHI 3D pass §5.x 신설) — R41 plan 의 정식 Phase 진입 / (c) derive macro for WidgetTransition (~150 LOC partial)"
+      ],
+      "publishable_decision_summary": "pinion-text-unicode 의 `mirror_paired_brackets` pub helper + pinion-runtime 의 paint_adapter::paint_text 가 parley shape 전에 그 helper 호출 — UAX #9 L4 mirroring substrate 완성 (R51.23 carry 청산)",
+      "publishable_changes_bullets": [
+        "crates/pinion-text-unicode/src/bidi.rs: pub fn mirror_paired_brackets(text) -> Cow<'_, str> 신규 — paragraphs 분할 + 각 paragraph 의 P→X→W→N→I→L1 파이프라인 실행 후 odd resolved-level + paired bracket 위치의 mirroring_glyph substitute. 2-pass (검출+구성) 구조 이고 LTR/bracket-free 경우 1패스 종료 후 Cow::Borrowed",
+        "crates/pinion-text-unicode/src/bidi.rs: resolved_levels_for_paragraph private helper — P→X→W→N→I→L1 캤스케이드 을 mirror_paired_brackets 의 두 패스에서 공유",
+        "crates/pinion-runtime/Cargo.toml: pinion-text-unicode dep 신규 (default, no feature gate — Cow::Borrowed fast path 때문에 headless/TUI 도 비용 0)",
+        "crates/pinion-runtime/src/paint_adapter.rs: paint_text 가 t.content 을 cache.layout 에 넘기기 전에 mirror_paired_brackets 호출, parley 는 mirror substituted 문자열로 shape — L4 substitute 는 shape engine 이 소모하는 source codepoints 계층에서 적용",
+        "crates/pinion-text-unicode/src/bidi.rs: 5 unit tests — LTR Borrowed fast path / pure RTL no brackets Borrowed / RTL paired brackets swap / LTR brackets keep / multi-paragraph independent"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1220 pass (+5 from 1215 — mirror_paired_brackets 5 경계 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "BIDI conformance 유지: UCD BidiCharacterTest 91 707/91 707 (100%) + BidiTest 490 846/490 846 (100%) — R51.27 의 substrate 추가 가 R51.26 모든 vector 통과 세트 유지",
+        "L4 완성도: R51.23 mirroring_glyph substrate 제공 + R51.27 렼타이옥-side wire — pinion-text-unicode 의 BIDI algorithm + paint_adapter 의 mirror substitute (paint-side first client) 완결"
+      ],
+      "publishable_impact_refs": [
+        "5.37.4",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "mirror_paired_brackets 은 매 paint frame 마다 BIDI pipeline 재계산 — LayoutCache 와 같은 cache 계층 future round 에서 고려 (R51.x perf substrate)",
+        "R51.x 다음 후보: (a) hello-toggle visual demo (paint-side N=2, ~500-700 LOC) — [[substrate-incompleteness-signal]] paint 측 검증 / (b) Phase 2 axis ratify (thin RHI 3D pass §5.x 신설) — R41 plan 의 정식 Phase 진입 / (c) derive macro for WidgetTransition (~150 LOC partial)"
       ]
     },
     "Round 6": {

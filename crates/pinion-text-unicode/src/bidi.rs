@@ -1769,6 +1769,97 @@ pub fn bidi_reorder(paragraph: &str) -> Vec<usize> {
     indices
 }
 
+// ======================================================================
+// R51.27 §5.37.4 — L4 mirroring renderer-side substitution helper
+// ======================================================================
+
+/// UAX #9 §3.4 L4 — substitute every paired bracket codepoint at an
+/// odd resolved embedding level with its `Bidi_Mirroring_Glyph`. The
+/// pre-substituted string is what a shape engine (parley, harfbuzz,
+/// ...) should consume: the renderer no longer has to introspect
+/// resolved levels at draw time, since the mirrored glyph is already
+/// in the source codepoint sequence.
+///
+/// Multi-paragraph input is supported — paragraphs are split via
+/// [`iter_paragraphs`] and resolved independently (their levels are
+/// paragraph-local by spec).
+///
+/// Returns `Cow::Borrowed(text)` when no codepoint at an odd level
+/// has a mirror entry — the common LTR / latin-only case allocates
+/// nothing. Otherwise the function emits a new `String` whose
+/// codepoint count and ordering match `text` exactly; only the
+/// glyph identity of the bracket positions differs.
+///
+/// L4 is conceptually a renderer-side concern (per UAX #9 §3.4), but
+/// since pinion-text drives shape via parley (which receives a
+/// `&str`), the textbook integration point is here at the
+/// pre-shape boundary rather than inside the shape engine.
+#[must_use]
+pub fn mirror_paired_brackets(text: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+
+    // First pass — detect whether any mirroring is needed. The common
+    // case is "no mirroring" (LTR / no brackets), so we want a
+    // zero-allocation `Cow::Borrowed` result there.
+    let mut needs_mirror = false;
+    'outer: for paragraph in iter_paragraphs(text) {
+        if paragraph.chars().all(|c| paired_bracket(c).is_none()) {
+            continue;
+        }
+        let levels = resolved_levels_for_paragraph(paragraph);
+        for (i, ch) in paragraph.chars().enumerate() {
+            if levels.levels[i] % 2 == 1
+                && levels.classes[i] != BidiClass::BN
+                && mirroring_glyph(ch).is_some()
+            {
+                needs_mirror = true;
+                break 'outer;
+            }
+        }
+    }
+    if !needs_mirror {
+        return Cow::Borrowed(text);
+    }
+
+    // Second pass — build the mirrored string. Recomputes the BIDI
+    // pipeline; the duplication is intentional, the first pass is the
+    // common-case fast path and the second is only paid when the
+    // input actually contains mirror candidates.
+    let mut out = String::with_capacity(text.len());
+    for paragraph in iter_paragraphs(text) {
+        if paragraph.chars().all(|c| paired_bracket(c).is_none()) {
+            out.push_str(paragraph);
+            continue;
+        }
+        let levels = resolved_levels_for_paragraph(paragraph);
+        for (i, ch) in paragraph.chars().enumerate() {
+            if levels.levels[i] % 2 == 1
+                && levels.classes[i] != BidiClass::BN
+            {
+                if let Some(mirror) = mirroring_glyph(ch) {
+                    out.push(mirror);
+                    continue;
+                }
+            }
+            out.push(ch);
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// Run the BIDI pipeline through L1 and return the resulting
+/// per-codepoint `(level, class)` pair. Helper for
+/// [`mirror_paired_brackets`] — encapsulates the
+/// P→X→W→N→I→L1 cascade so the two passes share one implementation.
+fn resolved_levels_for_paragraph(paragraph: &str) -> ExplicitLevels {
+    let p_level = paragraph_level(paragraph);
+    let post_x = resolve_explicit_levels(paragraph, p_level);
+    let post_w = resolve_weak_types(post_x, p_level);
+    let post_n = resolve_neutral_types(post_w, paragraph, p_level);
+    let post_i = resolve_implicit_levels(post_n);
+    apply_l1_line_break(post_i, paragraph, p_level)
+}
+
 #[cfg(test)]
 #[allow(
     clippy::similar_names,
@@ -3260,6 +3351,80 @@ mod tests {
         // glyphs. Verify the lookup returns the matching bracket.
         assert_eq!(mirroring_glyph('('), Some(')'));
         assert_eq!(mirroring_glyph(')'), Some('('));
+    }
+
+    // ---- R51.27 §5.37.4 — `mirror_paired_brackets` L4 helper ----
+
+    #[test]
+    fn mirror_paired_brackets_ltr_borrowed_fast_path() {
+        // Pure LTR — no brackets at odd levels, helper must return
+        // `Cow::Borrowed` (zero allocation).
+        use std::borrow::Cow;
+        let s = "Hello (world)";
+        match mirror_paired_brackets(s) {
+            Cow::Borrowed(b) => assert_eq!(b.as_ptr(), s.as_ptr()),
+            Cow::Owned(_) => {
+                panic!("LTR with parens must take the borrowed fast path")
+            }
+        }
+    }
+
+    #[test]
+    fn mirror_paired_brackets_pure_rtl_no_brackets_borrowed() {
+        // RTL with no brackets — fast path still applies because the
+        // first pass short-circuits on bracket-free paragraphs.
+        use std::borrow::Cow;
+        let s = "\u{05D0}\u{05D1}\u{05D2}"; // אבג
+        assert!(matches!(mirror_paired_brackets(s), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn mirror_paired_brackets_rtl_paragraph_swaps_open_to_close() {
+        // Pure-RTL paragraph: '(' at odd resolved level must become
+        // ')' so the shape engine renders the visually-correct glyph.
+        // Sequence: 'א' '(' 'ב' ')' 'ג' — all level 1 under N0 fallback
+        // (no strong inside the pair; brackets resolve to embed dir R).
+        let input = "\u{05D0}(\u{05D1})\u{05D2}";
+        let mirrored = mirror_paired_brackets(input);
+        let chars: Vec<char> = mirrored.chars().collect();
+        assert_eq!(chars[0], '\u{05D0}');
+        assert_eq!(
+            chars[1], ')',
+            "open paren at odd level must be mirrored to ')'"
+        );
+        assert_eq!(chars[2], '\u{05D1}');
+        assert_eq!(
+            chars[3], '(',
+            "close paren at odd level must be mirrored to '('"
+        );
+        assert_eq!(chars[4], '\u{05D2}');
+    }
+
+    #[test]
+    fn mirror_paired_brackets_ltr_paragraph_keeps_brackets() {
+        // LTR-paragraph brackets at even level — no mirroring.
+        let input = "abc (def) ghi";
+        let mirrored = mirror_paired_brackets(input);
+        assert_eq!(mirrored.as_ref(), input);
+    }
+
+    #[test]
+    fn mirror_paired_brackets_multi_paragraph_independent() {
+        // Two paragraphs: first LTR with brackets (no mirror), second
+        // RTL with brackets (mirror). Helper must split via
+        // iter_paragraphs and resolve each independently.
+        let input =
+            "abc (x)\n\u{05D0}(\u{05D1})\u{05D2}";
+        let mirrored = mirror_paired_brackets(input);
+        let chars: Vec<char> = mirrored.chars().collect();
+        // First paragraph: brackets preserved.
+        assert_eq!(chars[4], '(');
+        assert_eq!(chars[6], ')');
+        // Newline (paragraph boundary).
+        assert_eq!(chars[7], '\n');
+        // Second paragraph: brackets mirrored.
+        assert_eq!(chars[9], ')');
+        assert_eq!(chars[11], '(');
     }
 
     // ---- R51.24.1 §5.37.4 — `BidiCharacterTest.txt` conformance harness ----
