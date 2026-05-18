@@ -879,6 +879,21 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // out-of-band for Shift+Tab detection.
                 self.modifiers = modifiers.state();
             }
+            WindowEvent::Focused(focused) => {
+                // R51.59 §5.39 — Window blur / refocus. ARIA Focus
+                // Order asks the framework to reinstate the focused
+                // widget when the user returns to the window — Alt+Tab
+                // away from a half-typed form should not lose the
+                // active control. The FocusManager owns the snapshot;
+                // wiring lives here in the winit dispatch.
+                if focused {
+                    if self.focus.restore() {
+                        self.request_redraw();
+                    }
+                } else {
+                    self.focus.save();
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     match event.logical_key.as_ref() {

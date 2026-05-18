@@ -3767,6 +3767,10 @@
         {
           "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "AppShell::render (focus ring call)"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "AppShell window_event WindowEvent::Focused"
         }
       ],
       "decision_status": "active"
@@ -6861,6 +6865,46 @@
       "publishable_carry_forward_bullets": [
         "R51.59 — Window blur/restore wiring (save/restore 는 R51.52 로 이미 land)",
         "theming axis — focus ring color 를 Modifier 하튼으로 (현재 hard-coded blue)"
+      ]
+    },
+    "R51.59": {
+      "decision_summary": "R51.59 §5.39 Focus restoration — Window blur/refocus wiring (save/restore 호출 site)",
+      "changes_bullets": [
+        "AppShell::window_event 에 WindowEvent::Focused arm 신설",
+        "focused=false → FocusManager::save / focused=true → FocusManager::restore",
+        "Alt+Tab 후 반환 시 직전 focused widget 복원, ARIA Focus Order 준수"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1329 pass / 0 fail (test count unchanged, winit event path)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "theming axis — focus ring color 를 Modifier hint 로",
+        "RadioGroup internal focused index (selected 과 분리) 카리 — evidence-first",
+        "focus_set RPC method ('focus/set') — AI-first 측 programmatic focus, R51.59 carry 청산 evidence 시"
+      ],
+      "publishable_decision_summary": "R51.59 §5.39 Focus restoration — Window blur/refocus wiring (save/restore 호출 site)",
+      "publishable_changes_bullets": [
+        "AppShell::window_event 에 WindowEvent::Focused arm 신설",
+        "focused=false → FocusManager::save / focused=true → FocusManager::restore",
+        "Alt+Tab 후 반환 시 직전 focused widget 복원, ARIA Focus Order 준수"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1329 pass / 0 fail (test count unchanged, winit event path)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "theming axis — focus ring color 를 Modifier hint 로",
+        "RadioGroup internal focused index (selected 과 분리) 카리 — evidence-first",
+        "focus_set RPC method ('focus/set') — AI-first 측 programmatic focus, R51.59 carry 청산 evidence 시"
       ]
     },
     "Round 1": {

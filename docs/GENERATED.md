@@ -2895,6 +2895,7 @@ router.pointer_down(&mut state_scene);
 - examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key (focused gate)
 - crates/pinion-runtime/src/paint_adapter.rs:paint_focus_ring
 - crates/pinion-shell/src/lib.rs:AppShell::render (focus ring call)
+- crates/pinion-shell/src/lib.rs:AppShell window_event WindowEvent::Focused
 
 
 
@@ -4966,6 +4967,32 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - R51.59 — Window blur/restore wiring (save/restore 는 R51.52 로 이미 land)
 - theming axis — focus ring color 를 Modifier 하튼으로 (현재 hard-coded blue)
+
+
+
+### R51.59 — R51.59 §5.39 Focus restoration — Window blur/refocus wiring (save/restore 호출 site)
+
+**Changes**:
+- AppShell::window_event 에 WindowEvent::Focused arm 신설
+- focused=false → FocusManager::save / focused=true → FocusManager::restore
+- Alt+Tab 후 반환 시 직전 focused widget 복원, ARIA Focus Order 준수
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello — 1329 pass / 0 fail (test count unchanged, winit event path)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.39
+
+
+**Carry forward**:
+- theming axis — focus ring color 를 Modifier hint 로
+- RadioGroup internal focused index (selected 과 분리) 카리 — evidence-first
+- focus_set RPC method ('focus/set') — AI-first 측 programmatic focus, R51.59 carry 청산 evidence 시
 
 
 
