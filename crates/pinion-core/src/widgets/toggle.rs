@@ -51,8 +51,6 @@ mod sm {
     include!(concat!(env!("OUT_DIR"), "/toggle_sm.rs"));
 }
 
-use sce_rust_runtime::Engine;
-
 pub use sm::{ToggleEvent, ToggleState};
 use sm::TogglePolicy;
 
@@ -62,13 +60,14 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::widgets::{IntentEmitter, Widget};
 
-/// Toggle widget state machine + Off/On value sidecar. The state
-/// machine is identical to [`crate::widgets::Button`]; the only
-/// divergence is the boolean `value` field, which flips whenever a
-/// `pressed → hover` activate transition fires.
+/// Toggle widget state machine + Off/On value sidecar. R51.4 §5.38
+/// refactor: the engine wrapping moves into the shared
+/// [`Widget<P>`] facade; this newtype now adds only the `value: bool`
+/// sidecar that flips on each `pressed → hover` activate transition.
 pub struct Toggle {
-    engine: Engine<TogglePolicy>,
+    inner: Widget<TogglePolicy>,
     value: bool,
 }
 
@@ -78,9 +77,7 @@ impl Toggle {
     /// before the first activate.
     #[must_use]
     pub fn new() -> Self {
-        let mut engine = Engine::new(TogglePolicy::new());
-        engine.initialize();
-        Self { engine, value: false }
+        Self { inner: Widget::new(), value: false }
     }
 
     /// Drive a [`ToggleEvent`] through the SCXML. If the event causes
@@ -88,7 +85,7 @@ impl Toggle {
     /// `value` field flips Off ↔ On.
     pub fn send(&mut self, event: ToggleEvent) {
         let before = self.state();
-        self.engine.process_event(event);
+        self.inner.send(event);
         let after = self.state();
         if matches!(before, ToggleState::Pressed) && matches!(after, ToggleState::Hover) {
             self.value = !self.value;
@@ -98,7 +95,7 @@ impl Toggle {
     /// Current interaction state.
     #[must_use]
     pub fn state(&self) -> ToggleState {
-        self.engine.get_current_state()
+        self.inner.state()
     }
 
     /// Current Off / On value. Application code reads this to drive
@@ -136,20 +133,17 @@ impl Default for Toggle {
 /// single intent kind and read the post-flip value from the
 /// payload without a follow-up `query` round-trip.
 pub struct ToggleExternal {
-    inner: Toggle,
-    /// §5.20 intent buffer. Filled on `Pressed → Hover` activate
-    /// (the value-flipping transition); drained by the runtime walk
-    /// or the `scene/intents` RPC method.
-    pending_intents: Vec<Intent>,
+    /// R51.5 §5.38 refactor: §5.20 intent buffer + wrapped widget
+    /// share the [`IntentEmitter`] helper; the adapter only owns the
+    /// transition-detection logic in `send` and the `value` intervene
+    /// override.
+    em: IntentEmitter<Toggle>,
 }
 
 impl ToggleExternal {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            inner: Toggle::new(),
-            pending_intents: Vec::new(),
-        }
+        Self { em: IntentEmitter::default() }
     }
 
     /// Drive a [`ToggleEvent`] through the wrapped SCXML and queue
@@ -162,16 +156,16 @@ impl ToggleExternal {
     /// becomes e.g. `"dark_mode.toggle"` without the widget needing
     /// to know its parent identifier.
     pub fn send(&mut self, event: ToggleEvent) {
-        let before_state = self.inner.state();
-        let before_value = self.inner.is_on();
-        self.inner.send(event);
-        let after_state = self.inner.state();
-        let after_value = self.inner.is_on();
+        let before_state = self.em.inner.state();
+        let before_value = self.em.inner.is_on();
+        self.em.inner.send(event);
+        let after_state = self.em.inner.state();
+        let after_value = self.em.inner.is_on();
         if matches!(before_state, ToggleState::Pressed)
             && matches!(after_state, ToggleState::Hover)
             && before_value != after_value
         {
-            self.pending_intents
+            self.em
                 .push(Intent::new_static("toggle", IntrospectValue::Bool(after_value)));
         }
     }
@@ -179,13 +173,13 @@ impl ToggleExternal {
     /// Current interaction state.
     #[must_use]
     pub fn state(&self) -> ToggleState {
-        self.inner.state()
+        self.em.inner.state()
     }
 
     /// Current Off / On value.
     #[must_use]
     pub fn is_on(&self) -> bool {
-        self.inner.is_on()
+        self.em.inner.is_on()
     }
 
     /// Capture the current `(state, value)` as an owned, `Send`-
@@ -233,13 +227,11 @@ impl External for ToggleExternal {
     }
 
     fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
-        for intent in self.pending_intents.drain(..) {
-            sink(intent);
-        }
+        self.em.drain(sink);
     }
 
     fn is_dirty(&self) -> bool {
-        !self.pending_intents.is_empty()
+        self.em.is_dirty()
     }
 }
 
@@ -284,7 +276,7 @@ impl ExternalIntrospect for ToggleExternal {
             // accidentally trigger the intent stream.
             "value" => match value {
                 IntrospectValue::Bool(b) => {
-                    self.inner.set_on(b);
+                    self.em.inner.set_on(b);
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),

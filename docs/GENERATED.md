@@ -2628,6 +2628,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/build.rs:scxml_inputs::toggle
 - crates/pinion-core/widgets/standard_button.sce-template.xml
 - crates/pinion-core/widgets/button.scxml
+- crates/pinion-core/src/widgets/widget.rs:Widget
+- crates/pinion-core/src/widgets/widget.rs:IntentEmitter
 
 
 
@@ -7657,6 +7659,27 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.16
+
+
+
+### Round 493 — R51.4 §5.38 Widget<P> + IntentEmitter generic — Button/Toggle binding 의 L3+L4 boilerplate 청산 — Tier-1 widget binding 의 두 layer (L3 engine facade + L4 §5.20 intent buffer) 를 generic 화: Widget<P: StatePolicy> + IntentEmitter<W>. Button = type alias, Toggle = newtype with sidecar; ButtonExternal/ToggleExternal 는 inner+pending_intents 두 field → IntentEmitter<W> 한 field. Checkbox/Radio 진입 시 facade/buffer 재선언 0줄.
+
+**Changes**:
+- crates/pinion-core/src/widgets/widget.rs 신설: Widget<P: StatePolicy> facade (with_policy/new/send/state/Default) + IntentEmitter<W> (inner/push/drain/is_dirty/Default)
+- button.rs: pub struct Button + impl new/send/state/Default 제거 → pub type Button = Widget<ButtonPolicy>; ButtonExternal: inner+pending_intents 2 field → em: IntentEmitter<Button> 1 field, drain_intents/is_dirty 자동 위임
+- toggle.rs: Toggle struct 의 engine: Engine<TogglePolicy> → inner: Widget<TogglePolicy> (value: bool sidecar 유지); ToggleExternal 동일 패턴 + intervene value set_on 도 em.inner 경유
+- widgets/mod.rs: pub mod widget + pub use widget::{IntentEmitter, Widget} re-export
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 993 pass (회귀 0, API surface 완전 호환)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning (workspace strict baseline: forbid unsafe + deny warnings + clippy::pedantic deny)
+- atomic add_section_implementation ×2: §5.38 에 widget.rs:Widget + widget.rs:IntentEmitter 심볼 등록
+
+
+
+**Impact**: §5.38, §5.20
 
 
 

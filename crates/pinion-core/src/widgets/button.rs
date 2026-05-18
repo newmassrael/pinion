@@ -21,8 +21,6 @@ mod sm {
     include!(concat!(env!("OUT_DIR"), "/button_sm.rs"));
 }
 
-use sce_rust_runtime::Engine;
-
 pub use sm::{ButtonEvent, ButtonState};
 use sm::ButtonPolicy;
 
@@ -32,34 +30,13 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::widgets::{IntentEmitter, Widget};
 
-pub struct Button {
-    engine: Engine<ButtonPolicy>,
-}
-
-impl Button {
-    #[must_use]
-    pub fn new() -> Self {
-        let mut engine = Engine::new(ButtonPolicy::new());
-        engine.initialize();
-        Self { engine }
-    }
-
-    pub fn send(&mut self, event: ButtonEvent) {
-        self.engine.process_event(event);
-    }
-
-    #[must_use]
-    pub fn state(&self) -> ButtonState {
-        self.engine.get_current_state()
-    }
-}
-
-impl Default for Button {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// R12 Button widget. R51.4 §5.38 refactor: a type alias over the
+/// shared [`Widget<P>`] facade — Button has no value sidecar, so the
+/// alias gives `Button::new` / `Button::send` / `Button::state` /
+/// `Button::default` for free via the generic impls.
+pub type Button = Widget<ButtonPolicy>;
 
 /// `External` adapter wrapping a [`Button`] SCXML widget. Surfaces
 /// the button's [`ButtonState`] to the §5.12 `scene/query` RPC
@@ -71,21 +48,16 @@ impl Default for Button {
 /// but `ButtonExternal` is the first time a real widget's state
 /// machine round-trips through `dispatch`.
 pub struct ButtonExternal {
-    inner: Button,
-    /// §5.20 intent buffer. Filled when the wrapped SCXML transitions
-    /// in a way the framework should report (e.g. Pressed → Hover
-    /// signals a completed click); drained by the runtime walk or the
-    /// `scene/intents` RPC method.
-    pending_intents: Vec<Intent>,
+    /// R51.5 §5.38 refactor: §5.20 intent buffer + wrapped widget
+    /// share the [`IntentEmitter`] helper; the adapter only owns the
+    /// transition-detection logic in `send`.
+    em: IntentEmitter<Button>,
 }
 
 impl ButtonExternal {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            inner: Button::new(),
-            pending_intents: Vec::new(),
-        }
+        Self { em: IntentEmitter::default() }
     }
 
     /// Drive a [`ButtonEvent`] through the wrapped SCXML and enqueue
@@ -98,18 +70,17 @@ impl ButtonExternal {
     /// so widget-internal identity stays decoupled from the
     /// user-chosen scene-side identifier.
     pub fn send(&mut self, event: ButtonEvent) {
-        let before = self.inner.state();
-        self.inner.send(event);
-        let after = self.inner.state();
+        let before = self.em.inner.state();
+        self.em.inner.send(event);
+        let after = self.em.inner.state();
         if matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover) {
-            self.pending_intents
-                .push(Intent::new_static("click", IntrospectValue::Null));
+            self.em.push(Intent::new_static("click", IntrospectValue::Null));
         }
     }
 
     #[must_use]
     pub fn state(&self) -> ButtonState {
-        self.inner.state()
+        self.em.inner.state()
     }
 }
 
@@ -149,13 +120,11 @@ impl External for ButtonExternal {
     }
 
     fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
-        for intent in self.pending_intents.drain(..) {
-            sink(intent);
-        }
+        self.em.drain(sink);
     }
 
     fn is_dirty(&self) -> bool {
-        !self.pending_intents.is_empty()
+        self.em.is_dirty()
     }
 }
 
