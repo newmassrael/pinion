@@ -21,5 +21,12 @@ vendor/sce/target/
 # Local Claude Code state — settings.local.json, transcripts, etc.
 .claude/
 
+# Claude-Specific Documentation per global CLAUDE.md convention —
+# local working notes, ad-hoc analyses, and cross-project coordination
+# drafts that should not enter pinion's git history. Historical entries
+# that pre-dated this policy were untracked via `git rm --cached`; the
+# working copies remain on disk so the prior context is not lost.
+claudedocs/
+
 # Activity logs (local working notes; outside mnemosyne workspace).
 notes/
