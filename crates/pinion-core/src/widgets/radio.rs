@@ -283,7 +283,7 @@ fn radio_state_name(state: RadioState) -> &'static str {
     }
 }
 
-fn parse_radio_event(name: &str) -> Option<RadioEvent> {
+pub(crate) fn parse_radio_event(name: &str) -> Option<RadioEvent> {
     match name {
         "PointerEnter" => Some(RadioEvent::PointerEnter),
         "PointerLeave" => Some(RadioEvent::PointerLeave),

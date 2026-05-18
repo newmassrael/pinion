@@ -3233,6 +3233,18 @@
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
           "symbol": "&lt;Slider as WidgetTransition&gt;"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/radio_group.rs",
+          "symbol": "RadioGroup"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/radio_group.rs",
+          "symbol": "RadioGroupExternal"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/radio_group.rs",
+          "symbol": "&lt;RadioGroup as WidgetTransition&gt;"
         }
       ],
       "decision_status": "active"
@@ -12145,6 +12157,56 @@
       "publishable_carry_forward_bullets": [
         "R51.x 다음 후보: RadioGroup primitive (R47-class framework-vs-application boundary debt) / derive macro for WidgetTransition (improvement) / hello-toggle visual demo / BIDI P-rules (algorithm slice)",
         "Tier-2 drag-style widget (Knob, ScrollBar) 출현 시 pointer_track.sce-template.xml 으로 공통 body 추출 — 지금은 N=1 이라 YAGNI 조건 완화 적용"
+      ]
+    },
+    "Round 504 — R51.15 §5.38 RadioGroup primitive — framework-owned mutual exclusion": {
+      "decision_summary": "R47-class framework-primitive boundary 부채 청산 — Radio 의 sibling deselect 책임을 application 측에서 framework 측 RadioGroup 으로 이동; R51.12 WidgetTransition substrate 활용으로 응용 사례 입증",
+      "changes_bullets": [
+        "crates/pinion-core/src/widgets/radio_group.rs (new): RadioGroup struct (N 개 Radio 소유) + send(idx, ev) 이 activate 시 타 Radio set_selected(false) 자동 적용; selected_index Option<usize> 상태 관리",
+        "RadioGroup 가 impl WidgetTransition (Event=(usize, RadioEvent), Snapshot=Option<usize>) — R51.12 substrate 적용 사례 (1줄 dispatch 호출)",
+        "RadioGroupExternal 적용: schema (count/selected_index/send) + query/intervene/invoke 완전 커버리지 + \"selected\"/Int(idx) intent 발화 (selection change 시만, idempotent re-activate silent)",
+        "crates/pinion-core/src/widgets/radio.rs: parse_radio_event 가 pub(crate) 로 증강 (RadioGroupExternal::invoke send 에서 재사용)",
+        "crates/pinion-core/src/widgets/mod.rs: pub mod radio_group 추가"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1080 pass (+21 RadioGroup tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "pinion-core: 319 → 341 (+22 — 21 RadioGroup tests + parse_radio_event visibility 및 sequence test)",
+        "industry precedent verified: HTML radio name attribute / Material RadioGroup / SwiftUI Picker / Qt QButtonGroup 모두 framework 측 mutual exclusion — pinion 일치",
+        "R51.12 substrate 의 외부 적용 사례 (Radio 동일 패턴 외의 widget) — substrate 일반성 증명"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.20"
+      ],
+      "carry_forward_bullets": [
+        "R51.x 다음 후보: RadioGroup RPC e2e (dispatch.rs 에 4-test pattern 적용) / derive macro for WidgetTransition (improvement) / hello-toggle visual demo / BIDI P-rules",
+        "RadioGroup Scene 측 helper (RadioGroupNode 혹은 layout API 통합) 출현 시 재결정 — 현재는 application 측 공간 배치",
+        "Tier-2 group widget (TabBar, SegmentedControl, ListView selection) 출현 시 RadioGroup 패턴 재사용 — N 개 child widget + framework-owned mutual exclusion + Option<usize> snapshot"
+      ],
+      "publishable_decision_summary": "R47-class framework-primitive boundary 부채 청산 — Radio 의 sibling deselect 책임을 application 측에서 framework 측 RadioGroup 으로 이동; R51.12 WidgetTransition substrate 활용으로 응용 사례 입증",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widgets/radio_group.rs (new): RadioGroup struct (N 개 Radio 소유) + send(idx, ev) 이 activate 시 타 Radio set_selected(false) 자동 적용; selected_index Option<usize> 상태 관리",
+        "RadioGroup 가 impl WidgetTransition (Event=(usize, RadioEvent), Snapshot=Option<usize>) — R51.12 substrate 적용 사례 (1줄 dispatch 호출)",
+        "RadioGroupExternal 적용: schema (count/selected_index/send) + query/intervene/invoke 완전 커버리지 + \"selected\"/Int(idx) intent 발화 (selection change 시만, idempotent re-activate silent)",
+        "crates/pinion-core/src/widgets/radio.rs: parse_radio_event 가 pub(crate) 로 증강 (RadioGroupExternal::invoke send 에서 재사용)",
+        "crates/pinion-core/src/widgets/mod.rs: pub mod radio_group 추가"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1080 pass (+21 RadioGroup tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "pinion-core: 319 → 341 (+22 — 21 RadioGroup tests + parse_radio_event visibility 및 sequence test)",
+        "industry precedent verified: HTML radio name attribute / Material RadioGroup / SwiftUI Picker / Qt QButtonGroup 모두 framework 측 mutual exclusion — pinion 일치",
+        "R51.12 substrate 의 외부 적용 사례 (Radio 동일 패턴 외의 widget) — substrate 일반성 증명"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.20"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.x 다음 후보: RadioGroup RPC e2e (dispatch.rs 에 4-test pattern 적용) / derive macro for WidgetTransition (improvement) / hello-toggle visual demo / BIDI P-rules",
+        "RadioGroup Scene 측 helper (RadioGroupNode 혹은 layout API 통합) 출현 시 재결정 — 현재는 application 측 공간 배치",
+        "Tier-2 group widget (TabBar, SegmentedControl, ListView selection) 출현 시 RadioGroup 패턴 재사용 — N 개 child widget + framework-owned mutual exclusion + Option<usize> snapshot"
       ]
     },
     "Round 6": {
