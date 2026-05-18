@@ -2893,6 +2893,8 @@ router.pointer_down(&mut state_scene);
 - examples/hello-slider/src/main.rs:SliderView::apply_key
 - examples/hello-slider-vertical/src/main.rs:SliderVerticalView::apply_key
 - examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key (focused gate)
+- crates/pinion-runtime/src/paint_adapter.rs:paint_focus_ring
+- crates/pinion-shell/src/lib.rs:AppShell::render (focus ring call)
 
 
 
@@ -4937,6 +4939,33 @@ router.pointer_down(&mut state_scene);
 - R51.58 — paint-time focus ring rendering
 - R51.59 — Window blur/restore wiring
 - RadioGroup internal focused index (selected 과 분리) carry — evidence-first
+
+
+
+### R51.58 — R51.58 §5.39 Focus visual ring — paint-time WCAG 2.4.11 indicator
+
+**Changes**:
+- paint_adapter::paint_focus_ring 신설 — 2px outer stroke + 2px offset, Material #1A73E8
+- focus_rect_for_tag private helper (input::rect_for_tag 와 dup 의도, vello-gated)
+- shell::render 이 to_vello 다음 paint_focus_ring 호출 — frame submit 이전
+- WCAG 2.4.11 Focus Appearance 준수 — ≥2px 움라인, ≥3:1 contrast
+- paint_adapter unit test +5 — rect lookup + 4 paint_focus_ring 시나리오
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello — 1324 → 1329 pass / 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.16, §5.39
+
+
+**Carry forward**:
+- R51.59 — Window blur/restore wiring (save/restore 는 R51.52 로 이미 land)
+- theming axis — focus ring color 를 Modifier 하튼으로 (현재 hard-coded blue)
 
 
 

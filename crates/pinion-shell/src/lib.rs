@@ -694,6 +694,15 @@ impl<V: WidgetView> AppShell<V> {
             &mut self.text_cache,
             &mut self.vello_scene,
         );
+        // R51.58 §5.39 — paint the ARIA focus ring on top of the
+        // widget visual. Runs after `to_vello` so the ring overlays
+        // its target; runs before `renderer.render` so it lands in
+        // the same frame submit. No-op when nothing is focused.
+        paint_adapter::paint_focus_ring(
+            &paint_scene,
+            self.focus.focused(),
+            &mut self.vello_scene,
+        );
         if let Err(e) = renderer.render(&self.vello_scene, base) {
             eprintln!("shell: vello render: {e}");
         }
