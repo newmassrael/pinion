@@ -401,6 +401,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R51.1 — Scene-as-data invariant §2 #7 + RPC AI-first §2 #2 정통 적용
 - R51.1 — backend agnostic: parley LayoutCache → §5.37.7 자체 엔진 swap 시 surface 유지
 - R51.1 — R47.7.6 ceil regression test (300..=320 → line_count=1) + wrap (60px → ≥2) 영구 보장
+- R47.7.5 — winit resumed 후 explicit request_redraw() (first paint 전 RPC last_paint_layout None 회피)
 
 
 
@@ -420,6 +421,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - crates/pinion-rpc/src/layout_query.rs:LayoutNode::line_count
 - crates/pinion-core/src/scene.rs:TextNode::line_count
 - crates/pinion-runtime/src/layout.rs:compute_layout::text_lines
+- examples/hello-button/src/main.rs:App::resumed::request_redraw
 
 
 
@@ -2162,6 +2164,7 @@ router.pointer_down(&mut state_scene);
 - R47.6 = §5.36 close. R48 §5.3 별도 = BoxStyle Figma-fidelity (corner/shadow/gradient/blend/opacity)
 - R47.6 §5.36 round close = parley wire + decoration + Clip. Ellipsis = Clip fallback (R47.x carry)
 - R50 진입 = §5.36 의 parley/swash/fontique = Phase 1 bridge; §5.37 self-hosted text engine 으로 supersede
+- R47.7.6 — parley layout width/height .ceil() pixel snap (sub-pixel jitter 차단)
 
 
 
@@ -2175,6 +2178,10 @@ router.pointer_down(&mut state_scene);
 
 **Impact scope**: §5.3, §5.16, §5.20, §5.30, §6.3, §5.37
 
+
+
+**Implementations**:
+- crates/pinion-runtime/src/layout.rs:compute_layout::ceil
 
 
 
@@ -7454,6 +7461,81 @@ router.pointer_down(&mut state_scene);
 - ToggleExternal e2e RPC test (cargo run + invoke send + drain_intents)
 - R47.7.x atomic round entry 정리 carry
 - R50.2.13/14 atomic binding 미진행 carry
+
+
+
+### Round 487 — Round 487 — R47.7.5/6 backfill: winit redraw_request (example, §5.12) + parley layout ceil (runtime, §5.36) — c501ea6 commit atomic binding (single combined commit, no atomic at land time)
+
+**Changes**:
+- R47.7.5 (example): hello-button explicit self.request_redraw() after winit resumed callback
+- R47.7.6 (runtime): pinion-runtime compute_layout measure callback layout.width().ceil() + .height().ceil()
+- add_section_implementation §5.36 (compute_layout::ceil) + §5.12 (App::resumed::request_redraw)
+- add_section_caveat §5.36 / §5.12 (R47.7.6 ceil + R47.7.5 request_redraw)
+
+
+
+**Verification**:
+- mouse-drag resize 1-px text jitter 차단 (parley 77.0/77.8 sub-pixel oscillation)
+- first paint 전 RPC scene/layout {viewport: null} 응답을 위한 last_paint_layout populate 보장
+- R51.1 §5.12 line_count surface 의 stable cross-frame measurement substrate (R47.7.6 속)
+
+
+
+**Impact**: §5.12, §5.36
+
+
+**Carry forward**:
+- R51.1 LayoutNode.line_count regression test 가 R47.7.6 ceil 영구 검증 (300..=320 stable)
+
+
+
+### Round 488 — Round 488 — R50.2.13 backfill: §5.37.3 decomposition tables 2-stage BMP trie (canonical + compatibility) — be09f2b commit atomic binding (implementation 이미 등록, changelog entry 만 누락)
+
+**Changes**:
+- canonical + compatibility decomp tables → 2-stage BMP trie (Option B' indirect layout, shape 동일)
+- Stage 2 packed u32 ((length<<24) | offset); null block dedup; supplementary fallback (cold split)
+- build.rs: build_decomp_bmp_trie + emit_decomp_table + emit_packed_u32_hex_row helper
+- decompose.rs: lookup_decomp_trie (#[inline]) + lookup_decomp_supplementary (#[inline(never)])
+
+
+
+**Verification**:
+- throughput: sample +10%, hangul +15%, decomp -14% (trie miss cost; binary-layout carry)
+- cargo test 모두 통과 + 4 conformance sweep (NFC/NFD/NFKC/NFKD) 지속
+- compile-time const _: () = assert!() 2 cardinality 검증 (R50.2.12 정통)
+
+
+
+**Impact**: §5.37.3
+
+
+**Carry forward**:
+- R50.2.15 precomposed_nfc binary-layout regression PGO investigation
+
+
+
+### Round 489 — Round 489 — R50.2.14 backfill: §5.37.3 PRIMARY_COMPOSITES 2-level BMP trie + supplementary cold split — e23ab82 commit atomic binding (implementation 이미 등록, changelog entry 만 누락)
+
+**Changes**:
+- PRIMARY_COMPOSITES 2-level BMP trie (a 의 BMP 2-stage + per-a (b, c) sub-table flat)
+- supplementary fallback (UAX #15 D5 의 'a 는 BMP' 가정 panic, U+105D2 발견 → R50.2.13 supp 패턴 재사용)
+- composition.rs: compose_pair (fully inlined) + compose_pair_supplementary (out-of-line cold split)
+- PrimaryCompositesTrieParts type alias (clippy::type_complexity 회피)
+
+
+
+**Verification**:
+- throughput: decomp 50.6→117 MiB/s (+138%), hangul 158→284 (+82%), sample 228→266 (+17%)
+- asm 검증: compose_pair fully inlined, compose_pair_supplementary correctly out-of-line
+- precomp -22% noise carry (R50.2.15 PGO investigation)
+
+
+
+**Impact**: §5.37.3
+
+
+**Carry forward**:
+- R50.2.15: precomposed_nfc binary-layout regression PGO / #[hot] partition / link order investigation
 
 
 
