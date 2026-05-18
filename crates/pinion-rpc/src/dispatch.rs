@@ -4112,4 +4112,309 @@ mod tests {
         let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
         assert!(v.contains("true"), "value after activate should be true: {v}");
     }
+
+    // ---- R51.13 §5.38 — Checkbox widget e2e through JSON-RPC envelope ----
+    //
+    // Mirrors the Toggle e2e suite for the R51.5 Checkbox widget.
+    // Schema slot is `"checked"` (vs Toggle's `"value"`) and the
+    // intent name is `"checked"` (vs `"toggle"`), so form-bound
+    // listeners can subscribe to checkboxes independently from
+    // settings switches. Semantics otherwise identical: activate
+    // flips the value, intervene sets directly without firing intent.
+
+    #[test]
+    fn scene_query_on_checkbox_external_returns_initial_state_and_checked() {
+        use pinion_core::widgets::checkbox::CheckboxExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(CheckboxExternal::new())));
+        let req_state = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_state).unwrap());
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains("Idle"), "got {s}");
+
+        let req_checked = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":2}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_checked).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("false"), "got {v}");
+    }
+
+    #[test]
+    fn scene_rewind_on_checkbox_external_sets_checked_without_intent() {
+        use pinion_core::widgets::checkbox::CheckboxExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(CheckboxExternal::new())));
+        let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/checked","value":true},"id":10}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
+        assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":11}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("true"), "got {v}");
+
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":12}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert!(arr.is_empty(), "intervene must not queue intents");
+    }
+
+    #[test]
+    fn scene_invoke_on_checkbox_external_drives_transition() {
+        use pinion_core::widgets::checkbox::CheckboxExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(CheckboxExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"PointerEnter"},"id":20}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "invoke error: {:?}", resp.error);
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains("Hover"), "got {s}");
+    }
+
+    #[test]
+    fn scene_invoke_full_cycle_on_checkbox_external_emits_checked_intent() {
+        use pinion_core::widgets::checkbox::CheckboxExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(CheckboxExternal::new())));
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"{ev}"}},"id":30}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "invoke {ev} error: {:?}", resp.error);
+        }
+
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":31}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert_eq!(arr.len(), 1, "expected exactly one checked intent");
+        let entry = arr[0].as_object().unwrap();
+        assert_eq!(entry.get("tag").and_then(Value::as_str), Some("checked"));
+        assert_eq!(entry.get("payload"), Some(&Value::Bool(true)));
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/checked"},"id":32}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("true"), "checked after activate should be true: {v}");
+    }
+
+    // ---- R51.13 §5.38 — Radio widget e2e through JSON-RPC envelope ----
+    //
+    // Mirrors the Toggle e2e suite for the R51.6 Radio widget with
+    // two semantic differences ratified at the binding layer:
+    //
+    //   * Activate is **set-not-flip** — value goes false → true and
+    //     stays true until explicit deselect. Re-activating an
+    //     already-selected Radio is idempotent and silent on §5.20
+    //     (the first activate is the only emitter in a sequence).
+    //   * Intent payload is `Null`, not `Bool(after_value)` — Radio
+    //     selection is identity-only; the scene-side `ExternalNode.tag`
+    //     carries which option was picked.
+
+    #[test]
+    fn scene_query_on_radio_external_returns_initial_state_and_selected() {
+        use pinion_core::widgets::radio::RadioExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(RadioExternal::new())));
+        let req_state = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_state).unwrap());
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains("Idle"), "got {s}");
+
+        let req_selected = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected"},"id":2}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_selected).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("false"), "got {v}");
+    }
+
+    #[test]
+    fn scene_rewind_on_radio_external_sets_selected_without_intent() {
+        use pinion_core::widgets::radio::RadioExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(RadioExternal::new())));
+        let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/selected","value":true},"id":10}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
+        assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected"},"id":11}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("true"), "got {v}");
+
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":12}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert!(arr.is_empty(), "intervene must not queue intents");
+    }
+
+    #[test]
+    fn scene_invoke_on_radio_external_drives_transition() {
+        use pinion_core::widgets::radio::RadioExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(RadioExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"PointerEnter"},"id":20}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "invoke error: {:?}", resp.error);
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains("Hover"), "got {s}");
+    }
+
+    #[test]
+    fn scene_invoke_full_cycle_on_radio_external_emits_selected_intent_once() {
+        use pinion_core::widgets::radio::RadioExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(RadioExternal::new())));
+
+        // First activate cycle — fires "selected" intent.
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"{ev}"}},"id":30}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "invoke {ev} error: {:?}", resp.error);
+        }
+
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":31}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert_eq!(arr.len(), 1, "first activate fires exactly one selected intent");
+        let entry = arr[0].as_object().unwrap();
+        assert_eq!(entry.get("tag").and_then(Value::as_str), Some("selected"));
+        assert_eq!(entry.get("payload"), Some(&Value::Null));
+
+        // Second activate cycle — Radio is set-not-flip, so the
+        // re-activate emits no intent (idempotent). Validates the
+        // R51.6 binding-layer semantic over the wire.
+        for ev in ["PointerDown", "PointerUp"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"{ev}"}},"id":32}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "invoke {ev} error: {:?}", resp.error);
+        }
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":33}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert!(arr.is_empty(), "re-activate must be silent on §5.20");
+    }
+
+    // ---- R51.13 §5.38 — Slider widget e2e through JSON-RPC envelope ----
+    //
+    // Mirrors the Toggle e2e suite for the R51.7 Slider widget with
+    // two semantic divergences ratified at the binding layer:
+    //
+    //   * Two-phase intent stream — `"value_changing"` fires on every
+    //     effective value change (including model-driven `intervene`
+    //     because Slider's intervene path routes through `set_value`
+    //     to give two-way data binding a single source of truth);
+    //     `"value_committed"` fires once on drag-end (`Pressed →
+    //     Hover`). Toggle / Checkbox have a single activate intent.
+    //   * Value payload is `IntrospectValue::Float` (f64 on the wire);
+    //     the SCXML state and the f32 value sidecar both surface
+    //     through §5.15 `query`.
+
+    #[test]
+    fn scene_query_on_slider_external_returns_initial_state_and_value() {
+        use pinion_core::widgets::slider::SliderExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(SliderExternal::new())));
+        let req_state = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/state"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_state).unwrap());
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains("Idle"), "got {s}");
+
+        let req_value = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":2}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_value).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        // f64 zero serializes as "0.0" through serde_json.
+        assert!(v.contains('0'), "got {v}");
+    }
+
+    #[test]
+    fn scene_rewind_on_slider_external_changes_value_and_fires_value_changing() {
+        use pinion_core::widgets::slider::SliderExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(SliderExternal::new())));
+        let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/value","value":0.5},"id":10}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
+        assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/value"},"id":11}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains("0.5"), "got {v}");
+
+        // Slider semantic divergence vs Toggle/Checkbox/Radio:
+        // intervene-set DOES fire `"value_changing"` (single source of
+        // truth for value mutation — routes through set_value). The
+        // commit-side `"value_committed"` is the activate-only intent
+        // and is NOT armed by intervene.
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":12}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert_eq!(arr.len(), 1, "intervene fires exactly one value_changing");
+        let entry = arr[0].as_object().unwrap();
+        assert_eq!(
+            entry.get("tag").and_then(Value::as_str),
+            Some("value_changing")
+        );
+    }
+
+    #[test]
+    fn scene_invoke_on_slider_external_drives_transition() {
+        use pinion_core::widgets::slider::SliderExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(SliderExternal::new())));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"PointerEnter"},"id":20}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "invoke error: {:?}", resp.error);
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains("Hover"), "got {s}");
+    }
+
+    #[test]
+    fn scene_invoke_full_drag_cycle_on_slider_external_emits_value_committed() {
+        use pinion_core::widgets::slider::SliderExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(SliderExternal::new())));
+
+        // Drag cycle: Idle → Hover → Pressed → (set value during press
+        // via intervene → fires value_changing) → Hover (PointerUp
+        // fires value_committed).
+        for ev in ["PointerEnter", "PointerDown"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"{ev}"}},"id":30}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "invoke {ev} error: {:?}", resp.error);
+        }
+        // Set value mid-drag (intervene routes through set_value,
+        // fires value_changing).
+        let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/value","value":0.75},"id":31}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
+        assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
+
+        // Drag-end commit.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"PointerUp"},"id":32}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "invoke PointerUp error: {:?}", resp.error);
+
+        // Drain — two intents in order: value_changing then
+        // value_committed. Both carry Float(0.75).
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":33}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert_eq!(arr.len(), 2, "expected value_changing then value_committed");
+        assert_eq!(
+            arr[0]
+                .as_object()
+                .unwrap()
+                .get("tag")
+                .and_then(Value::as_str),
+            Some("value_changing")
+        );
+        let committed = arr[1].as_object().unwrap();
+        assert_eq!(
+            committed.get("tag").and_then(Value::as_str),
+            Some("value_committed")
+        );
+        // Payload check: f64 0.75 round-trips through serde_json.
+        let payload = committed.get("payload").unwrap();
+        let val = payload.as_f64().expect("Float payload must be a number");
+        assert!((val - 0.75).abs() < 1e-4, "got {val}");
+    }
 }

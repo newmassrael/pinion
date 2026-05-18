@@ -12059,6 +12059,54 @@
         "R51.x 다음 후보: derive macro for WidgetTransition (pinion-derive 확장, 5 widget impl boilerplate → #[derive] syntactic sugar) / Toggle 외 widget RPC e2e ×3 (Checkbox/Radio/Slider substrate validation 1/4 → 4/4) / RadioGroup primitive (framework-vs-application boundary fix) / SCE-002 RFC / BIDI P-rules / hello-toggle visual demo"
       ]
     },
+    "Round 502 — R51.13 §5.12+§5.38 widget RPC e2e ×3 (Checkbox/Radio/Slider)": {
+      "decision_summary": "Substrate validation coverage 1/4 → 4/4 — Toggle 외 3 widget JSON-RPC dispatch e2e suite mirror; Slider 의 intervene→value_changing asymmetric semantic 와 Radio set-not-flip 의 idempotent silent re-activate 를 wire-level 에서 enforce",
+      "changes_bullets": [
+        "crates/pinion-rpc/src/dispatch.rs: 12 new e2e tests (4 per widget) mirror R51.8 Toggle pattern — scene/query 상태+value, scene/rewind intervene, scene/invoke send transition, full activate cycle + scene/intents drain",
+        "Checkbox 4 tests: schema slot \"checked\" + intent name \"checked\" + Bool(after) payload; intervene set-without-intent semantic",
+        "Radio 4 tests: schema slot \"selected\" + intent name \"selected\" + Null payload; **second activate cycle silent on §5.20** (set-not-flip idempotent semantic wire-enforced)",
+        "Slider 4 tests: schema slot \"value\" Float + intent names \"value_changing\" / \"value_committed\"; **intervene fires value_changing** (single-source-of-truth value path through set_value); full drag cycle = 2 ordered intents",
+        "clippy::single_char_pattern 수정 (v.contains(\"0\") → v.contains('0'))"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1059 pass (+12 from 1047)",
+        "pinion-rpc: 323 → 335 tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline)",
+        "Slider 2-intent ordering (value_changing 선행 → value_committed 후발) wire 관찰 — R51.7 binding-layer semantic 가 RPC 경로에서도 동일"
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.38",
+        "5.20"
+      ],
+      "carry_forward_bullets": [
+        "R51.x 다음 후보: derive macro for WidgetTransition (pinion-derive 확장) / RadioGroup primitive / SCE-002 RFC / BIDI P-rules / Slider statechart cleanup (SCE-002 후) / hello-toggle visual demo",
+        "Tier-2 widget land 시 R51.8/R51.13 e2e 패턴 4-test 자동 적용 — widget-specific schema slot 이름 + intent name + payload type 만 교체하면 동일 structure"
+      ],
+      "publishable_decision_summary": "Substrate validation coverage 1/4 → 4/4 — Toggle 외 3 widget JSON-RPC dispatch e2e suite mirror; Slider 의 intervene→value_changing asymmetric semantic 와 Radio set-not-flip 의 idempotent silent re-activate 를 wire-level 에서 enforce",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc/src/dispatch.rs: 12 new e2e tests (4 per widget) mirror R51.8 Toggle pattern — scene/query 상태+value, scene/rewind intervene, scene/invoke send transition, full activate cycle + scene/intents drain",
+        "Checkbox 4 tests: schema slot \"checked\" + intent name \"checked\" + Bool(after) payload; intervene set-without-intent semantic",
+        "Radio 4 tests: schema slot \"selected\" + intent name \"selected\" + Null payload; **second activate cycle silent on §5.20** (set-not-flip idempotent semantic wire-enforced)",
+        "Slider 4 tests: schema slot \"value\" Float + intent names \"value_changing\" / \"value_committed\"; **intervene fires value_changing** (single-source-of-truth value path through set_value); full drag cycle = 2 ordered intents",
+        "clippy::single_char_pattern 수정 (v.contains(\"0\") → v.contains('0'))"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1059 pass (+12 from 1047)",
+        "pinion-rpc: 323 → 335 tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline)",
+        "Slider 2-intent ordering (value_changing 선행 → value_committed 후발) wire 관찰 — R51.7 binding-layer semantic 가 RPC 경로에서도 동일"
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.38",
+        "5.20"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.x 다음 후보: derive macro for WidgetTransition (pinion-derive 확장) / RadioGroup primitive / SCE-002 RFC / BIDI P-rules / Slider statechart cleanup (SCE-002 후) / hello-toggle visual demo",
+        "Tier-2 widget land 시 R51.8/R51.13 e2e 패턴 4-test 자동 적용 — widget-specific schema slot 이름 + intent name + payload type 만 교체하면 동일 structure"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [
