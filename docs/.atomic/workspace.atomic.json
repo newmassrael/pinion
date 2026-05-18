@@ -6470,6 +6470,42 @@
         "R36 §5.31 Hot reload (signal serialization)"
       ]
     },
+    "Round 297 — R45 entry 416 publishable_decision_summary 'Round 45 — ' prefix 일관성 복원 (audit half 미접촉, publishable side 만 redact_term 1-call)": {
+      "decision_summary": "mnemosyne redact_term 1-call 로 entry 416 (= R45 entry) 의 publishable_decision_summary 한 필드만 'Round 45 — ' prefix 추가 — 412-415 entry 들과 prefix 일관성 복원, audit half 는 미접촉",
+      "changes_bullets": [
+        "mnemosyne redact_term: entry 416 publishable_decision_summary 정정 ('§5.16 SceneRenderer ...' → 'Round 45 — §5.16 SceneRenderer ...')",
+        "mnemosyne.toml: [[publishable_override_ledger]] row 추가 — kind=redaction / target_id=416 / fields=[publishable_decision_summary] / reason=R45 round prefix 누락 정정 (412-415 entry 와 prefix 일관성 복원) / applied_in=pinion R46+",
+        "docs/.atomic/workspace.atomic.json: entry 416 publishable_decision_summary 한 필드 정정 (content_hash_before=cfd485e9... → content_hash_after=5f810b0f...)"
+      ],
+      "verification_bullets": [
+        "mnemosyne-cli validate-workspace: T1 orphan total=0 / round-trip mandatory=1/1 / GENERATED.md=sync",
+        "publishable / audit divergence: 7 → 8 (override ledger row +1) / ledger_rows 12 → 13",
+        "atomic ledger: entries=N — audit half (decision_summary) unchanged, frozen-ledger 원칙 보존"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "pinion R46+ entry 들은 'Round N — ' prefix 일관성 설계로 이 종류의 backfill 은 추가 발생 의미 없음 (제안 결정)"
+      ],
+      "publishable_decision_summary": "mnemosyne redact_term 1-call 로 entry 416 (= R45 entry) 의 publishable_decision_summary 한 필드만 'Round 45 — ' prefix 추가 — 412-415 entry 들과 prefix 일관성 복원, audit half 는 미접촉",
+      "publishable_changes_bullets": [
+        "mnemosyne redact_term: entry 416 publishable_decision_summary 정정 ('§5.16 SceneRenderer ...' → 'Round 45 — §5.16 SceneRenderer ...')",
+        "mnemosyne.toml: [[publishable_override_ledger]] row 추가 — kind=redaction / target_id=416 / fields=[publishable_decision_summary] / reason=R45 round prefix 누락 정정 (412-415 entry 와 prefix 일관성 복원) / applied_in=pinion R46+",
+        "docs/.atomic/workspace.atomic.json: entry 416 publishable_decision_summary 한 필드 정정 (content_hash_before=cfd485e9... → content_hash_after=5f810b0f...)"
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne-cli validate-workspace: T1 orphan total=0 / round-trip mandatory=1/1 / GENERATED.md=sync",
+        "publishable / audit divergence: 7 → 8 (override ledger row +1) / ledger_rows 12 → 13",
+        "atomic ledger: entries=N — audit half (decision_summary) unchanged, frozen-ledger 원칙 보존"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pinion R46+ entry 들은 'Round N — ' prefix 일관성 설계로 이 종류의 backfill 은 추가 발생 의미 없음 (제안 결정)"
+      ]
+    },
     "Round 3": {
       "decision_summary": "Round 3 — 9 axes ratified to single options; §5.2 §5.4 slot names confirmed; framework-first kickoff path locked",
       "changes_bullets": [
