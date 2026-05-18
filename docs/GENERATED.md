@@ -2143,6 +2143,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/input.rs:InputRouter::hover_wants_capture
 - crates/pinion-runtime/src/input.rs:split_subindex
 - examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key
+- crates/pinion-shell/src/lib.rs:AppShell::handle_touch
 
 
 
@@ -4453,6 +4454,35 @@ router.pointer_down(&mut state_scene);
 - R51.31 L4 alternative impl path RFC (부채 10) — pre-substitute path lock spec
 - winit Touch event 와이어링 (PointerId::touch 수용 ready, shell call site 남음)
 - hello-radio-group N=3 구조 — Vec/array 관례 제한 없이 dynamic-N first-client (e.g. settings binary) 는 명시 spec round 일면 추가 ratify 필요
+
+
+
+### R51.45 — R51.45 §5.35 winit Touch event wiring closes R51.38 multi-pointer arc
+
+**Changes**:
+- crates/pinion-shell/src/lib.rs: winit Touch / TouchPhase import 상단 use 절에 추가, WindowEvent::Touch arm 설치
+- crates/pinion-shell/src/lib.rs: AppShell::handle_touch helper 신설 — PointerId::touch(finger_id) factory + 4 TouchPhase 매핑 (Started=cursor_moved+pointer_down / Moved=cursor_moved / Ended | Cancelled=pointer_up+cursor_left)
+- Started 이 cursor_moved 선행 — mouse 경로와 직교 (CursorMoved 이 MouseInput 선행하는 winit 계약과 일치), hover 해소 조건 행동 동등
+- Ended 의 pointer_up + cursor_left 시퀘스 가 post-release refresh_hover 트리거 (button-like cancel-by-leave + capture release deferred PointerLeave 동일 컨트랙트 수용)
+- WindowEvent::Touch arm body 는 helper 호출 만 수행 — window_event 100 LOC 제한 회규 없이 textbook 레이어링 (winit dispatch=arm, router routing=helper)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1280 pass / 0 fail (Touch 는 실특 macOS desktop 불가능 — runtime regression 없으며 InputRouter R51.38 6 multi-pointer test 가 PointerId::touch 의 재사용 경로 검증)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (handle_touch 추출 로 too_many_lines 회피)
+- R51.34 / R51.37 / R51.38 / R51.40 회규 0 — mouse path 불변 (button-like + Slider drag + multi-pointer + wants_capture cache)
+- winit 0.30.13 Touch struct 의 phase / location / id 필드 제항 정합 — device_id / force 는 currently no-op (force 는 future pressure-sensitive carry)
+- mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync
+
+
+
+**Impact**: §5.35
+
+
+**Carry forward**:
+- TouchPhase::Cancelled 의 PointerUp commit-class intent 의도치 않은 emission — PointerCancel event variant 또는 InputRouter::cancel_pointer(id) helper 로 철자 release 는 별도 round (substrate 확장)
+- winit Touch.force 압력 감지 — Material InputRouter 는 pressure-aware (3D Touch / Apple Pencil) 그래니 포워딩 경로 설계 필요, carry
 
 
 

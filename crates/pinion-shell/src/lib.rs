@@ -63,7 +63,7 @@ use vello::peniko::Color as PenikoColor;
 use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -418,6 +418,53 @@ impl<V: WidgetView> AppShell<V> {
         }
     }
 
+    /// R51.45 §5.35 — winit [`Touch`] dispatch. Each finger mints a
+    /// distinct [`PointerId::touch(finger_id)`] so two simultaneous
+    /// touches drive two widgets without aliasing the capture lock.
+    ///
+    /// * [`TouchPhase::Started`] runs a synthetic
+    ///   [`InputRouter::cursor_moved`] first so the hover target
+    ///   resolves under the press point before the
+    ///   [`InputRouter::pointer_down`] lands — mirrors the mouse
+    ///   case where `CursorMoved` always precedes `MouseInput`.
+    /// * [`TouchPhase::Moved`] forwards the new position.
+    /// * [`TouchPhase::Ended`] runs `pointer_up` then `cursor_left`
+    ///   so the post-release hover refresh fires and the finger's
+    ///   cursor state is dropped (a future touch with the same
+    ///   finger id is a new gesture per winit's `WindowEvent::Touch`
+    ///   contract).
+    /// * [`TouchPhase::Cancelled`] follows the same `Ended` path
+    ///   with the carry that the dispatched `PointerUp` may emit a
+    ///   commit-class intent the gesture did not actually
+    ///   authorise — a future `PointerCancel` event variant or
+    ///   `InputRouter::cancel_pointer` lands as a separate round.
+    fn handle_touch(&mut self, touch: Touch) {
+        let pid = PointerId::touch(touch.id);
+        match touch.phase {
+            TouchPhase::Started => {
+                self.router.cursor_moved(
+                    pid,
+                    touch.location.x,
+                    touch.location.y,
+                    &mut self.scene,
+                );
+                self.router.pointer_down(pid, &mut self.scene);
+            }
+            TouchPhase::Moved => {
+                self.router.cursor_moved(
+                    pid,
+                    touch.location.x,
+                    touch.location.y,
+                    &mut self.scene,
+                );
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.router.pointer_up(pid, &mut self.scene);
+                self.router.cursor_left(pid, &mut self.scene);
+            }
+        }
+    }
+
     /// Translate a typed widget event into the symbolic
     /// `invoke("send", Text(<name>))` call — the same channel the RPC
     /// `scene/invoke` route uses. Failures from the statechart
@@ -732,6 +779,14 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 ..
             } => {
                 self.router.pointer_up(PointerId::MOUSE, &mut self.scene);
+                self.refresh_state();
+                self.drain_intents();
+            }
+            // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
+            // R51.38 multi-pointer first-design substrate arc.
+            // Dispatch is in [`AppShell::handle_touch`] below.
+            WindowEvent::Touch(touch) => {
+                self.handle_touch(touch);
                 self.refresh_state();
                 self.drain_intents();
             }
