@@ -2454,6 +2454,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/ucd/UnicodeData.txt
 - crates/pinion-text-unicode/ucd/DerivedNormalizationProps.txt
 - crates/pinion-text-unicode/ucd/CompositionExclusions.txt
+- crates/pinion-text-unicode/src/hangul.rs:decompose_hangul_syllable
+- crates/pinion-text-unicode/src/decompose.rs:decompose_canonical
+- crates/pinion-text-unicode/src/ordering.rs:canonical_ordering
+- crates/pinion-text-unicode/src/nfd.rs:nfd
+- crates/pinion-text-unicode/ucd/NormalizationTest.txt
 
 
 
@@ -6952,6 +6957,32 @@ router.pointer_down(&mut state_scene);
 - R50.2.3 NFD algorithm (Canonical Decomposition recursive + Canonical Ordering CCC swap)
 - R50.2.4 NFC algorithm (PRIMARY_COMPOSITES lookup + Hangul algorithmic composition UAX #15 §16)
 - R50.2.5+ NFKD/NFKC + Quick-check optimization + text/normalize RPC method
+
+
+
+### Round 473 — Round 473 — R50.2.3 §5.37.3 NFD algorithm (recursive canonical decomposition + Hangul §16 + Canonical Ordering)
+
+**Changes**:
+- hangul/decompose/ordering/nfd 4 module split (UAX #15 §1.2 / §3 / §16 separation of concerns)
+- nfd(s) -> String pub(crate) — recursive decomposition + CCC stable sort,  외부 lib 0
+- ucd/NormalizationTest.txt vendor (2.7MB) + 5-invariant sweep ~20000 case @ 0.14s
+
+
+
+**Verification**:
+- cargo test -p pinion-text-unicode = 35 pass (NFD conformance sweep 20026 line)
+- cargo test --workspace --features pinion-runtime/vello = 890 pass (855 + 35)
+- cargo clippy -p pinion-text-unicode --all-targets = 0 warning (workspace baseline 유지)
+
+
+
+**Impact**: §5.37, §5.37.3
+
+
+**Carry forward**:
+- R50.2.4 NFC algorithm (PRIMARY_COMPOSITES adjacent-pair + Hangul algorithmic composition)
+- R50.2.5 NFKD/NFKC (COMPATIBILITY_DECOMPOSITION reuse) + 4-form sweep
+- R50.2.6 Quick-check + pub fn normalize entry (allow(dead_code) 해제)
 
 
 

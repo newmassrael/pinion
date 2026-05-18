@@ -45,15 +45,29 @@ pub enum NormForm {
 }
 
 /// UCD 16.0.0 tables emitted at build time by `build.rs`. Crate-private
-/// — exposed only to the algorithm modules in R50.2.3+.
+/// — accessed by the algorithm modules below.
 ///
-/// `#[allow(dead_code)]` holds the line until the algorithm slice
-/// (R50.2.3 NFD) becomes the first runtime consumer. Lint reactivates
-/// then.
+/// `PRIMARY_COMPOSITES` is consumed by R50.2.4 NFC; until then it is
+/// flagged as dead. `COMPATIBILITY_DECOMPOSITION` is consumed by
+/// R50.2.5 NFKD/NFKC.
 #[allow(dead_code)]
 mod tables {
     include!(concat!(env!("OUT_DIR"), "/tables.rs"));
 }
+
+// Algorithm modules are crate-private until `pub fn normalize` lands
+// (R50.2.6 — first pub entry once all 4 forms work, per the
+// "no-partial-features" rule). `#[allow(dead_code)]` covers each
+// chain: hangul → decompose → ordering → nfd. The lint reactivates
+// per-module when `normalize` is wired through.
+#[allow(dead_code)]
+mod hangul;
+#[allow(dead_code)]
+mod decompose;
+#[allow(dead_code)]
+mod ordering;
+#[allow(dead_code)]
+mod nfd;
 
 #[cfg(test)]
 mod tests {
