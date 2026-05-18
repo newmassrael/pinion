@@ -45,7 +45,7 @@
 //! would leak. The §6.3 view-fn purity invariant is the cross-shell
 //! contract; everything else is shell-local.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::thread;
@@ -558,6 +558,17 @@ pub struct AppShell<V: WidgetView> {
     /// AT-side actions arriving via `AppEvent::AccessKit` resolve
     /// back to the widget tag without recomputing the tree.
     last_access_tag_map: HashMap<NodeId, String>,
+    /// R51.72 §5.40 — previous frame's `AccessNode` set (keyed by
+    /// `tag`). The next frame diffs against this to compute the
+    /// dirty subset passed to `AccessTreeBuilder::dirty_tags`.
+    /// AccessKit's incremental-update guidance: "an update should
+    /// only include nodes that are new or changed".
+    last_access_nodes: HashMap<String, AccessNode>,
+    /// R51.72 §5.40 — `true` until the first `TreeUpdate` has been
+    /// emitted (carrying the `Tree` metadata + every node). After
+    /// that, subsequent emits set `initial(false)` and pass only
+    /// the dirty subset.
+    access_emit_initial: bool,
 }
 
 impl<V: WidgetView> AppShell<V> {
@@ -615,6 +626,8 @@ impl<V: WidgetView> AppShell<V> {
             proxy,
             accesskit: None,
             last_access_tag_map: HashMap::new(),
+            last_access_nodes: HashMap::new(),
+            access_emit_initial: true,
         }
     }
 
@@ -870,6 +883,13 @@ impl<V: WidgetView> AppShell<V> {
             // consumes drives the AT exposed name — single source
             // of truth, no duplicate match blocks in widget impls.
             pinion_a11y::enrich_names_from_scene(&mut nodes, &paint_scene);
+            // R51.72 §5.40 — apply post-layout bounds before the
+            // dirty diff so geometry changes register as dirty.
+            for node in &mut nodes {
+                if let Some(rect) = rect_for_tag(&paint_scene, &node.tag) {
+                    node.bounds = Some(rect);
+                }
+            }
             // R51.66 / R51.71 §5.40 — composite widgets surface
             // both the parent focus and the active descendant via
             // `access_focus_target` returning `AccessFocus`. Atomic
@@ -884,16 +904,43 @@ impl<V: WidgetView> AppShell<V> {
             // `ActionRequested` deliveries can resolve `NodeId` back
             // to widget tags without recomputing the tree.
             self.last_access_tag_map = build_tag_map(&nodes);
-            let paint_ref = &paint_scene;
+            // R51.72 §5.40 — diff against the previous frame's node
+            // cache. The initial frame emits every tag (the AT has
+            // no prior state); subsequent frames emit only tags
+            // whose `AccessNode` body (name / value / state / bounds
+            // / children) actually changed. AccessKit guidance: "an
+            // update should only include nodes that are new or
+            // changed".
+            let initial = self.access_emit_initial;
+            let dirty: HashSet<String> = if initial {
+                nodes.iter().map(|n| n.tag.clone()).collect()
+            } else {
+                nodes
+                    .iter()
+                    .filter(|n| self.last_access_nodes.get(&n.tag) != Some(*n))
+                    .map(|n| n.tag.clone())
+                    .collect()
+            };
+            // Refresh the cache for the next frame. Cloning before
+            // moving `nodes` into the builder keeps the snapshot
+            // independent of any post-build mutation.
+            self.last_access_nodes = nodes
+                .iter()
+                .cloned()
+                .map(|n| (n.tag.clone(), n))
+                .collect();
             let at_focus_ref = at_focus.as_ref();
             if let Some(adapter) = self.accesskit.as_mut() {
                 adapter.update_if_active(|| {
                     let mut builder = AccessTreeBuilder::new();
-                    for mut node in nodes {
-                        if let Some(rect) = rect_for_tag(paint_ref, &node.tag) {
-                            node.bounds = Some(rect);
-                        }
+                    if !initial {
+                        builder = builder.initial(false);
+                    }
+                    for node in nodes {
                         builder.add(node);
+                    }
+                    if !initial {
+                        builder.dirty_tags(dirty);
                     }
                     if let Some(f) = at_focus_ref {
                         builder.focused(Some(&f.focus_tag));
@@ -913,6 +960,7 @@ impl<V: WidgetView> AppShell<V> {
                     builder.build(Some(window_bounds))
                 });
             }
+            self.access_emit_initial = false;
         }
         // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
         // into a `LayoutNode` tree so `scene/layout {viewport: null}`

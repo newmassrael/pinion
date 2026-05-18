@@ -3002,6 +3002,7 @@ router.pointer_down(&mut state_scene);
 - R51.69 — ContainerNode::aria_label + enrich_names_from_scene (WAI-ARIA name precedence land)
 - R51.70 — WidgetView::access_child_invoke + RadioGroup wire-format (WCAG 4.1.2 write 회복)
 - R51.71 — AccessFocus typed + accesskit Node::set_active_descendant (ARIA roving-tabindex 정통)
+- R51.72 — dirty_tags + last_access_nodes cache (AccessKit incremental-update 권고 준수)
 
 
 
@@ -3056,6 +3057,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-a11y/src/focus.rs
 - crates/pinion-a11y/src/focus.rs:AccessFocus
 - crates/pinion-a11y/src/tree.rs:AccessTreeBuilder::active_descendant
+- crates/pinion-a11y/src/tree.rs:AccessTreeBuilder::dirty_tags
+- crates/pinion-shell/src/lib.rs:AppShell::last_access_nodes
+- crates/pinion-shell/src/lib.rs:AppShell::access_emit_initial
 
 
 
@@ -5467,6 +5471,32 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수
 - composite tabindex vs selection 구분 — ARIA radio-group 의 tabindex 가 selected_index 와 독립적이어야 함 (현재 pinion 은 결합, R51.x carry)
+
+
+
+### R51.72 — R51.72 §5.40 incremental TreeUpdate — AccessTreeBuilder.dirty_tags + last_access_nodes diff (AccessKit incremental-update 권고 준수)
+
+**Changes**:
+- crates/pinion-a11y/src/tree.rs — AccessTreeBuilder.dirty: Option<HashSet<String>> + dirty_tags() setter, build() 시 dirty subset 만 emit (root 은 항상)
+- crates/pinion-shell/src/lib.rs — AppShell.last_access_nodes + access_emit_initial 필드 추가, render 의 access tree emit 구간 재구성 (bounds 적용 → diff vs cache → cache snapshot → builder.dirty_tags 전달)
+- crates/pinion-a11y/tests/conformance.rs — incremental emit + empty-dirty focus-only 회귀 test 2
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- cargo test --workspace --features pinion-runtime/vello — 1451 pass / 0 fail (+6 from 1445)
+- AccessTreeBuilder dirty_tags 4 unit + conformance incremental 2
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- composite tabindex vs selection 구분 — ARIA radio-group 의 tabindex 가 selected_index 와 독립적이어야 함 (현재 pinion 은 결합, R51.x carry)
+- no-change frame emit skip — 궁극 제로 을 위해 dirty+focus 변화 없으면 update_if_active 자체 스킵 (R51.x carry)
 
 
 

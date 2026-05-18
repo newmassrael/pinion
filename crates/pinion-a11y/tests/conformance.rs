@@ -293,3 +293,41 @@ fn empty_builder_emits_root_only() {
     assert_eq!(update.nodes.len(), 1);
     assert_eq!(update.nodes[0].0, ROOT_NODE_ID);
 }
+
+#[test]
+fn incremental_emit_carries_only_dirty_widget() {
+    // R51.72 §5.40 — simulate a "checkbox toggled" frame: the
+    // initial frame emits the full mixed scene; the next frame
+    // diffs and emits only the changed tag plus the synthetic root.
+    let mut builder = AccessTreeBuilder::new().initial(false);
+    for node in mixed_scene() {
+        builder.add(node);
+    }
+    let dirty: std::collections::HashSet<String> =
+        ["dark_toggle".to_owned()].into_iter().collect();
+    builder.dirty_tags(dirty);
+    let update = builder.build(Some(Rect::new(0, 0, 480, 320)));
+    // 1 root + 1 dirty widget = 2 nodes. The other 6 (button +
+    // slider + group + 3 radios) stay in the AT's cached state.
+    assert_eq!(update.nodes.len(), 2);
+    assert_eq!(update.nodes[0].0, ROOT_NODE_ID);
+    assert_eq!(update.nodes[1].0, tag_to_node_id("dark_toggle"));
+    // Tree metadata omitted on incremental emissions.
+    assert!(update.tree.is_none());
+}
+
+#[test]
+fn incremental_empty_dirty_still_carries_focus_and_root() {
+    // R51.72 §5.40 — no node body changed, but focus moved. The
+    // AT still receives the updated focus via `TreeUpdate::focus`;
+    // node payload is just the root carrier.
+    let mut builder = AccessTreeBuilder::new().initial(false);
+    for node in mixed_scene() {
+        builder.add(node);
+    }
+    builder.dirty_tags(std::collections::HashSet::new());
+    builder.focused(Some("main_btn"));
+    let update = builder.build(None);
+    assert_eq!(update.nodes.len(), 1);
+    assert_eq!(update.focus, tag_to_node_id("main_btn"));
+}

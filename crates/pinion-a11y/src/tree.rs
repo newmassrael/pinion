@@ -75,6 +75,7 @@ pub struct AccessTreeBuilder {
     focused: Option<String>,
     active_descendants: HashMap<String, String>,
     initial: bool,
+    dirty: Option<HashSet<String>>,
 }
 
 impl AccessTreeBuilder {
@@ -90,6 +91,7 @@ impl AccessTreeBuilder {
             focused: None,
             active_descendants: HashMap::new(),
             initial: true,
+            dirty: None,
         }
     }
 
@@ -107,6 +109,35 @@ impl AccessTreeBuilder {
     /// Mark the currently focused widget tag (or clear with `None`).
     pub fn focused(&mut self, tag: Option<&str>) -> &mut Self {
         self.focused = tag.map(str::to_owned);
+        self
+    }
+
+    /// R51.72 §5.40 — restrict `build()` to emit only the listed
+    /// widget tags (plus the synthetic root).
+    ///
+    /// AccessKit's incremental-update guidance: "an update should
+    /// only include nodes that are new or changed". The shell
+    /// caches the previous frame's `AccessNode` set, diffs against
+    /// the current frame, and passes the changed tags here so the
+    /// emitted `TreeUpdate::nodes` carries only what the AT
+    /// actually needs to refresh — bandwidth-proportional to
+    /// actual UI activity, not widget count.
+    ///
+    /// When `dirty_tags` is not called (or called with an empty
+    /// set), `build()` falls back to emitting every node — the
+    /// initial-frame behavior the conformance tests rely on. Tags
+    /// in the set that don't correspond to any added node are
+    /// silently ignored (the AT keeps its previous state for
+    /// those).
+    ///
+    /// The synthetic root node is always emitted regardless of
+    /// `dirty_tags`, because it carries the window bounds and
+    /// children list — both of which may need to change between
+    /// frames even when no widget body did (window resize, widget
+    /// added/removed). Holding the root constant would leave the
+    /// AT with stale geometry.
+    pub fn dirty_tags(&mut self, tags: HashSet<String>) -> &mut Self {
+        self.dirty = Some(tags);
         self
     }
 
@@ -182,7 +213,15 @@ impl AccessTreeBuilder {
         nodes.push((ROOT_NODE_ID, root));
 
         // 2. Per-widget nodes in insertion order.
+        //    R51.72 §5.40 — when `dirty` is `Some`, emit only the
+        //    tags it lists. The root above is always emitted so the
+        //    AT-side window geometry stays current.
         for tag in &self.insertion_order {
+            if let Some(dirty) = &self.dirty {
+                if !dirty.contains(tag) {
+                    continue;
+                }
+            }
             let access = &self.nodes[tag];
             let node_id = tag_to_node_id(tag);
             let mut node = lower_access_node(access);
@@ -477,6 +516,55 @@ mod tests {
         // No panic, no spurious node — the declaration applies only
         // to lowered nodes whose tag matches.
         assert_eq!(update.nodes.len(), 2);
+    }
+
+    #[test]
+    fn dirty_tags_filters_to_named_widgets_only() {
+        let mut b = AccessTreeBuilder::new();
+        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.add(AccessNode::new("main_cb", AriaRole::CheckBox));
+        b.add(AccessNode::new("main_sl", AriaRole::Slider));
+        let dirty: HashSet<String> =
+            ["main_cb".to_owned()].into_iter().collect();
+        b.dirty_tags(dirty);
+        let update = b.build(None);
+        // Root + 1 dirty widget = 2 emitted.
+        assert_eq!(update.nodes.len(), 2);
+        assert_eq!(update.nodes[0].0, ROOT_NODE_ID);
+        assert_eq!(update.nodes[1].0, tag_to_node_id("main_cb"));
+    }
+
+    #[test]
+    fn dirty_tags_empty_set_emits_root_only() {
+        let mut b = AccessTreeBuilder::new();
+        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.dirty_tags(HashSet::new());
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 1);
+        assert_eq!(update.nodes[0].0, ROOT_NODE_ID);
+    }
+
+    #[test]
+    fn dirty_tags_unknown_tag_silently_skipped() {
+        let mut b = AccessTreeBuilder::new();
+        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        let dirty: HashSet<String> =
+            ["nonexistent".to_owned(), "main_btn".to_owned()].into_iter().collect();
+        b.dirty_tags(dirty);
+        let update = b.build(None);
+        // The unknown tag is silently dropped; only main_btn lowered.
+        assert_eq!(update.nodes.len(), 2);
+    }
+
+    #[test]
+    fn unset_dirty_emits_every_widget() {
+        let mut b = AccessTreeBuilder::new();
+        b.add(AccessNode::new("a", AriaRole::Button));
+        b.add(AccessNode::new("b", AriaRole::Button));
+        b.add(AccessNode::new("c", AriaRole::Button));
+        // No call to `dirty_tags` — equivalent to "all dirty".
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 4); // root + 3
     }
 
     #[test]
