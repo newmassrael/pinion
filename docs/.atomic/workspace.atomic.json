@@ -3821,6 +3821,80 @@
       ],
       "decision_status": "active"
     },
+    "5.40": {
+      "title": "Accessibility semantic tree — AccessKit integration for WCAG 4.1.2 (Name, Role, Value)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "AccessKit 통합으로 widget name/role/state/value 를 OS AT API (UIA/AX/AT-SPI/Android) 노출, WCAG 4.1.2 충족, AI introspect 와 직교 공존",
+      "rationale_bullets": [
+        "WCAG 4.1.2 Name/Role/Value Level A — focus/keyboard 만으로 미충족, AT 노출 필수",
+        "R51.51-R51.59 §5.39 focus 완결 — visual+keyboard a11y land, semantic tree 만 hidden 부채",
+        "AccessKit = Rust 표준 cross-platform (UIA/AX/AT-SPI/Android), Mozilla/Bevy/egui/Slint 채택",
+        "AI introspect RPC 와 OS AT API 는 직교 audience — 둘 다 필요, 어느 쪽도 대체 아님",
+        "WidgetView 별 role 매핑 = single trait default method + per-widget override 패턴",
+        "TreeUpdate emit 시점 = render frame 후 (paint scene 동기, view-fn 순수 invariant 유지)"
+      ],
+      "inputs_bullets": [
+        "paint Scene (tagged widget enumeration, hit-test rect, semantic boundary 추출)",
+        "WidgetView::access_node(&Scene, &str) -> Option<AccessNode> trait method (default None)",
+        "FocusManager::focused() (focused widget = AccessKit ActiveDescendant + Focus state)",
+        "WindowEvent::AccessibilityRequested (AT 첫 query trigger, accesskit_winit relay)",
+        "ActionRequestEvent (AT 측 invoke: Click/Focus/Increment/Decrement/Default 5종)"
+      ],
+      "outputs_bullets": [
+        "TreeUpdate { nodes, focus, tree } emit per render frame (no-change frame 시 debounce)",
+        "accesskit_winit::Adapter ownership in AppShell (winit Window 와 1:1 lifecycle)",
+        "AccessNode = { id, role, name, value, state_flags } per widget (pinion-a11y substrate type)",
+        "Action handler — Click/Focus/Increment/Decrement → InputRouter intent 변환 layer",
+        "introspect schema 의 role/name = ARIA-aligned, AccessKit AccessNode 와 동일 표준 lockstep"
+      ],
+      "caveats_bullets": [
+        "Adapter ownership = AppShell field, winit Window 와 1:1, Drop 시 release (lifecycle invariant)",
+        "TreeUpdate debounce = scene 의 access_node 컬렉션 해시 변화시만 emit, no-op frame 비용 0",
+        "access_node default = None 반환 시 non-interactive 로 AT 노출 (decoration scene 자동 제외)",
+        "Action::Click = pointer_click intent 위조 (focus_set 후 apply_key Enter, widget-specific 위임)",
+        "Action::Focus = FocusManager::focus_set(tag) 직접 호출 (broadcast 없이 정확 target)",
+        "Action::Increment/Decrement = Slider apply_key(ArrowRight/ArrowLeft) 위조 + value_committed",
+        "composite (RadioGroup) AccessNode = role=RadioGroup + children=Radio nodes (AccessKit parent-child)",
+        "name 추출 = widget 내부 Text leaf 첫 줄 + Modifier::aria_label override (label hint = carry)",
+        "value = Slider current f32, Checkbox/Toggle/Radio boolean (introspect schema 와 lockstep)",
+        "state_flags = focused / disabled / hovered / pressed / checked (introspect state enum 동등)",
+        "live region = role=Log/Status/Alert + AccessKit live property (R51.x carry, framework 미요구)",
+        "platform AT test = Windows Narrator / macOS VoiceOver / Linux Orca / Android TalkBack (carry)",
+        "custom widget = access_node override 필수, default None = AT 무시 (intent declaration)"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "introspect RPC 만으로 a11y 완결 frame",
+          "reason": "AT (NVDA/VoiceOver/Orca) 미연동, WCAG 4.1.2 위반"
+        },
+        {
+          "alternative": "자체 a11y API 설계",
+          "reason": "UIA/AX/AT-SPI 재구현 천문학 비용, AccessKit 가 Rust 정통"
+        },
+        {
+          "alternative": "per-widget OS API 직접 호출",
+          "reason": "platform fork 필요, AccessKit single adapter 가 textbook"
+        },
+        {
+          "alternative": "TreeUpdate eager emit per input event",
+          "reason": "frame budget 폭증, render frame 동기가 정통"
+        },
+        {
+          "alternative": "별도 a11y trait 신설",
+          "reason": "DRY 위반, WidgetView trait default method 가 정통"
+        }
+      ],
+      "impact_scope": [
+        "5.13",
+        "5.15",
+        "5.20",
+        "5.21",
+        "5.35",
+        "5.39"
+      ],
+      "decision_status": "active"
+    },
     "5.5": {
       "title": "MCU v1 backend scope (AP-only vs MCU-included)",
       "parent_doc": "docs/GENERATED.md",
@@ -6905,6 +6979,52 @@
         "theming axis — focus ring color 를 Modifier hint 로",
         "RadioGroup internal focused index (selected 과 분리) 카리 — evidence-first",
         "focus_set RPC method ('focus/set') — AI-first 측 programmatic focus, R51.59 carry 청산 evidence 시"
+      ]
+    },
+    "R51.60": {
+      "decision_summary": "R51.60 §5.40 a11y semantic tree RFC — AccessKit integration for WCAG 4.1.2 (Name/Role/Value)",
+      "changes_bullets": [
+        "§5.40 신설 — Accessibility semantic tree RFC (design-only round, code mutation 0)",
+        "AccessKit 선택 — Rust 표준 cross-platform AT adapter (UIA/AX/AT-SPI/Android, Mozilla/Bevy/egui/Slint 채택)",
+        "WidgetView::access_node(&Scene, &str) -> Option<AccessNode> trait method default None spec",
+        "Action 5종 (Click/Focus/Increment/Decrement/Default) → InputRouter intent 변환 layer spec",
+        "13 caveats: adapter ownership, TreeUpdate debounce, action 매핑, name 추출, live region/AT test carry"
+      ],
+      "verification_bullets": [
+        "validate_workspace clean — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync/sections=56→57",
+        "code unchanged (design-only round, R51.43/.48/.49/.50/.51 spec-only precedent)"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.61 — accesskit + accesskit_winit dependency add + pinion-a11y substrate crate",
+        "R51.62 — pinion-shell AppShell Adapter wiring + WindowEvent::Accessibility* arm",
+        "R51.63-67 — per-widget access_node 매핑 (Button/Toggle/Checkbox/Radio/Slider/RadioGroup)",
+        "R51.67 — Action handler → InputRouter intent 변환 layer",
+        "R51.68 — conformance test (AccessKit consumer mock + Tree snapshot + ActionRequest round-trip)"
+      ],
+      "publishable_decision_summary": "R51.60 §5.40 a11y semantic tree RFC — AccessKit integration for WCAG 4.1.2 (Name/Role/Value)",
+      "publishable_changes_bullets": [
+        "§5.40 신설 — Accessibility semantic tree RFC (design-only round, code mutation 0)",
+        "AccessKit 선택 — Rust 표준 cross-platform AT adapter (UIA/AX/AT-SPI/Android, Mozilla/Bevy/egui/Slint 채택)",
+        "WidgetView::access_node(&Scene, &str) -> Option<AccessNode> trait method default None spec",
+        "Action 5종 (Click/Focus/Increment/Decrement/Default) → InputRouter intent 변환 layer spec",
+        "13 caveats: adapter ownership, TreeUpdate debounce, action 매핑, name 추출, live region/AT test carry"
+      ],
+      "publishable_verification_bullets": [
+        "validate_workspace clean — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync/sections=56→57",
+        "code unchanged (design-only round, R51.43/.48/.49/.50/.51 spec-only precedent)"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.61 — accesskit + accesskit_winit dependency add + pinion-a11y substrate crate",
+        "R51.62 — pinion-shell AppShell Adapter wiring + WindowEvent::Accessibility* arm",
+        "R51.63-67 — per-widget access_node 매핑 (Button/Toggle/Checkbox/Radio/Slider/RadioGroup)",
+        "R51.67 — Action handler → InputRouter intent 변환 layer",
+        "R51.68 — conformance test (AccessKit consumer mock + Tree snapshot + ActionRequest round-trip)"
       ]
     },
     "Round 1": {
