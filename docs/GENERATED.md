@@ -2579,6 +2579,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/bidi.rs:mirroring_glyph
 - crates/pinion-text-unicode/src/bidi.rs:apply_l3_combining_marks
 - crates/pinion-text-unicode/build.rs:parse_bidi_mirroring
+- crates/pinion-text-unicode/src/bidi.rs:canonical_bracket_form
+- crates/pinion-text-unicode/src/test_fixture.rs:parse_bidi_character_test
+- crates/pinion-text-unicode/src/test_fixture.rs:load_bidi_character_test
+- crates/pinion-text-unicode/ucd/BidiCharacterTest.txt
 
 
 
@@ -8301,6 +8305,39 @@ router.pointer_down(&mut state_scene);
 - R51.x 다음 후보: R51.24 UAX #9 BidiTest.txt typical-text vector subset conformance — algorithm 완성 검증 (hand-tests 대체); R51.24+ 에서 이 때 부족 자병→ N0 NSM-after-bracket propagation 도 처리
 - BIDI algorithm 80% 이상 완성 — N0 NSM propagation 잠잠 제외 + BidiTest conformance 잘 지마 철저한 구현
 - derive macro for WidgetTransition / hello-toggle visual demo — BIDI 완성 후 돌아볼 부채
+
+
+
+### Round 513 — R51.24 §5.37.4 BIDI UCD BidiCharacterTest conformance (full 91707-vector sweep, 100% pass; 3 부채 즉시 상환) — UCD 16.0 BidiCharacterTest.txt (91 707 vectors) 전체 통과 land — conformance harness + 3 부채 한 라운드에 즉시 상환 (L2 visible-only filter / N0 step (e) NSM propagation / BD16 canonical-equivalent bracket matching)
+
+**Changes**:
+- crates/pinion-text-unicode/ucd/BidiCharacterTest.txt: UCD 16.0.0 적재 (96 464 lines, 91 707 vectors after comment strip)
+- crates/pinion-text-unicode/src/test_fixture.rs: BidiCharacterCase + BidiParagraphDirectionInput + parse_bidi_character_test + load_bidi_character_test — Field 0~4 디코더 ('x' = X9-removed Option<u8>::None 모형)
+- crates/pinion-text-unicode/src/bidi.rs: bidi_reorder L2 visible-only filter — UAX #9 X9 의 'removed' 가 W/N/I/L 모든 단계에서 invisible 정신 정통화 (post-L1 BN 위치 mask 후 reorder_visual + map-back). hand-tests 가 BN-free 였기에 line 66 까지 미발견
+- crates/pinion-text-unicode/src/bidi.rs: apply_n0 의 N0 step (e) 구현 — original_nsm 인자 + N0 가 bracket type 변경한 직후 originally-NSM 인 후행 codepoints 가 새 bracket type 받음 (line 84 'a ( b ) U+0331' 정정)
+- crates/pinion-text-unicode/src/bidi.rs: canonical_bracket_form helper + find_bracket_pairs 의 BD16 canonical-equivalence — paired_bracket lookup 후 close 비교 양쪽 canonical singleton 매핑 (U+2329↔U+3008 / U+232A↔U+3009; lines 313/314/317/318 mixed-encoding angle bracket pairs)
+- crates/pinion-text-unicode/src/bidi.rs: reorder_visual doc — `levels` 가 visible-only 라는 contract 명시 (X9-removed 사전 필터 책임은 호출자)
+- crates/pinion-text-unicode/src/bidi.rs: run_bidi_character_case harness + smoke (first 100, default) + full_sweep (ignored, on-demand)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1212 pass (+1 from 1211 — smoke 1 default; full_sweep ignored)
+- cargo test -p pinion-text-unicode -- --ignored bidi_character_test_full_sweep = 91 707/91 707 pass (100.0000%)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- UAX #9 conformance: full UCD 16.0 BidiCharacterTest 전체 vector (~92K) 통과 — 'implementation 정통' + 'conformance 검증' 동시 완성, hand-tests ~70 만 의존하던 R51.23 baseline 의 검증 측 부채 청산
+- fail discovery progression — smoke 100 fail (line 66 visible-only) → 정정 → smoke 100 pass → full sweep 4 fail (lines 84 / 313 / 314 / 317 / 318) → N0 step (e) + BD16 canonical equivalence 정정 → full sweep 0 fail (4 → 0 in 2 정정 라운드)
+
+
+
+**Impact**: §5.37.4
+
+
+**Carry forward**:
+- R51.x 다음 후보: (a) derive macro for WidgetTransition (~250 LOC, application boilerplate ~135 LOC 청산) / (b) hello-toggle visual demo (paint-side N=2) / (c) serde Option<Value> JSON null carry (R51.16) / (d) L4 mirroring renderer-side 통합 / (e) Phase 2 axis 시작 (pinion thin RHI 3D pass §5.x 신설)
+- BIDI algorithm 완성도: ~100% (P/X/W/N/I/L1/L2/L3 + L4 substrate + UCD 표준 vector 91 707 conformance 100%)
+- R297 backfill 부채 carry (dc425f8 R45 entry 416 backfill commit 의 R297 changelog entry atomic-store missing — 다음 mnemosyne-publishable fix 라운드에서 상환)
+- BidiTest.txt (Bidi_Class 시퀀스, 384K vector) 는 별도 conformance vector — character vector 가 끝났으니 class 시퀀스 검증은 후속 라운드에서 결정
 
 
 

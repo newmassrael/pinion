@@ -1130,11 +1130,22 @@ fn find_bracket_pairs(
                 if stack.len() >= N0_BRACKET_STACK_MAX {
                     return Vec::new();
                 }
-                stack.push((i, matching));
+                // BD16 — "Bidi_Paired_Bracket ... or its canonical
+                // equivalent". Store the canonical form of the
+                // expected close so the comparison below matches
+                // U+2329 against U+3009 (and U+232A against U+3008)
+                // through their singleton canonical decompositions.
+                // R51.24.1 — caught by `BidiCharacterTest.txt` lines
+                // 313 / 314 / 317 / 318 (mixed-encoding angle bracket
+                // pairs); without the canonical fold those pairs are
+                // missed by N0 and the closing bracket falls through
+                // to N1/N2 with the wrong direction.
+                stack.push((i, canonical_bracket_form(matching)));
             }
             BracketType::Close => {
+                let ch_canon = canonical_bracket_form(ch);
                 if let Some(found) =
-                    stack.iter().rposition(|&(_, m)| m == ch)
+                    stack.iter().rposition(|&(_, m)| m == ch_canon)
                 {
                     let (open_pos, _) = stack[found];
                     stack.truncate(found);
@@ -1147,6 +1158,25 @@ fn find_bracket_pairs(
     pairs
 }
 
+/// BD16 helper — return the canonical-equivalent form of `c` if its
+/// canonical decomposition is a singleton (one codepoint), otherwise
+/// return `c` unchanged. Used to fold U+2329 / U+232A onto their
+/// canonical equivalents U+3008 / U+3009 (the only paired-bracket
+/// characters with a non-trivial canonical equivalence in Unicode
+/// 16.0). Delegates to the crate's canonical decomposition trie so
+/// the table is the single source of truth — if UCD ever adds another
+/// canonical-equivalent bracket, this helper picks it up automatically
+/// without bidi.rs changing.
+fn canonical_bracket_form(c: char) -> char {
+    let mut buf: Vec<u32> = Vec::with_capacity(1);
+    crate::decompose::decompose_canonical(c as u32, &mut buf);
+    if buf.len() == 1 {
+        char::from_u32(buf[0]).unwrap_or(c)
+    } else {
+        c
+    }
+}
+
 /// N0 — for each matched bracket pair in `pairs`, set both
 /// brackets in `view` to the resolved direction per UAX #9 N0.
 /// `embed_dir` is `L` (sequence level even) or `R` (odd). `sos` is
@@ -1156,6 +1186,7 @@ fn apply_n0(
     pairs: &[(usize, usize)],
     embed_dir: BidiClass,
     sos: BidiClass,
+    original_nsm: &[bool],
 ) {
     let opposite_dir = match embed_dir {
         BidiClass::L => BidiClass::R,
@@ -1207,6 +1238,24 @@ fn apply_n0(
         };
         view[open_pos] = pair_dir;
         view[close_pos] = pair_dir;
+        // N0 step (e) — any number of characters that had original
+        // bidirectional type NSM (prior to W1) and that immediately
+        // follow a paired bracket whose type was changed by N0
+        // adopt the bracket's new direction. R51.24.1 — caught by
+        // `BidiCharacterTest.txt` line 84 (`a ( b ) U+0331`): W1
+        // reclassed the post-bracket NSM as ON, but N0 step (e) must
+        // override it to the bracket's resolved L so I2 lifts every
+        // visible position to level 2.
+        let mut k = open_pos + 1;
+        while k < view.len() && original_nsm[k] {
+            view[k] = pair_dir;
+            k += 1;
+        }
+        let mut k = close_pos + 1;
+        while k < view.len() && original_nsm[k] {
+            view[k] = pair_dir;
+            k += 1;
+        }
     }
 }
 
@@ -1325,9 +1374,16 @@ pub fn resolve_neutral_types(
         };
 
         // N0: bracket pairs first (must run before N1/N2 so brackets
-        // either become strong or stay ON for N1 to resolve).
+        // either become strong or stay ON for N1 to resolve). Step (e)
+        // needs the pre-W1 NSM mask projected onto this run sequence —
+        // bidi_class(paragraph_char) is the original Bidi_Class before
+        // W1 reclassed combining marks as their preceding type.
         let pairs = find_bracket_pairs(&view, &positions, &chars);
-        apply_n0(&mut view, &pairs, embed_dir, sos);
+        let original_nsm: Vec<bool> = positions
+            .iter()
+            .map(|&p| bidi_class(chars[p]) == BidiClass::NSM)
+            .collect();
+        apply_n0(&mut view, &pairs, embed_dir, sos, &original_nsm);
         // N1: matched-strong neutral runs.
         apply_n1(&mut view, sos, eos);
         // N2: residual neutrals.
@@ -1486,6 +1542,14 @@ pub fn apply_l1_line_break(
 /// level. Paragraphs containing only LTR text (all levels = 0)
 /// short-circuit to the identity permutation.
 ///
+/// `levels` must already exclude X9-removed positions (RLE / LRE /
+/// RLO / LRO / PDF / BN). Per UAX #9 X9 those codepoints have no
+/// effect on the W / N / I / L stages, so their placeholder levels
+/// from `resolve_explicit_levels` must not be passed in here — doing
+/// so would skew `min_odd` and break contiguous-run detection.
+/// [`bidi_reorder`] handles the filter + map-back internally; ad-hoc
+/// callers (e.g. conformance harnesses) must do the same.
+///
 /// # Panics
 ///
 /// Panics if invoked with a non-empty `levels` slice for which
@@ -1593,7 +1657,40 @@ pub fn bidi_reorder(paragraph: &str) -> Vec<usize> {
     let post_n = resolve_neutral_types(post_w, paragraph, p_level);
     let post_i = resolve_implicit_levels(post_n);
     let post_l1 = apply_l1_line_break(post_i, paragraph, p_level);
-    let mut indices = reorder_visual(&post_l1.levels);
+
+    // UAX #9 X9 — "Remove all RLE, LRE, RLO, LRO, PDF, and BN codes."
+    // The W/N/I/L1 stages already treat BN-classed positions as
+    // invisible during their own resolution, but L2 (`reorder_visual`)
+    // is a pure permutation over its input slice — feeding it the
+    // full-length `levels` array would let placeholder BN levels
+    // (usually the parent embedding level assigned by X2-X8) lower
+    // `min_odd` past the levels that are actually present in the
+    // rendered text, and would also break L2's "contiguous run"
+    // contiguity by inserting BN positions between visible runs.
+    //
+    // Filter the BN positions out, run L2 on the visible-only slice,
+    // and map the resulting permutation back to original codepoint
+    // indices. R51.24.1 — caught by `BidiCharacterTest.txt` line 66
+    // (`LRE א ( ב PDF LRO )`); before this fix `reorder_visual` was
+    // emitting `[6, 3, 2, 1]` versus the UCD-reference `[3, 2, 1, 6]`
+    // because the BN levels at positions 0 / 5 (parent level 1)
+    // dragged `min_odd` from 3 down to 1 and triggered a spurious
+    // whole-line reversal.
+    let mut visible_levels: Vec<u8> = Vec::with_capacity(post_l1.levels.len());
+    let mut visible_to_original: Vec<usize> =
+        Vec::with_capacity(post_l1.levels.len());
+    for (i, &cls) in post_l1.classes.iter().enumerate() {
+        if cls != BidiClass::BN {
+            visible_levels.push(post_l1.levels[i]);
+            visible_to_original.push(i);
+        }
+    }
+    let visible_reorder = reorder_visual(&visible_levels);
+    let mut indices: Vec<usize> = visible_reorder
+        .into_iter()
+        .map(|k| visible_to_original[k])
+        .collect();
+
     let original_classes: Vec<BidiClass> =
         paragraph.chars().map(bidi_class).collect();
     apply_l3_combining_marks(&mut indices, &original_classes);
@@ -3091,5 +3188,194 @@ mod tests {
         // glyphs. Verify the lookup returns the matching bracket.
         assert_eq!(mirroring_glyph('('), Some(')'));
         assert_eq!(mirroring_glyph(')'), Some('('));
+    }
+
+    // ---- R51.24.1 §5.37.4 — `BidiCharacterTest.txt` conformance harness ----
+
+    use crate::test_fixture::{
+        load_bidi_character_test, BidiCharacterCase,
+        BidiParagraphDirectionInput,
+    };
+
+    /// Run one `BidiCharacterTest.txt` row through the pinion BIDI
+    /// pipeline (P → X → W → N → I → L1 → L2) and diff against the
+    /// UCD reference fields.
+    ///
+    /// UCD 16.0 declares L3 (combining marks) and L4 (mirroring) out
+    /// of scope for this conformance vector — the harness stops at
+    /// `reorder_visual` and filters X9-removed positions before
+    /// comparing visual order. The X9-removed mask is derived from
+    /// our pipeline's `BidiClass::BN` post-X output, since UAX #9 X9
+    /// cleanup folds RLE/LRE/RLO/LRO/PDF and original BN into the
+    /// single "removed" bucket the UCD encodes as `'x'`.
+    ///
+    /// Returns `Err(diagnostic)` on the first mismatch so the caller
+    /// can pinpoint a single failing UCD coordinate; the diagnostic
+    /// quotes the source `line_number` for direct lookup.
+    fn run_bidi_character_case(
+        case: &BidiCharacterCase,
+    ) -> Result<(), String> {
+        let paragraph: String = case.codepoints.iter().collect();
+
+        let p_level = match case.paragraph_direction_input {
+            BidiParagraphDirectionInput::Ltr => 0,
+            BidiParagraphDirectionInput::Rtl => 1,
+            BidiParagraphDirectionInput::Auto => paragraph_level(&paragraph),
+        };
+
+        if case.paragraph_direction_input == BidiParagraphDirectionInput::Auto
+            && p_level != case.resolved_paragraph_level
+        {
+            return Err(format!(
+                "line {}: paragraph_level (auto) mismatch: \
+                 expected {}, got {}",
+                case.line_number, case.resolved_paragraph_level, p_level,
+            ));
+        }
+
+        let post_x = resolve_explicit_levels(&paragraph, p_level);
+        let post_w = resolve_weak_types(post_x, p_level);
+        let post_n = resolve_neutral_types(post_w, &paragraph, p_level);
+        let post_i = resolve_implicit_levels(post_n);
+        let post_l1 = apply_l1_line_break(post_i, &paragraph, p_level);
+
+        if post_l1.classes.len() != case.resolved_levels.len() {
+            return Err(format!(
+                "line {}: codepoint count mismatch: expected {}, got {}",
+                case.line_number,
+                case.resolved_levels.len(),
+                post_l1.classes.len(),
+            ));
+        }
+
+        for (i, (&expected, (&actual_cls, &actual_lvl))) in case
+            .resolved_levels
+            .iter()
+            .zip(post_l1.classes.iter().zip(post_l1.levels.iter()))
+            .enumerate()
+        {
+            match expected {
+                None => {
+                    if actual_cls != BidiClass::BN {
+                        return Err(format!(
+                            "line {}: levels[{i}] expected 'x' \
+                             (X9-removed), got class={actual_cls:?} \
+                             level={actual_lvl}",
+                            case.line_number,
+                        ));
+                    }
+                }
+                Some(level) => {
+                    if actual_cls == BidiClass::BN {
+                        return Err(format!(
+                            "line {}: levels[{i}] expected {level}, \
+                             got 'x' (BN)",
+                            case.line_number,
+                        ));
+                    }
+                    if level != actual_lvl {
+                        return Err(format!(
+                            "line {}: levels[{i}] expected {level}, \
+                             got {actual_lvl}",
+                            case.line_number,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Mirror the `bidi_reorder` visible-only contract: filter out
+        // X9-removed positions before L2 + map the permutation back to
+        // original indices. The UCD reference indices in Field 4 are
+        // computed the same way ("characters with a resolved level of
+        // 'x' are skipped").
+        let mut visible_levels: Vec<u8> =
+            Vec::with_capacity(post_l1.levels.len());
+        let mut visible_to_original: Vec<usize> =
+            Vec::with_capacity(post_l1.levels.len());
+        for (i, &cls) in post_l1.classes.iter().enumerate() {
+            if cls != BidiClass::BN {
+                visible_levels.push(post_l1.levels[i]);
+                visible_to_original.push(i);
+            }
+        }
+        let visible_reorder = reorder_visual(&visible_levels);
+        let our_visual: Vec<usize> = visible_reorder
+            .into_iter()
+            .map(|k| visible_to_original[k])
+            .collect();
+
+        if our_visual != case.visual_indices {
+            return Err(format!(
+                "line {}: visual_indices mismatch:\n  \
+                 expected: {:?}\n  got:      {:?}",
+                case.line_number, case.visual_indices, our_visual,
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// R51.24.1 smoke: walk the first 100 vectors of
+    /// `BidiCharacterTest.txt`. UCD groups its early rows by §3.3.5
+    /// canonical examples + Unicode 8.0 algorithm change cases — a
+    /// healthy P→X→W→N→I→L1→L2 implementation must clear them all.
+    /// The full ~96 K-vector sweep is gated behind `#[ignore]` to
+    /// keep `cargo test` fast; run it with
+    /// `cargo test -p pinion-text-unicode -- --ignored
+    /// bidi_character_test_full_sweep` before promoting BIDI work.
+    #[test]
+    fn bidi_character_test_smoke_first_100() {
+        let cases = load_bidi_character_test();
+        assert!(
+            cases.len() >= 100,
+            "BidiCharacterTest.txt must yield at least 100 rows; got {}",
+            cases.len(),
+        );
+        for case in cases.iter().take(100) {
+            run_bidi_character_case(case).unwrap_or_else(|err| {
+                panic!("BidiCharacterTest smoke failure: {err}")
+            });
+        }
+    }
+
+    /// Full UCD 16.0 `BidiCharacterTest.txt` sweep (~96 K vectors).
+    /// `#[ignore]` keeps the default `cargo test` snappy; run on
+    /// demand with `cargo test -- --ignored` before promoting any
+    /// BIDI-affecting change. Failures aggregate into a single
+    /// diagnostic so a regression yields its full distribution
+    /// (pass / fail counts + the first five offending UCD lines)
+    /// instead of stopping at the first mismatch.
+    #[test]
+    #[ignore = "full UCD BidiCharacterTest sweep (~96K rows) — run on demand"]
+    fn bidi_character_test_full_sweep() {
+        let cases = load_bidi_character_test();
+        let total = cases.len();
+        let mut failures: Vec<String> = Vec::new();
+        for case in &cases {
+            if let Err(err) = run_bidi_character_case(case) {
+                failures.push(err);
+            }
+        }
+        if !failures.is_empty() {
+            let count = failures.len();
+            let pass = total - count;
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "diagnostic pass-rate float — precision loss past \
+                          ~9e15 vectors is irrelevant"
+            )]
+            let pass_rate = pass as f64 / total as f64 * 100.0;
+            let preview: Vec<&String> = failures.iter().take(5).collect();
+            panic!(
+                "BidiCharacterTest full sweep: {pass}/{total} pass \
+                 ({pass_rate:.4}%), {count} fail.\nfirst 5 failures:\n  {}",
+                preview
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n  "),
+            );
+        }
     }
 }
