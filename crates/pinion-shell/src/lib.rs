@@ -569,6 +569,11 @@ pub struct AppShell<V: WidgetView> {
     /// that, subsequent emits set `initial(false)` and pass only
     /// the dirty subset.
     access_emit_initial: bool,
+    /// R51.75 §5.40 — previous frame's `AccessFocus`. Compared
+    /// alongside the dirty-node diff: when neither nodes nor focus
+    /// changed, `update_if_active` is skipped entirely so a
+    /// steady-state animation frame costs no AT-side traffic.
+    last_access_focus: Option<pinion_a11y::AccessFocus>,
 }
 
 impl<V: WidgetView> AppShell<V> {
@@ -628,6 +633,7 @@ impl<V: WidgetView> AppShell<V> {
             last_access_tag_map: HashMap::new(),
             last_access_nodes: HashMap::new(),
             access_emit_initial: true,
+            last_access_focus: None,
         }
     }
 
@@ -942,8 +948,21 @@ impl<V: WidgetView> AppShell<V> {
                 .cloned()
                 .map(|n| (n.tag.clone(), n))
                 .collect();
+            // R51.75 §5.40 — no-change frame skip. When the dirty
+            // diff is empty AND the focus declaration is identical
+            // to the previous frame, the `TreeUpdate` would be a
+            // pure no-op (root re-emit + same focus the AT already
+            // holds). AccessKit's `update_if_active` would still
+            // serialise and dispatch it; skipping the call entirely
+            // is the textbook bandwidth fix once the tree metadata
+            // has been emitted (`!initial`).
+            let focus_changed = at_focus != self.last_access_focus;
+            let should_emit = initial || !dirty.is_empty() || focus_changed;
+            self.last_access_focus.clone_from(&at_focus);
             let at_focus_ref = at_focus.as_ref();
-            if let Some(adapter) = self.accesskit.as_mut() {
+            if should_emit
+                && let Some(adapter) = self.accesskit.as_mut()
+            {
                 adapter.update_if_active(|| {
                     let mut builder = AccessTreeBuilder::new();
                     if !initial {

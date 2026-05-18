@@ -3005,6 +3005,7 @@ router.pointer_down(&mut state_scene);
 - R51.72 — dirty_tags + last_access_nodes cache (AccessKit incremental-update 권고 준수)
 - R51.73 — focus/set + focus/get RPC dual to AccessKit Focus (AI primary path §2 #2 align)
 - R51.74 — focus/next + focus/prev RPC (Tab / Shift+Tab equivalent AI primary path)
+- R51.75 — no-change frame skip (last_access_focus diff, update_if_active 자체 스킵 시 0 cost)
 
 
 
@@ -3068,6 +3069,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/dispatch.rs:DispatchContext::focus_manager
 - crates/pinion-rpc/src/focus.rs:focus_next
 - crates/pinion-rpc/src/focus.rs:focus_prev
+- crates/pinion-shell/src/lib.rs:AppShell::last_access_focus
 
 
 
@@ -5559,6 +5561,30 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - composite tabindex vs selection 구분 — R51.71 carry
 - no-change frame emit skip — R51.72 carry
+
+
+
+### R51.75 — R51.75 §5.40 no-change frame AT emit skip — last_access_focus diff (R51.72 carry repayment)
+
+**Changes**:
+- crates/pinion-shell/src/lib.rs — AppShell.last_access_focus 필드 추가, render 의 emit 구간이 dirty.is_empty() && focus 불변 시 update_if_active 자체 스킵
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- cargo test --workspace --features pinion-runtime/vello — 1472 pass / 0 fail (R51.75 는 behavior change, R51.72 substrate 이 쿼워 됩 테스트 재사용)
+- AppShell mock-based dispatch path test infra 는 별도 carry (R51.x)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- AppShell mock-based dispatch path test infrastructure (handle_action_request / dispatch_access_action / apply_a11y_key / R51.75 skip behavior)
+- tag_to_node_id collision 디버그 검증 (debug_assert injective on build) — known textbook 약점
 
 
 
