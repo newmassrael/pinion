@@ -8,6 +8,7 @@ fn main() {
         "widgets/button.scxml",
         "widgets/toggle.scxml",
         "widgets/checkbox.scxml",
+        "widgets/radio.scxml",
         "app.scxml",
         "fixtures/multi_window.scxml",
     ];

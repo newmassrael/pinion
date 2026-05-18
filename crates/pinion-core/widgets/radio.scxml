@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.38 Round 51.6 — Radio widget statechart.
+
+     Same shared interaction body as Button/Toggle/Checkbox via the
+     `standard_button.sce-template.xml` template. Selects the
+     `radio.activate` event name; the pressed -> hover transition
+     raises it on `pointer_up`.
+
+     Semantic divergence from Toggle/Checkbox: at the Rust binding
+     layer, an activate transition *sets* the value to `true`
+     (selected) unconditionally — never flips. A selected Radio
+     stays selected; group exclusivity (only one Radio in a group
+     is `true` at a time) is an application-layer concern handled
+     by deselecting siblings via `set_selected(false)`, not by the
+     statechart itself. This keeps Radio a single primitive widget
+     with the same SCE shape as the rest of the Tier-1 catalog.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:sce="http://sce.dev/ext"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <sce:use template="standard_button.sce-template.xml"
+           activate_event="radio.activate"/>
+
+</scxml>

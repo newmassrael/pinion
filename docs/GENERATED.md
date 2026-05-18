@@ -2633,6 +2633,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/widgets/checkbox.scxml
 - crates/pinion-core/src/widgets/checkbox.rs:Checkbox
 - crates/pinion-core/src/widgets/checkbox.rs:CheckboxExternal
+- crates/pinion-core/widgets/radio.scxml
+- crates/pinion-core/src/widgets/radio.rs:Radio
+- crates/pinion-core/src/widgets/radio.rs:RadioExternal
 
 
 
@@ -7701,6 +7704,27 @@ router.pointer_down(&mut state_scene);
 - cargo test --workspace --features pinion-runtime/vello: 993 → 1004 pass (+11 checkbox)
 - cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning
 - substrate validation: 새 widget land cost = scxml ~20 LOC + binding ~330 LOC (도구적 boilerplate — 실 새 로직 = value field/flip/intent 이름/schema slot ~5 places)
+
+
+
+**Impact**: §5.38, §5.20
+
+
+
+### Round 495 — R51.6 §5.38 Radio (Tier-1) — set-not-flip variant — Radio = Toggle/Checkbox 와 동일 statechart, value mutation 만 다름 (activate 시 unconditional set true). Group constraint 는 application layer (set_selected(false) on siblings). Idempotent re-activate 는 §5.20 silent. substrate validation 2nd widget.
+
+**Changes**:
+- widgets/radio.scxml: sce:use standard_button activate_event=radio.activate
+- widgets/radio.rs: Radio newtype (selected: bool) + RadioExternal (em: IntentEmitter<Radio>); activate sets selected=true unconditional (flip 아닄)
+- intent "selected" + IntrospectValue::Null payload — false→true 전환에서만 emit, idempotent re-activate silent
+- build.rs + widgets/mod.rs 등록 + add_section_implementation ×3
+
+
+
+**Verification**:
+- cargo test 1004 → 1015 pass (+11 radio)
+- cargo clippy 0 warning
+- substrate validation: R51.4 generic + R51.3 template 공유, divergent value mutation 만 widget-specific (5 lines)
 
 
 
