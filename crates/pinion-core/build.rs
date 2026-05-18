@@ -7,6 +7,7 @@ fn main() {
     let scxml_inputs = [
         "widgets/button.scxml",
         "widgets/toggle.scxml",
+        "widgets/checkbox.scxml",
         "app.scxml",
         "fixtures/multi_window.scxml",
     ];

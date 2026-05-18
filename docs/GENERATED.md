@@ -2630,6 +2630,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/widgets/button.scxml
 - crates/pinion-core/src/widgets/widget.rs:Widget
 - crates/pinion-core/src/widgets/widget.rs:IntentEmitter
+- crates/pinion-core/widgets/checkbox.scxml
+- crates/pinion-core/src/widgets/checkbox.rs:Checkbox
+- crates/pinion-core/src/widgets/checkbox.rs:CheckboxExternal
 
 
 
@@ -7676,6 +7679,28 @@ router.pointer_down(&mut state_scene);
 - cargo test --workspace --features pinion-runtime/vello: 993 pass (회귀 0, API surface 완전 호환)
 - cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning (workspace strict baseline: forbid unsafe + deny warnings + clippy::pedantic deny)
 - atomic add_section_implementation ×2: §5.38 에 widget.rs:Widget + widget.rs:IntentEmitter 심볼 등록
+
+
+
+**Impact**: §5.38, §5.20
+
+
+
+### Round 494 — R51.5 §5.38 Checkbox (Tier-1) — substrate validation — Checkbox = Toggle 1:1 pattern with divergent intent name ("checked") and schema slot ("checked" vs "value"). R51.3 sce:template + R51.4 Widget/IntentEmitter substrate 의 첫 실사용 widget — new widget add ≈ sce:use 1줄 + Toggle 패턴 mirror.
+
+**Changes**:
+- widgets/checkbox.scxml 신설 — sce:use standard_button activate_event=checkbox.activate (R51.3 substrate 계승)
+- widgets/checkbox.rs 신설 — Checkbox newtype (inner: Widget<CheckboxPolicy> + value: bool) + CheckboxExternal (em: IntentEmitter<Checkbox>); R51.4 substrate 계승
+- intent name = "checked" + IntrospectValue::Bool payload — Toggle 의 "toggle" 과 분리, AI form-field listener 독립 subscribe
+- build.rs scxml_inputs + widgets/mod.rs pub mod checkbox 등록
+- atomic add_section_implementation ×3 (scxml + Checkbox + CheckboxExternal)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 993 → 1004 pass (+11 checkbox)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning
+- substrate validation: 새 widget land cost = scxml ~20 LOC + binding ~330 LOC (도구적 boilerplate — 실 새 로직 = value field/flip/intent 이름/schema slot ~5 places)
 
 
 

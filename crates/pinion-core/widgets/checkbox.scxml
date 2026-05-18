@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.38 Round 51.5 — Checkbox widget statechart.
+
+     Same shared interaction body as Button R12 and Toggle R51.2
+     (idle / hover / pressed / disabled) via the
+     `standard_button.sce-template.xml` template (R51.3). This
+     document selects the `checkbox.activate` event name; the
+     pressed -> hover transition raises it on `pointer_up`. The
+     Rust binding (`Checkbox` + `CheckboxExternal`) listens for
+     `checkbox.activate` to flip a `value: bool` sidecar (same as
+     Toggle) and emits a `"checked"` intent carrying the new
+     boolean as `IntrospectValue::Bool`.
+
+     Semantic note: at the statechart level Checkbox and Toggle
+     are interchangeable; the divergence is the *intent name* (so
+     AI listeners can subscribe to form fields vs. settings
+     switches independently) and the surrounding `Scene::Text` /
+     accessibility role (`checkbox` vs. `switch`).
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:sce="http://sce.dev/ext"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <sce:use template="standard_button.sce-template.xml"
+           activate_event="checkbox.activate"/>
+
+</scxml>
