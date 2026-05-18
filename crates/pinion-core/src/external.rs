@@ -681,10 +681,11 @@ mod tests {
         // `StubExternal` does not opt in to invoke beyond the default
         // impl — assertion guards against accidental future override
         // that would change the contract.
-        let mut stub = StubExternal::new();
+        //
         // StubExternal doesn't implement ExternalIntrospect; reach the
         // default via the trait-bound dispatch path by constructing an
-        // ad-hoc impl-of-the-trait.
+        // ad-hoc impl-of-the-trait. Item definitions are hoisted before
+        // any `let` to keep clippy::items_after_statements clean.
         struct NullIntrospect;
         impl ExternalIntrospect for NullIntrospect {
             fn schema(&self) -> IntrospectSchema {
@@ -702,6 +703,7 @@ mod tests {
             }
             // invoke uses default impl
         }
+        let mut stub = StubExternal::new();
         let mut null = NullIntrospect;
         let err = null
             .invoke("anything", IntrospectValue::Null)

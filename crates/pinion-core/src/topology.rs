@@ -17,8 +17,14 @@ use sce_rust_runtime::StatePolicy;
 /// First declared window — §5.18 absent-prefix short-circuit target.
 ///
 /// Returns the lowest-doc-order parallel region when the root is parallel,
-/// otherwise the root itself. Panics under the §5.17 invariant violation
-/// of a parallel root with zero regions (forbidden by SCE Forge emit).
+/// otherwise the root itself.
+///
+/// # Panics
+///
+/// Panics under the §5.17 invariant violation of a parallel root with
+/// zero regions — SCE Forge emit forbids this shape, so the panic only
+/// fires on a hand-written policy that bypasses the emitter.
+#[must_use]
 pub fn initial_window<P: StatePolicy>() -> P::State
 where
     P::State: Copy,
@@ -39,6 +45,7 @@ where
 ///
 /// Iterates parallel regions of root when present; otherwise compares the
 /// sole root state. Returns `None` when `name` matches no declared window.
+#[must_use]
 pub fn window_from_name<P: StatePolicy>(name: &str) -> Option<P::State>
 where
     P::State: Copy,

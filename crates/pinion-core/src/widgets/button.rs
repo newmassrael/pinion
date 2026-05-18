@@ -35,6 +35,7 @@ pub struct Button {
 }
 
 impl Button {
+    #[must_use]
     pub fn new() -> Self {
         let mut engine = Engine::new(ButtonPolicy::new());
         engine.initialize();
@@ -45,6 +46,7 @@ impl Button {
         self.engine.process_event(event);
     }
 
+    #[must_use]
     pub fn state(&self) -> ButtonState {
         self.engine.get_current_state()
     }

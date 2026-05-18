@@ -5,8 +5,8 @@
 //!
 //! Single-window apps short-circuit per §5.18: absent `/window[id]/` prefix
 //! resolves to the first SCE-declared state. Multi-window adds perfect-hash
-//! dispatch on the WindowId enum (later R16 slice once `<parallel>` root is
-//! exercised).
+//! dispatch on the `WindowId` enum (later R16 slice once `<parallel>` root
+//! is exercised).
 
 use pinion_core::app::{App, AppEvent, AppState};
 
