@@ -44,7 +44,7 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::radio::{Radio, RadioEvent, RadioState, parse_radio_event};
+use crate::widgets::radio::{Radio, RadioEvent, RadioState, parse_radio_event, radio_state_name};
 use crate::widgets::{IntentEmitter, WidgetTransition};
 
 /// Logical group of N Radio widgets with framework-owned mutual
@@ -290,9 +290,20 @@ impl External for RadioGroupExternal {
 
 impl ExternalIntrospect for RadioGroupExternal {
     fn schema(&self) -> IntrospectSchema {
+        // The per-radio paths advertise their `<index>` placeholder
+        // in the schema slot the same way `send` documents its
+        // `"<index>:<EventName>"` wire format — the schema is
+        // discovery metadata for AI clients (`scene/schema` RPC),
+        // not a static enumeration of every concrete path. R51.43
+        // §5.38 introduces the per-radio paths so a `WidgetView`
+        // running on top of `RadioGroupExternal` can read each
+        // radio's interaction state + selected bit through the same
+        // introspect surface AI agents use.
         IntrospectSchema::new(&[
             ("count", "int"),
             ("selected_index", "int"),
+            ("state.<index>", "string"),
+            ("selected.<index>", "bool"),
             ("send", "string"),
         ])
     }
@@ -309,7 +320,33 @@ impl ExternalIntrospect for RadioGroupExternal {
                 ),
                 None => IntrospectValue::Null,
             }),
-            _ => None,
+            _ => {
+                // R51.43 §5.38 — per-radio query paths route through
+                // `state.<i>` (interaction state name, mirrors
+                // `Radio` widget's own `query("state")`) and
+                // `selected.<i>` (boolean selected bit, mirrors
+                // `Radio::query("selected")`). Out-of-range indices
+                // and malformed suffixes return `None`; the router
+                // and the `scene/query` RPC treat that as "no such
+                // path" silently.
+                if let Some(idx_str) = path.strip_prefix("state.") {
+                    let idx: usize = idx_str.parse().ok()?;
+                    if idx >= self.count() {
+                        return None;
+                    }
+                    return Some(IntrospectValue::Text(
+                        radio_state_name(self.state(idx)).to_string(),
+                    ));
+                }
+                if let Some(idx_str) = path.strip_prefix("selected.") {
+                    let idx: usize = idx_str.parse().ok()?;
+                    if idx >= self.count() {
+                        return None;
+                    }
+                    return Some(IntrospectValue::Bool(self.is_selected(idx)));
+                }
+                None
+            }
         }
     }
 
@@ -633,15 +670,99 @@ mod tests {
     }
 
     #[test]
-    fn external_schema_declares_three_slots() {
+    fn external_schema_declares_five_slots() {
+        // R51.43 §5.38 — `state.<index>` + `selected.<index>` join
+        // the bare `count` / `selected_index` / `send` triple so AI
+        // clients discovering the schema see the per-radio access
+        // paths used by `WidgetView` impls.
         let g = RadioGroupExternal::new(3);
         assert_eq!(
             g.schema().fields,
             &[
                 ("count", "int"),
                 ("selected_index", "int"),
-                ("send", "string")
+                ("state.<index>", "string"),
+                ("selected.<index>", "bool"),
+                ("send", "string"),
             ]
         );
+    }
+
+    #[test]
+    fn external_query_state_per_radio_returns_state_name() {
+        // R51.43 §5.38 — `state.<i>` returns the canonical state
+        // name string ("Idle" / "Hover" / "Pressed" / "Disabled")
+        // matching the single-Radio `query("state")` convention.
+        let mut g = RadioGroupExternal::new(3);
+        assert_eq!(
+            g.query("state.0"),
+            Some(IntrospectValue::Text("Idle".to_string())),
+        );
+        g.send(1, RadioEvent::PointerEnter);
+        assert_eq!(
+            g.query("state.1"),
+            Some(IntrospectValue::Text("Hover".to_string())),
+        );
+        g.send(1, RadioEvent::PointerDown);
+        assert_eq!(
+            g.query("state.1"),
+            Some(IntrospectValue::Text("Pressed".to_string())),
+        );
+        g.send(2, RadioEvent::Disable);
+        assert_eq!(
+            g.query("state.2"),
+            Some(IntrospectValue::Text("Disabled".to_string())),
+        );
+        // Untouched radios stay Idle.
+        assert_eq!(
+            g.query("state.0"),
+            Some(IntrospectValue::Text("Idle".to_string())),
+        );
+    }
+
+    #[test]
+    fn external_query_selected_per_radio_returns_bool() {
+        // R51.43 §5.38 — `selected.<i>` returns the selected bit as
+        // `IntrospectValue::Bool`, mirroring single-Radio
+        // `query("selected")`. After activating radio 1, only index
+        // 1 reads as `true`.
+        let mut g = RadioGroupExternal::new(3);
+        assert_eq!(g.query("selected.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(g.query("selected.1"), Some(IntrospectValue::Bool(false)));
+        // Full activate sequence on radio 1.
+        for ev in [
+            RadioEvent::PointerEnter,
+            RadioEvent::PointerDown,
+            RadioEvent::PointerUp,
+        ] {
+            g.send(1, ev);
+        }
+        assert_eq!(g.query("selected.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(g.query("selected.1"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(g.query("selected.2"), Some(IntrospectValue::Bool(false)));
+    }
+
+    #[test]
+    fn external_query_out_of_range_index_is_none() {
+        // R51.43 §5.38 — out-of-range index returns `None` (matches
+        // unknown-path semantics), not an error variant. AI clients
+        // observe the same silent-fall-through that hits unknown
+        // top-level paths.
+        let g = RadioGroupExternal::new(3);
+        assert_eq!(g.query("state.99"), None);
+        assert_eq!(g.query("selected.99"), None);
+    }
+
+    #[test]
+    fn external_query_malformed_per_radio_path_is_none() {
+        // Non-numeric suffix → parse fails → `None`. The router
+        // does not panic on a malformed AI request.
+        let g = RadioGroupExternal::new(3);
+        assert_eq!(g.query("state.abc"), None);
+        assert_eq!(g.query("selected.-1"), None);
+        // Bare prefix with no `.` returns `None` via the top-level
+        // unknown-path fall-through.
+        assert_eq!(g.query("state"), None);
+        assert_eq!(g.query("selected"), None);
     }
 }

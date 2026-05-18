@@ -274,7 +274,7 @@ impl ExternalIntrospect for RadioExternal {
     }
 }
 
-fn radio_state_name(state: RadioState) -> &'static str {
+pub(crate) fn radio_state_name(state: RadioState) -> &'static str {
     match state {
         RadioState::Idle => "Idle",
         RadioState::Hover => "Hover",

@@ -2777,6 +2777,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/slider.rs:SliderExternal::with_axis
 - crates/pinion-core/src/widgets/slider.rs:SliderExternal::axis
 - crates/pinion-core/src/widgets/slider.rs:slider_axis_name
+- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/state.&lt;index&gt;
+- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/selected.&lt;index&gt;
 
 
 
@@ -4384,6 +4386,37 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - R51.43 examples/hello-radio-group first-client — substrate-first 3-round 의 3/3, paint N 'main_group#0..2' tags + state 1 'main_group' RadioGroupExternal, keybinding a/b/c → 0/1/2 + ARIA radio-group ArrowDown/Up navigation
 - External trait segregation RFC (부채 5) — R51.34/.37/.38 누적 trait 확장 정리, InputForwarding / Lifecycle / Introspection sub-trait 분리 design only
+- R41 §5.16 Phase 2 thin RHI 3D pass axis spec round (부채 9)
+- winit Touch event 와이어링 (PointerId::touch 수용 ready, shell call site 남음)
+
+
+
+### R51.43 — R51.43 §5.38 RadioGroupExternal introspect per-radio query paths
+
+**Changes**:
+- crates/pinion-core/src/widgets/radio.rs: radio_state_name 을 pub(crate) 로 승격 — radio_group.rs 의 per-radio query 에서 DRY 재사용, RadioState → name 관례 단일 소스
+- crates/pinion-core/src/widgets/radio_group.rs: RadioGroupExternal::query 가 'state.<i>' / 'selected.<i>' 동적 path 처리 — strip_prefix + usize 파싱, out-of-range / malformed 제술 아닌 None 묵식 관례 (최상위 unknown-path fall-through 일치)
+- crates/pinion-core/src/widgets/radio_group.rs: schema 가 ('state.<index>','string') + ('selected.<index>','bool') 포함 — 'send' 의 wire-format placeholder 관례와 동일, AI scene/schema discovery 대상
+- WidgetView::read_state 가 RadioGroupExternal 을 introspect 만으로 per-radio state 를 읽을 수 있도록 substrate gap 채움 — R51.44 first-client (hello-radio-group) 의 선행 조건
+- tests +4: external_query_state_per_radio_returns_state_name / external_query_selected_per_radio_returns_bool / external_query_out_of_range_index_is_none / external_query_malformed_per_radio_path_is_none + external_schema_declares_three_slots → _five_slots rename
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1280 pass / 0 fail (+4 from 1276)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict)
+- RadioGroup public API surface 변화 0 — send/state/is_selected/selected_index 시그니처 부변, query 확장은 순수 additive substrate
+- Radio (single-tag) query('state')/query('selected') 관례과 정합 — 동일 값 타입 (Text 이름 / Bool 비트)
+- mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- R51.44 examples/hello-radio-group first-client — N=3 Radio composite, paint 'main_group#0..2' tags + state RadioGroupExternal::new(3) with_tag('main_group'), keybinding a/b/c → 0/1/2 + ARIA radio-group ArrowDown/Up navigation, substrate-first 3-round (R51.41 RFC → R51.42 InputRouter → R51.43 introspect → R51.44 first-client) 의 4/4
+- External trait segregation RFC (부채 5)
 - R41 §5.16 Phase 2 thin RHI 3D pass axis spec round (부채 9)
 - winit Touch event 와이어링 (PointerId::touch 수용 ready, shell call site 남음)
 
