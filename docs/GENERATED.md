@@ -570,6 +570,9 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R17 ExternalIntrospect.invoke: action channel returning IntrospectValue; §5.12 scene/invoke
 - R17 hello-button: live bidirectional RPC via invoke; winit + JSON-RPC share one channel
 - R18 §5.20 External adds drain_intents+is_dirty (9-point contract); default no-op
+- R51.47 sub-trait future-path: new orthogonal axes follow item-8 Option<&dyn SubTrait> precedent
+- R51.47 backwards-compat: R51.34 input axis stays on External (defaults), no v0 retrofit
+- R51.47 sub-trait candidates: Drag (R51.34 input fwd) / Lifecycle (item 4) / Cancel (R51.45 carry)
 
 
 
@@ -4515,6 +4518,34 @@ router.pointer_down(&mut state_scene);
 - R41 §5.16 Phase 2 thin RHI 3D pass axis spec round (부채 9)
 - R51.31 L4 alternative impl path RFC (부채 10)
 - TouchPhase::Cancelled commit-class intent leak — PointerCancel substrate 확장 (R51.45 carry)
+
+
+
+### R51.47 — R51.47 §5.15 External sub-trait segregation future-path RFC (design-only)
+
+**Changes**:
+- §5.15 caveat: R51.47 sub-trait future-path — 새 orthogonal axes 는 item 8 Option<&dyn ExternalIntrospect> 선례의 sub-trait 패턴 채택 (누적 External default 회피)
+- §5.15 caveat: R51.47 backwards-compat — R51.34 input forwarding axis (wants_pointer_capture / pointer_move) 는 External default 로 남아 있음, v0 retrofit 안함
+- §5.15 caveat: R51.47 sub-trait 후보 — Drag (R51.34) / Lifecycle (item 4 mount/unmount/visibility/focus) / Cancel (R51.45 PointerCancel carry)
+- design-only round — code mutation 0, atomic store 의 contract 확장 path 명시화만 수행 ([[textbook-long-term-correct]] 관례 — 미래 widget 저자 가 Option<&dyn> 패턴 이 canonical 임을 도출할 수 있게)
+
+
+
+**Verification**:
+- mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync (3 caveat add)
+- cargo test --workspace --features pinion-runtime/vello = 1285 pass / 0 fail (코드 미변)
+- §5.15 body 의 8-point contract ¶ + Item 8 opt-in ¶ 원본 결정 불변 — 이번 RFC 는 확장 path 명시화 일 뿐, R5 Round 7 ratify 관련 자녘 부재
+- Sub-trait 실질 land 은 실 widget 에서 요구 시점 (e.g. 두 번째 drag-aware widget 등장 시 해당 라운드) — 명시 이용 chicken-and-egg 회피
+
+
+
+**Impact**: §5.15
+
+
+**Carry forward**:
+- Sub-trait 실질 land — 둘째 drag-aware widget 등장 시 Drag sub-trait extract, 둘째 lifecycle-sensitive External 등장 시 Lifecycle sub-trait extract
+- PointerCancel sub-trait (R51.45 carry 과 일치)
+- External default 누적 한계 트리거 명시 — 현재 17 method 중 12 개가 default, 3 개이상 추가 시 sub-trait extract
 
 
 
