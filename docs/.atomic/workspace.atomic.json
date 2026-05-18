@@ -2343,7 +2343,8 @@
         "Single-target hit-test 가 R48.1 scope, multi-target (capture/bubble) 은 carry-forward",
         "focus 모델 v0: click→focus pointer 만, key dispatch의 focus tab order 는 carry",
         "Touch/gesture (pinch/multi-finger) 는 R48 scope 아님 — winit Touch event carry",
-        "paint scene Container/Box.tag 가 state scene ExternalNode.tag 와 매칭 — pinion-core schema 확장"
+        "paint scene Container/Box.tag 가 state scene ExternalNode.tag 와 매칭 — pinion-core schema 확장",
+        "R51.41 sub-index: paint 'tag#idx' → InputRouter '#' split + invoke('send','idx:Event')"
       ],
       "alternatives_rejected": [
         {
@@ -3308,7 +3309,8 @@
         "R51.2 — Toggle (Tier-1 1번 widget) land. Button R12 SCXML 1:1 패턴 + value: bool layer",
         "R51.2 — ToggleExternal 3 schema slots (state/value/send) + toggle intent (Bool payload)",
         "R51.2 — AI introspect: §5.15 8-item contract 정통 (state/value read + value intervene + send invoke)",
-        "R51.2 — Figma fidelity: Toggle pure state, label = Scene::Text + R47.5 TextStyle"
+        "R51.2 — Figma fidelity: Toggle pure state, label = Scene::Text + R47.5 TextStyle",
+        "R51.41 composite hit-target: paint N 'group#i' tags + state 1 'group' External (RadioGroup)"
       ],
       "alternatives_rejected": [
         {
@@ -5778,6 +5780,64 @@
         "wants_pointer_capture 의 \"effectively constant per widget instance\" 가정 carry — 동적 toggle 원하는 widget 등장 시 cache invalidation 훅 추가 가능성 (현재 최소한 변경 원칙)",
         "winit Touch event 와이어링 at pinion-shell layer (R51.38 follow-up)",
         "vertical-axis 시각 예제 hello-slider-vertical N=6 도달 시 substrate amortization 검증 가능"
+      ]
+    },
+    "R51.41": {
+      "decision_summary": "R51.41 §5.35+§5.38 sub-index routing convention RFC — RadioGroup substrate-first 3-round 의 1단계 (RFC), 'tag#idx' suffix → InputRouter '#' split → 'idx:Event' forward, paint N tags + state 1 External pattern 명문화",
+      "changes_bullets": [
+        "§5.35 caveat 추가 (sub-index routing convention): 페인트 tag 'primary#idx' suffix 가 hit-test 시 '#' 분리, InputRouter::dispatch_send 가 'idx:EventName' 형식으로 External invoke('send', Text(...)) 호출. RadioGroupExternal::invoke('send') 의 '<index>:<EventName>' 기존 wire format (line 358) 과 정확히 정합, 추가 wire 정의 0",
+        "§5.38 caveat 추가 (composite widget hit-target convention): RadioGroup 같은 composite 위젯의 paint scene = N 'group#0..N-1' 태그 Container, state scene = single 'group' External — HTML <input type=radio name=...> + Material RadioGroup + SwiftUI Picker 산업 표준 precedent (per-radio hit, framework-owned mutual exclusion 유지)",
+        "(\bRFC 단계 — 0 LOC impl): R51.42 = InputRouter '#' suffix 파서 + dispatch_send_with_subindex impl + tests (~300 LOC), R51.43 = examples/hello-radio-group first-client binary (~280 LOC)",
+        "Alternatives 검토 (atomic ledger 외부 notes): (a) per-radio ExternalNode N개 → R51.15 framework-owned mutual exclusion 의 단일 source-of-truth 위반, 거부. (b) ExternalNode tag 에 sub_index Option<u32> 필드 추가 → invasive struct change + paint scene tag 와 state scene tag 의 비대칭, 거부. (c) tag '#' suffix convention → 비invasive, paint 만 변경, '#' 가 tag literal 에서 드문 collision 위험 낮음, 채택"
+      ],
+      "verification_bullets": [
+        "mnemosyne validate_workspace: entries=185 → 186 / sections=55 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync (RFC 라운드, atomic mutation only)",
+        "§5.35 caveats_bullets += 1 (R51.41 sub-index), §5.38 caveats_bullets += 1 (R51.41 composite hit-target) — caveat 100 char 한도 준수",
+        "GENERATED.md 의 §5.35 + §5.38 caveats 섹션이 cascade 렌더링 sync 확인",
+        "code 변경 0 — pre-existing 1271 pass / 0 fail / 8 ignored baseline + 0 clippy warnings 유지 (RFC = spec-only)",
+        "R51.42 / R51.43 카리 명시: substrate-first 의 textbook 계층분리 (RFC → impl → first-client) 유지, premature impl/client 회피"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "R51.42 impl: InputRouter '#' suffix 파서 + dispatch_send 가 'idx:EventName' forward + 새 tests (single-tag backwards-compat + sub-index forward 두 경로 검증, ~300 LOC)",
+        "R51.43 first-client: examples/hello-radio-group binary — N=3 Radio 시각화, paint 'main_group#0..2' tags + state Scene::External(RadioGroupExternal::new(3)).with_tag('main_group') (~280 LOC)",
+        "부채 5 External trait segregation RFC (design only)",
+        "부채 9 R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)",
+        "부채 10 R51.31 L4 alt impl path RFC (spec round)",
+        "vertical-axis 시각 예제 hello-slider-vertical N=6 도달 시 substrate amortization 검증 후보",
+        "winit Touch event 와이어링 at pinion-shell layer (R51.38 follow-up)",
+        "'#' suffix collision 위험 모니터링 — application 측에서 tag literal 에 '#' 사용 금지 도큐먼트화 carry"
+      ],
+      "publishable_decision_summary": "R51.41 §5.35+§5.38 sub-index routing convention RFC — RadioGroup substrate-first 3-round 의 1단계 (RFC), 'tag#idx' suffix → InputRouter '#' split → 'idx:Event' forward, paint N tags + state 1 External pattern 명문화",
+      "publishable_changes_bullets": [
+        "§5.35 caveat 추가 (sub-index routing convention): 페인트 tag 'primary#idx' suffix 가 hit-test 시 '#' 분리, InputRouter::dispatch_send 가 'idx:EventName' 형식으로 External invoke('send', Text(...)) 호출. RadioGroupExternal::invoke('send') 의 '<index>:<EventName>' 기존 wire format (line 358) 과 정확히 정합, 추가 wire 정의 0",
+        "§5.38 caveat 추가 (composite widget hit-target convention): RadioGroup 같은 composite 위젯의 paint scene = N 'group#0..N-1' 태그 Container, state scene = single 'group' External — HTML <input type=radio name=...> + Material RadioGroup + SwiftUI Picker 산업 표준 precedent (per-radio hit, framework-owned mutual exclusion 유지)",
+        "(\bRFC 단계 — 0 LOC impl): R51.42 = InputRouter '#' suffix 파서 + dispatch_send_with_subindex impl + tests (~300 LOC), R51.43 = examples/hello-radio-group first-client binary (~280 LOC)",
+        "Alternatives 검토 (atomic ledger 외부 notes): (a) per-radio ExternalNode N개 → R51.15 framework-owned mutual exclusion 의 단일 source-of-truth 위반, 거부. (b) ExternalNode tag 에 sub_index Option<u32> 필드 추가 → invasive struct change + paint scene tag 와 state scene tag 의 비대칭, 거부. (c) tag '#' suffix convention → 비invasive, paint 만 변경, '#' 가 tag literal 에서 드문 collision 위험 낮음, 채택"
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne validate_workspace: entries=185 → 186 / sections=55 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync (RFC 라운드, atomic mutation only)",
+        "§5.35 caveats_bullets += 1 (R51.41 sub-index), §5.38 caveats_bullets += 1 (R51.41 composite hit-target) — caveat 100 char 한도 준수",
+        "GENERATED.md 의 §5.35 + §5.38 caveats 섹션이 cascade 렌더링 sync 확인",
+        "code 변경 0 — pre-existing 1271 pass / 0 fail / 8 ignored baseline + 0 clippy warnings 유지 (RFC = spec-only)",
+        "R51.42 / R51.43 카리 명시: substrate-first 의 textbook 계층분리 (RFC → impl → first-client) 유지, premature impl/client 회피"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.42 impl: InputRouter '#' suffix 파서 + dispatch_send 가 'idx:EventName' forward + 새 tests (single-tag backwards-compat + sub-index forward 두 경로 검증, ~300 LOC)",
+        "R51.43 first-client: examples/hello-radio-group binary — N=3 Radio 시각화, paint 'main_group#0..2' tags + state Scene::External(RadioGroupExternal::new(3)).with_tag('main_group') (~280 LOC)",
+        "부채 5 External trait segregation RFC (design only)",
+        "부채 9 R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)",
+        "부채 10 R51.31 L4 alt impl path RFC (spec round)",
+        "vertical-axis 시각 예제 hello-slider-vertical N=6 도달 시 substrate amortization 검증 후보",
+        "winit Touch event 와이어링 at pinion-shell layer (R51.38 follow-up)",
+        "'#' suffix collision 위험 모니터링 — application 측에서 tag literal 에 '#' 사용 금지 도큐먼트화 carry"
       ]
     },
     "Round 1": {
