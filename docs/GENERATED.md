@@ -397,6 +397,10 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R47.7.6 LayoutNode.text_metrics (line_count/natural_width/height) — AI sub-pixel wrap 정확 detect
 - R47.7.6 paint_producer signature: Fn(w,h) -> Scene → Fn(w,h) -> LayoutNode (application atomic)
 - R47.7.6 directly above retracted — LayoutNode.rect.h 가 이미 line_count×line_height = wrap signal
+- R51.1 — LayoutNode.line_count: u32 노출 (Text-only sidecar, 다른 kind 는 0)
+- R51.1 — Scene-as-data invariant §2 #7 + RPC AI-first §2 #2 정통 적용
+- R51.1 — backend agnostic: parley LayoutCache → §5.37.7 자체 엔진 swap 시 surface 유지
+- R51.1 — R47.7.6 ceil regression test (300..=320 → line_count=1) + wrap (60px → ≥2) 영구 보장
 
 
 
@@ -413,6 +417,9 @@ Source: `docs/.atomic/workspace.atomic.json`
 **Implementations**:
 - crates/pinion-rpc/src/invoke.rs:invoke
 - crates/pinion-rpc/src/intents.rs:drain_intents
+- crates/pinion-rpc/src/layout_query.rs:LayoutNode::line_count
+- crates/pinion-core/src/scene.rs:TextNode::line_count
+- crates/pinion-runtime/src/layout.rs:compute_layout::text_lines
 
 
 
@@ -2487,6 +2494,20 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/build.rs:build_primary_composites_trie
 - crates/pinion-text-unicode/build.rs:emit_primary_composites_table
 - crates/pinion-text-unicode/src/composition.rs:compose_pair_supplementary
+
+
+
+### §5.37.7. Line break (UAX #14) — carry placeholder
+
+
+**Intent**: §5.37.7 line break sub-layer placeholder — UAX #14 algorithm. R51.1 §5.12 forward-reference 정합용. self-hosted text engine 의 line breaking step, ratify 는 multi-session carry
+
+
+
+
+
+
+
 
 
 
@@ -7352,6 +7373,40 @@ router.pointer_down(&mut state_scene);
 - R51.x: §5.38 Tier-2 axis 분리 검토 (compound widget: ComboBox/DatePicker/...)
 - R47.7.x atomic round 등록 carry (commit 됐지만 atomic binding 없음 — 적절한 round 에서 backfill)
 - R50.2.13/14 atomic binding 미진행 carry (add_section_implementation §5.37.3 누적은 됐지만 changelog entry 미진행)
+
+
+
+### Round 485 — Round 485 — R51.1 §5.12 LayoutNode.line_count: u32 노출 — Text-only measured-result sidecar, Scene-as-data invariant 정통, R47.7.6 regression 영구 보장
+
+**Changes**:
+- pinion-core::scene::TextNode 에 pub line_count: u32 추가 (Default 0, additive #[non_exhaustive])
+- pinion-runtime::layout::compute_layout 에 HashMap<NodeId, u32> side-channel + apply text_lines wire
+- pinion-rpc::layout_query::LayoutNode 에 line_count: u32 + SceneProjection named struct refactor
+- describe_scene Text arm: t.line_count → LayoutNode.line_count (다른 kind 는 0)
+- add_section_implementation §5.12 ×3: LayoutNode.line_count / TextNode.line_count / compute_layout::text_lines
+- add_section_caveat §5.12 ×4: R51.1 Text-only / invariant / backend agnostic / R47.7.6 regression
+
+
+
+**Verification**:
+- cargo test 968 → 973 (+5: pinion-rpc +2 round-trip + non-Text zero, pinion-runtime +3)
+- workspace clippy 0 lint warnings 유지 (baseline; 3 cargo:warning= 는 codegen 알림 lint 아님)
+- cargo check --workspace --features pinion-runtime/vello 통과 (모든 caller 자동 적응)
+- validate_workspace T1=0 T3=0 RT=1/1 sync (atomic store + GENERATED.md cascade)
+- R47.7.6 regression test: viewport 300..=320 21장 sweep line_count=1 stable
+- wrap baseline test: 60px slot 과 long sentence → line_count ≥ 2 (surface real wrap 계속 보고)
+
+
+
+**Impact**: §5.12, §5.36, §5.37
+
+
+**Carry forward**:
+- R51.1.x: cargo run -p hello-button e2e RPC test (stdin pipe + scene/layout response 검증) — unit-test 충분, e2e 별도 carry
+- R51.2+: F 위젯 카탈로그 Toggle/Checkbox/Slider/... 진입 (§5.38 carry, B 진입)
+- §5.37.7 line break self-hosted text engine — LayoutCache backend swap 시 line_count surface 유지 확인
+- R50.2.13/14 atomic binding 미진행 carry (§5.37.3 implementations)
+- R47.7.x atomic round 등록 carry (commit 됐지만 atomic binding 없음)
 
 
 

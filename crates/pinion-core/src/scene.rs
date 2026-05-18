@@ -457,6 +457,15 @@ pub struct TextNode {
     pub style: TextStyle,
     pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
+    /// Number of visual lines the shaper resolved this content into
+    /// against `rect.w`. R51.1 §5.12 — measured-result sidecar
+    /// populated by `pinion-runtime::compute_layout`'s measure pass
+    /// (shape backend agnostic: parley today, self-hosted text engine
+    /// after §5.37.7 lands). `0` if no shape pass has run yet
+    /// (`TextNode::new` / `TextNode::styled` defaults). The §5.12
+    /// `scene/layout` RPC surfaces this as `LayoutNode.line_count` so
+    /// AI clients verify single-line text without pixel inspection.
+    pub line_count: u32,
 }
 
 impl TextNode {
@@ -477,6 +486,7 @@ impl TextNode {
             style,
             layout: LayoutStyle::new(),
             tag: None,
+            line_count: 0,
         }
     }
 

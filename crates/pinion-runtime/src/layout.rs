@@ -26,6 +26,7 @@ use pinion_core::style::{
 };
 use pinion_core::Scene;
 use pinion_text::LayoutCache;
+use std::collections::HashMap;
 use taffy::prelude::{
     auto, length, percent, AvailableSpace, FromLength, LengthPercentage, NodeId,
     Rect as TaffyRect, Size as TaffySize, TaffyTree,
@@ -87,6 +88,17 @@ pub fn compute_layout(
         width: AvailableSpace::Definite(viewport_w as f32),
         height: AvailableSpace::Definite(viewport_h as f32),
     };
+    // R51.1 §5.12 — side-channel `NodeId → line_count` table populated
+    // by the measure callback, drained by `apply` into `TextNode.
+    // line_count`. taffy's measure closure has no `&mut Scene` access
+    // (Scene is borrowed read-only by `build`), and `NodeContext` is
+    // owned by taffy without a mutable accessor on the path
+    // `compute_layout_with_measure` returns, so a separate `HashMap`
+    // bridges the measure pass to the apply pass. parley's `Layout::
+    // lines().count()` is the shape backend agnostic source — the
+    // `pinion_text::LayoutCache` swap to a self-hosted text engine
+    // (§5.37.7 carry) keeps the same `.lines().count()` surface.
+    let mut text_lines: HashMap<NodeId, u32> = HashMap::new();
     // R47.4 §5.36 — measure callback. Scene::Text leaves consult parley
     // (via `cache`) for intrinsic width / height; non-Text leaves
     // return `Size::ZERO`, matching the pre-R47.4 `compute_layout`
@@ -94,7 +106,7 @@ pub fn compute_layout(
     tree.compute_layout_with_measure(
         layout_tree.node,
         available,
-        |known_dimensions, available_space, _node_id, node_context, _style| {
+        |known_dimensions, available_space, node_id, node_context, _style| {
             if let TaffySize { width: Some(width), height: Some(height) } = known_dimensions {
                 return TaffySize { width, height };
             }
@@ -112,6 +124,16 @@ pub fn compute_layout(
                         _ => None,
                     };
                     let layout = cache.layout(content, style, max_width);
+                    // R51.1 §5.12 — capture line count on the last
+                    // measure probe per node id; taffy may call this
+                    // closure multiple times during flex resolution
+                    // (MinContent / MaxContent / Definite). The final
+                    // call uses the resolved Definite width, which is
+                    // also what `apply` would re-measure against, so
+                    // overwriting on every call is correct.
+                    #[allow(clippy::cast_possible_truncation)]
+                    let line_count = layout.lines().count() as u32;
+                    text_lines.insert(node_id, line_count);
                     // R47.7.6 — integer pixel snapping. parley returns
                     // sub-pixel f32 widths; without `ceil` the value
                     // oscillates `77.0`/`77.8` between adjacent
@@ -130,7 +152,7 @@ pub fn compute_layout(
         },
     )
     .expect("taffy compute_layout failed");
-    apply(scene, &layout_tree, &tree, 0.0, 0.0);
+    apply(scene, &layout_tree, &tree, &text_lines, 0.0, 0.0);
 }
 
 /// Recursive shadow tree mirroring the Scene; each entry holds the
@@ -176,6 +198,7 @@ fn apply(
     scene: &mut Scene,
     shadow: &LayoutShadow,
     tree: &TaffyTree<NodeContext>,
+    text_lines: &HashMap<NodeId, u32>,
     parent_x: f32,
     parent_y: f32,
 ) {
@@ -192,9 +215,17 @@ fn apply(
     );
     let _ = assign_rect(scene, rect);
 
+    // R51.1 §5.12 — Text leaves carry their measured line count from
+    // the side-channel populated during `compute_layout_with_measure`.
+    // Other variants stay at the `TextNode::default()` `line_count = 0`
+    // because the field is Text-only by semantics.
+    if let Scene::Text(t) = scene {
+        t.line_count = text_lines.get(&shadow.node).copied().unwrap_or(0);
+    }
+
     if let Scene::Container(c) = scene {
         for (child, shadow_child) in c.children.iter_mut().zip(&shadow.children) {
-            apply(child, shadow_child, tree, abs_x, abs_y);
+            apply(child, shadow_child, tree, text_lines, abs_x, abs_y);
         }
     }
 }
@@ -464,6 +495,13 @@ mod tests {
         };
         assert!(t.rect.w > 0, "text leaf width should be parley-measured");
         assert!(t.rect.h > 0, "text leaf height should be parley-measured");
+        // R51.1 §5.12 — measured line count is populated alongside the
+        // rect. A short single-word label in a 320-wide viewport must
+        // resolve to a single line regardless of system font fallback.
+        assert_eq!(
+            t.line_count, 1,
+            "single-word label in 320-wide viewport must be 1 line"
+        );
         // flex Center → child rect.x ≈ (320 - w) / 2 and rect.y ≈
         // (200 - h) / 2. Exact pixel depends on the system font width;
         // we assert the offsets are non-trivial (not 0 = left/top edge).
@@ -476,6 +514,92 @@ mod tests {
             t.rect.y > 0,
             "Center flex must shift text below y=0 (got y={})",
             t.rect.y
+        );
+    }
+
+    #[test]
+    fn text_line_count_zero_before_layout() {
+        // R51.1 §5.12 — `TextNode::styled` / `TextNode::new` default
+        // `line_count = 0`. The measure pass populates it; readers
+        // can rely on `0` meaning "no shape pass has run yet" as a
+        // sentinel distinct from any valid measured count.
+        let t = TextNode::styled(
+            "Click me!",
+            Rect::default(),
+            TextStyle::new().with_size_px(18),
+        );
+        assert_eq!(t.line_count, 0);
+    }
+
+    #[test]
+    fn text_line_count_stable_across_adjacent_viewport_widths() {
+        // R47.7.6 / R51.1 §5.12 — sub-pixel parley widths get ceil'd
+        // before they reach taffy, so adjacent integer viewport widths
+        // (the per-frame sequence during mouse-drag resize) produce
+        // the same `line_count`. Missing the `ceil` would let
+        // `cache.layout(...).width()` return e.g. 77.8 while taffy's
+        // child slot is 77 — parley would then break to a second
+        // line on every other frame, jittering `line_count` between
+        // 1 and 2 across the drag.
+        let label = "Click me!";
+        let style = TextStyle::new().with_size_px(18);
+        let layout = LayoutStyle::new()
+            .flex(FlexDirection::Row)
+            .with_justify(JustifyContent::Center)
+            .with_align_items(AlignItems::Center);
+        let mut cache = LayoutCache::new();
+        let mut counts = Vec::with_capacity(21);
+        // 300..=320 — a 21-wide window straddles the natural label
+        // width on every reasonable system font, exercising the
+        // adjacent-width path that produced the original R47.7.6
+        // jitter on mouse-drag resize.
+        for w in 300_u32..=320 {
+            let text = Scene::Text(TextNode::styled(label, Rect::default(), style.clone()));
+            let mut scene =
+                Scene::Container(ContainerNode::new(vec![text]).with_layout(layout));
+            compute_layout(&mut scene, &mut cache, w, 200);
+            let Scene::Container(container) = &scene else {
+                panic!("container");
+            };
+            let Scene::Text(t) = &container.children[0] else {
+                panic!("text child");
+            };
+            counts.push(t.line_count);
+        }
+        assert!(
+            counts.iter().all(|&n| n == 1),
+            "line_count must stay 1 across adjacent widths 300..=320 (got {counts:?})"
+        );
+    }
+
+    #[test]
+    fn text_line_count_increases_when_max_width_forces_wrap() {
+        // R51.1 §5.12 — when the available width is genuinely narrower
+        // than the natural text width, parley wraps and `line_count`
+        // grows accordingly. This bounds the ceil-stability test
+        // above: the surface really does report >1 lines when the
+        // content truly does not fit, so the AI client can rely on
+        // `line_count > 1` as a real wrap signal.
+        let content = "The quick brown fox jumps over the lazy dog";
+        let style = TextStyle::new().with_size_px(18);
+        let text = Scene::Text(TextNode::styled(content, Rect::default(), style).with_layout(
+            LayoutStyle::new().with_size(pinion_core::style::Size::px(60, 200)),
+        ));
+        let layout = LayoutStyle::new().flex(FlexDirection::Row);
+        let mut scene =
+            Scene::Container(ContainerNode::new(vec![text]).with_layout(layout));
+        let mut cache = LayoutCache::new();
+        compute_layout(&mut scene, &mut cache, 320, 200);
+        let Scene::Container(container) = &scene else {
+            panic!("container");
+        };
+        let Scene::Text(t) = &container.children[0] else {
+            panic!("text child");
+        };
+        assert!(
+            t.line_count >= 2,
+            "60px-wide slot must force the sentence to wrap (got {})",
+            t.line_count
         );
     }
 

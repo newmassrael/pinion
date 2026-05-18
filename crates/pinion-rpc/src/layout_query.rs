@@ -68,6 +68,16 @@ pub struct LayoutNode {
     /// Text content. `Some(_)` iff `kind == Text`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// Number of visual lines the shaper produced for `content` against
+    /// `rect.w`. R51.1 §5.12 — surfaces the
+    /// `pinion_core::scene::TextNode.line_count` measured-result
+    /// sidecar (populated by `pinion-runtime::compute_layout`). `0` for
+    /// non-Text variants and for Text leaves whose owning Scene has not
+    /// been laid out yet. Lets AI clients verify single-line button
+    /// labels without screenshot inspection (Scene-as-data invariant
+    /// §2 #7). Backend agnostic: the surface stays the same after the
+    /// §5.37.7 self-hosted text engine replaces the parley `LayoutCache`.
+    pub line_count: u32,
     /// Recursive children. Empty for leaves.
     pub children: Vec<LayoutNode>,
 }
@@ -173,8 +183,9 @@ where
 /// `DispatchContext::with_last_paint_layout`.
 #[must_use]
 pub fn build_layout_node(scene: &Scene, path_prefix: &str) -> LayoutNode {
-    let (kind, rect, tag, content, children_scenes) = describe_scene(scene);
-    let children = children_scenes
+    let projected = describe_scene(scene);
+    let children = projected
+        .children
         .iter()
         .enumerate()
         .map(|(i, child)| {
@@ -184,80 +195,98 @@ pub fn build_layout_node(scene: &Scene, path_prefix: &str) -> LayoutNode {
         .collect();
     LayoutNode {
         path: path_prefix.to_string(),
-        kind,
-        rect,
-        tag,
-        content,
+        kind: projected.kind,
+        rect: projected.rect,
+        tag: projected.tag,
+        content: projected.content,
+        line_count: projected.line_count,
         children,
     }
 }
 
-/// Project a [`Scene`] node into the response shape. Returns
-/// `(kind, rect, tag, content, children)`. The `children` slice is
-/// non-empty only for `Scene::Container`; other variants are leaves.
-fn describe_scene(
-    scene: &Scene,
-) -> (LayoutKind, LayoutRect, Option<String>, Option<String>, &[Scene]) {
+/// Projected view of a `Scene` node into the response shape. R51.1
+/// — promoted from an anonymous tuple to a named struct after the
+/// `line_count` field broadened the projection beyond what is
+/// idiomatic to pattern-match on. The `children` slice is non-empty
+/// only for `Scene::Container`; other variants are leaves.
+struct SceneProjection<'a> {
+    kind: LayoutKind,
+    rect: LayoutRect,
+    tag: Option<String>,
+    content: Option<String>,
+    line_count: u32,
+    children: &'a [Scene],
+}
+
+fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
     match scene {
-        Scene::Container(c) => (
-            LayoutKind::Container,
-            to_layout_rect(c.rect),
-            c.tag.as_ref().map(ToString::to_string),
-            None,
-            c.children.as_slice(),
-        ),
-        Scene::Box(b) => (
-            LayoutKind::Box,
-            to_layout_rect(b.rect),
-            b.tag.as_ref().map(ToString::to_string),
-            None,
-            &[],
-        ),
-        Scene::Text(t) => (
-            LayoutKind::Text,
-            to_layout_rect(t.rect),
-            t.tag.as_ref().map(ToString::to_string),
-            Some(t.content.clone()),
-            &[],
-        ),
-        Scene::Path(p) => (
-            LayoutKind::Path,
-            to_layout_rect(p.rect),
-            p.tag.as_ref().map(ToString::to_string),
-            None,
-            &[],
-        ),
-        Scene::Image(i) => (
-            LayoutKind::Image,
-            to_layout_rect(i.rect),
-            i.tag.as_ref().map(ToString::to_string),
-            None,
-            &[],
-        ),
-        Scene::External(e) => (
-            LayoutKind::External,
-            to_layout_rect(e.rect),
-            e.tag.as_ref().map(ToString::to_string),
-            None,
-            &[],
-        ),
-        Scene::Effect(_) => (
-            LayoutKind::Effect,
-            LayoutRect { x: 0, y: 0, w: 0, h: 0 },
-            None,
-            None,
-            &[],
-        ),
+        Scene::Container(c) => SceneProjection {
+            kind: LayoutKind::Container,
+            rect: to_layout_rect(c.rect),
+            tag: c.tag.as_ref().map(ToString::to_string),
+            content: None,
+            line_count: 0,
+            children: c.children.as_slice(),
+        },
+        Scene::Box(b) => SceneProjection {
+            kind: LayoutKind::Box,
+            rect: to_layout_rect(b.rect),
+            tag: b.tag.as_ref().map(ToString::to_string),
+            content: None,
+            line_count: 0,
+            children: &[],
+        },
+        Scene::Text(t) => SceneProjection {
+            kind: LayoutKind::Text,
+            rect: to_layout_rect(t.rect),
+            tag: t.tag.as_ref().map(ToString::to_string),
+            content: Some(t.content.clone()),
+            line_count: t.line_count,
+            children: &[],
+        },
+        Scene::Path(p) => SceneProjection {
+            kind: LayoutKind::Path,
+            rect: to_layout_rect(p.rect),
+            tag: p.tag.as_ref().map(ToString::to_string),
+            content: None,
+            line_count: 0,
+            children: &[],
+        },
+        Scene::Image(i) => SceneProjection {
+            kind: LayoutKind::Image,
+            rect: to_layout_rect(i.rect),
+            tag: i.tag.as_ref().map(ToString::to_string),
+            content: None,
+            line_count: 0,
+            children: &[],
+        },
+        Scene::External(e) => SceneProjection {
+            kind: LayoutKind::External,
+            rect: to_layout_rect(e.rect),
+            tag: e.tag.as_ref().map(ToString::to_string),
+            content: None,
+            line_count: 0,
+            children: &[],
+        },
+        Scene::Effect(_) => SceneProjection {
+            kind: LayoutKind::Effect,
+            rect: LayoutRect { x: 0, y: 0, w: 0, h: 0 },
+            tag: None,
+            content: None,
+            line_count: 0,
+            children: &[],
+        },
         // Forward-compatibility for future `#[non_exhaustive]` Scene
         // additions — report as Unknown rather than panicking so the
         // AI client can detect newer-than-known variants explicitly.
-        _ => (
-            LayoutKind::Unknown,
-            LayoutRect { x: 0, y: 0, w: 0, h: 0 },
-            None,
-            None,
-            &[],
-        ),
+        _ => SceneProjection {
+            kind: LayoutKind::Unknown,
+            rect: LayoutRect { x: 0, y: 0, w: 0, h: 0 },
+            tag: None,
+            content: None,
+            line_count: 0,
+            children: &[],
+        },
     }
 }
 
@@ -332,6 +361,10 @@ mod tests {
         // R47.7.1 — wrap diagnosis primitive: AI inspects text rect.h
         // to detect single/multi-line wrap. content surfaces so the
         // tree dump is self-describing without re-querying state.
+        // R51.1 — `line_count` is a Text-only sidecar populated by
+        // `compute_layout`. This test builds a raw `Scene::Text` and
+        // does not invoke layout, so the default `line_count = 0`
+        // round-trips through the projection unchanged.
         let params = make_params(320, 200);
         let mut producer = |_w: u32, _h: u32| -> Scene {
             Scene::Container(ContainerNode::new(vec![Scene::Text(
@@ -349,6 +382,55 @@ mod tests {
         assert_eq!(text.content.as_deref(), Some("Click me!"));
         assert_eq!(text.rect, LayoutRect { x: 50, y: 30, w: 60, h: 22 });
         assert_eq!(text.tag.as_deref(), Some("label"));
+        assert_eq!(text.line_count, 0, "raw Scene::Text default");
+    }
+
+    #[test]
+    fn layout_query_text_line_count_round_trips_through_projection() {
+        // R51.1 §5.12 — TextNode.line_count (the measured-result
+        // sidecar populated by `pinion-runtime::compute_layout`)
+        // projects unchanged through `build_layout_node` onto
+        // `LayoutNode.line_count`. The runtime-side measurement is
+        // covered by `pinion-runtime::layout::tests::text_*`; this
+        // test owns only the wire-projection direction.
+        let mut measured_text = TextNode::styled(
+            "Click me!",
+            Rect::new(50, 30, 60, 22),
+            TextStyle::new().with_size_px(18),
+        )
+        .with_tag("label");
+        measured_text.line_count = 1;
+        let params = make_params(320, 200);
+        let mut producer = |_w: u32, _h: u32| -> Scene {
+            Scene::Container(ContainerNode::new(vec![Scene::Text(
+                measured_text.clone(),
+            )]))
+        };
+        let node = layout_query(&params, Some(&mut producer), None).unwrap();
+        let text = &node.children[0];
+        assert_eq!(text.line_count, 1);
+    }
+
+    #[test]
+    fn layout_query_non_text_node_line_count_is_zero() {
+        // R51.1 — `line_count` is Text-specific; Container/Box/Path/
+        // Image/External/Effect/Unknown all project as 0. Locks the
+        // semantics so AI clients can predicate on `kind == Text &&
+        // line_count > 1` without false positives from non-Text
+        // variants.
+        let params = make_params(320, 200);
+        let mut producer = |_w: u32, _h: u32| -> Scene {
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Box(
+                    BoxNode::filled(Rect::new(10, 20, 30, 40), Color::rgb(0xff, 0, 0))
+                        .with_tag("button"),
+                )])
+                .with_style(BoxStyle::filled(Color::rgb(0, 0, 0))),
+            )
+        };
+        let root = layout_query(&params, Some(&mut producer), None).unwrap();
+        assert_eq!(root.line_count, 0, "Container line_count");
+        assert_eq!(root.children[0].line_count, 0, "Box line_count");
     }
 
     #[test]
@@ -380,6 +462,7 @@ mod tests {
             rect: LayoutRect { x: 0, y: 0, w: 320, h: 200 },
             tag: None,
             content: None,
+            line_count: 0,
             children: vec![],
         };
         let mut producer_called = false;
