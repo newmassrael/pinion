@@ -24,23 +24,34 @@
 use crate::hangul::compose_hangul;
 use crate::ordering::combining_class;
 use crate::tables::{
-    PRIMARY_COMPOSITES, PRIMARY_COMPOSITES_FIRST_A_CP,
-    PRIMARY_COMPOSITES_LAST_A_CP,
+    PRIMARY_COMPOSITES_BC_DATA, PRIMARY_COMPOSITES_BMP_DATA,
+    PRIMARY_COMPOSITES_BMP_INDEX, PRIMARY_COMPOSITES_FIRST_A_CP,
+    PRIMARY_COMPOSITES_LAST_A_CP, PRIMARY_COMPOSITES_SUPPLEMENTARY,
 };
 
 /// Attempt to compose `(a, b)` into a single codepoint using
 /// algorithmic Hangul composition first, then the UCD-derived
-/// `PRIMARY_COMPOSITES` table. Returns `None` when no composite
-/// exists.
+/// primary-composite map. Returns `None` when no composite exists.
 ///
 /// R50.2.9 — when `a` falls outside the `[FIRST_A_CP, LAST_A_CP]`
 /// envelope of the primary-composite table, the table search is
 /// skipped entirely (Hangul composition stays in-band because the
 /// Hangul leading-jamo range U+1100..U+1112 sits inside the
 /// envelope). UAX #44 §3 stability forbids extending the
-/// `PRIMARY_COMPOSITES` `a`-range beyond the existing envelope, so
+/// primary-composite `a`-range beyond the existing envelope, so
 /// the short-circuit is forward-stable.
-fn compose_pair(a: u32, b: u32) -> Option<u32> {
+///
+/// R50.2.14 — the table search is now a two-level BMP trie: the
+/// `a` codepoint indexes through
+/// `PRIMARY_COMPOSITES_BMP_INDEX` / `_BMP_DATA` to a per-`a`
+/// sub-table inside `PRIMARY_COMPOSITES_BC_DATA`; the sub-table
+/// itself is sorted by `b` and served by `binary_search` over a
+/// 1\u{2013}20 entry slice. Replaces the R50.2.2 flat
+/// `binary_search` over ~1100 entries with two memory reads plus
+/// a small per-`a` `binary_search` (~3\u{2013}5 iterations), which
+/// is the dominant compose-pair speedup for combining-mark heavy
+/// text such as Latin diacritic recomposition.
+pub(crate) fn compose_pair(a: u32, b: u32) -> Option<u32> {
     if let Some(h) = compose_hangul(a, b) {
         return Some(h);
     }
@@ -49,10 +60,40 @@ fn compose_pair(a: u32, b: u32) -> Option<u32> {
     {
         return None;
     }
-    PRIMARY_COMPOSITES
-        .binary_search_by_key(&(a, b), |(k, _)| *k)
+    if a < 0x10000 {
+        let block = PRIMARY_COMPOSITES_BMP_INDEX[(a >> 8) as usize] as usize;
+        let packed =
+            PRIMARY_COMPOSITES_BMP_DATA[block * 256 + (a & 0xFF) as usize];
+        if packed == 0 {
+            return None;
+        }
+        let length = (packed >> 24) as usize;
+        let offset = (packed & 0x00FF_FFFF) as usize;
+        let sub = &PRIMARY_COMPOSITES_BC_DATA[offset..offset + length];
+        return sub
+            .binary_search_by_key(&b, |(b2, _)| *b2)
+            .ok()
+            .map(|idx| sub[idx].1);
+    }
+    compose_pair_supplementary(a, b)
+}
+
+/// R50.2.14 — sparse supplementary-plane fallback for
+/// [`compose_pair`]. Kept `#[inline(never)]` (R50.2.12 / R50.2.13
+/// pattern) because (a) it is the cold path — supplementary `a`
+/// codepoints are vanishingly rare in real text — and (b)
+/// folding the outer `binary_search` IR back into the BMP hot
+/// path would inflate [`compose_pair`] past the LLVM inline
+/// threshold, costing every compose probe on Latin / Greek / etc.
+#[inline(never)]
+fn compose_pair_supplementary(a: u32, b: u32) -> Option<u32> {
+    let idx = PRIMARY_COMPOSITES_SUPPLEMENTARY
+        .binary_search_by_key(&a, |(k, _)| *k)
+        .ok()?;
+    let sub = PRIMARY_COMPOSITES_SUPPLEMENTARY[idx].1;
+    sub.binary_search_by_key(&b, |(b2, _)| *b2)
         .ok()
-        .map(|idx| PRIMARY_COMPOSITES[idx].1)
+        .map(|i| sub[i].1)
 }
 
 /// Apply the Canonical Composition Algorithm to `buf` in place.

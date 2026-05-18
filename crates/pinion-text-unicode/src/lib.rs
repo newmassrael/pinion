@@ -192,6 +192,7 @@ mod test_fixture;
 
 #[cfg(test)]
 mod tests {
+    use super::composition::compose_pair;
     use super::decompose::{decompose_canonical, decompose_compatibility};
     use super::ordering::combining_class;
     use super::tables::{
@@ -207,8 +208,10 @@ mod tests {
         COMPATIBILITY_DECOMPOSITION_DATA,
         COMPATIBILITY_DECOMPOSITION_ENTRY_COUNT,
         COMPATIBILITY_DECOMPOSITION_SUPPLEMENTARY,
-        FULL_COMPOSITION_EXCLUSION, PRIMARY_COMPOSITES,
-        TABLES_GENERATED_BYTES,
+        FULL_COMPOSITION_EXCLUSION, PRIMARY_COMPOSITES_BC_DATA,
+        PRIMARY_COMPOSITES_BMP_DATA, PRIMARY_COMPOSITES_BMP_INDEX,
+        PRIMARY_COMPOSITES_ENTRY_COUNT,
+        PRIMARY_COMPOSITES_SUPPLEMENTARY, TABLES_GENERATED_BYTES,
     };
     use super::{normalize, NormForm, UCD_VERSION};
 
@@ -250,6 +253,16 @@ mod tests {
     const _: () = assert!(
         COMPATIBILITY_DECOMPOSITION_ENTRY_COUNT >= 5000,
         "compatibility decomposition table shrank below 5000 entries"
+    );
+    // R50.2.14 — same shape, applied to the primary-composite map.
+    // Unicode 16.0.0 yields ~940 (a, b) -> c entries (length-2
+    // canonical decompositions minus the Full_Composition_Exclusion
+    // set). The lower bound guards against derivation drift in
+    // `derive_primary_composites` without freezing the exact count
+    // (future UCD versions may add a handful of entries).
+    const _: () = assert!(
+        PRIMARY_COMPOSITES_ENTRY_COUNT >= 900,
+        "primary composites table shrank below 900 entries"
     );
 
     #[test]
@@ -567,29 +580,181 @@ mod tests {
     #[test]
     fn primary_composite_a_grave_round_trip() {
         // (U+0041, U+0300) must round-trip-compose to U+00C0 per
-        // UAX #15 D5 (canonical composition).
-        let idx = PRIMARY_COMPOSITES
-            .binary_search_by_key(&(0x0041_u32, 0x0300_u32), |(k, _)| *k)
-            .expect("(0x0041, 0x0300) must compose");
-        assert_eq!(PRIMARY_COMPOSITES[idx].1, 0x00C0);
+        // UAX #15 D5 (canonical composition). R50.2.14 — exercises
+        // the two-level trie + per-`a` `binary_search` directly
+        // through the same API the composition pipeline uses.
+        assert_eq!(compose_pair(0x0041, 0x0300), Some(0x00C0));
+    }
+
+    #[test]
+    fn primary_composite_e_acute_via_trie() {
+        // (U+0065, U+0301) → U+00E9 (é). Different `a` sub-table
+        // than the grave; second probe verifies the trie reaches
+        // multiple `a` groups, not just the first hit.
+        assert_eq!(compose_pair(0x0065, 0x0301), Some(0x00E9));
+    }
+
+    #[test]
+    fn primary_composite_no_composite_returns_none() {
+        // (U+0041, U+0061) is not a primary composite — `a` is in
+        // the envelope (Latin range) but no `b == U+0061` entry
+        // exists for this `a` sub-table.
+        assert_eq!(compose_pair(0x0041, 0x0061), None);
+        // (U+FFFF, U+0300) — `a` outside the envelope, anchor
+        // short-circuit fires before the trie.
+        assert_eq!(compose_pair(0xFFFF, 0x0300), None);
     }
 
     #[test]
     fn primary_composites_exclude_full_composition_set() {
-        // For each (a, b) → c, c must not be in
+        // For each (a, b) -> c, c must not be in
         // FULL_COMPOSITION_EXCLUSION (invariant from build.rs).
-        for ((_, _), c) in PRIMARY_COMPOSITES {
+        // R50.2.14 — iterate via the two-level trie shape.
+        for (_, _, c) in iter_primary_composites_for_test() {
             assert!(
-                FULL_COMPOSITION_EXCLUSION.binary_search(c).is_err(),
+                FULL_COMPOSITION_EXCLUSION.binary_search(&c).is_err(),
                 "composite 0x{c:04X} is in exclusion set"
             );
         }
     }
 
     #[test]
-    fn primary_composites_sorted_strictly() {
-        for window in PRIMARY_COMPOSITES.windows(2) {
-            assert!(window[0].0 < window[1].0, "PRIMARY_COMPOSITES not sorted");
+    fn primary_composites_sub_tables_sorted_by_b() {
+        // R50.2.14 — each per-`a` sub-table is `binary_search`-ed
+        // by `b`, so each sub-slice in `_BC_DATA` must be sorted
+        // strictly ascending on `b`. Catches `sort_by_key` drift
+        // in `build_primary_composites_trie` before the lookup
+        // returns a wrong composite.
+        for (high, &block_idx) in PRIMARY_COMPOSITES_BMP_INDEX.iter().enumerate()
+        {
+            let block = block_idx as usize;
+            let block_data =
+                &PRIMARY_COMPOSITES_BMP_DATA[block * 256..(block + 1) * 256];
+            for (low, &cell) in block_data.iter().enumerate() {
+                if cell == 0 {
+                    continue;
+                }
+                let length = (cell >> 24) as usize;
+                let offset = (cell & 0x00FF_FFFF) as usize;
+                let sub = &PRIMARY_COMPOSITES_BC_DATA[offset..offset + length];
+                let a = u32::try_from((high << 8) | low)
+                    .expect("BMP codepoint always fits in u32");
+                for window in sub.windows(2) {
+                    assert!(
+                        window[0].0 < window[1].0,
+                        "PRIMARY_COMPOSITES sub-table for U+{a:04X} not \
+                         sorted by `b`: {window:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn primary_composites_bmp_trie_well_formed() {
+        // R50.2.14 — Stage 1 size, Stage 2 block alignment, null
+        // block sentinel, and Stage 1 indices in range. Mirrors
+        // the R50.2.13 decomp trie invariant tests.
+        assert_eq!(PRIMARY_COMPOSITES_BMP_INDEX.len(), 256);
+        assert!(
+            PRIMARY_COMPOSITES_BMP_DATA.len() % 256 == 0,
+            "Stage 2 must be a whole number of 256-cell blocks: len = {}",
+            PRIMARY_COMPOSITES_BMP_DATA.len()
+        );
+        assert!(
+            PRIMARY_COMPOSITES_BMP_DATA[..256].iter().all(|&v| v == 0),
+            "Stage 2 block 0 must be the null block"
+        );
+        let num_blocks = u16::try_from(
+            PRIMARY_COMPOSITES_BMP_DATA.len() / 256,
+        )
+        .expect("BMP primary-composites trie block count must fit in u16");
+        for (i, &idx) in PRIMARY_COMPOSITES_BMP_INDEX.iter().enumerate() {
+            assert!(
+                idx < num_blocks,
+                "Stage 1 entry {i} points outside Stage 2 (idx = {idx}, \
+                 blocks = {num_blocks})"
+            );
+        }
+        let bc_len = PRIMARY_COMPOSITES_BC_DATA.len();
+        for &cell in PRIMARY_COMPOSITES_BMP_DATA {
+            if cell == 0 {
+                continue;
+            }
+            let length = (cell >> 24) as usize;
+            let offset = (cell & 0x00FF_FFFF) as usize;
+            assert!(
+                offset + length <= bc_len,
+                "packed cell (length={length}, offset={offset}) \
+                 overruns _BC_DATA (len={bc_len})"
+            );
+        }
+    }
+
+    /// R50.2.14 — walk both the BMP two-level trie and the
+    /// supplementary sparse fallback to yield every `(a, b, c)`
+    /// triple. Used by the test module's exclusion guard; not
+    /// exposed outside of `#[cfg(test)]`.
+    fn iter_primary_composites_for_test() -> Vec<(u32, u32, u32)> {
+        let mut out = Vec::with_capacity(PRIMARY_COMPOSITES_ENTRY_COUNT);
+        for (high, &block_idx) in PRIMARY_COMPOSITES_BMP_INDEX.iter().enumerate()
+        {
+            let block = block_idx as usize;
+            let block_data =
+                &PRIMARY_COMPOSITES_BMP_DATA[block * 256..(block + 1) * 256];
+            for (low, &cell) in block_data.iter().enumerate() {
+                if cell == 0 {
+                    continue;
+                }
+                let length = (cell >> 24) as usize;
+                let offset = (cell & 0x00FF_FFFF) as usize;
+                let a = u32::try_from((high << 8) | low)
+                    .expect("BMP codepoint always fits in u32");
+                for &(b, c) in
+                    &PRIMARY_COMPOSITES_BC_DATA[offset..offset + length]
+                {
+                    out.push((a, b, c));
+                }
+            }
+        }
+        for (a, sub) in PRIMARY_COMPOSITES_SUPPLEMENTARY {
+            for &(b, c) in *sub {
+                out.push((*a, b, c));
+            }
+        }
+        // Iteration size invariant: every (a, b, c) the build
+        // emitted must surface exactly once.
+        assert_eq!(
+            out.len(),
+            PRIMARY_COMPOSITES_ENTRY_COUNT,
+            "trie walker missed entries vs build-time count"
+        );
+        out
+    }
+
+    #[test]
+    fn primary_composites_supplementary_sorted_and_well_formed() {
+        // R50.2.14 — supplementary outer slice sorted by `a`,
+        // each inner sub-table sorted by `b`, every `a` in the
+        // supplementary plane.
+        for window in PRIMARY_COMPOSITES_SUPPLEMENTARY.windows(2) {
+            assert!(
+                window[0].0 < window[1].0,
+                "PRIMARY_COMPOSITES_SUPPLEMENTARY outer not sorted by `a`"
+            );
+        }
+        for (a, sub) in PRIMARY_COMPOSITES_SUPPLEMENTARY {
+            assert!(
+                *a >= 0x10000,
+                "BMP `a` leaked into supplementary: U+{a:04X}"
+            );
+            for window in sub.windows(2) {
+                assert!(
+                    window[0].0 < window[1].0,
+                    "supplementary sub-table for U+{a:04X} not sorted: \
+                     {window:?}"
+                );
+            }
         }
     }
 }

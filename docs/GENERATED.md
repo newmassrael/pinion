@@ -2435,6 +2435,7 @@ router.pointer_down(&mut state_scene);
 - §5.37.2 RPC channel 의 text/normalize 후속 method 추가 가능 — AI introspect 정합
 - R50.2.10/11 BMP trie supplementary는 binary_search (ICU UTrie2 strict 위반, 226 entries 수용).
 - R50.2.13 decomp BMP trie: Stage 2 = packed `(length, offset)` u32, null block 만 dedup.
+- R50.2.14 PRIMARY_COMPOSITES 2-level BMP trie + per-`a` `(b,c)` sub-table binary_search.
 
 
 
@@ -2483,6 +2484,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/build.rs:emit_packed_u32_hex_row
 - crates/pinion-text-unicode/src/decompose.rs:lookup_decomp_trie
 - crates/pinion-text-unicode/src/decompose.rs:lookup_decomp_supplementary
+- crates/pinion-text-unicode/build.rs:build_primary_composites_trie
+- crates/pinion-text-unicode/build.rs:emit_primary_composites_table
+- crates/pinion-text-unicode/src/composition.rs:compose_pair_supplementary
 
 
 

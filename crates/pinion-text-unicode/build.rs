@@ -841,25 +841,212 @@ fn emit_exclusion_table(s: &mut String, exclusions: &[u32]) {
     s.push_str("];\n\n");
 }
 
+/// R50.2.14 — emit the primary-composite map as a 2-level BMP
+/// trie. The first level (`PRIMARY_COMPOSITES_BMP_INDEX` +
+/// `PRIMARY_COMPOSITES_BMP_DATA`) maps the `a` codepoint to a
+/// small per-`a` sub-table inside the flat
+/// `PRIMARY_COMPOSITES_BC_DATA` store; the sub-table itself is
+/// sorted by `b` and served by a final `binary_search` (typically
+/// 1\u{2013}20 entries per `a`, so ~3\u{2013}5 iterations per
+/// lookup vs ~10 against the flat R50.2.2 table). Supplementary-
+/// plane `a` codepoints (a handful from blocks such as Musical
+/// Symbols) are emitted to the sparse `_SUPPLEMENTARY` sibling
+/// (sorted by `a`, served by `binary_search`) — same pattern as
+/// the R50.2.13 decomp trie. Replaces the R50.2.2
+/// `&[((u32, u32), u32)]` shape that paid log\u{2082}(1100)
+/// iterations on every compose probe.
 fn emit_primary_composites_table(
     s: &mut String,
     primary_composites: &[((u32, u32), u32)],
 ) {
-    s.push_str(
-        "/// Primary composite map for NFC: `(a, b) → c` where `c` has \
-         canonical decomposition `[a, b]` and is not in \
-         `FULL_COMPOSITION_EXCLUSION` (UAX #15 §1.3, D5).\n///\n/// \
-         Sorted by `(a, b)`; `binary_search` for adjacent-pair lookup \
-         during canonical composition.\n",
-    );
-    s.push_str(
-        "pub(crate) static PRIMARY_COMPOSITES: &[((u32, u32), u32)] = &[\n",
-    );
-    for ((a, b), c) in primary_composites {
-        writeln!(s, "    ((0x{a:04X}, 0x{b:04X}), 0x{c:04X}),")
+    let (bmp_index, bmp_data, bc_data, supplementary) =
+        build_primary_composites_trie(primary_composites);
+
+    writeln!(
+        s,
+        "/// Primary composite map for NFC: `(a, b) -> c` where `c`\n/// \
+         has canonical decomposition `[a, b]` and is not in\n/// \
+         `FULL_COMPOSITION_EXCLUSION` (UAX #15 \u{00A7}1.3, D5).\n///\n/// \
+         R50.2.14 \u{2014} two-level BMP lookup: the `a` codepoint indexes\n/// \
+         through `PRIMARY_COMPOSITES_BMP_INDEX` /\n/// \
+         `PRIMARY_COMPOSITES_BMP_DATA` to a per-`a` sub-table inside\n/// \
+         the flat `PRIMARY_COMPOSITES_BC_DATA` store (sorted by `b`,\n/// \
+         served by `binary_search`). The first-level cell packs\n/// \
+         `(length << 24) | offset` exactly like the R50.2.13 decomp\n/// \
+         trie, with value `0` encoding \"no `a` group at this code\n/// \
+         point\". Supplementary-plane `a` codepoints (Musical Symbols\n/// \
+         and similar) use the sorted `_SUPPLEMENTARY` sibling array,\n/// \
+         mirroring the R50.2.10/11/13 supplementary fallback pattern.",
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "pub(crate) static PRIMARY_COMPOSITES_BMP_INDEX: &[u16; 256] = &[",
+    )
+    .expect("String write infallible");
+    emit_packed_row(s, &bmp_index);
+    s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Packed `(length << 24) | offset` cells indexed by\n/// \
+         `PRIMARY_COMPOSITES_BMP_INDEX`; value `0` = no `a` group.",
+    )
+    .expect("String write infallible");
+    writeln!(s, "pub(crate) static PRIMARY_COMPOSITES_BMP_DATA: &[u32] = &[")
+        .expect("String write infallible");
+    emit_packed_u32_hex_row(s, &bmp_data);
+    s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Per-`a` `(b, c)` sub-tables concatenated in `a` order;\n/// \
+         each sub-table is sorted by `b`, served by `binary_search`\n/// \
+         within the `[offset, offset + length)` slice that\n/// \
+         `PRIMARY_COMPOSITES_BMP_DATA` points to.",
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "pub(crate) static PRIMARY_COMPOSITES_BC_DATA: &[(u32, u32)] = &[",
+    )
+    .expect("String write infallible");
+    for (b, c) in &bc_data {
+        writeln!(s, "    (0x{b:04X}, 0x{c:04X}),")
             .expect("String write infallible");
     }
     s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Supplementary-plane (`a >= 0x10000`) primary composites\n/// \
+         (sparse, sorted by `a`; each inner slice sorted by `b`).\n/// \
+         Served by `binary_search` over the outer slice plus a\n/// \
+         `binary_search` within the inner `(b, c)` sub-table.",
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "pub(crate) static PRIMARY_COMPOSITES_SUPPLEMENTARY: \
+         &[(u32, &[(u32, u32)])] = &[",
+    )
+    .expect("String write infallible");
+    for (a, sub) in &supplementary {
+        write!(s, "    (0x{a:04X}, &[").expect("String write infallible");
+        for (i, (b, c)) in sub.iter().enumerate() {
+            if i > 0 {
+                s.push_str(", ");
+            }
+            write!(s, "(0x{b:04X}, 0x{c:04X})")
+                .expect("String write infallible");
+        }
+        s.push_str("]),\n");
+    }
+    s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Total `(a, b, c)` triple count derived at build time. The\n/// \
+         R50.2.14 trie shape replaces the flat `.len()` introspection\n/// \
+         that the pre-trie tests used; the test module exercises this\n/// \
+         constant as the iteration bound for the exclusion guard.",
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "pub(crate) const PRIMARY_COMPOSITES_ENTRY_COUNT: usize = {};\n",
+        primary_composites.len(),
+    )
+    .expect("String write infallible");
+}
+
+/// Four-part output of [`build_primary_composites_trie`] — kept
+/// as a named alias because the inline tuple `(Vec<u16>, Vec<u32>,
+/// Vec<(u32, u32)>, Vec<(u32, Vec<(u32, u32)>)>)` trips
+/// `clippy::type_complexity` and a named alias documents intent
+/// better than a four-element tuple at a single call site.
+type PrimaryCompositesTrieParts = (
+    Vec<u16>,                     // stage1
+    Vec<u32>,                     // stage2 (packed `(length, offset)`)
+    Vec<(u32, u32)>,              // bc_data (flat per-`a` sub-tables)
+    Vec<(u32, Vec<(u32, u32)>)>,  // supplementary sparse fallback
+);
+
+/// R50.2.14 \u{2014} build the two-level BMP trie for the primary-
+/// composite map. Returns `(stage1, stage2, bc_data, supplementary)`
+/// where `stage1` has exactly 256 entries (one per `a`-high-byte),
+/// `stage2` is the partially-deduplicated `u32` block table with
+/// each cell packing `(length << 24) | offset` into `bc_data`,
+/// `bc_data` is the contiguous flat array of `(b, c)` pairs (each
+/// per-`a` sub-slice sorted by `b` so a later
+/// `binary_search_by_key` is correct), and `supplementary` is a
+/// sparse `(a, sub-table)` list for supplementary-plane `a`
+/// codepoints (Musical Symbols, etc. — a handful in UCD 16.0.0,
+/// each sub-table also sorted by `b`).
+fn build_primary_composites_trie(
+    entries: &[((u32, u32), u32)],
+) -> PrimaryCompositesTrieParts {
+    use std::collections::BTreeMap;
+    const BLOCK_SIZE: usize = 256;
+    const NUM_BLOCKS: usize = 0x10000 / BLOCK_SIZE; // 256
+
+    let mut grouped: BTreeMap<u32, Vec<(u32, u32)>> = BTreeMap::new();
+    for ((a, b), c) in entries {
+        grouped.entry(*a).or_default().push((*b, *c));
+    }
+    for sub in grouped.values_mut() {
+        sub.sort_by_key(|(b, _)| *b);
+    }
+
+    let mut bc_data: Vec<(u32, u32)> = Vec::new();
+    let mut blocks: Vec<[u32; BLOCK_SIZE]> = vec![[0; BLOCK_SIZE]; NUM_BLOCKS];
+    let mut supplementary: Vec<(u32, Vec<(u32, u32)>)> = Vec::new();
+
+    for (a, sub) in &grouped {
+        if *a >= 0x10000 {
+            supplementary.push((*a, sub.clone()));
+            continue;
+        }
+        let offset = bc_data.len();
+        let length = sub.len();
+        let length_u32: u32 = length.try_into().expect(
+            "per-`a` sub-table length must fit in u32 (UCD totals tiny)",
+        );
+        let offset_u32: u32 = offset.try_into().expect(
+            "BC_DATA offset must fit in u32 (UCD totals under 64 KiB)",
+        );
+        assert!(
+            length_u32 > 0 && length_u32 < 256,
+            "per-`a` sub-table length {length_u32} out of [1, 255] for U+{a:04X}"
+        );
+        assert!(
+            offset_u32 < (1 << 24),
+            "BC_DATA offset {offset_u32} overflows 24-bit field at U+{a:04X}"
+        );
+        let packed = (length_u32 << 24) | offset_u32;
+        let block = (*a as usize) / BLOCK_SIZE;
+        let off = (*a as usize) % BLOCK_SIZE;
+        blocks[block][off] = packed;
+        bc_data.extend_from_slice(sub);
+    }
+
+    let null_block = [0_u32; BLOCK_SIZE];
+    let mut stage1: Vec<u16> = vec![0; NUM_BLOCKS];
+    let mut stage2: Vec<u32> = null_block.to_vec();
+
+    for (i, blk) in blocks.iter().enumerate() {
+        if *blk == null_block {
+            stage1[i] = 0;
+        } else {
+            let idx = u16::try_from(stage2.len() / BLOCK_SIZE).expect(
+                "primary-composite BMP trie block index must fit in u16",
+            );
+            stage2.extend_from_slice(blk);
+            stage1[i] = idx;
+        }
+    }
+
+    (stage1, stage2, bc_data, supplementary)
 }
 
 fn emit_qc_ynm_table(
