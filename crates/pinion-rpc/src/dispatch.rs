@@ -79,14 +79,45 @@ pub enum RequestId {
 
 /// JSON-RPC 2.0 response envelope. Exactly one of `result` / `error` is
 /// `Some` per the spec.
+///
+/// `result` distinguishes the three wire shapes:
+///
+/// * **success with a non-null value** — `"result": <json>` → `Some(<json>)`
+/// * **success with a null value** — `"result": null` → `Some(Value::Null)`
+/// * **error response** — `result` field absent → `None`
+///
+/// Plain `Option<Value>` would conflate the second and third because
+/// serde's default `Option` deserializer collapses both `null` and
+/// missing field to `None`. R51.25 — replaced with a `deserialize_with`
+/// helper + `default` attribute so `result: null` survives the round
+/// trip as `Some(Value::Null)` and only an absent field decays to
+/// `None`. Cleans up R51.16's `selected_index None` carry that had to
+/// `assert!(raw.contains("\"result\":null"))` against the wire form.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Response {
     pub jsonrpc: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nullable_present",
+        skip_serializing_if = "Option::is_none",
+    )]
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<RpcError>,
     pub id: Option<RequestId>,
+}
+
+/// Deserialize the `result` field so an explicit JSON `null` becomes
+/// `Some(Value::Null)` rather than `None`. Paired with
+/// `#[serde(default)]` on the field — when the field is absent the
+/// deserializer never runs and serde supplies `None` via the default.
+fn deserialize_nullable_present<'de, D>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 /// JSON-RPC 2.0 error object.
@@ -1954,6 +1985,81 @@ mod tests {
     ) -> Option<String> {
         let mut ctx = DispatchContext::new(scene, previews, revision);
         dispatch(&mut ctx, req)
+    }
+
+    // ---- R51.25 §5.12 — Response::result nullable_present deserialize ----
+
+    #[test]
+    fn response_result_explicit_null_deserializes_to_some_null() {
+        // JSON-RPC success response carrying `result: null` (e.g. a
+        // method whose return value is `IntrospectValue::Null`).
+        // Plain `Option<Value>` would collapse this to `None`; the
+        // R51.25 `deserialize_nullable_present` keeps it as
+        // `Some(Value::Null)` so callers can distinguish from an
+        // error response.
+        let wire = r#"{"jsonrpc":"2.0","result":null,"id":1}"#;
+        let resp: Response = serde_json::from_str(wire).unwrap();
+        assert_eq!(resp.result, Some(Value::Null));
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn response_result_absent_deserializes_to_none() {
+        // JSON-RPC error response — `result` field is absent. The
+        // `#[serde(default)]` on the field supplies `None` without
+        // running `deserialize_nullable_present`.
+        let wire = r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"x"},"id":1}"#;
+        let resp: Response = serde_json::from_str(wire).unwrap();
+        assert_eq!(resp.result, None);
+        assert_eq!(resp.error.as_ref().unwrap().code, -32601);
+    }
+
+    #[test]
+    fn response_result_value_deserializes_to_some_value() {
+        // JSON-RPC success response with a concrete value. The custom
+        // deserializer must be transparent for non-null values.
+        let wire = r#"{"jsonrpc":"2.0","result":42,"id":1}"#;
+        let resp: Response = serde_json::from_str(wire).unwrap();
+        assert_eq!(resp.result, Some(Value::Number(42.into())));
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn response_result_some_null_serializes_to_explicit_null() {
+        // Round-trip — `Some(Value::Null)` must serialize as
+        // `"result":null`, not be elided like `None`.
+        let resp = Response {
+            jsonrpc: JSONRPC_V2.to_owned(),
+            result: Some(Value::Null),
+            error: None,
+            id: Some(RequestId::Num(7)),
+        };
+        let wire = serde_json::to_string(&resp).unwrap();
+        assert!(
+            wire.contains("\"result\":null"),
+            "Some(Value::Null) must serialize explicit null, got: {wire}",
+        );
+    }
+
+    #[test]
+    fn response_result_none_is_elided_on_serialize() {
+        // Round-trip — `None` (error response) must skip serialization
+        // so the wire form omits the `result` key entirely.
+        let resp = Response {
+            jsonrpc: JSONRPC_V2.to_owned(),
+            result: None,
+            error: Some(RpcError {
+                code: -32601,
+                message: "method not found".to_owned(),
+                data: None,
+            }),
+            id: Some(RequestId::Num(7)),
+        };
+        let wire = serde_json::to_string(&resp).unwrap();
+        assert!(
+            !wire.contains("\"result\""),
+            "None must elide the result field, got: {wire}",
+        );
     }
 
     #[test]
@@ -4440,16 +4546,15 @@ mod tests {
         let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
         assert!(s.contains('3'), "got {s}");
 
-        // JSON-RPC null result asserted on raw envelope: serde's
-        // Option<Value> deserializes `result: null` as `None`, so
-        // the test reads the wire form directly to confirm the
-        // selected_index slot returned IntrospectValue::Null.
+        // selected_index None must surface as JSON null in the result
+        // envelope — R51.25 lifts the R51.16 raw-envelope carry: the
+        // Response deserializer now preserves `result: null` as
+        // `Some(Value::Null)` instead of collapsing it to `None`, so a
+        // typed assertion suffices.
         let req_idx = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":2}"#;
-        let raw = dispatch_t(&mut scene, req_idx).unwrap();
-        assert!(
-            raw.contains("\"result\":null"),
-            "selected_index = None must surface as JSON null in result, got: {raw}"
-        );
+        let resp = parse_response(&dispatch_t(&mut scene, req_idx).unwrap());
+        assert_eq!(resp.result, Some(Value::Null));
+        assert!(resp.error.is_none());
     }
 
     #[test]
@@ -4483,12 +4588,12 @@ mod tests {
         // PointerEnter on index 1 — moves that Radio to Hover, no
         // selection change yet (no activate). selected_index stays
         // None, which surfaces as JSON null in the result envelope.
+        // R51.25 — typed assertion replaces the R51.16 raw-envelope
+        // workaround.
         let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"1:PointerEnter"},"id":20}"#;
-        let raw = dispatch_t(&mut scene, req).unwrap();
-        assert!(
-            raw.contains("\"result\":null"),
-            "non-activating invoke must return JSON null result, got: {raw}"
-        );
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert_eq!(resp.result, Some(Value::Null));
+        assert!(resp.error.is_none());
     }
 
     #[test]

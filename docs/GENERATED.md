@@ -424,6 +424,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - crates/pinion-runtime/src/layout.rs:compute_layout::text_lines
 - examples/hello-button/src/main.rs:App::resumed::request_redraw
 - crates/pinion-rpc/src/dispatch.rs:tests::scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent
+- crates/pinion-rpc/src/dispatch.rs:deserialize_nullable_present
 
 
 
@@ -8362,6 +8363,31 @@ router.pointer_down(&mut state_scene);
 - BIDI algorithm 완성도: ~100% (P/X/W/N/I/L1/L2/L3 + L4 substrate + UCD 표준 vector 91 707 conformance 100%)
 - R297 backfill 부채 carry (dc425f8 R45 entry 416 backfill commit 의 R297 changelog entry atomic-store missing — 다음 mnemosyne-publishable fix 라운드에서 상환)
 - BidiTest.txt (Bidi_Class 시퀀스, 384K vector) 는 별도 conformance vector — character vector 가 끝났으니 class 시퀀스 검증은 후속 라운드에서 결정
+
+
+
+### Round 514 — R51.25 §5.12 Response::result nullable-present deserialize (R51.16 carry 청산) — Response::result 의 deserialize_with helper (`deserialize_nullable_present`) + #[serde(default)] 조합으로 JSON-RPC 의 'result: null' vs 'result absent' 구분 — R51.16 의 raw-envelope `assert!(raw.contains("\"result\":null"))` 우회 carry 청산
+
+**Changes**:
+- crates/pinion-rpc/src/dispatch.rs: deserialize_nullable_present helper — Value::deserialize 후 Some(...) wrap. null JSON 값을 Some(Value::Null) 로 보존
+- crates/pinion-rpc/src/dispatch.rs: Response.result field 에 #[serde(default, deserialize_with = "deserialize_nullable_present", skip_serializing_if = "Option::is_none")] 적용 — 'absent' 은 default 이 None, 'null' 은 helper 가 Some(Value::Null), 'value' 는 일반 Some(value); 직렬화 측은 None 은 생략, Some 은 명시 null 또는 value
+- crates/pinion-rpc/src/dispatch.rs: R51.16 carry 2건 정정 — scene_query_selected_index_none 과 scene_invoke_non_activating_returns_null 의 raw envelope contains check 를 parse_response().result == Some(Value::Null) 타입 비교로 교체
+- crates/pinion-rpc/src/dispatch.rs: 5 dedicated unit tests — response_result_explicit_null / absent / value 3개 deserialize boundary + Some(Null) serialize=explicit null / None serialize=elided 2개 round-trip boundary
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1217 pass (+5 from 1212 — R51.25 boundary tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- JSON-RPC 2.0 즜명: deserialize 측 'result: null' = Some(Value::Null) / 'result absent' = None / 'result: 42' = Some(Number(42)); serialize 측 round-trip 명시 null 유지 + None 생략
+
+
+
+**Impact**: §5.12
+
+
+**Carry forward**:
+- RpcError.data 도 동일 quirk 가능 — 현재의 #[serde(skip_serializing_if = "Option::is_none")] 만 으로는 deserialize 측 null vs absent 구분 안됨; data 의 'present null' use case 발생 시 같은 정통으로 정정 (현재 부채 carry 없음)
 
 
 
