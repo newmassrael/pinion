@@ -2071,6 +2071,9 @@ fn main() {
 - Touch/gesture (pinch/multi-finger) 는 R48 scope 아님 — winit Touch event carry
 - paint scene Container/Box.tag 가 state scene ExternalNode.tag 와 매칭 — pinion-core schema 확장
 - R51.41 sub-index: paint 'tag#idx' → InputRouter '#' split + invoke('send','idx:Event')
+- R51.50 paint tag literal 의 '#' 사용 = application 측 금지 — InputRouter R51.42 split 와 충돌
+- R51.50 위반 시 행동: 첫 '#' 이전 primary 추출 → 의도치 않은 state lookup, 묵시적 dispatch drop
+- R51.50 정식 용법: composite hit-target convention 만 '#' 사용 (paint 'tag#idx' + state primary)
 
 
 
@@ -4615,6 +4618,28 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - mirror codepoint 미공급 폰트 fallback chain — mirroring_glyph(cp) 가 None 반환할 때 다른 폰트 시도 (현재는 관령 그대로 폴시터록 공급)
 - L4 알고리즘 정확성 conformance sweep 자동화 — UAX BidiCharacterTest.txt + BidiTest.txt 의 mirroring assertion subset
+
+
+
+### R51.50 — R51.50 §5.35 '#' suffix collision policy 명문화 (design-only)
+
+**Changes**:
+- §5.35 caveat: R51.50 — application 측 paint tag literal 의 '#' 사용 금지, InputRouter R51.42 split_subindex 와 충돌 조건
+- §5.35 caveat: R51.50 — 위반 시 행동 명시 (첫 '#' 이전 primary 추출 → 의도치 않은 state lookup 또는 dispatch drop)
+- §5.35 caveat: R51.50 — 정식 용법 명시 (composite hit-target convention: paint 'tag#idx' + state primary tag 만 허용)
+- design-only round — 코드 변경 0, 향후 widget 저자 / AI agent 가 합성 widget tag naming 시 참조할 업종 주의사항
+
+
+
+**Verification**:
+- mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync (3 caveat add)
+- cargo test --workspace --features pinion-runtime/vello = 1285 pass / 0 fail (코드 미변)
+- R51.42 split_subindex 프리미티브 의 contract 와 정식 정합 — '#' 가 존재하면 split, 없으면 unsplit, 빈 sub-index collapse
+- hello-radio-group (R51.44) 의 'main_group#0..2' 관례 도의 입명
+
+
+
+**Impact**: §5.35
 
 
 
