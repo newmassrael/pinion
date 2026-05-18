@@ -3121,6 +3121,12 @@
         "6 algorithm stages 분리 함수 (resolve_p / resolve_x / resolve_w / resolve_n / resolve_i / reorder_l)",
         "§5.37.2 RPC method text/bidi (codepoint sequence in → levels + reorder out)"
       ],
+      "caveats_bullets": [
+        "R51.49 L4 path lock: pre-substitute (R51.27/R51.31 LayoutCache) 채택, render-time GlyphRun.is_rtl 거부",
+        "R51.49 pre-substitute 장점: parley API decouple + LRU 단일 lookup 가 BIDI + shape 양쪽 cover",
+        "R51.49 render-time 거부 이유: cache layer unwind 강요 + parley GlyphRun.is_rtl backend lock-in",
+        "R51.49 pre-substitute 한계: font fallback 시 mirror glyph 미공급 폰트 = mirroring_glyph fallback chain 필요"
+      ],
       "alternatives_rejected": [
         {
           "alternative": "icu4x 의존",
@@ -6214,6 +6220,50 @@
         "Phase 2 entry 시 R45 renderer kind 'rhi' template emit 세부 설계 (pinion-render-rhi crate skeleton + naga 종속 depend + bgfx/makepad reference design)",
         "Phase 4+ 언리얼-class B 평가 round — AAA 도메인 구체적 demo requirement 대충 등장 시점에",
         "Vello 영구 의존 frame 회피 invariant 유지 — Phase 2 land 이후 의 Vello-drop 는 자연스럽게 additive path migration"
+      ]
+    },
+    "R51.49": {
+      "decision_summary": "R51.49 §5.37.4 BIDI L4 alt impl path lock RFC (pre-substitute 채택, render-time 거부)",
+      "changes_bullets": [
+        "§5.37.4 caveat: R51.49 L4 path lock — pre-substitute (R51.27 paint_adapter + R51.31 LayoutCache integration) 채택, render-time parley GlyphRun.is_rtl substitute 거부",
+        "§5.37.4 caveat: R51.49 pre-substitute 장점 — parley API decouple (backend swap 가능) + LRU 단일 lookup 가 BIDI helper + shape pass 양쪽 amortize",
+        "§5.37.4 caveat: R51.49 render-time 거부 이유 — R51.31 cache layer unwind 강요 + parley-specific GlyphRun.is_rtl 의존 = backend lock-in 위험",
+        "§5.37.4 caveat: R51.49 pre-substitute 한계 — font fallback 시 mirror codepoint 미공급 폰트 케이스, mirroring_glyph fallback chain 필요 (carry)",
+        "design-only round — R51.27 / R51.31 시점 누락한 architectural decision audit trail 만 atomic store 에 기록"
+      ],
+      "verification_bullets": [
+        "mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync (4 caveat add)",
+        "cargo test --workspace --features pinion-runtime/vello = 1285 pass / 0 fail (코드 미변)",
+        "BIDI L4 lookup substrate (R51.23 mirroring_glyph + R51.27 mirror_paired_brackets paint_adapter wire + R51.31 LayoutCache move) 모두 보존 — 이번 RFC 는 결정 명문화 만",
+        "§5.37.4 body 의 'L-rules' 명시 + alternatives '부분 구현' 거부 + UAX #9 full conformance 정신 정합"
+      ],
+      "impact_refs": [
+        "5.37.4"
+      ],
+      "carry_forward_bullets": [
+        "mirror codepoint 미공급 폰트 fallback chain — mirroring_glyph(cp) 가 None 반환할 때 다른 폰트 시도 (현재는 관령 그대로 폴시터록 공급)",
+        "L4 알고리즘 정확성 conformance sweep 자동화 — UAX BidiCharacterTest.txt + BidiTest.txt 의 mirroring assertion subset"
+      ],
+      "publishable_decision_summary": "R51.49 §5.37.4 BIDI L4 alt impl path lock RFC (pre-substitute 채택, render-time 거부)",
+      "publishable_changes_bullets": [
+        "§5.37.4 caveat: R51.49 L4 path lock — pre-substitute (R51.27 paint_adapter + R51.31 LayoutCache integration) 채택, render-time parley GlyphRun.is_rtl substitute 거부",
+        "§5.37.4 caveat: R51.49 pre-substitute 장점 — parley API decouple (backend swap 가능) + LRU 단일 lookup 가 BIDI helper + shape pass 양쪽 amortize",
+        "§5.37.4 caveat: R51.49 render-time 거부 이유 — R51.31 cache layer unwind 강요 + parley-specific GlyphRun.is_rtl 의존 = backend lock-in 위험",
+        "§5.37.4 caveat: R51.49 pre-substitute 한계 — font fallback 시 mirror codepoint 미공급 폰트 케이스, mirroring_glyph fallback chain 필요 (carry)",
+        "design-only round — R51.27 / R51.31 시점 누락한 architectural decision audit trail 만 atomic store 에 기록"
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync (4 caveat add)",
+        "cargo test --workspace --features pinion-runtime/vello = 1285 pass / 0 fail (코드 미변)",
+        "BIDI L4 lookup substrate (R51.23 mirroring_glyph + R51.27 mirror_paired_brackets paint_adapter wire + R51.31 LayoutCache move) 모두 보존 — 이번 RFC 는 결정 명문화 만",
+        "§5.37.4 body 의 'L-rules' 명시 + alternatives '부분 구현' 거부 + UAX #9 full conformance 정신 정합"
+      ],
+      "publishable_impact_refs": [
+        "5.37.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "mirror codepoint 미공급 폰트 fallback chain — mirroring_glyph(cp) 가 None 반환할 때 다른 폰트 시도 (현재는 관령 그대로 폴시터록 공급)",
+        "L4 알고리즘 정확성 conformance sweep 자동화 — UAX BidiCharacterTest.txt + BidiTest.txt 의 mirroring assertion subset"
       ]
     },
     "Round 1": {
