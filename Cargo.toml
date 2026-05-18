@@ -15,6 +15,7 @@ members = [
     "examples/hello-button",
     "examples/hello-toggle",
     "examples/hello-checkbox",
+    "examples/hello-radio",
     "examples/forge-counter",
     "examples/ai-introspect-demo",
 ]

@@ -2738,6 +2738,9 @@ router.pointer_down(&mut state_scene);
 - examples/hello-checkbox/app.pinion.xml
 - examples/hello-checkbox/src/main.rs:view
 - examples/hello-checkbox/src/main.rs:CheckboxView
+- examples/hello-radio/app.pinion.xml
+- examples/hello-radio/src/main.rs:view
+- examples/hello-radio/src/main.rs:RadioView
 
 
 
@@ -4009,6 +4012,36 @@ router.pointer_down(&mut state_scene);
 - R47.x TextStyle schema 확장 (font_family / weight / decoration)
 - R47.x fontique font fallback override API
 - Phase 2+ lifetime canonical = pinion 자체 text engine (§5.16 R11 thin RHI 정합)
+
+
+
+### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
+
+**Changes**:
+- examples/hello-radio (new binary): Cargo.toml + app.pinion.xml + build.rs + src/main.rs (235 LOC), pinion-core + pinion-shell + vello deps only — same Radio-on-shell shape as R51.30/R51.31/R51.32 button/toggle/checkbox
+- Cargo.toml workspace.members += examples/hello-radio
+- RadioView WidgetView impl: State = (RadioState, bool selected), tag = main_radio, introspect read = state + selected (Bool), keybinding = d / e (Disable / Enable)
+- view fn: 24x24 ring (Container, transparent fill, corner_radius=12, 2 px border) with optional 12x12 inner dot (Box, corner_radius=6, filled, only when selected) — Material / SwiftUI convention; right-of label "Premium tier"
+- §5.38 implementations += examples/hello-radio/{app.pinion.xml, src/main.rs:view, src/main.rs:RadioView}
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello = 0 errors
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (initial doc_markdown on bare "RadioGroup" fixed by backtick wrap)
+- cargo test --workspace --features pinion-runtime/vello = 1226 pass / 0 fail / 6 ignored (baseline preserved — pure-additive binary)
+- LOC: 235 main.rs + 24 Cargo.toml + 27 build.rs + 12 app.pinion.xml = 298 total — within the 200-240 envelope of hello-button (203) / hello-toggle (269) / hello-checkbox (221); substrate amortization holds — pinion-shell API unchanged
+- mnemosyne validate_workspace pending — confirm entries=180 / sections=55 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.38, §5.16, §5.20, §5.35
+
+
+**Carry forward**:
+- Slider visual demo needs InputRouter PointerMove cursor-X forwarding + WidgetView drag-position / key-intervene hook — substrate gap surfaced when R51.33 path A was selected over Slider-first; next round candidate
+- RadioGroup visual demo needs pinion-shell multi-External / multi-tag dispatch — single WidgetView::tag() insufficient for N siblings; substrate round candidate
+- Tier-1 widget visual coverage now 4/6 (button / toggle / checkbox / radio); Slider + RadioGroup remain blocked on the two substrate gaps above
 
 
 

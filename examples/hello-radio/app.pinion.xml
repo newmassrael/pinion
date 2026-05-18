@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R51.33 §5.38 paint-side N=4: pinion-forge renderer manifest for
+  hello-radio. Same single-source-of-truth template that emits
+  HelloButtonRenderer / HelloToggleRenderer / HelloCheckboxRenderer;
+  only the struct name diverges. backend=vello + default Area
+  antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloRadioRenderer"
+        backend="vello"/>
