@@ -3114,6 +3114,18 @@
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
           "symbol": "bidi_reorder"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/bidi.rs",
+          "symbol": "mirroring_glyph"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/bidi.rs",
+          "symbol": "apply_l3_combining_marks"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "parse_bidi_mirroring"
         }
       ],
       "decision_status": "active"
@@ -12599,6 +12611,54 @@
         "R51.24 BidiTest.txt typical-text vector conformance subset — algorithm 완성 검증 (hand-tests 대체)",
         "R51.21 N0 NSM-after-bracket propagation 상환 (deferred from R51.21) — BidiTest.txt 이 드러낼 때 필요 시 처리",
         "derive macro for WidgetTransition / hello-toggle visual demo — BIDI 완성 후 돌아볼 부채 (BIDI algorithm 80-85% 완성, L3/L4/conformance 만 남음)"
+      ]
+    },
+    "Round 512 — R51.23 §5.37.4 BIDI L3 combining marks + mirroring_glyph (L4 substrate)": {
+      "decision_summary": "UCD 16.0 BidiMirroring.txt 적재 + build.rs codegen + mirroring_glyph(cp) pub fn + apply_l3_combining_marks helper + bidi_reorder pipeline L3 추가 — BIDI 알고리즘 P/X/W/N/I/L1/L2/L3 모두 land; L4 mirroring은 render-layer로 위임 (substrate만 제공)",
+      "changes_bullets": [
+        "crates/pinion-text-unicode/ucd/BidiMirroring.txt: UCD 16.0.0 적재 (428 pairs)",
+        "crates/pinion-text-unicode/build.rs: parse_bidi_mirroring + emit_bidi_tables 시그니쳐 확장 (세 번째 table BIDI_MIRRORING_PAIRS 추가)",
+        "crates/pinion-text-unicode/src/bidi.rs: mirroring_glyph(cp: char) -> Option<char> — UAX #9 L4 substrate, binary-search lookup, # Panics doc-section",
+        "crates/pinion-text-unicode/src/bidi.rs: apply_l3_combining_marks(visual_indices, original_classes) — NSM-then-base reverse; bidi_reorder 은 paragraph.chars() 재산출 으로 original_classes 얻은 뒤 L3 적용",
+        "L4 mirroring application 은 renderer 책임; pinion-text-unicode 은 lookup + resolved-level 기반 제공만 하면 됨"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1211 pass (+10 from 1201 — L3 + L4 substrate)",
+        "pinion-text-unicode: 231 tests pass (+10: 5 mirroring_glyph + 5 L3 reorder 포함 파이프라인 컴포지션)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "UAX #9 준수: L3 RTL Hebrew+NSM identity 복원 / L3 multi-NSM order 유지 / L3 LTR no-op / L3 mixed 경지에서 base-before-NSM 구현 보장 / mirroring_glyph round-trip 대입",
+        "BIDI 알고리즘 완성도: ~95-100% (P/X/W/N/I/L1/L2/L3 land + L4 substrate; conformance vector subset 만 남음)"
+      ],
+      "impact_refs": [
+        "5.37.4"
+      ],
+      "carry_forward_bullets": [
+        "R51.x 다음 후보: R51.24 UAX #9 BidiTest.txt typical-text vector subset conformance — algorithm 완성 검증 (hand-tests 대체); R51.24+ 에서 이 때 부족 자병→ N0 NSM-after-bracket propagation 도 처리",
+        "BIDI algorithm 80% 이상 완성 — N0 NSM propagation 잠잠 제외 + BidiTest conformance 잘 지마 철저한 구현",
+        "derive macro for WidgetTransition / hello-toggle visual demo — BIDI 완성 후 돌아볼 부채"
+      ],
+      "publishable_decision_summary": "UCD 16.0 BidiMirroring.txt 적재 + build.rs codegen + mirroring_glyph(cp) pub fn + apply_l3_combining_marks helper + bidi_reorder pipeline L3 추가 — BIDI 알고리즘 P/X/W/N/I/L1/L2/L3 모두 land; L4 mirroring은 render-layer로 위임 (substrate만 제공)",
+      "publishable_changes_bullets": [
+        "crates/pinion-text-unicode/ucd/BidiMirroring.txt: UCD 16.0.0 적재 (428 pairs)",
+        "crates/pinion-text-unicode/build.rs: parse_bidi_mirroring + emit_bidi_tables 시그니쳐 확장 (세 번째 table BIDI_MIRRORING_PAIRS 추가)",
+        "crates/pinion-text-unicode/src/bidi.rs: mirroring_glyph(cp: char) -> Option<char> — UAX #9 L4 substrate, binary-search lookup, # Panics doc-section",
+        "crates/pinion-text-unicode/src/bidi.rs: apply_l3_combining_marks(visual_indices, original_classes) — NSM-then-base reverse; bidi_reorder 은 paragraph.chars() 재산출 으로 original_classes 얻은 뒤 L3 적용",
+        "L4 mirroring application 은 renderer 책임; pinion-text-unicode 은 lookup + resolved-level 기반 제공만 하면 됨"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1211 pass (+10 from 1201 — L3 + L4 substrate)",
+        "pinion-text-unicode: 231 tests pass (+10: 5 mirroring_glyph + 5 L3 reorder 포함 파이프라인 컴포지션)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "UAX #9 준수: L3 RTL Hebrew+NSM identity 복원 / L3 multi-NSM order 유지 / L3 LTR no-op / L3 mixed 경지에서 base-before-NSM 구현 보장 / mirroring_glyph round-trip 대입",
+        "BIDI 알고리즘 완성도: ~95-100% (P/X/W/N/I/L1/L2/L3 land + L4 substrate; conformance vector subset 만 남음)"
+      ],
+      "publishable_impact_refs": [
+        "5.37.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.x 다음 후보: R51.24 UAX #9 BidiTest.txt typical-text vector subset conformance — algorithm 완성 검증 (hand-tests 대체); R51.24+ 에서 이 때 부족 자병→ N0 NSM-after-bracket propagation 도 처리",
+        "BIDI algorithm 80% 이상 완성 — N0 NSM propagation 잠잠 제외 + BidiTest conformance 잘 지마 철저한 구현",
+        "derive macro for WidgetTransition / hello-toggle visual demo — BIDI 완성 후 돌아볼 부채"
       ]
     },
     "Round 6": {

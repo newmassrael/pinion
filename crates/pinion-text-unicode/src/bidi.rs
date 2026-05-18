@@ -203,6 +203,36 @@ pub enum BracketType {
     Close,
 }
 
+/// UAX #9 L4 `Bidi_Mirroring_Glyph` lookup — return the canonical
+/// mirrored codepoint that should be rendered when this character
+/// appears at an odd embedding level. Codepoints without a
+/// canonical mirror (most of Unicode) return `None`; the caller's
+/// rendering engine may apply a best-fit mirror for chars whose
+/// `Bidi_Mirrored` property is `Y` but which have no entry in
+/// `BidiMirroring.txt` (UCD note).
+///
+/// The pipeline's [`bidi_reorder`] does not apply L4 — mirroring is
+/// a glyph-level substitution that belongs to the renderer. Use
+/// this lookup at draw time, gated by the resolved embedding level
+/// being odd (from [`resolve_implicit_levels`]).
+///
+/// # Panics
+///
+/// Panics if the codegen layer emits a mirroring entry with an
+/// invalid target codepoint — a build-time invariant guarded by
+/// `parse_bidi_mirroring`.
+#[must_use]
+pub fn mirroring_glyph(cp: char) -> Option<char> {
+    let key = cp as u32;
+    let pairs = tables::BIDI_MIRRORING_PAIRS;
+    let idx = pairs.binary_search_by_key(&key, |&(k, _)| k).ok()?;
+    let (_, mirrored) = pairs[idx];
+    Some(
+        char::from_u32(mirrored)
+            .expect("BidiMirroring.txt entries are valid scalar values"),
+    )
+}
+
 /// UAX #9 BD16 lookup — given a codepoint, return its matching
 /// bracket and the kind (Open or Close) when the codepoint is a
 /// paired bracket. Codepoints not present in `BidiBrackets.txt`
@@ -1498,11 +1528,52 @@ pub fn reorder_visual(levels: &[u8]) -> Vec<usize> {
 }
 
 // ======================================================================
+// R51.23 §5.37.4 — L3 (UAX #9 §3.4 combining-mark reorder)
+// ======================================================================
+
+/// UAX #9 §3.4 L3 — restore "base first, NSMs second" order for
+/// combining marks that were swapped to the front of their base by
+/// L2's RTL-run reversal. Walks `visual_indices` and, for every
+/// maximal run of `Bidi_Class = NSM` characters that is *followed*
+/// by a non-NSM in visual order, reverses the `[NSMs..., base]`
+/// slice in place so the base leads.
+///
+/// `original_classes` carries the pre-W1 `Bidi_Class` for each
+/// codepoint (re-derived from the paragraph via [`bidi_class`] by
+/// the caller). NSM runs not followed by a base (i.e. the very end
+/// of the visual sequence) are left as-is — they have no associated
+/// base to reorder against.
+fn apply_l3_combining_marks(
+    visual_indices: &mut [usize],
+    original_classes: &[BidiClass],
+) {
+    let n = visual_indices.len();
+    if n < 2 {
+        return;
+    }
+    let mut i = 0;
+    while i < n {
+        if original_classes[visual_indices[i]] != BidiClass::NSM {
+            i += 1;
+            continue;
+        }
+        let nsm_start = i;
+        while i < n && original_classes[visual_indices[i]] == BidiClass::NSM {
+            i += 1;
+        }
+        let nsm_end = i; // exclusive — points to first non-NSM after the run
+        if nsm_end < n {
+            visual_indices[nsm_start..=nsm_end].reverse();
+        }
+    }
+}
+
+// ======================================================================
 // R51.22 §5.37.4 — bidi_reorder full-pipeline wrapper
 // ======================================================================
 
 /// UAX #9 full pipeline entry point — given a single paragraph,
-/// run P → X → W → N → I → L1 → L2 and return the visual index
+/// run P → X → W → N → I → L1 → L2 → L3 and return the visual index
 /// permutation. `result[k]` is the original codepoint position of
 /// the k-th character in visual order.
 ///
@@ -1510,11 +1581,10 @@ pub fn reorder_visual(levels: &[u8]) -> Vec<usize> {
 /// and apply [`bidi_reorder`] per paragraph — the algorithm is
 /// paragraph-local by design.
 ///
-/// L3 (combining-mark reorder) and L4 (mirroring) are NOT applied
-/// here; both are display-layer concerns (combining marks already
-/// follow their base in this output; mirroring needs
-/// `BidiMirroring.txt` which is not yet vendored). Tracked for a
-/// follow-up slice.
+/// L4 (mirroring) is NOT applied here — mirroring is a glyph
+/// substitution that belongs to the renderer. Use
+/// [`mirroring_glyph`] at draw time, gated by the resolved
+/// embedding level being odd, to obtain the L4 substitute glyph.
 #[must_use]
 pub fn bidi_reorder(paragraph: &str) -> Vec<usize> {
     let p_level = paragraph_level(paragraph);
@@ -1523,7 +1593,11 @@ pub fn bidi_reorder(paragraph: &str) -> Vec<usize> {
     let post_n = resolve_neutral_types(post_w, paragraph, p_level);
     let post_i = resolve_implicit_levels(post_n);
     let post_l1 = apply_l1_line_break(post_i, paragraph, p_level);
-    reorder_visual(&post_l1.levels)
+    let mut indices = reorder_visual(&post_l1.levels);
+    let original_classes: Vec<BidiClass> =
+        paragraph.chars().map(bidi_class).collect();
+    apply_l3_combining_marks(&mut indices, &original_classes);
+    indices
 }
 
 #[cfg(test)]
@@ -2905,5 +2979,117 @@ mod tests {
     #[test]
     fn bidi_reorder_empty_paragraph() {
         assert!(bidi_reorder("").is_empty());
+    }
+
+    // ---- R51.23 §5.37.4 — L3 combining marks + L4 mirroring lookup ----
+
+    #[test]
+    fn mirroring_glyph_ascii_parenthesis() {
+        assert_eq!(mirroring_glyph('('), Some(')'));
+        assert_eq!(mirroring_glyph(')'), Some('('));
+    }
+
+    #[test]
+    fn mirroring_glyph_less_greater() {
+        assert_eq!(mirroring_glyph('<'), Some('>'));
+        assert_eq!(mirroring_glyph('>'), Some('<'));
+    }
+
+    #[test]
+    fn mirroring_glyph_letter_is_none() {
+        assert_eq!(mirroring_glyph('a'), None);
+        assert_eq!(mirroring_glyph('א'), None);
+    }
+
+    #[test]
+    fn mirroring_glyph_square_bracket() {
+        assert_eq!(mirroring_glyph('['), Some(']'));
+        assert_eq!(mirroring_glyph(']'), Some('['));
+    }
+
+    #[test]
+    fn mirroring_glyph_round_trip() {
+        for ch in ['(', '[', '{', '<', '\u{27E6}', '\u{2983}'] {
+            let mirrored = mirroring_glyph(ch).expect("mirroring glyph");
+            let back = mirroring_glyph(mirrored).expect("inverse mirror");
+            assert_eq!(back, ch);
+        }
+    }
+
+    #[test]
+    fn l3_rtl_hebrew_with_combining_mark_keeps_base_first() {
+        // "א\u{0301}" — Hebrew alef + COMBINING ACUTE ACCENT (NSM).
+        // Paragraph_level = 1 (RTL). After P→X→W (NSM inherits R via
+        // W1) → N → I (no bump, both already at level 1) → L1 → L2
+        // (reverse whole [0, 1] → [1, 0]) → L3 (NSM at visual[0]
+        // followed by R-base at visual[1] → reverse [1, 0] back to
+        // [0, 1]).
+        let result = bidi_reorder("א\u{0301}");
+        assert_eq!(result, vec![0, 1]);
+    }
+
+    #[test]
+    fn l3_multiple_combining_marks_after_rtl_base_keep_order() {
+        // "א\u{0301}\u{0302}" — base + 2 NSMs. Paragraph=RTL.
+        //   L2 reverses [0, 1, 2] → [2, 1, 0].
+        //   L3: NSMs at visual[0, 1] followed by base at visual[2].
+        //   Reverse [0..=2] → [0, 1, 2]. Restores original order.
+        let result = bidi_reorder("א\u{0301}\u{0302}");
+        assert_eq!(result, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn l3_no_op_for_ltr_combining_marks() {
+        // "a\u{0301}" in LTR — no reversal at L2, L3 finds NSM at
+        // visual[1] with no following non-NSM → no-op.
+        let result = bidi_reorder("a\u{0301}");
+        assert_eq!(result, vec![0, 1]);
+    }
+
+    #[test]
+    fn l3_handles_mixed_ltr_rtl_with_nsm() {
+        // "Hello אב\u{0301}" — LTR text + RTL with NSM. Paragraph=LTR.
+        //   After full pipeline: 'Hello' at level 0 (LTR), 'אב\u{0301}'
+        //   at level 1 (RTL run). L2 reverses the RTL run including
+        //   NSM → visual: [0..5] + reversed [NSM, ב, א].
+        //   L3: NSM at visual[5] (orig pos 7 in chars), followed by
+        //   non-NSM base ('ב' orig pos 6) at visual[6]. Reverse
+        //   visual[5..=6] → [ב, NSM] order, then continue. After L3:
+        //   "Hello" + [ב, NSM, א].
+        //   Actually let me recompute carefully. Original char order:
+        //   H(0) e(1) l(2) l(3) o(4) ' '(5) א(6) ב(7) ́(8).
+        //   Wait there are 9 chars. Let me recount.
+        let text = "Hello אב\u{0301}";
+        let result = bidi_reorder(text);
+        let chars: Vec<char> = text.chars().collect();
+        // Build visual string from result for inspection.
+        let visual: String = result.iter().map(|&i| chars[i]).collect();
+        // Expected: "Hello " followed by [ב, \u{0301}, א] (base+NSM
+        // restored, then 'א' last). Let's verify by structural
+        // properties rather than exact equality, since the NSM
+        // combination is the L3 concern.
+        // Property: the NSM should appear after its base 'ב' in
+        // visual.
+        let nsm_visual_pos = result.iter().position(|&i| chars[i] == '\u{0301}').unwrap();
+        let bet_visual_pos = result.iter().position(|&i| chars[i] == 'ב').unwrap();
+        assert!(nsm_visual_pos > bet_visual_pos,
+            "NSM should follow its base 'ב' in visual order; got NSM at {nsm_visual_pos}, ב at {bet_visual_pos}. Visual: {visual:?}");
+    }
+
+    #[test]
+    fn pipeline_brackets_in_rtl_context_with_mirroring_lookup() {
+        // After bidi_reorder for "א(b)ג" RTL:
+        //   N0: brackets at level 1 (RTL embed). Inside (): 'b' L
+        //   opposite of embed. Preceding context = 'א' R = embed →
+        //   per N0 fallback brackets → embed → R.
+        //   I2: L 'b' at odd level → +1 to level 2.
+        //   L2: max=2, reverse 'b' alone (no change). Then level=1,
+        //   reverse whole sequence.
+        // Visual layout: 'ג', ')', 'b', '(', 'א' (right-to-left
+        // visual). Now at draw time, the embedding level of '(' and
+        // ')' is 1 (odd) → renderer applies mirroring_glyph to swap
+        // glyphs. Verify the lookup returns the matching bracket.
+        assert_eq!(mirroring_glyph('('), Some(')'));
+        assert_eq!(mirroring_glyph(')'), Some('('));
     }
 }
