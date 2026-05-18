@@ -2567,6 +2567,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/bidi.rs:resolve_explicit_levels
 - crates/pinion-text-unicode/src/bidi.rs:ExplicitLevels
 - crates/pinion-text-unicode/src/bidi.rs:MAX_DEPTH
+- crates/pinion-text-unicode/src/bidi.rs:resolve_weak_types
 
 
 
@@ -8136,6 +8137,38 @@ router.pointer_down(&mut state_scene);
 - R51.x 다음 후보: BIDI W-rules (UAX #9 §3.3.3) — weak type resolution (W1 NSM / W2 EN-after-AL / W3 AL->R / W4 ES-CS between EN-AN / W5 ET adjacent EN / W6 leftover separators->ON / W7 EN context-strong); level run partitioning (X10) 필요할 가능성
 - BIDI X-rules → W/N/I/L 진행 후 UAX #9 BidiTest.txt 수십만 vector conformance 적용 (hand-tests + 대표 vector subset)
 - derive macro for WidgetTransition (improvement opportunity, 별도 라운드) / hello-toggle visual demo (paint-side validation) / serde Option<Value> JSON null RFC (small fix)
+
+
+
+### Round 508 — R51.19 §5.37.4 BIDI W-rules (UAX #9 §3.3.3) — weak types + isolating run sequences — UAX #9 §3.3.3 W1-W7 + X10 level run + BD13 isolating run sequence land — resolve_weak_types(explicit, paragraph_level) over X-rules output; AL→R, EN-after-AL→AN, EN-context-L→L, NSM 전파 + isolate-boundary→ON, single-ES/CS-between-strong-neighbors→same-strong, ET-adjacent-EN→EN, residual→ON
+
+**Changes**:
+- crates/pinion-text-unicode/src/bidi.rs: resolve_weak_types(ExplicitLevels, paragraph_level) -> ExplicitLevels — UAX #9 §3.3.3 weak resolution; levels unchanged, classes rewritten W1→W7 per isolating run sequence
+- private substrate: LevelRun + IsolatingRunSequence structs; build_level_runs (X9-removed skip) + match_isolate_initiators (depth-tracked stack) + build_isolating_run_sequences (BD13 connect runs via matched initiator→PDI pair at run boundaries) + compute_sos_eos (X10 max(neighbor_level, sequence_level) parity)
+- private W-rule helpers: apply_w1 (NSM at sos / after isolate→ON / else preceding type) / apply_w2 (last-strong scan; AL→AN) / apply_w3 (AL→R) / apply_w4 (single ES|CS between EN-EN / single CS between AN-AN) / apply_w5 (ET-sequence adjacent EN) / apply_w6 (residual ES/ET/CS→ON) / apply_w7 (last-strong scan; L→L on EN)
+- external lib 0 유지 — std + alloc 만 의존; HashMap 없이 Vec<Option<usize>> position→run index lookup; W rules 는 sequence-flattened slice view 일괄 처리 (collect_sequence_positions)
+- overflow-isolate guard: matched LRI→PDI 가 같은 level run 안 (initiator overflow case) 는 BD13 connection 에서 제외 (initiator must be last member of run / PDI must be first member of run) — self-loop 회피
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1157 pass (+31 from 1126 — BIDI W-rules)
+- pinion-text-unicode: 177 tests pass (+31 W-rules incl. 3 pipeline composition tests + 2 cross-sequence boundary tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline 유지: forbid unsafe / deny warnings / clippy::pedantic deny)
+- UAX #9 spec 준수 검증: W1 NSM (start→ON / after-LRI/PDI→ON / propagation) / W2 EN-after-AL→AN / W2 sos-as-strong-boundary 구분 / W3 AL→R / W4 single-ES∈EN-EN→EN, double-ES leaves both / W4 single-CS∈AN-AN→AN / W4 EN-AN mismatch / W5 ET-before/after-EN→EN / W5 ET-sequence→EN / W6 residual→ON / W7 sos-L→L on bare EN
+- cross-sequence: AL outside isolate 가 EN inside isolate 에 영향 안 주음 (sequence-local W2) / BD13 outer sequence 가 LRI…PDI 제하 운 AL…EN 연결됨 (잘 이이지않) (외부 시퀀스 명릹 적용)
+
+
+
+**Impact**: §5.37.4
+
+
+**Carry forward**:
+- R51.x 다음 후보: BIDI N-rules (UAX #9 §3.3.4) — neutral resolution (N0 bracket pairs / N1 neutrals between strong→surrounding-strong / N2 remaining neutrals→sos-equivalent); BD16 괴 포용 조합하는 paired bracket table 적재 필요
+- BD16 (paired bracket): UCD BidiBrackets.txt 파싱 + (open, close, open_no_canonical_equiv 등) build.rs codegen
+- BIDI I-rules + L-rules 그 다음 장 — 레벨 재조정 (I1/I2) + level run reorder (L1-L4)
+- BidiTest.txt 수십만 vector conformance applied subset 머지마지 장 (W/N 완료 후)
+- derive macro for WidgetTransition (별도 라운드) / hello-toggle visual demo / serde Option<Value> JSON null RFC — BIDI 완성 후 돌아볼 부채
 
 
 

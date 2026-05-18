@@ -594,6 +594,392 @@ fn fsi_resolves_to_rli(chars: &[char], fsi_idx: usize) -> bool {
     false
 }
 
+// ======================================================================
+// R51.19 §5.37.4 — W-rules (UAX #9 §3.3.3 weak type resolution)
+// ======================================================================
+//
+// Pipeline order: X-rules (resolve_explicit_levels) → W-rules
+// (resolve_weak_types) → N → I → L. The W-rules operate per
+// "isolating run sequence" (UAX #9 BD13) — a chain of level runs
+// connected by matched isolate initiator / PDI pairs that span the
+// inner (higher) embedding levels they enclose. Within each
+// sequence, W1-W7 rewrite weak `BidiClass` values to strong
+// equivalents (L / R / EN / AN / ON) so the downstream N rules see
+// a sequence of strong + neutral types only.
+
+/// One UAX #9 level run — a maximal sub-sequence of consecutive
+/// non-removed codepoints sharing the same embedding level. Removed
+/// (X9) codes — RLE / LRE / RLO / LRO / PDF / original BN — are
+/// excluded from `members`; their level is preserved in
+/// [`ExplicitLevels::levels`] for downstream layout but they do not
+/// participate in W/N rule resolution.
+#[derive(Debug, Clone)]
+struct LevelRun {
+    level: u8,
+    members: Vec<usize>,
+}
+
+/// UAX #9 BD13 isolating run sequence — a chain of [`LevelRun`]s
+/// connected by matched isolate initiator (LRI / RLI / FSI) → PDI
+/// pairs. All runs in a sequence share the same embedding level
+/// (the X-rules ensure isolate initiators emit their *outer* level,
+/// so the matching PDI also reports the outer level — both sit on
+/// the run that owns the surrounding context).
+#[derive(Debug, Clone)]
+struct IsolatingRunSequence {
+    level: u8,
+    /// Indices into the parent `Vec<LevelRun>`, in textual order.
+    run_indices: Vec<usize>,
+}
+
+/// Group the non-removed codepoints of an X-rules output into level
+/// runs. The result preserves textual order; each run's `members`
+/// slice is monotonically increasing.
+fn build_level_runs(levels: &[u8], classes: &[BidiClass]) -> Vec<LevelRun> {
+    let mut runs: Vec<LevelRun> = Vec::new();
+    for (i, &cls) in classes.iter().enumerate() {
+        if cls == BidiClass::BN {
+            continue;
+        }
+        let level = levels[i];
+        if let Some(last) = runs.last_mut()
+            && last.level == level
+        {
+            last.members.push(i);
+            continue;
+        }
+        runs.push(LevelRun {
+            level,
+            members: vec![i],
+        });
+    }
+    runs
+}
+
+/// Match every isolate initiator (LRI / RLI / FSI) to its
+/// corresponding PDI using the same depth-tracked walk the X-rules
+/// already implement. Removed (BN) codes are skipped — by this
+/// point they no longer participate in the algorithm. Unmatched
+/// initiators (no PDI found before EOP) and stray PDIs (no prior
+/// initiator) are silently dropped from the result.
+fn match_isolate_initiators(classes: &[BidiClass]) -> Vec<(usize, usize)> {
+    let mut matches: Vec<(usize, usize)> = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, &cls) in classes.iter().enumerate() {
+        // BN (X9 "removed") chars fall into the wildcard arm — by
+        // this stage they no longer participate in matching, same
+        // as every other non-isolate character.
+        match cls {
+            BidiClass::LRI | BidiClass::RLI | BidiClass::FSI => stack.push(i),
+            BidiClass::PDI => {
+                if let Some(initiator) = stack.pop() {
+                    matches.push((initiator, i));
+                }
+            }
+            _ => {}
+        }
+    }
+    matches
+}
+
+/// Walk the level runs and group them into isolating run sequences
+/// (UAX #9 BD13). A pair `(initiator_pos, pdi_pos)` connects
+/// `run_a → run_b` when `initiator_pos` is the *last* member of
+/// `run_a` and `pdi_pos` is the *first* member of `run_b` *and* the
+/// two runs are distinct (the latter excludes the "overflowed
+/// isolate" case where the initiator and PDI are in the same run at
+/// the outer level).
+fn build_isolating_run_sequences(
+    runs: &[LevelRun],
+    classes: &[BidiClass],
+) -> Vec<IsolatingRunSequence> {
+    let n_runs = runs.len();
+    if n_runs == 0 {
+        return Vec::new();
+    }
+    let n_chars = classes.len();
+
+    // Position → owning run index. `None` for removed codes (X9).
+    let mut run_at_pos: Vec<Option<usize>> = vec![None; n_chars];
+    for (ri, run) in runs.iter().enumerate() {
+        for &p in &run.members {
+            run_at_pos[p] = Some(ri);
+        }
+    }
+
+    // next_in_seq[ri] = Some(rj) when run ri's last member is an
+    // isolate initiator matched to a PDI that begins run rj (and
+    // rj != ri).
+    let mut next_in_seq: Vec<Option<usize>> = vec![None; n_runs];
+    let mut has_prev: Vec<bool> = vec![false; n_runs];
+    for (initiator_pos, pdi_pos) in match_isolate_initiators(classes) {
+        let Some(ri) = run_at_pos[initiator_pos] else {
+            continue;
+        };
+        let Some(rj) = run_at_pos[pdi_pos] else {
+            continue;
+        };
+        if ri == rj {
+            continue;
+        }
+        if *runs[ri].members.last().unwrap_or(&usize::MAX) != initiator_pos {
+            continue;
+        }
+        if *runs[rj].members.first().unwrap_or(&usize::MAX) != pdi_pos {
+            continue;
+        }
+        next_in_seq[ri] = Some(rj);
+        has_prev[rj] = true;
+    }
+
+    // Walk: every run that has no predecessor starts a new sequence;
+    // follow next_in_seq until a chain end.
+    let mut sequences = Vec::new();
+    let mut visited = vec![false; n_runs];
+    for ri in 0..n_runs {
+        if visited[ri] || has_prev[ri] {
+            continue;
+        }
+        let mut run_indices = vec![ri];
+        visited[ri] = true;
+        let mut cur = ri;
+        while let Some(next) = next_in_seq[cur] {
+            if visited[next] {
+                break;
+            }
+            run_indices.push(next);
+            visited[next] = true;
+            cur = next;
+        }
+        sequences.push(IsolatingRunSequence {
+            level: runs[ri].level,
+            run_indices,
+        });
+    }
+    sequences
+}
+
+/// UAX #9 X10 sos/eos — determine the start-of-sequence and
+/// end-of-sequence types for an isolating run sequence. The types
+/// are L or R, computed from the higher of (`sequence_level`,
+/// `neighbor_level`) parity. The neighbor is the closest non-removed
+/// character outside the sequence; if no neighbor exists,
+/// `paragraph_level` substitutes.
+fn compute_sos_eos(
+    seq: &IsolatingRunSequence,
+    runs: &[LevelRun],
+    levels: &[u8],
+    classes: &[BidiClass],
+    paragraph_level: u8,
+) -> (BidiClass, BidiClass) {
+    let first_run = &runs[seq.run_indices[0]];
+    let last_run = &runs[*seq.run_indices.last().expect("sequence has at least one run")];
+    let first_pos = first_run.members[0];
+    let last_pos = *last_run
+        .members
+        .last()
+        .expect("level run has at least one member");
+
+    let prev_level = (0..first_pos)
+        .rev()
+        .find(|&i| classes[i] != BidiClass::BN)
+        .map_or(paragraph_level, |i| levels[i]);
+
+    let next_level = ((last_pos + 1)..classes.len())
+        .find(|&i| classes[i] != BidiClass::BN)
+        .map_or(paragraph_level, |i| levels[i]);
+
+    let sos_max = core::cmp::max(prev_level, seq.level);
+    let eos_max = core::cmp::max(seq.level, next_level);
+    let sos = if sos_max % 2 == 0 {
+        BidiClass::L
+    } else {
+        BidiClass::R
+    };
+    let eos = if eos_max % 2 == 0 {
+        BidiClass::L
+    } else {
+        BidiClass::R
+    };
+    (sos, eos)
+}
+
+/// W1 — NSM resolution. NSM at the start of the sequence or
+/// immediately after an isolate initiator / PDI takes type `ON`;
+/// otherwise it inherits the type of the preceding character (which
+/// may itself have been rewritten by an earlier W1 application).
+fn apply_w1(view: &mut [BidiClass]) {
+    if view.is_empty() {
+        return;
+    }
+    if view[0] == BidiClass::NSM {
+        view[0] = BidiClass::ON;
+    }
+    for i in 1..view.len() {
+        if view[i] != BidiClass::NSM {
+            continue;
+        }
+        view[i] = match view[i - 1] {
+            BidiClass::LRI | BidiClass::RLI | BidiClass::FSI | BidiClass::PDI => BidiClass::ON,
+            other => other,
+        };
+    }
+}
+
+/// W2 — EN preceded (in the sequence, skipping non-strong) by AL
+/// becomes AN. `sos` is treated as the last strong before the
+/// sequence start; since sos is always L or R, it never triggers
+/// the AL conversion.
+fn apply_w2(view: &mut [BidiClass], sos: BidiClass) {
+    let mut last_strong = sos;
+    for cls in view.iter_mut() {
+        match *cls {
+            BidiClass::L | BidiClass::R | BidiClass::AL => last_strong = *cls,
+            BidiClass::EN => {
+                if last_strong == BidiClass::AL {
+                    *cls = BidiClass::AN;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// W3 — every remaining AL becomes R.
+fn apply_w3(view: &mut [BidiClass]) {
+    for cls in view.iter_mut() {
+        if *cls == BidiClass::AL {
+            *cls = BidiClass::R;
+        }
+    }
+}
+
+/// W4 — a *single* ES or CS between two ENs becomes EN; a *single*
+/// CS between two ANs becomes AN. The neighbors are the immediate
+/// previous and next character in the flattened sequence.
+fn apply_w4(view: &mut [BidiClass]) {
+    if view.len() < 3 {
+        return;
+    }
+    for i in 1..view.len() - 1 {
+        let prev = view[i - 1];
+        let next = view[i + 1];
+        match view[i] {
+            BidiClass::ES | BidiClass::CS
+                if prev == BidiClass::EN && next == BidiClass::EN =>
+            {
+                view[i] = BidiClass::EN;
+            }
+            BidiClass::CS if prev == BidiClass::AN && next == BidiClass::AN => {
+                view[i] = BidiClass::AN;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// W5 — a maximal sequence of consecutive ETs that touches (on
+/// either side) at least one EN turns into all ENs.
+fn apply_w5(view: &mut [BidiClass]) {
+    let n = view.len();
+    let mut i = 0;
+    while i < n {
+        if view[i] != BidiClass::ET {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && view[i] == BidiClass::ET {
+            i += 1;
+        }
+        let end = i; // exclusive
+        let before_en = start > 0 && view[start - 1] == BidiClass::EN;
+        let after_en = end < n && view[end] == BidiClass::EN;
+        if before_en || after_en {
+            for cls in &mut view[start..end] {
+                *cls = BidiClass::EN;
+            }
+        }
+    }
+}
+
+/// W6 — any ES, ET, or CS that did not change in W4/W5 becomes ON.
+fn apply_w6(view: &mut [BidiClass]) {
+    for cls in view.iter_mut() {
+        match *cls {
+            BidiClass::ES | BidiClass::ET | BidiClass::CS => *cls = BidiClass::ON,
+            _ => {}
+        }
+    }
+}
+
+/// W7 — EN preceded (in the sequence, scanning backward over
+/// non-strong) by L becomes L. `sos` participates: at sequence
+/// start, a sos of L converts the leading ENs to L (this is what
+/// makes ASCII digits in an LTR paragraph render as L-tagged
+/// characters for the L rules).
+fn apply_w7(view: &mut [BidiClass], sos: BidiClass) {
+    let mut last_strong = sos;
+    for cls in view.iter_mut() {
+        match *cls {
+            BidiClass::L | BidiClass::R => last_strong = *cls,
+            BidiClass::EN => {
+                if last_strong == BidiClass::L {
+                    *cls = BidiClass::L;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Flatten an isolating run sequence into a sorted vector of
+/// codepoint positions. Each run's `members` is already sorted; the
+/// runs themselves are concatenated in textual order.
+fn collect_sequence_positions(seq: &IsolatingRunSequence, runs: &[LevelRun]) -> Vec<usize> {
+    let mut positions = Vec::new();
+    for &ri in &seq.run_indices {
+        positions.extend_from_slice(&runs[ri].members);
+    }
+    positions
+}
+
+/// UAX #9 §3.3.3 — apply W1-W7 to each isolating run sequence built
+/// over the X-rules output. The returned struct shares its `levels`
+/// vector with the input verbatim (W rules do not touch levels);
+/// only `classes` may have been rewritten.
+///
+/// `paragraph_level` is the same value passed to
+/// [`resolve_explicit_levels`] — needed by [`compute_sos_eos`] to
+/// determine sos/eos at paragraph boundaries.
+#[must_use]
+pub fn resolve_weak_types(explicit: ExplicitLevels, paragraph_level: u8) -> ExplicitLevels {
+    let ExplicitLevels {
+        levels,
+        mut classes,
+    } = explicit;
+    let runs = build_level_runs(&levels, &classes);
+    let sequences = build_isolating_run_sequences(&runs, &classes);
+
+    for seq in &sequences {
+        let positions = collect_sequence_positions(seq, &runs);
+        let (sos, _eos) = compute_sos_eos(seq, &runs, &levels, &classes, paragraph_level);
+        let mut view: Vec<BidiClass> = positions.iter().map(|&i| classes[i]).collect();
+        apply_w1(&mut view);
+        apply_w2(&mut view, sos);
+        apply_w3(&mut view);
+        apply_w4(&mut view);
+        apply_w5(&mut view);
+        apply_w6(&mut view);
+        apply_w7(&mut view, sos);
+        for (k, &p) in positions.iter().enumerate() {
+            classes[p] = view[k];
+        }
+    }
+
+    ExplicitLevels { levels, classes }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::similar_names,
@@ -1161,5 +1547,326 @@ mod tests {
         assert_eq!(out.classes[1], BidiClass::L); // LRI under outer LTR override
         assert_eq!(out.classes[2], BidiClass::R); // 'א' inside isolate stays R
         assert_eq!(out.levels[2], 4);
+    }
+
+    // ---- R51.19 §5.37.4 — W-rules (resolve_weak_types) ----
+
+    fn resolve_pipeline(text: &str, paragraph_level: u8) -> ExplicitLevels {
+        let explicit = resolve_explicit_levels(text, paragraph_level);
+        resolve_weak_types(explicit, paragraph_level)
+    }
+
+    #[test]
+    fn w_rules_empty_paragraph() {
+        let out = resolve_pipeline("", 0);
+        assert!(out.classes.is_empty());
+        assert!(out.levels.is_empty());
+    }
+
+    #[test]
+    fn w_rules_pure_ltr_unchanged() {
+        // No weak types, no rule fires. L stays L.
+        let out = resolve_pipeline("abc", 0);
+        assert_eq!(out.classes, vec![BidiClass::L; 3]);
+        assert_eq!(out.levels, vec![0; 3]);
+    }
+
+    #[test]
+    fn w_rules_pure_rtl_unchanged() {
+        let out = resolve_pipeline("אבג", 1);
+        assert_eq!(out.classes, vec![BidiClass::R; 3]);
+        assert_eq!(out.levels, vec![1; 3]);
+    }
+
+    // ---- W1 ----
+
+    #[test]
+    fn w1_nsm_at_sequence_start_becomes_on() {
+        // NSM at the very start of the paragraph (= sequence start) → ON.
+        // U+0301 COMBINING ACUTE ACCENT is class NSM.
+        let nsm = '\u{0301}';
+        let out = resolve_pipeline(&nsm.to_string(), 0);
+        assert_eq!(out.classes, vec![BidiClass::ON]);
+    }
+
+    #[test]
+    fn w1_nsm_after_l_becomes_l() {
+        // ASCII 'a' + combining accent: NSM inherits L.
+        let text = "a\u{0301}";
+        let out = resolve_pipeline(text, 0);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L]);
+    }
+
+    #[test]
+    fn w1_nsm_after_r_becomes_r() {
+        // Hebrew letter + combining mark: NSM inherits R.
+        let text = "א\u{0301}";
+        let out = resolve_pipeline(text, 1);
+        assert_eq!(out.classes, vec![BidiClass::R, BidiClass::R]);
+    }
+
+    #[test]
+    fn w1_nsm_after_lri_becomes_on() {
+        // LRI followed by NSM: W1 maps NSM to ON because the
+        // preceding char is an isolate initiator.
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        let text = format!("a{lri}\u{0301}b{pdi}");
+        let out = resolve_pipeline(&text, 0);
+        // Positions: 'a' (L), LRI (LRI), NSM→ON, 'b' (L), PDI (PDI).
+        assert_eq!(out.classes[2], BidiClass::ON);
+    }
+
+    #[test]
+    fn w1_nsm_after_pdi_becomes_on() {
+        // PDI followed by NSM (in the outer sequence): NSM → ON.
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        let text = format!("a{lri}b{pdi}\u{0301}");
+        let out = resolve_pipeline(&text, 0);
+        // Positions: a, LRI, b, PDI, NSM. NSM follows PDI → ON.
+        assert_eq!(out.classes[4], BidiClass::ON);
+    }
+
+    #[test]
+    fn w1_consecutive_nsm_propagate() {
+        // Two NSMs after 'a': both become L (the second propagates
+        // through the already-W1'd first).
+        let text = "a\u{0301}\u{0302}";
+        let out = resolve_pipeline(text, 0);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L, BidiClass::L]);
+    }
+
+    // ---- W2 ----
+
+    #[test]
+    fn w2_en_after_al_becomes_an() {
+        // Arabic letter followed by ASCII digit: W2 turns EN → AN.
+        // Then W3 turns AL → R.
+        let out = resolve_pipeline("ا5", 1);
+        assert_eq!(out.classes, vec![BidiClass::R, BidiClass::AN]);
+    }
+
+    #[test]
+    fn w2_en_after_l_stays_en_then_w7_to_l() {
+        // ASCII letter + ASCII digit in LTR paragraph: W2 keeps EN
+        // (preceding strong is L, not AL). W7 then converts EN → L.
+        let out = resolve_pipeline("a5", 0);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L]);
+    }
+
+    #[test]
+    fn w2_en_at_sequence_start_stays_en_in_rtl_paragraph() {
+        // RTL paragraph: sos = R. No AL precedes the EN, so W2 does
+        // not fire. W7 also does not fire (sos is R, not L). EN stays.
+        let out = resolve_pipeline("5", 1);
+        assert_eq!(out.classes, vec![BidiClass::EN]);
+    }
+
+    // ---- W3 ----
+
+    #[test]
+    fn w3_al_becomes_r() {
+        // Even an isolated AL becomes R.
+        let out = resolve_pipeline("ا", 1);
+        assert_eq!(out.classes, vec![BidiClass::R]);
+    }
+
+    // ---- W4 ----
+
+    #[test]
+    fn w4_single_es_between_en_en_becomes_en() {
+        // ASCII '+' is ES. "1+2" in RTL paragraph (so W7 doesn't
+        // override the EN to L afterward — keeps the W4 effect
+        // observable).
+        let out = resolve_pipeline("1+2", 1);
+        assert_eq!(out.classes, vec![BidiClass::EN, BidiClass::EN, BidiClass::EN]);
+    }
+
+    #[test]
+    fn w4_double_es_between_en_stays_on_after_w6() {
+        // "1++2" — two ESes. Neither matches W4's "single between
+        // ENs" condition. They fall through to W6 → ON.
+        let out = resolve_pipeline("1++2", 1);
+        assert_eq!(
+            out.classes,
+            vec![BidiClass::EN, BidiClass::ON, BidiClass::ON, BidiClass::EN],
+        );
+    }
+
+    #[test]
+    fn w4_single_cs_between_an_an_becomes_an() {
+        // Arabic-Indic digit + comma + Arabic-Indic digit.
+        // U+0660 = ARABIC-INDIC DIGIT ZERO (class AN), ',' is CS.
+        // RTL paragraph keeps the AN→AN visible (W7 doesn't touch AN).
+        let text = "\u{0660},\u{0661}";
+        let out = resolve_pipeline(text, 1);
+        assert_eq!(out.classes, vec![BidiClass::AN, BidiClass::AN, BidiClass::AN]);
+    }
+
+    #[test]
+    fn w4_cs_between_mixed_en_an_stays_separator() {
+        // CS between EN and AN does NOT trigger W4 (mismatched
+        // neighbor types). W6 reclassifies it to ON.
+        let text = "5,\u{0660}";
+        let out = resolve_pipeline(text, 1);
+        assert_eq!(out.classes, vec![BidiClass::EN, BidiClass::ON, BidiClass::AN]);
+    }
+
+    // ---- W5 ----
+
+    #[test]
+    fn w5_et_before_en_becomes_en() {
+        // '$' is ET, '5' is EN. ET adjacent to EN → EN. RTL
+        // paragraph keeps W7 from overriding.
+        let out = resolve_pipeline("$5", 1);
+        assert_eq!(out.classes, vec![BidiClass::EN, BidiClass::EN]);
+    }
+
+    #[test]
+    fn w5_et_after_en_becomes_en() {
+        let out = resolve_pipeline("5$", 1);
+        assert_eq!(out.classes, vec![BidiClass::EN, BidiClass::EN]);
+    }
+
+    #[test]
+    fn w5_et_sequence_adjacent_to_en_all_become_en() {
+        // Multiple ETs in a row adjacent to one EN.
+        let out = resolve_pipeline("$$5", 1);
+        assert_eq!(
+            out.classes,
+            vec![BidiClass::EN, BidiClass::EN, BidiClass::EN],
+        );
+    }
+
+    #[test]
+    fn w5_isolated_et_falls_to_on_via_w6() {
+        // ET with no EN neighbor — W5 does not fire, W6 does.
+        let out = resolve_pipeline("$", 1);
+        assert_eq!(out.classes, vec![BidiClass::ON]);
+    }
+
+    // ---- W6 ----
+
+    #[test]
+    fn w6_residual_es_becomes_on() {
+        // "a+b" — '+' is ES with non-EN neighbors. W4 doesn't fire,
+        // W6 maps ES → ON.
+        let out = resolve_pipeline("a+b", 1);
+        assert_eq!(out.classes[1], BidiClass::ON);
+    }
+
+    #[test]
+    fn w6_residual_cs_becomes_on() {
+        // "a,b" — CS with non-EN/AN neighbors.
+        let out = resolve_pipeline("a,b", 1);
+        assert_eq!(out.classes[1], BidiClass::ON);
+    }
+
+    // ---- W7 ----
+
+    #[test]
+    fn w7_en_after_sos_l_becomes_l() {
+        // LTR paragraph (sos = L), bare EN → L.
+        let out = resolve_pipeline("5", 0);
+        assert_eq!(out.classes, vec![BidiClass::L]);
+    }
+
+    #[test]
+    fn w7_en_after_l_in_text_becomes_l() {
+        // Mid-text L then EN: EN → L.
+        let out = resolve_pipeline("a5", 0);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L]);
+    }
+
+    #[test]
+    fn w7_en_after_r_stays_en() {
+        // Hebrew letter (R) then EN: W7 doesn't fire (no L in
+        // backward scan), EN stays.
+        let out = resolve_pipeline("א5", 1);
+        assert_eq!(out.classes, vec![BidiClass::R, BidiClass::EN]);
+    }
+
+    #[test]
+    fn w7_an_unaffected() {
+        // W7 operates on EN, not AN. Arabic number stays AN.
+        let out = resolve_pipeline("ا5", 0);
+        // 'ا' is AL → R via W3. '5' after AL → AN via W2. W7 only
+        // affects EN, so AN survives.
+        assert_eq!(out.classes, vec![BidiClass::R, BidiClass::AN]);
+    }
+
+    // ---- Cross-sequence behaviour ----
+
+    #[test]
+    fn w2_does_not_cross_isolating_run_sequence_boundary() {
+        // Outer sequence sees AL, but inside the isolate's own
+        // sequence the EN must not see that AL (different sequence).
+        // Outer: ...AL [LRI inner-content PDI] EN.
+        // Inner: inner-content (own sequence).
+        // After AL→R via W3, and W2 on outer: EN preceded by AL
+        // (skipping isolate-treated-as-non-strong) → EN→AN.
+        // But this test is about INSIDE the isolate not seeing the
+        // outer AL. Place EN inside the isolate, AL outside.
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        // Layout: AL LRI EN PDI. Outer sequence: [AL, LRI, PDI].
+        // Inner sequence: [EN].
+        let text = format!("ا{lri}5{pdi}");
+        let out = resolve_pipeline(&text, 1);
+        // Inner sequence's sos = max(outer_level=1, inner_level=2)
+        // is 2 → even → sos = L. So in the inner sequence the EN
+        // gets converted by W7 (sos=L), not by W2 (no AL in inner
+        // sequence). Both paths end at L.
+        // Crucially, the EN was NOT converted to AN — that would
+        // happen if W2 crossed sequence boundaries.
+        assert_eq!(out.classes[2], BidiClass::L);
+        assert_ne!(out.classes[2], BidiClass::AN);
+    }
+
+    #[test]
+    fn w2_crosses_runs_inside_one_isolating_run_sequence() {
+        // Outer sequence spans across a matched LRI...PDI (BD13
+        // connects the outer runs through the isolate). An AL
+        // before the LRI must influence an EN after the PDI in
+        // the OUTER sequence.
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        // Outer sequence chars: AL, LRI, PDI, EN. Inner: 'a'.
+        let text = format!("ا{lri}a{pdi}5");
+        let out = resolve_pipeline(&text, 1);
+        // After W3: AL → R at idx 0.
+        // After W2 on outer: when walking [R, LRI, PDI, EN], the
+        // last strong before EN is R, not AL → EN stays EN. Then
+        // W7 on outer: last strong before EN is R → EN stays EN.
+        // So EN at idx 4 = EN.
+        // But the point is W rules are sequence-local: had we
+        // mistakenly processed AL and EN as belonging to separate
+        // sequences, the result would still be EN at the end. So
+        // this test verifies the *converse*: if AL were preserved
+        // (not converted by W3 before W2 in outer pass), W2 inside
+        // outer sequence WOULD convert EN to AN. Since W3 runs
+        // after W2 in our impl per UAX #9 order, the AL is still
+        // AL when W2 fires and EN→AN.
+        assert_eq!(out.classes[4], BidiClass::AN);
+    }
+
+    #[test]
+    fn w_pipeline_dollar_then_digits_becomes_l_in_ltr() {
+        // "$50" in LTR paragraph:
+        //  - W5: ETs adjacent to EN → EN. classes: [EN, EN, EN].
+        //  - W7: sos=L, EN→L. classes: [L, L, L].
+        let out = resolve_pipeline("$50", 0);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L, BidiClass::L]);
+    }
+
+    #[test]
+    fn w_pipeline_arabic_number_in_arabic_text() {
+        // "ا5" in RTL: AL precedes EN.
+        //  - W2: EN→AN.
+        //  - W3: AL→R.
+        //  - Final: [R, AN].
+        let out = resolve_pipeline("ا5", 1);
+        assert_eq!(out.classes, vec![BidiClass::R, BidiClass::AN]);
     }
 }
