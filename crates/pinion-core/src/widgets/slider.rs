@@ -1,8 +1,13 @@
-//! R51.7 §5.38 — Slider widget: shared button-like statechart with
-//! a continuous `f32` value sidecar (0.0..=1.0 normalised). The
-//! statechart is identical to the rest of the Tier-1 button-like
-//! catalog (R51.3 `standard_button.sce-template.xml`); "Pressed"
-//! is interpreted as "dragging" by the binding.
+//! R51.7 / R51.14 §5.38 — Slider widget: own self-contained
+//! statechart (R51.14 cleanup of the R51.7 abstraction leak where
+//! the shared button-like template was reused with a binding-layer
+//! `Pressed = dragging` reinterpretation). State vocabulary now
+//! reads cleanly at every layer: SCXML state `dragging`, Rust
+//! [`SliderState::Dragging`], RPC `scene/query "state"` returns
+//! `"Dragging"`. The f32 value sidecar (0.0..=1.0 normalised) stays
+//! in the Rust binding — SCXML owns interaction state, the binding
+//! owns the typed value (SCXML "null datamodel + typed Rust
+//! sidecar" pattern).
 //!
 //! Value semantics split into two phases (Material / `SwiftUI` / Qt
 //! convention):
@@ -10,7 +15,7 @@
 //! * **`value_changing`** — every effective [`Slider::set_value`]
 //!   during drag emits a continuous intent. Applications can
 //!   wire live previews / inline visual updates to this stream.
-//! * **`value_committed`** — the `Pressed → Hover` activate
+//! * **`value_committed`** — the `Dragging → Hover` activate
 //!   transition (drag end via `PointerUp`) emits a single intent
 //!   carrying the committed value. Applications wire model
 //!   persistence / `onChangeEnd` semantics to this stream.
@@ -46,8 +51,9 @@ use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
 /// Slider widget state machine + `f32` value sidecar
-/// (0.0..=1.0 normalised). Interaction body mirrors Button R12;
-/// the binding interprets the `Pressed` state as "dragging".
+/// (0.0..=1.0 normalised). R51.14 own statechart with semantically
+/// named `dragging` state (replaces the R51.7 `Pressed = dragging`
+/// reinterpretation).
 pub struct Slider {
     inner: Widget<SliderPolicy>,
     value: f32,
@@ -103,7 +109,7 @@ impl Default for Slider {
 
 /// R51.12 §5.38 — Slider transition contract. Snapshot tuples the
 /// interaction state with the f32 value sidecar so detect can carry
-/// the committed value in the payload. The `Pressed → Hover`
+/// the committed value in the payload. The `Dragging → Hover`
 /// activate path (drag end via `PointerUp`) emits the
 /// `"value_committed"` intent carrying `after`'s value as
 /// [`IntrospectValue::Float`]; the live-preview `"value_changing"`
@@ -126,7 +132,7 @@ impl WidgetTransition for Slider {
     fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
         let (before_state, _) = before;
         let (after_state, after_value) = after;
-        if matches!(before_state, SliderState::Pressed)
+        if matches!(before_state, SliderState::Dragging)
             && matches!(after_state, SliderState::Hover)
         {
             Some(Intent::new_static(
@@ -145,7 +151,7 @@ impl WidgetTransition for Slider {
 /// * `"value_changing"` carrying `IntrospectValue::Float(value)` on
 ///   every effective [`Self::set_value`] (live preview channel).
 /// * `"value_committed"` carrying `IntrospectValue::Float(value)`
-///   on `Pressed → Hover` activate (drag-end commit channel).
+///   on `Dragging → Hover` activate (drag-end commit channel).
 pub struct SliderExternal {
     em: IntentEmitter<Slider>,
 }
@@ -157,7 +163,7 @@ impl SliderExternal {
     }
 
     /// Drive a [`SliderEvent`] and queue a `"value_committed"`
-    /// intent on drag-end (`Pressed → Hover`).
+    /// intent on drag-end (`Dragging → Hover`).
     ///
     /// R51.12 §5.38 refactor: pipeline on [`IntentEmitter::dispatch`],
     /// detection rule on [`WidgetTransition`] impl for [`Slider`].
@@ -309,7 +315,7 @@ fn slider_state_name(state: SliderState) -> &'static str {
     match state {
         SliderState::Idle => "Idle",
         SliderState::Hover => "Hover",
-        SliderState::Pressed => "Pressed",
+        SliderState::Dragging => "Dragging",
         SliderState::Disabled => "Disabled",
     }
 }

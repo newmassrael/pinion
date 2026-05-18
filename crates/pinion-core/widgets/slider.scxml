@@ -1,26 +1,60 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- pinion §5.38 Round 51.7 — Slider widget statechart.
+<!-- pinion §5.38 R51.7 / R51.14 — Slider widget statechart.
 
-     Same shared interaction body as Button/Toggle/Checkbox/Radio
-     via the `standard_button.sce-template.xml` template. Selects
-     `slider.activate` event name; the pressed -> hover transition
-     raises it on `pointer_up` (drag end).
+     R51.14 §5.38 — own self-contained statechart, not sce:use of
+     standard_button. The state name "dragging" replaces "pressed"
+     so the SCXML, the Rust binding (slider.rs), and the AI
+     introspect surface (RPC scene/query "state" → "Dragging") all
+     expose the same semantic vocabulary. R51.7 reused the
+     button-like template with a binding-layer reframe (pressed =
+     dragging); that was a documented abstraction leak. R51.14
+     lands the cleanup — Slider is a drag-style widget and its
+     statechart should say so.
 
-     Semantic mapping at the statechart layer: "pressed" =
-     "dragging". The value (`f32` in 0.0..=1.0) lives entirely in
-     the Rust binding, mutated via [`Slider::set_value`] during
-     drag (continuous "value_changing" intents) and committed on
-     drag-end (single "value_committed" intent). This keeps Slider
-     a SCE consumer of the same four-state body — no per-widget
-     statechart divergence, the richness is in the binding.
+     Event vocabulary matches §5.13 closed-core pointer/enable
+     events (pointer_enter / pointer_leave / pointer_down /
+     pointer_up / disable / enable). The dragging → hover
+     transition on pointer_up raises `slider.activate`; the Rust
+     binding listens to that for the `"value_committed"` intent at
+     drag-end. Dragging → idle on pointer_leave is the cancel
+     path (no activate event, no commit), matching W3C drag
+     cancel-on-leave semantics.
+
+     The f32 value sidecar (0.0..=1.0) lives entirely in the Rust
+     binding, mutated via [`Slider::set_value`] during drag
+     (continuous "value_changing" intents) and committed on
+     drag-end (single "value_committed" intent). SCXML owns the
+     interaction state; the binding owns the typed value — a
+     textbook SCXML "null datamodel + typed Rust sidecar" split.
+
+     States: idle / hover / dragging / disabled.
 -->
 <scxml xmlns="http://www.w3.org/2005/07/scxml"
-       xmlns:sce="http://sce.dev/ext"
        version="1.0"
        datamodel="null"
        initial="idle">
 
-  <sce:use template="standard_button.sce-template.xml"
-           activate_event="slider.activate"/>
+  <state id="idle">
+    <transition event="pointer_enter" target="hover"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="hover">
+    <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_down" target="dragging"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="dragging">
+    <transition event="pointer_up" target="hover">
+      <raise event="slider.activate"/>
+    </transition>
+    <transition event="pointer_leave" target="idle"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="disabled">
+    <transition event="enable" target="idle"/>
+  </state>
 
 </scxml>

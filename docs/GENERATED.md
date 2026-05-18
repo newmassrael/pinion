@@ -7991,6 +7991,32 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 503 — R51.14 §5.38 Slider own statechart — Dragging state semantic cleanup — R51.7 abstraction leak 청산 — Slider 가 sce:use 의 standard_button template 을 buinding-layer reframe (Pressed = dragging) 으로 재해석하던 패턴을 종료, 자체 statechart 의 semantically named Dragging state 로 SCXML/Rust/RPC vocabulary 일관
+
+**Changes**:
+- crates/pinion-core/widgets/slider.scxml: 자체 statechart 으로 재작성 (sce:use 제거) — states idle/hover/dragging/disabled, R51.7 의 button-like template 대신 widget-specific body
+- crates/pinion-core/src/widgets/slider.rs: SliderState::Pressed → SliderState::Dragging 전면 대체 — WidgetTransition::detect, slider_state_name, doc 업데이트
+- RPC scene/query "state" 은 이제 "Dragging" 반환 — AI introspect 측에서 상태 독도 증가 (SCXML state vocabulary 가 binding semantic 와 일치)
+- SCE-002 (Event payload 없음) 은 재평가 결과 design tradeoff — SCXML "null datamodel + typed Rust sidecar" 계층을 textbook 으로 운용; debt enumeration 보류
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1059 pass (refactor zero-delta — 상태 이름 만 변경, behavior 동일)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- slider.scxml sce-build codegen 가 SliderState::Dragging 방출 확인 — enum variant rename 이 전체 컴파일 통과
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- R51.x 다음 후보: RadioGroup primitive (R47-class framework-vs-application boundary debt) / derive macro for WidgetTransition (improvement) / hello-toggle visual demo / BIDI P-rules (algorithm slice)
+- Tier-2 drag-style widget (Knob, ScrollBar) 출현 시 pointer_track.sce-template.xml 으로 공통 body 추출 — 지금은 N=1 이라 YAGNI 조건 완화 적용
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
