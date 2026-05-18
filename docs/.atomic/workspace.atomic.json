@@ -3083,6 +3083,12 @@
         {
           "file": "crates/pinion-core/build.rs",
           "symbol": "scxml_inputs::toggle"
+        },
+        {
+          "file": "crates/pinion-core/widgets/standard_button.sce-template.xml"
+        },
+        {
+          "file": "crates/pinion-core/widgets/button.scxml"
         }
       ],
       "decision_status": "active"
@@ -11459,6 +11465,42 @@
       "publishable_impact_refs": [
         "5.4",
         "5.38"
+      ]
+    },
+    "Round 492 — R51.3 §5.38 SCE sce:template adopt: button + toggle byte-복붙 청산, multi-widget catalog substrate": {
+      "decision_summary": "SCE 의 sce:template (RFC §6.5 Phase A, vendor 측 land 완료) 활용으로 Button R12 + Toggle R51.2 의 4-state 상호작용 body 공유; 89 LOC byte-복붙 → 44 LOC + 1줄 변형점(activate_event). 향후 Checkbox/Radio/MenuItem/Tab 등 button-like widget 진입 = sce:use 1줄.",
+      "changes_bullets": [
+        "crates/pinion-core/widgets/standard_button.sce-template.xml 신설 (~56 LOC) — idle/hover/pressed/disabled 4-state body — sce:param activate_event 하나가 유일 변형점",
+        "crates/pinion-core/widgets/button.scxml: 43 LOC 쓠 본문 → sce:use template=standard_button.sce-template.xml activate_event=button.activate 1줄 축약",
+        "crates/pinion-core/widgets/toggle.scxml: 46 LOC 쓠 본문 → sce:use 동일 축약 (activate_event=toggle.activate)",
+        "atomic add_section_implementation ×2: §5.38 에 standard_button.sce-template.xml + button.scxml 등록 (toggle.scxml 는 R51.2 때 등록 완료)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello: 993 pass (회귀 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning",
+        "generated SM surface 바이트 동등: ButtonState/ButtonEvent/ButtonPolicy + ToggleState/ToggleEvent/TogglePolicy 이전 524 LOC 와 일치 유지 (file_stem PascalCase prefix 그대로)",
+        "sce_build cargo::rerun-if-changed: SCE 75c80a03 fix 로 standard_button.sce-template.xml 수정 시 caller SCXML rebuild 자동 트리거 (R491 vendor bump 쾐안 완료, SCE-001 청산)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.16"
+      ],
+      "publishable_decision_summary": "SCE 의 sce:template (RFC §6.5 Phase A, vendor 측 land 완료) 활용으로 Button R12 + Toggle R51.2 의 4-state 상호작용 body 공유; 89 LOC byte-복붙 → 44 LOC + 1줄 변형점(activate_event). 향후 Checkbox/Radio/MenuItem/Tab 등 button-like widget 진입 = sce:use 1줄.",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/widgets/standard_button.sce-template.xml 신설 (~56 LOC) — idle/hover/pressed/disabled 4-state body — sce:param activate_event 하나가 유일 변형점",
+        "crates/pinion-core/widgets/button.scxml: 43 LOC 쓠 본문 → sce:use template=standard_button.sce-template.xml activate_event=button.activate 1줄 축약",
+        "crates/pinion-core/widgets/toggle.scxml: 46 LOC 쓠 본문 → sce:use 동일 축약 (activate_event=toggle.activate)",
+        "atomic add_section_implementation ×2: §5.38 에 standard_button.sce-template.xml + button.scxml 등록 (toggle.scxml 는 R51.2 때 등록 완료)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello: 993 pass (회귀 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning",
+        "generated SM surface 바이트 동등: ButtonState/ButtonEvent/ButtonPolicy + ToggleState/ToggleEvent/TogglePolicy 이전 524 LOC 와 일치 유지 (file_stem PascalCase prefix 그대로)",
+        "sce_build cargo::rerun-if-changed: SCE 75c80a03 fix 로 standard_button.sce-template.xml 수정 시 caller SCXML rebuild 자동 트리거 (R491 vendor bump 쾐안 완료, SCE-001 청산)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.16"
       ]
     },
     "Round 5": {

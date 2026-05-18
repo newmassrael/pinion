@@ -1,46 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- pinion §5.38 Round 51.2 — Toggle widget state machine.
+<!-- pinion §5.38 Round 51.2 — Toggle widget statechart.
 
-     Same 4-state interaction shape as the §5.16 R12 Button
-     (idle/hover/pressed/disabled), per §5.38 rationale: interaction
-     state pattern is shared across Tier-1 widgets, the divergence is
-     value semantics.
+     R51.3 refactor: the four-state interaction body lives in
+     `standard_button.sce-template.xml` (shared with Button R12).
+     This document selects the `toggle.activate` event name; the
+     pressed -> hover transition raises it on `pointer_up`. The
+     Rust binding (`Toggle` + `ToggleExternal`) listens for
+     `toggle.activate` to flip a `value: bool` sidecar and emit a
+     `"toggle"` intent carrying the new boolean as
+     `IntrospectValue::Bool`.
 
-     Activation semantics: pressed → hover transition on pointer_up
-     emits a "toggle.activate" internal event (analogous to Button's
-     "button.activate"). The Rust binding (Toggle struct) listens
-     and flips its `value: bool` Off ↔ On on each activate, emitting
-     a "toggle" intent carrying the new boolean value.
-
-     Pressed → idle on pointer_leave is the cancel path (no flip,
-     no intent), matching the W3C button cancel-on-drag-off shape.
+     Pressed -> idle on pointer_leave is the cancel path (no flip,
+     no intent). Disabled is an absorbing class until `enable`
+     arrives. See the template file for full state / transition
+     documentation.
 -->
 <scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:sce="http://sce.dev/ext"
        version="1.0"
        datamodel="null"
        initial="idle">
 
-  <state id="idle">
-    <transition event="pointer_enter" target="hover"/>
-    <transition event="disable" target="disabled"/>
-  </state>
-
-  <state id="hover">
-    <transition event="pointer_leave" target="idle"/>
-    <transition event="pointer_down" target="pressed"/>
-    <transition event="disable" target="disabled"/>
-  </state>
-
-  <state id="pressed">
-    <transition event="pointer_up" target="hover">
-      <raise event="toggle.activate"/>
-    </transition>
-    <transition event="pointer_leave" target="idle"/>
-    <transition event="disable" target="disabled"/>
-  </state>
-
-  <state id="disabled">
-    <transition event="enable" target="idle"/>
-  </state>
+  <sce:use template="standard_button.sce-template.xml"
+           activate_event="toggle.activate"/>
 
 </scxml>
