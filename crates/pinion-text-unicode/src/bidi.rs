@@ -176,6 +176,97 @@ pub fn bidi_class(cp: char) -> BidiClass {
     BidiClass::L
 }
 
+// ======================================================================
+// R51.17 §5.37.4 — P-rules (UAX #9 §3.3.1 paragraph level resolution)
+// ======================================================================
+//
+// The P-rules sit at the top of the UAX #9 algorithm: every later
+// stage (X / W / N / I / L) needs a paragraph embedding level
+// (paragraph_level) and a paragraph boundary set (iter_paragraphs).
+// This slice lands P1 + P2 + P3 as pure functions of `bidi_class`,
+// independent of the higher stages.
+
+/// UAX #9 §3.3.1 P2 + P3 — resolve the paragraph embedding level
+/// for a single paragraph. Returns `0` for LTR (the default when no
+/// strong character is found), `1` for RTL.
+///
+/// Scans `paragraph` once looking for the first character of class
+/// L, R, or AL while skipping over any character inside an isolate
+/// (LRI / RLI / FSI ... matching PDI). Per UAX #9 P2, an isolate
+/// initiator's matching PDI may be absent; in that case the inner
+/// span stays skipped through the end of the paragraph. A stray
+/// PDI without a matching initiator is treated as a depth-0 PDI
+/// (no-op for level resolution).
+///
+/// This function does not split paragraphs — pass a single
+/// paragraph (typically a slice from [`iter_paragraphs`]). For a
+/// caller that needs every paragraph's level in one pass, iterate
+/// [`iter_paragraphs`] and call this on each item.
+#[must_use]
+pub fn paragraph_level(paragraph: &str) -> u8 {
+    let mut isolate_depth: u32 = 0;
+    for ch in paragraph.chars() {
+        match bidi_class(ch) {
+            BidiClass::LRI | BidiClass::RLI | BidiClass::FSI => {
+                isolate_depth = isolate_depth.saturating_add(1);
+            }
+            BidiClass::PDI => {
+                isolate_depth = isolate_depth.saturating_sub(1);
+            }
+            BidiClass::L if isolate_depth == 0 => return 0,
+            BidiClass::R | BidiClass::AL if isolate_depth == 0 => return 1,
+            _ => {}
+        }
+    }
+    // P3 default: no strong character at depth 0 → LTR.
+    0
+}
+
+/// UAX #9 §3.3.1 P1 — iterate the paragraphs of `text`. A paragraph
+/// extends from the previous boundary up to and **including** its
+/// terminating [`BidiClass::B`] character (per UAX #9 the paragraph
+/// separator belongs to the paragraph that ends with it); the final
+/// paragraph in the input may have no trailing B.
+///
+/// `Bidi_Class = B` covers LF (U+000A), VT (U+000B), FF (U+000C),
+/// CR (U+000D), NEL (U+0085), LSEP (U+2028), PSEP (U+2029) and a
+/// few other code points per the UCD. The iterator is lazy — it
+/// scans only as far as needed for each `next()` call and does not
+/// allocate.
+#[must_use]
+pub fn iter_paragraphs(text: &str) -> ParagraphIter<'_> {
+    ParagraphIter { text, pos: 0 }
+}
+
+/// Lazy paragraph iterator returned by [`iter_paragraphs`]. See the
+/// function docs for the boundary semantics.
+#[derive(Debug, Clone)]
+pub struct ParagraphIter<'a> {
+    text: &'a str,
+    pos: usize,
+}
+
+impl<'a> Iterator for ParagraphIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        if self.pos >= self.text.len() {
+            return None;
+        }
+        let rest = &self.text[self.pos..];
+        let mut end_rel = rest.len();
+        for (idx, ch) in rest.char_indices() {
+            if bidi_class(ch) == BidiClass::B {
+                end_rel = idx + ch.len_utf8();
+                break;
+            }
+        }
+        let start = self.pos;
+        self.pos += end_rel;
+        Some(&self.text[start..self.pos])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,5 +340,135 @@ mod tests {
             // ucd_name must be non-empty for every variant.
             assert!(!cls.ucd_name().is_empty());
         }
+    }
+
+    // ---- R51.17 §5.37.4 — P-rules (paragraph_level / iter_paragraphs) ----
+
+    #[test]
+    fn paragraph_level_empty_text_is_ltr() {
+        // P3 default: no strong character → 0.
+        assert_eq!(paragraph_level(""), 0);
+    }
+
+    #[test]
+    fn paragraph_level_ascii_text_is_ltr() {
+        assert_eq!(paragraph_level("Hello, world"), 0);
+    }
+
+    #[test]
+    fn paragraph_level_pure_hebrew_is_rtl() {
+        // U+05D0..U+05D2 — Hebrew Alef, Bet, Gimel (all class R).
+        assert_eq!(paragraph_level("אבג"), 1);
+    }
+
+    #[test]
+    fn paragraph_level_pure_arabic_is_rtl() {
+        // Arabic letters are class AL — still RTL per P3.
+        assert_eq!(paragraph_level("ابج"), 1);
+    }
+
+    #[test]
+    fn paragraph_level_ltr_strong_first_is_ltr() {
+        // The first strong is L ("H"), so paragraph is LTR even
+        // though Hebrew follows.
+        assert_eq!(paragraph_level("Hello אבג"), 0);
+    }
+
+    #[test]
+    fn paragraph_level_rtl_strong_first_is_rtl() {
+        // The first strong is R (Hebrew Alef), so RTL even though
+        // ASCII follows.
+        assert_eq!(paragraph_level("אבג Hello"), 1);
+    }
+
+    #[test]
+    fn paragraph_level_weak_chars_before_strong_do_not_count() {
+        // Digits (EN), commas (CS), spaces (WS) are weak/neutral —
+        // they must not determine the level. First strong is "H" (L).
+        assert_eq!(paragraph_level("123, Hello אבג"), 0);
+    }
+
+    #[test]
+    fn paragraph_level_isolate_skips_inner_strong() {
+        // LRI ... PDI wraps the Hebrew so the outer "first strong"
+        // is the trailing "L" (LTR). Without the isolate handling,
+        // the algorithm would mistakenly return RTL.
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        let text = format!("{lri}אבג{pdi}L");
+        assert_eq!(paragraph_level(&text), 0);
+    }
+
+    #[test]
+    fn paragraph_level_unmatched_isolate_skips_remainder() {
+        // LRI without PDI hides everything through end-of-paragraph.
+        // No strong char at depth 0 → P3 default LTR (0).
+        let lri = '\u{2066}';
+        let text = format!("{lri}אבג");
+        assert_eq!(paragraph_level(&text), 0);
+    }
+
+    #[test]
+    fn paragraph_level_stray_pdi_is_no_op() {
+        // PDI at depth 0 is invalid per UAX #9; the implementation
+        // saturates the counter at 0 so the rest of the paragraph
+        // still resolves normally.
+        let pdi = '\u{2069}';
+        let text = format!("{pdi}אבג");
+        assert_eq!(paragraph_level(&text), 1);
+    }
+
+    #[test]
+    fn iter_paragraphs_single_paragraph_no_b() {
+        // No B class character → one paragraph spanning the entire text.
+        let paras: Vec<&str> = iter_paragraphs("Hello world").collect();
+        assert_eq!(paras, &["Hello world"]);
+    }
+
+    #[test]
+    fn iter_paragraphs_splits_at_lf() {
+        // LF is class B. Each paragraph includes its trailing LF.
+        let paras: Vec<&str> = iter_paragraphs("ab\ncd\nef").collect();
+        assert_eq!(paras, &["ab\n", "cd\n", "ef"]);
+    }
+
+    #[test]
+    fn iter_paragraphs_trailing_b_yields_no_empty_paragraph() {
+        // If the text ends with B, the iterator stops after the
+        // paragraph that contains the trailing B — no spurious empty
+        // final paragraph.
+        let paras: Vec<&str> = iter_paragraphs("ab\n").collect();
+        assert_eq!(paras, &["ab\n"]);
+    }
+
+    #[test]
+    fn iter_paragraphs_empty_text_yields_no_paragraphs() {
+        let paras: Vec<&str> = iter_paragraphs("").collect();
+        assert!(paras.is_empty());
+    }
+
+    #[test]
+    fn iter_paragraphs_psep_is_paragraph_break() {
+        // U+2029 PARAGRAPH SEPARATOR is class B per UCD. (U+2028
+        // LINE SEPARATOR is class WS — line break inside paragraph,
+        // not a paragraph boundary.)
+        let psep = '\u{2029}';
+        let text = format!("ab{psep}cd");
+        let paras: Vec<&str> = iter_paragraphs(&text).collect();
+        assert_eq!(paras.len(), 2);
+        assert!(paras[0].ends_with(psep));
+        assert_eq!(paras[1], "cd");
+    }
+
+    #[test]
+    fn iter_paragraphs_then_paragraph_level_classifies_each() {
+        // P1 composes with P2/P3: each split paragraph resolves
+        // independently. Demonstrates the canonical pipeline.
+        let text = "Hello\nאבג\n123";
+        let levels: Vec<u8> = iter_paragraphs(text)
+            .map(paragraph_level)
+            .collect();
+        // LTR / RTL / LTR (no strong → default 0).
+        assert_eq!(levels, vec![0, 1, 0]);
     }
 }

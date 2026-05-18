@@ -2561,6 +2561,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/build.rs:parse_bidi_class
 - crates/pinion-text-unicode/src/bidi.rs:BidiClass
 - crates/pinion-text-unicode/src/bidi.rs:bidi_class
+- crates/pinion-text-unicode/src/bidi.rs:paragraph_level
+- crates/pinion-text-unicode/src/bidi.rs:iter_paragraphs
+- crates/pinion-text-unicode/src/bidi.rs:ParagraphIter
 
 
 
@@ -8072,6 +8075,34 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - serde Option<Value> JSON null 이주 우회 가 의존적으로 parse_response 과 raw envelope 두 경로 복합 사용 — 구조적 정리가 필요시 Response 구조체 자체 deserialize_with 개선 고려 (차기 RFC)
 - R51.x 다음 후보: derive macro for WidgetTransition (pinion-derive 증원) / hello-toggle visual demo / BIDI P-rules
+
+
+
+### Round 506 — R51.17 §5.37.4 BIDI P-rules (UAX #9 §3.3.1) — paragraph level + iter — UAX #9 §3.3.1 P1+P2+P3 land — paragraph 분리 (B class boundary) + 첫 strong character 기반 embedding level resolution + isolate-aware depth tracking; R51.11 BidiClass scaffold 위 첫 algorithm slice
+
+**Changes**:
+- crates/pinion-text-unicode/src/bidi.rs: paragraph_level(paragraph) -> u8 — UAX #9 P2+P3 구현, isolate_depth (LRI/RLI/FSI → PDI) 계수 skip + L/AL/R 첫 강한 char 검색 + P3 default LTR fallback
+- crates/pinion-text-unicode/src/bidi.rs: iter_paragraphs(text) + ParagraphIter 구조체 — UAX #9 P1 lazy iterator, B class boundary, 각 paragraph 은 trailing B 포함 (UAX #9 귄장)
+- external lib 0 유지 — std + alloc + R51.11 bidi_class 만 의존, [[uax-semantic-spec-lock]] policy 일치
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1100 pass (+16 from 1084 — BIDI P-rules)
+- pinion-text-unicode: 120 tests pass (+16 BIDI: 10 paragraph_level + 6 iter_paragraphs)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline 유지)
+- UAX #9 spec 준수 검증: P3 default LTR / RTL via R or AL / isolate skip via LRI...PDI / unmatched isolate / stray PDI saturate-at-zero / iter 의 single-pass + lazy + trailing-B semantic
+- U+2028 LSEP vs U+2029 PSEP 구분 — LSEP 은 WS (line break in paragraph), PSEP 만 B (paragraph boundary). 검증 test 수정
+
+
+
+**Impact**: §5.37.4
+
+
+**Carry forward**:
+- R51.x 다음 후보: BIDI X-rules (explicit embedding / override / isolate sequence build) — paragraph_level 의 신뢰 계층 위에 explicit-level stack 구축
+- BIDI W-rules / N-rules / I-rules / L-rules 추후 slice 적용 — UAX #9 BidiTest.txt 수십만 수의 vector 계립으로 hand-test 대체 고려
+- derive macro for WidgetTransition (improvement opportunity, 별도 라운드) / hello-toggle visual demo (paint-side validation)
 
 
 
