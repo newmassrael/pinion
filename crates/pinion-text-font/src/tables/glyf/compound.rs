@@ -140,6 +140,18 @@ pub(super) fn parse_composite(
             });
         }
 
+        // spec: "WE_HAVE_INSTRUCTIONS should only be set in the last component
+        // of a composite glyph". non-last component 에 set 이면 ambiguity =
+        // strict reject (R50.1.2 hhea reserved / R50.1.3.1 cmap searchParams
+        // 와 일관). 즉 (MORE_COMPONENTS && WE_HAVE_INSTRUCTIONS) = invalid.
+        if (flags & FLAG_MORE_COMPONENTS) != 0 && (flags & FLAG_WE_HAVE_INSTRUCTIONS) != 0 {
+            return Err(ParseError::InvalidTableField {
+                tag: GLYF_TAG,
+                field: "composite/flags/instructions-on-non-last-component",
+                value: FieldValue::from_u16(flags),
+            });
+        }
+
         let glyph_index = r.read_u16()?;
         let args = read_args(r, flags)?;
         let transform = read_transform(r, xform_bits)?;
@@ -435,6 +447,41 @@ mod tests {
             ParseError::InvalidTableField {
                 tag,
                 field: "composite/flags/reserved-bit-set",
+                ..
+            } if tag == GLYF_TAG
+        ));
+    }
+
+    #[test]
+    fn reject_instructions_on_non_last_component() {
+        // MORE_COMPONENTS + WE_HAVE_INSTRUCTIONS 동시 set = spec violation
+        // (instructions 는 last component 에만).
+        let body = build_composite_body(&[
+            ComponentSpec {
+                flags: FLAG_ARGS_ARE_XY_VALUES
+                    | FLAG_MORE_COMPONENTS
+                    | FLAG_WE_HAVE_INSTRUCTIONS,
+                glyph_index: 1,
+                arg1: 0,
+                arg2: 0,
+                transform: TransformSpec::Identity,
+            },
+            ComponentSpec {
+                flags: FLAG_ARGS_ARE_XY_VALUES, // last
+                glyph_index: 2,
+                arg1: 0,
+                arg2: 0,
+                transform: TransformSpec::Identity,
+            },
+        ]);
+        let body_clone = body.clone();
+        let mut r = Reader::new(&body, *b"glyf");
+        let err = parse_composite(&mut r, header_dummy(), body_clone).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag,
+                field: "composite/flags/instructions-on-non-last-component",
                 ..
             } if tag == GLYF_TAG
         ));

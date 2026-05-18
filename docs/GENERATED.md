@@ -6445,6 +6445,34 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 462 — Round 462 — R50.1.4.2.1 §5.37.1 glyf composite parser corrective. spec mandate "WE_HAVE_INSTRUCTIONS should only be set in the last component of a composite glyph" — non-last component (MORE_COMPONENTS = 1) 와 WE_HAVE_INSTRUCTIONS 동시 set 시 ambiguity = InvalidTableField {field: "composite/flags/instructions-on-non-last-component"} strict reject. R50.1.2 hhea reserved bit / R50.1.3.1 cmap searchParams 의 strict 정신 일관 적용. 1 new test (reject pattern). Noto Sans + Nanum Gothic real font sweep 모두 통과 — real-world canonical 정합 (no false positive).
+
+**Changes**:
+- compound.rs parse_composite 의 component loop 안에 조기 조건부 reject 추가: (FLAG_MORE_COMPONENTS && FLAG_WE_HAVE_INSTRUCTIONS) → InvalidTableField {field: "composite/flags/instructions-on-non-last-component"}
+- compound::tests reject_instructions_on_non_last_component 추가 — 2 component (첫째 = MORE+INSTR set, 둘째 = last) 을 build_composite_body 로 만들어 strict reject 검증
+- real font (Noto Sans + Nanum Gothic) sweep 재검증 — 이 new strict rule 가 production font 에서 false positive 없음을 확인
+
+
+
+**Verification**:
+- workspace 786 → 787 tests (+1; pinion-text-font lib 107 → 108)
+- pinion-text-font clippy --all-targets 0 warnings (baseline 유지)
+- Noto Sans 1848 composite / 3788 components real font sweep 재통과 — production canonical font 는 non-last component WE_HAVE_INSTRUCTIONS 사용 안 함 → strict rule = real-world canonical 정합
+- spec strict 일관 완성: R50.1.2 hhea reserved / R50.1.3.1 cmap searchParams / R50.1.4.1.1 composite numberOfContours == -1 와 동일 정신 적용
+
+
+
+**Impact**: §5.37.1
+
+
+**Carry forward**:
+- R50.1.4.X cycle detection helper API (R50.X+ traversal layer responsibility)
+- R50.1.5 name table parser (family / style / postscript / copyright + platform encoding dispatch)
+- R50.1.X 후속: cmap format 0/2/6/8/10/13/14, WOFF2, CFF/CFF2, variable axis, color tables, GSUB/GPOS raw store
+- R47-class InputRouter SCE migration carry
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
