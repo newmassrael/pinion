@@ -509,19 +509,113 @@ fn emit_decomp_table(
 }
 
 fn emit_ccc_table(s: &mut String, ccc: &[(u32, u8)]) {
+    let (bmp_index, bmp_data) = build_ccc_bmp_trie(ccc);
+    let supplementary: Vec<(u32, u8)> = ccc
+        .iter()
+        .copied()
+        .filter(|(cp, _)| *cp >= 0x10000)
+        .collect();
+
     s.push_str(
-        "/// Non-zero Canonical Combining Class values (UAX #44).\n///\n/// \
-         CCC == 0 (the vast majority) is the implicit default and \
-         omitted from the table. Sorted by codepoint.\n",
+        "/// R50.2.10 §5.37.3 — BMP CCC lookup via 2-stage trie\n///\n/// \
+         Stage 1 (`CANONICAL_COMBINING_CLASS_BMP_INDEX`) maps each\n/// \
+         high byte of a BMP codepoint to a Stage-2 block index. Stage 2\n/// \
+         (`CANONICAL_COMBINING_CLASS_BMP_DATA`) is a packed `u8` array\n/// \
+         where every 256-byte slice is one deduplicated block. The full\n/// \
+         lookup is `DATA[INDEX[c >> 8] * 256 + (c & 0xFF)]` — two memory\n/// \
+         accesses with no branches beyond the supplementary-plane test.\n/// \
+         Identical (mostly zero) blocks share a single Stage-2 entry,\n/// \
+         keeping the data table well under the 64 KiB worst case.\n",
     );
     s.push_str(
-        "pub(crate) static CANONICAL_COMBINING_CLASS: &[(u32, u8)] = &[\n",
+        "pub(crate) static CANONICAL_COMBINING_CLASS_BMP_INDEX: &[u16; 256] = &[\n",
     );
-    for (cp, value) in ccc {
+    for (i, idx) in bmp_index.iter().enumerate() {
+        if i % 16 == 0 {
+            s.push_str("    ");
+        }
+        write!(s, "{idx}, ").expect("String write infallible");
+        if i % 16 == 15 {
+            s.push('\n');
+        }
+    }
+    s.push_str("];\n\n");
+
+    s.push_str(
+        "/// Packed CCC `u8` blocks indexed by\n/// \
+         `CANONICAL_COMBINING_CLASS_BMP_INDEX`. See its doc for the\n/// \
+         2-stage trie layout (R50.2.10).\n",
+    );
+    s.push_str(
+        "pub(crate) static CANONICAL_COMBINING_CLASS_BMP_DATA: &[u8] = &[\n",
+    );
+    for (i, value) in bmp_data.iter().enumerate() {
+        if i % 16 == 0 {
+            s.push_str("    ");
+        }
+        write!(s, "{value}, ").expect("String write infallible");
+        if i % 16 == 15 {
+            s.push('\n');
+        }
+    }
+    s.push_str("];\n\n");
+
+    s.push_str(
+        "/// Supplementary-plane (`cp >= 0x10000`) CCC entries — sparse,\n/// \
+         sorted by codepoint, served by binary search. The BMP trie\n/// \
+         deliberately omits this range to keep the Stage-2 table compact.\n",
+    );
+    s.push_str(
+        "pub(crate) static CANONICAL_COMBINING_CLASS_SUPPLEMENTARY: \
+         &[(u32, u8)] = &[\n",
+    );
+    for (cp, value) in &supplementary {
         writeln!(s, "    (0x{cp:04X}, {value}),")
             .expect("String write infallible");
     }
     s.push_str("];\n\n");
+}
+
+/// R50.2.10 — build the BMP 2-stage trie for canonical combining
+/// class. Returns `(stage1, stage2)` where `stage1` has exactly 256
+/// entries (one per high byte) and `stage2` is the deduplicated
+/// 256-byte block table. Block 0 of Stage 2 is the all-zero "null"
+/// block, shared by every high byte with no non-default CCC entries
+/// in its range. Inputs with codepoint `>= 0x10000` are filtered out
+/// — supplementary entries land in a separate sorted array.
+fn build_ccc_bmp_trie(ccc: &[(u32, u8)]) -> (Vec<u16>, Vec<u8>) {
+    const BLOCK_SIZE: usize = 256;
+    const NUM_BLOCKS: usize = 0x10000 / BLOCK_SIZE; // 256
+
+    let mut blocks: Vec<[u8; BLOCK_SIZE]> = vec![[0; BLOCK_SIZE]; NUM_BLOCKS];
+    for &(cp, value) in ccc {
+        if cp >= 0x10000 {
+            continue;
+        }
+        let block = (cp as usize) / BLOCK_SIZE;
+        let offset = (cp as usize) % BLOCK_SIZE;
+        blocks[block][offset] = value;
+    }
+
+    let null_block = [0_u8; BLOCK_SIZE];
+    let mut stage1: Vec<u16> = vec![0; NUM_BLOCKS];
+    let mut stage2: Vec<u8> = null_block.to_vec();
+    let mut block_map: std::collections::HashMap<[u8; BLOCK_SIZE], u16> =
+        std::collections::HashMap::new();
+    block_map.insert(null_block, 0);
+
+    for (i, blk) in blocks.iter().enumerate() {
+        if let Some(&existing) = block_map.get(blk) {
+            stage1[i] = existing;
+        } else {
+            let idx = u16::try_from(stage2.len() / BLOCK_SIZE)
+                .expect("BMP CCC trie block index must fit in u16");
+            stage2.extend_from_slice(blk);
+            block_map.insert(*blk, idx);
+            stage1[i] = idx;
+        }
+    }
+    (stage1, stage2)
 }
 
 fn emit_exclusion_table(s: &mut String, exclusions: &[u32]) {

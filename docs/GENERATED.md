@@ -7180,6 +7180,32 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 481 — R50.2.10 §5.37.3 CCC 2-stage BMP trie (UTrie2-simplified) — decomposed +37%, hangul +24%, sample +19%
+
+**Changes**:
+- build.rs build_ccc_bmp_trie — Stage1 u16[256] + Stage2 packed u8 + supp linear
+- ordering.rs combining_class: BMP 2 mem access + supplementary binary_search fallback
+- lib.rs tests: 3 trie invariant + binary_search call 제거 (combining_class API 사용)
+
+
+
+**Verification**:
+- cargo test pinion-text-unicode = 87 unit + 2 doctest (NFC/NFD/NFKC/NFKD sweep 정상)
+- bench MiB/s Δ: decomp 35→48 (+37%), hangul 80→99 (+24%), sam 112→133 (+19%)
+- cargo test --workspace = 961 pass (+3); clippy baseline 6 유지
+
+
+
+**Impact**: §5.37.3
+
+
+**Carry forward**:
+- R50.2.11 후속: NFC_QC / NFD_QC / NFKC_QC / NFKD_QC tables 도 BMP trie
+- R50.2.12 후속: CANONICAL_DECOMPOSITION / COMPATIBILITY_DECOMPOSITION trie (indirect)
+- R50.2.13 후속: PRIMARY_COMPOSITES 2D key hash 또는 trie
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

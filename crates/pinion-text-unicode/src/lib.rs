@@ -181,8 +181,11 @@ mod test_fixture;
 
 #[cfg(test)]
 mod tests {
+    use super::ordering::combining_class;
     use super::tables::{
-        CANONICAL_COMBINING_CLASS, CANONICAL_DECOMPOSITION,
+        CANONICAL_COMBINING_CLASS_BMP_DATA,
+        CANONICAL_COMBINING_CLASS_BMP_INDEX,
+        CANONICAL_COMBINING_CLASS_SUPPLEMENTARY, CANONICAL_DECOMPOSITION,
         COMPATIBILITY_DECOMPOSITION, FULL_COMPOSITION_EXCLUSION,
         PRIMARY_COMPOSITES,
     };
@@ -275,15 +278,51 @@ mod tests {
     }
 
     #[test]
-    fn ccc_cardinality_and_sorted() {
-        assert!(
-            CANONICAL_COMBINING_CLASS.len() >= 900,
-            "CCC count = {}",
-            CANONICAL_COMBINING_CLASS.len()
+    fn ccc_bmp_trie_well_formed() {
+        // R50.2.10 — 2-stage trie invariants.
+        assert_eq!(
+            CANONICAL_COMBINING_CLASS_BMP_INDEX.len(),
+            256,
+            "Stage 1 must have exactly one entry per BMP high byte"
         );
-        // Must be strictly ascending by codepoint for binary_search.
-        for window in CANONICAL_COMBINING_CLASS.windows(2) {
-            assert!(window[0].0 < window[1].0, "CCC not sorted strictly");
+        assert!(
+            CANONICAL_COMBINING_CLASS_BMP_DATA.len() % 256 == 0,
+            "Stage 2 must be a whole number of 256-byte blocks: len = {}",
+            CANONICAL_COMBINING_CLASS_BMP_DATA.len()
+        );
+        // Block 0 must be the all-zero null block (shared sentinel).
+        assert!(
+            CANONICAL_COMBINING_CLASS_BMP_DATA[..256].iter().all(|&v| v == 0),
+            "Stage 2 block 0 must be the null block"
+        );
+        // Every Stage-1 index must point inside Stage 2.
+        let num_blocks = u16::try_from(
+            CANONICAL_COMBINING_CLASS_BMP_DATA.len() / 256,
+        )
+        .expect("BMP CCC trie block count must fit in u16");
+        for (i, &idx) in CANONICAL_COMBINING_CLASS_BMP_INDEX.iter().enumerate()
+        {
+            assert!(
+                idx < num_blocks,
+                "Stage 1 entry {i} points outside Stage 2 (idx = {idx}, \
+                 blocks = {num_blocks})"
+            );
+        }
+    }
+
+    #[test]
+    fn ccc_supplementary_sorted_and_unique() {
+        for window in CANONICAL_COMBINING_CLASS_SUPPLEMENTARY.windows(2) {
+            assert!(
+                window[0].0 < window[1].0,
+                "supplementary CCC not sorted strictly"
+            );
+        }
+        for (cp, _) in CANONICAL_COMBINING_CLASS_SUPPLEMENTARY {
+            assert!(
+                *cp >= 0x10000,
+                "BMP entry leaked into supplementary table: U+{cp:04X}"
+            );
         }
     }
 
@@ -308,11 +347,26 @@ mod tests {
 
     #[test]
     fn combining_grave_ccc_is_230() {
-        // U+0300 COMBINING GRAVE ACCENT has CCC 230 per UCD.
-        let idx = CANONICAL_COMBINING_CLASS
-            .binary_search_by_key(&0x0300_u32, |(cp, _)| *cp)
-            .expect("U+0300 must be in CCC table");
-        assert_eq!(CANONICAL_COMBINING_CLASS[idx].1, 230);
+        // U+0300 COMBINING GRAVE ACCENT has CCC 230 per UCD; goes
+        // through the BMP trie.
+        assert_eq!(combining_class(0x0300), 230);
+    }
+
+    #[test]
+    fn supplementary_ccc_via_fallback() {
+        // U+101FD PHAISTOS DISC SIGN COMBINING OBLIQUE STROKE has
+        // CCC 220; verifies the supplementary-plane binary_search
+        // fallback path.
+        assert_eq!(combining_class(0x101FD), 220);
+    }
+
+    #[test]
+    fn ascii_ccc_short_circuit_is_zero() {
+        // R50.2.9 anchor short-circuit returns 0 below the first
+        // non-zero CCC codepoint without touching the trie.
+        for c in 0_u32..0x80 {
+            assert_eq!(combining_class(c), 0, "ASCII U+{c:04X}");
+        }
     }
 
     #[test]

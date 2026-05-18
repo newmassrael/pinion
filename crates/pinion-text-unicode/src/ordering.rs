@@ -6,28 +6,42 @@
 //! and the algorithm never crosses a starter.
 
 use crate::tables::{
-    CANONICAL_COMBINING_CLASS, CANONICAL_COMBINING_CLASS_FIRST_CP,
+    CANONICAL_COMBINING_CLASS_BMP_DATA, CANONICAL_COMBINING_CLASS_BMP_INDEX,
+    CANONICAL_COMBINING_CLASS_FIRST_CP,
+    CANONICAL_COMBINING_CLASS_SUPPLEMENTARY,
 };
 
 /// Canonical combining class of `c`. Codepoints absent from the
 /// table have CCC 0 (the default per UAX #44).
 ///
 /// R50.2.9 — codepoints below
-/// [`CANONICAL_COMBINING_CLASS_FIRST_CP`] (build-time derived from
-/// the sorted UCD table) bypass the `binary_search` and return 0
-/// immediately. UAX #44 §3 stability policy forbids back-porting
-/// new non-zero CCC entries below the existing minimum, so the
-/// short-circuit is forward-stable across Unicode versions. The
-/// branch is the dominant win for ASCII / Latin-1 text where
-/// [`canonical_ordering`] would otherwise call `binary_search` once
-/// per character.
+/// [`CANONICAL_COMBINING_CLASS_FIRST_CP`] bypass every table access
+/// and return 0 immediately. UAX #44 §3 stability forbids back-
+/// porting non-zero CCC entries below the existing minimum, so the
+/// short-circuit is forward-stable.
+///
+/// R50.2.10 — BMP codepoints above the anchor go through a 2-stage
+/// trie (`BMP_INDEX[c >> 8] -> block`; `BMP_DATA[block * 256 +
+/// (c & 0xFF)]`), reducing the per-character cost to two memory
+/// accesses with no branches. Supplementary-plane codepoints
+/// (`c >= 0x10000`) fall back to a sparse `binary_search` over a
+/// few hundred entries, which is fine because supplementary text
+/// rarely dominates the hot path.
 #[inline]
 pub(crate) fn combining_class(c: u32) -> u8 {
     if c < CANONICAL_COMBINING_CLASS_FIRST_CP {
         return 0;
     }
-    match CANONICAL_COMBINING_CLASS.binary_search_by_key(&c, |(cp, _)| *cp) {
-        Ok(idx) => CANONICAL_COMBINING_CLASS[idx].1,
+    if c < 0x10000 {
+        let block =
+            CANONICAL_COMBINING_CLASS_BMP_INDEX[(c >> 8) as usize] as usize;
+        return CANONICAL_COMBINING_CLASS_BMP_DATA
+            [block * 256 + (c & 0xFF) as usize];
+    }
+    match CANONICAL_COMBINING_CLASS_SUPPLEMENTARY
+        .binary_search_by_key(&c, |(cp, _)| *cp)
+    {
+        Ok(idx) => CANONICAL_COMBINING_CLASS_SUPPLEMENTARY[idx].1,
         Err(_) => 0,
     }
 }
