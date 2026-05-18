@@ -2139,6 +2139,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/input.rs:InputRouter::cursors
 - crates/pinion-runtime/src/input.rs:InputRouter::hover_targets
 - crates/pinion-runtime/src/input.rs:InputRouter::captured_targets
+- crates/pinion-runtime/src/input.rs:InputRouter::hover_wants_capture
 
 
 
@@ -4282,6 +4283,41 @@ router.pointer_down(&mut state_scene);
 - 부채 10: R51.31 L4 alternative impl path RFC (spec round)
 - vertical-axis 시각 예제 (hello-slider-vertical) carry — N=6 도달 시 substrate amortization 검증 후보 (현재 부채 우선순위 더 높음)
 - winit Touch event 와이어링 at pinion-shell layer carry (R51.38 follow-up)
+
+
+
+### R51.40 — R51.40 §5.35 widget_wants_capture early-cache — refresh_hover 이 hover walk 와 동시에 wants_capture 조회 · per-pointer cache, pointer_down 은 bit read 만 — textbook layering (input router 가 click 시 점 scene walk 없음)
+
+**Changes**:
+- crates/pinion-runtime/src/input.rs: InputRouter 에 hover_wants_capture: HashMap<PointerId, bool> 필드 추가 — per-pointer cache, hover_targets 와 동일 lifecycle (입장/이동/표즜 해제 시 populate/replace/drop)
+- crates/pinion-runtime/src/input.rs: refresh_hover 가 PointerLeave 시 cache 명시적 remove(&id), PointerEnter 시 widget_wants_capture(state_scene, &target) 조회 결과 insert — hover-resolve walk 에 아주 작은 추가 일, click 시 점 재조회 제거
+- crates/pinion-runtime/src/input.rs: pointer_down 의 widget_wants_capture(...) call 제거 이후 cache.get(&id).copied().unwrap_or(false) 으로 read — 입력 핸들러 의 scene-walk 없음 (textbook layering: input router = state machine, scene walk = hover/layout)
+- crates/pinion-runtime/src/input.rs tests: wants_capture_cache_co_locates_with_hover_walk 신규 — drag-aware widget capture lock + button-like 0-lock 의 두 시나리오를 cache 경로로 end-to-end 검증 (기존 capture-related test 8개 동일 풋스 통과, cache 투명성 검증)
+- §5.35 implementations += InputRouter::hover_wants_capture
+
+
+
+**Verification**:
+- cargo build --workspace --features pinion-runtime/vello = 0 errors
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict)
+- cargo test --workspace --features pinion-runtime/vello = 1271 pass / 0 fail / 8 ignored (직전 R51.39 의 1270 → +1 cache invariant test)
+- cargo test -p pinion-runtime --features vello = 60 pass (이전 59 → +1)
+- R51.34 button_like_widget_preserves_pre_r51_34_cancel_by_leave + R51.34-R51.39 capture-related 8개 test 모두 0 회규 — cache 가 hover lifecycle 와 완전 동일, 관찰 가능한 시맨틱스 불변
+- Mnemosyne validate_workspace: entries=185 / sections=55 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.35
+
+
+**Carry forward**:
+- 부채 3: RadioGroup substrate-chicken-and-egg — substrate-first 3 rounds (RFC + sub-index routing + first-client)
+- 부채 5: External trait surface segregation RFC (design only) — InputForwarding/Lifecycle/Introspection 분리
+- 부채 9: R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)
+- 부채 10: R51.31 L4 alternative impl path RFC (spec round)
+- wants_pointer_capture 의 "effectively constant per widget instance" 가정 carry — 동적 toggle 원하는 widget 등장 시 cache invalidation 훅 추가 가능성 (현재 최소한 변경 원칙)
+- winit Touch event 와이어링 at pinion-shell layer (R51.38 follow-up)
+- vertical-axis 시각 예제 hello-slider-vertical N=6 도달 시 substrate amortization 검증 가능
 
 
 

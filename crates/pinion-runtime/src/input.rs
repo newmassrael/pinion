@@ -185,6 +185,20 @@ pub struct InputRouter {
     /// the aliasing-by-default refactor cost of single-target
     /// capture.
     captured_targets: HashMap<PointerId, String>,
+    /// R51.40 §5.35 — per-pointer cached
+    /// [`External::wants_pointer_capture`] flag for the widget under
+    /// the corresponding `hover_targets` entry. Refreshed in the
+    /// same hover walk as [`refresh_hover`], so [`pointer_down`]
+    /// reads a bit instead of re-walking the scene tree. The cache
+    /// stays consistent with the hover lifecycle: dropped when a
+    /// pointer's hover clears, replaced when it moves between
+    /// tagged widgets, never read while capture is in flight (the
+    /// `captured_targets` map already pins the answer for that
+    /// pointer). Relies on [`External::wants_pointer_capture`]
+    /// being effectively constant per widget instance — the
+    /// documented industry precedent (Button=false, Slider=true)
+    /// and pinion's own widget catalog all return static bools.
+    hover_wants_capture: HashMap<PointerId, bool>,
 }
 
 impl InputRouter {
@@ -297,7 +311,18 @@ impl InputRouter {
     pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
         if let Some(tag) = self.hover_targets.get(&id).cloned() {
             dispatch_send(state_scene, &tag, "PointerDown");
-            if widget_wants_capture(state_scene, &tag) {
+            // R51.40 §5.35 — read the cached wants_capture bit
+            // populated by the matching `refresh_hover` instead of
+            // re-walking the state-scene tree. The cache is
+            // populated when the pointer enters this tag and
+            // cleared on leave, so it is always consistent with the
+            // current `hover_targets[id]`.
+            let wants = self
+                .hover_wants_capture
+                .get(&id)
+                .copied()
+                .unwrap_or(false);
+            if wants {
                 self.captured_targets.insert(id, tag.clone());
                 // R51.35 §5.35 — click-to-position: forward the
                 // press-time cursor as the initial `pointer_move` so
@@ -377,6 +402,12 @@ impl InputRouter {
     /// tagged widget to another. Per-pointer ordering — two
     /// pointers crossing different widgets see two independent
     /// enter / leave streams.
+    ///
+    /// R51.40 §5.35: the new target's
+    /// [`External::wants_pointer_capture`] is queried in the same
+    /// pass and cached in `hover_wants_capture` so the next
+    /// [`pointer_down`] reads a bit instead of re-walking the
+    /// state-scene tree.
     fn refresh_hover(&mut self, id: PointerId, state_scene: &mut Scene) {
         let now = match (self.cursors.get(&id), &self.last_paint_scene) {
             (Some(&(x, y)), Some(scene)) => resolve_hover_tag(scene, x, y),
@@ -388,10 +419,13 @@ impl InputRouter {
         }
         if let Some(prev_tag) = prev {
             self.hover_targets.remove(&id);
+            self.hover_wants_capture.remove(&id);
             dispatch_send(state_scene, &prev_tag, "PointerLeave");
         }
         if let Some(target) = now {
             self.hover_targets.insert(id, target.clone());
+            let wants = widget_wants_capture(state_scene, &target);
+            self.hover_wants_capture.insert(id, wants);
             dispatch_send(state_scene, &target, "PointerEnter");
         }
     }
@@ -1402,6 +1436,37 @@ mod tests {
             vec!["PointerEnter".to_string(), "PointerLeave".into()],
         );
         assert_eq!(read(&eb), vec!["PointerEnter".to_string()]);
+    }
+
+    #[test]
+    fn wants_capture_cache_co_locates_with_hover_walk() {
+        // R51.40 §5.35 — `pointer_down` reads a cached bit
+        // populated by the matching `refresh_hover` instead of
+        // walking the state-scene tree itself. Behavioural
+        // verification: a drag-aware widget still enters capture on
+        // press, and a button-like widget still does not — same
+        // observable outcome as the pre-R51.40 walk-on-click path,
+        // exercising the cache lookup chain end-to-end.
+        let mut router = InputRouter::new();
+        let (mut state, _events, _moves) = state_with_slider();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        // Pointer hovers a drag-aware widget — the cache hit makes
+        // pointer_down lock capture without re-walking the scene.
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(router.captured_target(PointerId::MOUSE), Some("main_slider"));
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        // Drop hover (cache cleared on PointerLeave path).
+        let mut router2 = InputRouter::new();
+        let (mut state2, _events) = state_with_button();
+        let paint2 = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        router2.update_paint_scene(paint2, &mut state2);
+        router2.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state2);
+        // Button-like widget cached as wants_capture=false — no
+        // lock on press.
+        router2.pointer_down(PointerId::MOUSE, &mut state2);
+        assert_eq!(router2.captured_target(PointerId::MOUSE), None);
     }
 
     #[test]
