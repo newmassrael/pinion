@@ -31,7 +31,9 @@ pub mod wait_for;
 pub use click::{click, ClickError, ClickOutcome};
 pub use dispatch::{dispatch, DispatchContext, Request, RequestId, Response, RpcError};
 pub use dry_run::{dry_run, DryRunError};
-pub use focus::{focus_get, focus_set, FocusError, FocusSetParams, FocusState};
+pub use focus::{
+    focus_get, focus_next, focus_prev, focus_set, FocusError, FocusSetParams, FocusState,
+};
 pub use font::{
     cmap_subtables as font_cmap_subtables, dispose as font_dispose,
     family_name as font_family_name, full_name as font_full_name,

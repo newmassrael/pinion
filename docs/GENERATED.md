@@ -3004,6 +3004,7 @@ router.pointer_down(&mut state_scene);
 - R51.71 — AccessFocus typed + accesskit Node::set_active_descendant (ARIA roving-tabindex 정통)
 - R51.72 — dirty_tags + last_access_nodes cache (AccessKit incremental-update 권고 준수)
 - R51.73 — focus/set + focus/get RPC dual to AccessKit Focus (AI primary path §2 #2 align)
+- R51.74 — focus/next + focus/prev RPC (Tab / Shift+Tab equivalent AI primary path)
 
 
 
@@ -3065,6 +3066,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/focus.rs:focus_set
 - crates/pinion-rpc/src/focus.rs:focus_get
 - crates/pinion-rpc/src/dispatch.rs:DispatchContext::focus_manager
+- crates/pinion-rpc/src/focus.rs:focus_next
+- crates/pinion-rpc/src/focus.rs:focus_prev
 
 
 
@@ -5530,6 +5533,32 @@ router.pointer_down(&mut state_scene);
 - composite tabindex vs selection 구분 — R51.71 carry, ARIA radio-group tabindex independence
 - no-change frame emit skip — R51.72 carry, AccessKit incremental 극극 제로
 - focus/next + focus/prev RPC — keyboard Tab equivalent 의 AI path
+
+
+
+### R51.74 — R51.74 §5.40 focus/next + focus/prev RPC — Tab / Shift+Tab 구현설 동웁 (AI primary path 의 keyboard navigation dual)
+
+**Changes**:
+- crates/pinion-rpc/src/focus.rs — focus_next + focus_prev + handle_focus_next + handle_focus_prev
+- crates/pinion-rpc/src/lib.rs — re-export focus_next, focus_prev
+- crates/pinion-rpc/src/dispatch.rs — focus/next + focus/prev 라우트 (last-arm move 패턴으로 clippy needless_option_as_deref 회피)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- cargo test --workspace --features pinion-runtime/vello — 1472 pass / 0 fail (+9 from 1463)
+- focus.rs 7 unit (next/prev advance/wrap/from-unfocused/empty) + dispatch 2 wire
+
+
+
+**Impact**: §5.40, §5.7
+
+
+**Carry forward**:
+- composite tabindex vs selection 구분 — R51.71 carry
+- no-change frame emit skip — R51.72 carry
 
 
 

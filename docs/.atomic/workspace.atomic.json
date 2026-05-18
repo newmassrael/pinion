@@ -3868,7 +3868,8 @@
         "R51.70 — WidgetView::access_child_invoke + RadioGroup wire-format (WCAG 4.1.2 write 회복)",
         "R51.71 — AccessFocus typed + accesskit Node::set_active_descendant (ARIA roving-tabindex 정통)",
         "R51.72 — dirty_tags + last_access_nodes cache (AccessKit incremental-update 권고 준수)",
-        "R51.73 — focus/set + focus/get RPC dual to AccessKit Focus (AI primary path §2 #2 align)"
+        "R51.73 — focus/set + focus/get RPC dual to AccessKit Focus (AI primary path §2 #2 align)",
+        "R51.74 — focus/next + focus/prev RPC (Tab / Shift+Tab equivalent AI primary path)"
       ],
       "alternatives_rejected": [
         {
@@ -4071,6 +4072,14 @@
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
           "symbol": "DispatchContext::focus_manager"
+        },
+        {
+          "file": "crates/pinion-rpc/src/focus.rs",
+          "symbol": "focus_next"
+        },
+        {
+          "file": "crates/pinion-rpc/src/focus.rs",
+          "symbol": "focus_prev"
         }
       ],
       "decision_status": "active"
@@ -7831,6 +7840,48 @@
         "composite tabindex vs selection 구분 — R51.71 carry, ARIA radio-group tabindex independence",
         "no-change frame emit skip — R51.72 carry, AccessKit incremental 극극 제로",
         "focus/next + focus/prev RPC — keyboard Tab equivalent 의 AI path"
+      ]
+    },
+    "R51.74": {
+      "decision_summary": "R51.74 §5.40 focus/next + focus/prev RPC — Tab / Shift+Tab 구현설 동웁 (AI primary path 의 keyboard navigation dual)",
+      "changes_bullets": [
+        "crates/pinion-rpc/src/focus.rs — focus_next + focus_prev + handle_focus_next + handle_focus_prev",
+        "crates/pinion-rpc/src/lib.rs — re-export focus_next, focus_prev",
+        "crates/pinion-rpc/src/dispatch.rs — focus/next + focus/prev 라우트 (last-arm move 패턴으로 clippy needless_option_as_deref 회피)"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "cargo test --workspace --features pinion-runtime/vello — 1472 pass / 0 fail (+9 from 1463)",
+        "focus.rs 7 unit (next/prev advance/wrap/from-unfocused/empty) + dispatch 2 wire"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "composite tabindex vs selection 구분 — R51.71 carry",
+        "no-change frame emit skip — R51.72 carry"
+      ],
+      "publishable_decision_summary": "R51.74 §5.40 focus/next + focus/prev RPC — Tab / Shift+Tab 구현설 동웁 (AI primary path 의 keyboard navigation dual)",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc/src/focus.rs — focus_next + focus_prev + handle_focus_next + handle_focus_prev",
+        "crates/pinion-rpc/src/lib.rs — re-export focus_next, focus_prev",
+        "crates/pinion-rpc/src/dispatch.rs — focus/next + focus/prev 라우트 (last-arm move 패턴으로 clippy needless_option_as_deref 회피)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "cargo test --workspace --features pinion-runtime/vello — 1472 pass / 0 fail (+9 from 1463)",
+        "focus.rs 7 unit (next/prev advance/wrap/from-unfocused/empty) + dispatch 2 wire"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "composite tabindex vs selection 구분 — R51.71 carry",
+        "no-change frame emit skip — R51.72 carry"
       ]
     },
     "Round 1": {

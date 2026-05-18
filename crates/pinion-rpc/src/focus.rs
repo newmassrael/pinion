@@ -104,6 +104,34 @@ pub fn focus_get(focus: &FocusManager) -> FocusState {
     }
 }
 
+/// R51.74 §5.40 — `focus/next`. Tab-equivalent for AI clients.
+///
+/// Moves focus to the next element in
+/// [`pinion_runtime::FocusManager::tab_order`], wrapping end →
+/// start. When focus is unset, focuses the first element (matches
+/// the ARIA Authoring Practices first-Tab convention). Returns the
+/// new focus state.
+pub fn focus_next(focus: &mut FocusManager) -> FocusState {
+    let _ = focus.focus_next();
+    FocusState {
+        focused: focus.focused().map(str::to_owned),
+        tab_order: None,
+    }
+}
+
+/// R51.74 §5.40 — `focus/prev`. Shift+Tab-equivalent for AI clients.
+///
+/// Moves focus to the previous element, wrapping start → end. When
+/// focus is unset, focuses the last element (ARIA Authoring
+/// Practices first-Shift+Tab convention).
+pub fn focus_prev(focus: &mut FocusManager) -> FocusState {
+    let _ = focus.focus_prev();
+    FocusState {
+        focused: focus.focused().map(str::to_owned),
+        tab_order: None,
+    }
+}
+
 /// JSON-RPC adapter for `focus/set`. Parses the `params` Value into
 /// [`FocusSetParams`], runs [`focus_set`], and lifts the result into
 /// the dispatcher's `(serde_json::Value, RpcError)` shape.
@@ -157,6 +185,44 @@ pub(crate) fn handle_focus_get(
         });
     };
     let state = focus_get(focus);
+    serde_json::to_value(state).map_err(|e| crate::dispatch::RpcError {
+        code: -32603,
+        message: "Internal error".to_string(),
+        data: Some(Value::String(e.to_string())),
+    })
+}
+
+/// JSON-RPC adapter for `focus/next` (R51.74 §5.40).
+pub(crate) fn handle_focus_next(
+    focus: Option<&mut FocusManager>,
+) -> Result<Value, crate::dispatch::RpcError> {
+    let Some(focus) = focus else {
+        return Err(crate::dispatch::RpcError {
+            code: -32004,
+            message: "focus manager unavailable".to_string(),
+            data: None,
+        });
+    };
+    let state = focus_next(focus);
+    serde_json::to_value(state).map_err(|e| crate::dispatch::RpcError {
+        code: -32603,
+        message: "Internal error".to_string(),
+        data: Some(Value::String(e.to_string())),
+    })
+}
+
+/// JSON-RPC adapter for `focus/prev` (R51.74 §5.40).
+pub(crate) fn handle_focus_prev(
+    focus: Option<&mut FocusManager>,
+) -> Result<Value, crate::dispatch::RpcError> {
+    let Some(focus) = focus else {
+        return Err(crate::dispatch::RpcError {
+            code: -32004,
+            message: "focus manager unavailable".to_string(),
+            data: None,
+        });
+    };
+    let state = focus_prev(focus);
     serde_json::to_value(state).map_err(|e| crate::dispatch::RpcError {
         code: -32603,
         message: "Internal error".to_string(),
@@ -239,5 +305,58 @@ mod tests {
         assert!(state.focused.is_none());
         let order = state.tab_order.expect("populated by focus_get");
         assert!(order.is_empty());
+    }
+
+    #[test]
+    fn focus_next_advances_in_tab_order() {
+        let mut fm = fm_with(&["a", "b", "c"]);
+        let _ = fm.focus_set("a");
+        let state = focus_next(&mut fm);
+        assert_eq!(state.focused.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn focus_next_wraps_at_end() {
+        let mut fm = fm_with(&["a", "b"]);
+        let _ = fm.focus_set("b");
+        let state = focus_next(&mut fm);
+        assert_eq!(state.focused.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn focus_next_from_unfocused_picks_first() {
+        let mut fm = fm_with(&["a", "b", "c"]);
+        let state = focus_next(&mut fm);
+        assert_eq!(state.focused.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn focus_prev_steps_backward() {
+        let mut fm = fm_with(&["a", "b", "c"]);
+        let _ = fm.focus_set("c");
+        let state = focus_prev(&mut fm);
+        assert_eq!(state.focused.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn focus_prev_wraps_at_start() {
+        let mut fm = fm_with(&["a", "b"]);
+        let _ = fm.focus_set("a");
+        let state = focus_prev(&mut fm);
+        assert_eq!(state.focused.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn focus_prev_from_unfocused_picks_last() {
+        let mut fm = fm_with(&["a", "b", "c"]);
+        let state = focus_prev(&mut fm);
+        assert_eq!(state.focused.as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn focus_next_empty_tab_order_returns_none() {
+        let mut fm = FocusManager::new();
+        let state = focus_next(&mut fm);
+        assert!(state.focused.is_none());
     }
 }

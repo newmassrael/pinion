@@ -432,6 +432,12 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             request.params.as_ref(),
         ),
         "focus/get" => crate::focus::handle_focus_get(focus_manager.as_deref()),
+        // R51.74 §5.40 — Tab / Shift+Tab equivalents for AI clients.
+        "focus/next" => crate::focus::handle_focus_next(focus_manager.as_deref_mut()),
+        // Last `focus_manager` arm — move directly; the
+        // `as_deref_mut()` call would be a no-op identity reborrow
+        // on `Option<&mut FocusManager>`.
+        "focus/prev" => crate::focus::handle_focus_prev(focus_manager),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -4748,6 +4754,30 @@ mod tests {
         let err = resp.error.expect("expected unavailable error");
         assert_eq!(err.code, -32004);
         assert_eq!(err.message, "focus manager unavailable");
+    }
+
+    #[test]
+    fn focus_next_wire_advances() {
+        let mut scene = counted_scene(0);
+        let mut focus = pinion_runtime::FocusManager::new();
+        focus.update_focusable_tags(vec!["a".to_owned(), "b".to_owned()]);
+        let _ = focus.focus_set("a");
+        let req = r#"{"jsonrpc":"2.0","method":"focus/next","id":50}"#;
+        let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("focused").and_then(Value::as_str), Some("b"));
+    }
+
+    #[test]
+    fn focus_prev_wire_steps_back() {
+        let mut scene = counted_scene(0);
+        let mut focus = pinion_runtime::FocusManager::new();
+        focus.update_focusable_tags(vec!["a".to_owned(), "b".to_owned()]);
+        let _ = focus.focus_set("b");
+        let req = r#"{"jsonrpc":"2.0","method":"focus/prev","id":51}"#;
+        let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("focused").and_then(Value::as_str), Some("a"));
     }
 
     #[test]
