@@ -208,7 +208,7 @@ fn emit_tables(
     s.push_str(
         "/// UCD version pin (UAX #44 — Hyrum's Law deterministic).\n",
     );
-    s.push_str("pub(crate) const UCD_VERSION: &str = \"16.0.0\";\n\n");
+    s.push_str("pub const UCD_VERSION: &str = \"16.0.0\";\n\n");
 
     emit_decomp_table(
         &mut s,

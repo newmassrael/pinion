@@ -1,12 +1,21 @@
-//! R50.2.x §5.37.3 `pinion-text-unicode` — self-hosted Unicode
-//! normalization (UAX #15 NFC/NFD/NFKC/NFKD).
+//! `pinion-text-unicode` — self-hosted Unicode normalization
+//! (UAX #15 NFC/NFD/NFKC/NFKD) over a vendored UCD 16.0.0 source.
 //!
 //! `unicode-normalization` / `icu` / `parley` 등 black box crate 가
 //! 아닌, UCD 16.0.0 decomposition + `canonical_combining_class` +
 //! `full_composition_exclusion` table 자체 embed (`build.rs`
 //! codegen). R50 정신 완전 적용 — 외부 dependency 0개.
 //!
-//! Crate roadmap (R50.2.x sub-phase chain per §5.37.3):
+//! # Quick start
+//!
+//! ```
+//! use pinion_text_unicode::{normalize, NormForm};
+//! assert_eq!(normalize("A\u{0300}", NormForm::Nfc), "\u{00C0}");
+//! assert_eq!(normalize("\u{00C0}",  NormForm::Nfd), "A\u{0300}");
+//! assert_eq!(normalize("\u{FB01}",  NormForm::Nfkd), "fi");
+//! ```
+//!
+//! # Crate roadmap (§5.37.3)
 //!
 //! * R50.2.0 — atomic-only §5.37.3 ratify (spec round, no impl).
 //! * R50.2.1 — crate scaffold + [`NormForm`] enum.
@@ -14,8 +23,19 @@
 //! * R50.2.3 — NFD algorithm (Canonical Decomposition + Ordering).
 //! * R50.2.4 — NFC algorithm (Canonical Composition).
 //! * R50.2.5 — NFKD / NFKC algorithms (Compatibility Decomposition).
-//! * R50.2.6 — Quick-check optimization (UAX #15 §5).
+//! * R50.2.6 — `pub fn normalize` + `pub UCD_VERSION` re-export.
+//! * R50.2.7 — Quick-check optimization (UAX #15 §5).
 //! * R50.2.X — `text/normalize` RPC method (§5.37.2 channel).
+
+/// UCD version pinned at build time (Unicode 16.0.0 = current).
+///
+/// Re-exported from the build-time codegen so consumers can declare
+/// version-sensitive behaviour. Bumping the vendored UCD source
+/// requires updating `ucd/*.txt`, re-running `cargo build` (the
+/// table emit picks up automatically via `rerun-if-changed`), and
+/// running the conformance sweep against the matching
+/// `NormalizationTest.txt`.
+pub use tables::UCD_VERSION;
 
 /// One of the four Unicode normalization forms defined by UAX #15.
 ///
@@ -26,11 +46,9 @@
 /// * [`Nfkc`](Self::Nfkc) — Canonical Composition of the
 ///   compatibility decomposition.
 ///
-/// The four-variant set is closed by UAX #15 and frozen at the
-/// algorithm level; additional variants would be a new Unicode-level
-/// concept (e.g. `NFKC_Casefold` lives in a separate UAX). pinion adds
-/// algorithm-side helpers in R50.2.3+ as the consuming algorithm
-/// crystallises (additive — public API breaking 0).
+/// The four-variant set is closed by UAX #15. Additional variants
+/// would be a new Unicode-level concept (e.g. `NFKC_Casefold` lives
+/// in a separate UAX).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NormForm {
     /// `NFC` — Canonical Composition of the canonical decomposition.
@@ -44,37 +62,60 @@ pub enum NormForm {
     Nfkd,
 }
 
-/// UCD 16.0.0 tables emitted at build time by `build.rs`. Crate-private
-/// — accessed by the algorithm modules below.
+/// Normalize `s` to the requested Unicode normalization form.
 ///
-/// `PRIMARY_COMPOSITES` is consumed by R50.2.4 NFC; until then it is
-/// flagged as dead. `COMPATIBILITY_DECOMPOSITION` is consumed by
-/// R50.2.5 NFKD/NFKC.
+/// The four supported forms are UAX #15 NFD, NFC, NFKD, and NFKC.
+/// Each is fully conformant against UCD 16.0.0's
+/// `NormalizationTest.txt` (~20000 invariant tuples) per the per-
+/// form `*_conformance_sweep` test in this crate.
+///
+/// # Examples
+///
+/// ```
+/// use pinion_text_unicode::{normalize, NormForm};
+///
+/// // Canonical Decomposition: precomposed Á → A + combining acute.
+/// assert_eq!(normalize("\u{00C1}", NormForm::Nfd), "A\u{0301}");
+///
+/// // Canonical Composition: A + combining acute → Á.
+/// assert_eq!(normalize("A\u{0301}", NormForm::Nfc), "\u{00C1}");
+///
+/// // Compatibility Decomposition: superscript 2 → digit 2.
+/// assert_eq!(normalize("\u{00B2}", NormForm::Nfkd), "2");
+///
+/// // Compatibility Composition: ligature ﬁ → "fi" (no recomposition).
+/// assert_eq!(normalize("\u{FB01}", NormForm::Nfkc), "fi");
+/// ```
+#[must_use]
+pub fn normalize(s: &str, form: NormForm) -> String {
+    match form {
+        NormForm::Nfc => nfc::nfc(s),
+        NormForm::Nfd => nfd::nfd(s),
+        NormForm::Nfkc => nfkc::nfkc(s),
+        NormForm::Nfkd => nfkd::nfkd(s),
+    }
+}
+
+/// UCD 16.0.0 tables emitted at build time by `build.rs`. Crate-
+/// private structure; [`UCD_VERSION`] is re-exported above.
+///
+/// `FULL_COMPOSITION_EXCLUSION` is referenced only by the algorithm
+/// derivation (build.rs) and the crate-internal table tests — it
+/// has no runtime consumer in `lib.rs`. The `#[allow(dead_code)]`
+/// holds the line until R50.2.X surfaces `text/exclusion_member`
+/// via the RPC channel (§5.37.2).
 #[allow(dead_code)]
 mod tables {
     include!(concat!(env!("OUT_DIR"), "/tables.rs"));
 }
 
-// Algorithm modules are crate-private until `pub fn normalize` lands
-// (R50.2.6 — first pub entry once all 4 forms work, per the
-// "no-partial-features" rule). `#[allow(dead_code)]` covers each
-// chain: hangul → decompose → ordering → composition → nfd/nfc.
-// The lint reactivates per-module when `normalize` is wired through.
-#[allow(dead_code)]
 mod hangul;
-#[allow(dead_code)]
 mod decompose;
-#[allow(dead_code)]
 mod ordering;
-#[allow(dead_code)]
 mod composition;
-#[allow(dead_code)]
 mod nfc;
-#[allow(dead_code)]
 mod nfd;
-#[allow(dead_code)]
 mod nfkc;
-#[allow(dead_code)]
 mod nfkd;
 
 #[cfg(test)]
@@ -85,12 +126,33 @@ mod tests {
     use super::tables::{
         CANONICAL_COMBINING_CLASS, CANONICAL_DECOMPOSITION,
         COMPATIBILITY_DECOMPOSITION, FULL_COMPOSITION_EXCLUSION,
-        PRIMARY_COMPOSITES, UCD_VERSION,
+        PRIMARY_COMPOSITES,
     };
+    use super::{normalize, NormForm, UCD_VERSION};
 
     #[test]
     fn ucd_version_pinned() {
         assert_eq!(UCD_VERSION, "16.0.0");
+    }
+
+    #[test]
+    fn public_normalize_nfd_decomposes() {
+        assert_eq!(normalize("\u{00C0}", NormForm::Nfd), "A\u{0300}");
+    }
+
+    #[test]
+    fn public_normalize_nfc_composes() {
+        assert_eq!(normalize("A\u{0300}", NormForm::Nfc), "\u{00C0}");
+    }
+
+    #[test]
+    fn public_normalize_nfkd_strips_compat_tags() {
+        assert_eq!(normalize("\u{FB01}", NormForm::Nfkd), "fi");
+    }
+
+    #[test]
+    fn public_normalize_nfkc_strips_then_no_recompose() {
+        assert_eq!(normalize("\u{00B2}", NormForm::Nfkc), "2");
     }
 
     #[test]

@@ -2869,6 +2869,10 @@
         {
           "file": "crates/pinion-text-unicode/src/nfkc.rs",
           "symbol": "nfkc"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/lib.rs",
+          "symbol": "normalize"
         }
       ],
       "decision_status": "active"
@@ -10525,6 +10529,48 @@
       "publishable_carry_forward_bullets": [
         "R50.2.6 Quick-check optimization (UAX #15 §5 NFC/NFD/NFKC/NFKD_QC tables)",
         "R50.2.7 pub fn normalize entry + RPC text/normalize method (§5.37.2 channel)"
+      ]
+    },
+    "Round 476": {
+      "decision_summary": "Round 476 — R50.2.6 §5.37.3 pub fn normalize entry (4 form public API + UCD_VERSION re-export)",
+      "changes_bullets": [
+        "lib.rs pub fn normalize(s, form) -> String + pub use UCD_VERSION re-export + 2 crate doctest",
+        "build.rs UCD_VERSION emit 'pub const' 변경 — public surface 진입",
+        "algorithm 8 모듈 allow(dead_code) 해제 — normalize chain 활성화 (tables 만 잔존)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-text-unicode = 75 unit + 2 doctest pass",
+        "cargo test --workspace --features pinion-runtime/vello = 932 pass (855 + 77)",
+        "cargo clippy -p pinion-text-unicode --all-targets = 0 warning (baseline 유지)"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.3"
+      ],
+      "carry_forward_bullets": [
+        "R50.2.7 Quick-check optimization (UAX #15 §5 QC tables + fast path)",
+        "R50.2.X text/normalize RPC method (§5.37.2 channel, pinion-rpc 측 wrap)",
+        "tables FULL_COMPOSITION_EXCLUSION allow(dead_code) — RPC introspect 시 해제"
+      ],
+      "publishable_decision_summary": "Round 476 — R50.2.6 §5.37.3 pub fn normalize entry (4 form public API + UCD_VERSION re-export)",
+      "publishable_changes_bullets": [
+        "lib.rs pub fn normalize(s, form) -> String + pub use UCD_VERSION re-export + 2 crate doctest",
+        "build.rs UCD_VERSION emit 'pub const' 변경 — public surface 진입",
+        "algorithm 8 모듈 allow(dead_code) 해제 — normalize chain 활성화 (tables 만 잔존)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-text-unicode = 75 unit + 2 doctest pass",
+        "cargo test --workspace --features pinion-runtime/vello = 932 pass (855 + 77)",
+        "cargo clippy -p pinion-text-unicode --all-targets = 0 warning (baseline 유지)"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R50.2.7 Quick-check optimization (UAX #15 §5 QC tables + fast path)",
+        "R50.2.X text/normalize RPC method (§5.37.2 channel, pinion-rpc 측 wrap)",
+        "tables FULL_COMPOSITION_EXCLUSION allow(dead_code) — RPC introspect 시 해제"
       ]
     },
     "Round 5": {
