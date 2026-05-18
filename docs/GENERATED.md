@@ -2804,6 +2804,69 @@ router.pointer_down(&mut state_scene);
 
 
 
+### §5.39. Focus model — keyboard navigation + activation primitive
+
+
+**Intent**: focused widget = key dispatch single target + Tab traversal + ARIA Space/Enter activation; pinion-runtime FocusManager 가 focused_tag 소유, broadcast key dispatch 폐기
+
+
+**Rationale**:
+- ARIA WCAG 2.1.1 Keyboard / 2.4.3 Focus Order / 2.4.7 Focus Visible — framework primitive 기본 보장 필수
+- input.rs:71 v0 carry — focus tab order + keyboard dispatch 명시 미구현, R48 부터 dormant 부채
+- apply_key broadcast = 다중 focusable widget 시 aliasing — Slider 2개 시 동일 Arrow 양쪽 응답
+- Button/Toggle/Checkbox/Radio Space/Enter activation 부재 — WCAG 2.1.1 Keyboard 정면 위반
+- Xilem / Slint / Qt / GTK / iced / Druid 모두 focus = framework primitive (textbook)
+- §5.35 input dispatch 의 key 측 dual axis — pointer 가 framework 면 key 도 framework
+
+
+
+**Inputs**:
+- paint Scene (focusable tag enumeration, depth-first traversal)
+- WidgetView::focusable_tags(&Scene) -> Vec<&str> trait method
+- Tab / Shift+Tab / Space / Enter (FocusManager 의 reserved key set)
+- WindowEvent::Focus { focused: bool } (focus save/restore trigger)
+- pointer_down on tagged focusable widget (click → focus side-effect, §5.35 hook)
+
+
+
+**Outputs**:
+- focused_tag: Option<String> (FocusManager single owner)
+- apply_key signature: (&mut Scene, focused_tag: Option<&str>, key) -> bool
+- Focus { focused: bool } 양측 widget invoke('send') dispatch (blur old + focus new)
+- introspect query: schema 의 ('focused', 'option-string') — RPC AI-first 호환
+- paint-time focus_ring outline rendering (R51.58 sub-round)
+
+
+
+**Caveats**:
+- Roving tabindex (composite RadioGroup) = single tab stop + arrow nav (ARIA pattern)
+- Focus on click = §5.35 pointer_down → focused_tag 자동 갱신 (mouse/key 동등 trigger)
+- focus_set('tag') programmatic = RPC 'focus/set' method 측 carry (R51.59 evidence-first)
+- focus_clear = Escape 또는 비-focusable click → focused_tag = None
+- WindowEvent::Focus { focused: false } = focused_tag 보존, restore 시 복원 (R51.59 land)
+- focus ring rendering = paint-time outline, theme Modifier 의존 (R51.58 sub-round land)
+- composite (RadioGroup) 내부 focused index = External sub-state, 외부 single tag
+- single-tag widget 의 internal sub-element focus = 별도 axis, R51.x 미land carry
+- focusable enumeration = paint scene tagged subset, interactive widget 만 (decoration 제외)
+- key priority = Tab/Shift+Tab swallow by FocusManager, 이후 apply_key 로 forward
+- Space/Enter widget-specific 의미 = apply_key 위임 (Button click, Checkbox toggle 등)
+- apply_key breaking change = R51.53 land 시 모든 기존 example 동시 update (substrate-first)
+
+
+
+**Alternatives rejected**:
+- broadcast key dispatch (현 v0) — 다중 focusable widget aliasing, WCAG 위반; 안 함
+- per-widget focus state ownership — DRY 위반 + multi-source-of-truth, single owner = textbook
+- DOM-style focus event bubbling — §5.15 External opaque + §6.3 view-fn purity 충돌
+- tabindex 수동 명시 (HTML 모방) — view-fn 의 declarative 정신 위반, traversal 자동 정통
+
+
+
+**Impact scope**: §5.13, §5.15, §5.20, §5.32, §5.35
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -4640,6 +4703,35 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.35
+
+
+
+### R51.51 — R51.51 §5.39 Focus model RFC — keyboard navigation + activation primitive (design-only)
+
+**Changes**:
+- §5.39 new section — Focus model RFC (design-only round, code mutation 0)
+- FocusManager substrate ownership + apply_key broadcast → focused-only breaking change spec
+- Tab/Shift+Tab traversal + Space/Enter activation + ARIA roving tabindex pattern 명문화
+- WidgetView::focusable_tags trait method + WindowEvent::Focus save/restore 양측 spec
+- 12 caveats: roving tabindex, focus on click, focus_set RPC, focus_clear, Window blur restore, focus ring, composite focus, single-tag sub-focus, enumeration scope, key priority, Space/Enter delegation, breaking change discipline
+
+
+
+**Verification**:
+- validate_workspace clean — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync/sections=55→56
+- code unchanged (design-only round, R51.43/.48/.49/.50 spec-only precedent)
+
+
+
+**Impact**: §5.39
+
+
+**Carry forward**:
+- R51.52 — pinion-runtime FocusManager substrate land
+- R51.53 — pinion-shell focus wiring + WidgetView trait extension (apply_key breaking change)
+- R51.54-R51.57 — first-client widget activation + roving tabindex
+- R51.58 — paint-time focus ring rendering
+- R51.59 — Window blur/restore focus state save/restore
 
 
 
