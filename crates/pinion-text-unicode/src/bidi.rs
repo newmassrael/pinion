@@ -2461,12 +2461,24 @@ mod tests {
     // ---- W1 ----
 
     #[test]
-    fn w1_nsm_at_sequence_start_becomes_on() {
-        // NSM at the very start of the paragraph (= sequence start) → ON.
+    fn w1_nsm_at_sequence_start_inherits_sos_l() {
+        // UAX #9 W1 (post-R51.26): NSM at the start of an isolating
+        // run sequence inherits `sos`, not ON. For a single-NSM
+        // paragraph at level 0, sos = L (max(prev=0, seq=0) = 0, even).
         // U+0301 COMBINING ACUTE ACCENT is class NSM.
         let nsm = '\u{0301}';
         let out = resolve_pipeline(&nsm.to_string(), 0);
-        assert_eq!(out.classes, vec![BidiClass::ON]);
+        assert_eq!(out.classes, vec![BidiClass::L]);
+    }
+
+    #[test]
+    fn w1_nsm_at_sequence_start_inherits_sos_r() {
+        // Same invariant under an RTL paragraph: sos = R (max(prev=1,
+        // seq=1) = 1, odd) → NSM inherits R. Locks the other half of
+        // the W1 sos-type fix from R51.26.
+        let nsm = '\u{0301}';
+        let out = resolve_pipeline(&nsm.to_string(), 1);
+        assert_eq!(out.classes, vec![BidiClass::R]);
     }
 
     #[test]
@@ -2486,15 +2498,31 @@ mod tests {
     }
 
     #[test]
-    fn w1_nsm_after_lri_becomes_on() {
-        // LRI followed by NSM: W1 maps NSM to ON because the
-        // preceding char is an isolate initiator.
+    fn w1_nsm_after_lri_inherits_inner_sos_l() {
+        // UAX #9 W1 (post-R51.26): inside the LRI's inner isolating
+        // run sequence, the NSM is at sequence-start and inherits
+        // inner sos, not ON. LRI promotes from outer level 0 to inner
+        // level 2 (even, force-LTR), so inner sos = L.
         let lri = '\u{2066}';
         let pdi = '\u{2069}';
         let text = format!("a{lri}\u{0301}b{pdi}");
         let out = resolve_pipeline(&text, 0);
-        // Positions: 'a' (L), LRI (LRI), NSM→ON, 'b' (L), PDI (PDI).
-        assert_eq!(out.classes[2], BidiClass::ON);
+        // Positions: 'a' (L), LRI, NSM → inner sos = L, 'b' (L), PDI.
+        assert_eq!(out.classes[2], BidiClass::L);
+    }
+
+    #[test]
+    fn w1_nsm_after_rli_inherits_inner_sos_r() {
+        // RLI promotes from outer level 0 to inner level 1 (odd,
+        // force-RTL). NSM at start of inner sequence inherits inner
+        // sos = R. Mirrors the LRI case to lock the sos-type W1 fix
+        // for both isolate directions.
+        let rli = '\u{2067}';
+        let pdi = '\u{2069}';
+        let text = format!("a{rli}\u{0301}b{pdi}");
+        let out = resolve_pipeline(&text, 0);
+        // Positions: 'a' (L), RLI, NSM → inner sos = R, 'b' (L), PDI.
+        assert_eq!(out.classes[2], BidiClass::R);
     }
 
     #[test]

@@ -8454,6 +8454,33 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 517 — R51.28 §5.37.4 BIDI W1 sos-type test alignment + RTL variants — Replace R51.19 stale W1 unit tests (still expecting NSM→ON at sequence start) with the post-R51.26 sos-type contract, and lock both sos polarities with new RTL paragraph + RLI inner-sequence variants.
+
+**Changes**:
+- crates/pinion-text-unicode/src/bidi.rs: rename w1_nsm_at_sequence_start_becomes_on -> _inherits_sos_l and w1_nsm_after_lri_becomes_on -> _inherits_inner_sos_l; both now expect L (paragraph_level=0 -> sos=L; LRI inner level=2 even -> sos=L) matching the apply_w1 sos parameter introduced in R51.26 (f274753)
+- crates/pinion-text-unicode/src/bidi.rs: add w1_nsm_at_sequence_start_inherits_sos_r (paragraph_level=1 -> sos=R) and w1_nsm_after_rli_inherits_inner_sos_r (RLI inner level=1 odd -> sos=R) so both sos polarities are locked as regression sentries for the W1 fix
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 1226 passed; 0 failed; 6 ignored (was 1220 passed + 2 failed pre-fix; +2 from stale-test re-pass, +4 from RTL/RLI/LRI/L variants)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- manual reasoning chain matches BidiTest sweep (already 490 846/490 846 in R51.26): isolating run sequence sos = parity of max(prev_level, seq.level); apply_w1 view[0]==NSM => view[0] = sos
+
+
+
+**Impact**: §5.37.4
+
+
+**Carry forward**:
+- R51.29 hello-toggle visual demo (paint-side N=2 evidence per substrate-incompleteness-signal)
+- R51.30 derive macro WidgetTransition partial (~150 LOC, snapshot+drive only)
+- R51.31 mirror_paired_brackets per-frame cache layer (perf substrate)
+- L4 alternative impl RFC: render-time GlyphRun.is_rtl substitute vs pre-substitute (R51.27)
+- Phase 2 axis ratify per R41 §5.16 4-phase plan
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
