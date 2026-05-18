@@ -74,6 +74,33 @@ impl FontRegistry {
             .insert(id, Arc::new(font));
         Ok(id)
     }
+
+    /// Remove a handle from the registry; return whether it existed.
+    /// The `0` sentinel is always rejected (returns `Ok(false)`).
+    fn remove(&self, id: u32) -> Result<bool, FontError> {
+        if id == 0 {
+            return Ok(false);
+        }
+        Ok(self
+            .inner
+            .write()
+            .map_err(|_| FontError::RegistryPoisoned)?
+            .remove(&id)
+            .is_some())
+    }
+
+    /// Snapshot the currently-allocated handles, ascending.
+    fn snapshot_ids(&self) -> Result<Vec<u32>, FontError> {
+        let mut ids: Vec<u32> = self
+            .inner
+            .read()
+            .map_err(|_| FontError::RegistryPoisoned)?
+            .keys()
+            .copied()
+            .collect();
+        ids.sort_unstable();
+        Ok(ids)
+    }
 }
 
 impl Default for FontRegistry {
@@ -535,6 +562,54 @@ pub fn postscript_name(
     Ok(PostscriptNameOutcome { name: font.postscript_name() })
 }
 
+// ─── R50.X.3 lifecycle methods (§5.37.2 R50.X.3) ───────────────────────────
+
+/// JSON wire shape for `font/dispose` params.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DisposeParams {
+    pub font_id: u32,
+}
+
+/// Outcome for `font/dispose`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisposeOutcome {
+    /// `true` if the handle existed and was removed; `false` if the
+    /// handle was unknown (or `0`, the reserved sentinel).
+    pub existed: bool,
+}
+
+/// Drop a font handle from the registry. The `0` sentinel and unknown
+/// handles both surface as `existed: false` rather than an error so
+/// idempotent cleanup is safe.
+///
+/// # Errors
+///
+/// [`FontError::RegistryPoisoned`] — internal lock poisoned.
+pub fn dispose(
+    registry: &FontRegistry,
+    font_id: u32,
+) -> Result<DisposeOutcome, FontError> {
+    Ok(DisposeOutcome { existed: registry.remove(font_id)? })
+}
+
+/// Outcome for `font/list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListOutcome {
+    /// Currently-allocated handles, ascending.
+    pub font_ids: Vec<u32>,
+}
+
+/// Snapshot the currently-allocated font handles. Useful for AI
+/// agents to enumerate the live registry state and reconcile after
+/// session restart.
+///
+/// # Errors
+///
+/// [`FontError::RegistryPoisoned`] — internal lock poisoned.
+pub fn list(registry: &FontRegistry) -> Result<ListOutcome, FontError> {
+    Ok(ListOutcome { font_ids: registry.snapshot_ids()? })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -751,5 +826,72 @@ mod tests {
         ] {
             assert_eq!(err, FontError::NotFound { font_id: 999 });
         }
+    }
+
+    // ─── R50.X.3 lifecycle tests ───────────────────────────────────────
+
+    #[test]
+    fn dispose_removes_known_handle() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let out = dispose(&registry, id).unwrap();
+        assert!(out.existed);
+        assert_eq!(registry.len(), 0);
+        // After dispose, lookups fail.
+        let err = family_name(&registry, id).unwrap_err();
+        assert_eq!(err, FontError::NotFound { font_id: id });
+    }
+
+    #[test]
+    fn dispose_unknown_handle_is_idempotent() {
+        let registry = FontRegistry::new();
+        let out = dispose(&registry, 9_999).unwrap();
+        assert!(!out.existed);
+    }
+
+    #[test]
+    fn dispose_zero_sentinel_is_idempotent() {
+        let registry = FontRegistry::new();
+        let out = dispose(&registry, 0).unwrap();
+        assert!(!out.existed);
+    }
+
+    #[test]
+    fn dispose_does_not_recycle_handles() {
+        let registry = FontRegistry::new();
+        let first = parse_noto(&registry);
+        dispose(&registry, first).unwrap();
+        let second = parse_noto(&registry);
+        assert!(
+            second > first,
+            "next_id must continue ascending after dispose ({first} → {second})",
+        );
+    }
+
+    #[test]
+    fn list_empty_registry_returns_empty_vec() {
+        let registry = FontRegistry::new();
+        let out = list(&registry).unwrap();
+        assert!(out.font_ids.is_empty());
+    }
+
+    #[test]
+    fn list_returns_ascending_handles() {
+        let registry = FontRegistry::new();
+        let a = parse_noto(&registry);
+        let b = parse_noto(&registry);
+        let c = parse_noto(&registry);
+        let out = list(&registry).unwrap();
+        assert_eq!(out.font_ids, vec![a, b, c]);
+    }
+
+    #[test]
+    fn list_excludes_disposed_handles() {
+        let registry = FontRegistry::new();
+        let a = parse_noto(&registry);
+        let b = parse_noto(&registry);
+        dispose(&registry, a).unwrap();
+        let out = list(&registry).unwrap();
+        assert_eq!(out.font_ids, vec![b]);
     }
 }

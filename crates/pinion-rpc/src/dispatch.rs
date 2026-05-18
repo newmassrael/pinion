@@ -363,6 +363,8 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "font/postscript_name" => {
             handle_font_postscript_name(font_registry, request.params.as_ref())
         }
+        "font/dispose" => handle_font_dispose(font_registry, request.params.as_ref()),
+        "font/list" => handle_font_list(font_registry),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -1768,6 +1770,26 @@ fn handle_font_postscript_name(
     let font_id = font_id_from_params(params)?;
     match font::postscript_name(registry, font_id) {
         Ok(outcome) => serialize_outcome(&outcome, "postscript_name"),
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_dispose(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    match font::dispose(registry, font_id) {
+        Ok(outcome) => serialize_outcome(&outcome, "dispose"),
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_list(registry: Option<&FontRegistry>) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    match font::list(registry) {
+        Ok(outcome) => serialize_outcome(&outcome, "list"),
         Err(err) => Err(font_error_to_rpc(&err)),
     }
 }
@@ -3736,6 +3758,81 @@ mod tests {
                 r#"{{"jsonrpc":"2.0","method":"{method}","params":{{"font_id":1,"glyph_id":0}},"id":1}}"#,
             );
             let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            let err = resp.error.unwrap();
+            assert_eq!(err.code, -32603, "method {method}");
+            assert_eq!(
+                err.data.as_ref().and_then(|d| d.as_str()),
+                Some("FontRegistryUnavailable"),
+                "method {method}",
+            );
+        }
+    }
+
+    // --- R50.X.3 §5.37.2 lifecycle E2E tests ---
+
+    #[test]
+    fn font_dispose_round_trip_removes_handle() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/dispose","params":{{"font_id":{font_id}}},"id":10}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        assert_eq!(
+            resp.result.unwrap().get("existed").and_then(Value::as_bool),
+            Some(true),
+        );
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn font_dispose_unknown_handle_existed_false() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let req = r#"{"jsonrpc":"2.0","method":"font/dispose","params":{"font_id":9999},"id":11}"#;
+        let resp =
+            parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+        assert_eq!(
+            resp.result.unwrap().get("existed").and_then(Value::as_bool),
+            Some(false),
+        );
+    }
+
+    #[test]
+    fn font_list_round_trip_returns_handles() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let a = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let b = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let req = r#"{"jsonrpc":"2.0","method":"font/list","id":12}"#;
+        let resp =
+            parse_response(&dispatch_with_font(&mut scene, &registry, req).unwrap());
+        let ids: Vec<u64> = resp
+            .result
+            .unwrap()
+            .get("font_ids")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![a, b]);
+    }
+
+    #[test]
+    fn font_lifecycle_without_registry_returns_registry_unavailable() {
+        for (method, body) in [
+            (
+                "font/dispose",
+                r#"{"jsonrpc":"2.0","method":"font/dispose","params":{"font_id":1},"id":13}"#,
+            ),
+            ("font/list", r#"{"jsonrpc":"2.0","method":"font/list","id":14}"#),
+        ] {
+            let mut scene = counted_scene(0);
+            let resp = parse_response(&dispatch_t(&mut scene, body).unwrap());
             let err = resp.error.unwrap();
             assert_eq!(err.code, -32603, "method {method}");
             assert_eq!(

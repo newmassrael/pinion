@@ -2386,6 +2386,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/font.rs:full_name
 - crates/pinion-rpc/src/font.rs:postscript_name
 - crates/pinion-rpc/src/font.rs:GlyphOutlineOutcome
+- crates/pinion-rpc/src/font.rs:dispose
+- crates/pinion-rpc/src/font.rs:list
 
 
 
@@ -6761,6 +6763,41 @@ router.pointer_down(&mut state_scene);
 - ParseError detail JSON 직렬화 (현재 variant name only) — AI agent diagnostic 강화
 - concurrency stress test — RwLock multi-thread contention pattern (R50.X.3 이후 검토)
 - method namespace = font/* 만 — text/* (shape/layout/break) 는 R50.4+ shape 후 의 §5.37.3 그룹짐
+
+
+
+### Round 469 — R50.X.3 §5.37.2 lifecycle (font/dispose + font/list) — Round 469 — R50.X.3 §5.37.2 lifecycle. font/dispose (handle removal, idempotent on 0/unknown) + font/list (handle enumeration, ascending). FontRegistry::remove(id) → bool + snapshot_ids() → Vec<u32>. DisposeParams/DisposeOutcome { existed } + ListOutcome { font_ids }. dispatch routing 2 + handle_font_dispose + handle_font_list. handle counter 가 dispose 후 monotonic (next_id 회수 안 함) — Hyrum's Law 정합 + AI agent ID stability. 7 typed test + 4 JSON-RPC E2E test = 11 신규 pass.
+
+**Changes**:
+- font.rs: FontRegistry::remove(id) -> Result<bool, FontError> (0 sentinel 은 완전 false reject)
+- font.rs: FontRegistry::snapshot_ids() -> Result<Vec<u32>, FontError> ascending sort_unstable
+- font.rs: dispose / list typed fn + DisposeParams/DisposeOutcome/ListOutcome wire shape
+- dispatch.rs: "font/dispose" + "font/list" routing + handle_font_dispose + handle_font_list
+- lib.rs: dispose / list re-export + 3 new wire shape (DisposeParams/Outcome / ListOutcome) export
+- dispose semantics: 0 또는 unknown handle = existed:false (idempotent) — 에러 아닌 이유는 AI agent retry-safe cleanup
+- list semantics: ascending sort 고정 — AI agent 검증 용 deterministic enumeration
+- next_id monotonic 항구 (dispose 후도 회수 0) — ID stability + Hyrum's Law 정합
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 844 → 855 (+11 R50.X.3 new: 7 font.rs + 4 dispatch.rs E2E)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: pinion-rpc 0 new warnings (baseline 유지)
+- real font fixture: parse a / b → dispose(a) → list = [b] / next_id ascending continue verification
+- validate_workspace: entries 123→124 / sections 49 / T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+- §5.37.2 caveat #6 (R50.X.3 lifecycle: dispose/list) ratify completion
+
+
+
+**Impact**: §5.37.2, §5.7, §5.12
+
+
+**Carry forward**:
+- §5.37.2 sub-scope = 9 method complete (parse / family_name / glyph_id_for / glyph_outline / cmap_subtables / metrics / subfamily_name / full_name / postscript_name / dispose / list = 11 actually)
+- next text engine layer = R50.2 Unicode normalization (UAX #15 NFC/NFD/NFKC/NFKD) — R50.X.0∼R50.X.3 RPC channel 완성 후 자연 계속
+- font_advance_width / left_side_bearing accessor RPC (hmtx 세분 access) — R50.X.4 후보
+- concurrency stress test — multi-thread RwLock contention pattern (현재까지 single-thread test 만)
+- InputRouter SCE migration (§2 invariant #5 부채 청산) carry 그대로
 
 
 
