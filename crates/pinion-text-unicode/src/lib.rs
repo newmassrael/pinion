@@ -58,8 +58,8 @@ mod tables {
 // Algorithm modules are crate-private until `pub fn normalize` lands
 // (R50.2.6 — first pub entry once all 4 forms work, per the
 // "no-partial-features" rule). `#[allow(dead_code)]` covers each
-// chain: hangul → decompose → ordering → nfd. The lint reactivates
-// per-module when `normalize` is wired through.
+// chain: hangul → decompose → ordering → composition → nfd/nfc.
+// The lint reactivates per-module when `normalize` is wired through.
 #[allow(dead_code)]
 mod hangul;
 #[allow(dead_code)]
@@ -67,7 +67,14 @@ mod decompose;
 #[allow(dead_code)]
 mod ordering;
 #[allow(dead_code)]
+mod composition;
+#[allow(dead_code)]
+mod nfc;
+#[allow(dead_code)]
 mod nfd;
+
+#[cfg(test)]
+mod test_fixture;
 
 #[cfg(test)]
 mod tests {

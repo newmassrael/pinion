@@ -2841,6 +2841,22 @@
         },
         {
           "file": "crates/pinion-text-unicode/ucd/NormalizationTest.txt"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/hangul.rs",
+          "symbol": "compose_hangul"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/composition.rs",
+          "symbol": "canonical_composition"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/nfc.rs",
+          "symbol": "nfc"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/test_fixture.rs",
+          "symbol": "load_normalization_test"
         }
       ],
       "decision_status": "active"
@@ -10415,6 +10431,48 @@
         "R50.2.4 NFC algorithm (PRIMARY_COMPOSITES adjacent-pair + Hangul algorithmic composition)",
         "R50.2.5 NFKD/NFKC (COMPATIBILITY_DECOMPOSITION reuse) + 4-form sweep",
         "R50.2.6 Quick-check + pub fn normalize entry (allow(dead_code) 해제)"
+      ]
+    },
+    "Round 474": {
+      "decision_summary": "Round 474 — R50.2.4 §5.37.3 NFC algorithm (canonical composition + Hangul §16 compose)",
+      "changes_bullets": [
+        "hangul.rs compose_hangul (L+V→LV, LV+T→LVT) + 5 new test",
+        "composition.rs + nfc.rs 신설 — primary composite + blocked semantics (UAX #15 D6)",
+        "test_fixture.rs shared NormalizationCase loader (NFD/NFC sweep 양측 소비)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-text-unicode = 54 pass (NFC conformance sweep 20026 line @ 0.19s)",
+        "cargo test --workspace --features pinion-runtime/vello = 909 pass (855 + 54)",
+        "cargo clippy -p pinion-text-unicode --all-targets = 0 warning (workspace baseline 유지)"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.3"
+      ],
+      "carry_forward_bullets": [
+        "R50.2.5 NFKD/NFKC (COMPATIBILITY_DECOMPOSITION reuse + 4-form sweep complete)",
+        "R50.2.6 Quick-check optimization (UAX #15 §5 NFC/NFD/NFKC/NFKD_QC tables)",
+        "R50.2.7 pub fn normalize entry (all 4 form 완성, allow(dead_code) 해제)"
+      ],
+      "publishable_decision_summary": "Round 474 — R50.2.4 §5.37.3 NFC algorithm (canonical composition + Hangul §16 compose)",
+      "publishable_changes_bullets": [
+        "hangul.rs compose_hangul (L+V→LV, LV+T→LVT) + 5 new test",
+        "composition.rs + nfc.rs 신설 — primary composite + blocked semantics (UAX #15 D6)",
+        "test_fixture.rs shared NormalizationCase loader (NFD/NFC sweep 양측 소비)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-text-unicode = 54 pass (NFC conformance sweep 20026 line @ 0.19s)",
+        "cargo test --workspace --features pinion-runtime/vello = 909 pass (855 + 54)",
+        "cargo clippy -p pinion-text-unicode --all-targets = 0 warning (workspace baseline 유지)"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R50.2.5 NFKD/NFKC (COMPATIBILITY_DECOMPOSITION reuse + 4-form sweep complete)",
+        "R50.2.6 Quick-check optimization (UAX #15 §5 NFC/NFD/NFKC/NFKD_QC tables)",
+        "R50.2.7 pub fn normalize entry (all 4 form 완성, allow(dead_code) 해제)"
       ]
     },
     "Round 5": {

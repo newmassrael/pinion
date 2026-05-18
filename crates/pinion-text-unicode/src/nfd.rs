@@ -78,13 +78,7 @@ mod tests {
     /// - `c5 == toNFD(c5)` (idempotence)
     #[test]
     fn nfd_conformance_sweep() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/ucd/NormalizationTest.txt"
-        );
-        let text = std::fs::read_to_string(path)
-            .expect("NormalizationTest.txt must be vendored");
-        for case in parse_normalization_test(&text) {
+        for case in crate::test_fixture::load_normalization_test() {
             assert_eq!(
                 nfd(&case.source),
                 case.nfd,
@@ -116,53 +110,5 @@ mod tests {
                 case.label
             );
         }
-    }
-
-    #[cfg(test)]
-    struct NormalizationCase {
-        source: String,
-        nfc: String,
-        nfd: String,
-        nfkc: String,
-        nfkd: String,
-        label: String,
-    }
-
-    #[cfg(test)]
-    fn parse_normalization_test(text: &str) -> Vec<NormalizationCase> {
-        let mut cases = Vec::new();
-        for raw in text.lines() {
-            if raw.starts_with('@') || raw.starts_with('#') || raw.is_empty() {
-                continue;
-            }
-            let (data, label) = match raw.find('#') {
-                Some(pos) => (&raw[..pos], raw[pos + 1..].trim().to_owned()),
-                None => (raw, String::new()),
-            };
-            let cols: Vec<&str> = data.split(';').collect();
-            if cols.len() < 5 {
-                continue;
-            }
-            cases.push(NormalizationCase {
-                source: decode_column(cols[0]),
-                nfc: decode_column(cols[1]),
-                nfd: decode_column(cols[2]),
-                nfkc: decode_column(cols[3]),
-                nfkd: decode_column(cols[4]),
-                label,
-            });
-        }
-        cases
-    }
-
-    #[cfg(test)]
-    fn decode_column(col: &str) -> String {
-        col.split_whitespace()
-            .map(|hex| {
-                let cp = u32::from_str_radix(hex, 16)
-                    .expect("hex codepoint");
-                char::from_u32(cp).expect("valid Unicode scalar")
-            })
-            .collect()
     }
 }

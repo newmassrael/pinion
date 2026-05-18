@@ -31,6 +31,35 @@ pub(crate) fn is_hangul_syllable(c: u32) -> bool {
     (S_BASE..S_BASE + S_COUNT).contains(&c)
 }
 
+/// Algorithmic composition of two adjacent jamo (UAX #15 §16). Two
+/// shapes succeed:
+///
+/// * `(L, V) → LV` — leading consonant `L_BASE..L_COUNT` combined with
+///   vowel `V_BASE..V_COUNT` produces the syllable with T-offset 0.
+/// * `(LV, T) → LVT` — existing LV syllable (T-offset 0) combined
+///   with trailing consonant `T_BASE+1..T_BASE+T_COUNT` adds the
+///   trailing offset (real T jamo start at `T_BASE + 1`; the
+///   `T_BASE` codepoint itself is the "no trailing" sentinel).
+///
+/// Returns `None` for any other input pair.
+pub(crate) fn compose_hangul(a: u32, b: u32) -> Option<u32> {
+    if (L_BASE..L_BASE + L_COUNT).contains(&a)
+        && (V_BASE..V_BASE + V_COUNT).contains(&b)
+    {
+        let l_index = a - L_BASE;
+        let v_index = b - V_BASE;
+        return Some(S_BASE + (l_index * N_COUNT + v_index * T_COUNT));
+    }
+    if (S_BASE..S_BASE + S_COUNT).contains(&a) {
+        let s_index = a - S_BASE;
+        let is_lv = s_index % T_COUNT == 0;
+        if is_lv && (T_BASE + 1..T_BASE + T_COUNT).contains(&b) {
+            return Some(a + (b - T_BASE));
+        }
+    }
+    None
+}
+
 /// Decompose a precomposed Hangul syllable into its L, V, and
 /// optional T jamo (UAX #15 §16). Returns `true` iff `c` was a
 /// Hangul syllable and decomposition was emitted; `false` leaves
@@ -54,8 +83,8 @@ pub(crate) fn decompose_hangul_syllable(c: u32, out: &mut Vec<u32>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        decompose_hangul_syllable, is_hangul_syllable, L_BASE, S_BASE,
-        S_COUNT, T_BASE, V_BASE,
+        compose_hangul, decompose_hangul_syllable, is_hangul_syllable,
+        L_BASE, S_BASE, S_COUNT, T_BASE, V_BASE,
     };
 
     #[test]
@@ -95,5 +124,37 @@ mod tests {
         let mut out = vec![0xFFFF];
         assert!(!decompose_hangul_syllable(0x0041, &mut out));
         assert_eq!(out, vec![0xFFFF]);
+    }
+
+    #[test]
+    fn compose_l_v_produces_ga() {
+        // ᄀ (U+1100) + ᅡ (U+1161) → 가 (U+AC00).
+        assert_eq!(compose_hangul(L_BASE, V_BASE), Some(0xAC00));
+    }
+
+    #[test]
+    fn compose_lv_t_produces_han() {
+        // 하 (U+D558, an LV syllable) + ᆫ (U+11AB) → 한 (U+D55C).
+        // 하 has L=ᄒ V=ᅡ, so it's at S_BASE + (17 * N_COUNT + 0 * T_COUNT).
+        let ha = 0xD558_u32;
+        assert_eq!(compose_hangul(ha, 0x11AB), Some(0xD55C));
+    }
+
+    #[test]
+    fn compose_lvt_rejects_further_t() {
+        // 한 (U+D55C) is LVT (T-offset != 0); cannot accept another T.
+        assert!(compose_hangul(0xD55C, 0x11AB).is_none());
+    }
+
+    #[test]
+    fn compose_rejects_t_base_sentinel() {
+        // T_BASE itself (U+11A7) is the "no trailing" sentinel, not a
+        // real T jamo. A V-only LV syllable must NOT compose with it.
+        assert!(compose_hangul(0xAC00, T_BASE).is_none());
+    }
+
+    #[test]
+    fn compose_rejects_non_jamo_pair() {
+        assert!(compose_hangul(0x0041, 0x0300).is_none());
     }
 }
