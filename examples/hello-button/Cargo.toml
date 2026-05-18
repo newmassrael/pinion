@@ -17,6 +17,11 @@ path = "src/main.rs"
 # impl reaches into `ButtonExternal::new()` and the typed `ButtonEvent`
 # / `ButtonState` enums.
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.63 §5.40 — `AccessNode` / `AriaRole` types for the `access_node`
+# WidgetView override. pinion-shell re-export remains intentionally
+# minimal (only the shell-internal substrate is re-exported) so each
+# widget binding imports a11y primitives directly.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 # R51.30 paint-side AppShell. The shell pulls pinion-runtime (vello
 # feature) + pinion-rpc + pinion-text + winit + pollster transitively,
 # so this example's direct dep list collapses to "the widget I'm

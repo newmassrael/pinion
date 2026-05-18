@@ -38,6 +38,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Scene};
+use pinion_a11y::{AccessNode, AccessState, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 // pinion-forge codegen output. Defines `pub struct HelloButtonRenderer`
@@ -201,6 +202,32 @@ impl WidgetView for ButtonView {
     /// implementation but each widget gates on its own tag so
     /// activation never leaks to the wrong widget when multiple
     /// focusable controls share a screen.
+    /// R51.63 §5.40 — AccessKit semantic tree contribution. Emits a
+    /// single `AriaRole::Button` node whose accessible name matches
+    /// the visible label and whose `state_flags` mirror the four
+    /// `ButtonState` variants 1:1 (`Idle` = no flags, `Hover` =
+    /// `hovered`, `Pressed` = `pressed`, `Disabled` = `disabled`).
+    /// `focused` is set when `focused == Some(Self::tag())`; bounds
+    /// are filled by `AppShell::render` via `rect_for_tag` after
+    /// layout. AT clients (Narrator / `VoiceOver` / Orca / `TalkBack`)
+    /// see the same role/name/state the introspect schema reports.
+    fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
+        let label = match state {
+            ButtonState::Disabled => "Disabled",
+            _ => "Click me!",
+        };
+        let access_state = AccessState {
+            focused: focused == Some(Self::tag()),
+            disabled: matches!(state, ButtonState::Disabled),
+            hovered: matches!(state, ButtonState::Hover),
+            pressed: matches!(state, ButtonState::Pressed),
+            checked: None,
+        };
+        vec![AccessNode::new(Self::tag(), AriaRole::Button)
+            .with_name(label)
+            .with_state(access_state)]
+    }
+
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         if focused != Some(Self::tag()) {
             return false;
@@ -232,4 +259,58 @@ fn parse_button_state(name: &str) -> ButtonState {
 
 fn main() {
     pinion_shell::run::<ButtonView>();
+}
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    #[test]
+    fn idle_emits_button_role_with_label() {
+        let nodes = ButtonView::access_node(&ButtonState::Idle, None);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].role, AriaRole::Button);
+        assert_eq!(nodes[0].name.as_deref(), Some("Click me!"));
+        assert_eq!(nodes[0].tag, "main_btn");
+    }
+
+    #[test]
+    fn disabled_state_sets_disabled_flag_and_label() {
+        let nodes = ButtonView::access_node(&ButtonState::Disabled, None);
+        assert!(nodes[0].state.disabled);
+        assert_eq!(nodes[0].name.as_deref(), Some("Disabled"));
+    }
+
+    #[test]
+    fn hover_state_sets_hovered_flag() {
+        let nodes = ButtonView::access_node(&ButtonState::Hover, None);
+        assert!(nodes[0].state.hovered);
+        assert!(!nodes[0].state.pressed);
+        assert!(!nodes[0].state.disabled);
+    }
+
+    #[test]
+    fn pressed_state_sets_pressed_flag() {
+        let nodes = ButtonView::access_node(&ButtonState::Pressed, None);
+        assert!(nodes[0].state.pressed);
+        assert!(!nodes[0].state.hovered);
+    }
+
+    #[test]
+    fn focused_tag_sets_focused_flag() {
+        let nodes = ButtonView::access_node(&ButtonState::Idle, Some("main_btn"));
+        assert!(nodes[0].state.focused);
+    }
+
+    #[test]
+    fn other_focused_tag_does_not_set_focused() {
+        let nodes = ButtonView::access_node(&ButtonState::Idle, Some("other_widget"));
+        assert!(!nodes[0].state.focused);
+    }
+
+    #[test]
+    fn checked_is_none_for_button() {
+        let nodes = ButtonView::access_node(&ButtonState::Idle, None);
+        assert_eq!(nodes[0].state.checked, None);
+    }
 }

@@ -3028,6 +3028,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:AppShell::handle_accesskit_event
 - crates/pinion-shell/src/lib.rs:AppShell::forward_to_accesskit
 - crates/pinion-runtime/src/input.rs:rect_for_tag
+- examples/hello-button/src/main.rs:ButtonView::access_node
 
 
 
@@ -5171,6 +5172,37 @@ router.pointer_down(&mut state_scene);
 - R51.65 — Slider access_node + Float value + Action::Increment/Decrement support
 - R51.66 — RadioGroup composite access_node (parent + radio_N children)
 - R51.67 — ActionRequested handler → translate_action + InputRouter intent 변환 실제 디스패치
+
+
+
+### R51.63 — R51.63 §5.40 Button access_node first-client — AriaRole::Button + 4-state flag mapping
+
+**Changes**:
+- examples/hello-button/src/main.rs 의 ButtonView::access_node override (첫 first-client)
+- AriaRole::Button + label 이름 ("Click me!" / "Disabled") + AccessState 4 flag 매핑
+- ButtonState 4종 → AccessState (Idle=없음, Hover=hovered, Pressed=pressed, Disabled=disabled)
+- focused == Some("main_btn") 시 자동 focused flag set
+- examples/hello-button Cargo.toml 의 pinion-a11y 의존성 추가
+- hello-button 접수 7 unit test (idle/hover/pressed/disabled/focused/non-focused/checked)
+
+
+
+**Verification**:
+- cargo test -p hello-button — 7 pass / 0 fail (a11y_tests 명당)
+- cargo test --workspace --features pinion-runtime/vello — 1372 pass / 0 fail (+7 from 1365)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.64 — Toggle/Checkbox/Radio access_node (Switch/CheckBox/RadioButton role + checked state)
+- R51.65 — Slider access_node (Slider role + Float value + min/max + orientation hint)
+- R51.66 — RadioGroup composite access_node (parent + children topology)
+- R51.67 — ActionRequested dispatch (translate_action → InputRouter intent 변환)
 
 
 
