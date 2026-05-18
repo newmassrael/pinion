@@ -7939,6 +7939,30 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 501 — R51.12.1 §5.38 substrate dispatch tests + #[must_use] — R51.12 substrate gap closure — IntentEmitter::dispatch + WidgetTransition pipeline 격리 unit test 추가 + detect #[must_use] (silent intent loss 영구 방지)
+
+**Changes**:
+- crates/pinion-core/src/widgets/widget.rs: WidgetTransition::detect 에 #[must_use] 추가 — detect 결과 마세 시 silent intent loss 가 언제나 bug; attribute 로 compile-warn enforce
+- crates/pinion-core/src/widgets/widget.rs:tests 추가 — StubWidget fixture + 6 substrate isolation test (dispatch_pushes / dispatch_skips / drive_between / before_pre_drive / after_post_drive / direction_sensitive)
+- 5 widget 의 간접 coverage 와 독립적으로 substrate pipeline regression 포착 — widget impl 의 failure 와 substrate 의 failure 분리 관측 가능
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1047 pass (+6 from 1041)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict 유지)
+- 6 신규 test 는 stub fixture 로 완전 격리 — SCE engine 미의존, 순수 trait contract 검증
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- R51.x 다음 후보: derive macro for WidgetTransition (pinion-derive 확장, 5 widget impl boilerplate → #[derive] syntactic sugar) / Toggle 외 widget RPC e2e ×3 (Checkbox/Radio/Slider substrate validation 1/4 → 4/4) / RadioGroup primitive (framework-vs-application boundary fix) / SCE-002 RFC / BIDI P-rules / hello-toggle visual demo
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

@@ -179,6 +179,13 @@ pub trait WidgetTransition {
     /// an emitting transition; return the intent to push or `None`
     /// when the transition is silent on the §5.20 channel. Pure
     /// function of the two snapshots — does not borrow widget state.
+    ///
+    /// `#[must_use]` because dropping the result silently loses the
+    /// intent — every emitting transition has a downstream listener
+    /// expecting the §5.20 channel, so ignoring an emitted intent is
+    /// always a bug. The [`IntentEmitter::dispatch`] pipeline
+    /// consumes the return; direct callers should never discard it.
+    #[must_use]
     fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent>;
 }
 
@@ -199,5 +206,130 @@ impl<W: WidgetTransition> IntentEmitter<W> {
         if let Some(intent) = W::detect(before, after) {
             self.push(intent);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! R51.12.1 §5.38 — substrate isolation tests for
+    //! [`IntentEmitter::dispatch`] + [`WidgetTransition`].
+    //!
+    //! The Tier-1 widget suites (`button::tests`, `toggle::tests`,
+    //! ...) cover the substrate **indirectly** through each widget's
+    //! own state machine. These tests exercise the trait + dispatch
+    //! pipeline **directly** with a minimal stub widget, so a
+    //! regression in the snapshot → drive → detect → push pipeline
+    //! shows up as a substrate failure (this file) rather than five
+    //! correlated per-widget failures. Failure-mode coverage:
+    //!
+    //! * `drive` actually mutates inner state during dispatch
+    //! * `detect` sees the pre-drive snapshot as `before`
+    //! * `detect` sees the post-drive snapshot as `after`
+    //! * `Some(intent)` is pushed to the buffer
+    //! * `None` does not push (silent transitions)
+    use super::*;
+    use crate::external::IntrospectValue;
+
+    /// Minimal `WidgetTransition` fixture with explicit state control.
+    /// `Event` carries the next state directly so tests fully control
+    /// the (before, after) pair without going through an engine.
+    struct StubWidget {
+        state: u8,
+    }
+
+    impl StubWidget {
+        const fn new() -> Self {
+            Self { state: 0 }
+        }
+    }
+
+    impl WidgetTransition for StubWidget {
+        type Event = u8;
+        type Snapshot = u8;
+
+        fn snapshot(&self) -> Self::Snapshot {
+            self.state
+        }
+
+        fn drive(&mut self, event: Self::Event) {
+            self.state = event;
+        }
+
+        fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+            // Direction-sensitive: only the canonical 1 → 2 transition
+            // emits, so reverse and unrelated transitions stay silent
+            // and the tests can distinguish (before, after) ordering.
+            if before == 1 && after == 2 {
+                Some(Intent::new_static("stub.fire", IntrospectValue::Null))
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn dispatch_pushes_intent_when_detect_returns_some() {
+        let mut em = IntentEmitter::new(StubWidget::new());
+        em.inner.state = 1;
+        em.dispatch(2);
+        assert!(em.is_dirty(), "1 → 2 must arm the §5.20 buffer");
+        let mut harvested = Vec::new();
+        em.drain(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "stub.fire");
+        assert!(!em.is_dirty(), "drain must leave the buffer empty");
+    }
+
+    #[test]
+    fn dispatch_skips_push_when_detect_returns_none() {
+        let mut em = IntentEmitter::new(StubWidget::new());
+        // 0 → 5 does not match the 1 → 2 detect rule.
+        em.dispatch(5);
+        assert!(!em.is_dirty(), "non-matching transition must be silent");
+    }
+
+    #[test]
+    fn dispatch_drives_engine_between_snapshots() {
+        let mut em = IntentEmitter::new(StubWidget::new());
+        assert_eq!(em.inner.state, 0);
+        em.dispatch(42);
+        assert_eq!(
+            em.inner.state, 42,
+            "dispatch must invoke drive — inner state must reflect the event"
+        );
+    }
+
+    #[test]
+    fn dispatch_passes_pre_drive_state_as_before_to_detect() {
+        // Verifies that `before` is captured BEFORE drive, not after.
+        // If dispatch erroneously snapshotted twice post-drive, detect
+        // would see (2, 2) and emit nothing. The (1, 2) emission is
+        // proof that `before` is the pre-drive state.
+        let mut em = IntentEmitter::new(StubWidget::new());
+        em.inner.state = 1;
+        em.dispatch(2);
+        assert!(em.is_dirty(), "before-snapshot must precede drive");
+    }
+
+    #[test]
+    fn dispatch_passes_post_drive_state_as_after_to_detect() {
+        // Verifies that `after` is captured AFTER drive, not before.
+        // If dispatch erroneously snapshotted both pre-drive, detect
+        // would see (1, 1) and emit nothing. The (1, 2) emission is
+        // proof that `after` is the post-drive state.
+        let mut em = IntentEmitter::new(StubWidget::new());
+        em.inner.state = 1;
+        em.dispatch(2);
+        assert!(em.is_dirty(), "after-snapshot must follow drive");
+    }
+
+    #[test]
+    fn detect_is_direction_sensitive_in_dispatch() {
+        // The same (1, 2) state pair fires; the reverse (2, 1) must
+        // not. Guards against accidental commutativity in the pipeline.
+        let mut em = IntentEmitter::new(StubWidget::new());
+        em.inner.state = 2;
+        em.dispatch(1);
+        assert!(!em.is_dirty(), "reverse transition must be silent");
     }
 }
