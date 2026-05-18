@@ -3655,6 +3655,40 @@
         "5.32",
         "5.35"
       ],
+      "implementations": [
+        {
+          "file": "crates/pinion-runtime/src/focus.rs",
+          "symbol": "FocusManager"
+        },
+        {
+          "file": "crates/pinion-runtime/src/focus.rs",
+          "symbol": "FocusManager::focus_next"
+        },
+        {
+          "file": "crates/pinion-runtime/src/focus.rs",
+          "symbol": "FocusManager::focus_prev"
+        },
+        {
+          "file": "crates/pinion-runtime/src/focus.rs",
+          "symbol": "FocusManager::focus_set"
+        },
+        {
+          "file": "crates/pinion-runtime/src/focus.rs",
+          "symbol": "FocusManager::focus_clear"
+        },
+        {
+          "file": "crates/pinion-runtime/src/focus.rs",
+          "symbol": "FocusManager::update_focusable_tags"
+        },
+        {
+          "file": "crates/pinion-runtime/src/focus.rs",
+          "symbol": "FocusManager::save"
+        },
+        {
+          "file": "crates/pinion-runtime/src/focus.rs",
+          "symbol": "FocusManager::restore"
+        }
+      ],
       "decision_status": "active"
     },
     "5.4": {
@@ -6415,6 +6449,54 @@
         "R51.54-R51.57 — first-client widget activation + roving tabindex",
         "R51.58 — paint-time focus ring rendering",
         "R51.59 — Window blur/restore focus state save/restore"
+      ]
+    },
+    "R51.52": {
+      "decision_summary": "R51.52 §5.39 FocusManager substrate — focus state owner + Tab traversal + save/restore",
+      "changes_bullets": [
+        "crates/pinion-runtime/src/focus.rs 신설 — FocusManager + 7 메서드 + 17 unit test",
+        "lib.rs pub mod focus + pub use focus::FocusManager re-export",
+        "Tab/Shift+Tab wrap traversal + ARIA Authoring Practices initial-focus convention",
+        "update_focusable_tags 가 stale focus drop (view-fn 이 widget 제거 시 자동 cleanup)",
+        "save / restore — Window blur/refocus 용 snapshot (R51.59 wiring 경로 확보)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-runtime — 70 pass / 0 fail (focus tests 17 추가)",
+        "workspace cargo test --features pinion-runtime/vello — 1285 → 1302 pass",
+        "workspace clippy --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R51.53 — pinion-shell focus wiring + WidgetView::focusable_tags trait method",
+        "R51.54-R51.57 — widget-side activation + roving tabindex first-clients",
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring (save/restore 메서드 이미 land)"
+      ],
+      "publishable_decision_summary": "R51.52 §5.39 FocusManager substrate — focus state owner + Tab traversal + save/restore",
+      "publishable_changes_bullets": [
+        "crates/pinion-runtime/src/focus.rs 신설 — FocusManager + 7 메서드 + 17 unit test",
+        "lib.rs pub mod focus + pub use focus::FocusManager re-export",
+        "Tab/Shift+Tab wrap traversal + ARIA Authoring Practices initial-focus convention",
+        "update_focusable_tags 가 stale focus drop (view-fn 이 widget 제거 시 자동 cleanup)",
+        "save / restore — Window blur/refocus 용 snapshot (R51.59 wiring 경로 확보)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-runtime — 70 pass / 0 fail (focus tests 17 추가)",
+        "workspace cargo test --features pinion-runtime/vello — 1285 → 1302 pass",
+        "workspace clippy --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.53 — pinion-shell focus wiring + WidgetView::focusable_tags trait method",
+        "R51.54-R51.57 — widget-side activation + roving tabindex first-clients",
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring (save/restore 메서드 이미 land)"
       ]
     },
     "Round 1": {

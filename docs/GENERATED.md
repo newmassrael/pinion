@@ -2866,6 +2866,17 @@ router.pointer_down(&mut state_scene);
 
 
 
+**Implementations**:
+- crates/pinion-runtime/src/focus.rs:FocusManager
+- crates/pinion-runtime/src/focus.rs:FocusManager::focus_next
+- crates/pinion-runtime/src/focus.rs:FocusManager::focus_prev
+- crates/pinion-runtime/src/focus.rs:FocusManager::focus_set
+- crates/pinion-runtime/src/focus.rs:FocusManager::focus_clear
+- crates/pinion-runtime/src/focus.rs:FocusManager::update_focusable_tags
+- crates/pinion-runtime/src/focus.rs:FocusManager::save
+- crates/pinion-runtime/src/focus.rs:FocusManager::restore
+
+
 
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
@@ -4732,6 +4743,36 @@ router.pointer_down(&mut state_scene);
 - R51.54-R51.57 — first-client widget activation + roving tabindex
 - R51.58 — paint-time focus ring rendering
 - R51.59 — Window blur/restore focus state save/restore
+
+
+
+### R51.52 — R51.52 §5.39 FocusManager substrate — focus state owner + Tab traversal + save/restore
+
+**Changes**:
+- crates/pinion-runtime/src/focus.rs 신설 — FocusManager + 7 메서드 + 17 unit test
+- lib.rs pub mod focus + pub use focus::FocusManager re-export
+- Tab/Shift+Tab wrap traversal + ARIA Authoring Practices initial-focus convention
+- update_focusable_tags 가 stale focus drop (view-fn 이 widget 제거 시 자동 cleanup)
+- save / restore — Window blur/refocus 용 snapshot (R51.59 wiring 경로 확보)
+
+
+
+**Verification**:
+- cargo test -p pinion-runtime — 70 pass / 0 fail (focus tests 17 추가)
+- workspace cargo test --features pinion-runtime/vello — 1285 → 1302 pass
+- workspace clippy --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.39
+
+
+**Carry forward**:
+- R51.53 — pinion-shell focus wiring + WidgetView::focusable_tags trait method
+- R51.54-R51.57 — widget-side activation + roving tabindex first-clients
+- R51.58 — paint-time focus ring rendering
+- R51.59 — Window blur/restore wiring (save/restore 메서드 이미 land)
 
 
 

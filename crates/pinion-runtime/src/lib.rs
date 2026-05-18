@@ -8,8 +8,11 @@
 //! replaces application-level hit-test wiring. R46.3.1 added
 //! [`paint_adapter`] (feature `vello`) — the Scene → `vello::Scene`
 //! framework primitive that replaced inline paint walkers in
-//! consumer examples.
+//! consumer examples. R51.52 added [`focus`] — the §5.39 focus model
+//! primitive that owns the focused-widget identity for key dispatch
+//! and ARIA visual indication.
 
+pub mod focus;
 pub mod input;
 pub mod intent_queue;
 pub mod layout;
@@ -17,6 +20,7 @@ pub mod layout;
 pub mod paint_adapter;
 pub mod window;
 
+pub use focus::FocusManager;
 pub use input::{InputRouter, PointerId};
 pub use intent_queue::{walk_scene_and_drain, IntentQueue};
 pub use layout::compute_layout;
