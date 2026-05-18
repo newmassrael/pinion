@@ -45,17 +45,22 @@
 //! would leak. The §6.3 view-fn purity invariant is the cross-shell
 //! contract; everything else is shell-local.
 
+use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::thread;
 
+use accesskit::NodeId;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::BoxNode;
 use pinion_core::{Frame, Scene, SceneRevision};
 use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
 };
-use pinion_a11y::{AccessNode, AccessTreeBuilder};
+use pinion_a11y::{
+    tag_to_node_id, translate_action, AccessAction, AccessNode, AccessTreeBuilder,
+    PinionAccessAction, ROOT_NODE_ID,
+};
 use pinion_runtime::{
     compute_layout, paint_adapter, rect_for_tag, walk_scene_and_drain, FocusManager, InputRouter,
     IntentQueue, PointerId,
@@ -494,6 +499,12 @@ pub struct AppShell<V: WidgetView> {
     /// `ActionRequested`, `AccessibilityDeactivated`) through
     /// [`AppEvent::AccessKit`].
     accesskit: Option<accesskit_winit::Adapter>,
+    /// R51.67 §5.40 — `NodeId` → widget tag map from the most recent
+    /// `TreeUpdate`. Refreshed at the end of every `render` (when an
+    /// adapter is attached). Consumed by `handle_action_request` so
+    /// AT-side actions arriving via `AppEvent::AccessKit` resolve
+    /// back to the widget tag without recomputing the tree.
+    last_access_tag_map: HashMap<NodeId, String>,
 }
 
 impl<V: WidgetView> AppShell<V> {
@@ -550,6 +561,7 @@ impl<V: WidgetView> AppShell<V> {
             last_paint_layout: None,
             proxy,
             accesskit: None,
+            last_access_tag_map: HashMap::new(),
         }
     }
 
@@ -794,7 +806,7 @@ impl<V: WidgetView> AppShell<V> {
         // moves into `router.update_paint_scene`. `update_if_active`
         // is a no-op when no AT client is attached, so the
         // per-frame cost is one `Option::as_mut` + a load.
-        if let Some(adapter) = self.accesskit.as_mut() {
+        if self.accesskit.is_some() {
             let focused = self.focus.focused().map(str::to_owned);
             let nodes = V::access_node(&self.cached_state, focused.as_deref());
             // R51.66 §5.40 — composite widgets (RadioGroup) redirect
@@ -805,19 +817,25 @@ impl<V: WidgetView> AppShell<V> {
                 V::access_focus_target(&self.cached_state, focused.as_deref());
             let window_bounds =
                 pinion_core::scene::Rect::new(0, 0, size.width, size.height);
+            // R51.67 §5.40 — refresh the tag map so AT-side
+            // `ActionRequested` deliveries can resolve `NodeId` back
+            // to widget tags without recomputing the tree.
+            self.last_access_tag_map = build_tag_map(&nodes);
             let paint_ref = &paint_scene;
             let at_focus_ref = at_focus.as_deref();
-            adapter.update_if_active(|| {
-                let mut builder = AccessTreeBuilder::new();
-                for mut node in nodes {
-                    if let Some(rect) = rect_for_tag(paint_ref, &node.tag) {
-                        node.bounds = Some(rect);
+            if let Some(adapter) = self.accesskit.as_mut() {
+                adapter.update_if_active(|| {
+                    let mut builder = AccessTreeBuilder::new();
+                    for mut node in nodes {
+                        if let Some(rect) = rect_for_tag(paint_ref, &node.tag) {
+                            node.bounds = Some(rect);
+                        }
+                        builder.add(node);
                     }
-                    builder.add(node);
-                }
-                builder.focused(at_focus_ref);
-                builder.build(Some(window_bounds))
-            });
+                    builder.focused(at_focus_ref);
+                    builder.build(Some(window_bounds))
+                });
+            }
         }
         // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
         // into a `LayoutNode` tree so `scene/layout {viewport: null}`
@@ -832,6 +850,77 @@ impl<V: WidgetView> AppShell<V> {
         self.router.update_paint_scene(paint_scene, &mut self.scene);
         self.refresh_state();
         self.drain_intents();
+    }
+
+    /// R51.67 §5.40 — translate an AccessKit `ActionRequest` into a
+    /// pinion-native widget intent and dispatch it through the same
+    /// focus / `apply_key` substrate the winit keyboard path uses.
+    /// Returns silently when the request targets the synthetic root
+    /// window or an unknown `NodeId` (stale tree, AT race).
+    fn handle_action_request(&mut self, req: &accesskit::ActionRequest) {
+        let Some(action) = translate_action(req, &self.last_access_tag_map) else {
+            return;
+        };
+        self.dispatch_access_action(&action);
+    }
+
+    /// R51.67 §5.40 — pinion-native dispatch for one AT-driven
+    /// widget action.
+    ///
+    /// Mapping (atomic widgets):
+    /// - `Focus`          → [`FocusManager::focus_set`] + redraw
+    /// - `Click` / `Default` → focus + `apply_key("Enter")`
+    /// - `Increment`      → focus + `apply_key("ArrowRight")`
+    /// - `Decrement`      → focus + `apply_key("ArrowLeft")`
+    /// - `Other`          → silent drop
+    ///
+    /// Composite child tags (containing `#`) focus the parent tag
+    /// but defer `Click` / activation dispatch with a stderr carry
+    /// log — composite-child invocation needs the widget-specific
+    /// wire-format path that lives in the composite's `apply_key`
+    /// and is not yet exposed via a generic `WidgetView` hook.
+    fn dispatch_access_action(&mut self, action: &PinionAccessAction) {
+        let parent_tag = action
+            .tag
+            .split_once('#')
+            .map_or(action.tag.as_str(), |(p, _)| p);
+        match action.kind {
+            AccessAction::Focus => {
+                self.focus.focus_set(parent_tag);
+                self.request_redraw();
+            }
+            AccessAction::Click | AccessAction::Default => {
+                self.focus.focus_set(parent_tag);
+                if action.tag.contains('#') {
+                    eprintln!(
+                        "shell: a11y composite-child click on '{}' carry — widget-side wire-format dispatch pending",
+                        action.tag,
+                    );
+                    self.request_redraw();
+                    return;
+                }
+                self.apply_a11y_key(parent_tag, "Enter");
+            }
+            AccessAction::Increment => self.apply_a11y_key(parent_tag, "ArrowRight"),
+            AccessAction::Decrement => self.apply_a11y_key(parent_tag, "ArrowLeft"),
+            AccessAction::Other => {}
+        }
+    }
+
+    /// R51.67 §5.40 — focus + `apply_key` shared by `Click`,
+    /// `Increment`, and `Decrement` arms. Mirrors the winit
+    /// keyboard-path bookkeeping ([`Self::apply_key`]): bump the
+    /// §5.34 OCC revision, re-read cached state, drain pending
+    /// intents on handled, request a redraw regardless so the
+    /// AT-side activation surfaces visually.
+    fn apply_a11y_key(&mut self, tag: &str, key: &str) {
+        self.focus.focus_set(tag);
+        if V::apply_key(&mut self.scene, Some(tag), key) {
+            self.revision.bump();
+            self.refresh_state();
+            self.drain_intents();
+        }
+        self.request_redraw();
     }
 
     /// R51.62 §5.40 — relay one winit `WindowEvent` to the
@@ -870,10 +959,7 @@ impl<V: WidgetView> AppShell<V> {
                 self.request_redraw();
             }
             AccessEvent::ActionRequested(req) => {
-                eprintln!(
-                    "shell: accesskit action {:?} on node {:?} (dispatch carry R51.67)",
-                    req.action, req.target_node,
-                );
+                self.handle_action_request(&req);
             }
             AccessEvent::AccessibilityDeactivated => {
                 eprintln!("shell: accesskit deactivated");
@@ -1113,6 +1199,22 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             AppEvent::AccessKit(ak) => self.handle_accesskit_event(ak),
         }
     }
+}
+
+/// R51.67 §5.40 — build the `NodeId` → widget tag map for a
+/// freshly-collected list of `AccessNode`s.
+///
+/// Includes the synthetic root entry (`ROOT_NODE_ID` → `""`) so
+/// `pinion_a11y::translate_action` can treat a root-targeted action
+/// request as a sentinel and drop it without crossing into widget
+/// dispatch.
+fn build_tag_map(nodes: &[AccessNode]) -> HashMap<NodeId, String> {
+    let mut map = HashMap::with_capacity(nodes.len() + 1);
+    map.insert(ROOT_NODE_ID, String::new());
+    for node in nodes {
+        map.insert(tag_to_node_id(&node.tag), node.tag.clone());
+    }
+    map
 }
 
 /// R51.37 §5.35 — bridge from winit's [`NamedKey`] enum to the

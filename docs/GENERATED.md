@@ -2998,6 +2998,7 @@ router.pointer_down(&mut state_scene);
 - platform AT test = Windows Narrator / macOS VoiceOver / Linux Orca / Android TalkBack (carry)
 - custom widget = access_node override 필수, default None = AT 무시 (intent declaration)
 - composite focus redirect = WidgetView::access_focus_target (default passthrough) per R51.66
+- composite child click dispatch = R51.x carry — widget-side wire-format invoke surface 필요
 
 
 
@@ -3038,6 +3039,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:WidgetView::access_focus_target
 - examples/hello-radio-group/src/main.rs:RadioGroupView::access_node
 - examples/hello-radio-group/src/main.rs:RadioGroupView::access_focus_target
+- crates/pinion-shell/src/lib.rs:AppShell::handle_action_request
+- crates/pinion-shell/src/lib.rs:AppShell::dispatch_access_action
+- crates/pinion-shell/src/lib.rs:AppShell::apply_a11y_key
+- crates/pinion-shell/src/lib.rs:build_tag_map
 
 
 
@@ -5304,6 +5309,37 @@ router.pointer_down(&mut state_scene);
 - R51.67 — ActionRequested dispatch (translate_action → focus/click/increment 실제 수행)
 - R51.68 — conformance test (Tree snapshot per widget + ActionRequest round-trip)
 - accesskit Node::set_active_descendant (현재 focus redirect 으로 대체) — evidence 시 강화
+
+
+
+### R51.67 — R51.67 §5.40 AccessKit ActionRequested dispatch — Click/Focus/Increment/Decrement intent
+
+**Changes**:
+- AppShell.last_access_tag_map (NodeId→tag) field 신설 + render 마다 갱신
+- build_tag_map helper — ROOT_NODE_ID + AccessNode tag 와 NodeId 매핑
+- handle_action_request — translate_action → PinionAccessAction 디스패치
+- dispatch_access_action — Focus/Click/Default/Increment/Decrement→Enter/ArrowRight/ArrowLeft 매핑
+- apply_a11y_key helper — focus_set + apply_key + revision bump + refresh_state + drain_intents
+- composite child tag (main_group#N) = parent focus + carry log (widget-specific wire-format 필요)
+- handle_accesskit_event ActionRequested arm — carry log 제거 + handle_action_request 호출
+
+
+
+**Verification**:
+- cargo build -p pinion-shell --features pinion-runtime/vello — clean
+- cargo test --workspace --features pinion-runtime/vello — 1404 pass / 0 fail (wiring only, no new tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.68 — conformance integration test (Tree snapshot per widget + ActionRequest round-trip)
+- composite child action dispatch — widget-side per-index invoke surface (RadioGroup wire-format)
+- AccessAction::Default semantic difference (Enter vs widget-specific) — evidence 시
 
 
 
