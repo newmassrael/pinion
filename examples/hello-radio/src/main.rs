@@ -34,6 +34,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::radio::{RadioEvent, RadioExternal, RadioState};
 use pinion_core::{Color, Frame, Scene};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -228,6 +229,27 @@ impl WidgetView for RadioView {
             .is_ok()
     }
 
+    /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
+    /// single `AriaRole::RadioButton` node; `value` + `state.checked`
+    /// mirror the boolean selected state. A grouped Radio (R51.66
+    /// composite) attaches under an `AriaRole::RadioGroup` parent;
+    /// the single-radio dogfood case here remains AT-discoverable on
+    /// its own.
+    fn access_node(state: &(RadioState, bool), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, selected) = (state.0, state.1);
+        let access_state = AccessState {
+            focused: focused == Some(Self::tag()),
+            disabled: matches!(interaction, RadioState::Disabled),
+            hovered: matches!(interaction, RadioState::Hover),
+            pressed: matches!(interaction, RadioState::Pressed),
+            checked: Some(selected),
+        };
+        vec![AccessNode::new(Self::tag(), AriaRole::RadioButton)
+            .with_name("Premium tier")
+            .with_value(AccessValue::Bool(selected))
+            .with_state(access_state)]
+    }
+
     fn fmt_state_log(state: &(RadioState, bool)) -> String {
         format!(
             "{} / {}",
@@ -257,4 +279,36 @@ fn radio_state_name(state: RadioState) -> &'static str {
 
 fn main() {
     pinion_shell::run::<RadioView>();
+}
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    #[test]
+    fn unselected_idle_emits_radiobutton_role() {
+        let nodes = RadioView::access_node(&(RadioState::Idle, false), None);
+        assert_eq!(nodes[0].role, AriaRole::RadioButton);
+        assert_eq!(nodes[0].name.as_deref(), Some("Premium tier"));
+        assert_eq!(nodes[0].state.checked, Some(false));
+    }
+
+    #[test]
+    fn selected_idle_value_and_state_align() {
+        let nodes = RadioView::access_node(&(RadioState::Idle, true), None);
+        assert_eq!(nodes[0].value, Some(AccessValue::Bool(true)));
+        assert_eq!(nodes[0].state.checked, Some(true));
+    }
+
+    #[test]
+    fn disabled_sets_disabled_flag() {
+        let nodes = RadioView::access_node(&(RadioState::Disabled, false), None);
+        assert!(nodes[0].state.disabled);
+    }
+
+    #[test]
+    fn focused_tag_sets_focused_flag() {
+        let nodes = RadioView::access_node(&(RadioState::Idle, false), Some("main_radio"));
+        assert!(nodes[0].state.focused);
+    }
 }

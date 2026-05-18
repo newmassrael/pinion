@@ -3029,6 +3029,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:AppShell::forward_to_accesskit
 - crates/pinion-runtime/src/input.rs:rect_for_tag
 - examples/hello-button/src/main.rs:ButtonView::access_node
+- examples/hello-toggle/src/main.rs:ToggleView::access_node
+- examples/hello-checkbox/src/main.rs:CheckboxView::access_node
+- examples/hello-radio/src/main.rs:RadioView::access_node
 
 
 
@@ -5203,6 +5206,37 @@ router.pointer_down(&mut state_scene);
 - R51.65 — Slider access_node (Slider role + Float value + min/max + orientation hint)
 - R51.66 — RadioGroup composite access_node (parent + children topology)
 - R51.67 — ActionRequested dispatch (translate_action → InputRouter intent 변환)
+
+
+
+### R51.64 — R51.64 §5.40 Toggle/Checkbox/Radio access_node — Switch/CheckBox/RadioButton 3-in-1
+
+**Changes**:
+- ToggleView::access_node — AriaRole::Switch + AccessValue::Bool + checked state lockstep
+- CheckboxView::access_node — AriaRole::CheckBox + AccessValue::Bool + checked state lockstep
+- RadioView::access_node — AriaRole::RadioButton + AccessValue::Bool + checked state lockstep
+- 3 example labels 고정: 'Dark mode' / 'Receive newsletter' / 'Premium tier'
+- 3 example Cargo.toml 의 pinion-a11y 의존성 추가
+- 12 unit test 추가 (4 each — unchecked/checked/disabled/focused)
+
+
+
+**Verification**:
+- cargo test -p hello-toggle -p hello-checkbox -p hello-radio — 12 pass / 0 fail
+- cargo test --workspace --features pinion-runtime/vello — 1384 pass / 0 fail (+12 from 1372)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.65 — Slider access_node (AriaRole::Slider + Float value + min/max/orientation)
+- R51.66 — RadioGroup composite access_node (parent + radio_N children)
+- R51.67 — ActionRequested dispatch (translate_action → InputRouter intent)
+- R51.68 — conformance test (Tree snapshot + ActionRequest round-trip)
 
 
 

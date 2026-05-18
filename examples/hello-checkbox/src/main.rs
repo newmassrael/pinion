@@ -23,6 +23,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::checkbox::{CheckboxEvent, CheckboxExternal, CheckboxState};
 use pinion_core::{Color, Frame, Scene};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -213,6 +214,25 @@ impl WidgetView for CheckboxView {
             .is_ok()
     }
 
+    /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
+    /// single `AriaRole::CheckBox` node; `value` and `state.checked`
+    /// both carry the boolean checked state (lockstep with the
+    /// introspect schema's `value` key).
+    fn access_node(state: &(CheckboxState, bool), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, checked) = (state.0, state.1);
+        let access_state = AccessState {
+            focused: focused == Some(Self::tag()),
+            disabled: matches!(interaction, CheckboxState::Disabled),
+            hovered: matches!(interaction, CheckboxState::Hover),
+            pressed: matches!(interaction, CheckboxState::Pressed),
+            checked: Some(checked),
+        };
+        vec![AccessNode::new(Self::tag(), AriaRole::CheckBox)
+            .with_name("Receive newsletter")
+            .with_value(AccessValue::Bool(checked))
+            .with_state(access_state)]
+    }
+
     fn fmt_state_log(state: &(CheckboxState, bool)) -> String {
         format!(
             "{} / {}",
@@ -242,4 +262,40 @@ fn checkbox_state_name(state: CheckboxState) -> &'static str {
 
 fn main() {
     pinion_shell::run::<CheckboxView>();
+}
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    #[test]
+    fn unchecked_idle_emits_checkbox_role() {
+        let nodes = CheckboxView::access_node(&(CheckboxState::Idle, false), None);
+        assert_eq!(nodes[0].role, AriaRole::CheckBox);
+        assert_eq!(nodes[0].name.as_deref(), Some("Receive newsletter"));
+        assert_eq!(nodes[0].state.checked, Some(false));
+    }
+
+    #[test]
+    fn checked_idle_value_and_state_align() {
+        let nodes = CheckboxView::access_node(&(CheckboxState::Idle, true), None);
+        assert_eq!(nodes[0].value, Some(AccessValue::Bool(true)));
+        assert_eq!(nodes[0].state.checked, Some(true));
+    }
+
+    #[test]
+    fn hover_state_does_not_change_checked() {
+        let nodes = CheckboxView::access_node(&(CheckboxState::Hover, true), None);
+        assert!(nodes[0].state.hovered);
+        assert_eq!(nodes[0].state.checked, Some(true));
+    }
+
+    #[test]
+    fn focused_tag_sets_focused_flag() {
+        let nodes = CheckboxView::access_node(
+            &(CheckboxState::Idle, false),
+            Some("main_checkbox"),
+        );
+        assert!(nodes[0].state.focused);
+    }
 }

@@ -17,6 +17,8 @@ path = "src/main.rs"
 # impl reaches into `ToggleExternal::new()` and the typed `ToggleEvent`
 # / `ToggleState` enums + the `Toggle::is_on` value sidecar.
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 # R51.30 paint-side AppShell. The shell pulls pinion-runtime (vello
 # feature) + pinion-rpc + pinion-text + winit + pollster transitively,
 # so this example's direct dep list collapses to "the widget I'm

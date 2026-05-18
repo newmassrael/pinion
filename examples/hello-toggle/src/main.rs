@@ -26,6 +26,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{Color, Frame, Scene};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 // pinion-forge codegen output. Defines `pub struct HelloToggleRenderer`
@@ -260,6 +261,28 @@ impl WidgetView for ToggleView {
             .is_ok()
     }
 
+    /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
+    /// single `AriaRole::Switch` node (toggle button per WAI-ARIA;
+    /// distinct from `AriaRole::CheckBox` because Switch carries
+    /// On/Off semantics rather than tri-state Checked/Unchecked/Mixed).
+    /// `value` is `AccessValue::Bool(on)`; `state.checked` mirrors
+    /// the same boolean so AT clients reading either field see a
+    /// consistent on/off state.
+    fn access_node(state: &(ToggleState, bool), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, on) = (state.0, state.1);
+        let access_state = AccessState {
+            focused: focused == Some(Self::tag()),
+            disabled: matches!(interaction, ToggleState::Disabled),
+            hovered: matches!(interaction, ToggleState::Hover),
+            pressed: matches!(interaction, ToggleState::Pressed),
+            checked: Some(on),
+        };
+        vec![AccessNode::new(Self::tag(), AriaRole::Switch)
+            .with_name("Dark mode")
+            .with_value(AccessValue::Bool(on))
+            .with_state(access_state)]
+    }
+
     fn fmt_state_log(state: &(ToggleState, bool)) -> String {
         format!(
             "{} / {}",
@@ -290,4 +313,38 @@ fn toggle_state_name(state: ToggleState) -> &'static str {
 
 fn main() {
     pinion_shell::run::<ToggleView>();
+}
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    #[test]
+    fn off_idle_emits_switch_role_unchecked() {
+        let nodes = ToggleView::access_node(&(ToggleState::Idle, false), None);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].role, AriaRole::Switch);
+        assert_eq!(nodes[0].name.as_deref(), Some("Dark mode"));
+        assert_eq!(nodes[0].value, Some(AccessValue::Bool(false)));
+        assert_eq!(nodes[0].state.checked, Some(false));
+    }
+
+    #[test]
+    fn on_idle_emits_checked_state() {
+        let nodes = ToggleView::access_node(&(ToggleState::Idle, true), None);
+        assert_eq!(nodes[0].value, Some(AccessValue::Bool(true)));
+        assert_eq!(nodes[0].state.checked, Some(true));
+    }
+
+    #[test]
+    fn disabled_sets_disabled_flag() {
+        let nodes = ToggleView::access_node(&(ToggleState::Disabled, false), None);
+        assert!(nodes[0].state.disabled);
+    }
+
+    #[test]
+    fn focused_tag_sets_focused_flag() {
+        let nodes = ToggleView::access_node(&(ToggleState::Idle, false), Some("main_toggle"));
+        assert!(nodes[0].state.focused);
+    }
 }
