@@ -2892,6 +2892,7 @@ router.pointer_down(&mut state_scene);
 - examples/hello-radio/src/main.rs:RadioView::apply_key
 - examples/hello-slider/src/main.rs:SliderView::apply_key
 - examples/hello-slider-vertical/src/main.rs:SliderVerticalView::apply_key
+- examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key (focused gate)
 
 
 
@@ -4910,6 +4911,32 @@ router.pointer_down(&mut state_scene);
 - R51.57 — RadioGroup roving tabindex composite focus
 - R51.58 — paint-time focus ring rendering
 - R51.59 — Window blur/restore wiring
+
+
+
+### R51.57 — R51.57 §5.39 RadioGroup roving tabindex — focused-only routing (composite single tab stop)
+
+**Changes**:
+- RadioGroupView::apply_key 이 focused == "main_group" gate 추가 — composite single tab stop
+- ARIA roving tabindex pattern 완감 — focusable_tags default + Arrow=focus+check (R51.44) + focused gate
+- 4 unit test 추가 (focused=group routes / None/other-focus = silent / Home from End)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello — 1320 → 1324 pass / 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.38, §5.39
+
+
+**Carry forward**:
+- R51.58 — paint-time focus ring rendering
+- R51.59 — Window blur/restore wiring
+- RadioGroup internal focused index (selected 과 분리) carry — evidence-first
 
 
 

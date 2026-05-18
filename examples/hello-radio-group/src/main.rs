@@ -250,7 +250,16 @@ impl WidgetView for RadioGroupView {
         None
     }
 
-    fn apply_key(scene: &mut Scene, _focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        // R51.57 §5.39 — ARIA radio-group roving tabindex. The group
+        // is a single tab stop (`focusable_tags()` default returns
+        // just `Self::tag()` per the §5.39 caveat on composite focus),
+        // and Arrow / Home / End / a / b / c keys route only when the
+        // group itself is focused. Sibling controls on the same
+        // screen no longer alias the radio-group's keymap.
+        if focused != Some(Self::tag()) {
+            return false;
+        }
         let Scene::External(node) = scene else {
             return false;
         };
@@ -364,4 +373,84 @@ fn radio_state_short(state: RadioState) -> &'static str {
 
 fn main() {
     pinion_shell::run::<RadioGroupView>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pinion_core::scene::ExternalNode;
+    use pinion_core::widgets::radio_group::RadioGroupExternal;
+
+    /// Build a fresh group scene mirroring `create_external` so
+    /// `apply_key` walks the live shell's exact topology.
+    fn scene() -> Scene {
+        let ext = RadioGroupExternal::new(N);
+        Scene::External(ExternalNode::new(Box::new(ext)).with_tag(PRIMARY_TAG))
+    }
+
+    fn selected_index(scene: &Scene) -> Option<i64> {
+        let Scene::External(node) = scene else {
+            return None;
+        };
+        node.handle
+            .introspect()?
+            .query("selected_index")
+            .and_then(|v| match v {
+                IntrospectValue::Int(i) => Some(i),
+                _ => None,
+            })
+    }
+
+    // ----- R51.57 §5.39 focused-only routing -----
+
+    #[test]
+    fn focused_main_group_routes_arrow_to_selection() {
+        // Group focused — Arrow advances selection per ARIA radio-
+        // group "focus + check" pattern.
+        let mut s = scene();
+        assert!(RadioGroupView::apply_key(
+            &mut s,
+            Some("main_group"),
+            "ArrowDown"
+        ));
+        assert_eq!(selected_index(&s), Some(0));
+    }
+
+    #[test]
+    fn no_focus_swallows_arrow_silently() {
+        // Pre-Tab idle state — group must not steal Arrow keys.
+        let mut s = scene();
+        assert!(!RadioGroupView::apply_key(&mut s, None, "ArrowDown"));
+        assert_eq!(selected_index(&s), None);
+    }
+
+    #[test]
+    fn other_widget_focused_swallows_arrow_silently() {
+        // A sibling slider holding focus must keep its Arrow keys —
+        // group must not route them.
+        let mut s = scene();
+        assert!(!RadioGroupView::apply_key(
+            &mut s,
+            Some("volume_slider"),
+            "ArrowDown"
+        ));
+        assert_eq!(selected_index(&s), None);
+    }
+
+    #[test]
+    fn focused_main_group_routes_home_to_first() {
+        let mut s = scene();
+        // Step to last first so Home has somewhere to go from.
+        let _ = RadioGroupView::apply_key(&mut s, Some("main_group"), "End");
+        assert_eq!(
+            selected_index(&s),
+            Some(i64::try_from(N - 1).expect("N fits in i64"))
+        );
+        assert!(RadioGroupView::apply_key(
+            &mut s,
+            Some("main_group"),
+            "Home"
+        ));
+        assert_eq!(selected_index(&s), Some(0));
+    }
 }

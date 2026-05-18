@@ -3755,6 +3755,10 @@
         {
           "file": "examples/hello-slider-vertical/src/main.rs",
           "symbol": "SliderVerticalView::apply_key"
+        },
+        {
+          "file": "examples/hello-radio-group/src/main.rs",
+          "symbol": "RadioGroupView::apply_key (focused gate)"
         }
       ],
       "decision_status": "active"
@@ -6763,6 +6767,48 @@
         "R51.57 — RadioGroup roving tabindex composite focus",
         "R51.58 — paint-time focus ring rendering",
         "R51.59 — Window blur/restore wiring"
+      ]
+    },
+    "R51.57": {
+      "decision_summary": "R51.57 §5.39 RadioGroup roving tabindex — focused-only routing (composite single tab stop)",
+      "changes_bullets": [
+        "RadioGroupView::apply_key 이 focused == \"main_group\" gate 추가 — composite single tab stop",
+        "ARIA roving tabindex pattern 완감 — focusable_tags default + Arrow=focus+check (R51.44) + focused gate",
+        "4 unit test 추가 (focused=group routes / None/other-focus = silent / Home from End)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1320 → 1324 pass / 0 fail",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring",
+        "RadioGroup internal focused index (selected 과 분리) carry — evidence-first"
+      ],
+      "publishable_decision_summary": "R51.57 §5.39 RadioGroup roving tabindex — focused-only routing (composite single tab stop)",
+      "publishable_changes_bullets": [
+        "RadioGroupView::apply_key 이 focused == \"main_group\" gate 추가 — composite single tab stop",
+        "ARIA roving tabindex pattern 완감 — focusable_tags default + Arrow=focus+check (R51.44) + focused gate",
+        "4 unit test 추가 (focused=group routes / None/other-focus = silent / Home from End)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello — 1320 → 1324 pass / 0 fail",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.58 — paint-time focus ring rendering",
+        "R51.59 — Window blur/restore wiring",
+        "RadioGroup internal focused index (selected 과 분리) carry — evidence-first"
       ]
     },
     "Round 1": {
