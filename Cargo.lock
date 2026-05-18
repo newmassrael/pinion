@@ -1024,6 +1024,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-toggle"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+ "pinion-forge",
+ "pinion-rpc",
+ "pinion-runtime",
+ "pinion-text",
+ "pollster",
+ "vello",
+ "winit",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

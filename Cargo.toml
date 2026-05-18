@@ -12,6 +12,7 @@ members = [
     "crates/pinion-text-font",
     "crates/pinion-text-unicode",
     "examples/hello-button",
+    "examples/hello-toggle",
     "examples/forge-counter",
     "examples/ai-introspect-demo",
 ]

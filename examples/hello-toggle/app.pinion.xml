@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R51.29 §5.38 paint-side N=2: pinion-forge renderer manifest for
+  hello-toggle. Emits `HelloToggleRenderer` (Vello-backed RenderContext +
+  RenderSurface + Renderer wrapper). Identical manifest shape to
+  hello-button's `HelloButtonRenderer` — single-source-of-truth emit
+  template, only the struct name diverges. `aa` attribute omitted ->
+  defaults to Area per R46.2.1 (UI-canonical mode).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloToggleRenderer"
+        backend="vello"/>

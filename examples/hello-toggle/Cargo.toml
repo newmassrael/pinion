@@ -1,0 +1,45 @@
+[package]
+name = "hello-toggle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.29 §5.38 paint-side N=2: winit window + R51.2 Toggle SCXML statechart end-to-end on the Vello path (substrate-incompleteness-signal evidence)"
+publish = false
+
+[[bin]]
+name = "hello-toggle"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# Same vello-feature wiring as hello-button (R46.5 §5.16): paint_adapter
+# pulls in the Scene -> vello::Scene walker shared by every Vello-backed
+# example. Without the `vello` feature pinion-runtime stays headless.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", features = ["vello"] }
+# R47.3 §5.36 text shaping framework primitive. `LayoutCache` is owned
+# by `App` and threaded into `paint_adapter::to_vello` so the toggle's
+# static labels ("Dark mode" / status line) re-shape only when text
+# changes — steady-state frames hit the LRU.
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
+winit = { workspace = true }
+# R46.5 §5.16: Vello-backed GPU paint. The `HelloToggleRenderer` struct
+# emitted by `build.rs` references `vello::*` / `vello::wgpu::*` so the
+# binary needs vello at runtime. Mirrors hello-button.
+vello = { workspace = true }
+# Block on Vello's async `RenderContext::create_surface` at app boot —
+# pinion-core/runtime are sync (§6.3); pollster wraps the one-shot init
+# future at the boundary so view-fn purity stays intact.
+pollster = { workspace = true }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `HelloToggleRenderer` Vello
+# wrapper. Identical pattern to hello-button / ai-introspect-demo —
+# `build.rs` calls `compile_file` on `app.pinion.xml` and the emitted
+# Rust is included by `src/main.rs`.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

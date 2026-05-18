@@ -666,6 +666,10 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+**Implementations**:
+- examples/hello-toggle/src/main.rs:App::render
+
+
 
 ### §5.17. Window topology (SCE-driven app statechart vs runtime registry)
 
@@ -2722,6 +2726,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal
 - crates/pinion-core/src/widgets/radio_group.rs:&lt;RadioGroup as WidgetTransition&gt;
+- examples/hello-toggle/app.pinion.xml
+- examples/hello-toggle/src/main.rs:view
+- examples/hello-toggle/src/main.rs:App
 
 
 
@@ -8476,6 +8483,35 @@ router.pointer_down(&mut state_scene);
 - R51.29 hello-toggle visual demo (paint-side N=2 evidence per substrate-incompleteness-signal)
 - R51.30 derive macro WidgetTransition partial (~150 LOC, snapshot+drive only)
 - R51.31 mirror_paired_brackets per-frame cache layer (perf substrate)
+- L4 alternative impl RFC: render-time GlyphRun.is_rtl substitute vs pre-substitute (R51.27)
+- Phase 2 axis ratify per R41 §5.16 4-phase plan
+
+
+
+### Round 518 — R51.29 §5.38 + §5.16 hello-toggle paint-side N=2 visual demo (substrate-incompleteness-signal evidence) — Land examples/hello-toggle binary mirroring hello-button structure to surface paint-side substrate incompleteness via second-client boilerplate repetition; both render/forward/dispatch_rpc/drain_intents methods + ApplicationHandler impl + RenderState + spawn_stdin_rpc_reader recur identically across the two clients (~400 LOC), constituting the textbook substrate-refactor trigger per [[substrate-incompleteness-signal]].
+
+**Changes**:
+- examples/hello-toggle/Cargo.toml + build.rs + app.pinion.xml: new workspace member mirroring hello-button manifest shape; pinion-forge emits HelloToggleRenderer (Vello renderer wrapper, backend=vello, aa default Area)
+- examples/hello-toggle/src/main.rs: new binary wrapping ToggleExternal in Scene::External('main_toggle'); view fn maps (ToggleState, bool) -> Scene with a 64x32 rounded-pill track (corner_radius 16) + 24x24 white knob (corner_radius 12) justified Start/End via JustifyContent based on value; track fill encodes the 7-cell (state, value) cross product including a distinct chromatically-muted Disabled hue (0x4a_42_38) to satisfy clippy::match_same_arms and keep Disabled visually distinct from Hover-off
+- Cargo.toml: add examples/hello-toggle workspace member (between hello-button and forge-counter)
+
+
+
+**Verification**:
+- cargo build -p hello-toggle --features pinion-runtime/vello: ok
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (forbid unsafe / deny warnings / clippy::pedantic deny strict baseline preserved)
+- cargo test --workspace --features pinion-runtime/vello: 1226 passed; 0 failed; 6 ignored (unchanged from R51.28; example has no #[test] yet — visual binary)
+- manual structural diff vs hello-button: App struct fields identical except cached_state (ButtonState vs (ToggleState, bool)); all methods (forward, dispatch_rpc, drain_intents, refresh_state, request_redraw, render, ApplicationHandler impl, spawn_stdin_rpc_reader, RenderState) identical up to widget-specific event-name/parse fn substitution
+
+
+
+**Impact**: §5.38, §5.16
+
+
+**Carry forward**:
+- R51.30 AppShell substrate refactor — extract the ~400 LOC App + RenderState + spawn_stdin_rpc_reader boilerplate into pinion-runtime::AppShell<V: WidgetView>; both hello-button and hello-toggle become 'view fn + state-specific bits'. Includes VelloRenderer trait so pinion-forge codegen can emit a trait-impl block instead of an inherent impl (single-codegen-source-of-truth maintained).
+- R51.31 derive macro WidgetTransition partial (~150 LOC snapshot+drive only)
+- R51.32 mirror_paired_brackets per-frame cache layer (perf substrate)
 - L4 alternative impl RFC: render-time GlyphRun.is_rtl substitute vs pre-substitute (R51.27)
 - Phase 2 axis ratify per R41 §5.16 4-phase plan
 
