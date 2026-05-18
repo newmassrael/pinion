@@ -725,6 +725,16 @@ struct IsolatingRunSequence {
     level: u8,
     /// Indices into the parent `Vec<LevelRun>`, in textual order.
     run_indices: Vec<usize>,
+    /// `true` when the last codepoint of the sequence is an
+    /// unmatched isolate initiator (LRI / RLI / FSI) — its eos must
+    /// be computed against `paragraph_level` per UAX #9 X10 rather
+    /// than against the following run's level.
+    ends_with_unmatched_initiator: bool,
+    /// `true` when the first codepoint of the sequence is an
+    /// unmatched PDI — its sos must be computed against
+    /// `paragraph_level` per UAX #9 X10 rather than against the
+    /// preceding run's level.
+    starts_with_unmatched_pdi: bool,
 }
 
 /// Group the non-removed codepoints of an X-rules output into level
@@ -846,9 +856,30 @@ fn build_isolating_run_sequences(
             visited[next] = true;
             cur = next;
         }
+        // R51.26 — UAX #9 X10 special cases. The last codepoint of
+        // the sequence is an unmatched isolate initiator iff its
+        // owning run has no `next_in_seq` link AND the run's last
+        // member is LRI/RLI/FSI in `classes`. Symmetrically for an
+        // unmatched PDI at the start.
+        let last_run_idx = *run_indices.last().unwrap_or(&ri);
+        let last_member =
+            *runs[last_run_idx].members.last().unwrap_or(&usize::MAX);
+        let ends_with_unmatched_initiator =
+            next_in_seq[last_run_idx].is_none()
+                && last_member < classes.len()
+                && matches!(
+                    classes[last_member],
+                    BidiClass::LRI | BidiClass::RLI | BidiClass::FSI,
+                );
+        let first_run_idx = ri;
+        let first_member = runs[first_run_idx].members[0];
+        let starts_with_unmatched_pdi = !has_prev[first_run_idx]
+            && classes[first_member] == BidiClass::PDI;
         sequences.push(IsolatingRunSequence {
             level: runs[ri].level,
             run_indices,
+            ends_with_unmatched_initiator,
+            starts_with_unmatched_pdi,
         });
     }
     sequences
@@ -875,14 +906,31 @@ fn compute_sos_eos(
         .last()
         .expect("level run has at least one member");
 
-    let prev_level = (0..first_pos)
-        .rev()
-        .find(|&i| classes[i] != BidiClass::BN)
-        .map_or(paragraph_level, |i| levels[i]);
+    // UAX #9 X10 — when a sequence starts with an unmatched PDI or
+    // ends with an unmatched isolate initiator (LRI / RLI / FSI),
+    // sos / eos is computed against `paragraph_level` instead of the
+    // neighboring run's level. R51.26 — caught by `BidiTest.txt`
+    // row "R RLI R; 2" (paragraph_level=0 forced LTR): without this
+    // X10 carve-out the eos for the unmatched-RLI sequence resolved
+    // to R (next char level 1), N1 then made RLI → R, and I1
+    // promoted the embed-level-0 RLI to level 1 instead of leaving
+    // it at 0 (N2 → L embed direction).
+    let prev_level = if seq.starts_with_unmatched_pdi {
+        paragraph_level
+    } else {
+        (0..first_pos)
+            .rev()
+            .find(|&i| classes[i] != BidiClass::BN)
+            .map_or(paragraph_level, |i| levels[i])
+    };
 
-    let next_level = ((last_pos + 1)..classes.len())
-        .find(|&i| classes[i] != BidiClass::BN)
-        .map_or(paragraph_level, |i| levels[i]);
+    let next_level = if seq.ends_with_unmatched_initiator {
+        paragraph_level
+    } else {
+        ((last_pos + 1)..classes.len())
+            .find(|&i| classes[i] != BidiClass::BN)
+            .map_or(paragraph_level, |i| levels[i])
+    };
 
     let sos_max = core::cmp::max(prev_level, seq.level);
     let eos_max = core::cmp::max(seq.level, next_level);
@@ -903,12 +951,20 @@ fn compute_sos_eos(
 /// immediately after an isolate initiator / PDI takes type `ON`;
 /// otherwise it inherits the type of the preceding character (which
 /// may itself have been rewritten by an earlier W1 application).
-fn apply_w1(view: &mut [BidiClass]) {
+fn apply_w1(view: &mut [BidiClass], sos: BidiClass) {
     if view.is_empty() {
         return;
     }
+    // UAX #9 W1 — "If the NSM is at the start of the isolating run
+    // sequence, it will get the type of sos." R51.26 — caught by
+    // `BidiTest.txt` row "RLE S PDF NSM; 3": Seq[1] = [pos 3 NSM]
+    // alone, sos = R (max(prev_level=1, seq.level=0)=1). The pre-fix
+    // `view[0] = ON` collapsed the NSM-at-start case to a neutral,
+    // which N1/N2 then drifted to the embed direction (L at even
+    // seq.level 0) — UCD expected R via the W1 sos inheritance so I1
+    // could lift level 0 to 1.
     if view[0] == BidiClass::NSM {
-        view[0] = BidiClass::ON;
+        view[0] = sos;
     }
     for i in 1..view.len() {
         if view[i] != BidiClass::NSM {
@@ -1325,7 +1381,7 @@ pub fn resolve_weak_types(explicit: ExplicitLevels, paragraph_level: u8) -> Expl
         let positions = collect_sequence_positions(seq, &runs);
         let (sos, _eos) = compute_sos_eos(seq, &runs, &levels, &classes, paragraph_level);
         let mut view: Vec<BidiClass> = positions.iter().map(|&i| classes[i]).collect();
-        apply_w1(&mut view);
+        apply_w1(&mut view, sos);
         apply_w2(&mut view, sos);
         apply_w3(&mut view);
         apply_w4(&mut view);
@@ -1498,12 +1554,23 @@ pub fn apply_l1_line_break(
     }
 
     // Pass 1: S and B reset, plus walk-back through WS/isolate-fmt.
+    // X9-removed positions (BN-classed by `resolve_explicit_levels`
+    // for original BN / RLE / LRE / RLO / LRO / PDF) are transparent
+    // to the walk — they are "removed" for L1's purposes per UAX #9
+    // X9 and must not interrupt a trailing WS run that precedes an S
+    // or B. R51.26 — without this BN-skip pass the run "WS BN BN" at
+    // the end of a paragraph keeps the WS at its embedding level
+    // instead of paragraph_level (caught by `BidiTest.txt` rows
+    // ~2476-2480: `LRE WS LRE`).
     for i in 0..n {
         if matches!(original[i], BidiClass::S | BidiClass::B) {
             levels[i] = paragraph_level;
             let mut j = i;
             while j > 0 {
                 j -= 1;
+                if classes[j] == BidiClass::BN {
+                    continue;
+                }
                 if is_l1_pre_reset(original[j]) {
                     levels[j] = paragraph_level;
                 } else {
@@ -1513,10 +1580,15 @@ pub fn apply_l1_line_break(
         }
     }
 
-    // Pass 2: trailing WS / isolate-format at end of paragraph.
+    // Pass 2: trailing WS / isolate-format at end of paragraph. Same
+    // BN-skip semantics as Pass 1.
     let mut j = n;
     while j > 0 {
         let idx = j - 1;
+        if classes[idx] == BidiClass::BN {
+            j -= 1;
+            continue;
+        }
         if is_l1_pre_reset(original[idx]) {
             levels[idx] = paragraph_level;
             j -= 1;
@@ -3336,6 +3408,241 @@ mod tests {
             run_bidi_character_case(case).unwrap_or_else(|err| {
                 panic!("BidiCharacterTest smoke failure: {err}")
             });
+        }
+    }
+
+    // ---- R51.26 §5.37.4 — `BidiTest.txt` class-sequence conformance ----
+
+    use crate::test_fixture::{load_bidi_test, BidiTestCase};
+
+    /// Map each `Bidi_Class` to a representative codepoint whose
+    /// `bidi_class()` returns that class. Used to synthesize an input
+    /// string for `BidiTest.txt`, whose data rows give `Bidi_Class`
+    /// sequences instead of character sequences. Every entry is
+    /// audited against `bidi_class()` at run time in
+    /// `verify_representative_codepoints_round_trip` below — a UCD
+    /// table refresh that changes one of these characters' class
+    /// trips that test rather than silently breaking the sweep.
+    #[allow(
+        clippy::match_same_arms,
+        reason = "exhaustive 1:1 class ↔ codepoint table, never matched on \
+                  by value — collapsing identical arms would obscure \
+                  per-class intent and break the audit pattern"
+    )]
+    const fn representative_codepoint(class: BidiClass) -> char {
+        match class {
+            BidiClass::L => 'A',
+            BidiClass::R => '\u{05D0}',
+            BidiClass::AL => '\u{0627}',
+            BidiClass::EN => '0',
+            BidiClass::ES => '+',
+            BidiClass::ET => '$',
+            BidiClass::AN => '\u{0660}',
+            BidiClass::CS => ',',
+            BidiClass::NSM => '\u{0300}',
+            BidiClass::BN => '\u{00AD}',
+            BidiClass::B => '\n',
+            BidiClass::S => '\t',
+            BidiClass::WS => ' ',
+            BidiClass::ON => '!',
+            BidiClass::LRE => '\u{202A}',
+            BidiClass::LRO => '\u{202D}',
+            BidiClass::RLE => '\u{202B}',
+            BidiClass::RLO => '\u{202E}',
+            BidiClass::PDF => '\u{202C}',
+            BidiClass::LRI => '\u{2066}',
+            BidiClass::RLI => '\u{2067}',
+            BidiClass::FSI => '\u{2068}',
+            BidiClass::PDI => '\u{2069}',
+        }
+    }
+
+    #[test]
+    fn verify_representative_codepoints_round_trip() {
+        for idx in 0..=22u8 {
+            let cls = BidiClass::from_index(idx);
+            let cp = representative_codepoint(cls);
+            assert_eq!(
+                bidi_class(cp),
+                cls,
+                "representative_codepoint({cls:?}) = U+{:04X} but \
+                 bidi_class returns {:?} — representative table \
+                 drifted vs UCD",
+                cp as u32,
+                bidi_class(cp),
+            );
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum BidiTestParagraphMode {
+        Auto,
+        Ltr,
+        Rtl,
+    }
+
+    fn run_bidi_test_case_mode(
+        case: &BidiTestCase,
+        paragraph_mode: BidiTestParagraphMode,
+    ) -> Result<(), String> {
+        let chars: Vec<char> = case
+            .classes
+            .iter()
+            .map(|&c| representative_codepoint(c))
+            .collect();
+        let paragraph: String = chars.iter().collect();
+
+        let p_level = match paragraph_mode {
+            BidiTestParagraphMode::Auto => paragraph_level(&paragraph),
+            BidiTestParagraphMode::Ltr => 0,
+            BidiTestParagraphMode::Rtl => 1,
+        };
+
+        let post_x = resolve_explicit_levels(&paragraph, p_level);
+        let post_w = resolve_weak_types(post_x, p_level);
+        let post_n = resolve_neutral_types(post_w, &paragraph, p_level);
+        let post_i = resolve_implicit_levels(post_n);
+        let post_l1 = apply_l1_line_break(post_i, &paragraph, p_level);
+
+        if post_l1.classes.len() != case.expected_levels.len() {
+            return Err(format!(
+                "line {} mode {paragraph_mode:?}: count mismatch: \
+                 expected {}, got {}",
+                case.line_number,
+                case.expected_levels.len(),
+                post_l1.classes.len(),
+            ));
+        }
+
+        for (i, (&expected, (&actual_cls, &actual_lvl))) in case
+            .expected_levels
+            .iter()
+            .zip(post_l1.classes.iter().zip(post_l1.levels.iter()))
+            .enumerate()
+        {
+            match expected {
+                None => {
+                    if actual_cls != BidiClass::BN {
+                        return Err(format!(
+                            "line {} mode {paragraph_mode:?}: \
+                             levels[{i}] expected 'x' (X9-removed), got \
+                             class={actual_cls:?} level={actual_lvl}",
+                            case.line_number,
+                        ));
+                    }
+                }
+                Some(level) => {
+                    if actual_cls == BidiClass::BN {
+                        return Err(format!(
+                            "line {} mode {paragraph_mode:?}: \
+                             levels[{i}] expected {level}, got 'x' (BN)",
+                            case.line_number,
+                        ));
+                    }
+                    if level != actual_lvl {
+                        return Err(format!(
+                            "line {} mode {paragraph_mode:?}: \
+                             levels[{i}] expected {level}, got {actual_lvl}",
+                            case.line_number,
+                        ));
+                    }
+                }
+            }
+        }
+
+        let mut visible_levels: Vec<u8> =
+            Vec::with_capacity(post_l1.levels.len());
+        let mut visible_to_original: Vec<usize> =
+            Vec::with_capacity(post_l1.levels.len());
+        for (i, &cls) in post_l1.classes.iter().enumerate() {
+            if cls != BidiClass::BN {
+                visible_levels.push(post_l1.levels[i]);
+                visible_to_original.push(i);
+            }
+        }
+        let visible_reorder = reorder_visual(&visible_levels);
+        let our_visual: Vec<usize> = visible_reorder
+            .into_iter()
+            .map(|k| visible_to_original[k])
+            .collect();
+
+        if our_visual != case.expected_visual {
+            return Err(format!(
+                "line {} mode {paragraph_mode:?}: visual mismatch:\n  \
+                 expected: {:?}\n  got:      {:?}",
+                case.line_number, case.expected_visual, our_visual,
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn run_bidi_test_case(case: &BidiTestCase) -> Result<(), String> {
+        if case.paragraph_levels_bitset & 0x1 != 0 {
+            run_bidi_test_case_mode(case, BidiTestParagraphMode::Auto)?;
+        }
+        if case.paragraph_levels_bitset & 0x2 != 0 {
+            run_bidi_test_case_mode(case, BidiTestParagraphMode::Ltr)?;
+        }
+        if case.paragraph_levels_bitset & 0x4 != 0 {
+            run_bidi_test_case_mode(case, BidiTestParagraphMode::Rtl)?;
+        }
+        Ok(())
+    }
+
+    /// R51.26 smoke: walk the first 100 data rows of `BidiTest.txt`.
+    /// The full sweep (~490 K data rows × 1-3 paragraph modes each)
+    /// lives behind `bidi_test_full_sweep` (`#[ignore]`).
+    #[test]
+    fn bidi_test_smoke_first_100() {
+        let cases = load_bidi_test();
+        assert!(
+            cases.len() >= 100,
+            "BidiTest.txt must yield at least 100 cases; got {}",
+            cases.len(),
+        );
+        for case in cases.iter().take(100) {
+            run_bidi_test_case(case).unwrap_or_else(|err| {
+                panic!("BidiTest smoke failure: {err}")
+            });
+        }
+    }
+
+    /// Full UCD 16.0 `BidiTest.txt` sweep (~490 K data rows × 1-3
+    /// paragraph modes). `#[ignore]` keeps `cargo test` fast; run on
+    /// demand with `cargo test -p pinion-text-unicode -- --ignored
+    /// bidi_test_full_sweep` before promoting any BIDI-affecting
+    /// change. Diagnostic shape matches `bidi_character_test_full_sweep`.
+    #[test]
+    #[ignore = "full UCD BidiTest sweep (~490K data rows) — run on demand"]
+    fn bidi_test_full_sweep() {
+        let cases = load_bidi_test();
+        let total = cases.len();
+        let mut failures: Vec<String> = Vec::new();
+        for case in &cases {
+            if let Err(err) = run_bidi_test_case(case) {
+                failures.push(err);
+            }
+        }
+        if !failures.is_empty() {
+            let count = failures.len();
+            let pass = total - count;
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "diagnostic pass-rate float — precision loss \
+                          past ~9e15 vectors is irrelevant"
+            )]
+            let pass_rate = pass as f64 / total as f64 * 100.0;
+            let preview: Vec<&String> = failures.iter().take(5).collect();
+            panic!(
+                "BidiTest full sweep: {pass}/{total} pass \
+                 ({pass_rate:.4}%), {count} fail.\nfirst 5 failures:\n  {}",
+                preview
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n  "),
+            );
         }
     }
 

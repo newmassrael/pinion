@@ -3,7 +3,11 @@
 //! * `load_normalization_test` — `NormalizationTest.txt` (UAX #15,
 //!   consumed by per-form NFD/NFC/NFKD/NFKC sweeps).
 //! * `load_bidi_character_test` — `BidiCharacterTest.txt` (UAX #9,
-//!   consumed by the BIDI conformance harness in `bidi.rs`).
+//!   character-vector form, consumed by the BIDI conformance harness
+//!   in `bidi.rs`).
+//! * `load_bidi_test` — `BidiTest.txt` (UAX #9, class-sequence form
+//!   with paragraph-direction bitsets; consumed by the BIDI
+//!   class-sequence conformance harness in `bidi.rs`).
 
 #[derive(Debug)]
 pub(crate) struct NormalizationCase {
@@ -192,4 +196,150 @@ fn parse_bidi_character_test(text: &str) -> Vec<BidiCharacterCase> {
         });
     }
     cases
+}
+
+// ---- UAX #9 `BidiTest.txt` (R51.26) ----
+
+/// One emitted data row of `BidiTest.txt`. Each row carries the
+/// `@Levels` / `@Reorder` section anchors that were in effect at
+/// parse time, so the harness can consume rows independently of the
+/// section-header preamble.
+#[derive(Debug)]
+pub(crate) struct BidiTestCase {
+    /// 1-based line number of the data row in `BidiTest.txt`.
+    pub(crate) line_number: usize,
+    /// `Bidi_Class` sequence (one variant per visual codepoint slot).
+    pub(crate) classes: Vec<crate::bidi::BidiClass>,
+    /// Hex bitset of paragraph direction modes this row applies to:
+    /// bit 0 (`0x1`) = auto-LTR (P2/P3), bit 1 (`0x2`) = forced LTR,
+    /// bit 2 (`0x4`) = forced RTL. UCD packs the three modes onto a
+    /// single row when the expected outputs coincide.
+    pub(crate) paragraph_levels_bitset: u8,
+    /// `@Levels` directive in effect — one entry per input class;
+    /// `None` means `x` (X9-removed) at that position.
+    pub(crate) expected_levels: Vec<Option<u8>>,
+    /// `@Reorder` directive in effect — visual-order indices over
+    /// the visible (non-`x`) positions only.
+    pub(crate) expected_visual: Vec<usize>,
+}
+
+/// Load every data row from the vendored UCD `BidiTest.txt`,
+/// expanded against the surrounding `@Levels` / `@Reorder` section
+/// anchors. Forward-compatible: `@` directives other than `@Levels` /
+/// `@Reorder` are skipped per the UCD header guidance.
+pub(crate) fn load_bidi_test() -> Vec<BidiTestCase> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/ucd/BidiTest.txt"
+    );
+    let text = std::fs::read_to_string(path)
+        .expect("BidiTest.txt must be vendored");
+    parse_bidi_test(&text)
+}
+
+fn parse_bidi_test(text: &str) -> Vec<BidiTestCase> {
+    let mut cases = Vec::new();
+    let mut current_levels: Vec<Option<u8>> = Vec::new();
+    let mut current_reorder: Vec<usize> = Vec::new();
+    for (idx, raw) in text.lines().enumerate() {
+        let line_no = idx + 1;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("@Levels:") {
+            current_levels = rest
+                .split_whitespace()
+                .map(|tok| {
+                    if tok == "x" {
+                        None
+                    } else {
+                        Some(
+                            tok.parse::<u8>().expect(
+                                "BidiTest @Levels: level u8 or 'x'",
+                            ),
+                        )
+                    }
+                })
+                .collect();
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("@Reorder:") {
+            current_reorder = rest
+                .split_whitespace()
+                .map(|tok| {
+                    tok.parse::<usize>().expect(
+                        "BidiTest @Reorder: visual index usize",
+                    )
+                })
+                .collect();
+            continue;
+        }
+        if trimmed.starts_with('@') {
+            // UCD header: "Any other line starting with @ is to be
+            // ignored (this allows some degree of forward
+            // compatibility)."
+            continue;
+        }
+        let Some((classes_part, bitset_part)) = trimmed.split_once(';')
+        else {
+            panic!(
+                "BidiTest.txt:{line_no}: data line missing ';': {trimmed:?}"
+            );
+        };
+        let classes: Vec<crate::bidi::BidiClass> = classes_part
+            .split_whitespace()
+            .map(|tok| parse_bidi_class_token(tok, line_no))
+            .collect();
+        let bitset_str = bitset_part.trim();
+        let bitset = u8::from_str_radix(bitset_str, 16).unwrap_or_else(|_| {
+            panic!(
+                "BidiTest.txt:{line_no}: bitset must be a 1-byte hex value, \
+                 got {bitset_str:?}"
+            )
+        });
+        cases.push(BidiTestCase {
+            line_number: line_no,
+            classes,
+            paragraph_levels_bitset: bitset,
+            expected_levels: current_levels.clone(),
+            expected_visual: current_reorder.clone(),
+        });
+    }
+    cases
+}
+
+fn parse_bidi_class_token(
+    token: &str,
+    line_no: usize,
+) -> crate::bidi::BidiClass {
+    use crate::bidi::BidiClass;
+    match token {
+        "L" => BidiClass::L,
+        "R" => BidiClass::R,
+        "AL" => BidiClass::AL,
+        "EN" => BidiClass::EN,
+        "ES" => BidiClass::ES,
+        "ET" => BidiClass::ET,
+        "AN" => BidiClass::AN,
+        "CS" => BidiClass::CS,
+        "NSM" => BidiClass::NSM,
+        "BN" => BidiClass::BN,
+        "B" => BidiClass::B,
+        "S" => BidiClass::S,
+        "WS" => BidiClass::WS,
+        "ON" => BidiClass::ON,
+        "LRE" => BidiClass::LRE,
+        "LRO" => BidiClass::LRO,
+        "RLE" => BidiClass::RLE,
+        "RLO" => BidiClass::RLO,
+        "PDF" => BidiClass::PDF,
+        "LRI" => BidiClass::LRI,
+        "RLI" => BidiClass::RLI,
+        "FSI" => BidiClass::FSI,
+        "PDI" => BidiClass::PDI,
+        other => panic!(
+            "BidiTest.txt:{line_no}: unknown Bidi_Class token {other:?}"
+        ),
+    }
 }

@@ -2584,6 +2584,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/test_fixture.rs:parse_bidi_character_test
 - crates/pinion-text-unicode/src/test_fixture.rs:load_bidi_character_test
 - crates/pinion-text-unicode/ucd/BidiCharacterTest.txt
+- crates/pinion-text-unicode/ucd/BidiTest.txt
+- crates/pinion-text-unicode/src/test_fixture.rs:load_bidi_test
+- crates/pinion-text-unicode/src/test_fixture.rs:parse_bidi_test
 
 
 
@@ -8388,6 +8391,36 @@ router.pointer_down(&mut state_scene);
 
 **Carry forward**:
 - RpcError.data 도 동일 quirk 가능 — 현재의 #[serde(skip_serializing_if = "Option::is_none")] 만 으로는 deserialize 측 null vs absent 구분 안됨; data 의 'present null' use case 발생 시 같은 정통으로 정정 (현재 부채 carry 없음)
+
+
+
+### Round 515 — R51.26 §5.37.4 BIDI UCD BidiTest class-sequence conformance (full 490 846-row sweep, 100% pass; 3 부채 즉시 상환) — UCD 16.0 BidiTest.txt (490 846 data rows × 1-3 paragraph modes) 전체 통과 — class-sequence harness + 3 부채 한 라운드에 즉시 상환 (L1 trailing walk 의 X9-removed skip / X10 unmatched-initiator eos / W1 NSM-at-start-of-sequence = sos type)
+
+**Changes**:
+- crates/pinion-text-unicode/ucd/BidiTest.txt: UCD 16.0.0 적재 (497 590 lines, 490 846 data rows after comment/section strip)
+- crates/pinion-text-unicode/src/test_fixture.rs: BidiTestCase + parse_bidi_test + load_bidi_test — @Levels/@Reorder section anchors + bitset 1/2/4 (auto/LTR/RTL) decoded per row
+- crates/pinion-text-unicode/src/bidi.rs: apply_l1_line_break Pass 1 + Pass 2 의 X9-removed (BN) skip — trailing/preceding S/B walk 이 BN 위치 를 skip-without-break (caught by 'LRE WS LRE; 3'; 이전에는 trailing WS 가 paragraph_level 로 reset 안 됨)
+- crates/pinion-text-unicode/src/bidi.rs: IsolatingRunSequence 에 ends_with_unmatched_initiator + starts_with_unmatched_pdi 플래그 + compute_sos_eos X10 carve-out — unmatched isolate 경계 의 eos / sos 가 이웃 run level 대신 paragraph_level 로 계산 (caught by 'R RLI R; 2'; 이전에는 eos = R 되어 N1 이 RLI → R 로 수정, I1 가 RLI level 0→1 으로 부당 승급)
+- crates/pinion-text-unicode/src/bidi.rs: apply_w1 의 NSM-at-start-of-isolating-run-sequence 을 sos type 으로 해석 (차아서 W1 시그니처 sos 명시 추가) — 이전에 ON 으로 잘못 축소 (caught by 'RLE S PDF NSM; 3': NSM 가 고립 Seq[1] 에서 sos=R 을 상속, 이전 ON 으로 가 N1/N2 가 L 로 끜을 점 수정)
+- crates/pinion-text-unicode/src/bidi.rs: run_bidi_test_case + per-mode harness + smoke (first 100, default) + full_sweep (ignored, on-demand) + representative_codepoint 트릿이표 라운드-트립 검증 test
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1215 pass (+3 from 1212: BidiTest smoke + representative round-trip)
+- cargo test -p pinion-text-unicode -- --ignored = 2 pass — BidiCharacterTest 91 707/91 707 (100%) 유지 + BidiTest 490 846/490 846 (100%)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- UAX #9 conformance: BidiCharacterTest + BidiTest 두 계층 의 UCD 표준 vector 모두 통과 — character vector ('what codepoints render where') + class-sequence vector ('what class sequence yields what levels/reordering') 의 이중 conformance 계층 완성
+- fail discovery progression — smoke 100 pass → full sweep 95.28% (23 180 fail) L1 BN-skip 정정 → 99.27% (3 570 fail) X10 unmatched-initiator 정정 → 99.99% (52 fail) W1 NSM-sos 정정 → 100.0000% (0 fail) in 3 정정 라운드
+
+
+
+**Impact**: §5.37.4
+
+
+**Carry forward**:
+- BIDI algorithm 완성도: 100% — UCD 16.0 두 구조 모두 100% pass; L3 적용 마찠 + L4 mirroring substrate 제공; pinion-text-unicode BIDI layer 의 algorithm 측 부채 챠ƹ
+- R51.x 다음 후보: (a) L4 mirroring renderer-side 통합 — mirroring_glyph substrate 제공 되어있으나 render-layer slice 이 아직 없음 / (b) Phase 2 axis (통 RHI 3D pass §5.x 신설) 시작 / (c) hello-toggle visual demo (paint-side N=2) / (d) derive macro for WidgetTransition (~135 LOC boilerplate 청산, partial derive 보다 application detect logic 하이레 소용섭 하자 baseline 50%) / (e) framework primitive 추가 신설
 
 
 
