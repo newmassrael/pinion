@@ -2506,16 +2506,53 @@ router.pointer_down(&mut state_scene);
 
 
 
-### §5.37.4. BIDI (UAX #9) — carry placeholder
+### §5.37.4. BIDI directional resolution (UAX #9)
 
 
-**Intent**: §5.37.4 BIDI sub-layer placeholder — UAX #9. self-hosted text engine 의 directional resolution. R51.1 forward-reference 정합. ratify 는 multi-session carry
+**Intent**: Self-hosted text engine 의 directional resolution layer: NFC codepoint 시퀀스 → 각 character 의 paragraph-relative embedding level + visual reorder mapping, external lib 0 + UAX #9 full conformance.
+
+
+**Rationale**:
+- Shape engine (§5.37.6) prerequisite: GSUB/GPOS 진입 전 character order 결정 필요
+- external lib 0 정신: icu4x / unicode-bidi 의존 거부, UCD table 직접 embed (R50.2.x 패턴 일관)
+- AI-first: text/bidi method 노출로 AI agent 가 RTL/LTR mix 시각화 추론 가능
+- Backend swap stability: UAX #9 spec 결정적, parley → 자체 shape 시 동일 BIDI 결과 보장
+- Hyrum's law: spec strict — non-conformant 결과 reject, NFC strict 패턴 일관
+- UAX #9 conformance level: full (P/X/W/N/I/L rules 전체), partial subset 거부
+
+
+
+**Inputs**:
+- §5.37.3 NFC normalized codepoint sequence (input layer)
+- UCD 16.0 DerivedBidiClass.txt (Bidi_Class property table, build.rs codegen embed)
+- UAX #9 spec: P-rules / X-rules / W-rules / N-rules / I-rules / L-rules 6-stage
+- §5.37.1 sfnt parser 의 codepoint → glyph mapping (R50.1.x)
+- §5.37.2 RPC channel surface (R50.x.x text/bidi method 신규 슬롯)
+- §2 invariant #2 RPC AI-first (BIDI 결과를 AI agent 가 RPC 로 introspect)
+
+
+
+**Outputs**:
+- pinion-text-unicode crate 의 bidi module (또는 pinion-text-bidi 별도 crate)
+- pub fn resolve(text: &str, base_level: Option<Level>) -> BidiResult
+- BidiResult: per-character embedding levels + visual reorder index map
+- BidiClass table (build.rs codegen, BMP 2-stage trie, §5.37.3 패턴)
+- 6 algorithm stages 분리 함수 (resolve_p / resolve_x / resolve_w / resolve_n / resolve_i / reorder_l)
+- §5.37.2 RPC method text/bidi (codepoint sequence in → levels + reorder out)
 
 
 
 
+**Alternatives rejected**:
+- icu4x 의존 — external lib 0 정신 위반, framework 비대화 + transitive dep 폭증
+- unicode-bidi crate 의존 — 동일 거부 (R50.2.x text engine 자립 정신)
+- BIDI 미구현 (LTR-only) — Arabic/Hebrew 미지원, multi-lingual lifetime 부족
+- 부분 구현 (W rules only) — UAX #9 non-conformant, edge case 미보장 (Hyrum's law 위반)
+- shape engine 내 inline (separate layer 아님) — SRP 위반, RPC 노출 어려움, line break 와 ordering coupling
 
 
+
+**Impact scope**: §5.37, §5.37.1, §5.37.2, §5.37.3, §5.37.6, §5.37.7
 
 
 
@@ -7773,6 +7810,30 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.12, §5.15, §5.20
+
+
+
+### Round 498 — R51.10 §5.37.4 BIDI (UAX #9) axis ratify — placeholder → full body — §5.37.4 BIDI directional resolution axis ratify (atomic-only, code 변경 0). UAX #9 full conformance + external lib 0 (UCD DerivedBidiClass.txt embed via build.rs codegen, R50.2.x NFC 패턴 일관). intent/inputs/outputs/rationale/impact_scope/alternatives full set. self-hosted text engine layer chain 의 4번째 layer (NFC → BIDI → shape → line break → raster). multi-session impl carry — R51.11+ slice.
+
+**Changes**:
+- §5.37.4 title placeholder → BIDI directional resolution (UAX #9)
+- intent: NFC → embedding levels + visual reorder, external lib 0
+- inputs 6 (NFC seq / UCD DerivedBidiClass / UAX #9 6-stage / sfnt / RPC channel / invariant #2)
+- outputs 6 (pinion-text-unicode bidi module / resolve fn / BidiResult / BidiClass trie / 6 stage 함수 / RPC text/bidi)
+- rationale 6 (shape prereq / external 0 / AI-first / backend swap / Hyrum strict / full conformance)
+- impact_scope 6 (§5.37 / §5.37.1~3 / §5.37.6~7)
+- alternatives 5 (icu4x / unicode-bidi / LTR-only / partial subset / shape inline 모두 reject)
+
+
+
+**Verification**:
+- mnemosyne validate_workspace: entries 152 → 153, sections 55 (변동 없음), T1 orphan 0, RT 1/1, GENERATED.md sync
+- code 변경 0 (atomic-only round)
+- forward-reference 사전 확인: impact_scope 의 §5.37.6/§5.37.7 placeholder 존재 확인
+
+
+
+**Impact**: §5.37.4, §5.37
 
 
 
