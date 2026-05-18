@@ -8050,6 +8050,31 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 505 — R51.16 §5.12 RadioGroup RPC e2e — multi-Radio composite wire validation — RadioGroup substrate validation 완성 — JSON-RPC dispatch 경로 통과한 multi-Radio composite widget 의 query/rewind/invoke/full-cycle e2e, "selected"/Int(idx) intent 가 wire-form 에서 동일 동작 확인
+
+**Changes**:
+- crates/pinion-rpc/src/dispatch.rs: RadioGroup 4 e2e tests 제적 — query count/selected_index + rewind selected_index + invoke send (idx:Event format) + full activate cycle + selected intent verification
+- selected_index = None 경로 는 raw JSON envelope 레벨로 assert — serde Option<Value> 가 JSON `null` 을 None 으로 deserialize 하는 기본 동작 우회 (parse_response.result.unwrap() 고챔 회피)
+- wire format <index>:<EventName> (e.g. "2:PointerUp") 가 JSON-RPC 엔벨로프에서 정상 라우팅 — RadioGroupExternal::invoke send 가 R51.15 design 대로 동작
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1084 pass (+4 RadioGroup e2e from 1080)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline)
+- Toggle/Checkbox/Radio/Slider/RadioGroup — 이제 모든 Tier-1 widget 이 RPC e2e 계층에서 검증 (substrate validation 5/5)
+
+
+
+**Impact**: §5.12, §5.38, §5.20
+
+
+**Carry forward**:
+- serde Option<Value> JSON null 이주 우회 가 의존적으로 parse_response 과 raw envelope 두 경로 복합 사용 — 구조적 정리가 필요시 Response 구조체 자체 deserialize_with 개선 고려 (차기 RFC)
+- R51.x 다음 후보: derive macro for WidgetTransition (pinion-derive 증원) / hello-toggle visual demo / BIDI P-rules
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

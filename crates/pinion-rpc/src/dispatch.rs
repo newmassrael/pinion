@@ -4417,4 +4417,113 @@ mod tests {
         let val = payload.as_f64().expect("Float payload must be a number");
         assert!((val - 0.75).abs() < 1e-4, "got {val}");
     }
+
+    // ---- R51.16 §5.38 — RadioGroup e2e through JSON-RPC envelope ----
+    //
+    // Mirrors the R51.13 widget e2e pattern for the R51.15 RadioGroup
+    // primitive. Validates the §5.15 8-item contract over the wire for
+    // a multi-Radio composite widget: schema declares count +
+    // selected_index + send; query reads count and current selection
+    // (Int or Null); intervene restores selected_index; invoke "send"
+    // takes "<index>:<EventName>" args and drives the indexed Radio;
+    // a full activate cycle queues exactly one "selected" intent with
+    // the selected index as IntrospectValue::Int payload.
+
+    #[test]
+    fn scene_query_on_radio_group_returns_count_and_initial_selected_index() {
+        use pinion_core::widgets::radio_group::RadioGroupExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
+
+        let req_count = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_count).unwrap());
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains('3'), "got {s}");
+
+        // JSON-RPC null result asserted on raw envelope: serde's
+        // Option<Value> deserializes `result: null` as `None`, so
+        // the test reads the wire form directly to confirm the
+        // selected_index slot returned IntrospectValue::Null.
+        let req_idx = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":2}"#;
+        let raw = dispatch_t(&mut scene, req_idx).unwrap();
+        assert!(
+            raw.contains("\"result\":null"),
+            "selected_index = None must surface as JSON null in result, got: {raw}"
+        );
+    }
+
+    #[test]
+    fn scene_rewind_on_radio_group_sets_selected_index_without_intent() {
+        use pinion_core::widgets::radio_group::RadioGroupExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(4))));
+
+        let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/selected_index","value":2},"id":10}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
+        assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":11}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains('2'), "got {v}");
+
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":12}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert!(arr.is_empty(), "intervene must not queue intents");
+    }
+
+    #[test]
+    fn scene_invoke_on_radio_group_drives_indexed_radio() {
+        use pinion_core::widgets::radio_group::RadioGroupExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
+
+        // PointerEnter on index 1 — moves that Radio to Hover, no
+        // selection change yet (no activate). selected_index stays
+        // None, which surfaces as JSON null in the result envelope.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/invoke","params":{"path":"/external/send","args":"1:PointerEnter"},"id":20}"#;
+        let raw = dispatch_t(&mut scene, req).unwrap();
+        assert!(
+            raw.contains("\"result\":null"),
+            "non-activating invoke must return JSON null result, got: {raw}"
+        );
+    }
+
+    #[test]
+    fn scene_invoke_full_cycle_on_radio_group_emits_selected_with_index() {
+        use pinion_core::widgets::radio_group::RadioGroupExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(RadioGroupExternal::new(3))));
+
+        // Drive a full activate on index 2 over the wire.
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"2:{ev}"}},"id":30}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "invoke {ev} error: {:?}", resp.error);
+        }
+
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":31}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert_eq!(arr.len(), 1, "expected exactly one selected intent");
+        let entry = arr[0].as_object().unwrap();
+        assert_eq!(entry.get("tag").and_then(Value::as_str), Some("selected"));
+        // Payload is the new index as Int — wire form is JSON number.
+        assert_eq!(
+            entry.get("payload").and_then(Value::as_i64),
+            Some(2),
+            "intent payload must carry the new selected index"
+        );
+
+        // Final state observation through the same envelope.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":32}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains('2'), "selected_index after activate should be 2: {v}");
+    }
 }
