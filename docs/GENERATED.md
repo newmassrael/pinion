@@ -2450,6 +2450,10 @@ router.pointer_down(&mut state_scene);
 **Implementations**:
 - crates/pinion-text-unicode/Cargo.toml
 - crates/pinion-text-unicode/src/lib.rs:NormForm
+- crates/pinion-text-unicode/build.rs
+- crates/pinion-text-unicode/ucd/UnicodeData.txt
+- crates/pinion-text-unicode/ucd/DerivedNormalizationProps.txt
+- crates/pinion-text-unicode/ucd/CompositionExclusions.txt
 
 
 
@@ -6922,6 +6926,32 @@ router.pointer_down(&mut state_scene);
 - R50.2.2 UCD 16.x vendor + build.rs codegen (decomp + combining class + exclusions)
 - R50.2.3 NFD algorithm (Canonical Decomposition + Canonical Ordering)
 - R50.2.4+ NFC/NFKD/NFKC + Quick-check + RPC text/normalize method
+
+
+
+### Round 472 — Round 472 — R50.2.2 §5.37.3 UCD 16.0.0 vendor + build.rs codegen (5 normalization table 자체 embed)
+
+**Changes**:
+- ucd/ 신설 (UnicodeData + DerivedNormalizationProps + CompositionExclusions + Unicode License V3)
+- build.rs ~290 LOC — 5 sorted table emit (CCC, canonical/compat decomp, full excl, primary composite)
+- 13 spot-check test (À decomp, U+0300 CCC 230, Devanagari excl, A+grave composite, Hangul 알고리즘 누락 검증)
+
+
+
+**Verification**:
+- cargo build -p pinion-text-unicode = green (codegen emit ~10080 LOC tables.rs)
+- cargo test --workspace --features pinion-runtime/vello = 868 pass (855 baseline + 13)
+- cargo clippy -p pinion-text-unicode --all-targets = 0 warning (workspace baseline 유지)
+
+
+
+**Impact**: §5.37, §5.37.3
+
+
+**Carry forward**:
+- R50.2.3 NFD algorithm (Canonical Decomposition recursive + Canonical Ordering CCC swap)
+- R50.2.4 NFC algorithm (PRIMARY_COMPOSITES lookup + Hangul algorithmic composition UAX #15 §16)
+- R50.2.5+ NFKD/NFKC + Quick-check optimization + text/normalize RPC method
 
 
 
