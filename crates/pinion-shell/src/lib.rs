@@ -56,7 +56,7 @@ use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
-    compute_layout, paint_adapter, walk_scene_and_drain, InputRouter, IntentQueue,
+    compute_layout, paint_adapter, walk_scene_and_drain, InputRouter, IntentQueue, PointerId,
 };
 use pinion_text::LayoutCache;
 use vello::peniko::Color as PenikoColor;
@@ -697,12 +697,23 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // guarantees a CursorMoved follows, which resolves the
             // real cursor position).
             WindowEvent::CursorMoved { position, .. } => {
-                self.router.cursor_moved(position.x, position.y, &mut self.scene);
+                // R51.38 §5.35 — winit mouse events are single-source
+                // on every desktop platform pinion supports; the
+                // shell threads `PointerId::MOUSE` unconditionally.
+                // Touch / pen wiring will mint distinct ids via
+                // `PointerId::touch` when the `WindowEvent::Touch`
+                // handler lands as a follow-up.
+                self.router.cursor_moved(
+                    PointerId::MOUSE,
+                    position.x,
+                    position.y,
+                    &mut self.scene,
+                );
                 self.refresh_state();
                 self.drain_intents();
             }
             WindowEvent::CursorLeft { .. } => {
-                self.router.cursor_left(&mut self.scene);
+                self.router.cursor_left(PointerId::MOUSE, &mut self.scene);
                 self.refresh_state();
                 self.drain_intents();
             }
@@ -711,7 +722,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 button: MouseButton::Left,
                 ..
             } => {
-                self.router.pointer_down(&mut self.scene);
+                self.router.pointer_down(PointerId::MOUSE, &mut self.scene);
                 self.refresh_state();
                 self.drain_intents();
             }
@@ -720,7 +731,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 button: MouseButton::Left,
                 ..
             } => {
-                self.router.pointer_up(&mut self.scene);
+                self.router.pointer_up(PointerId::MOUSE, &mut self.scene);
                 self.refresh_state();
                 self.drain_intents();
             }

@@ -2133,6 +2133,12 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/input.rs:widget_wants_capture
 - crates/pinion-shell/src/lib.rs:AppShell::apply_key
 - crates/pinion-shell/src/lib.rs:named_key_str
+- crates/pinion-runtime/src/input.rs:PointerId
+- crates/pinion-runtime/src/input.rs:PointerId::MOUSE
+- crates/pinion-runtime/src/input.rs:PointerId::touch
+- crates/pinion-runtime/src/input.rs:InputRouter::cursors
+- crates/pinion-runtime/src/input.rs:InputRouter::hover_targets
+- crates/pinion-runtime/src/input.rs:InputRouter::captured_targets
 
 
 
@@ -4191,6 +4197,47 @@ router.pointer_down(&mut state_scene);
 - 부채 9: R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)
 - 부채 10: R51.31 L4 alternative impl path RFC (spec round)
 - 메모리 신설 후보: design-phase-industry-ux-checklist.md (R51.34 click-to-position 누락 lesson + R51.35 keyboard a11y 누락 lesson), a11y-first-class-requirement.md (carry deferred 가 ARIA 답 아님 lesson), opt-in-pattern-textbook-merit.md (wants_pointer_capture default false 4-widget 0 회규 검증)
+
+
+
+### R51.38 — R51.38 §5.35 multi-pointer first-design substrate — InputRouter per-pointer HashMap (cursors / hover_targets / captured_targets), 모바일/터치 진입 전 aliasing-by-default refactor cost 회피
+
+**Changes**:
+- crates/pinion-runtime/src/input.rs: PointerId(u64) newtype 신설 — Hash+Eq+Copy+Debug, PointerId::MOUSE(0) const 예약, PointerId::touch(finger_id) 가 +1 offset 로 mouse 겹치 회피 (winit FingerId u64 폭과 일치, wrapping_add 로 이론적 max 에지 대응)
+- crates/pinion-runtime/src/input.rs: InputRouter 필드 3개 HashMap<PointerId, _> 화 — cursors (커서 위치) / hover_targets (호버 tag) / captured_targets (capture-lock tag). single-target Option 시절 multi-touch 악러이싱 가능성 제거
+- crates/pinion-runtime/src/input.rs: cursor_moved / cursor_left / pointer_down / pointer_up 시그니처에 id: PointerId 인자 선두 추가; 각 메서드가 대응 HashMap 엔트리만 조작, 다른 포인터 상태 불변
+- crates/pinion-runtime/src/input.rs: update_paint_scene 이 cursors 의 모든 활성 PointerId 에 대해 refresh_hover 실행 (capture 포인터는 skip) — layout shift 시 전체 인터읽 동기화
+- crates/pinion-runtime/src/input.rs: refresh_hover 가 per-pointer (id 인자), 각 포인터가 독립적 leave-before-enter ordering 발생
+- crates/pinion-runtime/src/input.rs: hover_target(id) / captured_target(id) 접근자 per-pointer query 화 — diagnostic/test surface, application 코드 는 직접 query 불필요
+- crates/pinion-runtime/src/lib.rs: pub use input::{InputRouter, PointerId} — substrate 타입 re-export, downstream shell 이 use 가능
+- crates/pinion-shell/src/lib.rs: winit mouse 핸들러 4개 (CursorMoved / CursorLeft / MouseInput Pressed / Released) 가 PointerId::MOUSE 를 항상 전달; touch 이벤트 wiring 은 follow-up carry
+- crates/pinion-runtime/src/input.rs tests: 기존 15개 single-pointer test 모두 PointerId::MOUSE 인자 추가, 6개 multi-pointer new test (pointer_id_mouse_is_reserved_zero / two_touches_drag_two_widgets_independently / mouse_and_touch_dont_alias_hover / releasing_one_touch_does_not_release_other_capture / cursor_left_for_one_pointer_keeps_other_state / update_paint_scene_refreshes_every_active_pointer)
+- §5.35 implementations += PointerId / PointerId::MOUSE / PointerId::touch / InputRouter::{cursors, hover_targets, captured_targets}
+
+
+
+**Verification**:
+- cargo build --workspace --features pinion-runtime/vello = 0 errors (substrate + shell call site + 5 example 모두 통과)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict 유지 — forbid unsafe_code / deny warnings / deny clippy::pedantic)
+- cargo test --workspace --features pinion-runtime/vello = 1262 pass / 0 fail / 8 ignored (직전 R51.37 의 1256 → +6 multi-pointer InputRouter tests)
+- cargo test -p pinion-runtime --features vello = 59 pass (이전 53 → +6) — single-pointer 15개 잘지 없이 PointerId::MOUSE 로 이주, multi-touch 6개 new
+- cargo test -p pinion-shell --test smoke = 1/1 pass (트레잇 surface 회규 0)
+- button_like_widget_preserves_pre_r51_34_cancel_by_leave = 1/1 pass (R51.34 opt-in capture 패턴 backwards-compat 0 회규)
+- Mnemosyne validate_workspace: entries=183 / sections=55 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.35
+
+
+**Carry forward**:
+- winit Touch event 핸들러 wiring at pinion-shell layer — 현재 router API 는 PointerId::touch 수용 준비 완료, 실제 WindowEvent::Touch 소스 연결만 남음 (부채 2 소소 carry)
+- 부채 4: Slider vertical axis future-proof — SliderState/SliderEvent axis, SliderExternal::pointer_move axis 분기 (~50 LOC)
+- 부채 6: widget_wants_capture O(N) walk early-cache — multi-External 환경 frame cost (~50 LOC)
+- 부채 3: RadioGroup substrate-chicken-and-egg — substrate-first 3-round (RFC + sub-index routing + first-client hello-radio-group)
+- 부채 5: External trait surface 비대화 segregation RFC (design only)
+- 부채 9: R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)
+- 부채 10: R51.31 L4 alternative impl path RFC (spec round)
 
 
 

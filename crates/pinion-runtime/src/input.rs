@@ -14,27 +14,27 @@
 //! ```text
 //!   ┌─ winit CursorMoved ──────┐
 //!   │                          ▼
-//!   │   router.cursor_moved(x, y, &mut state_scene)
-//!   │       │  re-resolve hover_target from last paint scene
+//!   │   router.cursor_moved(id, x, y, &mut state_scene)
+//!   │       │  re-resolve hover_targets[id] from last paint scene
 //!   │       │  PointerEnter/Leave dispatch on tag transition
 //!   │       ▼
 //!   ┌─ winit MouseInput Press ─┐
-//!   │   router.pointer_down(&mut state_scene)
-//!   │       │  PointerDown to hover_target (no-op when none)
+//!   │   router.pointer_down(id, &mut state_scene)
+//!   │       │  PointerDown to hover_targets[id] (no-op when none)
 //!   │       ▼
 //!   ┌─ winit MouseInput Release┐
-//!   │   router.pointer_up(&mut state_scene)
-//!   │       │  PointerUp to hover_target (no-op when none)
+//!   │   router.pointer_up(id, &mut state_scene)
+//!   │       │  PointerUp to hover_targets[id] (no-op when none)
 //!   │       ▼
 //!   ┌─ winit CursorLeft ───────┐
-//!   │   router.cursor_left(&mut state_scene)
-//!   │       │  drop cursor, rollback in-flight Hover
+//!   │   router.cursor_left(id, &mut state_scene)
+//!   │       │  drop cursor for id, rollback in-flight Hover
 //!   │       ▼
 //!   ┌─ post-render ────────────┐
 //!   │   router.update_paint_scene(paint_scene, &mut state_scene)
-//!   │       │  retain paint scene, refresh hover_target
-//!   │       │  (handles window resize moving a widget under
-//!   │       │   a stationary cursor)
+//!   │       │  retain paint scene, refresh hover_targets for
+//!   │       │  every active pointer (handles window resize moving
+//!   │       │  a widget under a stationary cursor)
 //!   └──────────────────────────┘
 //! ```
 //!
@@ -49,18 +49,84 @@
 //! two scenes' tags in sync: the same `"main_btn"` literal on the
 //! paint Container and the state [`ExternalNode`].
 //!
-//! ## Out of scope (R48 carry-forward)
+//! ## Multi-pointer (R51.38 §5.35)
+//!
+//! Every input method takes a [`PointerId`] identifying the source
+//! pointer. Mouse-driven shells pass [`PointerId::MOUSE`]; touch /
+//! pen / future input sources mint distinct ids via
+//! [`PointerId::touch`]. Per-pointer state (`cursor`, `hover_target`,
+//! `captured_target`) lives in `HashMap<PointerId, _>` so two
+//! simultaneous touches can drag two different widgets without
+//! aliasing the capture lock. Single-pointer mouse shells observe no
+//! behavioural change — the maps degenerate to a single entry under
+//! `PointerId::MOUSE`. This is the first-design ratify for the
+//! mobile / multi-touch axis; designing in capture-aliasing-by-default
+//! and refactoring later was the carry-forward path the R51.38
+//! substrate-first decision rejected.
+//!
+//! ## Out of scope (R48+ carry-forward)
 //!
 //! - Multi-target dispatch (capture / bubble). The current router
 //!   picks the deepest tagged ancestor and dispatches once.
 //! - Focus tab order + keyboard dispatch. v0 routes pointer events
 //!   only; key events stay with the application until the focus model
 //!   lands (carry).
-//! - Touch / gesture (pinch, multi-finger). winit `Touch` event is
-//!   not yet wired; the routing axis for those is a separate carry.
+//! - Touch event wiring at the shell layer. The router's API accepts
+//!   touch pointers via [`PointerId::touch`], but no `pinion-shell`
+//!   call site sources them yet — winit `Touch` event integration is
+//!   a separate carry.
+
+use std::collections::HashMap;
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
+
+/// R51.38 §5.35 — pointer identity used by every [`InputRouter`]
+/// input method to route per-pointer cursor / hover / capture state.
+/// Mouse events on every desktop platform pinion supports come from a
+/// single (logical) source, so [`PointerId::MOUSE`] is a fixed `const`
+/// and mouse-driven shells never allocate. Touch finger IDs route
+/// through [`PointerId::touch`] which offsets by one so `PointerId(0)`
+/// stays reserved for the mouse.
+///
+/// `Hash` + `Eq` + `Copy` so the routing tables can key on it without
+/// allocation; `Debug` for diagnostic logging. The internal `u64`
+/// width matches winit's `FingerId` to avoid lossy narrowing when
+/// shells eventually wire touch events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PointerId(u64);
+
+impl PointerId {
+    /// The primary mouse pointer. Mouse events on every desktop
+    /// platform are single-source, so this constant suffices —
+    /// shells pass it unconditionally for every winit `CursorMoved`
+    /// / `MouseInput` event. The reserved id `0` cannot collide with
+    /// any [`PointerId::touch`] result because that factory offsets
+    /// by one.
+    pub const MOUSE: PointerId = PointerId(0);
+
+    /// Touch-finger pointer id. The factory offsets by one so a
+    /// `winit::event::Touch::id` of `0` maps to `PointerId(1)`,
+    /// keeping `PointerId(0)` reserved for [`MOUSE`]. Wrapping
+    /// addition handles the (theoretical) `u64::MAX` finger id edge
+    /// without panic — wrap-around lands at `PointerId(0)` which
+    /// then aliases the mouse, but in practice no platform mints
+    /// finger ids anywhere near that magnitude.
+    #[must_use]
+    pub fn touch(finger_id: u64) -> Self {
+        PointerId(finger_id.wrapping_add(1))
+    }
+
+    /// Raw underlying value. Exposed for diagnostic logging and for
+    /// shells that mint custom synthetic pointer IDs (e.g. pen input
+    /// on platforms pinion adds later). Application code that just
+    /// routes mouse + touch should prefer the [`MOUSE`] constant and
+    /// the [`touch`](Self::touch) factory.
+    #[must_use]
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+}
 
 /// Framework-side input dispatch primitive. Owns retained paint scene,
 /// cursor state, and hover target; dispatches winit-side input events
@@ -89,125 +155,150 @@ pub struct InputRouter {
     /// The router holds it across input events so hit-tests don't
     /// need a fresh `view()` rebuild per cursor move.
     last_paint_scene: Option<Scene>,
-    /// Cursor position in window physical pixels. `None` when the
-    /// cursor is outside the window or has never entered.
-    cursor: Option<(f64, f64)>,
-    /// Tag of the widget currently under the cursor. `None` when the
-    /// cursor is over no tagged region (background, or no cursor).
-    /// Drives `PointerEnter` / `PointerLeave` dispatch and gates
-    /// `PointerDown` / `PointerUp`.
-    hover_target: Option<String>,
-    /// R51.34 §5.35 — capture-lock target: tag of the widget that
-    /// claimed the cursor on the most recent `pointer_down` via
-    /// [`External::wants_pointer_capture`]. While `Some`, every
-    /// [`cursor_moved`](Self::cursor_moved) skips
+    /// R51.38 §5.35 — per-pointer cursor position in window physical
+    /// pixels. Absence means the pointer is outside the window or
+    /// has never entered. Mouse-driven shells observe a single
+    /// `PointerId::MOUSE` entry; touch / pen shells route each
+    /// finger / stylus through its own [`PointerId`].
+    cursors: HashMap<PointerId, (f64, f64)>,
+    /// R51.38 §5.35 — per-pointer hover target tag. Empty when no
+    /// pointer is over a tagged region. Drives `PointerEnter` /
+    /// `PointerLeave` dispatch and gates `PointerDown` /
+    /// `PointerUp` per pointer, so two simultaneous touches can sit
+    /// on two different widgets without aliasing.
+    hover_targets: HashMap<PointerId, String>,
+    /// R51.34 §5.35 + R51.38 §5.35 — per-pointer capture-lock map:
+    /// tag of the widget each pointer claimed on its most recent
+    /// `pointer_down` via [`External::wants_pointer_capture`]. While
+    /// an entry is present, every
+    /// [`cursor_moved`](Self::cursor_moved) for that pointer skips
     /// [`refresh_hover`](Self::refresh_hover) and forwards the
     /// cursor position to the widget's
     /// [`External::pointer_move`](pinion_core::external::External::pointer_move).
     /// Cleared on [`pointer_up`](Self::pointer_up); the subsequent
     /// `refresh_hover` fires the deferred `PointerLeave` if the
     /// cursor strayed off the widget during the drag. `cursor_left`
-    /// is suppressed while capture is in flight so the drag survives
-    /// the window-leave / re-enter cycle.
-    captured_target: Option<String>,
+    /// is suppressed for that pointer while capture is in flight so
+    /// the drag survives the window-leave / re-enter cycle. Multi-
+    /// touch drags (two fingers, two widgets) each get an
+    /// independent entry — the R51.38 first-design ratify avoids
+    /// the aliasing-by-default refactor cost of single-target
+    /// capture.
+    captured_targets: HashMap<PointerId, String>,
 }
 
 impl InputRouter {
-    /// Construct an empty router. No retained paint scene, no cursor,
-    /// no hover target.
+    /// Construct an empty router. No retained paint scene, no
+    /// cursors, no hover targets, no capture locks.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Current hover target tag, when any. Mainly for tests and
-    /// diagnostic logging; application dispatch should not need to
-    /// inspect this.
+    /// Current hover target tag for `id`, when any. Mainly for tests
+    /// and diagnostic logging; application dispatch should not need
+    /// to inspect this directly.
     #[must_use]
-    pub fn hover_target(&self) -> Option<&str> {
-        self.hover_target.as_deref()
+    pub fn hover_target(&self, id: PointerId) -> Option<&str> {
+        self.hover_targets.get(&id).map(String::as_str)
     }
 
-    /// R51.34 §5.35 — current capture-lock target tag, when a widget
-    /// claimed the cursor via [`External::wants_pointer_capture`] on
-    /// the most recent [`pointer_down`](Self::pointer_down). `None`
-    /// when no drag is in flight. Diagnostic / test surface only —
+    /// R51.34 §5.35 — current capture-lock target tag for `id`, when
+    /// that pointer claimed a widget via
+    /// [`External::wants_pointer_capture`] on its most recent
+    /// [`pointer_down`](Self::pointer_down). `None` when no drag is
+    /// in flight for that pointer. Diagnostic / test surface only —
     /// application code never needs to inspect this directly.
     #[must_use]
-    pub fn captured_target(&self) -> Option<&str> {
-        self.captured_target.as_deref()
+    pub fn captured_target(&self, id: PointerId) -> Option<&str> {
+        self.captured_targets.get(&id).map(String::as_str)
     }
 
     /// Update the retained paint scene after each render. Re-resolves
-    /// `hover_target` against the new layout — a window resize may
-    /// move the button rect under a stationary cursor, and the
-    /// resulting `PointerEnter` / `PointerLeave` transitions fire
-    /// here so the SCXML matches the new visual state on the next
-    /// frame.
+    /// `hover_targets` for every active pointer against the new
+    /// layout — a window resize may move the button rect under a
+    /// stationary cursor, and the resulting `PointerEnter` /
+    /// `PointerLeave` transitions fire here so the SCXML matches the
+    /// new visual state on the next frame. Pointers under capture
+    /// lock keep their hover pinned (the drag invariant).
     pub fn update_paint_scene(&mut self, scene: Scene, state_scene: &mut Scene) {
         self.last_paint_scene = Some(scene);
-        self.refresh_hover(state_scene);
+        // Snapshot pointer ids before iterating — refresh_hover
+        // takes &mut self and mutates `hover_targets`. Cloning the
+        // key set keeps the multi-pointer iteration self-contained
+        // (single-pointer shells: 1 entry, negligible cost).
+        let ids: Vec<PointerId> = self.cursors.keys().copied().collect();
+        for id in ids {
+            if self.captured_targets.contains_key(&id) {
+                continue;
+            }
+            self.refresh_hover(id, state_scene);
+        }
     }
 
     /// winit `CursorMoved` handler. Stores the new cursor position
-    /// then either:
+    /// under `id` then either:
     ///
     /// * **Capture mode** (R51.34 §5.35): when a drag-aware widget
-    ///   holds the lock from a prior `pointer_down`, forward the
-    ///   cursor position to its
+    ///   holds the lock for this pointer, forward the cursor
+    ///   position to its
     ///   [`External::pointer_move`](pinion_core::external::External::pointer_move)
-    ///   as widget-relative normalised `(x_rel, y_rel)`. `hover_target`
-    ///   stays pinned so the SCXML does not see spurious
+    ///   as widget-relative normalised `(x_rel, y_rel)`. The hover
+    ///   target stays pinned so the SCXML does not see spurious
     ///   `PointerLeave` events when the cursor strays off the
     ///   widget rect mid-drag.
-    /// * **Free mode** (pre-R51.34 default): re-resolve the hover
-    ///   target and dispatch `PointerEnter` / `PointerLeave` on
-    ///   transitions — the canonical button-like cancel-by-leave UX.
-    pub fn cursor_moved(&mut self, x: f64, y: f64, state_scene: &mut Scene) {
-        self.cursor = Some((x, y));
-        if let Some(tag) = self.captured_target.clone() {
+    /// * **Free mode** (pre-R51.34 default): re-resolve this
+    ///   pointer's hover target and dispatch `PointerEnter` /
+    ///   `PointerLeave` on transitions — the canonical button-like
+    ///   cancel-by-leave UX.
+    pub fn cursor_moved(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) {
+        self.cursors.insert(id, (x, y));
+        if let Some(tag) = self.captured_targets.get(&id).cloned() {
             self.forward_pointer_move(state_scene, &tag, x, y);
         } else {
-            self.refresh_hover(state_scene);
+            self.refresh_hover(id, state_scene);
         }
     }
 
-    /// winit `CursorLeft` handler. Drops the cursor and dispatches a
-    /// `PointerLeave` if a hover was in flight — *unless* a drag is
-    /// in flight (R51.34 §5.35 capture lock), in which case the
-    /// hover stays pinned so the drag survives the window-leave /
-    /// re-enter cycle that a real drag-out gesture produces. The
-    /// deferred `PointerLeave` (if the cursor never returns) fires
-    /// on the matching [`pointer_up`](Self::pointer_up).
-    pub fn cursor_left(&mut self, state_scene: &mut Scene) {
-        self.cursor = None;
-        if self.captured_target.is_some() {
+    /// winit `CursorLeft` handler. Drops the cursor for `id` and
+    /// dispatches a `PointerLeave` if a hover was in flight for that
+    /// pointer — *unless* a drag is in flight (R51.34 §5.35 capture
+    /// lock), in which case the hover stays pinned so the drag
+    /// survives the window-leave / re-enter cycle that a real
+    /// drag-out gesture produces. The deferred `PointerLeave` (if
+    /// the cursor never returns) fires on the matching
+    /// [`pointer_up`](Self::pointer_up).
+    pub fn cursor_left(&mut self, id: PointerId, state_scene: &mut Scene) {
+        self.cursors.remove(&id);
+        if self.captured_targets.contains_key(&id) {
             return;
         }
-        if let Some(tag) = self.hover_target.take() {
+        if let Some(tag) = self.hover_targets.remove(&id) {
             dispatch_send(state_scene, &tag, "PointerLeave");
         }
     }
 
-    /// winit `MouseInput` left-button press handler. Dispatches
-    /// `PointerDown` to the current hover target. No-op when the
-    /// cursor is off all tagged regions — clicks on the background
-    /// don't drive the SCXML (this is the R47 fix internalized).
+    /// winit `MouseInput` (or touch-down) press handler for `id`.
+    /// Dispatches `PointerDown` to the pointer's current hover
+    /// target. No-op when that pointer is over no tagged region —
+    /// clicks on the background don't drive the SCXML (this is the
+    /// R47 fix internalized).
     ///
     /// R51.34 §5.35: after dispatch, if the target widget opts in to
     /// pointer capture via
     /// [`External::wants_pointer_capture`](pinion_core::external::External::wants_pointer_capture),
-    /// the router pins `captured_target` to that tag for the
-    /// duration of the press. While pinned, [`cursor_moved`] forwards
-    /// the cursor to the widget through
+    /// the router pins this pointer's `captured_targets` entry to
+    /// that tag for the duration of the press. While pinned,
+    /// [`cursor_moved`] forwards the cursor to the widget through
     /// [`External::pointer_move`](pinion_core::external::External::pointer_move)
-    /// and suppresses hover / leave dispatch. Button-like widgets
-    /// keep the default `false` and observe no behaviour change.
-    pub fn pointer_down(&mut self, state_scene: &mut Scene) {
-        if let Some(tag) = self.hover_target.clone() {
+    /// and suppresses hover / leave dispatch for this pointer.
+    /// Button-like widgets keep the default `false` and observe no
+    /// behaviour change.
+    pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
+        if let Some(tag) = self.hover_targets.get(&id).cloned() {
             dispatch_send(state_scene, &tag, "PointerDown");
             if widget_wants_capture(state_scene, &tag) {
-                self.captured_target = Some(tag.clone());
+                self.captured_targets.insert(id, tag.clone());
                 // R51.35 §5.35 — click-to-position: forward the
                 // press-time cursor as the initial `pointer_move` so
                 // a click-without-drag still seeds the widget's
@@ -215,37 +306,38 @@ impl InputRouter {
                 // Slider click-jumps-to-position UX). Without this
                 // forward the value would not update unless the user
                 // also dragged the cursor at least one pixel.
-                if let Some((x, y)) = self.cursor {
+                if let Some(&(x, y)) = self.cursors.get(&id) {
                     self.forward_pointer_move(state_scene, &tag, x, y);
                 }
             }
         }
     }
 
-    /// winit `MouseInput` left-button release handler. Dispatches
-    /// `PointerUp` to the current hover target. Release with the
-    /// cursor off-button is a no-op in free mode: `cursor_moved`'s
-    /// `PointerLeave` already drove the SCXML out of `Pressed` back
-    /// to `Idle`.
+    /// winit `MouseInput` (or touch-up) release handler for `id`.
+    /// Dispatches `PointerUp` to that pointer's current hover
+    /// target. Release with the cursor off-button is a no-op in
+    /// free mode: `cursor_moved`'s `PointerLeave` already drove the
+    /// SCXML out of `Pressed` back to `Idle`.
     ///
     /// R51.34 §5.35: in capture mode the cursor may currently sit
     /// off the widget rect (the drag strayed). `PointerUp` still
     /// dispatches to the captured tag so the SCXML observes the
     /// drag-end transition (e.g. Slider `Dragging → Hover` →
-    /// `value_committed` intent). Capture is then released and
-    /// [`refresh_hover`](Self::refresh_hover) re-runs — if the
-    /// cursor really did stray off, the deferred `PointerLeave`
-    /// fires here.
-    pub fn pointer_up(&mut self, state_scene: &mut Scene) {
+    /// `value_committed` intent). Capture for this pointer is then
+    /// released and [`refresh_hover`](Self::refresh_hover) re-runs
+    /// — if the cursor really did stray off, the deferred
+    /// `PointerLeave` fires here.
+    pub fn pointer_up(&mut self, id: PointerId, state_scene: &mut Scene) {
         let target = self
-            .hover_target
-            .clone()
-            .or_else(|| self.captured_target.clone());
+            .hover_targets
+            .get(&id)
+            .cloned()
+            .or_else(|| self.captured_targets.get(&id).cloned());
         if let Some(tag) = target {
             dispatch_send(state_scene, &tag, "PointerUp");
         }
-        if self.captured_target.take().is_some() {
-            self.refresh_hover(state_scene);
+        if self.captured_targets.remove(&id).is_some() {
+            self.refresh_hover(id, state_scene);
         }
     }
 
@@ -277,25 +369,29 @@ impl InputRouter {
         external.handle.pointer_move(x_rel, y_rel);
     }
 
-    /// Recompute `hover_target` from the current cursor and the
-    /// retained paint scene. Dispatches `PointerLeave` for the old
-    /// target (if any) then `PointerEnter` for the new target (if
-    /// any) so consumers always see the leave-before-enter ordering
-    /// even when the cursor crosses directly from one tagged widget
-    /// to another.
-    fn refresh_hover(&mut self, state_scene: &mut Scene) {
-        let now = match (self.cursor, &self.last_paint_scene) {
-            (Some((x, y)), Some(scene)) => resolve_hover_tag(scene, x, y),
+    /// Recompute `hover_targets[id]` from `id`'s current cursor and
+    /// the retained paint scene. Dispatches `PointerLeave` for the
+    /// pointer's old target (if any) then `PointerEnter` for its new
+    /// target (if any) so consumers always see the leave-before-
+    /// enter ordering even when the cursor crosses directly from one
+    /// tagged widget to another. Per-pointer ordering — two
+    /// pointers crossing different widgets see two independent
+    /// enter / leave streams.
+    fn refresh_hover(&mut self, id: PointerId, state_scene: &mut Scene) {
+        let now = match (self.cursors.get(&id), &self.last_paint_scene) {
+            (Some(&(x, y)), Some(scene)) => resolve_hover_tag(scene, x, y),
             _ => None,
         };
-        if self.hover_target == now {
+        let prev = self.hover_targets.get(&id).cloned();
+        if prev == now {
             return;
         }
-        if let Some(prev) = self.hover_target.take() {
-            dispatch_send(state_scene, &prev, "PointerLeave");
+        if let Some(prev_tag) = prev {
+            self.hover_targets.remove(&id);
+            dispatch_send(state_scene, &prev_tag, "PointerLeave");
         }
-        self.hover_target.clone_from(&now);
         if let Some(target) = now {
+            self.hover_targets.insert(id, target.clone());
             dispatch_send(state_scene, &target, "PointerEnter");
         }
     }
@@ -599,11 +695,11 @@ mod tests {
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         // Cursor at (10, 10) — far from the button rect (80..120 x 80..120).
-        router.cursor_moved(10.0, 10.0, &mut state);
-        router.pointer_down(&mut state);
-        router.pointer_up(&mut state);
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
         assert!(read(&captures).is_empty());
-        assert_eq!(router.hover_target(), None);
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
     }
 
     #[test]
@@ -613,14 +709,14 @@ mod tests {
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         // Cursor on the button rect center.
-        router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_down(&mut state);
-        router.pointer_up(&mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
         assert_eq!(
             read(&captures),
             vec!["PointerEnter".to_string(), "PointerDown".into(), "PointerUp".into()],
         );
-        assert_eq!(router.hover_target(), Some("main_btn"));
+        assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_btn"));
     }
 
     #[test]
@@ -629,13 +725,13 @@ mod tests {
         let (mut state, captures) = state_with_button();
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state); // on
-        router.cursor_moved(10.0, 10.0, &mut state); // off
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // on
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state); // off
         assert_eq!(
             read(&captures),
             vec!["PointerEnter".to_string(), "PointerLeave".into()],
         );
-        assert_eq!(router.hover_target(), None);
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
     }
 
     #[test]
@@ -644,13 +740,13 @@ mod tests {
         let (mut state, captures) = state_with_button();
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state); // on
-        router.cursor_left(&mut state); // window-leave
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // on
+        router.cursor_left(PointerId::MOUSE, &mut state); // window-leave
         assert_eq!(
             read(&captures),
             vec!["PointerEnter".to_string(), "PointerLeave".into()],
         );
-        assert_eq!(router.hover_target(), None);
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
     }
 
     #[test]
@@ -660,7 +756,7 @@ mod tests {
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         // No cursor_moved — cursor stays None.
-        router.pointer_down(&mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
         assert!(read(&captures).is_empty());
     }
 
@@ -671,8 +767,8 @@ mod tests {
         // CursorMoved arrives before update_paint_scene — common at
         // startup. last_paint_scene is None, so hover_target stays
         // None, so dispatch is suppressed.
-        router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_down(&mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
         assert!(read(&captures).is_empty());
     }
 
@@ -685,8 +781,8 @@ mod tests {
             paint_with_button(200, 200, Rect::new(80, 80, 40, 40)),
             &mut state,
         );
-        router.cursor_moved(100.0, 100.0, &mut state);
-        assert_eq!(router.hover_target(), Some("main_btn"));
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_btn"));
         // Window resize moves the button to (10..50). Cursor stays at
         // (100, 100) — now off the button. update_paint_scene must
         // re-resolve and emit PointerLeave.
@@ -694,7 +790,7 @@ mod tests {
             paint_with_button(200, 200, Rect::new(10, 10, 40, 40)),
             &mut state,
         );
-        assert_eq!(router.hover_target(), None);
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
         assert_eq!(
             read(&captures),
             vec!["PointerEnter".to_string(), "PointerLeave".into()],
@@ -711,10 +807,10 @@ mod tests {
         );
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
         // hover_target resolves to "main_btn" from paint, but state
         // has no matching ExternalNode → silent no-op.
-        assert_eq!(router.hover_target(), Some("main_btn"));
+        assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_btn"));
         assert!(read(&captures).is_empty());
     }
 
@@ -868,24 +964,24 @@ mod tests {
         let (mut state, events, _moves) = state_with_slider();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state); // PointerEnter
-        router.pointer_down(&mut state); // PointerDown + capture lock
-        assert_eq!(router.captured_target(), Some("main_slider"));
-        router.cursor_moved(200.0, 200.0, &mut state); // stray off
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // PointerEnter
+        router.pointer_down(PointerId::MOUSE, &mut state); // PointerDown + capture lock
+        assert_eq!(router.captured_target(PointerId::MOUSE), Some("main_slider"));
+        router.cursor_moved(PointerId::MOUSE, 200.0, 200.0, &mut state); // stray off
         // No PointerLeave during stray — capture lock keeps the
         // hover pinned. Only PointerEnter + PointerDown so far.
         assert_eq!(
             read(&events),
             vec!["PointerEnter".to_string(), "PointerDown".into()],
         );
-        router.cursor_moved(100.0, 100.0, &mut state); // back over
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // back over
         // Still no extra events (the router is in capture mode,
         // hover doesn't re-resolve).
         assert_eq!(
             read(&events),
             vec!["PointerEnter".to_string(), "PointerDown".into()],
         );
-        router.pointer_up(&mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
         // PointerUp lands now; capture clears; subsequent refresh
         // sees cursor (100, 100) IS on the rect — no PointerLeave.
         assert_eq!(
@@ -896,7 +992,7 @@ mod tests {
                 "PointerUp".into(),
             ],
         );
-        assert_eq!(router.captured_target(), None);
+        assert_eq!(router.captured_target(PointerId::MOUSE), None);
     }
 
     #[test]
@@ -912,12 +1008,12 @@ mod tests {
         let (mut state, _events, moves) = state_with_slider();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state); // PointerEnter (not capture-mode yet)
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // PointerEnter (not capture-mode yet)
         assert!(read_moves(&moves).is_empty());
-        router.pointer_down(&mut state); // enter capture + click-point forward (0.5, 0.5)
-        router.cursor_moved(80.0, 80.0, &mut state); // top-left
-        router.cursor_moved(120.0, 120.0, &mut state); // bottom-right
-        router.cursor_moved(100.0, 100.0, &mut state); // centre
+        router.pointer_down(PointerId::MOUSE, &mut state); // enter capture + click-point forward (0.5, 0.5)
+        router.cursor_moved(PointerId::MOUSE, 80.0, 80.0, &mut state); // top-left
+        router.cursor_moved(PointerId::MOUSE, 120.0, 120.0, &mut state); // bottom-right
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // centre
         let log = read_moves(&moves);
         assert_eq!(log.len(), 4);
         assert!((log[0].0 - 0.5).abs() < 1e-4 && (log[0].1 - 0.5).abs() < 1e-4);
@@ -937,9 +1033,9 @@ mod tests {
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
         // Click at x = 110 → x_rel = (110 - 80) / 40 = 0.75.
-        router.cursor_moved(110.0, 100.0, &mut state);
-        router.pointer_down(&mut state);
-        router.pointer_up(&mut state);
+        router.cursor_moved(PointerId::MOUSE, 110.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
         let log = read_moves(&moves);
         // Exactly one pointer_move (the click-point); no drag moves
         // because the cursor never moved between down and up.
@@ -958,10 +1054,10 @@ mod tests {
         let (mut state, _events, moves) = state_with_slider();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_down(&mut state); // click-point (0.5, 0.5)
-        router.cursor_moved(40.0, 100.0, &mut state); // x = -1.0
-        router.cursor_moved(160.0, 100.0, &mut state); // x = 2.0
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state); // click-point (0.5, 0.5)
+        router.cursor_moved(PointerId::MOUSE, 40.0, 100.0, &mut state); // x = -1.0
+        router.cursor_moved(PointerId::MOUSE, 160.0, 100.0, &mut state); // x = 2.0
         let log = read_moves(&moves);
         assert_eq!(log.len(), 3);
         assert!((log[0].0 - 0.5).abs() < 1e-4);
@@ -979,18 +1075,18 @@ mod tests {
         let (mut state, events, _moves) = state_with_slider();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_down(&mut state);
-        router.cursor_left(&mut state); // off-screen
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_left(PointerId::MOUSE, &mut state); // off-screen
         // No PointerLeave; capture still pinned.
         assert_eq!(
             read(&events),
             vec!["PointerEnter".to_string(), "PointerDown".into()],
         );
-        assert_eq!(router.captured_target(), Some("main_slider"));
+        assert_eq!(router.captured_target(PointerId::MOUSE), Some("main_slider"));
         // Drag resumes when cursor re-enters.
-        router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_up(&mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
         assert_eq!(
             read(&events),
             vec![
@@ -999,7 +1095,7 @@ mod tests {
                 "PointerUp".into(),
             ],
         );
-        assert_eq!(router.captured_target(), None);
+        assert_eq!(router.captured_target(PointerId::MOUSE), None);
     }
 
     #[test]
@@ -1012,10 +1108,10 @@ mod tests {
         let (mut state, events, _moves) = state_with_slider();
         let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_down(&mut state);
-        router.cursor_moved(10.0, 10.0, &mut state); // stray off
-        router.pointer_up(&mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state); // stray off
+        router.pointer_up(PointerId::MOUSE, &mut state);
         assert_eq!(
             read(&events),
             vec![
@@ -1025,8 +1121,8 @@ mod tests {
                 "PointerLeave".into(),
             ],
         );
-        assert_eq!(router.captured_target(), None);
-        assert_eq!(router.hover_target(), None);
+        assert_eq!(router.captured_target(PointerId::MOUSE), None);
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
     }
 
     #[test]
@@ -1039,11 +1135,11 @@ mod tests {
         let (mut state, events) = state_with_button();
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_down(&mut state);
-        assert_eq!(router.captured_target(), None);
-        router.cursor_moved(10.0, 10.0, &mut state); // PointerLeave
-        router.pointer_up(&mut state); // no dispatch (hover gone)
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(router.captured_target(PointerId::MOUSE), None);
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state); // PointerLeave
+        router.pointer_up(PointerId::MOUSE, &mut state); // no dispatch (hover gone)
         assert_eq!(
             read(&events),
             vec![
@@ -1063,7 +1159,7 @@ mod tests {
         let (mut state, events) = state_with_button();
         let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
         router.update_paint_scene(paint, &mut state);
-        router.pointer_up(&mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
         assert!(read(&events).is_empty());
     }
 
@@ -1097,9 +1193,9 @@ mod tests {
         // pointer_down without paint → hover_target is None →
         // no PointerDown → no capture. Verify that direct invariant
         // first.
-        router.cursor_moved(100.0, 100.0, &mut state);
-        router.pointer_down(&mut state);
-        assert_eq!(router.captured_target(), None);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(router.captured_target(PointerId::MOUSE), None);
         // Now seed the paint scene + simulate a successful press to
         // enter capture; then drop the paint scene state by NOT
         // calling update_paint_scene with a fresh rect — the router
@@ -1108,5 +1204,236 @@ mod tests {
         // test instead validates pointer_down before paint does NOT
         // claim capture, exercising the same defensive path.)
         assert!(read_moves(&moves).is_empty());
+    }
+
+    // ─── R51.38 §5.35 multi-pointer fixtures + tests ───────────
+
+    /// Paint scene with two drag-aware widgets — `slider_a` on the
+    /// left and `slider_b` on the right. Used by the multi-touch
+    /// drag tests to exercise the per-pointer capture map.
+    fn paint_with_two_sliders(viewport_w: u32, viewport_h: u32) -> Scene {
+        let slider_a = {
+            let mut s = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag("slider_a")
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut s {
+                c.rect = Rect::new(20, 20, 60, 60);
+            }
+            s
+        };
+        let slider_b = {
+            let mut s = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag("slider_b")
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut s {
+                c.rect = Rect::new(120, 20, 60, 60);
+            }
+            s
+        };
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![slider_a, slider_b])
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, viewport_w, viewport_h);
+        }
+        root
+    }
+
+    /// State scene with two drag-aware externals matching the paint
+    /// fixture above. Returns both event + move logs so tests can
+    /// distinguish which widget received what.
+    #[allow(clippy::type_complexity)]
+    fn state_with_two_sliders() -> (Scene, (EventLog, MoveLog), (EventLog, MoveLog)) {
+        let (a, ea, ma) = DragCaptureExternal::new();
+        let (b, eb, mb) = DragCaptureExternal::new();
+        let root = Scene::Container(
+            ContainerNode::new(vec![
+                Scene::External(ExternalNode::new(Box::new(a)).with_tag("slider_a")),
+                Scene::External(ExternalNode::new(Box::new(b)).with_tag("slider_b")),
+            ])
+            .with_style(BoxStyle::filled(Color::default())),
+        );
+        (root, (ea, ma), (eb, mb))
+    }
+
+    #[test]
+    fn pointer_id_mouse_is_reserved_zero() {
+        // Backwards-compat invariant: mouse pointer maps to the
+        // reserved `PointerId(0)` slot; touch finger ids offset by
+        // one so they never alias the mouse no matter what winit
+        // hands the router.
+        assert_eq!(PointerId::MOUSE.raw(), 0);
+        assert_eq!(PointerId::touch(0).raw(), 1);
+        assert_eq!(PointerId::touch(42).raw(), 43);
+        assert_ne!(PointerId::MOUSE, PointerId::touch(0));
+    }
+
+    #[test]
+    fn two_touches_drag_two_widgets_independently() {
+        // Multi-touch first-design invariant: two fingers on two
+        // widgets each enter capture lock on their own tag and
+        // forward `pointer_move` only to their own widget. Single-
+        // target capture (`Option<String>`) would alias here — the
+        // R51.38 HashMap substrate makes this work without aliasing.
+        let mut router = InputRouter::new();
+        let (mut state, (ea, ma), (eb, mb)) = state_with_two_sliders();
+        let paint = paint_with_two_sliders(200, 200);
+        router.update_paint_scene(paint, &mut state);
+        let t1 = PointerId::touch(0);
+        let t2 = PointerId::touch(1);
+        // Touch 1 lands on slider_a's centre (50, 50).
+        router.cursor_moved(t1, 50.0, 50.0, &mut state);
+        router.pointer_down(t1, &mut state);
+        // Touch 2 lands on slider_b's centre (150, 50).
+        router.cursor_moved(t2, 150.0, 50.0, &mut state);
+        router.pointer_down(t2, &mut state);
+        assert_eq!(router.captured_target(t1), Some("slider_a"));
+        assert_eq!(router.captured_target(t2), Some("slider_b"));
+        // Drag each in opposite directions. Each widget's
+        // `pointer_move` only sees its own touch's coords; the
+        // sequence below would alias under a single-target capture
+        // implementation (the second touch would overwrite the
+        // first's lock).
+        router.cursor_moved(t1, 70.0, 50.0, &mut state); // slider_a right
+        router.cursor_moved(t2, 130.0, 50.0, &mut state); // slider_b left
+        router.pointer_up(t1, &mut state);
+        router.pointer_up(t2, &mut state);
+        // slider_a saw the click-point + one drag move.
+        let log_a = read_moves(&ma);
+        assert_eq!(log_a.len(), 2);
+        assert!((log_a[0].0 - 0.5).abs() < 1e-4); // click point
+        assert!((log_a[1].0 - 0.8333).abs() < 1e-3); // (70-20)/60
+        // slider_b saw its own click-point + drag.
+        let log_b = read_moves(&mb);
+        assert_eq!(log_b.len(), 2);
+        assert!((log_b[0].0 - 0.5).abs() < 1e-4); // click point
+        assert!((log_b[1].0 - 0.1666).abs() < 1e-3); // (130-120)/60
+        // PointerEnter / Down / Up streams independent per widget.
+        assert_eq!(
+            read(&ea),
+            vec![
+                "PointerEnter".to_string(),
+                "PointerDown".into(),
+                "PointerUp".into(),
+            ],
+        );
+        assert_eq!(
+            read(&eb),
+            vec![
+                "PointerEnter".to_string(),
+                "PointerDown".into(),
+                "PointerUp".into(),
+            ],
+        );
+        assert_eq!(router.captured_target(t1), None);
+        assert_eq!(router.captured_target(t2), None);
+    }
+
+    #[test]
+    fn mouse_and_touch_dont_alias_hover() {
+        // Mouse on slider_a, touch on slider_b — both pointers have
+        // their own `hover_target` entry. Per-pointer dispatch means
+        // each widget sees its own PointerEnter without aliasing.
+        let mut router = InputRouter::new();
+        let (mut state, (ea, _ma), (eb, _mb)) = state_with_two_sliders();
+        let paint = paint_with_two_sliders(200, 200);
+        router.update_paint_scene(paint, &mut state);
+        let touch = PointerId::touch(0);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state);
+        router.cursor_moved(touch, 150.0, 50.0, &mut state);
+        assert_eq!(router.hover_target(PointerId::MOUSE), Some("slider_a"));
+        assert_eq!(router.hover_target(touch), Some("slider_b"));
+        // Each widget observed exactly one PointerEnter — neither
+        // saw the other pointer's transitions.
+        assert_eq!(read(&ea), vec!["PointerEnter".to_string()]);
+        assert_eq!(read(&eb), vec!["PointerEnter".to_string()]);
+    }
+
+    #[test]
+    fn releasing_one_touch_does_not_release_other_capture() {
+        // Per-pointer capture isolation: lifting one finger must
+        // not break the other finger's drag. The shared single-
+        // target `Option<String>` capture would collapse here (the
+        // first pointer_up would clear the lock for both).
+        let mut router = InputRouter::new();
+        let (mut state, _a, _b) = state_with_two_sliders();
+        let paint = paint_with_two_sliders(200, 200);
+        router.update_paint_scene(paint, &mut state);
+        let t1 = PointerId::touch(0);
+        let t2 = PointerId::touch(1);
+        router.cursor_moved(t1, 50.0, 50.0, &mut state);
+        router.pointer_down(t1, &mut state);
+        router.cursor_moved(t2, 150.0, 50.0, &mut state);
+        router.pointer_down(t2, &mut state);
+        assert_eq!(router.captured_target(t1), Some("slider_a"));
+        assert_eq!(router.captured_target(t2), Some("slider_b"));
+        // Lift touch 1 only.
+        router.pointer_up(t1, &mut state);
+        assert_eq!(router.captured_target(t1), None);
+        // Touch 2's lock survives.
+        assert_eq!(router.captured_target(t2), Some("slider_b"));
+        router.pointer_up(t2, &mut state);
+        assert_eq!(router.captured_target(t2), None);
+    }
+
+    #[test]
+    fn cursor_left_for_one_pointer_keeps_other_state() {
+        // Cursor leaves the window for the mouse pointer, but a
+        // touch pointer's hover should be untouched. Per-pointer
+        // `cursor_left` only drops the matching id's cursor.
+        let mut router = InputRouter::new();
+        let (mut state, (ea, _ma), (eb, _mb)) = state_with_two_sliders();
+        let paint = paint_with_two_sliders(200, 200);
+        router.update_paint_scene(paint, &mut state);
+        let touch = PointerId::touch(0);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state);
+        router.cursor_moved(touch, 150.0, 50.0, &mut state);
+        router.cursor_left(PointerId::MOUSE, &mut state);
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
+        assert_eq!(router.hover_target(touch), Some("slider_b"));
+        // slider_a saw Enter + Leave; slider_b only Enter.
+        assert_eq!(
+            read(&ea),
+            vec!["PointerEnter".to_string(), "PointerLeave".into()],
+        );
+        assert_eq!(read(&eb), vec!["PointerEnter".to_string()]);
+    }
+
+    #[test]
+    fn update_paint_scene_refreshes_every_active_pointer() {
+        // After a layout change, every active pointer's hover_target
+        // must re-resolve. With two pointers active (mouse + touch),
+        // both should observe the layout shift independently.
+        let mut router = InputRouter::new();
+        let (mut state, (ea, _ma), (eb, _mb)) = state_with_two_sliders();
+        router.update_paint_scene(paint_with_two_sliders(200, 200), &mut state);
+        let touch = PointerId::touch(0);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state);
+        router.cursor_moved(touch, 150.0, 50.0, &mut state);
+        // Now repaint with both sliders shifted out from under both
+        // cursors. paint_with_two_sliders uses fixed rects; build a
+        // bare root with no children to simulate "both widgets
+        // moved away".
+        let bare_root = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        router.update_paint_scene(bare_root, &mut state);
+        // Both pointers lost their hover — each sees PointerLeave.
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
+        assert_eq!(router.hover_target(touch), None);
+        assert_eq!(
+            read(&ea),
+            vec!["PointerEnter".to_string(), "PointerLeave".into()],
+        );
+        assert_eq!(
+            read(&eb),
+            vec!["PointerEnter".to_string(), "PointerLeave".into()],
+        );
     }
 }
