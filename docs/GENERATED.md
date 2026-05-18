@@ -2470,6 +2470,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/nfkc.rs:nfkc
 - crates/pinion-text-unicode/src/lib.rs:normalize
 - crates/pinion-text-unicode/src/quick_check.rs:nfc_quick_check
+- crates/pinion-text-unicode/benches/normalize.rs
 
 
 
@@ -7123,6 +7124,33 @@ router.pointer_down(&mut state_scene);
 - criterion bench harness (성능 회귀 가드)
 - 2-stage table 가속 (high-byte index → 2nd table)
 - tables FULL_COMPOSITION_EXCLUSION RPC 노출 (text/composition_exclusion_member 등)
+
+
+
+### Round 479 — R50.2.8 §5.37.3 criterion bench harness 첫 도입 — 5 scenario UAX #15 NFC throughput baseline 측정
+
+**Changes**:
+- workspace.dependencies criterion 0.5 추가 — workspace 첫 dev-grade dep 정통
+- pinion-text-unicode [dev-dependencies] criterion + [[bench]] normalize harness=false
+- benches/normalize.rs 신설 — 5 scenario (ascii fast path / precomposed / decomposed / hangul / sample)
+
+
+
+**Verification**:
+- cargo bench baseline: ascii 28 / precomposed 31 / decomposed 9 / hangul 21 / sample 31 MiB/s
+- cargo test --workspace --features pinion-runtime/vello = 958 pass (baseline 유지)
+- cargo clippy bench target 0 warning, baseline 6 유지 (pinion-core 5 + pinion-runtime 1)
+
+
+
+**Impact**: §5.37.3
+
+
+**Carry forward**:
+- R50.2.9 2-stage table 가속 — A baseline 위 가속률 정량 검증
+- ASCII 가 precomposed 보다 약간 느림 — Quick-check binary_search ASCII short-circuit 검토
+- bench 결과 환경 명시 (CPU / Rust version) — 다음 bench round 메타데이터 정통화
+- 외부 dev-dep 정책 workspace 측 정통 — 미래 BIDI / GSUB / 등 동일 패턴 inherit
 
 
 

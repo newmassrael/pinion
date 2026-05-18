@@ -79,6 +79,18 @@ swash = "0.2"
 # §5.16 future damage cache, etc.) deduplicate transitively.
 lru = "0.18"
 
+# §5.37.3 R50.2.8 — criterion micro-benchmark harness. Workspace-side
+# pin so future performance-instrumented crates (text shaping, BIDI,
+# GSUB lookup, layout cache, etc.) share a single version. Consumers
+# opt in per-crate via `criterion = { workspace = true }` under their
+# own `[dev-dependencies]` table — Cargo's `workspace.dependencies`
+# namespace is unified across `[dependencies]` / `[dev-dependencies]`
+# / `[build-dependencies]`, the dev classification happens per-crate.
+# The runtime "0 external deps" invariant of pinion-text-unicode is
+# preserved because criterion never appears in the library
+# compilation graph (dev-only consumer).
+criterion = "0.5"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

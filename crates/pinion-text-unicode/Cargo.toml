@@ -8,9 +8,23 @@ authors.workspace = true
 
 # R50.2.1 §5.37.3 — self-hosted Unicode normalization
 # (UAX #15 NFC/NFD/NFKC/NFKD).
-# 외부 dependency 0개. UCD 16.x table embed + build.rs codegen 은
+# 외부 runtime dependency 0개. UCD 16.x table embed + build.rs codegen 은
 # R50.2.2 후속 slice. 본 commit 은 crate boundary + NormForm enum
 # scaffold 만 (algorithm + table 미포함).
+#
+# R50.2.8 §5.37.3 — criterion micro-benchmark harness 추가 (dev-only).
+# `[dependencies]` 영역은 여전히 0개 — runtime "외부 dep 0" 정신 유지.
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# R50.2.8 §5.37.3 — five-scenario criterion harness (`benches/normalize.rs`)
+# measuring the four `normalize()` performance envelopes (ASCII fast path,
+# precomposed multilingual NFC, decomposed recompose, Hangul jamo
+# composition) plus a 1024-row `NormalizationTest.txt` micro-sample.
+criterion = { workspace = true }
+
+[[bench]]
+name = "normalize"
+harness = false
