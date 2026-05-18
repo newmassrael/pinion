@@ -3510,6 +3510,30 @@
         {
           "file": "examples/hello-slider/src/main.rs",
           "symbol": "SliderView::apply_key"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/slider.rs",
+          "symbol": "SliderAxis"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/slider.rs",
+          "symbol": "Slider::with_axis"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/slider.rs",
+          "symbol": "Slider::axis"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/slider.rs",
+          "symbol": "SliderExternal::with_axis"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/slider.rs",
+          "symbol": "SliderExternal::axis"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/slider.rs",
+          "symbol": "slider_axis_name"
         }
       ],
       "decision_status": "active"
@@ -5628,6 +5652,70 @@
         "부채 5: External trait surface 비대화 segregation RFC (design only)",
         "부채 9: R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)",
         "부채 10: R51.31 L4 alternative impl path RFC (spec round)"
+      ]
+    },
+    "R51.39": {
+      "decision_summary": "R51.39 §5.38 Slider vertical axis future-proof — SliderAxis(Horizontal/Vertical) + with_axis builder + pointer_move axis 분기 + orientation introspect 필드, vertical 추가 시 widget-level breaking change 회피",
+      "changes_bullets": [
+        "crates/pinion-core/src/widgets/slider.rs: SliderAxis enum 신설 (Horizontal/Vertical) + Default=Horizontal (backwards-compat), Hash/Copy/PartialEq derive",
+        "crates/pinion-core/src/widgets/slider.rs: Slider 에 axis: SliderAxis 필드 추가, Slider::new() 가 Horizontal default 유지 (pre-R51.39 callers 0 migration), Slider::with_axis(axis) builder + Slider::axis() accessor 신설",
+        "crates/pinion-core/src/widgets/slider.rs: SliderExternal::with_axis(axis) builder + SliderExternal::axis() accessor 신설 (IntentEmitter::new(Slider::with_axis(axis)) wrapping)",
+        "crates/pinion-core/src/widgets/slider.rs: SliderExternal::pointer_move axis 분기 — Horizontal=x_rel (기존), Vertical=1.0-y_rel (Material 3 / W3C ARIA aria-orientation=vertical top=max 규약)",
+        "crates/pinion-core/src/widgets/slider.rs: introspect schema 4-slot 확장 — state/value/orientation/send (orientation 신규), query(\"orientation\") -> Text(\"horizontal\"/\"vertical\") aria-orientation 직매핑, intervene(\"orientation\")=ReadOnly (construction-time fixed 보호)",
+        "crates/pinion-core/src/widgets/slider.rs: slider_axis_name(axis) helper — lowercase aria-orientation 정렬 매핑",
+        "crates/pinion-core/src/widgets/slider.rs tests: 7 new (default_axis_is_horizontal / with_axis_pins_orientation_at_construction / horizontal_pointer_move_reads_x_rel / vertical_pointer_move_inverts_y_rel / vertical_pointer_move_clamps_outside_rect / orientation_query_returns_aria_string / orientation_intervene_is_read_only / schema_lists_orientation_field), 기존 external_schema_declares_three_slots → four_slots rename 으로 4-field 검증",
+        "§5.38 implementations += SliderAxis / Slider::with_axis / Slider::axis / SliderExternal::with_axis / SliderExternal::axis / slider_axis_name"
+      ],
+      "verification_bullets": [
+        "cargo build --workspace --features pinion-runtime/vello = 0 errors (substrate + 5 example 모두 통과; SliderExternal::new() default Horizontal 보존으로 hello-slider 회규 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (manual_pattern_or 회피 위해 state | orientation 합쳐 1개 arm)",
+        "cargo test --workspace --features pinion-runtime/vello = 1270 pass / 0 fail (직전 R51.38 의 1262 → +8 axis tests)",
+        "cargo test -p pinion-core widgets::slider = 24 pass / 0 fail (기존 16 + 신규 8)",
+        "Mnemosyne validate_workspace: entries=184 / sections=55 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync",
+        "R51.34 capture-lock + R51.37 apply_key + R51.38 multi-pointer cascade 회규 0 — Horizontal default 가 pre-R51.39 caller 의 pointer_move(x_rel, _) semantics 그대로 유지"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "부채 6: widget_wants_capture O(N) walk early-cache — multi-External 환경 frame cost (~50 LOC)",
+        "부채 3: RadioGroup substrate-chicken-and-egg — substrate-first 3-round (RFC + sub-index routing + first-client hello-radio-group)",
+        "부채 5: External trait surface 비대화 segregation RFC (design only)",
+        "부채 9: R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)",
+        "부채 10: R51.31 L4 alternative impl path RFC (spec round)",
+        "vertical-axis 시각 예제 (hello-slider-vertical) carry — N=6 도달 시 substrate amortization 검증 후보 (현재 부채 우선순위 더 높음)",
+        "winit Touch event 와이어링 at pinion-shell layer carry (R51.38 follow-up)"
+      ],
+      "publishable_decision_summary": "R51.39 §5.38 Slider vertical axis future-proof — SliderAxis(Horizontal/Vertical) + with_axis builder + pointer_move axis 분기 + orientation introspect 필드, vertical 추가 시 widget-level breaking change 회피",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widgets/slider.rs: SliderAxis enum 신설 (Horizontal/Vertical) + Default=Horizontal (backwards-compat), Hash/Copy/PartialEq derive",
+        "crates/pinion-core/src/widgets/slider.rs: Slider 에 axis: SliderAxis 필드 추가, Slider::new() 가 Horizontal default 유지 (pre-R51.39 callers 0 migration), Slider::with_axis(axis) builder + Slider::axis() accessor 신설",
+        "crates/pinion-core/src/widgets/slider.rs: SliderExternal::with_axis(axis) builder + SliderExternal::axis() accessor 신설 (IntentEmitter::new(Slider::with_axis(axis)) wrapping)",
+        "crates/pinion-core/src/widgets/slider.rs: SliderExternal::pointer_move axis 분기 — Horizontal=x_rel (기존), Vertical=1.0-y_rel (Material 3 / W3C ARIA aria-orientation=vertical top=max 규약)",
+        "crates/pinion-core/src/widgets/slider.rs: introspect schema 4-slot 확장 — state/value/orientation/send (orientation 신규), query(\"orientation\") -> Text(\"horizontal\"/\"vertical\") aria-orientation 직매핑, intervene(\"orientation\")=ReadOnly (construction-time fixed 보호)",
+        "crates/pinion-core/src/widgets/slider.rs: slider_axis_name(axis) helper — lowercase aria-orientation 정렬 매핑",
+        "crates/pinion-core/src/widgets/slider.rs tests: 7 new (default_axis_is_horizontal / with_axis_pins_orientation_at_construction / horizontal_pointer_move_reads_x_rel / vertical_pointer_move_inverts_y_rel / vertical_pointer_move_clamps_outside_rect / orientation_query_returns_aria_string / orientation_intervene_is_read_only / schema_lists_orientation_field), 기존 external_schema_declares_three_slots → four_slots rename 으로 4-field 검증",
+        "§5.38 implementations += SliderAxis / Slider::with_axis / Slider::axis / SliderExternal::with_axis / SliderExternal::axis / slider_axis_name"
+      ],
+      "publishable_verification_bullets": [
+        "cargo build --workspace --features pinion-runtime/vello = 0 errors (substrate + 5 example 모두 통과; SliderExternal::new() default Horizontal 보존으로 hello-slider 회규 0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (manual_pattern_or 회피 위해 state | orientation 합쳐 1개 arm)",
+        "cargo test --workspace --features pinion-runtime/vello = 1270 pass / 0 fail (직전 R51.38 의 1262 → +8 axis tests)",
+        "cargo test -p pinion-core widgets::slider = 24 pass / 0 fail (기존 16 + 신규 8)",
+        "Mnemosyne validate_workspace: entries=184 / sections=55 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync",
+        "R51.34 capture-lock + R51.37 apply_key + R51.38 multi-pointer cascade 회규 0 — Horizontal default 가 pre-R51.39 caller 의 pointer_move(x_rel, _) semantics 그대로 유지"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "부채 6: widget_wants_capture O(N) walk early-cache — multi-External 환경 frame cost (~50 LOC)",
+        "부채 3: RadioGroup substrate-chicken-and-egg — substrate-first 3-round (RFC + sub-index routing + first-client hello-radio-group)",
+        "부채 5: External trait surface 비대화 segregation RFC (design only)",
+        "부채 9: R41 §5.16 Phase 2 thin RHI 3D pass axis ratify (spec round)",
+        "부채 10: R51.31 L4 alternative impl path RFC (spec round)",
+        "vertical-axis 시각 예제 (hello-slider-vertical) carry — N=6 도달 시 substrate amortization 검증 후보 (현재 부채 우선순위 더 높음)",
+        "winit Touch event 와이어링 at pinion-shell layer carry (R51.38 follow-up)"
       ]
     },
     "Round 1": {

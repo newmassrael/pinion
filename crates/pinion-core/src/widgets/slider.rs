@@ -50,20 +50,72 @@ use crate::external::{
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
+/// R51.39 §5.38 — Slider track orientation. `Horizontal` (the
+/// default) places the value progression along the X axis with `0.0`
+/// at the left edge and `1.0` at the right edge; `Vertical` places
+/// it along the Y axis with `0.0` at the *bottom* and `1.0` at the
+/// *top* — the Material 3 / W3C ARIA `aria-orientation="vertical"`
+/// convention (value max sits at the top, matching how humans read
+/// "high" on a vertical scale). The axis is fixed at construction
+/// time so the SCXML and the pointer-forward path don't need to
+/// branch on a mutable state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SliderAxis {
+    Horizontal,
+    Vertical,
+}
+
+impl Default for SliderAxis {
+    fn default() -> Self {
+        Self::Horizontal
+    }
+}
+
 /// Slider widget state machine + `f32` value sidecar
 /// (0.0..=1.0 normalised). R51.14 own statechart with semantically
 /// named `dragging` state (replaces the R51.7 `Pressed = dragging`
-/// reinterpretation).
+/// reinterpretation). R51.39 carries a [`SliderAxis`] so vertical
+/// tracks can land without a widget-level breaking change — the
+/// axis is fixed at construction; runtime orientation flips are
+/// outside scope (the SCXML and ARIA semantics differ).
 pub struct Slider {
     inner: Widget<SliderPolicy>,
     value: f32,
+    axis: SliderAxis,
 }
 
 impl Slider {
-    /// Construct a Slider in the `Idle` state with `value = 0.0`.
+    /// Construct a horizontal Slider in the `Idle` state with
+    /// `value = 0.0`. Backwards-compat: pre-R51.39 callers see the
+    /// same Horizontal default and need no migration.
     #[must_use]
     pub fn new() -> Self {
-        Self { inner: Widget::new(), value: 0.0 }
+        Self {
+            inner: Widget::new(),
+            value: 0.0,
+            axis: SliderAxis::Horizontal,
+        }
+    }
+
+    /// R51.39 §5.38 — construct a Slider with an explicit
+    /// [`SliderAxis`]. Use [`SliderAxis::Vertical`] for a vertical
+    /// track; the pointer forward path then reads the Y cursor and
+    /// inverts (top = 1.0, bottom = 0.0) per ARIA convention.
+    #[must_use]
+    pub fn with_axis(axis: SliderAxis) -> Self {
+        Self {
+            inner: Widget::new(),
+            value: 0.0,
+            axis,
+        }
+    }
+
+    /// R51.39 §5.38 — track orientation, fixed at construction.
+    /// Drives the `pointer_move` axis dispatch and the
+    /// `"orientation"` introspect field surfaced to the AI side.
+    #[must_use]
+    pub fn axis(&self) -> SliderAxis {
+        self.axis
     }
 
     /// Drive a [`SliderEvent`] through the SCXML. Pure state
@@ -157,9 +209,32 @@ pub struct SliderExternal {
 }
 
 impl SliderExternal {
+    /// Construct a horizontal Slider external. Backwards-compat: the
+    /// pre-R51.39 default — no vertical-axis change for existing
+    /// callers (hello-slider, RPC clients, integration tests).
     #[must_use]
     pub fn new() -> Self {
         Self { em: IntentEmitter::default() }
+    }
+
+    /// R51.39 §5.38 — construct a Slider external with an explicit
+    /// [`SliderAxis`]. Wraps a [`Slider::with_axis`] under the
+    /// intent emitter so the `pointer_move` forward picks the
+    /// correct axis and the `"orientation"` introspect field
+    /// reports the right ARIA-aligned string.
+    #[must_use]
+    pub fn with_axis(axis: SliderAxis) -> Self {
+        Self {
+            em: IntentEmitter::new(Slider::with_axis(axis)),
+        }
+    }
+
+    /// R51.39 §5.38 — track orientation (delegates to
+    /// [`Slider::axis`]). Diagnostic / test surface; consumers
+    /// usually read the introspect `"orientation"` field instead.
+    #[must_use]
+    pub fn axis(&self) -> SliderAxis {
+        self.em.inner.axis()
     }
 
     /// Drive a [`SliderEvent`] and queue a `"value_committed"`
@@ -237,19 +312,33 @@ impl External for SliderExternal {
         true
     }
 
-    /// R51.35 §5.15 + §5.35 — feed widget-relative cursor X (`x_rel`)
-    /// into the f32 value sidecar, clamping to the [`Slider`]'s
-    /// `0.0..=1.0` range. `y_rel` is ignored — this is a horizontal
-    /// slider. The framework forwards both press-time
-    /// (click-to-position) and drag-time motion through this hook.
+    /// R51.35 §5.15 + §5.35 + R51.39 §5.38 — feed the widget-
+    /// relative cursor along the [`SliderAxis`] into the f32 value
+    /// sidecar, clamping to the [`Slider`]'s `0.0..=1.0` range.
+    /// The framework forwards both press-time (click-to-position)
+    /// and drag-time motion through this hook.
     ///
-    /// The clamping is intentional: `x_rel` may exceed `[0.0, 1.0]`
-    /// or go negative when the cursor strays off the track rect
-    /// under capture lock (R51.34 design point). Clamping here
-    /// preserves the `value_changing` intent's gate-by-effect
-    /// semantics — strays past the saturated value are silent.
-    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
-        self.set_value(x_rel.clamp(0.0, 1.0));
+    /// * **Horizontal** (R51.35 default): `x_rel` drives the value,
+    ///   `y_rel` is ignored. Left edge maps to `0.0`, right edge to
+    ///   `1.0`.
+    /// * **Vertical** (R51.39): `y_rel` drives the value with an
+    ///   inversion — top edge (`y_rel = 0.0`) maps to `1.0` and
+    ///   bottom edge (`y_rel = 1.0`) maps to `0.0`, matching the
+    ///   Material 3 / W3C ARIA `aria-orientation="vertical"`
+    ///   convention. `x_rel` is ignored.
+    ///
+    /// The clamping is intentional: either axis may exceed
+    /// `[0.0, 1.0]` or go negative when the cursor strays off the
+    /// track rect under capture lock (R51.34 design point).
+    /// Clamping here preserves the `value_changing` intent's
+    /// gate-by-effect semantics — strays past the saturated value
+    /// are silent.
+    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+        let value_axis = match self.em.inner.axis() {
+            SliderAxis::Horizontal => x_rel,
+            SliderAxis::Vertical => 1.0 - y_rel,
+        };
+        self.set_value(value_axis.clamp(0.0, 1.0));
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -274,6 +363,7 @@ impl ExternalIntrospect for SliderExternal {
         IntrospectSchema::new(&[
             ("state", "string"),
             ("value", "float"),
+            ("orientation", "string"),
             ("send", "string"),
         ])
     }
@@ -284,6 +374,9 @@ impl ExternalIntrospect for SliderExternal {
                 slider_state_name(self.state()).to_string(),
             )),
             "value" => Some(IntrospectValue::Float(f64::from(self.value()))),
+            "orientation" => Some(IntrospectValue::Text(
+                slider_axis_name(self.axis()).to_string(),
+            )),
             _ => None,
         }
     }
@@ -294,7 +387,13 @@ impl ExternalIntrospect for SliderExternal {
         value: IntrospectValue,
     ) -> Result<(), InterveneError> {
         match path {
-            "state" => Err(InterveneError::ReadOnly),
+            // R51.39 §5.38 — `state` is SCXML-owned (the framework
+            // drives it via `send`), and `orientation` is
+            // construction-time fixed (the SCXML and ARIA semantics
+            // differ between axes; a runtime flip would change the
+            // meaning of in-flight intent emissions and the
+            // introspect type contract). Both reject intervene.
+            "state" | "orientation" => Err(InterveneError::ReadOnly),
             "value" => match value {
                 IntrospectValue::Float(v) => {
                     // f64 → f32 narrowing is deliberate: the wire
@@ -343,6 +442,18 @@ fn slider_state_name(state: SliderState) -> &'static str {
         SliderState::Hover => "Hover",
         SliderState::Dragging => "Dragging",
         SliderState::Disabled => "Disabled",
+    }
+}
+
+/// R51.39 §5.38 — [`SliderAxis`] → introspect-surfaced
+/// `"orientation"` string. Lowercased per the W3C `aria-orientation`
+/// attribute convention (`"horizontal"` / `"vertical"`) so AI clients
+/// observing the introspect schema can map the field straight to
+/// ARIA without re-casing.
+fn slider_axis_name(axis: SliderAxis) -> &'static str {
+    match axis {
+        SliderAxis::Horizontal => "horizontal",
+        SliderAxis::Vertical => "vertical",
     }
 }
 
@@ -484,12 +595,20 @@ mod tests {
     }
 
     #[test]
-    fn external_schema_declares_three_slots() {
+    fn external_schema_declares_four_slots() {
+        // R51.39 §5.38 — schema grew an `orientation` field; the
+        // legacy `state`/`value`/`send` triple is preserved in the
+        // declaration order pre-R51.39 callers observed.
         let sx = SliderExternal::new();
         let schema = sx.schema();
         assert_eq!(
             schema.fields,
-            &[("state", "string"), ("value", "float"), ("send", "string")]
+            &[
+                ("state", "string"),
+                ("value", "float"),
+                ("orientation", "string"),
+                ("send", "string"),
+            ]
         );
     }
 
@@ -553,5 +672,115 @@ mod tests {
             panic!("expected Float payload");
         };
         assert!((v - 0.42_f64).abs() < 1e-4, "committed {v}");
+    }
+
+    // ─── R51.39 §5.38 vertical axis future-proof ─────────────
+
+    #[test]
+    fn default_axis_is_horizontal() {
+        // Backwards-compat invariant: `Slider::new` / default ctor
+        // both yield a Horizontal track. Pre-R51.39 callers see no
+        // behaviour change.
+        assert_eq!(Slider::new().axis(), SliderAxis::Horizontal);
+        assert_eq!(SliderExternal::new().axis(), SliderAxis::Horizontal);
+        assert_eq!(SliderAxis::default(), SliderAxis::Horizontal);
+    }
+
+    #[test]
+    fn with_axis_pins_orientation_at_construction() {
+        // R51.39 §5.38 — the builder threads the axis through to
+        // both Slider and SliderExternal without mutability.
+        assert_eq!(
+            Slider::with_axis(SliderAxis::Vertical).axis(),
+            SliderAxis::Vertical,
+        );
+        assert_eq!(
+            SliderExternal::with_axis(SliderAxis::Vertical).axis(),
+            SliderAxis::Vertical,
+        );
+    }
+
+    #[test]
+    fn horizontal_pointer_move_reads_x_rel() {
+        // Default Horizontal axis: x_rel drives the value, y_rel is
+        // ignored. Regression guard against the R51.35 contract.
+        let mut sx = SliderExternal::new();
+        sx.pointer_move(0.7, 0.2);
+        assert!((sx.value() - 0.7).abs() < 1e-4);
+        // Vary y_rel — value must not move.
+        sx.pointer_move(0.7, 0.9);
+        assert!((sx.value() - 0.7).abs() < 1e-4);
+    }
+
+    #[test]
+    fn vertical_pointer_move_inverts_y_rel() {
+        // Vertical axis: value = 1.0 - y_rel (ARIA convention, top
+        // = max). x_rel is ignored.
+        let mut sx = SliderExternal::with_axis(SliderAxis::Vertical);
+        sx.pointer_move(0.0, 0.0); // top edge
+        assert!((sx.value() - 1.0).abs() < 1e-4);
+        sx.pointer_move(0.0, 1.0); // bottom edge
+        assert!((sx.value() - 0.0).abs() < 1e-4);
+        sx.pointer_move(0.0, 0.3); // 30% from top → value 0.7
+        assert!((sx.value() - 0.7).abs() < 1e-4);
+        // Vary x_rel — value must not move.
+        sx.pointer_move(0.5, 0.3);
+        assert!((sx.value() - 0.7).abs() < 1e-4);
+    }
+
+    #[test]
+    fn vertical_pointer_move_clamps_outside_rect() {
+        // Cursor stray past either edge under capture lock — the
+        // resulting `1.0 - y_rel` may go negative or exceed 1.0;
+        // the `clamp(0.0, 1.0)` in pointer_move saturates.
+        let mut sx = SliderExternal::with_axis(SliderAxis::Vertical);
+        sx.pointer_move(0.0, -0.5); // above top → 1.5, clamps to 1.0
+        assert!((sx.value() - 1.0).abs() < 1e-4);
+        sx.pointer_move(0.0, 1.7); // below bottom → -0.7, clamps to 0.0
+        assert!((sx.value() - 0.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn orientation_query_returns_aria_string() {
+        // R51.39 §5.38 — introspect `"orientation"` exposes the
+        // axis as a W3C `aria-orientation`-aligned lowercase string
+        // ("horizontal" / "vertical"). AI clients consume this
+        // straight through to their ARIA model.
+        let h = SliderExternal::new();
+        let v = SliderExternal::with_axis(SliderAxis::Vertical);
+        assert_eq!(
+            h.query("orientation"),
+            Some(IntrospectValue::Text("horizontal".to_string())),
+        );
+        assert_eq!(
+            v.query("orientation"),
+            Some(IntrospectValue::Text("vertical".to_string())),
+        );
+    }
+
+    #[test]
+    fn orientation_intervene_is_read_only() {
+        // Axis is construction-time fixed; the SCXML and ARIA
+        // semantics differ between axes, so a runtime flip would
+        // break in-flight intent contracts. The intervene gate
+        // matches `"state"` (also construction-anchored).
+        let mut sx = SliderExternal::new();
+        let r = sx.intervene(
+            "orientation",
+            IntrospectValue::Text("vertical".to_string()),
+        );
+        assert_eq!(r, Err(InterveneError::ReadOnly));
+        // Original axis untouched.
+        assert_eq!(sx.axis(), SliderAxis::Horizontal);
+    }
+
+    #[test]
+    fn schema_lists_orientation_field() {
+        // The introspect schema must include the new field so
+        // schema-driven AI clients pick it up automatically.
+        let sx = SliderExternal::new();
+        let schema = sx.schema();
+        let fields: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
+        assert!(fields.contains(&"orientation"), "fields = {fields:?}");
     }
 }
