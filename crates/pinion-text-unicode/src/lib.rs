@@ -72,6 +72,10 @@ mod composition;
 mod nfc;
 #[allow(dead_code)]
 mod nfd;
+#[allow(dead_code)]
+mod nfkc;
+#[allow(dead_code)]
+mod nfkd;
 
 #[cfg(test)]
 mod test_fixture;

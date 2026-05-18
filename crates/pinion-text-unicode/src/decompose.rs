@@ -7,7 +7,7 @@
 //! realise this by recursive walk on each table-hit child.
 
 use crate::hangul::decompose_hangul_syllable;
-use crate::tables::CANONICAL_DECOMPOSITION;
+use crate::tables::{CANONICAL_DECOMPOSITION, COMPATIBILITY_DECOMPOSITION};
 
 /// Append the fully-decomposed canonical form of `c` to `out`. Non-
 /// decomposable codepoints (including Hangul jamo and CJK
@@ -26,9 +26,29 @@ pub(crate) fn decompose_canonical(c: u32, out: &mut Vec<u32>) {
     }
 }
 
+/// Append the fully-decomposed **compatibility** form of `c` to
+/// `out`. The compatibility decomposition is recursive over
+/// `COMPATIBILITY_DECOMPOSITION` (which contains both canonical and
+/// compatibility one-step entries, tag stripped). Hangul is handled
+/// algorithmically.
+pub(crate) fn decompose_compatibility(c: u32, out: &mut Vec<u32>) {
+    if decompose_hangul_syllable(c, out) {
+        return;
+    }
+    match COMPATIBILITY_DECOMPOSITION.binary_search_by_key(&c, |(cp, _)| *cp)
+    {
+        Ok(idx) => {
+            for &dc in COMPATIBILITY_DECOMPOSITION[idx].1 {
+                decompose_compatibility(dc, out);
+            }
+        }
+        Err(_) => out.push(c),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::decompose_canonical;
+    use super::{decompose_canonical, decompose_compatibility};
 
     #[test]
     fn unmapped_starter_unchanged() {
@@ -61,5 +81,42 @@ mod tests {
         let mut out = Vec::new();
         decompose_canonical(0x1E0A, &mut out);
         assert_eq!(out, vec![0x0044, 0x0307]);
+    }
+
+    #[test]
+    fn compatibility_decomposes_superscript_two() {
+        // U+00B2 SUPERSCRIPT TWO has compatibility decomposition
+        // <super> 0032. Tag-stripped table maps it to [0x0032].
+        let mut out = Vec::new();
+        decompose_compatibility(0x00B2, &mut out);
+        assert_eq!(out, vec![0x0032]);
+    }
+
+    #[test]
+    fn compatibility_decomposes_ligature_fi() {
+        // U+FB01 LATIN SMALL LIGATURE FI has compatibility
+        // decomposition <compat> 0066 0069 ("fi").
+        let mut out = Vec::new();
+        decompose_compatibility(0xFB01, &mut out);
+        assert_eq!(out, vec![0x0066, 0x0069]);
+    }
+
+    #[test]
+    fn compatibility_includes_canonical_decompositions() {
+        // The compatibility table is a superset; a purely
+        // canonical decomp (À → A + grave) must work via
+        // decompose_compatibility too.
+        let mut out = Vec::new();
+        decompose_compatibility(0x00C0, &mut out);
+        assert_eq!(out, vec![0x0041, 0x0300]);
+    }
+
+    #[test]
+    fn compatibility_hangul_uses_algorithm() {
+        // Hangul precomposed syllables have no UCD decomposition
+        // mapping; the algorithmic Hangul path must still run.
+        let mut out = Vec::new();
+        decompose_compatibility(0xD55C, &mut out);
+        assert_eq!(out, vec![0x1112, 0x1161, 0x11AB]);
     }
 }

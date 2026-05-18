@@ -2463,6 +2463,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/composition.rs:canonical_composition
 - crates/pinion-text-unicode/src/nfc.rs:nfc
 - crates/pinion-text-unicode/src/test_fixture.rs:load_normalization_test
+- crates/pinion-text-unicode/src/decompose.rs:decompose_compatibility
+- crates/pinion-text-unicode/src/nfkd.rs:nfkd
+- crates/pinion-text-unicode/src/nfkc.rs:nfkc
 
 
 
@@ -7013,6 +7016,31 @@ router.pointer_down(&mut state_scene);
 - R50.2.5 NFKD/NFKC (COMPATIBILITY_DECOMPOSITION reuse + 4-form sweep complete)
 - R50.2.6 Quick-check optimization (UAX #15 §5 NFC/NFD/NFKC/NFKD_QC tables)
 - R50.2.7 pub fn normalize entry (all 4 form 완성, allow(dead_code) 해제)
+
+
+
+### Round 475 — Round 475 — R50.2.5 §5.37.3 NFKD/NFKC algorithms (4 form 완성, UAX #15 fully conformant)
+
+**Changes**:
+- decompose.rs decompose_compatibility (recursive COMPATIBILITY_DECOMPOSITION) + 4 test
+- nfkd.rs + nfkc.rs 신설 — Pattern 3/4 sweep 5x5 invariant
+- 4 form 완성 — UAX #15 Pattern 1-4 conformance ~20000 case x 4 form
+
+
+
+**Verification**:
+- cargo test -p pinion-text-unicode = 71 pass (NFD/NFC/NFKD/NFKC sweep all)
+- cargo test --workspace --features pinion-runtime/vello = 926 pass (855 + 71)
+- cargo clippy -p pinion-text-unicode --all-targets = 0 warning
+
+
+
+**Impact**: §5.37, §5.37.3
+
+
+**Carry forward**:
+- R50.2.6 Quick-check optimization (UAX #15 §5 NFC/NFD/NFKC/NFKD_QC tables)
+- R50.2.7 pub fn normalize entry + RPC text/normalize method (§5.37.2 channel)
 
 
 

@@ -2857,6 +2857,18 @@
         {
           "file": "crates/pinion-text-unicode/src/test_fixture.rs",
           "symbol": "load_normalization_test"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/decompose.rs",
+          "symbol": "decompose_compatibility"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/nfkd.rs",
+          "symbol": "nfkd"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/nfkc.rs",
+          "symbol": "nfkc"
         }
       ],
       "decision_status": "active"
@@ -10473,6 +10485,46 @@
         "R50.2.5 NFKD/NFKC (COMPATIBILITY_DECOMPOSITION reuse + 4-form sweep complete)",
         "R50.2.6 Quick-check optimization (UAX #15 §5 NFC/NFD/NFKC/NFKD_QC tables)",
         "R50.2.7 pub fn normalize entry (all 4 form 완성, allow(dead_code) 해제)"
+      ]
+    },
+    "Round 475": {
+      "decision_summary": "Round 475 — R50.2.5 §5.37.3 NFKD/NFKC algorithms (4 form 완성, UAX #15 fully conformant)",
+      "changes_bullets": [
+        "decompose.rs decompose_compatibility (recursive COMPATIBILITY_DECOMPOSITION) + 4 test",
+        "nfkd.rs + nfkc.rs 신설 — Pattern 3/4 sweep 5x5 invariant",
+        "4 form 완성 — UAX #15 Pattern 1-4 conformance ~20000 case x 4 form"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-text-unicode = 71 pass (NFD/NFC/NFKD/NFKC sweep all)",
+        "cargo test --workspace --features pinion-runtime/vello = 926 pass (855 + 71)",
+        "cargo clippy -p pinion-text-unicode --all-targets = 0 warning"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.3"
+      ],
+      "carry_forward_bullets": [
+        "R50.2.6 Quick-check optimization (UAX #15 §5 NFC/NFD/NFKC/NFKD_QC tables)",
+        "R50.2.7 pub fn normalize entry + RPC text/normalize method (§5.37.2 channel)"
+      ],
+      "publishable_decision_summary": "Round 475 — R50.2.5 §5.37.3 NFKD/NFKC algorithms (4 form 완성, UAX #15 fully conformant)",
+      "publishable_changes_bullets": [
+        "decompose.rs decompose_compatibility (recursive COMPATIBILITY_DECOMPOSITION) + 4 test",
+        "nfkd.rs + nfkc.rs 신설 — Pattern 3/4 sweep 5x5 invariant",
+        "4 form 완성 — UAX #15 Pattern 1-4 conformance ~20000 case x 4 form"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-text-unicode = 71 pass (NFD/NFC/NFKD/NFKC sweep all)",
+        "cargo test --workspace --features pinion-runtime/vello = 926 pass (855 + 71)",
+        "cargo clippy -p pinion-text-unicode --all-targets = 0 warning"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R50.2.6 Quick-check optimization (UAX #15 §5 NFC/NFD/NFKC/NFKD_QC tables)",
+        "R50.2.7 pub fn normalize entry + RPC text/normalize method (§5.37.2 channel)"
       ]
     },
     "Round 5": {
