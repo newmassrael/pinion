@@ -689,6 +689,18 @@ pub struct ContainerNode {
     pub style: BoxStyle,
     pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
+    /// R51.69 §5.40 — explicit accessible-name override. When `None`,
+    /// the §5.40 access-tree builder derives the AT-exposed name from
+    /// the container's first descendant [`TextNode::content`] (matches
+    /// WAI-ARIA's "name from contents" derivation for `button`,
+    /// `checkbox`, etc.). When `Some`, this string wins, mirroring
+    /// HTML's `aria-label` attribute precedence over inner text.
+    ///
+    /// Lives on `ContainerNode` rather than `Modifier` because every
+    /// widget instance currently roots in a tagged `Container` and the
+    /// accessible name is a per-node attribute in WAI-ARIA (1.2 §5.2),
+    /// not a layout/transform adjustment.
+    pub aria_label: Option<Cow<'static, str>>,
 }
 
 impl ContainerNode {
@@ -700,6 +712,7 @@ impl ContainerNode {
             style: BoxStyle::default(),
             layout: LayoutStyle::new(),
             tag: None,
+            aria_label: None,
         }
     }
 
@@ -712,7 +725,7 @@ impl ContainerNode {
 
     /// Attach a §5.21 layout style (builder form).
     #[must_use]
-    pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
+    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
         self
     }
@@ -723,6 +736,19 @@ impl ContainerNode {
     #[must_use]
     pub const fn with_style(mut self, style: BoxStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// R51.69 §5.40 — attach an explicit accessible-name override.
+    /// Wins over the default "first descendant `TextNode` content"
+    /// derivation that the access-tree builder performs (WAI-ARIA 1.2
+    /// `aria-label` precedence). Use when the visible label and the
+    /// AT-exposed name should diverge (icon-only buttons, localized
+    /// names, etc.). Empty string is preserved verbatim — callers that
+    /// want "no override" should not set the field.
+    #[must_use]
+    pub fn with_aria_label(mut self, label: impl Into<Cow<'static, str>>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 }

@@ -49,9 +49,11 @@
 pub mod action;
 pub mod node;
 pub mod role;
+pub mod scene_label;
 pub mod tree;
 
 pub use action::{translate_action, AccessAction, PinionAccessAction};
 pub use node::{AccessNode, AccessState, AccessValue};
 pub use role::AriaRole;
+pub use scene_label::enrich_names_from_scene;
 pub use tree::{tag_to_node_id, AccessTreeBuilder, ROOT_NODE_ID};

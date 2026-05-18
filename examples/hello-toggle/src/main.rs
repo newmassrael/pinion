@@ -129,6 +129,13 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     let track = Scene::Container(
         ContainerNode::new(vec![knob])
             .with_tag("main_toggle")
+            // R51.69 §5.40 — explicit accessible-name (WAI-ARIA
+            // `aria-label`). The visible "Dark mode" caption sits as
+            // a sibling of the track for layout reasons, so the
+            // scene-walk name derivation cannot reach it; the
+            // override pins the AT-exposed name without a duplicate
+            // literal in `access_node`.
+            .with_aria_label("Dark mode")
             .with_style(BoxStyle::filled(track_fill).with_corner_radius(TRACK_RADIUS))
             .with_layout(
                 LayoutStyle::new()
@@ -268,6 +275,11 @@ impl WidgetView for ToggleView {
     /// `value` is `AccessValue::Bool(on)`; `state.checked` mirrors
     /// the same boolean so AT clients reading either field see a
     /// consistent on/off state.
+    ///
+    /// R51.69 §5.40 — the accessible name is sourced from the
+    /// track container's `aria_label` override (set in `view`) so
+    /// the literal `"Dark mode"` lives in exactly one place. The
+    /// shell's `enrich_names_from_scene` lifts it onto this node.
     fn access_node(state: &(ToggleState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, on) = (state.0, state.1);
         let access_state = AccessState {
@@ -278,7 +290,6 @@ impl WidgetView for ToggleView {
             checked: Some(on),
         };
         vec![AccessNode::new(Self::tag(), AriaRole::Switch)
-            .with_name("Dark mode")
             .with_value(AccessValue::Bool(on))
             .with_state(access_state)]
     }
@@ -319,9 +330,20 @@ fn main() {
 mod a11y_tests {
     use super::*;
 
+    /// R51.69 §5.40 — pipeline mirror (`view` + `access_node` +
+    /// `enrich_names_from_scene`) so name assertions read what the
+    /// AT client sees, not the pre-enrichment intermediate.
+    fn enriched(state: (ToggleState, bool), focused: Option<&str>) -> Vec<AccessNode> {
+        let (s, on) = state;
+        let scene = view(s, on, &Frame::new());
+        let mut nodes = ToggleView::access_node(&state, focused);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+        nodes
+    }
+
     #[test]
     fn off_idle_emits_switch_role_unchecked() {
-        let nodes = ToggleView::access_node(&(ToggleState::Idle, false), None);
+        let nodes = enriched((ToggleState::Idle, false), None);
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].role, AriaRole::Switch);
         assert_eq!(nodes[0].name.as_deref(), Some("Dark mode"));
@@ -346,5 +368,11 @@ mod a11y_tests {
     fn focused_tag_sets_focused_flag() {
         let nodes = ToggleView::access_node(&(ToggleState::Idle, false), Some("main_toggle"));
         assert!(nodes[0].state.focused);
+    }
+
+    #[test]
+    fn aria_label_override_persists_when_on() {
+        let nodes = enriched((ToggleState::Idle, true), None);
+        assert_eq!(nodes[0].name.as_deref(), Some("Dark mode"));
     }
 }

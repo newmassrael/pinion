@@ -295,10 +295,18 @@ impl WidgetView for RadioGroupView {
     /// Emits N+1 nodes: one `AriaRole::RadioGroup` parent holding
     /// every radio's sub-tag as a child, plus one
     /// `AriaRole::RadioButton` per index. Each radio carries its
-    /// own role, label, selected state, and interaction state
-    /// flags. The parent claims the children via
-    /// [`AccessNode::with_child`] so the tree builder routes them
-    /// under the group instead of the synthetic root.
+    /// own role, selected state, and interaction state flags. The
+    /// parent claims the children via [`AccessNode::with_child`] so
+    /// the tree builder routes them under the group instead of the
+    /// synthetic root.
+    ///
+    /// R51.69 §5.40 — per-radio accessible names are derived by
+    /// `enrich_names_from_scene` from each row's `tier_label(i)`
+    /// `TextNode` (WAI-ARIA name-from-contents). The parent group's
+    /// `"Subscription tier"` name has no paint-scene equivalent
+    /// (the group is a logical container; the view fn's outermost
+    /// node is untagged background fill) so it stays as an explicit
+    /// override on the parent `AccessNode`.
     fn access_node(state: &GroupState, focused: Option<&str>) -> Vec<AccessNode> {
         let group_focused = focused == Some(Self::tag());
         let active_idx = active_radio_index(*state);
@@ -320,7 +328,6 @@ impl WidgetView for RadioGroupView {
             };
             nodes.push(
                 AccessNode::new(&radio_tag, AriaRole::RadioButton)
-                    .with_name(tier_label(i))
                     .with_value(AccessValue::Bool(selected))
                     .with_state(radio_access_state),
             );
@@ -477,10 +484,26 @@ mod a11y_tests {
 
     #[test]
     fn each_radio_has_tier_label() {
-        let nodes = RadioGroupView::access_node(&unselected_state(), None);
+        let state = unselected_state();
+        let scene = view(state, &Frame::new());
+        let mut nodes = RadioGroupView::access_node(&state, None);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         assert_eq!(nodes[1].name.as_deref(), Some("Tier 0  (a)"));
         assert_eq!(nodes[2].name.as_deref(), Some("Tier 1  (b)"));
         assert_eq!(nodes[3].name.as_deref(), Some("Tier 2  (c)"));
+    }
+
+    #[test]
+    fn group_explicit_name_survives_enrichment() {
+        let state = unselected_state();
+        let scene = view(state, &Frame::new());
+        let mut nodes = RadioGroupView::access_node(&state, None);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+        assert_eq!(
+            nodes[0].name.as_deref(),
+            Some("Subscription tier"),
+            "explicit access_node name must not be overwritten by enrichment",
+        );
     }
 
     #[test]

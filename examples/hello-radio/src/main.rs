@@ -235,6 +235,10 @@ impl WidgetView for RadioView {
     /// composite) attaches under an `AriaRole::RadioGroup` parent;
     /// the single-radio dogfood case here remains AT-discoverable on
     /// its own.
+    ///
+    /// R51.69 §5.40 — the accessible name is lifted from the row's
+    /// `"Premium tier"` `TextNode` by `enrich_names_from_scene`
+    /// (WAI-ARIA "name from contents"). No duplicate literal here.
     fn access_node(state: &(RadioState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, selected) = (state.0, state.1);
         let access_state = AccessState {
@@ -245,7 +249,6 @@ impl WidgetView for RadioView {
             checked: Some(selected),
         };
         vec![AccessNode::new(Self::tag(), AriaRole::RadioButton)
-            .with_name("Premium tier")
             .with_value(AccessValue::Bool(selected))
             .with_state(access_state)]
     }
@@ -285,9 +288,17 @@ fn main() {
 mod a11y_tests {
     use super::*;
 
+    fn enriched(state: (RadioState, bool), focused: Option<&str>) -> Vec<AccessNode> {
+        let (s, sel) = state;
+        let scene = view(s, sel, &Frame::new());
+        let mut nodes = RadioView::access_node(&state, focused);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+        nodes
+    }
+
     #[test]
     fn unselected_idle_emits_radiobutton_role() {
-        let nodes = RadioView::access_node(&(RadioState::Idle, false), None);
+        let nodes = enriched((RadioState::Idle, false), None);
         assert_eq!(nodes[0].role, AriaRole::RadioButton);
         assert_eq!(nodes[0].name.as_deref(), Some("Premium tier"));
         assert_eq!(nodes[0].state.checked, Some(false));

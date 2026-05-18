@@ -132,6 +132,12 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
     let track_col = Scene::Container(
         ContainerNode::new(vec![unfilled, thumb, filled])
             .with_tag("main_slider")
+            // R51.69 §5.40 — explicit accessible-name. The "Volume"
+            // caption sits above the column as a sibling; the scene
+            // walk inside the tagged container reaches only Box
+            // children. Override pins the name without duplicating
+            // the literal in `access_node`.
+            .with_aria_label("Volume")
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -297,6 +303,9 @@ impl WidgetView for SliderVerticalView {
     /// distinct widget tag (`main_slider_v`) — a future round adds an
     /// `accesskit::Orientation` field to [`AccessNode`] once a
     /// non-slider orientation consumer exists (carry).
+    ///
+    /// R51.69 §5.40 — the accessible name is sourced from the track
+    /// column's `aria_label` override (set in `view`).
     fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, value) = (state.0, state.1);
         let access_state = AccessState {
@@ -307,7 +316,6 @@ impl WidgetView for SliderVerticalView {
             checked: None,
         };
         vec![AccessNode::new(Self::tag(), AriaRole::Slider)
-            .with_name("Volume")
             .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })
             .with_state(access_state)]
     }
@@ -439,9 +447,17 @@ mod tests {
 mod a11y_tests {
     use super::*;
 
+    fn enriched(state: (SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (s, v) = state;
+        let scene = view(s, v, &Frame::new());
+        let mut nodes = SliderVerticalView::access_node(&state, focused);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+        nodes
+    }
+
     #[test]
     fn vertical_idle_emits_slider_role() {
-        let nodes = SliderVerticalView::access_node(&(SliderState::Idle, 0.5), None);
+        let nodes = enriched((SliderState::Idle, 0.5), None);
         assert_eq!(nodes[0].role, AriaRole::Slider);
         assert_eq!(nodes[0].name.as_deref(), Some("Volume"));
     }

@@ -2999,6 +2999,7 @@ router.pointer_down(&mut state_scene);
 - custom widget = access_node override 필수, default None = AT 무시 (intent declaration)
 - composite focus redirect = WidgetView::access_focus_target (default passthrough) per R51.66
 - composite child click dispatch = R51.x carry — widget-side wire-format invoke surface 필요
+- R51.69 — ContainerNode::aria_label + enrich_names_from_scene (WAI-ARIA name precedence land)
 
 
 
@@ -3044,6 +3045,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:AppShell::apply_a11y_key
 - crates/pinion-shell/src/lib.rs:build_tag_map
 - crates/pinion-a11y/tests/conformance.rs
+- crates/pinion-core/src/scene.rs:ContainerNode::aria_label
+- crates/pinion-core/src/scene.rs:ContainerNode::with_aria_label
+- crates/pinion-a11y/src/scene_label.rs
+- crates/pinion-a11y/src/scene_label.rs:enrich_names_from_scene
 
 
 
@@ -5371,6 +5376,36 @@ router.pointer_down(&mut state_scene);
 - platform AT integration test (Windows Narrator / macOS VoiceOver / Linux Orca) — manual carry
 - accesskit_consumer crate 기반 mock AT (Tree walk 검증) — evidence 시
 - Modifier::aria_label hint surface (widget 내부 Text override) — evidence 시
+
+
+
+### R51.69 — R51.69 §5.40 aria_label hint surface — ContainerNode override + scene-walk name derivation (WAI-ARIA name precedence)
+
+**Changes**:
+- crates/pinion-core/src/scene.rs — ContainerNode::aria_label field + with_aria_label() builder
+- crates/pinion-a11y/src/scene_label.rs 신설 — enrich_names_from_scene + DFS first-text-leaf helper
+- crates/pinion-a11y/src/lib.rs — scene_label 모듈 등록 + enrich_names_from_scene re-export
+- crates/pinion-shell/src/lib.rs — render 가 access_node 결과를 enrich (paint_scene 기반)
+- 7 widget access_node 의 .with_name(label) hard-coded literal 제거 (DRY 회복) — RadioGroup parent 만 explicit name 유지 (scene 비-존재)
+- hello-toggle / hello-checkbox / hello-slider / hello-slider-vertical view fn — tagged container 에 .with_aria_label(...) 추가 (label sibling 위치 / check-glyph 회피)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — 0 warnings
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- cargo test --workspace --features pinion-runtime/vello — 1430 pass / 0 fail (+12 from 1418)
+- scene_label 8 unit test (override / DFS first-text / multiline collapse / nested) + 4 widget enriched 회귀 test
+
+
+
+**Impact**: §5.40, §5.11
+
+
+**Carry forward**:
+- R51.70 composite child action dispatch (WidgetView::access_child_invoke trait hook + RadioGroup wire-format invoke) — WCAG 4.1.2 write path 회복
+- R51.71 accesskit::Node::set_active_descendant 채택 — focus redirect 폐기, ARIA Authoring Practices 정통
+- R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수
 
 
 

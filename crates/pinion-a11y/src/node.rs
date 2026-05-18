@@ -30,9 +30,17 @@ pub struct AccessNode {
     pub tag: String,
     /// ARIA role — drives `accesskit::Role` in the emitted node.
     pub role: AriaRole,
-    /// Accessible name (`aria-label` equivalent). Default = widget
-    /// inner text first line; widgets may override via Modifier
-    /// hint (carry per §5.40 caveat).
+    /// Accessible name (`aria-label` equivalent).
+    ///
+    /// `WidgetView::access_node` impls leave this `None`; the shell
+    /// calls [`crate::enrich_names_from_scene`] after layout to
+    /// derive the name from the paint scene per WAI-ARIA 1.2 §4.3
+    /// precedence: `ContainerNode::aria_label` override first, then
+    /// the first descendant `TextNode::content`. Widgets that
+    /// fundamentally lack visible text (icon-only without an
+    /// `aria_label` modifier) may set this explicitly via
+    /// [`AccessNode::with_name`] and the enrichment will respect
+    /// that override.
     pub name: Option<String>,
     /// Current widget value (boolean for switch/check/radio, float
     /// for slider). Introspect schema reports the same value, by

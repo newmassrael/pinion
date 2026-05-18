@@ -172,6 +172,12 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
     let track_row = Scene::Container(
         ContainerNode::new(vec![filled, thumb, unfilled])
             .with_tag("main_slider")
+            // R51.69 §5.40 — explicit accessible-name. The "Volume"
+            // caption lives outside the track row for layout reasons
+            // (label sits above), so the scene-walk derivation
+            // cannot reach it; the override pins the AT-exposed
+            // name without a duplicate literal in `access_node`.
+            .with_aria_label("Volume")
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -341,9 +347,11 @@ impl WidgetView for SliderView {
     /// range (the same range the introspect schema's `"value"` key
     /// reports). `state.checked` stays `None` (Slider is not a
     /// check-like widget). `Action::Increment` / `Action::Decrement`
-    /// support is declared at tree-build time by `add_actions_for_role`
-    /// in `pinion-a11y`; the AT-side request lands at R51.67 dispatch
-    /// wiring (currently logged as a TODO).
+    /// dispatch lands at R51.67 wiring.
+    ///
+    /// R51.69 §5.40 — the accessible name comes from the track
+    /// container's `aria_label` override (set in `view`) so the
+    /// `"Volume"` literal lives in exactly one place.
     fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, value) = (state.0, state.1);
         let access_state = AccessState {
@@ -354,7 +362,6 @@ impl WidgetView for SliderView {
             checked: None,
         };
         vec![AccessNode::new(Self::tag(), AriaRole::Slider)
-            .with_name("Volume")
             .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })
             .with_state(access_state)]
     }
@@ -540,9 +547,17 @@ mod tests {
 mod a11y_tests {
     use super::*;
 
+    fn enriched(state: (SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (s, v) = state;
+        let scene = view(s, v, &Frame::new());
+        let mut nodes = SliderView::access_node(&state, focused);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+        nodes
+    }
+
     #[test]
     fn idle_emits_slider_role_with_volume_label() {
-        let nodes = SliderView::access_node(&(SliderState::Idle, 0.5), None);
+        let nodes = enriched((SliderState::Idle, 0.5), None);
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].role, AriaRole::Slider);
         assert_eq!(nodes[0].name.as_deref(), Some("Volume"));

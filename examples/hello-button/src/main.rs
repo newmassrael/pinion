@@ -203,19 +203,23 @@ impl WidgetView for ButtonView {
     /// activation never leaks to the wrong widget when multiple
     /// focusable controls share a screen.
     /// R51.63 §5.40 — AccessKit semantic tree contribution. Emits a
-    /// single `AriaRole::Button` node whose accessible name matches
-    /// the visible label and whose `state_flags` mirror the four
-    /// `ButtonState` variants 1:1 (`Idle` = no flags, `Hover` =
+    /// single `AriaRole::Button` node whose `state_flags` mirror the
+    /// four `ButtonState` variants 1:1 (`Idle` = no flags, `Hover` =
     /// `hovered`, `Pressed` = `pressed`, `Disabled` = `disabled`).
     /// `focused` is set when `focused == Some(Self::tag())`; bounds
     /// are filled by `AppShell::render` via `rect_for_tag` after
-    /// layout. AT clients (Narrator / `VoiceOver` / Orca / `TalkBack`)
-    /// see the same role/name/state the introspect schema reports.
+    /// layout.
+    ///
+    /// R51.69 §5.40 — the accessible name is no longer hard-coded
+    /// here. `AppShell` calls `enrich_names_from_scene` with the
+    /// paint scene after `view`, and the WAI-ARIA name-from-contents
+    /// rule lifts the button's label text (`"Click me!"` or
+    /// `"Disabled"`) directly out of the scene's `TextNode`. The
+    /// duplicate match block this impl used to carry is now a single
+    /// match in the `view` function — DRY restored. AT clients
+    /// (Narrator / `VoiceOver` / Orca / `TalkBack`) see the same
+    /// label the visible button shows.
     fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
-        let label = match state {
-            ButtonState::Disabled => "Disabled",
-            _ => "Click me!",
-        };
         let access_state = AccessState {
             focused: focused == Some(Self::tag()),
             disabled: matches!(state, ButtonState::Disabled),
@@ -223,9 +227,7 @@ impl WidgetView for ButtonView {
             pressed: matches!(state, ButtonState::Pressed),
             checked: None,
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::Button)
-            .with_name(label)
-            .with_state(access_state)]
+        vec![AccessNode::new(Self::tag(), AriaRole::Button).with_state(access_state)]
     }
 
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
@@ -265,9 +267,21 @@ fn main() {
 mod a11y_tests {
     use super::*;
 
+    /// R51.69 §5.40 — convenience that mirrors the production
+    /// `AppShell::render` pipeline: `view` + `access_node` +
+    /// `enrich_names_from_scene`. Tests verifying the AT-exposed
+    /// name use this so the assertion reads the same name an AT
+    /// client would see, not just the bare `access_node` output.
+    fn enriched(state: ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
+        let scene = view(state, &Frame::new());
+        let mut nodes = ButtonView::access_node(&state, focused);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+        nodes
+    }
+
     #[test]
     fn idle_emits_button_role_with_label() {
-        let nodes = ButtonView::access_node(&ButtonState::Idle, None);
+        let nodes = enriched(ButtonState::Idle, None);
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].role, AriaRole::Button);
         assert_eq!(nodes[0].name.as_deref(), Some("Click me!"));
@@ -276,7 +290,7 @@ mod a11y_tests {
 
     #[test]
     fn disabled_state_sets_disabled_flag_and_label() {
-        let nodes = ButtonView::access_node(&ButtonState::Disabled, None);
+        let nodes = enriched(ButtonState::Disabled, None);
         assert!(nodes[0].state.disabled);
         assert_eq!(nodes[0].name.as_deref(), Some("Disabled"));
     }
@@ -312,5 +326,14 @@ mod a11y_tests {
     fn checked_is_none_for_button() {
         let nodes = ButtonView::access_node(&ButtonState::Idle, None);
         assert_eq!(nodes[0].state.checked, None);
+    }
+
+    #[test]
+    fn bare_access_node_leaves_name_none() {
+        let nodes = ButtonView::access_node(&ButtonState::Idle, None);
+        assert!(
+            nodes[0].name.is_none(),
+            "name comes from enrich_names_from_scene, not from access_node"
+        );
     }
 }

@@ -808,7 +808,15 @@ impl<V: WidgetView> AppShell<V> {
         // per-frame cost is one `Option::as_mut` + a load.
         if self.accesskit.is_some() {
             let focused = self.focus.focused().map(str::to_owned);
-            let nodes = V::access_node(&self.cached_state, focused.as_deref());
+            let mut nodes = V::access_node(&self.cached_state, focused.as_deref());
+            // R51.69 §5.40 — derive the accessible name from the
+            // already-rendered paint scene (WAI-ARIA 1.2 §4.3
+            // precedence: `ContainerNode::aria_label` override ≻
+            // first descendant `TextNode::content`). Runs after
+            // `compute_layout` so the same scene the renderer
+            // consumes drives the AT exposed name — single source
+            // of truth, no duplicate match blocks in widget impls.
+            pinion_a11y::enrich_names_from_scene(&mut nodes, &paint_scene);
             // R51.66 §5.40 — composite widgets (RadioGroup) redirect
             // the AT-side focus from the group tag to the active
             // descendant sub-tag via `access_focus_target`. Atomic

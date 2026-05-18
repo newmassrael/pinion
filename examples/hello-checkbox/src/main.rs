@@ -109,6 +109,12 @@ fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
     let row = Scene::Container(
         ContainerNode::new(vec![box_visual, label])
             .with_tag("main_checkbox")
+            // R51.69 §5.40 — explicit accessible-name override. The
+            // checked-state check-mark glyph is itself a `TextNode`
+            // and sits earlier than the label in DFS order, so the
+            // scene-walk derivation would pick the glyph as the name.
+            // `aria_label` pins the actual caption.
+            .with_aria_label("Receive newsletter")
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -218,6 +224,11 @@ impl WidgetView for CheckboxView {
     /// single `AriaRole::CheckBox` node; `value` and `state.checked`
     /// both carry the boolean checked state (lockstep with the
     /// introspect schema's `value` key).
+    ///
+    /// R51.69 §5.40 — the accessible name is sourced from the row
+    /// container's `aria_label` override set in `view` (see comment
+    /// there for why the check-glyph `TextNode` forces an explicit
+    /// override). The literal lives in exactly one place.
     fn access_node(state: &(CheckboxState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, checked) = (state.0, state.1);
         let access_state = AccessState {
@@ -228,7 +239,6 @@ impl WidgetView for CheckboxView {
             checked: Some(checked),
         };
         vec![AccessNode::new(Self::tag(), AriaRole::CheckBox)
-            .with_name("Receive newsletter")
             .with_value(AccessValue::Bool(checked))
             .with_state(access_state)]
     }
@@ -268,9 +278,17 @@ fn main() {
 mod a11y_tests {
     use super::*;
 
+    fn enriched(state: (CheckboxState, bool), focused: Option<&str>) -> Vec<AccessNode> {
+        let (s, c) = state;
+        let scene = view(s, c, &Frame::new());
+        let mut nodes = CheckboxView::access_node(&state, focused);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+        nodes
+    }
+
     #[test]
     fn unchecked_idle_emits_checkbox_role() {
-        let nodes = CheckboxView::access_node(&(CheckboxState::Idle, false), None);
+        let nodes = enriched((CheckboxState::Idle, false), None);
         assert_eq!(nodes[0].role, AriaRole::CheckBox);
         assert_eq!(nodes[0].name.as_deref(), Some("Receive newsletter"));
         assert_eq!(nodes[0].state.checked, Some(false));
@@ -297,5 +315,15 @@ mod a11y_tests {
             Some("main_checkbox"),
         );
         assert!(nodes[0].state.focused);
+    }
+
+    #[test]
+    fn aria_label_overrides_check_glyph_when_checked() {
+        let nodes = enriched((CheckboxState::Idle, true), None);
+        assert_eq!(
+            nodes[0].name.as_deref(),
+            Some("Receive newsletter"),
+            "aria_label must beat the check-glyph TextNode in the DFS chain",
+        );
     }
 }
