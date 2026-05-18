@@ -672,6 +672,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - crates/pinion-shell/src/lib.rs:VelloRenderer
 - crates/pinion-shell/src/lib.rs:AppShell::render
 - crates/pinion-shell/src/lib.rs:vello_renderer_impl
+- crates/pinion-shell/tests/smoke.rs
 
 
 
@@ -4118,6 +4119,33 @@ router.pointer_down(&mut state_scene);
 - RadioGroup visual demo needs pinion-shell multi-External / multi-tag dispatch (single WidgetView::tag() insufficient for N siblings) — next substrate round candidate
 - Keyboard value step (decrement / increment via arrow keys) not wired: WidgetView::keybinding(key) -> Option<Self::Event> is enum-only; a key-driven intervene hook would need a separate trait extension. Carry until a clear N=2 case shows up
 - ai-introspect-demo migration to pinion-shell still blocked on multi-External support (same gap as RadioGroup)
+
+
+
+### R51.36 — R51.36 §5.16 pinion-shell compile-only smoke test fixture closes R51.30 doc carry
+
+**Changes**:
+- crates/pinion-shell/tests/smoke.rs (new, ~210 LOC): SmokeRenderer + SmokeRendererError empty enum + SmokeExternal + SmokeView fixture matching the pinion-forge codegen template signature byte-for-byte; #[test] captures fn pointer of run::<SmokeView> to type-check the full VelloRenderer + WidgetView + vello_renderer_impl + run surface independent of the five examples/hello-* binaries
+- module-scoped #![allow(clippy::unused_self, clippy::unnecessary_wraps)] on the smoke fixture only — stub-method bodies have no `self` use but the signatures are dictated by the trait / macro contract; workspace.lints strict baseline preserved everywhere else
+- §5.16 implementations += crates/pinion-shell/tests/smoke.rs
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello = 0 errors
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- cargo test --workspace --features pinion-runtime/vello = 1244 pass / 0 fail / 6 ignored (1243 + 1 new shell_substrate_type_checks_with_minimal_fixture)
+- smoke test detects any future regression that breaks the WidgetView / VelloRenderer trait surface (renamed associated types, tightened bounds, unsafe slip) at cargo test time, independent of the application binaries
+- mnemosyne validate_workspace pending — expect entries=181 / sections=55 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.16, §5.38
+
+
+**Carry forward**:
+- docstring //! example blocks at crates/pinion-shell/src/lib.rs:7 and :141 remain rust,ignore (visual snippets) — textbook escape hatch for async + Into<SurfaceTarget> bounds whose hidden-line stubs would be unwieldy; smoke fixture covers the compile guarantee instead
+- RadioGroup visual demo still blocked on multi-External / multi-tag substrate; first-client evidence (RadioGroup land) needed before substrate refactor per [[substrate-incompleteness-signal]] discipline
 
 
 
