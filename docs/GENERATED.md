@@ -2309,6 +2309,67 @@ router.pointer_down(&mut state_scene);
 
 
 
+### §5.37.2. Text engine RPC channel — AI-first font/text introspect (R50.X sub-scope)
+
+
+**Intent**: §5.37 text engine 의 RPC channel sub-scope — pinion-rpc 가 §5.37.1 parser 결과 + 후속 text layer (Unicode/BIDI/shape/layout) 를 JSON-RPC 2.0 로 AI agent 에게 노출, §2 invariant #2 (RPC AI-first) 의 text 영역 첫 적용.
+
+
+**Rationale**:
+- §2 invariant #2 (RPC AI-first) 의 §5.37 영역 첫 channel — parser 결과 AI introspect
+- §5.37.1 parser 결과를 AI 가 RPC 로 query — text 진단 격차 (sub-pixel oscillation) 해소
+- §5.7 JSON-RPC 2.0 + §5.12 hybrid typed method ratify 정합 — text 도 동일 transport
+- font/* namespace = text/* 와 분리 — text layer (R50.4+ shape) 별도 sub-scope 향후
+- Font registry = Arc<Mutex<HashMap<u32, Arc<Font>>>> — concurrent-safe handle pattern
+- parser stateless → RPC stateful (font_id) — re-parse 비용 제거, AI agent latency 작음
+
+
+
+**Inputs**:
+- §5.37.1 의 Font / ParseError / CmapSubtable / Glyph / 6 metadata table 출력
+- §5.7 JSON-RPC 2.0 transport (request/response/error envelope)
+- §5.12 hybrid typed RPC method dispatch pattern (method 별 typed params/return)
+- font binary (base64 인코딩 byte stream) — RPC request payload
+- font_id (u32 handle) — registry lookup key, AI agent 이 유지
+
+
+
+**Outputs**:
+- pinion-rpc/src/font.rs — font/* method 집합 module (parse/family_name/glyph_id_for/outline 등)
+- FontRegistry struct — Arc<Mutex<HashMap<u32, Arc<Font>>>> + next_id counter
+- Font / Glyph / metrics JSON schema — serde Serialize 직렬화 (parser type 정합)
+- dispatch::Request method routing 의 font/* prefix 분기 + integration test 패턴
+- FontRpcError enum — RPC layer 자체 error (NotFound / ParseError wrapper / InvalidArgs)
+
+
+
+**Caveats**:
+- R50.X.0 = spec round entry (atomic-only ratify). implementation = R50.X.1+ separate round
+- implementation sub-round: R50.X.1 minimal 3 method / R50.X.2 후속 / R50.X.3 lifecycle (dispose/list)
+- method namespace = font/* — text layer (line break / shape / layout) RPC 는 R50.4+ 후 별도 sub-scope
+- Font registry lifetime = Arc<Mutex<HashMap<u32, Arc<Font>>>> — concurrent safe + cheap clone 권장
+- R50.X.1 minimal: font/parse / font/family_name / font/glyph_id_for — visible value 작은 set
+- R50.X.2 extended: font/glyph_outline / font/cmap_subtables / font/metrics / font/subfamily_name
+- real font integration = Noto Sans / Nanum Gothic byte stream RPC roundtrip — R50.X.1 verification
+- Unicode/BIDI 후속 sub-scope 가 sibling 가능 — §-number 는 R50.2 진입 시 결정 (forward-compat anchor)
+
+
+
+**Alternatives rejected**:
+- (a) parser 직접 API 만 노출 (RPC channel 없음) — §2 invariant #2 (RPC AI-first) 위반
+- (b) Font 매 call re-parse (registry 없음) — byte stream 매번 전송, AI latency 큼, stateless 환상
+- (c) generic text/* 로 묶음 (font/* 분리 없음) — §5.12 hybrid 명료성 위반, shape/layout 과 책임 혼재
+- (d) FFI / C wrapper RPC channel — pinion pure Rust + JSON-RPC 정신 위반
+- (e) gRPC / proto schema — §5.7 JSON-RPC 2.0 결정 위반
+- (f) base64 대신 multipart binary — JSON-RPC 2.0 단순 envelope 깸, AI tooling 표준 이탈
+
+
+
+**Impact scope**: §5.37.1, §5.7, §5.12, §2
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -6572,6 +6633,41 @@ router.pointer_down(&mut state_scene);
 - R50.1.X future: Macintosh platform 1 Mac Roman name table 변환
 - R50.2+ self-hosted Unicode (UAX #15), BIDI (UAX #9), shaping per script
 - R47-class InputRouter SCE migration
+
+
+
+### Round 466 — R50.X.0 §5.37.2 신설 (text engine RPC channel sub-scope ratify) — Round 466 — R50.X.0 §5.37.2 신설. §5.37 text engine 의 RPC channel sub-scope ratify — pinion-rpc 가 §5.37.1 OpenType parser 결과 + 후속 text layer 를 JSON-RPC 2.0 로 AI agent 에게 노출. §2 invariant #2 (RPC AI-first) 의 text 영역 첫 적용. method namespace = font/* (text/* 와 분리), Font registry = Arc<Mutex<HashMap>> handle pattern, §5.7 / §5.12 ratify 정합. atomic-only round — code 변경 0, implementation 은 R50.X.1+ separate round.
+
+**Changes**:
+- docs/GENERATED.md 신규 §5.37.2 — Text engine RPC channel sub-scope (parent=§5.37)
+- intent: §5.37.1 parser 결과 + 후속 text layer 를 JSON-RPC 2.0 로 AI agent 노출
+- rationale 6 bullet: §2 invariant #2 첫 text channel / 진단 격차 해소 / §5.7+§5.12 정합 등
+- inputs 5 bullet: §5.37.1 output / §5.7 transport / §5.12 dispatch / font binary / font_id handle
+- outputs 5 bullet: pinion-rpc/src/font.rs / FontRegistry / JSON schema / dispatch routing / FontRpcError
+- alternatives 6 rejected: parser direct / per-call re-parse / generic text/* / FFI / gRPC / multipart
+- impact_scope: §5.37.1 / §5.7 / §5.12 / §2 — parser dependency + transport+dispatch ratify+invariant
+- caveat 8 bullet: spec round entry / sub-round split / namespace / registry / minimal+extended method 등
+
+
+
+**Verification**:
+- validate_workspace: entries 120→121 / sections 48→49 / T1=0 T3=0 / RT=1/1 / GENERATED.md=sync
+- atomic mutation chain 9 call: add_section + intent + rationale + inputs + outputs + alternatives + impact_scope + 8 caveat
+- rationale bullet length ≤1 violation → 102 char 경고 1회후 80-95 char로 재작성 (T3 default 100 char)
+- code 변경 0 — cargo test 807 / clippy baseline (pinion-core 5+1 / pinion-runtime 1) 유지
+
+
+
+**Impact**: §5.37.2, §5.37.1, §5.7, §5.12, §2, §5.37
+
+
+**Carry forward**:
+- R50.X.1 minimal 3 method (font/parse / font/family_name / font/glyph_id_for) pinion-rpc/src/font.rs 신설
+- FontRegistry struct 구현 — Arc<Mutex<HashMap<u32, Arc<Font>>>> + next_id counter (concurrent safe)
+- dispatch::Request method routing 의 font/* prefix 분기 + integration test (기존 RPC method 정합)
+- real font roundtrip test — Noto Sans byte stream 로 font/parse → font/family_name 검증
+- R50.X.2 extended method (font/glyph_outline / font/cmap_subtables / font/metrics) — R50.X.1 이후
+- R50.X.3 lifecycle (font/dispose / font/list) — registry cleanup 정리
 
 
 
