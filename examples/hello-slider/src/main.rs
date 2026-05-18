@@ -57,6 +57,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{Color, Frame, Scene};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -334,6 +335,30 @@ impl WidgetView for SliderView {
             .is_ok()
     }
 
+    /// R51.65 §5.40 — AccessKit semantic tree contribution. Emits a
+    /// single `AriaRole::Slider` node carrying an `AccessValue::Float`
+    /// with `min` / `max` matching the widget's normalized [0.0, 1.0]
+    /// range (the same range the introspect schema's `"value"` key
+    /// reports). `state.checked` stays `None` (Slider is not a
+    /// check-like widget). `Action::Increment` / `Action::Decrement`
+    /// support is declared at tree-build time by `add_actions_for_role`
+    /// in `pinion-a11y`; the AT-side request lands at R51.67 dispatch
+    /// wiring (currently logged as a TODO).
+    fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, value) = (state.0, state.1);
+        let access_state = AccessState {
+            focused: focused == Some(Self::tag()),
+            disabled: matches!(interaction, SliderState::Disabled),
+            hovered: matches!(interaction, SliderState::Hover),
+            pressed: matches!(interaction, SliderState::Dragging),
+            checked: None,
+        };
+        vec![AccessNode::new(Self::tag(), AriaRole::Slider)
+            .with_name("Volume")
+            .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })
+            .with_state(access_state)]
+    }
+
     fn fmt_state_log(state: &(SliderState, f32)) -> String {
         format!("{} / {:.2}", slider_state_name(state.0), state.1)
     }
@@ -508,5 +533,56 @@ mod tests {
             "ArrowRight"
         ));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
+    }
+}
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    #[test]
+    fn idle_emits_slider_role_with_volume_label() {
+        let nodes = SliderView::access_node(&(SliderState::Idle, 0.5), None);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].role, AriaRole::Slider);
+        assert_eq!(nodes[0].name.as_deref(), Some("Volume"));
+    }
+
+    #[test]
+    fn float_value_carries_normalized_range() {
+        let nodes = SliderView::access_node(&(SliderState::Idle, 0.75), None);
+        match &nodes[0].value {
+            Some(AccessValue::Float { value, min, max }) => {
+                assert!((value - 0.75).abs() < f32::EPSILON);
+                assert!((min - 0.0).abs() < f32::EPSILON);
+                assert!((max - 1.0).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Float value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dragging_state_sets_pressed_flag() {
+        let nodes = SliderView::access_node(&(SliderState::Dragging, 0.5), None);
+        assert!(nodes[0].state.pressed);
+    }
+
+    #[test]
+    fn disabled_state_sets_disabled_flag() {
+        let nodes = SliderView::access_node(&(SliderState::Disabled, 0.0), None);
+        assert!(nodes[0].state.disabled);
+    }
+
+    #[test]
+    fn focused_tag_sets_focused_flag() {
+        let nodes =
+            SliderView::access_node(&(SliderState::Idle, 0.5), Some("main_slider"));
+        assert!(nodes[0].state.focused);
+    }
+
+    #[test]
+    fn checked_stays_none_for_slider() {
+        let nodes = SliderView::access_node(&(SliderState::Idle, 0.5), None);
+        assert_eq!(nodes[0].state.checked, None);
     }
 }

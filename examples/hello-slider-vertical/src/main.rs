@@ -36,6 +36,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::slider::{SliderAxis, SliderEvent, SliderExternal, SliderState};
 use pinion_core::{Color, Frame, Scene};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -289,6 +290,27 @@ impl WidgetView for SliderVerticalView {
     fn fmt_state_log(state: &(SliderState, f32)) -> String {
         format!("{} / {:.2}", slider_state_name(state.0), state.1)
     }
+
+    /// R51.65 §5.40 — AccessKit semantic tree contribution for the
+    /// vertical slider variant. Same role / value semantics as the
+    /// horizontal slider; orientation is conveyed visually + by the
+    /// distinct widget tag (`main_slider_v`) — a future round adds an
+    /// `accesskit::Orientation` field to [`AccessNode`] once a
+    /// non-slider orientation consumer exists (carry).
+    fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, value) = (state.0, state.1);
+        let access_state = AccessState {
+            focused: focused == Some(Self::tag()),
+            disabled: matches!(interaction, SliderState::Disabled),
+            hovered: matches!(interaction, SliderState::Hover),
+            pressed: matches!(interaction, SliderState::Dragging),
+            checked: None,
+        };
+        vec![AccessNode::new(Self::tag(), AriaRole::Slider)
+            .with_name("Volume")
+            .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })
+            .with_state(access_state)]
+    }
 }
 
 fn parse_slider_state(name: &str) -> SliderState {
@@ -410,5 +432,39 @@ mod tests {
             "ArrowUp"
         ));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
+    }
+}
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    #[test]
+    fn vertical_idle_emits_slider_role() {
+        let nodes = SliderVerticalView::access_node(&(SliderState::Idle, 0.5), None);
+        assert_eq!(nodes[0].role, AriaRole::Slider);
+        assert_eq!(nodes[0].name.as_deref(), Some("Volume"));
+    }
+
+    #[test]
+    fn vertical_float_value_carries_range() {
+        let nodes = SliderVerticalView::access_node(&(SliderState::Idle, 0.25), None);
+        match &nodes[0].value {
+            Some(AccessValue::Float { value, min, max }) => {
+                assert!((value - 0.25).abs() < f32::EPSILON);
+                assert!((min - 0.0).abs() < f32::EPSILON);
+                assert!((max - 1.0).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Float, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vertical_focused_tag_sets_focused_flag() {
+        let nodes = SliderVerticalView::access_node(
+            &(SliderState::Idle, 0.5),
+            Some("main_slider"),
+        );
+        assert!(nodes[0].state.focused);
     }
 }

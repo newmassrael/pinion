@@ -3964,6 +3964,14 @@
         {
           "file": "examples/hello-radio/src/main.rs",
           "symbol": "RadioView::access_node"
+        },
+        {
+          "file": "examples/hello-slider/src/main.rs",
+          "symbol": "SliderView::access_node"
+        },
+        {
+          "file": "examples/hello-slider-vertical/src/main.rs",
+          "symbol": "SliderVerticalView::access_node"
         }
       ],
       "decision_status": "active"
@@ -7308,6 +7316,54 @@
         "R51.66 — RadioGroup composite access_node (parent + radio_N children)",
         "R51.67 — ActionRequested dispatch (translate_action → InputRouter intent)",
         "R51.68 — conformance test (Tree snapshot + ActionRequest round-trip)"
+      ]
+    },
+    "R51.65": {
+      "decision_summary": "R51.65 §5.40 Slider/SliderVertical access_node — AriaRole::Slider + Float value range",
+      "changes_bullets": [
+        "SliderView::access_node 신설 — AriaRole::Slider + AccessValue::Float(value, 0.0, 1.0) range",
+        "SliderVerticalView::access_node 신설 — horizontal 과 동일 role/value, orientation hint carry",
+        "Dragging state → pressed flag, Hover → hovered, Disabled → disabled, checked = None",
+        "2 example Cargo.toml 의 pinion-a11y 의존성 추가",
+        "9 unit test 시워 Slider + 3 unit test SliderVertical 추가 (range / focus / state)"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-slider — 20 pass (a11y_tests 6 + apply_key tests 14 — 기존 유지)",
+        "cargo test -p hello-slider-vertical — 10 pass (a11y_tests 3 + apply_key tests 7 — 기존 유지)",
+        "cargo test --workspace --features pinion-runtime/vello — 1393 pass / 0 fail (+9 from 1384)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.66 — RadioGroup composite access_node (parent + radio_N children)",
+        "R51.67 — ActionRequested dispatch (Click/Focus/Increment/Decrement 실제 디스패치)",
+        "R51.68 — conformance test (Tree snapshot + ActionRequest round-trip)",
+        "AccessNode 의 orientation field 캴 (Slider vertical/horizontal 구분) — evidence 시"
+      ],
+      "publishable_decision_summary": "R51.65 §5.40 Slider/SliderVertical access_node — AriaRole::Slider + Float value range",
+      "publishable_changes_bullets": [
+        "SliderView::access_node 신설 — AriaRole::Slider + AccessValue::Float(value, 0.0, 1.0) range",
+        "SliderVerticalView::access_node 신설 — horizontal 과 동일 role/value, orientation hint carry",
+        "Dragging state → pressed flag, Hover → hovered, Disabled → disabled, checked = None",
+        "2 example Cargo.toml 의 pinion-a11y 의존성 추가",
+        "9 unit test 시워 Slider + 3 unit test SliderVertical 추가 (range / focus / state)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-slider — 20 pass (a11y_tests 6 + apply_key tests 14 — 기존 유지)",
+        "cargo test -p hello-slider-vertical — 10 pass (a11y_tests 3 + apply_key tests 7 — 기존 유지)",
+        "cargo test --workspace --features pinion-runtime/vello — 1393 pass / 0 fail (+9 from 1384)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.66 — RadioGroup composite access_node (parent + radio_N children)",
+        "R51.67 — ActionRequested dispatch (Click/Focus/Increment/Decrement 실제 디스패치)",
+        "R51.68 — conformance test (Tree snapshot + ActionRequest round-trip)",
+        "AccessNode 의 orientation field 캴 (Slider vertical/horizontal 구분) — evidence 시"
       ]
     },
     "Round 1": {

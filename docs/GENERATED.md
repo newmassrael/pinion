@@ -3032,6 +3032,8 @@ router.pointer_down(&mut state_scene);
 - examples/hello-toggle/src/main.rs:ToggleView::access_node
 - examples/hello-checkbox/src/main.rs:CheckboxView::access_node
 - examples/hello-radio/src/main.rs:RadioView::access_node
+- examples/hello-slider/src/main.rs:SliderView::access_node
+- examples/hello-slider-vertical/src/main.rs:SliderVerticalView::access_node
 
 
 
@@ -5237,6 +5239,36 @@ router.pointer_down(&mut state_scene);
 - R51.66 — RadioGroup composite access_node (parent + radio_N children)
 - R51.67 — ActionRequested dispatch (translate_action → InputRouter intent)
 - R51.68 — conformance test (Tree snapshot + ActionRequest round-trip)
+
+
+
+### R51.65 — R51.65 §5.40 Slider/SliderVertical access_node — AriaRole::Slider + Float value range
+
+**Changes**:
+- SliderView::access_node 신설 — AriaRole::Slider + AccessValue::Float(value, 0.0, 1.0) range
+- SliderVerticalView::access_node 신설 — horizontal 과 동일 role/value, orientation hint carry
+- Dragging state → pressed flag, Hover → hovered, Disabled → disabled, checked = None
+- 2 example Cargo.toml 의 pinion-a11y 의존성 추가
+- 9 unit test 시워 Slider + 3 unit test SliderVertical 추가 (range / focus / state)
+
+
+
+**Verification**:
+- cargo test -p hello-slider — 20 pass (a11y_tests 6 + apply_key tests 14 — 기존 유지)
+- cargo test -p hello-slider-vertical — 10 pass (a11y_tests 3 + apply_key tests 7 — 기존 유지)
+- cargo test --workspace --features pinion-runtime/vello — 1393 pass / 0 fail (+9 from 1384)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.66 — RadioGroup composite access_node (parent + radio_N children)
+- R51.67 — ActionRequested dispatch (Click/Focus/Increment/Decrement 실제 디스패치)
+- R51.68 — conformance test (Tree snapshot + ActionRequest round-trip)
+- AccessNode 의 orientation field 캴 (Slider vertical/horizontal 구분) — evidence 시
 
 
 
