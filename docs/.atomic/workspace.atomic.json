@@ -610,7 +610,12 @@
         "R45: §5.16 R11 'zero unjustified abstraction overhead' + R31 'compile-time per target' 정합",
         "R45: §2#6 'one scene, two render dispatch paths' invariant 가 codegen 의 single emitted path 로 표현됨",
         "R45: pinion-forge 에 renderer kind 신설 (reactive 옆) — R37.7/R37.8 정합, SCE upstream 미요구",
-        "R45: build slice 1 = renderer kind + Vello first template + demo manifest; R46+ commits"
+        "R45: build slice 1 = renderer kind + Vello first template + demo manifest; R46+ commits",
+        "R51.48 Phase 2 trigger: first 3D primitive scene 요구 → R45 renderer kind 'rhi' template land",
+        "R51.48 Phase 2 scope: thin RHI 3D pass 는 Vello UI path 와 additive 공존, drop = Phase 4+ 평가",
+        "R51.48 Phase 2 surface: pinion-forge renderer kind=rhi + naga shader emit + bgfx/makepad pattern",
+        "R51.48 Phase 2 demo target: 단일 3D primitive (triangle/cube) + AI-introspect scene = first dogfood",
+        "R51.48 Phase 4+ B 평가 gate: 언리얼-class engine pass, AAA RDG/bindless 운용 검증 후 ratify"
       ],
       "alternatives_rejected": [
         {
@@ -6163,6 +6168,52 @@
         "Sub-trait 실질 land — 둘째 drag-aware widget 등장 시 Drag sub-trait extract, 둘째 lifecycle-sensitive External 등장 시 Lifecycle sub-trait extract",
         "PointerCancel sub-trait (R51.45 carry 과 일치)",
         "External default 누적 한계 트리거 명시 — 현재 17 method 중 12 개가 default, 3 개이상 추가 시 sub-trait extract"
+      ]
+    },
+    "R51.48": {
+      "decision_summary": "R51.48 §5.16 R41 Phase 2 thin RHI 3D pass axis spec round (design-only)",
+      "changes_bullets": [
+        "§5.16 caveat: R51.48 Phase 2 trigger — first 3D primitive scene 요구이 entry gate, R45 renderer kind 'rhi' template 가 land 조건",
+        "§5.16 caveat: R51.48 Phase 2 scope — thin RHI 3D pass 는 Vello UI path 와 additive 공존 (동시 운용), Vello drop 은 Phase 4+ 평가",
+        "§5.16 caveat: R51.48 Phase 2 surface — pinion-forge renderer kind=rhi + naga shader emit (WGSL→SPIRV/MSL/HLSL/DXIL) + bgfx/makepad multi-threaded 패턴",
+        "§5.16 caveat: R51.48 Phase 2 demo target — 단일 3D primitive (triangle/cube) + AI-introspect scene = first dogfood (R45 demo manifest 관례 재사용)",
+        "§5.16 caveat: R51.48 Phase 4+ B 평가 gate — 언리얼-class engine pass, AAA RDG/bindless 운용 검증 후 ratify"
+      ],
+      "verification_bullets": [
+        "mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync (5 caveat add)",
+        "cargo test --workspace --features pinion-runtime/vello = 1285 pass / 0 fail (코드 미변)",
+        "R11 'thin RHI + naga' 결정 (§5.16 body) + R41 Phase 2 4-phase plan + R45 renderer kind codegen 정합 — spec drift 0",
+        "Phase 1 Vello 원안 보존 — R51.48 은 Phase 2 trigger · scope · surface · demo target · Phase 4+ gate 5 caveat 추가만 수행, body 게속 수정 없음"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Phase 2 entry 시 R45 renderer kind 'rhi' template emit 세부 설계 (pinion-render-rhi crate skeleton + naga 종속 depend + bgfx/makepad reference design)",
+        "Phase 4+ 언리얼-class B 평가 round — AAA 도메인 구체적 demo requirement 대충 등장 시점에",
+        "Vello 영구 의존 frame 회피 invariant 유지 — Phase 2 land 이후 의 Vello-drop 는 자연스럽게 additive path migration"
+      ],
+      "publishable_decision_summary": "R51.48 §5.16 R41 Phase 2 thin RHI 3D pass axis spec round (design-only)",
+      "publishable_changes_bullets": [
+        "§5.16 caveat: R51.48 Phase 2 trigger — first 3D primitive scene 요구이 entry gate, R45 renderer kind 'rhi' template 가 land 조건",
+        "§5.16 caveat: R51.48 Phase 2 scope — thin RHI 3D pass 는 Vello UI path 와 additive 공존 (동시 운용), Vello drop 은 Phase 4+ 평가",
+        "§5.16 caveat: R51.48 Phase 2 surface — pinion-forge renderer kind=rhi + naga shader emit (WGSL→SPIRV/MSL/HLSL/DXIL) + bgfx/makepad multi-threaded 패턴",
+        "§5.16 caveat: R51.48 Phase 2 demo target — 단일 3D primitive (triangle/cube) + AI-introspect scene = first dogfood (R45 demo manifest 관례 재사용)",
+        "§5.16 caveat: R51.48 Phase 4+ B 평가 gate — 언리얼-class engine pass, AAA RDG/bindless 운용 검증 후 ratify"
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync (5 caveat add)",
+        "cargo test --workspace --features pinion-runtime/vello = 1285 pass / 0 fail (코드 미변)",
+        "R11 'thin RHI + naga' 결정 (§5.16 body) + R41 Phase 2 4-phase plan + R45 renderer kind codegen 정합 — spec drift 0",
+        "Phase 1 Vello 원안 보존 — R51.48 은 Phase 2 trigger · scope · surface · demo target · Phase 4+ gate 5 caveat 추가만 수행, body 게속 수정 없음"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Phase 2 entry 시 R45 renderer kind 'rhi' template emit 세부 설계 (pinion-render-rhi crate skeleton + naga 종속 depend + bgfx/makepad reference design)",
+        "Phase 4+ 언리얼-class B 평가 round — AAA 도메인 구체적 demo requirement 대충 등장 시점에",
+        "Vello 영구 의존 frame 회피 invariant 유지 — Phase 2 land 이후 의 Vello-drop 는 자연스럽게 additive path migration"
       ]
     },
     "Round 1": {
