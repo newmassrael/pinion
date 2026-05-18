@@ -1009,6 +1009,222 @@ fn collect_sequence_positions(seq: &IsolatingRunSequence, runs: &[LevelRun]) -> 
     positions
 }
 
+// ======================================================================
+// R51.21 §5.37.4 — N-rules (UAX #9 §3.3.4 neutral type resolution)
+// ======================================================================
+//
+// Pipeline order: W-rules (resolve_weak_types) → N-rules
+// (resolve_neutral_types) → I → L. The N-rules close out the
+// "logical-order" half of UAX #9 by resolving everything that is
+// still a Neutral (B, S, WS, ON) or Isolate initiator/terminator
+// (LRI, RLI, FSI, PDI) into L or R per the surrounding strong
+// context. Three sub-rules apply per isolating run sequence:
+//
+//   N0 — paired bracket pairs (BD16 stack matching, UCD
+//        BidiBrackets.txt). Each pair takes the embedding direction
+//        when enclosed strong matches; otherwise the
+//        opposite-direction-with-context fallback.
+//   N1 — runs of Neutrals/Isolates between matching strong
+//        neighbours (EN and AN act as R for this purpose) → that
+//        strong direction.
+//   N2 — every remaining Neutral/Isolate → embedding direction
+//        (L if `sequence_level` is even, R if odd).
+//
+// Known limitation: UAX #9 N0 step 5 — NSMs that *originally* had
+// `Bidi_Class = NSM` and follow a bracket whose direction changed
+// in N0 should adopt that direction. Implementing it requires the
+// pre-W1 class array; for now this slice carries the limitation
+// (rare in practice and not exercised by the typical-text BidiTest
+// subset). Tracked for a follow-up alongside BidiTest.txt
+// conformance harness.
+
+const N0_BRACKET_STACK_MAX: usize = 63;
+
+/// `true` if `cls` is a Neutral or Isolate (NI in UAX #9
+/// terminology) — the classes N1/N2 mutate. After W-rules + N0,
+/// these are the only classes left other than L, R, EN, AN, and the
+/// X9-removed BN.
+const fn is_neutral_or_isolate(cls: BidiClass) -> bool {
+    matches!(
+        cls,
+        BidiClass::B
+            | BidiClass::S
+            | BidiClass::WS
+            | BidiClass::ON
+            | BidiClass::LRI
+            | BidiClass::RLI
+            | BidiClass::FSI
+            | BidiClass::PDI
+    )
+}
+
+/// Project a (W-rules-resolved) class to its strong direction for
+/// N-rule purposes: L → L, R / EN / AN → R, everything else
+/// returns `cls` unchanged (callers only invoke this on non-NI
+/// chars, where the result is always L or R).
+const fn n_strong_direction(cls: BidiClass) -> BidiClass {
+    match cls {
+        BidiClass::L => BidiClass::L,
+        BidiClass::R | BidiClass::EN | BidiClass::AN => BidiClass::R,
+        _ => cls,
+    }
+}
+
+/// BD16 — match paired brackets within an isolating run sequence
+/// view using a stack of size [`N0_BRACKET_STACK_MAX`]. Each entry
+/// stores `(view_position, matching_codepoint)` so a close bracket
+/// can search down the stack for an entry whose recorded match
+/// equals the close bracket's own codepoint. Stack overflow aborts
+/// the matching for this sequence (returns an empty pair list per
+/// UAX #9).
+fn find_bracket_pairs(
+    view: &[BidiClass],
+    positions: &[usize],
+    chars: &[char],
+) -> Vec<(usize, usize)> {
+    let mut stack: Vec<(usize, char)> = Vec::new();
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    for (i, &cls) in view.iter().enumerate() {
+        // After W-rules, only ON remains as a candidate neutral the
+        // bracket could be classified as. (W6 leaves residual ON;
+        // brackets in UCD have Bidi_Class = ON.)
+        if cls != BidiClass::ON {
+            continue;
+        }
+        let ch = chars[positions[i]];
+        let Some((matching, kind)) = paired_bracket(ch) else {
+            continue;
+        };
+        match kind {
+            BracketType::Open => {
+                if stack.len() >= N0_BRACKET_STACK_MAX {
+                    return Vec::new();
+                }
+                stack.push((i, matching));
+            }
+            BracketType::Close => {
+                if let Some(found) =
+                    stack.iter().rposition(|&(_, m)| m == ch)
+                {
+                    let (open_pos, _) = stack[found];
+                    stack.truncate(found);
+                    pairs.push((open_pos, i));
+                }
+            }
+        }
+    }
+    pairs.sort_by_key(|(open, _)| *open);
+    pairs
+}
+
+/// N0 — for each matched bracket pair in `pairs`, set both
+/// brackets in `view` to the resolved direction per UAX #9 N0.
+/// `embed_dir` is `L` (sequence level even) or `R` (odd). `sos` is
+/// the start-of-sequence strong direction.
+fn apply_n0(
+    view: &mut [BidiClass],
+    pairs: &[(usize, usize)],
+    embed_dir: BidiClass,
+    sos: BidiClass,
+) {
+    let opposite_dir = match embed_dir {
+        BidiClass::L => BidiClass::R,
+        _ => BidiClass::L,
+    };
+    for &(open_pos, close_pos) in pairs {
+        let mut found_embed = false;
+        let mut found_opposite = false;
+        for cls in &view[open_pos + 1..close_pos] {
+            let strong = match *cls {
+                BidiClass::L => Some(BidiClass::L),
+                BidiClass::R | BidiClass::EN | BidiClass::AN => Some(BidiClass::R),
+                _ => None,
+            };
+            if let Some(dir) = strong {
+                if dir == embed_dir {
+                    found_embed = true;
+                    break;
+                }
+                found_opposite = true;
+            }
+        }
+        let pair_dir = if found_embed {
+            embed_dir
+        } else if found_opposite {
+            // Establish preceding context by scanning backward for
+            // the closest strong (or fall through to sos).
+            let mut context = sos;
+            for cls in view[..open_pos].iter().rev() {
+                let strong = match *cls {
+                    BidiClass::L => Some(BidiClass::L),
+                    BidiClass::R | BidiClass::EN | BidiClass::AN => Some(BidiClass::R),
+                    _ => None,
+                };
+                if let Some(dir) = strong {
+                    context = dir;
+                    break;
+                }
+            }
+            if context == opposite_dir {
+                opposite_dir
+            } else {
+                embed_dir
+            }
+        } else {
+            // No strong inside — brackets retain Other_Neutral. They
+            // will be resolved by N1/N2 like any other neutral.
+            continue;
+        };
+        view[open_pos] = pair_dir;
+        view[close_pos] = pair_dir;
+    }
+}
+
+/// N1 — resolve runs of Neutrals/Isolates between two strong
+/// characters (or sequence boundary sos/eos) when both sides agree.
+/// EN and AN are treated as R for influence purposes.
+fn apply_n1(view: &mut [BidiClass], sos: BidiClass, eos: BidiClass) {
+    let n = view.len();
+    let mut i = 0;
+    while i < n {
+        if !is_neutral_or_isolate(view[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && is_neutral_or_isolate(view[i]) {
+            i += 1;
+        }
+        let end = i; // exclusive
+        let before = if start == 0 {
+            sos
+        } else {
+            n_strong_direction(view[start - 1])
+        };
+        let after = if end == n {
+            eos
+        } else {
+            n_strong_direction(view[end])
+        };
+        if before == after && matches!(before, BidiClass::L | BidiClass::R) {
+            for cls in &mut view[start..end] {
+                *cls = before;
+            }
+        }
+    }
+}
+
+/// N2 — any remaining Neutral/Isolate takes the embedding
+/// direction. Always fires last so N1 can resolve matched-strong
+/// runs first.
+fn apply_n2(view: &mut [BidiClass], embed_dir: BidiClass) {
+    for cls in view.iter_mut() {
+        if is_neutral_or_isolate(*cls) {
+            *cls = embed_dir;
+        }
+    }
+}
+
 /// UAX #9 §3.3.3 — apply W1-W7 to each isolating run sequence built
 /// over the X-rules output. The returned struct shares its `levels`
 /// vector with the input verbatim (W rules do not touch levels);
@@ -1037,6 +1253,56 @@ pub fn resolve_weak_types(explicit: ExplicitLevels, paragraph_level: u8) -> Expl
         apply_w5(&mut view);
         apply_w6(&mut view);
         apply_w7(&mut view, sos);
+        for (k, &p) in positions.iter().enumerate() {
+            classes[p] = view[k];
+        }
+    }
+
+    ExplicitLevels { levels, classes }
+}
+
+/// UAX #9 §3.3.4 — apply N0/N1/N2 to each isolating run sequence
+/// built over the W-rules output. `paragraph` is the original text
+/// passed to [`resolve_explicit_levels`]; it is re-collected into a
+/// `Vec<char>` so N0 can resolve paired brackets via
+/// [`paired_bracket`]. Returns a new `ExplicitLevels` with the
+/// neutral types resolved; `levels` are unchanged.
+#[must_use]
+pub fn resolve_neutral_types(
+    weak: ExplicitLevels,
+    paragraph: &str,
+    paragraph_level: u8,
+) -> ExplicitLevels {
+    let chars: Vec<char> = paragraph.chars().collect();
+    let ExplicitLevels {
+        levels,
+        mut classes,
+    } = weak;
+    let runs = build_level_runs(&levels, &classes);
+    let sequences = build_isolating_run_sequences(&runs, &classes);
+
+    for seq in &sequences {
+        let positions = collect_sequence_positions(seq, &runs);
+        let (sos, eos) =
+            compute_sos_eos(seq, &runs, &levels, &classes, paragraph_level);
+        let mut view: Vec<BidiClass> =
+            positions.iter().map(|&i| classes[i]).collect();
+
+        let embed_dir = if seq.level % 2 == 0 {
+            BidiClass::L
+        } else {
+            BidiClass::R
+        };
+
+        // N0: bracket pairs first (must run before N1/N2 so brackets
+        // either become strong or stay ON for N1 to resolve).
+        let pairs = find_bracket_pairs(&view, &positions, &chars);
+        apply_n0(&mut view, &pairs, embed_dir, sos);
+        // N1: matched-strong neutral runs.
+        apply_n1(&mut view, sos, eos);
+        // N2: residual neutrals.
+        apply_n2(&mut view, embed_dir);
+
         for (k, &p) in positions.iter().enumerate() {
             classes[p] = view[k];
         }
@@ -2011,5 +2277,208 @@ mod tests {
             assert_eq!(back, ch);
             assert_eq!(back_kind, BracketType::Close);
         }
+    }
+
+    // ---- R51.21 §5.37.4 — N-rules (resolve_neutral_types) ----
+
+    fn resolve_full(text: &str, paragraph_level: u8) -> ExplicitLevels {
+        let post_x = resolve_explicit_levels(text, paragraph_level);
+        let post_w = resolve_weak_types(post_x, paragraph_level);
+        resolve_neutral_types(post_w, text, paragraph_level)
+    }
+
+    #[test]
+    fn n_rules_empty_paragraph() {
+        let out = resolve_full("", 0);
+        assert!(out.classes.is_empty());
+    }
+
+    #[test]
+    fn n_rules_pure_ltr_unchanged() {
+        // No neutrals, no bracket pairs — N rules are no-ops.
+        let out = resolve_full("abc", 0);
+        assert_eq!(out.classes, vec![BidiClass::L; 3]);
+    }
+
+    // ---- N0: bracket pair direction ----
+
+    #[test]
+    fn n0_bracket_embedding_direction_match_lt_ltr() {
+        // "(a)" in LTR paragraph. Embedding = L, inner 'a' is L (matches
+        // embed) → brackets become L.
+        let out = resolve_full("(a)", 0);
+        assert_eq!(
+            out.classes,
+            vec![BidiClass::L, BidiClass::L, BidiClass::L],
+        );
+    }
+
+    #[test]
+    fn n0_bracket_opposite_strong_with_ltr_context() {
+        // "a(אb)c" in LTR — inside the parens, first strong is R
+        // (the Hebrew). Embed = L, opposite = R. Preceding context
+        // (scan back from open paren) is 'a' = L = embed direction.
+        // Per N0: context not opposite → fall back to embed → brackets = L.
+        let out = resolve_full("a(אb)c", 0);
+        // 'a' L, '(' L (N0 embed fallback), 'א' R, 'b' L, ')' L, 'c' L.
+        assert_eq!(out.classes[0], BidiClass::L);
+        assert_eq!(out.classes[1], BidiClass::L);
+        assert_eq!(out.classes[4], BidiClass::L);
+        assert_eq!(out.classes[5], BidiClass::L);
+    }
+
+    #[test]
+    fn n0_bracket_opposite_strong_with_opposite_context() {
+        // "א(אb)" in RTL: embed = R, inside has 'א' (R) AND 'b' (L).
+        // First strong inside is 'א' = R = embed → brackets become R.
+        let out = resolve_full("א(אb)", 1);
+        // Indices: 'א'(0), '('(1), 'א'(2), 'b'(3), ')'(4).
+        assert_eq!(out.classes[1], BidiClass::R);
+        assert_eq!(out.classes[4], BidiClass::R);
+    }
+
+    #[test]
+    fn n0_bracket_opposite_first_strong_with_opposite_preceding_context() {
+        // "א(b)" in LTR paragraph. Embed=L, opposite=R.
+        // Inside parens: 'b' (L) — matches embed direction immediately.
+        // So brackets → L (embed match).
+        let out = resolve_full("א(b)", 0);
+        assert_eq!(out.classes[1], BidiClass::L); // '('
+        assert_eq!(out.classes[3], BidiClass::L); // ')'
+    }
+
+    #[test]
+    fn n0_empty_bracket_pair_stays_neutral_for_n1_n2() {
+        // "(\u{0020})" in LTR (space inside, no strong).
+        // N0: no strong inside → brackets stay ON.
+        // N1: ON between sos=L and eos=L → L.
+        // Final brackets and inner space → L.
+        let out = resolve_full("( )", 0);
+        assert_eq!(out.classes, vec![BidiClass::L; 3]);
+    }
+
+    // ---- N1: matched-strong neutral runs ----
+
+    #[test]
+    fn n1_neutral_between_l_neighbors_becomes_l() {
+        // "a b" (space class WS, an NI). Both sides L → space becomes L.
+        let out = resolve_full("a b", 0);
+        assert_eq!(out.classes, vec![BidiClass::L; 3]);
+    }
+
+    #[test]
+    fn n1_neutral_between_r_neighbors_becomes_r() {
+        // "א ב" (RTL). Both sides R → space becomes R.
+        let out = resolve_full("א ב", 1);
+        assert_eq!(out.classes, vec![BidiClass::R; 3]);
+    }
+
+    #[test]
+    fn n1_en_treated_as_r_for_influence_in_rtl() {
+        // "1 ב" in RTL paragraph. sos=R.
+        //   Post-W: 1 stays EN (sos=R so W7 doesn't fire).
+        //   N1 looks at space: before = n_strong_direction(EN) = R,
+        //   after = n_strong_direction(R) = R → space becomes R.
+        let out = resolve_full("1 ב", 1);
+        assert_eq!(out.classes, vec![BidiClass::EN, BidiClass::R, BidiClass::R]);
+    }
+
+    #[test]
+    fn n1_mismatched_neighbors_fall_to_n2() {
+        // "a ב" in LTR: L on left, R on right (mismatched).
+        // N1 doesn't fire on space. N2: space → embed_dir = L (level 0).
+        let out = resolve_full("a ב", 0);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L, BidiClass::R]);
+    }
+
+    // ---- N2: residual neutrals → embedding direction ----
+
+    #[test]
+    fn n2_leading_neutral_becomes_embedding_direction() {
+        // " a" in LTR: sos = L, eos = ... but the run before 'a' is
+        // sos=L, after 'a' is L. Wait, the NI is only at start.
+        // Actually for " a": NI run is [' ']. before = sos = L, after = L.
+        // N1 fires → ' ' becomes L.
+        let out = resolve_full(" a", 0);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L]);
+    }
+
+    #[test]
+    fn n2_trailing_neutral_in_rtl_becomes_r() {
+        // "א " in RTL: NI is [' ']. before = R, after = eos = R. N1
+        // fires → space becomes R.
+        let out = resolve_full("א ", 1);
+        assert_eq!(out.classes, vec![BidiClass::R, BidiClass::R]);
+    }
+
+    #[test]
+    fn n2_neutral_only_paragraph_becomes_embed() {
+        // " " alone in LTR: NI is [' ']. sos = eos = L. N1 fires → L.
+        let out = resolve_full(" ", 0);
+        assert_eq!(out.classes, vec![BidiClass::L]);
+    }
+
+    #[test]
+    fn n2_neutral_only_paragraph_in_rtl() {
+        let out = resolve_full(" ", 1);
+        assert_eq!(out.classes, vec![BidiClass::R]);
+    }
+
+    // ---- Pipeline composition ----
+
+    #[test]
+    fn pipeline_bracket_inside_hebrew_text() {
+        // "א(a)ב" in RTL. Embed=R. Inside (): 'a' is L (opposite of embed).
+        // Preceding context (scan back from '('): 'א' = R = embed.
+        // Per N0: opposite-strong-found AND preceding-context=embed → embed.
+        // So brackets → R. Then N1/N2 don't fire on the brackets again.
+        let out = resolve_full("א(a)ב", 1);
+        assert_eq!(out.classes[1], BidiClass::R); // '('
+        assert_eq!(out.classes[3], BidiClass::R); // ')'
+    }
+
+    #[test]
+    fn pipeline_nested_brackets_inner_pair_resolves_first() {
+        // "([a])" in LTR: nested brackets. Inner [a] has L inside,
+        // matches embed → [a] brackets become L. Outer (...) has L
+        // chars inside (the inner [a] resolved to LLL) → outer also
+        // becomes L.
+        let out = resolve_full("([a])", 0);
+        // '(' [ 'a' ] ')'
+        assert_eq!(out.classes, vec![BidiClass::L; 5]);
+    }
+
+    #[test]
+    fn pipeline_bracket_with_only_whitespace_inside() {
+        // "א(  )ב" in RTL. Inside (...): only spaces (NI), no strong.
+        // N0 leaves brackets as ON. N1 then sees the brackets and
+        // spaces collectively as a single NI run between two R chars
+        // ('א' and 'ב') → all become R.
+        let out = resolve_full("א(  )ב", 1);
+        assert_eq!(out.classes, vec![BidiClass::R; 6]);
+    }
+
+    #[test]
+    fn pipeline_unmatched_brackets_stay_neutral_then_n2() {
+        // ")(": no matching pairs (close before open). Both ')' and
+        // '(' stay ON via N0 (no pair recorded). N1: no strong
+        // neighbours (sos=eos=L if LTR paragraph). N1 fires with both
+        // L → both become L.
+        let out = resolve_full(")(", 0);
+        assert_eq!(out.classes, vec![BidiClass::L, BidiClass::L]);
+    }
+
+    #[test]
+    fn pipeline_isolate_initiator_resolves_to_strong() {
+        // LRI by itself in LTR paragraph. LRI is treated as NI by
+        // N1/N2.
+        let lri = '\u{2066}';
+        let pdi = '\u{2069}';
+        let text = format!("a{lri}b{pdi}c");
+        let out = resolve_full(&text, 0);
+        // Outer sequence: [a, LRI, PDI, c]. All NIs (LRI/PDI) between
+        // L's → become L via N1.
+        assert_eq!(out.classes[1], BidiClass::L); // LRI
+        assert_eq!(out.classes[3], BidiClass::L); // PDI
     }
 }

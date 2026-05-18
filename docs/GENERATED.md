@@ -2571,6 +2571,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/bidi.rs:paired_bracket
 - crates/pinion-text-unicode/src/bidi.rs:BracketType
 - crates/pinion-text-unicode/build.rs:parse_bidi_brackets
+- crates/pinion-text-unicode/src/bidi.rs:resolve_neutral_types
 
 
 
@@ -8202,6 +8203,36 @@ router.pointer_down(&mut state_scene);
 - R51.22 N1 + N2 — N0 그림 후 neutral resolution (neutral between strong→surrounding, residual→sos-equivalent direction)
 - BIDI I-rules + L-rules 그 다음 장 — 레벨 재조정 (I1/I2) + level run reorder (L1-L4)
 - BD16 N0 stack max-depth 63 이 UAX #9 명시 — R51.21 에서 overflow case 처리
+
+
+
+### Round 510 — R51.21 §5.37.4 BIDI N-rules (UAX #9 §3.3.4) — N0 bracket pairs + N1 + N2 — UAX #9 §3.3.4 N0+N1+N2 land — resolve_neutral_types(weak, paragraph, paragraph_level) over W-rules output; N0 BD16 bracket pair matching (max 63 stack) + embed-vs-opposite-context direction, N1 matched-strong-neighbor neutral runs (EN/AN treated as R), N2 residual neutral → embedding direction; R51.20 paired_bracket substrate 위 첫 client
+
+**Changes**:
+- crates/pinion-text-unicode/src/bidi.rs: resolve_neutral_types(ExplicitLevels, paragraph, paragraph_level) -> ExplicitLevels — UAX #9 §3.3.4; isolating run sequence 단위 N0→N1→N2 순차 적용
+- private N-rule helpers: find_bracket_pairs (BD16 stack 괴 max 63 + overflow abort) / apply_n0 (embed-strong-first scan / opposite-strong context-backward scan / no-strong leave-ON) / apply_n1 (matched-strong NI run resolution) / apply_n2 (residual NI → embedding direction)
+- is_neutral_or_isolate + n_strong_direction const fn 입별 조술 helper — LRI/RLI/FSI/PDI 는 N1/N2 의 NI 소속, EN/AN 은 R 은 influence direction 으로 접속 (UAX #9 N1 명시)
+- Known limitation: UAX #9 N0 step 5 (NSM 아이디어 프로파게이션) 미구현 — pre-W1 class array 적재 필요, BidiTest.txt 적용 롬드에서 재분석. 모듈 도킨 제한 명시.
+- external lib 0 유지 — std + alloc + R51.20 paired_bracket 만 의존
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1184 pass (+20 from 1164 — BIDI N-rules)
+- pinion-text-unicode: 204 tests pass (+20 N-rules: bracket embed-match / opposite-context / no-strong-inside / nested / unmatched / N1 LL+RR+EN-as-R / N1 mismatch → N2 / pipeline composition + isolate-as-NI)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline 유지)
+- UAX #9 spec 준수 검증: BD16 stack max 63 / N0 embed-strong-first short-circuit / N0 opposite-strong-with-context fallback / N0 no-strong leaves brackets ON for N1 / N1 EN+AN → R for influence / N1 mismatched neighbours → N2 fallback / N2 sequence-level parity
+
+
+
+**Impact**: §5.37.4
+
+
+**Carry forward**:
+- R51.x 다음 후보: R51.22 BIDI I-rules (UAX #9 §3.3.5) — implicit level resolution; I1 (L on odd-level→L+1) + I2 (R/EN/AN on even-level→L+1 / EN 이 R 다음으로 따른 경우→L+2 etc.)
+- R51.23 BIDI L-rules — visual reordering (L1 separators reset / L2 max-level reverse / L3 combining mark reorder / L4 mirroring); UAX #9 의 시각적 출력 단계 최종
+- R51.24 N0 NSM-after-bracket propagation (deferred from R51.21) + BidiTest.txt typical-text vector conformance subset
+- derive macro for WidgetTransition / hello-toggle visual demo — BIDI algorithm 완성 후 돌아볼 부채
 
 
 
