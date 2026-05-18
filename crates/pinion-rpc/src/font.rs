@@ -22,7 +22,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 
-use pinion_text_font::{Font, ParseError};
+use pinion_text_font::{
+    Component, ComponentArgs, ComponentTransform, Font, Glyph, GlyphHeader, GlyphPoint,
+    ParseError,
+};
 use serde::{Deserialize, Serialize};
 
 /// Per-server font handle store (§5.37.2 ratify).
@@ -85,6 +88,8 @@ impl Default for FontRegistry {
 pub enum FontError {
     /// `font_id == 0` (reserved sentinel) or unknown handle.
     NotFound { font_id: u32 },
+    /// `glyph_id >= num_glyphs` — out of the font's glyph index range.
+    GlyphIdOutOfRange { glyph_id: u16, num_glyphs: u16 },
     /// OpenType parse failed — wraps the [`ParseError`] detail.
     Parse(ParseError),
     /// Counter reached `u32::MAX` — server-lifecycle exhaustion.
@@ -204,6 +209,332 @@ fn lookup(registry: &FontRegistry, font_id: u32) -> Result<Arc<Font>, FontError>
         .ok_or(FontError::NotFound { font_id })
 }
 
+// ─── R50.X.2 extended methods (§5.37.2 R50.X.2) ────────────────────────────
+
+/// JSON wire shape for `font/glyph_outline` params.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct GlyphOutlineParams {
+    pub font_id: u32,
+    pub glyph_id: u16,
+}
+
+/// Outcome for `font/glyph_outline` — mirror of [`Glyph`] with serde
+/// support. `pinion-text-font` deliberately stays serde-free (§5.37.1
+/// 외부 lib 0 정신), so the wire shape lives here and is constructed via
+/// [`From<&Glyph>`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum GlyphOutlineOutcome {
+    /// `loca[i] == loca[i+1]` — glyph has no visual representation.
+    Empty,
+    /// Flattened contour glyph with absolute-coordinate points.
+    Simple {
+        header: GlyphHeaderInfo,
+        end_pts_of_contours: Vec<u16>,
+        instructions: Vec<u8>,
+        points: Vec<GlyphPointInfo>,
+    },
+    /// Composite glyph referring to other glyph indices via component
+    /// records. `raw_body` is deliberately omitted — internal source-
+    /// of-truth, AI agents query the parsed `components` view.
+    Composite {
+        header: GlyphHeaderInfo,
+        components: Vec<ComponentInfo>,
+        instructions: Vec<u8>,
+    },
+}
+
+/// Bounding-box header (`x_min`, `y_min`, `x_max`, `y_max`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlyphHeaderInfo {
+    pub x_min: i16,
+    pub y_min: i16,
+    pub x_max: i16,
+    pub y_max: i16,
+}
+
+/// One outline control point — absolute-coordinate `(x, y)` + on/off
+/// curve marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlyphPointInfo {
+    pub x: i16,
+    pub y: i16,
+    pub on_curve: bool,
+}
+
+/// Composite component record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComponentInfo {
+    pub flags: u16,
+    pub glyph_index: u16,
+    pub args: ComponentArgsInfo,
+    pub transform: ComponentTransformInfo,
+}
+
+/// Component placement arguments (offset vs point-match).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "tag")]
+pub enum ComponentArgsInfo {
+    Offset { x: i32, y: i32 },
+    PointMatch { parent: u32, child: u32 },
+}
+
+/// Component transform matrix (raw F2DOT14 `i16` — divide by 16384 for
+/// the floating-point value).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "tag")]
+pub enum ComponentTransformInfo {
+    Identity,
+    Scale { scale: i16 },
+    XYScale { x: i16, y: i16 },
+    Matrix { xx: i16, xy: i16, yx: i16, yy: i16 },
+}
+
+impl From<&GlyphHeader> for GlyphHeaderInfo {
+    fn from(h: &GlyphHeader) -> Self {
+        Self { x_min: h.x_min, y_min: h.y_min, x_max: h.x_max, y_max: h.y_max }
+    }
+}
+
+impl From<&GlyphPoint> for GlyphPointInfo {
+    fn from(p: &GlyphPoint) -> Self {
+        Self { x: p.x, y: p.y, on_curve: p.on_curve }
+    }
+}
+
+impl From<&ComponentArgs> for ComponentArgsInfo {
+    fn from(a: &ComponentArgs) -> Self {
+        match *a {
+            ComponentArgs::Offset { x, y } => Self::Offset { x, y },
+            ComponentArgs::PointMatch { parent, child } => {
+                Self::PointMatch { parent, child }
+            }
+        }
+    }
+}
+
+impl From<&ComponentTransform> for ComponentTransformInfo {
+    fn from(t: &ComponentTransform) -> Self {
+        match *t {
+            ComponentTransform::Identity => Self::Identity,
+            ComponentTransform::Scale { scale } => Self::Scale { scale },
+            ComponentTransform::XYScale { x, y } => Self::XYScale { x, y },
+            ComponentTransform::Matrix { xx, xy, yx, yy } => {
+                Self::Matrix { xx, xy, yx, yy }
+            }
+        }
+    }
+}
+
+impl From<&Component> for ComponentInfo {
+    fn from(c: &Component) -> Self {
+        Self {
+            flags: c.flags,
+            glyph_index: c.glyph_index,
+            args: (&c.args).into(),
+            transform: (&c.transform).into(),
+        }
+    }
+}
+
+impl From<&Glyph> for GlyphOutlineOutcome {
+    fn from(g: &Glyph) -> Self {
+        match g {
+            Glyph::Empty => Self::Empty,
+            Glyph::Simple(s) => Self::Simple {
+                header: (&s.header).into(),
+                end_pts_of_contours: s.end_pts_of_contours.clone(),
+                instructions: s.instructions.clone(),
+                points: s.points.iter().map(Into::into).collect(),
+            },
+            Glyph::Composite(c) => Self::Composite {
+                header: (&c.header).into(),
+                components: c.components.iter().map(Into::into).collect(),
+                instructions: c.instructions.clone(),
+            },
+        }
+    }
+}
+
+/// Look up a glyph's outline by id.
+///
+/// # Errors
+///
+/// * [`FontError::NotFound`] — `font_id` is `0` or unknown.
+/// * [`FontError::GlyphIdOutOfRange`] — `glyph_id >= num_glyphs`.
+pub fn glyph_outline(
+    registry: &FontRegistry,
+    font_id: u32,
+    glyph_id: u16,
+) -> Result<GlyphOutlineOutcome, FontError> {
+    let font = lookup(registry, font_id)?;
+    let num_glyphs = font.num_glyphs();
+    let glyph = font.glyph_outline(glyph_id).ok_or(FontError::GlyphIdOutOfRange {
+        glyph_id,
+        num_glyphs,
+    })?;
+    Ok(glyph.into())
+}
+
+/// JSON wire shape for `font/cmap_subtables` params.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct CmapSubtablesParams {
+    pub font_id: u32,
+}
+
+/// One row in [`CmapSubtablesOutcome::subtables`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CmapSubtableInfo {
+    pub platform_id: u16,
+    pub encoding_id: u16,
+    /// Subtable format header (uint16 at `subtable_offset`).
+    pub format: u16,
+    /// `true` if the parser recognised the format and parsed the
+    /// subtable (Format 0 / 4 / 12 today); `false` for unsupported
+    /// formats whose header is still surfaced for diagnostics.
+    pub supported: bool,
+}
+
+/// Outcome for `font/cmap_subtables`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CmapSubtablesOutcome {
+    pub version: u16,
+    pub subtables: Vec<CmapSubtableInfo>,
+}
+
+/// List the `cmap` table's encoding records with parser support flags.
+///
+/// # Errors
+///
+/// [`FontError::NotFound`] — `font_id` is `0` or unknown.
+pub fn cmap_subtables(
+    registry: &FontRegistry,
+    font_id: u32,
+) -> Result<CmapSubtablesOutcome, FontError> {
+    let font = lookup(registry, font_id)?;
+    let subtables = font
+        .cmap
+        .encodings
+        .iter()
+        .enumerate()
+        .map(|(i, enc)| CmapSubtableInfo {
+            platform_id: enc.platform_id,
+            encoding_id: enc.encoding_id,
+            format: enc.subtable_format,
+            supported: font
+                .cmap
+                .subtables
+                .get(i)
+                .and_then(Option::as_ref)
+                .is_some(),
+        })
+        .collect();
+    Ok(CmapSubtablesOutcome { version: font.cmap.version, subtables })
+}
+
+/// JSON wire shape for `font/metrics` params.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct MetricsParams {
+    pub font_id: u32,
+}
+
+/// Aggregate font metrics from `head` / `hhea` / `maxp` / `OS/2` /
+/// `post`. All values are raw design-space units; convert to pixels
+/// via `(value * font_size) / units_per_em`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetricsOutcome {
+    pub units_per_em: u16,
+    pub ascender: i16,
+    pub descender: i16,
+    pub line_gap: i16,
+    pub num_glyphs: u16,
+    pub weight_class: u16,
+    pub is_monospace: bool,
+}
+
+/// Read the aggregate font metrics.
+///
+/// # Errors
+///
+/// [`FontError::NotFound`] — `font_id` is `0` or unknown.
+pub fn metrics(
+    registry: &FontRegistry,
+    font_id: u32,
+) -> Result<MetricsOutcome, FontError> {
+    let font = lookup(registry, font_id)?;
+    Ok(MetricsOutcome {
+        units_per_em: font.units_per_em(),
+        ascender: font.ascender(),
+        descender: font.descender(),
+        line_gap: font.line_gap(),
+        num_glyphs: font.num_glyphs(),
+        weight_class: font.weight_class(),
+        is_monospace: font.is_monospace(),
+    })
+}
+
+/// JSON wire shape for the three sibling name-accessor params
+/// (`font/subfamily_name`, `font/full_name`, `font/postscript_name`).
+/// Identical shape to [`FamilyNameParams`].
+pub type NameAccessorParams = FamilyNameParams;
+
+/// Outcome for `font/subfamily_name` — Name id 2 (typographic subfamily).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubfamilyNameOutcome {
+    pub name: Option<String>,
+}
+
+/// Look up the typographic subfamily name (`name` table id 2).
+///
+/// # Errors
+///
+/// [`FontError::NotFound`] — `font_id` is `0` or unknown.
+pub fn subfamily_name(
+    registry: &FontRegistry,
+    font_id: u32,
+) -> Result<SubfamilyNameOutcome, FontError> {
+    let font = lookup(registry, font_id)?;
+    Ok(SubfamilyNameOutcome { name: font.subfamily_name() })
+}
+
+/// Outcome for `font/full_name` — Name id 4 (full font name).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FullNameOutcome {
+    pub name: Option<String>,
+}
+
+/// Look up the full font name (`name` table id 4).
+///
+/// # Errors
+///
+/// [`FontError::NotFound`] — `font_id` is `0` or unknown.
+pub fn full_name(
+    registry: &FontRegistry,
+    font_id: u32,
+) -> Result<FullNameOutcome, FontError> {
+    let font = lookup(registry, font_id)?;
+    Ok(FullNameOutcome { name: font.full_name() })
+}
+
+/// Outcome for `font/postscript_name` — Name id 6 (PostScript name).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PostscriptNameOutcome {
+    pub name: Option<String>,
+}
+
+/// Look up the PostScript name (`name` table id 6).
+///
+/// # Errors
+///
+/// [`FontError::NotFound`] — `font_id` is `0` or unknown.
+pub fn postscript_name(
+    registry: &FontRegistry,
+    font_id: u32,
+) -> Result<PostscriptNameOutcome, FontError> {
+    let font = lookup(registry, font_id)?;
+    Ok(PostscriptNameOutcome { name: font.postscript_name() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +631,125 @@ mod tests {
         let b = parse_noto(&registry);
         assert_ne!(a, b, "each parse must allocate a fresh handle");
         assert_eq!(registry.len(), 2);
+    }
+
+    // ─── R50.X.2 extended method tests ─────────────────────────────────
+
+    #[test]
+    fn glyph_outline_notdef_is_simple_for_noto_sans() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let outcome = glyph_outline(&registry, id, 0).unwrap();
+        // Noto Sans .notdef is a simple hollow box outline.
+        assert!(
+            matches!(outcome, GlyphOutlineOutcome::Simple { .. }),
+            "expected Simple for .notdef, got {outcome:?}",
+        );
+    }
+
+    #[test]
+    fn glyph_outline_letter_a_is_simple_with_points() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let gid = glyph_id_for(&registry, id, 0x0041)
+            .unwrap()
+            .glyph_id
+            .unwrap();
+        let outcome = glyph_outline(&registry, id, gid).unwrap();
+        let GlyphOutlineOutcome::Simple { points, end_pts_of_contours, .. } = outcome
+        else {
+            panic!("'A' should be a simple glyph in Noto Sans, got non-simple");
+        };
+        assert!(!points.is_empty(), "'A' must have outline points");
+        assert!(
+            !end_pts_of_contours.is_empty(),
+            "'A' must have at least one contour"
+        );
+    }
+
+    #[test]
+    fn glyph_outline_rejects_zero_font_id() {
+        let registry = FontRegistry::new();
+        let err = glyph_outline(&registry, 0, 0).unwrap_err();
+        assert_eq!(err, FontError::NotFound { font_id: 0 });
+    }
+
+    #[test]
+    fn glyph_outline_rejects_out_of_range_glyph_id() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let err = glyph_outline(&registry, id, u16::MAX).unwrap_err();
+        assert!(
+            matches!(err, FontError::GlyphIdOutOfRange { glyph_id, .. } if glyph_id == u16::MAX),
+            "expected GlyphIdOutOfRange for u16::MAX, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn cmap_subtables_noto_sans_lists_encodings() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let outcome = cmap_subtables(&registry, id).unwrap();
+        assert!(
+            !outcome.subtables.is_empty(),
+            "Noto Sans must have at least one cmap subtable",
+        );
+        // Noto Sans must carry a supported (Format 0 / 4 / 12) subtable.
+        let any_supported = outcome.subtables.iter().any(|s| s.supported);
+        assert!(any_supported, "Noto Sans must have a parser-supported cmap subtable");
+    }
+
+    #[test]
+    fn metrics_noto_sans_units_per_em_1000() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let m = metrics(&registry, id).unwrap();
+        assert_eq!(m.units_per_em, 1000, "Noto Sans uses 1000 UPEM");
+        assert!(m.ascender > 0);
+        assert!(m.descender < 0);
+        assert!(m.num_glyphs > 0);
+        assert_eq!(m.weight_class, 400, "Noto Sans Regular weight class is 400");
+        assert!(!m.is_monospace);
+    }
+
+    #[test]
+    fn subfamily_name_noto_sans_is_regular() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let out = subfamily_name(&registry, id).unwrap();
+        assert_eq!(out.name.as_deref(), Some("Regular"));
+    }
+
+    #[test]
+    fn full_name_noto_sans_contains_family() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let out = full_name(&registry, id).unwrap();
+        let name = out.name.expect("full name present");
+        assert!(name.contains("Noto Sans"), "full name = {name:?}");
+    }
+
+    #[test]
+    fn postscript_name_noto_sans_starts_with_notosans() {
+        let registry = FontRegistry::new();
+        let id = parse_noto(&registry);
+        let out = postscript_name(&registry, id).unwrap();
+        let name = out.name.expect("postscript name present");
+        assert!(name.starts_with("NotoSans"), "postscript name = {name:?}");
+    }
+
+    #[test]
+    fn extended_methods_reject_unknown_font_id() {
+        let registry = FontRegistry::new();
+        for err in [
+            glyph_outline(&registry, 999, 0).unwrap_err(),
+            cmap_subtables(&registry, 999).unwrap_err(),
+            metrics(&registry, 999).unwrap_err(),
+            subfamily_name(&registry, 999).unwrap_err(),
+            full_name(&registry, 999).unwrap_err(),
+            postscript_name(&registry, 999).unwrap_err(),
+        ] {
+            assert_eq!(err, FontError::NotFound { font_id: 999 });
+        }
     }
 }

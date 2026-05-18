@@ -2379,6 +2379,13 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/dispatch.rs:handle_font_family_name
 - crates/pinion-rpc/src/dispatch.rs:handle_font_glyph_id_for
 - crates/pinion-rpc/src/dispatch.rs:font_error_to_rpc
+- crates/pinion-rpc/src/font.rs:glyph_outline
+- crates/pinion-rpc/src/font.rs:cmap_subtables
+- crates/pinion-rpc/src/font.rs:metrics
+- crates/pinion-rpc/src/font.rs:subfamily_name
+- crates/pinion-rpc/src/font.rs:full_name
+- crates/pinion-rpc/src/font.rs:postscript_name
+- crates/pinion-rpc/src/font.rs:GlyphOutlineOutcome
 
 
 
@@ -6719,6 +6726,41 @@ router.pointer_down(&mut state_scene);
 - R50.X.3 lifecycle: font/dispose (registry cleanup) + font/list (active font_id 들 enumerate)
 - font_registry concurrency stress test — multi-thread RwLock contention pattern 검증 (R50.X.2+ 시점)
 - method namespace = font/* 만 — text/* (shape/layout/break) 는 R50.4+ shape 후 별도 sub-scope (§5.37.3 후보)
+
+
+
+### Round 468 — R50.X.2 §5.37.2 extended 6 font/* method — Round 468 — R50.X.2 §5.37.2 extended 6 font/* method 구현. font/glyph_outline (Glyph variant mirror with serde + From<&Glyph> 변환) / font/cmap_subtables (EncodingRecord + supported flag) / font/metrics (units_per_em/ascender/descender/line_gap/num_glyphs/weight_class/is_monospace 7-aggregate) / font/subfamily_name / font/full_name / font/postscript_name. FontError::GlyphIdOutOfRange variant 추가. dispatch routing 6 entries + 6 handle_font_* + serialize_outcome helper (serde_json::to_value 통한 serialize). pinion-text-font 의존 0 변경 — Glyph wire shape mirror 가 pinion-rpc 측 (GlyphOutlineOutcome / GlyphHeaderInfo / GlyphPointInfo / ComponentInfo / ComponentArgsInfo / ComponentTransformInfo). 10 typed test + 9 JSON-RPC E2E test = 19 신규 pass.
+
+**Changes**:
+- font.rs: GlyphOutlineOutcome enum (Empty/Simple/Composite) #[serde(tag="kind")] + GlyphHeaderInfo / GlyphPointInfo / ComponentInfo / ComponentArgsInfo / ComponentTransformInfo wire mirror
+- font.rs: From<&Glyph> / From<&GlyphHeader> / From<&GlyphPoint> / From<&Component> / From<&ComponentArgs> / From<&ComponentTransform> impl chain (pinion-text-font × pinion-rpc wire 이용)
+- font.rs: glyph_outline / cmap_subtables / metrics / subfamily_name / full_name / postscript_name 6 typed fn + Params/Outcome 구조 일관 적용
+- font.rs: FontError::GlyphIdOutOfRange { glyph_id, num_glyphs } variant 추가 — strict bounds reject
+- dispatch.rs: 6 routing entries + 6 handle_font_* + serialize_outcome<T: Serialize> helper (serde_json::to_value 경우 + RpcError -32603 매핑)
+- dispatch.rs: font_error_to_rpc 에 GlyphIdOutOfRange variant 추가 (이개와 NotFound 모두 -32602)
+- dispatch.rs: dispatch fn #[allow(too_many_lines)] + reason — routing match 가 method 증가 따라 자연 grow 교과서 canonical
+- lib.rs: 6 new typed fn alias + 7 new wire types + 3 new Outcome export
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 825 → 844 (+19 R50.X.2 new tests: 10 font.rs + 9 dispatch.rs E2E)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: pinion-rpc 1 new → 0 (dispatch too_many_lines allow + reason)
+- pinion-text-font 의존 녹이 0 변경 — serde mirror 가 pinion-rpc 측 (§5.37.1 외부 lib 0 정신 완전 유지)
+- real font fixture (Noto Sans Regular) glyph_outline notdef = Simple kind / 'A' = Simple+points / out-of-range u16::MAX reject 검증
+- validate_workspace: entries 122→123 / sections 49 / T1=0 / T3=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.37.2, §5.7, §5.12, §5.37.1
+
+
+**Carry forward**:
+- R50.X.3 lifecycle: font/dispose (RwLock write 해제) + font/list (active font_id enumerate)
+- font_advance_width / left_side_bearing accessor RPC method 후보 (hmtx 세분 access)
+- ParseError detail JSON 직렬화 (현재 variant name only) — AI agent diagnostic 강화
+- concurrency stress test — RwLock multi-thread contention pattern (R50.X.3 이후 검토)
+- method namespace = font/* 만 — text/* (shape/layout/break) 는 R50.4+ shape 후 의 §5.37.3 그룹짐
 
 
 

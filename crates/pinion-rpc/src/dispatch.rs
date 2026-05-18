@@ -250,6 +250,10 @@ impl<'a> DispatchContext<'a> {
 /// for notifications. Parse errors return a `Some(json)` carrying
 /// id=null per the spec.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 16 scene/* + 9 font/*)"
+)]
 pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
     let previews: &PreviewLedger = ctx.previews;
@@ -345,6 +349,20 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "font/parse" => handle_font_parse(font_registry, request.params.as_ref()),
         "font/family_name" => handle_font_family_name(font_registry, request.params.as_ref()),
         "font/glyph_id_for" => handle_font_glyph_id_for(font_registry, request.params.as_ref()),
+        "font/glyph_outline" => {
+            handle_font_glyph_outline(font_registry, request.params.as_ref())
+        }
+        "font/cmap_subtables" => {
+            handle_font_cmap_subtables(font_registry, request.params.as_ref())
+        }
+        "font/metrics" => handle_font_metrics(font_registry, request.params.as_ref()),
+        "font/subfamily_name" => {
+            handle_font_subfamily_name(font_registry, request.params.as_ref())
+        }
+        "font/full_name" => handle_font_full_name(font_registry, request.params.as_ref()),
+        "font/postscript_name" => {
+            handle_font_postscript_name(font_registry, request.params.as_ref())
+        }
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -1654,6 +1672,9 @@ fn font_registry_unavailable() -> RpcError {
 fn font_error_to_rpc(err: &FontError) -> RpcError {
     let (code, message, variant): (i32, &str, &str) = match err {
         FontError::NotFound { .. } => (-32602, "Invalid params", "NotFound"),
+        FontError::GlyphIdOutOfRange { .. } => {
+            (-32602, "Invalid params", "GlyphIdOutOfRange")
+        }
         FontError::Parse(_) => (-32602, "Invalid params", "Parse"),
         FontError::RegistryExhausted => {
             (-32603, "Internal error", "RegistryExhausted")
@@ -1667,6 +1688,99 @@ fn font_error_to_rpc(err: &FontError) -> RpcError {
         message: message.to_string(),
         data: Some(Value::String(variant.to_string())),
     }
+}
+
+fn handle_font_glyph_outline(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    let Some(params) = params else {
+        return Err(invalid_params("missing params"));
+    };
+    let Some(glyph_id) = params.get("glyph_id").and_then(Value::as_u64) else {
+        return Err(invalid_params(
+            "params.glyph_id missing or not an unsigned integer",
+        ));
+    };
+    let glyph_id = u16::try_from(glyph_id)
+        .map_err(|_| invalid_params("params.glyph_id out of u16 range"))?;
+    match font::glyph_outline(registry, font_id, glyph_id) {
+        Ok(outcome) => serialize_outcome(&outcome, "glyph_outline"),
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_cmap_subtables(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    match font::cmap_subtables(registry, font_id) {
+        Ok(outcome) => serialize_outcome(&outcome, "cmap_subtables"),
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_metrics(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    match font::metrics(registry, font_id) {
+        Ok(outcome) => serialize_outcome(&outcome, "metrics"),
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_subfamily_name(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    match font::subfamily_name(registry, font_id) {
+        Ok(outcome) => serialize_outcome(&outcome, "subfamily_name"),
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_full_name(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    match font::full_name(registry, font_id) {
+        Ok(outcome) => serialize_outcome(&outcome, "full_name"),
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+fn handle_font_postscript_name(
+    registry: Option<&FontRegistry>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let registry = registry.ok_or_else(font_registry_unavailable)?;
+    let font_id = font_id_from_params(params)?;
+    match font::postscript_name(registry, font_id) {
+        Ok(outcome) => serialize_outcome(&outcome, "postscript_name"),
+        Err(err) => Err(font_error_to_rpc(&err)),
+    }
+}
+
+/// Convert a serde-derived font outcome to a JSON `Value`. The
+/// `method` tag goes into the error data when serialization fails so
+/// the AI client can map the failure back to a method.
+fn serialize_outcome<T: Serialize>(outcome: &T, method: &str) -> Result<Value, RpcError> {
+    serde_json::to_value(outcome).map_err(|e| RpcError {
+        code: -32603,
+        message: "Internal error".to_string(),
+        data: Some(Value::String(format!("font/{method} serialize: {e}"))),
+    })
 }
 
 fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
@@ -3424,5 +3538,211 @@ mod tests {
             "expected codepoint range error, got {:?}",
             err.data,
         );
+    }
+
+    // --- R50.X.2 §5.37.2 extended method E2E tests ---
+
+    fn parse_noto_sans_via_dispatch(
+        scene: &mut Scene,
+        registry: &FontRegistry,
+    ) -> u64 {
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/parse","params":{{"bytes":{bytes}}},"id":1}}"#,
+            bytes = bytes_as_json_array(NOTO_SANS_FONT),
+        );
+        parse_response(&dispatch_with_font(scene, registry, &body).unwrap())
+            .result
+            .unwrap()
+            .get("font_id")
+            .and_then(Value::as_u64)
+            .unwrap()
+    }
+
+    #[test]
+    fn font_glyph_outline_notdef_is_simple_kind() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/glyph_outline","params":{{"font_id":{font_id},"glyph_id":0}},"id":2}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        let result = resp.result.unwrap();
+        assert_eq!(
+            result.get("kind").and_then(Value::as_str),
+            Some("Simple"),
+            "Noto Sans .notdef expected Simple kind, got {result:?}",
+        );
+        // Simple variant must carry points + header.
+        assert!(result.get("header").is_some());
+        assert!(result.get("points").is_some());
+    }
+
+    #[test]
+    fn font_glyph_outline_rejects_glyph_id_overflow() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/glyph_outline","params":{{"font_id":{font_id},"glyph_id":65536}},"id":3}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(
+            err.data
+                .as_ref()
+                .and_then(|d| d.as_str())
+                .is_some_and(|s| s.contains("u16 range")),
+            "expected u16 range message, got {:?}",
+            err.data,
+        );
+    }
+
+    #[test]
+    fn font_glyph_outline_rejects_out_of_range_glyph_id() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/glyph_outline","params":{{"font_id":{font_id},"glyph_id":65535}},"id":4}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert_eq!(
+            err.data.as_ref().and_then(|d| d.as_str()),
+            Some("GlyphIdOutOfRange"),
+        );
+    }
+
+    #[test]
+    fn font_cmap_subtables_round_trip_noto_sans() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/cmap_subtables","params":{{"font_id":{font_id}}},"id":5}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        let result = resp.result.unwrap();
+        let subtables = result.get("subtables").and_then(Value::as_array).unwrap();
+        assert!(!subtables.is_empty());
+        // Every subtable row carries platform_id, encoding_id, format, supported.
+        for row in subtables {
+            assert!(row.get("platform_id").is_some());
+            assert!(row.get("encoding_id").is_some());
+            assert!(row.get("format").is_some());
+            assert!(row.get("supported").is_some());
+        }
+    }
+
+    #[test]
+    fn font_metrics_round_trip_noto_sans() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/metrics","params":{{"font_id":{font_id}}},"id":6}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        let m = resp.result.unwrap();
+        assert_eq!(m.get("units_per_em").and_then(Value::as_u64), Some(1000));
+        assert_eq!(m.get("weight_class").and_then(Value::as_u64), Some(400));
+        assert_eq!(m.get("is_monospace").and_then(Value::as_bool), Some(false));
+    }
+
+    #[test]
+    fn font_subfamily_name_round_trip_regular() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/subfamily_name","params":{{"font_id":{font_id}}},"id":7}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        assert_eq!(
+            resp.result.unwrap().get("name").and_then(Value::as_str),
+            Some("Regular"),
+        );
+    }
+
+    #[test]
+    fn font_full_name_round_trip_contains_family() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/full_name","params":{{"font_id":{font_id}}},"id":8}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        let name = resp
+            .result
+            .unwrap()
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap();
+        assert!(name.contains("Noto Sans"), "full name = {name}");
+    }
+
+    #[test]
+    fn font_postscript_name_round_trip_starts_with_notosans() {
+        let mut scene = counted_scene(0);
+        let registry = FontRegistry::new();
+        let font_id = parse_noto_sans_via_dispatch(&mut scene, &registry);
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","method":"font/postscript_name","params":{{"font_id":{font_id}}},"id":9}}"#,
+        );
+        let resp = parse_response(
+            &dispatch_with_font(&mut scene, &registry, &body).unwrap(),
+        );
+        let name = resp
+            .result
+            .unwrap()
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap();
+        assert!(name.starts_with("NotoSans"), "postscript name = {name}");
+    }
+
+    #[test]
+    fn font_extended_methods_without_registry_return_registry_unavailable() {
+        for method in [
+            "font/glyph_outline",
+            "font/cmap_subtables",
+            "font/metrics",
+            "font/subfamily_name",
+            "font/full_name",
+            "font/postscript_name",
+        ] {
+            let mut scene = counted_scene(0);
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"{method}","params":{{"font_id":1,"glyph_id":0}},"id":1}}"#,
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            let err = resp.error.unwrap();
+            assert_eq!(err.code, -32603, "method {method}");
+            assert_eq!(
+                err.data.as_ref().and_then(|d| d.as_str()),
+                Some("FontRegistryUnavailable"),
+                "method {method}",
+            );
+        }
     }
 }

@@ -30,9 +30,16 @@ pub use click::{click, ClickError, ClickOutcome};
 pub use dispatch::{dispatch, DispatchContext, Request, RequestId, Response, RpcError};
 pub use dry_run::{dry_run, DryRunError};
 pub use font::{
-    family_name as font_family_name, glyph_id_for as font_glyph_id_for, parse as font_parse,
-    FamilyNameOutcome, FamilyNameParams, FontError, FontRegistry, GlyphIdForOutcome,
-    GlyphIdForParams, ParseOutcome, ParseParams,
+    cmap_subtables as font_cmap_subtables, family_name as font_family_name,
+    full_name as font_full_name, glyph_id_for as font_glyph_id_for,
+    glyph_outline as font_glyph_outline, metrics as font_metrics, parse as font_parse,
+    postscript_name as font_postscript_name, subfamily_name as font_subfamily_name,
+    CmapSubtableInfo, CmapSubtablesOutcome, CmapSubtablesParams, ComponentArgsInfo,
+    ComponentInfo, ComponentTransformInfo, FamilyNameOutcome, FamilyNameParams, FontError,
+    FontRegistry, FullNameOutcome, GlyphHeaderInfo, GlyphIdForOutcome, GlyphIdForParams,
+    GlyphOutlineOutcome, GlyphOutlineParams, GlyphPointInfo, MetricsOutcome, MetricsParams,
+    NameAccessorParams, ParseOutcome, ParseParams, PostscriptNameOutcome,
+    SubfamilyNameOutcome,
 };
 pub use intents::{drain_intents, IntentsError};
 pub use invoke::{invoke, InvokeError};
