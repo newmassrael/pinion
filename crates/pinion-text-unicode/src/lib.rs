@@ -187,9 +187,28 @@ mod tests {
         CANONICAL_COMBINING_CLASS_BMP_INDEX,
         CANONICAL_COMBINING_CLASS_SUPPLEMENTARY, CANONICAL_DECOMPOSITION,
         COMPATIBILITY_DECOMPOSITION, FULL_COMPOSITION_EXCLUSION,
-        PRIMARY_COMPOSITES,
+        PRIMARY_COMPOSITES, TABLES_GENERATED_BYTES,
     };
     use super::{normalize, NormForm, UCD_VERSION};
+
+    // R50.2.12 — compile-time guard against an unintended codegen
+    // blow-up. `TABLES_GENERATED_BYTES` is a build-time `const`, so
+    // `assert!` lowers to a const evaluation; clippy correctly
+    // flagged a runtime `#[test]` as redundant (`assert!(true)`
+    // optimised out). The const block fires at compile time and
+    // fails the build instead of a single test target. The
+    // R50.2.11 baseline lands around 519 KiB of source
+    // (decomposition tables dominate); the 1.5 MiB ceiling leaves
+    // room for future R50.2.x trie additions (decomp / primary
+    // composite) without becoming a noise gate.
+    const _: () = assert!(
+        TABLES_GENERATED_BYTES < 1_500_000,
+        "tables.rs footprint regression vs 1.5 MiB ceiling",
+    );
+    const _: () = assert!(
+        TABLES_GENERATED_BYTES > 100_000,
+        "tables.rs footprint suspiciously small (<100 KiB)",
+    );
 
     #[test]
     fn ucd_version_pinned() {

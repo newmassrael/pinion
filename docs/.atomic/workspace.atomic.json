@@ -2782,7 +2782,8 @@
         "UCD ~3MB raw → build.rs codegen 압축 권장 (~500KB 압축, 결정성 유지)",
         "layer chain: §5.37.3 (Unicode) → BIDI (UAX #9) → shape → break (UAX #14) → positioning → raster",
         "Quick-check optimization (UAX #15 §5) — already-normalized input 의 fast path",
-        "§5.37.2 RPC channel 의 text/normalize 후속 method 추가 가능 — AI introspect 정합"
+        "§5.37.2 RPC channel 의 text/normalize 후속 method 추가 가능 — AI introspect 정합",
+        "R50.2.10/11 BMP trie supplementary는 binary_search (ICU UTrie2 strict 위반, 226 entries 수용)."
       ],
       "alternatives_rejected": [
         {
@@ -2888,6 +2889,26 @@
         },
         {
           "file": "crates/pinion-text-unicode/benches/normalize.rs"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "emit_fast_path_anchors"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "build_u8_bmp_trie"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "emit_u8_bmp_trie_table"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/quick_check.rs",
+          "symbol": "lookup_u8_trie"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/ordering.rs",
+          "symbol": "combining_class_supplementary"
         }
       ],
       "decision_status": "active"
@@ -10834,6 +10855,46 @@
         "R50.2.12 precomposed_nfc -20% regression 분석 (flamegraph + inlining heuristic)",
         "R50.2.12 CANONICAL_DECOMPOSITION / COMPATIBILITY_DECOMPOSITION trie (indirect index)",
         "R50.2.13 PRIMARY_COMPOSITES 2D key hash 또는 trie (anchor short-circuit 외 추가 가속)"
+      ]
+    },
+    "Round 483": {
+      "decision_summary": "R50.2.12 §5.37.3 perf debt 6종 일괄 상환 — combining_class hot/cold split (precomposed regression 완전 해결)",
+      "changes_bullets": [
+        "ordering.rs combining_class hot/cold split (cargo asm root cause 검증)",
+        "benches 10s/500 config + 환경 metadata + build.rs TABLES_GENERATED_BYTES const",
+        "atomic: +5 binding (build.rs emit_*, lookup_u8_trie, supp) + 1 ICU caveat"
+      ],
+      "verification_bullets": [
+        "cargo asm: combining_class 0 callq (inline 확인), supplementary cold call",
+        "bench Cumulative MiB/s vs R50.2.7: ascii 103x / pre 72x / dec 6.5x / han 6.6x / sam 6.7x",
+        "tables.rs 519 KiB (1.5 MiB 35%); cargo test 962 pass (+1 const assert); clippy 6 유지"
+      ],
+      "impact_refs": [
+        "5.37.3"
+      ],
+      "carry_forward_bullets": [
+        "R50.2.13: CANONICAL_DECOMPOSITION / COMPATIBILITY_DECOMPOSITION trie (indirect)",
+        "R50.2.14: PRIMARY_COMPOSITES 2D key hash 또는 trie",
+        "R50.2.x: cargo-bloat / binutils 가 필요한 release binary size 측정"
+      ],
+      "publishable_decision_summary": "R50.2.12 §5.37.3 perf debt 6종 일괄 상환 — combining_class hot/cold split (precomposed regression 완전 해결)",
+      "publishable_changes_bullets": [
+        "ordering.rs combining_class hot/cold split (cargo asm root cause 검증)",
+        "benches 10s/500 config + 환경 metadata + build.rs TABLES_GENERATED_BYTES const",
+        "atomic: +5 binding (build.rs emit_*, lookup_u8_trie, supp) + 1 ICU caveat"
+      ],
+      "publishable_verification_bullets": [
+        "cargo asm: combining_class 0 callq (inline 확인), supplementary cold call",
+        "bench Cumulative MiB/s vs R50.2.7: ascii 103x / pre 72x / dec 6.5x / han 6.6x / sam 6.7x",
+        "tables.rs 519 KiB (1.5 MiB 35%); cargo test 962 pass (+1 const assert); clippy 6 유지"
+      ],
+      "publishable_impact_refs": [
+        "5.37.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R50.2.13: CANONICAL_DECOMPOSITION / COMPATIBILITY_DECOMPOSITION trie (indirect)",
+        "R50.2.14: PRIMARY_COMPOSITES 2D key hash 또는 trie",
+        "R50.2.x: cargo-bloat / binutils 가 필요한 release binary size 측정"
       ]
     },
     "Round 5": {

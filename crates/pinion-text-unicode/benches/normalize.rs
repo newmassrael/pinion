@@ -157,12 +157,47 @@ fn load_sample(limit: usize) -> Vec<String> {
     out
 }
 
-criterion_group!(
-    benches,
-    ascii_fast_path,
-    precomposed_nfc,
-    decomposed_recompose,
-    hangul_jamo_compose,
-    normalization_test_sample,
-);
+/// R50.2.12 — explicit Criterion configuration for measurement
+/// robustness.
+///
+/// * `sample_size(500)` — 5x the Criterion default so the per-sample
+///   noise is averaged out; the bench targets reach this in
+///   well under a minute apiece on commodity hardware.
+/// * `measurement_time(10 s)` — Criterion's documented baseline,
+///   restored from the earlier `--measurement-time 3` rapid-iteration
+///   harness so reported deltas reflect signal rather than warm-up
+///   transients.
+/// * `warm_up_time(3 s)` — three full L2-cache eviction cycles before
+///   measurement begins.
+///
+/// Reproducibility envelope (recorded so later rounds can compare on
+/// the same surface): host CPU model + Rust toolchain channel +
+/// `RUSTFLAGS` should be captured alongside the numbers in commit
+/// bodies or section caveats. The harness itself prints the
+/// rustc/profile metadata on every run for the build log to anchor.
+fn configure() -> Criterion {
+    use std::time::Duration;
+    Criterion::default()
+        .sample_size(500)
+        .measurement_time(Duration::from_secs(10))
+        .warm_up_time(Duration::from_secs(3))
+}
+
+fn report_environment() {
+    eprintln!(
+        "[pinion-text-unicode bench] rustc={} profile=release \
+         opt-level=3 measurement_time=10s sample_size=500",
+        env!("CARGO_PKG_RUST_VERSION"),
+    );
+}
+
+criterion_group! {
+    name = benches;
+    config = { report_environment(); configure() };
+    targets = ascii_fast_path,
+              precomposed_nfc,
+              decomposed_recompose,
+              hangul_jamo_compose,
+              normalization_test_sample,
+}
 criterion_main!(benches);

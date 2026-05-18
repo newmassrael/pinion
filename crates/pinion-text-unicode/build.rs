@@ -355,6 +355,30 @@ fn emit_tables(
         nfkd_qc_no,
     );
 
+    // R50.2.12 — record the generated table size as a const so callers
+    // (and tests) can assert footprint without invoking the build
+    // script directly. The value tracks the entire `tables.rs` output
+    // including doc comments — a single regression-resistant anchor
+    // for binary-size discussions.
+    let size_bytes = s.len();
+    writeln!(
+        s,
+        "\n/// R50.2.12 \u{2014} byte size of the generated `tables.rs`\n/// \
+         source as it was written, including doc comments. Updated\n/// \
+         deterministically every build from the same UCD inputs;\n/// \
+         changes only when UCD source or codegen layout shifts.\n\
+         #[allow(\
+         clippy::unreadable_literal, reason = \"build-emitted single decimal\"\
+         )]\n\
+         pub(crate) const TABLES_GENERATED_BYTES: usize = {size_bytes};",
+    )
+    .expect("String write infallible");
+    eprintln!(
+        "[pinion-text-unicode build] tables.rs: {size_bytes} bytes \
+         ({} KiB)",
+        size_bytes / 1024
+    );
+
     fs::write(out_path, s).expect("failed to write tables.rs");
 }
 

@@ -27,6 +27,16 @@ use crate::tables::{
 /// (`c >= 0x10000`) fall back to a sparse `binary_search` over a
 /// few hundred entries, which is fine because supplementary text
 /// rarely dominates the hot path.
+///
+/// R50.2.12 — the supplementary `binary_search_by_key` body is
+/// hoisted into a `#[inline(never)]` helper so the hot
+/// `combining_class` function stays small enough for LLVM to inline
+/// it into the Quick-check / ordering / composition loops that call
+/// it per character. Before the split, `cargo rustc -- --emit asm`
+/// showed `quick_check_ynm` taking a `callq` to `combining_class`
+/// on every iteration — the regression source identified by the
+/// R50.2.11 `precomposed_nfc` carry. With the split the helper
+/// inlines and the inner loop is branch-light again.
 #[inline]
 pub(crate) fn combining_class(c: u32) -> u8 {
     if c < CANONICAL_COMBINING_CLASS_FIRST_CP {
@@ -38,6 +48,17 @@ pub(crate) fn combining_class(c: u32) -> u8 {
         return CANONICAL_COMBINING_CLASS_BMP_DATA
             [block * 256 + (c & 0xFF) as usize];
     }
+    combining_class_supplementary(c)
+}
+
+/// Sparse supplementary-plane fallback for [`combining_class`]. Kept
+/// `#[inline(never)]` because (a) it is the cold path (supplementary
+/// text is rare in normalization workloads) and (b) folding the
+/// `binary_search_by_key` IR back into [`combining_class`] inflates
+/// the hot function past the LLVM inline threshold — the R50.2.11
+/// precomposed regression carry.
+#[inline(never)]
+fn combining_class_supplementary(c: u32) -> u8 {
     match CANONICAL_COMBINING_CLASS_SUPPLEMENTARY
         .binary_search_by_key(&c, |(cp, _)| *cp)
     {

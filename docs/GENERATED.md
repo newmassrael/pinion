@@ -2433,6 +2433,7 @@ router.pointer_down(&mut state_scene);
 - layer chain: §5.37.3 (Unicode) → BIDI (UAX #9) → shape → break (UAX #14) → positioning → raster
 - Quick-check optimization (UAX #15 §5) — already-normalized input 의 fast path
 - §5.37.2 RPC channel 의 text/normalize 후속 method 추가 가능 — AI introspect 정합
+- R50.2.10/11 BMP trie supplementary는 binary_search (ICU UTrie2 strict 위반, 226 entries 수용).
 
 
 
@@ -2471,6 +2472,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/lib.rs:normalize
 - crates/pinion-text-unicode/src/quick_check.rs:nfc_quick_check
 - crates/pinion-text-unicode/benches/normalize.rs
+- crates/pinion-text-unicode/build.rs:emit_fast_path_anchors
+- crates/pinion-text-unicode/build.rs:build_u8_bmp_trie
+- crates/pinion-text-unicode/build.rs:emit_u8_bmp_trie_table
+- crates/pinion-text-unicode/src/quick_check.rs:lookup_u8_trie
+- crates/pinion-text-unicode/src/ordering.rs:combining_class_supplementary
 
 
 
@@ -7229,6 +7235,32 @@ router.pointer_down(&mut state_scene);
 - R50.2.12 precomposed_nfc -20% regression 분석 (flamegraph + inlining heuristic)
 - R50.2.12 CANONICAL_DECOMPOSITION / COMPATIBILITY_DECOMPOSITION trie (indirect index)
 - R50.2.13 PRIMARY_COMPOSITES 2D key hash 또는 trie (anchor short-circuit 외 추가 가속)
+
+
+
+### Round 483 — R50.2.12 §5.37.3 perf debt 6종 일괄 상환 — combining_class hot/cold split (precomposed regression 완전 해결)
+
+**Changes**:
+- ordering.rs combining_class hot/cold split (cargo asm root cause 검증)
+- benches 10s/500 config + 환경 metadata + build.rs TABLES_GENERATED_BYTES const
+- atomic: +5 binding (build.rs emit_*, lookup_u8_trie, supp) + 1 ICU caveat
+
+
+
+**Verification**:
+- cargo asm: combining_class 0 callq (inline 확인), supplementary cold call
+- bench Cumulative MiB/s vs R50.2.7: ascii 103x / pre 72x / dec 6.5x / han 6.6x / sam 6.7x
+- tables.rs 519 KiB (1.5 MiB 35%); cargo test 962 pass (+1 const assert); clippy 6 유지
+
+
+
+**Impact**: §5.37.3
+
+
+**Carry forward**:
+- R50.2.13: CANONICAL_DECOMPOSITION / COMPATIBILITY_DECOMPOSITION trie (indirect)
+- R50.2.14: PRIMARY_COMPOSITES 2D key hash 또는 trie
+- R50.2.x: cargo-bloat / binutils 가 필요한 release binary size 측정
 
 
 
