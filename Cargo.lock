@@ -1893,6 +1893,7 @@ version = "0.0.1"
 dependencies = [
  "pinion-core",
  "pinion-runtime",
+ "pinion-text-font",
  "serde",
  "serde_json",
 ]
@@ -1919,6 +1920,10 @@ dependencies = [
 
 [[package]]
 name = "pinion-text-font"
+version = "0.0.1"
+
+[[package]]
+name = "pinion-text-unicode"
 version = "0.0.1"
 
 [[package]]

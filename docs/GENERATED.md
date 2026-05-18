@@ -2447,6 +2447,11 @@ router.pointer_down(&mut state_scene);
 
 
 
+**Implementations**:
+- crates/pinion-text-unicode/Cargo.toml
+- crates/pinion-text-unicode/src/lib.rs:NormForm
+
+
 
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
@@ -6891,6 +6896,32 @@ router.pointer_down(&mut state_scene);
 - R50.2.4 + R50.2.5: NFKD + NFKC (compatibility) 후속
 - R50.2.6: Quick-check optimization (already-normalized fast path)
 - §5.37.2 RPC channel 에 text/normalize method 추가 — R50.2.X RPC channel (별도 round)
+
+
+
+### Round 471 — Round 471 — R50.2.1 §5.37.3 pinion-text-unicode crate scaffold (NormForm enum boundary, algorithm 미포함)
+
+**Changes**:
+- crates/pinion-text-unicode 신설 (Cargo.toml workspace member + src/lib.rs)
+- NormForm enum (Nfc/Nfd/Nfkc/Nfkd) + R50.2.x roadmap doc
+- 외부 dependency 0개 — algorithm + UCD table embed 은 R50.2.2+ separate slice
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello clean
+- cargo clippy --workspace baseline 유지 (pinion-text-unicode 0 warning)
+- cargo test --workspace = 855 pass (baseline, scaffold 단계 무 추가 test)
+
+
+
+**Impact**: §5.37, §5.37.3
+
+
+**Carry forward**:
+- R50.2.2 UCD 16.x vendor + build.rs codegen (decomp + combining class + exclusions)
+- R50.2.3 NFD algorithm (Canonical Decomposition + Canonical Ordering)
+- R50.2.4+ NFC/NFKD/NFKC + Quick-check + RPC text/normalize method
 
 
 

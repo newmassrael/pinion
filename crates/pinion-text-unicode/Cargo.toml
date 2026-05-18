@@ -1,0 +1,16 @@
+[package]
+name = "pinion-text-unicode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# R50.2.1 §5.37.3 — self-hosted Unicode normalization
+# (UAX #15 NFC/NFD/NFKC/NFKD).
+# 외부 dependency 0개. UCD 16.x table embed + build.rs codegen 은
+# R50.2.2 후속 slice. 본 commit 은 crate boundary + NormForm enum
+# scaffold 만 (algorithm + table 미포함).
+
+[lints]
+workspace = true

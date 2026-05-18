@@ -2803,6 +2803,15 @@
         "5.37.1",
         "5.37.2"
       ],
+      "implementations": [
+        {
+          "file": "crates/pinion-text-unicode/Cargo.toml"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/lib.rs",
+          "symbol": "NormForm"
+        }
+      ],
       "decision_status": "active"
     },
     "5.4": {
@@ -10249,6 +10258,48 @@
         "R50.2.4 + R50.2.5: NFKD + NFKC (compatibility) 후속",
         "R50.2.6: Quick-check optimization (already-normalized fast path)",
         "§5.37.2 RPC channel 에 text/normalize method 추가 — R50.2.X RPC channel (별도 round)"
+      ]
+    },
+    "Round 471": {
+      "decision_summary": "Round 471 — R50.2.1 §5.37.3 pinion-text-unicode crate scaffold (NormForm enum boundary, algorithm 미포함)",
+      "changes_bullets": [
+        "crates/pinion-text-unicode 신설 (Cargo.toml workspace member + src/lib.rs)",
+        "NormForm enum (Nfc/Nfd/Nfkc/Nfkd) + R50.2.x roadmap doc",
+        "외부 dependency 0개 — algorithm + UCD table embed 은 R50.2.2+ separate slice"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello clean",
+        "cargo clippy --workspace baseline 유지 (pinion-text-unicode 0 warning)",
+        "cargo test --workspace = 855 pass (baseline, scaffold 단계 무 추가 test)"
+      ],
+      "impact_refs": [
+        "5.37",
+        "5.37.3"
+      ],
+      "carry_forward_bullets": [
+        "R50.2.2 UCD 16.x vendor + build.rs codegen (decomp + combining class + exclusions)",
+        "R50.2.3 NFD algorithm (Canonical Decomposition + Canonical Ordering)",
+        "R50.2.4+ NFC/NFKD/NFKC + Quick-check + RPC text/normalize method"
+      ],
+      "publishable_decision_summary": "Round 471 — R50.2.1 §5.37.3 pinion-text-unicode crate scaffold (NormForm enum boundary, algorithm 미포함)",
+      "publishable_changes_bullets": [
+        "crates/pinion-text-unicode 신설 (Cargo.toml workspace member + src/lib.rs)",
+        "NormForm enum (Nfc/Nfd/Nfkc/Nfkd) + R50.2.x roadmap doc",
+        "외부 dependency 0개 — algorithm + UCD table embed 은 R50.2.2+ separate slice"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello clean",
+        "cargo clippy --workspace baseline 유지 (pinion-text-unicode 0 warning)",
+        "cargo test --workspace = 855 pass (baseline, scaffold 단계 무 추가 test)"
+      ],
+      "publishable_impact_refs": [
+        "5.37",
+        "5.37.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R50.2.2 UCD 16.x vendor + build.rs codegen (decomp + combining class + exclusions)",
+        "R50.2.3 NFD algorithm (Canonical Decomposition + Canonical Ordering)",
+        "R50.2.4+ NFC/NFKD/NFKC + Quick-check + RPC text/normalize method"
       ]
     },
     "Round 5": {

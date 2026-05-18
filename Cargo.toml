@@ -10,6 +10,7 @@ members = [
     "crates/pinion-overlay",
     "crates/pinion-text",
     "crates/pinion-text-font",
+    "crates/pinion-text-unicode",
     "examples/hello-button",
     "examples/forge-counter",
     "examples/ai-introspect-demo",
