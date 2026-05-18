@@ -2783,7 +2783,8 @@
         "layer chain: §5.37.3 (Unicode) → BIDI (UAX #9) → shape → break (UAX #14) → positioning → raster",
         "Quick-check optimization (UAX #15 §5) — already-normalized input 의 fast path",
         "§5.37.2 RPC channel 의 text/normalize 후속 method 추가 가능 — AI introspect 정합",
-        "R50.2.10/11 BMP trie supplementary는 binary_search (ICU UTrie2 strict 위반, 226 entries 수용)."
+        "R50.2.10/11 BMP trie supplementary는 binary_search (ICU UTrie2 strict 위반, 226 entries 수용).",
+        "R50.2.13 decomp BMP trie: Stage 2 = packed `(length, offset)` u32, null block 만 dedup."
       ],
       "alternatives_rejected": [
         {
@@ -2909,6 +2910,26 @@
         {
           "file": "crates/pinion-text-unicode/src/ordering.rs",
           "symbol": "combining_class_supplementary"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "build_decomp_bmp_trie"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "emit_decomp_table"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "emit_packed_u32_hex_row"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/decompose.rs",
+          "symbol": "lookup_decomp_trie"
+        },
+        {
+          "file": "crates/pinion-text-unicode/src/decompose.rs",
+          "symbol": "lookup_decomp_supplementary"
         }
       ],
       "decision_status": "active"

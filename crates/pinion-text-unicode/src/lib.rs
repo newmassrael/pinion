@@ -161,7 +161,18 @@ pub fn normalize(s: &str, form: NormForm) -> std::borrow::Cow<'_, str> {
 /// has no runtime consumer in `lib.rs`. The `#[allow(dead_code)]`
 /// holds the line until R50.2.X surfaces `text/exclusion_member`
 /// via the RPC channel (§5.37.2).
-#[allow(dead_code)]
+///
+/// R50.2.13 — `clippy::unreadable_literal` is allowed at the
+/// module level because every literal in `tables.rs` is build-
+/// emitted (UCD-derived codepoints, packed `(length, offset)`
+/// trie cells, dedup block indices). The lint's "help a human
+/// reader scan the digits" rationale does not apply to a
+/// multi-thousand-line machine-generated artifact; sprinkling
+/// underscores via the codegen would add cost without buying
+/// audit value. Same rationale as the per-const allow on
+/// `TABLES_GENERATED_BYTES` (R50.2.12), promoted to module scope
+/// now that R50.2.13 added the `BMP_DATA` / `DATA` `u32` arrays.
+#[allow(dead_code, clippy::unreadable_literal)]
 mod tables {
     include!(concat!(env!("OUT_DIR"), "/tables.rs"));
 }
@@ -181,13 +192,23 @@ mod test_fixture;
 
 #[cfg(test)]
 mod tests {
+    use super::decompose::{decompose_canonical, decompose_compatibility};
     use super::ordering::combining_class;
     use super::tables::{
         CANONICAL_COMBINING_CLASS_BMP_DATA,
         CANONICAL_COMBINING_CLASS_BMP_INDEX,
-        CANONICAL_COMBINING_CLASS_SUPPLEMENTARY, CANONICAL_DECOMPOSITION,
-        COMPATIBILITY_DECOMPOSITION, FULL_COMPOSITION_EXCLUSION,
-        PRIMARY_COMPOSITES, TABLES_GENERATED_BYTES,
+        CANONICAL_COMBINING_CLASS_SUPPLEMENTARY,
+        CANONICAL_DECOMPOSITION_BMP_DATA,
+        CANONICAL_DECOMPOSITION_BMP_INDEX,
+        CANONICAL_DECOMPOSITION_DATA, CANONICAL_DECOMPOSITION_ENTRY_COUNT,
+        CANONICAL_DECOMPOSITION_SUPPLEMENTARY,
+        COMPATIBILITY_DECOMPOSITION_BMP_DATA,
+        COMPATIBILITY_DECOMPOSITION_BMP_INDEX,
+        COMPATIBILITY_DECOMPOSITION_DATA,
+        COMPATIBILITY_DECOMPOSITION_ENTRY_COUNT,
+        COMPATIBILITY_DECOMPOSITION_SUPPLEMENTARY,
+        FULL_COMPOSITION_EXCLUSION, PRIMARY_COMPOSITES,
+        TABLES_GENERATED_BYTES,
     };
     use super::{normalize, NormForm, UCD_VERSION};
 
@@ -197,10 +218,12 @@ mod tests {
     // flagged a runtime `#[test]` as redundant (`assert!(true)`
     // optimised out). The const block fires at compile time and
     // fails the build instead of a single test target. The
-    // R50.2.11 baseline lands around 519 KiB of source
-    // (decomposition tables dominate); the 1.5 MiB ceiling leaves
-    // room for future R50.2.x trie additions (decomp / primary
-    // composite) without becoming a noise gate.
+    // R50.2.13 baseline lands a few hundred KiB above the R50.2.11
+    // 519 KiB anchor because the BMP decomposition tries replace
+    // sparse `&[(u32, &[u32])]` lists with full 64-cell Stage-2
+    // blocks (per-codepoint offsets prevent dedup beyond the null
+    // block). The 1.5 MiB ceiling still leaves headroom for R50.2.14
+    // PRIMARY_COMPOSITES trie work without becoming a noise gate.
     const _: () = assert!(
         TABLES_GENERATED_BYTES < 1_500_000,
         "tables.rs footprint regression vs 1.5 MiB ceiling",
@@ -208,6 +231,25 @@ mod tests {
     const _: () = assert!(
         TABLES_GENERATED_BYTES > 100_000,
         "tables.rs footprint suspiciously small (<100 KiB)",
+    );
+
+    // R50.2.13 — cardinality regression guards. The build-emitted
+    // `*_ENTRY_COUNT` consts replace the pre-trie `.len()` shape
+    // introspection on `CANONICAL_DECOMPOSITION` / `COMPATIBILITY_-
+    // DECOMPOSITION`. clippy correctly flags `assert!` over const
+    // expressions as `assert!(true)`-equivalent for runtime tests,
+    // so the check fires at compile time (R50.2.12 pattern) and
+    // fails the build rather than a single test target. Lower
+    // bounds (not exact equality) leave room for future minor UCD
+    // versions to add canonical / compatibility entries without a
+    // gratuitous test churn.
+    const _: () = assert!(
+        CANONICAL_DECOMPOSITION_ENTRY_COUNT >= 2000,
+        "canonical decomposition table shrank below 2000 entries"
+    );
+    const _: () = assert!(
+        COMPATIBILITY_DECOMPOSITION_ENTRY_COUNT >= 5000,
+        "compatibility decomposition table shrank below 5000 entries"
     );
 
     #[test]
@@ -274,27 +316,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn canonical_decomposition_cardinality() {
-        // Unicode 16.0.0 has 2081 canonical decompositions in
-        // UnicodeData.txt. Lower bound guards against parse regression
-        // without freezing the exact count (future minor versions may
-        // add entries).
-        assert!(
-            CANONICAL_DECOMPOSITION.len() >= 2000,
-            "canonical decomp count = {}",
-            CANONICAL_DECOMPOSITION.len()
-        );
-    }
-
-    #[test]
-    fn compatibility_decomposition_cardinality() {
-        assert!(
-            COMPATIBILITY_DECOMPOSITION.len() >= 5000,
-            "compat decomp count = {}",
-            COMPATIBILITY_DECOMPOSITION.len()
-        );
-    }
 
     #[test]
     fn ccc_bmp_trie_well_formed() {
@@ -345,23 +366,142 @@ mod tests {
         }
     }
 
+    /// Validate the R50.2.13 BMP decomposition trie shape — Stage 1
+    /// has exactly one cell per high byte, Stage 2 is a whole number
+    /// of 256-cell blocks, block 0 is the shared null block, and
+    /// every Stage 1 index resolves inside Stage 2. Catches codegen
+    /// drift (e.g. an off-by-one in `build_decomp_bmp_trie`) before
+    /// it slips into the lookup hot path.
+    #[test]
+    fn canonical_decomp_bmp_trie_well_formed() {
+        assert_eq!(CANONICAL_DECOMPOSITION_BMP_INDEX.len(), 256);
+        assert!(
+            CANONICAL_DECOMPOSITION_BMP_DATA.len() % 256 == 0,
+            "Stage 2 must be a whole number of 256-cell blocks: len = {}",
+            CANONICAL_DECOMPOSITION_BMP_DATA.len()
+        );
+        assert!(
+            CANONICAL_DECOMPOSITION_BMP_DATA[..256].iter().all(|&v| v == 0),
+            "Stage 2 block 0 must be the null block"
+        );
+        let num_blocks = u16::try_from(
+            CANONICAL_DECOMPOSITION_BMP_DATA.len() / 256,
+        )
+        .expect("BMP decomp trie block count must fit in u16");
+        for (i, &idx) in CANONICAL_DECOMPOSITION_BMP_INDEX.iter().enumerate() {
+            assert!(
+                idx < num_blocks,
+                "Stage 1 entry {i} points outside Stage 2 (idx = {idx}, \
+                 blocks = {num_blocks})"
+            );
+        }
+        // Every packed cell's `offset + length` must fit inside
+        // `_DATA` — the slice into `_DATA` happens unchecked in the
+        // hot path so the invariant must hold by codegen.
+        let data_len = CANONICAL_DECOMPOSITION_DATA.len();
+        for &cell in CANONICAL_DECOMPOSITION_BMP_DATA {
+            if cell == 0 {
+                continue;
+            }
+            let length = (cell >> 24) as usize;
+            let offset = (cell & 0x00FF_FFFF) as usize;
+            assert!(
+                offset + length <= data_len,
+                "packed cell (length={length}, offset={offset}) \
+                 overruns _DATA (len={data_len})"
+            );
+        }
+    }
+
+    #[test]
+    fn compatibility_decomp_bmp_trie_well_formed() {
+        assert_eq!(COMPATIBILITY_DECOMPOSITION_BMP_INDEX.len(), 256);
+        assert!(
+            COMPATIBILITY_DECOMPOSITION_BMP_DATA.len() % 256 == 0,
+            "Stage 2 must be a whole number of 256-cell blocks: len = {}",
+            COMPATIBILITY_DECOMPOSITION_BMP_DATA.len()
+        );
+        assert!(
+            COMPATIBILITY_DECOMPOSITION_BMP_DATA[..256]
+                .iter()
+                .all(|&v| v == 0),
+            "Stage 2 block 0 must be the null block"
+        );
+        let num_blocks = u16::try_from(
+            COMPATIBILITY_DECOMPOSITION_BMP_DATA.len() / 256,
+        )
+        .expect("BMP compat decomp trie block count must fit in u16");
+        for (i, &idx) in
+            COMPATIBILITY_DECOMPOSITION_BMP_INDEX.iter().enumerate()
+        {
+            assert!(
+                idx < num_blocks,
+                "Stage 1 entry {i} points outside Stage 2 (idx = {idx}, \
+                 blocks = {num_blocks})"
+            );
+        }
+        let data_len = COMPATIBILITY_DECOMPOSITION_DATA.len();
+        for &cell in COMPATIBILITY_DECOMPOSITION_BMP_DATA {
+            if cell == 0 {
+                continue;
+            }
+            let length = (cell >> 24) as usize;
+            let offset = (cell & 0x00FF_FFFF) as usize;
+            assert!(
+                offset + length <= data_len,
+                "packed cell (length={length}, offset={offset}) \
+                 overruns _DATA (len={data_len})"
+            );
+        }
+    }
+
+    #[test]
+    fn decomp_supplementary_sorted_and_unique() {
+        for window in CANONICAL_DECOMPOSITION_SUPPLEMENTARY.windows(2) {
+            assert!(
+                window[0].0 < window[1].0,
+                "canonical decomp supplementary not sorted strictly"
+            );
+        }
+        for (cp, _) in CANONICAL_DECOMPOSITION_SUPPLEMENTARY {
+            assert!(
+                *cp >= 0x10000,
+                "BMP entry leaked into canonical decomp supplementary: \
+                 U+{cp:04X}"
+            );
+        }
+        for window in COMPATIBILITY_DECOMPOSITION_SUPPLEMENTARY.windows(2) {
+            assert!(
+                window[0].0 < window[1].0,
+                "compatibility decomp supplementary not sorted strictly"
+            );
+        }
+        for (cp, _) in COMPATIBILITY_DECOMPOSITION_SUPPLEMENTARY {
+            assert!(
+                *cp >= 0x10000,
+                "BMP entry leaked into compat decomp supplementary: \
+                 U+{cp:04X}"
+            );
+        }
+    }
+
     #[test]
     fn latin_capital_a_grave_canonical_decomposition() {
         // U+00C0 (À) decomposes canonically to U+0041 A + U+0300
-        // combining grave (UnicodeData.txt entry verified).
-        let idx = CANONICAL_DECOMPOSITION
-            .binary_search_by_key(&0x00C0_u32, |(cp, _)| *cp)
-            .expect("U+00C0 must be in canonical decomposition table");
-        assert_eq!(CANONICAL_DECOMPOSITION[idx].1, &[0x0041, 0x0300]);
+        // combining grave (UnicodeData.txt entry verified). R50.2.13 —
+        // exercises the BMP trie + recursive fixed-point pipeline
+        // end-to-end via the same API its non-test callers use.
+        let mut out = Vec::new();
+        decompose_canonical(0x00C0, &mut out);
+        assert_eq!(out, vec![0x0041, 0x0300]);
     }
 
     #[test]
     fn latin_small_e_acute_canonical_decomposition() {
         // U+00E9 (é) → U+0065 e + U+0301 combining acute.
-        let idx = CANONICAL_DECOMPOSITION
-            .binary_search_by_key(&0x00E9_u32, |(cp, _)| *cp)
-            .expect("U+00E9 must be in canonical decomposition table");
-        assert_eq!(CANONICAL_DECOMPOSITION[idx].1, &[0x0065, 0x0301]);
+        let mut out = Vec::new();
+        decompose_canonical(0x00E9, &mut out);
+        assert_eq!(out, vec![0x0065, 0x0301]);
     }
 
     #[test]
@@ -389,20 +529,23 @@ mod tests {
     }
 
     #[test]
-    fn hangul_syllable_has_no_table_decomposition() {
+    fn hangul_syllable_uses_algorithmic_decomposition() {
         // Hangul precomposed syllables (AC00..D7A3) use algorithmic
-        // decomposition per UAX #15 §16, not the UCD table. Verify no
-        // table entry leaks.
-        assert!(
-            CANONICAL_DECOMPOSITION
-                .binary_search_by_key(&0xAC00_u32, |(cp, _)| *cp)
-                .is_err()
-        );
-        assert!(
-            COMPATIBILITY_DECOMPOSITION
-                .binary_search_by_key(&0xD7A3_u32, |(cp, _)| *cp)
-                .is_err()
-        );
+        // decomposition per UAX #15 §16, not the UCD decomposition
+        // table. The canonical / compatibility decompose paths must
+        // delegate to the algorithmic branch before consulting the
+        // trie. R50.2.13 — verified end-to-end through the public
+        // decompose API instead of poking the raw table shape.
+        let mut canonical = Vec::new();
+        decompose_canonical(0xAC00, &mut canonical);
+        // 가 (U+AC00) = L=ᄀ (U+1100) + V=ᅡ (U+1161); LV-only syllable
+        // emits no trailing T (UAX #15 §16, Hangul S decomposition).
+        assert_eq!(canonical, vec![0x1100, 0x1161]);
+
+        let mut compatibility = Vec::new();
+        decompose_compatibility(0xD7A3, &mut compatibility);
+        // 힣 (U+D7A3) = L=ᄒ (U+1112) + V=ᅵ (U+1175) + T=ᇂ (U+11C2).
+        assert_eq!(compatibility, vec![0x1112, 0x1175, 0x11C2]);
     }
 
     #[test]

@@ -506,20 +506,84 @@ fn emit_fast_path_anchors(
     .expect("String write infallible");
 }
 
+/// R50.2.13 — emit a decomposition table as a BMP 2-stage trie
+/// plus a sorted supplementary fallback. Replaces the R50.2.2
+/// `&[(u32, &[u32])]` shape that required `binary_search_by_key`
+/// per lookup. The new shape lets [`crate::decompose`] reach the
+/// per-codepoint decomposition in two memory reads (Stage 1 →
+/// Stage 2) plus a slice into the flat `_DATA` store. Mirrors the
+/// `emit_u8_bmp_trie_table` pattern from R50.2.10/R50.2.11 but
+/// adapts the value encoding to handle variable-length entries.
 fn emit_decomp_table(
     s: &mut String,
     name: &str,
     doc: &str,
     table: &[(u32, Vec<u32>)],
 ) {
-    s.push_str("/// ");
-    s.push_str(doc);
-    s.push_str(
-        "\n///\n/// Sorted by codepoint; use `binary_search_by_key`.\n",
-    );
-    writeln!(s, "pub(crate) static {name}: &[(u32, &[u32])] = &[")
+    let entry_count = table.len();
+    let (bmp_index, bmp_data, decomp_data) = build_decomp_bmp_trie(table);
+    let supplementary: Vec<(u32, &[u32])> = table
+        .iter()
+        .filter(|(cp, _)| *cp >= 0x10000)
+        .map(|(cp, d)| (*cp, d.as_slice()))
+        .collect();
+
+    writeln!(
+        s,
+        "/// {doc}\n///\n/// R50.2.13 \u{2014} BMP lookup via 2-stage trie\n/// \
+         (`{name}_BMP_INDEX[c >> 8]` selects a Stage-2 block;\n/// \
+         `{name}_BMP_DATA[block * 256 + (c & 0xFF)]` returns the packed\n/// \
+         `(length << 24) | offset` cell, with `0` encoding \"no\n/// \
+         decomposition\"). The decomposed sequence is\n/// \
+         `&{name}_DATA[offset .. offset + length]`. Only the all-zero\n/// \
+         null block dedups across high bytes \u{2014} non-null blocks carry\n/// \
+         per-codepoint offsets into `_DATA` so cannot dedup beyond that.\n/// \
+         Supplementary-plane codepoints (`cp >= 0x10000`) use the sorted\n/// \
+         `_SUPPLEMENTARY` sibling array.",
+    )
+    .expect("String write infallible");
+    writeln!(s, "pub(crate) static {name}_BMP_INDEX: &[u16; 256] = &[")
         .expect("String write infallible");
-    for (cp, decomp) in table {
+    emit_packed_row(s, &bmp_index);
+    s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Packed `(length << 24) | offset` cells indexed by\n/// \
+         `{name}_BMP_INDEX`; value `0` = no decomposition.",
+    )
+    .expect("String write infallible");
+    writeln!(s, "pub(crate) static {name}_BMP_DATA: &[u32] = &[")
+        .expect("String write infallible");
+    emit_packed_u32_hex_row(s, &bmp_data);
+    s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Flat store of decomposed codepoints; `{name}_BMP_DATA`\n/// \
+         cells encode `(length, offset)` into this array. NFD/NFKD\n/// \
+         algorithms slice `[offset .. offset + length]` to obtain the\n/// \
+         one-step decomposition sequence.",
+    )
+    .expect("String write infallible");
+    writeln!(s, "pub(crate) static {name}_DATA: &[u32] = &[")
+        .expect("String write infallible");
+    emit_packed_u32_hex_row(s, &decomp_data);
+    s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Supplementary-plane (`cp >= 0x10000`) entries for\n/// \
+         `{name}` (sparse, sorted by codepoint; served by\n/// \
+         `binary_search`).",
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "pub(crate) static {name}_SUPPLEMENTARY: &[(u32, &[u32])] = &[",
+    )
+    .expect("String write infallible");
+    for (cp, decomp) in &supplementary {
         write!(s, "    (0x{cp:04X}, &[").expect("String write infallible");
         for (i, dc) in decomp.iter().enumerate() {
             if i > 0 {
@@ -530,6 +594,87 @@ fn emit_decomp_table(
         s.push_str("]),\n");
     }
     s.push_str("];\n\n");
+
+    writeln!(
+        s,
+        "/// Total entry count for `{name}` (BMP + supplementary).\n/// \
+         Build-time invariant for the crate-internal cardinality\n/// \
+         regression guard \u{2014} replaces the `.len()` introspection\n/// \
+         on the pre-R50.2.13 `&[(u32, &[u32])]` shape.",
+    )
+    .expect("String write infallible");
+    writeln!(
+        s,
+        "pub(crate) const {name}_ENTRY_COUNT: usize = {entry_count};\n",
+    )
+    .expect("String write infallible");
+}
+
+/// R50.2.13 \u{2014} build the BMP 2-stage trie for variable-length
+/// decomposition tables. Returns `(stage1, stage2, decomp_data)`
+/// where `stage1` has exactly 256 entries (one per high byte),
+/// `stage2` is the partially-deduplicated `u32` block table (each
+/// cell packs `(length << 24) | offset` into the flat `decomp_data`
+/// store), and `decomp_data` is the contiguous u32 sequence the
+/// trie indexes into. Block 0 of `stage2` is the all-zero "null"
+/// block, shared across every high byte whose 256-codepoint slice
+/// has no decomposable entries. Non-null blocks carry per-
+/// codepoint offsets and therefore cannot dedup across blocks even
+/// when their entry sets happen to coincide. Inputs with codepoint
+/// `>= 0x10000` are filtered out \u{2014} supplementary entries land in a
+/// separate sorted array via [`emit_decomp_table`].
+fn build_decomp_bmp_trie(
+    entries: &[(u32, Vec<u32>)],
+) -> (Vec<u16>, Vec<u32>, Vec<u32>) {
+    const BLOCK_SIZE: usize = 256;
+    const NUM_BLOCKS: usize = 0x10000 / BLOCK_SIZE; // 256
+
+    let mut decomp_data: Vec<u32> = Vec::new();
+    let mut blocks: Vec<[u32; BLOCK_SIZE]> = vec![[0; BLOCK_SIZE]; NUM_BLOCKS];
+
+    for (cp, decomp) in entries {
+        if *cp >= 0x10000 {
+            continue;
+        }
+        let offset = decomp_data.len();
+        let length = decomp.len();
+        let length_u32: u32 = length.try_into().expect(
+            "decomp length must fit in u32 (UCD entries are far smaller)",
+        );
+        let offset_u32: u32 = offset.try_into().expect(
+            "decomp_data offset must fit in u32 (UCD totals under 256 KiB)",
+        );
+        assert!(
+            length_u32 > 0 && length_u32 < 256,
+            "decomp length {length_u32} out of [1, 255] for U+{cp:04X}",
+        );
+        assert!(
+            offset_u32 < (1 << 24),
+            "decomp_data offset {offset_u32} overflows 24-bit field at U+{cp:04X}",
+        );
+        let packed = (length_u32 << 24) | offset_u32;
+        let block = (*cp as usize) / BLOCK_SIZE;
+        let off = (*cp as usize) % BLOCK_SIZE;
+        blocks[block][off] = packed;
+        decomp_data.extend_from_slice(decomp);
+    }
+
+    let null_block = [0_u32; BLOCK_SIZE];
+    let mut stage1: Vec<u16> = vec![0; NUM_BLOCKS];
+    let mut stage2: Vec<u32> = null_block.to_vec();
+
+    for (i, blk) in blocks.iter().enumerate() {
+        if *blk == null_block {
+            stage1[i] = 0;
+        } else {
+            let idx = u16::try_from(stage2.len() / BLOCK_SIZE)
+                .expect("decomp BMP trie block index must fit in u16");
+            stage2.extend_from_slice(blk);
+            stage1[i] = idx;
+        }
+    }
+
+    (stage1, stage2, decomp_data)
 }
 
 fn emit_ccc_table(s: &mut String, ccc: &[(u32, u8)]) {
@@ -614,6 +759,28 @@ fn emit_packed_row<T: std::fmt::Display>(s: &mut String, items: &[T]) {
         }
     }
     if !items.is_empty() && items.len() % 16 != 0 {
+        s.push('\n');
+    }
+}
+
+/// R50.2.13 — hex variant of [`emit_packed_row`] for `u32` cells.
+/// The generated decomposition trie tables hold packed `(length,
+/// offset)` cells and flat codepoint sequences whose values exceed
+/// the `clippy::unreadable_literal` decimal threshold; emitting in
+/// `0xXXXXXXXX` form keeps the lint clean *and* makes the byte
+/// layout (top byte = length, bottom three = offset) visually
+/// obvious to a reader auditing the generated source.
+fn emit_packed_u32_hex_row(s: &mut String, items: &[u32]) {
+    for (i, &value) in items.iter().enumerate() {
+        if i % 8 == 0 {
+            s.push_str("    ");
+        }
+        write!(s, "0x{value:08X}, ").expect("String write infallible");
+        if i % 8 == 7 {
+            s.push('\n');
+        }
+    }
+    if !items.is_empty() && items.len() % 8 != 0 {
         s.push('\n');
     }
 }

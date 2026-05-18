@@ -2434,6 +2434,7 @@ router.pointer_down(&mut state_scene);
 - Quick-check optimization (UAX #15 §5) — already-normalized input 의 fast path
 - §5.37.2 RPC channel 의 text/normalize 후속 method 추가 가능 — AI introspect 정합
 - R50.2.10/11 BMP trie supplementary는 binary_search (ICU UTrie2 strict 위반, 226 entries 수용).
+- R50.2.13 decomp BMP trie: Stage 2 = packed `(length, offset)` u32, null block 만 dedup.
 
 
 
@@ -2477,6 +2478,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/build.rs:emit_u8_bmp_trie_table
 - crates/pinion-text-unicode/src/quick_check.rs:lookup_u8_trie
 - crates/pinion-text-unicode/src/ordering.rs:combining_class_supplementary
+- crates/pinion-text-unicode/build.rs:build_decomp_bmp_trie
+- crates/pinion-text-unicode/build.rs:emit_decomp_table
+- crates/pinion-text-unicode/build.rs:emit_packed_u32_hex_row
+- crates/pinion-text-unicode/src/decompose.rs:lookup_decomp_trie
+- crates/pinion-text-unicode/src/decompose.rs:lookup_decomp_supplementary
 
 
 
