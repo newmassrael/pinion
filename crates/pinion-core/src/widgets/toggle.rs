@@ -28,8 +28,11 @@
 //!   `scene/invoke` paths cover every observable + every action
 //!   without screenshot inspection (Scene-as-data invariant §2 #7).
 
+// `unsafe_code` intentionally absent — the workspace `forbid` policy
+// (Cargo.toml) rejects per-site overrides, and the sce-build codegen
+// output does not use `unsafe`. The remaining allows silence the
+// stylistic / dead-code lints that generated code routinely trips.
 #[allow(
-    unsafe_code,
     non_snake_case,
     unused_imports,
     dead_code,

@@ -22,9 +22,13 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     match pinion_forge::compile_file(&input, Path::new(&out_dir)) {
-        Ok(out_path) => {
-            println!("cargo:warning=pinion-forge generated {}", out_path.display());
-        }
+        // Codegen success is the steady state on every clean build,
+        // so a silent path is the cargo-idiomatic shape. `cargo:warning=`
+        // is reserved for actual warnings (missing dep, deprecated API);
+        // emitting it from the happy path pollutes `cargo run` output
+        // and prevents the `warnings = "deny"` workspace policy from
+        // having a clean signal-to-noise floor.
+        Ok(_) => {}
         Err(pinion_forge::CompileError::Diagnostics(diags)) => {
             for d in &diags {
                 eprintln!("{d}");

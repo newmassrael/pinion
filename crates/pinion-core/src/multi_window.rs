@@ -7,8 +7,10 @@
 //! stress the topology idiom; consumer crates use `crate::app::App` for
 //! their real `app.scxml`.
 
+// `unsafe_code` intentionally absent — see `widgets/button.rs` for the
+// workspace `forbid` policy rationale. sce-build codegen output does
+// not use `unsafe`.
 #[allow(
-    unsafe_code,
     non_snake_case,
     unused_imports,
     dead_code,

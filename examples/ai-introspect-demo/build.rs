@@ -25,9 +25,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     match pinion_forge::compile_file(&input, Path::new(&out_dir)) {
-        Ok(out_path) => {
-            println!("cargo:warning=pinion-forge generated {}", out_path.display());
-        }
+        // Silent success path — see hello-button build.rs for the
+        // rationale. Codegen alerts on the happy path conflict with the
+        // workspace `warnings = "deny"` floor.
+        Ok(_) => {}
         Err(pinion_forge::CompileError::Diagnostics(diags)) => {
             for d in &diags {
                 eprintln!("{d}");

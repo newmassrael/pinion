@@ -8,8 +8,11 @@
 //! callers do not touch `sce_rust_runtime::Engine` directly. `pinion-runtime`
 //! consumes this for window routing per §5.17 §5.18.
 
+// `unsafe_code` intentionally absent — see `widgets/button.rs` for the
+// workspace `forbid` policy rationale. sce-build codegen output does
+// not use `unsafe`; the remaining allows silence stylistic / dead-code
+// lints generated code routinely trips.
 #[allow(
-    unsafe_code,
     non_snake_case,
     unused_imports,
     dead_code,

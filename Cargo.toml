@@ -92,7 +92,23 @@ lru = "0.18"
 criterion = "0.5"
 
 [workspace.lints.rust]
-unsafe_code = "deny"
+# `forbid` (vs `deny`) — rejects even per-site `#[allow]` overrides.
+# CLAUDE.md frame: `unsafe_code = "forbid"`. The framework never
+# requires `unsafe`; if a future axis genuinely needs it (e.g. a
+# vendored FFI), the spec round must explicitly downgrade to `deny`
+# at that boundary so the audit trail records the exception.
+unsafe_code = "forbid"
+# Treat every rustc warning as an error. The workspace baseline is
+# `0` warnings (verified by `cargo clippy --workspace --all-targets
+# --features pinion-runtime/vello`); promoting to `deny` codifies
+# that floor — any new warning aborts the build rather than
+# accumulating as drift. Aligns with the CLAUDE.md "Build and Link
+# Error Priority" rule.
+warnings = "deny"
 
 [workspace.lints.clippy]
-pedantic = { level = "warn", priority = -1 }
+# `pedantic` group — the strictest lint set still considered
+# textbook by Clippy maintainers. Already at `0` warnings on the
+# current workspace; promoting `warn → deny` makes the policy
+# enforced by the compiler instead of by convention.
+pedantic = { level = "deny", priority = -1 }
