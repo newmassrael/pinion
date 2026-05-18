@@ -227,107 +227,30 @@ impl Name {
     ///   범위 위반 / record string offset+length 가 storage 너머.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         let mut r = Reader::new(bytes, NAME_TAG);
-        let version = r.read_u16()?;
-        if version > 1 {
-            return Err(ParseError::InvalidTableField {
-                tag: NAME_TAG,
-                field: "version",
-                value: FieldValue::from_u16(version),
-            });
-        }
-        let count = r.read_u16()?;
-        let storage_offset = usize::from(r.read_u16()?);
-        if storage_offset > bytes.len() {
-            return Err(ParseError::InvalidTableField {
-                tag: NAME_TAG,
-                field: "storageOffset/out-of-bounds",
-                value: FieldValue::Unsigned(storage_offset as u64),
-            });
-        }
-
-        // Read name records (12 bytes each).
-        let mut raw_records = Vec::with_capacity(usize::from(count));
-        for _ in 0..count {
-            let platform_id = r.read_u16()?;
-            let encoding_id = r.read_u16()?;
-            let language_id = r.read_u16()?;
-            let name_id = r.read_u16()?;
-            let length = r.read_u16()?;
-            let string_offset = r.read_u16()?;
-            raw_records.push((
-                platform_id,
-                encoding_id,
-                language_id,
-                name_id,
-                length,
-                string_offset,
-            ));
-        }
-
-        // v1: additional langTagRecord[].
+        let (version, count, storage_offset) = read_header(&mut r, bytes.len())?;
+        let raw_records = read_record_headers(&mut r, count)?;
         let lang_tags_raw = if version == 1 {
-            let lang_tag_count = r.read_u16()?;
-            let mut buf = Vec::with_capacity(usize::from(lang_tag_count));
-            for _ in 0..lang_tag_count {
-                let length = r.read_u16()?;
-                let lang_tag_offset = r.read_u16()?;
-                buf.push((length, lang_tag_offset));
-            }
-            buf
+            read_lang_tag_headers(&mut r)?
         } else {
             Vec::new()
         };
 
-        // String storage = bytes[storage_offset..].
-        let storage_bytes = &bytes[storage_offset..];
-
-        // Resolve name records — string slice extraction with bounds check.
-        let mut records = Vec::with_capacity(raw_records.len());
-        for (platform_id, encoding_id, language_id, name_id, length, string_offset) in raw_records {
-            let so = usize::from(string_offset);
-            let len = usize::from(length);
-            let end = so.checked_add(len).ok_or(ParseError::InvalidTableField {
+        // spec mandate: storage 는 records / langTagRecords 너머에 위치 —
+        // R50.1.2 hhea reserved / R50.1.3.1 cmap searchParams / R50.1.4.2.1
+        // composite instructions strict 정신 일관.
+        let header_end = r.position();
+        if storage_offset < header_end {
+            return Err(ParseError::InvalidTableField {
                 tag: NAME_TAG,
-                field: "nameRecord/offset+length-overflow",
-                value: FieldValue::Unsigned(u64::from(string_offset) + u64::from(length)),
-            })?;
-            if end > storage_bytes.len() {
-                return Err(ParseError::TableTooShort {
-                    tag: NAME_TAG,
-                    needed: storage_offset + end,
-                    available: bytes.len(),
-                });
-            }
-            let string = storage_bytes[so..end].to_vec();
-            records.push(NameRecord {
-                platform_id,
-                encoding_id,
-                language_id,
-                name_id,
-                string,
+                field: "storageOffset/overlaps-header-or-records",
+                value: FieldValue::Unsigned(storage_offset as u64),
             });
         }
 
-        // Resolve lang tag records — same pattern.
-        let mut lang_tag_records = Vec::with_capacity(lang_tags_raw.len());
-        for (length, lang_tag_offset) in lang_tags_raw {
-            let so = usize::from(lang_tag_offset);
-            let len = usize::from(length);
-            let end = so.checked_add(len).ok_or(ParseError::InvalidTableField {
-                tag: NAME_TAG,
-                field: "langTagRecord/offset+length-overflow",
-                value: FieldValue::Unsigned(u64::from(lang_tag_offset) + u64::from(length)),
-            })?;
-            if end > storage_bytes.len() {
-                return Err(ParseError::TableTooShort {
-                    tag: NAME_TAG,
-                    needed: storage_offset + end,
-                    available: bytes.len(),
-                });
-            }
-            let tag = storage_bytes[so..end].to_vec();
-            lang_tag_records.push(LangTagRecord { tag });
-        }
+        let storage_bytes = &bytes[storage_offset..];
+        let records = resolve_records(&raw_records, storage_bytes, storage_offset, bytes.len())?;
+        let lang_tag_records =
+            resolve_lang_tags(&lang_tags_raw, storage_bytes, storage_offset, bytes.len())?;
 
         Ok(Self {
             version,
@@ -337,7 +260,7 @@ impl Name {
         })
     }
 
-    /// `nameID` 와 일치하는 첫 record 의 UTF-16BE 변환 String.
+    /// `nameID` 와 일치하는 첫 record 의 UTF-16BE 변환 `String`.
     ///
     /// Priority: Windows Unicode BMP (3, 1) > Unicode (0, *) > 첫 match.
     /// 검색 우선순위는 ttf-parser / Microsoft typography reference 정합.
@@ -366,6 +289,128 @@ impl Name {
         }
         None
     }
+}
+
+/// Read version + count + storageOffset header (6 bytes).
+fn read_header(r: &mut Reader<'_>, table_len: usize) -> Result<(u16, u16, usize), ParseError> {
+    let version = r.read_u16()?;
+    if version > 1 {
+        return Err(ParseError::InvalidTableField {
+            tag: NAME_TAG,
+            field: "version",
+            value: FieldValue::from_u16(version),
+        });
+    }
+    let count = r.read_u16()?;
+    let storage_offset = usize::from(r.read_u16()?);
+    if storage_offset > table_len {
+        return Err(ParseError::InvalidTableField {
+            tag: NAME_TAG,
+            field: "storageOffset/out-of-bounds",
+            value: FieldValue::Unsigned(storage_offset as u64),
+        });
+    }
+    Ok((version, count, storage_offset))
+}
+
+type RecordTuple = (u16, u16, u16, u16, u16, u16);
+
+/// Read `count` name records (12 bytes each).
+fn read_record_headers(r: &mut Reader<'_>, count: u16) -> Result<Vec<RecordTuple>, ParseError> {
+    let mut raw = Vec::with_capacity(usize::from(count));
+    for _ in 0..count {
+        let platform_id = r.read_u16()?;
+        let encoding_id = r.read_u16()?;
+        let language_id = r.read_u16()?;
+        let name_id = r.read_u16()?;
+        let length = r.read_u16()?;
+        let string_offset = r.read_u16()?;
+        raw.push((
+            platform_id,
+            encoding_id,
+            language_id,
+            name_id,
+            length,
+            string_offset,
+        ));
+    }
+    Ok(raw)
+}
+
+/// Read v1 langTagCount + langTagRecord[] (4 bytes each).
+fn read_lang_tag_headers(r: &mut Reader<'_>) -> Result<Vec<(u16, u16)>, ParseError> {
+    let lang_tag_count = r.read_u16()?;
+    let mut buf = Vec::with_capacity(usize::from(lang_tag_count));
+    for _ in 0..lang_tag_count {
+        let length = r.read_u16()?;
+        let lang_tag_offset = r.read_u16()?;
+        buf.push((length, lang_tag_offset));
+    }
+    Ok(buf)
+}
+
+/// Resolve record offsets into actual string slices with bounds check.
+fn resolve_records(
+    raw: &[RecordTuple],
+    storage: &[u8],
+    storage_offset: usize,
+    table_len: usize,
+) -> Result<Vec<NameRecord>, ParseError> {
+    let mut records = Vec::with_capacity(raw.len());
+    for &(platform_id, encoding_id, language_id, name_id, length, string_offset) in raw {
+        let so = usize::from(string_offset);
+        let len = usize::from(length);
+        let end = so.checked_add(len).ok_or(ParseError::InvalidTableField {
+            tag: NAME_TAG,
+            field: "nameRecord/offset+length-overflow",
+            value: FieldValue::Unsigned(u64::from(string_offset) + u64::from(length)),
+        })?;
+        if end > storage.len() {
+            return Err(ParseError::TableTooShort {
+                tag: NAME_TAG,
+                needed: storage_offset + end,
+                available: table_len,
+            });
+        }
+        let string = storage[so..end].to_vec();
+        records.push(NameRecord {
+            platform_id,
+            encoding_id,
+            language_id,
+            name_id,
+            string,
+        });
+    }
+    Ok(records)
+}
+
+/// Resolve langTagRecord offsets into actual tag slices.
+fn resolve_lang_tags(
+    raw: &[(u16, u16)],
+    storage: &[u8],
+    storage_offset: usize,
+    table_len: usize,
+) -> Result<Vec<LangTagRecord>, ParseError> {
+    let mut tags = Vec::with_capacity(raw.len());
+    for &(length, lang_tag_offset) in raw {
+        let so = usize::from(lang_tag_offset);
+        let len = usize::from(length);
+        let end = so.checked_add(len).ok_or(ParseError::InvalidTableField {
+            tag: NAME_TAG,
+            field: "langTagRecord/offset+length-overflow",
+            value: FieldValue::Unsigned(u64::from(lang_tag_offset) + u64::from(length)),
+        })?;
+        if end > storage.len() {
+            return Err(ParseError::TableTooShort {
+                tag: NAME_TAG,
+                needed: storage_offset + end,
+                available: table_len,
+            });
+        }
+        let tag = storage[so..end].to_vec();
+        tags.push(LangTagRecord { tag });
+    }
+    Ok(tags)
 }
 
 #[cfg(test)]
@@ -457,6 +502,28 @@ mod tests {
             ParseError::InvalidTableField {
                 tag,
                 field: "storageOffset/out-of-bounds",
+                ..
+            } if tag == NAME_TAG
+        ));
+    }
+
+    #[test]
+    fn reject_storage_offset_overlaps_records() {
+        // storageOffset = 6 (header end) but count = 2 → records 가 storage 와 overlap.
+        // record 들이 12 byte × 2 = 24 byte 필요하므로 storage start 가 30 이상 이어야.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u16.to_be_bytes()); // version
+        bytes.extend_from_slice(&2u16.to_be_bytes()); // count = 2
+        bytes.extend_from_slice(&6u16.to_be_bytes()); // storageOffset = 6 (header end, overlap)
+        // first record 12 bytes (filler)
+        bytes.extend_from_slice(&[0u8; 12]);
+        bytes.extend_from_slice(&[0u8; 12]);
+        let err = Name::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::InvalidTableField {
+                tag,
+                field: "storageOffset/overlaps-header-or-records",
                 ..
             } if tag == NAME_TAG
         ));
