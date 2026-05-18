@@ -2636,6 +2636,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/widgets/radio.scxml
 - crates/pinion-core/src/widgets/radio.rs:Radio
 - crates/pinion-core/src/widgets/radio.rs:RadioExternal
+- crates/pinion-core/widgets/slider.scxml
+- crates/pinion-core/src/widgets/slider.rs:Slider
+- crates/pinion-core/src/widgets/slider.rs:SliderExternal
 
 
 
@@ -7725,6 +7728,27 @@ router.pointer_down(&mut state_scene);
 - cargo test 1004 → 1015 pass (+11 radio)
 - cargo clippy 0 warning
 - substrate validation: R51.4 generic + R51.3 template 공유, divergent value mutation 만 widget-specific (5 lines)
+
+
+
+**Impact**: §5.38, §5.20
+
+
+
+### Round 496 — R51.7 §5.38 Slider (Tier-1) — continuous f32 value + two-phase intent — Slider = shared button-like statechart + continuous f32 value (0..=1) sidecar. Pressed 를 "dragging" 으로 binding 측에서 해석. two-phase intent: "value_changing" (drag 중 live preview) + "value_committed" (drag-end 단일 commit). Material/SwiftUI/Qt convention. substrate validation 3rd widget.
+
+**Changes**:
+- widgets/slider.scxml: sce:use activate_event=slider.activate
+- widgets/slider.rs: Slider (value: f32, set_value clamp+changed-bool) + SliderExternal (intent_changing + intent_committed)
+- IntrospectValue::Float schema slot, intervene 가 Float/Int 둘 다 수락 (Int 시 cast)
+- build.rs + widgets/mod.rs 등록 + add_section_implementation ×3
+
+
+
+**Verification**:
+- cargo test 1015 → 1027 pass (+12 slider)
+- cargo clippy 0 warning (f64::from + epsilon compare 적용)
+- substrate validation 3rd widget — statechart 공유 + value 타입/intent semantic 만 divergent (Toggle bool flip, Checkbox bool flip, Radio bool set, Slider f32 continuous)
 
 
 
