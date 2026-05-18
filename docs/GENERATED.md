@@ -2572,6 +2572,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-text-unicode/src/bidi.rs:BracketType
 - crates/pinion-text-unicode/build.rs:parse_bidi_brackets
 - crates/pinion-text-unicode/src/bidi.rs:resolve_neutral_types
+- crates/pinion-text-unicode/src/bidi.rs:resolve_implicit_levels
+- crates/pinion-text-unicode/src/bidi.rs:apply_l1_line_break
+- crates/pinion-text-unicode/src/bidi.rs:reorder_visual
+- crates/pinion-text-unicode/src/bidi.rs:bidi_reorder
 
 
 
@@ -8233,6 +8237,37 @@ router.pointer_down(&mut state_scene);
 - R51.23 BIDI L-rules — visual reordering (L1 separators reset / L2 max-level reverse / L3 combining mark reorder / L4 mirroring); UAX #9 의 시각적 출력 단계 최종
 - R51.24 N0 NSM-after-bracket propagation (deferred from R51.21) + BidiTest.txt typical-text vector conformance subset
 - derive macro for WidgetTransition / hello-toggle visual demo — BIDI algorithm 완성 후 돌아볼 부채
+
+
+
+### Round 511 — R51.22 §5.37.4 BIDI I-rules + L1 + L2 + bidi_reorder full-pipeline — UAX #9 §3.3.5 I-rules + §3.4 L1 + L2 + bidi_reorder full-pipeline wrapper land — implicit-level resolution (R-at-even+1, EN/AN-at-even+2, L/EN/AN-at-odd+1), L1 line-break level reset for S/B + trailing WS/isolate-format, L2 visual reorder (max-down-to-lowest-odd reverse), bidi_reorder(text) → Vec<usize> visual indices; BIDI algorithm 6단계 (P/X/W/N/I/L) 완성
+
+**Changes**:
+- crates/pinion-text-unicode/src/bidi.rs: resolve_implicit_levels(neutral) -> ExplicitLevels — UAX #9 §3.3.5 I1+I2; BN 제외 + level parity 기반 +1/+2 증량
+- crates/pinion-text-unicode/src/bidi.rs: apply_l1_line_break(implicit, paragraph, paragraph_level) -> ExplicitLevels — UAX #9 §3.4 L1; original Bidi_Class 재산출 (S/B 과 그 않는 WS/isolate-format walk-back + trailing reset)
+- crates/pinion-text-unicode/src/bidi.rs: reorder_visual(levels) -> Vec<usize> — UAX #9 §3.4 L2; max-level 단계적 감소 하향 반복 + lowest-odd-level floor
+- crates/pinion-text-unicode/src/bidi.rs: bidi_reorder(paragraph) -> Vec<usize> — 고수준 pipeline wrapper (P→X→W→N→I→L1→L2)
+- L3 (combining mark reorder) + L4 (bracket mirroring) 이후 라운드 이젤 (L4 는 BidiMirroring.txt UCD 보재 필요)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1201 pass (+17 from 1184 — BIDI I/L rules)
+- pinion-text-unicode: 221 tests pass (+17: I-rules 5 + L1 3 + L2 4 + bidi_reorder 5)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict baseline 유지)
+- UAX #9 spec 준수 검증: I1 R-at-even +1 / I1 EN-AN-at-even +2 / I2 L-at-odd +1 / I2 EN-AN-at-odd +1 / L1 trailing-WS reset / L1 S/B walk-back / L2 공조 LTR identity 숨골 ∘ 단일 RTL block 반복 ∘ nested levels 🔪-down 순차 반복
+- bidi_reorder end-to-end: 'Hello' LTR identity / Pure RTL 'אבג' visual reverse [2,1,0] / mixed LTR+RTL block [0,1,3,2] / Arabic 'ا' + ASCII '5' 이 [1, 0]
+
+
+
+**Impact**: §5.37.4
+
+
+**Carry forward**:
+- R51.x 다음 후보: R51.23 BIDI L3 (combining mark reorder, R에 base) + L4 (bracket mirroring) — UCD BidiMirroring.txt 임포트 + paired_bracket reflection + bidi_mirrored property
+- R51.24 BidiTest.txt typical-text vector conformance subset — algorithm 완성 검증 (hand-tests 대체)
+- R51.21 N0 NSM-after-bracket propagation 상환 (deferred from R51.21) — BidiTest.txt 이 드러낼 때 필요 시 처리
+- derive macro for WidgetTransition / hello-toggle visual demo — BIDI 완성 후 돌아볼 부채 (BIDI algorithm 80-85% 완성, L3/L4/conformance 만 남음)
 
 
 

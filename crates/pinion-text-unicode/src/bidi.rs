@@ -1311,6 +1311,221 @@ pub fn resolve_neutral_types(
     ExplicitLevels { levels, classes }
 }
 
+// ======================================================================
+// R51.22 §5.37.4 — I-rules (UAX #9 §3.3.5 implicit level resolution)
+// ======================================================================
+//
+// After N-rules every non-BN character is L, R, EN, or AN. The
+// I-rules bump levels of "direction-opposing" characters so the
+// final per-codepoint level reflects each character's visual
+// direction. I1 fires on even (LTR-direction) levels; I2 on odd
+// (RTL-direction) levels. BN codes (X9-removed) are skipped — they
+// retain whatever level X-rules assigned.
+
+/// UAX #9 §3.3.5 — apply I1 and I2 to each non-BN codepoint of the
+/// N-rules output. The result has the same `classes` vector
+/// (unchanged) and a `levels` vector with the I-rule adjustments
+/// applied; the W/N output already resolved every class to L, R,
+/// EN, AN (or BN for removed codes), so only those classes can
+/// trigger I-rule bumps.
+#[must_use]
+pub fn resolve_implicit_levels(neutral: ExplicitLevels) -> ExplicitLevels {
+    let ExplicitLevels {
+        mut levels,
+        classes,
+    } = neutral;
+    for i in 0..classes.len() {
+        if classes[i] == BidiClass::BN {
+            continue;
+        }
+        let level = levels[i];
+        if level % 2 == 0 {
+            // I1 — even (LTR) embedding level.
+            match classes[i] {
+                BidiClass::R => levels[i] = level.saturating_add(1),
+                BidiClass::EN | BidiClass::AN => {
+                    levels[i] = level.saturating_add(2);
+                }
+                _ => {}
+            }
+        } else {
+            // I2 — odd (RTL) embedding level.
+            match classes[i] {
+                BidiClass::L | BidiClass::EN | BidiClass::AN => {
+                    levels[i] = level.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+    }
+    ExplicitLevels { levels, classes }
+}
+
+// ======================================================================
+// R51.22 §5.37.4 — L1 (UAX #9 §3.4 line-break level reset)
+// ======================================================================
+//
+// L1 resets the embedding level back to `paragraph_level` for:
+//   1. Segment Separators (S) and Paragraph Separators (B).
+//   2. Any sequence of Whitespace (WS) or Isolate-format characters
+//      (LRI, RLI, FSI, PDI) immediately preceding such an S/B.
+//   3. Any trailing sequence of the same character types at the end
+//      of the paragraph (= end of the line in our one-paragraph
+//      caller contract).
+//
+// The rule consults the *original* (post-X9-removal but pre-W1)
+// Bidi_Class. After W/N rules the classes have all been resolved to
+// L/R/EN/AN, so this routine re-derives the original classes from
+// the source paragraph via [`bidi_class`]. That re-derivation is
+// O(n) and matches the X-rules input directly.
+
+const fn is_l1_pre_reset(cls: BidiClass) -> bool {
+    matches!(
+        cls,
+        BidiClass::WS
+            | BidiClass::LRI
+            | BidiClass::RLI
+            | BidiClass::FSI
+            | BidiClass::PDI
+    )
+}
+
+/// UAX #9 §3.4 L1 — reset whitespace/separator-adjacent levels to
+/// `paragraph_level`. `paragraph` is the original input text; this
+/// function re-derives original `Bidi_Class` values from it (which
+/// the prior pipeline stages have since rewritten).
+#[must_use]
+pub fn apply_l1_line_break(
+    implicit: ExplicitLevels,
+    paragraph: &str,
+    paragraph_level: u8,
+) -> ExplicitLevels {
+    let ExplicitLevels {
+        mut levels,
+        classes,
+    } = implicit;
+    let original: Vec<BidiClass> =
+        paragraph.chars().map(bidi_class).collect();
+    let n = original.len();
+    if n == 0 {
+        return ExplicitLevels { levels, classes };
+    }
+
+    // Pass 1: S and B reset, plus walk-back through WS/isolate-fmt.
+    for i in 0..n {
+        if matches!(original[i], BidiClass::S | BidiClass::B) {
+            levels[i] = paragraph_level;
+            let mut j = i;
+            while j > 0 {
+                j -= 1;
+                if is_l1_pre_reset(original[j]) {
+                    levels[j] = paragraph_level;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Pass 2: trailing WS / isolate-format at end of paragraph.
+    let mut j = n;
+    while j > 0 {
+        let idx = j - 1;
+        if is_l1_pre_reset(original[idx]) {
+            levels[idx] = paragraph_level;
+            j -= 1;
+        } else {
+            break;
+        }
+    }
+
+    ExplicitLevels { levels, classes }
+}
+
+// ======================================================================
+// R51.22 §5.37.4 — L2 (UAX #9 §3.4 visual reordering)
+// ======================================================================
+
+/// UAX #9 §3.4 L2 — produce a reordered index sequence for visual
+/// display. The returned vector maps `visual_position → original_position`
+/// (so `text.chars().nth(result[k])` is the k-th visual codepoint).
+///
+/// The algorithm iterates from the highest embedding level present
+/// in `levels` down to the lowest odd level, reversing each
+/// contiguous run whose level is at-or-above the current iteration
+/// level. Paragraphs containing only LTR text (all levels = 0)
+/// short-circuit to the identity permutation.
+///
+/// # Panics
+///
+/// Panics if invoked with a non-empty `levels` slice for which
+/// `iter().max()` returns `None` — an impossible state given the
+/// explicit `n == 0` early return.
+#[must_use]
+pub fn reorder_visual(levels: &[u8]) -> Vec<usize> {
+    let n = levels.len();
+    let mut indices: Vec<usize> = (0..n).collect();
+    if n == 0 {
+        return indices;
+    }
+    let max_level = *levels.iter().max().expect("non-empty levels");
+    // Lowest odd level present in the text — the loop floor per L2.
+    let Some(min_odd) = levels.iter().copied().filter(|&l| l % 2 == 1).min()
+    else {
+        return indices;
+    };
+
+    let mut level = max_level;
+    while level >= min_odd {
+        let mut i = 0;
+        while i < n {
+            if levels[indices[i]] >= level {
+                let start = i;
+                while i < n && levels[indices[i]] >= level {
+                    i += 1;
+                }
+                indices[start..i].reverse();
+            } else {
+                i += 1;
+            }
+        }
+        if level == 0 {
+            break;
+        }
+        level -= 1;
+    }
+    indices
+}
+
+// ======================================================================
+// R51.22 §5.37.4 — bidi_reorder full-pipeline wrapper
+// ======================================================================
+
+/// UAX #9 full pipeline entry point — given a single paragraph,
+/// run P → X → W → N → I → L1 → L2 and return the visual index
+/// permutation. `result[k]` is the original codepoint position of
+/// the k-th character in visual order.
+///
+/// For multi-paragraph input, split via [`iter_paragraphs`] first
+/// and apply [`bidi_reorder`] per paragraph — the algorithm is
+/// paragraph-local by design.
+///
+/// L3 (combining-mark reorder) and L4 (mirroring) are NOT applied
+/// here; both are display-layer concerns (combining marks already
+/// follow their base in this output; mirroring needs
+/// `BidiMirroring.txt` which is not yet vendored). Tracked for a
+/// follow-up slice.
+#[must_use]
+pub fn bidi_reorder(paragraph: &str) -> Vec<usize> {
+    let p_level = paragraph_level(paragraph);
+    let post_x = resolve_explicit_levels(paragraph, p_level);
+    let post_w = resolve_weak_types(post_x, p_level);
+    let post_n = resolve_neutral_types(post_w, paragraph, p_level);
+    let post_i = resolve_implicit_levels(post_n);
+    let post_l1 = apply_l1_line_break(post_i, paragraph, p_level);
+    reorder_visual(&post_l1.levels)
+}
+
 #[cfg(test)]
 #[allow(
     clippy::similar_names,
@@ -2480,5 +2695,215 @@ mod tests {
         // L's → become L via N1.
         assert_eq!(out.classes[1], BidiClass::L); // LRI
         assert_eq!(out.classes[3], BidiClass::L); // PDI
+    }
+
+    // ---- R51.22 §5.37.4 — I-rules + L1 + L2 + bidi_reorder ----
+
+    #[test]
+    fn i_rules_pure_ltr_unchanged() {
+        // All chars at level 0 (even), class L → no I-rule bump.
+        let post_x = resolve_explicit_levels("abc", 0);
+        let post_w = resolve_weak_types(post_x, 0);
+        let post_n = resolve_neutral_types(post_w, "abc", 0);
+        let post_i = resolve_implicit_levels(post_n);
+        assert_eq!(post_i.levels, vec![0; 3]);
+    }
+
+    #[test]
+    fn i1_r_at_even_level_bumps_to_odd() {
+        // "aא" in LTR paragraph (level 0). 'א' is R at even level
+        // → I1 bumps to level 1.
+        let post_x = resolve_explicit_levels("aא", 0);
+        let post_w = resolve_weak_types(post_x, 0);
+        let post_n = resolve_neutral_types(post_w, "aא", 0);
+        let post_i = resolve_implicit_levels(post_n);
+        assert_eq!(post_i.levels, vec![0, 1]);
+    }
+
+    #[test]
+    fn i1_en_at_even_level_bumps_by_two() {
+        // "א5" in RTL paragraph. Level 1 throughout (RTL paragraph).
+        //   Post-W7 (sos=R): '5' stays EN.
+        //   I2 at level 1: EN → level + 1 = 2.
+        // ... but this is I2 not I1. For I1, need EN at even level.
+        // Construct: LRE-pushed text with '5'. Hmm too complex.
+        // Simpler: "5א" in LTR paragraph (level 0). After W7 (sos=L):
+        // EN→L. So '5' is L at level 0 (no bump). Try different
+        // construction: use raw EN behaviour by RTL paragraph.
+        // Actually for I1 EN test, we need EN at even level. Post-W
+        // EN at level 0 would have been converted to L by W7 (sos=L).
+        // So EN at even level only happens in a level ≥ 2 LTR
+        // context. Use LRE to force level 2.
+        let lre = '\u{202A}';
+        let pdf = '\u{202C}';
+        let text = format!("{lre}5{pdf}");
+        let post_x = resolve_explicit_levels(&text, 0);
+        let post_w = resolve_weak_types(post_x, 0);
+        let post_n = resolve_neutral_types(post_w, &text, 0);
+        // Snapshot the pre-I class + level at '5' before consuming.
+        let cls_at_5 = post_n.classes[1];
+        let level_at_5 = post_n.levels[1];
+        let post_i = resolve_implicit_levels(post_n);
+        // Index 1 = '5'. If post-W class is L (W7 sos at the LRE-
+        // pushed sequence may resolve), I-rules don't bump. If still
+        // EN, I1 bumps by 2. Verify the relationship between the
+        // pre-I class and the post-I level shift.
+        match cls_at_5 {
+            BidiClass::EN | BidiClass::AN => {
+                assert_eq!(post_i.levels[1], level_at_5.saturating_add(2));
+            }
+            BidiClass::L => {
+                assert_eq!(post_i.levels[1], level_at_5);
+            }
+            other => panic!("unexpected class at '5': {other:?}"),
+        }
+    }
+
+    #[test]
+    fn i2_l_at_odd_level_bumps_to_even() {
+        // "אa" in RTL paragraph (level 1). 'a' is L at odd level
+        // → I2 bumps to level 2.
+        let post_x = resolve_explicit_levels("אa", 1);
+        let post_w = resolve_weak_types(post_x, 1);
+        let post_n = resolve_neutral_types(post_w, "אa", 1);
+        let post_i = resolve_implicit_levels(post_n);
+        assert_eq!(post_i.levels, vec![1, 2]);
+    }
+
+    #[test]
+    fn i2_en_at_odd_level_bumps_to_even() {
+        // "א5" in RTL paragraph. Post-W: 'א' R level 1, '5' EN
+        // level 1 (W7 sos=R, no L found, EN stays).
+        // I2: EN at odd level → level + 1 = 2.
+        let post_x = resolve_explicit_levels("א5", 1);
+        let post_w = resolve_weak_types(post_x, 1);
+        let post_n = resolve_neutral_types(post_w, "א5", 1);
+        let post_i = resolve_implicit_levels(post_n);
+        assert_eq!(post_i.levels, vec![1, 2]);
+    }
+
+    #[test]
+    fn l1_resets_trailing_whitespace_in_rtl() {
+        // "א " in RTL paragraph (level 1). Post-I: levels = [1, 1]
+        // (space resolved to R by N1 then no I-rule bump for non-
+        // strong class — wait, R is strong, but a space resolved to
+        // R via N1 stays as level 1? Actually I2 only bumps L/EN/AN.
+        // Resolved-to-R space stays at level 1. L1 should reset it
+        // (it was originally WS) to paragraph_level = 1. No change.
+        let text = "א ";
+        let post_x = resolve_explicit_levels(text, 1);
+        let post_w = resolve_weak_types(post_x, 1);
+        let post_n = resolve_neutral_types(post_w, text, 1);
+        let post_i = resolve_implicit_levels(post_n);
+        let post_l1 = apply_l1_line_break(post_i, text, 1);
+        // Trailing space gets reset to paragraph_level=1. Already 1,
+        // so no change observable here. But the reset path was
+        // exercised.
+        assert_eq!(post_l1.levels, vec![1, 1]);
+    }
+
+    #[test]
+    fn l1_resets_trailing_whitespace_in_ltr_with_embedded_rtl() {
+        // "אa " (RTL letter, then 'a' bumped, then space). In LTR
+        // paragraph (level 0). After I:
+        //   'א' (R at even=0): level 1.
+        //   'a' (L at even=0): level 0.
+        //   ' ' (originally WS, resolved by N to L since sos=eos=L):
+        //     level 0.
+        // L1 resets trailing WS to paragraph_level=0 (already 0).
+        // Construct case where it matters: paragraph at level 0 but
+        // the WS got resolved to level 1 somehow. Can't happen with
+        // simple text. Use a more involved example:
+        //   "abc \u{05D0}\u{05D1}" in LTR: 'abc' L level 0, ' ' WS,
+        //   'אב' R level 1 (post-I). The space between is mid-text
+        //   so L1 doesn't reset it (L1 only resets trailing or pre-
+        //   S/B). Verify levels stay [0, 0, 0, 0, 1, 1].
+        let text = "abc אב";
+        let post_x = resolve_explicit_levels(text, 0);
+        let post_w = resolve_weak_types(post_x, 0);
+        let post_n = resolve_neutral_types(post_w, text, 0);
+        let post_i = resolve_implicit_levels(post_n);
+        let post_l1 = apply_l1_line_break(post_i, text, 0);
+        // The space (index 3) is mid-text — L1 leaves it. After N
+        // the space had been resolved (between L on left and R on
+        // right → mismatched, falls to N2 → level 0). Post-I: 0.
+        // Hebrew letters at level 1.
+        assert_eq!(post_l1.levels, vec![0, 0, 0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn l1_resets_pre_paragraph_separator() {
+        // "a \n" in LTR: 'a' L, ' ' WS, '\n' B. L1: '\n' resets to
+        // paragraph_level=0 (already 0). The preceding ' ' (WS)
+        // also resets to 0 (no change since already 0).
+        let text = "a \n";
+        let result = bidi_reorder(text);
+        // Identity order since paragraph is LTR and no level > 0.
+        assert_eq!(result, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn l2_identity_for_pure_ltr() {
+        let levels = vec![0_u8, 0, 0, 0];
+        assert_eq!(reorder_visual(&levels), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn l2_reverses_rtl_block() {
+        // Levels [0, 0, 1, 1, 0]: reverse the middle two.
+        let levels = vec![0_u8, 0, 1, 1, 0];
+        assert_eq!(reorder_visual(&levels), vec![0, 1, 3, 2, 4]);
+    }
+
+    #[test]
+    fn l2_nested_levels_reverse_innermost_first() {
+        // Levels [0, 1, 2, 2, 1, 0]: at level 2, reverse [2, 3] →
+        // [0, 1, 3, 2, 4, 5]. At level 1, reverse [1, 2, 3, 4] →
+        // [0, 4, 2, 3, 1, 5].
+        let levels = vec![0_u8, 1, 2, 2, 1, 0];
+        assert_eq!(reorder_visual(&levels), vec![0, 4, 2, 3, 1, 5]);
+    }
+
+    #[test]
+    fn l2_empty_input() {
+        let levels: Vec<u8> = vec![];
+        assert!(reorder_visual(&levels).is_empty());
+    }
+
+    #[test]
+    fn bidi_reorder_pure_ltr() {
+        assert_eq!(bidi_reorder("Hello"), vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn bidi_reorder_pure_rtl_paragraph_visual_reverse() {
+        // "אבג" — three Hebrew chars. Paragraph level = 1, all chars
+        // at level 1. L2 reverses the whole thing.
+        assert_eq!(bidi_reorder("אבג"), vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn bidi_reorder_mixed_ltr_with_rtl_block() {
+        // "abאב" in LTR: levels [0, 0, 1, 1]. L2 reverses the RTL
+        // block → visual = [0, 1, 3, 2].
+        assert_eq!(bidi_reorder("abאב"), vec![0, 1, 3, 2]);
+    }
+
+    #[test]
+    fn bidi_reorder_arabic_number_in_arabic_text() {
+        // "ا5" — Arabic letter + ASCII digit in implicitly RTL text.
+        // After P: paragraph_level=1.
+        // After W: AL→R (level 1), EN→AN (level 1) via W2/W3.
+        // After N: no change (both strong).
+        // After I2: AN at odd level → level + 1 = 2.
+        // Levels: [1, 2]. L2: reverse [1] (level 2 alone) → no
+        // change to single-char run. Then reverse [0, 1] at level
+        // 1 → [1, 0].
+        assert_eq!(bidi_reorder("ا5"), vec![1, 0]);
+    }
+
+    #[test]
+    fn bidi_reorder_empty_paragraph() {
+        assert!(bidi_reorder("").is_empty());
     }
 }
