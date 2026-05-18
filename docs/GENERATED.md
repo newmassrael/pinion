@@ -2880,6 +2880,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:AppShell::click_to_focus
 - crates/pinion-shell/src/lib.rs:AppShell::focus
 - crates/pinion-shell/src/lib.rs:AppShell::modifiers
+- crates/pinion-core/widgets/standard_button.sce-template.xml:keyboard_activate
+- crates/pinion-core/src/widgets/widget.rs:WidgetTransition::detect
+- crates/pinion-core/src/widgets/button.rs:Button::detect (keyboard_click branch)
+- examples/hello-button/src/main.rs:ButtonView::apply_key
 
 
 
@@ -4810,6 +4814,37 @@ router.pointer_down(&mut state_scene);
 - R51.55 — Toggle/Checkbox/Radio Space activation 3-in-1 first-client
 - R51.56 — Slider/SliderVertical _focused 인자를 실제 결정에 사용 (broadcast → focused-only)
 - R51.57 — RadioGroup roving tabindex composite focus
+- R51.58 — paint-time focus ring rendering
+- R51.59 — Window blur/restore wiring
+
+
+
+### R51.54 — R51.54 §5.39 Button Space/Enter activation — ARIA keyboard click via SCXML internal transition
+
+**Changes**:
+- standard_button.sce-template.xml 에 keyboard_activate internal transition 2개 (idle/hover) 추가
+- WidgetTransition::detect signature breaking — event 인자 추가 (Copy bound on Event)
+- Button::detect 이 pointer_click ∨ keyboard_click 양측 “click” intent emit
+- ButtonEvent::KeyboardActivate 자동 codegen + parse_button_event 에 수동 매핑 추가
+- hello-button apply_key 신설 — focused == "main_btn" + Space/Enter 검증
+- Button unit test +4 — idle/hover 에서 click intent + disabled → 침묵 + invoke 파시판
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello — 1302 → 1306 pass / 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.38, §5.39
+
+
+**Carry forward**:
+- R51.55 — Toggle/Checkbox/Radio parse_*_event 에 KeyboardActivate 추가 + apply_key 3-in-1 first-client
+- R51.56 — Slider/SliderVertical focused-only routing
+- R51.57 — RadioGroup roving tabindex
 - R51.58 — paint-time focus ring rendering
 - R51.59 — Window blur/restore wiring
 

@@ -179,7 +179,11 @@ impl WidgetTransition for RadioGroup {
         self.send(idx, ev);
     }
 
-    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+    fn detect(
+        before: Self::Snapshot,
+        _event: Self::Event,
+        after: Self::Snapshot,
+    ) -> Option<Intent> {
         if before != after {
             if let Some(idx) = after {
                 return Some(Intent::new_static(

@@ -30,14 +30,32 @@
               name="standard_button">
   <sce:param name="activate_event" required="true"/>
 
+  <!-- R51.54 §5.39 — ARIA keyboard activation. Space / Enter on a
+       focused button-like widget translates to `keyboard_activate`,
+       an internal (no target) transition from `idle` or `hover` that
+       raises the activate event without changing visual state. This
+       matches the W3C ARIA Button keyboard pattern: focus +
+       Space/Enter = a click without requiring a pointer-down
+       sequence. `disabled` ignores the activation per ARIA spec
+       (no transition); `pressed` would conflict with an in-flight
+       pointer drag and is also intentionally absent — keyboard
+       activation in the middle of a pointer drag is a user-error
+       race rather than a meaningful event. -->
+
   <state id="idle">
     <transition event="pointer_enter" target="hover"/>
+    <transition event="keyboard_activate">
+      <raise event="{$activate_event}"/>
+    </transition>
     <transition event="disable" target="disabled"/>
   </state>
 
   <state id="hover">
     <transition event="pointer_leave" target="idle"/>
     <transition event="pointer_down" target="pressed"/>
+    <transition event="keyboard_activate">
+      <raise event="{$activate_event}"/>
+    </transition>
     <transition event="disable" target="disabled"/>
   </state>
 

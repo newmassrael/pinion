@@ -186,6 +186,38 @@ impl WidgetView for ButtonView {
             _ => None,
         }
     }
+
+    /// R51.54 §5.39 — ARIA Button keyboard activation. Space / Enter
+    /// on the focused button fires a `KeyboardActivate` event, which
+    /// the SCXML template (`standard_button.sce-template.xml`)
+    /// processes as an internal transition from `Idle` or `Hover` —
+    /// no visual state change, but the `Button::detect` substrate
+    /// emits a `"click"` intent (parity with the `Pressed → Hover`
+    /// pointer path). `Disabled` ignores activation; the SCXML
+    /// transition is absent from that state per the ARIA spec.
+    ///
+    /// `focused` must match `Self::tag()` — the `FocusManager`
+    /// dispatches the same key to every `WidgetView::apply_key`
+    /// implementation but each widget gates on its own tag so
+    /// activation never leaks to the wrong widget when multiple
+    /// focusable controls share a screen.
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        if focused != Some(Self::tag()) {
+            return false;
+        }
+        if !matches!(key, "Space" | "Enter") {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        intro
+            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .is_ok()
+    }
 }
 
 fn parse_button_state(name: &str) -> ButtonState {

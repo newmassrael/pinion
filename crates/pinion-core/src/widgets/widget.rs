@@ -159,8 +159,11 @@ impl<W: Default> Default for IntentEmitter<W> {
 pub trait WidgetTransition {
     /// The event type the widget consumes (typically the SCXML
     /// `*Event` enum the codegen emits, e.g. crate-scope
-    /// `ButtonEvent`).
-    type Event;
+    /// `ButtonEvent`). `Copy` so [`IntentEmitter::dispatch`] can
+    /// hand the same value to both `drive` and `detect` without
+    /// borrowing or cloning — SCXML event enums are cheap unit
+    /// variants on every Tier-1 widget today.
+    type Event: Copy;
     /// A cheap, owned view of everything the detection step needs
     /// from the widget — usually the SCXML state, optionally tupled
     /// with a value sidecar (`bool`, `f32`, ...).
@@ -175,10 +178,16 @@ pub trait WidgetTransition {
     /// (e.g. Toggle's `Pressed → Hover` flip) stays in one place.
     fn drive(&mut self, event: Self::Event);
 
-    /// Decide whether the (`before`, `after`) snapshot pair signals
+    /// Decide whether the (`before`, `event`, `after`) triple signals
     /// an emitting transition; return the intent to push or `None`
     /// when the transition is silent on the §5.20 channel. Pure
-    /// function of the two snapshots — does not borrow widget state.
+    /// function — does not borrow widget state.
+    ///
+    /// R51.54 §5.39 — the `event` argument lets internal transitions
+    /// (state-stable, e.g. ARIA `keyboard_activate`) emit intents
+    /// without relying on a state-change signature. Without `event`
+    /// the detection rule for a state-stable click would be
+    /// indistinguishable from a no-op.
     ///
     /// `#[must_use]` because dropping the result silently loses the
     /// intent — every emitting transition has a downstream listener
@@ -186,7 +195,11 @@ pub trait WidgetTransition {
     /// always a bug. The [`IntentEmitter::dispatch`] pipeline
     /// consumes the return; direct callers should never discard it.
     #[must_use]
-    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent>;
+    fn detect(
+        before: Self::Snapshot,
+        event: Self::Event,
+        after: Self::Snapshot,
+    ) -> Option<Intent>;
 }
 
 impl<W: WidgetTransition> IntentEmitter<W> {
@@ -203,7 +216,7 @@ impl<W: WidgetTransition> IntentEmitter<W> {
         let before = self.inner.snapshot();
         self.inner.drive(event);
         let after = self.inner.snapshot();
-        if let Some(intent) = W::detect(before, after) {
+        if let Some(intent) = W::detect(before, event, after) {
             self.push(intent);
         }
     }
@@ -255,7 +268,11 @@ mod tests {
             self.state = event;
         }
 
-        fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+        fn detect(
+            before: Self::Snapshot,
+            _event: Self::Event,
+            after: Self::Snapshot,
+        ) -> Option<Intent> {
             // Direction-sensitive: only the canonical 1 → 2 transition
             // emits, so reverse and unrelated transitions stay silent
             // and the tests can distinguish (before, after) ordering.

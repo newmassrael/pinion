@@ -57,8 +57,32 @@ impl WidgetTransition for Button {
         self.send(event);
     }
 
-    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
-        if matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover) {
+    /// Two emitting paths land the same `click` intent — the order
+    /// matters only for readability, both Null-payload click events
+    /// are semantically identical:
+    ///
+    /// 1. R51.12 (pointer) — `Pressed → Hover` transition fires on
+    ///    `PointerUp` when the cursor stayed on the widget through
+    ///    the press / release cycle.
+    /// 2. R51.54 §5.39 (keyboard) — `KeyboardActivate` event from
+    ///    `Idle` or `Hover` while focused; the SCXML internal
+    ///    transition leaves state unchanged, so without the `event`
+    ///    argument the detection would be ambiguous.
+    ///
+    /// The ARIA Button keyboard pattern says Space / Enter on a
+    /// focused button has the same effect as a click — the two paths
+    /// converge on the same intent kind precisely because the spec
+    /// equates them.
+    fn detect(
+        before: Self::Snapshot,
+        event: Self::Event,
+        after: Self::Snapshot,
+    ) -> Option<Intent> {
+        let pointer_click =
+            matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover);
+        let keyboard_click = matches!(event, ButtonEvent::KeyboardActivate)
+            && !matches!(before, ButtonState::Disabled);
+        if pointer_click || keyboard_click {
             Some(Intent::new_static("click", IntrospectValue::Null))
         } else {
             None
@@ -325,6 +349,11 @@ fn parse_button_event(name: &str) -> Option<ButtonEvent> {
         "PointerLeave" => Some(ButtonEvent::PointerLeave),
         "PointerDown" => Some(ButtonEvent::PointerDown),
         "PointerUp" => Some(ButtonEvent::PointerUp),
+        // R51.54 §5.39 — ARIA Space / Enter keyboard activation,
+        // wired via shell's `WidgetView::apply_key` → invoke('send',
+        // 'KeyboardActivate'). The SCXML template fires the activate
+        // event raise without changing visual state.
+        "KeyboardActivate" => Some(ButtonEvent::KeyboardActivate),
         "Disable" => Some(ButtonEvent::Disable),
         "Enable" => Some(ButtonEvent::Enable),
         _ => None,
@@ -586,5 +615,69 @@ mod tests {
         let mut harvested: Vec<Intent> = Vec::new();
         snap.drain_intents(&mut |i| harvested.push(i));
         assert!(harvested.is_empty());
+    }
+
+    // ----- R51.54 §5.39 keyboard activation -----
+
+    #[test]
+    fn keyboard_activate_from_idle_emits_click_intent_state_unchanged() {
+        // ARIA: Space/Enter on a focused button = click. The SCXML
+        // internal transition raises `button.activate` without
+        // changing visible state.
+        let mut bx = ButtonExternal::new();
+        assert_eq!(bx.state(), ButtonState::Idle);
+        bx.send(ButtonEvent::KeyboardActivate);
+        assert_eq!(
+            bx.state(),
+            ButtonState::Idle,
+            "keyboard activation must be a state-stable internal transition",
+        );
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "click");
+        assert_eq!(harvested[0].payload, IntrospectValue::Null);
+    }
+
+    #[test]
+    fn keyboard_activate_from_hover_emits_click_intent_state_unchanged() {
+        let mut bx = ButtonExternal::new();
+        bx.send(ButtonEvent::PointerEnter);
+        assert_eq!(bx.state(), ButtonState::Hover);
+        bx.send(ButtonEvent::KeyboardActivate);
+        assert_eq!(bx.state(), ButtonState::Hover);
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "click");
+    }
+
+    #[test]
+    fn keyboard_activate_from_disabled_emits_no_intent() {
+        // ARIA: disabled controls do not respond to keyboard
+        // activation. The SCXML template has no
+        // `keyboard_activate` transition from `disabled`.
+        let mut bx = ButtonExternal::new();
+        bx.send(ButtonEvent::Disable);
+        assert_eq!(bx.state(), ButtonState::Disabled);
+        bx.send(ButtonEvent::KeyboardActivate);
+        assert_eq!(bx.state(), ButtonState::Disabled);
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty());
+    }
+
+    #[test]
+    fn keyboard_activate_via_invoke_send_emits_click() {
+        // Same path the shell's `WidgetView::apply_key` uses: the
+        // event-name string round-trips through `parse_button_event`.
+        let mut bx = ButtonExternal::new();
+        let _ = bx
+            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+            .unwrap();
+        let mut harvested: Vec<Intent> = Vec::new();
+        bx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "click");
     }
 }

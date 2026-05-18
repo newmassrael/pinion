@@ -181,7 +181,11 @@ impl WidgetTransition for Slider {
         self.send(event);
     }
 
-    fn detect(before: Self::Snapshot, after: Self::Snapshot) -> Option<Intent> {
+    fn detect(
+        before: Self::Snapshot,
+        _event: Self::Event,
+        after: Self::Snapshot,
+    ) -> Option<Intent> {
         let (before_state, _) = before;
         let (after_state, after_value) = after;
         if matches!(before_state, SliderState::Dragging)
