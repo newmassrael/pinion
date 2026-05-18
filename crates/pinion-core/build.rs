@@ -1,10 +1,12 @@
 fn main() {
     // SCXML inputs compiled by sce-build (§5.4 + §5.19):
     //   widgets/button.scxml         -> button_sm.rs       (R12 widget statechart)
+    //   widgets/toggle.scxml         -> toggle_sm.rs       (R51.2 §5.38 Toggle widget)
     //   app.scxml                    -> app_sm.rs          (R16 §5.19 window topology)
     //   fixtures/multi_window.scxml  -> multi_window_sm.rs (R16 §5.17 parallel-root fixture)
     let scxml_inputs = [
         "widgets/button.scxml",
+        "widgets/toggle.scxml",
         "app.scxml",
         "fixtures/multi_window.scxml",
     ];

@@ -2546,6 +2546,13 @@ router.pointer_down(&mut state_scene);
 
 
 
+**Caveats**:
+- R51.2 — Toggle (Tier-1 1번 widget) land. Button R12 SCXML 1:1 패턴 + value: bool layer
+- R51.2 — ToggleExternal 3 schema slots (state/value/send) + toggle intent (Bool payload)
+- R51.2 — AI introspect: §5.15 8-item contract 정통 (state/value read + value intervene + send invoke)
+- R51.2 — Figma fidelity: Toggle pure state, label = Scene::Text + R47.5 TextStyle
+
+
 
 **Alternatives rejected**:
 - application/example inline implementation — R47-class incident 반복 (industry consensus 명확)
@@ -2557,6 +2564,13 @@ router.pointer_down(&mut state_scene);
 
 **Impact scope**: §4, §5.4, §5.13, §5.15, §5.20, §5.24
 
+
+
+**Implementations**:
+- crates/pinion-core/widgets/toggle.scxml
+- crates/pinion-core/src/widgets/toggle.rs:Toggle
+- crates/pinion-core/src/widgets/toggle.rs:ToggleExternal
+- crates/pinion-core/build.rs:scxml_inputs::toggle
 
 
 
@@ -7407,6 +7421,39 @@ router.pointer_down(&mut state_scene);
 - §5.37.7 line break self-hosted text engine — LayoutCache backend swap 시 line_count surface 유지 확인
 - R50.2.13/14 atomic binding 미진행 carry (§5.37.3 implementations)
 - R47.7.x atomic round 등록 carry (commit 됐지만 atomic binding 없음)
+
+
+
+### Round 486 — Round 486 — R51.2 §5.38 Toggle widget land — Button R12 SCXML 1:1 패턴 + value: bool layer, ToggleExternal AI-introspect 정통 (state/value/send schema)
+
+**Changes**:
+- crates/pinion-core/widgets/toggle.scxml 신설 (Button 4-state + raise toggle.activate)
+- crates/pinion-core/build.rs scxml_inputs 에 toggle.scxml 추가 (codegen wire)
+- crates/pinion-core/src/widgets/toggle.rs: Toggle + ToggleExternal + ToggleStateSnapshot
+- widgets/mod.rs: pub mod toggle 추가
+- value flip on Pressed→Hover activate; toggle intent emit IntrospectValue::Bool payload
+- ExternalIntrospect schema 3 slots: state/value/send (query/intervene/invoke 정통)
+- add_section_implementation §5.38 ×4 + caveat ×4 (Toggle land binding)
+
+
+
+**Verification**:
+- cargo test 973 → 993 (+20: Toggle 7 + ToggleExternal 9 + Snapshot 3 + Toggle activate 1)
+- workspace clippy 0 lint baseline 유지 (5 doc backtick warning fix 후)
+- cargo build pinion-core toggle_sm.rs codegen 성공 (sce-build TogglePolicy)
+- ToggleExternal AI-first 정통: 5.15 8-item contract 충족 (state/value/send)
+- Figma fidelity 정통: Toggle pure state, label = Scene::Text + R47.5 TextStyle
+
+
+
+**Impact**: §5.38, §5.4, §5.13, §5.15, §5.20, §5.24
+
+
+**Carry forward**:
+- R51.3+: Checkbox / Slider / TextInput / Menu 후속 (§5.38 Tier-1 catalog)
+- ToggleExternal e2e RPC test (cargo run + invoke send + drain_intents)
+- R47.7.x atomic round entry 정리 carry
+- R50.2.13/14 atomic binding 미진행 carry
 
 
 
