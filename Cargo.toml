@@ -95,6 +95,13 @@ lru = "0.18"
 # crate — Rust cross-platform AT (UIA/AX/AT-SPI/Android) substrate.
 accesskit = "0.24"
 
+# §5.40 R51.62 — winit Adapter for AccessKit. Lives in pinion-shell
+# (winit-coupled). Version-pinned to accesskit 0.24's compatible
+# accesskit_winit 0.33; a future accesskit bump rewrites only this
+# pair (pinion-shell adapter wiring + pinion-a11y substrate) — every
+# widget impl keeps its declarative shape.
+accesskit_winit = "0.33"
+
 # §5.37.3 R50.2.8 — criterion micro-benchmark harness. Workspace-side
 # pin so future performance-instrumented crates (text shaping, BIDI,
 # GSUB lookup, layout cache, etc.) share a single version. Consumers

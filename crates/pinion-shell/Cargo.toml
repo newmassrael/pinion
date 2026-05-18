@@ -36,6 +36,16 @@ vello = { workspace = true }
 # the one-shot init future at the boundary so view-fn purity stays
 # intact across all consumers.
 pollster = { workspace = true }
+# R51.61 §5.40 — pinion-native AccessKit wrapper. AppShell owns the
+# `accesskit_winit::Adapter` and lowers `AccessNode`s emitted by
+# `WidgetView::access_node` into `TreeUpdate` via `AccessTreeBuilder`.
+pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
+# R51.62 §5.40 — winit-coupled AccessKit Adapter. Lives only in
+# pinion-shell because the Adapter type is per-Window per-EventLoop;
+# pinion-a11y stays winit-free so headless / TUI shells can reuse the
+# substrate.
+accesskit = { workspace = true }
+accesskit_winit = { workspace = true }
 
 [lints]
 workspace = true

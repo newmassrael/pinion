@@ -3023,6 +3023,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-a11y/src/tree.rs:tag_to_node_id
 - crates/pinion-a11y/src/action.rs:AccessAction
 - crates/pinion-a11y/src/action.rs:translate_action
+- crates/pinion-shell/src/lib.rs:AppEvent::AccessKit
+- crates/pinion-shell/src/lib.rs:WidgetView::access_node
+- crates/pinion-shell/src/lib.rs:AppShell::handle_accesskit_event
+- crates/pinion-shell/src/lib.rs:AppShell::forward_to_accesskit
+- crates/pinion-runtime/src/input.rs:rect_for_tag
 
 
 
@@ -5131,6 +5136,41 @@ router.pointer_down(&mut state_scene);
 - R51.63-66 — WidgetView::access_node trait 신설 + per-widget 매핑 (Button/Toggle/Checkbox/Radio/Slider/RadioGroup)
 - R51.67 — Action handler → InputRouter intent 변환 layer
 - R51.68 — conformance integration test (AccessKit consumer mock + Tree snapshot + ActionRequest round-trip)
+
+
+
+### R51.62 — R51.62 §5.40 AppShell accesskit_winit::Adapter wiring + WidgetView::access_node trait
+
+**Changes**:
+- accesskit_winit 0.33 workspace.dependencies 추가 + pinion-shell 의 accesskit + accesskit_winit 소비
+- AppEvent 확장 — AccessKit(accesskit_winit::Event) variant + From<Event> impl (Clone derive 제거)
+- WidgetView::access_node(&State, Option<&str>) -> Vec<AccessNode> trait method 신설 (default empty)
+- AppShell.proxy + .accesskit field 추가, new(proxy) 생성자, Default impl 제거
+- resumed 시 accesskit_winit::Adapter::with_event_loop_proxy 호출 (Active 처음 진입 한 번)
+- forward_to_accesskit helper — winit WindowEvent 를 Adapter::process_event 로 전달
+- user_event 확장 — AppEvent::AccessKit 처리 (InitialTreeRequested/ActionRequested/Deactivated)
+- render 후부 — Adapter::update_if_active 로 TreeUpdate emit (paint_scene 이동 전)
+- pinion-runtime::rect_for_tag 을 pub 로 승격 + lib.rs re-export (shell 적장)
+
+
+
+**Verification**:
+- cargo build -p pinion-shell --features pinion-runtime/vello — clean (accesskit_winit linked)
+- cargo test --workspace --features pinion-runtime/vello — 1365 pass / 0 fail (활동 수 유지)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings (window_event helper extract)
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.63 — Button::access_node override (첫 first-client + Button 소속 AccessNode)
+- R51.64 — Toggle/Checkbox/Radio access_node 매핑 (Switch/CheckBox/RadioButton role)
+- R51.65 — Slider access_node + Float value + Action::Increment/Decrement support
+- R51.66 — RadioGroup composite access_node (parent + radio_N children)
+- R51.67 — ActionRequested handler → translate_action + InputRouter intent 변환 실제 디스패치
 
 
 

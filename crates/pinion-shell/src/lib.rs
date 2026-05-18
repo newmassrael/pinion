@@ -55,9 +55,10 @@ use pinion_core::{Frame, Scene, SceneRevision};
 use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
 };
+use pinion_a11y::{AccessNode, AccessTreeBuilder};
 use pinion_runtime::{
-    compute_layout, paint_adapter, walk_scene_and_drain, FocusManager, InputRouter, IntentQueue,
-    PointerId,
+    compute_layout, paint_adapter, rect_for_tag, walk_scene_and_drain, FocusManager, InputRouter,
+    IntentQueue, PointerId,
 };
 use pinion_text::LayoutCache;
 use vello::peniko::Color as PenikoColor;
@@ -69,14 +70,34 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
-/// Winit user-event variant carrying one stdin-fed JSON-RPC 2.0
-/// frame across to the UI thread. The shell's [`AppShell::user_event`]
-/// handler is the sole consumer; the stdin reader thread is the sole
-/// producer.
-#[derive(Debug, Clone)]
+/// Winit user-event variants that reach the UI thread out-of-band.
+///
+/// The shell's [`AppShell::user_event`] handler is the sole consumer;
+/// producers are the stdin reader thread ([`AppEvent::RpcRequest`])
+/// and the `accesskit_winit` adapter ([`AppEvent::AccessKit`], R51.62
+/// §5.40 wiring).
+///
+/// `Clone` is intentionally absent: `accesskit_winit::Event` is not
+/// `Clone`, and the shell never duplicates a user event in-flight.
+#[derive(Debug)]
 pub enum AppEvent {
     /// One JSON-RPC 2.0 frame read from stdin, awaiting dispatch.
     RpcRequest(String),
+    /// R51.62 §5.40 — AT-side accessibility event delivered by
+    /// `accesskit_winit`. Carries `InitialTreeRequested` (AT first
+    /// connected — shell answers with a redraw, which calls
+    /// `Adapter::update_if_active` to emit the current tree),
+    /// `ActionRequested` (AT-side `Click` / `Focus` / `Increment` /
+    /// `Decrement`, routed to the widget's intent surface — R51.67
+    /// dispatch wiring), or `AccessibilityDeactivated` (AT
+    /// disconnected — adapter remains in place for the next attach).
+    AccessKit(accesskit_winit::Event),
+}
+
+impl From<accesskit_winit::Event> for AppEvent {
+    fn from(event: accesskit_winit::Event) -> Self {
+        Self::AccessKit(event)
+    }
 }
 
 /// `Send`-able renderer wrapper trait that the pinion-forge codegen
@@ -326,6 +347,29 @@ pub trait WidgetView: 'static {
     fn fmt_state_log(state: &Self::State) -> String {
         format!("{state:?}")
     }
+
+    /// R51.62 §5.40 — accessibility semantic tree contribution.
+    ///
+    /// Return one [`AccessNode`] per AT-visible tag the widget paints
+    /// (atomic widgets emit a single node; composite widgets like
+    /// `RadioGroup` emit the group node plus one per child radio).
+    /// Bounds are filled in by the shell after layout — widgets need
+    /// not (and should not) resolve pixel rects here. The `focused`
+    /// argument carries [`FocusManager::focused`] at emit time so
+    /// each [`AccessNode::state`] can set its `focused` flag without
+    /// the widget tracking focus state independently.
+    ///
+    /// Default returns an empty vector — widgets that opt out are
+    /// AT-invisible (a deliberate intent declaration; see WAI-ARIA
+    /// Authoring Practices on `role="presentation"`). Tier-1
+    /// catalogue widgets override starting R51.63
+    /// (`Button → AriaRole::Button`, `Toggle → AriaRole::Switch`,
+    /// `Checkbox → AriaRole::CheckBox`, `Radio → AriaRole::RadioButton`,
+    /// `Slider → AriaRole::Slider`, `RadioGroup → AriaRole::RadioGroup`).
+    #[must_use]
+    fn access_node(_state: &Self::State, _focused: Option<&str>) -> Vec<AccessNode> {
+        Vec::new()
+    }
 }
 
 /// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.6
@@ -417,6 +461,19 @@ pub struct AppShell<V: WidgetView> {
     /// the winit-actual frame via `scene/layout {viewport: null}`.
     /// `None` until the first frame has rendered.
     last_paint_layout: Option<LayoutNode>,
+    /// R51.62 §5.40 — winit [`EventLoopProxy`] cached so the shell
+    /// can construct the per-window `accesskit_winit::Adapter` on
+    /// `resumed` (the constructor requires both the active event
+    /// loop and a proxy that produces `Adapter`-routed user events).
+    proxy: EventLoopProxy<AppEvent>,
+    /// R51.62 §5.40 — per-window `accesskit_winit::Adapter`. `None`
+    /// while the window is `Suspended`; populated by `resumed` once
+    /// the winit `Window` exists. The adapter relays winit events
+    /// (`Moved`, `Resized`, `Focused`) into AccessKit's internal
+    /// state and delivers AT-side requests (`InitialTreeRequested`,
+    /// `ActionRequested`, `AccessibilityDeactivated`) through
+    /// [`AppEvent::AccessKit`].
+    accesskit: Option<accesskit_winit::Adapter>,
 }
 
 impl<V: WidgetView> AppShell<V> {
@@ -424,8 +481,13 @@ impl<V: WidgetView> AppShell<V> {
     /// initial cached state read through the §5.15 introspect channel.
     /// The renderer + window stay [`RenderState::Suspended`] until the
     /// first `resumed` event lands.
+    ///
+    /// `proxy` is the same `EventLoopProxy<AppEvent>` the
+    /// [`spawn_stdin_rpc_reader`] background thread holds; the shell
+    /// retains a clone so it can hand a fresh copy to the
+    /// `accesskit_winit::Adapter` on `resumed` (R51.62 §5.40).
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
         use pinion_core::scene::ExternalNode;
         // R22 §5.20: the scene-side `ExternalNode.tag` supplies the
         // widget identifier used as the intent-tag prefix. The widget
@@ -466,6 +528,8 @@ impl<V: WidgetView> AppShell<V> {
             vello_scene: VelloScene::new(),
             text_cache: LayoutCache::new(),
             last_paint_layout: None,
+            proxy,
+            accesskit: None,
         }
     }
 
@@ -706,6 +770,29 @@ impl<V: WidgetView> AppShell<V> {
         if let Err(e) = renderer.render(&self.vello_scene, base) {
             eprintln!("shell: vello render: {e}");
         }
+        // R51.62 §5.40 — emit the AccessKit tree before `paint_scene`
+        // moves into `router.update_paint_scene`. `update_if_active`
+        // is a no-op when no AT client is attached, so the
+        // per-frame cost is one `Option::as_mut` + a load.
+        if let Some(adapter) = self.accesskit.as_mut() {
+            let focused = self.focus.focused().map(str::to_owned);
+            let nodes = V::access_node(&self.cached_state, focused.as_deref());
+            let window_bounds =
+                pinion_core::scene::Rect::new(0, 0, size.width, size.height);
+            let paint_ref = &paint_scene;
+            let focused_ref = focused.as_deref();
+            adapter.update_if_active(|| {
+                let mut builder = AccessTreeBuilder::new();
+                for mut node in nodes {
+                    if let Some(rect) = rect_for_tag(paint_ref, &node.tag) {
+                        node.bounds = Some(rect);
+                    }
+                    builder.add(node);
+                }
+                builder.focused(focused_ref);
+                builder.build(Some(window_bounds))
+            });
+        }
         // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
         // into a `LayoutNode` tree so `scene/layout {viewport: null}`
         // can return the *actual* winit-rendered frame on the next
@@ -720,11 +807,52 @@ impl<V: WidgetView> AppShell<V> {
         self.refresh_state();
         self.drain_intents();
     }
-}
 
-impl<V: WidgetView> Default for AppShell<V> {
-    fn default() -> Self {
-        Self::new()
+    /// R51.62 §5.40 — relay one winit `WindowEvent` to the
+    /// `accesskit_winit::Adapter` (if attached).
+    ///
+    /// Every winit event must reach the adapter before the shell
+    /// processes it so the AT-side mirror of window bounds / focus
+    /// state stays consistent. The adapter handles `Moved` /
+    /// `Resized` / `Focused` internally (`set_root_window_bounds` +
+    /// `update_window_focus_state`) and ignores everything else, so
+    /// the relay is unconditional.
+    fn forward_to_accesskit(&mut self, event: &WindowEvent) {
+        if let (Some(adapter), RenderState::Active { window, .. }) =
+            (self.accesskit.as_mut(), &self.render)
+        {
+            adapter.process_event(window, event);
+        }
+    }
+
+    /// R51.62 §5.40 — dispatch one AT-side event reported by
+    /// `accesskit_winit`.
+    ///
+    /// * `InitialTreeRequested` (AT attaches): trigger a redraw — the
+    ///   next `render` will see `Adapter::update_if_active` as active
+    ///   and emit the full tree. No state mutation here.
+    /// * `ActionRequested(req)`: log only for v0; widget-level
+    ///   dispatch lands at R51.67 alongside the
+    ///   [`pinion_a11y::translate_action`] router.
+    /// * `AccessibilityDeactivated`: log only — the adapter stays in
+    ///   place so a subsequent AT reconnect can reuse it without
+    ///   recreating the per-window state.
+    fn handle_accesskit_event(&mut self, event: accesskit_winit::Event) {
+        use accesskit_winit::WindowEvent as AccessEvent;
+        match event.window_event {
+            AccessEvent::InitialTreeRequested => {
+                self.request_redraw();
+            }
+            AccessEvent::ActionRequested(req) => {
+                eprintln!(
+                    "shell: accesskit action {:?} on node {:?} (dispatch carry R51.67)",
+                    req.action, req.target_node,
+                );
+            }
+            AccessEvent::AccessibilityDeactivated => {
+                eprintln!("shell: accesskit deactivated");
+            }
+        }
     }
 }
 
@@ -775,6 +903,19 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 return;
             }
         };
+        // R51.62 §5.40 — construct the per-window accesskit_winit
+        // Adapter once renderer init succeeds. Skipped if an adapter
+        // already exists (cached-window resume path). The proxy is
+        // cloned because Adapter consumes one internally for each of
+        // its three handler hooks (activation / action / deactivation).
+        if self.accesskit.is_none() {
+            let adapter = accesskit_winit::Adapter::with_event_loop_proxy(
+                event_loop,
+                &window,
+                self.proxy.clone(),
+            );
+            self.accesskit = Some(adapter);
+        }
         self.render = RenderState::Active {
             window,
             renderer: Box::new(renderer),
@@ -809,6 +950,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        self.forward_to_accesskit(&event);
         match event {
             WindowEvent::CloseRequested => {
                 eprintln!(
@@ -942,6 +1084,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             AppEvent::RpcRequest(json) => self.dispatch_rpc(&json),
+            AppEvent::AccessKit(ak) => self.handle_accesskit_event(ak),
         }
     }
 }
@@ -1014,7 +1157,7 @@ pub fn run<V: WidgetView>() {
         .expect("winit EventLoop::with_user_event failed");
     event_loop.set_control_flow(ControlFlow::Wait);
     spawn_stdin_rpc_reader(event_loop.create_proxy());
-    let mut app = AppShell::<V>::new();
+    let mut app = AppShell::<V>::new(event_loop.create_proxy());
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("shell: event loop error: {e}");
     }

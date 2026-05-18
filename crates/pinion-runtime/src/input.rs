@@ -554,7 +554,15 @@ fn tag_matches(node_tag: Option<&str>, target: &str) -> bool {
 /// in declaration order (mirrors [`find_external_by_tag`]'s walk).
 /// `EffectNode` carries no tag so the walk skips it implicitly via
 /// [`Scene::tag`]. `None` when no node in the paint tree matches.
-fn rect_for_tag(scene: &Scene, target_tag: &str) -> Option<Rect> {
+///
+/// R51.62 §5.40 — promoted to `pub` so `pinion-shell` can resolve
+/// post-layout widget bounds when lowering [`pinion_a11y::AccessNode`]
+/// into `accesskit::TreeUpdate`. The walk is identical to the private
+/// `focus_rect_for_tag` in `paint_adapter`; consolidation is carry —
+/// keeping two callsites independent for now avoids cross-module
+/// coupling.
+#[must_use]
+pub fn rect_for_tag(scene: &Scene, target_tag: &str) -> Option<Rect> {
     if let Some(tag) = scene.tag() {
         if tag == target_tag {
             return Some(scene.rect());

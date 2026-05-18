@@ -21,7 +21,7 @@ pub mod paint_adapter;
 pub mod window;
 
 pub use focus::FocusManager;
-pub use input::{InputRouter, PointerId};
+pub use input::{rect_for_tag, InputRouter, PointerId};
 pub use intent_queue::{walk_scene_and_drain, IntentQueue};
 pub use layout::compute_layout;
 pub use window::WindowRouter;
