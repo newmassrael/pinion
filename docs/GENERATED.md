@@ -3003,6 +3003,7 @@ router.pointer_down(&mut state_scene);
 - R51.70 — WidgetView::access_child_invoke + RadioGroup wire-format (WCAG 4.1.2 write 회복)
 - R51.71 — AccessFocus typed + accesskit Node::set_active_descendant (ARIA roving-tabindex 정통)
 - R51.72 — dirty_tags + last_access_nodes cache (AccessKit incremental-update 권고 준수)
+- R51.73 — focus/set + focus/get RPC dual to AccessKit Focus (AI primary path §2 #2 align)
 
 
 
@@ -3060,6 +3061,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-a11y/src/tree.rs:AccessTreeBuilder::dirty_tags
 - crates/pinion-shell/src/lib.rs:AppShell::last_access_nodes
 - crates/pinion-shell/src/lib.rs:AppShell::access_emit_initial
+- crates/pinion-rpc/src/focus.rs
+- crates/pinion-rpc/src/focus.rs:focus_set
+- crates/pinion-rpc/src/focus.rs:focus_get
+- crates/pinion-rpc/src/dispatch.rs:DispatchContext::focus_manager
 
 
 
@@ -5497,6 +5502,34 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - composite tabindex vs selection 구분 — ARIA radio-group 의 tabindex 가 selected_index 와 독립적이어야 함 (현재 pinion 은 결합, R51.x carry)
 - no-change frame emit skip — 궁극 제로 을 위해 dirty+focus 변화 없으면 update_if_active 자체 스킵 (R51.x carry)
+
+
+
+### R51.73 — R51.73 §5.40 focus/set + focus/get RPC — AI a11y primary path (AccessKit Focus action 의 RPC dual)
+
+**Changes**:
+- crates/pinion-rpc/src/focus.rs 신설 — focus_set + focus_get + FocusError + FocusSetParams + FocusState
+- crates/pinion-rpc/src/dispatch.rs — DispatchContext.focus_manager 필드 + with_focus_manager() builder + focus/set + focus/get 라우트
+- crates/pinion-rpc/src/lib.rs — focus 모듈 등록 + re-export
+- crates/pinion-shell/src/lib.rs — dispatch_rpc 가 with_focus_manager 연결, focus 변경 감지 시 request_redraw
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- cargo test --workspace --features pinion-runtime/vello — 1463 pass / 0 fail (+12 from 1451)
+- focus.rs 6 unit (known/null/unknown/no-op/get/empty) + dispatch 6 wire integration
+
+
+
+**Impact**: §5.40, §5.7
+
+
+**Carry forward**:
+- composite tabindex vs selection 구분 — R51.71 carry, ARIA radio-group tabindex independence
+- no-change frame emit skip — R51.72 carry, AccessKit incremental 극극 제로
+- focus/next + focus/prev RPC — keyboard Tab equivalent 의 AI path
 
 
 

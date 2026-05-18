@@ -747,6 +747,10 @@ impl<V: WidgetView> AppShell<V> {
     /// block scope releases the split borrows before
     /// `self.refresh_state()` runs.
     fn dispatch_rpc(&mut self, request: &str) {
+        // R51.73 §5.40 — sample focus before dispatch so we can
+        // detect `focus/set` (or any other focus-mutating method)
+        // and trigger a redraw to refresh the focus ring.
+        let focus_before = self.focus.focused().map(str::to_owned);
         let resp = {
             // Disjoint-field split mutable borrows so the producer
             // closure can capture `cached_state` + `text_cache` while
@@ -754,6 +758,7 @@ impl<V: WidgetView> AppShell<V> {
             let scene_ptr = &mut self.scene;
             let previews = &self.previews;
             let revision = &self.revision;
+            let focus_ptr = &mut self.focus;
             let cached_state = self.cached_state;
             let text_cache_ptr = &mut self.text_cache;
             let render_ref = &self.render;
@@ -781,7 +786,8 @@ impl<V: WidgetView> AppShell<V> {
             // the `Option` wiring branchless at the AI-client level.
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
-                .with_resize_request(&mut resize_req);
+                .with_resize_request(&mut resize_req)
+                .with_focus_manager(focus_ptr);
             if let Some(snapshot) = last_paint {
                 ctx = ctx.with_last_paint_layout(snapshot);
             }
@@ -796,6 +802,13 @@ impl<V: WidgetView> AppShell<V> {
         }
         self.refresh_state();
         self.drain_intents();
+        // R51.73 §5.40 — `focus/set` from the AI client must trigger
+        // a redraw so the focus ring repaints on the new target. The
+        // before/after comparison catches every focus-mutating
+        // method without enumerating method names.
+        if self.focus.focused().map(str::to_owned) != focus_before {
+            self.request_redraw();
+        }
     }
 
     /// §5.20 live dogfood: walk the scene, drain any pending intents

@@ -3867,7 +3867,8 @@
         "R51.69 — ContainerNode::aria_label + enrich_names_from_scene (WAI-ARIA name precedence land)",
         "R51.70 — WidgetView::access_child_invoke + RadioGroup wire-format (WCAG 4.1.2 write 회복)",
         "R51.71 — AccessFocus typed + accesskit Node::set_active_descendant (ARIA roving-tabindex 정통)",
-        "R51.72 — dirty_tags + last_access_nodes cache (AccessKit incremental-update 권고 준수)"
+        "R51.72 — dirty_tags + last_access_nodes cache (AccessKit incremental-update 권고 준수)",
+        "R51.73 — focus/set + focus/get RPC dual to AccessKit Focus (AI primary path §2 #2 align)"
       ],
       "alternatives_rejected": [
         {
@@ -4055,6 +4056,21 @@
         {
           "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "AppShell::access_emit_initial"
+        },
+        {
+          "file": "crates/pinion-rpc/src/focus.rs"
+        },
+        {
+          "file": "crates/pinion-rpc/src/focus.rs",
+          "symbol": "focus_set"
+        },
+        {
+          "file": "crates/pinion-rpc/src/focus.rs",
+          "symbol": "focus_get"
+        },
+        {
+          "file": "crates/pinion-rpc/src/dispatch.rs",
+          "symbol": "DispatchContext::focus_manager"
         }
       ],
       "decision_status": "active"
@@ -7769,6 +7785,52 @@
       "publishable_carry_forward_bullets": [
         "composite tabindex vs selection 구분 — ARIA radio-group 의 tabindex 가 selected_index 와 독립적이어야 함 (현재 pinion 은 결합, R51.x carry)",
         "no-change frame emit skip — 궁극 제로 을 위해 dirty+focus 변화 없으면 update_if_active 자체 스킵 (R51.x carry)"
+      ]
+    },
+    "R51.73": {
+      "decision_summary": "R51.73 §5.40 focus/set + focus/get RPC — AI a11y primary path (AccessKit Focus action 의 RPC dual)",
+      "changes_bullets": [
+        "crates/pinion-rpc/src/focus.rs 신설 — focus_set + focus_get + FocusError + FocusSetParams + FocusState",
+        "crates/pinion-rpc/src/dispatch.rs — DispatchContext.focus_manager 필드 + with_focus_manager() builder + focus/set + focus/get 라우트",
+        "crates/pinion-rpc/src/lib.rs — focus 모듈 등록 + re-export",
+        "crates/pinion-shell/src/lib.rs — dispatch_rpc 가 with_focus_manager 연결, focus 변경 감지 시 request_redraw"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "cargo test --workspace --features pinion-runtime/vello — 1463 pass / 0 fail (+12 from 1451)",
+        "focus.rs 6 unit (known/null/unknown/no-op/get/empty) + dispatch 6 wire integration"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "composite tabindex vs selection 구분 — R51.71 carry, ARIA radio-group tabindex independence",
+        "no-change frame emit skip — R51.72 carry, AccessKit incremental 극극 제로",
+        "focus/next + focus/prev RPC — keyboard Tab equivalent 의 AI path"
+      ],
+      "publishable_decision_summary": "R51.73 §5.40 focus/set + focus/get RPC — AI a11y primary path (AccessKit Focus action 의 RPC dual)",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc/src/focus.rs 신설 — focus_set + focus_get + FocusError + FocusSetParams + FocusState",
+        "crates/pinion-rpc/src/dispatch.rs — DispatchContext.focus_manager 필드 + with_focus_manager() builder + focus/set + focus/get 라우트",
+        "crates/pinion-rpc/src/lib.rs — focus 모듈 등록 + re-export",
+        "crates/pinion-shell/src/lib.rs — dispatch_rpc 가 with_focus_manager 연결, focus 변경 감지 시 request_redraw"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "cargo test --workspace --features pinion-runtime/vello — 1463 pass / 0 fail (+12 from 1451)",
+        "focus.rs 6 unit (known/null/unknown/no-op/get/empty) + dispatch 6 wire integration"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "composite tabindex vs selection 구분 — R51.71 carry, ARIA radio-group tabindex independence",
+        "no-change frame emit skip — R51.72 carry, AccessKit incremental 극극 제로",
+        "focus/next + focus/prev RPC — keyboard Tab equivalent 의 AI path"
       ]
     },
     "Round 1": {

@@ -183,6 +183,14 @@ pub struct DispatchContext<'a> {
     /// the field. Lifetime is server-scoped; the embedder owns the
     /// registry and `DispatchContext` only borrows.
     pub font_registry: Option<&'a FontRegistry>,
+    /// R51.73 §5.40 — application's focus manager handle. Consumed
+    /// by `focus/set` (mutable) + `focus/get` (read-only) so AI
+    /// clients can drive focus programmatically as a dual to the
+    /// `AccessKit::Action::Focus` AT path. `None` causes both
+    /// methods to error with `focus manager unavailable`; the
+    /// embedder may opt out of focus surfacing for headless test
+    /// fixtures that have no `FocusManager`.
+    pub focus_manager: Option<&'a mut pinion_runtime::FocusManager>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -204,6 +212,7 @@ impl<'a> DispatchContext<'a> {
             resize_request: None,
             last_paint_layout: None,
             font_registry: None,
+            focus_manager: None,
         }
     }
 
@@ -255,6 +264,19 @@ impl<'a> DispatchContext<'a> {
         self.font_registry = Some(registry);
         self
     }
+
+    /// Builder: attach the application's focus manager (R51.73
+    /// §5.40). `focus/set` mutates it; `focus/get` reads it. Both
+    /// methods error with `focus manager unavailable` when this is
+    /// not registered.
+    #[must_use]
+    pub fn with_focus_manager(
+        mut self,
+        focus: &'a mut pinion_runtime::FocusManager,
+    ) -> Self {
+        self.focus_manager = Some(focus);
+        self
+    }
 }
 
 /// Dispatch one JSON-RPC 2.0 frame against `ctx`.
@@ -297,6 +319,10 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     // caller registers a fresh producer before each dispatch.
     let mut paint_producer = ctx.paint_producer.take();
     let mut resize_request = ctx.resize_request.take();
+    // R51.73 §5.40 — same split-borrow pattern for the focus manager:
+    // `focus/set` mutates, `focus/get` reads; both need exclusive
+    // access during the route arm.
+    let mut focus_manager = ctx.focus_manager.take();
     // R47.7.5 — snapshot read-only; safe to copy the &LayoutNode out
     // of the context for the dispatch lifetime.
     let last_paint_layout = ctx.last_paint_layout;
@@ -398,6 +424,14 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "font/dispose" => handle_font_dispose(font_registry, request.params.as_ref()),
         "font/list" => handle_font_list(font_registry),
         "text/normalize" => handle_text_normalize(request.params.as_ref()),
+        // R51.73 §5.40 — focus surface as JSON-RPC dual to AccessKit
+        // Focus action. Both methods require the embedder to have
+        // registered a `FocusManager` via `with_focus_manager`.
+        "focus/set" => crate::focus::handle_focus_set(
+            focus_manager.as_deref_mut(),
+            request.params.as_ref(),
+        ),
+        "focus/get" => crate::focus::handle_focus_get(focus_manager.as_deref()),
         _ => Err(RpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -4630,5 +4664,104 @@ mod tests {
         let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
         assert!(v.contains('2'), "selected_index after activate should be 2: {v}");
+    }
+
+    // ---- R51.73 §5.40 — focus/set + focus/get JSON-RPC wire ----
+
+    fn dispatch_with_focus(
+        scene: &mut Scene,
+        focus: &mut pinion_runtime::FocusManager,
+        req: &str,
+    ) -> Option<String> {
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut ctx = DispatchContext::new(scene, &previews, &revision)
+            .with_focus_manager(focus);
+        dispatch(&mut ctx, req)
+    }
+
+    #[test]
+    fn focus_set_wire_round_trip() {
+        let mut scene = counted_scene(0);
+        let mut focus = pinion_runtime::FocusManager::new();
+        focus.update_focusable_tags(vec![
+            "main_btn".to_owned(),
+            "main_cb".to_owned(),
+        ]);
+        let req = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"main_cb"},"id":40}"#;
+        let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
+        let result = resp.result.expect("focus/set returned no result");
+        assert_eq!(
+            result.get("focused").and_then(Value::as_str),
+            Some("main_cb"),
+        );
+        assert_eq!(focus.focused(), Some("main_cb"));
+    }
+
+    #[test]
+    fn focus_set_null_clears() {
+        let mut scene = counted_scene(0);
+        let mut focus = pinion_runtime::FocusManager::new();
+        focus.update_focusable_tags(vec!["main_btn".to_owned()]);
+        let _ = focus.focus_set("main_btn");
+        let req = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":null},"id":41}"#;
+        let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
+        let result = resp.result.unwrap();
+        assert!(result.get("focused").unwrap().is_null());
+        assert!(focus.focused().is_none());
+    }
+
+    #[test]
+    fn focus_set_unknown_tag_errors() {
+        let mut scene = counted_scene(0);
+        let mut focus = pinion_runtime::FocusManager::new();
+        focus.update_focusable_tags(vec!["main_btn".to_owned()]);
+        let req = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"bogus"},"id":42}"#;
+        let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
+        let err = resp.error.expect("expected error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.message, "tag_not_focusable");
+    }
+
+    #[test]
+    fn focus_get_returns_state_with_tab_order() {
+        let mut scene = counted_scene(0);
+        let mut focus = pinion_runtime::FocusManager::new();
+        focus.update_focusable_tags(vec![
+            "a".to_owned(),
+            "b".to_owned(),
+        ]);
+        let _ = focus.focus_set("b");
+        let req = r#"{"jsonrpc":"2.0","method":"focus/get","id":43}"#;
+        let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("focused").and_then(Value::as_str), Some("b"));
+        let order = result.get("tab_order").and_then(Value::as_array).unwrap();
+        assert_eq!(order.len(), 2);
+    }
+
+    #[test]
+    fn focus_set_without_manager_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"main_btn"},"id":44}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("expected unavailable error");
+        assert_eq!(err.code, -32004);
+        assert_eq!(err.message, "focus manager unavailable");
+    }
+
+    #[test]
+    fn focus_set_already_focused_succeeds_idempotent() {
+        let mut scene = counted_scene(0);
+        let mut focus = pinion_runtime::FocusManager::new();
+        focus.update_focusable_tags(vec!["main_btn".to_owned()]);
+        let _ = focus.focus_set("main_btn");
+        let req = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"main_btn"},"id":45}"#;
+        let resp = parse_response(&dispatch_with_focus(&mut scene, &mut focus, req).unwrap());
+        assert!(resp.error.is_none(), "idempotent set must not error");
+        assert_eq!(
+            resp.result.unwrap().get("focused").and_then(Value::as_str),
+            Some("main_btn"),
+        );
     }
 }
