@@ -230,6 +230,11 @@ fn nanum_gothic_cmap_subtable_sweep() {
                 assert!(gid.is_some(), "U+{:04X} should map", g.start_char_code);
             }
         }
+        Some(CmapSubtable::Format0(_)) => {
+            // Format 0 = Mac Roman fallback (priority 4); production Korean font
+            // 가 fallback 으로 선택될 일은 없음 (Format 12 / 4 우선).
+            panic!("Nanum Gothic best_subtable unexpectedly Format0");
+        }
         None => panic!("Nanum Gothic has no usable cmap subtable"),
     }
 }

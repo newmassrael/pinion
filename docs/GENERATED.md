@@ -6542,6 +6542,39 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 465 — Round 465 — R50.1.6 §5.37.1 cmap format 0 (Mac Roman byte encoding). tables/cmap/format0.rs 신설 — 262-byte fixed (header 6 + glyphIdArray 256 byte). Format0::parse strict reject (length != 262). CmapSubtable::Format0 variant + selection_score priority 4 (Format 12 > 4 > 0 fallback). 가장 단순한 cmap format — legacy Mac Roman encoding 폰트 호환. workspace 801 → 807 tests (+6).
+
+**Changes**:
+- tables/cmap/format0.rs 신설 — Format0 (language + glyph_id_array [u8; 256]) + parse strict (length != 262 reject)
+- Format0::glyph_id — codepoint > 255 → None, glyph_id_array entry == 0 → None (.notdef)
+- cmap/mod.rs CmapSubtable::Format0 variant 추가 + glyph_id dispatch + parse format 0 case 추가
+- selection_score priority 4 = Format 0 (Format 12 = 0/1, Format 4 = 2/3, Format 0 = 4 fallback) — priority 순서 명시 갱신
+- cmap/mod.rs tests: unsupported_format_subtable_none 을 format 6 (trimmed) 으로 이전 (format 0 이제 parsed Some) + format0_parsed_and_fallback_priority 신규 test (priority 4 검증)
+- tests/fixtures.rs nanum_gothic_cmap_subtable_sweep 에 Format0 arm 추가 (non-exhaustive panic)
+- format0::tests 5 unit — parse minimal + glyph_id > 255 None + entry 0 unmapped + length != 262 reject + too-short reject
+
+
+
+**Verification**:
+- workspace 801 → 807 tests (+6; pinion-text-font lib 119 → 125 + 5 new unit + 1 priority test)
+- pinion-text-font clippy --all-targets 0 warnings (baseline 유지)
+- real font sweep 재통과 — Noto Sans + Nanum Gothic best_subtable 의 Format 4 / Format 12 우선순위 유지 (Format 0 은 fallback only)
+- spec strict: length != 262 strict reject = R50.1.2/1.3.1/1.4.1.1/1.4.2.1/1.5.1 strict 6단계 일관 원칙 적용
+
+
+
+**Impact**: §5.37.1
+
+
+**Carry forward**:
+- R50.X RPC channel — pinion-rpc font/* method (larger work, pinion-rpc 8292 LOC; Font registry/cache lifetime 결정 필요)
+- R50.1.X future: cmap format 2/6/8/10/13/14 (variation selector / multi-byte CJK), WOFF2, CFF/CFF2, variable axis, color tables, GSUB/GPOS raw
+- R50.1.X future: Macintosh platform 1 Mac Roman name table 변환
+- R50.2+ self-hosted Unicode (UAX #15), BIDI (UAX #9), shaping per script
+- R47-class InputRouter SCE migration
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:

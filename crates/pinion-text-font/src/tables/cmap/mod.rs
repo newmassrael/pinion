@@ -20,11 +20,13 @@
 use crate::error::{FieldValue, ParseError};
 use crate::reader::Reader;
 
+mod format0;
 mod format12;
 mod format4;
 #[cfg(test)]
 mod test_helpers;
 
+pub use format0::Format0;
 pub use format12::{Format12, SequentialMapGroup};
 pub use format4::Format4;
 
@@ -41,6 +43,7 @@ pub struct EncodingRecord {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum CmapSubtable {
+    Format0(Format0),
     Format4(Format4),
     Format12(Format12),
 }
@@ -49,6 +52,7 @@ impl CmapSubtable {
     #[must_use]
     pub fn glyph_id(&self, codepoint: u32) -> Option<u16> {
         match self {
+            Self::Format0(f) => f.glyph_id(codepoint),
             Self::Format4(f) => f.glyph_id(codepoint),
             Self::Format12(f) => f.glyph_id(codepoint),
         }
@@ -129,6 +133,7 @@ impl Cmap {
             }
             let format = u16::from_be_bytes([bytes[off], bytes[off + 1]]);
             let parsed = match format {
+                0 => Some(CmapSubtable::Format0(Format0::parse(&bytes[off..])?)),
                 4 => Some(CmapSubtable::Format4(Format4::parse(&bytes[off..])?)),
                 12 => Some(CmapSubtable::Format12(Format12::parse(&bytes[off..])?)),
                 _ => None,
@@ -177,6 +182,7 @@ impl Cmap {
 /// 1. Format 12 with any other platform/encoding
 /// 2. Format 4 with Microsoft Unicode BMP (3, 1) or Unicode BMP (0, 3)
 /// 3. Format 4 with any other platform/encoding
+/// 4. Format 0 (legacy 8-bit Mac Roman) — fallback when nothing else
 ///
 /// Function 형태 — R50.X RPC introspect 시 AI agent 가 자체 score 계산
 /// 가능하도록 priority 표현체 직접 노출 friendly.
@@ -192,6 +198,7 @@ fn selection_score(rec: &EncodingRecord, sub: &CmapSubtable) -> u8 {
             2
         }
         CmapSubtable::Format4(_) => 3,
+        CmapSubtable::Format0(_) => 4,
     }
 }
 
@@ -373,16 +380,36 @@ mod tests {
 
     #[test]
     fn unsupported_format_subtable_none() {
+        // Format 6 = trimmed table (not yet supported in R50.1.x).
         let mut sub = Vec::new();
-        sub.extend_from_slice(&0u16.to_be_bytes()); // format = 0
-        sub.extend_from_slice(&262u16.to_be_bytes()); // length
+        sub.extend_from_slice(&6u16.to_be_bytes()); // format = 6
+        sub.extend_from_slice(&10u16.to_be_bytes()); // length (minimal)
         sub.extend_from_slice(&0u16.to_be_bytes()); // language
-        sub.resize(sub.len() + 256, 0);
+        sub.extend_from_slice(&0u16.to_be_bytes()); // firstCode
+        sub.extend_from_slice(&0u16.to_be_bytes()); // entryCount = 0
         let cmap_bytes = build_cmap_with_subtable(1, 0, &sub);
-        let cmap = Cmap::parse(&cmap_bytes).expect("valid cmap with format 0");
-        assert_eq!(cmap.encodings[0].subtable_format, 0);
+        let cmap = Cmap::parse(&cmap_bytes).expect("valid cmap with format 6");
+        assert_eq!(cmap.encodings[0].subtable_format, 6);
         assert!(cmap.subtables[0].is_none());
         assert_eq!(cmap.glyph_id(0x0041), None);
+    }
+
+    #[test]
+    fn format0_parsed_and_fallback_priority() {
+        // Format 0: 262-byte fixed. 'A' (0x41) → glyph 42.
+        let mut sub = Vec::new();
+        sub.extend_from_slice(&0u16.to_be_bytes()); // format = 0
+        sub.extend_from_slice(&262u16.to_be_bytes()); // length = 262
+        sub.extend_from_slice(&0u16.to_be_bytes()); // language
+        let mut array = [0u8; 256];
+        array[0x41] = 42;
+        sub.extend_from_slice(&array);
+        let cmap_bytes = build_cmap_with_subtable(1, 0, &sub); // Macintosh platform
+        let cmap = Cmap::parse(&cmap_bytes).expect("valid cmap with format 0");
+        assert!(matches!(cmap.subtables[0], Some(CmapSubtable::Format0(_))));
+        assert_eq!(cmap.glyph_id(0x41), Some(42));
+        // format 0 is priority 4 (lowest), so still selected when sole subtable.
+        assert_eq!(selection_score(&cmap.encodings[0], cmap.subtables[0].as_ref().unwrap()), 4);
     }
 
     #[test]
