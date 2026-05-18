@@ -26,5 +26,8 @@ pub mod tables;
 pub use error::{FieldValue, ParseError};
 pub use font::Font;
 pub use sfnt::{Flavor as SfntFlavor, OffsetTable, TableRecord, find_table, parse_sfnt};
-pub use tables::glyf::{CompositeGlyph, Glyf, Glyph, GlyphHeader, GlyphPoint, SimpleGlyph};
+pub use tables::glyf::{
+    Component, ComponentArgs, ComponentTransform, CompositeGlyph, Glyf, Glyph, GlyphHeader,
+    GlyphPoint, SimpleGlyph,
+};
 pub use tables::loca::{Loca, LocaFormat};

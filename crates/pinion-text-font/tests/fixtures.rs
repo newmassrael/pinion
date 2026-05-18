@@ -323,6 +323,42 @@ fn noto_sans_letter_a_outline_present() {
 }
 
 #[test]
+fn noto_sans_composite_components_nonempty() {
+    // R50.1.4.2: composite glyph 들의 components parse 결과 검증 — 모든 composite
+    // 가 ≥ 1 component, 모든 component 의 transform 이 4 variant 중 하나.
+    let bytes = fs::read("tests/fonts/NotoSans-Regular.ttf").expect("fixture present");
+    let font = Font::from_bytes(bytes).expect("valid Font");
+
+    let mut composite_count = 0;
+    let mut total_components = 0usize;
+    let mut transform_variants = (0usize, 0usize, 0usize, 0usize); // identity/scale/xy/2x2
+    for gid in 0..font.num_glyphs() {
+        if let Some(Glyph::Composite(c)) = font.glyph_outline(gid) {
+            composite_count += 1;
+            assert!(
+                !c.components.is_empty(),
+                "composite glyph {gid} has 0 components"
+            );
+            total_components += c.components.len();
+            for comp in &c.components {
+                use pinion_text_font::ComponentTransform::*;
+                match comp.transform {
+                    Identity => transform_variants.0 += 1,
+                    Scale { .. } => transform_variants.1 += 1,
+                    XYScale { .. } => transform_variants.2 += 1,
+                    Matrix { .. } => transform_variants.3 += 1,
+                }
+            }
+        }
+    }
+    assert!(composite_count > 0, "Noto Sans 는 composite glyph 보유");
+    eprintln!(
+        "Noto Sans: {composite_count} composite / {total_components} components / transforms identity={} scale={} xy={} 2x2={}",
+        transform_variants.0, transform_variants.1, transform_variants.2, transform_variants.3,
+    );
+}
+
+#[test]
 fn nanum_gothic_hangul_outline_present() {
     let bytes = fs::read("tests/fonts/NanumGothic-Regular.ttf").expect("fixture present");
     let font = Font::from_bytes(bytes).expect("valid Font");

@@ -22,10 +22,12 @@ use crate::error::{FieldValue, ParseError};
 use crate::reader::Reader;
 use crate::tables::loca::Loca;
 
+mod compound;
 mod simple;
 #[cfg(test)]
 mod test_helpers;
 
+pub use compound::{Component, ComponentArgs, ComponentTransform};
 pub use simple::SimpleGlyph;
 
 pub(super) const GLYF_TAG: [u8; 4] = *b"glyf";
@@ -50,21 +52,23 @@ pub struct GlyphPoint {
     pub on_curve: bool,
 }
 
-/// Composite glyph — header + raw body bytes.
+/// Composite glyph — header + raw body bytes + parsed components.
 ///
-/// `raw_body` 는 source-of-truth 로 항구 보존 — R50.1.4.2 진입 시 옆에
-/// `components: Vec<Component>` field 가 additive 추가됨 (`raw_body` 는 그대로
-/// 유지, parsed view 의 source + invariant 재검증 용). public API breaking
-/// 없는 evolution.
-///
-/// R50.1.4.1 시점에서는 components parser 가 아직 없어 raw bytes 만 노출 —
-/// real font integration sweep 시 composite glyph 만나도 panic 없이 통과.
+/// `raw_body` 는 source-of-truth 로 항구 보존 (R50.1.4.1 invariant). R50.1.4.2
+/// 가 그 옆에 `components: Vec<Component>` + `instructions: Vec<u8>` additive
+/// 추가 — parsed view 와 raw source 가 모두 노출되어 re-parse / invariant 재
+/// 검증 / future extension 가능.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CompositeGlyph {
     pub header: GlyphHeader,
-    /// glyph header (10 byte) 뒤의 나머지 raw bytes. 항구 보존 — R50.1.4.2
-    /// 가 이 bytes 의 parsed view 를 추가하되 source 는 그대로.
+    /// glyph header (10 byte) 뒤의 나머지 raw bytes. 항구 보존.
     pub raw_body: Vec<u8>,
+    /// R50.1.4.2 — composite component records (subglyph + args + transform).
+    /// Spec: 항상 ≥ 1 entry.
+    pub components: Vec<Component>,
+    /// R50.1.4.2 — last component's `WE_HAVE_INSTRUCTIONS` 가 set 인 경우 부착된
+    /// TrueType hinting bytecode. 그 외에는 empty vec.
+    pub instructions: Vec<u8>,
 }
 
 /// Glyph data variant — empty / simple / composite.
@@ -182,11 +186,14 @@ fn parse_glyph(bytes: &[u8]) -> Result<Glyph, ParseError> {
             )?))
         }
         -1 => {
-            // composite glyph — R50.1.4.1 placeholder: header 만 parse, body 보존.
-            // R50.1.4.2 에서 raw_body 의 parsed view (components + transform) 추가.
+            // composite glyph — header 후 body 를 raw 로 capture + parsed view 생성.
+            // raw_body 는 source-of-truth 항구 보존, components + instructions 는
+            // R50.1.4.2 의 parsed view (additive).
             let body_start = r.position();
             let raw_body = bytes[body_start..].to_vec();
-            Ok(Glyph::Composite(CompositeGlyph { header, raw_body }))
+            Ok(Glyph::Composite(compound::parse_composite(
+                &mut r, header, raw_body,
+            )?))
         }
         other => Err(ParseError::InvalidTableField {
             tag: GLYF_TAG,
@@ -345,6 +352,8 @@ mod tests {
         let composite = Glyph::Composite(CompositeGlyph {
             header: GlyphHeader { x_min: -10, y_min: -20, x_max: 100, y_max: 200 },
             raw_body: vec![],
+            components: vec![],
+            instructions: vec![],
         });
         assert_eq!(
             composite.header(),
@@ -353,15 +362,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_composite_placeholder() {
-        // numberOfContours = -1, bbox valid, 4-byte body remainder.
+    #[allow(clippy::cast_sign_loss)] // (-5i8) as u8 = explicit signed-byte serialization
+    fn parse_composite_single_component() {
+        // numberOfContours = -1, bbox valid, 1 component (i8 args, identity, no more).
+        // Component body: flags(2) + glyphIndex(2) + arg1(1) + arg2(1) = 6 bytes.
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&(-1i16).to_be_bytes()); // numberOfContours = -1
         bytes.extend_from_slice(&0i16.to_be_bytes());
         bytes.extend_from_slice(&0i16.to_be_bytes());
         bytes.extend_from_slice(&100i16.to_be_bytes());
         bytes.extend_from_slice(&100i16.to_be_bytes());
-        bytes.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // raw body
+        // component: flags = ARGS_ARE_XY_VALUES (0x0002), glyph=5, arg1=10, arg2=-5
+        bytes.extend_from_slice(&0x0002u16.to_be_bytes());
+        bytes.extend_from_slice(&5u16.to_be_bytes());
+        bytes.push(10u8);
+        bytes.push((-5i8) as u8);
 
         let loca = Loca {
             format: LocaFormat::Long,
@@ -374,7 +389,14 @@ mod tests {
                     c.header,
                     GlyphHeader { x_min: 0, y_min: 0, x_max: 100, y_max: 100 }
                 );
-                assert_eq!(c.raw_body, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+                assert_eq!(c.raw_body.len(), 6); // source-of-truth 그대로
+                assert_eq!(c.components.len(), 1);
+                assert_eq!(c.components[0].glyph_index, 5);
+                assert_eq!(
+                    c.components[0].args,
+                    ComponentArgs::Offset { x: 10, y: -5 }
+                );
+                assert!(c.instructions.is_empty());
             }
             other => panic!("expected Composite, got {other:?}"),
         }

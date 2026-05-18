@@ -6407,6 +6407,44 @@ router.pointer_down(&mut state_scene);
 
 
 
+### Round 461 — Round 461 — R50.1.4.2 §5.37.1 glyf compound (composite) glyph parser. tables/glyf/compound.rs 신설 — Component + ComponentArgs (Offset i8/i16 + PointMatch u8/u16) + ComponentTransform (Identity / Scale / XYScale / Matrix 4 variant, F2DOT14 raw i16 보존). MORE_COMPONENTS loop + last component's WE_HAVE_INSTRUCTIONS 의 instructions 부착. spec strict: reserved bits (0x0010 + 0xE000) + mutually exclusive transform bits (count_ones <= 1) reject. CompositeGlyph additive (components + instructions field, raw_body source-of-truth 항구 유지). cycle detection = R50.X+ traversal layer separation of concerns. Noto Sans 1848 composite / 3788 components 모두 Identity transform real font sweep 통과. workspace 775 → 786 tests (+11).
+
+**Changes**:
+- tables/glyf/compound.rs 신설 — Component / ComponentArgs (Offset {x: i32, y: i32} 또는 PointMatch {parent: u32, child: u32}) / ComponentTransform (Identity / Scale {scale: i16} / XYScale {x: i16, y: i16} / Matrix {xx, xy, yx, yy: i16}). F2DOT14 raw i16 보존 — caller 가 /16384.0 변환 (lossless representation)
+- FLAG_* 12 const pub(super) — single source of truth (test_helpers 가 import). ARG_1_AND_2_ARE_WORDS / ARGS_ARE_XY_VALUES / WE_HAVE_A_SCALE / RESERVED_BIT_4 (0x0010) / MORE_COMPONENTS / WE_HAVE_AN_X_AND_Y_SCALE / WE_HAVE_A_TWO_BY_TWO / WE_HAVE_INSTRUCTIONS + RESERVED_HIGH (0xE000). hint bits (ROUND_XY_TO_GRID / USE_MY_METRICS / OVERLAP_COMPOUND / SCALED_COMPONENT_OFFSET / UNSCALED_COMPONENT_OFFSET) 는 #[allow(dead_code)] 보존 (caller flags inspect)
+- parse_composite — MORE_COMPONENTS loop, last iter 안에서 WE_HAVE_INSTRUCTIONS 조건부 numInstr + instructions[] parse (last_flags variable 제거 — textbook control flow). read_args / read_transform helper 분리 (DRY)
+- spec strict reject: composite/flags/reserved-bit-set (0x10 또는 0xE000 set), composite/flags/multiple-transform-bits (count_ones > 1)
+- tables/glyf/mod.rs CompositeGlyph — components: Vec<Component> + instructions: Vec<u8> field additive (R50.1.4.1 raw_body source-of-truth 그대로 유지)
+- tables/glyf/mod.rs parse_glyph composite arm — compound::parse_composite 호출 변경, raw_body capture → parsed view 둘 다 포함 반환
+- tables/glyf/test_helpers.rs — ComponentSpec / TransformSpec / build_composite_body builder 추가 (super::compound 의 FLAG_* import — DRY)
+- src/lib.rs — Component + ComponentArgs + ComponentTransform re-export 추가
+- tests/fixtures.rs — noto_sans_composite_components_nonempty (1848 composite / 3788 components / transform variant 통계) sweep
+- compound::tests 11 unit — single component identity/i8/i16 + offset/PointMatch + scale/XYScale/Matrix transform + multiple components loop + WE_HAVE_INSTRUCTIONS + reserved bit reject (low + high) + multiple transform bits reject
+
+
+
+**Verification**:
+- workspace 786 tests pass (R50.1.4.1.1 775 → +11 R50.1.4.2)
+- pinion-text-font clippy --all-targets 0 warnings; workspace clippy baseline 유지 (pinion-core 5 + pinion-runtime 1)
+- real font integration: Noto Sans 1848 composite glyphs / 3788 components / all Identity transform (Latin accented 글자 placement offset only, scale/rotation 없음) — panic 0
+- spec strict 일관: composite reserved bits + transform mutually exclusive — R50.1.1–3.1 의 hhea reserved / cmap searchParams strict 정신 연장
+- API additive evolution: CompositeGlyph 에 components + instructions field 추가 — R50.1.4.1 의 raw_body 그대로 보존, public API breaking 0 (R50.1.4.1.1 doc framing 증명)
+- self-audit 15 questions all pass + last_flags variable 제거 (textbook control flow last iter 내 instruction handling) + FLAG_* DRY single source (compound → test_helpers import)
+
+
+
+**Impact**: §5.37.1
+
+
+**Carry forward**:
+- R50.1.4.X cycle detection helper API — Glyf::composite_cycle_check(root) / max_depth traversal. parse 단계 아닌 R50.X+ layout/render layer responsibility (separation of concerns); ttf-parser MAX_RECURSION_DEPTH = 32 정합
+- R50.1.5 name table parser (family / style / postscript / copyright + platform encoding dispatch)
+- R50.1.X 후속: cmap format 0/2/6/8/10/13/14, WOFF2, CFF/CFF2, variable axis (fvar/avar/gvar), color tables (COLR/CPAL/sbix), GSUB/GPOS raw store
+- R50.2+ self-hosted Unicode (UAX #15), BIDI (UAX #9), shaping per script
+- R47-class InputRouter SCE migration carry — R50 시리즈 마감 후 별도 axis
+
+
+
 ### Round 5 — Round 5 — 4 axes ratified (§5.11-§5.14): layered primitives, hybrid RPC, core+opaque events, hierarchical SCE topology
 
 **Changes**:
