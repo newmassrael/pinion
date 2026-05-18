@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R51.32 §5.38 paint-side N=3: pinion-forge renderer manifest for
+  hello-checkbox. Same single-source-of-truth template that emits
+  HelloButtonRenderer / HelloToggleRenderer; only the struct name
+  diverges. backend=vello + default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloCheckboxRenderer"
+        backend="vello"/>

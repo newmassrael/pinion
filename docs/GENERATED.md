@@ -2735,6 +2735,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:run
 - examples/hello-button/src/main.rs:ButtonView
 - examples/hello-toggle/src/main.rs:ToggleView
+- examples/hello-checkbox/app.pinion.xml
+- examples/hello-checkbox/src/main.rs:view
+- examples/hello-checkbox/src/main.rs:CheckboxView
 
 
 
@@ -8580,6 +8583,35 @@ router.pointer_down(&mut state_scene);
 - derive macro WidgetTransition partial — evaluated this session as premature at N=6 widgets (~5 LOC saved per widget vs ~150 LOC proc-macro infra); revisit at N=15+ widgets
 - pinion-shell doc-tested example smoke (R51.30 carry)
 - pinion-shell extension to cover ai-introspect-demo's multi-control single-canonical-scene pattern (overlays + previews + Character keybindings like R/P/A/C/L)
+
+
+
+### Round 521 — R51.32 §5.38 hello-checkbox paint-side N=3 (pinion-shell amortization evidence) — Land examples/hello-checkbox as the third visual binary on the pinion-shell substrate (after R51.29 hello-toggle established N=2 and R51.30 extracted the AppShell primitive); the 221 LOC main.rs vs ~650 LOC pre-shell projection confirms the substrate amortizes correctly past the second client.
+
+**Changes**:
+- examples/hello-checkbox/: new workspace member; Cargo.toml + build.rs + app.pinion.xml mirror hello-button/hello-toggle shape; pinion-forge emits HelloCheckboxRenderer (Vello renderer wrapper) into $OUT_DIR/app.rs
+- examples/hello-checkbox/src/main.rs (221 LOC): CheckboxView WidgetView impl with composite (CheckboxState, bool) State; view fn renders a 24x24 rounded square (corner_radius=4) with state/checked-driven fill, white outline border via BoxStyle::with_border, optional U+2713 CHECK MARK Text child centered via flex when checked, and a 'Receive newsletter' label justified next to it; reuses Toggle's chromatic-mute Disabled convention (0x4a_42_38 fill + 0x70_66_58 border) for visual consistency across the example gallery
+- Cargo.toml: add examples/hello-checkbox workspace member after hello-toggle
+
+
+
+**Verification**:
+- cargo build -p hello-checkbox: ok (after 2 unused-import fixes from initial scaffold)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (forbid unsafe / deny warnings / clippy::pedantic deny strict baseline preserved)
+- cargo test --workspace --features pinion-runtime/vello: 1226 passed; 0 failed; 6 ignored (unchanged — example has no #[test])
+- LOC amortization: 3 binaries total 693 LOC (203 button + 269 toggle + 221 checkbox) vs pre-R51.30 projection of 3 × ~650 = ~1950 LOC; ~64% reduction realized; per-binary marginal cost ~220 LOC mostly view fn + WidgetView assoc-fns (the framework primitive amortization is the expected long-term constant)
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- Visible-tag carry: example gallery for Tier-1 widgets now covers Button + Toggle + Checkbox; Slider + Radio + RadioGroup are the remaining Tier-1 widgets without paint-side demos (each ~200 LOC per the shell amortization curve)
+- L4 alternative impl RFC (R51.27 / R51.31 carry)
+- Phase 2 axis ratify per R41 §5.16 4-phase plan
+- derive macro WidgetTransition partial — evaluated as premature at N=6 widgets; revisit at N=15+
+- pinion-shell doc-tested example smoke (R51.30 carry)
 
 
 

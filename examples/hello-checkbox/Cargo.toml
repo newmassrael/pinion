@@ -1,0 +1,24 @@
+[package]
+name = "hello-checkbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.32 §5.38 paint-side N=3: Checkbox SCXML widget on the pinion-shell substrate (~90 LOC main.rs — amortization beyond hello-button/hello-toggle's R51.30 second-client land)"
+publish = false
+
+[[bin]]
+name = "hello-checkbox"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
