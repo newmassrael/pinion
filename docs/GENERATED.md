@@ -402,6 +402,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - R51.1 — backend agnostic: parley LayoutCache → §5.37.7 자체 엔진 swap 시 surface 유지
 - R51.1 — R47.7.6 ceil regression test (300..=320 → line_count=1) + wrap (60px → ≥2) 영구 보장
 - R47.7.5 — winit resumed 후 explicit request_redraw() (first paint 전 RPC last_paint_layout None 회피)
+- R51.1 line_count semantic: UAX #14 visual lines (BIDI 무관 / empty → 1 / 0 = sentinel)
 
 
 
@@ -2504,6 +2505,48 @@ router.pointer_down(&mut state_scene);
 
 
 
+### §5.37.4. BIDI (UAX #9) — carry placeholder
+
+
+**Intent**: §5.37.4 BIDI sub-layer placeholder — UAX #9. self-hosted text engine 의 directional resolution. R51.1 forward-reference 정합. ratify 는 multi-session carry
+
+
+
+
+
+
+
+
+
+
+### §5.37.5. Script analysis (UCD Script property) — carry placeholder
+
+
+**Intent**: §5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서
+
+
+
+
+
+
+
+
+
+
+### §5.37.6. Shape (OpenType GSUB/GPOS execution) — carry placeholder
+
+
+**Intent**: §5.37.6 shape sub-layer placeholder — OpenType GSUB/GPOS execution (glyph substitution + positioning). parley/swash 대체. R51.1 line_count semantic forward-reference. ratify 는 multi-session carry
+
+
+
+
+
+
+
+
+
+
 ### §5.37.7. Line break (UAX #14) — carry placeholder
 
 
@@ -2511,6 +2554,11 @@ router.pointer_down(&mut state_scene);
 
 
 
+
+
+**Caveats**:
+- Carry placeholder — ratify TBD, §5.37.4 BIDI / §5.37.6 shape 이후 자연 순서
+- decision_status 변경 primitive 부재 — 진짜 정정 = mnemosyne MCP RFC carry
 
 
 
@@ -7536,6 +7584,35 @@ router.pointer_down(&mut state_scene);
 
 **Carry forward**:
 - R50.2.15: precomposed_nfc binary-layout regression PGO / #[hot] partition / link order investigation
+
+
+
+### Round 490 — Round 490 — Carry 1+2 정정: line_count UAX #14 visual-line semantic spec + §5.37.4/.5/.6 placeholder cascade (T1 orphan 종결, lifetime axis forward declaration)
+
+**Changes**:
+- TextNode.line_count doc: UAX #14 visual lines / BIDI 무관 / empty→1 / 0 sentinel 명시
+- LayoutNode.line_count doc: 동일 semantic + non-Text variants 0 명시
+- add_section_caveat §5.12: R51.1 line_count UAX #14 visual lines semantic
+- add_section_caveat §5.37.7 ×2: carry placeholder + decision_status RFC carry
+- add_section §5.37.4 BIDI / §5.37.5 script / §5.37.6 shape placeholder (cascade)
+- set_section_intent §5.37.4/.5/.6 placeholder — ratify multi-session carry
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 sync (entries 144, sections 52→55)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 lint
+- cargo test 993 pass 유지 (doc-only 변경)
+
+
+
+**Impact**: §5.12, §5.37.4, §5.37.5, §5.37.6, §5.37.7
+
+
+**Carry forward**:
+- Carry 3: SCXML template 시스템 (pinion-forge codegen template axis, multi-session, 다음 세션)
+- mnemosyne MCP primitive RFC: set_section_caveats / remove_section_caveat / set_section_decision_status
+- §5.37.4 BIDI / §5.37.5 script / §5.37.6 shape 정통 ratify (multi-session axis chain)
 
 
 

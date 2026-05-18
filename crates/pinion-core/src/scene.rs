@@ -457,14 +457,31 @@ pub struct TextNode {
     pub style: TextStyle,
     pub layout: LayoutStyle,
     pub tag: Option<Cow<'static, str>>,
-    /// Number of visual lines the shaper resolved this content into
-    /// against `rect.w`. R51.1 §5.12 — measured-result sidecar
-    /// populated by `pinion-runtime::compute_layout`'s measure pass
-    /// (shape backend agnostic: parley today, self-hosted text engine
-    /// after §5.37.7 lands). `0` if no shape pass has run yet
-    /// (`TextNode::new` / `TextNode::styled` defaults). The §5.12
-    /// `scene/layout` RPC surfaces this as `LayoutNode.line_count` so
-    /// AI clients verify single-line text without pixel inspection.
+    /// Number of *visual* lines (UAX #14 line break opportunities the
+    /// shaper actually broke at) this content resolved into against
+    /// `rect.w`. R51.1 §5.12 — measured-result sidecar populated by
+    /// `pinion-runtime::compute_layout`'s measure pass.
+    ///
+    /// **Semantic** (locked to UAX #14 visual-line counting so the
+    /// backend swap from parley to the §5.37.7 self-hosted line break
+    /// engine is observationally stable):
+    /// * **Counts visual lines, not logical paragraphs** — soft line
+    ///   breaks induced by `rect.w` constraints count; hard line
+    ///   breaks (`U+000A` etc.) within `content` count.
+    /// * **BIDI is irrelevant to the count** — mixed LTR / RTL runs
+    ///   resolved by UBA (§5.37.4) occupy the same visual line iff
+    ///   they sit between the same pair of break opportunities. A
+    ///   single bidi-mixed line is `1`, not `2`.
+    /// * **`content.is_empty()` → `1`** — UAX #14 treats the empty
+    ///   string as a single zero-width line; the §5.37.7 engine and
+    ///   parley both report this consistently.
+    /// * **`0` is a sentinel** — no shape pass has run yet
+    ///   (`TextNode::new` / `TextNode::styled` defaults). Distinct
+    ///   from any valid measured count.
+    ///
+    /// The §5.12 `scene/layout` RPC surfaces this as
+    /// `LayoutNode.line_count` so AI clients verify single-line text
+    /// without pixel inspection (Scene-as-data invariant §2 #7).
     pub line_count: u32,
 }
 

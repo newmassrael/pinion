@@ -68,15 +68,28 @@ pub struct LayoutNode {
     /// Text content. `Some(_)` iff `kind == Text`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
-    /// Number of visual lines the shaper produced for `content` against
-    /// `rect.w`. R51.1 §5.12 — surfaces the
-    /// `pinion_core::scene::TextNode.line_count` measured-result
-    /// sidecar (populated by `pinion-runtime::compute_layout`). `0` for
-    /// non-Text variants and for Text leaves whose owning Scene has not
-    /// been laid out yet. Lets AI clients verify single-line button
-    /// labels without screenshot inspection (Scene-as-data invariant
-    /// §2 #7). Backend agnostic: the surface stays the same after the
-    /// §5.37.7 self-hosted text engine replaces the parley `LayoutCache`.
+    /// Number of *visual* lines (UAX #14 break opportunities the
+    /// shaper actually broke at) the content produced against
+    /// `rect.w`. R51.1 §5.12 — wire-projection of
+    /// `pinion_core::scene::TextNode.line_count` (populated by
+    /// `pinion-runtime::compute_layout`).
+    ///
+    /// **Semantic** (UAX #14 visual-line counting; locked so the
+    /// parley → §5.37.7 backend swap is observationally stable):
+    /// * Soft line breaks (induced by `rect.w`) + hard line breaks
+    ///   (`U+000A`) both count. Logical paragraph count is *not*
+    ///   exposed by this field.
+    /// * BIDI mixed runs (UBA §5.37.4) sitting between the same pair
+    ///   of break opportunities occupy one visual line — bidirectional
+    ///   content does not inflate the count.
+    /// * `content.is_empty()` → `1` (UAX #14 zero-width single line).
+    /// * `0` is a sentinel for "no shape pass yet" — Text leaves
+    ///   whose owning Scene has not been laid out, and all non-Text
+    ///   variants (Container / Box / Path / Image / External /
+    ///   Effect / Unknown).
+    ///
+    /// Lets AI clients verify single-line button labels without
+    /// screenshot inspection (Scene-as-data invariant §2 #7).
     pub line_count: u32,
     /// Recursive children. Empty for leaves.
     pub children: Vec<LayoutNode>,
