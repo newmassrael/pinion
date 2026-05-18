@@ -1,0 +1,24 @@
+[package]
+name = "hello-slider-vertical"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.46 §5.38 vertical Slider visual evidence — SliderAxis::Vertical first-client on the R51.39 future-proof axis substrate, aria-orientation=vertical (top=max) Material/iOS volume-HUD convention"
+publish = false
+
+[[bin]]
+name = "hello-slider-vertical"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

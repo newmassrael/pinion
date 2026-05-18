@@ -1060,6 +1060,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-slider-vertical"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-toggle"
 version = "0.0.1"
 dependencies = [

@@ -2782,6 +2782,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/state.&lt;index&gt;
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/selected.&lt;index&gt;
 - examples/hello-radio-group/src/main.rs:RadioGroupView
+- examples/hello-slider-vertical/src/main.rs:SliderVerticalView
 
 
 
@@ -4483,6 +4484,37 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - TouchPhase::Cancelled 의 PointerUp commit-class intent 의도치 않은 emission — PointerCancel event variant 또는 InputRouter::cancel_pointer(id) helper 로 철자 release 는 별도 round (substrate 확장)
 - winit Touch.force 압력 감지 — Material InputRouter 는 pressure-aware (3D Touch / Apple Pencil) 그래니 포워딩 경로 설계 필요, carry
+
+
+
+### R51.46 — R51.46 §5.38 hello-slider-vertical first-client validates SliderAxis::Vertical
+
+**Changes**:
+- examples/hello-slider-vertical/{Cargo.toml, build.rs, app.pinion.xml, src/main.rs} 신설 — workspace.members 등록, pinion-forge codegen 시작점 + HelloSliderVerticalRenderer manifest
+- src/main.rs: SliderVerticalView WidgetView impl — SliderExternal::with_axis(SliderAxis::Vertical) construct, paint vertical track Column [unfilled (top) | thumb | filled (bottom)] = 8×200 rail + 16×16 thumb, aria-orientation=vertical (top=max) Material/iOS volume HUD convention
+- apply_key 가 hello-slider 와 동일 — ARIA Slider keyboard contract 는 orientation 의존 않음 (ArrowUp/Right=increment, ArrowDown/Left=decrement)
+- tests +5: vertical_arrow_up_increments / vertical_arrow_down_decrements / vertical_home_jumps_to_minimum / vertical_end_jumps_to_maximum / vertical_orientation_reports_through_introspect
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1285 pass / 0 fail (+5 from 1280)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict)
+- R51.39 SliderExternal::pointer_move 의 1.0 - y_rel 인버전 + R51.34 capture + R51.42 sub-index dispatch substrate 가 axis-specific branch 없이 재사용 됨 에 대한 시각 evidence
+- hello-slider (horizontal) 회규 0 — axis builder line 이 유일 분기점, 그 외 의 binding 완전 공유
+- mnemosyne-cli validate-workspace = T1=0 / T3=0 / RT=1/1 / sync
+- Tier-1 visual coverage 7 binary 도달 (button/toggle/checkbox/radio/slider/radio-group/slider-vertical)
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- External trait segregation RFC (부채 5)
+- R41 §5.16 Phase 2 thin RHI 3D pass axis spec round (부채 9)
+- R51.31 L4 alternative impl path RFC (부채 10)
+- TouchPhase::Cancelled commit-class intent leak — PointerCancel substrate 확장 (R51.45 carry)
 
 
 

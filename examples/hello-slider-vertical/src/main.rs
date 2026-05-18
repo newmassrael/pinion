@@ -1,0 +1,382 @@
+//! `hello-slider-vertical` — R51.46 §5.38 vertical Slider first-
+//! client on the R51.39 future-proof axis substrate. Visual
+//! evidence that [`SliderAxis::Vertical`] composes with the rest of
+//! the R51.34 → R51.37 → R51.39 → R51.40 → R51.42 → R51.45 substrate
+//! stack without any axis-specific `InputRouter` / `WidgetView` /
+//! shell branch — the only divergence from `hello-slider` is the
+//! axis builder call and the visual track orientation.
+//!
+//! Visual contract: Material / iOS volume-HUD style vertical slider
+//! with an 8×200 pill track split top-to-bottom into
+//! `[unfilled (above thumb) | thumb | filled (below thumb)]`. The
+//! ARIA convention `aria-orientation=vertical` puts `value = 1.0`
+//! at the top of the bar, so the filled portion grows upward as
+//! the value increases. Setting `value = 0.0` leaves the thumb at
+//! the bottom of the track (no fill); `value = 1.0` raises the
+//! thumb to the top of the track (full bar fill below it).
+//!
+//! State / colour cross product mirrors `hello-slider`:
+//!
+//! * Idle: white thumb, blue accent filled portion
+//! * Hover: brighter thumb (cursor over the rect but not pressed)
+//! * Dragging: light-violet thumb (capture-in-flight affordance)
+//! * Disabled: muted brown-grey across thumb + fill
+//!
+//! Keybindings reuse the ARIA-canonical small / large / extreme
+//! step mapping (the same hooks `hello-slider`'s `apply_key`
+//! exposes). ARIA's vertical-slider keyboard contract is identical
+//! to its horizontal counterpart: `ArrowUp` / `ArrowRight` increment,
+//! `ArrowDown` / `ArrowLeft` decrement, `Home` / `End` jump to the
+//! extremes, `PageUp` / `PageDown` apply the large step.
+
+use pinion_core::external::{External, IntrospectValue};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+};
+use pinion_core::widgets::slider::{SliderAxis, SliderEvent, SliderExternal, SliderState};
+use pinion_core::{Color, Frame, Scene};
+use pinion_shell::{vello_renderer_impl, WidgetView};
+
+include!(concat!(env!("OUT_DIR"), "/app.rs"));
+vello_renderer_impl!(HelloSliderVerticalRenderer, HelloSliderVerticalRendererError);
+
+const WIN_W: u32 = 220;
+const WIN_H: u32 = 360;
+const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
+// Vertical track: 8 wide × 200 tall — same Material rail thinness
+// as the horizontal example, rotated 90°.
+const TRACK_W: u32 = 8;
+const TRACK_H: u32 = 200;
+const TRACK_RADIUS: u32 = 4;
+// Thumb size = twice track width per Material spec.
+const THUMB_SIZE: u32 = 16;
+const THUMB_RADIUS: u32 = 8;
+// Available drag range = track height minus thumb height.
+const RANGE: u32 = TRACK_H - THUMB_SIZE;
+const ROW_GAP: u32 = 16;
+
+/// view-fn (§6.3): pure sync mapping `(SliderState, f32) -> Scene`.
+///
+/// Top-level layout (column, centred):
+///
+/// 1. "Volume" label.
+/// 2. Vertical track (`main_slider` tag, 16×200 col so the 16-px
+///    thumb is horizontally centred on the 8-px rail):
+///    `[unfilled | thumb | filled]` top-to-bottom.
+/// 3. Status line — `"<state> | <value:0.42>"`.
+///
+/// The `main_slider` tag is the shell's `InputRouter` hit-test
+/// handle; R51.34 capture + R51.39 axis split + R51.42 sub-index
+/// dispatch all compose on the same single-tag wiring the
+/// horizontal example uses — the axis-specific behaviour lives
+/// inside `SliderExternal::pointer_move`.
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
+    let filled_color: Color = match state {
+        SliderState::Idle => Color::rgb(0x30, 0x70, 0xd0),
+        SliderState::Hover => Color::rgb(0x40, 0x80, 0xe0),
+        SliderState::Dragging => Color::rgb(0x20, 0x50, 0xa0),
+        SliderState::Disabled => Color::rgb(0x70, 0x66, 0x58),
+    };
+    let unfilled_color: Color = match state {
+        SliderState::Disabled => Color::rgb(0x4a, 0x42, 0x38),
+        _ => Color::rgb(0x40, 0x40, 0x40),
+    };
+    let thumb_fill: Color = match state {
+        SliderState::Idle => Color::rgb(0xf0, 0xf0, 0xf0),
+        SliderState::Hover => Color::rgb(0xff, 0xff, 0xff),
+        SliderState::Dragging => Color::rgb(0xe0, 0xe0, 0xff),
+        SliderState::Disabled => Color::rgb(0xa0, 0xa0, 0xa0),
+    };
+    let value_clamped = value.clamp(0.0, 1.0);
+    // value = 1.0 → thumb at top → all space below it is filled.
+    // value = 0.0 → thumb at bottom → no fill (thumb sits on min).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let filled_h = (value_clamped * RANGE as f32) as u32;
+    let unfilled_h = RANGE.saturating_sub(filled_h);
+    let unfilled = Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::filled(unfilled_color).with_corner_radius(TRACK_RADIUS),
+        )
+        .with_layout(LayoutStyle::new().with_size(Size::px(TRACK_W, unfilled_h))),
+    );
+    let thumb = Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::filled(thumb_fill).with_corner_radius(THUMB_RADIUS),
+        )
+        .with_layout(LayoutStyle::new().with_size(Size::px(THUMB_SIZE, THUMB_SIZE))),
+    );
+    let filled = Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::filled(filled_color).with_corner_radius(TRACK_RADIUS),
+        )
+        .with_layout(LayoutStyle::new().with_size(Size::px(TRACK_W, filled_h))),
+    );
+    // Track column: [unfilled (top) | thumb | filled (bottom)] so
+    // value=1.0 means thumb at top + bar fully filled below. The
+    // thumb is wider (16 px) than the rail (8 px); horizontal
+    // centering via `AlignItems::Center` matches the Material
+    // thumb-on-rail spec. The 16-wide column sets the hit-test
+    // rect so the tag covers the full thumb area, not just the
+    // thin rail.
+    let track_col = Scene::Container(
+        ContainerNode::new(vec![unfilled, thumb, filled])
+            .with_tag("main_slider")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(THUMB_SIZE, TRACK_H)),
+            ),
+    );
+    let label = Scene::Text(TextNode::styled(
+        "Volume",
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(18)
+            .with_fg(Color::rgb(0xe0, 0xe0, 0xe0)),
+    ));
+    let status_str = format!(
+        "{} | {value_clamped:.2}",
+        slider_state_name(state),
+    );
+    let status = Scene::Text(TextNode::styled(
+        status_str,
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(12)
+            .with_fg(Color::rgb(0x90, 0x90, 0x90)),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![label, track_col, status])
+            .with_style(BoxStyle::filled(BG_FILL))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_justify(JustifyContent::Center)
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(ROW_GAP),
+            ),
+    )
+}
+
+struct SliderVerticalView;
+
+impl WidgetView for SliderVerticalView {
+    type State = (SliderState, f32);
+    type Event = SliderEvent;
+    type Renderer = HelloSliderVerticalRenderer;
+
+    fn create_external() -> Box<dyn External> {
+        // R51.39 §5.38 — the only line that diverges from
+        // `hello-slider`. The rest of the binding (read_state /
+        // view / apply_key) does not branch on axis because the
+        // axis-specific behaviour is contained in
+        // `SliderExternal::pointer_move`'s `1.0 - y_rel`
+        // inversion.
+        Box::new(SliderExternal::with_axis(SliderAxis::Vertical))
+    }
+
+    fn tag() -> &'static str {
+        "main_slider"
+    }
+
+    fn read_state(scene: &Scene) -> (SliderState, f32) {
+        if let Scene::External(node) = scene {
+            if let Some(intro) = node.handle.introspect() {
+                let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+                    parse_slider_state(&name)
+                } else {
+                    SliderState::Idle
+                };
+                #[allow(clippy::cast_possible_truncation)]
+                let value = if let Some(IntrospectValue::Float(v)) = intro.query("value") {
+                    v as f32
+                } else {
+                    0.0
+                };
+                return (state, value);
+            }
+        }
+        (SliderState::Idle, 0.0)
+    }
+
+    fn view(state: (SliderState, f32), frame: &Frame) -> Scene {
+        view(state.0, state.1, frame)
+    }
+
+    fn event_name(event: SliderEvent) -> &'static str {
+        match event {
+            SliderEvent::PointerEnter => "PointerEnter",
+            SliderEvent::PointerLeave => "PointerLeave",
+            SliderEvent::PointerDown => "PointerDown",
+            SliderEvent::PointerUp => "PointerUp",
+            SliderEvent::Disable => "Disable",
+            SliderEvent::Enable => "Enable",
+            _ => "__internal__",
+        }
+    }
+
+    fn title() -> &'static str {
+        "pinion hello-slider-vertical (R51.46 §5.38 SliderAxis::Vertical)"
+    }
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
+    }
+
+    fn keybinding(key: &str) -> Option<SliderEvent> {
+        match key {
+            "d" => Some(SliderEvent::Disable),
+            "e" => Some(SliderEvent::Enable),
+            _ => None,
+        }
+    }
+
+    /// ARIA Slider keyboard accessibility. The vertical orientation
+    /// reuses the same key mapping as the horizontal example: ARIA
+    /// keeps `ArrowUp` / `ArrowRight` as the increment direction
+    /// regardless of orientation so screen readers do not have to
+    /// branch on `aria-orientation` to decide the activation
+    /// direction. Disabled state ignores keyboard input per the
+    /// same ARIA contract.
+    fn apply_key(scene: &mut Scene, key: &str) -> bool {
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+            if name == "Disabled" {
+                return false;
+            }
+        }
+        let Some(IntrospectValue::Float(current)) = intro.query("value") else {
+            return false;
+        };
+        let new_value = match key {
+            "ArrowLeft" | "ArrowDown" => (current - 0.05).clamp(0.0, 1.0),
+            "ArrowRight" | "ArrowUp" => (current + 0.05).clamp(0.0, 1.0),
+            "Home" => 0.0,
+            "End" => 1.0,
+            "PageDown" => (current - 0.10).clamp(0.0, 1.0),
+            "PageUp" => (current + 0.10).clamp(0.0, 1.0),
+            _ => return false,
+        };
+        intro
+            .intervene("value", IntrospectValue::Float(new_value))
+            .is_ok()
+    }
+
+    fn fmt_state_log(state: &(SliderState, f32)) -> String {
+        format!("{} / {:.2}", slider_state_name(state.0), state.1)
+    }
+}
+
+fn parse_slider_state(name: &str) -> SliderState {
+    match name {
+        "Hover" => SliderState::Hover,
+        "Dragging" => SliderState::Dragging,
+        "Disabled" => SliderState::Disabled,
+        _ => SliderState::Idle,
+    }
+}
+
+fn slider_state_name(state: SliderState) -> &'static str {
+    match state {
+        SliderState::Idle => "Idle",
+        SliderState::Hover => "Hover",
+        SliderState::Dragging => "Dragging",
+        SliderState::Disabled => "Disabled",
+    }
+}
+
+fn main() {
+    pinion_shell::run::<SliderVerticalView>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pinion_core::scene::ExternalNode;
+
+    /// Build a vertical-axis slider scene at a starting value. The
+    /// axis builder is the only divergence from `hello-slider`'s
+    /// fixture; verifying the axis routing wires through the same
+    /// `apply_key` / introspect path keeps the substrate's
+    /// orientation invariant honest.
+    fn scene_at(start_value: f32) -> Scene {
+        let mut ext = SliderExternal::with_axis(SliderAxis::Vertical);
+        ext.set_value(start_value);
+        Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_slider"))
+    }
+
+    fn current_value(scene: &Scene) -> f32 {
+        let Scene::External(node) = scene else {
+            panic!("expected External root");
+        };
+        let intro = node.handle.introspect().expect("introspect opted in");
+        let Some(IntrospectValue::Float(v)) = intro.query("value") else {
+            panic!("value path returns Float");
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            v as f32
+        }
+    }
+
+    #[test]
+    fn vertical_arrow_up_increments() {
+        let mut scene = scene_at(0.5);
+        assert!(SliderVerticalView::apply_key(&mut scene, "ArrowUp"));
+        assert!((current_value(&scene) - 0.55).abs() < 1e-5);
+    }
+
+    #[test]
+    fn vertical_arrow_down_decrements() {
+        let mut scene = scene_at(0.5);
+        assert!(SliderVerticalView::apply_key(&mut scene, "ArrowDown"));
+        assert!((current_value(&scene) - 0.45).abs() < 1e-5);
+    }
+
+    #[test]
+    fn vertical_home_jumps_to_minimum() {
+        let mut scene = scene_at(0.7);
+        assert!(SliderVerticalView::apply_key(&mut scene, "Home"));
+        assert!((current_value(&scene) - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn vertical_end_jumps_to_maximum() {
+        let mut scene = scene_at(0.3);
+        assert!(SliderVerticalView::apply_key(&mut scene, "End"));
+        assert!((current_value(&scene) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn vertical_orientation_reports_through_introspect() {
+        let scene = scene_at(0.5);
+        let Scene::External(node) = &scene else {
+            panic!("expected External root");
+        };
+        let intro = node.handle.introspect().expect("introspect opted in");
+        // R51.39 §5.38 — the `orientation` slot reports the axis
+        // name aligned with ARIA `aria-orientation`. The vertical-
+        // axis fixture must report `"vertical"`; the value is
+        // construction-time fixed and read-only.
+        assert_eq!(
+            intro.query("orientation"),
+            Some(IntrospectValue::Text("vertical".to_string())),
+        );
+    }
+}

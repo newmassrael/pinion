@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R51.46 §5.38 vertical Slider visual evidence: pinion-forge
+  renderer manifest for hello-slider-vertical. Same single-source-
+  of-truth template as the other hello-* renderers; only the struct
+  name diverges. backend=vello + default Area antialiasing.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloSliderVerticalRenderer"
+        backend="vello"/>
