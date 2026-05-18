@@ -8,6 +8,7 @@ members = [
     "crates/pinion-cli",
     "crates/pinion-forge",
     "crates/pinion-overlay",
+    "crates/pinion-a11y",
     "crates/pinion-text",
     "crates/pinion-text-font",
     "crates/pinion-text-unicode",
@@ -85,6 +86,14 @@ swash = "0.2"
 # workspace-shared version so future cache consumers (R47.5+ GlyphCache,
 # §5.16 future damage cache, etc.) deduplicate transitively.
 lru = "0.18"
+
+# §5.40 R51.61 — AccessKit accessibility infrastructure. pinion-a11y wraps
+# this with a stable pinion-native AccessNode/AriaRole/AccessAction surface so
+# WidgetView trait + per-widget mappings depend only on pinion-a11y (single
+# upgrade boundary). accesskit_winit lands in pinion-shell at R51.62 since the
+# Adapter type is winit-coupled. Mozilla/Bevy/egui/Slint all consume this same
+# crate — Rust cross-platform AT (UIA/AX/AT-SPI/Android) substrate.
+accesskit = "0.24"
 
 # §5.37.3 R50.2.8 — criterion micro-benchmark harness. Workspace-side
 # pin so future performance-instrumented crates (text shaping, BIDI,

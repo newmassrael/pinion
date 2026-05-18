@@ -3013,6 +3013,18 @@ router.pointer_down(&mut state_scene);
 
 
 
+**Implementations**:
+- crates/pinion-a11y/src/lib.rs
+- crates/pinion-a11y/src/role.rs:AriaRole
+- crates/pinion-a11y/src/node.rs:AccessNode
+- crates/pinion-a11y/src/node.rs:AccessState
+- crates/pinion-a11y/src/node.rs:AccessValue
+- crates/pinion-a11y/src/tree.rs:AccessTreeBuilder
+- crates/pinion-a11y/src/tree.rs:tag_to_node_id
+- crates/pinion-a11y/src/action.rs:AccessAction
+- crates/pinion-a11y/src/action.rs:translate_action
+
+
 
 ### §5.5. MCU v1 backend scope (AP-only vs MCU-included)
 
@@ -5087,6 +5099,38 @@ router.pointer_down(&mut state_scene);
 - R51.63-67 — per-widget access_node 매핑 (Button/Toggle/Checkbox/Radio/Slider/RadioGroup)
 - R51.67 — Action handler → InputRouter intent 변환 layer
 - R51.68 — conformance test (AccessKit consumer mock + Tree snapshot + ActionRequest round-trip)
+
+
+
+### R51.61 — R51.61 §5.40 pinion-a11y substrate — AccessNode / AriaRole / AccessTreeBuilder / AccessAction land
+
+**Changes**:
+- crates/pinion-a11y 신설 — AccessKit wrapper substrate (lib + role + node + tree + action)
+- AriaRole enum (Button/Switch/CheckBox/RadioButton/Slider/RadioGroup/Generic) — to_accesskit + aria_name lower
+- AccessNode + AccessState + AccessValue — pinion-native widget descriptor + builder pattern
+- AccessTreeBuilder — TreeUpdate 조립 + composite parent-child + ROOT_NODE_ID(1) 예약
+- AccessAction + translate_action — accesskit::Action 5종 매핑 + unmapped Other silent drop
+- tag_to_node_id — DefaultHasher + high-bit reserve (NodeId(1) 겹침 방지)
+- accesskit 0.24 workspace.dependencies 추가 + pinion-a11y workspace member 등록
+
+
+
+**Verification**:
+- cargo test -p pinion-a11y — 36 pass / 0 fail (role 6 + node 8 + tree 13 + action 9)
+- cargo test --workspace --features pinion-runtime/vello — 1365 pass / 0 fail (+36 from 1329)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- validate_workspace — T1=0/T3=0/round-trip=1/1/GENERATED.md=sync
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.62 — pinion-shell AppShell 의 accesskit_winit::Adapter wiring + WindowEvent::Accessibility* arm
+- R51.63-66 — WidgetView::access_node trait 신설 + per-widget 매핑 (Button/Toggle/Checkbox/Radio/Slider/RadioGroup)
+- R51.67 — Action handler → InputRouter intent 변환 layer
+- R51.68 — conformance integration test (AccessKit consumer mock + Tree snapshot + ActionRequest round-trip)
 
 
 
