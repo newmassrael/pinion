@@ -2490,6 +2490,55 @@ router.pointer_down(&mut state_scene);
 
 
 
+### §5.38. Widget catalog — Tier 1 primitive widgets
+
+
+**Intent**: §5.38 Tier-1 widget primitive 카탈로그 axis ratify — Button R12 시작, Toggle/Checkbox/Slider/TextInput/Menu 등 후속, framework-side 책임 (R47-class lesson 적용)
+
+
+**Rationale**:
+- R47-class lesson: framework primitive 영역, application/example inline 금지
+- industry precedent: Xilem/Druid/Slint/Qt/Material/SwiftUI 모두 framework-측 widget
+- API completeness (Bloch) — partial widget surface 보다 풀 카탈로그 lifetime correct
+- §5.1 framework-first kickoff 일관 — substrate (RPC/SCE/intent) 위 widget 쌓음
+- per-widget SCXML — SRP + AI introspect 친화 (R12 Button 정통 패턴)
+- DRY: interaction state pattern (idle/hover/pressed/disabled) widget 간 공유
+
+
+
+**Inputs**:
+- §5.4 SCE statechart (per-widget SCXML interaction state machine substrate)
+- §5.13 Event enum closed core (PointerEnter/Leave/Down/Up + Disable/Enable)
+- §5.20 Intent system (widget → app intent emission channel)
+- §5.15 External 8-item contract (introspect schema + query/intervene/invoke)
+- §5.24 Semantic tree (role / state / action — ARIA aligned)
+- §4 first dogfood widget catalogue (~12 core + 6 domain-specific)
+
+
+
+**Outputs**:
+- crates/pinion-core::widgets module (Tier-1 primitive widget set)
+- per-widget SCXML at crates/pinion-core/widgets/*.scxml (Button precedent R12)
+- Widget + WidgetExternal binding pattern (engine + value field + intent emit)
+- External adapter: state read / send action (§5.15 introspect path)
+- AI introspect: schema fields + query/intervene/invoke per widget
+
+
+
+
+**Alternatives rejected**:
+- application/example inline implementation — R47-class incident 반복 (industry consensus 명확)
+- single mega-widget SCXML — per-widget SRP 위반, hot-reload + introspect 차단
+- third-party widget kit (egui retained immediate) — SCE substrate 비호환, AI introspect 제한
+- Tier 1 minimal MVP subset — lifetime framework partial surface 부채 (Bloch API completeness 위반)
+
+
+
+**Impact scope**: §4, §5.4, §5.13, §5.15, §5.20, §5.24
+
+
+
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -7271,6 +7320,38 @@ router.pointer_down(&mut state_scene);
 - R50.2.13: CANONICAL_DECOMPOSITION / COMPATIBILITY_DECOMPOSITION trie (indirect)
 - R50.2.14: PRIMARY_COMPOSITES 2D key hash 또는 trie
 - R50.2.x: cargo-bloat / binutils 가 필요한 release binary size 측정
+
+
+
+### Round 484 — Round 484 — R51.0 §5.38 신설: F-tier widget catalog axis ratify (Tier-1 primitive widgets, atomic-only, code 변경 0, R47-class framework primitive 정통)
+
+**Changes**:
+- add_section §5.38 "Widget catalog — Tier 1 primitive widgets" (parent §5)
+- set_section_intent: Button R12 시작 + Toggle/Checkbox/Slider/TextInput/Menu carry, framework-side 책임
+- set_section_inputs: §5.4 SCXML / §5.13 Event / §5.20 Intent / §5.15 External / §5.24 Semantic / §4 first dogfood
+- set_section_outputs: pinion-core::widgets module, per-widget SCXML, Widget+WidgetExternal pattern, External adapter
+- set_section_rationale: R47-class lesson + industry precedent (Xilem/Druid/Slint/Qt/Material/SwiftUI) + Bloch API completeness
+- set_section_impact_scope: 4, 5.4, 5.13, 5.15, 5.20, 5.24
+- set_section_alternatives_rejected: inline impl (R47-class), mega-SCXML (SRP), egui-style kit, MVP subset
+
+
+
+**Verification**:
+- validate_workspace: T1=0 T3=0 RT=1/1 sections=51 sync (atomic-only round, GENERATED.md cascade)
+- code 변경 0 (atomic-only) — cargo test 968 / clippy 0 회귀 가능성 없음 (baseline 그대로)
+- F 위젯 카탈로그 axis ratify 자체로 R47-class 부채 (application/example inline implementation 반복) 영구 차단
+
+
+
+**Impact**: §5.38, §4, §5.4, §5.13, §5.15, §5.20, §5.24
+
+
+**Carry forward**:
+- R51.1+: Toggle widget 첫 진입 (SCXML + Rust binding + External adapter + tests, Button R12 1:1 패턴 재사용)
+- R51.2+: Checkbox/Slider/TextInput/Menu/... Tier-1 catalog 순차 land (per-widget atomic round)
+- R51.x: §5.38 Tier-2 axis 분리 검토 (compound widget: ComboBox/DatePicker/...)
+- R47.7.x atomic round 등록 carry (commit 됐지만 atomic binding 없음 — 적절한 round 에서 backfill)
+- R50.2.13/14 atomic binding 미진행 carry (add_section_implementation §5.37.3 누적은 됐지만 changelog entry 미진행)
 
 
 
