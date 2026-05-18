@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "First dogfood (§4): winit window + R12 Button SCXML statechart end-to-end (R46.5 Vello path)"
+description = "First dogfood (§4): winit window + R12 Button SCXML statechart end-to-end (R51.30 pinion-shell migration — application supplies WidgetView only)"
 publish = false
 
 [[bin]]
@@ -13,36 +13,27 @@ name = "hello-button"
 path = "src/main.rs"
 
 [dependencies]
+# §5.38 Tier-1 Button widget + its `External` adapter; the WidgetView
+# impl reaches into `ButtonExternal::new()` and the typed `ButtonEvent`
+# / `ButtonState` enums.
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
-# R46.5 §5.16: paint_adapter framework primitive (R46.3.1) is the
-# Scene → vello::Scene walker shared by all Vello-backed examples.
-# Enabling the `vello` feature pulls in the to_vello/root_background
-# surface; without it pinion-runtime stays headless.
-pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", features = ["vello"] }
-# R47.3 §5.36 text shaping framework primitive. The `LayoutCache` is
-# owned by `App` and threaded into `paint_adapter::to_vello` so the
-# button label re-shapes only when its text / style / wrap width
-# changes (steady-state frames hit the LRU). The crate carries the
-# parley + swash + fontique transitive trio behind the same single
-# import — app code never touches the underlying shaper directly.
-pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
-pinion-rpc = { path = "../../crates/pinion-rpc", version = "0.0.1" }
-winit = { workspace = true }
-# R46.5 §5.16: Vello-backed GPU paint replaces softbuffer. The
-# `HelloButtonRenderer` struct emitted by `build.rs` references
-# `vello::*` and `vello::wgpu::*` directly so the binary needs vello
-# at run-time. Mirrors the ai-introspect-demo R46.3 migration.
+# R51.30 paint-side AppShell. The shell pulls pinion-runtime (vello
+# feature) + pinion-rpc + pinion-text + winit + pollster transitively,
+# so this example's direct dep list collapses to "the widget I'm
+# showcasing + the shell + vello for the codegen output types".
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the `HelloButtonRenderer` struct emitted by `build.rs`
+# references `::vello::*` and `::vello::wgpu::*` directly (R46.3.3
+# fully-qualified codegen path); the `vello_renderer_impl!` macro
+# expansion also names `::vello::Scene` and `::vello::peniko::Color`.
+# Either dependency makes vello a direct dep.
 vello = { workspace = true }
-# Block on Vello's async `RenderContext::create_surface` at app boot —
-# pinion-core/runtime are sync (§6.3); this example wraps the one-shot
-# init future at the boundary so view-fn purity stays intact.
-pollster = { workspace = true }
 
 [build-dependencies]
 # R46.5 §5.16: build-time codegen for the `HelloButtonRenderer` Vello
 # wrapper. `build.rs` calls `compile_file` on `app.pinion.xml`; the
 # emitted Rust is written to `$OUT_DIR/app.rs` and `include!`d by
-# main.rs (one-file-one-struct shape per R38 ratify).
+# main.rs.
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
 
 [lints]

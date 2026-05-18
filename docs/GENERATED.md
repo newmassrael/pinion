@@ -667,7 +667,9 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 **Implementations**:
-- examples/hello-toggle/src/main.rs:App::render
+- crates/pinion-shell/src/lib.rs:VelloRenderer
+- crates/pinion-shell/src/lib.rs:AppShell::render
+- crates/pinion-shell/src/lib.rs:vello_renderer_impl
 
 
 
@@ -2728,7 +2730,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/radio_group.rs:&lt;RadioGroup as WidgetTransition&gt;
 - examples/hello-toggle/app.pinion.xml
 - examples/hello-toggle/src/main.rs:view
-- examples/hello-toggle/src/main.rs:App
+- crates/pinion-shell/src/lib.rs:WidgetView
+- crates/pinion-shell/src/lib.rs:AppShell
+- crates/pinion-shell/src/lib.rs:run
+- examples/hello-button/src/main.rs:ButtonView
+- examples/hello-toggle/src/main.rs:ToggleView
 
 
 
@@ -8514,6 +8520,36 @@ router.pointer_down(&mut state_scene);
 - R51.32 mirror_paired_brackets per-frame cache layer (perf substrate)
 - L4 alternative impl RFC: render-time GlyphRun.is_rtl substitute vs pre-substitute (R51.27)
 - Phase 2 axis ratify per R41 §5.16 4-phase plan
+
+
+
+### Round 519 — R51.30 §5.16 + §5.38 pinion-shell AppShell substrate refactor (R51.29 incompleteness-signal immediate response) — Extract the ~400 LOC App + RenderState + dispatch_rpc + spawn_stdin_rpc_reader + ApplicationHandler boilerplate that R51.29 surfaced as duplicate between hello-button and hello-toggle into a new pinion-shell crate (VelloRenderer trait + WidgetView trait + AppShell&lt;V&gt; + run::&lt;V&gt;()), reducing each visual binary to its widget-specific diff (view fn + unit-struct WidgetView impl + one-line main); textbook immediate response to [[substrate-incompleteness-signal]] per memory.
+
+**Changes**:
+- crates/pinion-shell/: new workspace member; lib.rs defines VelloRenderer trait (async new&lt;W: Into&lt;wgpu::SurfaceTarget&lt;'static&gt;&gt;&gt; + sync render + sync resize, Sized + Error: Display), vello_renderer_impl! bridge macro (codegen-template-agnostic), WidgetView trait (assoc State/Event/Renderer + create_external/tag/read_state/view/event_name + title/initial_size + default keybinding/fmt_state_log), AppShell&lt;V: WidgetView&gt; struct (scene + cached_state + IntentQueue + PreviewLedger + SceneRevision + InputRouter + RenderState&lt;V::Renderer&gt; + VelloScene + LayoutCache + last_paint_layout), winit::ApplicationHandler impl + spawn_stdin_rpc_reader + run::&lt;V&gt;() entrypoint
+- examples/hello-button/src/main.rs: rewrite as 220 LOC (was 659) — view fn + ButtonView WidgetView impl + vello_renderer_impl! + 3-line main; Cargo.toml drops direct pinion-runtime/pinion-rpc/pinion-text/winit/pollster deps (shell pulls transitively), keeps pinion-core + pinion-shell + vello + pinion-forge (build)
+- examples/hello-toggle/src/main.rs: rewrite as 270 LOC (was 540) — view fn + ToggleView WidgetView impl with composite (ToggleState, bool) State + custom fmt_state_log (`Idle / Off` form) + vello_renderer_impl! + 3-line main; Cargo.toml same dep collapse
+- Cargo.toml: add crates/pinion-shell workspace member after pinion-text-unicode
+
+
+
+**Verification**:
+- cargo build --workspace --features pinion-runtime/vello: ok
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (forbid unsafe / deny warnings / clippy::pedantic deny strict baseline preserved); fixed doc_markdown / doc_lazy_continuation / missing_panics_doc / missing_must_use in pinion-shell + hello-toggle along the way
+- cargo test --workspace --features pinion-runtime/vello: 1226 passed; 0 failed; 6 ignored (unchanged from R51.29 — pure refactor)
+- LOC: ~1199 LOC pre-refactor across 2 example main.rs vs ~490 LOC post-refactor + ~770 LOC new pinion-shell/lib.rs; future N=3 visual binary saves ~440 LOC over the pre-refactor pattern (substrate amortization realized starting at the 2nd binary)
+
+
+
+**Impact**: §5.16, §5.38
+
+
+**Carry forward**:
+- R51.31 derive macro WidgetTransition partial (~150 LOC snapshot+drive only)
+- R51.32 mirror_paired_brackets per-frame cache layer (perf substrate)
+- L4 alternative impl RFC: render-time GlyphRun.is_rtl substitute vs pre-substitute (R51.27)
+- Phase 2 axis ratify per R41 §5.16 4-phase plan
+- pinion-shell follow-up: doc-tested example builds via `cargo test --doc -p pinion-shell` (today the //! example is `rust,ignore` — a tested smoke would lock the macro + run signature against accidental SemVer breaks)
 
 
 

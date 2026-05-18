@@ -1,0 +1,41 @@
+[package]
+name = "pinion-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.30 §5.16/§5.20/§5.35 paint-side AppShell — winit lifecycle + Vello render loop + JSON-RPC stdin reader + InputRouter/IntentQueue/LayoutCache wiring, generic over WidgetView (one binary = one widget catalogue entry)"
+
+# Lib-only (no [[bin]]) — consumers are example binaries / future
+# application crates that pull `pinion_shell::run::<V>()` from their
+# own `fn main()`.
+
+[dependencies]
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# §5.16 paint_adapter Scene -> vello::Scene walk + InputRouter + IntentQueue
+# + compute_layout — all of AppShell's substrate calls live in pinion-runtime
+# (vello feature for the paint_adapter half).
+pinion-runtime = { path = "../pinion-runtime", version = "0.0.1", features = ["vello"] }
+# §5.12 bidirectional RPC dispatcher — every winit/RPC frame routes through
+# `dispatch` + `DispatchContext` here, never bypassed.
+pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
+# §5.36 text shaping primitive — owned `LayoutCache` shared between
+# `compute_layout` (measure) and `paint_adapter::to_vello` (paint).
+pinion-text = { path = "../pinion-text", version = "0.0.1" }
+# §4 first dogfood window lifecycle — winit's ApplicationHandler is the
+# entry point AppShell implements. Workspace-pinned to keep examples /
+# shell in lock-step.
+winit = { workspace = true }
+# §5.16 R46.5 Vello backend (paint scene submission + peniko Color for
+# `RenderParams.base_color`). AppShell is Vello-only by design — TUI /
+# headless paths go through a different shell (or no shell at all).
+vello = { workspace = true }
+# Block on Vello's async `RenderContext::create_surface` at app boot.
+# pinion-core / runtime / shell logic is sync (§6.3); pollster wraps
+# the one-shot init future at the boundary so view-fn purity stays
+# intact across all consumers.
+pollster = { workspace = true }
+
+[lints]
+workspace = true

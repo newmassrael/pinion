@@ -1015,12 +1015,8 @@ version = "0.0.1"
 dependencies = [
  "pinion-core",
  "pinion-forge",
- "pinion-rpc",
- "pinion-runtime",
- "pinion-text",
- "pollster",
+ "pinion-shell",
  "vello",
- "winit",
 ]
 
 [[package]]
@@ -1029,12 +1025,8 @@ version = "0.0.1"
 dependencies = [
  "pinion-core",
  "pinion-forge",
- "pinion-rpc",
- "pinion-runtime",
- "pinion-text",
- "pollster",
+ "pinion-shell",
  "vello",
- "winit",
 ]
 
 [[package]]
@@ -2073,6 +2065,19 @@ dependencies = [
  "pinion-text-unicode",
  "taffy",
  "vello",
+]
+
+[[package]]
+name = "pinion-shell"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+ "pinion-rpc",
+ "pinion-runtime",
+ "pinion-text",
+ "pollster",
+ "vello",
+ "winit",
 ]
 
 [[package]]
