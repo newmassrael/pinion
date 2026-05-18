@@ -3000,6 +3000,7 @@ router.pointer_down(&mut state_scene);
 - composite focus redirect = WidgetView::access_focus_target (default passthrough) per R51.66
 - composite child click dispatch = R51.x carry — widget-side wire-format invoke surface 필요
 - R51.69 — ContainerNode::aria_label + enrich_names_from_scene (WAI-ARIA name precedence land)
+- R51.70 — WidgetView::access_child_invoke + RadioGroup wire-format (WCAG 4.1.2 write 회복)
 
 
 
@@ -3049,6 +3050,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/scene.rs:ContainerNode::with_aria_label
 - crates/pinion-a11y/src/scene_label.rs
 - crates/pinion-a11y/src/scene_label.rs:enrich_names_from_scene
+- crates/pinion-shell/src/lib.rs:WidgetView::access_child_invoke
+- examples/hello-radio-group/src/main.rs:RadioGroupView::access_child_invoke
 
 
 
@@ -5404,6 +5407,32 @@ router.pointer_down(&mut state_scene);
 
 **Carry forward**:
 - R51.70 composite child action dispatch (WidgetView::access_child_invoke trait hook + RadioGroup wire-format invoke) — WCAG 4.1.2 write path 회복
+- R51.71 accesskit::Node::set_active_descendant 채택 — focus redirect 폐기, ARIA Authoring Practices 정통
+- R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수
+
+
+
+### R51.70 — R51.70 §5.40 composite child action dispatch — WidgetView::access_child_invoke hook + RadioGroup wire-format (WCAG 4.1.2 write 회복)
+
+**Changes**:
+- crates/pinion-shell/src/lib.rs — WidgetView::access_child_invoke trait method (default false)
+- crates/pinion-shell/src/lib.rs — AppShell::dispatch_access_action composite child 경로 교체 (carry log 제거, V::access_child_invoke 호출 + revision/refresh/drain commit)
+- examples/hello-radio-group/src/main.rs — RadioGroupView::access_child_invoke impl (Click/Default = wire-format invoke, Focus = R51.71 carry suppression, 그 외 fallback)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- cargo test --workspace --features pinion-runtime/vello — 1438 pass / 0 fail (+8 from 1430)
+- 8 RadioGroup access_child_invoke test (Click/Default/switch/Focus/out-of-range/non-numeric/Increment-decline/Other-decline)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
 - R51.71 accesskit::Node::set_active_descendant 채택 — focus redirect 폐기, ARIA Authoring Practices 정통
 - R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수
 

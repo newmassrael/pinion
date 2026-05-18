@@ -395,6 +395,44 @@ pub trait WidgetView: 'static {
     fn access_focus_target(_state: &Self::State, focused: Option<&str>) -> Option<String> {
         focused.map(str::to_owned)
     }
+
+    /// R51.70 §5.40 — composite-side dispatch for an AT-driven action
+    /// targeting a sub-child by the segment after `#` in the widget
+    /// tag.
+    ///
+    /// `AccessKit`'s `ActionRequest` delivers `Click` / `Default` /
+    /// `Focus` / `Increment` / `Decrement` against a `NodeId`; the
+    /// shell recovers the widget tag and, for composite widgets,
+    /// splits it at `#` (e.g. `"main_group#1"` → `("main_group",
+    /// "1")`). The shell focuses the parent tag uniformly and then
+    /// calls this hook so composite widgets can wire the activation
+    /// through their existing wire-format invocation path
+    /// (`invoke("send", Text("<i>:<EventName>"))` for the
+    /// `RadioGroup`, similarly for future `ListBox` / `MenuButton`
+    /// / `TreeView` composites).
+    ///
+    /// Returns `true` if the action was handled — the shell then
+    /// bumps the §5.34 revision, refreshes cached state, and drains
+    /// pending intents (mirrors `apply_a11y_key`). Returns `false`
+    /// to let the shell fall through to the atomic-widget chain
+    /// (`focus_set` + `apply_key("Enter")`).
+    ///
+    /// Default returns `false` — atomic widgets receive no
+    /// composite-child requests because their `access_node` impls
+    /// never expose `#`-suffixed tags.
+    ///
+    /// WAI-ARIA / WCAG 4.1.2 (Name, Role, **Value**) coverage:
+    /// without this hook, an AT issuing `Click` on a composite
+    /// child cannot programmatically set the underlying value —
+    /// the §5.40 substrate prior to R51.70 only logged a carry. The
+    /// hook closes the write-path gap for composites.
+    fn access_child_invoke(
+        _scene: &mut Scene,
+        _sub_tag: &str,
+        _action: AccessAction,
+    ) -> bool {
+        false
+    }
 }
 
 /// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.6
@@ -882,16 +920,17 @@ impl<V: WidgetView> AppShell<V> {
     /// - `Decrement`      → focus + `apply_key("ArrowLeft")`
     /// - `Other`          → silent drop
     ///
-    /// Composite child tags (containing `#`) focus the parent tag
-    /// but defer `Click` / activation dispatch with a stderr carry
-    /// log — composite-child invocation needs the widget-specific
-    /// wire-format path that lives in the composite's `apply_key`
-    /// and is not yet exposed via a generic `WidgetView` hook.
+    /// R51.70 §5.40 — composite child tags (containing `#`) focus
+    /// the parent and route the action through
+    /// [`WidgetView::access_child_invoke`] before falling back to
+    /// the atomic chain. The composite parses the sub-tag (the
+    /// segment after `#`) and dispatches through its own wire-format
+    /// invocation path; the shell stays composite-agnostic.
     fn dispatch_access_action(&mut self, action: &PinionAccessAction) {
-        let parent_tag = action
-            .tag
-            .split_once('#')
-            .map_or(action.tag.as_str(), |(p, _)| p);
+        let (parent_tag, sub_tag) = match action.tag.split_once('#') {
+            Some((p, s)) => (p, Some(s)),
+            None => (action.tag.as_str(), None),
+        };
         match action.kind {
             AccessAction::Focus => {
                 self.focus.focus_set(parent_tag);
@@ -899,13 +938,23 @@ impl<V: WidgetView> AppShell<V> {
             }
             AccessAction::Click | AccessAction::Default => {
                 self.focus.focus_set(parent_tag);
-                if action.tag.contains('#') {
-                    eprintln!(
-                        "shell: a11y composite-child click on '{}' carry — widget-side wire-format dispatch pending",
-                        action.tag,
-                    );
-                    self.request_redraw();
-                    return;
+                if let Some(sub) = sub_tag {
+                    // R51.70 §5.40 — composite child dispatch hook.
+                    // The composite invokes its wire format and
+                    // returns `true`; we commit the same revision /
+                    // refresh / drain bookkeeping `apply_a11y_key`
+                    // performs so AT-driven activation matches the
+                    // keyboard path 1:1.
+                    if V::access_child_invoke(&mut self.scene, sub, action.kind) {
+                        self.revision.bump();
+                        self.refresh_state();
+                        self.drain_intents();
+                        self.request_redraw();
+                        return;
+                    }
+                    // Composite declined (unrecognised sub-tag /
+                    // unsupported action) — fall through so the AT
+                    // still sees activation feedback via the parent.
                 }
                 self.apply_a11y_key(parent_tag, "Enter");
             }

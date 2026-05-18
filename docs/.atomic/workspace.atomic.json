@@ -3864,7 +3864,8 @@
         "custom widget = access_node override 필수, default None = AT 무시 (intent declaration)",
         "composite focus redirect = WidgetView::access_focus_target (default passthrough) per R51.66",
         "composite child click dispatch = R51.x carry — widget-side wire-format invoke surface 필요",
-        "R51.69 — ContainerNode::aria_label + enrich_names_from_scene (WAI-ARIA name precedence land)"
+        "R51.69 — ContainerNode::aria_label + enrich_names_from_scene (WAI-ARIA name precedence land)",
+        "R51.70 — WidgetView::access_child_invoke + RadioGroup wire-format (WCAG 4.1.2 write 회복)"
       ],
       "alternatives_rejected": [
         {
@@ -4021,6 +4022,14 @@
         {
           "file": "crates/pinion-a11y/src/scene_label.rs",
           "symbol": "enrich_names_from_scene"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "WidgetView::access_child_invoke"
+        },
+        {
+          "file": "examples/hello-radio-group/src/main.rs",
+          "symbol": "RadioGroupView::access_child_invoke"
         }
       ],
       "decision_status": "active"
@@ -7609,6 +7618,46 @@
       ],
       "publishable_carry_forward_bullets": [
         "R51.70 composite child action dispatch (WidgetView::access_child_invoke trait hook + RadioGroup wire-format invoke) — WCAG 4.1.2 write path 회복",
+        "R51.71 accesskit::Node::set_active_descendant 채택 — focus redirect 폐기, ARIA Authoring Practices 정통",
+        "R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수"
+      ]
+    },
+    "R51.70": {
+      "decision_summary": "R51.70 §5.40 composite child action dispatch — WidgetView::access_child_invoke hook + RadioGroup wire-format (WCAG 4.1.2 write 회복)",
+      "changes_bullets": [
+        "crates/pinion-shell/src/lib.rs — WidgetView::access_child_invoke trait method (default false)",
+        "crates/pinion-shell/src/lib.rs — AppShell::dispatch_access_action composite child 경로 교체 (carry log 제거, V::access_child_invoke 호출 + revision/refresh/drain commit)",
+        "examples/hello-radio-group/src/main.rs — RadioGroupView::access_child_invoke impl (Click/Default = wire-format invoke, Focus = R51.71 carry suppression, 그 외 fallback)"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "cargo test --workspace --features pinion-runtime/vello — 1438 pass / 0 fail (+8 from 1430)",
+        "8 RadioGroup access_child_invoke test (Click/Default/switch/Focus/out-of-range/non-numeric/Increment-decline/Other-decline)"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.71 accesskit::Node::set_active_descendant 채택 — focus redirect 폐기, ARIA Authoring Practices 정통",
+        "R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수"
+      ],
+      "publishable_decision_summary": "R51.70 §5.40 composite child action dispatch — WidgetView::access_child_invoke hook + RadioGroup wire-format (WCAG 4.1.2 write 회복)",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/lib.rs — WidgetView::access_child_invoke trait method (default false)",
+        "crates/pinion-shell/src/lib.rs — AppShell::dispatch_access_action composite child 경로 교체 (carry log 제거, V::access_child_invoke 호출 + revision/refresh/drain commit)",
+        "examples/hello-radio-group/src/main.rs — RadioGroupView::access_child_invoke impl (Click/Default = wire-format invoke, Focus = R51.71 carry suppression, 그 외 fallback)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings",
+        "cargo test --workspace --features pinion-runtime/vello — 1438 pass / 0 fail (+8 from 1430)",
+        "8 RadioGroup access_child_invoke test (Click/Default/switch/Focus/out-of-range/non-numeric/Increment-decline/Other-decline)"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
         "R51.71 accesskit::Node::set_active_descendant 채택 — focus redirect 폐기, ARIA Authoring Practices 정통",
         "R51.72 incremental TreeUpdate dirty tracking — last_access_nodes cache, AccessKit performance 권고 준수"
       ]

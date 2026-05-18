@@ -43,7 +43,7 @@ use pinion_core::style::{
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_a11y::{AccessAction, AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -350,6 +350,59 @@ impl WidgetView for RadioGroupView {
         }
     }
 
+    /// R51.70 §5.40 — composite child action dispatch. Mirrors the
+    /// `apply_key` wire-format path (`PointerEnter` / `PointerDown` /
+    /// `PointerUp` / `PointerLeave` against `format!("{idx}:{ev}")`)
+    /// but is reached when an AT invokes `AccessKit::Action::Click` /
+    /// `Default` on a specific radio's `NodeId`
+    /// (`"main_group#<i>"`), bypassing the keyboard-resolved index
+    /// step.
+    ///
+    /// `Click` / `Default` activate the addressed radio (mutual
+    /// exclusion + `"selected"` intent fires through the standard
+    /// composite path). `Focus` returns `true` to suppress the
+    /// shell's atomic-fallback `apply_key("Enter")` while letting
+    /// the parent focus + active-descendant model surface the right
+    /// active row visually. Other actions decline so the shell
+    /// stays in charge of the fallback chain.
+    fn access_child_invoke(scene: &mut Scene, sub_tag: &str, action: AccessAction) -> bool {
+        let Ok(idx) = sub_tag.parse::<usize>() else {
+            return false;
+        };
+        if idx >= N {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        match action {
+            AccessAction::Click | AccessAction::Default => {
+                for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+                    let _ = intro.invoke(
+                        "send",
+                        IntrospectValue::Text(format!("{idx}:{ev}")),
+                    );
+                }
+                true
+            }
+            // R51.71 carry — `Focus` on a composite child should
+            // update the active descendant via `accesskit::Node::
+            // set_active_descendant`. Until that lands, returning
+            // `true` here suppresses the shell's atomic-fallback
+            // Enter activation so AT-issued Focus doesn't accidentally
+            // *select* the row; the parent focus_set the shell
+            // already performed leaves the group focused, and the
+            // active descendant follows the selected radio.
+            AccessAction::Focus => true,
+            AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => {
+                false
+            }
+        }
+    }
+
     fn fmt_state_log(state: &GroupState) -> String {
         state
             .iter()
@@ -648,5 +701,98 @@ mod tests {
             "Home"
         ));
         assert_eq!(selected_index(&s), Some(0));
+    }
+
+    // ----- R51.70 §5.40 access_child_invoke ----------------------
+
+    #[test]
+    fn access_child_invoke_click_selects_addressed_radio() {
+        let mut s = scene();
+        assert!(RadioGroupView::access_child_invoke(
+            &mut s,
+            "1",
+            AccessAction::Click,
+        ));
+        assert_eq!(selected_index(&s), Some(1));
+    }
+
+    #[test]
+    fn access_child_invoke_default_acts_as_click() {
+        let mut s = scene();
+        assert!(RadioGroupView::access_child_invoke(
+            &mut s,
+            "2",
+            AccessAction::Default,
+        ));
+        assert_eq!(selected_index(&s), Some(2));
+    }
+
+    #[test]
+    fn access_child_invoke_subsequent_click_switches_selection() {
+        let mut s = scene();
+        assert!(RadioGroupView::access_child_invoke(&mut s, "0", AccessAction::Click));
+        assert_eq!(selected_index(&s), Some(0));
+        assert!(RadioGroupView::access_child_invoke(&mut s, "2", AccessAction::Click));
+        assert_eq!(selected_index(&s), Some(2));
+    }
+
+    #[test]
+    fn access_child_invoke_focus_returns_true_without_mutation() {
+        let mut s = scene();
+        // Pre-select index 1 via Click so we can detect that Focus
+        // does not perturb the existing selection.
+        let _ = RadioGroupView::access_child_invoke(&mut s, "1", AccessAction::Click);
+        let before = selected_index(&s);
+        assert!(RadioGroupView::access_child_invoke(
+            &mut s,
+            "0",
+            AccessAction::Focus,
+        ));
+        assert_eq!(selected_index(&s), before);
+    }
+
+    #[test]
+    fn access_child_invoke_out_of_range_returns_false() {
+        let mut s = scene();
+        assert!(!RadioGroupView::access_child_invoke(
+            &mut s,
+            "9",
+            AccessAction::Click,
+        ));
+        assert_eq!(selected_index(&s), None);
+    }
+
+    #[test]
+    fn access_child_invoke_non_numeric_sub_tag_returns_false() {
+        let mut s = scene();
+        assert!(!RadioGroupView::access_child_invoke(
+            &mut s,
+            "foo",
+            AccessAction::Click,
+        ));
+        assert_eq!(selected_index(&s), None);
+    }
+
+    #[test]
+    fn access_child_invoke_increment_declines_for_composite() {
+        let mut s = scene();
+        // RadioGroup is not a continuous-value composite — Increment
+        // is meaningless here; the shell falls back to parent
+        // activation.
+        assert!(!RadioGroupView::access_child_invoke(
+            &mut s,
+            "0",
+            AccessAction::Increment,
+        ));
+    }
+
+    #[test]
+    fn access_child_invoke_other_action_declines() {
+        let mut s = scene();
+        assert!(!RadioGroupView::access_child_invoke(
+            &mut s,
+            "0",
+            AccessAction::Other,
+        ));
     }
 }
