@@ -487,19 +487,19 @@ fn r51_67_handle_action_request_unknown_target_silent() {
 }
 
 #[test]
-fn r51_67_handle_action_request_resolves_via_compute_access_emit() {
+fn r51_67_handle_action_request_resolves_via_plan_commit() {
     let _g = TEST_LOCK.lock().unwrap();
     reset_mocks();
     APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
 
     let mut core = ShellCore::<TestView>::new();
-    // Populate the tag map via compute_access_emit — the same path
-    // production `AppShell::render` uses on every frame.
-    let plan = core.compute_access_emit(
-        vec![atomic_node("test", false)],
-        Some(AccessFocus::atomic("test")),
-    );
-    assert!(plan.should_emit, "initial emit always fires");
+    // R51.77 §5.40 — populate the tag map via the plan + commit
+    // pair (same shape `AppShell::render` runs on every frame).
+    let nodes = vec![atomic_node("test", false)];
+    let focus = Some(AccessFocus::atomic("test"));
+    let decision = core.plan_access_emit(&nodes, focus.as_ref());
+    assert!(decision.should_emit, "initial emit always fires");
+    core.commit_access_emit(&nodes, focus.as_ref());
 
     let req = accesskit::ActionRequest {
         action: accesskit::Action::Click,
@@ -515,21 +515,43 @@ fn r51_67_handle_action_request_resolves_via_compute_access_emit() {
 }
 
 #[test]
-fn r51_72_compute_access_emit_initial_emits_full_dirty() {
+fn r51_72_plan_access_emit_initial_marks_all_dirty() {
     let _g = TEST_LOCK.lock().unwrap();
     reset_mocks();
 
-    let mut core = ShellCore::<TestView>::new();
-    let plan = core.compute_access_emit(
-        vec![atomic_node("a", false), atomic_node("b", false)],
-        Some(AccessFocus::atomic("a")),
-    );
+    let core = ShellCore::<TestView>::new();
+    let nodes = vec![atomic_node("a", false), atomic_node("b", false)];
+    let focus = Some(AccessFocus::atomic("a"));
+    let decision = core.plan_access_emit(&nodes, focus.as_ref());
 
-    assert!(plan.should_emit, "first frame always emits");
-    assert!(plan.initial, "first call sets initial = true");
-    assert_eq!(plan.dirty.len(), 2, "initial dirty contains every tag");
-    assert!(plan.dirty.contains("a"));
-    assert!(plan.dirty.contains("b"));
+    assert!(decision.should_emit, "first frame always emits");
+    assert!(decision.initial, "first call sees initial = true");
+    assert_eq!(decision.dirty.len(), 2, "initial dirty contains every tag");
+    assert!(decision.dirty.contains("a"));
+    assert!(decision.dirty.contains("b"));
+}
+
+#[test]
+fn r51_77_plan_alone_is_pure_no_state_advance() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    // R51.77 §5.40 — two back-to-back plans without a commit in
+    // between must return identical decisions. The planner is pure
+    // by contract; the textbook regression for the pre-R51.77
+    // silent-surprise (mutating `compute_access_emit`) would yield
+    // different `dirty` sets and `initial` flags on the two calls.
+    let core = ShellCore::<TestView>::new();
+    let nodes = vec![atomic_node("a", false)];
+    let focus = Some(AccessFocus::atomic("a"));
+
+    let d1 = core.plan_access_emit(&nodes, focus.as_ref());
+    let d2 = core.plan_access_emit(&nodes, focus.as_ref());
+
+    assert_eq!(d1.should_emit, d2.should_emit);
+    assert_eq!(d1.initial, d2.initial);
+    assert_eq!(d1.dirty, d2.dirty);
+    assert!(d1.initial, "still initial — no commit ran in between");
 }
 
 #[test]
@@ -538,20 +560,18 @@ fn r51_75_no_change_frame_skips_emit() {
     reset_mocks();
 
     let mut core = ShellCore::<TestView>::new();
-    let _initial = core.compute_access_emit(
-        vec![atomic_node("a", false)],
-        Some(AccessFocus::atomic("a")),
-    );
-    let second = core.compute_access_emit(
-        vec![atomic_node("a", false)],
-        Some(AccessFocus::atomic("a")),
-    );
+    let nodes = vec![atomic_node("a", false)];
+    let focus = Some(AccessFocus::atomic("a"));
+    let _initial = core.plan_access_emit(&nodes, focus.as_ref());
+    core.commit_access_emit(&nodes, focus.as_ref());
+
+    let second = core.plan_access_emit(&nodes, focus.as_ref());
 
     assert!(
         !second.should_emit,
         "identical nodes + focus → skip Adapter::update_if_active",
     );
-    assert!(!second.initial, "subsequent frames are non-initial");
+    assert!(!second.initial, "post-commit frames are non-initial");
     assert!(
         second.dirty.is_empty(),
         "no dirty tags when nothing changed",
@@ -564,14 +584,14 @@ fn r51_72_changed_node_only_in_dirty() {
     reset_mocks();
 
     let mut core = ShellCore::<TestView>::new();
-    let _initial = core.compute_access_emit(
-        vec![atomic_node("a", false), atomic_node("b", false)],
-        Some(AccessFocus::atomic("a")),
-    );
-    let second = core.compute_access_emit(
-        vec![atomic_node("a", false), atomic_node("b", true)],
-        Some(AccessFocus::atomic("a")),
-    );
+    let initial_nodes =
+        vec![atomic_node("a", false), atomic_node("b", false)];
+    let focus = Some(AccessFocus::atomic("a"));
+    let _initial = core.plan_access_emit(&initial_nodes, focus.as_ref());
+    core.commit_access_emit(&initial_nodes, focus.as_ref());
+
+    let next_nodes = vec![atomic_node("a", false), atomic_node("b", true)];
+    let second = core.plan_access_emit(&next_nodes, focus.as_ref());
 
     assert!(second.should_emit, "node body changed → emit");
     assert_eq!(second.dirty.len(), 1, "only b's body changed");
@@ -585,14 +605,13 @@ fn r51_75_focus_change_emits_with_empty_dirty() {
     reset_mocks();
 
     let mut core = ShellCore::<TestView>::new();
-    let _initial = core.compute_access_emit(
-        vec![atomic_node("a", false), atomic_node("b", false)],
-        Some(AccessFocus::atomic("a")),
-    );
-    let second = core.compute_access_emit(
-        vec![atomic_node("a", false), atomic_node("b", false)],
-        Some(AccessFocus::atomic("b")),
-    );
+    let nodes = vec![atomic_node("a", false), atomic_node("b", false)];
+    let focus_a = Some(AccessFocus::atomic("a"));
+    let focus_b = Some(AccessFocus::atomic("b"));
+    let _initial = core.plan_access_emit(&nodes, focus_a.as_ref());
+    core.commit_access_emit(&nodes, focus_a.as_ref());
+
+    let second = core.plan_access_emit(&nodes, focus_b.as_ref());
 
     assert!(
         second.should_emit,
@@ -602,29 +621,31 @@ fn r51_75_focus_change_emits_with_empty_dirty() {
         second.dirty.is_empty(),
         "focus-only change leaves the dirty set empty",
     );
-    assert_eq!(
-        second.focus.as_ref().expect("focus present").focus_tag,
-        "b",
-    );
 }
 
 #[test]
-fn r51_71_active_descendant_round_trips_through_plan() {
+fn r51_71_active_descendant_does_not_leak_into_dirty() {
     let _g = TEST_LOCK.lock().unwrap();
     reset_mocks();
 
     let mut core = ShellCore::<TestView>::new();
-    let plan = core.compute_access_emit(
-        vec![atomic_node("group", false)],
-        Some(AccessFocus::composite("group", "group#child_1")),
-    );
+    let nodes = vec![atomic_node("group", false)];
+    let focus_1 =
+        Some(AccessFocus::composite("group", "group#child_1"));
+    let focus_2 =
+        Some(AccessFocus::composite("group", "group#child_2"));
+    let _initial = core.plan_access_emit(&nodes, focus_1.as_ref());
+    core.commit_access_emit(&nodes, focus_1.as_ref());
 
-    let focus = plan.focus.expect("composite focus present");
-    assert_eq!(focus.focus_tag, "group", "TreeUpdate::focus = parent tag");
-    assert_eq!(
-        focus.active_descendant.as_deref(),
-        Some("group#child_1"),
-        "set_active_descendant carries the child tag through the plan",
+    // Active-descendant shift is a focus change, not a node body
+    // change — dirty stays empty but should_emit fires (R51.71
+    // roving-tabindex semantics).
+    let second = core.plan_access_emit(&nodes, focus_2.as_ref());
+
+    assert!(second.should_emit, "active descendant shifted");
+    assert!(
+        second.dirty.is_empty(),
+        "active descendant lives in AccessFocus, not in AccessNode body",
     );
 }
 
@@ -634,15 +655,15 @@ fn r51_75_focus_unset_after_set_emits() {
     reset_mocks();
 
     let mut core = ShellCore::<TestView>::new();
-    let _initial = core.compute_access_emit(
-        vec![atomic_node("a", false)],
-        Some(AccessFocus::atomic("a")),
-    );
-    let second = core.compute_access_emit(vec![atomic_node("a", false)], None);
+    let nodes = vec![atomic_node("a", false)];
+    let focus = Some(AccessFocus::atomic("a"));
+    let _initial = core.plan_access_emit(&nodes, focus.as_ref());
+    core.commit_access_emit(&nodes, focus.as_ref());
+
+    let second = core.plan_access_emit(&nodes, None);
 
     assert!(
         second.should_emit,
         "focus cleared → emit (AT must observe the focus drop)",
     );
-    assert!(second.focus.is_none());
 }

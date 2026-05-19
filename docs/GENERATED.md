@@ -3007,6 +3007,7 @@ router.pointer_down(&mut state_scene);
 - R51.74 — focus/next + focus/prev RPC (Tab / Shift+Tab equivalent AI primary path)
 - R51.75 — no-change frame skip (last_access_focus diff, update_if_active 자체 스킵 시 0 cost)
 - R51.76 — ShellCore<V> substrate/surface 분리 + AccessEmitPlan + redraw flag drain
+- R51.77 — plan_access_emit (pure &self) + commit_access_emit (&mut) 분리, AccessEmitPlan→Decision
 
 
 
@@ -3072,14 +3073,15 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/focus.rs:focus_prev
 - crates/pinion-shell/src/lib.rs:AppShell::last_access_focus
 - crates/pinion-shell/src/lib.rs:ShellCore
-- crates/pinion-shell/src/lib.rs:AccessEmitPlan
-- crates/pinion-shell/src/lib.rs:ShellCore::compute_access_emit
 - crates/pinion-shell/src/lib.rs:ShellCore::dispatch_access_action
 - crates/pinion-shell/src/lib.rs:ShellCore::handle_action_request
 - crates/pinion-shell/src/lib.rs:ShellCore::take_redraw_request
 - crates/pinion-shell/src/lib.rs:AppShell::handle_key_press
 - crates/pinion-shell/src/lib.rs:AppShell::drain_redraw_to_winit
 - crates/pinion-shell/tests/dispatch_core.rs
+- crates/pinion-shell/src/lib.rs:AccessEmitDecision
+- crates/pinion-shell/src/lib.rs:ShellCore::plan_access_emit
+- crates/pinion-shell/src/lib.rs:ShellCore::commit_access_emit
 
 
 
@@ -5628,6 +5630,35 @@ router.pointer_down(&mut state_scene);
 - R51.79 — AccessEmitPlan owning Vec<AccessNode> alloc churn (60fps animation 누적): borrow-based 또는 by-value consume 정당성 명시
 - R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction (encapsulation 정통)
 - 이전 carry — aria_label Band-Aid (R51.77 대안 carry) / API 일관성 AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / 이전 R51.x carry 11개
+
+
+
+### R51.77 — §5.40 R51.77 — compute_access_emit silent surprise 청산: plan_access_emit (pure &self, AccessEmitDecision 반환) + commit_access_emit (&mut, cache 진보) 2-step textbook 분리.
+
+**Changes**:
+- crates/pinion-shell/src/lib.rs — AccessEmitPlan (owning nodes+focus) 제거, AccessEmitDecision (should_emit + initial + dirty 3-field) 신설
+- crates/pinion-shell/src/lib.rs — compute_access_emit 제거, plan_access_emit (&self, borrowed nodes/focus, pure) + commit_access_emit (&mut, cache update only) 신설
+- crates/pinion-shell/src/lib.rs — AppShell::render 가 plan + (optional) emit + commit pattern 으로 재구성 (nodes 클론 1회 이동 closure consume, focus 도 borrow 유지)
+- crates/pinion-shell/tests/dispatch_core.rs — 7 compute_access_emit 공호출처 plan+commit 제안 대체 + R51.77 plan purity 회귀 test 신설 (back-to-back plan = identical decision) + R51.71 active descendant 재구성 (dirty leak 검증)
+
+
+
+**Verification**:
+- cargo test -p pinion-shell --test dispatch_core --features pinion-runtime/vello → 18 passed / 0 failed (+1 R51.77 purity regression)
+- cargo test --workspace --features pinion-runtime/vello → 1490 passed / 0 failed / 8 ignored (+1 from 1489)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings (workspace.lints pedantic deny 유지)
+- Mnemosyne validate_workspace → entries=221 / T1=0 / round-trip 1/1 / commit↔ledger missing=0 / AccessEmitPlan + compute_access_emit stale citation 청산 (remove_section_implementation 2회)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.78 — AppShell::handle_key_press winit 결합 (Key + ActiveEventLoop 동시 의존): Escape arm 별도 dispatch + helper winit-free 가 textbook 정통 + 단위 테스트 가능
+- R51.79 — AppShell::render 의 nodes.clone() (R51.77 표즜 설계 포함): closure 소유권 이전 vs commit 세션 아래 by-ref pattern 완성함 — 60fps animation alloc churn 회복
+- R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction (encapsulation 정통)
+- 이전 carry — aria_label Band-Aid (R51.77 대안) / API 일관성 AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화
 
 
 

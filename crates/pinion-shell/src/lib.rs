@@ -587,19 +587,24 @@ pub struct ShellCore<V: WidgetView> {
     pub(crate) redraw_requested: bool,
 }
 
-/// R51.76 §5.40 — pure decision returned by
-/// [`ShellCore::compute_access_emit`].
+/// R51.77 §5.40 — pure decision returned by
+/// [`ShellCore::plan_access_emit`].
 ///
-/// Carries everything the AccessKit emit path needs: the diff
-/// (`dirty`), the initial-frame flag (`initial` — forces a full tree
-/// metadata emit on the first frame), the should-emit verdict
-/// (`should_emit`), and the consumed `nodes` + `focus` (passed
-/// through so the caller does not need to retain a separate
-/// reference). When `should_emit` is `false`, the caller skips
-/// `Adapter::update_if_active` entirely — the R51.75 no-change
-/// frame skip.
+/// Carries only the emit verdict + diff metadata: the should-emit
+/// flag (`should_emit`), the initial-frame flag (`initial` — forces a
+/// full tree metadata emit on the first frame), and the dirty-tag
+/// set. Nodes / focus stay with the caller — the decision struct
+/// borrows them while planning and lets the render path consume them
+/// once for `Adapter::update_if_active` (no clone for the closure).
+///
+/// R51.77 split: pre-R51.77 `AccessEmitPlan` bundled the decision
+/// AND the consumed nodes / focus AND mutated the `ShellCore` cache
+/// inside a single `compute_access_emit` call (silent surprise —
+/// pure-looking name but mutating). The textbook canonical shape
+/// separates pure planning from the cache-update commit step. See
+/// [`ShellCore::commit_access_emit`].
 #[derive(Debug)]
-pub struct AccessEmitPlan {
+pub struct AccessEmitDecision {
     /// `true` when the caller should invoke
     /// `Adapter::update_if_active`. `false` when the tree is
     /// byte-identical to the previous frame's emit (no dirty nodes,
@@ -614,14 +619,6 @@ pub struct AccessEmitPlan {
     /// when only focus changed. On `initial` the set contains every
     /// node's tag (the AT has no prior state).
     pub dirty: HashSet<String>,
-    /// Nodes that will be emitted. Consumed by
-    /// `AccessTreeBuilder::add` in the caller.
-    pub nodes: Vec<AccessNode>,
-    /// Focus declaration that will be emitted. The atomic case
-    /// resolves to `TreeUpdate::focus = focus_tag`; the composite
-    /// case additionally annotates the parent's `accesskit::Node`
-    /// with `set_active_descendant(child)`.
-    pub focus: Option<pinion_a11y::AccessFocus>,
 }
 
 /// The framework-side shell. Generic over a widget binding
@@ -1019,33 +1016,40 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
-    /// R51.76 §5.40 — pure dispatch of the §5.40 AccessKit emit
-    /// decision: takes the freshly-computed nodes + focus, returns the
-    /// emit plan (should-emit verdict, initial-flag, dirty diff), and
-    /// updates the substrate's incremental caches in lock-step.
+    /// R51.77 §5.40 — pure planning step for the §5.40 AccessKit
+    /// emit. Borrows the freshly-computed nodes + focus, consults
+    /// the substrate's incremental caches, and returns the emit
+    /// verdict + dirty-tag diff. **Does not mutate any
+    /// `ShellCore` state** — the caller invokes
+    /// [`Self::commit_access_emit`] after the `Adapter::update_if_active`
+    /// closure has consumed the nodes, completing the cache update
+    /// in a separate step.
     ///
-    /// The split keeps the AccessKit emit logic testable without an
-    /// `accesskit_winit::Adapter`: the caller (production [`AppShell::render`]
-    /// or a headless test) invokes this method, then either feeds the
-    /// returned plan into `Adapter::update_if_active` (production) or
-    /// asserts on `plan.should_emit` / `plan.initial` / `plan.dirty`
-    /// (test).
+    /// Two-step rationale (R51.77 split): pre-R51.77
+    /// `compute_access_emit` bundled the decision AND the cache
+    /// update into one `&mut self` call named like a pure function.
+    /// Reading the name without reading the body suggested
+    /// idempotence; two back-to-back calls actually yielded different
+    /// answers (the second saw the first's cache update). The
+    /// `plan_access_emit` / `commit_access_emit` pair makes the
+    /// state-machine step explicit:
     ///
-    /// Cache mutation rule: the method always updates
-    /// `last_access_tag_map`, `last_access_nodes`, `last_access_focus`,
-    /// and clears `access_emit_initial` after the first call. The
-    /// caller never has to remember to refresh these — calling
-    /// `compute_access_emit` is the single source of truth for both
-    /// the decision and the cache update.
-    pub fn compute_access_emit(
-        &mut self,
-        nodes: Vec<AccessNode>,
-        focus: Option<pinion_a11y::AccessFocus>,
-    ) -> AccessEmitPlan {
-        // R51.67 §5.40 — refresh the tag map so AT-side
-        // `ActionRequested` deliveries can resolve `NodeId` back to
-        // widget tags without recomputing the tree.
-        self.last_access_tag_map = build_tag_map(&nodes);
+    /// 1. `plan_access_emit(&nodes, focus.as_ref())` — pure decision.
+    /// 2. If `decision.should_emit`, feed `nodes` + `focus` into the
+    ///    closure passed to `Adapter::update_if_active`.
+    /// 3. `commit_access_emit(&nodes, focus.as_ref())` — advances
+    ///    the cache so the next plan sees the post-emit baseline.
+    ///
+    /// Tests exercise the pure planner via two back-to-back
+    /// `plan_access_emit` calls separated by a `commit_access_emit`
+    /// without any AccessKit adapter on hand (R51.75 no-change
+    /// verification path).
+    #[must_use]
+    pub fn plan_access_emit(
+        &self,
+        nodes: &[AccessNode],
+        focus: Option<&pinion_a11y::AccessFocus>,
+    ) -> AccessEmitDecision {
         // R51.72 §5.40 — diff against the previous frame's node
         // cache. The initial frame emits every tag (the AT has no
         // prior state); subsequent frames emit only tags whose
@@ -1061,27 +1065,58 @@ impl<V: WidgetView> ShellCore<V> {
                 .map(|n| n.tag.clone())
                 .collect()
         };
-        // Refresh the cache for the next frame.
+        // R51.75 §5.40 — no-change frame skip. Emit only when the
+        // initial-frame flag is set, the dirty set is non-empty, or
+        // the focus declaration shifted. Otherwise the TreeUpdate
+        // would be a pure no-op (root re-emit + identical focus).
+        let focus_changed = focus != self.last_access_focus.as_ref();
+        let should_emit = initial || !dirty.is_empty() || focus_changed;
+        AccessEmitDecision {
+            should_emit,
+            initial,
+            dirty,
+        }
+    }
+
+    /// R51.77 §5.40 — commit step paired with
+    /// [`Self::plan_access_emit`]. Advances the substrate's
+    /// incremental caches to the just-emitted baseline so the next
+    /// planning call diffs against this frame.
+    ///
+    /// Always run after the `Adapter::update_if_active` closure has
+    /// consumed the nodes — even when `decision.should_emit` is
+    /// `false`, calling `commit_access_emit` is safe (it idempotently
+    /// rewrites the cache to the same values). The textbook canonical
+    /// idiom is "plan, optionally emit, always commit"; the alternative
+    /// (skipping commit on `!should_emit`) is also correct (cache is
+    /// already accurate) but easier to get wrong as the substrate
+    /// grows.
+    ///
+    /// Update set: `last_access_tag_map` (`NodeId` → tag for AT-side
+    /// action routing), `last_access_nodes` (per-tag snapshot for the
+    /// next dirty diff), `last_access_focus` (for the next focus-change
+    /// detection), `access_emit_initial` (set to `false` after the
+    /// first commit so the next plan emits incrementally).
+    pub fn commit_access_emit(
+        &mut self,
+        nodes: &[AccessNode],
+        focus: Option<&pinion_a11y::AccessFocus>,
+    ) {
+        // R51.67 §5.40 — refresh the NodeId → tag map so AT-side
+        // `ActionRequested` deliveries can resolve back to widget
+        // tags without recomputing the tree.
+        self.last_access_tag_map = build_tag_map(nodes);
+        // Refresh the per-tag snapshot for the next frame's dirty
+        // diff.
         self.last_access_nodes = nodes
             .iter()
             .cloned()
             .map(|n| (n.tag.clone(), n))
             .collect();
-        // R51.75 §5.40 — no-change frame skip. Emit only when the
-        // initial-frame flag is set, the dirty set is non-empty, or
-        // the focus declaration shifted. Otherwise the TreeUpdate
-        // would be a pure no-op (root re-emit + identical focus).
-        let focus_changed = focus != self.last_access_focus;
-        let should_emit = initial || !dirty.is_empty() || focus_changed;
-        self.last_access_focus.clone_from(&focus);
+        // Refresh the focus snapshot for the next frame's
+        // focus-change check.
+        self.last_access_focus = focus.cloned();
         self.access_emit_initial = false;
-        AccessEmitPlan {
-            should_emit,
-            initial,
-            dirty,
-            nodes,
-            focus,
-        }
     }
 
     /// R51.67 §5.40 — translate an AccessKit `ActionRequest` into a
@@ -1302,26 +1337,33 @@ impl<V: WidgetView> AppShell<V> {
                 V::access_focus_target(&self.core.cached_state, focused.as_deref());
             let window_bounds =
                 pinion_core::scene::Rect::new(0, 0, size.width, size.height);
-            // R51.76 §5.40 — pure emit decision (diff + initial flag +
-            // should-emit verdict) computed by ShellCore. Tests
-            // exercise the same path; AppShell only handles the
-            // adapter-side update_if_active wiring.
-            let plan = self.core.compute_access_emit(nodes, at_focus);
-            if plan.should_emit
+            // R51.77 §5.40 — plan + (optionally) emit + commit. The
+            // pure planner reads the substrate's incremental caches
+            // and returns the dirty diff + should-emit verdict
+            // without mutating any state; the optional emit feeds
+            // `nodes` + `at_focus` into the AccessKit closure; the
+            // commit advances the cache for the next frame.
+            let decision =
+                self.core.plan_access_emit(&nodes, at_focus.as_ref());
+            if decision.should_emit
                 && let Some(adapter) = self.accesskit.as_mut()
             {
+                let initial = decision.initial;
+                let dirty = decision.dirty;
+                let at_focus_ref = at_focus.as_ref();
+                let nodes_for_emit = nodes.clone();
                 adapter.update_if_active(|| {
                     let mut builder = AccessTreeBuilder::new();
-                    if !plan.initial {
+                    if !initial {
                         builder = builder.initial(false);
                     }
-                    for node in plan.nodes {
+                    for node in nodes_for_emit {
                         builder.add(node);
                     }
-                    if !plan.initial {
-                        builder.dirty_tags(plan.dirty);
+                    if !initial {
+                        builder.dirty_tags(dirty);
                     }
-                    if let Some(f) = &plan.focus {
+                    if let Some(f) = at_focus_ref {
                         builder.focused(Some(&f.focus_tag));
                         if let Some(child) = &f.active_descendant {
                             // R51.71 §5.40 — roving-tabindex active
@@ -1334,6 +1376,10 @@ impl<V: WidgetView> AppShell<V> {
                     builder.build(Some(window_bounds))
                 });
             }
+            // R51.77 §5.40 — commit step. Always runs (idempotent on
+            // !should_emit) so the next frame's plan diffs against
+            // the post-emit baseline.
+            self.core.commit_access_emit(&nodes, at_focus.as_ref());
         }
         // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
         // into a `LayoutNode` tree so `scene/layout {viewport: null}`
