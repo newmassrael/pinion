@@ -3015,6 +3015,7 @@ router.pointer_down(&mut state_scene);
 - R51.82 — dispatch_access_action::Focus composite tag 처리, access_child_invoke 라우팅
 - R51.83 — ShellCore 14 필드 + AppShell.core pub(crate) → private (R51.80 encapsulation claim 회복)
 - R51.84 — AccessTreeBuilder::initial &mut self 통일 + AccessFocus::with_active_descendant builder
+- R51.85 — focus 4 route handler 의 RpcError 매핑 helper 5개 추출 (DRY + code lockstep)
 
 
 
@@ -5893,6 +5894,37 @@ router.pointer_down(&mut state_scene);
 - R51.85 — pinion-rpc focus 4 route (set/get/next/prev) Option<&mut FocusManager> null check + RpcError 매핑 helper 추출
 - R51.86 — TextRole::Label variant 활용처 land 또는 enum 에서 제거
 - R51.87 — RadioGroup focused_index vs selected_index 분리 (SCE template 재설계)
+
+
+
+### R51.85 — §5.40 R51.85 — pinion-rpc focus 4 route handler boilerplate helper 추출 (err_focus_unavailable / err_invalid_params / err_internal / state_to_value / err_from_focus): DRY 회복, RpcError code 일관성 lockstep.
+
+**Changes**:
+- crates/pinion-rpc/src/focus.rs — err_focus_unavailable() helper 신설 (`-32004 focus manager unavailable` RpcError 4곳 중복 제거)
+- crates/pinion-rpc/src/focus.rs — err_invalid_params(impl Display) helper 신설 (`-32602 Invalid params` map_err 대상, `impl Display` generic 으로 clippy needless_pass_by_value 회피)
+- crates/pinion-rpc/src/focus.rs — err_internal(impl Display) helper 신설 (`-32603 Internal error` map_err 대상)
+- crates/pinion-rpc/src/focus.rs — state_to_value(FocusState) helper 신설 (FocusState→serde_json::Value lift 의 단일 진입점)
+- crates/pinion-rpc/src/focus.rs — err_from_focus(FocusError) helper 신설 (Unavailable→err_focus_unavailable, NotFocusable→-32602 `tag_not_focusable` 매핑)
+- crates/pinion-rpc/src/focus.rs — handle_focus_set / _get / _next / _prev 본철 다 `let focus = focus.ok_or_else(err_focus_unavailable)?;` + helper 체인 으로 재작성 (각 ~3-7 LOC 로 축소)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — 모든 crate clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warning (needless_pass_by_value lint 도 해결)
+- cargo test --workspace --features pinion-runtime/vello — 1504 pass / 0 fail / 9 ignored (R51.84 baseline byte-identical)
+- focus.rs LOC 감소: handler 4개 이전 ~81 LOC → helper 5개 + handler 4개 ~75 LOC. DRY 회복 + code/message lockstep 강화.
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.86 — TextRole::Label variant 활용처 land 또는 enum 에서 제거 + carry 명시
+- R51.87 — RadioGroup focused_index vs selected_index 분리 (SCE template 재설계)
+- R51.84 carry 잠재: with_aria_label rename 결론 재검토 (현재 WAI-ARIA 정렬 판단 유지)
+- R51.84 carry 잠재: handle_focus_traverse early return 결론 재검토 (현재 FocusManager short-circuit 중복 불필요 판단 유지)
 
 
 

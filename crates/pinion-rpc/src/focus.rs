@@ -132,6 +132,69 @@ pub fn focus_prev(focus: &mut FocusManager) -> FocusState {
     }
 }
 
+/// R51.85 §5.40 — JSON-RPC error for "no focus manager wired".
+///
+/// All four `focus/*` adapters fail on `Option<&FocusManager> = None`
+/// with the same shape: the embedding shell did not register a focus
+/// manager in [`crate::DispatchContext`]. Sharing a single constructor
+/// keeps the error code + message in lockstep (`-32004` is reserved
+/// for "service unavailable" in pinion-rpc's error space).
+fn err_focus_unavailable() -> crate::dispatch::RpcError {
+    crate::dispatch::RpcError {
+        code: -32004,
+        message: "focus manager unavailable".to_string(),
+        data: None,
+    }
+}
+
+/// R51.85 §5.40 — JSON-RPC `-32602 Invalid params` lift from any
+/// `Display` error (parser-side failures for `focus/set`).
+///
+/// `impl Display` (not `serde_json::Error`) so `map_err(err_invalid_params)`
+/// works with `FnOnce(E) -> E2` shape regardless of whether the
+/// concrete error type is owned or borrowed (clippy
+/// `needless_pass_by_value` defers to the trait bound).
+fn err_invalid_params(e: impl std::fmt::Display) -> crate::dispatch::RpcError {
+    crate::dispatch::RpcError {
+        code: -32602,
+        message: "Invalid params".to_string(),
+        data: Some(Value::String(e.to_string())),
+    }
+}
+
+/// R51.85 §5.40 — JSON-RPC `-32603 Internal error` lift from any
+/// `Display` error (serializer-side failures when lowering a
+/// [`FocusState`] back to `Value`).
+fn err_internal(e: impl std::fmt::Display) -> crate::dispatch::RpcError {
+    crate::dispatch::RpcError {
+        code: -32603,
+        message: "Internal error".to_string(),
+        data: Some(Value::String(e.to_string())),
+    }
+}
+
+/// R51.85 §5.40 — typed→JSON lift for [`FocusState`] responses.
+/// Centralises the `to_value → -32603` mapping the four handlers
+/// share.
+fn state_to_value(state: FocusState) -> Result<Value, crate::dispatch::RpcError> {
+    serde_json::to_value(state).map_err(err_internal)
+}
+
+/// R51.85 §5.40 — lift a [`FocusError`] into the dispatcher's
+/// `RpcError` shape. `Unavailable` mirrors
+/// [`err_focus_unavailable`]; `NotFocusable` carries the offending
+/// tag in `data` so AI clients can branch on the rejected name.
+fn err_from_focus(e: FocusError) -> crate::dispatch::RpcError {
+    match e {
+        FocusError::Unavailable => err_focus_unavailable(),
+        FocusError::NotFocusable(tag) => crate::dispatch::RpcError {
+            code: -32602,
+            message: "tag_not_focusable".to_string(),
+            data: Some(Value::String(tag)),
+        },
+    }
+}
+
 /// JSON-RPC adapter for `focus/set`. Parses the `params` Value into
 /// [`FocusSetParams`], runs [`focus_set`], and lifts the result into
 /// the dispatcher's `(serde_json::Value, RpcError)` shape.
@@ -139,95 +202,37 @@ pub(crate) fn handle_focus_set(
     focus: Option<&mut FocusManager>,
     params: Option<&Value>,
 ) -> Result<Value, crate::dispatch::RpcError> {
-    let Some(focus) = focus else {
-        return Err(crate::dispatch::RpcError {
-            code: -32004,
-            message: "focus manager unavailable".to_string(),
-            data: None,
-        });
-    };
+    let focus = focus.ok_or_else(err_focus_unavailable)?;
     let parsed: FocusSetParams = match params {
-        Some(p) => serde_json::from_value(p.clone()).map_err(|e| crate::dispatch::RpcError {
-            code: -32602,
-            message: "Invalid params".to_string(),
-            data: Some(Value::String(e.to_string())),
-        })?,
+        Some(p) => serde_json::from_value(p.clone()).map_err(err_invalid_params)?,
         None => FocusSetParams { tag: None },
     };
-    let state = focus_set(focus, &parsed).map_err(|e| match e {
-        FocusError::Unavailable => crate::dispatch::RpcError {
-            code: -32004,
-            message: "focus manager unavailable".to_string(),
-            data: None,
-        },
-        FocusError::NotFocusable(tag) => crate::dispatch::RpcError {
-            code: -32602,
-            message: "tag_not_focusable".to_string(),
-            data: Some(Value::String(tag)),
-        },
-    })?;
-    serde_json::to_value(state).map_err(|e| crate::dispatch::RpcError {
-        code: -32603,
-        message: "Internal error".to_string(),
-        data: Some(Value::String(e.to_string())),
-    })
+    let state = focus_set(focus, &parsed).map_err(err_from_focus)?;
+    state_to_value(state)
 }
 
 /// JSON-RPC adapter for `focus/get`.
 pub(crate) fn handle_focus_get(
     focus: Option<&FocusManager>,
 ) -> Result<Value, crate::dispatch::RpcError> {
-    let Some(focus) = focus else {
-        return Err(crate::dispatch::RpcError {
-            code: -32004,
-            message: "focus manager unavailable".to_string(),
-            data: None,
-        });
-    };
-    let state = focus_get(focus);
-    serde_json::to_value(state).map_err(|e| crate::dispatch::RpcError {
-        code: -32603,
-        message: "Internal error".to_string(),
-        data: Some(Value::String(e.to_string())),
-    })
+    let focus = focus.ok_or_else(err_focus_unavailable)?;
+    state_to_value(focus_get(focus))
 }
 
 /// JSON-RPC adapter for `focus/next` (R51.74 §5.40).
 pub(crate) fn handle_focus_next(
     focus: Option<&mut FocusManager>,
 ) -> Result<Value, crate::dispatch::RpcError> {
-    let Some(focus) = focus else {
-        return Err(crate::dispatch::RpcError {
-            code: -32004,
-            message: "focus manager unavailable".to_string(),
-            data: None,
-        });
-    };
-    let state = focus_next(focus);
-    serde_json::to_value(state).map_err(|e| crate::dispatch::RpcError {
-        code: -32603,
-        message: "Internal error".to_string(),
-        data: Some(Value::String(e.to_string())),
-    })
+    let focus = focus.ok_or_else(err_focus_unavailable)?;
+    state_to_value(focus_next(focus))
 }
 
 /// JSON-RPC adapter for `focus/prev` (R51.74 §5.40).
 pub(crate) fn handle_focus_prev(
     focus: Option<&mut FocusManager>,
 ) -> Result<Value, crate::dispatch::RpcError> {
-    let Some(focus) = focus else {
-        return Err(crate::dispatch::RpcError {
-            code: -32004,
-            message: "focus manager unavailable".to_string(),
-            data: None,
-        });
-    };
-    let state = focus_prev(focus);
-    serde_json::to_value(state).map_err(|e| crate::dispatch::RpcError {
-        code: -32603,
-        message: "Internal error".to_string(),
-        data: Some(Value::String(e.to_string())),
-    })
+    let focus = focus.ok_or_else(err_focus_unavailable)?;
+    state_to_value(focus_prev(focus))
 }
 
 #[cfg(test)]
