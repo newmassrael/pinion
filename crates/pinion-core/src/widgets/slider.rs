@@ -508,6 +508,17 @@ mod tests {
         assert!(harvested.iter().all(|i| i.tag_str() == "value_changing"));
         sx.send(SliderEvent::PointerCancel);
         assert!(matches!(sx.state(), SliderState::Idle));
+        // R51.93 §5.35 documented invariant: the in-flight `set_value`
+        // calls during the drag stay applied — the OS revoked the
+        // commit signal, not the user's in-flight drag updates.
+        // Slider value is a continuous-domain sidecar, not a
+        // commit-bound enum; the value_changing intents already
+        // emitted are honest reports of where the drag was. Only
+        // the commit (value_committed) is suppressed.
+        assert!(
+            (sx.value() - 0.5).abs() < f32::EPSILON,
+            "set_value during drag stays applied across PointerCancel"
+        );
         // No `value_committed` intent in the post-cancel drain.
         let mut post = Vec::new();
         sx.drain_intents(&mut |i| post.push(i));
