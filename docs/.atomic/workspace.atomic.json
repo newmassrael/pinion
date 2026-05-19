@@ -3886,7 +3886,8 @@
         "R51.88 — AccessFocus::with_active_descendant 제거 (caller 0, strict YAGNI; composite 직접 구성)",
         "R51.89 — RpcError builder (new/with_data/with_data_string/invalid_params/internal_error) + focus DRY",
         "R51.90 — RadioGroup::send activate edge 가 focused_index 동기화 (WAI-ARIA APG roving first-class)",
-        "R51.91 — InterveneError::OutOfRange variant (RadioGroup selected/focused_index TypeMismatch 우회 정정)"
+        "R51.91 — InterveneError::OutOfRange variant (RadioGroup selected/focused_index TypeMismatch 우회 정정)",
+        "R51.92 — pinion-shell/src/substrate.rs 분할: R51.83 visibility 가 substantive (모듈 경계)"
       ],
       "alternatives_rejected": [
         {
@@ -4104,22 +4105,6 @@
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::dispatch_access_action"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::handle_action_request"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::take_redraw_request"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "AppShell::handle_key_press"
         },
         {
@@ -4130,56 +4115,12 @@
           "file": "crates/pinion-shell/tests/dispatch_core.rs"
         },
         {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AccessEmitDecision"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::plan_access_emit"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::commit_access_emit"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::handle_focus_traverse"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::handle_character_key"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::handle_named_key"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::compute_paint_scene"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::collect_access_emit_inputs"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::finalize_frame"
-        },
-        {
           "file": "crates/pinion-core/src/scene.rs",
           "symbol": "TextRole"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
           "symbol": "TextNode::with_role"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::text_cache_mut"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "ShellCore::modifiers_shift_key"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
@@ -4224,6 +4165,66 @@
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
           "symbol": "RadioGroupExternal::resolve_index_intervene"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "AccessEmitDecision"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::dispatch_access_action"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::handle_action_request"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::take_redraw_request"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::plan_access_emit"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::commit_access_emit"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::handle_focus_traverse"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::handle_character_key"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::handle_named_key"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::compute_paint_scene"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::collect_access_emit_inputs"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::finalize_frame"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::text_cache_mut"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::modifiers_shift_key"
         }
       ],
       "decision_status": "active"
@@ -6152,6 +6153,58 @@
         "R51.92 — pinion-shell/src/lib.rs 모듈 분할 (core.rs/shell.rs) — R51.83 substantive 회복",
         "carry: listbox/menu/tree/tab composite 신설 시 resolve_index_intervene 패턴 공유 (R59 axis)",
         "carry: dispatch.rs 의 49 RpcError literal sweep (R51.89 carry)"
+      ]
+    },
+    "R236": {
+      "decision_summary": "R51.92 §5.40 pinion-shell/src/substrate.rs 모듈 분할 — R51.83 의 ShellCore field private 다운그레이드가 단일 파일 한계를 넘어 모듈 경계 substantive 효과 발휘",
+      "changes_bullets": [
+        "crates/pinion-shell/src/substrate.rs 신규 파일 (~700 LOC) — ShellCore + AccessEmitDecision + impl ShellCore + impl Default for ShellCore + build_tag_map helper",
+        "crates/pinion-shell/src/lib.rs 에서 동일 콘텐츠 제거 + `mod substrate;` + `pub use substrate::{AccessEmitDecision, ShellCore};` re-export",
+        "crates/pinion-shell/src/lib.rs imports 정리 — substrate 전용 import (winit::event::Touch/TouchPhase, ModifiersState, IntentQueue, InputRouter, FocusManager, LayoutCache, PreviewLedger, DispatchContext, SceneRevision, IntrospectValue, compute_layout, walk_scene_and_drain, build_layout_node, rect_for_tag, dispatch, translate_action, PinionAccessAction, ROOT_NODE_ID, tag_to_node_id) 을 substrate.rs 로 이동",
+        "crates/pinion-shell/src/lib.rs AppShell + impl + impl ApplicationHandler + run + spawn_stdin_rpc_reader + named_key_str 는 잔존 (수행자 역할)",
+        "ShellCore 14 필드 + AccessEmitDecision 의 필드 visibility 가 substrate.rs 모듈 내부로 완전 제한 — AppShell (lib.rs) 은 pub accessor + dispatch 메서드 만 호출 가능",
+        "build_tag_map 은 substrate.rs 내 fn (모듈 별명차 없이 commit_access_emit 의 유일 호출자)",
+        "atomic store: 15 ShellCore/AccessEmitDecision implementation binding 를 lib.rs → substrate.rs 경로 이전 (15 remove + 15 add)"
+      ],
+      "verification_bullets": [
+        "cargo build -p pinion-shell = clean (import 재조정 완료)",
+        "cargo test --workspace --features pinion-runtime/vello = 1527 pass / 0 fail / 8 ignored (R51.91 와 동일 — 순수 refactor)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "grep 검증: AppShell 의 self.core. 접근은 전원 메서드 호출 — 필드 직접 접근 0 (이미 R51.83 에서 달성되었으며 substrate.rs 분할로 백만 없는 타입 경계 확정)",
+        "external consumer (tests + examples) 계속 ShellCore/WidgetView/run/vello_renderer_impl 을 pub use 로 이용 — break 없음"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "carry: AppShell + impl ApplicationHandler 도 별도 모듈 (e.g. app.rs) 분할 — 이번에는 lib.rs 자체에 잔존 (수행자 역할 + run 과 좀 섞임). R51.92.1 carry: app.rs 구조 최적화",
+        "carry: dispatch.rs 의 49 RpcError literal sweep (R51.89 carry)",
+        "carry: listbox/menu/tree/tab composite 신설 시 resolve_index_intervene 패턴 공유 (R59 axis)"
+      ],
+      "publishable_decision_summary": "R51.92 §5.40 pinion-shell/src/substrate.rs 모듈 분할 — R51.83 의 ShellCore field private 다운그레이드가 단일 파일 한계를 넘어 모듈 경계 substantive 효과 발휘",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/substrate.rs 신규 파일 (~700 LOC) — ShellCore + AccessEmitDecision + impl ShellCore + impl Default for ShellCore + build_tag_map helper",
+        "crates/pinion-shell/src/lib.rs 에서 동일 콘텐츠 제거 + `mod substrate;` + `pub use substrate::{AccessEmitDecision, ShellCore};` re-export",
+        "crates/pinion-shell/src/lib.rs imports 정리 — substrate 전용 import (winit::event::Touch/TouchPhase, ModifiersState, IntentQueue, InputRouter, FocusManager, LayoutCache, PreviewLedger, DispatchContext, SceneRevision, IntrospectValue, compute_layout, walk_scene_and_drain, build_layout_node, rect_for_tag, dispatch, translate_action, PinionAccessAction, ROOT_NODE_ID, tag_to_node_id) 을 substrate.rs 로 이동",
+        "crates/pinion-shell/src/lib.rs AppShell + impl + impl ApplicationHandler + run + spawn_stdin_rpc_reader + named_key_str 는 잔존 (수행자 역할)",
+        "ShellCore 14 필드 + AccessEmitDecision 의 필드 visibility 가 substrate.rs 모듈 내부로 완전 제한 — AppShell (lib.rs) 은 pub accessor + dispatch 메서드 만 호출 가능",
+        "build_tag_map 은 substrate.rs 내 fn (모듈 별명차 없이 commit_access_emit 의 유일 호출자)",
+        "atomic store: 15 ShellCore/AccessEmitDecision implementation binding 를 lib.rs → substrate.rs 경로 이전 (15 remove + 15 add)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo build -p pinion-shell = clean (import 재조정 완료)",
+        "cargo test --workspace --features pinion-runtime/vello = 1527 pass / 0 fail / 8 ignored (R51.91 와 동일 — 순수 refactor)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "grep 검증: AppShell 의 self.core. 접근은 전원 메서드 호출 — 필드 직접 접근 0 (이미 R51.83 에서 달성되었으며 substrate.rs 분할로 백만 없는 타입 경계 확정)",
+        "external consumer (tests + examples) 계속 ShellCore/WidgetView/run/vello_renderer_impl 을 pub use 로 이용 — break 없음"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry: AppShell + impl ApplicationHandler 도 별도 모듈 (e.g. app.rs) 분할 — 이번에는 lib.rs 자체에 잔존 (수행자 역할 + run 과 좀 섞임). R51.92.1 carry: app.rs 구조 최적화",
+        "carry: dispatch.rs 의 49 RpcError literal sweep (R51.89 carry)",
+        "carry: listbox/menu/tree/tab composite 신설 시 resolve_index_intervene 패턴 공유 (R59 axis)"
       ]
     },
     "R51.33": {

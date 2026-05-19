@@ -3022,6 +3022,7 @@ router.pointer_down(&mut state_scene);
 - R51.89 — RpcError builder (new/with_data/with_data_string/invalid_params/internal_error) + focus DRY
 - R51.90 — RadioGroup::send activate edge 가 focused_index 동기화 (WAI-ARIA APG roving first-class)
 - R51.91 — InterveneError::OutOfRange variant (RadioGroup selected/focused_index TypeMismatch 우회 정정)
+- R51.92 — pinion-shell/src/substrate.rs 분할: R51.83 visibility 가 substantive (모듈 경계)
 
 
 
@@ -3086,26 +3087,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/focus.rs:focus_next
 - crates/pinion-rpc/src/focus.rs:focus_prev
 - crates/pinion-shell/src/lib.rs:AppShell::last_access_focus
-- crates/pinion-shell/src/lib.rs:ShellCore
-- crates/pinion-shell/src/lib.rs:ShellCore::dispatch_access_action
-- crates/pinion-shell/src/lib.rs:ShellCore::handle_action_request
-- crates/pinion-shell/src/lib.rs:ShellCore::take_redraw_request
 - crates/pinion-shell/src/lib.rs:AppShell::handle_key_press
 - crates/pinion-shell/src/lib.rs:AppShell::drain_redraw_to_winit
 - crates/pinion-shell/tests/dispatch_core.rs
-- crates/pinion-shell/src/lib.rs:AccessEmitDecision
-- crates/pinion-shell/src/lib.rs:ShellCore::plan_access_emit
-- crates/pinion-shell/src/lib.rs:ShellCore::commit_access_emit
-- crates/pinion-shell/src/lib.rs:ShellCore::handle_focus_traverse
-- crates/pinion-shell/src/lib.rs:ShellCore::handle_character_key
-- crates/pinion-shell/src/lib.rs:ShellCore::handle_named_key
-- crates/pinion-shell/src/lib.rs:ShellCore::compute_paint_scene
-- crates/pinion-shell/src/lib.rs:ShellCore::collect_access_emit_inputs
-- crates/pinion-shell/src/lib.rs:ShellCore::finalize_frame
 - crates/pinion-core/src/scene.rs:TextRole
 - crates/pinion-core/src/scene.rs:TextNode::with_role
-- crates/pinion-shell/src/lib.rs:ShellCore::text_cache_mut
-- crates/pinion-shell/src/lib.rs:ShellCore::modifiers_shift_key
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::focused_index
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::set_focused_index
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::focused_index
@@ -3117,6 +3103,21 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::send
 - crates/pinion-core/src/external.rs:InterveneError::OutOfRange
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::resolve_index_intervene
+- crates/pinion-shell/src/substrate.rs:ShellCore
+- crates/pinion-shell/src/substrate.rs:AccessEmitDecision
+- crates/pinion-shell/src/substrate.rs:ShellCore::dispatch_access_action
+- crates/pinion-shell/src/substrate.rs:ShellCore::handle_action_request
+- crates/pinion-shell/src/substrate.rs:ShellCore::take_redraw_request
+- crates/pinion-shell/src/substrate.rs:ShellCore::plan_access_emit
+- crates/pinion-shell/src/substrate.rs:ShellCore::commit_access_emit
+- crates/pinion-shell/src/substrate.rs:ShellCore::handle_focus_traverse
+- crates/pinion-shell/src/substrate.rs:ShellCore::handle_character_key
+- crates/pinion-shell/src/substrate.rs:ShellCore::handle_named_key
+- crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
+- crates/pinion-shell/src/substrate.rs:ShellCore::collect_access_emit_inputs
+- crates/pinion-shell/src/substrate.rs:ShellCore::finalize_frame
+- crates/pinion-shell/src/substrate.rs:ShellCore::text_cache_mut
+- crates/pinion-shell/src/substrate.rs:ShellCore::modifiers_shift_key
 
 
 
@@ -4462,6 +4463,38 @@ router.pointer_down(&mut state_scene);
 - R51.92 — pinion-shell/src/lib.rs 모듈 분할 (core.rs/shell.rs) — R51.83 substantive 회복
 - carry: listbox/menu/tree/tab composite 신설 시 resolve_index_intervene 패턴 공유 (R59 axis)
 - carry: dispatch.rs 의 49 RpcError literal sweep (R51.89 carry)
+
+
+
+### R236 — R51.92 §5.40 pinion-shell/src/substrate.rs 모듈 분할 — R51.83 의 ShellCore field private 다운그레이드가 단일 파일 한계를 넘어 모듈 경계 substantive 효과 발휘
+
+**Changes**:
+- crates/pinion-shell/src/substrate.rs 신규 파일 (~700 LOC) — ShellCore + AccessEmitDecision + impl ShellCore + impl Default for ShellCore + build_tag_map helper
+- crates/pinion-shell/src/lib.rs 에서 동일 콘텐츠 제거 + `mod substrate;` + `pub use substrate::{AccessEmitDecision, ShellCore};` re-export
+- crates/pinion-shell/src/lib.rs imports 정리 — substrate 전용 import (winit::event::Touch/TouchPhase, ModifiersState, IntentQueue, InputRouter, FocusManager, LayoutCache, PreviewLedger, DispatchContext, SceneRevision, IntrospectValue, compute_layout, walk_scene_and_drain, build_layout_node, rect_for_tag, dispatch, translate_action, PinionAccessAction, ROOT_NODE_ID, tag_to_node_id) 을 substrate.rs 로 이동
+- crates/pinion-shell/src/lib.rs AppShell + impl + impl ApplicationHandler + run + spawn_stdin_rpc_reader + named_key_str 는 잔존 (수행자 역할)
+- ShellCore 14 필드 + AccessEmitDecision 의 필드 visibility 가 substrate.rs 모듈 내부로 완전 제한 — AppShell (lib.rs) 은 pub accessor + dispatch 메서드 만 호출 가능
+- build_tag_map 은 substrate.rs 내 fn (모듈 별명차 없이 commit_access_emit 의 유일 호출자)
+- atomic store: 15 ShellCore/AccessEmitDecision implementation binding 를 lib.rs → substrate.rs 경로 이전 (15 remove + 15 add)
+
+
+
+**Verification**:
+- cargo build -p pinion-shell = clean (import 재조정 완료)
+- cargo test --workspace --features pinion-runtime/vello = 1527 pass / 0 fail / 8 ignored (R51.91 와 동일 — 순수 refactor)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- grep 검증: AppShell 의 self.core. 접근은 전원 메서드 호출 — 필드 직접 접근 0 (이미 R51.83 에서 달성되었으며 substrate.rs 분할로 백만 없는 타입 경계 확정)
+- external consumer (tests + examples) 계속 ShellCore/WidgetView/run/vello_renderer_impl 을 pub use 로 이용 — break 없음
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- carry: AppShell + impl ApplicationHandler 도 별도 모듈 (e.g. app.rs) 분할 — 이번에는 lib.rs 자체에 잔존 (수행자 역할 + run 과 좀 섞임). R51.92.1 carry: app.rs 구조 최적화
+- carry: dispatch.rs 의 49 RpcError literal sweep (R51.89 carry)
+- carry: listbox/menu/tree/tab composite 신설 시 resolve_index_intervene 패턴 공유 (R59 axis)
 
 
 
