@@ -4645,6 +4645,239 @@ mod tests {
         assert!(v.contains('2'), "selected_index after activate should be 2: {v}");
     }
 
+    // ---- R51.100 §5.38 — ListBox e2e through JSON-RPC envelope ----
+    //
+    // Mirrors the R51.16 RadioGroup e2e pattern for the R51.96 ListBox
+    // primitive. Validates the §5.15 8-item contract over the wire for
+    // the composite single-select Listbox and the R51.98 multi-select
+    // variant. Single mode parity with RadioGroup: count + multiselect
+    // + selected_index + send. Multi mode adds: `multiselect=true`
+    // exposed via query, `selected_index` reads as `null` regardless
+    // of selection, `selected.<i>` is intervene-able, and `send`
+    // activations emit `"selected"` Int(toggled_index) for both
+    // toggle-on and toggle-off transitions.
+    //
+    // Composite cancel propagation: R51.93 `PointerCancel` over the
+    // wire format `"<i>:PointerCancel"` lands the addressed item back
+    // at `Idle` without firing the `"selected"` intent, regardless of
+    // mode. Verified separately to guard the R51.93.1 regression at
+    // the JSON-RPC boundary.
+    //
+    // The tests address `RadioGroup` and `ListBoxExternal` directly
+    // (not through `WidgetView`) because the §5.15 contract is the
+    // External adapter's responsibility — the dispatch layer just
+    // routes JSON requests to the adapter's introspect surface.
+
+    #[test]
+    fn r51_100_scene_query_on_listbox_single_returns_count_and_mode() {
+        use pinion_core::widgets::listbox::ListBoxExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
+
+        let req_count = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_count).unwrap());
+        let s = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(s.contains('3'), "count: got {s}");
+
+        // multiselect is exposed even in single mode for AI clients.
+        let req_mode = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/multiselect"},"id":2}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_mode).unwrap());
+        assert_eq!(resp.result, Some(Value::Bool(false)));
+
+        let req_idx = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":3}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req_idx).unwrap());
+        assert_eq!(resp.result, Some(Value::Null));
+    }
+
+    #[test]
+    fn r51_100_scene_rewind_listbox_single_selected_index_no_intent() {
+        use pinion_core::widgets::listbox::ListBoxExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(4))));
+
+        let rewind = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/selected_index","value":2},"id":10}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, rewind).unwrap());
+        assert!(resp.error.is_none(), "rewind error: {:?}", resp.error);
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":11}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let v = serde_json::to_string(&resp.result.unwrap()).unwrap();
+        assert!(v.contains('2'), "selected_index after rewind: {v}");
+
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":12}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert!(arr.is_empty(), "intervene must not queue intents");
+    }
+
+    #[test]
+    fn r51_100_scene_invoke_listbox_full_activate_emits_selected() {
+        use pinion_core::widgets::listbox::ListBoxExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
+
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"1:{ev}"}},"id":20}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "invoke {ev} error: {:?}", resp.error);
+        }
+
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":21}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert_eq!(arr.len(), 1, "single activate emits one intent");
+        let entry = arr[0].as_object().unwrap();
+        assert_eq!(entry.get("tag").and_then(Value::as_str), Some("selected"));
+        assert_eq!(
+            entry.get("payload").and_then(Value::as_i64),
+            Some(1),
+            "payload = new selected index"
+        );
+    }
+
+    #[test]
+    fn r51_100_scene_invoke_listbox_pointer_cancel_silent() {
+        use pinion_core::widgets::listbox::ListBoxExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
+
+        // Pressed → cancel without commit. R51.93 PointerCancel must
+        // not fire `"selected"` even through the composite wire.
+        for ev in ["PointerEnter", "PointerDown", "PointerCancel"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"2:{ev}"}},"id":30}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "invoke {ev}: {:?}", resp.error);
+        }
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":31}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap();
+        let arr = arr.as_array().expect("intents result must be array");
+        assert!(arr.is_empty(), "PointerCancel must not queue intents");
+
+        // selected_index stays Null (no commit happened).
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":32}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert_eq!(resp.result, Some(Value::Null));
+    }
+
+    #[test]
+    fn r51_100_scene_query_listbox_multi_returns_multiselect_true() {
+        use pinion_core::widgets::listbox::ListBoxExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(
+            ListBoxExternal::with_multiselect(3),
+        )));
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/multiselect"},"id":40}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert_eq!(resp.result, Some(Value::Bool(true)));
+
+        // selected_index always Null in multi.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected_index"},"id":41}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert_eq!(resp.result, Some(Value::Null));
+    }
+
+    #[test]
+    fn r51_100_scene_rewind_listbox_multi_selected_dot_writes_per_row() {
+        use pinion_core::widgets::listbox::ListBoxExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(
+            ListBoxExternal::with_multiselect(4),
+        )));
+
+        // Set indices 1 + 3 via per-row intervene.
+        for i in [1, 3] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/rewind","params":{{"path":"/external/selected.{i}","value":true}},"id":50}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert!(resp.error.is_none(), "rewind selected.{i}: {:?}", resp.error);
+        }
+
+        // Verify per-row selected reads true.
+        for i in [1, 3] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"/external/selected.{i}"}},"id":51}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert_eq!(resp.result, Some(Value::Bool(true)), "selected.{i}");
+        }
+        // And the others false.
+        for i in [0, 2] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"/external/selected.{i}"}},"id":52}}"#
+            );
+            let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+            assert_eq!(resp.result, Some(Value::Bool(false)), "selected.{i}");
+        }
+        // Slot-assignment: no intent.
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":53}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap().as_array().unwrap().clone();
+        assert!(arr.is_empty(), "intervene must not queue intents");
+    }
+
+    #[test]
+    fn r51_100_scene_rewind_listbox_single_selected_dot_rejected() {
+        use pinion_core::widgets::listbox::ListBoxExternal;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(ListBoxExternal::new(3))));
+        // Single-mode rejects per-row intervene (the mutual-exclusion
+        // invariant lives in `selected_index`, not `selected.<i>`).
+        let req = r#"{"jsonrpc":"2.0","method":"scene/rewind","params":{"path":"/external/selected.1","value":true},"id":60}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(resp.error.is_some(), "single-mode selected.<i> must error");
+    }
+
+    #[test]
+    fn r51_100_scene_invoke_listbox_multi_full_cycle_emits_toggle_on_and_off() {
+        use pinion_core::widgets::listbox::ListBoxExternal;
+        let mut scene = Scene::External(ExternalNode::new(Box::new(
+            ListBoxExternal::with_multiselect(3),
+        )));
+
+        // First activate row 2 = toggle on.
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"2:{ev}"}},"id":70}}"#
+            );
+            let _ = dispatch_t(&mut scene, &req).unwrap();
+        }
+        // Second activate row 2 = toggle off.
+        for ev in ["PointerDown", "PointerUp"] {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/invoke","params":{{"path":"/external/send","args":"2:{ev}"}},"id":71}}"#
+            );
+            let _ = dispatch_t(&mut scene, &req).unwrap();
+        }
+        // Both transitions emit "selected" Int(2) — payload identifies
+        // the toggled row; AI follow-up query learns the direction.
+        let drain = r#"{"jsonrpc":"2.0","method":"scene/intents","id":72}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, drain).unwrap());
+        let arr = resp.result.unwrap().as_array().unwrap().clone();
+        assert_eq!(arr.len(), 2, "expected toggle-on + toggle-off intents");
+        for entry in &arr {
+            assert_eq!(
+                entry.get("tag").and_then(Value::as_str),
+                Some("selected"),
+            );
+            assert_eq!(
+                entry.get("payload").and_then(Value::as_i64),
+                Some(2),
+                "payload = toggled index"
+            );
+        }
+        // Final per-row query: row 2 is now false.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/selected.2"},"id":73}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert_eq!(resp.result, Some(Value::Bool(false)));
+    }
+
     // ---- R51.73 §5.40 — focus/set + focus/get JSON-RPC wire ----
 
     fn dispatch_with_focus(
