@@ -3895,7 +3895,8 @@
         "R51.94 — AccessTreeBuilder::build 가 debug_assert 로 tag_to_node_id injective 검증 (release 0-cost)",
         "R51.95 — ListBoxItem 신규 widget (template 공유, listbox_item.activate 채널, ListBox composite 의 기본 item)",
         "R51.96 — ListBox composite (WAI-ARIA Listbox: Arrow=focus, Space/Enter=commit) RadioGroup mirror",
-        "R51.96.1 — AriaRole 에 Listbox + ListBoxOption variant 추가 (additive, #[non_exhaustive] 보존)"
+        "R51.96.1 — AriaRole 에 Listbox + ListBoxOption variant 추가 (additive, #[non_exhaustive] 보존)",
+        "R51.97 — hello-listbox 예제 (WAI-ARIA Listbox 키보드 모델: Arrow=focus, Space/Enter=commit, AT integration)"
       ],
       "alternatives_rejected": [
         {
@@ -4274,6 +4275,10 @@
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
           "symbol": "ListBoxExternal"
+        },
+        {
+          "file": "examples/hello-listbox/src/main.rs",
+          "symbol": "ListBoxView"
         }
       ],
       "decision_status": "active"

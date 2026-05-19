@@ -18,6 +18,7 @@ members = [
     "examples/hello-checkbox",
     "examples/hello-radio",
     "examples/hello-radio-group",
+    "examples/hello-listbox",
     "examples/hello-slider",
     "examples/hello-slider-vertical",
     "examples/forge-counter",

@@ -3031,6 +3031,7 @@ router.pointer_down(&mut state_scene);
 - R51.95 — ListBoxItem 신규 widget (template 공유, listbox_item.activate 채널, ListBox composite 의 기본 item)
 - R51.96 — ListBox composite (WAI-ARIA Listbox: Arrow=focus, Space/Enter=commit) RadioGroup mirror
 - R51.96.1 — AriaRole 에 Listbox + ListBoxOption variant 추가 (additive, #[non_exhaustive] 보존)
+- R51.97 — hello-listbox 예제 (WAI-ARIA Listbox 키보드 모델: Arrow=focus, Space/Enter=commit, AT integration)
 
 
 
@@ -3137,6 +3138,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItemExternal
 - crates/pinion-core/src/widgets/listbox.rs:ListBox
 - crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal
+- examples/hello-listbox/src/main.rs:ListBoxView
 
 
 
