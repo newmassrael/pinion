@@ -56,6 +56,32 @@ pub struct AccessNode {
     /// widgets. The tree builder resolves these into
     /// `accesskit::NodeId`s and attaches them under this node.
     pub children: Vec<String>,
+    /// R51.98 §5.40 — WAI-ARIA `aria-selected` per WAI-ARIA 1.2
+    /// §6.6.7. `Some(true)` lowers to `accesskit::Node::set_selected`,
+    /// `Some(false)` to `clear_selected` (explicit-unselected for AT
+    /// awareness in multi-select containers), `None` omits the
+    /// attribute (the default for roles without a selected semantic
+    /// — `Button`, `Slider`, atomic `Switch`/`CheckBox`/`RadioButton`
+    /// that already carry `aria-checked` instead).
+    ///
+    /// Axis distinction from `state.checked`: `aria-checked` is the
+    /// truthy axis for two-state widgets (`Switch`, `CheckBox`,
+    /// `RadioButton`); `aria-selected` is the truthy axis for
+    /// container-membership widgets (`ListBoxOption`, `Tab`,
+    /// `MenuItemRadio`, future grid cells). WAI-ARIA APG explicitly
+    /// distinguishes them — a `Listbox` option is *selected*, not
+    /// *checked*, regardless of the visual rendering. The R51.97
+    /// `hello-listbox` emitted `aria-checked` via `state.checked` for
+    /// `ListBox` options; R51.98 corrects that.
+    pub selected: Option<bool>,
+    /// R51.98 §5.40 — WAI-ARIA `aria-multiselectable` per WAI-ARIA
+    /// 1.2 §6.6.6. `true` lowers to
+    /// `accesskit::Node::set_multiselectable` (the AT then announces
+    /// the container as "list, multi-selectable" instead of "list").
+    /// Default `false` omits the attribute. Only meaningful on
+    /// container roles that own a selection set (`Listbox`,
+    /// future `Grid`/`Tree`/`TabList`); atomic roles ignore the flag.
+    pub multiselectable: bool,
 }
 
 impl AccessNode {
@@ -72,6 +98,8 @@ impl AccessNode {
             state: AccessState::default(),
             bounds: None,
             children: Vec::new(),
+            selected: None,
+            multiselectable: false,
         }
     }
 
@@ -107,6 +135,28 @@ impl AccessNode {
     #[must_use]
     pub fn with_child(mut self, child_tag: impl Into<String>) -> Self {
         self.children.push(child_tag.into());
+        self
+    }
+
+    /// R51.98 §5.40 — set the WAI-ARIA `aria-selected` attribute.
+    /// Use `true` for "this option is currently in the container's
+    /// selection set", `false` for "explicitly not selected"
+    /// (announced distinctly by AT in multi-select containers), or
+    /// omit (leave `selected = None`) for roles that don't carry a
+    /// selected axis.
+    #[must_use]
+    pub fn with_selected(mut self, selected: bool) -> Self {
+        self.selected = Some(selected);
+        self
+    }
+
+    /// R51.98 §5.40 — declare this container exposes
+    /// `aria-multiselectable="true"`. Only meaningful on `Listbox`,
+    /// future `Grid` / `Tree` / `TabList` parents; atomic roles
+    /// ignore it at lowering.
+    #[must_use]
+    pub fn with_multiselectable(mut self) -> Self {
+        self.multiselectable = true;
         self
     }
 }
@@ -229,5 +279,26 @@ mod tests {
         assert!(!s.hovered);
         assert!(!s.pressed);
         assert_eq!(s.checked, None);
+    }
+
+    #[test]
+    fn r51_98_new_omits_selected_and_multiselectable() {
+        let n = AccessNode::new("opt", AriaRole::ListBoxOption);
+        assert_eq!(n.selected, None);
+        assert!(!n.multiselectable);
+    }
+
+    #[test]
+    fn r51_98_with_selected_records_axis() {
+        let n = AccessNode::new("opt", AriaRole::ListBoxOption).with_selected(true);
+        assert_eq!(n.selected, Some(true));
+        let n2 = AccessNode::new("opt", AriaRole::ListBoxOption).with_selected(false);
+        assert_eq!(n2.selected, Some(false));
+    }
+
+    #[test]
+    fn r51_98_with_multiselectable_marks_container() {
+        let n = AccessNode::new("list", AriaRole::Listbox).with_multiselectable();
+        assert!(n.multiselectable);
     }
 }

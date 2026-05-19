@@ -59,7 +59,7 @@
 //! [`RadioGroup`]: pinion_core::widgets::radio_group::RadioGroup
 //! [`ListBoxItem`]: pinion_core::widgets::listbox_item::ListBoxItem
 
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -373,16 +373,26 @@ impl WidgetView for ListBoxView {
         nodes.push(list);
         for (i, (item_state, selected)) in state.rows.iter().copied().enumerate() {
             let option_tag = format!("{PRIMARY_TAG}#{i}");
+            // R51.98 §5.40 — ListBoxOption uses WAI-ARIA
+            // `aria-selected` (container-membership axis), not
+            // `aria-checked` (two-state truthy axis used by Switch /
+            // CheckBox / RadioButton). The R51.97 hello-listbox
+            // emitted `state.checked + AccessValue::Bool` for option
+            // selection; that conflated the two ARIA axes and
+            // misreported the option to AT (NVDA / VoiceOver would
+            // announce "checked" instead of "selected"). The option's
+            // accessible name comes from its TextNode label via
+            // `enrich_names_from_scene` — no `AccessValue` needed.
             let access_state = AccessState {
                 focused: list_focused && i == active_idx,
                 disabled: matches!(item_state, ListboxItemState::Disabled),
                 hovered: matches!(item_state, ListboxItemState::Hover),
                 pressed: matches!(item_state, ListboxItemState::Pressed),
-                checked: Some(selected),
+                checked: None,
             };
             nodes.push(
                 AccessNode::new(&option_tag, AriaRole::ListBoxOption)
-                    .with_value(AccessValue::Bool(selected))
+                    .with_selected(selected)
                     .with_state(access_state),
             );
         }
@@ -652,21 +662,28 @@ mod a11y_tests {
     }
 
     #[test]
-    fn options_report_selected_value_when_committed() {
+    fn r51_98_options_report_selected_via_aria_selected() {
         let nodes = ListBoxView::access_node(&selected_state(2), None);
         // nodes[0] is the listbox parent; option N starts at nodes[1].
         for i in 0..N {
             let opt = &nodes[i + 1];
             let expect_selected = i == 2;
             assert_eq!(
-                opt.value,
-                Some(AccessValue::Bool(expect_selected)),
-                "option {i} value must match selection",
+                opt.selected,
+                Some(expect_selected),
+                "option {i} aria-selected must match selection",
+            );
+            // R51.98 §5.40 — ListBoxOption no longer carries the
+            // `aria-checked` axis or a `Bool` `AccessValue`. WAI-ARIA
+            // explicitly distinguishes the two; previously the test
+            // pinned the wrong axis.
+            assert_eq!(
+                opt.state.checked, None,
+                "option {i} must not carry aria-checked (wrong axis)",
             );
             assert_eq!(
-                opt.state.checked,
-                Some(expect_selected),
-                "option {i} access_state.checked must match selection",
+                opt.value, None,
+                "option {i} value field unused (name comes from label)",
             );
         }
     }

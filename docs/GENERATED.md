@@ -2728,6 +2728,7 @@ router.pointer_down(&mut state_scene);
 - R51.2 — AI introspect: §5.15 8-item contract 정통 (state/value read + value intervene + send invoke)
 - R51.2 — Figma fidelity: Toggle pure state, label = Scene::Text + R47.5 TextStyle
 - R51.41 composite hit-target: paint N 'group#i' tags + state 1 'group' External (RadioGroup)
+- R51.98 — ListBox 의 multi-select 모드 (with_multiselect; aria-multiselectable; 활성화 시 토글, 형제 미터치)
 
 
 
@@ -2801,6 +2802,13 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/selected.&lt;index&gt;
 - examples/hello-radio-group/src/main.rs:RadioGroupView
 - examples/hello-slider-vertical/src/main.rs:SliderVerticalView
+- crates/pinion-core/src/widgets/listbox.rs:ListBox::with_multiselect
+- crates/pinion-core/src/widgets/listbox.rs:ListBox::is_multiselect
+- crates/pinion-core/src/widgets/listbox.rs:ListBox::selected_indices
+- crates/pinion-core/src/widgets/listbox.rs:ListBox::set_selected_indices
+- crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::with_multiselect
+- crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::is_multiselect
+- crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::selected_indices
 
 
 
@@ -3032,6 +3040,8 @@ router.pointer_down(&mut state_scene);
 - R51.96 — ListBox composite (WAI-ARIA Listbox: Arrow=focus, Space/Enter=commit) RadioGroup mirror
 - R51.96.1 — AriaRole 에 Listbox + ListBoxOption variant 추가 (additive, #[non_exhaustive] 보존)
 - R51.97 — hello-listbox 예제 (WAI-ARIA Listbox 키보드 모델: Arrow=focus, Space/Enter=commit, AT integration)
+- R51.98 — AccessNode.selected (aria-selected) + multiselectable (aria-multiselectable) wire-up
+- R51.98 — hello-listbox ListBoxOption aria-checked→aria-selected 정정 (axis 분리, WAI-ARIA APG)
 
 
 
@@ -3139,6 +3149,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/listbox.rs:ListBox
 - crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal
 - examples/hello-listbox/src/main.rs:ListBoxView
+- crates/pinion-a11y/src/node.rs:AccessNode::with_selected
+- crates/pinion-a11y/src/node.rs:AccessNode::with_multiselectable
 
 
 

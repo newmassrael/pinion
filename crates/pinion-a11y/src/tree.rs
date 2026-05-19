@@ -347,6 +347,27 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_disabled();
     }
 
+    // R51.98 §5.40 — WAI-ARIA `aria-selected` mapping. Distinct axis
+    // from `aria-checked`: container-membership (Listbox option, Tab,
+    // future grid cell) vs two-state truthy (Switch / CheckBox /
+    // RadioButton). AccessKit treats `Selected` as a 3-state
+    // `Option<bool>` flag — `Some(true)` = selected, `Some(false)` =
+    // explicitly unselected (announced distinctly in multi-select
+    // containers, per `bool_property_methods` doc), `None` = the
+    // attribute is omitted (the role doesn't carry the axis).
+    if let Some(v) = access.selected {
+        node.set_selected(v);
+    }
+
+    // R51.98 §5.40 — WAI-ARIA `aria-multiselectable` mapping. Only
+    // meaningful on container roles with a selection set (Listbox
+    // primarily; Grid/Tree/TabList future). AccessKit's flag is
+    // boolean-set; we omit it when false to keep TreeUpdate payload
+    // minimal per the R51.72 incremental-update guidance.
+    if access.multiselectable {
+        node.set_multiselectable();
+    }
+
     if let Some(bounds) = access.bounds {
         node.set_bounds(rect_to_accesskit(bounds));
     }
@@ -627,6 +648,42 @@ mod tests {
         // No call to `dirty_tags` — equivalent to "all dirty".
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 4); // root + 3
+    }
+
+    #[test]
+    fn r51_98_listbox_with_multiselectable_lowers() {
+        // Smoke test: build with a multi-selectable Listbox parent +
+        // two ListBoxOption children, one selected. We can't read
+        // accesskit::Node internals from outside the crate, so we
+        // only verify build succeeds and the node count is right.
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            &AccessNode::new("list", AriaRole::Listbox)
+                .with_multiselectable()
+                .with_child("list#0")
+                .with_child("list#1"),
+        );
+        b.add(
+            &AccessNode::new("list#0", AriaRole::ListBoxOption)
+                .with_selected(true),
+        );
+        b.add(
+            &AccessNode::new("list#1", AriaRole::ListBoxOption)
+                .with_selected(false),
+        );
+        let update = b.build(None);
+        // root + list + 2 options = 4
+        assert_eq!(update.nodes.len(), 4);
+    }
+
+    #[test]
+    fn r51_98_listbox_option_with_selected_none_lowers() {
+        // `selected: None` is the legacy path — pre-R51.98 hello-listbox
+        // didn't set the axis at all. Build must still succeed.
+        let mut b = AccessTreeBuilder::new();
+        b.add(&AccessNode::new("opt", AriaRole::ListBoxOption));
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 2);
     }
 
     #[test]

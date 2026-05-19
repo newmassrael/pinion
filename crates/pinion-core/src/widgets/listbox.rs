@@ -32,6 +32,18 @@
 //!   wire channel; the SCXML-level distinction is for future
 //!   observers / tooling.
 //!
+//! R51.98 §5.38 — **single-select / multi-select mode** is fixed at
+//! construction. Use [`ListBox::new`] for the WAI-ARIA single-select
+//! Listbox model (mutual exclusion: activating one row deselects every
+//! sibling) and [`ListBox::with_multiselect`] for the
+//! `aria-multiselectable="true"` model (activation toggles only the
+//! addressed row; siblings stay untouched). The two modes share every
+//! primitive (`send`, `selected_indices`, `set_selected_indices`,
+//! `set_focused_index`); the single-select-only convenience surfaces
+//! ([`selected_index`](ListBox::selected_index) /
+//! [`set_selected`](ListBox::set_selected)) panic in multi-select mode
+//! to signal the mode mismatch at the call site.
+//!
 //! Inherits the framework patterns paid through R51.x:
 //!
 //! * R51.87 §5.40 — `focused_index` carries the AT-side active
@@ -78,19 +90,65 @@ pub struct ListBox {
     /// falls back to `selected`-or-0 at the application's
     /// `access_focus_target` resolution.
     focused: Option<usize>,
+    /// R51.98 §5.38 — selection-cardinality mode, fixed at
+    /// construction. `false` (default via [`Self::new`]) = WAI-ARIA
+    /// single-select Listbox (mutual exclusion on activate). `true`
+    /// (via [`Self::with_multiselect`]) = `aria-multiselectable="true"`
+    /// (activation toggles only the addressed row). Mode is immutable
+    /// because flipping it mid-life would either invalidate the
+    /// outstanding selection set or silently coerce it — neither
+    /// matches any industry-precedent Listbox surface.
+    multiselect: bool,
 }
 
 impl ListBox {
-    /// Construct a list with `count` items, all unselected.
+    /// Construct a single-select list with `count` items, all
+    /// unselected.
+    ///
     /// Use [`set_selected`](Self::set_selected) to seed an initial
-    /// selection.
+    /// selection. The list is the canonical WAI-ARIA Listbox
+    /// single-select model (activating one row deselects every
+    /// sibling); for the `aria-multiselectable="true"` variant use
+    /// [`Self::with_multiselect`] instead.
     #[must_use]
     pub fn new(count: usize) -> Self {
         Self {
             items: (0..count).map(|_| ListBoxItem::new()).collect(),
             selected: None,
             focused: None,
+            multiselect: false,
         }
+    }
+
+    /// R51.98 §5.38 — construct a multi-select list with `count`
+    /// items, all unselected.
+    ///
+    /// In multi-select mode each activation toggles only the
+    /// addressed row (no sibling deselect). The
+    /// [`set_selected`](Self::set_selected) /
+    /// [`selected_index`](Self::selected_index) single-select-only
+    /// surfaces panic in this mode; use
+    /// [`set_selected_indices`](Self::set_selected_indices) and
+    /// [`selected_indices`](Self::selected_indices) (which work in
+    /// both modes) for programmatic admin.
+    #[must_use]
+    pub fn with_multiselect(count: usize) -> Self {
+        Self {
+            items: (0..count).map(|_| ListBoxItem::new()).collect(),
+            selected: None,
+            focused: None,
+            multiselect: true,
+        }
+    }
+
+    /// R51.98 §5.38 — `true` if this list was constructed via
+    /// [`Self::with_multiselect`]. Drives the
+    /// `aria-multiselectable` AccessKit attribute at the application's
+    /// `access_node` and disambiguates the `send` toggle semantic for
+    /// the External adapter's intent emit.
+    #[must_use]
+    pub fn is_multiselect(&self) -> bool {
+        self.multiselect
     }
 
     /// Number of items in this list.
@@ -99,31 +157,70 @@ impl ListBox {
         self.items.len()
     }
 
-    /// Drive `event` to the item at `index`. If the event causes
-    /// that item to activate (false → true selected), every other
-    /// item in the list is deselected and the list's
-    /// `selected_index` snaps to `Some(index)`. R51.90 §5.40 —
-    /// activation also syncs `focused_index` to the new index.
+    /// Drive `event` to the item at `index`.
+    ///
+    /// **Single-select mode** ([`Self::new`]) — if the event causes
+    /// the item to activate (false → true selected), every other
+    /// item is deselected and the list's `selected_index` snaps to
+    /// `Some(index)`. R51.90 §5.40 — activation also syncs
+    /// `focused_index` to the new index.
+    ///
+    /// **Multi-select mode** ([`Self::with_multiselect`]) — R51.98
+    /// §5.38 — activation toggles the addressed item only (already-
+    /// selected → deselected; unselected → selected). Siblings stay
+    /// untouched, and `selected_index` is *not* updated (it has no
+    /// single meaningful value in multi-mode and is invalid to
+    /// query). `focused_index` still syncs to the toggled row so the
+    /// AT cursor follows the user's last interaction. R51.93 §5.35
+    /// `PointerCancel` does not commit the toggle in either mode.
+    ///
+    /// Activation detection runs off the item's state-machine
+    /// transition (`Pressed → Hover` for pointer release;
+    /// non-`Disabled` `KeyboardActivate`) so multi-mode toggle-off
+    /// (where `ListBoxItem::send` is intentionally idempotent on the
+    /// already-`true` value) is still caught.
     ///
     /// # Panics
     /// Panics if `index >= count()`.
     pub fn send(&mut self, index: usize, event: ListboxItemEvent) {
+        let pre_state = self.items[index].state();
         let was_selected = self.items[index].is_selected();
         self.items[index].send(event);
-        let now_selected = self.items[index].is_selected();
-        if !was_selected && now_selected {
-            for (j, r) in self.items.iter_mut().enumerate() {
-                if j != index {
-                    r.set_selected(false);
+        let post_state = self.items[index].state();
+        // R51.98 §5.38 — detect activation independent of the value
+        // sidecar so multi-mode toggle-off is reachable. Mirrors the
+        // `ListBoxItem::send` activation predicate (kept in sync with
+        // `crates/pinion-core/widgets/standard_button.sce-template.xml`).
+        let activation = (matches!(pre_state, ListboxItemState::Pressed)
+            && matches!(post_state, ListboxItemState::Hover))
+            || (matches!(event, ListboxItemEvent::KeyboardActivate)
+                && !matches!(pre_state, ListboxItemState::Disabled));
+        if self.multiselect {
+            if activation {
+                if was_selected {
+                    // Toggle off: atom is set-not-flip, so the
+                    // composite forces the new false here.
+                    self.items[index].set_selected(false);
                 }
+                // Else: atom already set true on the activation edge.
+                self.focused = Some(index);
             }
-            self.selected = Some(index);
-            // R51.90 §5.40 — activation moves focus. Mirrors
-            // `RadioGroup::send`. Differs from RadioGroup in keyboard
-            // routing (Arrow keys do not reach `send` in the ARIA
-            // Listbox model — only Space/Enter on a focused row does)
-            // but the sync rule is identical.
-            self.focused = Some(index);
+        } else {
+            let now_selected = self.items[index].is_selected();
+            if !was_selected && now_selected {
+                for (j, r) in self.items.iter_mut().enumerate() {
+                    if j != index {
+                        r.set_selected(false);
+                    }
+                }
+                self.selected = Some(index);
+                // R51.90 §5.40 — activation moves focus. Mirrors
+                // `RadioGroup::send`. Differs from RadioGroup in
+                // keyboard routing (Arrow keys do not reach `send` in
+                // the ARIA Listbox model — only Space/Enter on a
+                // focused row does) but the sync rule is identical.
+                self.focused = Some(index);
+            }
         }
     }
 
@@ -146,9 +243,35 @@ impl ListBox {
     }
 
     /// Index of the currently selected item, or `None` if none.
+    /// **Single-select only** — see [`Self::selected_indices`] for
+    /// the multi-select-aware query.
+    ///
+    /// # Panics
+    /// Panics if [`Self::is_multiselect`] is `true`. A multi-select
+    /// list has no single meaningful selected index (zero or many
+    /// items may be selected); callers in multi-mode must use
+    /// [`Self::selected_indices`].
     #[must_use]
     pub fn selected_index(&self) -> Option<usize> {
+        assert!(
+            !self.multiselect,
+            "ListBox::selected_index() is single-select-only; \
+             use selected_indices() in multi-select mode"
+        );
         self.selected
+    }
+
+    /// R51.98 §5.38 — every currently-selected index, ascending.
+    /// Works in both modes: single-select returns 0 or 1 indices,
+    /// multi-select returns 0..count indices. This is the canonical
+    /// query for multi-mode and the mode-agnostic query for tooling.
+    #[must_use]
+    pub fn selected_indices(&self) -> Vec<usize> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| r.is_selected().then_some(i))
+            .collect()
     }
 
     /// Restore the list to a specific selection (persisted preference
@@ -164,9 +287,18 @@ impl ListBox {
     /// here directly (commit-class side effects are reserved for
     /// genuine user activation).
     ///
+    /// **Single-select only** — see [`Self::set_selected_indices`]
+    /// for the multi-select-aware setter.
+    ///
     /// # Panics
-    /// Panics if `idx` is `Some(i)` with `i >= count()`.
+    /// * Panics if [`Self::is_multiselect`] is `true`.
+    /// * Panics if `idx` is `Some(i)` with `i >= count()`.
     pub fn set_selected(&mut self, idx: Option<usize>) {
+        assert!(
+            !self.multiselect,
+            "ListBox::set_selected() is single-select-only; \
+             use set_selected_indices() in multi-select mode"
+        );
         if let Some(i) = idx {
             assert!(
                 i < self.items.len(),
@@ -178,6 +310,42 @@ impl ListBox {
             r.set_selected(idx == Some(j));
         }
         self.selected = idx;
+    }
+
+    /// R51.98 §5.38 — slot-assignment setter that works in both
+    /// modes. Replaces the entire selection set with `indices`.
+    ///
+    /// Single-select mode: `indices` must contain 0 or 1 entries
+    /// (`selected_index` is the canonical convenience for that
+    /// case). Multi-select mode: any subset of `0..count` is valid;
+    /// duplicates are deduplicated; order is irrelevant.
+    ///
+    /// Mirrors [`Self::set_selected`] in being silent on the §5.20
+    /// intent channel — restoration is admin, not interaction.
+    ///
+    /// # Panics
+    /// * Panics if any index in `indices` is `>= count()`.
+    /// * In single-select mode, panics if `indices.len() > 1`.
+    pub fn set_selected_indices(&mut self, indices: &[usize]) {
+        for &i in indices {
+            assert!(
+                i < self.items.len(),
+                "ListBox::set_selected_indices index {i} out of range (count={})",
+                self.items.len()
+            );
+        }
+        if !self.multiselect {
+            assert!(
+                indices.len() <= 1,
+                "ListBox::set_selected_indices: single-select mode \
+                 accepts at most one index, got {}",
+                indices.len()
+            );
+            self.selected = indices.first().copied();
+        }
+        for (j, item) in self.items.iter_mut().enumerate() {
+            item.set_selected(indices.contains(&j));
+        }
     }
 
     /// R51.87 §5.40 — AT-side active descendant index. First-class
@@ -229,10 +397,11 @@ impl Default for ListBox {
 /// `ListBox` transition contract (R51.12 substrate). Same shape as
 /// [`crate::widgets::RadioGroup`]: event pairs the item index with
 /// the underlying [`ListboxItemEvent`]; snapshot is the list's
-/// selected-index option; detect emits `"selected"` with the new
-/// index as [`IntrospectValue::Int`] whenever selection moves.
+/// **single-select** `selected_index` option; detect emits
+/// `"selected"` with the new index as [`IntrospectValue::Int`]
+/// whenever selection moves.
 ///
-/// Selection transitions that emit:
+/// Selection transitions that emit (single-select mode only):
 ///
 /// * `None → Some(i)` — first selection
 /// * `Some(a) → Some(b)` where `a != b` — switch
@@ -243,6 +412,18 @@ impl Default for ListBox {
 /// * `Some(a) → None` — clear (only reachable via
 ///   [`set_selected`](ListBox::set_selected), not via `send`)
 /// * `None → None` — no-op (non-activating event)
+///
+/// R51.98 §5.38 — **multi-select mode is invisible to this contract**.
+/// The snapshot is `self.selected`, which is never written in
+/// multi-mode (mode mismatch with the "sole selected index" axis), so
+/// every `detect` invocation in multi-mode evaluates `None → None`
+/// and returns `None`. Multi-mode intent emission is the External
+/// adapter's responsibility: [`ListBoxExternal::send`] inspects the
+/// addressed item's value before/after the dispatch and pushes a
+/// `"selected"` intent with the toggled index when the bit flipped.
+/// Future substrate refactor (carry `R59 WidgetTransition::detect ->
+/// Vec<Intent>`) would let the contract carry the multi-mode emit
+/// natively without adapter-side bypass.
 impl WidgetTransition for ListBox {
     type Event = (usize, ListboxItemEvent);
     type Snapshot = Option<usize>;
@@ -285,16 +466,66 @@ pub struct ListBoxExternal {
 }
 
 impl ListBoxExternal {
-    /// Construct with `count` items, all unselected.
+    /// Construct a single-select adapter with `count` items, all
+    /// unselected.
     #[must_use]
     pub fn new(count: usize) -> Self {
         Self { em: IntentEmitter::new(ListBox::new(count)) }
     }
 
+    /// R51.98 §5.38 — construct a multi-select adapter with `count`
+    /// items, all unselected. The `aria-multiselectable="true"`
+    /// model: activating one row toggles only that row's value.
+    #[must_use]
+    pub fn with_multiselect(count: usize) -> Self {
+        Self { em: IntentEmitter::new(ListBox::with_multiselect(count)) }
+    }
+
+    /// R51.98 §5.38 — `true` if this adapter was constructed via
+    /// [`Self::with_multiselect`].
+    #[must_use]
+    pub fn is_multiselect(&self) -> bool {
+        self.em.inner.is_multiselect()
+    }
+
     /// Drive `event` to the item at `index`. Queues a `"selected"`
-    /// intent on selection-change transitions.
+    /// intent with the toggled index as payload on every value flip.
+    ///
+    /// **Single-select mode** — emits on `None → Some(i)` /
+    /// `Some(a) → Some(b)` via the [`WidgetTransition::detect`]
+    /// rule; payload is the new `selected_index`.
+    ///
+    /// **Multi-select mode** (R51.98 §5.38) — emits on any `false ↔
+    /// true` flip of the addressed row; payload is the toggled
+    /// `index`. The follow-up `selected.<index>` query confirms the
+    /// new boolean state. Two consecutive activations on the same
+    /// row emit twice (toggle-on, toggle-off). The emit happens
+    /// outside [`IntentEmitter::dispatch`] because the trait-level
+    /// detect rule is single-mode only (see the impl doc on
+    /// [`WidgetTransition`] for [`ListBox`] — multi-mode is invisible
+    /// to the trait snapshot).
+    ///
+    /// # Panics
+    /// * Panics if `index >= count()` (forwarded from
+    ///   [`ListBox::send`]).
+    /// * Panics if `index` does not fit in `i64` (multi-mode only;
+    ///   guarded by `usize <= i64::MAX` on every supported target).
     pub fn send(&mut self, index: usize, event: ListboxItemEvent) {
-        self.em.dispatch((index, event));
+        if self.em.inner.is_multiselect() {
+            let was = self.em.inner.is_selected(index);
+            self.em.dispatch((index, event));
+            let now = self.em.inner.is_selected(index);
+            if was != now {
+                self.em.push(Intent::new_static(
+                    "selected",
+                    IntrospectValue::Int(
+                        i64::try_from(index).expect("ListBox index fits in i64"),
+                    ),
+                ));
+            }
+        } else {
+            self.em.dispatch((index, event));
+        }
     }
 
     /// Number of items in the wrapped list.
@@ -316,9 +547,21 @@ impl ListBoxExternal {
     }
 
     /// Index of the currently selected item, or `None`.
+    /// **Single-select only** — see [`Self::selected_indices`] for
+    /// the multi-select-aware query.
+    ///
+    /// # Panics
+    /// Panics if [`Self::is_multiselect`] is `true`.
     #[must_use]
     pub fn selected_index(&self) -> Option<usize> {
         self.em.inner.selected_index()
+    }
+
+    /// R51.98 §5.38 — every currently-selected index, ascending.
+    /// Works in both modes.
+    #[must_use]
+    pub fn selected_indices(&self) -> Vec<usize> {
+        self.em.inner.selected_indices()
     }
 
     /// R51.91 §5.40 — shared validation for `selected_index` /
@@ -353,11 +596,19 @@ impl Default for ListBoxExternal {
 
 impl core::fmt::Debug for ListBoxExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ListBoxExternal")
-            .field("count", &self.count())
-            .field("selected_index", &self.selected_index())
-            .field("focused_index", &self.focused_index())
-            .finish()
+        let mut s = f.debug_struct("ListBoxExternal");
+        s.field("count", &self.count())
+            .field("multiselect", &self.is_multiselect());
+        // R51.98 §5.38 — `selected_index` panics in multi-mode, so the
+        // Debug output substitutes the mode-agnostic `selected_indices`
+        // there. Single-mode keeps the legacy field for parity with
+        // pre-R51.98 logs and tests.
+        if self.is_multiselect() {
+            s.field("selected_indices", &self.selected_indices());
+        } else {
+            s.field("selected_index", &self.selected_index());
+        }
+        s.field("focused_index", &self.focused_index()).finish()
     }
 }
 
@@ -397,8 +648,16 @@ impl ExternalIntrospect for ListBoxExternal {
         // convention as `RadioGroupExternal` (R51.43 §5.38). Schema
         // is discovery metadata for AI clients (`scene/schema` RPC),
         // not a static enumeration of every concrete path.
+        //
+        // R51.98 §5.38 — `multiselect` (bool) is read-only mode
+        // metadata. `selected.<index>` becomes write-enabled in
+        // multi-select mode (canonical multi-mode admin path while
+        // an array-typed `IntrospectValue` is still a substrate
+        // carry); `selected_index` returns `null` in multi-mode and
+        // rejects intervene.
         IntrospectSchema::new(&[
             ("count", "int"),
+            ("multiselect", "bool"),
             ("selected_index", "int"),
             ("focused_index", "int"),
             ("state.<index>", "string"),
@@ -413,12 +672,26 @@ impl ExternalIntrospect for ListBoxExternal {
                 i64::try_from(self.count())
                     .expect("ListBox count must fit in i64"),
             )),
-            "selected_index" => Some(match self.selected_index() {
-                Some(idx) => IntrospectValue::Int(
-                    i64::try_from(idx).expect("index fits in i64"),
-                ),
-                None => IntrospectValue::Null,
-            }),
+            // R51.98 §5.38 — mode metadata exposed to AI clients so a
+            // mode-agnostic introspector can pick the right path
+            // (`selected.<i>` per-row vs `selected_index` single).
+            "multiselect" => Some(IntrospectValue::Bool(self.is_multiselect())),
+            "selected_index" => {
+                if self.is_multiselect() {
+                    // R51.98 §5.38 — multi-mode has no single selected
+                    // index; introspect returns Null rather than
+                    // panicking like the Rust API. RPC clients use
+                    // `selected.<i>` for per-row state.
+                    Some(IntrospectValue::Null)
+                } else {
+                    Some(match self.selected_index() {
+                        Some(idx) => IntrospectValue::Int(
+                            i64::try_from(idx).expect("index fits in i64"),
+                        ),
+                        None => IntrospectValue::Null,
+                    })
+                }
+            }
             "focused_index" => Some(match self.focused_index() {
                 Some(idx) => IntrospectValue::Int(
                     i64::try_from(idx).expect("index fits in i64"),
@@ -453,19 +726,26 @@ impl ExternalIntrospect for ListBoxExternal {
         value: IntrospectValue,
     ) -> Result<(), InterveneError> {
         match path {
-            "count" => Err(InterveneError::ReadOnly),
-            "selected_index" => match value {
-                IntrospectValue::Int(i) => {
-                    let idx = self.resolve_index_intervene(i)?;
-                    self.em.inner.set_selected(Some(idx));
-                    Ok(())
+            "count" | "multiselect" => Err(InterveneError::ReadOnly),
+            "selected_index" => {
+                if self.is_multiselect() {
+                    // R51.98 §5.38 — multi-mode mode mismatch: no
+                    // single index axis. Use `selected.<i>` instead.
+                    return Err(InterveneError::ReadOnly);
                 }
-                IntrospectValue::Null => {
-                    self.em.inner.set_selected(None);
-                    Ok(())
+                match value {
+                    IntrospectValue::Int(i) => {
+                        let idx = self.resolve_index_intervene(i)?;
+                        self.em.inner.set_selected(Some(idx));
+                        Ok(())
+                    }
+                    IntrospectValue::Null => {
+                        self.em.inner.set_selected(None);
+                        Ok(())
+                    }
+                    _ => Err(InterveneError::TypeMismatch),
                 }
-                _ => Err(InterveneError::TypeMismatch),
-            },
+            }
             "focused_index" => match value {
                 IntrospectValue::Int(i) => {
                     let idx = self.resolve_index_intervene(i)?;
@@ -478,6 +758,38 @@ impl ExternalIntrospect for ListBoxExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
+            // R51.98 §5.38 — per-row write only in multi-select mode.
+            // Single-select uses `selected_index` (or `set_selected`
+            // Rust API) so the mutual-exclusion invariant cannot be
+            // violated through the RPC surface.
+            other if other.starts_with("selected.") => {
+                if !self.is_multiselect() {
+                    return Err(InterveneError::ReadOnly);
+                }
+                let idx_str = other.strip_prefix("selected.").unwrap_or("");
+                let idx: usize =
+                    idx_str.parse().map_err(|_| InterveneError::UnknownPath)?;
+                if idx >= self.count() {
+                    return Err(InterveneError::OutOfRange);
+                }
+                match value {
+                    IntrospectValue::Bool(b) => {
+                        let current: Vec<usize> = self.selected_indices();
+                        let mut next: Vec<usize> = current
+                            .iter()
+                            .copied()
+                            .filter(|&j| j != idx)
+                            .collect();
+                        if b {
+                            next.push(idx);
+                            next.sort_unstable();
+                        }
+                        self.em.inner.set_selected_indices(&next);
+                        Ok(())
+                    }
+                    _ => Err(InterveneError::TypeMismatch),
+                }
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -504,11 +816,21 @@ impl ExternalIntrospect for ListBoxExternal {
                     let ev = parse_listbox_item_event(event_name)
                         .ok_or(InvokeError::Rejected)?;
                     self.send(idx, ev);
-                    Ok(match self.selected_index() {
-                        Some(i) => IntrospectValue::Int(
-                            i64::try_from(i).expect("index fits in i64"),
-                        ),
-                        None => IntrospectValue::Null,
+                    // R51.98 §5.38 — return path is mode-aware:
+                    // single returns the (possibly new) `selected_index`
+                    // for legacy parity with the R51.96 surface, while
+                    // multi returns Null because there is no single
+                    // index. AI clients can follow up with `selected.<i>`
+                    // or `selected_indices()` for the new full set.
+                    Ok(if self.is_multiselect() {
+                        IntrospectValue::Null
+                    } else {
+                        match self.selected_index() {
+                            Some(i) => IntrospectValue::Int(
+                                i64::try_from(i).expect("index fits in i64"),
+                            ),
+                            None => IntrospectValue::Null,
+                        }
                     })
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -825,6 +1147,341 @@ mod tests {
         let r =
             lx.invoke("send", IntrospectValue::Text("no_colon".to_string()));
         assert!(matches!(r, Err(InvokeError::Rejected)));
+    }
+
+    // R51.98 — multi-select mode regression.
+
+    #[test]
+    fn r51_98_new_constructs_single_select() {
+        let l = ListBox::new(3);
+        assert!(!l.is_multiselect());
+        assert_eq!(l.selected_index(), None);
+        assert_eq!(l.selected_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn r51_98_with_multiselect_constructs_multi() {
+        let l = ListBox::with_multiselect(4);
+        assert!(l.is_multiselect());
+        assert_eq!(l.selected_indices(), Vec::<usize>::new());
+        assert_eq!(l.focused_index(), None);
+    }
+
+    #[test]
+    fn r51_98_multi_activate_toggles_only_addressed_row() {
+        let mut l = ListBox::with_multiselect(4);
+        activate(&mut l, 1);
+        assert!(l.is_selected(1));
+        assert!(!l.is_selected(0));
+        assert!(!l.is_selected(2));
+        assert!(!l.is_selected(3));
+    }
+
+    #[test]
+    fn r51_98_multi_two_independent_selections_coexist() {
+        let mut l = ListBox::with_multiselect(4);
+        activate(&mut l, 0);
+        activate(&mut l, 2);
+        assert!(l.is_selected(0));
+        assert!(l.is_selected(2));
+        assert!(!l.is_selected(1));
+        assert!(!l.is_selected(3));
+        assert_eq!(l.selected_indices(), vec![0, 2]);
+    }
+
+    #[test]
+    fn r51_98_multi_re_activate_deselects_addressed_row() {
+        let mut l = ListBox::with_multiselect(3);
+        activate(&mut l, 1);
+        assert!(l.is_selected(1));
+        // Re-activate the same row: toggle-off.
+        activate(&mut l, 1);
+        assert!(!l.is_selected(1));
+        assert_eq!(l.selected_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn r51_98_multi_keyboard_activate_toggles() {
+        let mut l = ListBox::with_multiselect(3);
+        l.send(0, ListboxItemEvent::KeyboardActivate);
+        assert!(l.is_selected(0));
+        l.send(0, ListboxItemEvent::KeyboardActivate);
+        assert!(!l.is_selected(0), "Space/Enter on selected multi-row deselects");
+    }
+
+    #[test]
+    fn r51_98_multi_focused_follows_toggle() {
+        let mut l = ListBox::with_multiselect(4);
+        assert_eq!(l.focused_index(), None);
+        activate(&mut l, 2);
+        assert_eq!(l.focused_index(), Some(2));
+        // Toggle-off also syncs focus (last interaction).
+        activate(&mut l, 2);
+        assert_eq!(l.focused_index(), Some(2));
+        // New row's toggle moves focus.
+        activate(&mut l, 0);
+        assert_eq!(l.focused_index(), Some(0));
+    }
+
+    #[test]
+    fn r51_98_multi_pointer_cancel_does_not_toggle() {
+        let mut l = ListBox::with_multiselect(3);
+        activate(&mut l, 1);
+        assert!(l.is_selected(1));
+        l.send(1, ListboxItemEvent::PointerEnter);
+        l.send(1, ListboxItemEvent::PointerDown);
+        assert_eq!(l.state(1), ListboxItemState::Pressed);
+        l.send(1, ListboxItemEvent::PointerCancel);
+        assert_eq!(l.state(1), ListboxItemState::Idle);
+        assert!(l.is_selected(1), "PointerCancel must not flip selection");
+    }
+
+    #[test]
+    fn r51_98_multi_disabled_ignores_keyboard_activate() {
+        let mut l = ListBox::with_multiselect(3);
+        l.send(0, ListboxItemEvent::Disable);
+        l.send(0, ListboxItemEvent::KeyboardActivate);
+        assert!(!l.is_selected(0));
+        assert_eq!(l.state(0), ListboxItemState::Disabled);
+    }
+
+    #[test]
+    #[should_panic(expected = "single-select-only")]
+    fn r51_98_selected_index_panics_in_multi() {
+        let l = ListBox::with_multiselect(2);
+        let _ = l.selected_index();
+    }
+
+    #[test]
+    #[should_panic(expected = "single-select-only")]
+    fn r51_98_set_selected_panics_in_multi() {
+        let mut l = ListBox::with_multiselect(2);
+        l.set_selected(Some(0));
+    }
+
+    #[test]
+    fn r51_98_set_selected_indices_works_in_multi() {
+        let mut l = ListBox::with_multiselect(4);
+        l.set_selected_indices(&[1, 3]);
+        assert!(!l.is_selected(0));
+        assert!(l.is_selected(1));
+        assert!(!l.is_selected(2));
+        assert!(l.is_selected(3));
+        assert_eq!(l.selected_indices(), vec![1, 3]);
+    }
+
+    #[test]
+    fn r51_98_set_selected_indices_works_in_single() {
+        let mut l = ListBox::new(4);
+        l.set_selected_indices(&[2]);
+        assert!(l.is_selected(2));
+        assert_eq!(l.selected_index(), Some(2));
+    }
+
+    #[test]
+    fn r51_98_set_selected_indices_single_empty_clears() {
+        let mut l = ListBox::new(3);
+        l.set_selected(Some(1));
+        l.set_selected_indices(&[]);
+        assert_eq!(l.selected_index(), None);
+        assert!(!l.is_selected(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "single-select mode")]
+    fn r51_98_set_selected_indices_single_rejects_two() {
+        let mut l = ListBox::new(4);
+        l.set_selected_indices(&[0, 2]);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn r51_98_set_selected_indices_out_of_range_panics() {
+        let mut l = ListBox::with_multiselect(2);
+        l.set_selected_indices(&[5]);
+    }
+
+    #[test]
+    fn r51_98_set_selected_indices_replaces_set() {
+        let mut l = ListBox::with_multiselect(4);
+        l.set_selected_indices(&[0, 1, 2]);
+        l.set_selected_indices(&[3]);
+        assert_eq!(l.selected_indices(), vec![3]);
+    }
+
+    #[test]
+    fn r51_98_set_selected_indices_dedup_safe() {
+        let mut l = ListBox::with_multiselect(3);
+        l.set_selected_indices(&[1, 1, 1]);
+        assert!(l.is_selected(1));
+        assert_eq!(l.selected_indices(), vec![1]);
+    }
+
+    #[test]
+    fn r51_98_external_multi_constructor() {
+        let lx = ListBoxExternal::with_multiselect(3);
+        assert!(lx.is_multiselect());
+        assert_eq!(lx.count(), 3);
+        assert_eq!(lx.selected_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn r51_98_external_multi_emits_selected_on_toggle_on() {
+        let mut lx = ListBoxExternal::with_multiselect(3);
+        for ev in [
+            ListboxItemEvent::PointerEnter,
+            ListboxItemEvent::PointerDown,
+            ListboxItemEvent::PointerUp,
+        ] {
+            lx.send(2, ev);
+        }
+        let mut harvested = Vec::new();
+        lx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "selected");
+        assert_eq!(harvested[0].payload, IntrospectValue::Int(2));
+    }
+
+    #[test]
+    fn r51_98_external_multi_emits_selected_on_toggle_off() {
+        let mut lx = ListBoxExternal::with_multiselect(3);
+        // First activation: emits toggle-on.
+        for ev in [
+            ListboxItemEvent::PointerEnter,
+            ListboxItemEvent::PointerDown,
+            ListboxItemEvent::PointerUp,
+        ] {
+            lx.send(1, ev);
+        }
+        // Second activation on same row: emits toggle-off.
+        for ev in [
+            ListboxItemEvent::PointerDown,
+            ListboxItemEvent::PointerUp,
+        ] {
+            lx.send(1, ev);
+        }
+        let mut harvested = Vec::new();
+        lx.drain_intents(&mut |i| harvested.push(i));
+        // Two emits, both tag = "selected", both payload = Int(1).
+        // The mode-agnostic semantic is "the index that flipped";
+        // AI follows up with `selected.1` query to learn direction.
+        assert_eq!(harvested.len(), 2);
+        for intent in &harvested {
+            assert_eq!(intent.tag_str(), "selected");
+            assert_eq!(intent.payload, IntrospectValue::Int(1));
+        }
+    }
+
+    #[test]
+    fn r51_98_external_query_multiselect_path() {
+        let single = ListBoxExternal::new(3);
+        assert_eq!(
+            single.query("multiselect"),
+            Some(IntrospectValue::Bool(false))
+        );
+        let multi = ListBoxExternal::with_multiselect(3);
+        assert_eq!(
+            multi.query("multiselect"),
+            Some(IntrospectValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn r51_98_external_query_selected_index_null_in_multi() {
+        let mut lx = ListBoxExternal::with_multiselect(3);
+        for ev in [
+            ListboxItemEvent::PointerEnter,
+            ListboxItemEvent::PointerDown,
+            ListboxItemEvent::PointerUp,
+        ] {
+            lx.send(1, ev);
+        }
+        // selected_index returns Null in multi-mode even when items
+        // are selected — there is no single "the" selected index.
+        assert_eq!(
+            lx.query("selected_index"),
+            Some(IntrospectValue::Null)
+        );
+        // Per-row selection is still queryable.
+        assert_eq!(
+            lx.query("selected.1"),
+            Some(IntrospectValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn r51_98_external_intervene_selected_index_read_only_in_multi() {
+        let mut lx = ListBoxExternal::with_multiselect(3);
+        assert_eq!(
+            lx.intervene("selected_index", IntrospectValue::Int(1)),
+            Err(InterveneError::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn r51_98_external_intervene_multiselect_is_read_only() {
+        let mut lx = ListBoxExternal::new(2);
+        assert_eq!(
+            lx.intervene("multiselect", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn r51_98_external_intervene_selected_dot_writes_in_multi() {
+        let mut lx = ListBoxExternal::with_multiselect(4);
+        lx.intervene("selected.1", IntrospectValue::Bool(true)).unwrap();
+        lx.intervene("selected.3", IntrospectValue::Bool(true)).unwrap();
+        assert_eq!(lx.selected_indices(), vec![1, 3]);
+        // Slot-assignment: no `"selected"` intent (mirrors
+        // set_selected/set_selected_indices admin semantics).
+        assert!(!lx.is_dirty());
+        // Clear one.
+        lx.intervene("selected.1", IntrospectValue::Bool(false)).unwrap();
+        assert_eq!(lx.selected_indices(), vec![3]);
+    }
+
+    #[test]
+    fn r51_98_external_intervene_selected_dot_read_only_in_single() {
+        let mut lx = ListBoxExternal::new(3);
+        assert_eq!(
+            lx.intervene("selected.1", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn r51_98_external_intervene_selected_dot_out_of_range() {
+        let mut lx = ListBoxExternal::with_multiselect(2);
+        assert_eq!(
+            lx.intervene("selected.5", IntrospectValue::Bool(true)),
+            Err(InterveneError::OutOfRange)
+        );
+    }
+
+    #[test]
+    fn r51_98_external_intervene_selected_dot_wrong_variant() {
+        let mut lx = ListBoxExternal::with_multiselect(2);
+        assert_eq!(
+            lx.intervene("selected.0", IntrospectValue::Int(1)),
+            Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn r51_98_external_invoke_send_in_multi_emits_selected() {
+        let mut lx = ListBoxExternal::with_multiselect(3);
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            lx.invoke("send", IntrospectValue::Text(format!("0:{ev}")))
+                .unwrap();
+        }
+        // invoke return for activation is selected_index; in multi
+        // mode that is Null. The intent emit carries the toggled index.
+        let mut harvested = Vec::new();
+        lx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].payload, IntrospectValue::Int(0));
+        assert!(lx.is_selected(0));
     }
 
     #[test]

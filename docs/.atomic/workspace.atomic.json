@@ -3339,7 +3339,8 @@
         "R51.2 — ToggleExternal 3 schema slots (state/value/send) + toggle intent (Bool payload)",
         "R51.2 — AI introspect: §5.15 8-item contract 정통 (state/value read + value intervene + send invoke)",
         "R51.2 — Figma fidelity: Toggle pure state, label = Scene::Text + R47.5 TextStyle",
-        "R51.41 composite hit-target: paint N 'group#i' tags + state 1 'group' External (RadioGroup)"
+        "R51.41 composite hit-target: paint N 'group#i' tags + state 1 'group' External (RadioGroup)",
+        "R51.98 — ListBox 의 multi-select 모드 (with_multiselect; aria-multiselectable; 활성화 시 토글, 형제 미터치)"
       ],
       "alternatives_rejected": [
         {
@@ -3585,6 +3586,34 @@
         {
           "file": "examples/hello-slider-vertical/src/main.rs",
           "symbol": "SliderVerticalView"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBox::with_multiselect"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBox::is_multiselect"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBox::selected_indices"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBox::set_selected_indices"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBoxExternal::with_multiselect"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBoxExternal::is_multiselect"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBoxExternal::selected_indices"
         }
       ],
       "decision_status": "active"
@@ -3896,7 +3925,9 @@
         "R51.95 — ListBoxItem 신규 widget (template 공유, listbox_item.activate 채널, ListBox composite 의 기본 item)",
         "R51.96 — ListBox composite (WAI-ARIA Listbox: Arrow=focus, Space/Enter=commit) RadioGroup mirror",
         "R51.96.1 — AriaRole 에 Listbox + ListBoxOption variant 추가 (additive, #[non_exhaustive] 보존)",
-        "R51.97 — hello-listbox 예제 (WAI-ARIA Listbox 키보드 모델: Arrow=focus, Space/Enter=commit, AT integration)"
+        "R51.97 — hello-listbox 예제 (WAI-ARIA Listbox 키보드 모델: Arrow=focus, Space/Enter=commit, AT integration)",
+        "R51.98 — AccessNode.selected (aria-selected) + multiselectable (aria-multiselectable) wire-up",
+        "R51.98 — hello-listbox ListBoxOption aria-checked→aria-selected 정정 (axis 분리, WAI-ARIA APG)"
       ],
       "alternatives_rejected": [
         {
@@ -4279,6 +4310,14 @@
         {
           "file": "examples/hello-listbox/src/main.rs",
           "symbol": "ListBoxView"
+        },
+        {
+          "file": "crates/pinion-a11y/src/node.rs",
+          "symbol": "AccessNode::with_selected"
+        },
+        {
+          "file": "crates/pinion-a11y/src/node.rs",
+          "symbol": "AccessNode::with_multiselectable"
         }
       ],
       "decision_status": "active"
