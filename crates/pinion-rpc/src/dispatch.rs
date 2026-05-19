@@ -129,6 +129,59 @@ pub struct RpcError {
     pub data: Option<Value>,
 }
 
+impl RpcError {
+    /// R51.89 §5.40 — base constructor for the JSON-RPC error object.
+    /// All other constructors / helpers in this crate route through
+    /// here so the `(code, message, data)` triple is built in one
+    /// canonical place. Chain [`Self::with_data`] /
+    /// [`Self::with_data_string`] to attach the optional `data`
+    /// payload.
+    #[must_use]
+    pub fn new(code: i32, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    /// R51.89 §5.40 — chainable builder that attaches an arbitrary
+    /// `serde_json::Value` as the error's `data` payload.
+    #[must_use]
+    pub fn with_data(mut self, data: Value) -> Self {
+        self.data = Some(data);
+        self
+    }
+
+    /// R51.89 §5.40 — convenience wrapper for the most common shape:
+    /// `data = Some(Value::String(_))`. Most error-to-RPC converters
+    /// in this crate (focus/scene/font/...) attach a short variant
+    /// or detail string here, so the explicit `Value::String(...)`
+    /// wrapper is collapsed into a single call.
+    #[must_use]
+    pub fn with_data_string(self, detail: impl Into<String>) -> Self {
+        self.with_data(Value::String(detail.into()))
+    }
+
+    /// R51.89 §5.40 — JSON-RPC `-32602 Invalid params` with a
+    /// `Display` detail. Shared between the in-crate
+    /// [`invalid_params`] wrapper and the `focus/*` adapter so the
+    /// code + message stay in lockstep across the dispatcher.
+    #[must_use]
+    pub fn invalid_params(detail: impl std::fmt::Display) -> Self {
+        Self::new(-32602, "Invalid params").with_data_string(detail.to_string())
+    }
+
+    /// R51.89 §5.40 — JSON-RPC `-32603 Internal error` with a
+    /// `Display` detail. Used by serializer-side and other
+    /// "shouldn't normally happen" lifts where the detail is a
+    /// programmer-facing message.
+    #[must_use]
+    pub fn internal_error(detail: impl std::fmt::Display) -> Self {
+        Self::new(-32603, "Internal error").with_data_string(detail.to_string())
+    }
+}
+
 const JSONRPC_V2: &str = "2.0";
 
 /// Bundle of all the runtime state a dispatch call needs (§5.34 R40.7).
@@ -438,11 +491,8 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         // `as_deref_mut()` call would be a no-op identity reborrow
         // on `Option<&mut FocusManager>`.
         "focus/prev" => crate::focus::handle_focus_prev(focus_manager),
-        _ => Err(RpcError {
-            code: -32601,
-            message: "Method not found".to_string(),
-            data: Some(Value::String(request.method.clone())),
-        }),
+        _ => Err(RpcError::new(-32601, "Method not found")
+            .with_data_string(request.method.clone())),
     };
 
     // §5.34 R40.4: bump the OCC token after any mutating handler
@@ -1737,11 +1787,7 @@ fn font_id_from_params(params: Option<&Value>) -> Result<u32, RpcError> {
 }
 
 fn font_registry_unavailable() -> RpcError {
-    RpcError {
-        code: -32603,
-        message: "Internal error".to_string(),
-        data: Some(Value::String("FontRegistryUnavailable".to_string())),
-    }
+    RpcError::internal_error("FontRegistryUnavailable")
 }
 
 fn font_error_to_rpc(err: &FontError) -> RpcError {
@@ -1930,11 +1976,7 @@ fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
 }
 
 fn invalid_params(detail: &str) -> RpcError {
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(detail.to_string())),
-    }
+    RpcError::invalid_params(detail)
 }
 
 fn query_error_to_rpc(err: QueryError) -> RpcError {

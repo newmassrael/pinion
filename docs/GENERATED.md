@@ -3019,6 +3019,7 @@ router.pointer_down(&mut state_scene);
 - R51.86 — TextRole::Label 제거 (consumer 0, strict YAGNI 회복; #[non_exhaustive] 보존)
 - R51.87 — RadioGroup focused_index 분리 (WAI-ARIA roving-tabindex 정통, AT Focus 가 selected commit 없이 이동)
 - R51.88 — AccessFocus::with_active_descendant 제거 (caller 0, strict YAGNI; composite 직접 구성)
+- R51.89 — RpcError builder (new/with_data/with_data_string/invalid_params/internal_error) + focus DRY
 
 
 
@@ -3106,6 +3107,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::focused_index
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::set_focused_index
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::focused_index
+- crates/pinion-rpc/src/dispatch.rs:RpcError::new
+- crates/pinion-rpc/src/dispatch.rs:RpcError::with_data
+- crates/pinion-rpc/src/dispatch.rs:RpcError::with_data_string
+- crates/pinion-rpc/src/dispatch.rs:RpcError::invalid_params
+- crates/pinion-rpc/src/dispatch.rs:RpcError::internal_error
 
 
 
@@ -4357,6 +4363,39 @@ router.pointer_down(&mut state_scene);
 - R51.90 — RadioGroup activate path 의 focused_index 동기화 (apply_key arrow + AT Click/Default)
 - R51.91 — InterveneError::OutOfRange variant 추가 + RadioGroup selected_index/focused_index 의 TypeMismatch 우회 정정
 - R51.92 — pinion-shell/src/lib.rs 모듈 분할 (core.rs/shell.rs) — R51.83 visibility 변경의 substantive 효과 회복
+
+
+
+### R233 — R51.89 §5.40 RpcError builder API — focus.rs local helper 회수 + dispatch.rs invalid_params/font_registry_unavailable/Method-not-found 도 동일 builder 정렬
+
+**Changes**:
+- crates/pinion-rpc/src/dispatch.rs: RpcError::new(code, message) base constructor 신설
+- crates/pinion-rpc/src/dispatch.rs: RpcError::with_data(Value) + with_data_string(impl Into<String>) chainable builder
+- crates/pinion-rpc/src/dispatch.rs: RpcError::invalid_params(impl Display) + internal_error(impl Display) convenience constructors (-32602 / -32603 lockstep)
+- crates/pinion-rpc/src/dispatch.rs: 기존 invalid_params(&str) 와 font_registry_unavailable() 가 새 builder 경유
+- crates/pinion-rpc/src/dispatch.rs: Method-not-found arm 의 RpcError struct 리터럴 → RpcError::new(-32601, "Method not found").with_data_string(...)
+- crates/pinion-rpc/src/focus.rs: err_invalid_params + err_internal local helper 2개 제거 (RpcError::invalid_params / internal_error 으로 안정 대체)
+- crates/pinion-rpc/src/focus.rs: err_focus_unavailable + err_from_focus + state_to_value 가 builder 경유 (RpcError literal 구성 제거)
+- crates/pinion-rpc/src/focus.rs: use crate::dispatch::RpcError 으로 축약 테이블, handler return type 각각 이용
+
+
+
+**Verification**:
+- cargo build -p pinion-rpc = clean
+- cargo test --workspace --features pinion-runtime/vello = 1516 pass / 0 fail / 8 ignored (변화 0)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- focus.rs local err_invalid_params / err_internal 호출 사이트 그립 0 확인 (후속)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.90 — RadioGroup activate path (apply_key arrow + AT Click/Default) 에서 focused_index sync
+- R51.91 — InterveneError::OutOfRange variant 추가 + RadioGroup selected_index/focused_index 우회 정정
+- R51.92 — pinion-shell/src/lib.rs 모듈 분할 (core.rs/shell.rs) — R51.83 substantive 회복
+- carry: dispatch.rs 의 49 RpcError literal 구성 사이트 중 잠재적 builder 1-line 단축 적용 - 우선순위 낮은 sweep (evidence-first)
 
 
 
