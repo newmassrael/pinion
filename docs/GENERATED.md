@@ -3010,6 +3010,7 @@ router.pointer_down(&mut state_scene);
 - R51.77 — plan_access_emit (pure &self) + commit_access_emit (&mut) 분리, AccessEmitPlan→Decision
 - R51.78 — handle_key_press winit-free 분리 (focus_traverse / character / named 3-method)
 - R51.79 — AccessTreeBuilder::add &AccessNode + commit_access_emit by-value Vec move
+- R51.80 — ShellCore deeper extraction: paint+a11y+finalize+input+focus wrappers 정통
 
 
 
@@ -3087,6 +3088,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:ShellCore::handle_focus_traverse
 - crates/pinion-shell/src/lib.rs:ShellCore::handle_character_key
 - crates/pinion-shell/src/lib.rs:ShellCore::handle_named_key
+- crates/pinion-shell/src/lib.rs:ShellCore::compute_paint_scene
+- crates/pinion-shell/src/lib.rs:ShellCore::collect_access_emit_inputs
+- crates/pinion-shell/src/lib.rs:ShellCore::finalize_frame
 
 
 
@@ -5723,6 +5727,35 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction (encapsulation 정통)
 - 이전 carry — aria_label Band-Aid / AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / Tier-1 R51.x carry 9개 (touch cancel commit-class, pressure widget, drag 2nd, lifecycle 2nd, 3D primitive, font mirror, L4 conformance, theming axis, platform AT test)
+
+
+
+### R51.80 — §5.40 R51.80 — ShellCore deeper extraction: compute_paint_scene/collect_access_emit_inputs/finalize_frame + cursor_moved/_left/mouse_pressed/_released/touch_event/set_modifiers/window_focused/_blurred 10 wrapper method, AppShell::render + window_event 의 cross-struct intimacy 청산.
+
+**Changes**:
+- crates/pinion-shell/src/lib.rs — ShellCore::compute_paint_scene(w,h)->Scene (V::view + compute_layout encapsulate)
+- crates/pinion-shell/src/lib.rs — ShellCore::collect_access_emit_inputs(&Scene)->(Vec<AccessNode>, Option<AccessFocus>) (V::access_node + enrich + bounds + access_focus_target pipeline)
+- crates/pinion-shell/src/lib.rs — ShellCore::finalize_frame(Scene) (last_paint_layout + router.update + refresh_state + drain_intents)
+- crates/pinion-shell/src/lib.rs — ShellCore::{cursor_moved/_left/mouse_pressed/_released/touch_event/set_modifiers/window_focused/_blurred} 7 winit-free wrapper method
+- crates/pinion-shell/src/lib.rs — AppShell::render 110 LOC → ~70 LOC (paint scene compute/access input collect/finalize 단일 호출)
+- crates/pinion-shell/src/lib.rs — AppShell::window_event 7 arm (CursorMoved/CursorLeft/MouseInput ×2/Touch/ModifiersChanged/Focused) 각 4-6 LOC 수준으로 축소, 높은 LOC arm 제거 (향후 too_many_lines 재발 방지)
+- crates/pinion-shell/tests/dispatch_core.rs — 4 R51.80 회귀 test (compute_paint_scene root tag / finalize_frame idempotent / window_blurred+focused restore / collect_access_emit_inputs empty path)
+
+
+
+**Verification**:
+- cargo test -p pinion-shell --test dispatch_core --features pinion-runtime/vello → 27 passed / 0 failed (+4 R51.80)
+- cargo test --workspace --features pinion-runtime/vello → 1499 passed / 0 failed / 8 ignored (+4 from 1495)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- pub(crate) 14 필드 일부 private 가능 (text_cache / last_paint_layout / last_access_*): R51.80 wrapper method land 이후 cross-crate 접근 제로 — 차기 round 에 명시적 visibility 단계적 하향
+- 이전 carry — aria_label Band-Aid / AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / Tier-1 R51.x carry 9개 (이전 carry list 유지)
 
 
 

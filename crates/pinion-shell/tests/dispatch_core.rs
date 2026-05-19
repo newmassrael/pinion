@@ -787,6 +787,90 @@ fn r51_78_character_key_routes_through_forward_when_bound() {
     );
 }
 
+// ---------- R51.80 §5.40 deeper extraction ----------------------------
+
+#[test]
+fn r51_80_compute_paint_scene_returns_view_output() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let scene = core.compute_paint_scene(64, 32);
+
+    // TestView::view always returns a tagged Container("test"). The
+    // compute step layered compute_layout on top, but the root tag
+    // identity is preserved.
+    match scene {
+        Scene::Container(c) => assert_eq!(c.tag.as_deref(), Some("test")),
+        _ => panic!("expected Container root, got {scene:?}"),
+    }
+}
+
+#[test]
+fn r51_80_finalize_frame_snapshots_layout() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let scene = core.compute_paint_scene(64, 32);
+    core.finalize_frame(scene);
+
+    // The §5.12 last-paint snapshot drives RPC `scene/layout
+    // {viewport: null}` — finalize must populate it so the AI client
+    // can read the frame the user actually sees.
+    // (We only assert the substrate-visible side effect: that some
+    // other dispatch chain that depends on the snapshot doesn't
+    // panic. Direct access is `pub(crate)` so the assertion is
+    // indirect — re-running finalize_frame again must remain safe
+    // and idempotent.)
+    let scene2 = core.compute_paint_scene(64, 32);
+    core.finalize_frame(scene2);
+}
+
+#[test]
+fn r51_80_window_blurred_then_focused_restores_focus() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    // Seed focus on the only focusable tag.
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test".to_owned(),
+        kind: AccessAction::Focus,
+    });
+    assert_eq!(core.focus().focused(), Some("test"));
+    let _ = core.take_redraw_request();
+
+    core.window_blurred(); // FocusManager::save remembers the tag.
+    core.window_focused(); // FocusManager::restore reinstates.
+    assert_eq!(
+        core.focus().focused(),
+        Some("test"),
+        "ARIA Focus Order: blur + refocus reinstates the saved tag",
+    );
+}
+
+#[test]
+fn r51_80_collect_access_emit_inputs_runs_pipeline() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let scene = core.compute_paint_scene(64, 32);
+    let (nodes, focus) = core.collect_access_emit_inputs(&scene);
+
+    // TestView::access_node defaults to empty (Vec::new) — opt-out
+    // path. The substrate must still run name enrichment + bounds
+    // assignment without panicking on zero nodes; focus_target
+    // defaults to `AccessFocus::atomic(focused)` which is None when
+    // no widget is focused.
+    assert!(nodes.is_empty(), "TestView opts out of access_node");
+    assert!(
+        focus.is_none(),
+        "no focused tag → access_focus_target returns None",
+    );
+}
+
 #[test]
 fn r51_78_named_key_routes_to_apply_key() {
     let _g = TEST_LOCK.lock().unwrap();

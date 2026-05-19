@@ -931,6 +931,143 @@ impl<V: WidgetView> ShellCore<V> {
         self.apply_key(key_str);
     }
 
+    /// R51.80 §5.35 — winit `CursorMoved` dispatch decoupled from
+    /// winit at the [`ShellCore`] surface. Forwards through the
+    /// [`InputRouter`] (which routes to the matching
+    /// `Scene::External` via tag hit-test), then refreshes cached
+    /// state + drains intents.
+    pub fn cursor_moved(&mut self, pid: PointerId, x: f64, y: f64) {
+        self.router.cursor_moved(pid, x, y, &mut self.scene);
+        self.refresh_state();
+        self.drain_intents();
+    }
+
+    /// R51.80 §5.35 — winit `CursorLeft` dispatch decoupled from
+    /// winit at the [`ShellCore`] surface.
+    pub fn cursor_left(&mut self, pid: PointerId) {
+        self.router.cursor_left(pid, &mut self.scene);
+        self.refresh_state();
+        self.drain_intents();
+    }
+
+    /// R51.80 §5.35 — winit `MouseInput { Pressed, Left }` dispatch.
+    /// Combines `InputRouter::pointer_down` with the §5.39
+    /// click-to-focus rule (the same path
+    /// `TouchPhase::Started` runs after a synthetic cursor move).
+    pub fn mouse_pressed(&mut self, pid: PointerId) {
+        self.router.pointer_down(pid, &mut self.scene);
+        self.click_to_focus(pid);
+        self.refresh_state();
+        self.drain_intents();
+    }
+
+    /// R51.80 §5.35 — winit `MouseInput { Released, Left }` dispatch.
+    pub fn mouse_released(&mut self, pid: PointerId) {
+        self.router.pointer_up(pid, &mut self.scene);
+        self.refresh_state();
+        self.drain_intents();
+    }
+
+    /// R51.80 §5.35 — winit `WindowEvent::Touch` dispatch. Delegates
+    /// to the multi-pointer [`Self::handle_touch`] (R51.45 §5.35)
+    /// then refreshes cached state + drains intents.
+    pub fn touch_event(&mut self, touch: Touch) {
+        self.handle_touch(touch);
+        self.refresh_state();
+        self.drain_intents();
+    }
+
+    /// R51.80 §5.39 — winit `WindowEvent::ModifiersChanged` cache.
+    /// `KeyEvent` carries no modifier state in winit; the substrate
+    /// remembers the most-recent `ModifiersChanged` so the
+    /// [`AppShell::handle_key_press`] Tab arm can branch on Shift.
+    pub fn set_modifiers(&mut self, modifiers: ModifiersState) {
+        self.modifiers = modifiers;
+    }
+
+    /// R51.80 §5.39 / R51.59 — winit `WindowEvent::Focused(true)`
+    /// dispatch. ARIA Focus Order asks the framework to reinstate the
+    /// previously-focused widget when the window regains focus (the
+    /// [`FocusManager`] owns the snapshot). Sets `redraw_requested` when
+    /// `restore` reports a change so the focus ring repaints.
+    pub fn window_focused(&mut self) {
+        if self.focus.restore() {
+            self.request_redraw();
+        }
+    }
+
+    /// R51.80 §5.39 / R51.59 — winit `WindowEvent::Focused(false)`
+    /// dispatch. Saves the currently-focused widget tag so a future
+    /// [`Self::window_focused`] can restore it.
+    pub fn window_blurred(&mut self) {
+        self.focus.save();
+    }
+
+    /// R51.80 §5.16 §5.36 — compute one frame's paint scene from the
+    /// cached state.
+    ///
+    /// Encapsulates `Frame::new` + `V::view(state, &frame)` +
+    /// `compute_layout(&mut scene, &mut text_cache, w, h)` so
+    /// [`AppShell::render`] does not have to reach into
+    /// `self.core.cached_state` and `self.core.text_cache` directly.
+    /// Pure with respect to substrate state (only `text_cache`
+    /// mutates internally, by design — the LRU records each freshly
+    /// shaped text run for the next frame's cache hit).
+    pub fn compute_paint_scene(&mut self, w: u32, h: u32) -> Scene {
+        let frame = Frame::new();
+        let mut paint_scene = V::view(self.cached_state, &frame);
+        compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        paint_scene
+    }
+
+    /// R51.80 §5.40 — build the inputs to
+    /// [`Self::plan_access_emit`] from a freshly-computed paint
+    /// scene.
+    ///
+    /// Runs the pipeline `V::access_node` → `enrich_names_from_scene`
+    /// → `rect_for_tag` → `V::access_focus_target` in one place so
+    /// [`AppShell::render`] does not have to reach into
+    /// `self.core.cached_state` / `self.core.focus` four times in a
+    /// row. The pure paint scene + the substrate's read-only state
+    /// (focus + `cached_state`) are the only inputs; nothing on
+    /// `ShellCore` mutates.
+    #[must_use]
+    pub fn collect_access_emit_inputs(
+        &self,
+        paint_scene: &Scene,
+    ) -> (Vec<AccessNode>, Option<pinion_a11y::AccessFocus>) {
+        let focused = self.focus.focused().map(str::to_owned);
+        let mut nodes =
+            V::access_node(&self.cached_state, focused.as_deref());
+        pinion_a11y::enrich_names_from_scene(&mut nodes, paint_scene);
+        for node in &mut nodes {
+            if let Some(rect) = rect_for_tag(paint_scene, &node.tag) {
+                node.bounds = Some(rect);
+            }
+        }
+        let at_focus = V::access_focus_target(
+            &self.cached_state,
+            focused.as_deref(),
+        );
+        (nodes, at_focus)
+    }
+
+    /// R51.80 §5.12 §5.35 — post-render bookkeeping.
+    ///
+    /// Snapshots the just-rendered paint scene into the §5.12
+    /// `last_paint_layout` so an AI client's
+    /// `scene/layout {viewport: null}` reaches the actual frame; hands
+    /// the same scene to the [`InputRouter`] so the next pointer
+    /// event hit-tests against current geometry; refreshes cached
+    /// state and drains pending intents (winit input bypasses the
+    /// dispatcher, so the substrate has to close the loop here).
+    pub fn finalize_frame(&mut self, paint_scene: Scene) {
+        self.last_paint_layout = Some(build_layout_node(&paint_scene, "/0"));
+        self.router.update_paint_scene(paint_scene, &mut self.scene);
+        self.refresh_state();
+        self.drain_intents();
+    }
+
     /// R51.53 §5.39 — click → focus auto-set / background → clear.
     /// Called after every `pointer_down` (mouse Left press or touch
     /// `TouchPhase::Started`). Mirrors the W3C HTML convention:
@@ -1350,9 +1487,9 @@ impl<V: WidgetView> AppShell<V> {
         let size = window.inner_size();
         let Some(w) = core::num::NonZeroU32::new(size.width) else { return };
         let Some(h) = core::num::NonZeroU32::new(size.height) else { return };
-        let frame = Frame::new();
-        let mut paint_scene = V::view(self.core.cached_state, &frame);
-        compute_layout(&mut paint_scene, &mut self.core.text_cache, w.get(), h.get());
+        // R51.80 §5.16 §5.36 — ShellCore owns the paint scene
+        // pipeline; AppShell only handles the vello/wgpu submit.
+        let paint_scene = self.core.compute_paint_scene(w.get(), h.get());
         self.vello_scene.reset();
         let base = paint_adapter::root_background(&paint_scene);
         paint_adapter::to_vello(
@@ -1367,48 +1504,21 @@ impl<V: WidgetView> AppShell<V> {
         // the same frame submit. No-op when nothing is focused.
         paint_adapter::paint_focus_ring(
             &paint_scene,
-            self.core.focus.focused(),
+            self.core.focus().focused(),
             &mut self.vello_scene,
         );
         if let Err(e) = renderer.render(&self.vello_scene, base) {
             eprintln!("shell: vello render: {e}");
         }
-        // R51.62 §5.40 — emit the AccessKit tree before `paint_scene`
-        // moves into `router.update_paint_scene`. `update_if_active`
-        // is a no-op when no AT client is attached, so the
-        // per-frame cost is one `Option::as_mut` + a load.
+        // R51.62 / R51.80 §5.40 — AccessKit emit. The substrate
+        // assembles the nodes + focus inputs; the surface plans +
+        // optionally emits + commits. No accesskit-side work when
+        // no AT client is attached (`update_if_active` is a no-op).
         if self.accesskit.is_some() {
-            let focused = self.core.focus.focused().map(str::to_owned);
-            let mut nodes =
-                V::access_node(&self.core.cached_state, focused.as_deref());
-            // R51.69 §5.40 — derive the accessible name from the
-            // already-rendered paint scene (WAI-ARIA 1.2 §4.3
-            // precedence: `ContainerNode::aria_label` override ≻
-            // first descendant `TextNode::content`).
-            pinion_a11y::enrich_names_from_scene(&mut nodes, &paint_scene);
-            // R51.72 §5.40 — apply post-layout bounds before the
-            // dirty diff so geometry changes register as dirty.
-            for node in &mut nodes {
-                if let Some(rect) = rect_for_tag(&paint_scene, &node.tag) {
-                    node.bounds = Some(rect);
-                }
-            }
-            // R51.66 / R51.71 §5.40 — composite widgets surface both
-            // the parent focus and the active descendant via
-            // `access_focus_target` returning `AccessFocus`.
-            let at_focus =
-                V::access_focus_target(&self.core.cached_state, focused.as_deref());
+            let (nodes, at_focus) =
+                self.core.collect_access_emit_inputs(&paint_scene);
             let window_bounds =
                 pinion_core::scene::Rect::new(0, 0, size.width, size.height);
-            // R51.77 / R51.79 §5.40 — plan + (optionally) emit +
-            // commit. The pure planner reads the substrate's
-            // incremental caches and returns the dirty diff +
-            // should-emit verdict without mutating any state; the
-            // optional emit borrows `&nodes` into the AccessKit
-            // closure (R51.79: `AccessTreeBuilder::add` takes
-            // `&AccessNode` so no outer `nodes.clone()` is needed);
-            // the commit consumes `nodes` by-value into the cache
-            // (one allocation total, in the builder).
             let decision =
                 self.core.plan_access_emit(&nodes, at_focus.as_ref());
             if decision.should_emit
@@ -1448,19 +1558,10 @@ impl<V: WidgetView> AppShell<V> {
             // the post-emit baseline.
             self.core.commit_access_emit(nodes, at_focus.as_ref());
         }
-        // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
-        // into a `LayoutNode` tree so `scene/layout {viewport: null}`
-        // can return the *actual* winit-rendered frame on the next
-        // dispatch. Must run before `router.update_paint_scene` moves
-        // `paint_scene` out of scope.
-        self.core.last_paint_layout = Some(build_layout_node(&paint_scene, "/0"));
-        // R48 §5.35: hand the post-layout paint scene to the framework
-        // router.
-        self.core
-            .router
-            .update_paint_scene(paint_scene, &mut self.core.scene);
-        self.core.refresh_state();
-        self.core.drain_intents();
+        // R51.80 §5.12 §5.35 — snapshot the rendered scene + hand it
+        // to the input router + refresh state + drain intents in one
+        // method.
+        self.core.finalize_frame(paint_scene);
     }
 
     /// R51.78 §5.39 — pressed-key routing surface. Translates the
@@ -1645,87 +1746,53 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 );
                 event_loop.exit();
             }
-            // R48 §5.35: all pointer routing flows through the framework
-            // InputRouter. The handler bodies just forward the winit
-            // event into the router; the router does the hit-test, emits
-            // PointerEnter/Leave/Down/Up to the matching ExternalNode,
-            // and the shell only refreshes its cached state + drains
-            // intents afterwards. CursorEntered is a no-op (winit
-            // guarantees a CursorMoved follows, which resolves the
-            // real cursor position).
+            // R48 / R51.80 §5.35: all pointer routing flows through
+            // the framework `InputRouter` via [`ShellCore`] wrapper
+            // methods. The handler arms only translate winit events
+            // into the substrate's pinion-native shape.
             WindowEvent::CursorMoved { position, .. } => {
                 // R51.38 §5.35 — winit mouse events are single-source
                 // on every desktop platform pinion supports; the
                 // shell threads `PointerId::MOUSE` unconditionally.
-                // Touch / pen wiring will mint distinct ids via
-                // `PointerId::touch` when the `WindowEvent::Touch`
-                // handler lands as a follow-up.
-                self.core.router.cursor_moved(
-                    PointerId::MOUSE,
-                    position.x,
-                    position.y,
-                    &mut self.core.scene,
-                );
-                self.core.refresh_state();
-                self.core.drain_intents();
+                self.core
+                    .cursor_moved(PointerId::MOUSE, position.x, position.y);
             }
             WindowEvent::CursorLeft { .. } => {
-                self.core
-                    .router
-                    .cursor_left(PointerId::MOUSE, &mut self.core.scene);
-                self.core.refresh_state();
-                self.core.drain_intents();
+                self.core.cursor_left(PointerId::MOUSE);
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
             } => {
-                self.core
-                    .router
-                    .pointer_down(PointerId::MOUSE, &mut self.core.scene);
-                self.core.click_to_focus(PointerId::MOUSE);
-                self.core.refresh_state();
-                self.core.drain_intents();
+                self.core.mouse_pressed(PointerId::MOUSE);
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
             } => {
-                self.core
-                    .router
-                    .pointer_up(PointerId::MOUSE, &mut self.core.scene);
-                self.core.refresh_state();
-                self.core.drain_intents();
+                self.core.mouse_released(PointerId::MOUSE);
             }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
-            // Dispatch is in [`ShellCore::handle_touch`] below.
             WindowEvent::Touch(touch) => {
-                self.core.handle_touch(touch);
-                self.core.refresh_state();
-                self.core.drain_intents();
+                self.core.touch_event(touch);
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 // R51.53 §5.39 — winit emits `KeyEvent` without
                 // modifier state, so cache the most-recent value
                 // out-of-band for Shift+Tab detection.
-                self.core.modifiers = modifiers.state();
+                self.core.set_modifiers(modifiers.state());
             }
             WindowEvent::Focused(focused) => {
                 // R51.59 §5.39 — Window blur / refocus. ARIA Focus
                 // Order asks the framework to reinstate the focused
-                // widget when the user returns to the window — Alt+Tab
-                // away from a half-typed form should not lose the
-                // active control. The FocusManager owns the snapshot;
-                // wiring lives here in the winit dispatch.
+                // widget when the user returns to the window.
                 if focused {
-                    if self.core.focus.restore() {
-                        self.core.request_redraw();
-                    }
+                    self.core.window_focused();
                 } else {
-                    self.core.focus.save();
+                    self.core.window_blurred();
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
