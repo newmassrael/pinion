@@ -846,7 +846,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// `scene/invoke` route uses. Failures from the statechart
     /// (`InvokeError::Rejected` etc.) are swallowed: the SCXML decides
     /// whether a given transition fires.
-    fn forward(&mut self, event: V::Event) {
+    pub fn forward(&mut self, event: V::Event) {
         let name = V::event_name(event);
         if let Scene::External(node) = &mut self.scene {
             if let Some(intro) = node.handle.introspect_mut() {
@@ -868,12 +868,67 @@ impl<V: WidgetView> ShellCore<V> {
     /// §5.34 revision, re-read cached state (paint on visible
     /// change), drain pending intents. Unhandled keys are swallowed
     /// quietly (same shape as an unmatched [`WidgetView::keybinding`]).
-    fn apply_key(&mut self, key: &str) {
+    pub fn apply_key(&mut self, key: &str) {
         if V::apply_key(&mut self.scene, self.focus.focused(), key) {
             self.revision.bump();
             self.refresh_state();
             self.drain_intents();
         }
+    }
+
+    /// R51.78 §5.39 — Tab / Shift+Tab dispatch decoupled from winit.
+    ///
+    /// [`AppShell::handle_key_press`] (winit-side) maps
+    /// `Key::Named(NamedKey::Tab) + modifiers.shift_key()` into a
+    /// boolean `shift` flag and forwards here. The substrate then
+    /// invokes [`FocusManager::focus_next`] / [`FocusManager::focus_prev`]
+    /// against the seeded `focusable_tags` order and requests a
+    /// redraw when the focused tag actually changed (avoiding
+    /// no-op repaints when Tab cycles back to a one-tag list).
+    ///
+    /// Returns the underlying `FocusManager` change flag for
+    /// callers / tests that want to assert on the cycle behaviour.
+    pub fn handle_focus_traverse(&mut self, shift: bool) -> bool {
+        let changed = if shift {
+            self.focus.focus_prev()
+        } else {
+            self.focus.focus_next()
+        };
+        if changed {
+            self.request_redraw();
+        }
+        changed
+    }
+
+    /// R51.78 §5.37 — `Key::Character` dispatch decoupled from winit.
+    ///
+    /// First consults [`WidgetView::keybinding`]; on `Some(event)`
+    /// routes through [`Self::forward`] (typed event channel). On
+    /// `None` falls through to [`Self::apply_key`] (raw key-string
+    /// dispatch). Matches the pre-R51.78 inline behaviour in
+    /// `AppShell::handle_key_press` byte-for-byte.
+    pub fn handle_character_key(&mut self, c: &str) {
+        if let Some(ev) = V::keybinding(c) {
+            self.forward(ev);
+        } else {
+            self.apply_key(c);
+        }
+    }
+
+    /// R51.78 §5.37 — `Key::Named` dispatch decoupled from winit.
+    ///
+    /// `AppShell::handle_key_press` (winit-side) maps the winit
+    /// `NamedKey` enum to the W3C `KeyboardEvent.key` string via
+    /// [`named_key_str`] and forwards the resulting `&'static str`
+    /// here. The substrate routes through [`Self::apply_key`]; widgets
+    /// match on the W3C string in their `apply_key` impls.
+    ///
+    /// `Escape` and `Tab` never reach this method — they are
+    /// shell-reserved in `AppShell::handle_key_press` (`Escape` quits
+    /// the window via `event_loop.exit`; `Tab` routes through
+    /// [`Self::handle_focus_traverse`]).
+    pub fn handle_named_key(&mut self, key_str: &str) {
+        self.apply_key(key_str);
     }
 
     /// R51.53 §5.39 — click → focus auto-set / background → clear.
@@ -1396,18 +1451,18 @@ impl<V: WidgetView> AppShell<V> {
         self.core.drain_intents();
     }
 
-    /// R51.76 §5.40 — pressed-key dispatch helper extracted from the
-    /// `window_event` `KeyboardInput` arm so the parent function
-    /// stays under the `clippy::too_many_lines` 100-LOC ceiling
-    /// (R51.45 / R51.53 / R51.62 lesson: winit dispatcher arms grow
-    /// faster than expected; centralise the key routing logic where
-    /// it belongs).
+    /// R51.78 §5.39 — pressed-key routing surface. Translates the
+    /// winit-specific [`Key`] enum into the winit-free
+    /// [`ShellCore::handle_focus_traverse`] /
+    /// [`ShellCore::handle_character_key`] /
+    /// [`ShellCore::handle_named_key`] triple, keeping `Escape`
+    /// shell-side because it terminates the event loop.
     ///
-    /// Routing matches the §5.39 contract: `Escape` → shell-reserved
-    /// quit; `Tab` / `Shift+Tab` → `FocusManager::focus_next` /
-    /// `focus_prev`; `Key::Character` → `V::keybinding` first then
-    /// `V::apply_key`; `Key::Named` → `V::apply_key` with the W3C
-    /// key-string when the variant maps (otherwise swallowed).
+    /// Pre-R51.78 this helper did the full dispatch (focus traversal,
+    /// `V::keybinding` lookup, `V::apply_key`) inline and was untestable
+    /// without a winit `ActiveEventLoop`. R51.78 pushes the substrate
+    /// logic into [`ShellCore`] and leaves only the winit↔substrate
+    /// adapter shape here.
     fn handle_key_press(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -1415,30 +1470,13 @@ impl<V: WidgetView> AppShell<V> {
     ) {
         match logical_key.as_ref() {
             Key::Named(NamedKey::Escape) => event_loop.exit(),
-            // R51.53 §5.39 — Tab / Shift+Tab swallow by FocusManager.
-            // Does not reach `apply_key`; widgets see `Tab` only via
-            // the (sub-)widget-internal arrow / direction hooks the
-            // §5.39 caveat documents.
             Key::Named(NamedKey::Tab) => {
-                let changed = if self.core.modifiers.shift_key() {
-                    self.core.focus.focus_prev()
-                } else {
-                    self.core.focus.focus_next()
-                };
-                if changed {
-                    self.core.request_redraw();
-                }
+                self.core.handle_focus_traverse(self.core.modifiers.shift_key());
             }
-            Key::Character(c) => {
-                if let Some(ev) = V::keybinding(c) {
-                    self.core.forward(ev);
-                } else {
-                    self.core.apply_key(c);
-                }
-            }
+            Key::Character(c) => self.core.handle_character_key(c),
             Key::Named(named) => {
                 if let Some(key_str) = named_key_str(named) {
-                    self.core.apply_key(key_str);
+                    self.core.handle_named_key(key_str);
                 }
             }
             _ => {}

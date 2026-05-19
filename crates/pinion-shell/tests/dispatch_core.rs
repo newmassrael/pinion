@@ -162,12 +162,20 @@ static APPLY_KEY_LOG: Mutex<Vec<(Option<String>, String)>> = Mutex::new(Vec::new
 static APPLY_KEY_RETURNS: AtomicBool = AtomicBool::new(false);
 static CHILD_INVOKE_LOG: Mutex<Vec<(String, AccessAction)>> = Mutex::new(Vec::new());
 static CHILD_INVOKE_RETURNS: AtomicBool = AtomicBool::new(false);
+// R51.78 §5.37 — keybinding lookup mock. `true` makes
+// `TestView::keybinding` return `Some(())`, routing the character
+// through the typed-event path (`ShellCore::forward`); `false` returns
+// `None`, falling through to `apply_key`.
+static KEYBINDING_RETURNS_SOME: AtomicBool = AtomicBool::new(false);
+static EVENT_NAME_LOG: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
     CHILD_INVOKE_LOG.lock().unwrap().clear();
     CHILD_INVOKE_RETURNS.store(false, Ordering::SeqCst);
+    KEYBINDING_RETURNS_SOME.store(false, Ordering::SeqCst);
+    EVENT_NAME_LOG.lock().unwrap().clear();
 }
 
 struct TestView;
@@ -209,7 +217,19 @@ impl WidgetView for TestView {
     }
 
     fn event_name(_event: Self::Event) -> &'static str {
+        // R51.78 §5.37 — record the event_name lookup so tests that
+        // exercise the typed-event path (`handle_character_key` →
+        // `forward`) can assert the channel actually fired.
+        EVENT_NAME_LOG.lock().unwrap().push("__test__");
         "__test__"
+    }
+
+    fn keybinding(_key: &str) -> Option<Self::Event> {
+        if KEYBINDING_RETURNS_SOME.load(Ordering::SeqCst) {
+            Some(())
+        } else {
+            None
+        }
     }
 
     fn title() -> &'static str {
@@ -665,5 +685,121 @@ fn r51_75_focus_unset_after_set_emits() {
     assert!(
         second.should_emit,
         "focus cleared → emit (AT must observe the focus drop)",
+    );
+}
+
+// ---------- R51.78 §5.37 winit-free key dispatch ------------------------
+
+#[test]
+fn r51_78_focus_traverse_tab_advances_then_wraps() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    // Default focusable_tags = vec![Self::tag()] = ["test"]. Tab on
+    // a one-tag list should land on "test" first, then cycle back
+    // to the same tag (no change on the second Tab — same tag).
+    assert!(
+        core.handle_focus_traverse(false),
+        "first Tab advances from None → 'test'",
+    );
+    assert_eq!(core.focus().focused(), Some("test"));
+    assert!(
+        core.take_redraw_request(),
+        "focus change requests redraw",
+    );
+
+    // FocusManager::focus_next on a one-tag list keeps focus on the
+    // single tag — no change, no redraw.
+    let changed_again = core.handle_focus_traverse(false);
+    assert_eq!(core.focus().focused(), Some("test"));
+    assert!(
+        !core.take_redraw_request() && !changed_again,
+        "Tab on a one-tag list after first land is a no-op",
+    );
+}
+
+#[test]
+fn r51_78_focus_traverse_shift_tab_calls_focus_prev() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let advanced = core.handle_focus_traverse(true);
+
+    assert!(
+        advanced,
+        "Shift+Tab on empty focus advances FocusManager::focus_prev to the last tag",
+    );
+    assert_eq!(
+        core.focus().focused(),
+        Some("test"),
+        "single-tag list: focus_prev lands on 'test' (the only tag)",
+    );
+}
+
+#[test]
+fn r51_78_character_key_routes_to_apply_key_when_no_binding() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+    KEYBINDING_RETURNS_SOME.store(false, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    core.handle_character_key("z");
+
+    let log = APPLY_KEY_LOG.lock().unwrap();
+    assert_eq!(
+        log.len(),
+        1,
+        "no keybinding → fall through to V::apply_key",
+    );
+    assert_eq!(log[0].1, "z");
+    assert!(
+        EVENT_NAME_LOG.lock().unwrap().is_empty(),
+        "no event_name lookup when keybinding returned None",
+    );
+}
+
+#[test]
+fn r51_78_character_key_routes_through_forward_when_bound() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    KEYBINDING_RETURNS_SOME.store(true, Ordering::SeqCst);
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    let rev_before = core.revision();
+    core.handle_character_key("c");
+
+    assert!(
+        APPLY_KEY_LOG.lock().unwrap().is_empty(),
+        "keybinding returned Some → typed-event path, NOT apply_key",
+    );
+    assert_eq!(
+        EVENT_NAME_LOG.lock().unwrap().len(),
+        1,
+        "forward path looks up V::event_name exactly once",
+    );
+    assert!(
+        core.revision() > rev_before,
+        "forward bumps the §5.34 OCC revision",
+    );
+}
+
+#[test]
+fn r51_78_named_key_routes_to_apply_key() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    core.handle_named_key("ArrowLeft");
+
+    let log = APPLY_KEY_LOG.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(
+        log[0].1, "ArrowLeft",
+        "named-key dispatch passes the W3C string through unchanged",
     );
 }

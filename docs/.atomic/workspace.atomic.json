@@ -3872,7 +3872,8 @@
         "R51.74 — focus/next + focus/prev RPC (Tab / Shift+Tab equivalent AI primary path)",
         "R51.75 — no-change frame skip (last_access_focus diff, update_if_active 자체 스킵 시 0 cost)",
         "R51.76 — ShellCore<V> substrate/surface 분리 + AccessEmitPlan + redraw flag drain",
-        "R51.77 — plan_access_emit (pure &self) + commit_access_emit (&mut) 분리, AccessEmitPlan→Decision"
+        "R51.77 — plan_access_emit (pure &self) + commit_access_emit (&mut) 분리, AccessEmitPlan→Decision",
+        "R51.78 — handle_key_press winit-free 분리 (focus_traverse / character / named 3-method)"
       ],
       "alternatives_rejected": [
         {
@@ -4126,6 +4127,18 @@
         {
           "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "ShellCore::commit_access_emit"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "ShellCore::handle_focus_traverse"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "ShellCore::handle_character_key"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "ShellCore::handle_named_key"
         }
       ],
       "decision_status": "active"
@@ -8064,6 +8077,54 @@
         "R51.79 — AppShell::render 의 nodes.clone() (R51.77 표즜 설계 포함): closure 소유권 이전 vs commit 세션 아래 by-ref pattern 완성함 — 60fps animation alloc churn 회복",
         "R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction (encapsulation 정통)",
         "이전 carry — aria_label Band-Aid (R51.77 대안) / API 일관성 AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화"
+      ]
+    },
+    "R51.78": {
+      "decision_summary": "§5.40 R51.78 — handle_key_press winit 결합 청산: ShellCore 에 handle_focus_traverse / handle_character_key / handle_named_key 3 winit-free method 분리, AppShell::handle_key_press 는 winit↔substrate adapter routing 으로 축소.",
+      "changes_bullets": [
+        "crates/pinion-shell/src/lib.rs — ShellCore::handle_focus_traverse(shift) -> bool (Tab/Shift+Tab dispatch, focus.focus_next/prev + request_redraw + change flag 반환)",
+        "crates/pinion-shell/src/lib.rs — ShellCore::handle_character_key(c) (V::keybinding lookup → forward 또는 apply_key fallthrough)",
+        "crates/pinion-shell/src/lib.rs — ShellCore::handle_named_key(key_str) (V::apply_key thin wrap)",
+        "crates/pinion-shell/src/lib.rs — forward / apply_key pub 으로 노출 (R51.78 테스트 접근 + 이전 R51.x carry pub fix 동반)",
+        "crates/pinion-shell/src/lib.rs — AppShell::handle_key_press 가 ~40 LOC → ~15 LOC (Escape만 winit 고유, 나머지 core delegation)",
+        "crates/pinion-shell/tests/dispatch_core.rs — 5 R51.78 winit-free key dispatch 회귀 test (Tab/Shift+Tab/character±binding/named) + KEYBINDING_RETURNS_SOME + EVENT_NAME_LOG mock 추가"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-shell --test dispatch_core --features pinion-runtime/vello → 23 passed / 0 failed (+5 R51.78 회귀)",
+        "cargo test --workspace --features pinion-runtime/vello → 1495 passed / 0 failed / 8 ignored (+5 from 1490)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings (workspace.lints pedantic deny 유지)",
+        "Mnemosyne validate_workspace → entries=222 → 다음 R51.78 append 후 223 / T1=0 / round-trip 1/1 / sync"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.79 — AppShell::render 의 nodes.clone() (R51.77 carry 잘라옥): closure consume + commit by-ref pattern 와 충돌, alloc 회복 필요",
+        "R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction",
+        "이전 carry — aria_label Band-Aid / AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / Tier-1 R51.x carry 9개"
+      ],
+      "publishable_decision_summary": "§5.40 R51.78 — handle_key_press winit 결합 청산: ShellCore 에 handle_focus_traverse / handle_character_key / handle_named_key 3 winit-free method 분리, AppShell::handle_key_press 는 winit↔substrate adapter routing 으로 축소.",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/lib.rs — ShellCore::handle_focus_traverse(shift) -> bool (Tab/Shift+Tab dispatch, focus.focus_next/prev + request_redraw + change flag 반환)",
+        "crates/pinion-shell/src/lib.rs — ShellCore::handle_character_key(c) (V::keybinding lookup → forward 또는 apply_key fallthrough)",
+        "crates/pinion-shell/src/lib.rs — ShellCore::handle_named_key(key_str) (V::apply_key thin wrap)",
+        "crates/pinion-shell/src/lib.rs — forward / apply_key pub 으로 노출 (R51.78 테스트 접근 + 이전 R51.x carry pub fix 동반)",
+        "crates/pinion-shell/src/lib.rs — AppShell::handle_key_press 가 ~40 LOC → ~15 LOC (Escape만 winit 고유, 나머지 core delegation)",
+        "crates/pinion-shell/tests/dispatch_core.rs — 5 R51.78 winit-free key dispatch 회귀 test (Tab/Shift+Tab/character±binding/named) + KEYBINDING_RETURNS_SOME + EVENT_NAME_LOG mock 추가"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-shell --test dispatch_core --features pinion-runtime/vello → 23 passed / 0 failed (+5 R51.78 회귀)",
+        "cargo test --workspace --features pinion-runtime/vello → 1495 passed / 0 failed / 8 ignored (+5 from 1490)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings (workspace.lints pedantic deny 유지)",
+        "Mnemosyne validate_workspace → entries=222 → 다음 R51.78 append 후 223 / T1=0 / round-trip 1/1 / sync"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.79 — AppShell::render 의 nodes.clone() (R51.77 carry 잘라옥): closure consume + commit by-ref pattern 와 충돌, alloc 회복 필요",
+        "R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction",
+        "이전 carry — aria_label Band-Aid / AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / Tier-1 R51.x carry 9개"
       ]
     },
     "Round 1": {
