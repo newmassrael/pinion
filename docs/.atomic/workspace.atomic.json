@@ -4264,6 +4264,14 @@
         {
           "file": "crates/pinion-core/src/widgets/listbox_item.rs",
           "symbol": "ListBoxItemExternal"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBox"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox.rs",
+          "symbol": "ListBoxExternal"
         }
       ],
       "decision_status": "active"

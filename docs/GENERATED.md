@@ -3133,6 +3133,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/widgets/listbox_item.scxml
 - crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItem
 - crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItemExternal
+- crates/pinion-core/src/widgets/listbox.rs:ListBox
+- crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal
 
 
 
