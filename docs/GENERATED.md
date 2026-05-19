@@ -3018,6 +3018,7 @@ router.pointer_down(&mut state_scene);
 - R51.85 — focus 4 route handler 의 RpcError 매핑 helper 5개 추출 (DRY + code lockstep)
 - R51.86 — TextRole::Label 제거 (consumer 0, strict YAGNI 회복; #[non_exhaustive] 보존)
 - R51.87 — RadioGroup focused_index 분리 (WAI-ARIA roving-tabindex 정통, AT Focus 가 selected commit 없이 이동)
+- R51.88 — AccessFocus::with_active_descendant 제거 (caller 0, strict YAGNI; composite 직접 구성)
 
 
 
@@ -3102,7 +3103,6 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/scene.rs:TextNode::with_role
 - crates/pinion-shell/src/lib.rs:ShellCore::text_cache_mut
 - crates/pinion-shell/src/lib.rs:ShellCore::modifiers_shift_key
-- crates/pinion-a11y/src/focus.rs:AccessFocus::with_active_descendant
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::focused_index
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::set_focused_index
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::focused_index
@@ -4327,6 +4327,36 @@ router.pointer_down(&mut state_scene);
 - R47.x TextStyle schema 확장 (font_family / weight / decoration)
 - R47.x fontique font fallback override API
 - Phase 2+ lifetime canonical = pinion 자체 text engine (§5.16 R11 thin RHI 정합)
+
+
+
+### R232 — R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정
+
+**Changes**:
+- crates/pinion-a11y/src/focus.rs: AccessFocus::with_active_descendant builder 제거 (R51.84 add 회수)
+- crates/pinion-a11y/src/focus.rs: composite 가 atomic+with_active_descendant chain 대신 Self { focus_tag, active_descendant: Some(_) } 직접 필드 구성
+- crates/pinion-a11y/src/focus.rs: doc-comment 의 ignore 예제 (conditional builder chain) 동반 제거
+- crates/pinion-a11y/src/focus.rs: r51_84_with_active_descendant_chains_on_atomic 테스트 → r51_88_composite_constructs_directly_without_builder_chain 으로 대체
+
+
+
+**Verification**:
+- cargo build -p pinion-a11y = clean
+- cargo test -p pinion-a11y = 17 pass / 0 fail
+- cargo test --workspace --features pinion-runtime/vello = 1516 pass / 0 fail / 8 ignored (이전 9 ignored 에서 -1 = with_active_descendant 의 ignore doctest 제거 분)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 외부 caller grep 0 확인 (workspace 전역에서 with_active_descendant 호출 없음)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.89 — dispatch.rs::RpcError builder API land + focus.rs 5 local helper 제거
+- R51.90 — RadioGroup activate path 의 focused_index 동기화 (apply_key arrow + AT Click/Default)
+- R51.91 — InterveneError::OutOfRange variant 추가 + RadioGroup selected_index/focused_index 의 TypeMismatch 우회 정정
+- R51.92 — pinion-shell/src/lib.rs 모듈 분할 (core.rs/shell.rs) — R51.83 visibility 변경의 substantive 효과 회복
 
 
 
