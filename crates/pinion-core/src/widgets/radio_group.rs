@@ -324,6 +324,23 @@ impl RadioGroupExternal {
         self.em.inner.selected_index()
     }
 
+    /// R51.91 §5.40 — shared validation for `selected_index` /
+    /// `focused_index` intervene. Negative `i`, `i` overflowing
+    /// `usize`, and `idx >= count` all map to
+    /// [`InterveneError::OutOfRange`] (R51.91 replaces the prior
+    /// `TypeMismatch` misuse — variant mismatch is reserved for
+    /// `Value` shape errors).
+    fn resolve_index_intervene(&self, i: i64) -> Result<usize, InterveneError> {
+        if i < 0 {
+            return Err(InterveneError::OutOfRange);
+        }
+        let idx = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
+        if idx >= self.count() {
+            return Err(InterveneError::OutOfRange);
+        }
+        Ok(idx)
+    }
+
     /// R51.87 §5.40 — AT-side active descendant index, or `None`.
     /// See [`RadioGroup::focused_index`].
     #[must_use]
@@ -460,14 +477,7 @@ impl ExternalIntrospect for RadioGroupExternal {
             "count" => Err(InterveneError::ReadOnly),
             "selected_index" => match value {
                 IntrospectValue::Int(i) => {
-                    if i < 0 {
-                        return Err(InterveneError::TypeMismatch);
-                    }
-                    let idx = usize::try_from(i)
-                        .map_err(|_| InterveneError::TypeMismatch)?;
-                    if idx >= self.count() {
-                        return Err(InterveneError::TypeMismatch);
-                    }
+                    let idx = self.resolve_index_intervene(i)?;
                     self.em.inner.set_selected(Some(idx));
                     Ok(())
                 }
@@ -484,14 +494,7 @@ impl ExternalIntrospect for RadioGroupExternal {
             // through the application's `access_child_invoke` hook.
             "focused_index" => match value {
                 IntrospectValue::Int(i) => {
-                    if i < 0 {
-                        return Err(InterveneError::TypeMismatch);
-                    }
-                    let idx = usize::try_from(i)
-                        .map_err(|_| InterveneError::TypeMismatch)?;
-                    if idx >= self.count() {
-                        return Err(InterveneError::TypeMismatch);
-                    }
+                    let idx = self.resolve_index_intervene(i)?;
                     self.em.inner.set_focused_index(Some(idx));
                     Ok(())
                 }
@@ -728,11 +731,69 @@ mod tests {
     }
 
     #[test]
-    fn external_intervene_selected_index_out_of_range_is_type_mismatch() {
+    fn external_intervene_selected_index_out_of_range_is_out_of_range() {
+        // R51.91 §5.40 — `Int(5)` is the correct Value variant; the
+        // failure is the index, not the variant. Pre-R51.91 this
+        // returned `TypeMismatch` (framework-table-stakes carry).
         let mut g = RadioGroupExternal::new(2);
         assert_eq!(
             g.intervene("selected_index", IntrospectValue::Int(5)),
+            Err(InterveneError::OutOfRange)
+        );
+    }
+
+    // R51.91 §5.40 — InterveneError taxonomy regression. Verify
+    // OutOfRange covers value-domain failures while TypeMismatch
+    // stays scoped to wrong-variant failures.
+
+    #[test]
+    fn r51_91_selected_index_negative_int_is_out_of_range() {
+        let mut g = RadioGroupExternal::new(3);
+        assert_eq!(
+            g.intervene("selected_index", IntrospectValue::Int(-1)),
+            Err(InterveneError::OutOfRange)
+        );
+    }
+
+    #[test]
+    fn r51_91_selected_index_wrong_variant_is_type_mismatch() {
+        // String at an Int slot — variant-level error, not value-
+        // domain error. Stays TypeMismatch (semantic axis preserved).
+        let mut g = RadioGroupExternal::new(3);
+        assert_eq!(
+            g.intervene(
+                "selected_index",
+                IntrospectValue::Text("zero".to_string())
+            ),
             Err(InterveneError::TypeMismatch)
+        );
+        assert_eq!(
+            g.intervene("selected_index", IntrospectValue::Bool(true)),
+            Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn r51_91_focused_index_wrong_variant_is_type_mismatch() {
+        let mut g = RadioGroupExternal::new(3);
+        assert_eq!(
+            g.intervene(
+                "focused_index",
+                IntrospectValue::Float(1.0)
+            ),
+            Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn r51_91_selected_index_at_boundary_is_accepted() {
+        // `idx == count - 1` is in range; `idx == count` is OutOfRange.
+        let mut g = RadioGroupExternal::new(3);
+        g.intervene("selected_index", IntrospectValue::Int(2)).unwrap();
+        assert_eq!(g.selected_index(), Some(2));
+        assert_eq!(
+            g.intervene("selected_index", IntrospectValue::Int(3)),
+            Err(InterveneError::OutOfRange)
         );
     }
 
@@ -911,14 +972,18 @@ mod tests {
 
     #[test]
     fn r51_87_external_intervene_focused_index_out_of_range_rejects() {
+        // R51.91 §5.40 — both arms now report `OutOfRange` (the
+        // `Int(_)` variant is correct; only the value is bad). The
+        // pre-R51.91 `TypeMismatch` was a framework-expressivity
+        // carry now repaid.
         let mut g = RadioGroupExternal::new(2);
         assert_eq!(
             g.intervene("focused_index", IntrospectValue::Int(5)),
-            Err(InterveneError::TypeMismatch)
+            Err(InterveneError::OutOfRange)
         );
         assert_eq!(
             g.intervene("focused_index", IntrospectValue::Int(-1)),
-            Err(InterveneError::TypeMismatch)
+            Err(InterveneError::OutOfRange)
         );
     }
 

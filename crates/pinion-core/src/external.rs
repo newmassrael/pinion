@@ -161,9 +161,21 @@ pub enum InterveneError {
     /// Path is not declared in the schema.
     UnknownPath,
     /// Path exists but the value variant does not match the slot type.
+    /// Use this for "the JSON was a String when an Int was expected",
+    /// not for "the Int was outside the slot's accepted range" — the
+    /// latter is [`OutOfRange`](Self::OutOfRange).
     TypeMismatch,
     /// Path exists and the type matches but the slot is read-only.
     ReadOnly,
+    /// R51.91 §5.40 — path exists and the value variant matches the
+    /// slot type, but the value itself falls outside the accepted
+    /// range. Composite widgets that address sub-elements by index
+    /// (`RadioGroup::selected_index` / `focused_index`,
+    /// future `ListBox::selected_index` / `TabBar::active_index`)
+    /// raise this for negative integers and indices `>= count`. Slot
+    /// types with continuous-value clamping (`Slider::value`) prefer
+    /// internal clamping over rejection and do not raise this.
+    OutOfRange,
 }
 
 /// Failure modes for [`ExternalIntrospect::invoke`] (R17 bidirectional

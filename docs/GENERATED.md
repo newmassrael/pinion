@@ -3021,6 +3021,7 @@ router.pointer_down(&mut state_scene);
 - R51.88 — AccessFocus::with_active_descendant 제거 (caller 0, strict YAGNI; composite 직접 구성)
 - R51.89 — RpcError builder (new/with_data/with_data_string/invalid_params/internal_error) + focus DRY
 - R51.90 — RadioGroup::send activate edge 가 focused_index 동기화 (WAI-ARIA APG roving first-class)
+- R51.91 — InterveneError::OutOfRange variant (RadioGroup selected/focused_index TypeMismatch 우회 정정)
 
 
 
@@ -3114,6 +3115,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/dispatch.rs:RpcError::invalid_params
 - crates/pinion-rpc/src/dispatch.rs:RpcError::internal_error
 - crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::send
+- crates/pinion-core/src/external.rs:InterveneError::OutOfRange
+- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::resolve_index_intervene
 
 
 
@@ -4428,6 +4431,37 @@ router.pointer_down(&mut state_scene);
 - R51.92 — pinion-shell/src/lib.rs 모듈 분할 (core.rs/shell.rs) — R51.83 substantive 회복
 - carry: hello-radio-group access_child_invoke_focus_returns_true_without_mutation 테스트 명 이 제한적 (focused_index 은 실제 변경) — 언제가 rename 가능
 - carry: listbox/menu/tree/tab composite 신설 시 R51.90 sync pattern 공유 (R59 axis)
+
+
+
+### R235 — R51.91 §5.40 InterveneError::OutOfRange variant — RadioGroup selected_index/focused_index 의 value-domain 실패 가 TypeMismatch 차용 우회에서 정통 OutOfRange 로 정정
+
+**Changes**:
+- crates/pinion-core/src/external.rs: InterveneError::OutOfRange variant 신설 (#[non_exhaustive] enum 의 additive 확장)
+- crates/pinion-core/src/external.rs: TypeMismatch / OutOfRange 의 도메인 경계 도텍 (variant-vs-value-domain)
+- crates/pinion-core/src/widgets/radio_group.rs: RadioGroupExternal::resolve_index_intervene helper 추출 (selected_index + focused_index 공유)
+- crates/pinion-core/src/widgets/radio_group.rs: selected_index + focused_index intervene 가 OutOfRange 발사 (이전 TypeMismatch ×3 우회 제거)
+- crates/pinion-core/src/widgets/radio_group.rs: 기존 2 테스트 (out_of_range_rejects + out_of_range_is_type_mismatch) 가 OutOfRange 검증 으로 갱신
+- crates/pinion-core/src/widgets/radio_group.rs: R51.91 신규 4 테스트 (negative / wrong_variant_int / wrong_variant_focused / at_boundary)
+
+
+
+**Verification**:
+- cargo test -p pinion-core widgets::radio_group = 45 pass / 0 fail (이전 41 에서 +4 R51.91)
+- cargo test --workspace --features pinion-runtime/vello = 1527 pass / 0 fail / 8 ignored (1523 +4)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- Slider value clamp (소프트 계약) « 자체 구현이 이미 OutOfRange 안 쓰고 clamp, 의도적 유지
+- 다른 widget (Checkbox/Toggle/Radio/Button) 는 고유 path 아닌 앞 우회 없음 — sweep 부담 없음
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.92 — pinion-shell/src/lib.rs 모듈 분할 (core.rs/shell.rs) — R51.83 substantive 회복
+- carry: listbox/menu/tree/tab composite 신설 시 resolve_index_intervene 패턴 공유 (R59 axis)
+- carry: dispatch.rs 의 49 RpcError literal sweep (R51.89 carry)
 
 
 
