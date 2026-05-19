@@ -291,6 +291,67 @@ fn shell_core_new_starts_in_clean_state() {
 }
 
 #[test]
+fn r51_82_composite_focus_routes_to_child_invoke() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    CHILD_INVOKE_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    let rev_before = core.revision();
+    // Composite Focus action targets the same `parent#child` shape
+    // the Click path consumes. R51.82 routes Focus through
+    // `access_child_invoke` so composites can mirror the active
+    // descendant without inheriting the Click activation chain.
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test#child_3".to_owned(),
+        kind: AccessAction::Focus,
+    });
+
+    assert_eq!(
+        core.focus().focused(),
+        Some("test"),
+        "composite Focus still pins focus on the parent tag",
+    );
+    let child_log = CHILD_INVOKE_LOG.lock().unwrap();
+    assert_eq!(
+        child_log.len(),
+        1,
+        "Focus arm now routes through access_child_invoke (R51.82)",
+    );
+    assert_eq!(child_log[0].0, "child_3");
+    assert_eq!(child_log[0].1, AccessAction::Focus);
+    assert!(
+        APPLY_KEY_LOG.lock().unwrap().is_empty(),
+        "Focus never falls back to apply_key — no Enter activation",
+    );
+    assert!(
+        core.revision() > rev_before,
+        "composite Focus bumps the revision (active descendant moved)",
+    );
+}
+
+#[test]
+fn r51_82_atomic_focus_unchanged_no_child_invoke() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    CHILD_INVOKE_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    // Atomic tag (no `#`) keeps the pre-R51.82 fast path: just
+    // focus_set + request_redraw, no access_child_invoke call.
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test".to_owned(),
+        kind: AccessAction::Focus,
+    });
+
+    assert_eq!(core.focus().focused(), Some("test"));
+    assert!(
+        CHILD_INVOKE_LOG.lock().unwrap().is_empty(),
+        "atomic Focus must not call access_child_invoke",
+    );
+}
+
+#[test]
 fn r51_67_focus_action_sets_focus_and_requests_redraw() {
     let _g = TEST_LOCK.lock().unwrap();
     reset_mocks();

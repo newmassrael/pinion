@@ -398,14 +398,23 @@ impl WidgetView for RadioGroupView {
                 }
                 true
             }
-            // R51.71 carry — `Focus` on a composite child should
-            // update the active descendant via `accesskit::Node::
-            // set_active_descendant`. Until that lands, returning
-            // `true` here suppresses the shell's atomic-fallback
-            // Enter activation so AT-issued Focus doesn't accidentally
-            // *select* the row; the parent focus_set the shell
-            // already performed leaves the group focused, and the
-            // active descendant follows the selected radio.
+            // R51.82 §5.40 — composite Focus on a specific child.
+            // The shell already ran `focus_set` on the parent before
+            // calling this hook (R51.82 dispatch_access_action::Focus
+            // arm), and `access_focus_target` drives the active
+            // descendant from `selected_index`. The current
+            // `RadioGroup` state model conflates "addressed" with
+            // "selected" — a textbook WAI-ARIA roving-tabindex
+            // implementation would carry a parallel `focused_index`
+            // alongside `selected_index` so AT navigation (arrow
+            // keys, AT-side Focus) can move the active descendant
+            // without selecting. That structural split lands as a
+            // follow-up; for now we accept the Focus without state
+            // mutation. Return value is informational only — the
+            // R51.82 shell does not branch on it for the Focus arm
+            // (composite Focus never falls back to the atomic
+            // chain — there is no keyboard equivalent for "make
+            // this the active descendant").
             AccessAction::Focus => true,
             AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => {
                 false

@@ -3012,6 +3012,7 @@ router.pointer_down(&mut state_scene);
 - R51.79 — AccessTreeBuilder::add &AccessNode + commit_access_emit by-value Vec move
 - R51.80 — ShellCore deeper extraction: paint+a11y+finalize+input+focus wrappers 정통
 - R51.81 — TextNode.role + TextRole 정통, decoration glyph 의 aria_label Band-Aid 청산
+- R51.82 — dispatch_access_action::Focus composite tag 처리, access_child_invoke 라우팅
 
 
 
@@ -5789,6 +5790,36 @@ router.pointer_down(&mut state_scene);
 - composite AccessAction::Focus 의미 명확화
 - Tier-1 R51.x carry 9개 (touch cancel commit-class / pressure widget / drag 2nd / lifecycle 2nd / 3D primitive / font mirror / L4 conformance / theming axis / platform AT test)
 - TextRole::Label 변형 활용 — WAI-ARIA 1.2 §5.2.6 labelling axis 랜딩 시 explicit label TextNode 우선 적용
+
+
+
+### R51.82 — §5.40 R51.82 — composite AccessAction::Focus 의미 명확화: dispatch_access_action::Focus arm 이 sub_tag 인식 + access_child_invoke 라우팅 (active descendant 갱신 책임 위임), R51.70/R51.71 carry 청산.
+
+**Changes**:
+- crates/pinion-shell/src/lib.rs — dispatch_access_action::Focus arm 이 sub_tag 인식, V::access_child_invoke(scene, sub, Focus) 호출 후 revision bump + refresh + drain
+- crates/pinion-shell/src/lib.rs — Focus 는 단독 fall-back (apply_key Enter 철회) — keyboard 동등물 없으므로
+- examples/hello-radio-group/src/main.rs — access_child_invoke::Focus arm comment 재구조 (R51.71 carry 쟠임, R51.82 의미 명문화)
+- crates/pinion-shell/tests/dispatch_core.rs — 2 R51.82 회귀 test (composite Focus 라우팅 / atomic Focus 자명)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello → 1503 passed / 0 failed / 8 ignored (+2 R51.82)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings
+- RadioGroup access_child_invoke_focus_returns_true_without_mutation 기존 test 계속 pass
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- RadioGroup state model 의 focused_index vs selected_index 분리 (WAI-ARIA roving-tabindex 정통): R51.x 포괄 안 속편, SCE template 재설계 필요
+- pub(crate) 14 필드 일부 private 가능 (R51.80 carry)
+- AccessFocus builder + AccessTreeBuilder signature 통일
+- handle_focus_* boilerplate helper
+- Tier-1 R51.x carry 9개
+- TextRole::Label variant 활용 (R51.81 carry)
 
 
 

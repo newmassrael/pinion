@@ -1355,6 +1355,26 @@ impl<V: WidgetView> ShellCore<V> {
         match action.kind {
             AccessAction::Focus => {
                 self.focus.focus_set(parent_tag);
+                if let Some(sub) = sub_tag {
+                    // R51.82 §5.40 — composite Focus routes through
+                    // the same `access_child_invoke` hook the Click
+                    // path uses, so the composite can update its
+                    // active-descendant model (move the visually
+                    // current row inside a `RadioGroup`, light up
+                    // the current item in a future `ListBox` /
+                    // `MenuButton` / `TreeView`) without selecting.
+                    // The composite is responsible for distinguishing
+                    // Focus from Click in its impl; the shell stays
+                    // composite-agnostic. Return value is observed
+                    // only as "intent accepted" — Focus never falls
+                    // back to the atomic `apply_key` chain (no
+                    // keyboard equivalent for "make this the active
+                    // descendant").
+                    let _ = V::access_child_invoke(&mut self.scene, sub, action.kind);
+                    self.revision.bump();
+                    self.refresh_state();
+                    self.drain_intents();
+                }
                 self.request_redraw();
             }
             AccessAction::Click | AccessAction::Default => {
