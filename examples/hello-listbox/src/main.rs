@@ -325,6 +325,15 @@ impl WidgetView for ListBoxView {
     ///   full `PointerEnter / Down / Up / Leave` cycle through the
     ///   composite wire format so the `"selected"` intent fires the
     ///   same way a mouse click on the row would.
+    /// * R51.99 §5.38 — printable letter / digit — type-ahead jump
+    ///   to the next option whose label starts with that character
+    ///   (case-insensitive, ASCII fold), wrapping cyclically from
+    ///   `focused_index + 1`. Successive presses of the same letter
+    ///   cycle through every matching option. WAI-ARIA Authoring
+    ///   Practices Listbox optional convention; bundled because the
+    ///   four fruit labels have unique first letters and the model
+    ///   completes the textbook keyboard surface for the demo. Does
+    ///   not commit — pairs with `Space` / `Enter` after the jump.
     ///
     /// Unrecognised keys return `false` so the shell's swallow path
     /// matches the unrecognised-keybinding contract.
@@ -344,7 +353,11 @@ impl WidgetView for ListBoxView {
             "Home" => set_focus(node, 0),
             "End" => set_focus(node, N - 1),
             "Space" | "Enter" => commit_focused(node),
-            _ => false,
+            // R51.99 §5.38 — single-character keys fall through to
+            // the WAI-ARIA optional type-ahead jump. The match arm
+            // sits last so named keys (`ArrowDown`, `Home`, etc.)
+            // win on key-string length disambiguation.
+            other => type_ahead_jump(node, other),
         }
     }
 
@@ -532,6 +545,83 @@ fn set_focus(node: &mut pinion_core::scene::ExternalNode, idx: usize) -> bool {
     };
     let _ = intro.intervene("focused_index", IntrospectValue::Int(i));
     true
+}
+
+/// R51.99 §5.38 — WAI-ARIA Listbox optional type-ahead jump (W3C
+/// ARIA Authoring Practices). Accepts a single printable
+/// alphanumeric character; finds the next option whose label starts
+/// with that character (case-insensitive, ASCII fold), wrapping
+/// cyclically from `focused_index + 1` so successive presses of the
+/// same letter cycle through every match. The jump only mutates
+/// `focused_index` (no commit) — `Space` / `Enter` commits after.
+///
+/// Returns `true` when the key is a single alphanumeric character
+/// that triggered a focus move; `false` for multi-character key
+/// strings (`Tab`, `Escape`, named navigation keys handled by the
+/// caller before reaching this fallback) or when no option label
+/// begins with the typed character.
+///
+/// Multi-character prefix buffering with timeout (e.g. typing
+/// `"Ba"` to disambiguate `Banana` from `Berry`) is a future axis
+/// — the four fruit labels here have unique first letters and the
+/// single-character form is the WAI-ARIA APG baseline. Non-ASCII
+/// label first-character match (Unicode case folding) is also a
+/// carry; the current fold uses `eq_ignore_ascii_case` which is
+/// correct for the ASCII fruit names.
+fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bool {
+    let Some(first) = single_printable_char(key) else {
+        return false;
+    };
+    let current = node
+        .handle
+        .introspect()
+        .and_then(|i| i.query("focused_index"))
+        .and_then(|v| match v {
+            IntrospectValue::Int(i) => usize::try_from(i).ok(),
+            _ => None,
+        });
+    let Some(target) = find_next_match(current, first) else {
+        return false;
+    };
+    set_focus(node, target)
+}
+
+/// R51.99 §5.38 — extract the single-printable-character predicate so
+/// the type-ahead unit tests can exercise the gate independent of a
+/// live `ExternalNode`. A printable type-ahead key is exactly one
+/// ASCII alphanumeric (`A-Za-z0-9`); named keys (`ArrowDown`, `F1`,
+/// `Tab`) and multi-character / control keys return `None`.
+fn single_printable_char(key: &str) -> Option<char> {
+    let mut iter = key.chars();
+    let first = iter.next()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    first.is_ascii_alphanumeric().then_some(first)
+}
+
+/// R51.99 §5.38 — wrap-around search for the next option whose label
+/// starts with `key` (case-insensitive, ASCII fold). Starts from
+/// `current + 1` (so successive presses of the same letter cycle
+/// through every match); falls back to `0` when `current` is `None`
+/// or out of range. Returns the matched index or `None` when no
+/// label begins with `key`.
+fn find_next_match(current: Option<usize>, key: char) -> Option<usize> {
+    let start = match current {
+        Some(c) if c < N => (c + 1) % N,
+        _ => 0,
+    };
+    for offset in 0..N {
+        let i = (start + offset) % N;
+        let label = option_label(i);
+        let Some(label_first) = label.chars().next() else {
+            continue;
+        };
+        if label_first.eq_ignore_ascii_case(&key) {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// Commit the currently focused option (Space / Enter on a focused
@@ -730,5 +820,76 @@ mod a11y_tests {
     #[test]
     fn active_option_fallback_to_zero_when_nothing_set() {
         assert_eq!(active_option_index(unselected_state()), 0);
+    }
+
+    // R51.99 §5.38 — type-ahead navigation (WAI-ARIA APG optional).
+
+    #[test]
+    fn r51_99_single_printable_char_accepts_letter() {
+        assert_eq!(single_printable_char("A"), Some('A'));
+        assert_eq!(single_printable_char("z"), Some('z'));
+    }
+
+    #[test]
+    fn r51_99_single_printable_char_accepts_digit() {
+        assert_eq!(single_printable_char("0"), Some('0'));
+        assert_eq!(single_printable_char("7"), Some('7'));
+    }
+
+    #[test]
+    fn r51_99_single_printable_char_rejects_named_keys() {
+        assert_eq!(single_printable_char("ArrowDown"), None);
+        assert_eq!(single_printable_char("Tab"), None);
+        assert_eq!(single_printable_char("Escape"), None);
+        assert_eq!(single_printable_char("F1"), None);
+        assert_eq!(single_printable_char(""), None);
+    }
+
+    #[test]
+    fn r51_99_single_printable_char_rejects_punctuation() {
+        // Space, dash, etc. are not type-ahead targets (Space is a
+        // commit key in the keyboard model).
+        assert_eq!(single_printable_char(" "), None);
+        assert_eq!(single_printable_char("-"), None);
+        assert_eq!(single_printable_char("!"), None);
+    }
+
+    #[test]
+    fn r51_99_find_next_match_from_unfocused_finds_first() {
+        // Labels = [Apple, Banana, Cherry, Date]. From no focus, 'A'
+        // should land on index 0 (Apple).
+        assert_eq!(find_next_match(None, 'A'), Some(0));
+        assert_eq!(find_next_match(None, 'a'), Some(0));
+        assert_eq!(find_next_match(None, 'B'), Some(1));
+        assert_eq!(find_next_match(None, 'D'), Some(3));
+    }
+
+    #[test]
+    fn r51_99_find_next_match_starts_after_current() {
+        // From Apple (0), 'B' jumps to Banana (1).
+        assert_eq!(find_next_match(Some(0), 'B'), Some(1));
+        // From Cherry (2), 'A' wraps to Apple (0).
+        assert_eq!(find_next_match(Some(2), 'A'), Some(0));
+    }
+
+    #[test]
+    fn r51_99_find_next_match_no_match_returns_none() {
+        // No fruit starts with 'Z'.
+        assert_eq!(find_next_match(None, 'Z'), None);
+        assert_eq!(find_next_match(Some(1), 'X'), None);
+    }
+
+    #[test]
+    fn r51_99_find_next_match_same_letter_from_match_finds_self_after_wrap() {
+        // From Apple (0), 'A' searches 1..=3, none match, wraps to 0;
+        // returns Some(0) (the only Apple, cyclic).
+        assert_eq!(find_next_match(Some(0), 'A'), Some(0));
+    }
+
+    #[test]
+    fn r51_99_find_next_match_out_of_range_current_treated_as_unfocused() {
+        // Defensive: focused_index larger than N is treated as None
+        // (start from 0).
+        assert_eq!(find_next_match(Some(99), 'A'), Some(0));
     }
 }

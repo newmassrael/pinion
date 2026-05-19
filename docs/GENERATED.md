@@ -2729,6 +2729,7 @@ router.pointer_down(&mut state_scene);
 - R51.2 — Figma fidelity: Toggle pure state, label = Scene::Text + R47.5 TextStyle
 - R51.41 composite hit-target: paint N 'group#i' tags + state 1 'group' External (RadioGroup)
 - R51.98 — ListBox 의 multi-select 모드 (with_multiselect; aria-multiselectable; 활성화 시 토글, 형제 미터치)
+- R51.99 — hello-listbox type-ahead 점프 (printable 문자→다음 매칭 옵션, WAI-ARIA APG)
 
 
 
