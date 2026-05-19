@@ -3006,6 +3006,7 @@ router.pointer_down(&mut state_scene);
 - R51.73 — focus/set + focus/get RPC dual to AccessKit Focus (AI primary path §2 #2 align)
 - R51.74 — focus/next + focus/prev RPC (Tab / Shift+Tab equivalent AI primary path)
 - R51.75 — no-change frame skip (last_access_focus diff, update_if_active 자체 스킵 시 0 cost)
+- R51.76 — ShellCore<V> substrate/surface 분리 + AccessEmitPlan + redraw flag drain
 
 
 
@@ -3070,6 +3071,15 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/focus.rs:focus_next
 - crates/pinion-rpc/src/focus.rs:focus_prev
 - crates/pinion-shell/src/lib.rs:AppShell::last_access_focus
+- crates/pinion-shell/src/lib.rs:ShellCore
+- crates/pinion-shell/src/lib.rs:AccessEmitPlan
+- crates/pinion-shell/src/lib.rs:ShellCore::compute_access_emit
+- crates/pinion-shell/src/lib.rs:ShellCore::dispatch_access_action
+- crates/pinion-shell/src/lib.rs:ShellCore::handle_action_request
+- crates/pinion-shell/src/lib.rs:ShellCore::take_redraw_request
+- crates/pinion-shell/src/lib.rs:AppShell::handle_key_press
+- crates/pinion-shell/src/lib.rs:AppShell::drain_redraw_to_winit
+- crates/pinion-shell/tests/dispatch_core.rs
 
 
 
@@ -5585,6 +5595,39 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - AppShell mock-based dispatch path test infrastructure (handle_action_request / dispatch_access_action / apply_a11y_key / R51.75 skip behavior)
 - tag_to_node_id collision 디버그 검증 (debug_assert injective on build) — known textbook 약점
+
+
+
+### R51.76 — §5.40 R51.76 — substrate/surface 분리: ShellCore<V> 추출 + AccessEmitPlan + redraw flag drain + 17 dispatch_core 회귀 test 추가 (R51.75 verification gap 청산).
+
+**Changes**:
+- crates/pinion-shell/src/lib.rs — ShellCore<V> struct 신설 (14 dispatch substrate 필드 + redraw_requested flag 보유; AppShell 은 render / vello_scene / proxy / accesskit 만 owning)
+- crates/pinion-shell/src/lib.rs — AccessEmitPlan struct (should_emit + initial + dirty + nodes + focus carrier) + ShellCore::compute_access_emit (pure emit decision + cache update)
+- crates/pinion-shell/src/lib.rs — ShellCore::dispatch_rpc 시그니처 &mut dyn FnMut(u32, u32) 로 변경 (DispatchContext 와 일관, monomorphization 회피)
+- crates/pinion-shell/src/lib.rs — ShellCore::request_redraw flag 기반 + AppShell::drain_redraw_to_winit drain helper, ApplicationHandler arm 끝에서 호출
+- crates/pinion-shell/src/lib.rs — AppShell::handle_key_press helper extract (window_event too_many_lines 100 LOC 회복)
+- crates/pinion-shell/src/lib.rs — dispatch_access_action / handle_action_request pub 노출 + Default impl for ShellCore
+- crates/pinion-shell/tests/dispatch_core.rs — 17 회귀 test (R51.67 atomic Focus/Click/Default/Increment/Decrement/Other + R51.70 composite child invoke true/false + R51.67 handle_action_request resolve via compute_access_emit + R51.72 dirty diff + R51.75 no-change skip + R51.71 active descendant + R51.75 focus unset 후 emit)
+
+
+
+**Verification**:
+- cargo test -p pinion-shell --test dispatch_core --features pinion-runtime/vello → 17 passed / 0 failed
+- cargo test --workspace --features pinion-runtime/vello → 1489 passed / 0 failed / 8 ignored (+17 from 1472 baseline)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings (workspace.lints pedantic deny 유지)
+- Mnemosyne validate_workspace → entries=220 / T1=0 / round-trip 1/1 / GENERATED.md=sync / commit↔ledger missing=0
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.77 — compute_access_emit naming 약점 (pure 처럼 보이나 self.last_access_* mutation): pure decision fn + 별도 commit step 분리가 textbook 정통
+- R51.78 — handle_key_press winit 결합 (Key + ActiveEventLoop 동시 의존): Escape arm 별도 dispatch + helper winit-free 가 textbook 정통 + 단위 테스트 가능
+- R51.79 — AccessEmitPlan owning Vec<AccessNode> alloc churn (60fps animation 누적): borrow-based 또는 by-value consume 정당성 명시
+- R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction (encapsulation 정통)
+- 이전 carry — aria_label Band-Aid (R51.77 대안 carry) / API 일관성 AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / 이전 R51.x carry 11개
 
 
 

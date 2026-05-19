@@ -471,39 +471,59 @@ pub enum RenderState<R: VelloRenderer> {
     Suspended(Option<Arc<Window>>),
 }
 
-/// The framework-side shell. Generic over a widget binding
-/// [`WidgetView`]; concrete examples instantiate via `run::<V>()`.
-pub struct AppShell<V: WidgetView> {
+/// R51.76 §5.40 — framework-side dispatch substrate, decoupled from
+/// winit / wgpu / `accesskit_winit`.
+///
+/// [`ShellCore`] owns every piece of state that `AppShell`'s dispatch
+/// path mutates: the authoritative state scene, the cached state
+/// projection, the §5.20 intent queue, the §5.34 preview ledger +
+/// revision token, the §5.35 input router, the §5.39 focus manager
+/// and cached winit modifier state, the §5.36 text layout cache, the
+/// §5.12 last-paint snapshot, and the §5.40 incremental AT-emit
+/// caches (tag map / node diff / focus diff / initial-emit flag).
+///
+/// The split is the textbook substrate/surface separation: the
+/// shell-coupled bits (winit `Window`, wgpu surface, Vello renderer,
+/// `accesskit_winit::Adapter`, `EventLoopProxy`) live in [`AppShell`];
+/// everything else lives here so the dispatch surface is reachable
+/// from headless tests without standing up a winit `EventLoop` or a
+/// real wgpu device.
+///
+/// `request_redraw` no longer touches a `Window` directly — it sets
+/// [`ShellCore::redraw_requested`] so [`AppShell`] can drain the flag
+/// once per event-loop iteration and forward to `Window::request_redraw`
+/// when a `Window` exists, while headless tests just observe the flag.
+pub struct ShellCore<V: WidgetView> {
     /// Authoritative state scene — owns the live widget External via
     /// `Box<dyn External>`. Both winit input (via the `InputRouter`)
     /// and RPC dispatch (via the `DispatchContext`) reach the SCXML
     /// statechart through this single scene.
-    scene: Scene,
+    pub(crate) scene: Scene,
     /// Cached projection of the introspect state, kept in sync by
     /// `refresh_state` after every input. Drives change-detection
     /// for the redraw request + the view fn's input.
-    cached_state: V::State,
+    pub(crate) cached_state: V::State,
     /// §5.20 intent harvest buffer. Refilled by `drain_intents` after
     /// every winit / RPC event; consumed by stderr logging. The
     /// `scene/intents` RPC method drains the same source independently
     /// since the underlying `External::pending_intents` is the single
     /// queue.
-    intent_queue: IntentQueue,
+    pub(crate) intent_queue: IntentQueue,
     /// §5.34 preview lifecycle ledger — passed into every
     /// `pinion_rpc::dispatch` call alongside the scene. Lifecycle RPC
     /// methods read or mutate it through interior mutability;
     /// non-lifecycle methods ignore it.
-    previews: PreviewLedger,
+    pub(crate) previews: PreviewLedger,
     /// §5.34 R40.4 OCC revision token. `dispatch` auto-bumps on
-    /// mutating RPC methods; [`AppShell::forward`] explicitly bumps
+    /// mutating RPC methods; [`ShellCore::forward`] explicitly bumps
     /// after the winit-side `invoke` since that path bypasses the
     /// dispatcher entirely.
-    revision: SceneRevision,
+    pub(crate) revision: SceneRevision,
     /// R48 §5.35 framework-side input dispatch primitive. Owns the
     /// retained paint scene + cursor state + `hover_target` and
     /// routes pointer events to the matching `ExternalNode` in
     /// `self.scene` (the one tagged `V::tag()`).
-    router: InputRouter,
+    pub(crate) router: InputRouter,
     /// R51.53 §5.39 framework-side focus state owner. Tab/Shift+Tab
     /// traverses [`FocusManager::tab_order`] (seeded from
     /// `V::focusable_tags()` at boot); click on a tagged widget
@@ -512,33 +532,115 @@ pub struct AppShell<V: WidgetView> {
     /// manager on every key dispatch so `apply_key` runs only when
     /// the widget's own tag is focused (eliminating the broadcast
     /// aliasing the pre-R51.53 design carried).
-    focus: FocusManager,
+    pub(crate) focus: FocusManager,
     /// R51.53 §5.39 — winit [`ModifiersState`] cache. Refreshed by
     /// `WindowEvent::ModifiersChanged`; consulted on every
     /// `KeyboardInput` for Shift detection (Shift+Tab = `focus_prev`).
     /// winit emits `KeyEvent` without modifier state, so the shell
     /// has to track it out-of-band.
-    modifiers: ModifiersState,
-    /// R46.5 §5.16 suspend / resume lifecycle (R46.3.4 pattern).
-    render: RenderState<V::Renderer>,
-    /// Reusable Vello scene buffer — reset at the start of each frame
-    /// rather than reallocated. Vello's Scene API expects this pattern
-    /// (Linebender Vello examples / Xilem).
-    vello_scene: VelloScene,
+    pub(crate) modifiers: ModifiersState,
     /// R47.3 §5.36 — owned [`LayoutCache`] (LRU 256). `paint_adapter`'s
     /// Text arm consults this cache for every `Scene::Text` it walks
     /// so the view fn's static labels shape once on first paint and
     /// hit the cache on every subsequent frame. The cache also owns
     /// parley's `FontContext` / `LayoutContext` so the shell never
     /// holds parley state directly.
-    text_cache: LayoutCache,
+    pub(crate) text_cache: LayoutCache,
     /// R47.7.5 §5.12 — most recent winit-rendered frame's paint scene
     /// projected into a [`LayoutNode`] tree. Refreshed at the end of
     /// every paint pass; `dispatch_rpc` hands it to
     /// `DispatchContext::with_last_paint_layout` so AI clients reach
     /// the winit-actual frame via `scene/layout {viewport: null}`.
     /// `None` until the first frame has rendered.
-    last_paint_layout: Option<LayoutNode>,
+    pub(crate) last_paint_layout: Option<LayoutNode>,
+    /// R51.67 §5.40 — `NodeId` → widget tag map from the most recent
+    /// `TreeUpdate`. Refreshed at the end of every `render` (when an
+    /// adapter is attached). Consumed by `handle_action_request` so
+    /// AT-side actions arriving via `AppEvent::AccessKit` resolve
+    /// back to the widget tag without recomputing the tree.
+    pub(crate) last_access_tag_map: HashMap<NodeId, String>,
+    /// R51.72 §5.40 — previous frame's `AccessNode` set (keyed by
+    /// `tag`). The next frame diffs against this to compute the
+    /// dirty subset passed to `AccessTreeBuilder::dirty_tags`.
+    /// AccessKit's incremental-update guidance: "an update should
+    /// only include nodes that are new or changed".
+    pub(crate) last_access_nodes: HashMap<String, AccessNode>,
+    /// R51.72 §5.40 — `true` until the first `TreeUpdate` has been
+    /// emitted (carrying the `Tree` metadata + every node). After
+    /// that, subsequent emits set `initial(false)` and pass only
+    /// the dirty subset.
+    pub(crate) access_emit_initial: bool,
+    /// R51.75 §5.40 — previous frame's `AccessFocus`. Compared
+    /// alongside the dirty-node diff: when neither nodes nor focus
+    /// changed, `update_if_active` is skipped entirely so a
+    /// steady-state animation frame costs no AT-side traffic.
+    pub(crate) last_access_focus: Option<pinion_a11y::AccessFocus>,
+    /// R51.76 §5.40 — flag set whenever a method on
+    /// [`ShellCore`] decides the next frame should repaint. Drained
+    /// by [`AppShell`] after each event-loop iteration and forwarded
+    /// to `Window::request_redraw` when a winit `Window` is attached;
+    /// remains observable for headless tests that never spin up a
+    /// `Window`. The flag-based design replaces the pre-R51.76
+    /// direct `window.request_redraw()` call buried in every
+    /// dispatch method, which made the substrate untestable without
+    /// a real event loop.
+    pub(crate) redraw_requested: bool,
+}
+
+/// R51.76 §5.40 — pure decision returned by
+/// [`ShellCore::compute_access_emit`].
+///
+/// Carries everything the AccessKit emit path needs: the diff
+/// (`dirty`), the initial-frame flag (`initial` — forces a full tree
+/// metadata emit on the first frame), the should-emit verdict
+/// (`should_emit`), and the consumed `nodes` + `focus` (passed
+/// through so the caller does not need to retain a separate
+/// reference). When `should_emit` is `false`, the caller skips
+/// `Adapter::update_if_active` entirely — the R51.75 no-change
+/// frame skip.
+#[derive(Debug)]
+pub struct AccessEmitPlan {
+    /// `true` when the caller should invoke
+    /// `Adapter::update_if_active`. `false` when the tree is
+    /// byte-identical to the previous frame's emit (no dirty nodes,
+    /// no focus change, not initial).
+    pub should_emit: bool,
+    /// `true` for the first emit (carries `Tree` metadata + every
+    /// node). Subsequent emits set `false` and pass only the dirty
+    /// subset via `AccessTreeBuilder::dirty_tags`.
+    pub initial: bool,
+    /// Set of tags whose `AccessNode` body (name / value / state /
+    /// bounds / children) changed since the previous emit. Empty
+    /// when only focus changed. On `initial` the set contains every
+    /// node's tag (the AT has no prior state).
+    pub dirty: HashSet<String>,
+    /// Nodes that will be emitted. Consumed by
+    /// `AccessTreeBuilder::add` in the caller.
+    pub nodes: Vec<AccessNode>,
+    /// Focus declaration that will be emitted. The atomic case
+    /// resolves to `TreeUpdate::focus = focus_tag`; the composite
+    /// case additionally annotates the parent's `accesskit::Node`
+    /// with `set_active_descendant(child)`.
+    pub focus: Option<pinion_a11y::AccessFocus>,
+}
+
+/// The framework-side shell. Generic over a widget binding
+/// [`WidgetView`]; concrete examples instantiate via `run::<V>()`.
+///
+/// R51.76 §5.40 — every piece of testable dispatch state lives in
+/// [`ShellCore`]; this struct only owns the winit / wgpu / AccessKit
+/// surface so headless tests can target [`ShellCore`] directly.
+pub struct AppShell<V: WidgetView> {
+    /// R51.76 §5.40 — extracted dispatch substrate (scene, cached
+    /// state, focus, intents, previews, revision, router, modifiers,
+    /// text cache, last paint snapshot, AT caches, redraw flag).
+    pub(crate) core: ShellCore<V>,
+    /// R46.5 §5.16 suspend / resume lifecycle (R46.3.4 pattern).
+    render: RenderState<V::Renderer>,
+    /// Reusable Vello scene buffer — reset at the start of each frame
+    /// rather than reallocated. Vello's Scene API expects this pattern
+    /// (Linebender Vello examples / Xilem).
+    vello_scene: VelloScene,
     /// R51.62 §5.40 — winit [`EventLoopProxy`] cached so the shell
     /// can construct the per-window `accesskit_winit::Adapter` on
     /// `resumed` (the constructor requires both the active event
@@ -552,42 +654,19 @@ pub struct AppShell<V: WidgetView> {
     /// `ActionRequested`, `AccessibilityDeactivated`) through
     /// [`AppEvent::AccessKit`].
     accesskit: Option<accesskit_winit::Adapter>,
-    /// R51.67 §5.40 — `NodeId` → widget tag map from the most recent
-    /// `TreeUpdate`. Refreshed at the end of every `render` (when an
-    /// adapter is attached). Consumed by `handle_action_request` so
-    /// AT-side actions arriving via `AppEvent::AccessKit` resolve
-    /// back to the widget tag without recomputing the tree.
-    last_access_tag_map: HashMap<NodeId, String>,
-    /// R51.72 §5.40 — previous frame's `AccessNode` set (keyed by
-    /// `tag`). The next frame diffs against this to compute the
-    /// dirty subset passed to `AccessTreeBuilder::dirty_tags`.
-    /// AccessKit's incremental-update guidance: "an update should
-    /// only include nodes that are new or changed".
-    last_access_nodes: HashMap<String, AccessNode>,
-    /// R51.72 §5.40 — `true` until the first `TreeUpdate` has been
-    /// emitted (carrying the `Tree` metadata + every node). After
-    /// that, subsequent emits set `initial(false)` and pass only
-    /// the dirty subset.
-    access_emit_initial: bool,
-    /// R51.75 §5.40 — previous frame's `AccessFocus`. Compared
-    /// alongside the dirty-node diff: when neither nodes nor focus
-    /// changed, `update_if_active` is skipped entirely so a
-    /// steady-state animation frame costs no AT-side traffic.
-    last_access_focus: Option<pinion_a11y::AccessFocus>,
 }
 
-impl<V: WidgetView> AppShell<V> {
-    /// Construct the shell with a freshly-built state scene and the
-    /// initial cached state read through the §5.15 introspect channel.
-    /// The renderer + window stay [`RenderState::Suspended`] until the
-    /// first `resumed` event lands.
+impl<V: WidgetView> ShellCore<V> {
+    /// R51.76 §5.40 — construct the dispatch substrate with a
+    /// freshly-built state scene and the initial cached state read
+    /// through the §5.15 introspect channel.
     ///
-    /// `proxy` is the same `EventLoopProxy<AppEvent>` the
-    /// [`spawn_stdin_rpc_reader`] background thread holds; the shell
-    /// retains a clone so it can hand a fresh copy to the
-    /// `accesskit_winit::Adapter` on `resumed` (R51.62 §5.40).
+    /// Identical bootstrapping to the pre-R51.76 `AppShell::new` minus
+    /// the winit / wgpu / AccessKit surface (which lives on
+    /// [`AppShell`] and is constructed lazily on `resumed`). Headless
+    /// tests build only this struct.
     #[must_use]
-    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+    pub fn new() -> Self {
         use pinion_core::scene::ExternalNode;
         // R22 §5.20: the scene-side `ExternalNode.tag` supplies the
         // widget identifier used as the intent-tag prefix. The widget
@@ -624,18 +703,98 @@ impl<V: WidgetView> AppShell<V> {
             router: InputRouter::new(),
             focus,
             modifiers: ModifiersState::empty(),
-            render: RenderState::Suspended(None),
-            vello_scene: VelloScene::new(),
             text_cache: LayoutCache::new(),
             last_paint_layout: None,
-            proxy,
-            accesskit: None,
             last_access_tag_map: HashMap::new(),
             last_access_nodes: HashMap::new(),
             access_emit_initial: true,
             last_access_focus: None,
+            redraw_requested: false,
         }
     }
+
+    /// R51.76 §5.40 — borrow the focus manager. Tests inspect the
+    /// focused tag through this accessor; production code accesses
+    /// the field directly via `pub(crate)`.
+    #[must_use]
+    pub fn focus(&self) -> &FocusManager {
+        &self.focus
+    }
+}
+
+/// `ShellCore::new()` is the canonical constructor; the
+/// `Default` impl exists so the substrate composes with any
+/// future builder that defaults a member field via
+/// [`Default::default`] (R51.76 — workspace lints set
+/// `clippy::pedantic = "deny"`, which promotes
+/// `clippy::new_without_default` to a hard build error; this
+/// impl is mandatory to satisfy the lint without weakening
+/// the baseline).
+impl<V: WidgetView> Default for ShellCore<V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<V: WidgetView> ShellCore<V> {
+
+    /// R51.76 §5.40 — borrow the cached state projection. Tests
+    /// observe widget state transitions through this accessor.
+    #[must_use]
+    pub fn cached_state(&self) -> &V::State {
+        &self.cached_state
+    }
+
+    /// R51.76 §5.40 — current §5.34 R40.4 OCC revision counter
+    /// (loaded with `Acquire` ordering — see
+    /// [`SceneRevision::current`]). Mutating winit / AT-side
+    /// dispatches bump it; tests assert the before/after delta when
+    /// verifying that a dispatch path actually committed.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision.current()
+    }
+
+    /// R51.76 §5.40 — borrow the live state scene. Tests reach the
+    /// widget External through `Scene::External(node) => node.handle`
+    /// when verifying introspect side effects.
+    #[must_use]
+    pub fn scene(&self) -> &Scene {
+        &self.scene
+    }
+
+    /// R51.76 §5.40 — drain the redraw flag set by `request_redraw`.
+    ///
+    /// Returns `true` once for each call to `request_redraw` between
+    /// drains. [`AppShell`] calls this at the end of every event-loop
+    /// iteration and forwards to `Window::request_redraw` on `true`;
+    /// headless tests call it directly to verify that a dispatch
+    /// triggered a repaint request without standing up a `Window`.
+    pub fn take_redraw_request(&mut self) -> bool {
+        let r = self.redraw_requested;
+        self.redraw_requested = false;
+        r
+    }
+
+    /// R51.76 §5.40 — `true` when a redraw has been requested since
+    /// the last drain. Tests prefer [`take_redraw_request`](Self::take_redraw_request)
+    /// when they want to consume the signal; this accessor is for
+    /// debug logging and peek-only assertions.
+    #[must_use]
+    pub fn redraw_requested(&self) -> bool {
+        self.redraw_requested
+    }
+
+    /// R51.76 §5.40 — note that a repaint is required.
+    ///
+    /// The flag is drained by [`AppShell`] once per event-loop
+    /// iteration, so multiple `request_redraw` calls within one
+    /// dispatch collapse to a single `Window::request_redraw` call
+    /// (the textbook winit idiom: redraws are coalesced).
+    pub fn request_redraw(&mut self) {
+        self.redraw_requested = true;
+    }
+
 
     /// R51.45 §5.35 — winit [`Touch`] dispatch. Each finger mints a
     /// distinct [`PointerId::touch(finger_id)`] so two simultaneous
@@ -752,7 +911,38 @@ impl<V: WidgetView> AppShell<V> {
     /// and returns the freshly-measured paint scene. The dispatch
     /// block scope releases the split borrows before
     /// `self.refresh_state()` runs.
-    fn dispatch_rpc(&mut self, request: &str) {
+    /// Dispatch one JSON-RPC frame against the LIVE state scene.
+    /// `scene/invoke /external/send PointerEnter` (and friends) drive
+    /// the SCXML the same way a winit click would.
+    ///
+    /// R47.7.2 §5.12 — `scene/layout` requests reach the framework
+    /// via `DispatchContext::with_paint_producer`: the closure captures
+    /// `cached_state` (`Copy`) and `text_cache` (`&mut`), runs the
+    /// view fn and `compute_layout` for the hypothetical viewport,
+    /// and returns the freshly-measured paint scene.
+    ///
+    /// R51.76 §5.40 — `resize_request` is supplied by the caller so
+    /// the substrate stays winit-free. [`AppShell`] constructs the
+    /// production closure (calls `Window::request_inner_size` +
+    /// `Window::request_redraw`); headless tests pass a no-op.
+    ///
+    /// Returns the optional JSON-RPC 2.0 response frame; the caller
+    /// owns the IO surface (production writes to stdout; tests
+    /// inspect the string).
+    ///
+    /// Signature note — `&mut dyn FnMut(u32, u32)` (not generic
+    /// `F: FnMut`) for two reasons: (a) the downstream
+    /// [`DispatchContext::with_resize_request`] takes the same
+    /// `&mut (dyn FnMut + 'a)` shape, so the substrate forwards the
+    /// reference straight through without re-wrapping; (b) avoids
+    /// per-callsite monomorphisation of the entire dispatch body
+    /// (production callsite vs test no-op closure would otherwise
+    /// duplicate ~1 KiB of code).
+    pub fn dispatch_rpc(
+        &mut self,
+        request: &str,
+        resize_request: &mut dyn FnMut(u32, u32),
+    ) -> Option<String> {
         // R51.73 §5.40 — sample focus before dispatch so we can
         // detect `focus/set` (or any other focus-mutating method)
         // and trigger a redraw to refresh the focus ring.
@@ -767,7 +957,6 @@ impl<V: WidgetView> AppShell<V> {
             let focus_ptr = &mut self.focus;
             let cached_state = self.cached_state;
             let text_cache_ptr = &mut self.text_cache;
-            let render_ref = &self.render;
             let last_paint = self.last_paint_layout.as_ref();
             let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
@@ -775,37 +964,19 @@ impl<V: WidgetView> AppShell<V> {
                 compute_layout(&mut paint, text_cache_ptr, w, h);
                 paint
             };
-            // R47.7.4.2 — `scene/resize` reaches winit through this
-            // closure: `request_inner_size` queues a size change that
-            // winit emits as a `Resized` event on the next loop pass,
-            // and the explicit `request_redraw` shortens the gap to
-            // the new paint scene observation.
-            let mut resize_req = |w: u32, h: u32| {
-                if let RenderState::Active { window, .. } = render_ref {
-                    let _ = window.request_inner_size(LogicalSize::new(w, h));
-                    window.request_redraw();
-                }
-            };
             // R47.7.5 §5.12 — surface the most recent winit-rendered
             // frame to the dispatcher so `scene/layout {viewport: null}`
             // returns the actual frame snapshot. Builder pattern keeps
             // the `Option` wiring branchless at the AI-client level.
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
-                .with_resize_request(&mut resize_req)
+                .with_resize_request(resize_request)
                 .with_focus_manager(focus_ptr);
             if let Some(snapshot) = last_paint {
                 ctx = ctx.with_last_paint_layout(snapshot);
             }
             dispatch(&mut ctx, request)
         };
-        if let Some(resp) = resp {
-            let mut out = std::io::stdout().lock();
-            if writeln!(out, "{resp}").is_err() {
-                // stdout closed (downstream consumer gone) — silently
-                // skip; do not abort the GUI loop on a broken pipe.
-            }
-        }
         self.refresh_state();
         self.drain_intents();
         // R51.73 §5.40 — `focus/set` from the AI client must trigger
@@ -815,6 +986,7 @@ impl<V: WidgetView> AppShell<V> {
         if self.focus.focused().map(str::to_owned) != focus_before {
             self.request_redraw();
         }
+        resp
     }
 
     /// §5.20 live dogfood: walk the scene, drain any pending intents
@@ -847,166 +1019,69 @@ impl<V: WidgetView> AppShell<V> {
         }
     }
 
-    fn request_redraw(&self) {
-        if let RenderState::Active { window, .. } = &self.render {
-            window.request_redraw();
-        }
-    }
-
-    /// Build the paint scene for the current cached state, run layout,
-    /// hand it to the framework-side `paint_adapter` walker, and submit
-    /// the resulting `vello::Scene` to the renderer. No-op while
-    /// suspended (R46.3.4 lifecycle).
-    fn render(&mut self) {
-        let RenderState::Active { window, renderer } = &mut self.render else {
-            return;
-        };
-        let size = window.inner_size();
-        let Some(w) = core::num::NonZeroU32::new(size.width) else { return };
-        let Some(h) = core::num::NonZeroU32::new(size.height) else { return };
-        let frame = Frame::new();
-        let mut paint_scene = V::view(self.cached_state, &frame);
-        compute_layout(&mut paint_scene, &mut self.text_cache, w.get(), h.get());
-        self.vello_scene.reset();
-        let base = paint_adapter::root_background(&paint_scene);
-        paint_adapter::to_vello(
-            &paint_scene,
-            &|_b: &BoxNode| None,
-            &mut self.text_cache,
-            &mut self.vello_scene,
-        );
-        // R51.58 §5.39 — paint the ARIA focus ring on top of the
-        // widget visual. Runs after `to_vello` so the ring overlays
-        // its target; runs before `renderer.render` so it lands in
-        // the same frame submit. No-op when nothing is focused.
-        paint_adapter::paint_focus_ring(
-            &paint_scene,
-            self.focus.focused(),
-            &mut self.vello_scene,
-        );
-        if let Err(e) = renderer.render(&self.vello_scene, base) {
-            eprintln!("shell: vello render: {e}");
-        }
-        // R51.62 §5.40 — emit the AccessKit tree before `paint_scene`
-        // moves into `router.update_paint_scene`. `update_if_active`
-        // is a no-op when no AT client is attached, so the
-        // per-frame cost is one `Option::as_mut` + a load.
-        if self.accesskit.is_some() {
-            let focused = self.focus.focused().map(str::to_owned);
-            let mut nodes = V::access_node(&self.cached_state, focused.as_deref());
-            // R51.69 §5.40 — derive the accessible name from the
-            // already-rendered paint scene (WAI-ARIA 1.2 §4.3
-            // precedence: `ContainerNode::aria_label` override ≻
-            // first descendant `TextNode::content`). Runs after
-            // `compute_layout` so the same scene the renderer
-            // consumes drives the AT exposed name — single source
-            // of truth, no duplicate match blocks in widget impls.
-            pinion_a11y::enrich_names_from_scene(&mut nodes, &paint_scene);
-            // R51.72 §5.40 — apply post-layout bounds before the
-            // dirty diff so geometry changes register as dirty.
-            for node in &mut nodes {
-                if let Some(rect) = rect_for_tag(&paint_scene, &node.tag) {
-                    node.bounds = Some(rect);
-                }
-            }
-            // R51.66 / R51.71 §5.40 — composite widgets surface
-            // both the parent focus and the active descendant via
-            // `access_focus_target` returning `AccessFocus`. Atomic
-            // widgets default to `AccessFocus::atomic(focused)` so
-            // the parent tag becomes `TreeUpdate::focus` and no
-            // active descendant is set.
-            let at_focus =
-                V::access_focus_target(&self.cached_state, focused.as_deref());
-            let window_bounds =
-                pinion_core::scene::Rect::new(0, 0, size.width, size.height);
-            // R51.67 §5.40 — refresh the tag map so AT-side
-            // `ActionRequested` deliveries can resolve `NodeId` back
-            // to widget tags without recomputing the tree.
-            self.last_access_tag_map = build_tag_map(&nodes);
-            // R51.72 §5.40 — diff against the previous frame's node
-            // cache. The initial frame emits every tag (the AT has
-            // no prior state); subsequent frames emit only tags
-            // whose `AccessNode` body (name / value / state / bounds
-            // / children) actually changed. AccessKit guidance: "an
-            // update should only include nodes that are new or
-            // changed".
-            let initial = self.access_emit_initial;
-            let dirty: HashSet<String> = if initial {
-                nodes.iter().map(|n| n.tag.clone()).collect()
-            } else {
-                nodes
-                    .iter()
-                    .filter(|n| self.last_access_nodes.get(&n.tag) != Some(*n))
-                    .map(|n| n.tag.clone())
-                    .collect()
-            };
-            // Refresh the cache for the next frame. Cloning before
-            // moving `nodes` into the builder keeps the snapshot
-            // independent of any post-build mutation.
-            self.last_access_nodes = nodes
+    /// R51.76 §5.40 — pure dispatch of the §5.40 AccessKit emit
+    /// decision: takes the freshly-computed nodes + focus, returns the
+    /// emit plan (should-emit verdict, initial-flag, dirty diff), and
+    /// updates the substrate's incremental caches in lock-step.
+    ///
+    /// The split keeps the AccessKit emit logic testable without an
+    /// `accesskit_winit::Adapter`: the caller (production [`AppShell::render`]
+    /// or a headless test) invokes this method, then either feeds the
+    /// returned plan into `Adapter::update_if_active` (production) or
+    /// asserts on `plan.should_emit` / `plan.initial` / `plan.dirty`
+    /// (test).
+    ///
+    /// Cache mutation rule: the method always updates
+    /// `last_access_tag_map`, `last_access_nodes`, `last_access_focus`,
+    /// and clears `access_emit_initial` after the first call. The
+    /// caller never has to remember to refresh these — calling
+    /// `compute_access_emit` is the single source of truth for both
+    /// the decision and the cache update.
+    pub fn compute_access_emit(
+        &mut self,
+        nodes: Vec<AccessNode>,
+        focus: Option<pinion_a11y::AccessFocus>,
+    ) -> AccessEmitPlan {
+        // R51.67 §5.40 — refresh the tag map so AT-side
+        // `ActionRequested` deliveries can resolve `NodeId` back to
+        // widget tags without recomputing the tree.
+        self.last_access_tag_map = build_tag_map(&nodes);
+        // R51.72 §5.40 — diff against the previous frame's node
+        // cache. The initial frame emits every tag (the AT has no
+        // prior state); subsequent frames emit only tags whose
+        // `AccessNode` body (name / value / state / bounds / children)
+        // actually changed.
+        let initial = self.access_emit_initial;
+        let dirty: HashSet<String> = if initial {
+            nodes.iter().map(|n| n.tag.clone()).collect()
+        } else {
+            nodes
                 .iter()
-                .cloned()
-                .map(|n| (n.tag.clone(), n))
-                .collect();
-            // R51.75 §5.40 — no-change frame skip. When the dirty
-            // diff is empty AND the focus declaration is identical
-            // to the previous frame, the `TreeUpdate` would be a
-            // pure no-op (root re-emit + same focus the AT already
-            // holds). AccessKit's `update_if_active` would still
-            // serialise and dispatch it; skipping the call entirely
-            // is the textbook bandwidth fix once the tree metadata
-            // has been emitted (`!initial`).
-            let focus_changed = at_focus != self.last_access_focus;
-            let should_emit = initial || !dirty.is_empty() || focus_changed;
-            self.last_access_focus.clone_from(&at_focus);
-            let at_focus_ref = at_focus.as_ref();
-            if should_emit
-                && let Some(adapter) = self.accesskit.as_mut()
-            {
-                adapter.update_if_active(|| {
-                    let mut builder = AccessTreeBuilder::new();
-                    if !initial {
-                        builder = builder.initial(false);
-                    }
-                    for node in nodes {
-                        builder.add(node);
-                    }
-                    if !initial {
-                        builder.dirty_tags(dirty);
-                    }
-                    if let Some(f) = at_focus_ref {
-                        builder.focused(Some(&f.focus_tag));
-                        if let Some(child) = &f.active_descendant {
-                            // R51.71 §5.40 — roving-tabindex active
-                            // descendant: parent's accesskit::Node
-                            // gets `set_active_descendant(child_id)`
-                            // at build time. The AT navigates into
-                            // the composite by reading this hint,
-                            // not by following a redirected
-                            // `TreeUpdate::focus`.
-                            builder.active_descendant(&f.focus_tag, child);
-                        }
-                    } else {
-                        builder.focused(None);
-                    }
-                    builder.build(Some(window_bounds))
-                });
-            }
-            self.access_emit_initial = false;
+                .filter(|n| self.last_access_nodes.get(&n.tag) != Some(*n))
+                .map(|n| n.tag.clone())
+                .collect()
+        };
+        // Refresh the cache for the next frame.
+        self.last_access_nodes = nodes
+            .iter()
+            .cloned()
+            .map(|n| (n.tag.clone(), n))
+            .collect();
+        // R51.75 §5.40 — no-change frame skip. Emit only when the
+        // initial-frame flag is set, the dirty set is non-empty, or
+        // the focus declaration shifted. Otherwise the TreeUpdate
+        // would be a pure no-op (root re-emit + identical focus).
+        let focus_changed = focus != self.last_access_focus;
+        let should_emit = initial || !dirty.is_empty() || focus_changed;
+        self.last_access_focus.clone_from(&focus);
+        self.access_emit_initial = false;
+        AccessEmitPlan {
+            should_emit,
+            initial,
+            dirty,
+            nodes,
+            focus,
         }
-        // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
-        // into a `LayoutNode` tree so `scene/layout {viewport: null}`
-        // can return the *actual* winit-rendered frame on the next
-        // dispatch. Must run before `router.update_paint_scene` moves
-        // `paint_scene` out of scope.
-        self.last_paint_layout = Some(build_layout_node(&paint_scene, "/0"));
-        // R48 §5.35: hand the post-layout paint scene to the framework
-        // router. The router retains it for subsequent hit-tests and
-        // re-resolves hover_target now (window resize may have moved
-        // the interactive rect under a stationary cursor).
-        self.router.update_paint_scene(paint_scene, &mut self.scene);
-        self.refresh_state();
-        self.drain_intents();
     }
 
     /// R51.67 §5.40 — translate an AccessKit `ActionRequest` into a
@@ -1014,7 +1089,7 @@ impl<V: WidgetView> AppShell<V> {
     /// focus / `apply_key` substrate the winit keyboard path uses.
     /// Returns silently when the request targets the synthetic root
     /// window or an unknown `NodeId` (stale tree, AT race).
-    fn handle_action_request(&mut self, req: &accesskit::ActionRequest) {
+    pub fn handle_action_request(&mut self, req: &accesskit::ActionRequest) {
         let Some(action) = translate_action(req, &self.last_access_tag_map) else {
             return;
         };
@@ -1037,7 +1112,7 @@ impl<V: WidgetView> AppShell<V> {
     /// the atomic chain. The composite parses the sub-tag (the
     /// segment after `#`) and dispatches through its own wire-format
     /// invocation path; the shell stays composite-agnostic.
-    fn dispatch_access_action(&mut self, action: &PinionAccessAction) {
+    pub fn dispatch_access_action(&mut self, action: &PinionAccessAction) {
         let (parent_tag, sub_tag) = match action.tag.split_once('#') {
             Some((p, s)) => (p, Some(s)),
             None => (action.tag.as_str(), None),
@@ -1091,6 +1166,239 @@ impl<V: WidgetView> AppShell<V> {
         self.request_redraw();
     }
 
+}
+
+impl<V: WidgetView> AppShell<V> {
+    /// R51.76 §5.40 — construct the shell with a freshly-built state
+    /// scene and the initial cached state read through the §5.15
+    /// introspect channel. Delegates the dispatch substrate to
+    /// [`ShellCore::new`]; this constructor only adds the winit /
+    /// wgpu / AccessKit surface (`render`, `vello_scene`, `proxy`,
+    /// `accesskit`) which lives on `AppShell` itself.
+    ///
+    /// `proxy` is the same `EventLoopProxy<AppEvent>` the
+    /// [`spawn_stdin_rpc_reader`] background thread holds; the shell
+    /// retains a clone so it can hand a fresh copy to the
+    /// `accesskit_winit::Adapter` on `resumed` (R51.62 §5.40).
+    #[must_use]
+    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+        Self {
+            core: ShellCore::new(),
+            render: RenderState::Suspended(None),
+            vello_scene: VelloScene::new(),
+            proxy,
+            accesskit: None,
+        }
+    }
+
+    /// R51.76 §5.40 — drain the [`ShellCore::redraw_requested`] flag
+    /// and forward to the live winit `Window` (if attached).
+    ///
+    /// Called at the end of every `window_event` / `user_event`
+    /// `ApplicationHandler` arm so all redraw requests collapse into a
+    /// single `Window::request_redraw` call (the winit idiom: winit
+    /// itself coalesces back-to-back redraw requests, but the
+    /// AppShell-level coalesce avoids the round-trip when no window
+    /// is attached yet).
+    fn drain_redraw_to_winit(&mut self) {
+        if self.core.take_redraw_request()
+            && let RenderState::Active { window, .. } = &self.render
+        {
+            window.request_redraw();
+        }
+    }
+
+    /// R51.76 §5.40 — thin wrapper around [`ShellCore::dispatch_rpc`]
+    /// that builds the production `resize_request` closure from the
+    /// live winit `Window` and writes the JSON-RPC response to
+    /// stdout. Headless tests call `ShellCore::dispatch_rpc` directly
+    /// with a no-op closure.
+    fn dispatch_rpc(&mut self, request: &str) {
+        let render_ref = &self.render;
+        let mut resize_req = |w: u32, h: u32| {
+            // R47.7.4.2 — `scene/resize` reaches winit through this
+            // closure: `request_inner_size` queues a size change that
+            // winit emits as a `Resized` event on the next loop pass,
+            // and the explicit `request_redraw` shortens the gap to
+            // the new paint scene observation.
+            if let RenderState::Active { window, .. } = render_ref {
+                let _ = window.request_inner_size(LogicalSize::new(w, h));
+                window.request_redraw();
+            }
+        };
+        let resp = self.core.dispatch_rpc(request, &mut resize_req);
+        if let Some(resp) = resp {
+            let mut out = std::io::stdout().lock();
+            if writeln!(out, "{resp}").is_err() {
+                // stdout closed (downstream consumer gone) — silently
+                // skip; do not abort the GUI loop on a broken pipe.
+            }
+        }
+    }
+
+    /// Build the paint scene for the current cached state, run layout,
+    /// hand it to the framework-side `paint_adapter` walker, and submit
+    /// the resulting `vello::Scene` to the renderer. No-op while
+    /// suspended (R46.3.4 lifecycle).
+    ///
+    /// R51.76 §5.40 — the AccessKit emit decision is delegated to
+    /// [`ShellCore::compute_access_emit`] so the same diff logic is
+    /// exercised by headless tests; the AppShell-side responsibility
+    /// is just to feed the plan to `Adapter::update_if_active`.
+    fn render(&mut self) {
+        let RenderState::Active { window, renderer } = &mut self.render else {
+            return;
+        };
+        let size = window.inner_size();
+        let Some(w) = core::num::NonZeroU32::new(size.width) else { return };
+        let Some(h) = core::num::NonZeroU32::new(size.height) else { return };
+        let frame = Frame::new();
+        let mut paint_scene = V::view(self.core.cached_state, &frame);
+        compute_layout(&mut paint_scene, &mut self.core.text_cache, w.get(), h.get());
+        self.vello_scene.reset();
+        let base = paint_adapter::root_background(&paint_scene);
+        paint_adapter::to_vello(
+            &paint_scene,
+            &|_b: &BoxNode| None,
+            &mut self.core.text_cache,
+            &mut self.vello_scene,
+        );
+        // R51.58 §5.39 — paint the ARIA focus ring on top of the
+        // widget visual. Runs after `to_vello` so the ring overlays
+        // its target; runs before `renderer.render` so it lands in
+        // the same frame submit. No-op when nothing is focused.
+        paint_adapter::paint_focus_ring(
+            &paint_scene,
+            self.core.focus.focused(),
+            &mut self.vello_scene,
+        );
+        if let Err(e) = renderer.render(&self.vello_scene, base) {
+            eprintln!("shell: vello render: {e}");
+        }
+        // R51.62 §5.40 — emit the AccessKit tree before `paint_scene`
+        // moves into `router.update_paint_scene`. `update_if_active`
+        // is a no-op when no AT client is attached, so the
+        // per-frame cost is one `Option::as_mut` + a load.
+        if self.accesskit.is_some() {
+            let focused = self.core.focus.focused().map(str::to_owned);
+            let mut nodes =
+                V::access_node(&self.core.cached_state, focused.as_deref());
+            // R51.69 §5.40 — derive the accessible name from the
+            // already-rendered paint scene (WAI-ARIA 1.2 §4.3
+            // precedence: `ContainerNode::aria_label` override ≻
+            // first descendant `TextNode::content`).
+            pinion_a11y::enrich_names_from_scene(&mut nodes, &paint_scene);
+            // R51.72 §5.40 — apply post-layout bounds before the
+            // dirty diff so geometry changes register as dirty.
+            for node in &mut nodes {
+                if let Some(rect) = rect_for_tag(&paint_scene, &node.tag) {
+                    node.bounds = Some(rect);
+                }
+            }
+            // R51.66 / R51.71 §5.40 — composite widgets surface both
+            // the parent focus and the active descendant via
+            // `access_focus_target` returning `AccessFocus`.
+            let at_focus =
+                V::access_focus_target(&self.core.cached_state, focused.as_deref());
+            let window_bounds =
+                pinion_core::scene::Rect::new(0, 0, size.width, size.height);
+            // R51.76 §5.40 — pure emit decision (diff + initial flag +
+            // should-emit verdict) computed by ShellCore. Tests
+            // exercise the same path; AppShell only handles the
+            // adapter-side update_if_active wiring.
+            let plan = self.core.compute_access_emit(nodes, at_focus);
+            if plan.should_emit
+                && let Some(adapter) = self.accesskit.as_mut()
+            {
+                adapter.update_if_active(|| {
+                    let mut builder = AccessTreeBuilder::new();
+                    if !plan.initial {
+                        builder = builder.initial(false);
+                    }
+                    for node in plan.nodes {
+                        builder.add(node);
+                    }
+                    if !plan.initial {
+                        builder.dirty_tags(plan.dirty);
+                    }
+                    if let Some(f) = &plan.focus {
+                        builder.focused(Some(&f.focus_tag));
+                        if let Some(child) = &f.active_descendant {
+                            // R51.71 §5.40 — roving-tabindex active
+                            // descendant.
+                            builder.active_descendant(&f.focus_tag, child);
+                        }
+                    } else {
+                        builder.focused(None);
+                    }
+                    builder.build(Some(window_bounds))
+                });
+            }
+        }
+        // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
+        // into a `LayoutNode` tree so `scene/layout {viewport: null}`
+        // can return the *actual* winit-rendered frame on the next
+        // dispatch. Must run before `router.update_paint_scene` moves
+        // `paint_scene` out of scope.
+        self.core.last_paint_layout = Some(build_layout_node(&paint_scene, "/0"));
+        // R48 §5.35: hand the post-layout paint scene to the framework
+        // router.
+        self.core
+            .router
+            .update_paint_scene(paint_scene, &mut self.core.scene);
+        self.core.refresh_state();
+        self.core.drain_intents();
+    }
+
+    /// R51.76 §5.40 — pressed-key dispatch helper extracted from the
+    /// `window_event` `KeyboardInput` arm so the parent function
+    /// stays under the `clippy::too_many_lines` 100-LOC ceiling
+    /// (R51.45 / R51.53 / R51.62 lesson: winit dispatcher arms grow
+    /// faster than expected; centralise the key routing logic where
+    /// it belongs).
+    ///
+    /// Routing matches the §5.39 contract: `Escape` → shell-reserved
+    /// quit; `Tab` / `Shift+Tab` → `FocusManager::focus_next` /
+    /// `focus_prev`; `Key::Character` → `V::keybinding` first then
+    /// `V::apply_key`; `Key::Named` → `V::apply_key` with the W3C
+    /// key-string when the variant maps (otherwise swallowed).
+    fn handle_key_press(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        logical_key: &Key,
+    ) {
+        match logical_key.as_ref() {
+            Key::Named(NamedKey::Escape) => event_loop.exit(),
+            // R51.53 §5.39 — Tab / Shift+Tab swallow by FocusManager.
+            // Does not reach `apply_key`; widgets see `Tab` only via
+            // the (sub-)widget-internal arrow / direction hooks the
+            // §5.39 caveat documents.
+            Key::Named(NamedKey::Tab) => {
+                let changed = if self.core.modifiers.shift_key() {
+                    self.core.focus.focus_prev()
+                } else {
+                    self.core.focus.focus_next()
+                };
+                if changed {
+                    self.core.request_redraw();
+                }
+            }
+            Key::Character(c) => {
+                if let Some(ev) = V::keybinding(c) {
+                    self.core.forward(ev);
+                } else {
+                    self.core.apply_key(c);
+                }
+            }
+            Key::Named(named) => {
+                if let Some(key_str) = named_key_str(named) {
+                    self.core.apply_key(key_str);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// R51.62 §5.40 — relay one winit `WindowEvent` to the
     /// `accesskit_winit::Adapter` (if attached).
     ///
@@ -1114,9 +1422,10 @@ impl<V: WidgetView> AppShell<V> {
     /// * `InitialTreeRequested` (AT attaches): trigger a redraw — the
     ///   next `render` will see `Adapter::update_if_active` as active
     ///   and emit the full tree. No state mutation here.
-    /// * `ActionRequested(req)`: log only for v0; widget-level
-    ///   dispatch lands at R51.67 alongside the
-    ///   [`pinion_a11y::translate_action`] router.
+    /// * `ActionRequested(req)`: routed through
+    ///   [`ShellCore::handle_action_request`] which lifts the
+    ///   AccessKit action into the same dispatch path the winit
+    ///   keyboard arm uses.
     /// * `AccessibilityDeactivated`: log only — the adapter stays in
     ///   place so a subsequent AT reconnect can reuse it without
     ///   recreating the per-window state.
@@ -1124,10 +1433,10 @@ impl<V: WidgetView> AppShell<V> {
         use accesskit_winit::WindowEvent as AccessEvent;
         match event.window_event {
             AccessEvent::InitialTreeRequested => {
-                self.request_redraw();
+                self.core.request_redraw();
             }
             AccessEvent::ActionRequested(req) => {
-                self.handle_action_request(&req);
+                self.core.handle_action_request(&req);
             }
             AccessEvent::AccessibilityDeactivated => {
                 eprintln!("shell: accesskit deactivated");
@@ -1204,7 +1513,8 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // `resumed` (platform-dependent). Explicitly request the
         // first redraw so `last_paint_layout` populates before the
         // first AI client `scene/layout {viewport: null}` lands.
-        self.request_redraw();
+        self.core.request_redraw();
+        self.drain_redraw_to_winit();
         eprintln!(
             "shell: {} resumed (initial size {}x{}); keys handled by V::keybinding + Esc=quit; pipe JSON-RPC 2.0 frames on stdin",
             V::title(),
@@ -1235,7 +1545,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             WindowEvent::CloseRequested => {
                 eprintln!(
                     "shell: final state = {}",
-                    V::fmt_state_log(&self.cached_state),
+                    V::fmt_state_log(&self.core.cached_state),
                 );
                 event_loop.exit();
             }
@@ -1254,52 +1564,58 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // Touch / pen wiring will mint distinct ids via
                 // `PointerId::touch` when the `WindowEvent::Touch`
                 // handler lands as a follow-up.
-                self.router.cursor_moved(
+                self.core.router.cursor_moved(
                     PointerId::MOUSE,
                     position.x,
                     position.y,
-                    &mut self.scene,
+                    &mut self.core.scene,
                 );
-                self.refresh_state();
-                self.drain_intents();
+                self.core.refresh_state();
+                self.core.drain_intents();
             }
             WindowEvent::CursorLeft { .. } => {
-                self.router.cursor_left(PointerId::MOUSE, &mut self.scene);
-                self.refresh_state();
-                self.drain_intents();
+                self.core
+                    .router
+                    .cursor_left(PointerId::MOUSE, &mut self.core.scene);
+                self.core.refresh_state();
+                self.core.drain_intents();
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
             } => {
-                self.router.pointer_down(PointerId::MOUSE, &mut self.scene);
-                self.click_to_focus(PointerId::MOUSE);
-                self.refresh_state();
-                self.drain_intents();
+                self.core
+                    .router
+                    .pointer_down(PointerId::MOUSE, &mut self.core.scene);
+                self.core.click_to_focus(PointerId::MOUSE);
+                self.core.refresh_state();
+                self.core.drain_intents();
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
             } => {
-                self.router.pointer_up(PointerId::MOUSE, &mut self.scene);
-                self.refresh_state();
-                self.drain_intents();
+                self.core
+                    .router
+                    .pointer_up(PointerId::MOUSE, &mut self.core.scene);
+                self.core.refresh_state();
+                self.core.drain_intents();
             }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
-            // Dispatch is in [`AppShell::handle_touch`] below.
+            // Dispatch is in [`ShellCore::handle_touch`] below.
             WindowEvent::Touch(touch) => {
-                self.handle_touch(touch);
-                self.refresh_state();
-                self.drain_intents();
+                self.core.handle_touch(touch);
+                self.core.refresh_state();
+                self.core.drain_intents();
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 // R51.53 §5.39 — winit emits `KeyEvent` without
                 // modifier state, so cache the most-recent value
                 // out-of-band for Shift+Tab detection.
-                self.modifiers = modifiers.state();
+                self.core.modifiers = modifiers.state();
             }
             WindowEvent::Focused(focused) => {
                 // R51.59 §5.39 — Window blur / refocus. ARIA Focus
@@ -1309,46 +1625,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // active control. The FocusManager owns the snapshot;
                 // wiring lives here in the winit dispatch.
                 if focused {
-                    if self.focus.restore() {
-                        self.request_redraw();
+                    if self.core.focus.restore() {
+                        self.core.request_redraw();
                     }
                 } else {
-                    self.focus.save();
+                    self.core.focus.save();
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
-                    match event.logical_key.as_ref() {
-                        Key::Named(NamedKey::Escape) => event_loop.exit(),
-                        // R51.53 §5.39 — Tab / Shift+Tab swallow by
-                        // FocusManager. Does not reach `apply_key`;
-                        // widgets see `Tab` only via the
-                        // (sub-)widget-internal arrow / direction
-                        // hooks the §5.39 caveat documents.
-                        Key::Named(NamedKey::Tab) => {
-                            let changed = if self.modifiers.shift_key() {
-                                self.focus.focus_prev()
-                            } else {
-                                self.focus.focus_next()
-                            };
-                            if changed {
-                                self.request_redraw();
-                            }
-                        }
-                        Key::Character(c) => {
-                            if let Some(ev) = V::keybinding(c) {
-                                self.forward(ev);
-                            } else {
-                                self.apply_key(c);
-                            }
-                        }
-                        Key::Named(named) => {
-                            if let Some(key_str) = named_key_str(named) {
-                                self.apply_key(key_str);
-                            }
-                        }
-                        _ => {}
-                    }
+                    self.handle_key_press(event_loop, &event.logical_key);
                 }
             }
             WindowEvent::Resized(size) => {
@@ -1359,6 +1645,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             WindowEvent::RedrawRequested => self.render(),
             _ => {}
         }
+        self.drain_redraw_to_winit();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
@@ -1366,6 +1653,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             AppEvent::RpcRequest(json) => self.dispatch_rpc(&json),
             AppEvent::AccessKit(ak) => self.handle_accesskit_event(ak),
         }
+        self.drain_redraw_to_winit();
     }
 }
 

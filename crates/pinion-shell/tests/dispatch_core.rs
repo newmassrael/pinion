@@ -1,0 +1,648 @@
+//! R51.76 §5.40 — `ShellCore` dispatch-substrate regression tests.
+//!
+//! Closes the R51.75 verification gap. The §5.40 a11y dispatch path
+//! (R51.67 `dispatch_access_action` / R51.70 composite child invoke /
+//! R51.71 active-descendant focus / R51.72 incremental dirty / R51.75
+//! no-change frame skip) all landed without unit coverage until this
+//! round — the methods touched `accesskit_winit::Adapter`,
+//! `winit::Window`, and an `EventLoopProxy`, which a `#[test]` cannot
+//! synthesise on a headless CI runner.
+//!
+//! R51.76 extracted [`pinion_shell::ShellCore`] so the dispatch
+//! surface is reachable without a winit `EventLoop` or wgpu device;
+//! these tests exercise that surface and assert against
+//! [`ShellCore::take_redraw_request`], [`ShellCore::focus`],
+//! [`ShellCore::compute_access_emit`], and a [`TestView`] whose
+//! `apply_key` / `access_child_invoke` impls record calls into
+//! per-test static mocks.
+//!
+//! Test isolation: each `#[test]` acquires `TEST_LOCK` for its whole
+//! body and clears the static mock state at entry. Cargo's default
+//! multi-thread runner thus serialises the static logs the
+//! [`WidgetView`] impl mutates, while running other crates' tests in
+//! parallel.
+
+// Mock-method bodies are dictated by the trait contract, not by what
+// clippy can infer from the trivial body alone. Scoping the allow to
+// this fixture keeps the workspace baseline strict.
+#![allow(clippy::unused_self, clippy::unnecessary_wraps)]
+
+use core::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
+use pinion_a11y::{
+    tag_to_node_id, AccessAction, AccessFocus, AccessNode, AccessValue, AriaRole,
+    PinionAccessAction,
+};
+use pinion_core::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+use pinion_core::style::{BoxStyle, Color};
+use pinion_core::{Frame, Scene};
+use pinion_shell::{vello_renderer_impl, ShellCore, WidgetView};
+
+// ---------- Test-fixture VelloRenderer ----------------------------------
+//
+// Mirrors the pinion-forge codegen template: an inherent
+// `async new` / `render` / `resize` triple wrapped by
+// `vello_renderer_impl!` to satisfy the `WidgetView::Renderer` bound.
+// The shell's dispatch path never touches the renderer, so the bodies
+// are empty.
+
+struct TestRenderer;
+
+#[derive(Debug)]
+enum TestRendererError {}
+
+impl fmt::Display for TestRendererError {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {}
+    }
+}
+
+impl std::error::Error for TestRendererError {}
+
+impl TestRenderer {
+    #[allow(clippy::unused_async)]
+    async fn new<W>(
+        _target: W,
+        _width: u32,
+        _height: u32,
+    ) -> Result<Self, TestRendererError>
+    where
+        W: Into<vello::wgpu::SurfaceTarget<'static>>,
+    {
+        Ok(Self)
+    }
+
+    fn render(
+        &mut self,
+        _scene: &vello::Scene,
+        _base: vello::peniko::Color,
+    ) -> Result<(), TestRendererError> {
+        Ok(())
+    }
+
+    fn resize(&mut self, _w: u32, _h: u32) {}
+}
+
+vello_renderer_impl!(TestRenderer, TestRendererError);
+
+// ---------- Test-fixture External --------------------------------------
+//
+// Minimal [`External`] opting in to the introspect channel so the
+// `WidgetView::read_state` path resolves a value. The dispatch tests
+// drive `apply_key` and `access_child_invoke` directly via the
+// statics below — the External itself is just a state slot the shell
+// requires to construct its `Scene::External` root.
+
+#[derive(Debug, Default)]
+struct TestExternal {
+    value: i32,
+}
+
+impl External for TestExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for TestExternal {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[("value", "i32")])
+    }
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "value" => Some(IntrospectValue::Int(i64::from(self.value))),
+            _ => None,
+        }
+    }
+    fn intervene(
+        &mut self,
+        _path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        Err(InterveneError::UnknownPath)
+    }
+    fn invoke(
+        &mut self,
+        _path: &str,
+        _args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        Ok(IntrospectValue::Null)
+    }
+}
+
+// ---------- Mock state for TestView ------------------------------------
+//
+// Each test acquires `TEST_LOCK` for its whole body and clears the
+// statics at entry via `reset_mocks()`. The TestView trait impls then
+// log each call into the statics; the test asserts on the logs after
+// running the dispatch path. AtomicBool drives the deterministic
+// return value (default `false` = "unhandled"; set to `true` to model
+// a widget that consumes the key / child invoke).
+
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+static APPLY_KEY_LOG: Mutex<Vec<(Option<String>, String)>> = Mutex::new(Vec::new());
+static APPLY_KEY_RETURNS: AtomicBool = AtomicBool::new(false);
+static CHILD_INVOKE_LOG: Mutex<Vec<(String, AccessAction)>> = Mutex::new(Vec::new());
+static CHILD_INVOKE_RETURNS: AtomicBool = AtomicBool::new(false);
+
+fn reset_mocks() {
+    APPLY_KEY_LOG.lock().unwrap().clear();
+    APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
+    CHILD_INVOKE_LOG.lock().unwrap().clear();
+    CHILD_INVOKE_RETURNS.store(false, Ordering::SeqCst);
+}
+
+struct TestView;
+
+impl WidgetView for TestView {
+    type State = i32;
+    type Event = ();
+    type Renderer = TestRenderer;
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(TestExternal::default())
+    }
+
+    fn tag() -> &'static str {
+        "test"
+    }
+
+    fn read_state(scene: &Scene) -> Self::State {
+        match scene {
+            Scene::External(node) => {
+                match node.handle.introspect().and_then(|i| i.query("value")) {
+                    Some(IntrospectValue::Int(v)) => i32::try_from(v).unwrap_or(0),
+                    _ => 0,
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    fn view(_state: Self::State, _frame: &Frame) -> Scene {
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+                Rect::default(),
+                Color::rgb(0x00, 0x00, 0x00),
+            ))])
+            .with_tag("test")
+            .with_style(BoxStyle::filled(Color::rgb(0x00, 0x00, 0x00))),
+        )
+    }
+
+    fn event_name(_event: Self::Event) -> &'static str {
+        "__test__"
+    }
+
+    fn title() -> &'static str {
+        "test"
+    }
+
+    fn initial_size() -> (u32, u32) {
+        (8, 8)
+    }
+
+    fn apply_key(_scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        APPLY_KEY_LOG
+            .lock()
+            .unwrap()
+            .push((focused.map(ToOwned::to_owned), key.to_owned()));
+        APPLY_KEY_RETURNS.load(Ordering::SeqCst)
+    }
+
+    fn access_child_invoke(
+        _scene: &mut Scene,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
+        CHILD_INVOKE_LOG
+            .lock()
+            .unwrap()
+            .push((sub_tag.to_owned(), action));
+        CHILD_INVOKE_RETURNS.load(Ordering::SeqCst)
+    }
+}
+
+/// Build an atomic `AccessNode` snapshot. `value` is a `bool` so two
+/// snapshots with different values differ via
+/// `AccessValue::Bool` — the simplest type that exercises the
+/// `PartialEq` diff `compute_access_emit` runs.
+fn atomic_node(tag: &str, value: bool) -> AccessNode {
+    AccessNode::new(tag, AriaRole::CheckBox)
+        .with_name("snapshot")
+        .with_value(AccessValue::Bool(value))
+}
+
+// ---------- Tests ------------------------------------------------------
+
+#[test]
+fn shell_core_new_starts_in_clean_state() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let core = ShellCore::<TestView>::new();
+    assert!(
+        core.focus().focused().is_none(),
+        "focus starts cleared (no widget focused on app boot)",
+    );
+    assert_eq!(core.revision(), 0, "OCC revision starts at 0");
+    assert!(
+        !core.redraw_requested(),
+        "first frame has no pending redraw before any dispatch runs",
+    );
+}
+
+#[test]
+fn r51_67_focus_action_sets_focus_and_requests_redraw() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test".to_owned(),
+        kind: AccessAction::Focus,
+    });
+
+    assert_eq!(
+        core.focus().focused(),
+        Some("test"),
+        "AccessAction::Focus → FocusManager::focus_set",
+    );
+    assert!(
+        core.take_redraw_request(),
+        "AccessAction::Focus requests a redraw (focus ring refresh)",
+    );
+    assert!(
+        APPLY_KEY_LOG.lock().unwrap().is_empty(),
+        "Focus arm must NOT call apply_key — pure focus shift, no key event",
+    );
+}
+
+#[test]
+fn r51_67_click_action_routes_through_apply_key_enter() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test".to_owned(),
+        kind: AccessAction::Click,
+    });
+
+    assert_eq!(core.focus().focused(), Some("test"));
+    let log = APPLY_KEY_LOG.lock().unwrap();
+    assert_eq!(log.len(), 1, "Click → exactly one apply_key call");
+    assert_eq!(
+        log[0].0.as_deref(),
+        Some("test"),
+        "apply_key receives the focused tag as its 'focused' argument",
+    );
+    assert_eq!(
+        log[0].1, "Enter",
+        "ARIA Action::Click maps to the W3C 'Enter' key string",
+    );
+    assert!(core.take_redraw_request());
+}
+
+#[test]
+fn r51_67_default_action_aliases_click() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test".to_owned(),
+        kind: AccessAction::Default,
+    });
+
+    let log = APPLY_KEY_LOG.lock().unwrap();
+    assert_eq!(log.len(), 1, "Default mirrors Click — one apply_key call");
+    assert_eq!(log[0].1, "Enter");
+}
+
+#[test]
+fn r51_67_increment_routes_to_arrow_right() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test".to_owned(),
+        kind: AccessAction::Increment,
+    });
+
+    let log = APPLY_KEY_LOG.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(
+        log[0].1, "ArrowRight",
+        "WAI-ARIA Slider Increment lowers to the 'ArrowRight' key string",
+    );
+}
+
+#[test]
+fn r51_67_decrement_routes_to_arrow_left() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test".to_owned(),
+        kind: AccessAction::Decrement,
+    });
+
+    let log = APPLY_KEY_LOG.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(
+        log[0].1, "ArrowLeft",
+        "WAI-ARIA Slider Decrement lowers to the 'ArrowLeft' key string",
+    );
+}
+
+#[test]
+fn r51_67_other_action_silent_drop() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test".to_owned(),
+        kind: AccessAction::Other,
+    });
+
+    assert!(
+        APPLY_KEY_LOG.lock().unwrap().is_empty(),
+        "Other (unmapped AccessKit action) must not reach apply_key",
+    );
+    assert!(CHILD_INVOKE_LOG.lock().unwrap().is_empty());
+    assert!(
+        core.focus().focused().is_none(),
+        "Other must not change focus (AT over-request safety)",
+    );
+    assert!(
+        !core.take_redraw_request(),
+        "Other must not request a redraw",
+    );
+}
+
+#[test]
+fn r51_70_composite_click_routes_to_child_invoke_first() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    CHILD_INVOKE_RETURNS.store(true, Ordering::SeqCst);
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test#child_2".to_owned(),
+        kind: AccessAction::Click,
+    });
+
+    assert_eq!(
+        core.focus().focused(),
+        Some("test"),
+        "composite Click focuses the parent tag (R51.70 contract)",
+    );
+    let child_log = CHILD_INVOKE_LOG.lock().unwrap();
+    assert_eq!(child_log.len(), 1, "access_child_invoke called exactly once");
+    assert_eq!(child_log[0].0, "child_2", "sub-tag is everything after '#'");
+    assert_eq!(child_log[0].1, AccessAction::Click);
+    assert!(
+        APPLY_KEY_LOG.lock().unwrap().is_empty(),
+        "child_invoke returned true → atomic apply_key chain is skipped",
+    );
+    assert!(
+        core.take_redraw_request(),
+        "composite-child invoke commits a redraw on success",
+    );
+}
+
+#[test]
+fn r51_70_composite_child_invoke_false_falls_back_to_atomic_chain() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    CHILD_INVOKE_RETURNS.store(false, Ordering::SeqCst);
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    core.dispatch_access_action(&PinionAccessAction {
+        tag: "test#unknown".to_owned(),
+        kind: AccessAction::Click,
+    });
+
+    let child_log = CHILD_INVOKE_LOG.lock().unwrap();
+    assert_eq!(
+        child_log.len(),
+        1,
+        "child_invoke is tried before the atomic chain falls back",
+    );
+    let key_log = APPLY_KEY_LOG.lock().unwrap();
+    assert_eq!(
+        key_log.len(),
+        1,
+        "child_invoke returned false → atomic apply_key('Enter') fires",
+    );
+    assert_eq!(key_log[0].1, "Enter");
+}
+
+#[test]
+fn r51_67_handle_action_request_unknown_target_silent() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    // No prior compute_access_emit → tag map is empty → translate
+    // returns None → dispatch is skipped silently.
+    let req = accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: accesskit::NodeId(0x0DEA_DBEE_F000_0001),
+        data: None,
+    };
+    core.handle_action_request(&req);
+
+    assert!(APPLY_KEY_LOG.lock().unwrap().is_empty());
+    assert!(core.focus().focused().is_none());
+}
+
+#[test]
+fn r51_67_handle_action_request_resolves_via_compute_access_emit() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+    APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+    let mut core = ShellCore::<TestView>::new();
+    // Populate the tag map via compute_access_emit — the same path
+    // production `AppShell::render` uses on every frame.
+    let plan = core.compute_access_emit(
+        vec![atomic_node("test", false)],
+        Some(AccessFocus::atomic("test")),
+    );
+    assert!(plan.should_emit, "initial emit always fires");
+
+    let req = accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: tag_to_node_id("test"),
+        data: None,
+    };
+    core.handle_action_request(&req);
+
+    let log = APPLY_KEY_LOG.lock().unwrap();
+    assert_eq!(log.len(), 1, "valid tag resolves through to apply_key");
+    assert_eq!(log[0].1, "Enter");
+}
+
+#[test]
+fn r51_72_compute_access_emit_initial_emits_full_dirty() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let plan = core.compute_access_emit(
+        vec![atomic_node("a", false), atomic_node("b", false)],
+        Some(AccessFocus::atomic("a")),
+    );
+
+    assert!(plan.should_emit, "first frame always emits");
+    assert!(plan.initial, "first call sets initial = true");
+    assert_eq!(plan.dirty.len(), 2, "initial dirty contains every tag");
+    assert!(plan.dirty.contains("a"));
+    assert!(plan.dirty.contains("b"));
+}
+
+#[test]
+fn r51_75_no_change_frame_skips_emit() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let _initial = core.compute_access_emit(
+        vec![atomic_node("a", false)],
+        Some(AccessFocus::atomic("a")),
+    );
+    let second = core.compute_access_emit(
+        vec![atomic_node("a", false)],
+        Some(AccessFocus::atomic("a")),
+    );
+
+    assert!(
+        !second.should_emit,
+        "identical nodes + focus → skip Adapter::update_if_active",
+    );
+    assert!(!second.initial, "subsequent frames are non-initial");
+    assert!(
+        second.dirty.is_empty(),
+        "no dirty tags when nothing changed",
+    );
+}
+
+#[test]
+fn r51_72_changed_node_only_in_dirty() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let _initial = core.compute_access_emit(
+        vec![atomic_node("a", false), atomic_node("b", false)],
+        Some(AccessFocus::atomic("a")),
+    );
+    let second = core.compute_access_emit(
+        vec![atomic_node("a", false), atomic_node("b", true)],
+        Some(AccessFocus::atomic("a")),
+    );
+
+    assert!(second.should_emit, "node body changed → emit");
+    assert_eq!(second.dirty.len(), 1, "only b's body changed");
+    assert!(second.dirty.contains("b"));
+    assert!(!second.dirty.contains("a"), "unchanged a is not dirty");
+}
+
+#[test]
+fn r51_75_focus_change_emits_with_empty_dirty() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let _initial = core.compute_access_emit(
+        vec![atomic_node("a", false), atomic_node("b", false)],
+        Some(AccessFocus::atomic("a")),
+    );
+    let second = core.compute_access_emit(
+        vec![atomic_node("a", false), atomic_node("b", false)],
+        Some(AccessFocus::atomic("b")),
+    );
+
+    assert!(
+        second.should_emit,
+        "focus shifted to b → emit even though every node body is unchanged",
+    );
+    assert!(
+        second.dirty.is_empty(),
+        "focus-only change leaves the dirty set empty",
+    );
+    assert_eq!(
+        second.focus.as_ref().expect("focus present").focus_tag,
+        "b",
+    );
+}
+
+#[test]
+fn r51_71_active_descendant_round_trips_through_plan() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let plan = core.compute_access_emit(
+        vec![atomic_node("group", false)],
+        Some(AccessFocus::composite("group", "group#child_1")),
+    );
+
+    let focus = plan.focus.expect("composite focus present");
+    assert_eq!(focus.focus_tag, "group", "TreeUpdate::focus = parent tag");
+    assert_eq!(
+        focus.active_descendant.as_deref(),
+        Some("group#child_1"),
+        "set_active_descendant carries the child tag through the plan",
+    );
+}
+
+#[test]
+fn r51_75_focus_unset_after_set_emits() {
+    let _g = TEST_LOCK.lock().unwrap();
+    reset_mocks();
+
+    let mut core = ShellCore::<TestView>::new();
+    let _initial = core.compute_access_emit(
+        vec![atomic_node("a", false)],
+        Some(AccessFocus::atomic("a")),
+    );
+    let second = core.compute_access_emit(vec![atomic_node("a", false)], None);
+
+    assert!(
+        second.should_emit,
+        "focus cleared → emit (AT must observe the focus drop)",
+    );
+    assert!(second.focus.is_none());
+}
