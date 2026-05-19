@@ -467,6 +467,11 @@ fn parse_slider_event(name: &str) -> Option<SliderEvent> {
         "PointerLeave" => Some(SliderEvent::PointerLeave),
         "PointerDown" => Some(SliderEvent::PointerDown),
         "PointerUp" => Some(SliderEvent::PointerUp),
+        // R51.93 §5.35 — touch-cancel sibling of PointerUp; drops
+        // `dragging → idle` without firing `"value_committed"`.
+        // The drag's last in-flight `set_value` keeps whatever
+        // value it landed on, but no commit signal is raised.
+        "PointerCancel" => Some(SliderEvent::PointerCancel),
         "Disable" => Some(SliderEvent::Disable),
         "Enable" => Some(SliderEvent::Enable),
         _ => None,
@@ -482,6 +487,42 @@ mod tests {
         let s = Slider::new();
         assert_eq!(s.state(), SliderState::Idle);
         assert!((s.value() - 0.0).abs() < f32::EPSILON);
+    }
+
+    // R51.93 §5.35 — touch-cancel during a drag must NOT fire
+    // `value_committed`. `value_changing` intents from the in-flight
+    // `set_value` calls are still legitimate (the value really did
+    // change during the drag), but the commit signal is suppressed.
+
+    #[test]
+    fn r51_93_pointer_cancel_during_drag_returns_to_idle_without_commit() {
+        let mut sx = SliderExternal::new();
+        sx.send(SliderEvent::PointerEnter);
+        sx.send(SliderEvent::PointerDown);
+        assert!(matches!(sx.state(), SliderState::Dragging));
+        sx.set_value(0.5);
+        // Drain the value_changing intents emitted so far so the
+        // post-cancel `is_dirty` cleanly reports the commit absence.
+        let mut harvested = Vec::new();
+        sx.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.iter().all(|i| i.tag_str() == "value_changing"));
+        sx.send(SliderEvent::PointerCancel);
+        assert!(matches!(sx.state(), SliderState::Idle));
+        // No `value_committed` intent in the post-cancel drain.
+        let mut post = Vec::new();
+        sx.drain_intents(&mut |i| post.push(i));
+        assert!(
+            post.iter().all(|i| i.tag_str() != "value_committed"),
+            "PointerCancel from Dragging must not fire value_committed"
+        );
+    }
+
+    #[test]
+    fn r51_93_parse_pointer_cancel_event_name() {
+        assert_eq!(
+            parse_slider_event("PointerCancel"),
+            Some(SliderEvent::PointerCancel)
+        );
     }
 
     #[test]

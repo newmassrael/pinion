@@ -435,11 +435,17 @@ impl<V: WidgetView> ShellCore<V> {
     ///   cursor state is dropped (a future touch with the same
     ///   finger id is a new gesture per winit's `WindowEvent::Touch`
     ///   contract).
-    /// * [`TouchPhase::Cancelled`] follows the same `Ended` path
-    ///   with the carry that the dispatched `PointerUp` may emit a
-    ///   commit-class intent the gesture did not actually
-    ///   authorise — a future `PointerCancel` event variant or
-    ///   `InputRouter::cancel_pointer` lands as a separate round.
+    /// * [`TouchPhase::Cancelled`] (R51.93 §5.35 §5.13) runs
+    ///   [`InputRouter::pointer_cancel`] (not `pointer_up`) so the
+    ///   widget statechart sees `PointerCancel` instead of `PointerUp`
+    ///   and routes `Pressed → Idle` without raising the activate
+    ///   event. The trailing `cursor_left` still runs to drop the
+    ///   finger's cursor state. Pre-R51.93 routed Cancelled through
+    ///   `pointer_up` and silently committed `click` / `toggle` /
+    ///   `selected` / `value_committed` intents the OS-revoked
+    ///   gesture did not authorise (4-finger gesture, phone-call
+    ///   interrupt, notification pull-down, edge-swipe back nav,
+    ///   app-switcher).
     fn handle_touch(&mut self, touch: Touch) {
         let pid = PointerId::touch(touch.id);
         match touch.phase {
@@ -461,8 +467,12 @@ impl<V: WidgetView> ShellCore<V> {
                     &mut self.scene,
                 );
             }
-            TouchPhase::Ended | TouchPhase::Cancelled => {
+            TouchPhase::Ended => {
                 self.router.pointer_up(pid, &mut self.scene);
+                self.router.cursor_left(pid, &mut self.scene);
+            }
+            TouchPhase::Cancelled => {
+                self.router.pointer_cancel(pid, &mut self.scene);
                 self.router.cursor_left(pid, &mut self.scene);
             }
         }

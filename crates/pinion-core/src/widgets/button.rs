@@ -349,6 +349,11 @@ fn parse_button_event(name: &str) -> Option<ButtonEvent> {
         "PointerLeave" => Some(ButtonEvent::PointerLeave),
         "PointerDown" => Some(ButtonEvent::PointerDown),
         "PointerUp" => Some(ButtonEvent::PointerUp),
+        // R51.93 §5.35 — winit `TouchPhase::Cancelled` sibling of
+        // PointerUp. Routes `pressed → idle` without raising the
+        // activate event so a touch revoked by an OS-side gesture
+        // does not fire a `"click"` intent.
+        "PointerCancel" => Some(ButtonEvent::PointerCancel),
         // R51.54 §5.39 — ARIA Space / Enter keyboard activation,
         // wired via shell's `WidgetView::apply_key` → invoke('send',
         // 'KeyboardActivate'). The SCXML template fires the activate
@@ -395,6 +400,59 @@ mod tests {
         button.send(ButtonEvent::PointerDown);
         button.send(ButtonEvent::PointerLeave);
         assert_eq!(button.state(), ButtonState::Idle);
+    }
+
+    // R51.93 §5.35 — PointerCancel regression tests.
+
+    #[test]
+    fn r51_93_pointer_cancel_during_press_returns_to_idle_without_click() {
+        // OS-revoked touch (TouchPhase::Cancelled) — the gesture
+        // reached `Pressed` but must NOT commit a click.
+        let mut bx = ButtonExternal::new();
+        bx.send(ButtonEvent::PointerEnter);
+        bx.send(ButtonEvent::PointerDown);
+        assert!(matches!(bx.state(), ButtonState::Pressed));
+        bx.send(ButtonEvent::PointerCancel);
+        assert!(matches!(bx.state(), ButtonState::Idle));
+        // The activate-edge intent must not have been emitted.
+        assert!(
+            !bx.is_dirty(),
+            "PointerCancel from Pressed must not fire `click` intent"
+        );
+    }
+
+    #[test]
+    fn r51_93_pointer_cancel_during_hover_drops_to_idle() {
+        // Mid-hover cancellation (defensive — the OS may revoke
+        // before pointer_down lands).
+        let mut button = Button::new();
+        button.send(ButtonEvent::PointerEnter);
+        assert_eq!(button.state(), ButtonState::Hover);
+        button.send(ButtonEvent::PointerCancel);
+        assert_eq!(button.state(), ButtonState::Idle);
+    }
+
+    #[test]
+    fn r51_93_pointer_cancel_from_idle_is_silent_no_op() {
+        let mut button = Button::new();
+        button.send(ButtonEvent::PointerCancel);
+        assert_eq!(button.state(), ButtonState::Idle);
+    }
+
+    #[test]
+    fn r51_93_pointer_cancel_when_disabled_is_silent_no_op() {
+        let mut button = Button::new();
+        button.send(ButtonEvent::Disable);
+        button.send(ButtonEvent::PointerCancel);
+        assert_eq!(button.state(), ButtonState::Disabled);
+    }
+
+    #[test]
+    fn r51_93_parse_pointer_cancel_event_name() {
+        assert_eq!(
+            parse_button_event("PointerCancel"),
+            Some(ButtonEvent::PointerCancel)
+        );
     }
 
     #[test]

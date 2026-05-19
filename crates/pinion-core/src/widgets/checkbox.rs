@@ -307,6 +307,9 @@ fn parse_checkbox_event(name: &str) -> Option<CheckboxEvent> {
         "PointerLeave" => Some(CheckboxEvent::PointerLeave),
         "PointerDown" => Some(CheckboxEvent::PointerDown),
         "PointerUp" => Some(CheckboxEvent::PointerUp),
+        // R51.93 §5.35 — touch-cancel sibling of PointerUp; does
+        // not flip checked or fire a `"checked"` intent.
+        "PointerCancel" => Some(CheckboxEvent::PointerCancel),
         // R51.55 §5.39 — ARIA Space keyboard activation.
         "KeyboardActivate" => Some(CheckboxEvent::KeyboardActivate),
         "Disable" => Some(CheckboxEvent::Disable),
@@ -324,6 +327,36 @@ mod tests {
         let cb = Checkbox::new();
         assert_eq!(cb.state(), CheckboxState::Idle);
         assert!(!cb.is_checked());
+    }
+
+    // R51.93 §5.35 — touch-cancel must NOT flip the checked bit.
+
+    #[test]
+    fn r51_93_pointer_cancel_during_press_returns_to_idle_without_flip() {
+        let mut cx = CheckboxExternal::new();
+        cx.send(CheckboxEvent::PointerEnter);
+        cx.send(CheckboxEvent::PointerDown);
+        assert!(matches!(cx.state(), CheckboxState::Pressed));
+        let before = cx.is_checked();
+        cx.send(CheckboxEvent::PointerCancel);
+        assert!(matches!(cx.state(), CheckboxState::Idle));
+        assert_eq!(
+            cx.is_checked(),
+            before,
+            "PointerCancel must not flip the checked bit"
+        );
+        assert!(
+            !cx.is_dirty(),
+            "PointerCancel from Pressed must not fire `checked` intent"
+        );
+    }
+
+    #[test]
+    fn r51_93_parse_pointer_cancel_event_name() {
+        assert_eq!(
+            parse_checkbox_event("PointerCancel"),
+            Some(CheckboxEvent::PointerCancel)
+        );
     }
 
     #[test]

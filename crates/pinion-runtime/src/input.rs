@@ -366,6 +366,41 @@ impl InputRouter {
         }
     }
 
+    /// R51.93 §5.35 — pointer cancellation handler. The OS-side
+    /// counterpart to [`pointer_up`](Self::pointer_up): the user did
+    /// **not** release the pointer of their own accord, the system
+    /// revoked the gesture. winit emits `TouchPhase::Cancelled` for
+    /// every such revoke path (4-finger system gesture, phone-call
+    /// interrupt, notification banner pull-down, app-switcher
+    /// invocation, edge-swipe back nav, Android `MotionEvent.ACTION_CANCEL`,
+    /// iOS `UITouch` cancellation, etc.).
+    ///
+    /// Dispatches `PointerCancel` to the pointer's current hover or
+    /// captured target. Widget statecharts route `Pressed → Idle` on
+    /// this event **without raising the activate event**, so the
+    /// `click` / `toggle` / `selected` / `value_committed` intent
+    /// never fires for a cancelled gesture. Capture release + hover
+    /// refresh mirror [`Self::pointer_up`]'s post-dispatch
+    /// bookkeeping so the substrate's trailing `cursor_left` lands
+    /// cleanly.
+    ///
+    /// Free-mode pre-R51.93 (touch cancel routed via `pointer_up`)
+    /// silently committed a click the user did not authorise — this
+    /// method is the textbook fix.
+    pub fn pointer_cancel(&mut self, id: PointerId, state_scene: &mut Scene) {
+        let target = self
+            .hover_targets
+            .get(&id)
+            .cloned()
+            .or_else(|| self.captured_targets.get(&id).cloned());
+        if let Some(tag) = target {
+            dispatch_send(state_scene, &tag, "PointerCancel");
+        }
+        if self.captured_targets.remove(&id).is_some() {
+            self.refresh_hover(id, state_scene);
+        }
+    }
+
     /// R51.34 §5.35 — capture-mode cursor forward. Look up the
     /// post-layout rect of the captured widget in the retained paint
     /// scene, normalise the cursor `(x, y)` into widget-relative

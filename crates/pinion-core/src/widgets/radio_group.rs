@@ -152,6 +152,17 @@ impl RadioGroup {
     /// `None` deselects all; `Some(i)` selects index `i` and
     /// deselects all others.
     ///
+    /// Semantic axis (R51.92.2 §5.40 evaluation): this is a
+    /// **slot-assignment** setter — it mutates `self.selected`
+    /// directly without firing the `"selected"` intent and without
+    /// touching `self.focused`. Only the interactive [`send`](Self::send)
+    /// path (`PointerUp` activation) fires the intent through
+    /// [`WidgetTransition::detect`] and syncs focused per R51.90.
+    /// This matches the pinion-wide convention that
+    /// [`ExternalIntrospect::intervene`] mutates slots without
+    /// commit-class side effects; the RPC `intervene "selected_index"`
+    /// route is the AI-client surface and lands here directly.
+    ///
     /// # Panics
     /// Panics if `idx` is `Some(i)` with `i >= count()`.
     pub fn set_selected(&mut self, idx: Option<usize>) {

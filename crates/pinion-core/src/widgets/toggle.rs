@@ -463,6 +463,9 @@ fn parse_toggle_event(name: &str) -> Option<ToggleEvent> {
         "PointerLeave" => Some(ToggleEvent::PointerLeave),
         "PointerDown" => Some(ToggleEvent::PointerDown),
         "PointerUp" => Some(ToggleEvent::PointerUp),
+        // R51.93 §5.35 — touch-cancel sibling of PointerUp; does
+        // not flip the value sidecar or fire a `"toggle"` intent.
+        "PointerCancel" => Some(ToggleEvent::PointerCancel),
         // R51.55 §5.39 — ARIA Space keyboard activation.
         "KeyboardActivate" => Some(ToggleEvent::KeyboardActivate),
         "Disable" => Some(ToggleEvent::Disable),
@@ -482,6 +485,36 @@ mod tests {
         let t = Toggle::new();
         assert_eq!(t.state(), ToggleState::Idle);
         assert!(!t.is_on());
+    }
+
+    // R51.93 §5.35 — touch-cancel must NOT flip the value.
+
+    #[test]
+    fn r51_93_pointer_cancel_during_press_returns_to_idle_without_flip() {
+        let mut tx = ToggleExternal::new();
+        tx.send(ToggleEvent::PointerEnter);
+        tx.send(ToggleEvent::PointerDown);
+        assert!(matches!(tx.state(), ToggleState::Pressed));
+        let before = tx.is_on();
+        tx.send(ToggleEvent::PointerCancel);
+        assert!(matches!(tx.state(), ToggleState::Idle));
+        assert_eq!(
+            tx.is_on(),
+            before,
+            "PointerCancel must not flip the value sidecar"
+        );
+        assert!(
+            !tx.is_dirty(),
+            "PointerCancel from Pressed must not fire `toggle` intent"
+        );
+    }
+
+    #[test]
+    fn r51_93_parse_pointer_cancel_event_name() {
+        assert_eq!(
+            parse_toggle_event("PointerCancel"),
+            Some(ToggleEvent::PointerCancel)
+        );
     }
 
     #[test]

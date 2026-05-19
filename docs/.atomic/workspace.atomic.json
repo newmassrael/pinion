@@ -3889,7 +3889,8 @@
         "R51.91 — InterveneError::OutOfRange variant (RadioGroup selected/focused_index TypeMismatch 우회 정정)",
         "R51.92 — pinion-shell/src/substrate.rs 분할: R51.83 visibility 가 substantive (모듈 경계)",
         "R51.92.1 — app.rs 모듈 분할 (AppShell + impl ApplicationHandler + run + helpers) 로 3-모듈 완성",
-        "R51.89.1 — dispatch.rs RpcError literal 14 site full sweep (builder 통일, struct 직접 구성 0)"
+        "R51.89.1 — dispatch.rs RpcError literal 14 site full sweep (builder 통일, struct 직접 구성 0)",
+        "R51.93 — TouchPhase::Cancelled commit-class fix (pointer_cancel SCXML + InputRouter API + 5 widget)"
       ],
       "alternatives_rejected": [
         {
@@ -4239,6 +4240,16 @@
         {
           "file": "crates/pinion-shell/src/app.rs",
           "symbol": "run"
+        },
+        {
+          "file": "crates/pinion-core/widgets/standard_button.sce-template.xml"
+        },
+        {
+          "file": "crates/pinion-core/widgets/slider.scxml"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "InputRouter::pointer_cancel"
         }
       ],
       "decision_status": "active"
@@ -6313,6 +6324,56 @@
       "publishable_carry_forward_bullets": [
         "carry: dispatch.rs::invalid_params(detail: &str) wrapper 는 30+ caller 와의 호환 보존을 위해 유지 (RpcError::invalid_params 로 delegate 만)",
         "carry: R51.92.2 set_selected 의미 분리 평가 (over-engineering 가능성 높음)"
+      ]
+    },
+    "R239": {
+      "decision_summary": "R51.93 §5.35 §5.13 TouchPhase::Cancelled 가 commit-class intent 발사 버그 정통 정정 — pointer_cancel SCXML 이벤트 + InputRouter::pointer_cancel + 5 widget 통일",
+      "changes_bullets": [
+        "crates/pinion-core/widgets/standard_button.sce-template.xml: pressed/hover 에서 pointer_cancel → idle transition 추가 (activate raise 없음) — Button/Toggle/Checkbox/Radio 4 widget 동시 적용",
+        "crates/pinion-core/widgets/slider.scxml: dragging/hover 에서 pointer_cancel → idle transition (slider.activate raise 없음)",
+        "crates/pinion-core/src/widgets/{button,toggle,checkbox,radio,slider}.rs: parse_*_event 에 'PointerCancel' → *::PointerCancel 매핑 5개",
+        "crates/pinion-runtime/src/input.rs: InputRouter::pointer_cancel(pid, scene) 신규 — pointer_up 과 동일 수신자 론징만 'PointerCancel' wire 이벤트 발사, capture release + hover refresh 동일",
+        "crates/pinion-shell/src/substrate.rs: handle_touch 의 TouchPhase::Ended | TouchPhase::Cancelled 한 한 arm 이 두 arm 으로 분리 — Cancelled 가 pointer_cancel 경유 (pointer_up 아닌)",
+        "5 widget 당 R51.93 회귀 테스트 추가 = button 5 (cancel/hover/idle/disabled/parse) + toggle 2 + checkbox 2 + radio 2 + slider 2 = 13"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1540 pass / 0 fail / 8 ignored (1527 +13 R51.93)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "sce-build 자동 재생성 확인: ButtonEvent::PointerCancel / ToggleEvent::PointerCancel / CheckboxEvent::PointerCancel / RadioEvent::PointerCancel / SliderEvent::PointerCancel 모두 generated_sm 에 출현",
+        "해소된 소원 UX 버그: 4-finger system gesture / phone call / notification banner / app switcher / edge-swipe 등 OS-revoked touch 들이 더이상 의도치 않은 click/toggle/checked/selected/value_committed intent 발사 안 함"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.35",
+        "5.13"
+      ],
+      "carry_forward_bullets": [
+        "carry: pre-R51.93 의 종속적 mock test fixture 가 PointerUp 만 쓴다면 cancel path coverage 가 아직 일면적 — future widget composite 신설 시 PointerCancel 경로도 테스트 포함 권고",
+        "carry: pointer_cancel 의 RPC dual — 'scene/invoke send PointerCancel' wire 이벤트 가 이미 자동 지원됨 (parse_*_event PointerCancel arm). AI 클라이언트가 외부 cancel 시너리오를 재현 가능"
+      ],
+      "publishable_decision_summary": "R51.93 §5.35 §5.13 TouchPhase::Cancelled 가 commit-class intent 발사 버그 정통 정정 — pointer_cancel SCXML 이벤트 + InputRouter::pointer_cancel + 5 widget 통일",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/widgets/standard_button.sce-template.xml: pressed/hover 에서 pointer_cancel → idle transition 추가 (activate raise 없음) — Button/Toggle/Checkbox/Radio 4 widget 동시 적용",
+        "crates/pinion-core/widgets/slider.scxml: dragging/hover 에서 pointer_cancel → idle transition (slider.activate raise 없음)",
+        "crates/pinion-core/src/widgets/{button,toggle,checkbox,radio,slider}.rs: parse_*_event 에 'PointerCancel' → *::PointerCancel 매핑 5개",
+        "crates/pinion-runtime/src/input.rs: InputRouter::pointer_cancel(pid, scene) 신규 — pointer_up 과 동일 수신자 론징만 'PointerCancel' wire 이벤트 발사, capture release + hover refresh 동일",
+        "crates/pinion-shell/src/substrate.rs: handle_touch 의 TouchPhase::Ended | TouchPhase::Cancelled 한 한 arm 이 두 arm 으로 분리 — Cancelled 가 pointer_cancel 경유 (pointer_up 아닌)",
+        "5 widget 당 R51.93 회귀 테스트 추가 = button 5 (cancel/hover/idle/disabled/parse) + toggle 2 + checkbox 2 + radio 2 + slider 2 = 13"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1540 pass / 0 fail / 8 ignored (1527 +13 R51.93)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "sce-build 자동 재생성 확인: ButtonEvent::PointerCancel / ToggleEvent::PointerCancel / CheckboxEvent::PointerCancel / RadioEvent::PointerCancel / SliderEvent::PointerCancel 모두 generated_sm 에 출현",
+        "해소된 소원 UX 버그: 4-finger system gesture / phone call / notification banner / app switcher / edge-swipe 등 OS-revoked touch 들이 더이상 의도치 않은 click/toggle/checked/selected/value_committed intent 발사 안 함"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.35",
+        "5.13"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry: pre-R51.93 의 종속적 mock test fixture 가 PointerUp 만 쓴다면 cancel path coverage 가 아직 일면적 — future widget composite 신설 시 PointerCancel 경로도 테스트 포함 권고",
+        "carry: pointer_cancel 의 RPC dual — 'scene/invoke send PointerCancel' wire 이벤트 가 이미 자동 지원됨 (parse_*_event PointerCancel arm). AI 클라이언트가 외부 cancel 시너리오를 재현 가능"
       ]
     },
     "R51.33": {

@@ -316,6 +316,9 @@ pub(crate) fn parse_radio_event(name: &str) -> Option<RadioEvent> {
         "PointerLeave" => Some(RadioEvent::PointerLeave),
         "PointerDown" => Some(RadioEvent::PointerDown),
         "PointerUp" => Some(RadioEvent::PointerUp),
+        // R51.93 §5.35 — touch-cancel sibling of PointerUp; does
+        // not set selected = true or fire the `"selected"` intent.
+        "PointerCancel" => Some(RadioEvent::PointerCancel),
         // R51.55 §5.39 — ARIA Space keyboard activation.
         "KeyboardActivate" => Some(RadioEvent::KeyboardActivate),
         "Disable" => Some(RadioEvent::Disable),
@@ -333,6 +336,36 @@ mod tests {
         let r = Radio::new();
         assert_eq!(r.state(), RadioState::Idle);
         assert!(!r.is_selected());
+    }
+
+    // R51.93 §5.35 — touch-cancel must NOT set selected.
+
+    #[test]
+    fn r51_93_pointer_cancel_during_press_returns_to_idle_without_select() {
+        let mut rx = RadioExternal::new();
+        rx.send(RadioEvent::PointerEnter);
+        rx.send(RadioEvent::PointerDown);
+        assert!(matches!(rx.state(), RadioState::Pressed));
+        let before = rx.is_selected();
+        rx.send(RadioEvent::PointerCancel);
+        assert!(matches!(rx.state(), RadioState::Idle));
+        assert_eq!(
+            rx.is_selected(),
+            before,
+            "PointerCancel must not set selected"
+        );
+        assert!(
+            !rx.is_dirty(),
+            "PointerCancel from Pressed must not fire `selected` intent"
+        );
+    }
+
+    #[test]
+    fn r51_93_parse_pointer_cancel_event_name() {
+        assert_eq!(
+            parse_radio_event("PointerCancel"),
+            Some(RadioEvent::PointerCancel)
+        );
     }
 
     #[test]

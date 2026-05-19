@@ -41,15 +41,25 @@
 
   <state id="hover">
     <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_cancel" target="idle"/>
     <transition event="pointer_down" target="dragging"/>
     <transition event="disable" target="disabled"/>
   </state>
+
+  <!-- R51.93 §5.35 §5.13 — pointer_cancel from `dragging` drops to
+       `idle` without raising `slider.activate`, so the
+       `"value_committed"` intent does not fire on touch cancel
+       (OS-side gesture revoked the drag — value stays at whatever
+       the last `pointer_move` set, but no commit signal). Matches
+       the W3C HTML5 drag-cancel-on-leave convention; pointer
+       cancel is the touch-side analog of leave. -->
 
   <state id="dragging">
     <transition event="pointer_up" target="hover">
       <raise event="slider.activate"/>
     </transition>
     <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_cancel" target="idle"/>
     <transition event="disable" target="disabled"/>
   </state>
 

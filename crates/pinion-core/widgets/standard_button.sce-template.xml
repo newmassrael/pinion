@@ -42,6 +42,25 @@
        activation in the middle of a pointer drag is a user-error
        race rather than a meaningful event. -->
 
+  <!-- R51.93 §5.35 §5.13 — pointer_cancel is the touch-cancel
+       sibling of pointer_up. winit's `TouchPhase::Cancelled`
+       (4-finger system gesture, phone call interrupt, notification
+       pull-down, app-switcher invocation, edge-swipe back nav —
+       any OS-side gesture that revokes an in-flight touch) routes
+       here. Semantic axis vs pointer_up: `pointer_up` is the
+       user's commit signal that activates the widget; `pointer_cancel`
+       is the OS revoke signal that must NOT commit. From `pressed`
+       we transition straight to `idle` (skipping the `pressed →
+       hover` activate path) so the click / toggle / selected /
+       value_committed intent never fires. From `hover` we similarly
+       drop to `idle` defensively (cancellation mid-hover should
+       not leave the visual stuck on hover when the cursor is in
+       fact gone). `idle` / `disabled` ignore the event (no
+       transition declared — SCXML's default no-op silently absorbs
+       it). Touch's trailing `cursor_left` still runs at the shell
+       layer, so any `hover → idle` cleanup it would have done is
+       still reached. -->
+
   <state id="idle">
     <transition event="pointer_enter" target="hover"/>
     <transition event="keyboard_activate">
@@ -52,6 +71,7 @@
 
   <state id="hover">
     <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_cancel" target="idle"/>
     <transition event="pointer_down" target="pressed"/>
     <transition event="keyboard_activate">
       <raise event="{$activate_event}"/>
@@ -64,6 +84,7 @@
       <raise event="{$activate_event}"/>
     </transition>
     <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_cancel" target="idle"/>
     <transition event="disable" target="disabled"/>
   </state>
 
