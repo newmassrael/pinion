@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.38 Round 51.95 — ListBoxItem widget statechart.
+
+     Same shared interaction body as Button/Toggle/Checkbox/Radio
+     via the `standard_button.sce-template.xml` template (R51.3
+     template + R51.54 keyboard_activate arm + R51.93 pointer_cancel
+     arm). Selects the `listbox_item.activate` event name; the
+     pressed -> hover transition raises it on `pointer_up`.
+
+     Semantic axis vs Radio (R51.6): Radio's activate transition
+     *sets* `selected = true` unconditionally (group exclusivity
+     handled by RadioGroup). ListBoxItem's activate transition has
+     the same shape — set `selected = true` unconditionally — but
+     the composite ([`ListBox`]) routes the selection through a
+     different ARIA role (`Listbox` + `Option` instead of
+     `RadioGroup` + `RadioButton`) and a different keyboard model
+     (W3C ARIA Listbox: Arrow keys move focus only, Space/Enter
+     commits; vs Radio Group: Arrow keys move focus AND select per
+     the WAI-ARIA roving-tabindex Radio pattern). The statechart
+     itself is unchanged because the press/release/cancel/keyboard
+     primitives are widget-agnostic; only the activate-event name
+     differentiates ListBoxItem from Radio at the wire level so a
+     binding can listen to the right channel.
+
+     R51.93 §5.35 — pointer_cancel inherited from the template:
+     touch cancellation (OS-revoked gesture) drops Pressed → Idle
+     without firing the activate event; ListBoxItem's `selected`
+     flag therefore does not flip on a cancelled gesture, matching
+     Radio / Checkbox / Toggle / Button.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:sce="http://sce.dev/ext"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <sce:use template="standard_button.sce-template.xml"
+           activate_event="listbox_item.activate"/>
+
+</scxml>

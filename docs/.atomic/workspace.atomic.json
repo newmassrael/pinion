@@ -3892,7 +3892,8 @@
         "R51.89.1 — dispatch.rs RpcError literal 14 site full sweep (builder 통일, struct 직접 구성 0)",
         "R51.93 — TouchPhase::Cancelled commit-class fix (pointer_cancel SCXML + InputRouter API + 5 widget)",
         "R51.93.1 — RadioGroup 합성 cancel propagation 회귀 테스트 (template fix 가 composite path 자동 적용 검증)",
-        "R51.94 — AccessTreeBuilder::build 가 debug_assert 로 tag_to_node_id injective 검증 (release 0-cost)"
+        "R51.94 — AccessTreeBuilder::build 가 debug_assert 로 tag_to_node_id injective 검증 (release 0-cost)",
+        "R51.95 — ListBoxItem 신규 widget (template 공유, listbox_item.activate 채널, ListBox composite 의 기본 item)"
       ],
       "alternatives_rejected": [
         {
@@ -4252,6 +4253,17 @@
         {
           "file": "crates/pinion-runtime/src/input.rs",
           "symbol": "InputRouter::pointer_cancel"
+        },
+        {
+          "file": "crates/pinion-core/widgets/listbox_item.scxml"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox_item.rs",
+          "symbol": "ListBoxItem"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/listbox_item.rs",
+          "symbol": "ListBoxItemExternal"
         }
       ],
       "decision_status": "active"

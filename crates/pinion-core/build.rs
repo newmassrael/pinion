@@ -9,6 +9,7 @@ fn main() {
         "widgets/toggle.scxml",
         "widgets/checkbox.scxml",
         "widgets/radio.scxml",
+        "widgets/listbox_item.scxml",
         "widgets/slider.scxml",
         "app.scxml",
         "fixtures/multi_window.scxml",

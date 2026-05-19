@@ -3028,6 +3028,7 @@ router.pointer_down(&mut state_scene);
 - R51.93 — TouchPhase::Cancelled commit-class fix (pointer_cancel SCXML + InputRouter API + 5 widget)
 - R51.93.1 — RadioGroup 합성 cancel propagation 회귀 테스트 (template fix 가 composite path 자동 적용 검증)
 - R51.94 — AccessTreeBuilder::build 가 debug_assert 로 tag_to_node_id injective 검증 (release 0-cost)
+- R51.95 — ListBoxItem 신규 widget (template 공유, listbox_item.activate 채널, ListBox composite 의 기본 item)
 
 
 
@@ -3129,6 +3130,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/widgets/standard_button.sce-template.xml
 - crates/pinion-core/widgets/slider.scxml
 - crates/pinion-runtime/src/input.rs:InputRouter::pointer_cancel
+- crates/pinion-core/widgets/listbox_item.scxml
+- crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItem
+- crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItemExternal
 
 
 
