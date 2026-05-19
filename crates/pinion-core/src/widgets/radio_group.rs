@@ -49,9 +49,26 @@ use crate::widgets::{IntentEmitter, WidgetTransition};
 
 /// Logical group of N Radio widgets with framework-owned mutual
 /// exclusion. See module docs for the full design rationale.
+///
+/// R51.87 §5.40 — carries a separate `focused_index` alongside
+/// `selected` to model the WAI-ARIA roving-tabindex distinction
+/// between "the addressed (active) descendant" and "the user's
+/// choice". The two indices conflate naturally for radio groups
+/// because arrow keys activate immediately (ARIA Authoring
+/// Practices radio-group convention — distinct from listbox /
+/// menu / tab where roving moves focus without activating). The
+/// split lets AT clients issue `Focus` actions to navigate
+/// between rows without committing a selection, and lets the
+/// `access_focus_target` `active_descendant` honour the AT-side
+/// addressed row instead of always reporting the selected one.
 pub struct RadioGroup {
     radios: Vec<Radio>,
     selected: Option<usize>,
+    /// R51.87 §5.40 — AT-side active descendant. Independent of
+    /// `selected`; mutated by AT `Focus` actions or programmatic
+    /// `set_focused_index`. `None` falls back to `selected`-or-0
+    /// at the application's `access_focus_target` resolution.
+    focused: Option<usize>,
 }
 
 impl RadioGroup {
@@ -63,6 +80,7 @@ impl RadioGroup {
         Self {
             radios: (0..count).map(|_| Radio::new()).collect(),
             selected: None,
+            focused: None,
         }
     }
 
@@ -136,6 +154,39 @@ impl RadioGroup {
             r.set_selected(idx == Some(j));
         }
         self.selected = idx;
+    }
+
+    /// R51.87 §5.40 — AT-side active descendant index.
+    ///
+    /// The WAI-ARIA roving-tabindex active descendant. `None` until
+    /// an AT `Focus` action or programmatic
+    /// [`set_focused_index`](Self::set_focused_index) lands; the
+    /// application's `access_focus_target` falls back to
+    /// `selected_index()`-or-0 in the `None` case.
+    #[must_use]
+    pub fn focused_index(&self) -> Option<usize> {
+        self.focused
+    }
+
+    /// R51.87 §5.40 — set the AT-side active descendant.
+    ///
+    /// Independent of `selected_index` — calling this neither
+    /// activates the row nor deselects siblings; it only marks the
+    /// addressed item so AT clients (and the application's
+    /// `access_focus_target`) can report it as the active
+    /// descendant of the focused parent.
+    ///
+    /// # Panics
+    /// Panics if `idx` is `Some(i)` with `i >= count()`.
+    pub fn set_focused_index(&mut self, idx: Option<usize>) {
+        if let Some(i) = idx {
+            assert!(
+                i < self.radios.len(),
+                "RadioGroup::set_focused_index index {i} out of range (count={})",
+                self.radios.len()
+            );
+        }
+        self.focused = idx;
     }
 }
 
@@ -244,6 +295,13 @@ impl RadioGroupExternal {
     pub fn selected_index(&self) -> Option<usize> {
         self.em.inner.selected_index()
     }
+
+    /// R51.87 §5.40 — AT-side active descendant index, or `None`.
+    /// See [`RadioGroup::focused_index`].
+    #[must_use]
+    pub fn focused_index(&self) -> Option<usize> {
+        self.em.inner.focused_index()
+    }
 }
 
 impl Default for RadioGroupExternal {
@@ -258,6 +316,7 @@ impl core::fmt::Debug for RadioGroupExternal {
         f.debug_struct("RadioGroupExternal")
             .field("count", &self.count())
             .field("selected_index", &self.selected_index())
+            .field("focused_index", &self.focused_index())
             .finish()
     }
 }
@@ -306,6 +365,7 @@ impl ExternalIntrospect for RadioGroupExternal {
         IntrospectSchema::new(&[
             ("count", "int"),
             ("selected_index", "int"),
+            ("focused_index", "int"),
             ("state.<index>", "string"),
             ("selected.<index>", "bool"),
             ("send", "string"),
@@ -319,6 +379,15 @@ impl ExternalIntrospect for RadioGroupExternal {
                     .expect("RadioGroup count must fit in i64"),
             )),
             "selected_index" => Some(match self.selected_index() {
+                Some(idx) => IntrospectValue::Int(
+                    i64::try_from(idx).expect("index fits in i64"),
+                ),
+                None => IntrospectValue::Null,
+            }),
+            // R51.87 §5.40 — AT-side active descendant. `Null` until
+            // a `Focus` action or `intervene "focused_index" = Int(i)`
+            // sets it.
+            "focused_index" => Some(match self.focused_index() {
                 Some(idx) => IntrospectValue::Int(
                     i64::try_from(idx).expect("index fits in i64"),
                 ),
@@ -376,6 +445,30 @@ impl ExternalIntrospect for RadioGroupExternal {
                 }
                 IntrospectValue::Null => {
                     self.em.inner.set_selected(None);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            // R51.87 §5.40 — AT-side active descendant intervene.
+            // Mutates only `focused_index`; siblings stay
+            // unchanged, no selection commit, no `"selected"` intent.
+            // AT `Focus` actions on a specific radio reach this path
+            // through the application's `access_child_invoke` hook.
+            "focused_index" => match value {
+                IntrospectValue::Int(i) => {
+                    if i < 0 {
+                        return Err(InterveneError::TypeMismatch);
+                    }
+                    let idx = usize::try_from(i)
+                        .map_err(|_| InterveneError::TypeMismatch)?;
+                    if idx >= self.count() {
+                        return Err(InterveneError::TypeMismatch);
+                    }
+                    self.em.inner.set_focused_index(Some(idx));
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.em.inner.set_focused_index(None);
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -674,21 +767,132 @@ mod tests {
     }
 
     #[test]
-    fn external_schema_declares_five_slots() {
+    fn external_schema_declares_six_slots() {
         // R51.43 §5.38 — `state.<index>` + `selected.<index>` join
         // the bare `count` / `selected_index` / `send` triple so AI
         // clients discovering the schema see the per-radio access
         // paths used by `WidgetView` impls.
+        //
+        // R51.87 §5.40 — `focused_index` joins the schema so AT
+        // clients (and the application's `access_focus_target`) can
+        // read / write the active descendant independently of
+        // `selected_index`.
         let g = RadioGroupExternal::new(3);
         assert_eq!(
             g.schema().fields,
             &[
                 ("count", "int"),
                 ("selected_index", "int"),
+                ("focused_index", "int"),
                 ("state.<index>", "string"),
                 ("selected.<index>", "bool"),
                 ("send", "string"),
             ]
+        );
+    }
+
+    // R51.87 §5.40 — focused_index regression tests.
+
+    #[test]
+    fn r51_87_new_group_has_no_focused_index() {
+        let g = RadioGroup::new(3);
+        assert_eq!(g.focused_index(), None);
+        assert_eq!(g.selected_index(), None);
+    }
+
+    #[test]
+    fn r51_87_set_focused_index_independent_of_selected() {
+        let mut g = RadioGroup::new(3);
+        g.set_focused_index(Some(2));
+        // Setting the active descendant does NOT activate the row
+        // (radio-group's roving-tabindex semantic — Focus moves the
+        // addressed item; Click / Enter / arrow keys activate).
+        assert_eq!(g.focused_index(), Some(2));
+        assert_eq!(g.selected_index(), None);
+        for i in 0..3 {
+            assert!(!g.is_selected(i));
+        }
+    }
+
+    #[test]
+    fn r51_87_set_focused_index_none_clears() {
+        let mut g = RadioGroup::new(3);
+        g.set_focused_index(Some(1));
+        assert_eq!(g.focused_index(), Some(1));
+        g.set_focused_index(None);
+        assert_eq!(g.focused_index(), None);
+    }
+
+    #[test]
+    fn r51_87_focused_index_and_selected_can_diverge() {
+        let mut g = RadioGroup::new(3);
+        // User selected radio 0 (mouse / arrow path).
+        activate(&mut g, 0);
+        assert_eq!(g.selected_index(), Some(0));
+        // AT navigates Focus to radio 2 without committing.
+        g.set_focused_index(Some(2));
+        assert_eq!(g.focused_index(), Some(2));
+        assert_eq!(g.selected_index(), Some(0));
+        // Activate path on radio 2 → both indices land on 2.
+        activate(&mut g, 2);
+        assert_eq!(g.selected_index(), Some(2));
+        // R51.87 does not automatically sync focused_index on
+        // activate — `apply_key` / `access_child_invoke` paths
+        // refresh it explicitly when a row becomes the active
+        // descendant. focused_index stays as last AT-set value.
+        assert_eq!(g.focused_index(), Some(2));
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn r51_87_set_focused_index_out_of_range_panics() {
+        let mut g = RadioGroup::new(2);
+        g.set_focused_index(Some(5));
+    }
+
+    #[test]
+    fn r51_87_external_query_focused_index_initially_null() {
+        let g = RadioGroupExternal::new(3);
+        assert_eq!(
+            g.query("focused_index").unwrap(),
+            IntrospectValue::Null
+        );
+    }
+
+    #[test]
+    fn r51_87_external_intervene_focused_index_sets_value() {
+        let mut g = RadioGroupExternal::new(3);
+        g.intervene("focused_index", IntrospectValue::Int(2))
+            .unwrap();
+        assert_eq!(g.focused_index(), Some(2));
+        assert_eq!(
+            g.query("focused_index").unwrap(),
+            IntrospectValue::Int(2)
+        );
+        // No `"selected"` intent — focused_index is AT navigation,
+        // not a commit.
+        assert!(!g.is_dirty());
+    }
+
+    #[test]
+    fn r51_87_external_intervene_focused_index_null_clears() {
+        let mut g = RadioGroupExternal::new(3);
+        g.intervene("focused_index", IntrospectValue::Int(1))
+            .unwrap();
+        g.intervene("focused_index", IntrospectValue::Null).unwrap();
+        assert_eq!(g.focused_index(), None);
+    }
+
+    #[test]
+    fn r51_87_external_intervene_focused_index_out_of_range_rejects() {
+        let mut g = RadioGroupExternal::new(2);
+        assert_eq!(
+            g.intervene("focused_index", IntrospectValue::Int(5)),
+            Err(InterveneError::TypeMismatch)
+        );
+        assert_eq!(
+            g.intervene("focused_index", IntrospectValue::Int(-1)),
+            Err(InterveneError::TypeMismatch)
         );
     }
 

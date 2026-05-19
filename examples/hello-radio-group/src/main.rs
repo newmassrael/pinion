@@ -65,10 +65,30 @@ const ROW_GAP: u32 = 10;
 const ROW_VERTICAL_GAP: u32 = 14;
 
 /// Cached projection of the group. One `(RadioState, selected)` pair
-/// per radio — `Copy` because `RadioState` is a flat enum and `bool`
-/// is trivially copyable, so the shell can hand the snapshot into
-/// the `paint_producer` closure without lifetime gymnastics.
-type GroupState = [(RadioState, bool); N];
+/// per radio plus the R51.87 §5.40 AT-side active-descendant index.
+/// `Copy` because both fields' inner types are `Copy`, so the shell
+/// can hand the snapshot into the `paint_producer` closure without
+/// lifetime gymnastics.
+///
+/// R51.87 §5.40 — `focused` is the WAI-ARIA roving-tabindex active
+/// descendant. `None` falls back to the selected row (or 0 if no
+/// selection) in the `access_focus_target` resolution; `Some(i)`
+/// records that an AT `Focus` action (or programmatic intervene)
+/// pinned the addressed row to `i` independent of selection.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+struct GroupState {
+    rows: [(RadioState, bool); N],
+    focused: Option<usize>,
+}
+
+impl GroupState {
+    fn idle() -> Self {
+        Self {
+            rows: [(RadioState::Idle, false); N],
+            focused: None,
+        }
+    }
+}
 
 /// view-fn (§6.3): pure sync mapping `GroupState -> Scene`. Builds a
 /// vertical column of N rows, each row tagged `"main_group#<i>"` so
@@ -78,7 +98,7 @@ type GroupState = [(RadioState, bool); N];
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: GroupState, _frame: &Frame) -> Scene {
     let rows: Vec<Scene> = (0..N)
-        .map(|i| radio_row(i, state[i].0, state[i].1))
+        .map(|i| radio_row(i, state.rows[i].0, state.rows[i].1))
         .collect();
     let column = Scene::Container(
         ContainerNode::new(rows).with_layout(
@@ -194,7 +214,7 @@ impl WidgetView for RadioGroupView {
     }
 
     fn read_state(scene: &Scene) -> GroupState {
-        let mut out: GroupState = [(RadioState::Idle, false); N];
+        let mut out = GroupState::idle();
         let Scene::External(node) = scene else {
             return out;
         };
@@ -206,7 +226,7 @@ impl WidgetView for RadioGroupView {
         // is the single source of truth: an AI client running
         // `scene/query /external/main_group/state.0` sees exactly
         // the same value the view fn renders.
-        for (i, slot) in out.iter_mut().enumerate() {
+        for (i, slot) in out.rows.iter_mut().enumerate() {
             let state = match intro.query(&format!("state.{i}")) {
                 Some(IntrospectValue::Text(name)) => parse_radio_state(&name),
                 _ => RadioState::Idle,
@@ -217,6 +237,14 @@ impl WidgetView for RadioGroupView {
             );
             *slot = (state, selected);
         }
+        // R51.87 §5.40 — AT-side active descendant. `Null` until a
+        // `Focus` action lands; the application's
+        // `access_focus_target` falls back to `selected || 0` when
+        // `focused` is `None`.
+        out.focused = match intro.query("focused_index") {
+            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+            _ => None,
+        };
         out
     }
 
@@ -317,7 +345,7 @@ impl WidgetView for RadioGroupView {
             group = group.with_child(format!("{PRIMARY_TAG}#{i}"));
         }
         nodes.push(group);
-        for (i, (radio_state, selected)) in state.iter().copied().enumerate() {
+        for (i, (radio_state, selected)) in state.rows.iter().copied().enumerate() {
             let radio_tag = format!("{PRIMARY_TAG}#{i}");
             let radio_access_state = AccessState {
                 focused: group_focused && i == active_idx,
@@ -398,24 +426,32 @@ impl WidgetView for RadioGroupView {
                 }
                 true
             }
-            // R51.82 §5.40 — composite Focus on a specific child.
-            // The shell already ran `focus_set` on the parent before
-            // calling this hook (R51.82 dispatch_access_action::Focus
-            // arm), and `access_focus_target` drives the active
-            // descendant from `selected_index`. The current
-            // `RadioGroup` state model conflates "addressed" with
-            // "selected" — a textbook WAI-ARIA roving-tabindex
-            // implementation would carry a parallel `focused_index`
-            // alongside `selected_index` so AT navigation (arrow
-            // keys, AT-side Focus) can move the active descendant
-            // without selecting. That structural split lands as a
-            // follow-up; for now we accept the Focus without state
-            // mutation. Return value is informational only — the
-            // R51.82 shell does not branch on it for the Focus arm
-            // (composite Focus never falls back to the atomic
-            // chain — there is no keyboard equivalent for "make
-            // this the active descendant").
-            AccessAction::Focus => true,
+            // R51.87 §5.40 — composite Focus on a specific child now
+            // mutates the parent's `focused_index` (independent of
+            // `selected_index`). The shell's R51.82
+            // `dispatch_access_action::Focus` arm already ran
+            // `focus.focus_set(parent_tag)` before this hook; here
+            // we mark the addressed row as the active descendant so
+            // the next `access_focus_target` call reports the
+            // AT-addressed radio instead of the selected one. AT
+            // navigation (arrow keys without Enter, AT-side Focus)
+            // can now move between rows without committing a
+            // selection — WAI-ARIA roving-tabindex textbook model.
+            //
+            // `i64::try_from(idx)` is infallible for `idx < N` with
+            // small `N`; the underlying `intervene` already validates
+            // the range and rejects out-of-range as `TypeMismatch`,
+            // which we swallow here (the `idx >= N` guard above
+            // already rejected anyway).
+            AccessAction::Focus => {
+                if let Ok(i) = i64::try_from(idx) {
+                    let _ = intro.intervene(
+                        "focused_index",
+                        IntrospectValue::Int(i),
+                    );
+                }
+                true
+            }
             AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => {
                 false
             }
@@ -423,7 +459,8 @@ impl WidgetView for RadioGroupView {
     }
 
     fn fmt_state_log(state: &GroupState) -> String {
-        state
+        let rows = state
+            .rows
             .iter()
             .enumerate()
             .map(|(i, (s, sel))| {
@@ -434,7 +471,13 @@ impl WidgetView for RadioGroupView {
                 )
             })
             .collect::<Vec<_>>()
-            .join(" ")
+            .join(" ");
+        // R51.87 §5.40 — focused_index in the log so stderr traces
+        // distinguish AT navigation from selection commits.
+        match state.focused {
+            Some(idx) => format!("{rows} focused={idx}"),
+            None => rows,
+        }
     }
 }
 
@@ -485,13 +528,23 @@ fn arrow_step(
     }
 }
 
-/// R51.66 §5.40 — active radio index (selected radio, or `0` when
-/// nothing is selected). Mirrors `arrow_step`'s fallback so the
-/// keyboard activation path, the visual focus indication, and the
-/// AccessKit `access_focus_target` redirect all agree on which
-/// radio is the active descendant.
+/// R51.66 §5.40 — active radio index (the row reported as the AT-side
+/// "active descendant" of the focused group). Resolution order:
+///
+/// 1. R51.87 §5.40 — `state.focused` if `Some(_)` (AT `Focus` action
+///    or programmatic `focused_index` intervene pinned a row).
+/// 2. The currently selected row, if any.
+/// 3. `0` (start of the cyclic ring — same fallback `arrow_step`
+///    uses when no radio is selected and `ArrowDown` lands first).
+///
+/// The keyboard activation path, the visual focus indication, and
+/// the AccessKit `access_focus_target` redirect all agree on this
+/// resolution so the three views never diverge.
 fn active_radio_index(state: GroupState) -> usize {
-    state.iter().position(|(_, sel)| *sel).unwrap_or(0)
+    if let Some(idx) = state.focused {
+        return idx;
+    }
+    state.rows.iter().position(|(_, sel)| *sel).unwrap_or(0)
 }
 
 fn parse_radio_state(name: &str) -> RadioState {
@@ -521,16 +574,22 @@ mod a11y_tests {
     use super::*;
 
     fn unselected_state() -> GroupState {
-        [
-            (RadioState::Idle, false),
-            (RadioState::Idle, false),
-            (RadioState::Idle, false),
-        ]
+        GroupState::idle()
     }
 
     fn selected_state(idx: usize) -> GroupState {
         let mut s = unselected_state();
-        s[idx].1 = true;
+        s.rows[idx].1 = true;
+        s
+    }
+
+    /// R51.87 §5.40 — fixture for AT `Focus`-pinned state. Carries
+    /// `focused = Some(idx)` independent of selection so the active
+    /// descendant resolution prefers AT navigation over the
+    /// selected fallback.
+    fn focused_state(focused_idx: usize) -> GroupState {
+        let mut s = unselected_state();
+        s.focused = Some(focused_idx);
         s
     }
 
@@ -651,6 +710,52 @@ mod a11y_tests {
     fn access_focus_target_none_when_no_focus() {
         let target = RadioGroupView::access_focus_target(&unselected_state(), None);
         assert!(target.is_none());
+    }
+
+    // ----- R51.87 §5.40 focused_index regression -----
+
+    #[test]
+    fn r51_87_active_descendant_honors_focused_over_selected() {
+        // User selected row 0 (mouse / arrow), AT then navigated
+        // Focus to row 2 without committing. The active descendant
+        // reported to AT should be row 2, not row 0.
+        let mut state = selected_state(0);
+        state.focused = Some(2);
+        let target = RadioGroupView::access_focus_target(
+            &state,
+            Some("main_group"),
+        )
+        .expect("group focused returns Some");
+        assert_eq!(target.focus_tag, "main_group");
+        assert_eq!(
+            target.active_descendant.as_deref(),
+            Some("main_group#2"),
+            "AT-side focused_index must take precedence over selected",
+        );
+    }
+
+    #[test]
+    fn r51_87_active_descendant_falls_back_to_selected_when_focused_none() {
+        // Pre-R51.87 behavior — `focused = None` should still resolve
+        // active descendant to the selected row.
+        let target = RadioGroupView::access_focus_target(
+            &selected_state(1),
+            Some("main_group"),
+        )
+        .expect("group focused returns Some");
+        assert_eq!(target.active_descendant.as_deref(), Some("main_group#1"));
+    }
+
+    #[test]
+    fn r51_87_focused_state_marks_correct_radio_focused() {
+        // `access_node` consults `active_radio_index` which now
+        // honors `state.focused`. AT-focused row 2 should carry
+        // `state.focused = true` in its `AccessNode`.
+        let nodes =
+            RadioGroupView::access_node(&focused_state(2), Some("main_group"));
+        assert!(nodes[3].state.focused, "AT-focused radio must mark focused");
+        assert!(!nodes[1].state.focused);
+        assert!(!nodes[2].state.focused);
     }
 }
 

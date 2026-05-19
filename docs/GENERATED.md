@@ -3017,6 +3017,7 @@ router.pointer_down(&mut state_scene);
 - R51.84 — AccessTreeBuilder::initial &mut self 통일 + AccessFocus::with_active_descendant builder
 - R51.85 — focus 4 route handler 의 RpcError 매핑 helper 5개 추출 (DRY + code lockstep)
 - R51.86 — TextRole::Label 제거 (consumer 0, strict YAGNI 회복; #[non_exhaustive] 보존)
+- R51.87 — RadioGroup focused_index 분리 (WAI-ARIA roving-tabindex 정통, AT Focus 가 selected commit 없이 이동)
 
 
 
@@ -3102,6 +3103,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:ShellCore::text_cache_mut
 - crates/pinion-shell/src/lib.rs:ShellCore::modifiers_shift_key
 - crates/pinion-a11y/src/focus.rs:AccessFocus::with_active_descendant
+- crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::focused_index
+- crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::set_focused_index
+- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::focused_index
 
 
 
@@ -5953,6 +5957,45 @@ router.pointer_down(&mut state_scene);
 - R51.87 — RadioGroup focused_index vs selected_index 분리 (WAI-ARIA roving-tabindex 정통, SCE template 재설계)
 - future R5x.y — WAI-ARIA 1.2 §5.2.6 labelling axis 정착 시 TextRole::Label 재도입 (구체 consumer + 우선순위 룰 동반 land)
 - R51.84 carry 잠재: with_aria_label rename / handle_focus_traverse early return — 기술적 정당성 재검토
+
+
+
+### R51.87 — §5.40 R51.87 — RadioGroup focused_index vs selected_index 분리 (WAI-ARIA roving-tabindex 정통): AT Focus action 이 selected 와 독립적으로 active descendant 를 이동, application access_focus_target 가 focused → selected → 0 fallback 으로 일관.
+
+**Changes**:
+- crates/pinion-core/src/widgets/radio_group.rs — RadioGroup 구조체에 `focused: Option<usize>` 필드 + focused_index() getter + set_focused_index(idx) mutator 추가 (선택과 독립, no "selected" intent fires)
+- crates/pinion-core/src/widgets/radio_group.rs — RadioGroupExternal::focused_index() forwarding accessor 추가
+- crates/pinion-core/src/widgets/radio_group.rs — schema 6개 slot (count/selected_index/focused_index/state.<i>/selected.<i>/send) 이로 확장
+- crates/pinion-core/src/widgets/radio_group.rs — query "focused_index" 추가 (Null 또는 Int)
+- crates/pinion-core/src/widgets/radio_group.rs — intervene "focused_index" 추가 (Int/Null, out-of-range → TypeMismatch, no commit/intent)
+- crates/pinion-core/src/widgets/radio_group.rs — Debug impl 에 focused_index 필드 추가
+- crates/pinion-core/src/widgets/radio_group.rs — 9 R51.87 회귀 test 신설 (focused initial None / set independent / clear / diverge from selected / out-of-range panic / external query / intervene set / intervene null / intervene out-of-range reject)
+- examples/hello-radio-group/src/main.rs — GroupState alias 을 struct `{rows: [(RadioState, bool); N], focused: Option<usize>}` 로 재설계 (Copy 보존)
+- examples/hello-radio-group/src/main.rs — read_state 가 "focused_index" 을 읽어 GroupState.focused 에 반영
+- examples/hello-radio-group/src/main.rs — active_radio_index 가 state.focused 우선 조회, fallback to selected, fallback to 0 해서 access_focus_target / access_node 둘 다 일관 해서키는 우선순위 접근
+- examples/hello-radio-group/src/main.rs — access_child_invoke::Focus arm 이 intervene "focused_index" 로 idx 고정 (R51.82 의 `true` silent no-op 개선, 이제 실제 상태가 변경됨)
+- examples/hello-radio-group/src/main.rs — fmt_state_log 에 focused index 동반 출력
+- examples/hello-radio-group/src/main.rs — view / access_node / fmt_state_log 가 state.rows[i] / state.rows.iter() form 으로 업데이트
+- examples/hello-radio-group/src/main.rs — 3 R51.87 회귀 test 신설 (active descendant honors focused over selected / falls back to selected when focused None / focused state marks correct radio)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — 모든 crate clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warning
+- cargo test --workspace --features pinion-runtime/vello — 1516 pass / 0 fail / 9 ignored (R51.86 baseline 1504에서 +12 테스트: pinion-core +9, hello-radio-group +3)
+- WAI-ARIA roving-tabindex 정통: focus.focus_tag = parent + active_descendant = AT-addressed row (focused) 또는 selected fallback. selected commit 없이 Focus 명명적이로 이동 가능.
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- future R5x.y — RadioGroup arrow-key activation path의 focused_index sync (activated row 가 focused_index 에도 반영되는 동기화 고려, 현재는 AT side 만 변경)
+- future R5x.y — RadioGroup arrow keys 가 selected commit 없이 focused_index 만 이동 하는 listbox-style roving 옵션 (현재 radio-group 관례대로 immediate activate 유지)
+- future R5x.y — listbox / menu / treeview / tab composite widget 가 같은 focused_index 패턴 공유 — RadioGroup 의 설계가 제일 설계 구독
+- R51.84 carry 잠재: with_aria_label rename / handle_focus_traverse early return — 재검토
 
 
 
