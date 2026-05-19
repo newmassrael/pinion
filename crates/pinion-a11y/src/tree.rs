@@ -228,6 +228,30 @@ impl AccessTreeBuilder {
         }
         nodes.push((ROOT_NODE_ID, root));
 
+        // R51.94 §5.40 — `tag_to_node_id` injective verification
+        // (debug builds only, zero release cost).
+        //
+        // Two distinct widget tags hashing to the same `NodeId`
+        // would silently shadow each other (AccessKit's
+        // "later node with same id wins") and AT-side actions would
+        // route to the wrong widget. The hash space (63 effective
+        // bits — `DefaultHasher::finish() | 0x8000_0000_0000_0000`)
+        // makes a real collision astronomically unlikely
+        // (P ≈ N²/2^64), but accidental tag-duplication bugs in
+        // application code or future framework refactors that break
+        // injectivity would surface here on the first debug-mode
+        // build instead of as a baffling AT-routing report.
+        //
+        // `ROOT_NODE_ID` is pre-seeded; the high-bit set on every
+        // hashed tag id guarantees no widget tag collides with the
+        // reserved root.
+        #[cfg(debug_assertions)]
+        let mut seen_ids: HashSet<NodeId> = {
+            let mut s = HashSet::with_capacity(self.insertion_order.len() + 1);
+            s.insert(ROOT_NODE_ID);
+            s
+        };
+
         // 2. Per-widget nodes in insertion order.
         //    R51.72 §5.40 — when `dirty` is `Some`, emit only the
         //    tags it lists. The root above is always emitted so the
@@ -240,6 +264,16 @@ impl AccessTreeBuilder {
             }
             let access = &self.nodes[tag];
             let node_id = tag_to_node_id(tag);
+            #[cfg(debug_assertions)]
+            {
+                debug_assert!(
+                    seen_ids.insert(node_id),
+                    "R51.94 §5.40 tag_to_node_id collision: tag {tag:?} hashes to \
+                     a NodeId already emitted this frame. Pick a distinct widget \
+                     tag string for one of the colliding widgets, or widen the \
+                     hash output if this is a real production collision."
+                );
+            }
             let mut node = lower_access_node(access);
             // R51.71 §5.40 — apply roving-tabindex active descendant
             // when this tag was declared via `active_descendant`.

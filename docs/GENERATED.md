@@ -3027,6 +3027,7 @@ router.pointer_down(&mut state_scene);
 - R51.89.1 — dispatch.rs RpcError literal 14 site full sweep (builder 통일, struct 직접 구성 0)
 - R51.93 — TouchPhase::Cancelled commit-class fix (pointer_cancel SCXML + InputRouter API + 5 widget)
 - R51.93.1 — RadioGroup 합성 cancel propagation 회귀 테스트 (template fix 가 composite path 자동 적용 검증)
+- R51.94 — AccessTreeBuilder::build 가 debug_assert 로 tag_to_node_id injective 검증 (release 0-cost)
 
 
 
