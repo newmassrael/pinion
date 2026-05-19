@@ -177,8 +177,14 @@ impl AccessTreeBuilder {
     /// the tree (default = `true`). After the first build,
     /// downstream callers pass `false` so the `tree` field is
     /// omitted per AccessKit's "rarely-updated" guidance.
-    #[must_use]
-    pub fn initial(mut self, initial: bool) -> Self {
+    ///
+    /// R51.84 §5.40 — signature is `&mut self -> &mut Self` to match
+    /// every other [`AccessTreeBuilder`] setter (`add`, `focused`,
+    /// `dirty_tags`, `active_descendant`). The pre-R51.84 by-value
+    /// shape (`mut self -> Self`) forced the shell to write
+    /// `builder = builder.initial(false)` instead of the plain
+    /// `builder.initial(false)` form the other setters take.
+    pub fn initial(&mut self, initial: bool) -> &mut Self {
         self.initial = initial;
         self
     }
@@ -425,7 +431,9 @@ mod tests {
 
     #[test]
     fn initial_false_omits_tree_field() {
-        let update = AccessTreeBuilder::new().initial(false).build(None);
+        let mut b = AccessTreeBuilder::new();
+        b.initial(false);
+        let update = b.build(None);
         assert!(update.tree.is_none());
     }
 

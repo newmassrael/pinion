@@ -3878,7 +3878,8 @@
         "R51.80 — ShellCore deeper extraction: paint+a11y+finalize+input+focus wrappers 정통",
         "R51.81 — TextNode.role + TextRole 정통, decoration glyph 의 aria_label Band-Aid 청산",
         "R51.82 — dispatch_access_action::Focus composite tag 처리, access_child_invoke 라우팅",
-        "R51.83 — ShellCore 14 필드 + AppShell.core pub(crate) → private (R51.80 encapsulation claim 회복)"
+        "R51.83 — ShellCore 14 필드 + AppShell.core pub(crate) → private (R51.80 encapsulation claim 회복)",
+        "R51.84 — AccessTreeBuilder::initial &mut self 통일 + AccessFocus::with_active_descendant builder"
       ],
       "alternatives_rejected": [
         {
@@ -4172,6 +4173,10 @@
         {
           "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "ShellCore::modifiers_shift_key"
+        },
+        {
+          "file": "crates/pinion-a11y/src/focus.rs",
+          "symbol": "AccessFocus::with_active_descendant"
         }
       ],
       "decision_status": "active"
@@ -8404,6 +8409,60 @@
         "R51.85 — pinion-rpc focus 4 route (set/get/next/prev) Option<&mut FocusManager> null check + RpcError 매핑 helper 추출 (DRY 회복)",
         "R51.86 — TextRole::Label variant 활용처 land 또는 enum 에서 제거 + carry 명시 (strict YAGNI textbook)",
         "R51.87 — RadioGroup focused_index vs selected_index 분리 (WAI-ARIA roving-tabindex 정통, SCE template 재설계 동반)"
+      ]
+    },
+    "R51.84": {
+      "decision_summary": "§5.40 R51.84 — AccessTreeBuilder::initial signature 통일 (`mut self → Self` 에서 `&mut self → &mut Self` 로) + AccessFocus::with_active_descendant chainable builder 신설 (composite shorthand 가 atomic+with_active_descendant 로 delegate).",
+      "changes_bullets": [
+        "crates/pinion-a11y/src/tree.rs — AccessTreeBuilder::initial signature `mut self → Self` 에서 `&mut self → &mut Self` 로 통일 (add/focused/dirty_tags/active_descendant 과 일관)",
+        "crates/pinion-a11y/src/tree.rs — initial_false_omits_tree_field test 가 by-value chain 대신 let-binding 으로 재구성",
+        "crates/pinion-shell/src/lib.rs — render 의 `builder = builder.initial(false)` 가 plain `builder.initial(false)` 로 대체 (다른 setter 와 일관)",
+        "crates/pinion-a11y/tests/conformance.rs — 3 test 의 by-value chain (subsequent_emission_omits_tree_metadata / incremental_emit_* / incremental_empty_dirty_*) 을 let-binding form 으로 전환",
+        "crates/pinion-a11y/src/focus.rs — AccessFocus::with_active_descendant(mut self, child) -> Self chainable builder 신설 (AccessNode::with_* 패턴과 일관)",
+        "crates/pinion-a11y/src/focus.rs — AccessFocus::composite shorthand 가 Self::atomic(parent).with_active_descendant(child) 로 delegate (single source of truth for active-descendant 설정)",
+        "crates/pinion-a11y/src/focus.rs — r51_84_with_active_descendant_chains_on_atomic 회귀 test 신설 (chain == composite shorthand 동등성 검증)"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — 모든 crate clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello — 1504 pass / 0 fail / 9 ignored (+1 AccessFocus chain regression test, +1 intentionally-ignored doctest)",
+        "AccessFocus chain == composite shorthand byte-identical 검증 (PartialEq), 필드 구조 변경 없음"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.84 evaluated but skipped: ContainerNode::with_aria_label → with_name_override rename. 이유: 구현차가 WAI-ARIA 1.2 §4.3 (Accessible Name Computation) + §5.2.6 (aria-label attribute) 와 1:1 일치함 — scene_label.rs 의 우선순위 체인이 경우 수는 aria-labelledby ≻ aria-label ≻ name-from-content 를 충실히 반영. 현재 이름이 표준에 정렬됨.",
+        "R51.84 evaluated but skipped: handle_focus_traverse empty tab_order early return. 이유: FocusManager::advance 가 line 151-153 에서 이미 `if self.tab_order.is_empty() { return false; }` 로 short-circuit 함 — shell-layer 중복 체크는 방어적 중복코드, 동작 변경 없음.",
+        "R51.85 — pinion-rpc focus 4 route (set/get/next/prev) Option<&mut FocusManager> null check + RpcError 매핑 helper 추출",
+        "R51.86 — TextRole::Label variant 활용처 land 또는 enum 에서 제거",
+        "R51.87 — RadioGroup focused_index vs selected_index 분리 (SCE template 재설계)"
+      ],
+      "publishable_decision_summary": "§5.40 R51.84 — AccessTreeBuilder::initial signature 통일 (`mut self → Self` 에서 `&mut self → &mut Self` 로) + AccessFocus::with_active_descendant chainable builder 신설 (composite shorthand 가 atomic+with_active_descendant 로 delegate).",
+      "publishable_changes_bullets": [
+        "crates/pinion-a11y/src/tree.rs — AccessTreeBuilder::initial signature `mut self → Self` 에서 `&mut self → &mut Self` 로 통일 (add/focused/dirty_tags/active_descendant 과 일관)",
+        "crates/pinion-a11y/src/tree.rs — initial_false_omits_tree_field test 가 by-value chain 대신 let-binding 으로 재구성",
+        "crates/pinion-shell/src/lib.rs — render 의 `builder = builder.initial(false)` 가 plain `builder.initial(false)` 로 대체 (다른 setter 와 일관)",
+        "crates/pinion-a11y/tests/conformance.rs — 3 test 의 by-value chain (subsequent_emission_omits_tree_metadata / incremental_emit_* / incremental_empty_dirty_*) 을 let-binding form 으로 전환",
+        "crates/pinion-a11y/src/focus.rs — AccessFocus::with_active_descendant(mut self, child) -> Self chainable builder 신설 (AccessNode::with_* 패턴과 일관)",
+        "crates/pinion-a11y/src/focus.rs — AccessFocus::composite shorthand 가 Self::atomic(parent).with_active_descendant(child) 로 delegate (single source of truth for active-descendant 설정)",
+        "crates/pinion-a11y/src/focus.rs — r51_84_with_active_descendant_chains_on_atomic 회귀 test 신설 (chain == composite shorthand 동등성 검증)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — 모든 crate clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello — 1504 pass / 0 fail / 9 ignored (+1 AccessFocus chain regression test, +1 intentionally-ignored doctest)",
+        "AccessFocus chain == composite shorthand byte-identical 검증 (PartialEq), 필드 구조 변경 없음"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.84 evaluated but skipped: ContainerNode::with_aria_label → with_name_override rename. 이유: 구현차가 WAI-ARIA 1.2 §4.3 (Accessible Name Computation) + §5.2.6 (aria-label attribute) 와 1:1 일치함 — scene_label.rs 의 우선순위 체인이 경우 수는 aria-labelledby ≻ aria-label ≻ name-from-content 를 충실히 반영. 현재 이름이 표준에 정렬됨.",
+        "R51.84 evaluated but skipped: handle_focus_traverse empty tab_order early return. 이유: FocusManager::advance 가 line 151-153 에서 이미 `if self.tab_order.is_empty() { return false; }` 로 short-circuit 함 — shell-layer 중복 체크는 방어적 중복코드, 동작 변경 없음.",
+        "R51.85 — pinion-rpc focus 4 route (set/get/next/prev) Option<&mut FocusManager> null check + RpcError 매핑 helper 추출",
+        "R51.86 — TextRole::Label variant 활용처 land 또는 enum 에서 제거",
+        "R51.87 — RadioGroup focused_index vs selected_index 분리 (SCE template 재설계)"
       ]
     },
     "Round 1": {

@@ -283,7 +283,9 @@ fn initial_emission_includes_tree_metadata() {
 
 #[test]
 fn subsequent_emission_omits_tree_metadata() {
-    let update = AccessTreeBuilder::new().initial(false).build(None);
+    let mut b = AccessTreeBuilder::new();
+    b.initial(false);
+    let update = b.build(None);
     assert!(update.tree.is_none());
 }
 
@@ -299,7 +301,8 @@ fn incremental_emit_carries_only_dirty_widget() {
     // R51.72 §5.40 — simulate a "checkbox toggled" frame: the
     // initial frame emits the full mixed scene; the next frame
     // diffs and emits only the changed tag plus the synthetic root.
-    let mut builder = AccessTreeBuilder::new().initial(false);
+    let mut builder = AccessTreeBuilder::new();
+    builder.initial(false);
     for node in mixed_scene() {
         builder.add(&node);
     }
@@ -321,7 +324,8 @@ fn incremental_empty_dirty_still_carries_focus_and_root() {
     // R51.72 §5.40 — no node body changed, but focus moved. The
     // AT still receives the updated focus via `TreeUpdate::focus`;
     // node payload is just the root carrier.
-    let mut builder = AccessTreeBuilder::new().initial(false);
+    let mut builder = AccessTreeBuilder::new();
+    builder.initial(false);
     for node in mixed_scene() {
         builder.add(&node);
     }

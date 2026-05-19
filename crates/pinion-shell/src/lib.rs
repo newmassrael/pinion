@@ -1641,7 +1641,7 @@ impl<V: WidgetView> AppShell<V> {
                 adapter.update_if_active(|| {
                     let mut builder = AccessTreeBuilder::new();
                     if !initial {
-                        builder = builder.initial(false);
+                        builder.initial(false);
                     }
                     for node in nodes_ref {
                         builder.add(node);
