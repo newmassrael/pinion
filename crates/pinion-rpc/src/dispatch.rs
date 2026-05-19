@@ -164,9 +164,13 @@ impl RpcError {
     }
 
     /// R51.89 §5.40 — JSON-RPC `-32602 Invalid params` with a
-    /// `Display` detail. Shared between the in-crate
-    /// [`invalid_params`] wrapper and the `focus/*` adapter so the
-    /// code + message stay in lockstep across the dispatcher.
+    /// `Display` detail. The dispatcher and the `focus/*` adapter
+    /// share this builder so code + message stay in lockstep.
+    ///
+    /// R51.101 §5.40 — pre-R51.101 callers reached this through a
+    /// crate-local `fn invalid_params(&str)` wrapper kept for
+    /// R51.89.1's incremental 30-caller sweep. The wrapper is now
+    /// retired (all sites call `RpcError::invalid_params` directly).
     #[must_use]
     pub fn invalid_params(detail: impl std::fmt::Display) -> Self {
         Self::new(-32602, "Invalid params").with_data_string(detail.to_string())
@@ -548,10 +552,10 @@ fn mutates_scene_on_success(method: &str) -> bool {
 
 fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
 
     match query(scene, path) {
@@ -562,16 +566,16 @@ fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, Rp
 
 fn handle_scene_click(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
     let Some(x) = params.get("x").and_then(Value::as_f64) else {
-        return Err(invalid_params("params.x missing or not a number"));
+        return Err(RpcError::invalid_params("params.x missing or not a number"));
     };
     let Some(y) = params.get("y").and_then(Value::as_f64) else {
-        return Err(invalid_params("params.y missing or not a number"));
+        return Err(RpcError::invalid_params("params.y missing or not a number"));
     };
 
     #[allow(clippy::cast_possible_truncation)]
@@ -599,16 +603,16 @@ fn click_error_to_rpc(err: ClickError) -> RpcError {
 
 fn handle_scene_rewind(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
     let Some(value_json) = params.get("value") else {
-        return Err(invalid_params("params.value missing"));
+        return Err(RpcError::invalid_params("params.value missing"));
     };
     let Some(value) = json_to_introspect_value(value_json) else {
-        return Err(invalid_params("params.value unsupported (v0: null/bool/number/string only)"));
+        return Err(RpcError::invalid_params("params.value unsupported (v0: null/bool/number/string only)"));
     };
 
     match rewind(scene, path, value) {
@@ -630,10 +634,10 @@ fn rewind_error_to_rpc(err: RewindError) -> RpcError {
 
 fn handle_scene_snapshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
 
     match snapshot(scene, path) {
@@ -686,16 +690,16 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
 
 fn handle_scene_dry_run(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
     let Some(value_json) = params.get("value") else {
-        return Err(invalid_params("params.value missing"));
+        return Err(RpcError::invalid_params("params.value missing"));
     };
     let Some(value) = json_to_introspect_value(value_json) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.value unsupported (v0: null/bool/number/string only)",
         ));
     };
@@ -722,24 +726,24 @@ fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
 
 fn handle_scene_wait_for(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
     let Some(target_json) = params.get("target") else {
-        return Err(invalid_params("params.target missing"));
+        return Err(RpcError::invalid_params("params.target missing"));
     };
     let Some(target) = json_to_introspect_value(target_json) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.target unsupported (v0: null/bool/number/string only)",
         ));
     };
     let Some(max_attempts) = params.get("max_attempts").and_then(Value::as_u64) else {
-        return Err(invalid_params("params.max_attempts missing or not u64"));
+        return Err(RpcError::invalid_params("params.max_attempts missing or not u64"));
     };
     let max_attempts = u32::try_from(max_attempts)
-        .map_err(|_| invalid_params("params.max_attempts exceeds u32 range"))?;
+        .map_err(|_| RpcError::invalid_params("params.max_attempts exceeds u32 range"))?;
 
     match wait_for(scene, path, &target, max_attempts) {
         Ok(outcome) => Ok(wait_outcome_to_json(&outcome)),
@@ -769,10 +773,10 @@ fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
 
 fn handle_scene_screenshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
 
     match screenshot(scene, path) {
@@ -807,16 +811,16 @@ fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
 
 fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
     let Some(args_json) = params.get("args") else {
-        return Err(invalid_params("params.args missing"));
+        return Err(RpcError::invalid_params("params.args missing"));
     };
     let Some(args) = json_to_introspect_value(args_json) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.args is not a representable IntrospectValue",
         ));
     };
@@ -856,16 +860,16 @@ fn intents_error_to_rpc(err: IntentsError) -> RpcError {
 
 fn handle_scene_locate(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(x) = params.get("x").and_then(Value::as_u64) else {
-        return Err(invalid_params("params.x missing or not a non-negative integer"));
+        return Err(RpcError::invalid_params("params.x missing or not a non-negative integer"));
     };
     let Some(y) = params.get("y").and_then(Value::as_u64) else {
-        return Err(invalid_params("params.y missing or not a non-negative integer"));
+        return Err(RpcError::invalid_params("params.y missing or not a non-negative integer"));
     };
-    let x32 = u32::try_from(x).map_err(|_| invalid_params("params.x exceeds u32 range"))?;
-    let y32 = u32::try_from(y).map_err(|_| invalid_params("params.y exceeds u32 range"))?;
+    let x32 = u32::try_from(x).map_err(|_| RpcError::invalid_params("params.x exceeds u32 range"))?;
+    let y32 = u32::try_from(y).map_err(|_| RpcError::invalid_params("params.y exceeds u32 range"))?;
 
     match locate(scene, x32, y32) {
         Ok(outcome) => Ok(locate_outcome_to_json(&outcome)),
@@ -895,14 +899,14 @@ fn bbox_to_json(r: &pinion_core::scene::Rect) -> Value {
 
 fn handle_scene_locate_region(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let read_u32 = |k: &str| -> Result<u32, RpcError> {
         let raw = params
             .get(k)
             .and_then(Value::as_u64)
-            .ok_or_else(|| invalid_params(&format!("params.{k} missing or not a non-negative integer")))?;
-        u32::try_from(raw).map_err(|_| invalid_params(&format!("params.{k} exceeds u32 range")))
+            .ok_or_else(|| RpcError::invalid_params(&format!("params.{k} missing or not a non-negative integer")))?;
+        u32::try_from(raw).map_err(|_| RpcError::invalid_params(&format!("params.{k} exceeds u32 range")))
     };
     let x = read_u32("x")?;
     let y = read_u32("y")?;
@@ -932,10 +936,10 @@ fn locate_error_to_rpc(err: LocateError) -> RpcError {
 
 fn handle_scene_bbox(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(invalid_params("params.path missing or not a string"));
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
     match bbox(scene, path) {
         Ok(r) => {
@@ -973,13 +977,13 @@ where
     F: FnMut(u32, u32) -> Scene + ?Sized,
 {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let typed: LayoutQueryParams = serde_json::from_value(params.clone())
-        .map_err(|e| invalid_params(&format!("params shape: {e}")))?;
+        .map_err(|e| RpcError::invalid_params(&format!("params shape: {e}")))?;
     match layout_query(&typed, paint_producer, last_paint_layout) {
         Ok(node) => serde_json::to_value(&node)
-            .map_err(|e| invalid_params(&format!("serialize: {e}"))),
+            .map_err(|e| RpcError::invalid_params(&format!("serialize: {e}"))),
         Err(err) => Err(layout_query_error_to_rpc(err)),
     }
 }
@@ -1005,13 +1009,13 @@ where
     F: FnMut(u32, u32) + ?Sized,
 {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let typed: ResizeParams = serde_json::from_value(params.clone())
-        .map_err(|e| invalid_params(&format!("params shape: {e}")))?;
+        .map_err(|e| RpcError::invalid_params(&format!("params shape: {e}")))?;
     match resize(typed, resize_request) {
         Ok(outcome) => serde_json::to_value(outcome)
-            .map_err(|e| invalid_params(&format!("serialize: {e}"))),
+            .map_err(|e| RpcError::invalid_params(&format!("serialize: {e}"))),
         Err(err) => Err(resize_error_to_rpc(err)),
     }
 }
@@ -1029,15 +1033,15 @@ fn handle_scene_cancel_preview(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(raw_id) = params.get("preview_id").and_then(Value::as_u64) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.preview_id missing or not a positive integer",
         ));
     };
     let Some(id) = PreviewId::try_new(raw_id) else {
-        return Err(invalid_params("params.preview_id must be non-zero"));
+        return Err(RpcError::invalid_params("params.preview_id must be non-zero"));
     };
     let cancelled = cancel_preview(previews, id);
     let mut map = serde_json::Map::new();
@@ -1051,14 +1055,14 @@ fn handle_scene_propose_change(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let proposal = parse_typed_proposal(params)?;
     let ttl_hint = match params.get("ttl_ms") {
         None | Some(Value::Null) => None,
         Some(v) => {
             let Some(ms) = v.as_u64() else {
-                return Err(invalid_params(
+                return Err(RpcError::invalid_params(
                     "params.ttl_ms must be a non-negative integer (ms)",
                 ));
             };
@@ -1073,24 +1077,24 @@ fn handle_scene_propose_change(
 
 fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
     let Some(kind) = params.get("kind").and_then(Value::as_str) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.kind missing or not a string (expected one of: SetSignal, DispatchIntent, SetStyle, ReplaceView)",
         ));
     };
     match kind {
         "SetSignal" => {
             let Some(target_path) = params.get("target_path").and_then(Value::as_str) else {
-                return Err(invalid_params(
+                return Err(RpcError::invalid_params(
                     "params.target_path missing or not a string",
                 ));
             };
             let Some(signal_path) = params.get("signal_path").and_then(Value::as_str) else {
-                return Err(invalid_params(
+                return Err(RpcError::invalid_params(
                     "params.signal_path missing or not a string",
                 ));
             };
             let Some(value) = params.get("value") else {
-                return Err(invalid_params("params.value missing"));
+                return Err(RpcError::invalid_params("params.value missing"));
             };
             Ok(TypedProposal::SetSignal {
                 target_path: target_path.to_owned(),
@@ -1100,21 +1104,21 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
         }
         "DispatchIntent" => {
             let Some(target_path) = params.get("target_path").and_then(Value::as_str) else {
-                return Err(invalid_params(
+                return Err(RpcError::invalid_params(
                     "params.target_path missing or not a string",
                 ));
             };
             let Some(intent_obj) = params.get("intent") else {
-                return Err(invalid_params("params.intent missing"));
+                return Err(RpcError::invalid_params("params.intent missing"));
             };
             let Some(tag) = intent_obj.get("tag").and_then(Value::as_str) else {
-                return Err(invalid_params(
+                return Err(RpcError::invalid_params(
                     "params.intent.tag missing or not a string",
                 ));
             };
             let payload_value = intent_obj.get("payload").cloned().unwrap_or(Value::Null);
             let payload = json_to_introspect_value(&payload_value).ok_or_else(|| {
-                invalid_params("params.intent.payload not a representable IntrospectValue shape")
+                RpcError::invalid_params("params.intent.payload not a representable IntrospectValue shape")
             })?;
             Ok(TypedProposal::DispatchIntent {
                 target_path: target_path.to_owned(),
@@ -1123,12 +1127,12 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
         }
         "SetStyle" => {
             let Some(target_path) = params.get("target_path").and_then(Value::as_str) else {
-                return Err(invalid_params(
+                return Err(RpcError::invalid_params(
                     "params.target_path missing or not a string",
                 ));
             };
             let Some(style_obj) = params.get("style") else {
-                return Err(invalid_params("params.style missing"));
+                return Err(RpcError::invalid_params("params.style missing"));
             };
             let style = parse_box_style(style_obj)?;
             Ok(TypedProposal::SetStyle {
@@ -1138,12 +1142,12 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
         }
         "ReplaceView" => {
             let Some(target_path) = params.get("target_path").and_then(Value::as_str) else {
-                return Err(invalid_params(
+                return Err(RpcError::invalid_params(
                     "params.target_path missing or not a string",
                 ));
             };
             let Some(replacement_obj) = params.get("replacement") else {
-                return Err(invalid_params("params.replacement missing"));
+                return Err(RpcError::invalid_params("params.replacement missing"));
             };
             let replacement = parse_view_blueprint(replacement_obj)?;
             Ok(TypedProposal::ReplaceView {
@@ -1171,7 +1175,7 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
 /// scope for the JSON-RPC boundary).
 fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
     let Some(kind) = v.get("kind").and_then(Value::as_str) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.replacement.kind missing or not a string (expected one of: Box, Container, Text, Path, Image)",
         ));
     };
@@ -1180,13 +1184,13 @@ fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
     match kind {
         "Box" => {
             let style = parse_box_style(
-                v.get("style").ok_or_else(|| invalid_params("params.replacement.style missing"))?,
+                v.get("style").ok_or_else(|| RpcError::invalid_params("params.replacement.style missing"))?,
             )?;
             Ok(ViewBlueprint::Box { rect, style, tag })
         }
         "Container" => {
             let style = parse_box_style(
-                v.get("style").ok_or_else(|| invalid_params("params.replacement.style missing"))?,
+                v.get("style").ok_or_else(|| RpcError::invalid_params("params.replacement.style missing"))?,
             )?;
             let children_value = v.get("children").unwrap_or(&Value::Null);
             let children = match children_value {
@@ -1196,7 +1200,7 @@ fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
                     .map(parse_view_blueprint)
                     .collect::<Result<Vec<_>, _>>()?,
                 _ => {
-                    return Err(invalid_params(
+                    return Err(RpcError::invalid_params(
                         "params.replacement.children must be an array",
                     ));
                 }
@@ -1213,7 +1217,7 @@ fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
                 .get("content")
                 .and_then(Value::as_str)
                 .ok_or_else(|| {
-                    invalid_params("params.replacement.content missing or not a string")
+                    RpcError::invalid_params("params.replacement.content missing or not a string")
                 })?
                 .to_owned();
             let style = parse_text_style(v.get("style"))?;
@@ -1239,7 +1243,7 @@ fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
                 .get("source")
                 .and_then(Value::as_str)
                 .ok_or_else(|| {
-                    invalid_params("params.replacement.source missing or not a string")
+                    RpcError::invalid_params("params.replacement.source missing or not a string")
                 })?
                 .to_owned();
             let style = parse_image_style(v.get("style"))?;
@@ -1250,10 +1254,10 @@ fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
                 tag,
             })
         }
-        "Effect" | "External" => Err(invalid_params(&format!(
+        "Effect" | "External" => Err(RpcError::invalid_params(&format!(
             "params.replacement.kind {kind} not supported by wire (closed-by-design — Effect lacks declarative shape; External needs factory registry)"
         ))),
-        other => Err(invalid_params(&format!(
+        other => Err(RpcError::invalid_params(&format!(
             "params.replacement.kind unrecognised: {other} (expected one of: Box, Container, Text, Path, Image)"
         ))),
     }
@@ -1264,7 +1268,7 @@ fn parse_optional_tag(v: Option<&Value>) -> Result<Option<String>, RpcError> {
     match v {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
-        _ => Err(invalid_params(
+        _ => Err(RpcError::invalid_params(
             "params.replacement.tag must be a string or null",
         )),
     }
@@ -1279,12 +1283,12 @@ fn parse_text_style(v: Option<&Value>) -> Result<pinion_core::style::TextStyle, 
     let mut style = pinion_core::style::TextStyle::new();
     if let Some(font_size) = obj.get("font_size_px").and_then(Value::as_u64) {
         let n = u32::try_from(font_size)
-            .map_err(|_| invalid_params("params.replacement.style.font_size_px exceeds u32 range"))?;
+            .map_err(|_| RpcError::invalid_params("params.replacement.style.font_size_px exceeds u32 range"))?;
         style.font_size_px = n;
     }
     if let Some(fg) = obj.get("fg_color").and_then(Value::as_u64) {
         let n = u32::try_from(fg)
-            .map_err(|_| invalid_params("params.replacement.style.fg_color exceeds u32 range"))?;
+            .map_err(|_| RpcError::invalid_params("params.replacement.style.fg_color exceeds u32 range"))?;
         style.fg_color = Color::from_argb(n);
     }
     if let Some(family) = obj.get("font_family").and_then(Value::as_str) {
@@ -1302,7 +1306,7 @@ fn parse_path_style(v: Option<&Value>) -> Result<pinion_core::style::PathStyle, 
     let mut style = pinion_core::style::PathStyle::default();
     if let Some(fill) = obj.get("fill").and_then(Value::as_u64) {
         let n = u32::try_from(fill)
-            .map_err(|_| invalid_params("params.replacement.style.fill exceeds u32 range"))?;
+            .map_err(|_| RpcError::invalid_params("params.replacement.style.fill exceeds u32 range"))?;
         style.fill = Some(Color::from_argb(n));
     }
     if let Some(stroke_obj) = obj.get("stroke") {
@@ -1310,18 +1314,18 @@ fn parse_path_style(v: Option<&Value>) -> Result<pinion_core::style::PathStyle, 
             .get("color")
             .and_then(Value::as_u64)
             .ok_or_else(|| {
-                invalid_params("params.replacement.style.stroke.color missing or not u64")
+                RpcError::invalid_params("params.replacement.style.stroke.color missing or not u64")
             })?;
         let stroke_width = stroke_obj
             .get("width")
             .and_then(Value::as_u64)
             .ok_or_else(|| {
-                invalid_params("params.replacement.style.stroke.width missing or not u64")
+                RpcError::invalid_params("params.replacement.style.stroke.width missing or not u64")
             })?;
         let c = u32::try_from(stroke_color)
-            .map_err(|_| invalid_params("params.replacement.style.stroke.color exceeds u32 range"))?;
+            .map_err(|_| RpcError::invalid_params("params.replacement.style.stroke.color exceeds u32 range"))?;
         let w = u32::try_from(stroke_width)
-            .map_err(|_| invalid_params("params.replacement.style.stroke.width exceeds u32 range"))?;
+            .map_err(|_| RpcError::invalid_params("params.replacement.style.stroke.width exceeds u32 range"))?;
         style.stroke = Some(pinion_core::style::Stroke::new(Color::from_argb(c), w));
     }
     Ok(style)
@@ -1341,7 +1345,7 @@ fn parse_image_style(v: Option<&Value>) -> Result<pinion_core::style::ImageStyle
             "Cover" => pinion_core::style::Fit::Cover,
             "Tile" => pinion_core::style::Fit::Tile,
             other => {
-                return Err(invalid_params(&format!(
+                return Err(RpcError::invalid_params(&format!(
                     "params.replacement.style.fit unrecognised: {other} (expected Fill/Contain/Cover/Tile)"
                 )));
             }
@@ -1349,7 +1353,7 @@ fn parse_image_style(v: Option<&Value>) -> Result<pinion_core::style::ImageStyle
     }
     if let Some(tint) = obj.get("tint").and_then(Value::as_u64) {
         let n = u32::try_from(tint)
-            .map_err(|_| invalid_params("params.replacement.style.tint exceeds u32 range"))?;
+            .map_err(|_| RpcError::invalid_params("params.replacement.style.tint exceeds u32 range"))?;
         style.tint = Some(Color::from_argb(n));
     }
     Ok(style)
@@ -1362,7 +1366,7 @@ fn parse_path_commands(v: Option<&Value>) -> Result<Vec<pinion_core::scene::Path
         return Ok(Vec::new());
     };
     let Some(arr) = arr_val.as_array() else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.replacement.commands must be an array",
         ));
     };
@@ -1372,17 +1376,17 @@ fn parse_path_commands(v: Option<&Value>) -> Result<Vec<pinion_core::scene::Path
 fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcError> {
     use pinion_core::scene::{PathCommand, PathPoint};
     let Some(op) = v.get("op").and_then(Value::as_str) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.replacement.commands[].op missing or not a string",
         ));
     };
     let read_point = |field: &str| -> Result<PathPoint, RpcError> {
         let obj = v.get(field).ok_or_else(|| {
-            invalid_params(&format!("params.replacement.commands[].{field} missing"))
+            RpcError::invalid_params(&format!("params.replacement.commands[].{field} missing"))
         })?;
         let read_coord = |axis: &str| -> Result<f32, RpcError> {
             let n = obj.get(axis).and_then(Value::as_f64).ok_or_else(|| {
-                invalid_params(&format!(
+                RpcError::invalid_params(&format!(
                     "params.replacement.commands[].{field}.{axis} missing or not numeric"
                 ))
             })?;
@@ -1391,7 +1395,7 @@ fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcE
             // the f32 narrowing has explicit bounded-finite preconditions
             // rather than relying on `as` truncation semantics.
             if !n.is_finite() {
-                return Err(invalid_params(&format!(
+                return Err(RpcError::invalid_params(&format!(
                     "params.replacement.commands[].{field}.{axis} must be finite"
                 )));
             }
@@ -1412,7 +1416,7 @@ fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcE
             end: read_point("end")?,
         }),
         "Close" => Ok(PathCommand::Close),
-        other => Err(invalid_params(&format!(
+        other => Err(RpcError::invalid_params(&format!(
             "params.replacement.commands[].op unrecognised: {other} (expected MoveTo/LineTo/CurveTo/Close)"
         ))),
     }
@@ -1423,16 +1427,16 @@ fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcE
 /// [`parse_view_blueprint`].
 fn parse_rect(v: Option<&Value>) -> Result<pinion_core::scene::Rect, RpcError> {
     let Some(obj) = v else {
-        return Err(invalid_params("params.replacement.rect missing"));
+        return Err(RpcError::invalid_params("params.replacement.rect missing"));
     };
     let read = |field: &str| -> Result<u32, RpcError> {
         let n = obj.get(field).and_then(Value::as_u64).ok_or_else(|| {
-            invalid_params(&format!(
+            RpcError::invalid_params(&format!(
                 "params.replacement.rect.{field} missing or not an unsigned integer"
             ))
         })?;
         u32::try_from(n).map_err(|_| {
-            invalid_params(&format!("params.replacement.rect.{field} exceeds u32 range"))
+            RpcError::invalid_params(&format!("params.replacement.rect.{field} exceeds u32 range"))
         })
     };
     Ok(pinion_core::scene::Rect::new(
@@ -1451,18 +1455,18 @@ fn parse_rect(v: Option<&Value>) -> Result<pinion_core::scene::Rect, RpcError> {
 /// wire stays forward-compatible with future `BoxStyle` additions.
 fn parse_box_style(style: &Value) -> Result<BoxStyle, RpcError> {
     let Some(fill) = style.get("fill").and_then(Value::as_u64) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.style.fill missing or not an unsigned integer",
         ));
     };
     // u32 ARGB is the wire shape; clamp to u32 explicitly so callers
     // cannot smuggle high bits past the BoxStyle field type.
     let fill_argb = u32::try_from(fill)
-        .map_err(|_| invalid_params("params.style.fill exceeds u32 range"))?;
+        .map_err(|_| RpcError::invalid_params("params.style.fill exceeds u32 range"))?;
     let mut out = BoxStyle::filled(Color::from_argb(fill_argb));
     if let Some(corner) = style.get("corner_radius").and_then(Value::as_u64) {
         let radius = u32::try_from(corner)
-            .map_err(|_| invalid_params("params.style.corner_radius exceeds u32 range"))?;
+            .map_err(|_| RpcError::invalid_params("params.style.corner_radius exceeds u32 range"))?;
         out = out.with_corner_radius(radius);
     }
     // Border requires both color + width; either alone is incoherent
@@ -1472,14 +1476,14 @@ fn parse_box_style(style: &Value) -> Result<BoxStyle, RpcError> {
     match (border_color, border_width) {
         (Some(c), Some(w)) => {
             let c = u32::try_from(c)
-                .map_err(|_| invalid_params("params.style.border_color exceeds u32 range"))?;
+                .map_err(|_| RpcError::invalid_params("params.style.border_color exceeds u32 range"))?;
             let w = u32::try_from(w)
-                .map_err(|_| invalid_params("params.style.border_width exceeds u32 range"))?;
+                .map_err(|_| RpcError::invalid_params("params.style.border_width exceeds u32 range"))?;
             out = out.with_border(Border::new(Color::from_argb(c), w));
         }
         (None, None) => {}
         _ => {
-            return Err(invalid_params(
+            return Err(RpcError::invalid_params(
                 "params.style.border_color and border_width must be provided together",
             ));
         }
@@ -1507,15 +1511,15 @@ fn handle_scene_apply_preview(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(raw_id) = params.get("preview_id").and_then(Value::as_u64) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.preview_id missing or not a positive integer",
         ));
     };
     let Some(id) = PreviewId::try_new(raw_id) else {
-        return Err(invalid_params("params.preview_id must be non-zero"));
+        return Err(RpcError::invalid_params("params.preview_id must be non-zero"));
     };
     match apply_preview(scene, revision, previews, id) {
         Ok(outcome) => Ok(apply_outcome_to_json(&outcome)),
@@ -1638,20 +1642,20 @@ fn handle_font_parse(
 ) -> Result<Value, RpcError> {
     let registry = registry.ok_or_else(font_registry_unavailable)?;
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(bytes_arr) = params.get("bytes").and_then(Value::as_array) else {
-        return Err(invalid_params("params.bytes missing or not an array"));
+        return Err(RpcError::invalid_params("params.bytes missing or not an array"));
     };
     let mut bytes: Vec<u8> = Vec::with_capacity(bytes_arr.len());
     for (i, v) in bytes_arr.iter().enumerate() {
         let Some(n) = v.as_u64() else {
-            return Err(invalid_params(&format!(
+            return Err(RpcError::invalid_params(&format!(
                 "params.bytes[{i}] not an unsigned integer"
             )));
         };
         let byte = u8::try_from(n).map_err(|_| {
-            invalid_params(&format!("params.bytes[{i}] = {n} out of u8 range"))
+            RpcError::invalid_params(&format!("params.bytes[{i}] = {n} out of u8 range"))
         })?;
         bytes.push(byte);
     }
@@ -1695,15 +1699,15 @@ fn handle_font_glyph_id_for(
     let font_id = font_id_from_params(params)?;
     let Some(params) = params else {
         // unreachable: font_id_from_params already rejected None.
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(codepoint) = params.get("codepoint").and_then(Value::as_u64) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.codepoint missing or not an unsigned integer",
         ));
     };
     let codepoint = u32::try_from(codepoint)
-        .map_err(|_| invalid_params("params.codepoint out of u32 range"))?;
+        .map_err(|_| RpcError::invalid_params("params.codepoint out of u32 range"))?;
     match font::glyph_id_for(registry, font_id, codepoint) {
         Ok(outcome) => {
             let mut map = serde_json::Map::new();
@@ -1721,15 +1725,15 @@ fn handle_font_glyph_id_for(
 
 fn font_id_from_params(params: Option<&Value>) -> Result<u32, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(font_id) = params.get("font_id").and_then(Value::as_u64) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.font_id missing or not an unsigned integer",
         ));
     };
     u32::try_from(font_id)
-        .map_err(|_| invalid_params("params.font_id out of u32 range"))
+        .map_err(|_| RpcError::invalid_params("params.font_id out of u32 range"))
 }
 
 fn font_registry_unavailable() -> RpcError {
@@ -1760,15 +1764,15 @@ fn handle_font_glyph_outline(
     let registry = registry.ok_or_else(font_registry_unavailable)?;
     let font_id = font_id_from_params(params)?;
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(glyph_id) = params.get("glyph_id").and_then(Value::as_u64) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.glyph_id missing or not an unsigned integer",
         ));
     };
     let glyph_id = u16::try_from(glyph_id)
-        .map_err(|_| invalid_params("params.glyph_id out of u16 range"))?;
+        .map_err(|_| RpcError::invalid_params("params.glyph_id out of u16 range"))?;
     match font::glyph_outline(registry, font_id, glyph_id) {
         Ok(outcome) => serialize_outcome(&outcome, "glyph_outline"),
         Err(err) => Err(font_error_to_rpc(&err)),
@@ -1857,15 +1861,15 @@ fn handle_font_list(registry: Option<&FontRegistry>) -> Result<Value, RpcError> 
 
 fn handle_text_normalize(params: Option<&Value>) -> Result<Value, RpcError> {
     let Some(params) = params else {
-        return Err(invalid_params("missing params"));
+        return Err(RpcError::invalid_params("missing params"));
     };
     let Some(text) = params.get("text").and_then(Value::as_str) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.text missing or not a string",
         ));
     };
     let Some(form_str) = params.get("form").and_then(Value::as_str) else {
-        return Err(invalid_params(
+        return Err(RpcError::invalid_params(
             "params.form missing or not a string",
         ));
     };
@@ -1875,7 +1879,7 @@ fn handle_text_normalize(params: Option<&Value>) -> Result<Value, RpcError> {
         "NFKC" => NormalizeForm::Nfkc,
         "NFKD" => NormalizeForm::Nfkd,
         other => {
-            return Err(invalid_params(&format!(
+            return Err(RpcError::invalid_params(&format!(
                 "params.form must be NFC/NFD/NFKC/NFKD (got {other:?})"
             )));
         }
@@ -1912,10 +1916,6 @@ fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
         // `T` reaches RPC through this variant.
         Value::Array(_) | Value::Object(_) => Some(IntrospectValue::Json(v.clone())),
     }
-}
-
-fn invalid_params(detail: &str) -> RpcError {
-    RpcError::invalid_params(detail)
 }
 
 fn query_error_to_rpc(err: QueryError) -> RpcError {

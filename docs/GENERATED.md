@@ -3044,6 +3044,7 @@ router.pointer_down(&mut state_scene);
 - R51.97 — hello-listbox 예제 (WAI-ARIA Listbox 키보드 모델: Arrow=focus, Space/Enter=commit, AT integration)
 - R51.98 — AccessNode.selected (aria-selected) + multiselectable (aria-multiselectable) wire-up
 - R51.98 — hello-listbox ListBoxOption aria-checked→aria-selected 정정 (axis 분리, WAI-ARIA APG)
+- R51.101 — dispatch.rs invalid_params(&str) wrapper 제거 (R51.89.1 carry; 129 caller 직접 호출)
 
 
 
