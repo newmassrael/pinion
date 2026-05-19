@@ -3024,6 +3024,7 @@ router.pointer_down(&mut state_scene);
 - R51.91 — InterveneError::OutOfRange variant (RadioGroup selected/focused_index TypeMismatch 우회 정정)
 - R51.92 — pinion-shell/src/substrate.rs 분할: R51.83 visibility 가 substantive (모듈 경계)
 - R51.92.1 — app.rs 모듈 분할 (AppShell + impl ApplicationHandler + run + helpers) 로 3-모듈 완성
+- R51.89.1 — dispatch.rs RpcError literal 14 site full sweep (builder 통일, struct 직접 구성 0)
 
 
 
@@ -4528,6 +4529,36 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - R51.89.1 — dispatch.rs 41 RpcError literal full sweep (builder 적용 높은 반복)
 - carry: R51.92.2 을 set_selected 의미 분리 검토 — over-engineering 가능성 높음, restore-semantic 이 이미 도텍 완료
+
+
+
+### R238 — R51.89.1 §5.40 dispatch.rs RpcError struct-literal full sweep — 14 error-converter + 1 test 가 RpcError::invalid_params / internal_error / new+with_data 으로 통일
+
+**Changes**:
+- crates/pinion-rpc/src/dispatch.rs: 14 error-converter 함수 (click/rewind/snapshot/dry_run/wait_for/screenshot/locate/bbox/layout_query/resize/apply/propose/invoke/query) 가 RpcError::invalid_params(variant) / with_data(...) 적용
+- crates/pinion-rpc/src/dispatch.rs: parse_typed_proposal 의 UnknownProposalKind arm 도 builder 적용
+- crates/pinion-rpc/src/dispatch.rs: apply_error_to_rpc 의 Map data 카르ier 가 RpcError::new(-32602, ...).with_data(Value::Object(map))
+- crates/pinion-rpc/src/dispatch.rs: font_error_to_rpc 가 RpcError::new(code, message).with_data_string(variant)
+- crates/pinion-rpc/src/dispatch.rs: serialize_outcome 가 RpcError::internal_error 적용
+- crates/pinion-rpc/src/dispatch.rs: error_response 헬퍼가 RpcError::new + 옵셔널 with_data builder 적용
+- crates/pinion-rpc/src/dispatch.rs: response_result_none_is_elided_on_serialize 회귀 테스트도 RpcError::new 사용
+
+
+
+**Verification**:
+- cargo build -p pinion-rpc = clean
+- cargo test --workspace --features pinion-runtime/vello = 1527 pass / 0 fail / 8 ignored (불변)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- grep 'RpcError {' dispatch.rs = 0 struct-literal construction (struct 정의 + impl 블록 + fn return type 제외)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- carry: dispatch.rs::invalid_params(detail: &str) wrapper 는 30+ caller 와의 호환 보존을 위해 유지 (RpcError::invalid_params 로 delegate 만)
+- carry: R51.92.2 set_selected 의미 분리 평가 (over-engineering 가능성 높음)
 
 
 

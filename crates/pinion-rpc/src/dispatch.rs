@@ -594,11 +594,7 @@ fn click_error_to_rpc(err: ClickError) -> RpcError {
         ClickError::UnsupportedPath => "UnsupportedPath",
         ClickError::NoExternalAtPath => "NoExternalAtPath",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn handle_scene_rewind(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -629,11 +625,7 @@ fn rewind_error_to_rpc(err: RewindError) -> RpcError {
         RewindError::IntrospectionOptedOut => "IntrospectionOptedOut",
         RewindError::Intervene(_) => "Intervene",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn handle_scene_snapshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -655,11 +647,7 @@ fn snapshot_error_to_rpc(err: SnapshotError) -> RpcError {
         SnapshotError::Path(_) => "Path",
         SnapshotError::UnsupportedPath => "UnsupportedPath",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn snapshot_node_to_json(node: SnapshotNode) -> Value {
@@ -729,11 +717,7 @@ fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
         DryRunError::RollbackFailed => "RollbackFailed",
         DryRunError::SnapshotFailed => "SnapshotFailed",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn handle_scene_wait_for(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -780,11 +764,7 @@ fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
         WaitForError::Query(_) => "Query",
         WaitForError::ZeroAttempts => "ZeroAttempts",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn handle_scene_screenshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -822,11 +802,7 @@ fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
         ScreenshotError::UnsupportedPath => "UnsupportedPath",
         ScreenshotError::RenderBackendUnavailable => "RenderBackendUnavailable",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -951,11 +927,7 @@ fn locate_error_to_rpc(err: LocateError) -> RpcError {
     let variant = match err {
         LocateError::OutOfBounds => "OutOfBounds",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn handle_scene_bbox(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -980,11 +952,7 @@ fn bbox_error_to_rpc(err: BboxError) -> RpcError {
         BboxError::Path(_) => "Path",
         BboxError::UnknownPath => "UnknownPath",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 /// R47.7.1 §5.12 — `scene/layout` typed dispatcher entry. Deserializes
@@ -1023,11 +991,7 @@ fn layout_query_error_to_rpc(err: LayoutQueryError) -> RpcError {
         LayoutQueryError::InvalidViewport => "InvalidViewport",
         LayoutQueryError::NoLastPaintLayout => "NoLastPaintLayout",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 /// R47.7.4 §5.12 — `scene/resize` dispatch entry. Invokes the
@@ -1057,11 +1021,7 @@ fn resize_error_to_rpc(err: ResizeError) -> RpcError {
         ResizeError::ClosureUnavailable => "ClosureUnavailable",
         ResizeError::InvalidSize => "InvalidSize",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn handle_scene_cancel_preview(
@@ -1191,11 +1151,9 @@ fn parse_typed_proposal(params: &Value) -> Result<TypedProposal, RpcError> {
                 replacement,
             })
         }
-        other => Err(RpcError {
-            code: -32602,
-            message: "Invalid params".to_string(),
-            data: Some(Value::String(format!("UnknownProposalKind: {other}"))),
-        }),
+        other => Err(RpcError::invalid_params(format!(
+            "UnknownProposalKind: {other}"
+        ))),
     }
 }
 
@@ -1602,22 +1560,14 @@ fn apply_error_to_rpc(err: &ApplyError) -> RpcError {
         }
     };
     data_obj.insert("variant".into(), Value::String(variant.to_string()));
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::Object(data_obj)),
-    }
+    RpcError::new(-32602, "Invalid params").with_data(Value::Object(data_obj))
 }
 
 fn propose_error_to_rpc(err: &ProposeError) -> RpcError {
     let variant = match err {
         ProposeError::CapacityFull { .. } => "CapacityFull",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 // `Result<_, _>` shape kept for dispatcher consistency — every match
@@ -1679,11 +1629,7 @@ fn invoke_error_to_rpc(err: &InvokeError) -> RpcError {
         InvokeError::InvokeTypeMismatch => "InvokeTypeMismatch",
         InvokeError::InvokeRejected => "InvokeRejected",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn handle_font_parse(
@@ -1804,11 +1750,7 @@ fn font_error_to_rpc(err: &FontError) -> RpcError {
             (-32603, "Internal error", "RegistryPoisoned")
         }
     };
-    RpcError {
-        code,
-        message: message.to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::new(code, message).with_data_string(variant)
 }
 
 fn handle_font_glyph_outline(
@@ -1952,11 +1894,8 @@ fn normalize_outcome_to_json(outcome: &NormalizeOutcome) -> Value {
 /// `method` tag goes into the error data when serialization fails so
 /// the AI client can map the failure back to a method.
 fn serialize_outcome<T: Serialize>(outcome: &T, method: &str) -> Result<Value, RpcError> {
-    serde_json::to_value(outcome).map_err(|e| RpcError {
-        code: -32603,
-        message: "Internal error".to_string(),
-        data: Some(Value::String(format!("font/{method} serialize: {e}"))),
-    })
+    serde_json::to_value(outcome)
+        .map_err(|e| RpcError::internal_error(format!("font/{method} serialize: {e}")))
 }
 
 fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
@@ -1987,11 +1926,7 @@ fn query_error_to_rpc(err: QueryError) -> RpcError {
         QueryError::IntrospectionOptedOut => "IntrospectionOptedOut",
         QueryError::UnknownIntrospectPath => "UnknownIntrospectPath",
     };
-    RpcError {
-        code: -32602,
-        message: "Invalid params".to_string(),
-        data: Some(Value::String(variant.to_string())),
-    }
+    RpcError::invalid_params(variant)
 }
 
 fn introspect_value_to_json(value: IntrospectValue) -> Value {
@@ -2010,14 +1945,14 @@ fn introspect_value_to_json(value: IntrospectValue) -> Value {
 }
 
 fn error_response(id: Option<RequestId>, code: i32, message: &str, data: Option<Value>) -> Response {
+    let mut err = RpcError::new(code, message);
+    if let Some(d) = data {
+        err = err.with_data(d);
+    }
     Response {
         jsonrpc: JSONRPC_V2.to_string(),
         result: None,
-        error: Some(RpcError {
-            code,
-            message: message.to_string(),
-            data,
-        }),
+        error: Some(err),
         id,
     }
 }
@@ -2130,11 +2065,7 @@ mod tests {
         let resp = Response {
             jsonrpc: JSONRPC_V2.to_owned(),
             result: None,
-            error: Some(RpcError {
-                code: -32601,
-                message: "method not found".to_owned(),
-                data: None,
-            }),
+            error: Some(RpcError::new(-32601, "method not found")),
             id: Some(RequestId::Num(7)),
         };
         let wire = serde_json::to_string(&resp).unwrap();
