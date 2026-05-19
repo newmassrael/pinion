@@ -108,6 +108,18 @@ impl RadioGroup {
                 }
             }
             self.selected = Some(index);
+            // R51.90 §5.40 — WAI-ARIA Authoring Practices roving-
+            // tabindex: activation moves focus. When a Radio's
+            // selection state flips `false → true` (the activation
+            // edge), the active descendant follows. This applies to
+            // every activate path that funnels through `send`
+            // (`apply_key` arrow / Home / End / letter keys, AT
+            // `Click`/`Default` actions). AT-only `Focus` actions on
+            // a sibling reach the group through `set_focused_index`
+            // (no `send`) so user-initiated AT navigation can still
+            // diverge `focused_index` from `selected_index` until the
+            // next activation re-syncs them.
+            self.focused = Some(index);
         }
     }
 
@@ -159,9 +171,19 @@ impl RadioGroup {
     /// R51.87 §5.40 — AT-side active descendant index.
     ///
     /// The WAI-ARIA roving-tabindex active descendant. `None` until
-    /// an AT `Focus` action or programmatic
-    /// [`set_focused_index`](Self::set_focused_index) lands; the
-    /// application's `access_focus_target` falls back to
+    /// any of three paths first lands a value:
+    ///
+    /// * Activation through [`send`](Self::send) (R51.90 §5.40) —
+    ///   the activation edge syncs `focused_index` with the new
+    ///   `selected_index`.
+    /// * AT-side `Focus` action on a specific child reaching the
+    ///   widget through [`set_focused_index`](Self::set_focused_index)
+    ///   (typically routed by the application's
+    ///   `access_child_invoke` hook).
+    /// * Programmatic [`set_focused_index`](Self::set_focused_index)
+    ///   for tests / persisted-AT-state restore.
+    ///
+    /// The application's `access_focus_target` falls back to
     /// `selected_index()`-or-0 in the `None` case.
     #[must_use]
     pub fn focused_index(&self) -> Option<usize> {
@@ -175,6 +197,12 @@ impl RadioGroup {
     /// addressed item so AT clients (and the application's
     /// `access_focus_target`) can report it as the active
     /// descendant of the focused parent.
+    ///
+    /// R51.90 §5.40 — activation through [`send`](Self::send) keeps
+    /// `focused_index` in sync with `selected_index` on the
+    /// activation edge; this setter is the AT-only divergence path
+    /// for navigating without committing a selection (arrow keys
+    /// without Enter, AT-side `Focus` actions).
     ///
     /// # Panics
     /// Panics if `idx` is `Some(i)` with `i >= count()`.
@@ -833,13 +861,11 @@ mod tests {
         g.set_focused_index(Some(2));
         assert_eq!(g.focused_index(), Some(2));
         assert_eq!(g.selected_index(), Some(0));
-        // Activate path on radio 2 → both indices land on 2.
+        // R51.90 §5.40 — activation now syncs focused_index back to
+        // the selected index. The AT-only Focus divergence (above)
+        // collapses the moment the user commits a selection.
         activate(&mut g, 2);
         assert_eq!(g.selected_index(), Some(2));
-        // R51.87 does not automatically sync focused_index on
-        // activate — `apply_key` / `access_child_invoke` paths
-        // refresh it explicitly when a row becomes the active
-        // descendant. focused_index stays as last AT-set value.
         assert_eq!(g.focused_index(), Some(2));
     }
 
@@ -893,6 +919,103 @@ mod tests {
         assert_eq!(
             g.intervene("focused_index", IntrospectValue::Int(-1)),
             Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    // R51.90 §5.40 — activate path syncs focused_index regression
+    // tests. WAI-ARIA Authoring Practices: activation moves focus.
+
+    #[test]
+    fn r51_90_first_activate_syncs_focused_to_selected() {
+        let mut g = RadioGroup::new(3);
+        assert_eq!(g.focused_index(), None);
+        activate(&mut g, 1);
+        assert_eq!(g.selected_index(), Some(1));
+        assert_eq!(g.focused_index(), Some(1));
+    }
+
+    #[test]
+    fn r51_90_switching_activation_moves_focused() {
+        let mut g = RadioGroup::new(3);
+        activate(&mut g, 0);
+        assert_eq!(g.focused_index(), Some(0));
+        activate(&mut g, 2);
+        assert_eq!(g.selected_index(), Some(2));
+        assert_eq!(g.focused_index(), Some(2));
+    }
+
+    #[test]
+    fn r51_90_reactivating_same_radio_keeps_focused_stable() {
+        let mut g = RadioGroup::new(3);
+        activate(&mut g, 1);
+        assert_eq!(g.focused_index(), Some(1));
+        // Reactivating the same row is idempotent on selection AND
+        // on focused — no `!was && now` transition fires, so neither
+        // index changes. (The PointerEnter/Down/Up cycle still runs
+        // visual state through the Radio leaf, but `selected` stays
+        // true throughout, so the activate-edge branch is skipped.)
+        activate(&mut g, 1);
+        assert_eq!(g.selected_index(), Some(1));
+        assert_eq!(g.focused_index(), Some(1));
+    }
+
+    #[test]
+    fn r51_90_cancelled_press_leaves_focused_untouched() {
+        let mut g = RadioGroup::new(3);
+        activate(&mut g, 0);
+        let before = g.focused_index();
+        // Press but cancel on a different radio — no selection
+        // change → no focused sync to row 2.
+        g.send(2, RadioEvent::PointerEnter);
+        g.send(2, RadioEvent::PointerDown);
+        g.send(2, RadioEvent::PointerLeave);
+        assert_eq!(g.selected_index(), Some(0));
+        assert_eq!(g.focused_index(), before);
+        assert_eq!(g.focused_index(), Some(0));
+    }
+
+    #[test]
+    fn r51_90_set_selected_programmatic_does_not_touch_focused() {
+        // R51.90 sync is scoped to the user-interactive `send`
+        // activate edge. Programmatic `set_selected` (persisted-
+        // preference restore, form default) intentionally leaves
+        // `focused_index` alone so the AT active descendant is not
+        // pre-committed before the user has interacted.
+        let mut g = RadioGroup::new(3);
+        assert_eq!(g.focused_index(), None);
+        g.set_selected(Some(2));
+        assert_eq!(g.selected_index(), Some(2));
+        assert_eq!(g.focused_index(), None);
+    }
+
+    #[test]
+    fn r51_90_at_focus_then_activate_collapses_divergence() {
+        let mut g = RadioGroup::new(4);
+        activate(&mut g, 0);
+        // AT-side Focus walks to row 2 (no commit).
+        g.set_focused_index(Some(2));
+        assert_eq!(g.selected_index(), Some(0));
+        assert_eq!(g.focused_index(), Some(2));
+        // User commits on row 3 → both indices snap to 3.
+        activate(&mut g, 3);
+        assert_eq!(g.selected_index(), Some(3));
+        assert_eq!(g.focused_index(), Some(3));
+    }
+
+    #[test]
+    fn r51_90_external_activate_via_send_invoke_syncs_focused() {
+        let mut g = RadioGroupExternal::new(3);
+        // Wire-format activation through the introspect surface
+        // (mirrors what `apply_key` and `access_child_invoke` issue).
+        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+            g.invoke("send", IntrospectValue::Text(format!("1:{ev}")))
+                .unwrap();
+        }
+        assert_eq!(g.selected_index(), Some(1));
+        assert_eq!(g.focused_index(), Some(1));
+        assert_eq!(
+            g.query("focused_index").unwrap(),
+            IntrospectValue::Int(1)
         );
     }
 
