@@ -483,6 +483,46 @@ pub struct TextNode {
     /// `LayoutNode.line_count` so AI clients verify single-line text
     /// without pixel inspection (Scene-as-data invariant §2 #7).
     pub line_count: u32,
+    /// R51.81 §5.40 — WAI-ARIA-aligned role hint for the AT-side name
+    /// enrichment pipeline.
+    ///
+    /// The §5.40 `enrich_names_from_scene` pass derives a widget's
+    /// accessible name by walking the paint scene for the first
+    /// descendant `TextNode::content`. Decoration glyphs (checkbox `✓`,
+    /// slider thumb caret, toggle dot) that visually mark state but
+    /// have no linguistic value should NOT become the AT-exposed
+    /// name — they confuse screen readers ("checked" reading as "✓").
+    ///
+    /// `Default` (= `None` after `TextNode::new`) puts the text into
+    /// the enrichment search. `Presentational` declares the run is
+    /// pure decoration (WAI-ARIA `role="presentation"`) so enrichment
+    /// skips it. `Label` is forward-compatible: future composite
+    /// widgets may carry an in-scene label that takes precedence over
+    /// later content; the enrichment can prioritise it once we land
+    /// the WAI-ARIA 1.2 §5.2.6 labelling axis.
+    pub role: Option<TextRole>,
+}
+
+/// R51.81 §5.40 — accessibility role hint attached to a [`TextNode`].
+///
+/// See [`TextNode::role`] for the contract. The enum is `#[non_exhaustive]`
+/// so the §5.2.6 labelling axis can add variants without breaking
+/// downstream matchers.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextRole {
+    /// Default — text participates in the §5.40 name enrichment as
+    /// the first-text source. Most widgets' static labels carry this
+    /// role.
+    Default,
+    /// Decoration glyph — skipped by `enrich_names_from_scene`.
+    /// WAI-ARIA `role="presentation"`. Use for visual-only state
+    /// marks (`✓`, `▶`, `●`).
+    Presentational,
+    /// Explicit accessible name carrier — takes precedence over later
+    /// text runs during enrichment. Forward-compatible for the
+    /// WAI-ARIA 1.2 §5.2.6 labelling axis.
+    Label,
 }
 
 impl TextNode {
@@ -504,6 +544,7 @@ impl TextNode {
             layout: LayoutStyle::new(),
             tag: None,
             line_count: 0,
+            role: None,
         }
     }
 
@@ -518,6 +559,17 @@ impl TextNode {
     #[must_use]
     pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
+        self
+    }
+
+    /// R51.81 §5.40 — attach a [`TextRole`] hint for the
+    /// `enrich_names_from_scene` pass. Use `TextRole::Presentational`
+    /// on decoration glyphs (checkbox `✓`, slider thumb caret) so
+    /// the AT-exposed name skips past them and lands on the linguistic
+    /// label text.
+    #[must_use]
+    pub fn with_role(mut self, role: TextRole) -> Self {
+        self.role = Some(role);
         self
     }
 }

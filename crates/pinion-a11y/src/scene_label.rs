@@ -103,11 +103,29 @@ fn find_container_by_tag<'s>(
 }
 
 /// DFS pre-order over `scene`, returning the `content` of the first
-/// [`Scene::Text`] reached. Skips [`Scene::Effect`] (no geometry) and
-/// stops at the first hit. Returns `None` for scenes with no text.
+/// [`Scene::Text`] reached whose [`TextNode::role`] is not
+/// [`pinion_core::scene::TextRole::Presentational`].
+///
+/// R51.81 §5.40 — pre-R51.81 the pass returned the *first* text
+/// content unconditionally. Widgets that paint a decoration glyph
+/// (Checkbox `✓`, Slider thumb caret) before their linguistic label
+/// in DFS order had to override [`crate::AccessNode::with_name`] or
+/// `ContainerNode::aria_label` to mask the wrong content (a
+/// `WAI-ARIA 1.2 §4.3` Band-Aid). The role hint inverts the
+/// responsibility: widgets declare which `TextNode`s are decoration via
+/// `TextNode::with_role(TextRole::Presentational)`, and the
+/// enrichment skips past them — no `aria_label` override needed for
+/// the common case.
 fn first_text_leaf(scene: &Scene) -> Option<String> {
+    use pinion_core::scene::TextRole;
     match scene {
-        Scene::Text(t) => Some(t.content.clone()),
+        Scene::Text(t) => {
+            if matches!(t.role, Some(TextRole::Presentational)) {
+                None
+            } else {
+                Some(t.content.clone())
+            }
+        }
         Scene::Container(c) => c.children.iter().find_map(first_text_leaf),
         _ => None,
     }
@@ -248,5 +266,54 @@ mod tests {
             Scene::Text(TextNode::new("Second".to_string(), Rect::default())),
         ]);
         assert_eq!(walk_for_text(&container).as_deref(), Some("First"));
+    }
+
+    #[test]
+    fn r51_81_presentational_text_node_is_skipped() {
+        use pinion_core::scene::TextRole;
+        // Common Checkbox pattern: decoration glyph ("✓") sits earlier
+        // in DFS order than the linguistic label. Pre-R51.81 the glyph
+        // would have been picked as the AT name (then masked by an
+        // `aria_label` Band-Aid). R51.81 lets the widget declare the
+        // glyph as Presentational; enrichment skips past it and lands
+        // on the next non-presentational TextNode.
+        let scene = Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Text(
+                    TextNode::new("\u{2713}".to_string(), Rect::default())
+                        .with_role(TextRole::Presentational),
+                ),
+                Scene::Text(TextNode::new(
+                    "Subscribe".to_string(),
+                    Rect::default(),
+                )),
+            ])
+            .with_tag("checkbox"),
+        );
+        let mut nodes = vec![AccessNode::new("checkbox", AriaRole::CheckBox)];
+        let filled = enrich_names_from_scene(&mut nodes, &scene);
+        assert_eq!(filled, 1);
+        assert_eq!(
+            nodes[0].name.as_deref(),
+            Some("Subscribe"),
+            "Presentational TextNode must be skipped during the DFS first-text scan",
+        );
+    }
+
+    #[test]
+    fn r51_81_default_role_keeps_text_in_chain() {
+        // Sanity: the default role (`role: None` from `TextNode::new`)
+        // behaves exactly as pre-R51.81 — the text participates as the
+        // first-text source.
+        let scene = Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::new(
+                "Save".to_string(),
+                Rect::default(),
+            ))])
+            .with_tag("btn"),
+        );
+        let mut nodes = vec![AccessNode::new("btn", AriaRole::Button)];
+        enrich_names_from_scene(&mut nodes, &scene);
+        assert_eq!(nodes[0].name.as_deref(), Some("Save"));
     }
 }

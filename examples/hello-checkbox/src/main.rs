@@ -76,11 +76,20 @@ fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
             CheckboxState::Disabled => Color::rgb(0xc0, 0xb0, 0x98),
             _ => Color::rgb(0xff, 0xff, 0xff),
         };
-        children.push(Scene::Text(TextNode::styled(
-            "\u{2713}",
-            Rect::default(),
-            TextStyle::new().with_size_px(18).with_fg(glyph_color),
-        )));
+        children.push(Scene::Text(
+            // R51.81 §5.40 — the check-glyph is pure decoration
+            // (visual mark for the `checked` state). `Presentational`
+            // tells `enrich_names_from_scene` to skip it so the AT
+            // exposes the linguistic label ("Receive newsletter")
+            // instead of "✓". Replaces the pre-R51.81 `aria_label`
+            // Band-Aid on the outer `ContainerNode`.
+            TextNode::styled(
+                "\u{2713}",
+                Rect::default(),
+                TextStyle::new().with_size_px(18).with_fg(glyph_color),
+            )
+            .with_role(pinion_core::scene::TextRole::Presentational),
+        ));
     }
     let box_visual = Scene::Container(
         ContainerNode::new(children)
@@ -109,12 +118,12 @@ fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
     let row = Scene::Container(
         ContainerNode::new(vec![box_visual, label])
             .with_tag("main_checkbox")
-            // R51.69 §5.40 — explicit accessible-name override. The
-            // checked-state check-mark glyph is itself a `TextNode`
-            // and sits earlier than the label in DFS order, so the
-            // scene-walk derivation would pick the glyph as the name.
-            // `aria_label` pins the actual caption.
-            .with_aria_label("Receive newsletter")
+            // R51.81 §5.40 — the check-glyph TextNode declares
+            // `TextRole::Presentational`, so `enrich_names_from_scene`
+            // skips past it and lands on the "Receive newsletter"
+            // label naturally. No `aria_label` override needed: the
+            // role marker is the textbook fix for in-scene
+            // decoration glyphs.
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -225,10 +234,12 @@ impl WidgetView for CheckboxView {
     /// both carry the boolean checked state (lockstep with the
     /// introspect schema's `value` key).
     ///
-    /// R51.69 §5.40 — the accessible name is sourced from the row
-    /// container's `aria_label` override set in `view` (see comment
-    /// there for why the check-glyph `TextNode` forces an explicit
-    /// override). The literal lives in exactly one place.
+    /// R51.81 §5.40 — the accessible name is derived by
+    /// `enrich_names_from_scene` walking the paint scene for the
+    /// first non-presentational `TextNode::content`. The check-glyph
+    /// `TextNode` carries `TextRole::Presentational` so it is skipped;
+    /// the DFS lands on the "Receive newsletter" label naturally. No
+    /// duplicate string literal lives in `access_node`.
     fn access_node(state: &(CheckboxState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, checked) = (state.0, state.1);
         let access_state = AccessState {
@@ -318,12 +329,18 @@ mod a11y_tests {
     }
 
     #[test]
-    fn aria_label_overrides_check_glyph_when_checked() {
+    fn role_marker_skips_check_glyph_when_checked() {
+        // R51.81 §5.40 — the check-glyph TextNode carries
+        // `TextRole::Presentational` so `enrich_names_from_scene`
+        // skips it during the DFS first-text scan and lands on the
+        // linguistic "Receive newsletter" label. Pre-R51.81 the
+        // glyph would have been picked first; an `aria_label`
+        // override masked it as a Band-Aid (now removed).
         let nodes = enriched((CheckboxState::Idle, true), None);
         assert_eq!(
             nodes[0].name.as_deref(),
             Some("Receive newsletter"),
-            "aria_label must beat the check-glyph TextNode in the DFS chain",
+            "role marker must keep the check-glyph TextNode out of the DFS chain",
         );
     }
 }

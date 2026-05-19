@@ -3011,6 +3011,7 @@ router.pointer_down(&mut state_scene);
 - R51.78 — handle_key_press winit-free 분리 (focus_traverse / character / named 3-method)
 - R51.79 — AccessTreeBuilder::add &AccessNode + commit_access_emit by-value Vec move
 - R51.80 — ShellCore deeper extraction: paint+a11y+finalize+input+focus wrappers 정통
+- R51.81 — TextNode.role + TextRole 정통, decoration glyph 의 aria_label Band-Aid 청산
 
 
 
@@ -3091,6 +3092,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/lib.rs:ShellCore::compute_paint_scene
 - crates/pinion-shell/src/lib.rs:ShellCore::collect_access_emit_inputs
 - crates/pinion-shell/src/lib.rs:ShellCore::finalize_frame
+- crates/pinion-core/src/scene.rs:TextRole
+- crates/pinion-core/src/scene.rs:TextNode::with_role
 
 
 
@@ -5756,6 +5759,36 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - pub(crate) 14 필드 일부 private 가능 (text_cache / last_paint_layout / last_access_*): R51.80 wrapper method land 이후 cross-crate 접근 제로 — 차기 round 에 명시적 visibility 단계적 하향
 - 이전 carry — aria_label Band-Aid / AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / Tier-1 R51.x carry 9개 (이전 carry list 유지)
+
+
+
+### R51.81 — §5.40 R51.81 — TextNode presentational role marker: pinion-core::TextRole 신설, enrich_names_from_scene 가 Presentational TextNode 스킵 → Checkbox 의 check-glyph aria_label Band-Aid 청산.
+
+**Changes**:
+- crates/pinion-core/src/scene.rs — TextRole enum (Default/Presentational/Label, non_exhaustive) + TextNode.role Option field + with_role(role) builder
+- crates/pinion-a11y/src/scene_label.rs — first_text_leaf 가 Presentational TextNode 스킵 (DFS first-text scan 에서 제외) + 2 회귀 test
+- examples/hello-checkbox/src/main.rs — check-glyph TextNode 에 .with_role(Presentational) 적용, ContainerNode::aria_label override 제거 (role marker 가 textbook fix), access_node doc 업데이트, test 이름 aria_label → role_marker
+- Toggle/Slider/SliderVertical 은 변경 없음 — 이들의 aria_label 은 'label outside tagged scope' 정통 사용, Band-Aid 아닔 (검토 결과)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello → 1501 passed / 0 failed / 8 ignored (+2 R51.81 회귀)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings
+- hello-checkbox role_marker_skips_check_glyph_when_checked 회귀 테스트 pass (Receive newsletter 이 enrichment 결과)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- pub(crate) 14 필드 일부 private 가능 (R51.80 carry) — visibility 단계적 하향
+- AccessFocus builder + AccessTreeBuilder signature 통일
+- handle_focus_* boilerplate helper
+- composite AccessAction::Focus 의미 명확화
+- Tier-1 R51.x carry 9개 (touch cancel commit-class / pressure widget / drag 2nd / lifecycle 2nd / 3D primitive / font mirror / L4 conformance / theming axis / platform AT test)
+- TextRole::Label 변형 활용 — WAI-ARIA 1.2 §5.2.6 labelling axis 랜딩 시 explicit label TextNode 우선 적용
 
 
 
