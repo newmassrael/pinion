@@ -519,7 +519,7 @@ fn r51_67_handle_action_request_resolves_via_plan_commit() {
     let focus = Some(AccessFocus::atomic("test"));
     let decision = core.plan_access_emit(&nodes, focus.as_ref());
     assert!(decision.should_emit, "initial emit always fires");
-    core.commit_access_emit(&nodes, focus.as_ref());
+    core.commit_access_emit(nodes.clone(), focus.as_ref());
 
     let req = accesskit::ActionRequest {
         action: accesskit::Action::Click,
@@ -583,7 +583,7 @@ fn r51_75_no_change_frame_skips_emit() {
     let nodes = vec![atomic_node("a", false)];
     let focus = Some(AccessFocus::atomic("a"));
     let _initial = core.plan_access_emit(&nodes, focus.as_ref());
-    core.commit_access_emit(&nodes, focus.as_ref());
+    core.commit_access_emit(nodes.clone(), focus.as_ref());
 
     let second = core.plan_access_emit(&nodes, focus.as_ref());
 
@@ -608,7 +608,7 @@ fn r51_72_changed_node_only_in_dirty() {
         vec![atomic_node("a", false), atomic_node("b", false)];
     let focus = Some(AccessFocus::atomic("a"));
     let _initial = core.plan_access_emit(&initial_nodes, focus.as_ref());
-    core.commit_access_emit(&initial_nodes, focus.as_ref());
+    core.commit_access_emit(initial_nodes.clone(), focus.as_ref());
 
     let next_nodes = vec![atomic_node("a", false), atomic_node("b", true)];
     let second = core.plan_access_emit(&next_nodes, focus.as_ref());
@@ -629,7 +629,7 @@ fn r51_75_focus_change_emits_with_empty_dirty() {
     let focus_a = Some(AccessFocus::atomic("a"));
     let focus_b = Some(AccessFocus::atomic("b"));
     let _initial = core.plan_access_emit(&nodes, focus_a.as_ref());
-    core.commit_access_emit(&nodes, focus_a.as_ref());
+    core.commit_access_emit(nodes.clone(), focus_a.as_ref());
 
     let second = core.plan_access_emit(&nodes, focus_b.as_ref());
 
@@ -655,7 +655,7 @@ fn r51_71_active_descendant_does_not_leak_into_dirty() {
     let focus_2 =
         Some(AccessFocus::composite("group", "group#child_2"));
     let _initial = core.plan_access_emit(&nodes, focus_1.as_ref());
-    core.commit_access_emit(&nodes, focus_1.as_ref());
+    core.commit_access_emit(nodes.clone(), focus_1.as_ref());
 
     // Active-descendant shift is a focus change, not a node body
     // change — dirty stays empty but should_emit fires (R51.71
@@ -678,7 +678,7 @@ fn r51_75_focus_unset_after_set_emits() {
     let nodes = vec![atomic_node("a", false)];
     let focus = Some(AccessFocus::atomic("a"));
     let _initial = core.plan_access_emit(&nodes, focus.as_ref());
-    core.commit_access_emit(&nodes, focus.as_ref());
+    core.commit_access_emit(nodes.clone(), focus.as_ref());
 
     let second = core.plan_access_emit(&nodes, None);
 

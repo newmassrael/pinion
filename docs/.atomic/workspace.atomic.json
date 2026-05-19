@@ -3873,7 +3873,8 @@
         "R51.75 — no-change frame skip (last_access_focus diff, update_if_active 자체 스킵 시 0 cost)",
         "R51.76 — ShellCore<V> substrate/surface 분리 + AccessEmitPlan + redraw flag drain",
         "R51.77 — plan_access_emit (pure &self) + commit_access_emit (&mut) 분리, AccessEmitPlan→Decision",
-        "R51.78 — handle_key_press winit-free 분리 (focus_traverse / character / named 3-method)"
+        "R51.78 — handle_key_press winit-free 분리 (focus_traverse / character / named 3-method)",
+        "R51.79 — AccessTreeBuilder::add &AccessNode + commit_access_emit by-value Vec move"
       ],
       "alternatives_rejected": [
         {
@@ -8125,6 +8126,52 @@
         "R51.79 — AppShell::render 의 nodes.clone() (R51.77 carry 잘라옥): closure consume + commit by-ref pattern 와 충돌, alloc 회복 필요",
         "R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction",
         "이전 carry — aria_label Band-Aid / AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / Tier-1 R51.x carry 9개"
+      ]
+    },
+    "R51.79": {
+      "decision_summary": "§5.40 R51.79 — R51.77 carry 청산: AccessTreeBuilder::add 시그니처 &AccessNode (borrow) + commit_access_emit by-value Vec move 으로 AppShell::render 의 nodes.clone() 제거, 프레임당 alloc 2N → N.",
+      "changes_bullets": [
+        "crates/pinion-a11y/src/tree.rs — AccessTreeBuilder::add(&AccessNode) signature (내부 clone, caller 가 Vec 소유권 유지)",
+        "crates/pinion-a11y/src/tree.rs — unit test 17개 사이트 b.add(...) → b.add(&...) update",
+        "crates/pinion-a11y/tests/conformance.rs — 13 conformance 사이트 builder.add(node) → builder.add(&node) update",
+        "crates/pinion-shell/src/lib.rs — ShellCore::commit_access_emit by-value Vec<AccessNode> + into_iter().map move (클론 0회)",
+        "crates/pinion-shell/src/lib.rs — AppShell::render: nodes_for_emit clone 제거, closure 가 &nodes borrow + commit 이 by-value move 소비",
+        "crates/pinion-shell/tests/dispatch_core.rs — 6 commit_access_emit 사이트 nodes.clone() 명시 (test 구조 상 nodes 재사용 필요)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-shell --test dispatch_core --features pinion-runtime/vello → 23 passed / 0 failed",
+        "cargo test --workspace --features pinion-runtime/vello → 1495 passed / 0 failed / 8 ignored",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings",
+        "AccessTreeBuilder unit 17 + conformance 13 + dispatch_core 23 — 전 caller fan-out 적용 검증"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction (encapsulation 정통)",
+        "이전 carry — aria_label Band-Aid / AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / Tier-1 R51.x carry 9개 (touch cancel commit-class, pressure widget, drag 2nd, lifecycle 2nd, 3D primitive, font mirror, L4 conformance, theming axis, platform AT test)"
+      ],
+      "publishable_decision_summary": "§5.40 R51.79 — R51.77 carry 청산: AccessTreeBuilder::add 시그니처 &AccessNode (borrow) + commit_access_emit by-value Vec move 으로 AppShell::render 의 nodes.clone() 제거, 프레임당 alloc 2N → N.",
+      "publishable_changes_bullets": [
+        "crates/pinion-a11y/src/tree.rs — AccessTreeBuilder::add(&AccessNode) signature (내부 clone, caller 가 Vec 소유권 유지)",
+        "crates/pinion-a11y/src/tree.rs — unit test 17개 사이트 b.add(...) → b.add(&...) update",
+        "crates/pinion-a11y/tests/conformance.rs — 13 conformance 사이트 builder.add(node) → builder.add(&node) update",
+        "crates/pinion-shell/src/lib.rs — ShellCore::commit_access_emit by-value Vec<AccessNode> + into_iter().map move (클론 0회)",
+        "crates/pinion-shell/src/lib.rs — AppShell::render: nodes_for_emit clone 제거, closure 가 &nodes borrow + commit 이 by-value move 소비",
+        "crates/pinion-shell/tests/dispatch_core.rs — 6 commit_access_emit 사이트 nodes.clone() 명시 (test 구조 상 nodes 재사용 필요)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-shell --test dispatch_core --features pinion-runtime/vello → 23 passed / 0 failed",
+        "cargo test --workspace --features pinion-runtime/vello → 1495 passed / 0 failed / 8 ignored",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warnings",
+        "AccessTreeBuilder unit 17 + conformance 13 + dispatch_core 23 — 전 caller fan-out 적용 검증"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.80 — ShellCore 14 필드 pub(crate) cross-struct intimacy: render path 의 paint_scene compute + focus ring paint 도 ShellCore owning 으로 deeper extraction (encapsulation 정통)",
+        "이전 carry — aria_label Band-Aid / AccessFocus builder + AccessTreeBuilder signature 통일 / handle_focus_* boilerplate helper / composite AccessAction::Focus 의미 명확화 / Tier-1 R51.x carry 9개 (touch cancel commit-class, pressure widget, drag 2nd, lifecycle 2nd, 3D primitive, font mirror, L4 conformance, theming axis, platform AT test)"
       ]
     },
     "Round 1": {

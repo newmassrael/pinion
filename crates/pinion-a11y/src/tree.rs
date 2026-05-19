@@ -97,12 +97,22 @@ impl AccessTreeBuilder {
 
     /// Append a widget node. Duplicate tag overwrites the previous
     /// entry (last-write-wins, matching AccessKit semantics).
-    pub fn add(&mut self, node: AccessNode) -> &mut Self {
-        let tag = node.tag.clone();
-        if !self.nodes.contains_key(&tag) {
-            self.insertion_order.push(tag.clone());
+    ///
+    /// R51.79 §5.40 — signature takes `&AccessNode` (not by-value)
+    /// so callers can keep ownership of their `Vec<AccessNode>` past
+    /// the builder build, hand the same Vec by-value to
+    /// [`crate::ShellCore::commit_access_emit`], and move it
+    /// straight into the per-tag cache without re-cloning. The
+    /// builder still clones internally (`self.nodes` consumes the
+    /// node) — moving the clone from caller to callee centralises
+    /// the bookkeeping and eliminates the outer
+    /// `nodes.clone()` the pre-R51.79 render path performed before
+    /// every `update_if_active` closure.
+    pub fn add(&mut self, node: &AccessNode) -> &mut Self {
+        if !self.nodes.contains_key(&node.tag) {
+            self.insertion_order.push(node.tag.clone());
         }
-        self.nodes.insert(tag, node);
+        self.nodes.insert(node.tag.clone(), node.clone());
         self
     }
 
@@ -367,7 +377,7 @@ mod tests {
     #[test]
     fn single_atomic_widget_attaches_to_root() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.add(&AccessNode::new("main_btn", AriaRole::Button));
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 2);
         // root first, then widget
@@ -378,13 +388,13 @@ mod tests {
     #[test]
     fn composite_children_not_at_root() {
         let mut b = AccessTreeBuilder::new();
-        b.add(
+        b.add(&
             AccessNode::new("main_group", AriaRole::RadioGroup)
                 .with_child("r0")
                 .with_child("r1"),
         );
-        b.add(AccessNode::new("r0", AriaRole::RadioButton));
-        b.add(AccessNode::new("r1", AriaRole::RadioButton));
+        b.add(&AccessNode::new("r0", AriaRole::RadioButton));
+        b.add(&AccessNode::new("r1", AriaRole::RadioButton));
         let update = b.build(None);
         // RadioGroup is at root; r0/r1 are not direct root children
         // (they live under RadioGroup via the composite topology).
@@ -398,7 +408,7 @@ mod tests {
     #[test]
     fn focused_falls_back_to_root_when_tag_missing() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.add(&AccessNode::new("main_btn", AriaRole::Button));
         b.focused(Some("nonexistent"));
         let update = b.build(None);
         assert_eq!(update.focus, ROOT_NODE_ID);
@@ -407,7 +417,7 @@ mod tests {
     #[test]
     fn focused_resolves_to_widget_when_present() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.add(&AccessNode::new("main_btn", AriaRole::Button));
         b.focused(Some("main_btn"));
         let update = b.build(None);
         assert_eq!(update.focus, tag_to_node_id("main_btn"));
@@ -431,8 +441,8 @@ mod tests {
     #[test]
     fn duplicate_tag_overwrites_previous() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("btn", AriaRole::Button).with_name("First"));
-        b.add(AccessNode::new("btn", AriaRole::Button).with_name("Second"));
+        b.add(&AccessNode::new("btn", AriaRole::Button).with_name("First"));
+        b.add(&AccessNode::new("btn", AriaRole::Button).with_name("Second"));
         let update = b.build(None);
         // 1 widget node + 1 root = 2
         assert_eq!(update.nodes.len(), 2);
@@ -441,8 +451,8 @@ mod tests {
     #[test]
     fn tag_map_includes_root_and_widgets() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("main_btn", AriaRole::Button));
-        b.add(AccessNode::new("main_cb", AriaRole::CheckBox));
+        b.add(&AccessNode::new("main_btn", AriaRole::Button));
+        b.add(&AccessNode::new("main_cb", AriaRole::CheckBox));
         let map = b.tag_map();
         assert_eq!(map.get(&ROOT_NODE_ID).map(String::as_str), Some(""));
         assert_eq!(
@@ -468,7 +478,7 @@ mod tests {
             .with_state(state)
             .with_bounds(Rect::new(10, 20, 100, 30));
         let mut b = AccessTreeBuilder::new();
-        b.add(node);
+        b.add(&node);
         b.focused(Some("cb"));
         let update = b.build(None);
         assert_eq!(update.focus, tag_to_node_id("cb"));
@@ -481,7 +491,7 @@ mod tests {
             .with_value(AccessValue::Float { value: 50.0, min: 0.0, max: 100.0 })
             .with_bounds(Rect::new(0, 0, 200, 24));
         let mut b = AccessTreeBuilder::new();
-        b.add(node);
+        b.add(&node);
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 2);
     }
@@ -489,13 +499,13 @@ mod tests {
     #[test]
     fn active_descendant_does_not_alter_focus_or_node_count() {
         let mut b = AccessTreeBuilder::new();
-        b.add(
+        b.add(&
             AccessNode::new("main_group", AriaRole::RadioGroup)
                 .with_child("main_group#0")
                 .with_child("main_group#1"),
         );
-        b.add(AccessNode::new("main_group#0", AriaRole::RadioButton));
-        b.add(AccessNode::new("main_group#1", AriaRole::RadioButton));
+        b.add(&AccessNode::new("main_group#0", AriaRole::RadioButton));
+        b.add(&AccessNode::new("main_group#1", AriaRole::RadioButton));
         b.focused(Some("main_group"));
         b.active_descendant("main_group", "main_group#1");
         let update = b.build(None);
@@ -510,7 +520,7 @@ mod tests {
     #[test]
     fn active_descendant_for_unknown_parent_is_silent() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.add(&AccessNode::new("main_btn", AriaRole::Button));
         b.active_descendant("nonexistent_parent", "main_btn");
         let update = b.build(None);
         // No panic, no spurious node — the declaration applies only
@@ -521,9 +531,9 @@ mod tests {
     #[test]
     fn dirty_tags_filters_to_named_widgets_only() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("main_btn", AriaRole::Button));
-        b.add(AccessNode::new("main_cb", AriaRole::CheckBox));
-        b.add(AccessNode::new("main_sl", AriaRole::Slider));
+        b.add(&AccessNode::new("main_btn", AriaRole::Button));
+        b.add(&AccessNode::new("main_cb", AriaRole::CheckBox));
+        b.add(&AccessNode::new("main_sl", AriaRole::Slider));
         let dirty: HashSet<String> =
             ["main_cb".to_owned()].into_iter().collect();
         b.dirty_tags(dirty);
@@ -537,7 +547,7 @@ mod tests {
     #[test]
     fn dirty_tags_empty_set_emits_root_only() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.add(&AccessNode::new("main_btn", AriaRole::Button));
         b.dirty_tags(HashSet::new());
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 1);
@@ -547,7 +557,7 @@ mod tests {
     #[test]
     fn dirty_tags_unknown_tag_silently_skipped() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("main_btn", AriaRole::Button));
+        b.add(&AccessNode::new("main_btn", AriaRole::Button));
         let dirty: HashSet<String> =
             ["nonexistent".to_owned(), "main_btn".to_owned()].into_iter().collect();
         b.dirty_tags(dirty);
@@ -559,9 +569,9 @@ mod tests {
     #[test]
     fn unset_dirty_emits_every_widget() {
         let mut b = AccessTreeBuilder::new();
-        b.add(AccessNode::new("a", AriaRole::Button));
-        b.add(AccessNode::new("b", AriaRole::Button));
-        b.add(AccessNode::new("c", AriaRole::Button));
+        b.add(&AccessNode::new("a", AriaRole::Button));
+        b.add(&AccessNode::new("b", AriaRole::Button));
+        b.add(&AccessNode::new("c", AriaRole::Button));
         // No call to `dirty_tags` — equivalent to "all dirty".
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 4); // root + 3
@@ -570,13 +580,13 @@ mod tests {
     #[test]
     fn active_descendant_last_call_wins_per_parent() {
         let mut b = AccessTreeBuilder::new();
-        b.add(
+        b.add(&
             AccessNode::new("g", AriaRole::RadioGroup)
                 .with_child("g#a")
                 .with_child("g#b"),
         );
-        b.add(AccessNode::new("g#a", AriaRole::RadioButton));
-        b.add(AccessNode::new("g#b", AriaRole::RadioButton));
+        b.add(&AccessNode::new("g#a", AriaRole::RadioButton));
+        b.add(&AccessNode::new("g#b", AriaRole::RadioButton));
         b.active_descendant("g", "g#a");
         b.active_descendant("g", "g#b");
         let update = b.build(None);

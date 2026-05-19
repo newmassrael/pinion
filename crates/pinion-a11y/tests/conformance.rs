@@ -84,7 +84,7 @@ fn mixed_scene() -> Vec<AccessNode> {
 fn mixed_scene_emits_root_plus_seven_widget_nodes() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     let update = builder.build(Some(Rect::new(0, 0, 480, 320)));
     // 1 synthetic root + 3 atomic widgets + 1 composite group + 3
@@ -97,7 +97,7 @@ fn mixed_scene_emits_root_plus_seven_widget_nodes() {
 fn focus_resolves_to_atomic_widget() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     builder.focused(Some("main_btn"));
     let update = builder.build(None);
@@ -108,7 +108,7 @@ fn focus_resolves_to_atomic_widget() {
 fn focus_resolves_to_arbitrary_present_tag() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     // The builder accepts whatever tag the shell passes and resolves
     // to the matching `NodeId`. Composite focus now travels via
@@ -124,7 +124,7 @@ fn focus_resolves_to_arbitrary_present_tag() {
 fn composite_focus_with_active_descendant_lands_on_parent() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     // R51.71 §5.40 — ARIA Authoring Practices roving-tabindex:
     // parent owns the tab stop, child is the active descendant.
@@ -143,7 +143,7 @@ fn composite_focus_with_active_descendant_lands_on_parent() {
 fn focus_falls_back_to_root_when_tag_absent() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     builder.focused(Some("stale_widget_from_previous_frame"));
     let update = builder.build(None);
@@ -154,7 +154,7 @@ fn focus_falls_back_to_root_when_tag_absent() {
 fn tag_map_resolves_every_widget_back_to_its_tag() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     let map = builder.tag_map();
     assert_eq!(map.get(&ROOT_NODE_ID).map(String::as_str), Some(""));
@@ -176,7 +176,7 @@ fn tag_map_resolves_every_widget_back_to_its_tag() {
 fn action_request_round_trip_recovers_widget_tag() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     let map = builder.tag_map();
 
@@ -195,7 +195,7 @@ fn action_request_round_trip_recovers_widget_tag() {
 fn action_request_increment_for_slider_round_trips() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     let map = builder.tag_map();
     let req = ActionRequest {
@@ -213,7 +213,7 @@ fn action_request_increment_for_slider_round_trips() {
 fn action_request_on_composite_child_recovers_sub_tag() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     let map = builder.tag_map();
     let req = ActionRequest {
@@ -230,7 +230,7 @@ fn action_request_on_composite_child_recovers_sub_tag() {
 fn action_request_on_root_returns_none() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     let map = builder.tag_map();
     let req = ActionRequest {
@@ -246,7 +246,7 @@ fn action_request_on_root_returns_none() {
 fn action_request_on_unknown_node_returns_none() {
     let mut builder = AccessTreeBuilder::new();
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     let map = builder.tag_map();
     let req = ActionRequest {
@@ -301,7 +301,7 @@ fn incremental_emit_carries_only_dirty_widget() {
     // diffs and emits only the changed tag plus the synthetic root.
     let mut builder = AccessTreeBuilder::new().initial(false);
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     let dirty: std::collections::HashSet<String> =
         ["dark_toggle".to_owned()].into_iter().collect();
@@ -323,7 +323,7 @@ fn incremental_empty_dirty_still_carries_focus_and_root() {
     // node payload is just the root carrier.
     let mut builder = AccessTreeBuilder::new().initial(false);
     for node in mixed_scene() {
-        builder.add(node);
+        builder.add(&node);
     }
     builder.dirty_tags(std::collections::HashSet::new());
     builder.focused(Some("main_btn"));

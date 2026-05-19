@@ -1139,33 +1139,41 @@ impl<V: WidgetView> ShellCore<V> {
     /// planning call diffs against this frame.
     ///
     /// Always run after the `Adapter::update_if_active` closure has
-    /// consumed the nodes — even when `decision.should_emit` is
-    /// `false`, calling `commit_access_emit` is safe (it idempotently
-    /// rewrites the cache to the same values). The textbook canonical
-    /// idiom is "plan, optionally emit, always commit"; the alternative
-    /// (skipping commit on `!should_emit`) is also correct (cache is
-    /// already accurate) but easier to get wrong as the substrate
-    /// grows.
+    /// consumed (or borrowed) the nodes — even when
+    /// `decision.should_emit` is `false`, calling `commit_access_emit`
+    /// is safe (it idempotently rewrites the cache to the same
+    /// values). The textbook canonical idiom is "plan, optionally
+    /// emit, always commit".
+    ///
+    /// R51.79 §5.40 — signature takes `nodes: Vec<AccessNode>`
+    /// by-value so the Vec moves straight into `last_access_nodes`
+    /// without a per-node clone. Pre-R51.79 took `&[AccessNode]` and
+    /// did `nodes.iter().cloned()` internally, doubling the per-frame
+    /// allocation budget (one clone for the emit closure, one clone
+    /// for the cache). The new shape pairs with
+    /// [`AccessTreeBuilder::add`] taking `&AccessNode` — the emit
+    /// closure borrows from `nodes`, then `commit_access_emit`
+    /// consumes by-value: one clone per node, in the builder only.
     ///
     /// Update set: `last_access_tag_map` (`NodeId` → tag for AT-side
     /// action routing), `last_access_nodes` (per-tag snapshot for the
-    /// next dirty diff), `last_access_focus` (for the next focus-change
-    /// detection), `access_emit_initial` (set to `false` after the
-    /// first commit so the next plan emits incrementally).
+    /// next dirty diff — moved in by-value), `last_access_focus`
+    /// (for the next focus-change detection), `access_emit_initial`
+    /// (set to `false` after the first commit so the next plan emits
+    /// incrementally).
     pub fn commit_access_emit(
         &mut self,
-        nodes: &[AccessNode],
+        nodes: Vec<AccessNode>,
         focus: Option<&pinion_a11y::AccessFocus>,
     ) {
-        // R51.67 §5.40 — refresh the NodeId → tag map so AT-side
-        // `ActionRequested` deliveries can resolve back to widget
-        // tags without recomputing the tree.
-        self.last_access_tag_map = build_tag_map(nodes);
-        // Refresh the per-tag snapshot for the next frame's dirty
-        // diff.
+        // R51.67 §5.40 — refresh the NodeId → tag map. Borrow before
+        // the by-value move below.
+        self.last_access_tag_map = build_tag_map(&nodes);
+        // R51.79 §5.40 — move the Vec straight into the per-tag
+        // HashMap. `tag.clone()` lifts only the key (a String) out;
+        // each `AccessNode` itself moves without an extra clone.
         self.last_access_nodes = nodes
-            .iter()
-            .cloned()
+            .into_iter()
             .map(|n| (n.tag.clone(), n))
             .collect();
         // Refresh the focus snapshot for the next frame's
@@ -1392,12 +1400,15 @@ impl<V: WidgetView> AppShell<V> {
                 V::access_focus_target(&self.core.cached_state, focused.as_deref());
             let window_bounds =
                 pinion_core::scene::Rect::new(0, 0, size.width, size.height);
-            // R51.77 §5.40 — plan + (optionally) emit + commit. The
-            // pure planner reads the substrate's incremental caches
-            // and returns the dirty diff + should-emit verdict
-            // without mutating any state; the optional emit feeds
-            // `nodes` + `at_focus` into the AccessKit closure; the
-            // commit advances the cache for the next frame.
+            // R51.77 / R51.79 §5.40 — plan + (optionally) emit +
+            // commit. The pure planner reads the substrate's
+            // incremental caches and returns the dirty diff +
+            // should-emit verdict without mutating any state; the
+            // optional emit borrows `&nodes` into the AccessKit
+            // closure (R51.79: `AccessTreeBuilder::add` takes
+            // `&AccessNode` so no outer `nodes.clone()` is needed);
+            // the commit consumes `nodes` by-value into the cache
+            // (one allocation total, in the builder).
             let decision =
                 self.core.plan_access_emit(&nodes, at_focus.as_ref());
             if decision.should_emit
@@ -1406,13 +1417,13 @@ impl<V: WidgetView> AppShell<V> {
                 let initial = decision.initial;
                 let dirty = decision.dirty;
                 let at_focus_ref = at_focus.as_ref();
-                let nodes_for_emit = nodes.clone();
+                let nodes_ref = &nodes;
                 adapter.update_if_active(|| {
                     let mut builder = AccessTreeBuilder::new();
                     if !initial {
                         builder = builder.initial(false);
                     }
-                    for node in nodes_for_emit {
+                    for node in nodes_ref {
                         builder.add(node);
                     }
                     if !initial {
@@ -1431,10 +1442,11 @@ impl<V: WidgetView> AppShell<V> {
                     builder.build(Some(window_bounds))
                 });
             }
-            // R51.77 §5.40 — commit step. Always runs (idempotent on
-            // !should_emit) so the next frame's plan diffs against
+            // R51.77 / R51.79 §5.40 — commit step. By-value Vec move
+            // into the cache; nodes consumed here. Idempotent on
+            // !should_emit so the next frame's plan diffs against
             // the post-emit baseline.
-            self.core.commit_access_emit(&nodes, at_focus.as_ref());
+            self.core.commit_access_emit(nodes, at_focus.as_ref());
         }
         // R47.7.5 §5.12 — snapshot the freshly-measured paint scene
         // into a `LayoutNode` tree so `scene/layout {viewport: null}`
