@@ -498,32 +498,53 @@ pub struct ShellCore<V: WidgetView> {
     /// `Box<dyn External>`. Both winit input (via the `InputRouter`)
     /// and RPC dispatch (via the `DispatchContext`) reach the SCXML
     /// statechart through this single scene.
-    pub(crate) scene: Scene,
+    ///
+    /// R51.83 §5.40 — private. Read-only access via [`Self::scene`];
+    /// mutation happens through the [`ShellCore`] dispatch methods
+    /// (`forward`, `apply_key`, `cursor_moved`, …) so the substrate
+    /// stays the sole writer.
+    scene: Scene,
     /// Cached projection of the introspect state, kept in sync by
     /// `refresh_state` after every input. Drives change-detection
     /// for the redraw request + the view fn's input.
-    pub(crate) cached_state: V::State,
+    ///
+    /// R51.83 §5.40 — private. Read-only access via
+    /// [`Self::cached_state`]; mutation happens inside `refresh_state`.
+    cached_state: V::State,
     /// §5.20 intent harvest buffer. Refilled by `drain_intents` after
     /// every winit / RPC event; consumed by stderr logging. The
     /// `scene/intents` RPC method drains the same source independently
     /// since the underlying `External::pending_intents` is the single
     /// queue.
-    pub(crate) intent_queue: IntentQueue,
+    ///
+    /// R51.83 §5.40 — private. Substrate-internal harvest queue; no
+    /// external observer (the RPC drain reaches the External directly).
+    intent_queue: IntentQueue,
     /// §5.34 preview lifecycle ledger — passed into every
     /// `pinion_rpc::dispatch` call alongside the scene. Lifecycle RPC
     /// methods read or mutate it through interior mutability;
     /// non-lifecycle methods ignore it.
-    pub(crate) previews: PreviewLedger,
+    ///
+    /// R51.83 §5.40 — private. Plumbed into [`DispatchContext`] by
+    /// [`Self::dispatch_rpc`] only.
+    previews: PreviewLedger,
     /// §5.34 R40.4 OCC revision token. `dispatch` auto-bumps on
     /// mutating RPC methods; [`ShellCore::forward`] explicitly bumps
     /// after the winit-side `invoke` since that path bypasses the
     /// dispatcher entirely.
-    pub(crate) revision: SceneRevision,
+    ///
+    /// R51.83 §5.40 — private. Read-only access via
+    /// [`Self::revision`] (returns the current `u64`); mutation
+    /// happens through the substrate dispatch methods only.
+    revision: SceneRevision,
     /// R48 §5.35 framework-side input dispatch primitive. Owns the
     /// retained paint scene + cursor state + `hover_target` and
     /// routes pointer events to the matching `ExternalNode` in
     /// `self.scene` (the one tagged `V::tag()`).
-    pub(crate) router: InputRouter,
+    ///
+    /// R51.83 §5.40 — private. The substrate's pointer-event wrappers
+    /// (`cursor_moved`, `mouse_pressed`, …) are the only callers.
+    router: InputRouter,
     /// R51.53 §5.39 framework-side focus state owner. Tab/Shift+Tab
     /// traverses [`FocusManager::tab_order`] (seeded from
     /// `V::focusable_tags()` at boot); click on a tagged widget
@@ -532,49 +553,76 @@ pub struct ShellCore<V: WidgetView> {
     /// manager on every key dispatch so `apply_key` runs only when
     /// the widget's own tag is focused (eliminating the broadcast
     /// aliasing the pre-R51.53 design carried).
-    pub(crate) focus: FocusManager,
+    ///
+    /// R51.83 §5.40 — private. Read-only access via [`Self::focus`];
+    /// mutation routed through the substrate's focus-handling
+    /// methods (`handle_focus_traverse`, `click_to_focus`, …).
+    focus: FocusManager,
     /// R51.53 §5.39 — winit [`ModifiersState`] cache. Refreshed by
     /// `WindowEvent::ModifiersChanged`; consulted on every
     /// `KeyboardInput` for Shift detection (Shift+Tab = `focus_prev`).
     /// winit emits `KeyEvent` without modifier state, so the shell
     /// has to track it out-of-band.
-    pub(crate) modifiers: ModifiersState,
+    ///
+    /// R51.83 §5.40 — private. `AppShell::handle_key_press` reads
+    /// only the Shift bit via [`Self::modifiers_shift_key`];
+    /// mutation happens through [`Self::set_modifiers`].
+    modifiers: ModifiersState,
     /// R47.3 §5.36 — owned [`LayoutCache`] (LRU 256). `paint_adapter`'s
     /// Text arm consults this cache for every `Scene::Text` it walks
     /// so the view fn's static labels shape once on first paint and
     /// hit the cache on every subsequent frame. The cache also owns
     /// parley's `FontContext` / `LayoutContext` so the shell never
     /// holds parley state directly.
-    pub(crate) text_cache: LayoutCache,
+    ///
+    /// R51.83 §5.40 — private. The vello-side paint pipeline reaches
+    /// the cache through [`Self::text_cache_mut`]; substrate-internal
+    /// callers use the field directly.
+    text_cache: LayoutCache,
     /// R47.7.5 §5.12 — most recent winit-rendered frame's paint scene
     /// projected into a [`LayoutNode`] tree. Refreshed at the end of
     /// every paint pass; `dispatch_rpc` hands it to
     /// `DispatchContext::with_last_paint_layout` so AI clients reach
     /// the winit-actual frame via `scene/layout {viewport: null}`.
     /// `None` until the first frame has rendered.
-    pub(crate) last_paint_layout: Option<LayoutNode>,
+    ///
+    /// R51.83 §5.40 — private. Set inside [`Self::finalize_frame`]
+    /// and consumed inside [`Self::dispatch_rpc`].
+    last_paint_layout: Option<LayoutNode>,
     /// R51.67 §5.40 — `NodeId` → widget tag map from the most recent
     /// `TreeUpdate`. Refreshed at the end of every `render` (when an
     /// adapter is attached). Consumed by `handle_action_request` so
     /// AT-side actions arriving via `AppEvent::AccessKit` resolve
     /// back to the widget tag without recomputing the tree.
-    pub(crate) last_access_tag_map: HashMap<NodeId, String>,
+    ///
+    /// R51.83 §5.40 — private. Set inside [`Self::commit_access_emit`]
+    /// and consumed inside [`Self::handle_action_request`].
+    last_access_tag_map: HashMap<NodeId, String>,
     /// R51.72 §5.40 — previous frame's `AccessNode` set (keyed by
     /// `tag`). The next frame diffs against this to compute the
     /// dirty subset passed to `AccessTreeBuilder::dirty_tags`.
     /// AccessKit's incremental-update guidance: "an update should
     /// only include nodes that are new or changed".
-    pub(crate) last_access_nodes: HashMap<String, AccessNode>,
+    ///
+    /// R51.83 §5.40 — private. Read by [`Self::plan_access_emit`],
+    /// written by [`Self::commit_access_emit`].
+    last_access_nodes: HashMap<String, AccessNode>,
     /// R51.72 §5.40 — `true` until the first `TreeUpdate` has been
     /// emitted (carrying the `Tree` metadata + every node). After
     /// that, subsequent emits set `initial(false)` and pass only
     /// the dirty subset.
-    pub(crate) access_emit_initial: bool,
+    ///
+    /// R51.83 §5.40 — private. Read by [`Self::plan_access_emit`],
+    /// cleared by [`Self::commit_access_emit`].
+    access_emit_initial: bool,
     /// R51.75 §5.40 — previous frame's `AccessFocus`. Compared
     /// alongside the dirty-node diff: when neither nodes nor focus
     /// changed, `update_if_active` is skipped entirely so a
     /// steady-state animation frame costs no AT-side traffic.
-    pub(crate) last_access_focus: Option<pinion_a11y::AccessFocus>,
+    ///
+    /// R51.83 §5.40 — private. Read by [`Self::plan_access_emit`],
+    /// written by [`Self::commit_access_emit`].
+    last_access_focus: Option<pinion_a11y::AccessFocus>,
     /// R51.76 §5.40 — flag set whenever a method on
     /// [`ShellCore`] decides the next frame should repaint. Drained
     /// by [`AppShell`] after each event-loop iteration and forwarded
@@ -584,7 +632,12 @@ pub struct ShellCore<V: WidgetView> {
     /// direct `window.request_redraw()` call buried in every
     /// dispatch method, which made the substrate untestable without
     /// a real event loop.
-    pub(crate) redraw_requested: bool,
+    ///
+    /// R51.83 §5.40 — private. Read-only access via
+    /// [`Self::redraw_requested`]; drain via
+    /// [`Self::take_redraw_request`]; mutation via
+    /// [`Self::request_redraw`].
+    redraw_requested: bool,
 }
 
 /// R51.77 §5.40 — pure decision returned by
@@ -631,7 +684,11 @@ pub struct AppShell<V: WidgetView> {
     /// R51.76 §5.40 — extracted dispatch substrate (scene, cached
     /// state, focus, intents, previews, revision, router, modifiers,
     /// text cache, last paint snapshot, AT caches, redraw flag).
-    pub(crate) core: ShellCore<V>,
+    ///
+    /// R51.83 §5.40 — private. All surface-side access happens
+    /// through the substrate's typed methods + accessors so the
+    /// boundary stays one-way.
+    core: ShellCore<V>,
     /// R46.5 §5.16 suspend / resume lifecycle (R46.3.4 pattern).
     render: RenderState<V::Renderer>,
     /// Reusable Vello scene buffer — reset at the start of each frame
@@ -710,9 +767,11 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
-    /// R51.76 §5.40 — borrow the focus manager. Tests inspect the
-    /// focused tag through this accessor; production code accesses
-    /// the field directly via `pub(crate)`.
+    /// R51.76 §5.40 — borrow the focus manager. Both tests and the
+    /// vello-side paint pipeline reach the focused tag through this
+    /// accessor. R51.83 §5.40: substrate-internal callers use the
+    /// field directly; the surface boundary forbids it (the field
+    /// itself is private).
     #[must_use]
     pub fn focus(&self) -> &FocusManager {
         &self.focus
@@ -790,6 +849,32 @@ impl<V: WidgetView> ShellCore<V> {
     /// (the textbook winit idiom: redraws are coalesced).
     pub fn request_redraw(&mut self) {
         self.redraw_requested = true;
+    }
+
+    /// R51.83 §5.40 — mutable borrow of the §5.36 [`LayoutCache`] for
+    /// the vello-side paint pipeline.
+    ///
+    /// `paint_adapter::to_vello` walks the paint scene and consults
+    /// the cache for every `Scene::Text` node (shape once, hit on
+    /// every subsequent frame). The accessor is the single
+    /// surface-side entry point: substrate-internal callers
+    /// (`compute_paint_scene`'s `compute_layout` call) use the field
+    /// directly so the surface boundary stays explicit.
+    #[must_use]
+    pub fn text_cache_mut(&mut self) -> &mut LayoutCache {
+        &mut self.text_cache
+    }
+
+    /// R51.83 §5.40 — Shift modifier bit from the cached winit
+    /// [`ModifiersState`].
+    ///
+    /// `AppShell::handle_key_press` reads the Shift bit to decide
+    /// whether `Tab` calls [`Self::handle_focus_traverse`] in the
+    /// reverse direction. Exposes only the bit the surface needs;
+    /// the rest of the modifier state stays substrate-internal.
+    #[must_use]
+    pub fn modifiers_shift_key(&self) -> bool {
+        self.modifiers.shift_key()
     }
 
 
@@ -1007,12 +1092,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// cached state.
     ///
     /// Encapsulates `Frame::new` + `V::view(state, &frame)` +
-    /// `compute_layout(&mut scene, &mut text_cache, w, h)` so
-    /// [`AppShell::render`] does not have to reach into
-    /// `self.core.cached_state` and `self.core.text_cache` directly.
-    /// Pure with respect to substrate state (only `text_cache`
-    /// mutates internally, by design — the LRU records each freshly
-    /// shaped text run for the next frame's cache hit).
+    /// `compute_layout(&mut scene, &mut text_cache, w, h)` so the
+    /// surface-side render path does not have to interleave a state
+    /// read with a text-cache mutable borrow. R51.83 §5.40: the
+    /// underlying `cached_state` / `text_cache` fields are private,
+    /// so this method (and [`Self::text_cache_mut`] for the paint
+    /// adapter borrow) is the only way for the surface to drive the
+    /// pipeline. Pure with respect to substrate state (only
+    /// `text_cache` mutates internally, by design — the LRU records
+    /// each freshly shaped text run for the next frame's cache hit).
     pub fn compute_paint_scene(&mut self, w: u32, h: u32) -> Scene {
         let frame = Frame::new();
         let mut paint_scene = V::view(self.cached_state, &frame);
@@ -1026,11 +1114,13 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// Runs the pipeline `V::access_node` → `enrich_names_from_scene`
     /// → `rect_for_tag` → `V::access_focus_target` in one place so
-    /// [`AppShell::render`] does not have to reach into
-    /// `self.core.cached_state` / `self.core.focus` four times in a
-    /// row. The pure paint scene + the substrate's read-only state
-    /// (focus + `cached_state`) are the only inputs; nothing on
-    /// `ShellCore` mutates.
+    /// the surface-side render path does not have to interleave four
+    /// reads against substrate-internal state. R51.83 §5.40: the
+    /// underlying `cached_state` and `focus` fields are private, so
+    /// this method is the only way for the surface to assemble the
+    /// emit inputs. The pure paint scene + the substrate's read-only
+    /// state (focus + `cached_state`) are the only inputs; nothing
+    /// on `ShellCore` mutates.
     #[must_use]
     pub fn collect_access_emit_inputs(
         &self,
@@ -1515,7 +1605,7 @@ impl<V: WidgetView> AppShell<V> {
         paint_adapter::to_vello(
             &paint_scene,
             &|_b: &BoxNode| None,
-            &mut self.core.text_cache,
+            self.core.text_cache_mut(),
             &mut self.vello_scene,
         );
         // R51.58 §5.39 — paint the ARIA focus ring on top of the
@@ -1604,7 +1694,7 @@ impl<V: WidgetView> AppShell<V> {
         match logical_key.as_ref() {
             Key::Named(NamedKey::Escape) => event_loop.exit(),
             Key::Named(NamedKey::Tab) => {
-                self.core.handle_focus_traverse(self.core.modifiers.shift_key());
+                self.core.handle_focus_traverse(self.core.modifiers_shift_key());
             }
             Key::Character(c) => self.core.handle_character_key(c),
             Key::Named(named) => {
@@ -1762,7 +1852,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             WindowEvent::CloseRequested => {
                 eprintln!(
                     "shell: final state = {}",
-                    V::fmt_state_log(&self.core.cached_state),
+                    V::fmt_state_log(self.core.cached_state()),
                 );
                 event_loop.exit();
             }

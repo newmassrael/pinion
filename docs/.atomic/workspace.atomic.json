@@ -3877,7 +3877,8 @@
         "R51.79 — AccessTreeBuilder::add &AccessNode + commit_access_emit by-value Vec move",
         "R51.80 — ShellCore deeper extraction: paint+a11y+finalize+input+focus wrappers 정통",
         "R51.81 — TextNode.role + TextRole 정통, decoration glyph 의 aria_label Band-Aid 청산",
-        "R51.82 — dispatch_access_action::Focus composite tag 처리, access_child_invoke 라우팅"
+        "R51.82 — dispatch_access_action::Focus composite tag 처리, access_child_invoke 라우팅",
+        "R51.83 — ShellCore 14 필드 + AppShell.core pub(crate) → private (R51.80 encapsulation claim 회복)"
       ],
       "alternatives_rejected": [
         {
@@ -4163,6 +4164,14 @@
         {
           "file": "crates/pinion-core/src/scene.rs",
           "symbol": "TextNode::with_role"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "ShellCore::text_cache_mut"
+        },
+        {
+          "file": "crates/pinion-shell/src/lib.rs",
+          "symbol": "ShellCore::modifiers_shift_key"
         }
       ],
       "decision_status": "active"
@@ -8337,6 +8346,64 @@
         "handle_focus_* boilerplate helper",
         "Tier-1 R51.x carry 9개",
         "TextRole::Label variant 활용 (R51.81 carry)"
+      ]
+    },
+    "R51.83": {
+      "decision_summary": "§5.40 R51.83 — ShellCore 14 필드 + AppShell.core `pub(crate)` → private (encapsulation substantive): R51.80 wrapper-only claim 의 substantive 단계 land, surface boundary 강화, 외부 직접 접근 점 0개로 축소.",
+      "changes_bullets": [
+        "crates/pinion-shell/src/lib.rs — ShellCore 14 필드 (scene/cached_state/intent_queue/previews/revision/router/focus/modifiers/text_cache/last_paint_layout/last_access_tag_map/last_access_nodes/access_emit_initial/last_access_focus/redraw_requested) `pub(crate)` → private",
+        "crates/pinion-shell/src/lib.rs — AppShell.core 필드 `pub(crate)` → private (surface 가 자신의 substrate 를 외부 노출하지 않음)",
+        "crates/pinion-shell/src/lib.rs — ShellCore::text_cache_mut() accessor 신설 (paint_adapter::to_vello 의 유일 surface-side mutable 진입점)",
+        "crates/pinion-shell/src/lib.rs — ShellCore::modifiers_shift_key() accessor 신설 (Tab+Shift detection 의 minimal-surface bit 노출 — ModifiersState 전체는 substrate-internal 보존)",
+        "crates/pinion-shell/src/lib.rs — AppShell::render 의 paint_adapter::to_vello 호출이 self.core.text_cache_mut() 사용 (이전 &mut self.core.text_cache 직접 접근)",
+        "crates/pinion-shell/src/lib.rs — AppShell::handle_key_press Tab arm 이 self.core.modifiers_shift_key() 사용 (이전 self.core.modifiers.shift_key() 직접 접근)",
+        "crates/pinion-shell/src/lib.rs — AppShell::window_event CloseRequested arm 이 self.core.cached_state() accessor 사용 (이전 &self.core.cached_state 직접 접근)",
+        "crates/pinion-shell/src/lib.rs — 14 필드 + AppShell.core doc comment 에 R51.83 private 결정 + accessor 통한 단방향 surface boundary 명시"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — 모든 crate clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warning (workspace.lints strict baseline 보호)",
+        "cargo test --workspace --features pinion-runtime/vello — 1503 pass / 0 fail / 8 ignored (R51.82 baseline byte-identical)",
+        "dispatch_core 27 test 전 통과 — 모든 외부 accessor (focus()/revision()/redraw_requested()) 만 사용",
+        "grep `core\\.(scene|cached_state|intent_queue|previews|revision|router|focus|modifiers|text_cache|last_paint_layout|last_access_|access_emit_initial|redraw_requested)` 외부 접근 점 0개 (이전 3개 — 1518/1607/1765 라인)",
+        "R51.80 claim accuracy gap 회복 — `encapsulation 정통` claim 의 substantive 단계 (wrapper method add 만이 아니라 필드 visibility 하향) 완료"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.84 — AccessFocus::with_active_descendant builder + AccessTreeBuilder::initial signature 통일 (다른 method 와 &mut self 일관) + ContainerNode::with_aria_label → with_name_override rename (WAI-ARIA 의미 1:1 일치) + handle_focus_traverse empty tab_order early return",
+        "R51.85 — pinion-rpc focus 4 route (set/get/next/prev) Option<&mut FocusManager> null check + RpcError 매핑 helper 추출 (DRY 회복)",
+        "R51.86 — TextRole::Label variant 활용처 land 또는 enum 에서 제거 + carry 명시 (strict YAGNI textbook)",
+        "R51.87 — RadioGroup focused_index vs selected_index 분리 (WAI-ARIA roving-tabindex 정통, SCE template 재설계 동반)"
+      ],
+      "publishable_decision_summary": "§5.40 R51.83 — ShellCore 14 필드 + AppShell.core `pub(crate)` → private (encapsulation substantive): R51.80 wrapper-only claim 의 substantive 단계 land, surface boundary 강화, 외부 직접 접근 점 0개로 축소.",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/lib.rs — ShellCore 14 필드 (scene/cached_state/intent_queue/previews/revision/router/focus/modifiers/text_cache/last_paint_layout/last_access_tag_map/last_access_nodes/access_emit_initial/last_access_focus/redraw_requested) `pub(crate)` → private",
+        "crates/pinion-shell/src/lib.rs — AppShell.core 필드 `pub(crate)` → private (surface 가 자신의 substrate 를 외부 노출하지 않음)",
+        "crates/pinion-shell/src/lib.rs — ShellCore::text_cache_mut() accessor 신설 (paint_adapter::to_vello 의 유일 surface-side mutable 진입점)",
+        "crates/pinion-shell/src/lib.rs — ShellCore::modifiers_shift_key() accessor 신설 (Tab+Shift detection 의 minimal-surface bit 노출 — ModifiersState 전체는 substrate-internal 보존)",
+        "crates/pinion-shell/src/lib.rs — AppShell::render 의 paint_adapter::to_vello 호출이 self.core.text_cache_mut() 사용 (이전 &mut self.core.text_cache 직접 접근)",
+        "crates/pinion-shell/src/lib.rs — AppShell::handle_key_press Tab arm 이 self.core.modifiers_shift_key() 사용 (이전 self.core.modifiers.shift_key() 직접 접근)",
+        "crates/pinion-shell/src/lib.rs — AppShell::window_event CloseRequested arm 이 self.core.cached_state() accessor 사용 (이전 &self.core.cached_state 직접 접근)",
+        "crates/pinion-shell/src/lib.rs — 14 필드 + AppShell.core doc comment 에 R51.83 private 결정 + accessor 통한 단방향 surface boundary 명시"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello — 모든 crate clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warning (workspace.lints strict baseline 보호)",
+        "cargo test --workspace --features pinion-runtime/vello — 1503 pass / 0 fail / 8 ignored (R51.82 baseline byte-identical)",
+        "dispatch_core 27 test 전 통과 — 모든 외부 accessor (focus()/revision()/redraw_requested()) 만 사용",
+        "grep `core\\.(scene|cached_state|intent_queue|previews|revision|router|focus|modifiers|text_cache|last_paint_layout|last_access_|access_emit_initial|redraw_requested)` 외부 접근 점 0개 (이전 3개 — 1518/1607/1765 라인)",
+        "R51.80 claim accuracy gap 회복 — `encapsulation 정통` claim 의 substantive 단계 (wrapper method add 만이 아니라 필드 visibility 하향) 완료"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.84 — AccessFocus::with_active_descendant builder + AccessTreeBuilder::initial signature 통일 (다른 method 와 &mut self 일관) + ContainerNode::with_aria_label → with_name_override rename (WAI-ARIA 의미 1:1 일치) + handle_focus_traverse empty tab_order early return",
+        "R51.85 — pinion-rpc focus 4 route (set/get/next/prev) Option<&mut FocusManager> null check + RpcError 매핑 helper 추출 (DRY 회복)",
+        "R51.86 — TextRole::Label variant 활용처 land 또는 enum 에서 제거 + carry 명시 (strict YAGNI textbook)",
+        "R51.87 — RadioGroup focused_index vs selected_index 분리 (WAI-ARIA roving-tabindex 정통, SCE template 재설계 동반)"
       ]
     },
     "Round 1": {
