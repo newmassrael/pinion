@@ -3016,6 +3016,7 @@ router.pointer_down(&mut state_scene);
 - R51.83 — ShellCore 14 필드 + AppShell.core pub(crate) → private (R51.80 encapsulation claim 회복)
 - R51.84 — AccessTreeBuilder::initial &mut self 통일 + AccessFocus::with_active_descendant builder
 - R51.85 — focus 4 route handler 의 RpcError 매핑 helper 5개 추출 (DRY + code lockstep)
+- R51.86 — TextRole::Label 제거 (consumer 0, strict YAGNI 회복; #[non_exhaustive] 보존)
 
 
 
@@ -5925,6 +5926,33 @@ router.pointer_down(&mut state_scene);
 - R51.87 — RadioGroup focused_index vs selected_index 분리 (SCE template 재설계)
 - R51.84 carry 잠재: with_aria_label rename 결론 재검토 (현재 WAI-ARIA 정렬 판단 유지)
 - R51.84 carry 잠재: handle_focus_traverse early return 결론 재검토 (현재 FocusManager short-circuit 중복 불필요 판단 유지)
+
+
+
+### R51.86 — §5.40 R51.86 — TextRole::Label variant 제거 (forward-compat declaration 미land, strict YAGNI 회복): #[non_exhaustive] 보존으로 §5.2.6 labelling axis 정착 시 추가 변형 가능.
+
+**Changes**:
+- crates/pinion-core/src/scene.rs — TextRole::Label variant 제거 (활용처 0, forward-compat declaration 만 존재 했던 strict-YAGNI 위반)
+- crates/pinion-core/src/scene.rs — TextNode::role + TextRole doc comment 에서 Label paragraph 제거 + R51.86 strict-YAGNI 설명 추가
+- TextRole 은 여전히 #[non_exhaustive] 이므로 future WAI-ARIA 1.2 §5.2.6 labelling axis 정착 시 구체 consumer 와 함께 Label 명시적 재도입 가능
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello — 모든 crate clean (Label 참조 없음 경우만 존재했으므로 제거 안전)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warning
+- cargo test --workspace --features pinion-runtime/vello — 1504 pass / 0 fail / 9 ignored (R51.85 baseline byte-identical)
+- TextRole consumer set: Default + Presentational 두 variant 만 권장 — 실제 사용처와 enum surface 1:1 일치 (claim accuracy)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.87 — RadioGroup focused_index vs selected_index 분리 (WAI-ARIA roving-tabindex 정통, SCE template 재설계)
+- future R5x.y — WAI-ARIA 1.2 §5.2.6 labelling axis 정착 시 TextRole::Label 재도입 (구체 consumer + 우선순위 룰 동반 land)
+- R51.84 carry 잠재: with_aria_label rename / handle_focus_traverse early return — 기술적 정당성 재검토
 
 
 

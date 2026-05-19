@@ -496,18 +496,23 @@ pub struct TextNode {
     /// `Default` (= `None` after `TextNode::new`) puts the text into
     /// the enrichment search. `Presentational` declares the run is
     /// pure decoration (WAI-ARIA `role="presentation"`) so enrichment
-    /// skips it. `Label` is forward-compatible: future composite
-    /// widgets may carry an in-scene label that takes precedence over
-    /// later content; the enrichment can prioritise it once we land
-    /// the WAI-ARIA 1.2 §5.2.6 labelling axis.
+    /// skips it.
+    ///
+    /// R51.86 §5.40 — the enum is `#[non_exhaustive]`; future
+    /// variants (e.g. an explicit `Label` carrier for the WAI-ARIA
+    /// 1.2 §5.2.6 labelling axis) land additively when a concrete
+    /// consumer arrives. Pre-R51.86 carried a `Label` placeholder
+    /// without a consumer; strict-YAGNI removed it so the enum
+    /// surfaces only roles the pipeline actually honours.
     pub role: Option<TextRole>,
 }
 
 /// R51.81 §5.40 — accessibility role hint attached to a [`TextNode`].
 ///
 /// See [`TextNode::role`] for the contract. The enum is `#[non_exhaustive]`
-/// so the §5.2.6 labelling axis can add variants without breaking
-/// downstream matchers.
+/// so future variants (the WAI-ARIA 1.2 §5.2.6 labelling axis is the
+/// next likely addition) land additively without breaking downstream
+/// matchers.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextRole {
@@ -519,10 +524,6 @@ pub enum TextRole {
     /// WAI-ARIA `role="presentation"`. Use for visual-only state
     /// marks (`✓`, `▶`, `●`).
     Presentational,
-    /// Explicit accessible name carrier — takes precedence over later
-    /// text runs during enrichment. Forward-compatible for the
-    /// WAI-ARIA 1.2 §5.2.6 labelling axis.
-    Label,
 }
 
 impl TextNode {
