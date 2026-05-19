@@ -3023,6 +3023,7 @@ router.pointer_down(&mut state_scene);
 - R51.90 — RadioGroup::send activate edge 가 focused_index 동기화 (WAI-ARIA APG roving first-class)
 - R51.91 — InterveneError::OutOfRange variant (RadioGroup selected/focused_index TypeMismatch 우회 정정)
 - R51.92 — pinion-shell/src/substrate.rs 분할: R51.83 visibility 가 substantive (모듈 경계)
+- R51.92.1 — app.rs 모듈 분할 (AppShell + impl ApplicationHandler + run + helpers) 로 3-모듈 완성
 
 
 
@@ -3118,6 +3119,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/substrate.rs:ShellCore::finalize_frame
 - crates/pinion-shell/src/substrate.rs:ShellCore::text_cache_mut
 - crates/pinion-shell/src/substrate.rs:ShellCore::modifiers_shift_key
+- crates/pinion-shell/src/app.rs:AppShell
+- crates/pinion-shell/src/app.rs:AppShell::new
+- crates/pinion-shell/src/app.rs:run
 
 
 
@@ -4495,6 +4499,35 @@ router.pointer_down(&mut state_scene);
 - carry: AppShell + impl ApplicationHandler 도 별도 모듈 (e.g. app.rs) 분할 — 이번에는 lib.rs 자체에 잔존 (수행자 역할 + run 과 좀 섞임). R51.92.1 carry: app.rs 구조 최적화
 - carry: dispatch.rs 의 49 RpcError literal sweep (R51.89 carry)
 - carry: listbox/menu/tree/tab composite 신설 시 resolve_index_intervene 패턴 공유 (R59 axis)
+
+
+
+### R237 — R51.92.1 §5.40 pinion-shell/src/app.rs 모듈 분할 — R51.92 3-모듈 textbook 구조 완성 (substrate + app + lib entry)
+
+**Changes**:
+- crates/pinion-shell/src/app.rs 신규 파일 (~480 LOC): AppShell + impl AppShell + impl ApplicationHandler + named_key_str + spawn_stdin_rpc_reader + run
+- crates/pinion-shell/src/lib.rs 에서 동일 콘텐츠 제거 + `mod app;` + `pub use app::{run, AppShell};` re-export
+- crates/pinion-shell/src/lib.rs imports 대폭 축소 — surface 전용 use 항목 (winit::application/dpi/event/event_loop/keyboard/window + std::io::{BufRead,Write} + std::thread + AccessTreeBuilder + BoxNode + paint_adapter + PointerId) 는 app.rs 로 이동; 잔존 은 lib.rs 자체 (trait + enum + macro) 에 필요한 (Arc + Window + Frame + Scene + AccessNode + AccessFocus + AccessAction + External + VelloScene + PenikoColor) 만
+- lib.rs 구조 안정 = entry + AppEvent + VelloRenderer trait + vello_renderer_impl macro + WidgetView trait + RenderState enum + mod 선언 + pub use re-export 으로 목적 단일화
+- AppShell.core (substrate 차용) 필드 visibility 가 substrate.rs 내부 강제 — lib.rs 도 이미 접근 불가, 이제 app.rs 내부로 모듈 경계 완전 확정
+
+
+
+**Verification**:
+- cargo build -p pinion-shell = clean
+- cargo test --workspace --features pinion-runtime/vello = 1527 pass / 0 fail / 8 ignored (R51.92 와 동일 — 순수 refactor)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- external consumer (tests + 8 examples) 계속 run + WidgetView + ShellCore + vello_renderer_impl 을 pub use 로 이용 — break 0
+- lib.rs LOC ~990 → ~470 (52% 속) + substrate.rs ~700 + app.rs ~480 = total ~1650 (계 동일, docs 소폭 증가 포함)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.89.1 — dispatch.rs 41 RpcError literal full sweep (builder 적용 높은 반복)
+- carry: R51.92.2 을 set_selected 의미 분리 검토 — over-engineering 가능성 높음, restore-semantic 이 이미 도텍 완료
 
 
 
