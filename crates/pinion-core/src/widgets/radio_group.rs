@@ -817,6 +817,44 @@ mod tests {
         );
     }
 
+    // R51.93 §5.35 — composite cancel-propagation test. RadioGroup
+    // forwards `idx:PointerCancel` wire events to the indexed Radio,
+    // whose template-driven SCXML routes `Pressed → Idle` without
+    // raising `radio.activate`. Verify that touch cancel mid-press
+    // does NOT select the row, does NOT change `selected_index`, and
+    // does NOT fire a `"selected"` intent through the composite's
+    // WidgetTransition path.
+
+    #[test]
+    fn r51_93_composite_pointer_cancel_does_not_select_row() {
+        let mut g = RadioGroupExternal::new(3);
+        let _ = g.invoke("send", IntrospectValue::Text("1:PointerEnter".to_string())).unwrap();
+        let _ = g.invoke("send", IntrospectValue::Text("1:PointerDown".to_string())).unwrap();
+        assert_eq!(g.state(1), RadioState::Pressed);
+        let before_selected = g.selected_index();
+        let before_focused = g.focused_index();
+        // Touch revoked mid-press (4-finger gesture / phone call / ...).
+        let _ = g.invoke("send", IntrospectValue::Text("1:PointerCancel".to_string())).unwrap();
+        assert_eq!(g.state(1), RadioState::Idle, "Pressed→Idle on cancel");
+        assert_eq!(
+            g.selected_index(),
+            before_selected,
+            "PointerCancel must not commit selection"
+        );
+        assert_eq!(
+            g.focused_index(),
+            before_focused,
+            "PointerCancel must not trigger R51.90 focused sync"
+        );
+        // No `"selected"` intent in the drain.
+        let mut harvested = Vec::new();
+        g.drain_intents(&mut |i| harvested.push(i));
+        assert!(
+            harvested.iter().all(|i| i.tag_str() != "selected"),
+            "PointerCancel must not fire `selected` intent through the group"
+        );
+    }
+
     #[test]
     fn external_invoke_send_drives_specified_radio() {
         let mut g = RadioGroupExternal::new(3);
