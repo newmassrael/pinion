@@ -3029,6 +3029,8 @@ router.pointer_down(&mut state_scene);
 - R51.93.1 — RadioGroup 합성 cancel propagation 회귀 테스트 (template fix 가 composite path 자동 적용 검증)
 - R51.94 — AccessTreeBuilder::build 가 debug_assert 로 tag_to_node_id injective 검증 (release 0-cost)
 - R51.95 — ListBoxItem 신규 widget (template 공유, listbox_item.activate 채널, ListBox composite 의 기본 item)
+- R51.96 — ListBox composite (WAI-ARIA Listbox: Arrow=focus, Space/Enter=commit) RadioGroup mirror
+- R51.96.1 — AriaRole 에 Listbox + ListBoxOption variant 추가 (additive, #[non_exhaustive] 보존)
 
 
 

@@ -33,6 +33,21 @@ pub enum AriaRole {
     RadioButton,
     Slider,
     RadioGroup,
+    /// R51.96.1 §5.40 — WAI-ARIA 1.2 §4.3.x `listbox` composite
+    /// role. Container for [`Self::ListBoxOption`] children; pairs
+    /// with the `ListBox` composite primitive
+    /// ([`pinion_core::widgets::listbox`]). Distinct from
+    /// [`Self::RadioGroup`] in the WAI-ARIA keyboard model: Arrow
+    /// keys move focus only, `Space` / `Enter` commits the
+    /// selection (vs Arrow-activates-immediately for `RadioGroup`).
+    Listbox,
+    /// R51.96.1 §5.40 — WAI-ARIA 1.2 `option` role. Single
+    /// selectable child of an [`Self::Listbox`] parent. Distinct
+    /// from [`Self::RadioButton`] only at the AT-side role surface;
+    /// the underlying widget primitive
+    /// ([`pinion_core::widgets::listbox_item`]) shares the
+    /// button-like statechart with `Radio` / `Toggle` / `Checkbox`.
+    ListBoxOption,
     Generic,
 }
 
@@ -51,6 +66,8 @@ impl AriaRole {
             Self::RadioButton => Role::RadioButton,
             Self::Slider => Role::Slider,
             Self::RadioGroup => Role::RadioGroup,
+            Self::Listbox => Role::ListBox,
+            Self::ListBoxOption => Role::ListBoxOption,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -67,6 +84,8 @@ impl AriaRole {
             Self::RadioButton => "radio",
             Self::Slider => "slider",
             Self::RadioGroup => "radiogroup",
+            Self::Listbox => "listbox",
+            Self::ListBoxOption => "option",
             Self::Generic => "generic",
         }
     }
@@ -109,6 +128,23 @@ mod tests {
         assert_eq!(AriaRole::RadioButton.aria_name(), "radio");
         assert_eq!(AriaRole::Slider.aria_name(), "slider");
         assert_eq!(AriaRole::RadioGroup.aria_name(), "radiogroup");
+        assert_eq!(AriaRole::Listbox.aria_name(), "listbox");
+        assert_eq!(AriaRole::ListBoxOption.aria_name(), "option");
         assert_eq!(AriaRole::Generic.aria_name(), "generic");
+    }
+
+    // R51.96.1 §5.40 — Listbox / Option role lowering.
+
+    #[test]
+    fn listbox_lowers_to_accesskit_listbox() {
+        assert_eq!(AriaRole::Listbox.to_accesskit(), Role::ListBox);
+    }
+
+    #[test]
+    fn listbox_option_lowers_to_accesskit_listbox_option() {
+        assert_eq!(
+            AriaRole::ListBoxOption.to_accesskit(),
+            Role::ListBoxOption
+        );
     }
 }

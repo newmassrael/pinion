@@ -364,6 +364,12 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         AriaRole::Button
         | AriaRole::CheckBox
         | AriaRole::RadioButton
+        // R51.96.1 §5.40 — `ListBoxOption` behaves like the other
+        // commit-class atomic roles for AT-side actions (Click =
+        // activate, Focus = move active descendant). Distinct from
+        // `RadioButton` only at the role surface; the action set is
+        // the same.
+        | AriaRole::ListBoxOption
         | AriaRole::Switch => {
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
@@ -373,7 +379,11 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
             node.add_action(Action::Increment);
             node.add_action(Action::Decrement);
         }
-        AriaRole::RadioGroup | AriaRole::Generic => {
+        // R51.96.1 §5.40 — `Listbox` composite parent supports
+        // `Focus` (move the AT-side cursor to the listbox itself,
+        // letting `active_descendant` surface the focused option).
+        // Mirrors `RadioGroup`'s container-action set.
+        AriaRole::RadioGroup | AriaRole::Listbox | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }
     }
