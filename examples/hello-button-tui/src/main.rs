@@ -200,21 +200,7 @@ impl WidgetViewTui for HelloButtonTui {
     /// — once a multi-binding TUI shell lands, both backends share
     /// this impl through the generic `WidgetView` merge.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
-        if focused != Some(Self::tag()) {
-            return false;
-        }
-        if !matches!(key, "Space" | "Enter") {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        intro
-            .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
-            .is_ok()
+        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }
 

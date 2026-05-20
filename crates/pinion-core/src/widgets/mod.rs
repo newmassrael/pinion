@@ -1,3 +1,4 @@
+pub mod aria;
 pub mod button;
 pub mod checkbox;
 pub mod listbox;
