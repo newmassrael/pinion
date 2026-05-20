@@ -1542,6 +1542,7 @@ fn main() {
 - R33: Frame.dt field added per §6.3 (Frame ZST evolves); deterministic time source.
 - R33: SCE schema: animated block declares Signal + config; Forge emits Animated<T> init.
 - R51.142 — CoreShell<V>::root_owner + tick_animations land (§5.28 paint-loop driver surface)
+- R51.143 — ShellCore (Vello) paint cycle dt wiring + root_owner forward (#1/2; TUI R51.144)
 
 
 
@@ -1575,6 +1576,8 @@ fn main() {
 - crates/pinion-core/src/reactive/owner.rs:Owner::tick_animations
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::root_owner
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::tick_animations
+- crates/pinion-shell/src/substrate.rs:ShellCore::root_owner
+- crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
 
 
 
@@ -5953,6 +5956,34 @@ router.pointer_down(&mut state_scene);
 - R51.144 — hello-button hover transition demo (1st visual application, ColorAnimation use case)
 - R51.145 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)
 - R51.146 — Handler executor binding (R51.141 carry, pinion-rpc/pinion-shell tokio runtime owner)
+
+
+
+### R51.143 — §5.28 ShellCore (Vello) paint cycle dt 측정 + tick_animations + Frame::with_dt wiring (#1/2)
+
+**Changes**:
+- pinion-shell/src/substrate.rs: last_paint_instant: Option<Instant> 필드 + root_owner forward
+- compute_paint_scene: Instant 측정 → dt → core.tick_animations(dt) + Frame::with_dt(dt)
+- 3 integration tests (first dt=0 / second dt>1ms / repeated 5 ticks)
+
+
+
+**Verification**:
+- 1820 → 1823 tests (+3 신규 integration), 0 failed, 8 ignored
+- clippy --features pinion-runtime/vello = 0 warnings
+- entries 314 → 315, T1=0, RT=1/1, GENERATED.md=sync
+- TUI 평행 wiring carry R51.144 (ShellCoreTui Cell<Option<Instant>> 패턴)
+
+
+
+**Impact**: §5.28, §5.40, §6.3
+
+
+**Carry forward**:
+- R51.144 — ShellCoreTui (TUI) paint cycle dt wiring 평행 (#2/2; Cell interior mutability)
+- R51.145 — hello-button hover transition demo (1st visual application, ColorAnimation)
+- R51.146 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)
+- dt frame budget cap (background/long-pause robustness, 100ms 또는 1/30s clamp 정통)
 
 
 

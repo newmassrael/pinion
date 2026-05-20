@@ -953,3 +953,130 @@ fn r51_78_named_key_routes_to_apply_key() {
         "named-key dispatch passes the W3C string through unchanged",
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// R51.143 §5.28 — paint cycle dt measurement + tick_animations wiring.
+// ─────────────────────────────────────────────────────────────────────
+
+mod r51_143_paint_cycle_dt {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    use pinion_core::animation::Tickable;
+
+    use super::{reset_mocks, ShellCore, TestView, TEST_LOCK};
+
+    /// Records every `tick(dt)` the substrate dispatches so the test
+    /// asserts both the count of dispatches and the magnitude of
+    /// the measured delta.
+    struct TickRecorder {
+        ticks: Cell<u32>,
+        last_dt: Cell<f32>,
+    }
+
+    impl TickRecorder {
+        fn new() -> Self {
+            Self {
+                ticks: Cell::new(0),
+                last_dt: Cell::new(f32::NAN),
+            }
+        }
+    }
+
+    impl Tickable for TickRecorder {
+        fn tick(&self, dt: f32) {
+            self.ticks.set(self.ticks.get() + 1);
+            self.last_dt.set(dt);
+        }
+        fn is_at_rest(&self, _epsilon: f32) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn first_compute_paint_scene_ticks_with_zero_dt() {
+        // R51.143 — the very first `compute_paint_scene` measures
+        // against a missing previous timestamp and passes `dt = 0.0`
+        // to the spring solver. At-rest animations stay at rest;
+        // construction-time baseline holds.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let recorder = Rc::new(TickRecorder::new());
+        let mut core = ShellCore::<TestView>::new();
+        core.root_owner().register_animation(recorder.clone());
+
+        let _scene = core.compute_paint_scene(64, 48);
+
+        assert_eq!(
+            recorder.ticks.get(),
+            1,
+            "compute_paint_scene drives one tick per call",
+        );
+        assert_eq!(
+            recorder.last_dt.get().to_bits(),
+            0.0_f32.to_bits(),
+            "first paint sees dt=0 (no prior timestamp)",
+        );
+    }
+
+    #[test]
+    fn second_compute_paint_scene_measures_real_dt() {
+        // R51.143 — the second call sees `dt = now - prev` from the
+        // real wall clock. We sleep ~5ms between calls so the
+        // recorded dt is bounded above zero and well under one
+        // second; the assertion uses an inclusive lower bound and
+        // a generous upper bound so the test stays robust under
+        // any scheduler jitter.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let recorder = Rc::new(TickRecorder::new());
+        let mut core = ShellCore::<TestView>::new();
+        core.root_owner().register_animation(recorder.clone());
+
+        let _scene1 = core.compute_paint_scene(64, 48);
+        sleep(Duration::from_millis(5));
+        let _scene2 = core.compute_paint_scene(64, 48);
+
+        assert_eq!(
+            recorder.ticks.get(),
+            2,
+            "two paints → two ticks",
+        );
+        let dt = recorder.last_dt.get();
+        assert!(
+            dt > 0.001,
+            "5ms sleep → measured dt must exceed 1ms (saw {dt})",
+        );
+        assert!(
+            dt < 1.0,
+            "wall-clock dt should never exceed 1s in a test (saw {dt})",
+        );
+    }
+
+    #[test]
+    fn repeated_compute_paint_scene_drives_animation_repeatedly() {
+        // R51.143 — five consecutive paints dispatch five ticks; the
+        // substrate never skips, never short-circuits past
+        // `Tickable::is_at_rest=false` recorders.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let recorder = Rc::new(TickRecorder::new());
+        let mut core = ShellCore::<TestView>::new();
+        core.root_owner().register_animation(recorder.clone());
+
+        for _ in 0..5 {
+            let _scene = core.compute_paint_scene(64, 48);
+        }
+
+        assert_eq!(
+            recorder.ticks.get(),
+            5,
+            "five paints → five ticks (substrate is per-call, never throttled)",
+        );
+    }
+}

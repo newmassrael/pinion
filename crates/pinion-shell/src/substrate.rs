@@ -32,6 +32,7 @@
 //! substantive depths of the same encapsulation claim).
 
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use accesskit::NodeId;
 use pinion_a11y::{
@@ -211,6 +212,26 @@ pub struct ShellCore<V: WidgetView> {
     /// [`Self::take_redraw_request`]; mutation via
     /// [`Self::request_redraw`].
     redraw_requested: bool,
+
+    /// R51.143 §5.28 — wall-clock timestamp of the previous
+    /// [`Self::compute_paint_scene`] entry. `None` until the first
+    /// paint runs; the next paint measures `now - prev` to feed both
+    /// the [`Frame::with_dt`](pinion_core::Frame::with_dt) view-fn
+    /// input and the
+    /// [`CoreShell::tick_animations`](pinion_runtime::CoreShell::tick_animations)
+    /// driver call.
+    ///
+    /// Per §5.28 R33 the spring solver is deterministic given
+    /// `(current, velocity, target, dt, config)` — driving it from a
+    /// real measured delta is what turns the synthetic substrate
+    /// (which always passed `dt=0`) into a real per-frame animation
+    /// pump.
+    ///
+    /// On the very first paint `dt = 0.0`, which leaves at-rest
+    /// animations untouched and starts the spring solver from its
+    /// construction baseline — the same shape any synthetic flush
+    /// hits, so no special-case branching is needed elsewhere.
+    last_paint_instant: Option<Instant>,
 }
 
 /// R51.77 §5.40 — pure decision returned by
@@ -298,6 +319,7 @@ impl<V: WidgetView> ShellCore<V> {
             access_emit_initial: true,
             last_access_focus: None,
             redraw_requested: false,
+            last_paint_instant: None,
         }
     }
 
@@ -334,6 +356,25 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn cached_state(&self) -> &V::State {
         self.core.cached_state()
+    }
+
+    /// R51.143 §5.28 — delegates to
+    /// [`CoreShell::root_owner`](pinion_runtime::CoreShell::root_owner)
+    /// so the view fn (and tests + SCE-emitted code) can attach
+    /// [`Animation<T>`](pinion_core::Animation) instances and
+    /// [`Effect`](pinion_core::Effect) closures to this binding's
+    /// reactive scope.
+    ///
+    /// The animation list registered here is exactly the one
+    /// [`Self::compute_paint_scene`] ticks once per paint cycle.
+    /// Drop on `ShellCore` cascades through the wrapped
+    /// [`CoreShell`](pinion_runtime::CoreShell) into the
+    /// [`Owner`](pinion_core::Owner) drop semantics, cancelling every
+    /// pending [`Command`](pinion_core::Command) and animation in the
+    /// scope (Solid pattern, R51.137 + R51.139).
+    #[must_use]
+    pub fn root_owner(&self) -> &pinion_core::Owner {
+        self.core.root_owner()
     }
 
     /// R51.76 §5.40 — current §5.34 R40.4 OCC revision counter
@@ -611,18 +652,40 @@ impl<V: WidgetView> ShellCore<V> {
     /// R51.80 §5.16 §5.36 — compute one frame's paint scene from the
     /// cached state.
     ///
-    /// Encapsulates `Frame::new` + `V::view(state, &frame)` +
-    /// `compute_layout(&mut scene, &mut text_cache, w, h)` so the
-    /// surface-side render path does not have to interleave a state
-    /// read with a text-cache mutable borrow. R51.83 §5.40: the
-    /// underlying `cached_state` / `text_cache` fields are private,
-    /// so this method (and [`Self::text_cache_mut`] for the paint
-    /// adapter borrow) is the only way for the surface to drive the
-    /// pipeline. Pure with respect to substrate state (only
-    /// `text_cache` mutates internally, by design — the LRU records
-    /// each freshly shaped text run for the next frame's cache hit).
+    /// Encapsulates the per-frame pump that the surface-side render
+    /// path drives every redraw:
+    ///
+    /// 1. Measure `dt` against the previous paint timestamp
+    ///    ([`Self::last_paint_instant`]) — `0.0` on the very first
+    ///    paint, otherwise `now - prev` as `f32` seconds.
+    /// 2. Advance every animation attached to
+    ///    [`CoreShell::root_owner`](pinion_runtime::CoreShell::root_owner)
+    ///    through
+    ///    [`CoreShell::tick_animations`](pinion_runtime::CoreShell::tick_animations)
+    ///    so the §5.22 [`Signal`](pinion_core::Signal) values the view
+    ///    fn is about to read reflect the just-elapsed slice of
+    ///    real time.
+    /// 3. Hand the same `dt` to [`Frame::with_dt`](pinion_core::Frame::with_dt)
+    ///    so deterministic-time-dependent view-fn logic (Tween
+    ///    progress reads, dt-conditional layout) sees the same delta
+    ///    the spring solver did.
+    /// 4. Run `V::view(state, &frame)` + the §5.21 layout pass against
+    ///    the shared `text_cache`.
+    ///
+    /// R51.83 §5.40: the underlying `cached_state` / `text_cache`
+    /// fields are private, so this method (and [`Self::text_cache_mut`]
+    /// for the paint adapter borrow) is the only way for the surface
+    /// to drive the pipeline. Pure with respect to substrate state
+    /// modulo the timing field + `text_cache` LRU + the root owner's
+    /// animation queue — every mutation is documented + tested.
     pub fn compute_paint_scene(&mut self, w: u32, h: u32) -> Scene {
-        let frame = Frame::new();
+        let now = Instant::now();
+        let dt = self
+            .last_paint_instant
+            .map_or(0.0_f32, |prev| now.duration_since(prev).as_secs_f32());
+        self.last_paint_instant = Some(now);
+        self.core.tick_animations(dt);
+        let frame = Frame::with_dt(dt);
         let mut paint_scene = V::view(*self.core.cached_state(), &frame);
         compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
         paint_scene
