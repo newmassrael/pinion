@@ -1324,6 +1324,7 @@ fn main() {
 - examples/hello-commands-tui/src/main.rs:HelloCommandsTui
 - examples/hello-commands-tui/src/main.rs:queue_one_shot_demo_command
 - crates/pinion-core/src/widget_core.rs:WidgetCore::update
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::route_intent_through_update
 
 
 
@@ -6754,6 +6755,34 @@ router.pointer_down(&mut state_scene);
 - R51.168 — Intent.payload typed routing through SCXML invoke send (currently tag-only path drops payload)
 - R51.169 — hello-commands(-tui) migrate from R51.163 Owner::cache one-shot hack to reducer-driven Command flow
 - R51.170 — Forge codegen emits update body from SCE schema effect + command tables
+
+
+
+### R51.167 — §5.23 R27 — CoreShell::route_intent_through_update substrate routing API queues reducer-produced Vec<Command> on root_owner
+
+**Changes**:
+- crates/pinion-runtime/src/core_shell.rs: CoreShell<V>::route_intent_through_update(&self, intent: &Intent) -> Vec<Command> — reads state via V::read_state, calls V::update, dispatches each command to root_owner queue
+- crates/pinion-runtime/src/core_shell.rs: 3 R51.167 tests — default-reducer empty path on ButtonFixture + EchoButton override fixture (queues per-intent + FIFO accumulation across calls)
+- doc: routing path stated — SCXML drain / async re-feed Intent both flow through this method before reaching invoke("send", …); state writeback to Scene is the R51.168 carry
+
+
+
+**Verification**:
+- cargo test -p pinion-runtime --lib r51_167 --features pinion-runtime/vello: 3 pass
+- cargo test --workspace --features pinion-runtime/vello: 1990 pass / 0 fail / 10 ignored (+3 vs R51.166)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (doc_markdown reactive: read_state/event_name backtick fix during the round)
+- mnemosyne validate_workspace: entries=338 (+1) / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.23, §5.41, §6.3
+
+
+**Carry forward**:
+- R51.168 — state writeback: V::update mutated state propagates back to Scene::External (currently the mutation lives only in the transient cached projection)
+- R51.169 — ShellCore::dispatch_intent (shell + tui) calls route_intent_through_update before forwarding to SCXML invoke send
+- R51.170 — Intent.payload typed routing through SCXML send (currently tag-only path drops payload)
+- R51.171 — hello-commands(-tui) migrate from R51.163 Owner::cache one-shot hack to reducer-driven Command flow
 
 
 

@@ -459,6 +459,40 @@ impl<V: WidgetCore> CoreShell<V> {
         unhandled
     }
 
+    /// R51.167 §5.23 R27 — route an incoming Intent through the
+    /// [`WidgetCore::update`] reducer and queue the produced
+    /// `Vec<Command>` on the [`root_owner`](Self::root_owner).
+    ///
+    /// The dispatch loop's reducer step: every Intent arriving from
+    /// either widget-side input (the §5.20 SCXML drain that
+    /// `walk_scene_and_drain` surfaces during `tick_intents`) or the
+    /// async re-feed path
+    /// (`AppEvent::IntentArrived` on Vello / `MpscIntentSink::try_recv`
+    /// on TUI) flows through this method before reaching the SCXML
+    /// `invoke("send", …)` channel.
+    ///
+    /// The cached projection [`WidgetCore::read_state`] yields is
+    /// mutated transiently by the reducer; writing the mutation back
+    /// into the authoritative [`Scene`] is the R51.168 carry.
+    /// First-cut land surfaces the **declarative `Vec<Command>` half**
+    /// of the §5.23 R27 contract — every command lands on the owner
+    /// queue so [`Self::dispatch_pending_commands`] reaches the
+    /// registered handler on the next pump.
+    ///
+    /// Returns the same `Vec<Command>` the reducer produced so
+    /// callers (and tests) can introspect what was queued without a
+    /// second owner snapshot. The commands are already on the queue
+    /// — drop the return value if the caller has no use for it.
+    #[must_use = "the returned commands are already queued; ignore explicitly with `let _ = …` if you do not need them"]
+    pub fn route_intent_through_update(&self, intent: &Intent) -> Vec<Command> {
+        let mut state = V::read_state(&self.scene);
+        let commands = V::update(&mut state, intent);
+        for cmd in &commands {
+            self.root_owner.dispatch_command(cmd.clone());
+        }
+        commands
+    }
+
     /// Read-only borrow of the authoritative state scene. Tests
     /// reach the widget External through
     /// `Scene::External(node) => &node.handle` when verifying
@@ -1515,5 +1549,110 @@ mod tests {
         let core: CoreShell<TestButton> = CoreShell::new().with_executor(executor);
         let installed = core.executor().expect("with_executor installs Some");
         assert_eq!(Arc::as_ptr(installed).cast::<()>() as usize, exec_ptr);
+    }
+
+    // R51.167 §5.23 R27 — `route_intent_through_update` calls the
+    // `WidgetCore::update` reducer and queues every produced
+    // `Command` on the substrate's `root_owner`. Tests exercise
+    // the default-reducer (empty) path on `TestButton` and an
+    // overriding reducer fixture (`EchoButton`) that emits one
+    // command per intent.
+
+    use pinion_core::external::External;
+    use pinion_core::widgets::button::ButtonExternal;
+
+    /// R51.167 reducer-test fixture: same paint / `read_state` /
+    /// `event_name` surface as `TestButton`, but the reducer emits
+    /// one `echo.reply` `Command` per incoming intent.
+    struct EchoButton;
+
+    impl WidgetCore for EchoButton {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(ButtonExternal::new())
+        }
+
+        fn tag() -> &'static str {
+            "echo_btn"
+        }
+
+        fn read_state(scene: &Scene) -> Self::State {
+            <TestButton as WidgetCore>::read_state(scene)
+        }
+
+        fn view(state: Self::State, frame: &Frame) -> Scene {
+            <TestButton as WidgetCore>::view(state, frame)
+        }
+
+        fn event_name(event: Self::Event) -> &'static str {
+            <TestButton as WidgetCore>::event_name(event)
+        }
+
+        fn title() -> &'static str {
+            "EchoBtn"
+        }
+
+        fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
+            vec![Command::new_static(
+                "echo.reply",
+                IntrospectValue::Text(intent.tag_str().to_string()),
+                42,
+            )]
+        }
+    }
+
+    #[test]
+    fn r51_167_route_intent_default_reducer_yields_empty() {
+        // R51.167 — `TestButton` carries no `update` override, so
+        // the default `Vec::new()` reducer flows through the routing
+        // path unchanged. The owner queue stays empty.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let intent = Intent::new_static("test_btn.click", IntrospectValue::Null);
+        let queued = core.route_intent_through_update(&intent);
+        assert!(queued.is_empty());
+        assert!(core.root_owner().pending_commands().is_empty());
+    }
+
+    #[test]
+    fn r51_167_route_intent_queues_reducer_commands() {
+        // R51.167 — `EchoButton::update` emits one command per
+        // intent; the routing path queues it on the root owner
+        // AND returns the same Vec for direct caller inspection.
+        let core: CoreShell<EchoButton> = CoreShell::new();
+        let intent = Intent::new_static("echo_btn.tick", IntrospectValue::Null);
+        let queued = core.route_intent_through_update(&intent);
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].kind_str(), "echo.reply");
+        assert_eq!(
+            queued[0].payload,
+            IntrospectValue::Text("echo_btn.tick".to_string()),
+        );
+        let pending = core.root_owner().pending_commands();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind_str(), "echo.reply");
+    }
+
+    #[test]
+    fn r51_167_route_intent_accumulates_across_calls() {
+        // R51.167 — multiple intents pile their reducer-produced
+        // commands onto the owner queue in FIFO order, so a later
+        // `dispatch_pending_commands` pump reaches every handler.
+        let core: CoreShell<EchoButton> = CoreShell::new();
+        let i1 = Intent::new_static("echo_btn.a", IntrospectValue::Null);
+        let i2 = Intent::new_static("echo_btn.b", IntrospectValue::Null);
+        let _ = core.route_intent_through_update(&i1);
+        let _ = core.route_intent_through_update(&i2);
+        let pending = core.root_owner().pending_commands();
+        assert_eq!(pending.len(), 2);
+        assert_eq!(
+            pending[0].payload,
+            IntrospectValue::Text("echo_btn.a".to_string()),
+        );
+        assert_eq!(
+            pending[1].payload,
+            IntrospectValue::Text("echo_btn.b".to_string()),
+        );
     }
 }
