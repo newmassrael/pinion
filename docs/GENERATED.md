@@ -5552,6 +5552,32 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.131 — R51.131 §5.38 — R51.107 type-ahead polish carry close (substrate textbook 정통, application thread_local 은 evidence-first 미충족)
+
+**Changes**:
+- audit-only entry — 코드 변경 0
+- pinion-shell::typeahead substrate 재검토 결과 — TypeaheadCursor::step 이 pure function + caller-injected `now: Instant` + caller-owned storage (§2 #3 dry_run invariant 관철)
+- 모듈 doc 이 이미 명시: “thread-local, struct field, ECS resource — caller's choice” — substrate 계 이미 multi-window safe
+- examples/hello-listbox + hello-listbox-multi 의 `thread_local!` 패턴 은 application-side design choice (substrate 에 너뻘 부채 아님)
+
+
+
+**Verification**:
+- pinion-shell/src/typeahead.rs L17-L23 의 “## Design boundary” 섹션 관철 — cursor = application-side state 명시
+- Rule of Three (Fowler) + [[abstraction-needs-second-consumer]] 적용 — multi-window app 0 건 존재, application-side storage abstraction 추출 = premature
+- multi-window app land 시 자동 trigger 로 재평가
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- R51.107 carry — multi-window app land 시 application-side storage abstraction 재평가 trigger
+- [[abstraction-needs-second-consumer]] lesson 반아 — evidence 없는 polish 는 textbook 도ҫacceptable defer
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
