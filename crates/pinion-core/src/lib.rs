@@ -45,4 +45,5 @@ pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, Display, Fit, FlexDirection, FontStyle,
     FontWeight, ImageStyle, JustifyContent, LayoutStyle, LineHeight, PathStyle, Size, SizeValue,
     Stroke, StrokeCap, TextAlign, TextDecoration, TextOverflow, TextStyle,
+    scale_normalized_to_px,
 };

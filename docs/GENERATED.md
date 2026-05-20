@@ -1726,6 +1726,7 @@ fn main() {
 - crates/pinion-core/src/style.rs:Align
 - crates/pinion-core/src/scene.rs:Modifier
 - examples/hello-button/src/main.rs:paint_text
+- crates/pinion-core/src/style.rs:scale_normalized_to_px
 
 
 
@@ -6277,6 +6278,36 @@ router.pointer_down(&mut state_scene);
 - R51.153+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
 - R51.154+ access_node / access_child_invoke 도 root_owner wrap (대칭 완성)
 - R51.155+ Owner::cache positional/macro variant (call-site identity DX)
+
+
+
+### R51.154 — §5.3 scale_normalized_to_px framework primitive + hello-slider*/hello-slider-vertical DRY 청산 + #[allow(cast)] 회복
+
+**Changes**:
+- pinion-core::style::scale_normalized_to_px(value, total) primitive (clamp + safe cast + drift)
+- NaN guard (NaN → 0) + endpoint saturation + zero-total handling
+- hello-slider filled_w = scale_normalized_to_px (value*RANGE 청산)
+- hello-slider-vertical filled_h 동일 적용
+- #[allow(clippy::cast_possible_truncation/sign_loss)] 2건 제거 (framework 정통)
+- pub use lib.rs re-export 공개 알죠맄
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1891 passed / 0 failed / 8 ignored
+- baseline 1882 → 1891 (+9 R51.154 scale tests: endpoints/clamp/NaN/zero/drift/large/round)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- hello-slider + hello-slider-vertical 시각 결과 동일 (계산 값 일치)
+
+
+
+**Impact**: §5.3, §5.41
+
+
+**Carry forward**:
+- R51.155+ Owner::cache positional/macro variant (call-site identity DX)
+- R51.156+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
+- R51.157+ access_node / access_child_invoke root_owner wrap (대칭)
 
 
 

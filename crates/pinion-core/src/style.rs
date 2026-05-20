@@ -165,6 +165,51 @@ fn srgb_decode(c: u8) -> f32 {
     }
 }
 
+/// R51.154 §5.3 — convert a normalized `[0.0, 1.0]` value to a pixel
+/// extent on a `[0, total]` axis.
+///
+/// Common UI math: thumb position on a slider track, progress bar
+/// fill, scrubber thumbnail offset, etc. Application code wrote
+/// `(value * total as f32) as u32` with three `#[allow(clippy::cast_*)]`
+/// lints sprinkled around each call site (hello-slider +
+/// hello-slider-vertical); this helper folds the math + lint
+/// containment + endpoint-clamp into a single framework primitive.
+///
+/// ## Behaviour
+///
+/// - `value ≤ 0.0` (incl. negative + NaN) → `0`.
+/// - `value ≥ 1.0` → `total` (no overflow on float drift past 1.0).
+/// - Otherwise → `round(value * total)` saturated to `[0, total]`.
+///
+/// NaN coerces to `0.0` before clamp so a degraded numerical input
+/// produces a zero-width fill (textbook silent recovery — matches
+/// R51.145 [`clamp_frame_dt`](crate::frame_pacing::clamp_frame_dt)
+/// + R51.151 [`Color::lerp`] NaN policy).
+///
+/// ## Why not a `Size` method
+///
+/// The conversion is upstream of any [`Size`] / [`LayoutStyle`]
+/// construction (callers build the `Size::px(filled_w, ...)` after
+/// this returns the pixel count). Threading it through a `Size`
+/// builder would tangle the math + layout layers; a free fn keeps
+/// the responsibilities split.
+#[must_use]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+pub fn scale_normalized_to_px(value: f32, total: u32) -> u32 {
+    let v = if value.is_nan() { 0.0 } else { value.clamp(0.0, 1.0) };
+    let pixels = (v * total as f32).round();
+    // Clamp the float result before the as-cast so any drift past
+    // `total` (e.g. value = 1.0 + epsilon rounded up) saturates
+    // rather than overflowing to 0 via wrap-on-cast for u32-out-of-
+    // range f32s.
+    let pixels = pixels.clamp(0.0, total as f32) as u32;
+    pixels.min(total)
+}
+
 /// sRGB inverse-EOTF: linear-light `f32` → 8-bit channel with clamp.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn srgb_encode(l: f32) -> u8 {
@@ -327,6 +372,77 @@ mod color_linear_tests {
         let b = Color::rgba(0, 0, 100, 128);
         assert_eq!(a.lerp(b, 0.0).a, 255);
         assert_eq!(a.lerp(b, 1.0).a, 128);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R51.154 §5.3 — scale_normalized_to_px tests.
+    //
+    // Replaces the bespoke `(value * RANGE as f32) as u32` pattern
+    // from hello-slider*/hello-slider-vertical. The tests pin down
+    // endpoint behaviour, clamping, NaN guard, drift safety.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn scale_zero_returns_zero() {
+        assert_eq!(super::scale_normalized_to_px(0.0, 100), 0);
+    }
+
+    #[test]
+    fn scale_one_returns_total() {
+        assert_eq!(super::scale_normalized_to_px(1.0, 100), 100);
+    }
+
+    #[test]
+    fn scale_half_returns_half_total_rounded() {
+        // 0.5 * 100 = 50; round = 50.
+        assert_eq!(super::scale_normalized_to_px(0.5, 100), 50);
+        // 0.5 * 101 = 50.5; round → 51.
+        assert_eq!(super::scale_normalized_to_px(0.5, 101), 51);
+    }
+
+    #[test]
+    fn scale_clamps_negative_to_zero() {
+        assert_eq!(super::scale_normalized_to_px(-0.3, 100), 0);
+        assert_eq!(super::scale_normalized_to_px(f32::NEG_INFINITY, 100), 0);
+    }
+
+    #[test]
+    fn scale_clamps_above_one_to_total() {
+        assert_eq!(super::scale_normalized_to_px(1.5, 100), 100);
+        assert_eq!(super::scale_normalized_to_px(f32::INFINITY, 100), 100);
+    }
+
+    #[test]
+    fn scale_nan_returns_zero() {
+        // R51.154 + R51.151 NaN policy mirror.
+        assert_eq!(super::scale_normalized_to_px(f32::NAN, 100), 0);
+    }
+
+    #[test]
+    fn scale_with_zero_total_returns_zero() {
+        assert_eq!(super::scale_normalized_to_px(0.5, 0), 0);
+        assert_eq!(super::scale_normalized_to_px(1.0, 0), 0);
+    }
+
+    #[test]
+    fn scale_drift_past_one_saturates_safely() {
+        // Float arithmetic can produce 1.0 + 1e-7 from accumulated
+        // updates. The clamp guarantees the cast doesn't overflow.
+        let drifted = 1.0_f32 + f32::EPSILON;
+        assert_eq!(super::scale_normalized_to_px(drifted, 1024), 1024);
+    }
+
+    #[test]
+    fn scale_large_total_round_trip() {
+        // u32 close to its max — the clamp at f32::from(u32) precision
+        // boundary keeps us safe.
+        assert_eq!(super::scale_normalized_to_px(0.0, u32::MAX), 0);
+        // u32::MAX cannot be represented exactly in f32; the rounded
+        // result is the nearest representable f32 cast back, which we
+        // saturate via `.min(total)`. We accept the small precision
+        // gap as documented behaviour for extreme inputs.
+        let near_max = super::scale_normalized_to_px(1.0, u32::MAX);
+        assert_eq!(near_max, u32::MAX);
     }
 
     #[test]

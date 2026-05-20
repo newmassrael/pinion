@@ -35,7 +35,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::slider::{SliderAxis, SliderEvent, SliderExternal, SliderState};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -95,12 +95,14 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
         SliderState::Dragging => Color::rgb(0xe0, 0xe0, 0xff),
         SliderState::Disabled => Color::rgb(0xa0, 0xa0, 0xa0),
     };
-    let value_clamped = value.clamp(0.0, 1.0);
-    // value = 1.0 → thumb at top → all space below it is filled.
-    // value = 0.0 → thumb at bottom → no fill (thumb sits on min).
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let filled_h = (value_clamped * RANGE as f32) as u32;
+    // R51.154 §5.3 — value = 1.0 → thumb at top → all space below
+    // it is filled; value = 0.0 → thumb at bottom → no fill.
+    // [`scale_normalized_to_px`] handles the clamp + safe cast.
+    let filled_h = scale_normalized_to_px(value, RANGE);
     let unfilled_h = RANGE.saturating_sub(filled_h);
+    // Status-line clamp mirrors the framework primitive's clamp so
+    // the printed value stays inside `[0, 1]` even on float drift.
+    let value_clamped = value.clamp(0.0, 1.0);
     let unfilled = Scene::Box(
         BoxNode::new(
             Rect::default(),
