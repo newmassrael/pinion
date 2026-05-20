@@ -1,27 +1,36 @@
-//! `hello-commands` — R51.163 §5.23 dispatch loop demo.
+//! `hello-commands` — R51.170 §5.23 R27 reducer-driven dispatch demo.
 //!
 //! Sibling of [`hello-button`](../hello-button) that exercises the
-//! §5.23 R27 Command pipeline end-to-end:
+//! §5.23 R27 Command pipeline end-to-end via the `WidgetCore::update`
+//! reducer surface (R51.166-169 substrate land):
 //!
 //! ```text
-//! view fn  (one-shot)
-//!   → Owner::current().dispatch_command(...)        [R51.139 substrate]
-//!     → CoreShell::dispatch_pending_commands        [R51.157 drain pump]
-//!       → CommandExecutor::dispatch                  [R51.156 composite]
-//!         → TokioExecutor::spawn → tokio worker      [R51.159 binding]
-//!           → echo Handler resolves → Intent
-//!           → ProxyIntentSink → AppEvent::IntentArrived
-//!             → user_event arm → ShellCore::dispatch_intent
-//!               → SCXML invoke("send", tag)         [R51.159 re-feed]
+//! button press
+//!   → ButtonExternal SCXML transition → click intent drains
+//!     → ShellCore::handle_tail (R51.169)
+//!       → CoreShell::route_intent_through_update (R51.167)
+//!         → CommandsView::update — matches "main_btn.click"
+//!         → returns vec![Command("demo.echo", "hello pinion")]
+//!         → root_owner.dispatch_command queues it
+//!       → CoreShell::dispatch_pending_commands (R51.157 drain pump)
+//!         → CommandExecutor::dispatch (R51.156)
+//!           → TokioExecutor::spawn → tokio worker (R51.159)
+//!             → echo Handler resolves (+200ms sleep) → Intent
+//!             → ProxyIntentSink → AppEvent::IntentArrived
+//!               → user_event arm → ShellCore::dispatch_intent
+//!                 → CoreShell::route_intent_through_update — no match
+//!                 → SCXML invoke("send", "echo.demo.echo") (R51.159 re-feed)
 //! ```
 //!
 //! ## What this demo shows
 //!
-//! - The view fn queues a `demo.echo` [`Command`] on first paint
-//!   through the [`Owner::cache`] idempotent guard
-//!   ([[owner-cache-substrate]] R51.150). Subsequent paints observe
-//!   the cached `dispatched` cell already `true` and skip the
-//!   `dispatch_command` call — the queue stays single-shot.
+//! - Click the button. The Button SCXML statechart emits a
+//!   `main_btn.click` intent on `PointerUp`; the R51.169
+//!   `handle_tail` routing pumps that intent through
+//!   [`CommandsView::update`].
+//!   The reducer matches the tag and emits a `demo.echo` `Command`
+//!   describing the work, which the framework runs through the
+//!   registered handler.
 //! - [`pinion_shell::run_with_handlers`] installs a tokio runtime +
 //!   `EventLoopProxy`-backed [`IntentSink`] so the Handler's future
 //!   resolves on a worker thread and the resolved [`Intent`] reaches
@@ -33,24 +42,35 @@
 //!   the visible widget state stays at Idle, but the stderr trace
 //!   shows the full Command → Intent round-trip.
 //!
+//! ## Why this is the textbook dogfood
+//!
+//! Pre-R51.170 this binary leaned on a view-fn one-shot HACK
+//! ([`Owner::cache`] + `Cell<bool>` guard) to pre-queue the demo
+//! command before any input arrived. That side-stepped the §5.23 R27
+//! "Update(&mut Model, Intent) -> Vec<Command>" contract — the
+//! framework's `WidgetCore::update` reducer surface didn't exist
+//! yet, so the example faked it from inside the view fn. With the
+//! reducer substrate (R51.166-169) in place, the example replays the
+//! real R27 contract: input flows in, the reducer decides what async
+//! work to schedule, and the framework owns the dispatch.
+//!
 //! ## Running
 //!
 //! ```text
 //! cargo run -p hello-commands
 //! ```
 //!
-//! Expected stderr (truncated):
+//! Expected stderr after clicking the button:
 //! ```text
 //! shell: initial state = Idle
-//! hello-commands: queued demo.echo on first paint (scope_id=N)
-//! shell: hello-commands resumed (initial size 320x200) ...
-//! handler: demo.echo received payload=Text("hello pinion")
+//! shell: intent main_btn.click payload=Null
+//! shell: state Idle -> Pressed
+//! handler: demo.echo received payload=Text("hello pinion") ... after 200ms sleep
 //! shell: intent-feedback echo.demo.echo payload=Text("hello pinion")
 //! ```
 //!
 //! Press `Esc` to quit.
 
-use std::cell::Cell;
 use std::sync::Arc;
 
 use pinion_core::external::{External, IntrospectValue};
@@ -59,7 +79,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Command, Frame, Intent, Owner, Scene, WidgetCore};
+use pinion_core::{Color, Command, Frame, Intent, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_runtime::{Handler, HandlerFuture, HandlerRegistry};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -78,59 +98,27 @@ const BTN_W: u32 = 240;
 const BTN_H: u32 = 80;
 const BTN_FILL: Color = Color::rgb(0xe0, 0xe0, 0xe8);
 
-/// R51.163 §5.23 — owner-scoped cache key for the once-only
-/// `demo.echo` dispatch guard. `&'static str` per
-/// [`Owner::cache`]'s contract.
-const ONE_SHOT_KEY: &str = "hello_commands::initial_dispatch_guard";
-
-/// R51.163 §5.23 — kind tag for the demo Command. Matches the
-/// handler registration in [`build_handler_registry`] below.
+/// R51.170 §5.23 R27 — kind tag for the demo Command emitted by
+/// [`CommandsView::update`] when the button click intent arrives.
+/// Matches the handler registration in [`build_handler_registry`].
 const DEMO_KIND: &str = "demo.echo";
 
-/// R51.163 §5.23 — fixed payload the view fn queues alongside the
-/// one-shot Command. The Handler echoes this back as the Intent's
+/// R51.170 §5.23 R27 — fixed payload the reducer attaches to every
+/// `demo.echo` Command. The handler echoes it back as the Intent's
 /// payload.
 const DEMO_PAYLOAD: &str = "hello pinion";
 
-/// R51.163 §5.23 — idempotent one-shot guard. Called from inside the
-/// view fn on every paint; the first call queues a [`Command`] on
-/// the binding's root [`Owner`], subsequent calls observe
-/// `dispatched.get() == true` and skip the dispatch.
-///
-/// view-fn purity invariant: the function is sync, has no IO, and
-/// the [`Owner::cache`] returns the same `Rc<Cell<bool>>` on every
-/// call — the side effect is observable only through the
-/// substrate's pending-command queue, not through the returned
-/// `Scene`. `dry_run` (§2 #3) still skips actual `Command` dispatch;
-/// it only collects the queue for AI inspection, matching the §5.23
-/// R27 contract.
-fn queue_one_shot_demo_command() {
-    let owner = Owner::current().expect(
-        "hello-commands view fn must run inside ShellCore::root_owner().run(...)",
-    );
-    let dispatched: std::rc::Rc<Cell<bool>> =
-        owner.cache(ONE_SHOT_KEY, || Cell::new(false));
-    if dispatched.get() {
-        return;
-    }
-    let scope_id = owner.id();
-    owner.dispatch_command(Command::new_static(
-        DEMO_KIND,
-        IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
-        scope_id,
-    ));
-    eprintln!(
-        "hello-commands: queued {DEMO_KIND} on first paint (scope_id={scope_id})",
-    );
-    dispatched.set(true);
-}
+/// R51.170 §5.23 R27 — intent tag the reducer matches against. The
+/// Button SCXML emits `click` on `PointerUp`; the §5.20 R22
+/// `<widget_tag>.<kind>` prefix convention makes the full
+/// wire-form tag `main_btn.click` (`V::tag()` = `"main_btn"`).
+const CLICK_INTENT_TAG: &str = "main_btn.click";
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ButtonState, _frame: &Frame) -> Scene {
-    queue_one_shot_demo_command();
     let label = match state {
         ButtonState::Disabled => "Disabled",
-        _ => "Watch stderr for command flow",
+        _ => "Click for command flow",
     };
     let label_text = Scene::Text(TextNode::styled(
         label,
@@ -204,7 +192,7 @@ impl WidgetCore for CommandsView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-commands (R51.163 §5.23 dispatch loop demo)"
+        "pinion hello-commands (R51.170 §5.23 R27 reducer-driven demo)"
     }
 
     fn keybinding(key: &str) -> Option<ButtonEvent> {
@@ -217,6 +205,33 @@ impl WidgetCore for CommandsView {
 
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
+    }
+
+    fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
+        // R51.170 §5.23 R27 — reducer-driven dogfood. Match the
+        // SCXML-emitted `main_btn.click` intent and emit a
+        // `demo.echo` Command describing the async work. The
+        // R51.169 handle_tail wiring drives this on every drain,
+        // so a pointer-up release or `Enter`/`Space` activation
+        // triggers the dispatch loop without the pre-R51.170
+        // view-fn one-shot HACK.
+        //
+        // scope_id is `0` because the substrate does not yet wrap
+        // `V::update` in `Owner::current()` — see the R51.171 carry
+        // for the [[callback-root-owner-wrap]] lift. Pinning to 0
+        // costs only the RPC inspection label; the dispatch /
+        // cancellation behaviour is unaffected because the
+        // framework attributes ownership through the queueing
+        // `root_owner` itself.
+        if intent.tag_str() == CLICK_INTENT_TAG {
+            vec![Command::new_static(
+                DEMO_KIND,
+                IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
+                0,
+            )]
+        } else {
+            Vec::new()
+        }
     }
 }
 

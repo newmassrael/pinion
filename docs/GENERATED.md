@@ -6850,6 +6850,35 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.170 — §5.23 R27 — hello-commands(-tui) reducer-driven dogfood (Owner::cache one-shot HACK removed)
+
+**Changes**:
+- examples/hello-commands/src/main.rs: removed queue_one_shot_demo_command + ONE_SHOT_KEY + use std::cell::Cell + use pinion_core::Owner
+- examples/hello-commands/src/main.rs: CommandsView::update matches CLICK_INTENT_TAG ("main_btn.click") and emits demo.echo Command; view fn no longer carries the one-shot guard
+- examples/hello-commands-tui/src/main.rs: HelloCommandsTui::update mirror (matches "hello_commands_tui.click"); same imports/constants cleanup
+- both binaries: doc block rewritten to describe the real R51.169 handle_tail → V::update → demo.echo flow (R51.166-169 substrate citations)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello: clean
+- cargo test --workspace --features pinion-runtime/vello: 2000 pass / 0 fail / 10 ignored (no regression — example dogfood, substrate covered by R51.166-169)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (doc_markdown reactive: 4 backtick fixes during the round)
+- mnemosyne validate_workspace: entries=341 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.23, §5.20, §5.16, §2
+
+
+**Carry forward**:
+- R51.171 — substrate refinement: wrap V::update inside root_owner.run(...) ([[callback-root-owner-wrap]]) so the reducer can call Owner::current() to fill scope_id automatically; current hardcoded 0 is the limit
+- R51.172 — Intent.payload typed routing through SCXML invoke send (still tag-only path drops payload)
+- R51.173 — V::update state writeback semantics design: pinion has SCXML-as-Model so &mut state is transient; document the contract OR add a separate application Model field
+- R51.174 — Forge codegen emits update body from SCE schema effect + command tables (SCE upstream RFC carry per [[sce-upstream-debts]])
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

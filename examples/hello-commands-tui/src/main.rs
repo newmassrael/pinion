@@ -1,20 +1,26 @@
-//! `hello-commands-tui` — R51.164 §5.23 §2 #6 TUI sibling of
+//! `hello-commands-tui` — R51.170 §5.23 R27 §2 #6 TUI sibling of
 //! `hello-commands`.
 //!
-//! Demonstrates the §5.23 R27 Command dispatch pipeline on the TUI
-//! backend, mirror of the Vello [`hello-commands`](../hello-commands)
-//! binary:
+//! Demonstrates the §5.23 R27 reducer-driven Command dispatch
+//! pipeline on the TUI backend (R51.170 dogfood), mirror of the
+//! Vello [`hello-commands`](../hello-commands) binary:
 //!
 //! ```text
-//! view fn  (one-shot)
-//!   → Owner::current().dispatch_command(...)        [R51.139 substrate]
-//!     → CoreShell::dispatch_pending_commands        [R51.157 drain pump]
-//!       → CommandExecutor::dispatch                  [R51.156 composite]
-//!         → TokioExecutor::spawn → tokio worker      [R51.160 binding]
-//!           → echo Handler resolves → Intent
-//!           → MpscIntentSink → shell.run loop try_recv
-//!             → ShellCoreTui::dispatch_intent
-//!               → SCXML invoke("send", tag)         [R51.160 re-feed]
+//! button press
+//!   → ButtonExternal SCXML transition → click intent drains
+//!     → ShellCoreTui::handle_tail (R51.169)
+//!       → CoreShell::route_intent_through_update (R51.167)
+//!         → HelloCommandsTui::update — matches "hello_commands_tui.click"
+//!         → returns vec![Command("demo.echo", "hello pinion (tui)")]
+//!         → root_owner.dispatch_command queues it
+//!       → CoreShell::dispatch_pending_commands (R51.157 drain pump)
+//!         → CommandExecutor::dispatch (R51.156)
+//!           → TokioExecutor::spawn → tokio worker (R51.160 binding)
+//!             → echo Handler resolves (+200ms sleep) → Intent
+//!             → MpscIntentSink → shell.run loop try_recv
+//!               → ShellCoreTui::dispatch_intent
+//!                 → CoreShell::route_intent_through_update — no match
+//!                 → SCXML invoke("send", "echo.demo.echo")
 //! ```
 //!
 //! ## Why a separate TUI binary
@@ -49,7 +55,6 @@
 //!
 //! Press `Esc` to quit.
 
-use std::cell::Cell;
 use std::io::Stdout;
 use std::sync::Arc;
 
@@ -58,48 +63,28 @@ use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Command, Frame, Intent, Owner, WidgetCore, style};
+use pinion_core::{Color, Command, Frame, Intent, WidgetCore, style};
 use pinion_runtime::{Handler, HandlerFuture, HandlerRegistry};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
-/// R51.164 §5.23 — owner-cache key for the once-only `demo.echo`
-/// dispatch guard. Distinct prefix from the Vello sibling so the
-/// two examples cannot collide under future shared infrastructure.
-const ONE_SHOT_KEY: &str = "hello_commands_tui::initial_dispatch_guard";
-
-/// R51.164 §5.23 — kind tag for the demo Command. Matches the
-/// handler registration in [`build_handler_registry`] below.
+/// R51.170 §5.23 R27 — kind tag for the demo Command emitted by
+/// [`HelloCommandsTui::update`] when the button click intent
+/// arrives. Matches the handler registration in
+/// [`build_handler_registry`].
 const DEMO_KIND: &str = "demo.echo";
 
-/// R51.164 §5.23 — fixed payload the view fn queues alongside the
-/// one-shot Command.
+/// R51.170 §5.23 R27 — fixed payload the reducer attaches to every
+/// `demo.echo` Command. Distinct from the Vello sibling so a
+/// `PINION_TUI_LOG=path` trace makes the backend obvious.
 const DEMO_PAYLOAD: &str = "hello pinion (tui)";
 
-/// R51.164 §5.23 — idempotent one-shot guard. Identical shape to
-/// the Vello sibling, only the cache key differs.
-///
-/// Silent (no eprintln) because the TUI shell runs under
-/// raw-mode + alternate-screen — any `stderr` write corrupts the
-/// visible buffer ([[r47-class-incident-prevention]]). The substrate
-/// surfaces the queued command through its `log_sink` (R51.120
-/// `PINION_TUI_LOG=path` opt-in) so the trace is still observable.
-fn queue_one_shot_demo_command() {
-    let owner = Owner::current().expect(
-        "hello-commands-tui view fn must run inside ShellCoreTui::root_owner().run(...)",
-    );
-    let dispatched: std::rc::Rc<Cell<bool>> =
-        owner.cache(ONE_SHOT_KEY, || Cell::new(false));
-    if dispatched.get() {
-        return;
-    }
-    owner.dispatch_command(Command::new_static(
-        DEMO_KIND,
-        IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
-        owner.id(),
-    ));
-    dispatched.set(true);
-}
+/// R51.170 §5.23 R27 — intent tag the reducer matches against. The
+/// Button SCXML emits `click` on `PointerUp`; the §5.20 R22
+/// `<widget_tag>.<kind>` prefix convention makes the full
+/// wire-form tag `hello_commands_tui.click`
+/// (`V::tag()` = `"hello_commands_tui"`).
+const CLICK_INTENT_TAG: &str = "hello_commands_tui.click";
 
 struct HelloCommandsTui;
 
@@ -126,10 +111,8 @@ impl WidgetCore for HelloCommandsTui {
     }
 
     fn view(state: Self::State, _frame: &Frame) -> Scene {
-        queue_one_shot_demo_command();
-
         let label_str: &'static str = match state {
-            ButtonState::Idle => "demo.echo queued",
+            ButtonState::Idle => "Click for cmd flow",
             ButtonState::Hover => "Hovered",
             ButtonState::Pressed => "PRESSED",
             ButtonState::Disabled => "Disabled",
@@ -185,7 +168,7 @@ impl WidgetCore for HelloCommandsTui {
     }
 
     fn title() -> &'static str {
-        "pinion hello-commands-tui (R51.164 §5.23 §2#6 dual)"
+        "pinion hello-commands-tui (R51.170 §5.23 R27 §2#6 dual)"
     }
 
     fn keybinding(key: &str) -> Option<Self::Event> {
@@ -198,6 +181,28 @@ impl WidgetCore for HelloCommandsTui {
 
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
+    }
+
+    fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
+        // R51.170 §5.23 R27 — TUI mirror of the Vello reducer
+        // dogfood. Match the SCXML-emitted
+        // `hello_commands_tui.click` intent and emit a `demo.echo`
+        // Command describing the async work. R51.169 handle_tail
+        // routing pumps the drained click through this reducer so
+        // the dispatch loop runs without the pre-R51.170 view-fn
+        // one-shot HACK.
+        //
+        // scope_id = 0; see the Vello sibling for the R51.171
+        // [[callback-root-owner-wrap]] carry note.
+        if intent.tag_str() == CLICK_INTENT_TAG {
+            vec![Command::new_static(
+                DEMO_KIND,
+                IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
+                0,
+            )]
+        } else {
+            Vec::new()
+        }
     }
 }
 
