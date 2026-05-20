@@ -232,11 +232,17 @@ fn parse_button_state(name: &str) -> ButtonState {
 
 /// R51.164 §5.23 — application-supplied [`Handler`] for `demo.echo`.
 /// Echoes its payload back as `Intent("echo.demo.echo", payload)`.
-/// Silent (no eprintln from the worker thread — same raw-mode +
-/// alternate-screen reasoning as the view fn).
+///
+/// R51.165 §5.23 — sleeps 200ms before echoing so the
+/// `intent-feedback` log line (when `PINION_TUI_LOG=path` is set)
+/// shows up ~200ms after the launch trace, proving the future
+/// actually suspended at the `.await` rather than resolving
+/// synchronously. Silent (no eprintln from the worker thread —
+/// same raw-mode + alternate-screen reasoning as the view fn).
 fn echo_handler() -> Arc<dyn Handler> {
     Arc::new(|cmd: Command| -> HandlerFuture {
         Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             Intent::new_owned(format!("echo.{}", cmd.kind_str()), cmd.payload)
         })
     })

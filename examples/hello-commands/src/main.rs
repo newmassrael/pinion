@@ -257,16 +257,24 @@ fn parse_button_state(name: &str) -> ButtonState {
 /// `demo.echo` kind. Echoes the payload back as an [`Intent`] tagged
 /// `echo.demo.echo`.
 ///
+/// R51.165 §5.23 — sleeps 200ms before echoing to make the async
+/// boundary observable in the stderr trace. The sleep runs on the
+/// tokio worker thread (`pinion_shell::TokioExecutor`), so the UI
+/// thread keeps painting / handling input the whole time. The gap
+/// between "queued demo.echo" (view-fn one-shot) and "handler:
+/// demo.echo received" demonstrates that the future actually
+/// suspended at the `.await` and resumed later, not just resolved
+/// synchronously.
+///
 /// In a real application this would be a richer impl that does
-/// actual IO (HTTP, file read, clipboard write, etc.) and returns an
-/// [`Intent`] describing the outcome. For the demo we surface the
-/// payload + the executor + the channel work simply by
-/// stderr-tracing the handler entry then echoing back.
+/// actual IO (HTTP, file read, clipboard write, etc.) and returns
+/// an [`Intent`] describing the outcome.
 fn echo_handler() -> Arc<dyn Handler> {
     Arc::new(|cmd: Command| -> HandlerFuture {
         Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             eprintln!(
-                "handler: {} received payload={:?} (scope_id={})",
+                "handler: {} received payload={:?} (scope_id={}) after 200ms sleep",
                 cmd.kind_str(),
                 cmd.payload,
                 cmd.scope_id,

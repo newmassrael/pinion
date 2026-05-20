@@ -22,3 +22,8 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
 # R51.160 §5.23 — TUI `run_with_handlers` entry point + TuiRenderer.
 pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
+# R51.165 §5.23 — `tokio::time::sleep` for the async delay demo
+# inside `echo_handler`. Runs on the tokio worker thread
+# (`pinion_tui::TokioExecutor`), so the TUI shell's crossterm poll
+# loop keeps responsive throughout the sleep.
+tokio = { version = "1", default-features = false, features = ["time"] }

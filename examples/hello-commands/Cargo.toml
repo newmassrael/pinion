@@ -26,6 +26,12 @@ pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", feat
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R46.5 §5.16 — forge codegen output references `::vello::*` directly.
 vello = { workspace = true }
+# R51.165 §5.23 — `tokio::time::sleep` for the async delay demo
+# inside `echo_handler`. The handler runs on the tokio worker thread
+# (`pinion_shell::TokioExecutor`), so the sleep does not block the
+# UI thread; it just makes the Command → Intent round-trip
+# observably asynchronous in the stderr trace.
+tokio = { version = "1", default-features = false, features = ["time"] }
 
 [build-dependencies]
 # R46.5 §5.16 — `build.rs` compiles `app.pinion.xml` into

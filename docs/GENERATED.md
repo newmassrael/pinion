@@ -6702,6 +6702,31 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.165 — §5.23 hello-commands(-tui) echo_handler async delay 시연 — tokio::time::sleep 200ms
+
+**Changes**:
+- examples/hello-commands/Cargo.toml + main.rs: tokio dep(time) + 200ms sleep + stderr trace 보강
+- examples/hello-commands-tui/Cargo.toml + main.rs: tokio dep(time) + 200ms sleep (silent, PINION_TUI_LOG 통한 트레이스)
+- Handler async boundary 실증 — view-fn one-shot 시작 시점과 intent-feedback 사이에 ~200ms gap
+- 양 backend에서 동일 패턴 (Vello/TUI dual invariant 유지)
+
+
+
+**Verification**:
+- cargo clippy -p hello-commands -p hello-commands-tui --all-targets → 0 warning
+- cargo run -p hello-commands 시 stderr 소접 '200ms sleep' 타임라인 관찰 가능
+- tokio worker thread에서 sleep 수행, UI 쓰레드 paint/poll 은 잘 움직임
+
+
+
+**Impact**: §5.23
+
+
+**Carry forward**:
+- Visual feedback — dispatch_intent 시 Signal 업데이트 로 view fn 에 술해 적달 (별 R51.166+)
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

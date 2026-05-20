@@ -1531,6 +1531,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-commands"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-runtime",
+ "pinion-shell",
+ "tokio",
+ "vello",
+]
+
+[[package]]
+name = "hello-commands-tui"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-runtime",
+ "pinion-tui",
+ "tokio",
+]
+
+[[package]]
 name = "hello-listbox"
 version = "0.0.1"
 dependencies = [
