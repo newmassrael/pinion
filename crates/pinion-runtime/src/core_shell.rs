@@ -67,13 +67,15 @@
 //! `Fn(state, &Frame) -> Scene` per §6.3 R51.27 `dry_run` invariant.
 
 use std::cell::Cell;
+use std::sync::Arc;
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Effect, Signal};
 use pinion_core::scene::ExternalNode;
-use pinion_core::{Owner, Scene, WidgetCore};
+use pinion_core::{Command, Owner, Scene, WidgetCore};
 
+use crate::command::CommandExecutor;
 use crate::input::{InputRouter, PointerId, Touch, TouchPhase};
 use crate::intent_queue::{walk_scene_and_drain, IntentQueue};
 
@@ -201,6 +203,34 @@ pub struct CoreShell<V: WidgetCore> {
     /// ([`Signal::set`](pinion_core::reactive::Signal::set) on
     /// [`Self::frame_signal`]).
     _animation_driver: Effect,
+
+    /// R51.157 §5.23 — optional [`CommandExecutor`] the substrate
+    /// drains pending [`Command`](pinion_core::Command) queue into via
+    /// [`Self::dispatch_pending_commands`].
+    ///
+    /// `Option<Arc<CommandExecutor>>` so:
+    ///
+    /// - Headless tests that exercise the dispatch primitives without
+    ///   binding any handler can leave the field `None`; pending
+    ///   commands stay parked in the owner queues for inspection via
+    ///   [`Owner::pending_commands`](pinion_core::reactive::Owner::pending_commands).
+    /// - Backends bind a single shared executor at boot and inject via
+    ///   [`Self::set_executor`] / [`Self::with_executor`]; both
+    ///   `pinion-shell` and `pinion-tui` can hold their own
+    ///   `Arc<CommandExecutor>` clones cheaply.
+    /// - Swapping handler vocabularies for tests / runtime feature
+    ///   gates uses [`Self::set_executor`] which returns the prior
+    ///   executor for symmetry with the §5.23 R27 "swappable for
+    ///   testing" contract.
+    ///
+    /// `Arc` (not `Rc`) because the [`CommandExecutor`] internals are
+    /// already `Send + Sync` (the
+    /// [`Executor`](crate::command::Executor) and
+    /// [`IntentSink`](crate::command::IntentSink) trait bounds force
+    /// it). The substrate's other `Rc<...>` fields stay `!Send`; the
+    /// added `Arc` only widens the bound on this particular field, not
+    /// on `CoreShell` as a whole.
+    executor: Option<Arc<CommandExecutor>>,
 }
 
 /// R51.122 §5.41 — post-dispatch bookkeeping artifact returned by
@@ -335,7 +365,98 @@ impl<V: WidgetCore> CoreShell<V> {
             last_dt,
             next_frame_count: Cell::new(1_u64),
             _animation_driver: animation_driver,
+            executor: None,
         }
+    }
+
+    /// R51.157 §5.23 — builder-style executor injection.
+    ///
+    /// Backends typically chain this after [`Self::new`] at boot:
+    ///
+    /// ```ignore
+    /// let core: CoreShell<MyView> = CoreShell::new()
+    ///     .with_executor(Arc::clone(&shared_executor));
+    /// ```
+    ///
+    /// For post-construction injection (renderer-attached / swappable
+    /// registration phases) use [`Self::set_executor`].
+    #[must_use]
+    pub fn with_executor(mut self, executor: Arc<CommandExecutor>) -> Self {
+        self.executor = Some(executor);
+        self
+    }
+
+    /// R51.157 §5.23 — install or replace the [`CommandExecutor`] used
+    /// by [`Self::dispatch_pending_commands`].
+    ///
+    /// Returns the prior executor (if any) so callers can restore it
+    /// after a scoped swap — matches the §5.23 R27 "swappable for
+    /// testing" contract on the underlying
+    /// [`HandlerRegistry`](crate::command::HandlerRegistry).
+    pub fn set_executor(
+        &mut self,
+        executor: Arc<CommandExecutor>,
+    ) -> Option<Arc<CommandExecutor>> {
+        self.executor.replace(executor)
+    }
+
+    /// R51.157 §5.23 — detach the current [`CommandExecutor`].
+    /// Returns the cleared handle so callers may transfer ownership
+    /// (e.g. a shutdown path that wants to drain remaining in-flight
+    /// work on the dropped executor before the substrate goes away).
+    pub fn clear_executor(&mut self) -> Option<Arc<CommandExecutor>> {
+        self.executor.take()
+    }
+
+    /// R51.157 §5.23 — read-only borrow of the currently-installed
+    /// [`CommandExecutor`]. `None` when no executor has been injected
+    /// (the headless-test default).
+    #[must_use]
+    pub fn executor(&self) -> Option<&Arc<CommandExecutor>> {
+        self.executor.as_ref()
+    }
+
+    /// R51.157 §5.23 — drain every pending
+    /// [`Command`](pinion_core::Command) from
+    /// [`Self::root_owner`](Self::root_owner) (recursively through its
+    /// child scopes) and dispatch each through the installed
+    /// [`CommandExecutor`].
+    ///
+    /// Returns the [`Command`]s for which the registry had no
+    /// registered handler — backends typically `eprintln!` these to
+    /// surface handler-registration mistakes. Silent drop is
+    /// intentionally not the default because an unhandled [`Command`]
+    /// is exactly the case an AI agent's introspection wants to see.
+    ///
+    /// No-op when [`Self::executor`] is `None`: pending commands stay
+    /// in their owner queues for inspection via
+    /// [`Owner::pending_commands`](pinion_core::reactive::Owner::pending_commands).
+    /// Returns an empty `Vec` in that case.
+    ///
+    /// Backends call this after every dispatch tail (or at the end of
+    /// every event-loop tick) so commands queued during the just-run
+    /// SCXML transition reach their handlers before the next frame
+    /// paints.
+    #[must_use = "unhandled commands describe a handler-registration mismatch; surface or log them rather than dropping silently"]
+    pub fn dispatch_pending_commands(&self) -> Vec<Command> {
+        let Some(executor) = self.executor.as_ref() else {
+            // No executor installed — leave commands in the owner
+            // queues so an inspecting AI client can still observe them
+            // via the `scene/commands` RPC method (carry).
+            return Vec::new();
+        };
+        let pending = self.root_owner.take_pending_commands_recursive();
+        let mut unhandled: Vec<Command> = Vec::new();
+        for cmd in pending {
+            if executor.registry().has(cmd.kind_str()) {
+                // Drop the returned `CommandTaskHandle` — R51.158 will
+                // capture it into a per-scope cancellation map.
+                let _ = executor.dispatch(cmd);
+            } else {
+                unhandled.push(cmd);
+            }
+        }
+        unhandled
     }
 
     /// Read-only borrow of the authoritative state scene. Tests
@@ -1169,5 +1290,230 @@ mod tests {
             assert!(Rc::strong_count(&recorder) >= 2);
         }
         assert_eq!(Rc::strong_count(&recorder), 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R51.157 §5.23 — CommandExecutor drain pump tests.
+    //
+    // Owner.dispatch_command queues commands on the binding's root
+    // reactive scope; CoreShell::dispatch_pending_commands drains them
+    // (recursively, R51.139 contract) and feeds each through the
+    // installed CommandExecutor. The tests below pin the load-bearing
+    // invariants:
+    //
+    // - no executor → no drain (leaves queue untouched)
+    // - registered handler → command routed, sink observes resulting Intent
+    // - unregistered kind → returned in unhandled Vec, sink stays empty
+    // - mixed (some handled, some not) → handled dispatched, unhandled returned
+    // - recursive drain reaches child-scope commands
+    // - executor swap returns prior + uses new for subsequent drains
+    // ─────────────────────────────────────────────────────────────────
+
+    use crate::command::{
+        BlockOnExecutor, CommandExecutor, Executor, HandlerRegistry, IntentSink, VecSink,
+    };
+    use pinion_core::Command;
+
+    fn echo_handler() -> std::sync::Arc<dyn crate::command::Handler> {
+        std::sync::Arc::new(|cmd: Command| -> crate::command::HandlerFuture {
+            Box::pin(async move {
+                Intent::new_owned(
+                    format!("echo.{}", cmd.kind_str()),
+                    cmd.payload,
+                )
+            })
+        })
+    }
+
+    fn build_executor_with(
+        kinds: &[&'static str],
+    ) -> (Arc<CommandExecutor>, Arc<VecSink>) {
+        let mut reg = HandlerRegistry::new();
+        for k in kinds {
+            reg.register(*k, echo_handler());
+        }
+        let sink = Arc::new(VecSink::new());
+        let exec: Arc<dyn Executor> = Arc::new(BlockOnExecutor);
+        let sink_dyn: Arc<dyn IntentSink> = sink.clone();
+        let cmd_exec = Arc::new(CommandExecutor::new(reg, exec, sink_dyn));
+        (cmd_exec, sink)
+    }
+
+    #[test]
+    fn r51_157_dispatch_without_executor_returns_empty_and_keeps_queue() {
+        // R51.157 — no executor installed → drain pump is a no-op.
+        // Owner-side pending queue stays populated so an AI inspection
+        // round can still observe the parked Command via
+        // `Owner::pending_commands`.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        core.root_owner().dispatch_command(Command::new_static(
+            "http.get",
+            IntrospectValue::Null,
+            0,
+        ));
+        let unhandled = core.dispatch_pending_commands();
+        assert!(unhandled.is_empty(), "no executor → empty Vec returned");
+        assert_eq!(
+            core.root_owner().pending_commands().len(),
+            1,
+            "no-executor drain must NOT consume the queue",
+        );
+    }
+
+    #[test]
+    fn r51_157_dispatch_routes_handled_command_to_sink() {
+        // R51.157 — installed executor with a registered handler:
+        // the drained Command resolves through BlockOnExecutor inside
+        // dispatch (sync), and the resulting Intent reaches the sink.
+        let (executor, sink) = build_executor_with(&["http.get"]);
+        let core: CoreShell<TestButton> =
+            CoreShell::new().with_executor(executor);
+        core.root_owner().dispatch_command(Command::new_static(
+            "http.get",
+            IntrospectValue::Text("/api/v1".into()),
+            42,
+        ));
+        let unhandled = core.dispatch_pending_commands();
+        assert!(unhandled.is_empty(), "registered kind → empty unhandled");
+        let drained = sink.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].tag_str(), "echo.http.get");
+        assert_eq!(
+            drained[0].payload,
+            IntrospectValue::Text("/api/v1".into()),
+        );
+        // Owner queue is now empty (the drain pump consumed it).
+        assert!(core.root_owner().pending_commands().is_empty());
+    }
+
+    #[test]
+    fn r51_157_dispatch_unhandled_kind_returned_to_caller() {
+        // R51.157 — registry has no handler for `audio.play`; the
+        // command is returned in the unhandled Vec so the backend
+        // can log it. The sink stays empty because no future ran.
+        let (executor, sink) = build_executor_with(&["http.get"]);
+        let core: CoreShell<TestButton> =
+            CoreShell::new().with_executor(executor);
+        core.root_owner().dispatch_command(Command::new_static(
+            "audio.play",
+            IntrospectValue::Int(440),
+            0,
+        ));
+        let unhandled = core.dispatch_pending_commands();
+        assert_eq!(unhandled.len(), 1, "unhandled kind returned");
+        assert_eq!(unhandled[0].kind_str(), "audio.play");
+        assert_eq!(unhandled[0].payload, IntrospectValue::Int(440));
+        assert!(sink.is_empty(), "no handler → no sink delivery");
+    }
+
+    #[test]
+    fn r51_157_dispatch_mixed_handled_and_unhandled() {
+        // R51.157 — handled commands dispatch through the executor;
+        // unhandled commands accumulate in the returned Vec. The
+        // sink observes only the handled ones, in dispatch order.
+        let (executor, sink) = build_executor_with(&["a", "c"]);
+        let core: CoreShell<TestButton> =
+            CoreShell::new().with_executor(executor);
+        let owner = core.root_owner();
+        owner.dispatch_command(Command::new_static("a", IntrospectValue::Int(1), 0));
+        owner.dispatch_command(Command::new_static("b", IntrospectValue::Int(2), 0));
+        owner.dispatch_command(Command::new_static("c", IntrospectValue::Int(3), 0));
+        owner.dispatch_command(Command::new_static("d", IntrospectValue::Int(4), 0));
+        let unhandled = core.dispatch_pending_commands();
+        let unhandled_kinds: Vec<&str> =
+            unhandled.iter().map(Command::kind_str).collect();
+        assert_eq!(unhandled_kinds, vec!["b", "d"]);
+        let drained = sink.drain();
+        let handled_tags: Vec<&str> = drained.iter().map(Intent::tag_str).collect();
+        assert_eq!(handled_tags, vec!["echo.a", "echo.c"]);
+    }
+
+    #[test]
+    fn r51_157_dispatch_drains_child_scope_commands_too() {
+        // R51.157 — `take_pending_commands_recursive` walks the
+        // children-first cascade (R51.139); the drain pump inherits
+        // the recursion automatically. Both child + parent commands
+        // reach the sink.
+        let (executor, sink) = build_executor_with(&["child.evt", "parent.evt"]);
+        let core: CoreShell<TestButton> =
+            CoreShell::new().with_executor(executor);
+        let child = Owner::new_child(core.root_owner());
+        child.dispatch_command(Command::new_static(
+            "child.evt",
+            IntrospectValue::Null,
+            child.id(),
+        ));
+        core.root_owner().dispatch_command(Command::new_static(
+            "parent.evt",
+            IntrospectValue::Null,
+            core.root_owner().id(),
+        ));
+        let unhandled = core.dispatch_pending_commands();
+        assert!(unhandled.is_empty());
+        let drained = sink.drain();
+        let tags: Vec<&str> = drained.iter().map(Intent::tag_str).collect();
+        // R51.139 cascade order = children first, then self.
+        assert_eq!(tags, vec!["echo.child.evt", "echo.parent.evt"]);
+    }
+
+    #[test]
+    fn r51_157_set_executor_returns_prior_handle() {
+        // R51.157 — `set_executor` is the swappable-registration
+        // entry the §5.23 R27 contract calls for. Replacing returns
+        // the prior handle so tests can restore baseline after a
+        // scoped swap.
+        let (first, _sink_a) = build_executor_with(&["k"]);
+        let (second, _sink_b) = build_executor_with(&["k"]);
+        let first_id = Arc::as_ptr(&first).cast::<()>() as usize;
+        let mut core: CoreShell<TestButton> =
+            CoreShell::new().with_executor(first);
+        let prior = core.set_executor(second);
+        let prior = prior.expect("first executor returned on replace");
+        assert_eq!(Arc::as_ptr(&prior).cast::<()>() as usize, first_id);
+    }
+
+    #[test]
+    fn r51_157_clear_executor_returns_prior_and_disables_drain() {
+        // R51.157 — `clear_executor` returns the detached handle (so
+        // a shutdown path can still drive remaining in-flight work)
+        // and switches the drain pump back to no-op behaviour.
+        let (executor, sink) = build_executor_with(&["k"]);
+        let mut core: CoreShell<TestButton> =
+            CoreShell::new().with_executor(executor);
+        let _detached = core
+            .clear_executor()
+            .expect("clear returns the prior executor");
+        assert!(core.executor().is_none());
+        core.root_owner().dispatch_command(Command::new_static(
+            "k",
+            IntrospectValue::Null,
+            0,
+        ));
+        let unhandled = core.dispatch_pending_commands();
+        assert!(unhandled.is_empty(), "no executor → no-op drain");
+        assert!(sink.is_empty(), "no executor → sink stays empty");
+        assert_eq!(
+            core.root_owner().pending_commands().len(),
+            1,
+            "no-executor drain must NOT consume the queue",
+        );
+    }
+
+    #[test]
+    fn r51_157_executor_accessor_yields_none_until_set() {
+        // R51.157 — fresh substrate has no executor.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        assert!(core.executor().is_none());
+    }
+
+    #[test]
+    fn r51_157_with_executor_builder_attaches_handle() {
+        // R51.157 — builder chains the executor into the new
+        // substrate without an intermediate mutable borrow.
+        let (executor, _sink) = build_executor_with(&["k"]);
+        let exec_ptr = Arc::as_ptr(&executor).cast::<()>() as usize;
+        let core: CoreShell<TestButton> = CoreShell::new().with_executor(executor);
+        let installed = core.executor().expect("with_executor installs Some");
+        assert_eq!(Arc::as_ptr(installed).cast::<()>() as usize, exec_ptr);
     }
 }

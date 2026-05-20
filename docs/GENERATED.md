@@ -1278,6 +1278,11 @@ fn main() {
 - crates/pinion-runtime/src/command/sink.rs:VecSink::snapshot
 - crates/pinion-runtime/src/command/sink.rs:VecSink::len
 - crates/pinion-runtime/src/command/sink.rs:VecSink::is_empty
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::with_executor
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::set_executor
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::clear_executor
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::executor
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::dispatch_pending_commands
 
 
 
@@ -6398,6 +6403,37 @@ router.pointer_down(&mut state_scene);
 - R51.157 — CoreShell::dispatch_pending_commands drain pump + Option<Arc<CommandExecutor>> 필드
 - R51.158 — per-scope BTreeMap<scope_id, CommandTaskHandle> cancellation (R27 Solid 패턴)
 - R51.159 — pinion-shell tokio current-thread Executor + EventLoopProxy IntentSink + AppEvent::IntentArrived
+
+
+
+### R51.157 — §5.23 CoreShell drain pump + Option&lt;Arc&lt;CommandExecutor&gt;&gt; executor field
+
+**Changes**:
+- pinion-runtime/src/core_shell.rs: CoreShell.executor: Option<Arc<CommandExecutor>> 신규 필드
+- CoreShell::with_executor builder + set_executor swap + clear_executor + executor() accessor
+- CoreShell::dispatch_pending_commands(): root_owner.take_pending_commands_recursive() 순회 → executor.registry().has(kind) 골라내기 → executor.dispatch(cmd) 명시적 라우팅 (handler 재시 실수 표면화)
+- executor 미설치 시 no-op drain (Owner queue 보존, AI 관찰 가능)
+- #[must_use] — unhandled Vec<Command> 합니 backend 로그/표자구우
+- core_shell tests +9 (no-executor/handled/unhandled/mixed/recursive/set/clear/accessor/builder)
+
+
+
+**Verification**:
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning
+- cargo test --workspace --features pinion-runtime/vello → 1933 pass / 0 fail / 10 ignored
+- 직전 1924/0/9 대비 +9 pass +1 ignored (R51.157 신규 9 tests + 1 doc-ignore example)
+- r51_157_dispatch_drains_child_scope_commands_too: child-first 카스케이드 순서 표면
+- r51_157_dispatch_mixed_handled_and_unhandled: handled vs unhandled 분리 로직 검증
+
+
+
+**Impact**: §5.23, §5.22, §5.41
+
+
+**Carry forward**:
+- R51.158 — CommandExecutor.in_flight: Mutex<BTreeMap<scope_id, CommandTaskHandle>> 경쟁취소
+- R51.159 — pinion-shell ShellCore.ShellCore::dispatch_pending_commands 쉬프들 wire-up + tokio current-thread
+- R51.160 — pinion-tui ShellCoreTui drain pump 동명령 + IntentSink
 
 
 
