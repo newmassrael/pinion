@@ -1588,6 +1588,11 @@ fn main() {
 - crates/pinion-runtime/src/frame_pacing.rs
 - crates/pinion-runtime/src/frame_pacing.rs:MAX_FRAME_DT_SECS
 - crates/pinion-runtime/src/frame_pacing.rs:clamp_frame_dt
+- crates/pinion-core/src/reactive/owner.rs:Owner::any_animation_active
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::any_animation_active
+- examples/hello-button/src/main.rs:drive_hover_progress
+- examples/hello-button/src/main.rs:lerp_grayscale
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::any_animation_active
 
 
 
@@ -6083,6 +6088,37 @@ router.pointer_down(&mut state_scene);
 - R51.148 §5.28 AnimationDriver Effect-wrap (manual tick → Effect-driven, §5.28 R33 진본화)
 - R51.149+ §5.23 Handler executor binding (tokio::spawn + Command queue drain pump)
 - memory entries #157-166 (Handler / CoreShell composition / clamp anchor / Owner::current)
+
+
+
+### R51.147 — §5.28 Owner::any_animation_active + hello-button hover Animation<f32> demo (first visual application of §5.28 substrate)
+
+**Changes**:
+- pinion-core Owner::any_animation_active(eps) recursive walk — children depth-first then self
+- pinion-runtime CoreShell::any_animation_active accessor forward
+- pinion-shell ShellCore::compute_paint_scene sets redraw_requested if any_animation_active
+- pinion-tui ShellCoreTui::any_animation_active accessor forward (surface poll-loop carry)
+- hello-button drive_hover_progress: thread_local OnceCell<Animation<f32>> + Owner::current()
+- hello-button lerp_grayscale + view fn Idle↔Hover spring-driven lightness fade
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1856 passed / 0 failed / 8 ignored
+- baseline 1848 → 1856 (+8 R51.147: 6 owner.rs + 2 core_shell.rs)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- hello-button binary built — visual spring transition 사용자 verification pending (binary side)
+
+
+
+**Impact**: §5.28, §5.22, §5.41
+
+
+**Carry forward**:
+- R51.148 cleaner application context API (avoid thread_local OnceCell view-fn pattern)
+- R51.148 §5.28 AnimationDriver Effect-wrap (manual tick → Effect-driven, R33 진본화)
+- R51.149 TUI surface continuous-paint loop (poll timeout while any_animation_active)
+- R51.150+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
 
 
 

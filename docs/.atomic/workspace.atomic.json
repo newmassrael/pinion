@@ -1825,6 +1825,26 @@
         {
           "file": "crates/pinion-runtime/src/frame_pacing.rs",
           "symbol": "clamp_frame_dt"
+        },
+        {
+          "file": "crates/pinion-core/src/reactive/owner.rs",
+          "symbol": "Owner::any_animation_active"
+        },
+        {
+          "file": "crates/pinion-runtime/src/core_shell.rs",
+          "symbol": "CoreShell::any_animation_active"
+        },
+        {
+          "file": "examples/hello-button/src/main.rs",
+          "symbol": "drive_hover_progress"
+        },
+        {
+          "file": "examples/hello-button/src/main.rs",
+          "symbol": "lerp_grayscale"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::any_animation_active"
         }
       ],
       "decision_status": "active"
@@ -9004,6 +9024,60 @@
         "R51.148 §5.28 AnimationDriver Effect-wrap (manual tick → Effect-driven, §5.28 R33 진본화)",
         "R51.149+ §5.23 Handler executor binding (tokio::spawn + Command queue drain pump)",
         "memory entries #157-166 (Handler / CoreShell composition / clamp anchor / Owner::current)"
+      ]
+    },
+    "R51.147": {
+      "decision_summary": "§5.28 Owner::any_animation_active + hello-button hover Animation<f32> demo (first visual application of §5.28 substrate)",
+      "changes_bullets": [
+        "pinion-core Owner::any_animation_active(eps) recursive walk — children depth-first then self",
+        "pinion-runtime CoreShell::any_animation_active accessor forward",
+        "pinion-shell ShellCore::compute_paint_scene sets redraw_requested if any_animation_active",
+        "pinion-tui ShellCoreTui::any_animation_active accessor forward (surface poll-loop carry)",
+        "hello-button drive_hover_progress: thread_local OnceCell<Animation<f32>> + Owner::current()",
+        "hello-button lerp_grayscale + view fn Idle↔Hover spring-driven lightness fade"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1856 passed / 0 failed / 8 ignored",
+        "baseline 1848 → 1856 (+8 R51.147: 6 owner.rs + 2 core_shell.rs)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "hello-button binary built — visual spring transition 사용자 verification pending (binary side)"
+      ],
+      "impact_refs": [
+        "5.28",
+        "5.22",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R51.148 cleaner application context API (avoid thread_local OnceCell view-fn pattern)",
+        "R51.148 §5.28 AnimationDriver Effect-wrap (manual tick → Effect-driven, R33 진본화)",
+        "R51.149 TUI surface continuous-paint loop (poll timeout while any_animation_active)",
+        "R51.150+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)"
+      ],
+      "publishable_decision_summary": "§5.28 Owner::any_animation_active + hello-button hover Animation<f32> demo (first visual application of §5.28 substrate)",
+      "publishable_changes_bullets": [
+        "pinion-core Owner::any_animation_active(eps) recursive walk — children depth-first then self",
+        "pinion-runtime CoreShell::any_animation_active accessor forward",
+        "pinion-shell ShellCore::compute_paint_scene sets redraw_requested if any_animation_active",
+        "pinion-tui ShellCoreTui::any_animation_active accessor forward (surface poll-loop carry)",
+        "hello-button drive_hover_progress: thread_local OnceCell<Animation<f32>> + Owner::current()",
+        "hello-button lerp_grayscale + view fn Idle↔Hover spring-driven lightness fade"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1856 passed / 0 failed / 8 ignored",
+        "baseline 1848 → 1856 (+8 R51.147: 6 owner.rs + 2 core_shell.rs)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "hello-button binary built — visual spring transition 사용자 verification pending (binary side)"
+      ],
+      "publishable_impact_refs": [
+        "5.28",
+        "5.22",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.148 cleaner application context API (avoid thread_local OnceCell view-fn pattern)",
+        "R51.148 §5.28 AnimationDriver Effect-wrap (manual tick → Effect-driven, R33 진본화)",
+        "R51.149 TUI surface continuous-paint loop (poll timeout while any_animation_active)",
+        "R51.150+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)"
       ]
     },
     "R51.33": {

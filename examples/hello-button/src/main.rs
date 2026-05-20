@@ -31,13 +31,16 @@
 //!     `paint_adapter::to_vello` (called from the shell) walks the
 //!     tree into a `vello::Scene` and `HelloButtonRenderer` submits it.
 
+use std::cell::OnceCell;
+
+use pinion_core::animation::SpringConfig;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -64,12 +67,78 @@ const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
 const BTN_W: u32 = 160;
 const BTN_H: u32 = 80;
 
+// R51.147 §5.28 — per-binding `Animation<f32>` driving the
+// idle ↔ hover lightness transition. Cached in a `thread_local` so
+// the view fn instantiates the animation exactly once on the first
+// paint; subsequent calls just `set_target` and read the current
+// value. The lifetime ties to the binding's
+// [`pinion_shell::ShellCore::root_owner`] via
+// [`Owner::current()`](pinion_core::Owner::current) (R51.146 wrap),
+// so when the shell drops the animation drops with it. A future
+// cleaner-application-context API (carry: R51.148+) will let bindings
+// declare animations without thread-local plumbing.
+thread_local! {
+    static HOVER_ANIM: OnceCell<Animation<f32>> = const { OnceCell::new() };
+}
+
+/// R51.147 §5.28 — drive the hover progress animation off the current
+/// [`ButtonState`] and return the displayed value in `[0.0, 1.0]`.
+///
+/// The first call instantiates the animation on the binding's root
+/// [`Owner`] via [`Owner::current()`] (R51.146). Idle / Pressed /
+/// Disabled target `0.0`; Hover targets `1.0`. The spring carries
+/// velocity through re-targets so transitioning Idle → Hover → Idle
+/// without waiting for settle looks natural.
+fn drive_hover_progress(state: ButtonState) -> f32 {
+    HOVER_ANIM.with(|cell| {
+        let anim = cell.get_or_init(|| {
+            // R51.146 — `Owner::current()` resolves to the shell's
+            // `root_owner` because `compute_paint_scene` wrapped this
+            // call in `root_owner().run(...)`. Panicking here means
+            // the view fn is running outside the framework wrap (a
+            // broken integration); we choose loud failure over a
+            // silently-broken animation.
+            let owner = Owner::current()
+                .expect("hello-button view fn must run inside ShellCore::root_owner().run(...)");
+            Animation::new(&owner, 0.0_f32, SpringConfig::default())
+        });
+        let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
+        anim.set_target(target);
+        anim.value()
+    })
+}
+
+/// R51.147 §5.28 — linear interpolate a single-channel grayscale fill
+/// between two 8-bit endpoints by `t ∈ [0.0, 1.0]` and emit an RGB
+/// `Color`. `t` outside the range is clamped.
+fn lerp_grayscale(from: u8, to: u8, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    #[allow(clippy::cast_precision_loss)]
+    let from_f = f32::from(from);
+    let to_f = f32::from(to);
+    let mixed = from_f + (to_f - from_f) * t;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let v = mixed.round().clamp(0.0, 255.0) as u8;
+    Color::rgb(v, v, v)
+}
+
 /// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
 /// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, ready for
 /// `dt`/`frame_index` without a `SemVer` major. Purity is the §2
 /// `dry_run` invariant: same `(state, frame)` always yields the same
-/// `Scene`. The shell calls `compute_layout` on the result before
-/// paint, so the view fn need not (and should not) resolve pixel rects.
+/// `Scene` AT A GIVEN SETTLED ANIMATION STATE — the R51.147 hover
+/// transition layers a spring-driven progress value on top, which the
+/// shell's repaint loop drives to steady state once the user input
+/// stops. Re-paints during the transition observe the same monotonic
+/// time series as the spring's tick history, so `dry_run` still gets
+/// a deterministic snapshot when paired with the
+/// [`Owner::snapshot`](pinion_core::Owner::snapshot) +
+/// [`Owner::restore`](pinion_core::Owner::restore) primitives. The
+/// shell calls `compute_layout` on the result before paint, so the
+/// view fn need not (and should not) resolve pixel rects.
 //
 // `&Frame` intentional per §6.3 signature contract even though
 // `Frame` is presently a ZST: once real per-frame fields land,
@@ -77,9 +146,16 @@ const BTN_H: u32 = 80;
 // Allow the lint at the view-fn boundary.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ButtonState, _frame: &Frame) -> Scene {
+    // R51.147 §5.28 — animated hover progress (0.0 = Idle baseline,
+    // 1.0 = full Hover). Drives the lightness lerp below.
+    let hover_progress = drive_hover_progress(state);
     let btn_fill: Color = match state {
-        ButtonState::Idle => Color::rgb(0xff, 0xff, 0xff),
-        ButtonState::Hover => Color::rgb(0xd0, 0xd0, 0xd0),
+        // Idle ↔ Hover lerp from white (0xff) to gray (0xd0). The
+        // spring smooths the transition over ~200ms at the default
+        // config — no discrete snap on cursor enter / leave.
+        ButtonState::Idle | ButtonState::Hover => {
+            lerp_grayscale(0xff, 0xd0, hover_progress)
+        }
         ButtonState::Pressed => Color::rgb(0x50, 0x50, 0x50),
         ButtonState::Disabled => Color::rgb(0xb0, 0x20, 0x20),
     };
@@ -258,8 +334,18 @@ mod a11y_tests {
     /// `enrich_names_from_scene`. Tests verifying the AT-exposed
     /// name use this so the assertion reads the same name an AT
     /// client would see, not just the bare `access_node` output.
+    ///
+    /// R51.147 §5.28 — `view()` now creates an `Animation<f32>` via
+    /// `Owner::current()` on its first call, so the production
+    /// `compute_paint_scene` `root_owner().run(...)` wrap (R51.146)
+    /// must be mirrored here. The test owner stays alive only for the
+    /// `run` body; the `HOVER_ANIM` thread-local cell caches the
+    /// animation past the owner drop, but value reads still resolve
+    /// (`Animation` holds its `AnimationInner` `Rc` independently of
+    /// the registry; the registry tie only governs the tick walk).
     fn enriched(state: ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
-        let scene = view(state, &Frame::new());
+        let owner = pinion_core::Owner::new();
+        let scene = owner.run(|| view(state, &Frame::new()));
         let mut nodes = ButtonView::access_node(&state, focused);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         nodes

@@ -705,6 +705,20 @@ impl<V: WidgetView> ShellCore<V> {
             .root_owner()
             .run(|| V::view(cached_state, &frame));
         compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        // R51.147 §5.28 — keep painting while any animation registered
+        // on the binding is still moving. `request_redraw` is
+        // idempotent inside winit; the redraw flag is drained once per
+        // event-loop iteration and forwarded to
+        // `Window::request_redraw` when a window exists, otherwise
+        // observed by headless tests. Once every animation settles
+        // under the spring epsilon the call short-circuits and the
+        // surface idles until the next input / state change.
+        if self
+            .core
+            .any_animation_active(pinion_core::Animation::<f32>::DEFAULT_REST_EPSILON)
+        {
+            self.redraw_requested = true;
+        }
         paint_scene
     }
 

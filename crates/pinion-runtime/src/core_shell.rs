@@ -295,6 +295,27 @@ impl<V: WidgetCore> CoreShell<V> {
         self.root_owner.tick_animations(dt);
     }
 
+    /// R51.147 §5.28 — `true` when any animation registered on this
+    /// binding's [`root_owner`](Self::root_owner) (or transitively on
+    /// a child scope) is still moving above `epsilon`.
+    ///
+    /// Backends call this after the paint cycle's
+    /// [`Self::tick_animations`] step to decide whether the next
+    /// frame should also paint. Once `false`, the backend can stop
+    /// requesting redraws and let the surface idle until the next
+    /// event arrives (state change / input / RPC mutation).
+    ///
+    /// `epsilon` is forwarded verbatim to each
+    /// [`pinion_core::animation::Tickable::is_at_rest`]. Typical
+    /// callers pass
+    /// [`pinion_core::Animation::DEFAULT_REST_EPSILON`] so the
+    /// stopping rule matches the spring solver's own settlement
+    /// threshold.
+    #[must_use]
+    pub fn any_animation_active(&self, epsilon: f32) -> bool {
+        self.root_owner.any_animation_active(epsilon)
+    }
+
     /// R51.122 §5.41 — hand a freshly-painted scene to the
     /// [`InputRouter`] so the next pointer event resolves against the
     /// visible layout. Both backends call this once per paint commit
@@ -828,6 +849,25 @@ mod tests {
         }
         assert_eq!(recorder.ticks.get(), 5);
         assert_eq!(recorder.last_dt.get().to_bits(), 0.01_f32.to_bits());
+    }
+
+    #[test]
+    fn any_animation_active_false_for_empty_substrate() {
+        // R51.147 — fresh substrate has no animations; the helper
+        // reports `false` so the backend can idle.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        assert!(!core.any_animation_active(0.01));
+    }
+
+    #[test]
+    fn any_animation_active_true_with_non_at_rest_tickable() {
+        // R51.147 — the recorder fixture's `is_at_rest` is hard-coded
+        // to `false` so the substrate observes an active animation
+        // after registration.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let recorder = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(recorder);
+        assert!(core.any_animation_active(0.01));
     }
 
     #[test]

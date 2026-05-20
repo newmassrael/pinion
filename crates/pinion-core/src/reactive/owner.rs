@@ -557,6 +557,55 @@ impl Owner {
         self.inner.owned_animations.borrow().len()
     }
 
+    /// R51.147 §5.28 — `true` when any animation registered on this
+    /// owner (or transitively on a descendant scope) reports
+    /// [`Tickable::is_at_rest(epsilon)`](crate::animation::Tickable::is_at_rest)
+    /// as `false`. The walk mirrors [`Self::tick_animations`]:
+    /// depth-first across children, then this scope's direct
+    /// registrations.
+    ///
+    /// Used by framework backends to decide whether to request another
+    /// frame from the host's vsync loop. Once every animation has
+    /// settled (`is_at_rest(eps)` for every registry entry) the
+    /// backend can stop requesting redraws and let the scene rest at
+    /// steady state — the textbook "lazy repaint while animating"
+    /// pattern (winit's `Window::request_redraw` is idempotent;
+    /// backends still benefit from skipping the no-op call once nothing
+    /// is moving).
+    ///
+    /// `epsilon` is forwarded verbatim to each
+    /// [`Tickable::is_at_rest`](crate::animation::Tickable::is_at_rest).
+    /// Callers typically pass [`Animation::DEFAULT_REST_EPSILON`](crate::animation::Animation::DEFAULT_REST_EPSILON)
+    /// so the "at rest" criterion matches the spring solver's own
+    /// settlement threshold.
+    ///
+    /// Implementation note — children + animations snapshot
+    /// (`Rc::clone` collect) before releasing the `RefCell` borrow,
+    /// mirroring [`Self::tick_animations`]; safe under mid-walk
+    /// register/drop.
+    #[must_use]
+    pub fn any_animation_active(&self, epsilon: f32) -> bool {
+        let children: Vec<Owner> = self.inner.children.borrow().iter().cloned().collect();
+        for child in &children {
+            if child.any_animation_active(epsilon) {
+                return true;
+            }
+        }
+        let anims: Vec<Rc<dyn crate::animation::Tickable>> = self
+            .inner
+            .owned_animations
+            .borrow()
+            .iter()
+            .map(Rc::clone)
+            .collect();
+        for anim in &anims {
+            if !anim.is_at_rest(epsilon) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Queue a declarative [`Command`](crate::command::Command) on this
     /// scope. The framework / registered handler drains the queue via
     /// [`Owner::take_pending_commands`]; until then it is visible to
@@ -1160,6 +1209,103 @@ mod tests {
         });
         assert!(observer.is_dirty());
         assert_eq!(s.get(), 0);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R51.147 §5.28 — Owner::any_animation_active(eps) tests.
+    //
+    // Backends need to know when to stop requesting frames from their
+    // vsync loop. Owner::any_animation_active walks the subtree and
+    // returns true iff at least one registered Tickable reports
+    // is_at_rest(eps) == false. The tests verify:
+    //
+    // - Empty owner → false.
+    // - One at-rest animation → false.
+    // - One not-at-rest animation → true.
+    // - Mixed at-rest + not-at-rest → true (early-return finds the
+    //   active one).
+    // - Child scope with active anim → parent reports true.
+    // - All settle → false again (transitions to steady state).
+    // ────────────────────────────────────────────────────────────────
+
+    mod animation_active {
+        use super::Owner;
+        use crate::animation::Tickable;
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        /// Tickable whose `is_at_rest(_)` mirrors a `Cell<bool>`. Lets
+        /// the test flip an animation between resting / active states
+        /// without standing up a real spring solver.
+        struct ProgrammableRest {
+            at_rest: Cell<bool>,
+        }
+        impl ProgrammableRest {
+            fn at_rest() -> Rc<Self> {
+                Rc::new(Self { at_rest: Cell::new(true) })
+            }
+            fn active() -> Rc<Self> {
+                Rc::new(Self { at_rest: Cell::new(false) })
+            }
+        }
+        impl Tickable for ProgrammableRest {
+            fn tick(&self, _dt: f32) {}
+            fn is_at_rest(&self, _epsilon: f32) -> bool {
+                self.at_rest.get()
+            }
+        }
+
+        #[test]
+        fn empty_owner_reports_no_active_animation() {
+            let owner = Owner::new();
+            assert!(!owner.any_animation_active(0.01));
+        }
+
+        #[test]
+        fn at_rest_animation_reports_inactive() {
+            let owner = Owner::new();
+            owner.register_animation(ProgrammableRest::at_rest());
+            assert!(!owner.any_animation_active(0.01));
+        }
+
+        #[test]
+        fn active_animation_reports_active() {
+            let owner = Owner::new();
+            owner.register_animation(ProgrammableRest::active());
+            assert!(owner.any_animation_active(0.01));
+        }
+
+        #[test]
+        fn mixed_registry_reports_active_when_any_is_active() {
+            let owner = Owner::new();
+            owner.register_animation(ProgrammableRest::at_rest());
+            owner.register_animation(ProgrammableRest::active());
+            owner.register_animation(ProgrammableRest::at_rest());
+            assert!(owner.any_animation_active(0.01));
+        }
+
+        #[test]
+        fn child_scope_with_active_animation_bubbles_to_parent() {
+            let parent = Owner::new();
+            let child = Owner::new_child(&parent);
+            child.register_animation(ProgrammableRest::active());
+            assert!(parent.any_animation_active(0.01));
+            assert!(child.any_animation_active(0.01));
+        }
+
+        #[test]
+        fn settling_animation_flips_back_to_inactive() {
+            // The frame-by-frame contract: tick eventually settles
+            // each spring, and the next `any_animation_active` call
+            // reports false. Simulate by flipping the Cell after
+            // observation.
+            let owner = Owner::new();
+            let anim = ProgrammableRest::active();
+            owner.register_animation(anim.clone());
+            assert!(owner.any_animation_active(0.01));
+            anim.at_rest.set(true);
+            assert!(!owner.any_animation_active(0.01));
+        }
     }
 
     // ────────────────────────────────────────────────────────────────

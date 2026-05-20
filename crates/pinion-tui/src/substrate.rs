@@ -200,6 +200,18 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         self.core.root_owner()
     }
 
+    /// R51.147 §5.28 — `true` while any animation registered on
+    /// [`Self::root_owner`] is still moving above the spring epsilon.
+    /// The TUI surface (`shell::run`) polls this between event-loop
+    /// iterations: a `true` return shortens the crossterm poll
+    /// timeout so the next paint commits at animation pace; a
+    /// `false` return restores the idle long-poll. Delegates to
+    /// [`CoreShell::any_animation_active`](pinion_runtime::CoreShell::any_animation_active).
+    #[must_use]
+    pub fn any_animation_active(&self, epsilon: f32) -> bool {
+        self.core.any_animation_active(epsilon)
+    }
+
     /// Build the binding's paint scene from the current cached
     /// state. Pure sync per §6.3 R51.27 `dry_run`: identical
     /// `(state, frame, owner_state)` always yields the same `Scene`.
