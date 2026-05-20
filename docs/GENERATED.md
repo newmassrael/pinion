@@ -3221,6 +3221,7 @@ router.pointer_down(&mut state_scene);
 - ColorBrush RGBA → ANSI color 매핑 + TextAlign wrap policy = R51.109 substrate 결정
 - R51.108 — ShellCore substrate winit-free 분리 land (Touch / TouchPhase / Modifiers pinion lift)
 - R51.109.0 — pinion-tui crate skeleton land (ratatui 0.29 + crossterm 0.28 + TuiRenderer placeholder)
+- R51.109.1 — WidgetRenderer trait + VelloContext + macro 2 impl (backend-agnostic dispatch land)
 
 
 
@@ -3250,6 +3251,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/Cargo.toml
 - crates/pinion-tui/src/lib.rs
 - crates/pinion-tui/src/lib.rs:TuiRenderer
+- crates/pinion-shell/src/lib.rs:WidgetRenderer
+- crates/pinion-shell/src/lib.rs:VelloContext
 
 
 
@@ -10291,6 +10294,38 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.20
+
+
+
+### Round 494 — R51.109.1 §5.41 WidgetRenderer trait + VelloContext + VelloRenderer super-trait 분리 — backend-agnostic dispatch substrate, macro emit 갱신 (Frame/Context associated type 정통)
+
+**Changes**:
+- WidgetRenderer trait 신설 (Frame + Context + render + resize backend-agnostic surface)
+- VelloContext struct 신설 (base_color carry, Default = BLACK = root_background fallback)
+- VelloRenderer = WidgetRenderer<Frame=vello::Scene, Context=VelloContext> + Sized super-trait
+- vello_renderer_impl! macro 가 두 trait impl 동시 emit (codegen template 미변경)
+- app.rs:render call site = WidgetRenderer::render via method resolution (renderer.render)
+- 기존 binding (hello-* 등) 0 변경 — macro 가 새 trait 두 impl 자동 emit
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning
+- cargo test --workspace --features pinion-runtime/vello = 1660 pass / 0 fail (baseline 유지)
+- WidgetView::Renderer: VelloRenderer + 'static 그대로 (transitively WidgetRenderer)
+
+
+
+**Impact**: §2, §5.16, §5.41
+
+
+**Carry forward**:
+- R51.109.2 — TuiRenderer impl + WidgetRenderer for TuiRenderer + paint_adapter::to_tui
+- R51.110 — hello-button TUI dogfood (first 2 impl substrate 평가)
+- WidgetRenderer::Frame / Context associated type Send/Sync bound = R51.109.2 평가
+- VelloContext Default = BLACK 가 paint_adapter::root_background fallback 일치 (정통)
+- Context: Copy 한정 — Default 불필요 (새 backend 온 ratify 시 재평가)
 
 
 

@@ -37,7 +37,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::substrate::ShellCore;
-use crate::{AppEvent, RenderState, VelloRenderer, WidgetView};
+use crate::{AppEvent, RenderState, VelloContext, VelloRenderer, WidgetRenderer, WidgetView};
 
 /// The framework-side shell. Generic over a widget binding
 /// [`WidgetView`]; concrete examples instantiate via `run::<V>()`.
@@ -190,7 +190,14 @@ impl<V: WidgetView> AppShell<V> {
             self.core.focus().focused(),
             &mut self.vello_scene,
         );
-        if let Err(e) = renderer.render(&self.vello_scene, base) {
+        // R51.109.1 §5.41 — call through the backend-agnostic
+        // `WidgetRenderer` trait. `VelloContext::base_color` carries
+        // the window background sampled from
+        // `paint_adapter::root_background`; the renderer's macro impl
+        // forwards to the inherent `<R>::render(frame, base_color)`.
+        // `renderer.render` auto-derefs through `Box<R>` because the
+        // `WidgetRenderer` trait is in scope.
+        if let Err(e) = renderer.render(&self.vello_scene, VelloContext { base_color: base }) {
             eprintln!("shell: vello render: {e}");
         }
         // R51.62 / R51.80 §5.40 — AccessKit emit. The substrate

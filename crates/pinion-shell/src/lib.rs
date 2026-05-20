@@ -91,25 +91,118 @@ impl From<accesskit_winit::Event> for AppEvent {
     }
 }
 
-/// `Send`-able renderer wrapper trait that the pinion-forge codegen
-/// output (`HelloFooRenderer` + `HelloFooRendererError`) bridges into
-/// via the [`vello_renderer_impl!`] macro. The shell is generic over
-/// `R: VelloRenderer` so each binary keeps the zero-virtual-dispatch
-/// Vello pipeline §5.16 R45 guarantees — there is no `dyn VelloRenderer`
-/// anywhere in the hot path.
+/// R51.109.1 §5.41 — Vello-specific frame render context.
 ///
-/// The shape mirrors the codegen template (R46.3.3) exactly — async
-/// `new`, sync `render` + `resize`, `Sized` so the shell can store
-/// `Box<Self>` in [`RenderState::Active`] without pulling object-safety
-/// constraints in. `Error: Display` so the shell can `eprintln!` any
-/// failure without forcing the application into the error type.
-pub trait VelloRenderer: Sized {
-    /// Concrete error type emitted by the renderer constructor and
-    /// `render`. The codegen template emits `HelloFooRendererError`
-    /// which derives `Debug` + impls `Display` + `Error`; meets the
-    /// `Display` bound directly.
+/// Carries the application-level paint hint (window background base
+/// color) that the Vello pipeline needs at frame submit. `Copy` so
+/// the shell can pass it by value per frame without lifetime
+/// gymnastics; `Default::default()` returns opaque black which is
+/// also the fallback `paint_adapter::root_background` returns when
+/// no Container fill is set — the shell overrides via
+/// `paint_adapter::root_background(&paint_scene)` on every frame
+/// when a real fill is present.
+///
+/// This is the Vello specialization of [`WidgetRenderer::Context`];
+/// the parallel `TuiContext` (R51.109.2 in `pinion-tui`) carries the
+/// TUI palette / capability hints. Single-typed `Context` per
+/// backend keeps the substrate dispatch backend-agnostic while
+/// preserving the zero-virtual-dispatch guarantee.
+#[derive(Debug, Clone, Copy)]
+pub struct VelloContext {
+    /// Window background color sampled from
+    /// `paint_adapter::root_background(&paint_scene)`. Vello clears
+    /// the surface to this color on `render` submit so the visible
+    /// frame matches the paint scene's root Container fill.
+    pub base_color: PenikoColor,
+}
+
+impl Default for VelloContext {
+    fn default() -> Self {
+        // `PenikoColor::BLACK` matches `paint_adapter::root_background`'s
+        // fallback for scenes without a root Container fill — keeps
+        // the substrate's `WidgetRenderer::Context: Copy` constraint
+        // trivially constructible without forcing a non-trivial
+        // sentinel through every caller.
+        Self {
+            base_color: PenikoColor::BLACK,
+        }
+    }
+}
+
+/// R51.109.1 §5.41 — backend-agnostic widget renderer trait.
+///
+/// Single dispatch boundary between the shell's render loop and the
+/// concrete backend. Each `WidgetRenderer` impl owns its
+/// backend-specific surface (Vello → wgpu, TUI → terminal); the
+/// shell only knows about the `Frame` + `Context` associated types
+/// and calls `render` once per frame.
+///
+/// The two visible backends:
+///
+/// | Backend | `Frame` | `Context` | crate |
+/// |---|---|---|---|
+/// | Vello GUI (§5.16) | `vello::Scene` | [`VelloContext`] | `pinion-shell` (codegen via [`vello_renderer_impl!`]) |
+/// | ratatui TUI (§5.41) | `ratatui::Buffer` | `pinion_tui::TuiContext` | `pinion-tui` (R51.109.2) |
+///
+/// `Sized` so the shell can store `Box<Self>` in `RenderState::Active`
+/// without object-safety constraints; zero-virtual-dispatch in the
+/// hot path (no `dyn WidgetRenderer`) per §5.16 R45 R51.16 guarantee.
+/// `Context: Copy` so the shell passes by value per frame without
+/// allocation; `Error: Display` so the shell can `eprintln!` any
+/// failure without forcing the application into the concrete error.
+pub trait WidgetRenderer: Sized {
+    /// Concrete error type emitted by `render`. The codegen template
+    /// emits `HelloFooRendererError` for Vello consumers; TUI
+    /// implementations surface `std::io::Error` directly.
     type Error: core::fmt::Display;
 
+    /// Backend-specific painted-output type. The shell's render
+    /// pipeline builds this via the backend-specific paint adapter
+    /// (`paint_adapter::to_vello` for GUI, `paint_adapter::to_tui`
+    /// for TUI) then hands it to the renderer.
+    type Frame;
+
+    /// Backend-specific frame-level render hints (base color for
+    /// Vello, palette for TUI, etc.). `Copy` so the shell passes by
+    /// value per frame.
+    type Context: Copy;
+
+    /// Submit one painted frame against the backend's surface.
+    ///
+    /// # Errors
+    /// Implementation-defined — frame submission failure, swapchain
+    /// loss (Vello), IO error writing terminal cells (TUI), etc.
+    fn render(
+        &mut self,
+        frame: &Self::Frame,
+        ctx: Self::Context,
+    ) -> Result<(), Self::Error>;
+
+    /// Resize the backend surface to match a new logical dimension.
+    fn resize(&mut self, width: u32, height: u32);
+}
+
+/// R51.109.1 §5.41 — Vello specialization of [`WidgetRenderer`].
+///
+/// Locks `Frame = vello::Scene` and `Context = VelloContext` so every
+/// Vello binding ships the same dispatch surface, plus the
+/// Vello-specific async wgpu surface constructor. The wrapper trait
+/// the pinion-forge codegen output (`HelloFooRenderer` +
+/// `HelloFooRendererError`) bridges into via the
+/// [`vello_renderer_impl!`] macro; the shell is generic over `R:
+/// VelloRenderer` so each binary keeps the zero-virtual-dispatch
+/// Vello pipeline §5.16 R45 guarantees — there is no `dyn
+/// VelloRenderer` anywhere in the hot path.
+///
+/// The shape mirrors the codegen template (R46.3.3) — async `new`,
+/// sync `render` + `resize` (the latter two inherited from
+/// `WidgetRenderer`), `Sized` so the shell can store `Box<Self>` in
+/// [`RenderState::Active`] without pulling object-safety constraints
+/// in. `Error: Display` so the shell can `eprintln!` any failure
+/// without forcing the application into the error type.
+pub trait VelloRenderer:
+    WidgetRenderer<Frame = VelloScene, Context = VelloContext> + Sized
+{
     /// Initialize the Vello renderer against a wgpu surface target.
     /// Async because wgpu adapter + device acquisition is async; the
     /// shell wraps the future in `pollster::block_on` at the §6.3
@@ -125,29 +218,18 @@ pub trait VelloRenderer: Sized {
     ) -> impl core::future::Future<Output = Result<Self, Self::Error>>
     where
         W: Into<vello::wgpu::SurfaceTarget<'static>>;
-
-    /// Submit one Vello scene frame against the configured surface.
-    ///
-    /// # Errors
-    /// Implementation-defined — frame submission failure or
-    /// swapchain acquisition failure.
-    fn render(
-        &mut self,
-        scene: &VelloScene,
-        base_color: PenikoColor,
-    ) -> Result<(), Self::Error>;
-
-    /// Resize the wgpu surface to match a new window dimension.
-    fn resize(&mut self, width: u32, height: u32);
 }
 
 /// Bridge a pinion-forge-emitted renderer struct into the
-/// [`VelloRenderer`] trait. The codegen template emits inherent
-/// methods (`async fn new<W>(...)`, `fn render(...)`, `fn resize(...)`)
-/// matching the trait signature byte-for-byte; this macro generates
-/// a thin trait-impl that forwards each method call to the inherent
-/// one. Keeps the codegen template free of any pinion-shell coupling
-/// (consumers without the shell can still use the renderer).
+/// [`WidgetRenderer`] + [`VelloRenderer`] trait pair. The codegen
+/// template emits inherent methods (`async fn new<W>(...)`,
+/// `fn render(...)`, `fn resize(...)`) matching the substrate's
+/// signature byte-for-byte; this macro generates two thin trait-impls
+/// (one for the backend-agnostic `WidgetRenderer`, one for the
+/// Vello-specialised `VelloRenderer`) that forward each method call
+/// to the inherent one. Keeps the codegen template free of any
+/// pinion-shell coupling (consumers without the shell can still use
+/// the renderer).
 ///
 /// # Example
 ///
@@ -158,30 +240,34 @@ pub trait VelloRenderer: Sized {
 #[macro_export]
 macro_rules! vello_renderer_impl {
     ($name:ident, $err:ident) => {
-        impl $crate::VelloRenderer for $name {
+        impl $crate::WidgetRenderer for $name {
             type Error = $err;
-
-            async fn new<W>(
-                target: W,
-                width: u32,
-                height: u32,
-            ) -> ::core::result::Result<Self, Self::Error>
-            where
-                W: ::core::convert::Into<::vello::wgpu::SurfaceTarget<'static>>,
-            {
-                <$name>::new(target, width, height).await
-            }
+            type Frame = ::vello::Scene;
+            type Context = $crate::VelloContext;
 
             fn render(
                 &mut self,
-                scene: &::vello::Scene,
-                base_color: ::vello::peniko::Color,
-            ) -> ::core::result::Result<(), Self::Error> {
-                <$name>::render(self, scene, base_color)
+                frame: &::vello::Scene,
+                ctx: $crate::VelloContext,
+            ) -> ::core::result::Result<(), $err> {
+                <$name>::render(self, frame, ctx.base_color)
             }
 
             fn resize(&mut self, width: u32, height: u32) {
                 <$name>::resize(self, width, height);
+            }
+        }
+
+        impl $crate::VelloRenderer for $name {
+            async fn new<W>(
+                target: W,
+                width: u32,
+                height: u32,
+            ) -> ::core::result::Result<Self, $err>
+            where
+                W: ::core::convert::Into<::vello::wgpu::SurfaceTarget<'static>>,
+            {
+                <$name>::new(target, width, height).await
             }
         }
     };
