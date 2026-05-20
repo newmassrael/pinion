@@ -44,11 +44,28 @@ pub enum Scene {
     Container(ContainerNode),
     Effect(EffectNode),
     External(ExternalNode),
+    /// R55.A §5.45 — scroll container primitive. Carries a clip
+    /// viewport, a content scene rendered with an applied offset, and
+    /// the `(offset_x, offset_y)` pair the input router / paint
+    /// adapter consult to render only the visible window of the
+    /// content. First-cut scaffold: subsequent R55.A.* sub-rounds
+    /// wire hit-test descent, lookup-path traversal, paint clipping,
+    /// and input mapping. See §5.45 R55 axis caveats for the full
+    /// sub-axis enumeration.
+    Scroll(ScrollNode),
 }
 
 impl Scene {
     /// Outermost rect of this primitive. [`EffectNode`] has no
     /// geometry of its own and returns [`Rect::default`].
+    ///
+    /// R55.A §5.45 — [`Scene::Scroll`] returns its `viewport` rect (the
+    /// visible clip window). Content scene geometry is intentionally
+    /// hidden behind the clip: hit-test / region-select / paint walk
+    /// at the parent level see only what the viewport exposes, which
+    /// preserves the §5.34 `dry_run` invariant that an introspection
+    /// query never reveals primitive state the user cannot observe
+    /// on screen.
     #[must_use]
     pub fn rect(&self) -> Rect {
         match self {
@@ -59,6 +76,7 @@ impl Scene {
             Scene::Container(n) => n.rect,
             Scene::External(n) => n.rect,
             Scene::Effect(_) => Rect::default(),
+            Scene::Scroll(n) => n.viewport,
         }
     }
 
@@ -74,6 +92,7 @@ impl Scene {
             Scene::Container(n) => n.tag.as_deref(),
             Scene::External(n) => n.tag.as_deref(),
             Scene::Effect(_) => None,
+            Scene::Scroll(n) => n.tag.as_deref(),
         }
     }
 
@@ -865,6 +884,99 @@ impl ExternalNode {
     }
 }
 
+/// R55.A §5.45 — scroll container primitive carrying a clip viewport,
+/// a child scene rendered with an applied offset, and the
+/// `(offset_x, offset_y)` pair the input router and paint adapter
+/// consult to determine which window of the content is visible.
+///
+/// Content geometry MAY exceed `viewport.size` — that is the entire
+/// point of the primitive. The runtime clamps `offset_x` to
+/// `0..=max(0, content_intrinsic_width - viewport.width)` and
+/// `offset_y` analogously; offsets the caller supplies outside that
+/// range are clamped at next dispatch.
+///
+/// ## First-cut scaffold (R55.A first round)
+///
+/// Only the data shape lands this round. The companion sub-rounds
+/// wire:
+///
+/// - R55.A.2 — `Scene::hit_test` / `lookup_path_*` /
+///   `collect_intersections` descent through `Scroll.content` with
+///   the offset translation applied (intent: a hit inside the
+///   visible portion of the content surfaces with the same path
+///   shape it would have without the wrap).
+/// - R55.B — `ScrollState` (offset + max bounds + spring animation)
+///   stored on the [`Owner::cache`](crate::reactive::Owner::cache)
+///   scope-id keyed substrate, so the reactive cascade fires when
+///   the offset changes.
+/// - R55.C — wheel / arrow / PgUp/PgDn / Home/End input mapping
+///   layered on top of the existing §5.13 `Event` enum.
+/// - R55.E — paint clipping at the Vello + TUI boundaries.
+///
+/// The struct stays `#[non_exhaustive]`-free for now because the
+/// field set is stable: any future addition (e.g. an explicit
+/// `clip_to_viewport: bool` flag for overflow-visible compatibility)
+/// is additive and can land without breaking the closed-form
+/// invariant.
+#[derive(Debug)]
+pub struct ScrollNode {
+    /// Visible clip window in logical pixels (Vello) or cells (TUI).
+    /// The runtime hit-tester and paint adapter treat this rect as
+    /// the geometry of the entire primitive at the parent level —
+    /// the [`Scene::rect`] return value points at `viewport`.
+    pub viewport: Rect,
+    /// Child scene painted with the `(offset_x, offset_y)`
+    /// translation applied. The content's intrinsic size MAY exceed
+    /// `viewport.size`; the parts that fall outside the clipped
+    /// viewport are not rendered.
+    pub content: Box<Scene>,
+    /// Horizontal offset in the same unit as `viewport`. Bounded by
+    /// `0..=max(0, content_intrinsic_width - viewport.width)`; the
+    /// runtime clamps out-of-range values at dispatch.
+    pub offset_x: i32,
+    /// Vertical offset, semantics symmetric with [`Self::offset_x`].
+    pub offset_y: i32,
+    /// R51.122 §5.41 — input router tag. Wheel / arrow / page
+    /// keystrokes inside this tag route to the §5.45 R55.C scroll
+    /// input handler instead of bubbling to the parent.
+    pub tag: Option<Cow<'static, str>>,
+}
+
+impl ScrollNode {
+    /// Construct a scroll container around `content` clipped to
+    /// `viewport`. Initial offset is `(0, 0)`; the caller adjusts via
+    /// future `set_offset` / scroll-by intent emission.
+    #[must_use]
+    pub fn new(viewport: Rect, content: Scene) -> Self {
+        Self {
+            viewport,
+            content: Box::new(content),
+            offset_x: 0,
+            offset_y: 0,
+            tag: None,
+        }
+    }
+
+    /// Attach a §5.20 intent tag — wheel / key intents that route
+    /// through this scroll container are prefixed with `<tag>.` by
+    /// the future R55.C input mapping.
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
+    }
+
+    /// Set the initial offset. The runtime clamps to bounds at
+    /// dispatch; callers do not need to know the content size to
+    /// supply an in-range value.
+    #[must_use]
+    pub const fn with_offset(mut self, offset_x: i32, offset_y: i32) -> Self {
+        self.offset_x = offset_x;
+        self.offset_y = offset_y;
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -900,7 +1012,8 @@ mod tests {
             | Scene::Image(_)
             | Scene::Container(_)
             | Scene::Effect(_)
-            | Scene::External(_) => {}
+            | Scene::External(_)
+            | Scene::Scroll(_) => {}
         }
     }
 
@@ -1502,5 +1615,66 @@ mod tests {
             }
             _ => panic!("expected External variant"),
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.A §5.45 — ScrollNode scaffold smoke tests. The primitive's
+    // data shape is final this round; hit-test descent / lookup-path
+    // traversal / paint clipping ride the R55.A.* sub-axes.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_a_scroll_node_rect_returns_viewport() {
+        // R55.A — `Scene::rect()` returns the clip viewport, not the
+        // intrinsic content geometry. Preserves the §5.34 dry_run
+        // invariant: the parent-level hit-test sees only what the
+        // viewport exposes.
+        let viewport = Rect::new(10, 20, 100, 200);
+        let content = box_at(0, 0, 500, 1000);
+        let scene = Scene::Scroll(ScrollNode::new(viewport, content));
+        assert_eq!(scene.rect(), viewport);
+    }
+
+    #[test]
+    fn r55_a_scroll_node_tag_round_trips() {
+        // R55.A — the `tag` field surfaces through `Scene::tag()` so
+        // R51.122 input router resolves wheel / arrow / page events
+        // to the scroll container the same way it resolves clicks to
+        // a tagged ContainerNode.
+        let scroll = ScrollNode::new(
+            Rect::new(0, 0, 50, 50),
+            box_at(0, 0, 200, 200),
+        )
+        .with_tag("scroll_box");
+        let scene = Scene::Scroll(scroll);
+        assert_eq!(scene.tag(), Some("scroll_box"));
+    }
+
+    #[test]
+    fn r55_a_scroll_node_offset_round_trips() {
+        // R55.A — the builder `with_offset` writes the field pair
+        // verbatim. The substrate-side clamp lives on the scroll
+        // dispatch path (R55.B carry); construction itself is
+        // verbatim.
+        let scroll = ScrollNode::new(
+            Rect::new(0, 0, 100, 100),
+            box_at(0, 0, 400, 800),
+        )
+        .with_offset(40, 250);
+        assert_eq!(scroll.offset_x, 40);
+        assert_eq!(scroll.offset_y, 250);
+    }
+
+    #[test]
+    fn r55_a_scroll_node_default_offset_is_zero() {
+        // R55.A — `ScrollNode::new` starts at (0, 0) so the content's
+        // top-left aligns with the viewport's top-left by default.
+        let scroll = ScrollNode::new(
+            Rect::new(0, 0, 100, 100),
+            box_at(0, 0, 400, 800),
+        );
+        assert_eq!(scroll.offset_x, 0);
+        assert_eq!(scroll.offset_y, 0);
+        assert!(scroll.tag.is_none());
     }
 }

@@ -5269,6 +5269,87 @@
       ],
       "decision_status": "active"
     },
+    "5.45": {
+      "title": "Scroll axis (R55)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "intent": "Establish scroll container axis: ScrollNode scene primitive + offset state + input mapping + clipping render + composite widget integration.",
+      "rationale_bullets": [
+        "Current catalogue (ListBox, RadioGroup) implicitly clamps content to fixed viewport — limit",
+        "Real GUI apps routinely have content larger than viewport (lists, forms, text editors)",
+        "Scroll = textbook fundamental of every UI framework (Iced/Egui/Slint/SwiftUI/Web all carry)",
+        "AI introspection: scroll offset / max bounds surfaceable via scene/query (pinion-unique)",
+        "SCE schema benefit: scroll-bar drag state (Idle/Hover/Dragging) is a statechart axis",
+        "Composite catalogue (R58) cannot expand without scroll primitive — Grid, CardList depend"
+      ],
+      "inputs_bullets": [
+        "ListBox with 1000+ items — current clamp-to-viewport unrealistic for real apps",
+        "Multi-line TextField (R56 carry) — vertical scroll required for >1 line of text",
+        "RadioGroup with many options — same content-overflow case",
+        "Iced ScrollableState / Egui ScrollArea / SwiftUI ScrollView — industry convention",
+        "Composite catalogue expansion (R58) blocked without scroll primitive — Grid / CardList"
+      ],
+      "outputs_bullets": [
+        "pinion-core::scene::ScrollNode (or Scene::ScrollContainer variant) clip+content+offset",
+        "pinion-core::reactive scroll state (scope-id keyed offset via Owner::cache substrate)",
+        "scroll Event variants (WheelDelta / ArrowKey / PgUp/PgDn / Home/End) in Event enum",
+        "ScrollBar widget catalogue entry (vertical + horizontal sub-widget)",
+        "Vello + TUI clipping render at paint_adapter boundary (cell + pixel raster)",
+        "scene/scroll RPC method (programmatic scroll to offset / by delta)",
+        "ListBox + future Grid composite integration through ScrollNode wrap"
+      ],
+      "caveats_bullets": [
+        "R55.A: ScrollNode primitive in Scene enum carries clip rect + child content + offset(x,y).",
+        "R55.B: ScrollState (offset + max bounds + Animation<f32>) lives on Owner::cache scope-id keyed.",
+        "R55.C: Input mapping = wheel delta + ArrowUp/Down + PgUp/PgDn + Home/End on focus inside scroll.",
+        "R55.D: ScrollBar sub-widget (vertical + horizontal) with hover/drag SCXML statechart per axis.",
+        "R55.E: Clipping render at paint_adapter boundary (Vello clip layer + TUI cell-mask write skip).",
+        "R55.F: scene/scroll RPC = 11th typed method; offset_to(x,y) / scroll_by(dx,dy) variants.",
+        "R55.G: ListBox + future Grid/CardList composites wrap their content in ScrollNode.",
+        "R55.H: Forge codegen emits ScrollBar statechart from SCE schema (SCE upstream RFC carry)."
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Unlimited viewport (overflow:visible)",
+          "reason": "limits widget catalogue + breaks introspection"
+        },
+        {
+          "alternative": "Per-widget ad-hoc scroll",
+          "reason": "primitive duplication, no shared input/state path"
+        },
+        {
+          "alternative": "CSS overflow-style property on existing ContainerNode",
+          "reason": "visual prop confused with semantic"
+        },
+        {
+          "alternative": "Container.scroll() inherent method",
+          "reason": "type erasure fights, sub-widget cohesion lost"
+        }
+      ],
+      "impact_scope": [
+        "5.2",
+        "5.3",
+        "5.13",
+        "5.35",
+        "5.36",
+        "5.16",
+        "5.41",
+        "5.7",
+        "5.20",
+        "5.40"
+      ],
+      "examples": [
+        {
+          "language": "rust",
+          "code": "// R55.A — ScrollNode primitive sketch (pinion-core::scene)\n// First-cut shape; the R55 substrate land iterates each field.\npub struct ScrollNode {\n    /// Clip viewport in logical pixels / cells. Content beyond this\n    /// rect (after offset translation) does not paint.\n    pub viewport: Rect,\n    /// Child scene rendered with `offset_*` translation applied. The\n    /// content's intrinsic size MAY exceed `viewport.size`.\n    pub content: Box<Scene>,\n    /// Horizontal offset in logical pixels / cells. Bounded by\n    /// `0..=max_x` where `max_x = content.size.x - viewport.size.x`.\n    pub offset_x: i32,\n    /// Vertical offset analogous to `offset_x`.\n    pub offset_y: i32,\n    /// R51.122 §5.41 — input router tag for wheel + key dispatch.\n    pub tag: Option<Cow<'static, str>>,\n}"
+        },
+        {
+          "language": "json",
+          "code": "// R55.F — scene/scroll RPC method (11th typed method)\n{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"scene/scroll\",\n  \"params\": {\n    \"path\": \"/external/list_box/scroll\",\n    \"action\": { \"scroll_by\": { \"dx\": 0, \"dy\": 120 } }\n  }\n}\n// Result mirrors the post-scroll offset so the AI client can confirm\n// the framework clamped to bounds and the visible window has moved.\n{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"result\": { \"offset_x\": 0, \"offset_y\": 240, \"clamped\": false }\n}"
+        }
+      ],
+      "decision_status": "active"
+    },
     "5.5": {
       "title": "MCU v1 backend scope (AP-only vs MCU-included)",
       "parent_doc": "docs/GENERATED.md",
@@ -10986,6 +11067,60 @@
         "R51.181 — Intent.payload typed routing through SCXML invoke send (wait first consumer)",
         "R51.182 — framework cascade detect debug-assert (lift on first concrete cascade evidence)",
         "R51.183 — app Model field wait (Owner::cache<S> lift OR CoreShell.app_state<S>) first consumer"
+      ]
+    },
+    "R51.180": {
+      "decision_summary": "R51.180 §5.45 R55 Scroll axis ratify + ScrollNode primitive scaffold (data shape land)",
+      "changes_bullets": [
+        "atomic store: §5.45 R55 Scroll axis ratify (intent/rationale/impact/in/out/alt/8 caveats/2 ex)",
+        "pinion-core::scene::Scene::Scroll variant + ScrollNode struct + new/with_tag/with_offset builders",
+        "pinion-core::scene::Scene::rect/tag — Scroll arm returns viewport / tag.as_deref()",
+        "pinion-core::scene::tests — 4 R55.A scaffold smoke tests + exhaustive-match guard arm"
+      ],
+      "verification_bullets": [
+        "cargo test (vello) = 2008 / 0 / 10 (+4 R55.A scaffold tests; was 2004)",
+        "cargo clippy 0 warnings (strict baseline maintained)",
+        "atomic: entries=351 / sections=59 (+1 R55 axis) / T1=0 / T3=0 / RT=1/1"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.2",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "R51.181 R55.A.2 — Scene::hit_test + lookup_path_* descent through ScrollNode.content offset-translated",
+        "R51.182 R55.B — ScrollState scope-id keyed (Owner::cache substrate + Animation<f32> bound)",
+        "R51.183 R55.C — wheel + arrow + PgUp/PgDn + Home/End input mapping (Event enum extension)",
+        "R51.184 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag SCXML statechart",
+        "R51.185 R55.E — paint clipping at Vello + TUI boundaries (clip layer / cell-mask write skip)",
+        "R51.186 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)",
+        "R51.187 R55.G — ListBox + future Grid/CardList composite integration through Scroll wrap"
+      ],
+      "publishable_decision_summary": "R51.180 §5.45 R55 Scroll axis ratify + ScrollNode primitive scaffold (data shape land)",
+      "publishable_changes_bullets": [
+        "atomic store: §5.45 R55 Scroll axis ratify (intent/rationale/impact/in/out/alt/8 caveats/2 ex)",
+        "pinion-core::scene::Scene::Scroll variant + ScrollNode struct + new/with_tag/with_offset builders",
+        "pinion-core::scene::Scene::rect/tag — Scroll arm returns viewport / tag.as_deref()",
+        "pinion-core::scene::tests — 4 R55.A scaffold smoke tests + exhaustive-match guard arm"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test (vello) = 2008 / 0 / 10 (+4 R55.A scaffold tests; was 2004)",
+        "cargo clippy 0 warnings (strict baseline maintained)",
+        "atomic: entries=351 / sections=59 (+1 R55 axis) / T1=0 / T3=0 / RT=1/1"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.2",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.181 R55.A.2 — Scene::hit_test + lookup_path_* descent through ScrollNode.content offset-translated",
+        "R51.182 R55.B — ScrollState scope-id keyed (Owner::cache substrate + Animation<f32> bound)",
+        "R51.183 R55.C — wheel + arrow + PgUp/PgDn + Home/End input mapping (Event enum extension)",
+        "R51.184 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag SCXML statechart",
+        "R51.185 R55.E — paint clipping at Vello + TUI boundaries (clip layer / cell-mask write skip)",
+        "R51.186 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)",
+        "R51.187 R55.G — ListBox + future Grid/CardList composite integration through Scroll wrap"
       ]
     },
     "R51.33": {
