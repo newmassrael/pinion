@@ -69,6 +69,150 @@ impl Color {
     /// Fully-transparent (a=0) ARGB literal `0x0000_0000` decoded.
     /// Same bit layout as the previous default `BoxNode.fill = 0`.
     pub const TRANSPARENT: Self = Self::rgba(0, 0, 0, 0);
+
+    /// Decode sRGB gamma-encoded channels into linear-light
+    /// `[AnimVec4]` space for use with the spring solver (§5.28).
+    ///
+    /// Alpha is interpolated in linear (premultiplication is a
+    /// downstream decision the caller makes after re-encoding). RGB
+    /// uses the exact sRGB EOTF (IEC 61966-2-1):
+    ///
+    /// - `n = c / 255`
+    /// - if `n ≤ 0.04045` → `L = n / 12.92`
+    /// - else → `L = ((n + 0.055) / 1.055)^2.4`
+    ///
+    /// Inverse of [`Color::from_linear`].
+    ///
+    /// [`AnimVec4`]: crate::animation::AnimVec4
+    #[must_use]
+    pub fn to_linear(self) -> crate::animation::AnimVec4 {
+        crate::animation::AnimVec4 {
+            x: srgb_decode(self.r),
+            y: srgb_decode(self.g),
+            z: srgb_decode(self.b),
+            w: f32::from(self.a) / 255.0,
+        }
+    }
+
+    /// Encode a linear-light [`AnimVec4`] back into 8-bit sRGB
+    /// channels. Components are clamped to `[0, 1]` before the
+    /// inverse-EOTF; out-of-range produces a saturated channel
+    /// rather than wrapping. Inverse of [`Color::to_linear`].
+    ///
+    /// [`AnimVec4`]: crate::animation::AnimVec4
+    #[must_use]
+    pub fn from_linear(v: crate::animation::AnimVec4) -> Self {
+        Self::rgba(
+            srgb_encode(v.x),
+            srgb_encode(v.y),
+            srgb_encode(v.z),
+            linear_alpha_encode(v.w),
+        )
+    }
+}
+
+/// sRGB EOTF: 8-bit channel → linear-light `f32` in `[0, 1]`.
+fn srgb_decode(c: u8) -> f32 {
+    let n = f32::from(c) / 255.0;
+    if n <= 0.040_45 {
+        n / 12.92
+    } else {
+        ((n + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// sRGB inverse-EOTF: linear-light `f32` → 8-bit channel with clamp.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn srgb_encode(l: f32) -> u8 {
+    let clamped = l.clamp(0.0, 1.0);
+    let n = if clamped <= 0.003_130_8 {
+        12.92 * clamped
+    } else {
+        1.055 * clamped.powf(1.0 / 2.4) - 0.055
+    };
+    (n.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// Linear alpha encoder — alpha is interpolated directly in linear,
+/// no gamma curve. Clamp + round to `u8`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn linear_alpha_encode(a: f32) -> u8 {
+    (a.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+#[cfg(test)]
+mod color_linear_tests {
+    use super::*;
+    use crate::animation::{AnimVec4, Animatable};
+
+    #[test]
+    fn srgb_round_trip_endpoints() {
+        // 0 and 255 must round-trip exactly.
+        let black = Color::rgba(0, 0, 0, 255);
+        assert_eq!(Color::from_linear(black.to_linear()), black);
+        let white = Color::rgba(255, 255, 255, 255);
+        assert_eq!(Color::from_linear(white.to_linear()), white);
+    }
+
+    #[test]
+    fn srgb_round_trip_midrange_close() {
+        // Mid-range channels round-trip within ±1 unit due to
+        // EOTF/inverse-EOTF float precision.
+        for v in [32, 64, 128, 192, 200].iter().copied() {
+            let c = Color::rgba(v, v, v, 255);
+            let back = Color::from_linear(c.to_linear());
+            assert!(
+                back.r.abs_diff(v) <= 1,
+                "channel {v} round-tripped to {back:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn srgb_dark_linear_region() {
+        // Channels below ~0x0D fall in the linear segment (n ≤ 0.04045).
+        let dark = srgb_decode(8);
+        let manual_linear = (8.0 / 255.0) / 12.92;
+        assert!(
+            (dark - manual_linear).abs() < 1e-6,
+            "dark segment expected {manual_linear}, got {dark}",
+        );
+    }
+
+    #[test]
+    fn alpha_linear_round_trip() {
+        let c = Color::rgba(100, 150, 200, 64);
+        let linear = c.to_linear();
+        assert!((linear.w - 64.0 / 255.0).abs() < 1e-6);
+        let back = Color::from_linear(linear);
+        assert_eq!(back.a, 64);
+    }
+
+    #[test]
+    fn lerp_in_linear_space_midpoint() {
+        // Mid-grey in linear space is darker in sRGB than the
+        // naive (255+0)/2 = 127. Lerping in linear must produce
+        // a higher channel value when re-encoded.
+        let black = Color::rgba(0, 0, 0, 255);
+        let white = Color::rgba(255, 255, 255, 255);
+        let mid_linear = AnimVec4::lerp(black.to_linear(), white.to_linear(), 0.5);
+        let mid = Color::from_linear(mid_linear);
+        // Naive sRGB midpoint is 127; perceptually-linear midpoint is
+        // higher (~188 / 0xBC) — the whole point of doing animation
+        // in linear space.
+        assert!(
+            mid.r > 180,
+            "expected perceptual midpoint above 180, got {}",
+            mid.r,
+        );
+    }
+
+    #[test]
+    fn from_linear_saturates_out_of_range() {
+        let over = AnimVec4::new(2.0, -0.5, 1.5, 1.2);
+        let c = Color::from_linear(over);
+        assert_eq!(c, Color::rgba(255, 0, 255, 255));
+    }
 }
 
 /// Where the border is drawn relative to the [`BoxNode`]'s `rect`.

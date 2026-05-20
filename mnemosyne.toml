@@ -182,3 +182,17 @@ fields = ["publishable_changes_bullets", "publishable_carry_forward_bullets"]
 reason = "R51.131 publishable half typo + over-length 정정 — changes 의 '너뻘'→'별도' + 165→100 char 압축; carry 의 '반아'→'받아', '도ҫacceptable'→'도 acceptable' (audit half immutable, publishable 명료성 향상)"
 applied_in = "pinion R51.132"
 content_hash_after = "01c058933f9601378997e790f8155b2520eac6b62c79f6538bba0bc537994a2b"
+
+# R51.134.1 incident — R51.134 changes_bullets[1] 104-char over-length
+# 즉시 청산 (>100, R161 §41 threshold). 'AnimRect struct + Animatable
+# impl + Rect/AnimRect bidirectional helpers' → 'bidirectional' 제거 +
+# '/'↔'↔' 변환. audit half 는 immutable 이라 T4 info baseline 119→120
+# permanent shift. publishable half 만 88 char 압축 적용.
+
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "R51.134"
+fields = ["publishable_changes_bullets"]
+reason = "R51.134 publishable_changes_bullets[1] over-length 104→88 char 즉시 청산 ('bidirectional' 제거 + '/'→'↔'). audit half immutable T4 info +1 permanent carry"
+applied_in = "pinion R51.134"
+content_hash_after = "8fa69cad4b251c5c5d5cdb8026b4df81071aba420eced7c2f82249a64bb09b7d"

@@ -207,6 +207,101 @@ impl Animatable for AnimVec4 {
     }
 }
 
+/// 4-component continuous-space rectangle for animation.
+///
+/// Mirrors [`Rect`](crate::scene::Rect) (u32 grid coordinates) in
+/// `f32` space so the spring solver can produce fractional
+/// intermediate positions during integration. Quantize back at
+/// paint-adapter boundary via [`AnimRect::to_rect`].
+///
+/// Use this (not [`AnimVec4`]) when the four components are
+/// semantically `x` / `y` / `w` / `h` — the named fields are the
+/// only thing distinguishing it from a generic 4-vector.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct AnimRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl AnimRect {
+    #[must_use]
+    pub const fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { x, y, w, h }
+    }
+
+    /// Lift a quantized [`Rect`](crate::scene::Rect) into continuous
+    /// space. `u32 → f32` widens, so values up to about 2²⁴ are
+    /// exact; larger values lose lower-bit precision but stay within
+    /// `f32` magnitude range.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn from_rect(r: crate::scene::Rect) -> Self {
+        Self::new(r.x as f32, r.y as f32, r.w as f32, r.h as f32)
+    }
+
+    /// Quantize back to a [`Rect`](crate::scene::Rect). Components are
+    /// rounded; negative, NaN, or out-of-`u32`-range values saturate
+    /// to `0` / [`u32::MAX`] rather than wrapping.
+    #[must_use]
+    pub fn to_rect(self) -> crate::scene::Rect {
+        crate::scene::Rect::new(
+            saturate_u32(self.x),
+            saturate_u32(self.y),
+            saturate_u32(self.w),
+            saturate_u32(self.h),
+        )
+    }
+}
+
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn saturate_u32(v: f32) -> u32 {
+    if v.is_nan() || v <= 0.0 {
+        0
+    } else if v >= u32::MAX as f32 {
+        u32::MAX
+    } else {
+        v.round() as u32
+    }
+}
+
+impl Animatable for AnimRect {
+    fn zero() -> Self {
+        Self::new(0.0, 0.0, 0.0, 0.0)
+    }
+    fn add(self, other: Self) -> Self {
+        Self::new(
+            self.x + other.x,
+            self.y + other.y,
+            self.w + other.w,
+            self.h + other.h,
+        )
+    }
+    fn sub(self, other: Self) -> Self {
+        Self::new(
+            self.x - other.x,
+            self.y - other.y,
+            self.w - other.w,
+            self.h - other.h,
+        )
+    }
+    fn scale(self, factor: f32) -> Self {
+        Self::new(
+            self.x * factor,
+            self.y * factor,
+            self.w * factor,
+            self.h * factor,
+        )
+    }
+    fn approx_zero(self, epsilon: f32) -> bool {
+        self.x.abs() < epsilon
+            && self.y.abs() < epsilon
+            && self.w.abs() < epsilon
+            && self.h.abs() < epsilon
+    }
+}
+
 /// Spring physics tuning: stiffness, damping, mass.
 ///
 /// The damping ratio `ζ = damping / (2 * sqrt(stiffness * mass))`
@@ -451,5 +546,57 @@ mod tests {
         let b = AnimVec2::new(10.0, 20.0);
         let mid = <AnimVec2 as Animatable>::lerp(a, b, 0.5);
         assert_eq!(mid, AnimVec2::new(5.0, 10.0));
+    }
+
+    #[test]
+    fn anim_rect_arithmetic() {
+        let a = AnimRect::new(1.0, 2.0, 3.0, 4.0);
+        let b = AnimRect::new(5.0, 6.0, 7.0, 8.0);
+        assert_eq!(a.add(b), AnimRect::new(6.0, 8.0, 10.0, 12.0));
+        assert_eq!(b.sub(a), AnimRect::new(4.0, 4.0, 4.0, 4.0));
+        assert_eq!(a.scale(0.5), AnimRect::new(0.5, 1.0, 1.5, 2.0));
+        assert!(AnimRect::zero().approx_zero(1e-6));
+    }
+
+    #[test]
+    fn anim_rect_round_trip_small_values() {
+        let r = crate::scene::Rect::new(10, 20, 100, 50);
+        let lifted = AnimRect::from_rect(r);
+        assert_eq!(lifted, AnimRect::new(10.0, 20.0, 100.0, 50.0));
+        assert_eq!(lifted.to_rect(), r);
+    }
+
+    #[test]
+    fn anim_rect_to_rect_saturates() {
+        let neg = AnimRect::new(-5.0, -1.0, -100.0, -0.5);
+        assert_eq!(neg.to_rect(), crate::scene::Rect::new(0, 0, 0, 0));
+        let nan_x = AnimRect::new(f32::NAN, 5.0, 10.0, 20.0);
+        assert_eq!(
+            nan_x.to_rect(),
+            crate::scene::Rect::new(0, 5, 10, 20),
+        );
+    }
+
+    #[test]
+    fn anim_rect_to_rect_rounds_half_up() {
+        let r = AnimRect::new(10.4, 10.5, 10.6, 11.5);
+        assert_eq!(r.to_rect(), crate::scene::Rect::new(10, 11, 11, 12));
+    }
+
+    #[test]
+    fn anim_rect_converges_to_target() {
+        // Resize+move a rect under spring; check all four channels
+        // settle near target.
+        let mut s = SpringState::at_rest(AnimRect::new(0.0, 0.0, 50.0, 30.0));
+        s.target = AnimRect::new(100.0, 80.0, 200.0, 120.0);
+        let dt = 1.0 / 60.0;
+        for _ in 0..300 {
+            s = s.step(SpringConfig::DEFAULT, dt);
+        }
+        assert!((s.current.x - 100.0).abs() < 0.5);
+        assert!((s.current.y - 80.0).abs() < 0.5);
+        assert!((s.current.w - 200.0).abs() < 0.5);
+        assert!((s.current.h - 120.0).abs() < 0.5);
+        assert!(s.is_done(1.0));
     }
 }

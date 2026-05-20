@@ -1534,6 +1534,9 @@ fn main() {
 - crates/pinion-core/src/animation.rs:Animatable
 - crates/pinion-core/src/animation.rs:SpringConfig
 - crates/pinion-core/src/animation.rs:SpringState
+- crates/pinion-core/src/animation.rs:AnimRect
+- crates/pinion-core/src/style.rs:Color::to_linear
+- crates/pinion-core/src/style.rs:Color::from_linear
 
 
 
@@ -5638,6 +5641,35 @@ router.pointer_down(&mut state_scene);
 - Animated<T> Signal 래퍼 — §5.22 의존 + Frame.dt driver (R51.135+)
 - SCE schema + Forge emit — declarative animated bindings (R51.136+)
 - Easing enum (Linear / EaseInQuad / …) — tween special case path
+
+
+
+### R51.134 — R51.134 §5.28 — Color sRGB linear-space conversion (to_linear/from_linear exact EOTF) + AnimRect 4-f32 wrapper
+
+**Changes**:
+- Color::to_linear/from_linear — sRGB IEC 61966-2-1 EOTF, alpha linear, saturate clamp
+- pinion-core/src/animation.rs — AnimRect struct + Animatable impl + Rect↔AnimRect helpers
+- pinion-core/src/lib.rs — AnimRect top-level re-export
+- atomic §5.28 — +3 binding (AnimRect, Color::to_linear, Color::from_linear)
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib: 506 passed (495 base + 11 R51.134: 6 sRGB / 5 AnimRect)
+- cargo test --workspace --features pinion-runtime/vello: 1744/0/8 (+11 신규, baseline 1733)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning
+- perceptual midpoint test 검증 — sRGB exact (b/w mid = ~188) vs naive (127), 정통 입증
+
+
+
+**Impact**: §5.28
+
+
+**Carry forward**:
+- Color::Animatable impl deferred — caller-explicit to_linear → spring → from_linear 이 정통 (lossy saturating impl 회피)
+- AnimationDriver Effect substrate — §5.23 Effect + §5.22 Signal 의존 (R51.135+)
+- premultiplied-linear vs straight-linear alpha decision (quality round)
+- AnimVec2/3 계열 올림 여부 — Vec3 needed 시 evidence-first
 
 
 
