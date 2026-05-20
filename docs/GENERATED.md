@@ -6966,6 +6966,34 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.174 — R51.174 §5.23 R27 hello-commands(-tui) match polish on update reducer (Elm/Iced canonical shape)
+
+**Changes**:
+- examples/hello-commands::CommandsView::update — if/else → match arm + doc note
+- examples/hello-commands-tui::HelloCommandsTui::update — if/else → match arm + doc note
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2001 / 0 / 10 (unchanged)
+- cargo clippy 0 warnings (strict baseline maintained)
+- ratify: match-on-tag-str is Elm/Iced canonical Update reducer shape
+
+
+
+**Impact**: §5.23, §5.20
+
+
+**Carry forward**:
+- R51.175 — shell test scaffold lift pinion-shell::test_fixtures::impl WidgetView (process maturity)
+- R51.176 — r51_171 test fragility: next_node_id() thread-local counter parallel isolation
+- R51.177 — handler cascade guard (reducer reactivity lurking risk; kind whitelist or scope_id)
+- R51.178 — app Model field wait (Owner::cache<S> lift OR CoreShell.app_state<S>) first consumer
+- R51.179 — Forge codegen emits update body from SCE schema (SCE upstream RFC carry)
+- R51.180 — Intent.payload typed routing through SCXML invoke send (wait first consumer)
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

@@ -193,15 +193,20 @@ impl WidgetCore for HelloCommandsTui {
         // substrate's root owner (route_intent_through_update wraps
         // the call in `root_owner.run(...)`); scope_id tags the
         // Command for `scene/commands` RPC inspection.
-        if intent.tag_str() == CLICK_INTENT_TAG {
-            let scope_id = pinion_core::Owner::current().map_or(0, |o| o.id());
-            vec![Command::new_static(
-                DEMO_KIND,
-                IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
-                scope_id,
-            )]
-        } else {
-            Vec::new()
+        //
+        // R51.174 §5.23 R27 — Elm/Iced canonical Update reducer
+        // shape: `match` over `intent.tag_str()` so each intent maps
+        // to its arm; the wildcard arm explicitly opts out.
+        match intent.tag_str() {
+            CLICK_INTENT_TAG => {
+                let scope_id = pinion_core::Owner::current().map_or(0, |o| o.id());
+                vec![Command::new_static(
+                    DEMO_KIND,
+                    IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
+                    scope_id,
+                )]
+            }
+            _ => Vec::new(),
         }
     }
 }

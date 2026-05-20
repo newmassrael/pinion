@@ -222,15 +222,22 @@ impl WidgetCore for CommandsView {
         // in `root_owner.run(...)`. Tagging the Command with the
         // producing scope id surfaces the right scope to the
         // `scene/commands` RPC inspector ([[callback-root-owner-wrap]]).
-        if intent.tag_str() == CLICK_INTENT_TAG {
-            let scope_id = pinion_core::Owner::current().map_or(0, |o| o.id());
-            vec![Command::new_static(
-                DEMO_KIND,
-                IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
-                scope_id,
-            )]
-        } else {
-            Vec::new()
+        //
+        // R51.174 §5.23 R27 — `match` over `intent.tag_str()` is the
+        // Elm/Iced canonical Update reducer shape; each arm maps a
+        // specific intent tag to its declarative side-effect, the
+        // wildcard arm explicitly opts out. Future intents drop in
+        // as new arms without touching the dispatch shape.
+        match intent.tag_str() {
+            CLICK_INTENT_TAG => {
+                let scope_id = pinion_core::Owner::current().map_or(0, |o| o.id());
+                vec![Command::new_static(
+                    DEMO_KIND,
+                    IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
+                    scope_id,
+                )]
+            }
+            _ => Vec::new(),
         }
     }
 }
