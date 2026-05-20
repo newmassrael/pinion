@@ -1,0 +1,27 @@
+[package]
+name = "pinion-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.109 §5.41 cell-based render mode primitive — ratatui Backend + crossterm event source, §2 #6 GUI/TUI dual invariant impl path (Scene → terminal cells, TUI sibling of the Vello pixel-raster pipeline)"
+
+[lints]
+workspace = true
+
+[dependencies]
+# §5.41 R51.109.0 — Rust TUI rendering library. Cell-based scene
+# render target (§2 #6 GUI/TUI dual). Linebender-adjacent maintainer
+# continuity; egui / iced / bubbletea-class adoption baseline. The
+# Scene → ratatui buffer mapping lands in pinion-runtime
+# `paint_adapter::to_tui` behind the `tui` feature (R51.109.1+); the
+# actual `TuiRenderer: WidgetRenderer` impl lives here (R51.109.2+).
+ratatui = { workspace = true }
+
+# §5.41 R51.109.0 — terminal capability detection, raw mode, mouse +
+# key event source. Already a transitive ratatui dep; promoted to
+# direct so this crate can reach `crossterm::event::Event` /
+# `KeyEvent` / `MouseEvent` types without going through ratatui's
+# re-export.
+crossterm = { workspace = true }

@@ -13,6 +13,7 @@ members = [
     "crates/pinion-text-font",
     "crates/pinion-text-unicode",
     "crates/pinion-shell",
+    "crates/pinion-tui",
     "examples/hello-button",
     "examples/hello-toggle",
     "examples/hello-checkbox",
@@ -103,6 +104,23 @@ accesskit = "0.24"
 # pair (pinion-shell adapter wiring + pinion-a11y substrate) — every
 # widget impl keeps its declarative shape.
 accesskit_winit = "0.33"
+
+# §5.41 R51.109.0 — Rust TUI rendering library (Linebender-adjacent
+# maintainer continuity; egui / iced / bubbletea-class adoption
+# baseline). Cell-based scene render target sibling of the Vello
+# pixel-raster pipeline (§2 #6 GUI/TUI dual). Consumed only by
+# pinion-tui (the framework crate that owns the Backend trait + raw
+# mode + event source); pinion-core / pinion-runtime stay free of
+# ratatui transitive in non-TUI builds via the `tui` feature gate
+# landing R51.109.1+.
+ratatui = "0.29"
+
+# §5.41 R51.109.0 — terminal capability + key/mouse event source.
+# Transitive ratatui dep promoted to direct workspace pin so
+# pinion-tui (and any future RPC-driven terminal layer) reaches
+# crossterm types without going through ratatui's re-export, which
+# avoids breakage when ratatui upgrades its crossterm pin.
+crossterm = "0.28"
 
 # §5.37.3 R50.2.8 — criterion micro-benchmark harness. Workspace-side
 # pin so future performance-instrumented crates (text shaping, BIDI,

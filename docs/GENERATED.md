@@ -3220,6 +3220,7 @@ router.pointer_down(&mut state_scene);
 - windows terminal / xterm / iterm2 capability 매트릭스 = R51.110+ manual test carry
 - ColorBrush RGBA → ANSI color 매핑 + TextAlign wrap policy = R51.109 substrate 결정
 - R51.108 — ShellCore substrate winit-free 분리 land (Touch / TouchPhase / Modifiers pinion lift)
+- R51.109.0 — pinion-tui crate skeleton land (ratatui 0.29 + crossterm 0.28 + TuiRenderer placeholder)
 
 
 
@@ -3246,6 +3247,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/input.rs:Modifiers::shift_key
 - crates/pinion-shell/src/app.rs:winit_touch_to_pinion
 - crates/pinion-shell/src/app.rs:winit_modifiers_to_pinion
+- crates/pinion-tui/Cargo.toml
+- crates/pinion-tui/src/lib.rs
+- crates/pinion-tui/src/lib.rs:TuiRenderer
 
 
 
@@ -10235,6 +10239,37 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.16
+
+
+
+### Round 493 — R51.109.0 §5.41 pinion-tui crate skeleton — ratatui 0.29 + crossterm 0.28 workspace deps + TuiRenderer placeholder (R51.109.1 substrate trait / R51.109.2 실제 impl 의 type identity 사전 예약)
+
+**Changes**:
+- crates/pinion-tui 신설 — Cargo.toml + lib.rs + 3 smoke test (type identity reservation)
+- ratatui 0.29 + crossterm 0.28 workspace.dependencies pin (§5.41 첫 외부 dep)
+- pinion-tui::TuiRenderer 빈 placeholder + Default + Debug (R51.109.2 시 종속 field 추가)
+- ratatui + crossterm re-export pub use (downstream binding dep 통합 surface)
+- R51.109 sub-rounds 분할: R51.109.0=skeleton / .1=substrate trait / .2=실제 impl
+
+
+
+**Verification**:
+- cargo check -p pinion-tui clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning
+- cargo test --workspace --features pinion-runtime/vello = 1660 pass / 0 fail (+3 pinion-tui smoke)
+- ratatui::layout::Rect / crossterm::event::Event re-export 검증 (3 smoke test 1개씩)
+
+
+
+**Impact**: §2, §5.41
+
+
+**Carry forward**:
+- R51.109.1 — WidgetRenderer trait (pinion-shell) + paint_adapter::to_tui (pinion-runtime tui feature)
+- R51.109.2 — TuiRenderer::new crossterm raw mode + ratatui::Terminal wire-up + WidgetRenderer impl
+- R51.110 — hello-button TUI dogfood first-client substrate 평가
+- ratatui 0.29.x lock — major 변경 시 paint_adapter::to_tui mapping 재평가
+- crossterm 0.28.x 이 ratatui 0.29 와 transitive 일치 (lock-step 유지)
 
 
 
