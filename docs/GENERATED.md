@@ -3164,6 +3164,80 @@ router.pointer_down(&mut state_scene);
 
 
 
+### §5.41. TUI 백엔드 — cell-based render mode + crossterm 입력 + WidgetRenderer trait 추출
+
+
+**Intent**: §2 #6 GUI/TUI dual invariant 의 spec 구체화 — Scene→cell 매핑, crossterm key/mouse → §5.13 Event 변환, WidgetRenderer trait 추출 substrate evolution plan
+
+
+**Rationale**:
+- §2 #6 'GUI/TUI dual: one scene, two render dispatch paths' 는 settled invariant 인데 impl 0%
+- 14 invariant 중 유일 0% — strategic gap 최대, axis hierarchy 상 application axis 보다 우선
+- §5.16 R45 renderer kind 는 pixel raster (vello/softbuffer/headless) 한정 — cell-based 는 별 axis
+- §5.2 closed-form scene primitive enum 은 backend 무관, 매핑 layer 가 backend-specific
+- Slint TUI experimental + ratatui 가 industry precedent — scene primitive 공유 + render 분기 정통
+- crossterm key/mouse → §5.13 Event 변환 = winit-free InputRouter substrate evolution trigger
+- §3 dry_run primitive 은 scene→cell deterministic 자동 호환 (GPU side effect 0)
+- first dogfood = hello-button TUI — framework primitive substrate 검증 first client
+
+
+
+**Inputs**:
+- Scene primitive enum (§5.2 Box/Text/Path/Image/Container/Effect/External 8 variant)
+- §5.13 Event enum (Click/Key/Touch/Gesture/Focus/Scroll/External + Logical coord)
+- crossterm 0.27 (key+mouse 이벤트, raw mode, alternate screen, capability detection)
+- ratatui 0.26 Backend trait (terminal cell buffer + style attribute + cursor 관리)
+- unicode-width / unicode-segmentation (grapheme cluster cell width 정통)
+- WAI-ARIA APG keyboard model (GUI 측 이미 정통, TUI 동일 단축키 매핑)
+- VelloRenderer (pinion-shell 단일 impl) — WidgetRenderer trait 추출 대상
+- ShellCore substrate (R51.83 visibility, R51.92 모듈 분할 완료) — render-side trait 화
+
+
+
+**Outputs**:
+- pinion-tui crate 신설 (TuiRenderer impl + crossterm event loop + ApplicationHandlerTui)
+- WidgetRenderer trait 추출 (VelloRenderer 와 TuiRenderer 의 2 impl, Open-Closed)
+- InputRouter substrate winit-free 분리 — event source 추상화 (winit / crossterm)
+- Scene → cell 매핑: Box→border chars, Text→grapheme cells, Container→nested rect
+- Path/Image primitive TUI 매핑 placeholder (block char) — unicode art 는 후속 carry
+- ApplicationHandlerTui 별도 entry — crossterm event loop, winit 와 mutual exclusive feature
+- first slice 순서 = R51.108 substrate trait, R51.109 TuiRenderer, R51.110 hello-button TUI
+- framework-first — pinion-tui crate cargo feature, application optional, framework 강제 0
+
+
+
+**Caveats**:
+- Scene Path/Image primitive TUI 매핑 placeholder (block char), unicode art = R51.111+ carry
+- TUI a11y (§5.40) 별도 path — screen reader 가 PTY 출력 청취, AccessKit adapter 비적용
+- color depth (24bit truecolor / 256 / 16) terminal capability 의존, 자동 fallback 정통
+- mouse 미지원 terminal fallback = keyboard-only (WAI-ARIA APG 정합 자동 보장)
+- TUI logical coord = cell (col, row) — winit logical pixel 과 unit conversion 필요
+- winit 와 crossterm cargo feature mutual exclusive — 단일 binary 두 backend 선택
+- first slice 순서: R51.108 substrate trait → R51.109 TuiRenderer → R51.110 dogfood
+- dry_run (§3) primitive scene→cell deterministic 자동 호환 (no GPU side effect)
+- framework-first — pinion-tui crate ratatui dep optional, framework 강제 0
+- Animation (R52 후보) / Scroll (R55) / Vector path (R53) R52+ axis 와 직교 (TUI 무영향)
+- windows terminal / xterm / iterm2 capability 매트릭스 = R51.110+ manual test carry
+- ColorBrush RGBA → ANSI color 매핑 + TextAlign wrap policy = R51.109 substrate 결정
+
+
+
+**Alternatives rejected**:
+- ANSI escape 직접 작성 (ratatui 우회) — buffer diff + flicker control 자체 구축 천문학
+- TUI 를 §5.16 backend variant 로 처리 — pixel raster axis 와 fundamental 다른 layer
+- Scene primitive enum 재정의 (TUI-specific) — §5.2 closed-form 위반, AI introspect 일관성 깨짐
+- winit 의존 InputRouter 유지 + TUI 별 router 구축 — DRY 위반, substrate 분기 폭증
+- blessed.rs / cursive — maintenance status 약함, ratatui 가 Rust 생태 정통
+- tui-rs (deprecated) — ratatui 가 maintained successor (Linebender 외 fjall 계열 maintainer)
+- AccessKit-on-TUI 시도 — screen reader 가 PTY 직접 청취, AccessKit adapter 매핑 무의미
+
+
+
+**Impact scope**: §2, §3, §5.2, §5.13, §5.15, §5.16, §5.40
+
+
+
+
 ### §5.5. MCU v1 backend scope (AP-only vs MCU-included)
 
 
@@ -10035,6 +10109,44 @@ router.pointer_down(&mut state_scene);
 - Carry 3: SCXML template 시스템 (pinion-forge codegen template axis, multi-session, 다음 세션)
 - mnemosyne MCP primitive RFC: set_section_caveats / remove_section_caveat / set_section_decision_status
 - §5.37.4 BIDI / §5.37.5 script / §5.37.6 shape 정통 ratify (multi-session axis chain)
+
+
+
+### Round 491 — R51.107 §5.41 신설 — §2 #6 GUI/TUI dual invariant 의 spec 구체화 RFC, Scene→cell 매핑 + crossterm wire + WidgetRenderer trait 추출 substrate plan (impl 0)
+
+**Changes**:
+- §5.41 신설 — TUI 백엔드 axis (cell-based render mode + crossterm input + WidgetRenderer trait)
+- §2 #6 settled invariant 의 implementation substrate plan 첫 정통 (14 invariant 중 0% → spec)
+- Slint TUI experimental + ratatui 정합으로 industry precedent enumerate
+- §5.16 R45 renderer kind 와 직교 axis 분리 (pixel raster vs cell-based)
+- §5.13 Event enum 의 winit-free 변환 layer (crossterm → §5.13 Event)
+- first slice = R51.108 WidgetRenderer trait + InputRouter substrate (impl land)
+- R51.109 pinion-tui crate + TuiRenderer impl + ApplicationHandlerTui (impl land)
+- R51.110 hello-button TUI dogfood = first slice 평가 gate
+
+
+
+**Verification**:
+- validate_workspace 사후 = T1 orphan 0, T2 frozen 0, RT 1/1, GENERATED.md sync
+- §5.41 impact_scope 7 refs (§2 §3 §5.2 §5.13 §5.15 §5.16 §5.40) 모두 존재 검증
+- Round 491 entry_id 단조 증가 (Round 490 < Round 491)
+- RFC round = atomic mutation only, cargo test/clippy 1657 pass / 0 warning 회귀 검증
+
+
+
+**Impact**: §2, §3, §5.2, §5.13, §5.15, §5.16, §5.40, §5.41
+
+
+**Carry forward**:
+- R51.108 — WidgetRenderer trait 추출 (VelloRenderer 단일 → trait + 2nd impl 준비)
+- R51.108 — InputRouter winit-free 분리 (event source 추상화 substrate evolution)
+- R51.109 — pinion-tui crate 신설 + TuiRenderer impl + crossterm event loop
+- R51.110 — hello-button TUI dogfood = first slice land 평가
+- color depth fallback (24bit/256/16) 정통 — R51.111+ carry
+- TUI mouse capability 매트릭스 manual test = R51.112+ carry
+- logical pixel ↔ cell unit conversion contract = R51.108 substrate 시 결정
+- Path/Image primitive unicode-art TUI 매핑 = R51.111+ carry
+- TUI a11y 별도 path (screen reader PTY 청취) = framework 의무 없음
 
 
 
