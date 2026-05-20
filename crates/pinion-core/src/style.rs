@@ -70,6 +70,50 @@ impl Color {
     /// Same bit layout as the previous default `BoxNode.fill = 0`.
     pub const TRANSPARENT: Self = Self::rgba(0, 0, 0, 0);
 
+    /// R51.151 §5.28 — colorimetrically-correct linear interpolation
+    /// between two [`Color`]s.
+    ///
+    /// `t = 0.0` returns `self`; `t = 1.0` returns `other`; intermediate
+    /// values blend per-channel in **linear-light** space (sRGB EOTF
+    /// decoded → blended → re-encoded). Linear-space blending matches
+    /// the §5.28 spring solver path
+    /// ([`Color::to_linear`](Self::to_linear) →
+    /// [`Animatable::lerp`](crate::animation::Animatable::lerp) →
+    /// [`Color::from_linear`](Self::from_linear)) so a fade animated
+    /// through a spring renders identically to a snapshot-and-lerp.
+    ///
+    /// ## Inputs and clamping
+    ///
+    /// - `t` outside `[0.0, 1.0]` is clamped (no extrapolation — fade
+    ///   semantics are "between these two visual states", not
+    ///   "extrapolate past them"; over-shoots come from the spring
+    ///   target re-tune, not from the lerp).
+    /// - `t = NaN` is treated as `0.0` (returns `self`) — defensive
+    ///   guard mirroring the R51.145
+    ///   [`clamp_frame_dt`](crate::frame_pacing::clamp_frame_dt) NaN
+    ///   policy so a degraded numerical input does not propagate
+    ///   visible artifacts.
+    ///
+    /// ## Why linear-space (and not sRGB-space)
+    ///
+    /// Naive per-channel `u8` lerp in sRGB space produces noticeably
+    /// darker mid-tones on a gradient (the canonical "muddy gray"
+    /// artifact when fading red → green). Linear-space lerp matches
+    /// what physical light blending does and what the §5.28 spring
+    /// solver outputs internally. The cost is two sRGB
+    /// encode/decode passes per call — negligible compared to the
+    /// per-frame layout + render cost, and pinion's frame budget cap
+    /// (§5.28 R33) is set with this overhead already accounted for.
+    #[must_use]
+    pub fn lerp(self, other: Self, t: f32) -> Self {
+        let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+        let a = self.to_linear();
+        let b = other.to_linear();
+        Self::from_linear(<crate::animation::AnimVec4 as crate::animation::Animatable>::lerp(
+            a, b, t,
+        ))
+    }
+
     /// Decode sRGB gamma-encoded channels into linear-light
     /// `[AnimVec4]` space for use with the spring solver (§5.28).
     ///
@@ -212,6 +256,98 @@ mod color_linear_tests {
         let over = AnimVec4::new(2.0, -0.5, 1.5, 1.2);
         let c = Color::from_linear(over);
         assert_eq!(c, Color::rgba(255, 0, 255, 255));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R51.151 §5.28 — Color::lerp tests.
+    //
+    // Verifies the colorimetrically-correct (linear-space) lerp:
+    // endpoint identity, mid-tone perceptual lightness, clamping,
+    // NaN guard, and grayscale parity (replaces the bespoke
+    // `lerp_grayscale` in hello-button*/hello-button-tui).
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn lerp_at_zero_returns_self() {
+        let a = Color::rgb(255, 0, 0);
+        let b = Color::rgb(0, 255, 0);
+        assert_eq!(a.lerp(b, 0.0), a);
+    }
+
+    #[test]
+    fn lerp_at_one_returns_other() {
+        let a = Color::rgb(255, 0, 0);
+        let b = Color::rgb(0, 255, 0);
+        assert_eq!(a.lerp(b, 1.0), b);
+    }
+
+    #[test]
+    fn lerp_grayscale_midpoint_is_perceptually_centered() {
+        // White → black at t=0.5 should be perceptually centered.
+        // In linear space the midpoint encodes back to ~188 (0xBC)
+        // sRGB rather than the naive 127 sRGB midpoint.
+        let white = Color::rgb(255, 255, 255);
+        let black = Color::rgb(0, 0, 0);
+        let mid = white.lerp(black, 0.5);
+        assert!(
+            mid.r > 180,
+            "perceptual mid expected > 180, got {}",
+            mid.r,
+        );
+        assert_eq!(mid.r, mid.g);
+        assert_eq!(mid.r, mid.b);
+    }
+
+    #[test]
+    fn lerp_clamps_negative_t_to_zero() {
+        let a = Color::rgb(100, 100, 100);
+        let b = Color::rgb(200, 200, 200);
+        assert_eq!(a.lerp(b, -1.0), a, "negative t clamps to 0 → self");
+    }
+
+    #[test]
+    fn lerp_clamps_t_above_one() {
+        let a = Color::rgb(100, 100, 100);
+        let b = Color::rgb(200, 200, 200);
+        assert_eq!(a.lerp(b, 2.0), b, "t > 1 clamps to 1 → other");
+    }
+
+    #[test]
+    fn lerp_nan_t_returns_self() {
+        // R51.151 + R51.145 NaN policy — degraded input must not
+        // propagate to visible artifacts. NaN → 0 → self.
+        let a = Color::rgb(100, 50, 0);
+        let b = Color::rgb(0, 200, 255);
+        assert_eq!(a.lerp(b, f32::NAN), a);
+    }
+
+    #[test]
+    fn lerp_preserves_alpha_endpoint_at_zero_and_one() {
+        let a = Color::rgba(100, 0, 0, 255);
+        let b = Color::rgba(0, 0, 100, 128);
+        assert_eq!(a.lerp(b, 0.0).a, 255);
+        assert_eq!(a.lerp(b, 1.0).a, 128);
+    }
+
+    #[test]
+    fn lerp_replaces_legacy_lerp_grayscale() {
+        // Parity smoke test — the hello-button*/hello-button-tui
+        // examples used a bespoke `lerp_grayscale(from, to, t)` that
+        // did naive per-channel u8 interp. R51.151 redirects them to
+        // `Color::lerp` (linear-space). The endpoint values are
+        // identical; only mid-tones drift to the perceptually-
+        // centered position (verified above).
+        let from = Color::rgb(0xff, 0xff, 0xff);
+        let to = Color::rgb(0xd0, 0xd0, 0xd0);
+        assert_eq!(from.lerp(to, 0.0), from);
+        assert_eq!(from.lerp(to, 1.0), to);
+        // mid-tone moves above the naive sRGB midpoint (0xe7).
+        let mid = from.lerp(to, 0.5);
+        assert!(
+            mid.r > 0xe7,
+            "linear-space mid expected > 0xe7, got {:02x}",
+            mid.r,
+        );
     }
 }
 

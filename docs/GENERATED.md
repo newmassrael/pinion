@@ -1598,6 +1598,7 @@ fn main() {
 - crates/pinion-tui/src/shell.rs:run
 - examples/hello-button-tui/src/main.rs:drive_hover_progress
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::frame_signal
+- crates/pinion-core/src/style.rs:Color::lerp
 
 
 
@@ -6215,6 +6216,36 @@ router.pointer_down(&mut state_scene);
 - R51.152+ lerp_grayscale framework primitive 화 (hello-button + hello-button-tui DRY)
 - R51.153+ Owner::cache positional/macro variant (call-site identity ergonomic)
 - memory entry #169 — Owner::cache substrate (useMemo/useRef 정통 mirror)
+
+
+
+### R51.151 — §5.28 Color::lerp linear-space primitive + hello-button*/hello-button-tui lerp_grayscale DRY 청산 + #[allow(cast)] 회복
+
+**Changes**:
+- pinion-core Color::lerp(self, other, t) -> Color (linear-space 정통)
+- NaN guard (NaN → 0.0 → self) + clamp t ∈ [0.0, 1.0]
+- AnimVec4 + Animatable::lerp 재사용 (spring solver path 와 일치)
+- hello-button BTN_FILL_IDLE/HOVER const + Color::lerp (lerp_grayscale 제거)
+- hello-button-tui 동일 적용 (lerp_grayscale 제거)
+- #[allow(clippy::cast_*)] 제거 (framework primitive 정통 회피)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1878 passed / 0 failed / 8 ignored
+- baseline 1870 → 1878 (+8 R51.151 lerp tests: endpoints/clamp/NaN/perceptual/alpha/parity)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- linear-space midpoint perceptually correct (mid > 180 vs sRGB-naive 127)
+
+
+
+**Impact**: §5.28, §5.3
+
+
+**Carry forward**:
+- R51.152+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
+- R51.153+ Owner::cache positional/macro variant (call-site identity)
+- R51.154+ Color::Animatable trait 정식 binding (lerp 자체적으로 trait method)
 
 
 

@@ -93,24 +93,15 @@ fn drive_hover_progress(state: ButtonState) -> f32 {
     anim.value()
 }
 
-/// R51.148 §5.28 — linear interpolate a single-channel grayscale fill
-/// between two 8-bit endpoints by `t ∈ [0.0, 1.0]` (clamped) and emit
-/// an RGB `Color`. The terminal's truecolor path (24-bit ANSI) lands
-/// the smooth gradient on modern terminals (kitty / alacritty / foot
-/// / windows-terminal); legacy 16-colour terminals collapse the
+/// R51.151 §5.28 — idle (white) and hover (gray) lightness endpoints
+/// for the Idle ↔ Hover spring fade. Mirror of `hello-button` (Vello
+/// sibling) so the two backends paint the same gradient. The
+/// terminal's truecolor path (24-bit ANSI) lands the linear-space
+/// gradient on modern terminals (kitty / alacritty / foot /
+/// windows-terminal); legacy 16-colour terminals collapse the
 /// gradient to nearest-palette steps.
-fn lerp_grayscale(from: u8, to: u8, t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    let from_f = f32::from(from);
-    let to_f = f32::from(to);
-    let mixed = from_f + (to_f - from_f) * t;
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
-    let v = mixed.round().clamp(0.0, 255.0) as u8;
-    Color::rgb(v, v, v)
-}
+const BTN_FILL_IDLE: Color = Color::rgb(0xff, 0xff, 0xff);
+const BTN_FILL_HOVER: Color = Color::rgb(0xd0, 0xd0, 0xd0);
 
 /// The widget binding unit type. `pinion_tui::run::<HelloButtonTui>()`
 /// instantiates the substrate around this binding.
@@ -177,7 +168,7 @@ impl WidgetCore for HelloButtonTui {
         let hover_progress = drive_hover_progress(state);
         let bg_fill: Color = match state {
             ButtonState::Idle | ButtonState::Hover => {
-                lerp_grayscale(0xff, 0xd0, hover_progress)
+                BTN_FILL_IDLE.lerp(BTN_FILL_HOVER, hover_progress)
             }
             ButtonState::Pressed => Color::rgb(0x50, 0x50, 0x50),
             ButtonState::Disabled => Color::rgb(0xb0, 0x20, 0x20),
