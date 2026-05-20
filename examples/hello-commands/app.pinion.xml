@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R51.163 §5.16 §5.23 — Vello renderer manifest for the
+  hello-commands demo. Emits `HelloCommandsRenderer` (same shape as
+  hello-button's `HelloButtonRenderer`); the only difference is the
+  struct name so the codegen output does not collide.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloCommandsRenderer"
+        backend="vello"/>

@@ -1,0 +1,36 @@
+[package]
+name = "hello-commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.163 §5.23 Command 디스패치 데모 — view-fn one-shot dispatch via Owner::cache + run_with_handlers + Handler echo"
+publish = false
+
+[[bin]]
+name = "hello-commands"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Tier-1 Button widget — `ButtonExternal` carries the same SCXML
+# the hello-button binary uses; we reuse it so this example focuses on
+# the §5.23 Command dispatch path, not on a new widget.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.63 §5.40 — AccessNode / AriaRole for the WidgetA11y impl.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R51.156–R51.158 §5.23 — Handler / Registry / Command primitives this
+# demo exercises.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1", features = ["vello"] }
+# R51.30 paint-side AppShell + R51.159 `run_with_handlers` entry point.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16 — forge codegen output references `::vello::*` directly.
+vello = { workspace = true }
+
+[build-dependencies]
+# R46.5 §5.16 — `build.rs` compiles `app.pinion.xml` into
+# `$OUT_DIR/app.rs` (the `HelloCommandsRenderer` Vello wrapper).
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

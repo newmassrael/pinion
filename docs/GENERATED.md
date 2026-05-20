@@ -1316,6 +1316,10 @@ fn main() {
 - crates/pinion-runtime/src/command/executor.rs:CommandExecutor::in_flight_snapshot
 - crates/pinion-rpc/src/commands.rs:list_in_flight_commands
 - crates/pinion-rpc/src/dispatch.rs:DispatchContext::with_commands_executor
+- examples/hello-commands/src/main.rs
+- examples/hello-commands/src/main.rs:queue_one_shot_demo_command
+- examples/hello-commands/src/main.rs:CommandsView
+- examples/hello-commands/src/main.rs:echo_handler
 
 
 
@@ -6631,6 +6635,37 @@ router.pointer_down(&mut state_scene);
 - scope_id → widget tag lookup (composite scope 자동 용어 극한자)
 - path filter 젤러니 설정
 - demo example 접속 (http.get / clipboard.write Handler 등록 예제)
+
+
+
+### R51.163 — §5.23 hello-commands 데모 — view-fn one-shot dispatch + run_with_handlers + Handler echo cycle
+
+**Changes**:
+- examples/hello-commands/ 신규 binary (Cargo.toml + build.rs + app.pinion.xml + src/main.rs)
+- queue_one_shot_demo_command: Owner::cache idempotent guard 패턴 — view-fn 은 순도 유지 (양자-적 cell)
+- run_with_handlers → demo.echo Handler 등록 → first paint 시 dispatch_command → tokio worker echo → IntentArrived → dispatch_intent re-feed
+- ButtonExternal SCXML 재사용 (새 SCXML 작성 X), 포그 codegen 이름만 HelloCommandsRenderer 로 변경
+- workspace Cargo.toml members 추가 (한 줄)
+- stderr trace = command flow 시웠 관찰 (handler → intent-feedback 패턴 일치)
+
+
+
+**Verification**:
+- cargo check -p hello-commands → 0 error
+- cargo clippy -p hello-commands --all-targets → 0 warning
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning
+- cargo test --workspace --features pinion-runtime/vello → 1984 pass / 0 fail / 10 ignored (테스트 추가 없음, 바이너리 추가)
+- cargo run -p hello-commands 시 Owner::cache one-shot 관찰 가능 (stderr trace)
+
+
+
+**Impact**: §5.23, §5.22, §5.16
+
+
+**Carry forward**:
+- Visual feedback (state = command_arrived) — SCXML 확장 필요, 현재는 stderr trace 만 표면
+- tokio::time::sleep 기반 async 해들러 (지연 관찰) 시연 추가
+- demo example — hello-commands-tui 관결 차베이 (TUI 쓸 실제 용례 확보)
 
 
 
