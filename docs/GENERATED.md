@@ -1593,6 +1593,8 @@ fn main() {
 - examples/hello-button/src/main.rs:drive_hover_progress
 - examples/hello-button/src/main.rs:lerp_grayscale
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::any_animation_active
+- crates/pinion-tui/src/shell.rs:run
+- examples/hello-button-tui/src/main.rs:drive_hover_progress
 
 
 
@@ -6119,6 +6121,36 @@ router.pointer_down(&mut state_scene);
 - R51.148 §5.28 AnimationDriver Effect-wrap (manual tick → Effect-driven, R33 진본화)
 - R51.149 TUI surface continuous-paint loop (poll timeout while any_animation_active)
 - R51.150+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
+
+
+
+### R51.148 — §5.28 TUI shell adaptive poll-timeout + hello-button-tui hover Animation demo (Vello R51.147 의 TUI 대칭)
+
+**Changes**:
+- pinion-tui shell::run adaptive poll timeout (IDLE 100ms ↔ ACTIVE 16ms while animations move)
+- pinion-tui shell::run timeout-tick repaint commit while any_animation_active
+- IDLE_POLL_MS / ACTIVE_POLL_MS / REST_EPSILON module-level constants (clippy 정합)
+- hello-button-tui drive_hover_progress: OnceCell<Animation<f32>> via Owner::current()
+- hello-button-tui lerp_grayscale + view fn Idle↔Hover spring lerp (truecolor)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1856 passed / 0 failed / 8 ignored
+- baseline 1856 → 1856 (R51.148 = surface/example only, 신규 unit tests 없음)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- hello-button-tui binary built — terminal truecolor spring transition 사용자 verify pending
+
+
+
+**Impact**: §5.28, §5.41
+
+
+**Carry forward**:
+- R51.149 §5.28 AnimationDriver Effect-wrap (manual tick → Effect-driven, R33 진본화)
+- R51.150+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
+- R51.151+ application context API (avoid thread_local OnceCell view-fn pattern)
+- memory entries #157-166 lessons partial land (5 of ~9), 잔여 carry
 
 
 

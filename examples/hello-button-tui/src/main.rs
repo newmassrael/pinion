@@ -57,16 +57,65 @@
 //!   declares `Backend::Gui` because no dedicated TUI flag exists
 //!   in the §5.15 backend taxonomy).
 
+use std::cell::OnceCell;
 use std::io::Stdout;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_core::animation::SpringConfig;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, WidgetCore, style};
+use pinion_core::{Animation, Color, Frame, Owner, WidgetCore, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
+
+// R51.148 §5.28 — per-binding `Animation<f32>` driving the
+// idle ↔ hover lightness transition. Mirrors the Vello `hello-button`
+// (R51.147) pattern: cached in a `thread_local` so the view fn
+// instantiates the animation exactly once on the first paint; later
+// calls just `set_target` and read the current value. Lifetime ties
+// to the binding's [`pinion_tui::ShellCoreTui::root_owner`] via
+// [`Owner::current()`](pinion_core::Owner::current) (R51.146 wrap).
+thread_local! {
+    static HOVER_ANIM: OnceCell<Animation<f32>> = const { OnceCell::new() };
+}
+
+/// R51.148 §5.28 — drive the hover progress animation and return the
+/// displayed value in `[0.0, 1.0]`. Hover targets `1.0`; every other
+/// state targets `0.0`.
+fn drive_hover_progress(state: ButtonState) -> f32 {
+    HOVER_ANIM.with(|cell| {
+        let anim = cell.get_or_init(|| {
+            let owner = Owner::current().expect(
+                "hello-button-tui view fn must run inside ShellCoreTui::root_owner().run(...)",
+            );
+            Animation::new(&owner, 0.0_f32, SpringConfig::default())
+        });
+        let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
+        anim.set_target(target);
+        anim.value()
+    })
+}
+
+/// R51.148 §5.28 — linear interpolate a single-channel grayscale fill
+/// between two 8-bit endpoints by `t ∈ [0.0, 1.0]` (clamped) and emit
+/// an RGB `Color`. The terminal's truecolor path (24-bit ANSI) lands
+/// the smooth gradient on modern terminals (kitty / alacritty / foot
+/// / windows-terminal); legacy 16-colour terminals collapse the
+/// gradient to nearest-palette steps.
+fn lerp_grayscale(from: u8, to: u8, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let from_f = f32::from(from);
+    let to_f = f32::from(to);
+    let mixed = from_f + (to_f - from_f) * t;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let v = mixed.round().clamp(0.0, 255.0) as u8;
+    Color::rgb(v, v, v)
+}
 
 /// The widget binding unit type. `pinion_tui::run::<HelloButtonTui>()`
 /// instantiates the substrate around this binding.
@@ -123,9 +172,18 @@ impl WidgetCore for HelloButtonTui {
         // Button colour scheme — same RGB triples the Vello
         // hello-button uses so the two backends paint with visual
         // parity.
+        //
+        // R51.148 §5.28 — Idle↔Hover lerps via a spring-driven
+        // progress value (0.0 = Idle, 1.0 = full Hover) so the
+        // transition is smooth in truecolor terminals; Pressed and
+        // Disabled retain their discrete fills (no animation; the
+        // shell's adaptive `poll_timeout` keeps the substrate idle
+        // once the spring settles).
+        let hover_progress = drive_hover_progress(state);
         let bg_fill: Color = match state {
-            ButtonState::Idle => Color::rgb(0xff, 0xff, 0xff),
-            ButtonState::Hover => Color::rgb(0xd0, 0xd0, 0xd0),
+            ButtonState::Idle | ButtonState::Hover => {
+                lerp_grayscale(0xff, 0xd0, hover_progress)
+            }
             ButtonState::Pressed => Color::rgb(0x50, 0x50, 0x50),
             ButtonState::Disabled => Color::rgb(0xb0, 0x20, 0x20),
         };

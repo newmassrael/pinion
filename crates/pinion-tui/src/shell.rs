@@ -121,6 +121,23 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// R51.111 idle poll timeout — sub-frame responsive for typical
+/// typing latency, ~10 polls/sec while the substrate is at rest.
+const IDLE_POLL_MS: u64 = 100;
+
+/// R51.148 §5.28 — short poll timeout while any animation is moving.
+/// One 60Hz frame keeps the spring transition smooth without
+/// pegging a core; the substrate falls back to [`IDLE_POLL_MS`]
+/// once every animation settles under [`REST_EPSILON`].
+const ACTIVE_POLL_MS: u64 = 16;
+
+/// R51.148 §5.28 — spring settlement epsilon forwarded to
+/// [`pinion_core::reactive::Owner::any_animation_active`]. Matches
+/// the default [`pinion_core::Animation::DEFAULT_REST_EPSILON`] so
+/// the shell's "stop painting" threshold lines up with the spring
+/// solver's own rest criterion.
+const REST_EPSILON: f32 = pinion_core::Animation::<f32>::DEFAULT_REST_EPSILON;
+
 /// R51.110.2 §5.41 — run the TUI binding `V` end-to-end against the
 /// live terminal.
 ///
@@ -182,12 +199,23 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
     let initial_paint = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
     core.update_paint_scene(initial_paint);
 
-    // Event loop. `poll` timeout = 100ms balances responsiveness
-    // (sub-frame for typical typing latency) against CPU wake
-    // budget (10 polls/sec idle).
-    let poll_timeout = Duration::from_millis(100);
+    // Event loop. See module-level [`IDLE_POLL_MS`] / [`ACTIVE_POLL_MS`]
+    // / [`REST_EPSILON`] for the R51.148 §5.28 adaptive-poll rationale.
     loop {
+        let poll_timeout = if core.any_animation_active(REST_EPSILON) {
+            Duration::from_millis(ACTIVE_POLL_MS)
+        } else {
+            Duration::from_millis(IDLE_POLL_MS)
+        };
         if !crossterm::event::poll(poll_timeout)? {
+            // R51.148 §5.28 — timeout without an input event. If an
+            // animation is still moving, commit another paint so the
+            // user observes the spring transition; otherwise stay
+            // idle until the next event arrives.
+            if core.any_animation_active(REST_EPSILON) {
+                let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
+                core.update_paint_scene(paint_scene);
+            }
             continue;
         }
         match crossterm::event::read()? {
