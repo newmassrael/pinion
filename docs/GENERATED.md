@@ -3236,6 +3236,7 @@ router.pointer_down(&mut state_scene);
 - R51.116 — hello-button-tui / hello-toggle-tui view BoxStyle 적용 (substrate evidence-first)
 - R51.117 — ShellCoreTui<V> substrate extraction (headless test infra + R51.92.1 parity)
 - R51.118 — WidgetViewTui::access_node default + 2 TUI binding override (TUI a11y substrate first cut)
+- R51.119 — atomic stale citation cleanup (R51.117 substrate move: 4 removes + 7 adds)
 
 
 
@@ -3283,14 +3284,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/input.rs
 - crates/pinion-tui/src/input.rs:key_str_from_event
 - crates/pinion-tui/src/input.rs:modifiers_from_crossterm
-- crates/pinion-tui/src/shell.rs:dispatch_key
-- crates/pinion-tui/src/shell.rs:forward_event
 - crates/pinion-tui/src/widget.rs:WidgetViewTui::apply_key
 - crates/pinion-tui/src/widget.rs:WidgetViewTui::keybinding
 - crates/pinion-tui/src/input.rs:cell_to_pixel
 - crates/pinion-tui/src/shell.rs:dispatch_mouse
-- crates/pinion-tui/src/shell.rs:drain_and_repaint
-- crates/pinion-tui/src/shell.rs:paint_frame
 - examples/hello-toggle-tui/Cargo.toml
 - examples/hello-toggle-tui/src/main.rs
 - examples/hello-toggle-tui/src/main.rs:HelloToggleTui
@@ -3302,6 +3299,13 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui
 - crates/pinion-tui/src/shell.rs:commit_paint
 - crates/pinion-tui/src/widget.rs:WidgetViewTui::access_node
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::dispatch_key
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::refresh_state
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::cursor_moved
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_down
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_up
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::compute_paint_scene
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::update_paint_scene
 
 
 

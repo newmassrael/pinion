@@ -4407,7 +4407,8 @@
         "R51.115 — paint::to_buffer Scene::Box + ContainerNode.style mapping (border ┌─┐│└─┘ + bg fill)",
         "R51.116 — hello-button-tui / hello-toggle-tui view BoxStyle 적용 (substrate evidence-first)",
         "R51.117 — ShellCoreTui<V> substrate extraction (headless test infra + R51.92.1 parity)",
-        "R51.118 — WidgetViewTui::access_node default + 2 TUI binding override (TUI a11y substrate first cut)"
+        "R51.118 — WidgetViewTui::access_node default + 2 TUI binding override (TUI a11y substrate first cut)",
+        "R51.119 — atomic stale citation cleanup (R51.117 substrate move: 4 removes + 7 adds)"
       ],
       "alternatives_rejected": [
         {
@@ -4554,14 +4555,6 @@
           "symbol": "modifiers_from_crossterm"
         },
         {
-          "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "dispatch_key"
-        },
-        {
-          "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "forward_event"
-        },
-        {
           "file": "crates/pinion-tui/src/widget.rs",
           "symbol": "WidgetViewTui::apply_key"
         },
@@ -4576,14 +4569,6 @@
         {
           "file": "crates/pinion-tui/src/shell.rs",
           "symbol": "dispatch_mouse"
-        },
-        {
-          "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "drain_and_repaint"
-        },
-        {
-          "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "paint_frame"
         },
         {
           "file": "examples/hello-toggle-tui/Cargo.toml"
@@ -4625,6 +4610,34 @@
         {
           "file": "crates/pinion-tui/src/widget.rs",
           "symbol": "WidgetViewTui::access_node"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::dispatch_key"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::refresh_state"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::cursor_moved"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::pointer_down"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::pointer_up"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::compute_paint_scene"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::update_paint_scene"
         }
       ],
       "decision_status": "active"
