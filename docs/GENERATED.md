@@ -1158,6 +1158,9 @@ fn main() {
 - examples/forge-counter/build.rs
 - examples/forge-counter/ui/counter.pinion.xml
 - examples/forge-counter/src/main.rs
+- crates/pinion-core/src/reactive/owner.rs:Owner::current
+- crates/pinion-core/src/reactive/owner.rs:CURRENT_OWNER_HANDLE
+- crates/pinion-core/src/reactive/owner.rs:OwnerHandleGuard
 
 
 
@@ -3393,6 +3396,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::update_paint_scene
 - crates/pinion-runtime/src/core_shell.rs:DispatchTail
 - crates/pinion-runtime/src/core_shell.rs:StateChange
+- crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
 
 
 
@@ -6048,6 +6052,37 @@ router.pointer_down(&mut state_scene);
 - R51.147 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)
 - R51.148 — Handler executor binding (R51.141 carry, tokio dispatch)
 - view-fn ↔ Owner context substrate gap — Owner::current() public + run() framework wrap
+
+
+
+### R51.146 — §5.22 view-fn ↔ Owner context substrate (option b): framework wrap root_owner().run + Owner::current() public
+
+**Changes**:
+- pinion-core::reactive::owner Owner::current() public + CURRENT_OWNER_HANDLE thread-local stack
+- pinion-core OwnerHandleGuard RAII; Owner::run pushes both subscriber + handle stacks
+- pinion-shell ShellCore::compute_paint_scene wraps V::view in root_owner().run(|| ...)
+- pinion-shell ShellCore::dispatch_rpc producer closure wraps V::view in root_owner.run(...)
+- pinion-tui ShellCoreTui::compute_paint_scene wraps V::view in root_owner().run(|| ...)
+- Computed::recompute leaves handle stack untouched — Owner::current() returns lexical enclosing Owner
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1848 passed / 0 failed / 8 ignored
+- baseline 1832 → 1848 (+16 R51.146: 10 owner.rs + 3 pinion-shell + 3 pinion-tui)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace: entries=318 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.22, §5.28, §5.41
+
+
+**Carry forward**:
+- R51.147 §5.28 first visual demo: hello-button hover transition via Owner::current()
+- R51.148 §5.28 AnimationDriver Effect-wrap (manual tick → Effect-driven, §5.28 R33 진본화)
+- R51.149+ §5.23 Handler executor binding (tokio::spawn + Command queue drain pump)
+- memory entries #157-166 (Handler / CoreShell composition / clamp anchor / Owner::current)
 
 
 

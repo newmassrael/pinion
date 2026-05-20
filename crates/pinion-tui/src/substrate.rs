@@ -238,7 +238,17 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let dt = clamp_frame_dt(raw_dt);
         self.core.tick_animations(dt);
         let frame = Frame::with_dt(dt);
-        V::view(*self.core.cached_state(), &frame)
+        // R51.146 §5.22 — wrap the view fn in `root_owner().run(...)`
+        // so [`pinion_core::Owner::current`] resolves to this
+        // binding's root reactive scope from inside `V::view`. The
+        // TUI side mirrors the Vello sibling exactly: animations /
+        // effects / commands created without an explicit
+        // [`pinion_core::Owner`] argument land on the framework-owned
+        // scope, dropping together with this substrate.
+        let cached_state = *self.core.cached_state();
+        self.core
+            .root_owner()
+            .run(|| V::view(cached_state, &frame))
     }
 
     /// Hand a freshly-painted scene to the substrate's
@@ -649,6 +659,166 @@ mod tests {
             // proves the field's interior mutability path works.
             let _a = core_ref.compute_paint_scene();
             let _b = core_ref.compute_paint_scene();
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // R51.146 §5.22 — view fn runs under `root_owner().run(...)`.
+    //
+    // Mirrors the Vello sibling's R51.146 contract on the TUI side:
+    // `ShellCoreTui::compute_paint_scene` wraps the `V::view` call
+    // so `pinion_core::Owner::current()` from inside the view fn
+    // resolves to this binding's `root_owner`. The
+    // `Owner::register_animation` path through `Owner::current()`
+    // pins a registration onto the same owner the substrate ticks
+    // each frame.
+    // ───────────────────────────────────────────────────────────────
+
+    mod r51_146_view_fn_owner_wrap {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        use pinion_core::animation::Tickable;
+        use pinion_core::widgets::button::ButtonState;
+        use pinion_core::{Frame, Owner, Scene, WidgetCore};
+
+        use super::super::{ShellCoreTui, WidgetViewTui};
+
+        /// Stand-in widget that records the `Owner::current().id()`
+        /// observation each time its `view` runs. The TUI binding's
+        /// `WidgetView` impl side-effects through a shared
+        /// [`Cell<Option<u64>>`] handed in via a thread-local because
+        /// the trait fn signature is static — every TUI view binding
+        /// in the workspace looks this way today.
+        struct OwnerObservingButton;
+
+        thread_local! {
+            static OBSERVED_OWNER_ID: Cell<Option<u64>> = const { Cell::new(None) };
+            static REGISTER_ANIMATION_OBSERVED: Cell<bool> = const { Cell::new(false) };
+        }
+
+        struct NoopTickable;
+        impl Tickable for NoopTickable {
+            fn tick(&self, _dt: f32) {}
+            fn is_at_rest(&self, _epsilon: f32) -> bool {
+                true
+            }
+        }
+
+        impl WidgetCore for OwnerObservingButton {
+            type State = ButtonState;
+            type Event = pinion_core::widgets::button::ButtonEvent;
+            fn create_external() -> Box<dyn pinion_core::external::External> {
+                <pinion_core::test_fixtures::ButtonFixture as WidgetCore>::create_external()
+            }
+            fn tag() -> &'static str {
+                "owner_observing_btn"
+            }
+            fn read_state(scene: &Scene) -> Self::State {
+                <pinion_core::test_fixtures::ButtonFixture as WidgetCore>::read_state(scene)
+            }
+            fn view(_state: Self::State, _frame: &Frame) -> Scene {
+                // Record the current Owner id so the test can compare
+                // against `ShellCoreTui::root_owner().id()`.
+                OBSERVED_OWNER_ID.with(|cell| {
+                    cell.set(Owner::current().map(|o| o.id()));
+                });
+                // Also exercise the more demanding case: register an
+                // animation through `Owner::current()` and verify the
+                // registration is observable on the substrate's owner
+                // after `view` returns.
+                if REGISTER_ANIMATION_OBSERVED.with(Cell::get) {
+                    if let Some(cur) = Owner::current() {
+                        cur.register_animation(Rc::new(NoopTickable));
+                    }
+                }
+                // Reuse the fixture's view body for the visible scene.
+                <pinion_core::test_fixtures::ButtonFixture as WidgetCore>::view(
+                    ButtonState::Idle,
+                    &Frame::new(),
+                )
+            }
+            fn event_name(_event: Self::Event) -> &'static str {
+                ""
+            }
+            fn keybinding(_key: &str) -> Option<Self::Event> {
+                None
+            }
+            fn title() -> &'static str {
+                "owner-observing"
+            }
+            fn apply_key(_scene: &mut Scene, _focused: Option<&str>, _key: &str) -> bool {
+                false
+            }
+        }
+
+        // R51.121 supertrait — WidgetViewTui requires WidgetA11y.
+        // OwnerObservingButton is AT-invisible (no `access_node`); the
+        // R51.146 test only exercises the paint cycle owner wrap.
+        impl pinion_a11y::WidgetA11y for OwnerObservingButton {}
+
+        impl WidgetViewTui for OwnerObservingButton {
+            type Renderer = crate::TuiRenderer<ratatui::backend::TestBackend>;
+        }
+
+        #[test]
+        fn compute_paint_scene_runs_view_under_root_owner() {
+            // R51.146 — Owner::current() inside the view fn must
+            // resolve to ShellCoreTui::root_owner().
+            OBSERVED_OWNER_ID.with(|c| c.set(None));
+            REGISTER_ANIMATION_OBSERVED.with(|c| c.set(false));
+
+            let core: ShellCoreTui<OwnerObservingButton> = ShellCoreTui::new();
+            let expected = core.root_owner().id();
+            let _scene = core.compute_paint_scene();
+
+            let observed = OBSERVED_OWNER_ID.with(Cell::get);
+            assert_eq!(
+                observed,
+                Some(expected),
+                "view fn must observe the substrate's root_owner via Owner::current()",
+            );
+        }
+
+        #[test]
+        fn current_returns_to_none_after_compute_paint_scene_exits() {
+            // R51.146 — RAII pop: the framework wrap is symmetric.
+            // After compute_paint_scene returns, Owner::current()
+            // from the surface caller sees None again.
+            OBSERVED_OWNER_ID.with(|c| c.set(None));
+            REGISTER_ANIMATION_OBSERVED.with(|c| c.set(false));
+
+            let core: ShellCoreTui<OwnerObservingButton> = ShellCoreTui::new();
+            let _scene = core.compute_paint_scene();
+
+            assert!(
+                Owner::current().is_none(),
+                "OwnerHandleGuard pops on compute_paint_scene exit",
+            );
+        }
+
+        #[test]
+        fn animation_registered_through_current_lands_on_root_owner() {
+            // R51.146 — registering through `Owner::current()` reaches
+            // the same scope `tick_animations` walks. We exercise the
+            // path by registering through `Owner::current()` inside
+            // the view fn across two paints; the load-bearing
+            // assertion is that two paints succeed without panic and
+            // observe the same root owner each time (mismatch would
+            // mean `Owner::current()` returned a stray scope rather
+            // than the substrate's `root_owner`).
+            OBSERVED_OWNER_ID.with(|c| c.set(None));
+            REGISTER_ANIMATION_OBSERVED.with(|c| c.set(true));
+
+            let core: ShellCoreTui<OwnerObservingButton> = ShellCoreTui::new();
+            let expected = core.root_owner().id();
+            let _scene1 = core.compute_paint_scene();
+            let after_first = OBSERVED_OWNER_ID.with(Cell::get);
+            let _scene2 = core.compute_paint_scene();
+            let after_second = OBSERVED_OWNER_ID.with(Cell::get);
+
+            assert_eq!(after_first, Some(expected));
+            assert_eq!(after_second, Some(expected));
         }
     }
 }

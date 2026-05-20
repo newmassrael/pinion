@@ -169,6 +169,12 @@ static CHILD_INVOKE_RETURNS: AtomicBool = AtomicBool::new(false);
 static KEYBINDING_RETURNS_SOME: AtomicBool = AtomicBool::new(false);
 static EVENT_NAME_LOG: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
+// R51.146 §5.22 — captures the `Owner::current()` observation each
+// time `TestView::view` runs so the R51.146 paint-cycle-owner-wrap
+// test can assert the substrate wraps `V::view` in
+// `root_owner().run(...)`. Reset by `reset_mocks`.
+static OBSERVED_OWNER_ID: Mutex<Option<u64>> = Mutex::new(None);
+
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
@@ -176,6 +182,7 @@ fn reset_mocks() {
     CHILD_INVOKE_RETURNS.store(false, Ordering::SeqCst);
     KEYBINDING_RETURNS_SOME.store(false, Ordering::SeqCst);
     EVENT_NAME_LOG.lock().unwrap().clear();
+    *OBSERVED_OWNER_ID.lock().unwrap() = None;
 }
 
 struct TestView;
@@ -205,6 +212,13 @@ impl WidgetCore for TestView {
     }
 
     fn view(_state: Self::State, _frame: &Frame) -> Scene {
+        // R51.146 §5.22 — record the `Owner::current()` observation
+        // so the paint-cycle-owner-wrap test asserts that the
+        // substrate runs `V::view` inside `root_owner().run(...)`.
+        // Other tests reset the static via `reset_mocks` and leave
+        // the value alone; the cost is one atomic op per `view` call.
+        *OBSERVED_OWNER_ID.lock().unwrap() =
+            pinion_core::Owner::current().map(|o| o.id());
         Scene::Container(
             ContainerNode::new(vec![Scene::Box(BoxNode::filled(
                 Rect::default(),
@@ -1077,6 +1091,89 @@ mod r51_143_paint_cycle_dt {
             recorder.ticks.get(),
             5,
             "five paints → five ticks (substrate is per-call, never throttled)",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R51.146 §5.22 — view fn runs under `root_owner().run(...)` so
+// `Owner::current()` resolves from inside `V::view` without threading
+// the [`Owner`] argument through every callee.
+// ─────────────────────────────────────────────────────────────────────
+
+mod r51_146_view_fn_owner_wrap {
+    use super::{reset_mocks, ShellCore, TestView, OBSERVED_OWNER_ID, TEST_LOCK};
+
+    #[test]
+    fn compute_paint_scene_runs_view_under_root_owner() {
+        // R51.146 — `ShellCore::compute_paint_scene` wraps the
+        // `V::view` call in `root_owner().run(|| ...)`. Inside
+        // `TestView::view` we record `Owner::current().id()` and
+        // expect to see the binding's `root_owner().id()`.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let expected = core.root_owner().id();
+
+        let _scene = core.compute_paint_scene(64, 48);
+
+        let observed = *OBSERVED_OWNER_ID.lock().unwrap();
+        assert_eq!(
+            observed,
+            Some(expected),
+            "view fn must run under the binding's root reactive scope",
+        );
+    }
+
+    #[test]
+    fn dispatch_rpc_synthetic_paint_runs_view_under_root_owner() {
+        // R51.146 — the `dispatch_rpc` producer closure (used by
+        // `scene/layout {viewport: w,h}` RPC requests for synthetic
+        // paint snapshots) also wraps `V::view` in
+        // `root_owner.run(...)`. Trigger a synthetic paint through
+        // an RPC `scene/layout` request and assert the same owner
+        // id observation.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let expected = core.root_owner().id();
+
+        // Synthetic-paint RPC request. The exact response body is
+        // irrelevant for this test — we only need the producer
+        // closure to fire (which it does whenever the RPC method
+        // requests a non-null viewport snapshot).
+        let mut resize_noop = |_w: u32, _h: u32| {};
+        let _resp = core.dispatch_rpc(
+            r#"{"jsonrpc":"2.0","id":1,"method":"scene/layout","params":{"viewport":[80,60]}}"#,
+            &mut resize_noop,
+        );
+
+        let observed = *OBSERVED_OWNER_ID.lock().unwrap();
+        assert_eq!(
+            observed,
+            Some(expected),
+            "dispatch_rpc producer closure must wrap V::view in root_owner.run",
+        );
+    }
+
+    #[test]
+    fn current_returns_to_none_after_compute_paint_scene_exits() {
+        // R51.146 — the framework wrap is RAII: once
+        // `compute_paint_scene` returns, the handle stack is empty
+        // again, so a stray `Owner::current()` from caller code
+        // (e.g. test diagnostics) sees `None` and not a dangling
+        // reference to the just-painted owner.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let _scene = core.compute_paint_scene(64, 48);
+
+        assert!(
+            pinion_core::Owner::current().is_none(),
+            "OwnerHandleGuard must pop on compute_paint_scene exit",
         );
     }
 }

@@ -692,7 +692,18 @@ impl<V: WidgetView> ShellCore<V> {
         let dt = clamp_frame_dt(raw_dt);
         self.core.tick_animations(dt);
         let frame = Frame::with_dt(dt);
-        let mut paint_scene = V::view(*self.core.cached_state(), &frame);
+        let cached_state = *self.core.cached_state();
+        // R51.146 §5.22 — wrap the view fn in `root_owner().run(...)`
+        // so [`pinion_core::Owner::current`] resolves to this
+        // binding's root reactive scope from inside `V::view`.
+        // Animations / Effects / Commands created without an explicit
+        // [`Owner`] argument land on the framework-owned scope, dropping
+        // together with this shell. The wrap is the textbook Signal /
+        // Effect thread-local stack pattern; examples stay unchanged.
+        let mut paint_scene = self
+            .core
+            .root_owner()
+            .run(|| V::view(cached_state, &frame));
         compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
         paint_scene
     }
@@ -808,7 +819,16 @@ impl<V: WidgetView> ShellCore<V> {
             // `cached_state` (`Copy`) and the dispatcher takes the
             // scene mut via `core.scene_mut()`. `previews` / `revision`
             // / `focus` / `text_cache` stay on the Vello extras.
+            //
+            // R51.146 §5.22 — clone the root [`Owner`] handle (cheap
+            // `Rc` clone) before `scene_mut` so the producer closure
+            // wraps `V::view` in `root_owner.run(|| ...)`. The clone
+            // aliases the same reactive scope through the underlying
+            // `Rc<OwnerInner>`, so animations / effects registered
+            // through `Owner::current()` inside the synthetic-paint
+            // path still land on the binding's owner.
             let cached_state = *self.core.cached_state();
+            let root_owner = self.core.root_owner().clone();
             let scene_ptr = self.core.scene_mut();
             let previews = &self.previews;
             let revision = &self.revision;
@@ -817,7 +837,7 @@ impl<V: WidgetView> ShellCore<V> {
             let last_paint = self.last_paint_layout.as_ref();
             let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
-                let mut paint = V::view(cached_state, &frame);
+                let mut paint = root_owner.run(|| V::view(cached_state, &frame));
                 compute_layout(&mut paint, text_cache_ptr, w, h);
                 paint
             };

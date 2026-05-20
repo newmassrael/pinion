@@ -57,6 +57,22 @@ thread_local! {
     static CURRENT_OWNER: RefCell<Vec<Weak<dyn ReactiveNode>>> = const { RefCell::new(Vec::new()) };
     static BATCH_DEPTH: Cell<u32> = const { Cell::new(0) };
     static PENDING_DIRTY: RefCell<SubscriberSet> = RefCell::new(SubscriberSet::new());
+    /// R51.146 §5.22 — Owner-only handle stack, mirrors [`CURRENT_OWNER`]
+    /// for the subset of pushes that originate from [`Owner::run`].
+    /// [`Computed::recompute`] / [`Effect::recompute`] use the internal
+    /// [`run_with_node`] path which deliberately leaves this stack
+    /// untouched, so [`Owner::current`] inside a `Computed` body still
+    /// resolves to the enclosing `Owner` rather than the computed node
+    /// (the textbook Solid.js / SolidJS contract for `useOwner` /
+    /// `createRoot` capture: derived values stay framework-owned, the
+    /// "active scope" the application sees is always the lexical
+    /// `Owner`). [`Owner::current`] returns the strong [`Owner`]
+    /// handle by upgrading the topmost [`Weak`]; the strong handle
+    /// suffices for [`Animation`](crate::animation::Animation)
+    /// registration, [`Effect`](crate::reactive::Effect) anchoring,
+    /// and [`Command`](crate::command::Command) dispatch from inside
+    /// a framework-wrapped view fn.
+    static CURRENT_OWNER_HANDLE: RefCell<Vec<Weak<OwnerInner>>> = const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) fn next_node_id() -> u64 {
@@ -380,11 +396,77 @@ impl Owner {
     /// Push this owner as the current scope, run `f`, pop. Signal reads
     /// during `f` auto-subscribe to this owner. The stack pop is RAII —
     /// even if `f` panics, the stack is restored before the unwind continues.
+    ///
+    /// R51.146 §5.22 — pushes onto the separate
+    /// [`CURRENT_OWNER_HANDLE`] stack in addition to [`CURRENT_OWNER`].
+    /// The two stacks track different things: [`CURRENT_OWNER`] is the
+    /// subscriber stack consulted by [`Signal::get`](crate::reactive::Signal::get)
+    /// and [`Computed::get`](crate::reactive::Computed::get) for
+    /// auto-subscription, while [`CURRENT_OWNER_HANDLE`] is the
+    /// pure-`Owner` stack [`Owner::current`] reads. The split is what
+    /// lets a [`Computed`](crate::reactive::Computed) body or
+    /// [`Effect`](crate::reactive::Effect) reactive subscriber sit
+    /// atop the subscriber stack (so its reads are tracked) while
+    /// [`Owner::current`] inside it still returns the enclosing
+    /// [`Owner`] — the lexical scope the application owns rather than
+    /// the framework-internal derived node.
     pub fn run<R>(&self, f: impl FnOnce() -> R) -> R {
         let strong: Rc<OwnerInner> = Rc::clone(&self.inner);
+        let handle_weak: Weak<OwnerInner> = Rc::downgrade(&strong);
         let as_node: Rc<dyn ReactiveNode> = strong;
-        let _guard = OwnerStackGuard::push(Rc::downgrade(&as_node));
+        let _node_guard = OwnerStackGuard::push(Rc::downgrade(&as_node));
+        let _handle_guard = OwnerHandleGuard::push(handle_weak);
         f()
+    }
+
+    /// R51.146 §5.22 — return the strong [`Owner`] handle for the
+    /// innermost active [`Owner::run`] scope, if any.
+    ///
+    /// Returns [`None`] when called outside any active [`Owner::run`]
+    /// (a bare entry from `main`, a background thread that never set
+    /// up an owner, or after every enclosing [`Owner::run`] has
+    /// returned). Returns [`Some`] when called from inside a view fn
+    /// wrapped by the framework's
+    /// `root_owner().run(|| V::view(state, &frame))` pattern —
+    /// applications and the SCE-emitted code use this to attach
+    /// [`Animation<T>`](crate::animation::Animation) instances,
+    /// [`Effect`](crate::reactive::Effect) closures, and
+    /// [`Command`](crate::command::Command) dispatches to the binding's
+    /// reactive scope without threading the [`Owner`] argument through
+    /// every callee.
+    ///
+    /// The returned [`Owner`] is a strong clone — registrations on it
+    /// pin the [`Owner`] alive for as long as the registration holds.
+    /// Stale [`Weak`] entries (an [`Owner`] dropped mid-`run` via
+    /// `mem::take` or similar pathological code path) appear here as
+    /// the strong-handle stack walks down to the first live entry —
+    /// the same panic-safe RAII invariant the [`OwnerHandleGuard`]
+    /// drop already enforces.
+    ///
+    /// Reactive-node nesting note: a [`Computed`](crate::reactive::Computed)
+    /// or [`Effect`](crate::reactive::Effect) running its recompute
+    /// closure pushes onto [`CURRENT_OWNER`] (the subscriber stack)
+    /// but NOT onto [`CURRENT_OWNER_HANDLE`]. So inside a `Computed`
+    /// body, [`Owner::current`] still returns the lexically enclosing
+    /// [`Owner::run`] scope — the framework-internal derived node is
+    /// invisible to applications by design (the `SolidJS` `useOwner`
+    /// contract).
+    #[must_use]
+    pub fn current() -> Option<Owner> {
+        CURRENT_OWNER_HANDLE.with(|stack| {
+            let borrowed = stack.borrow();
+            // Walk from top to bottom — a `Weak` that fails to
+            // upgrade is a dropped scope (rare; happens when an
+            // outer `Owner` is moved/dropped while a nested `run`
+            // closure is still executing under it). The first live
+            // entry is the innermost active scope.
+            for weak in borrowed.iter().rev() {
+                if let Some(inner) = weak.upgrade() {
+                    return Some(Owner { inner });
+                }
+            }
+            None
+        })
     }
 
     /// Whether any source the owner subscribed to has been written since the
@@ -562,6 +644,29 @@ impl Drop for OwnerStackGuard {
     }
 }
 
+/// R51.146 §5.22 — RAII guard for the [`CURRENT_OWNER_HANDLE`] stack
+/// mirroring [`OwnerStackGuard`]. Pushed only by [`Owner::run`]; the
+/// internal [`run_with_node`] path (used by [`Computed::recompute`] /
+/// [`Effect::recompute`]) leaves this stack untouched, so
+/// [`Owner::current`] inside derived-node bodies still resolves to the
+/// enclosing application scope.
+struct OwnerHandleGuard;
+
+impl OwnerHandleGuard {
+    fn push(weak: Weak<OwnerInner>) -> Self {
+        CURRENT_OWNER_HANDLE.with(|stack| stack.borrow_mut().push(weak));
+        Self
+    }
+}
+
+impl Drop for OwnerHandleGuard {
+    fn drop(&mut self) {
+        CURRENT_OWNER_HANDLE.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
 /// Run `f` with a strong handle to the topmost active node, if any. Sources
 /// call this from `get()` to find the subscriber that should be registered.
 pub(crate) fn with_current_owner<R>(f: impl FnOnce(Option<&Rc<dyn ReactiveNode>>) -> R) -> R {
@@ -688,6 +793,11 @@ pub(crate) fn in_batch() -> bool {
 #[cfg(test)]
 pub(crate) fn current_owner_stack_len() -> usize {
     CURRENT_OWNER.with(|s| s.borrow().len())
+}
+
+#[cfg(test)]
+pub(crate) fn current_owner_handle_stack_len() -> usize {
+    CURRENT_OWNER_HANDLE.with(|s| s.borrow().len())
 }
 
 #[cfg(test)]
@@ -1050,6 +1160,199 @@ mod tests {
         });
         assert!(observer.is_dirty());
         assert_eq!(s.get(), 0);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R51.146 §5.22 — Owner::current() public API tests.
+    //
+    // The substrate landed an Owner-only handle stack
+    // (`CURRENT_OWNER_HANDLE`) parallel to `CURRENT_OWNER`. The tests
+    // below pin down its observable contract:
+    //
+    // - Outside any `Owner::run`: `current()` returns `None`.
+    // - Inside `Owner::run`: returns the strong handle to *self*.
+    // - Nested `Owner::run`: returns the innermost.
+    // - After `Owner::run` exits: returns `None` again (RAII pop).
+    // - Panic inside body: still pops both stacks.
+    // - Computed::recompute / Effect::recompute push onto
+    //   `CURRENT_OWNER` (subscriber stack) but NOT onto the handle
+    //   stack — `Owner::current()` from inside a derived-node body
+    //   still resolves to the enclosing `Owner::run`. This is the
+    //   load-bearing test for the "useOwner doesn't see derived
+    //   nodes" SolidJS contract.
+    // ────────────────────────────────────────────────────────────────
+
+    mod current_owner_handle {
+        use super::{Owner, current_owner_handle_stack_len};
+
+        #[test]
+        fn current_outside_run_is_none() {
+            assert!(Owner::current().is_none());
+            assert_eq!(current_owner_handle_stack_len(), 0);
+        }
+
+        #[test]
+        fn current_inside_run_returns_self_handle() {
+            let owner = Owner::new();
+            let seen_id = owner.run(|| Owner::current().map(|o| o.id()));
+            assert_eq!(seen_id, Some(owner.id()));
+        }
+
+        #[test]
+        fn current_after_run_exits_returns_to_none() {
+            let owner = Owner::new();
+            owner.run(|| {
+                let _ = Owner::current();
+            });
+            assert!(Owner::current().is_none());
+            assert_eq!(current_owner_handle_stack_len(), 0);
+        }
+
+        #[test]
+        fn nested_run_current_returns_innermost() {
+            let outer = Owner::new();
+            let inner = Owner::new();
+            let seen = outer.run(|| inner.run(|| Owner::current().map(|o| o.id())));
+            assert_eq!(seen, Some(inner.id()));
+        }
+
+        #[test]
+        fn nested_run_current_returns_outer_after_inner_pops() {
+            let outer = Owner::new();
+            let inner = Owner::new();
+            let seen = outer.run(|| {
+                inner.run(|| {
+                    // Inside the innermost — innermost wins.
+                    assert_eq!(Owner::current().map(|o| o.id()), Some(inner.id()));
+                });
+                // After the inner pops the handle guard, the outer
+                // is back on top.
+                Owner::current().map(|o| o.id())
+            });
+            assert_eq!(seen, Some(outer.id()));
+        }
+
+        #[test]
+        fn returned_handle_is_a_strong_clone_of_the_running_owner() {
+            // The handle returned by `current()` aliases the same
+            // `OwnerInner`, so registrations on it land in the same
+            // scope as registrations on the original.
+            use crate::animation::Tickable;
+            use std::cell::Cell;
+            use std::rc::Rc;
+
+            struct Noop;
+            impl Tickable for Noop {
+                fn tick(&self, _dt: f32) {}
+                fn is_at_rest(&self, _epsilon: f32) -> bool {
+                    true
+                }
+            }
+
+            let owner = Owner::new();
+            let captured: Cell<Option<u64>> = Cell::new(None);
+            owner.run(|| {
+                let cur = Owner::current().expect("current must be Some inside run");
+                cur.register_animation(Rc::new(Noop));
+                captured.set(Some(cur.id()));
+            });
+            assert_eq!(captured.get(), Some(owner.id()));
+            // The animation registered through the `current()` handle
+            // lives on the original `owner` — verified through the
+            // test-only count accessor.
+            assert_eq!(owner.registered_animation_count(), 1);
+        }
+
+        #[test]
+        fn panic_in_run_body_still_pops_handle_stack() {
+            assert_eq!(current_owner_handle_stack_len(), 0);
+            let owner = Owner::new();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                owner.run(|| {
+                    panic!("simulated user-closure panic");
+                })
+            }));
+            assert!(result.is_err());
+            assert_eq!(
+                current_owner_handle_stack_len(),
+                0,
+                "CURRENT_OWNER_HANDLE stack must unwind on panic",
+            );
+            assert!(Owner::current().is_none());
+        }
+
+        #[test]
+        fn nested_run_panic_unwinds_handle_stack_in_order() {
+            let outer = Owner::new();
+            let inner = Owner::new();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                outer.run(|| {
+                    inner.run(|| {
+                        panic!("inner panic");
+                    })
+                })
+            }));
+            assert!(result.is_err());
+            assert_eq!(current_owner_handle_stack_len(), 0);
+            assert!(Owner::current().is_none());
+        }
+
+        #[test]
+        fn computed_recompute_does_not_shadow_owner_handle_stack() {
+            // R51.146 load-bearing — Computed::recompute pushes its
+            // own node onto `CURRENT_OWNER` (subscriber tracking) but
+            // must NOT push onto `CURRENT_OWNER_HANDLE`. Inside the
+            // compute closure, `Owner::current()` returns the
+            // enclosing `Owner::run` scope, not the computed node.
+            use crate::reactive::computed::Computed;
+            use crate::reactive::signal::Signal;
+            use std::cell::Cell;
+            use std::rc::Rc;
+
+            let outer = Owner::new();
+            let observed_owner_id: Rc<Cell<Option<u64>>> = Rc::new(Cell::new(None));
+            let observed_id_clone = Rc::clone(&observed_owner_id);
+            let source = Signal::new(1_i32);
+            let source_clone = source.clone();
+            let computed = Computed::new(move || {
+                // Read the source so the Computed subscribes (this
+                // pushes the Computed node onto CURRENT_OWNER); then
+                // read the lexical owner via current() — should still
+                // be the `outer` from the enclosing run.
+                let v = source_clone.get();
+                observed_id_clone.set(Owner::current().map(|o| o.id()));
+                v + 1
+            });
+            // Trigger the recompute by reading inside the outer scope.
+            let value = outer.run(|| computed.get());
+            assert_eq!(value, 2);
+            assert_eq!(
+                observed_owner_id.get(),
+                Some(outer.id()),
+                "Owner::current() inside Computed body must resolve to the lexical Owner::run, \
+                 not the Computed node itself",
+            );
+        }
+
+        #[test]
+        fn current_in_separate_thread_is_none() {
+            // R51.146 — handle stack is thread-local. A spawned
+            // thread starts with an empty stack regardless of the
+            // parent's run state. The single-threaded reactive model
+            // (§5.22) forbids cross-thread Signal/Owner sharing, but
+            // we still verify the substrate's thread-local boundary.
+            let owner = Owner::new();
+            owner.run(|| {
+                assert!(Owner::current().is_some());
+                let other = std::thread::spawn(|| Owner::current().map(|o| o.id()))
+                    .join()
+                    .expect("worker thread joined");
+                assert!(
+                    other.is_none(),
+                    "spawned thread sees its own empty handle stack",
+                );
+            });
+        }
     }
 
     // ────────────────────────────────────────────────────────────────
