@@ -1,3 +1,4 @@
+pub mod animation;
 pub mod app;
 pub mod event;
 pub mod external;
@@ -21,6 +22,7 @@ pub mod test_fixtures;
 #[cfg(test)]
 mod multi_window;
 
+pub use animation::{Animatable, AnimVec2, AnimVec4, SpringConfig, SpringState};
 pub use event::Event;
 pub use renderer::WidgetRenderer;
 pub use external::External;

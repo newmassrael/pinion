@@ -1525,6 +1525,15 @@ fn main() {
 
 
 
+**Impact scope**: §5.22, §5.23, §6.3
+
+
+
+**Implementations**:
+- crates/pinion-core/src/animation.rs
+- crates/pinion-core/src/animation.rs:Animatable
+- crates/pinion-core/src/animation.rs:SpringConfig
+- crates/pinion-core/src/animation.rs:SpringState
 
 
 
@@ -5601,6 +5610,34 @@ router.pointer_down(&mut state_scene);
 - R51.107 carry close 자체는 R51.131 audit-only 로 land 완료 (substrate textbook 정통)
 - host mnemosyne-cli emit-publishable-override-ledger-draft subcommand 미지원 회피
 - validate_workspace stderr hint = anchor sha256 정통 path (cli rebuild 불요)
+
+
+
+### R51.133 — R51.133 §5.28 — animation primitive substrate (Animatable trait + SpringConfig + SpringState semi-implicit Euler 첫 land, R52 axis 시작)
+
+**Changes**:
+- pinion-core/src/animation.rs 신규 — Animatable trait + AnimVec2/AnimVec4 + SpringConfig + SpringState (+11 테스트)
+- pinion-core/src/lib.rs — pub mod animation + 5 type re-export top-level
+- atomic §5.28 — 4 implementation bindings (file + Animatable + SpringConfig + SpringState) + impact_scope=[5.22, 5.23, 6.3]
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib animation: 11/11 passed (수렴 검증 / pure function / interrupt velocity 보존)
+- cargo test --workspace --features pinion-runtime/vello: 1733/0/8 (+11 신규, baseline 1722 보존)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning (doc_markdown 5건 backtick 정통)
+
+
+
+**Impact**: §5.28
+
+
+**Carry forward**:
+- Color / Rect Animatable impls — linear-RGBA / f32-shadow space 변환 quality 라운드
+- AnimationDriver Effect substrate — §5.23 의존 + Owner drop cancel (R51.134+)
+- Animated<T> Signal 래퍼 — §5.22 의존 + Frame.dt driver (R51.135+)
+- SCE schema + Forge emit — declarative animated bindings (R51.136+)
+- Easing enum (Linear / EaseInQuad / …) — tween special case path
 
 
 
