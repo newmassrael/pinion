@@ -39,13 +39,13 @@ use pinion_a11y::{
     tag_to_node_id, translate_action, AccessAction, AccessFocus, AccessNode,
     PinionAccessAction, ROOT_NODE_ID,
 };
-use pinion_core::{Frame, Scene, SceneRevision};
+use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
-    clamp_frame_dt, compute_layout, rect_for_tag, CoreShell, DispatchTail, FocusManager,
-    Modifiers, PointerId, Touch, TouchPhase,
+    clamp_frame_dt, compute_layout, rect_for_tag, CommandExecutor, CoreShell, DispatchTail,
+    FocusManager, Modifiers, PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
 
@@ -898,6 +898,18 @@ impl<V: WidgetView> ShellCore<V> {
     /// substrate-side reads (`tail.intents` iter, `tail.state_change`
     /// copy) consume nothing; the caller owns the `Vec<Intent>` and
     /// drops it on return.
+    ///
+    /// R51.159 §5.23 — after the existing intent + state-change
+    /// bookkeeping, drain any [`pinion_core::Command`] the just-run
+    /// SCXML transition queued through
+    /// [`CoreShell::dispatch_pending_commands`]. With no executor
+    /// installed (the default for headless tests and pre-R51.159
+    /// binaries) the drain is a no-op; with an executor installed
+    /// (the `run_with_handlers` entry point) every command kind with
+    /// a registered handler dispatches asynchronously and the
+    /// resolved [`Intent`] arrives back as
+    /// [`AppEvent::IntentArrived`](crate::AppEvent::IntentArrived).
+    /// Unhandled kinds are logged so a missing handler is observable.
     fn handle_tail(&mut self, tail: &DispatchTail<V::State>) {
         for intent in &tail.intents {
             eprintln!(
@@ -914,6 +926,74 @@ impl<V: WidgetView> ShellCore<V> {
             );
             self.request_redraw();
         }
+        // R51.159 §5.23 — drain Commands the dispatch arm queued.
+        for cmd in self.core.dispatch_pending_commands() {
+            eprintln!(
+                "shell: command unhandled kind={} payload={:?}",
+                cmd.kind_str(),
+                cmd.payload,
+            );
+        }
+    }
+
+    /// R51.159 §5.23 — install or replace the
+    /// [`CommandExecutor`](pinion_runtime::CommandExecutor) the
+    /// substrate's [`Self::handle_tail`] drains pending
+    /// [`pinion_core::Command`]s into. Forwards to
+    /// [`CoreShell::set_executor`].
+    pub fn set_command_executor(
+        &mut self,
+        executor: std::sync::Arc<CommandExecutor>,
+    ) -> Option<std::sync::Arc<CommandExecutor>> {
+        self.core.set_executor(executor)
+    }
+
+    /// R51.159 §5.23 — borrow the currently-installed
+    /// [`CommandExecutor`]. `None` until
+    /// [`Self::set_command_executor`] runs.
+    #[must_use]
+    pub fn command_executor(&self) -> Option<&std::sync::Arc<CommandExecutor>> {
+        self.core.executor()
+    }
+
+    /// R51.159 §5.23 — re-feed a resolved [`Intent`] (arriving via
+    /// [`AppEvent::IntentArrived`](crate::AppEvent::IntentArrived)
+    /// from the [`ProxyIntentSink`](crate::ProxyIntentSink)) into the
+    /// SCXML `send` channel.
+    ///
+    /// This is the closing step of the §5.23 R27 dispatch loop:
+    ///
+    /// ```text
+    /// Owner.dispatch_command(cmd)
+    ///   → CommandExecutor::dispatch → tokio worker → Intent
+    ///   → ProxyIntentSink::send → AppEvent::IntentArrived
+    ///   → AppShell.user_event arm → ShellCore::dispatch_intent
+    ///   → Scene::External invoke("send", tag) → SCXML transition.
+    /// ```
+    ///
+    /// R51.159 first-cut routes the intent's tag through the same
+    /// `invoke("send", Text(tag))` channel typed widget events use
+    /// ([`CoreShell::forward`]). The
+    /// [`Intent::payload`](pinion_core::Intent) is logged but not yet
+    /// threaded into the SCXML send (carry: payload-aware SCXML send
+    /// is part of the Update-reducer signature evolution).
+    pub fn dispatch_intent(&mut self, intent: &Intent) {
+        eprintln!(
+            "shell: intent-feedback {} payload={:?}",
+            intent.tag_str(),
+            intent.payload,
+        );
+        if let pinion_core::Scene::External(node) = self.core.scene_mut()
+            && let Some(intro) = node.handle.introspect_mut()
+        {
+            let _ = intro.invoke(
+                "send",
+                pinion_core::external::IntrospectValue::Text(intent.tag_str().to_string()),
+            );
+        }
+        self.revision.bump();
+        let tail = self.core.tail();
+        self.handle_tail(&tail);
     }
 
     /// R51.77 §5.40 — pure planning step for the §5.40 AccessKit

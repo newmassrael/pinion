@@ -47,23 +47,27 @@
 
 use std::sync::Arc;
 
+use pinion_core::Intent;
 use vello::peniko::Color as PenikoColor;
 use vello::Scene as VelloScene;
 use winit::window::Window;
 
 mod app;
+pub mod executor;
 mod substrate;
 pub mod typeahead;
 
-pub use app::{run, AppShell};
+pub use app::{run, run_with_handlers, AppShell};
+pub use executor::{build_executor_and_sink, ProxyIntentSink, TokioExecutor};
 pub use substrate::{AccessEmitDecision, ShellCore};
 
 /// Winit user-event variants that reach the UI thread out-of-band.
 ///
 /// The shell's [`AppShell::user_event`] handler is the sole consumer;
-/// producers are the stdin reader thread ([`AppEvent::RpcRequest`])
-/// and the `accesskit_winit` adapter ([`AppEvent::AccessKit`], R51.62
-/// §5.40 wiring).
+/// producers are the stdin reader thread ([`AppEvent::RpcRequest`]),
+/// the `accesskit_winit` adapter ([`AppEvent::AccessKit`], R51.62
+/// §5.40 wiring), and the [`ProxyIntentSink`] backing the §5.23
+/// `CommandExecutor` ([`AppEvent::IntentArrived`], R51.159 wiring).
 ///
 /// `Clone` is intentionally absent: `accesskit_winit::Event` is not
 /// `Clone`, and the shell never duplicates a user event in-flight.
@@ -80,6 +84,12 @@ pub enum AppEvent {
     /// dispatch wiring), or `AccessibilityDeactivated` (AT
     /// disconnected — adapter remains in place for the next attach).
     AccessKit(accesskit_winit::Event),
+    /// R51.159 §5.23 — [`Intent`] produced by a resolved
+    /// [`Command`](pinion_core::Command) future and delivered through
+    /// [`ProxyIntentSink`]. The [`AppShell::user_event`] arm routes
+    /// the intent into [`ShellCore`] for re-feeding into the SCXML
+    /// `send` channel (R51.160 carry — this round logs it).
+    IntentArrived(Intent),
 }
 
 impl From<accesskit_winit::Event> for AppEvent {

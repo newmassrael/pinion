@@ -46,6 +46,21 @@ pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
 # substrate.
 accesskit = { workspace = true }
 accesskit_winit = { workspace = true }
+# R51.159 §5.23 — tokio multi-thread runtime backs the [`TokioExecutor`]
+# concrete [`Executor`] impl in `crate::executor`. The substrate
+# [`CommandExecutor`] in pinion-runtime stays runtime-agnostic; the
+# binding to tokio lives at the §6.3 boundary (here, paint-side
+# shell). `rt-multi-thread` is the worker-thread builder + `rt` is
+# the base runtime + `macros` enables `#[tokio::test]` for unit
+# tests. We pin the default-features off `tokio` (no need for net/fs
+# at this round) but enable everything via `enable_all` per-runtime.
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+
+[dev-dependencies]
+# R51.159 §5.23 — `tokio::time::sleep` etc. for command-dispatch
+# integration tests that need a real async boundary. Same feature set
+# as the runtime dep so the test crate compiles without extra knobs.
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 
 [lints]
 workspace = true

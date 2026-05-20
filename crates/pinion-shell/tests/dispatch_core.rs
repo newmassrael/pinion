@@ -1263,3 +1263,197 @@ mod r51_146_view_fn_owner_wrap {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// R51.159 §5.23 — pinion-shell tokio binding integration tests.
+//
+// Verifies the ShellCore-level wiring: set_command_executor injects an
+// executor, handle_tail drains pending commands on every dispatch arm,
+// dispatch_intent re-feeds an Intent into the SCXML send channel.
+//
+// The executor under test is BlockOnExecutor (synchronous, deterministic);
+// the tokio multi-thread runtime that pinion-shell's run_with_handlers
+// installs is unit-tested in pinion-shell/src/executor.rs directly.
+// ─────────────────────────────────────────────────────────────────────────
+
+mod r51_159_command_executor_wiring {
+    use super::*;
+    use std::sync::Arc;
+
+    use pinion_core::{Command, Intent};
+    use pinion_runtime::{
+        BlockOnExecutor, CommandExecutor, Executor, HandlerFuture, HandlerRegistry, IntentSink,
+        VecSink,
+    };
+
+    fn echo_handler() -> Arc<dyn pinion_runtime::Handler> {
+        Arc::new(|cmd: Command| -> HandlerFuture {
+            Box::pin(async move {
+                Intent::new_owned(
+                    format!("echo.{}", cmd.kind_str()),
+                    cmd.payload,
+                )
+            })
+        })
+    }
+
+    fn build_executor(
+        kinds: &[&'static str],
+    ) -> (Arc<CommandExecutor>, Arc<VecSink>) {
+        let mut reg = HandlerRegistry::new();
+        for k in kinds {
+            reg.register(*k, echo_handler());
+        }
+        let sink = Arc::new(VecSink::new());
+        let exec: Arc<dyn Executor> = Arc::new(BlockOnExecutor);
+        let sink_dyn: Arc<dyn IntentSink> = sink.clone();
+        let cmd_exec = Arc::new(CommandExecutor::new(reg, exec, sink_dyn));
+        (cmd_exec, sink)
+    }
+
+    #[test]
+    fn set_command_executor_installs_and_returns_prior() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        assert!(core.command_executor().is_none(), "fresh ShellCore has no executor");
+
+        let (first, _sink) = build_executor(&[]);
+        let first_ptr = Arc::as_ptr(&first).cast::<()>() as usize;
+        let prior = core.set_command_executor(first);
+        assert!(prior.is_none(), "first install returns no prior");
+        let installed = core
+            .command_executor()
+            .expect("set_command_executor installs Some");
+        assert_eq!(
+            Arc::as_ptr(installed).cast::<()>() as usize,
+            first_ptr,
+            "accessor returns the just-installed Arc",
+        );
+
+        let (second, _sink_b) = build_executor(&[]);
+        let prior = core
+            .set_command_executor(second)
+            .expect("replace returns prior");
+        assert_eq!(
+            Arc::as_ptr(&prior).cast::<()>() as usize,
+            first_ptr,
+            "swap returns the first executor",
+        );
+    }
+
+    #[test]
+    fn forward_drain_pumps_handled_command_through_to_sink() {
+        // R51.159 — installing an executor + queuing a Command on the
+        // root owner, then triggering any dispatch arm (forward),
+        // routes the queued command through the registry and the
+        // resolved Intent arrives at the sink.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let (executor, sink) = build_executor(&["http.get"]);
+        let mut core = ShellCore::<TestView>::new();
+        let _ = core.set_command_executor(executor);
+
+        // Queue a command on the root owner — this would normally
+        // come from a reducer or SCXML; for the integration test we
+        // inject it directly.
+        let scope_id = core.root_owner().id();
+        core.root_owner().dispatch_command(Command::new_static(
+            "http.get",
+            IntrospectValue::Text("/api".into()),
+            scope_id,
+        ));
+
+        assert_eq!(
+            core.root_owner().pending_commands().len(),
+            1,
+            "command queued before dispatch arm runs",
+        );
+
+        // Trigger any dispatch arm — `forward` runs `handle_tail`
+        // which calls `core.dispatch_pending_commands`.
+        core.forward(());
+
+        assert!(
+            core.root_owner().pending_commands().is_empty(),
+            "handle_tail drained the queue",
+        );
+        let drained = sink.drain();
+        assert_eq!(drained.len(), 1, "sink received the resolved intent");
+        assert_eq!(drained[0].tag_str(), "echo.http.get");
+    }
+
+    #[test]
+    fn forward_drain_pumps_unhandled_command_logged_only() {
+        // R51.159 — when no handler is registered for the command's
+        // kind, the drain pump returns the command as unhandled. The
+        // shell side currently logs to stderr; the sink stays empty.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let (executor, sink) = build_executor(&["other.kind"]);
+        let mut core = ShellCore::<TestView>::new();
+        let _ = core.set_command_executor(executor);
+
+        let scope_id = core.root_owner().id();
+        core.root_owner().dispatch_command(Command::new_static(
+            "missing.kind",
+            IntrospectValue::Null,
+            scope_id,
+        ));
+        core.forward(());
+
+        assert!(
+            core.root_owner().pending_commands().is_empty(),
+            "even unhandled commands consume the queue on drain",
+        );
+        assert!(sink.is_empty(), "unregistered handler → sink stays empty");
+    }
+
+    #[test]
+    fn dispatch_intent_bumps_revision() {
+        // R51.159 — dispatch_intent re-feeds an Intent through the
+        // SCXML send channel. The OCC revision bump observable
+        // before/after confirms the path ran. The TestExternal's
+        // invoke is a no-op, so no state change is expected; we just
+        // verify the surface fires.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let rev_before = core.revision();
+        let intent = Intent::new_static("test.evt", IntrospectValue::Null);
+        core.dispatch_intent(&intent);
+        assert!(
+            core.revision() > rev_before,
+            "dispatch_intent must bump OCC revision (winit input bypass policy)",
+        );
+    }
+
+    #[test]
+    fn forward_without_executor_keeps_queue_intact() {
+        // R51.159 — without an installed executor, handle_tail's
+        // drain step is a no-op (Vec::new returned by
+        // dispatch_pending_commands); pending commands stay parked.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        assert!(core.command_executor().is_none());
+
+        let scope_id = core.root_owner().id();
+        core.root_owner().dispatch_command(Command::new_static(
+            "foo",
+            IntrospectValue::Null,
+            scope_id,
+        ));
+        core.forward(());
+        assert_eq!(
+            core.root_owner().pending_commands().len(),
+            1,
+            "no executor → drain pump is no-op; queue preserved",
+        );
+    }
+}

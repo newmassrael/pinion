@@ -27,7 +27,7 @@ use std::thread;
 
 use pinion_a11y::AccessTreeBuilder;
 use pinion_core::scene::BoxNode;
-use pinion_runtime::{paint_adapter, PointerId};
+use pinion_runtime::{paint_adapter, CommandExecutor, HandlerRegistry, PointerId};
 use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -36,6 +36,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
+use crate::executor::build_executor_and_sink;
 use crate::substrate::ShellCore;
 use crate::{AppEvent, RenderState, VelloContext, VelloRenderer, WidgetRenderer, WidgetView};
 
@@ -508,6 +509,11 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         match event {
             AppEvent::RpcRequest(json) => self.dispatch_rpc(&json),
             AppEvent::AccessKit(ak) => self.handle_accesskit_event(ak),
+            // R51.159 §5.23 — re-feed an Intent produced by a resolved
+            // Command future back into the SCXML `send` channel via
+            // `ShellCore::dispatch_intent`. The closing step of the
+            // §5.23 R27 dispatch loop.
+            AppEvent::IntentArrived(intent) => self.core.dispatch_intent(&intent),
         }
         self.drain_redraw_to_winit();
     }
@@ -611,6 +617,12 @@ fn winit_modifiers_to_pinion(
 /// the [`AppShell<V>`] until quit. The single line every shell
 /// consumer needs in `fn main()`.
 ///
+/// R51.159 §5.23 — no [`CommandExecutor`] is installed by this entry
+/// point; pending [`pinion_core::Command`] queues stay parked on the
+/// owner side and never fire. Use [`run_with_handlers`] to register
+/// async [`Handler`](pinion_runtime::Handler)s and bind a tokio
+/// runtime + intent-arrival event channel.
+///
 /// # Panics
 /// Panics if `winit::event_loop::EventLoop::with_user_event().build()`
 /// fails — that constructor only errors on platforms that cannot
@@ -624,6 +636,51 @@ pub fn run<V: WidgetView>() {
     event_loop.set_control_flow(ControlFlow::Wait);
     spawn_stdin_rpc_reader(event_loop.create_proxy());
     let mut app = AppShell::<V>::new(event_loop.create_proxy());
+    if let Err(e) = event_loop.run_app(&mut app) {
+        eprintln!("shell: event loop error: {e}");
+    }
+}
+
+/// R51.159 §5.23 — variant of [`run`] that installs a
+/// [`CommandExecutor`](pinion_runtime::CommandExecutor) at boot so
+/// pending [`pinion_core::Command`]s queued by reducer fallout or
+/// SCXML / Update steps reach their registered
+/// [`Handler`](pinion_runtime::Handler)s asynchronously.
+///
+/// Composes:
+///
+/// - A tokio multi-thread [`TokioExecutor`](crate::TokioExecutor) (1
+///   worker thread, `enable_all`) backing
+///   [`Executor::spawn`](pinion_runtime::Executor).
+/// - A [`ProxyIntentSink`](crate::ProxyIntentSink) wrapping the
+///   winit [`EventLoopProxy`] so resolved [`pinion_core::Intent`]s
+///   arrive on the UI thread through
+///   [`AppEvent::IntentArrived`] for re-feed.
+/// - The supplied `registry` of [`Handler`](pinion_runtime::Handler)
+///   impls keyed by [`pinion_core::Command::kind_str`].
+///
+/// # Panics
+/// Panics if the winit event loop cannot be built (same condition as
+/// [`run`]) or if the tokio runtime cannot spin up its worker
+/// thread (the OS-level thread-spawn failure that
+/// [`TokioExecutor::new`](crate::TokioExecutor) wraps).
+pub fn run_with_handlers<V: WidgetView>(registry: HandlerRegistry) {
+    let event_loop = EventLoop::<AppEvent>::with_user_event()
+        .build()
+        .expect("winit EventLoop::with_user_event failed");
+    event_loop.set_control_flow(ControlFlow::Wait);
+    spawn_stdin_rpc_reader(event_loop.create_proxy());
+
+    // R51.159 §5.23 — assemble the CommandExecutor and inject it
+    // before the event loop starts so the first dispatch tail can
+    // already drain pending commands.
+    let (executor, sink) = build_executor_and_sink(event_loop.create_proxy())
+        .expect("tokio runtime build failed");
+    let cmd_exec = Arc::new(CommandExecutor::new(registry, executor, sink));
+
+    let mut app = AppShell::<V>::new(event_loop.create_proxy());
+    let _prior = app.core.set_command_executor(cmd_exec);
+
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("shell: event loop error: {e}");
     }

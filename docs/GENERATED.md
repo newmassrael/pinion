@@ -1286,6 +1286,17 @@ fn main() {
 - crates/pinion-runtime/src/command/executor.rs:CommandExecutor::cancel_scope
 - crates/pinion-runtime/src/command/executor.rs:CommandExecutor::in_flight_len
 - crates/pinion-runtime/src/command/executor.rs:CommandExecutor::has_in_flight
+- crates/pinion-shell/src/executor.rs
+- crates/pinion-shell/src/executor.rs:TokioExecutor
+- crates/pinion-shell/src/executor.rs:TokioExecutor::new
+- crates/pinion-shell/src/executor.rs:ProxyIntentSink
+- crates/pinion-shell/src/executor.rs:ProxyIntentSink::new
+- crates/pinion-shell/src/executor.rs:build_executor_and_sink
+- crates/pinion-shell/src/lib.rs:AppEvent::IntentArrived
+- crates/pinion-shell/src/app.rs:run_with_handlers
+- crates/pinion-shell/src/substrate.rs:ShellCore::set_command_executor
+- crates/pinion-shell/src/substrate.rs:ShellCore::command_executor
+- crates/pinion-shell/src/substrate.rs:ShellCore::dispatch_intent
 
 
 
@@ -6469,6 +6480,39 @@ router.pointer_down(&mut state_scene);
 - pinion-shell AppEvent::IntentArrived variant + user_event arm → ShellCore::dispatch_intent
 - ShellCore: CoreShell drain pump 호출 도메인 (handle_tail 후 / event 종료 시)
 - R51.160 — pinion-tui ShellCoreTui drain pump + IntentSink dual-backend symmetry
+
+
+
+### R51.159 — §5.23 pinion-shell tokio Executor + ProxyIntentSink — R52 axis B 완성 (Command→Future→Intent→UI loop)
+
+**Changes**:
+- pinion-shell/src/executor.rs 신규: TokioExecutor (multi-thread 1 worker) + ProxyIntentSink (winit EventLoopProxy)
+- AppEvent::IntentArrived(Intent) variant + AppShell.user_event arm → core.dispatch_intent
+- pinion-shell/Cargo.toml tokio 1 dep (rt, rt-multi-thread, macros, time, sync)
+- ShellCore::set_command_executor / command_executor / dispatch_intent (SCXML invoke send + revision bump)
+- ShellCore::handle_tail 증강: dispatch_pending_commands 결과 표면 (처리/미처리 log)
+- app.rs run_with_handlers entry point (registry 입력 → tokio+sink 조립 + ShellCore 주입)
+- pinion-shell tests +9 (executor unit 4 + dispatch_core integration 5)
+
+
+
+**Verification**:
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning
+- cargo test --workspace --features pinion-runtime/vello → 1952 pass / 0 fail / 10 ignored (직전 1943 +9)
+- tokio_executor_cancel_aborts_pending_future: 5s sleep abort 관찰 검증 (cancel 실제 작동)
+- forward_drain_pumps_handled_command_through_to_sink: 원 owner queue → drain → sink Intent 계열 완성
+- dispatch_intent_bumps_revision: 재주입 path OCC revision +1
+
+
+
+**Impact**: §5.23, §5.20, §5.12, §6.3
+
+
+**Carry forward**:
+- R51.160 — pinion-tui ShellCoreTui drain pump 동명령 + mpsc IntentSink
+- Intent.payload SCXML send 채널 전파 (Update reducer signature evolution)
+- scene/commands RPC method (10th method, 폈딩 큐와 in-flight 스냅샷)
+- demo example — 실제 Handler 접속 (http.get / clipboard.write 수준 fixture)
 
 
 
