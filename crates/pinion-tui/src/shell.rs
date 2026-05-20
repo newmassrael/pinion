@@ -81,6 +81,8 @@
 //! ([[substrate-incompleteness-signal]]) — each shell-side path
 //! waits for its concrete first consumer.
 
+use std::env;
+use std::fs::OpenOptions;
 use std::io::{self, Stdout, stdout};
 use std::time::Duration;
 
@@ -154,7 +156,22 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
     // owns the renderer-agnostic state (state scene, cached state,
     // router, intent queue). This surface only sequences calls +
     // commits the painted buffer through the live renderer.
+    //
+    // R51.120 §5.41 — substrate is silent by default (no `stderr`
+    // writes under `enable_raw_mode()` + `EnterAlternateScreen`, see
+    // `ShellCoreTui::log_sink` doc for the rationale). Setting
+    // `PINION_TUI_LOG=<path>` in the environment opens the named
+    // file with `append(true)` and routes intent / state trace
+    // lines there. An unset / empty value, or an open error, leaves
+    // the substrate silent — the live UI must not panic on a
+    // missing log dir.
     let mut core = ShellCoreTui::<V>::new();
+    if let Some(path) = env::var_os("PINION_TUI_LOG")
+        && !path.is_empty()
+        && let Ok(file) = OpenOptions::new().create(true).append(true).open(&path)
+    {
+        core.set_log_sink(Box::new(file));
+    }
 
     let (mut cols, mut rows) = V::initial_size();
 

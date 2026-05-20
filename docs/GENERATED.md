@@ -3237,6 +3237,7 @@ router.pointer_down(&mut state_scene);
 - R51.117 — ShellCoreTui<V> substrate extraction (headless test infra + R51.92.1 parity)
 - R51.118 — WidgetViewTui::access_node default + 2 TUI binding override (TUI a11y substrate first cut)
 - R51.119 — atomic stale citation cleanup (R51.117 substrate move: 4 removes + 7 adds)
+- R51.120 — substrate stderr → optional file sink (alternate screen 보호, PINION_TUI_LOG opt-in)
 
 
 
@@ -3306,6 +3307,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_up
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::compute_paint_scene
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::update_paint_scene
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::set_log_sink
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::with_log_sink
 
 
 

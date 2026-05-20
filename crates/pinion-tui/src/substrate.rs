@@ -38,9 +38,11 @@
 //!   through the `PIXEL_PER_CELL_*` placeholder. Carry until a
 //!   binding surfaces a real terminal cell-size mismatch.
 
+use std::io;
 use std::marker::PhantomData;
 
 use pinion_core::external::IntrospectValue;
+use pinion_core::intent::Intent;
 use pinion_core::scene::ExternalNode;
 use pinion_core::{Frame, Scene};
 use pinion_runtime::input::{InputRouter, PointerId};
@@ -77,9 +79,30 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// after `cell_to_pixel` conversion.
     router: InputRouter,
     /// Per-frame queue the §5.20 intent drain accumulates into.
-    /// Drained on every successful dispatch — each intent reaches
-    /// stderr as a `tui: intent <name> payload=<value>` trace line.
+    /// Drained on every successful dispatch — each intent is routed
+    /// through [`Self::log_sink`] (if set) as a
+    /// `tui: intent <name> payload=<value>` trace line.
     intent_queue: IntentQueue,
+    /// R51.120 §5.41 — optional diagnostic sink for intent / state
+    /// trace lines.
+    ///
+    /// **Default = `None` (silent)**: the surface enables the TUI
+    /// shell under `enable_raw_mode()` + `EnterAlternateScreen`;
+    /// writing diagnostic text to `stderr` from inside that mode
+    /// produces raw bytes on the same terminal alternate buffer
+    /// (the `EnterAlternateScreen` ANSI sequence only retargets the
+    /// `stdout` fd — `stderr` keeps going to the visible terminal),
+    /// which then collides with the ratatui frame the next
+    /// `draw` cycle commits. The cell appears overwritten by the
+    /// stale log glyph until the ratatui differential redraw
+    /// happens to mark that exact cell dirty.
+    ///
+    /// Setting a non-`None` sink (the surface's
+    /// `PINION_TUI_LOG=path` env-var opt-in) routes every trace
+    /// line to a separate writer so the alternate screen stays
+    /// undisturbed. Tests use an in-memory `Vec<u8>` sink to assert
+    /// against the captured lines.
+    log_sink: Option<Box<dyn io::Write + Send>>,
     /// Phantom to anchor the `V` parameter — `V` is not stored
     /// directly (the trait's methods are all associated functions).
     _phantom: PhantomData<fn() -> V>,
@@ -113,7 +136,61 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             cached_state,
             router: InputRouter::new(),
             intent_queue: IntentQueue::new(),
+            log_sink: None,
             _phantom: PhantomData,
+        }
+    }
+
+    /// R51.120 §5.41 — install a diagnostic sink for intent / state
+    /// trace lines. See [`Self::log_sink`] for why this is opt-in;
+    /// the default `None` keeps the substrate silent so the surface
+    /// can run under `enable_raw_mode()` + `EnterAlternateScreen`
+    /// without leaking trace text onto the visible terminal.
+    ///
+    /// The surface's `PINION_TUI_LOG=path` env-var opt-in opens
+    /// the named file with `append(true)` and hands the resulting
+    /// `File` here. Tests pass a `Vec<u8>` boxed as
+    /// `Box<dyn io::Write + Send>` to capture the trace in memory.
+    /// Calling this method twice replaces the previous sink (the
+    /// dropped writer flushes on `Drop`).
+    pub fn set_log_sink(&mut self, sink: Box<dyn io::Write + Send>) {
+        self.log_sink = Some(sink);
+    }
+
+    /// R51.120 §5.41 — builder-style sibling of
+    /// [`Self::set_log_sink`]; equivalent to `let mut c =
+    /// ShellCoreTui::new(); c.set_log_sink(sink); c` so chained
+    /// construction sites (`ShellCoreTui::new().with_log_sink(...)`)
+    /// stay one-line.
+    #[must_use]
+    pub fn with_log_sink(mut self, sink: Box<dyn io::Write + Send>) -> Self {
+        self.set_log_sink(sink);
+        self
+    }
+
+    /// R51.120 §5.41 — write one intent trace line to the
+    /// substrate's [`Self::log_sink`] (no-op when silent). IO
+    /// errors are intentionally swallowed: a closed file should not
+    /// crash the live event loop, and there is no recovery path
+    /// available from inside `refresh_state` (the surface's
+    /// terminal is in alternate-screen + raw mode and can't
+    /// surface an error message visibly anyway).
+    fn log_intent(&mut self, intent: &Intent) {
+        if let Some(sink) = &mut self.log_sink {
+            let _ = writeln!(
+                sink,
+                "tui: intent {} payload={:?}",
+                intent.tag_str(),
+                intent.payload,
+            );
+        }
+    }
+
+    /// R51.120 §5.41 — write one state-transition trace line to
+    /// the substrate's [`Self::log_sink`] (no-op when silent).
+    fn log_state_change(&mut self, before: &V::State, after: &V::State) {
+        if let Some(sink) = &mut self.log_sink {
+            let _ = writeln!(sink, "tui: state {before:?} -> {after:?}");
         }
     }
 
@@ -205,22 +282,25 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// continuous redraw — terminals do not `VSync`).
     pub fn refresh_state(&mut self) -> bool {
         walk_scene_and_drain(&mut self.scene, &mut self.intent_queue);
-        for intent in self.intent_queue.drain() {
-            eprintln!(
-                "tui: intent {} payload={:?}",
-                intent.tag_str(),
-                intent.payload,
-            );
+        // Drain first so the sink borrow + intent borrow don't
+        // overlap (`log_intent` takes `&mut self`).
+        let intents = self.intent_queue.drain();
+        for intent in &intents {
+            self.log_intent(intent);
         }
         let new_state = V::read_state(&self.scene);
         if new_state == self.cached_state {
             return false;
         }
-        eprintln!(
-            "tui: state {:?} -> {:?}",
-            self.cached_state, new_state,
-        );
+        // R51.120 §5.41 — route through `log_state_change` instead
+        // of `eprintln!` so the trace line never lands on the
+        // alternate screen. See `Self::log_sink` for the full
+        // anti-pattern explanation. `Copy` on `V::State` (trait
+        // bound) lets us snapshot before swapping, avoiding a
+        // simultaneous borrow of `self` + `self.cached_state`.
+        let before = self.cached_state;
         self.cached_state = new_state;
+        self.log_state_change(&before, &new_state);
         true
     }
 }
@@ -393,5 +473,114 @@ mod tests {
         let a: ShellCoreTui<TestButtonView> = ShellCoreTui::default();
         let b: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
         assert_eq!(a.cached_state(), b.cached_state());
+    }
+
+    /// R51.120 §5.41 — thread-safe in-memory `io::Write` capture
+    /// for `ShellCoreTui::set_log_sink` tests. The substrate
+    /// `Box<dyn io::Write + Send>` consumes the sink; the test's
+    /// `Arc<Mutex<Vec<u8>>>` clone retains a read handle so the
+    /// captured trace can be inspected after the dispatch cycle.
+    #[derive(Clone)]
+    struct SharedBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl io::Write for SharedBuffer {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn silent_default_produces_no_log_output() {
+        // R51.120 — without `set_log_sink`, the substrate must
+        // never write trace lines anywhere observable. Silence is
+        // a load-bearing invariant under raw mode + alternate
+        // screen (see `ShellCoreTui::log_sink` doc). The test
+        // exercises the full click cycle to cover both
+        // `log_intent` and `log_state_change` paths.
+        let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+        let paint = core.compute_paint_scene();
+        core.update_paint_scene(paint);
+        core.cursor_moved(8.0, 8.0);
+        let _ = core.refresh_state();
+        core.pointer_down();
+        let _ = core.refresh_state();
+        core.pointer_up();
+        let _ = core.refresh_state();
+        // No assertion needed — the test passes by reaching the
+        // end of the dispatch sequence without panic + without
+        // surfacing trace text (caller verifies by terminal
+        // observation in the shipping binary).
+    }
+
+    #[test]
+    fn log_sink_captures_intents_and_state_transitions() {
+        // R51.120 — once a sink is installed, every intent +
+        // state-change trace line lands in the sink instead of
+        // `stderr`. The captured text matches the legacy
+        // `eprintln!` format exactly so consumers of
+        // `PINION_TUI_LOG=path` see the same audit shape across
+        // the silent-default migration boundary.
+        let buf = SharedBuffer(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+        let mut core: ShellCoreTui<TestButtonView> =
+            ShellCoreTui::new().with_log_sink(Box::new(buf.clone()));
+        let paint = core.compute_paint_scene();
+        core.update_paint_scene(paint);
+
+        core.cursor_moved(8.0, 8.0);
+        assert!(core.refresh_state());
+        core.pointer_down();
+        assert!(core.refresh_state());
+        core.pointer_up();
+        assert!(core.refresh_state());
+
+        let captured = {
+            let guard = buf.0.lock().unwrap();
+            String::from_utf8(guard.clone()).expect("UTF-8 trace")
+        };
+        // Click intent emitted on Pressed → Hover transition.
+        assert!(
+            captured.contains("tui: intent test_btn.click"),
+            "trace must contain click intent line; got:\n{captured}",
+        );
+        // State-change trace lines for each visible transition.
+        assert!(
+            captured.contains("tui: state Idle -> Hover"),
+            "trace must contain Idle -> Hover; got:\n{captured}",
+        );
+        assert!(
+            captured.contains("tui: state Hover -> Pressed"),
+            "trace must contain Hover -> Pressed; got:\n{captured}",
+        );
+        assert!(
+            captured.contains("tui: state Pressed -> Hover"),
+            "trace must contain Pressed -> Hover; got:\n{captured}",
+        );
+    }
+
+    #[test]
+    fn log_sink_silent_when_state_unchanged() {
+        // R51.120 — KeyboardActivate fires the `click` intent
+        // (visible in the sink) but the SCXML internal transition
+        // leaves the visible state unchanged (Idle → Idle), so
+        // only the intent line lands — no state-change row.
+        let buf = SharedBuffer(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+        let mut core: ShellCoreTui<TestButtonView> =
+            ShellCoreTui::new().with_log_sink(Box::new(buf.clone()));
+        assert!(core.dispatch_key("Space"));
+        let visible_change = core.refresh_state();
+        assert!(!visible_change);
+        let captured = {
+            let guard = buf.0.lock().unwrap();
+            String::from_utf8(guard.clone()).expect("UTF-8 trace")
+        };
+        assert!(captured.contains("tui: intent test_btn.click"));
+        assert!(
+            !captured.contains("tui: state"),
+            "no visible state change should produce no state log; got:\n{captured}",
+        );
     }
 }

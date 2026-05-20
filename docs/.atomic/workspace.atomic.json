@@ -4408,7 +4408,8 @@
         "R51.116 — hello-button-tui / hello-toggle-tui view BoxStyle 적용 (substrate evidence-first)",
         "R51.117 — ShellCoreTui<V> substrate extraction (headless test infra + R51.92.1 parity)",
         "R51.118 — WidgetViewTui::access_node default + 2 TUI binding override (TUI a11y substrate first cut)",
-        "R51.119 — atomic stale citation cleanup (R51.117 substrate move: 4 removes + 7 adds)"
+        "R51.119 — atomic stale citation cleanup (R51.117 substrate move: 4 removes + 7 adds)",
+        "R51.120 — substrate stderr → optional file sink (alternate screen 보호, PINION_TUI_LOG opt-in)"
       ],
       "alternatives_rejected": [
         {
@@ -4638,6 +4639,14 @@
         {
           "file": "crates/pinion-tui/src/substrate.rs",
           "symbol": "ShellCoreTui::update_paint_scene"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::set_log_sink"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::with_log_sink"
         }
       ],
       "decision_status": "active"
