@@ -57,6 +57,17 @@ pub mod executor;
 mod substrate;
 pub mod typeahead;
 
+// R51.175 §5.41 — shared Vello-side test fixture surface. Exposes a
+// minimal `VelloRenderer`-conforming `TestRenderer` plus
+// `impl WidgetView for EchoButtonFixture` so the integration test
+// suite reuses the canonical reducer fixture from
+// `pinion_core::test_fixtures` instead of an ad-hoc `TestView` mock.
+// Gated behind the `test-fixtures` feature (which forwards into the
+// pinion-core / pinion-a11y supertrait crates) so production
+// binaries never see the symbols.
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod test_fixtures;
+
 pub use app::{run, run_with_handlers, AppShell};
 pub use executor::{build_executor_and_sink, ProxyIntentSink, TokioExecutor};
 pub use substrate::{AccessEmitDecision, ShellCore};

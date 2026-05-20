@@ -10762,6 +10762,54 @@
         "R51.180 — Intent.payload typed routing through SCXML invoke send (wait first consumer)"
       ]
     },
+    "R51.175": {
+      "decision_summary": "R51.175 §5.41 §5.23 R27 shell test_fixtures + WidgetView for EchoButtonFixture (TUI parity)",
+      "changes_bullets": [
+        "pinion-shell/Cargo.toml — [features] test-fixtures + self path-dep dev-dep entry",
+        "pinion-shell/src/lib.rs — cfg-gated `pub mod test_fixtures`",
+        "pinion-shell/src/test_fixtures.rs (new) — TestRenderer + impl WidgetView for EchoButtonFixture",
+        "pinion-shell/tests/dispatch_core.rs — r51_175_shared_fixture_wiring sub-module +3 tests"
+      ],
+      "verification_bullets": [
+        "cargo test (vello) = 2004 / 0 / 10 (+3 new R51.175 tests, all pass)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "shell + tui now drive same EchoButtonFixture through dispatch_intent (process maturity)"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.23"
+      ],
+      "carry_forward_bullets": [
+        "R51.176 — r51_171 test fragility: next_node_id() thread-local counter parallel isolation",
+        "R51.177 — handler cascade guard (reducer reactivity lurking risk; kind whitelist or scope_id)",
+        "R51.178 — app Model field wait (Owner::cache<S> lift OR CoreShell.app_state<S>) first consumer",
+        "R51.179 — Forge codegen emits update body from SCE schema (SCE upstream RFC carry)",
+        "R51.180 — Intent.payload typed routing through SCXML invoke send (wait first consumer)"
+      ],
+      "publishable_decision_summary": "R51.175 §5.41 §5.23 R27 shell test_fixtures + WidgetView for EchoButtonFixture (TUI parity)",
+      "publishable_changes_bullets": [
+        "pinion-shell/Cargo.toml — [features] test-fixtures + self path-dep dev-dep entry",
+        "pinion-shell/src/lib.rs — cfg-gated `pub mod test_fixtures`",
+        "pinion-shell/src/test_fixtures.rs (new) — TestRenderer + impl WidgetView for EchoButtonFixture",
+        "pinion-shell/tests/dispatch_core.rs — r51_175_shared_fixture_wiring sub-module +3 tests"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test (vello) = 2004 / 0 / 10 (+3 new R51.175 tests, all pass)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "shell + tui now drive same EchoButtonFixture through dispatch_intent (process maturity)"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.23"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.176 — r51_171 test fragility: next_node_id() thread-local counter parallel isolation",
+        "R51.177 — handler cascade guard (reducer reactivity lurking risk; kind whitelist or scope_id)",
+        "R51.178 — app Model field wait (Owner::cache<S> lift OR CoreShell.app_state<S>) first consumer",
+        "R51.179 — Forge codegen emits update body from SCE schema (SCE upstream RFC carry)",
+        "R51.180 — Intent.payload typed routing through SCXML invoke send (wait first consumer)"
+      ]
+    },
     "R51.33": {
       "decision_summary": "R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate",
       "changes_bullets": [

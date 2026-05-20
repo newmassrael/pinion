@@ -1672,3 +1672,113 @@ mod r51_169_handle_tail_drain_routing {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// R51.175 §5.41 §5.23 R27 — shared reducer fixture wiring tests.
+//
+// Closes the process-maturity carry: the R51.168/169 wiring on the
+// shell side used a custom `TestView` mock (with `UPDATE_INTENT_LOG`
+// + `UPDATE_EMITS_ECHO_COMMAND` statics) while the TUI side already
+// drove the same wiring through `pinion_core::test_fixtures::
+// EchoButtonFixture`. The asymmetry made the two backends'
+// dispatch-loop guarantees harder to compare — a reader had to map
+// the mock's static flags onto the fixture's `update` body manually.
+//
+// R51.175 lifts the Vello-side `WidgetView` impl for
+// `EchoButtonFixture` into `pinion_shell::test_fixtures` (gated
+// behind the local `test-fixtures` feature, forwarded via the
+// `pinion-shell` self-`dev-dependencies` entry) so this sub-module
+// can drive the same fixture through `ShellCore::dispatch_intent`
+// and the substrate's drain pump. The mock TestView path stays in
+// place for the apply_key / event_name / access_child_invoke
+// observability tests that still need a per-test static log.
+// ─────────────────────────────────────────────────────────────────────────
+
+mod r51_175_shared_fixture_wiring {
+    use pinion_core::external::IntrospectValue;
+    use pinion_core::test_fixtures::EchoButtonFixture;
+    use pinion_core::Intent;
+    use pinion_shell::ShellCore;
+
+    #[test]
+    fn dispatch_intent_queues_reducer_command_on_root_owner() {
+        // R51.175 — mirror of pinion-tui's
+        // `r51_168_dispatch_intent_reducer_routing::
+        // dispatch_intent_queues_reducer_commands_on_root_owner`.
+        // The Vello-side substrate must call the shared reducer
+        // BEFORE forwarding to the SCXML invoke send and queue the
+        // produced command on the root owner — identical observable
+        // behaviour to the TUI side.
+        let mut core = ShellCore::<EchoButtonFixture>::new();
+        let intent = Intent::new_static("echo_btn.tick", IntrospectValue::Null);
+        core.dispatch_intent(&intent);
+        let pending = core.root_owner().pending_commands();
+        assert_eq!(pending.len(), 1, "reducer command must be queued");
+        assert_eq!(pending[0].kind_str(), "echo.reply");
+        assert_eq!(
+            pending[0].payload,
+            IntrospectValue::Text("echo_btn.tick".to_string()),
+        );
+    }
+
+    #[test]
+    fn dispatch_intent_accumulates_reducer_commands_across_calls() {
+        // R51.175 — mirror of pinion-tui's
+        // `dispatch_intent_accumulates_reducer_commands_across_calls`.
+        // FIFO accumulation across calls is part of the §5.23 R27
+        // contract: a downstream `dispatch_pending_commands` pump
+        // must reach every reducer-emitted command in submission
+        // order.
+        let mut core = ShellCore::<EchoButtonFixture>::new();
+        let i1 = Intent::new_static("echo_btn.a", IntrospectValue::Null);
+        let i2 = Intent::new_static("echo_btn.b", IntrospectValue::Null);
+        core.dispatch_intent(&i1);
+        core.dispatch_intent(&i2);
+        let pending = core.root_owner().pending_commands();
+        assert_eq!(pending.len(), 2);
+        assert_eq!(
+            pending[0].payload,
+            IntrospectValue::Text("echo_btn.a".to_string()),
+        );
+        assert_eq!(
+            pending[1].payload,
+            IntrospectValue::Text("echo_btn.b".to_string()),
+        );
+    }
+
+    #[test]
+    fn drained_intent_runs_through_update_reducer() {
+        // R51.175 — mirror of pinion-tui's
+        // `r51_169_handle_tail_drain_routing::
+        // drained_intent_runs_through_update_reducer`. The
+        // incoming-intent (carrier) + drained-intent (statechart
+        // emission) pair both flow through `V::update`, so a single
+        // `KeyboardActivate` dispatch lands two commands: one from
+        // the R51.168 incoming pass, one from the R51.169 drain
+        // pass.
+        let mut core = ShellCore::<EchoButtonFixture>::new();
+        let intent = Intent::new_static("KeyboardActivate", IntrospectValue::Null);
+        core.dispatch_intent(&intent);
+
+        let pending = core.root_owner().pending_commands();
+        assert_eq!(
+            pending.len(),
+            2,
+            "incoming + drained reducer must each queue one command",
+        );
+        // Carrier payload (incoming reducer pass).
+        assert!(
+            pending
+                .iter()
+                .any(|c| c.payload == IntrospectValue::Text("KeyboardActivate".to_string())),
+            "incoming reducer must observe `KeyboardActivate`",
+        );
+        // Drained payload (`<tag>.<kind>` per R51.122 convention).
+        assert!(
+            pending
+                .iter()
+                .any(|c| c.payload == IntrospectValue::Text("echo_btn.click".to_string())),
+            "drain reducer must observe `echo_btn.click`",
+        );
+    }
+}

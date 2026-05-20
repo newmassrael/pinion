@@ -56,11 +56,29 @@ accesskit_winit = { workspace = true }
 # at this round) but enable everything via `enable_all` per-runtime.
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 
+# R51.175 §5.41 — expose `pinion_shell::test_fixtures` (Vello-side
+# WidgetView impl for the shared `EchoButtonFixture` reducer fixture)
+# to downstream `dev-dependencies` so the integration test suite
+# reuses the canonical reducer fixture instead of an ad-hoc
+# `TestView` mock. Forwards `test-fixtures` into the supertrait
+# crates (`pinion-core` for the type, `pinion-a11y` for the blank
+# `WidgetA11y` impl) so the symbol surfaces at the same time the
+# Vello-side impl compiles.
+[features]
+test-fixtures = ["pinion-core/test-fixtures", "pinion-a11y/test-fixtures"]
+
 [dev-dependencies]
 # R51.159 §5.23 — `tokio::time::sleep` etc. for command-dispatch
 # integration tests that need a real async boundary. Same feature set
 # as the runtime dep so the test crate compiles without extra knobs.
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+# R51.175 §5.41 — self path-dep so the integration test suite picks
+# up `pinion_shell::test_fixtures` (gated behind the local
+# `test-fixtures` feature, forwarded into the supertrait crates).
+# Cargo accepts a self-`path = "."` dev-dep; the production
+# build of this crate stays feature-free, the dev build adds the
+# fixture module.
+pinion-shell = { path = ".", features = ["test-fixtures"] }
 
 [lints]
 workspace = true
