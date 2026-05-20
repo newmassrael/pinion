@@ -6937,6 +6937,220 @@
         "R51.121 의 §5.16 audit 결과 — stale 0 (WidgetView trait 자체 구조 변화 없음, citation valid)"
       ]
     },
+    "R51.122": {
+      "decision_summary": "R51.122 §5.41 — pinion-runtime::CoreShell<V: WidgetCore> backend-agnostic dispatch substrate 신설 (R51.122-R51.125 4-round 분할 중 #1)",
+      "changes_bullets": [
+        "crates/pinion-runtime/src/core_shell.rs 신설 (+744 LOC) — CoreShell<V: WidgetCore> + DispatchTail<S> + StateChange ADT + 13 unit tests",
+        "CoreShell fields = scene + cached_state + router + intent_queue (4 backend-agnostic core fields)",
+        "DispatchTail<S> = { intents: Vec<Intent>, state_change: StateChange<S> } — dispatch auto-tail named artifact",
+        "12 dispatch primitive: forward / apply_key / cursor_moved / cursor_left / pointer_down / pointer_up / pointer_cancel / touch_event / tail / update_paint_scene + hover_target accessor",
+        "crates/pinion-runtime/src/lib.rs += pub mod core_shell + pub use",
+        "§5.41 caveats + 13 implementations 신규 — atomic store 에 framework primitive 명시",
+        "dep graph 0 변경 — pinion-runtime = pinion-core + pinion-text (+ taffy + vello optional), pinion-a11y / pinion-rpc 0 의존"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1709 → 1722 pass / 0 fail / 8 ignored (+13 CoreShell unit tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict 유지)",
+        "cargo check --workspace 통과 — backend-agnostic state lift 동작 검증",
+        "mnemosyne validate_workspace = entries=250 → 251 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync (post-#1)",
+        "behavior 변경 0 — pinion-runtime 신규 모듈만 추가, 기존 consumer 0 영향"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R51.123 = pinion-shell::ShellCore wraps CoreShell<V> (Vello extras 만 유지, 4-round #2) 즉시 land 예정",
+        "R51.124 = pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3) 즉시 land 예정",
+        "R51.125 = dispatch_rpc trait extraction — 2nd RPC consumer (TUI RPC) carry 시까지 defer 검토",
+        "[[coreshell-composition-lift]] lesson — backend-agnostic state lift = composition (struct field), not subtrait inheritance",
+        "[[dispatch-tail-auto-tail-pattern]] lesson — dispatch method = mutate + return DispatchTail<S> {intents, state_change}; backend wrapper handle_tail() consolidates log + side-effect"
+      ],
+      "publishable_decision_summary": "R51.122 §5.41 — pinion-runtime::CoreShell<V: WidgetCore> backend-agnostic dispatch substrate 신설 (R51.122-R51.125 4-round 분할 중 #1)",
+      "publishable_changes_bullets": [
+        "crates/pinion-runtime/src/core_shell.rs 신설 (+744 LOC) — CoreShell<V: WidgetCore> + DispatchTail<S> + StateChange ADT + 13 unit tests",
+        "CoreShell fields = scene + cached_state + router + intent_queue (4 backend-agnostic core fields)",
+        "DispatchTail<S> = { intents: Vec<Intent>, state_change: StateChange<S> } — dispatch auto-tail named artifact",
+        "12 dispatch primitive: forward / apply_key / cursor_moved / cursor_left / pointer_down / pointer_up / pointer_cancel / touch_event / tail / update_paint_scene + hover_target accessor",
+        "crates/pinion-runtime/src/lib.rs += pub mod core_shell + pub use",
+        "§5.41 caveats + 13 implementations 신규 — atomic store 에 framework primitive 명시",
+        "dep graph 0 변경 — pinion-runtime = pinion-core + pinion-text (+ taffy + vello optional), pinion-a11y / pinion-rpc 0 의존"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1709 → 1722 pass / 0 fail / 8 ignored (+13 CoreShell unit tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict 유지)",
+        "cargo check --workspace 통과 — backend-agnostic state lift 동작 검증",
+        "mnemosyne validate_workspace = entries=250 → 251 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync (post-#1)",
+        "behavior 변경 0 — pinion-runtime 신규 모듈만 추가, 기존 consumer 0 영향"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.123 = pinion-shell::ShellCore wraps CoreShell<V> (Vello extras 만 유지, 4-round #2) 즉시 land 예정",
+        "R51.124 = pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3) 즉시 land 예정",
+        "R51.125 = dispatch_rpc trait extraction — 2nd RPC consumer (TUI RPC) carry 시까지 defer 검토",
+        "[[coreshell-composition-lift]] lesson — backend-agnostic state lift = composition (struct field), not subtrait inheritance",
+        "[[dispatch-tail-auto-tail-pattern]] lesson — dispatch method = mutate + return DispatchTail<S> {intents, state_change}; backend wrapper handle_tail() consolidates log + side-effect"
+      ]
+    },
+    "R51.123": {
+      "decision_summary": "R51.123 §5.41 — pinion-shell::ShellCore<V> wraps CoreShell<V> (Vello extras 만 유지, 4-round 분할 #2)",
+      "changes_bullets": [
+        "crates/pinion-shell/src/substrate.rs ShellCore: 4 fields (scene/cached_state/intent_queue/router) → core: CoreShell<V> 1 field 으로 압축 (256 - 191 = +65 LOC net, +/-345 churn)",
+        "Dispatch methods (forward, apply_key, cursor_moved, cursor_left, pointer_down, pointer_up, pointer_cancel, touch_event, dispatch_rpc, finalize_frame, update_paint_scene) — 전원 'core.X() → handle_tail(&tail)' shape 로 반복",
+        "handle_tail helper 신설 — stderr log + state_change 시 request_redraw 단 1 곡Ş 시말고 처리. drain_intents / refresh_state private helpers 제거 (handle_tail 으로 일원화)",
+        "crates/pinion-runtime/src/core_shell.rs += hover_target accessor (router-state 읽기 prop — click_to_focus follow-up)",
+        "public API 0 변경 — ShellCore 11 method signature (scene / cached_state / forward / apply_key / cursor_moved / cursor_left / pointer_down / pointer_up / pointer_cancel / touch_event / dispatch_rpc / finalize_frame) 전원 보존, AppShell + tests 미변경"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1722 / 0 / 8 (R51.122 baseline 유지, +0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "mnemosyne validate_workspace = entries=251 → 252 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync",
+        "AppShell consumer + 13 example binaries 재컴파일 — ShellCore signature 보존 증명"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R51.124 = pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3) 즉시 land",
+        "R51.125 = dispatch_rpc trait extraction — 2nd RPC consumer (TUI RPC) carry 시까지 defer 검토",
+        "[[coreshell-composition-lift]] 확장 — 1st wrapper land 계속, dep graph (pinion-shell → pinion-runtime → pinion-core) cycle 0 적합",
+        "handle_tail 패턴 = backend-specific log + request_redraw side-effect (Vello path 1차 binding)"
+      ],
+      "publishable_decision_summary": "R51.123 §5.41 — pinion-shell::ShellCore<V> wraps CoreShell<V> (Vello extras 만 유지, 4-round 분할 #2)",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/substrate.rs ShellCore: 4 fields (scene/cached_state/intent_queue/router) → core: CoreShell<V> 1 field 으로 압축 (256 - 191 = +65 LOC net, +/-345 churn)",
+        "Dispatch methods (forward, apply_key, cursor_moved, cursor_left, pointer_down, pointer_up, pointer_cancel, touch_event, dispatch_rpc, finalize_frame, update_paint_scene) — 전원 'core.X() → handle_tail(&tail)' shape 로 반복",
+        "handle_tail helper 신설 — stderr log + state_change 시 request_redraw 단 1 곡Ş 시말고 처리. drain_intents / refresh_state private helpers 제거 (handle_tail 으로 일원화)",
+        "crates/pinion-runtime/src/core_shell.rs += hover_target accessor (router-state 읽기 prop — click_to_focus follow-up)",
+        "public API 0 변경 — ShellCore 11 method signature (scene / cached_state / forward / apply_key / cursor_moved / cursor_left / pointer_down / pointer_up / pointer_cancel / touch_event / dispatch_rpc / finalize_frame) 전원 보존, AppShell + tests 미변경"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1722 / 0 / 8 (R51.122 baseline 유지, +0)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "mnemosyne validate_workspace = entries=251 → 252 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync",
+        "AppShell consumer + 13 example binaries 재컴파일 — ShellCore signature 보존 증명"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.124 = pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3) 즉시 land",
+        "R51.125 = dispatch_rpc trait extraction — 2nd RPC consumer (TUI RPC) carry 시까지 defer 검토",
+        "[[coreshell-composition-lift]] 확장 — 1st wrapper land 계속, dep graph (pinion-shell → pinion-runtime → pinion-core) cycle 0 적합",
+        "handle_tail 패턴 = backend-specific log + request_redraw side-effect (Vello path 1차 binding)"
+      ]
+    },
+    "R51.124": {
+      "decision_summary": "R51.124 §5.41 — pinion-tui::ShellCoreTui<V> wraps CoreShell<V> + dispatch_X auto-tail bool 반환 (refresh_state 청산, 4-round 분할 #3)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/substrate.rs ShellCoreTui: 5 fields (scene/cached_state/router/intent_queue/_phantom) → core: CoreShell<V> + log_sink 2 fields 축소 (399 churn, -224 +296)",
+        "dispatch_key / cursor_moved / pointer_down / pointer_up 전원 bool 반환 (auto-tail state_changed) — 별도 refresh_state 호출 패턴 청산",
+        "refresh_state + forward_event helper 제거 — handle_tail 하나로 log_sink 라우팅 + intent + state_change + bool 반환 통합",
+        "crates/pinion-tui/src/shell.rs callers: 'dispatch_X && refresh_state' two-call → 'dispatch_X' 단 1 호출 (+24 -10 LOC)",
+        "dispatch_mouse Down(Left) arm = '|' 로 cursor_moved + pointer_down 두 dispatch 의 state_changed 관측 보존",
+        "atomic stale citation cleanup (R51.119 lesson) — §5.41 의 ShellCoreTui::refresh_state implementation 동시 제거 (auto-tail 흡수)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1722 / 0 / 8 (baseline 유지, behavior 0 변경)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "mnemosyne validate_workspace = entries=252 → 253 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync",
+        "hello-button-tui + hello-toggle-tui 실행 검증 — visual identical (refactor only, no behavior change)",
+        "TUI signature breaking but consumer 0 — dispatch_X bool 반환 §2 binding (hello-button-tui / hello-toggle-tui) caller 적용 same-round land"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.40",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R51.124.1 = R51.125 dispatch_rpc trait extraction defer audit entry (Rule of Three + substrate-incompleteness-signal)",
+        "R51.125 = dispatch_rpc trait extraction 자체 — 2nd RPC consumer (TUI RPC) land 시까지 defer (cycle 0 / 1 impl / 2nd consumer 0)",
+        "[[dispatch-tail-auto-tail-pattern]] lesson 2nd binding 증명 — drain/refresh two-call 완전 청산 (Vello R51.123 + TUI R51.124 일관 패턴)",
+        "[[abstraction-needs-second-consumer]] preview — trait 추출 실재 cycle + 2 impl 동시 충족 시에만 (R51.125 carry)",
+        "TUI focus management hardcode + cell-native coord + AT integration 등 잔여 carry 그대로"
+      ],
+      "publishable_decision_summary": "R51.124 §5.41 — pinion-tui::ShellCoreTui<V> wraps CoreShell<V> + dispatch_X auto-tail bool 반환 (refresh_state 청산, 4-round 분할 #3)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/substrate.rs ShellCoreTui: 5 fields (scene/cached_state/router/intent_queue/_phantom) → core: CoreShell<V> + log_sink 2 fields 축소 (399 churn, -224 +296)",
+        "dispatch_key / cursor_moved / pointer_down / pointer_up 전원 bool 반환 (auto-tail state_changed) — 별도 refresh_state 호출 패턴 청산",
+        "refresh_state + forward_event helper 제거 — handle_tail 하나로 log_sink 라우팅 + intent + state_change + bool 반환 통합",
+        "crates/pinion-tui/src/shell.rs callers: 'dispatch_X && refresh_state' two-call → 'dispatch_X' 단 1 호출 (+24 -10 LOC)",
+        "dispatch_mouse Down(Left) arm = '|' 로 cursor_moved + pointer_down 두 dispatch 의 state_changed 관측 보존",
+        "atomic stale citation cleanup (R51.119 lesson) — §5.41 의 ShellCoreTui::refresh_state implementation 동시 제거 (auto-tail 흡수)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 1722 / 0 / 8 (baseline 유지, behavior 0 변경)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "mnemosyne validate_workspace = entries=252 → 253 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync",
+        "hello-button-tui + hello-toggle-tui 실행 검증 — visual identical (refactor only, no behavior change)",
+        "TUI signature breaking but consumer 0 — dispatch_X bool 반환 §2 binding (hello-button-tui / hello-toggle-tui) caller 적용 same-round land"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.40",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.124.1 = R51.125 dispatch_rpc trait extraction defer audit entry (Rule of Three + substrate-incompleteness-signal)",
+        "R51.125 = dispatch_rpc trait extraction 자체 — 2nd RPC consumer (TUI RPC) land 시까지 defer (cycle 0 / 1 impl / 2nd consumer 0)",
+        "[[dispatch-tail-auto-tail-pattern]] lesson 2nd binding 증명 — drain/refresh two-call 완전 청산 (Vello R51.123 + TUI R51.124 일관 패턴)",
+        "[[abstraction-needs-second-consumer]] preview — trait 추출 실재 cycle + 2 impl 동시 충족 시에만 (R51.125 carry)",
+        "TUI focus management hardcode + cell-native coord + AT integration 등 잔여 carry 그대로"
+      ]
+    },
+    "R51.124.1": {
+      "decision_summary": "R51.124.1 §5.41 — R51.125 (dispatch_rpc trait extraction) deferral audit: Rule of Three + substrate-incompleteness-signal 미충족 정통 명시",
+      "changes_bullets": [
+        "§5.41 caveats += R51.125 dispatch_rpc trait extraction defer 정통 사유 — cycle 0 (dep graph reverse direction 없음) + impl 1곳 (pinion-shell::ShellCore::dispatch_rpc) + 2nd RPC consumer 없음 (pinion-tui RPC carry)",
+        "docs/GENERATED.md 동기 (caveat 1줄 추가, mnemosyne-cli generate_docs cascade)",
+        "Memory 추가 3건 — coreshell-composition-lift.md / dispatch-tail-auto-tail-pattern.md / abstraction-needs-second-consumer.md (R51.122-R51.124 lessons 영구 capture)",
+        "Rule of Three (Fowler) + [[substrate-incompleteness-signal]] abstraction layer 적용 명시 — 1 impl 의 trait abstraction = unused indirection, 가상 cycle 추출 = premature"
+      ],
+      "verification_bullets": [
+        "mnemosyne validate_workspace = entries=253 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync (post-#4)",
+        "cargo test / clippy 변경 0 (audit-only entry, 코드 변경 0)",
+        "atomic store mutation = caveat 1줄 (100 char limit 검증), GENERATED.md 1줄 추가 (round-trip sync 유지)",
+        "R51.122-R51.124 4-round 분할 종료 마침표 — strategic 부채 #1 (ShellCore lift) 청산 audit trail 완성"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R51.125 = dispatch_rpc trait extraction — 2nd RPC consumer (pinion-tui RPC) land 시 자동 trigger 로 재평가; 그 시점 cycle 검증 + 2-impl 동시 검증 필수",
+        "[[abstraction-needs-second-consumer]] lesson 정통 capture — trait/interface 추출은 (a) dep graph 실재 cycle (b) 2 이상 impl 동시 충족 시에만, 가상 cycle 으로 추출 금지",
+        "TestButton fixture 중복 (runtime + tui tests) shared module lift 후보 — R51.127 cosmetic",
+        "self-audit framework #140-#143 통합 — R51.122-R51.124.1 lessons 4건 (CoreShell composition / DispatchTail / TUI auto-tail / trait extraction Rule of Three) 자동 carry",
+        "changelog 95 entries 백필 후보 — R51.88-R51.120 gap 청산 (R51.128 후보)"
+      ],
+      "publishable_decision_summary": "R51.124.1 §5.41 — R51.125 (dispatch_rpc trait extraction) deferral audit: Rule of Three + substrate-incompleteness-signal 미충족 정통 명시",
+      "publishable_changes_bullets": [
+        "§5.41 caveats += R51.125 dispatch_rpc trait extraction defer 정통 사유 — cycle 0 (dep graph reverse direction 없음) + impl 1곳 (pinion-shell::ShellCore::dispatch_rpc) + 2nd RPC consumer 없음 (pinion-tui RPC carry)",
+        "docs/GENERATED.md 동기 (caveat 1줄 추가, mnemosyne-cli generate_docs cascade)",
+        "Memory 추가 3건 — coreshell-composition-lift.md / dispatch-tail-auto-tail-pattern.md / abstraction-needs-second-consumer.md (R51.122-R51.124 lessons 영구 capture)",
+        "Rule of Three (Fowler) + [[substrate-incompleteness-signal]] abstraction layer 적용 명시 — 1 impl 의 trait abstraction = unused indirection, 가상 cycle 추출 = premature"
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne validate_workspace = entries=253 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync (post-#4)",
+        "cargo test / clippy 변경 0 (audit-only entry, 코드 변경 0)",
+        "atomic store mutation = caveat 1줄 (100 char limit 검증), GENERATED.md 1줄 추가 (round-trip sync 유지)",
+        "R51.122-R51.124 4-round 분할 종료 마침표 — strategic 부채 #1 (ShellCore lift) 청산 audit trail 완성"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.125 = dispatch_rpc trait extraction — 2nd RPC consumer (pinion-tui RPC) land 시 자동 trigger 로 재평가; 그 시점 cycle 검증 + 2-impl 동시 검증 필수",
+        "[[abstraction-needs-second-consumer]] lesson 정통 capture — trait/interface 추출은 (a) dep graph 실재 cycle (b) 2 이상 impl 동시 충족 시에만, 가상 cycle 으로 추출 금지",
+        "TestButton fixture 중복 (runtime + tui tests) shared module lift 후보 — R51.127 cosmetic",
+        "self-audit framework #140-#143 통합 — R51.122-R51.124.1 lessons 4건 (CoreShell composition / DispatchTail / TUI auto-tail / trait extraction Rule of Three) 자동 carry",
+        "changelog 95 entries 백필 후보 — R51.88-R51.120 gap 청산 (R51.128 후보)"
+      ]
+    },
     "R51.33": {
       "decision_summary": "R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate",
       "changes_bullets": [
