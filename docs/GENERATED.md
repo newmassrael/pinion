@@ -3738,6 +3738,12 @@ router.pointer_down(&mut state_scene);
 
 
 
+**Implementations**:
+- crates/pinion-core/src/frame.rs
+- crates/pinion-core/src/frame.rs:Frame
+- crates/pinion-core/src/frame.rs:Frame::with_dt
+
+
 
 ### §6.4. Ecosystem default deps (winit, taffy, cosmic-text, accesskit, image, lyon, kurbo)
 
@@ -5670,6 +5676,33 @@ router.pointer_down(&mut state_scene);
 - AnimationDriver Effect substrate — §5.23 Effect + §5.22 Signal 의존 (R51.135+)
 - premultiplied-linear vs straight-linear alpha decision (quality round)
 - AnimVec2/3 계열 올림 여부 — Vec3 needed 시 evidence-first
+
+
+
+### R51.135 — R51.135 §6.3 — Frame ZST→{dt: f32} evolution (§5.28 R51.133 carry 청산, AnimationDriver prerequisite)
+
+**Changes**:
+- pinion-core/src/frame.rs — Frame { dt: f32 } + Frame::new (dt=0) + Frame::with_dt(dt) factory
+- size assertion 제거 — Frame 이 더 이상 ZST 아님 (4-byte, single-register ABI)
+- atomic §6.3 — +3 binding (file + Frame + Frame::with_dt)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 1748/0/8 (+4 신규, baseline 1744)
+- cargo clippy --workspace --all-targets: 0 warning (float_cmp → to_bits)
+- #[non_exhaustive] 보호 — caller 25 sites Frame::new() 영향 0 (additive evolution)
+
+
+
+**Impact**: §6.3, §5.28
+
+
+**Carry forward**:
+- AnimationDriver Effect substrate — §5.23 Effect first-cut + Frame.dt driver wire-up
+- Frame::with_dt caller migration — Frame::new → with_dt(measured_dt) (evidence-first)
+- frame_index / scale_factor field carry — evidence-first, 2nd consumer trigger
+- §6.3 charter expand — body/intent/rationale (현재 empty), Async model full doc
 
 
 

@@ -196,3 +196,20 @@ fields = ["publishable_changes_bullets"]
 reason = "R51.134 publishable_changes_bullets[1] over-length 104→88 char 즉시 청산 ('bidirectional' 제거 + '/'→'↔'). audit half immutable T4 info +1 permanent carry"
 applied_in = "pinion R51.134"
 content_hash_after = "8fa69cad4b251c5c5d5cdb8026b4df81071aba420eced7c2f82249a64bb09b7d"
+
+# R51.135.1 incident — R51.135 verification_bullets[1] 103-char +
+# carry_forward_bullets[1] 115-char over-length 즉시 청산.
+# verification: "--all-targets --features pinion-runtime/vello" 단축.
+# carry: "WidgetCore::view caller migration — production paths 이
+# Frame::new → Frame::with_dt(measured_dt) 적용 (evidence-first)"
+# → "Frame::with_dt caller migration — Frame::new → with_dt
+# (measured_dt) (evidence-first)". audit half 는 immutable 이라
+# T4 info +1 (120→121) permanent shift. publishable half 84/72 char.
+
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "R51.135"
+fields = ["publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R51.135 publishable_verification[1] 103→72 char + carry_forward[1] 115→84 char 즉시 청산 (전자 'all-targets --features' clippy 옵션 단축, 후자 'production paths 이' 제거). audit immutable T4 info 120→121 permanent carry"
+applied_in = "pinion R51.135"
+content_hash_after = "b47fe08c1938425b3a167d413b0b10abe25b7fdb625d68dfcd33d81bd556db4d"
