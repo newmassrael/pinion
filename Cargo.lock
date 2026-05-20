@@ -2553,6 +2553,7 @@ dependencies = [
 name = "pinion-core"
 version = "0.0.1"
 dependencies = [
+ "criterion",
  "sce-build",
  "sce-rust-runtime",
  "serde",

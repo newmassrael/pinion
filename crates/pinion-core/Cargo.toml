@@ -17,3 +17,13 @@ serde_json = { workspace = true }
 
 [build-dependencies]
 sce-build = { path = "../../vendor/sce/sce-build" }
+
+[dev-dependencies]
+# R51.105 §5.38 — criterion micro-bench measuring ListBox dispatch
+# alloc cost (Snapshot=Vec<bool> per user input). Drives the data-
+# driven SmallVec-vs-Vec decision for R51.102's substrate refactor.
+criterion = { workspace = true }
+
+[[bench]]
+name = "listbox_dispatch"
+harness = false
