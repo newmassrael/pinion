@@ -371,6 +371,143 @@ pub struct SpringState<T: Animatable> {
     pub target: T,
 }
 
+/// Curve-based easing functions for tween animation.
+///
+/// Tween animation is the spring's special case — a critically-damped
+/// spring with a fixed duration approximates `EaseOutCubic` closely.
+/// Use [`Tween`] for cases where deterministic finish-time matters
+/// (UI route transitions, splash sequencing); use [`SpringState`] for
+/// physical / interruptible interactions (drag-release, gesture
+/// follow).
+///
+/// Each variant accepts `t ∈ [0, 1]` and returns an eased `t' ∈
+/// [0, 1]` (endpoints exact). Out-of-range input extrapolates; callers
+/// that need clamping wrap with `t.clamp(0.0, 1.0)` before calling.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Easing {
+    /// Identity — `t` returned unchanged.
+    #[default]
+    Linear,
+    /// `t²` — accelerating, "slow start".
+    EaseInQuad,
+    /// `1 - (1 - t)²` — decelerating, "soft stop".
+    EaseOutQuad,
+    /// Quad acceleration in the first half, decel in the second.
+    EaseInOutQuad,
+    /// `t³` — sharper acceleration than [`Easing::EaseInQuad`].
+    EaseInCubic,
+    /// `1 - (1 - t)³` — sharper deceleration.
+    EaseOutCubic,
+    /// Cubic accel in the first half, decel in the second — the
+    /// closest curve match to a critically-damped spring of the
+    /// same duration.
+    EaseInOutCubic,
+}
+
+impl Easing {
+    /// Map input `t` through the curve. `t = 0` → `0`, `t = 1` → `1`
+    /// for every variant. Const-evaluable so callers can precompute
+    /// curve points for static layout work.
+    #[must_use]
+    pub fn apply(self, t: f32) -> f32 {
+        match self {
+            Self::Linear => t,
+            Self::EaseInQuad => t * t,
+            Self::EaseOutQuad => {
+                let inv = 1.0 - t;
+                1.0 - inv * inv
+            }
+            Self::EaseInOutQuad => {
+                if t < 0.5 {
+                    2.0 * t * t
+                } else {
+                    let inv = -2.0 * t + 2.0;
+                    1.0 - inv * inv / 2.0
+                }
+            }
+            Self::EaseInCubic => t * t * t,
+            Self::EaseOutCubic => {
+                let inv = 1.0 - t;
+                1.0 - inv * inv * inv
+            }
+            Self::EaseInOutCubic => {
+                if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    let inv = -2.0 * t + 2.0;
+                    1.0 - inv * inv * inv / 2.0
+                }
+            }
+        }
+    }
+}
+
+/// Caller-driven tween animation — fixed duration, deterministic
+/// finish time, curve-shaped progress.
+///
+/// Contrast with [`SpringState`]: a tween locks both end points and
+/// the time taken, so it cannot be naturally interrupted mid-flight
+/// without a discontinuity. Use this when the *when* matters as much
+/// as the *where* (modal slide-in, list reorder choreography); use
+/// [`SpringState`] when responsiveness under interruption is the
+/// primary concern.
+///
+/// Pure: same `(from, to, duration, easing, elapsed)` always yields
+/// the same `current()`. The §2 invariant #3 `dry_run` guarantee
+/// extends here without further ceremony.
+#[derive(Debug, Clone, Copy)]
+pub struct Tween<T: Animatable> {
+    pub from: T,
+    pub to: T,
+    pub duration: f32,
+    pub easing: Easing,
+    pub elapsed: f32,
+}
+
+impl<T: Animatable> Tween<T> {
+    /// Construct a tween at `elapsed = 0`. `duration` must be `> 0`
+    /// for a sensible progression — a zero-duration tween produces
+    /// `current() == from` for any `elapsed < ε` and `to` afterward
+    /// (the saturating fallback below).
+    #[must_use]
+    pub fn new(from: T, to: T, duration: f32, easing: Easing) -> Self {
+        Self {
+            from,
+            to,
+            duration,
+            easing,
+            elapsed: 0.0,
+        }
+    }
+
+    /// Compute the current value. Clamps internal progress to
+    /// `[0, 1]` so callers don't have to police `elapsed`.
+    #[must_use]
+    pub fn current(self) -> T {
+        if self.duration <= 0.0 {
+            return self.to;
+        }
+        let raw = (self.elapsed / self.duration).clamp(0.0, 1.0);
+        let eased = self.easing.apply(raw);
+        T::lerp(self.from, self.to, eased)
+    }
+
+    /// Advance `elapsed` by `dt` seconds. Caller-injected time
+    /// keeps the dry-run guarantee intact.
+    pub fn tick(&mut self, dt: f32) {
+        self.elapsed += dt;
+    }
+
+    /// `true` once `elapsed >= duration` — the tween has reached
+    /// its `to` value and further `tick` calls are no-ops with
+    /// respect to [`Tween::current`].
+    #[must_use]
+    pub fn is_done(self) -> bool {
+        self.elapsed >= self.duration
+    }
+}
+
 impl<T: Animatable> SpringState<T> {
     /// Construct a state at rest at `value` — `current == target ==
     /// value` and `velocity == zero`. The natural starting point
@@ -598,5 +735,117 @@ mod tests {
         assert!((s.current.w - 200.0).abs() < 0.5);
         assert!((s.current.h - 120.0).abs() < 0.5);
         assert!(s.is_done(1.0));
+    }
+
+    #[test]
+    fn easing_endpoints_exact() {
+        // Every variant must map 0 → 0 and 1 → 1 exactly.
+        for e in [
+            Easing::Linear,
+            Easing::EaseInQuad,
+            Easing::EaseOutQuad,
+            Easing::EaseInOutQuad,
+            Easing::EaseInCubic,
+            Easing::EaseOutCubic,
+            Easing::EaseInOutCubic,
+        ] {
+            assert_eq!(e.apply(0.0).to_bits(), 0.0_f32.to_bits());
+            assert_eq!(e.apply(1.0).to_bits(), 1.0_f32.to_bits());
+        }
+    }
+
+    #[test]
+    fn easing_linear_is_identity() {
+        assert!((Easing::Linear.apply(0.25) - 0.25).abs() < 1e-6);
+        assert!((Easing::Linear.apply(0.5) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn easing_quad_curve_shape() {
+        // EaseInQuad: t=0.5 → 0.25 (below linear)
+        assert!((Easing::EaseInQuad.apply(0.5) - 0.25).abs() < 1e-6);
+        // EaseOutQuad: t=0.5 → 0.75 (above linear)
+        assert!((Easing::EaseOutQuad.apply(0.5) - 0.75).abs() < 1e-6);
+        // EaseInOutQuad: midpoint = 0.5
+        assert!((Easing::EaseInOutQuad.apply(0.5) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn easing_monotonic_on_unit_interval() {
+        // All curves should be monotonically non-decreasing on
+        // [0, 1] — sample 0.0, 0.1, …, 1.0 and check.
+        // (precision_loss allow: i ∈ 0..=10 fits exactly in f32.)
+        for e in [
+            Easing::EaseInQuad,
+            Easing::EaseOutQuad,
+            Easing::EaseInOutQuad,
+            Easing::EaseInCubic,
+            Easing::EaseOutCubic,
+            Easing::EaseInOutCubic,
+        ] {
+            let mut prev = f32::NEG_INFINITY;
+            for i in 0..=10u32 {
+                let t = i as f32 / 10.0;
+                let v = e.apply(t);
+                assert!(
+                    v >= prev,
+                    "easing {e:?} not monotonic at t={t}: {v} < {prev}",
+                );
+                prev = v;
+            }
+        }
+    }
+
+    #[test]
+    fn tween_at_start_returns_from() {
+        let t = Tween::new(0.0_f32, 100.0_f32, 1.0, Easing::Linear);
+        assert!((t.current() - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn tween_after_full_duration_returns_to() {
+        let mut t = Tween::new(0.0_f32, 100.0_f32, 1.0, Easing::Linear);
+        t.tick(1.0);
+        assert!((t.current() - 100.0).abs() < 1e-6);
+        assert!(t.is_done());
+    }
+
+    #[test]
+    fn tween_linear_midpoint() {
+        let mut t = Tween::new(0.0_f32, 100.0_f32, 1.0, Easing::Linear);
+        t.tick(0.5);
+        assert!((t.current() - 50.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn tween_easing_affects_midpoint() {
+        let mut t = Tween::new(0.0_f32, 100.0_f32, 1.0, Easing::EaseInQuad);
+        t.tick(0.5);
+        // EaseInQuad at t=0.5 = 0.25 → value 25.0
+        assert!((t.current() - 25.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn tween_zero_duration_returns_to() {
+        let t = Tween::new(0.0_f32, 50.0_f32, 0.0, Easing::Linear);
+        // Saturating fallback: zero-duration tween is "instant".
+        assert!((t.current() - 50.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn tween_extrapolation_clamps() {
+        // Ticking past duration must not overshoot.
+        let mut t = Tween::new(0.0_f32, 100.0_f32, 1.0, Easing::Linear);
+        t.tick(2.0);
+        assert!((t.current() - 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn tween_pure_function() {
+        let t = Tween::new(0.0_f32, 100.0_f32, 1.0, Easing::EaseInOutCubic);
+        let a = t.current();
+        let b = t.current();
+        assert!((a - b).abs() < 1e-6);
     }
 }

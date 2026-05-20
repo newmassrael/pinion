@@ -22,7 +22,9 @@ pub mod test_fixtures;
 #[cfg(test)]
 mod multi_window;
 
-pub use animation::{Animatable, AnimRect, AnimVec2, AnimVec4, SpringConfig, SpringState};
+pub use animation::{
+    Animatable, AnimRect, AnimVec2, AnimVec4, Easing, SpringConfig, SpringState, Tween,
+};
 pub use event::Event;
 pub use renderer::WidgetRenderer;
 pub use external::External;

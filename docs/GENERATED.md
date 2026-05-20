@@ -1537,6 +1537,8 @@ fn main() {
 - crates/pinion-core/src/animation.rs:AnimRect
 - crates/pinion-core/src/style.rs:Color::to_linear
 - crates/pinion-core/src/style.rs:Color::from_linear
+- crates/pinion-core/src/animation.rs:Easing
+- crates/pinion-core/src/animation.rs:Tween
 
 
 
@@ -5703,6 +5705,34 @@ router.pointer_down(&mut state_scene);
 - Frame::with_dt caller migration — Frame::new → with_dt(measured_dt) (evidence-first)
 - frame_index / scale_factor field carry — evidence-first, 2nd consumer trigger
 - §6.3 charter expand — body/intent/rationale (현재 empty), Async model full doc
+
+
+
+### R51.136 — R51.136 §5.28 — Easing enum (7 variants) + Tween<T> deterministic tween path (spring 의 special case, 결정성 우선 use case)
+
+**Changes**:
+- pinion-core/src/animation.rs — Easing enum (Linear/Quad×3/Cubic×3) + apply pure
+- Tween<T: Animatable> { from, to, duration, easing, elapsed } + new/current/tick/is_done
+- pinion-core/src/lib.rs — Easing, Tween top-level re-export
+- atomic §5.28 — +2 binding (Easing, Tween)
+
+
+
+**Verification**:
+- cargo test --workspace: 1759/0/8 (+11 신규 Easing 4 + Tween 7, 1748 base)
+- cargo clippy: 0 warning (cast_precision_loss test allow i≤0..=10 f32 exact)
+- 27 animation tests 누적 (R51.133 11 + R51.134 5 + R51.136 11) — endpoint exact + monotonic
+
+
+
+**Impact**: §5.28
+
+
+**Carry forward**:
+- AnimationDriver Effect substrate — §5.23 first-cut + Signal subscription (R51.137+)
+- Color/Rect Animatable impl — caller-explicit linear path 정통 (R51.134 carry)
+- premultiplied-linear vs straight-linear alpha quality round
+- EaseInQuart/Quint/EaseInOutBack 등 extended curves — evidence-first
 
 
 
