@@ -5556,9 +5556,9 @@ router.pointer_down(&mut state_scene);
 
 **Changes**:
 - audit-only entry — 코드 변경 0
-- pinion-shell::typeahead substrate 재검토 결과 — TypeaheadCursor::step 이 pure function + caller-injected `now: Instant` + caller-owned storage (§2 #3 dry_run invariant 관철)
-- 모듈 doc 이 이미 명시: “thread-local, struct field, ECS resource — caller's choice” — substrate 계 이미 multi-window safe
-- examples/hello-listbox + hello-listbox-multi 의 `thread_local!` 패턴 은 application-side design choice (substrate 에 너뻘 부채 아님)
+- typeahead substrate 재검토 — TypeaheadCursor::step pure + caller-inject `now: Instant` + caller-owned
+- 모듈 doc: "thread-local/struct field/ECS resource — caller's choice" → multi-window safe
+- hello-listbox{,-multi} `thread_local!` = application-side design choice (substrate 별도 부채 아님)
 
 
 
@@ -5574,7 +5574,33 @@ router.pointer_down(&mut state_scene);
 
 **Carry forward**:
 - R51.107 carry — multi-window app land 시 application-side storage abstraction 재평가 trigger
-- [[abstraction-needs-second-consumer]] lesson 반아 — evidence 없는 polish 는 textbook 도ҫacceptable defer
+- [[abstraction-needs-second-consumer]] lesson 받아 — evidence 없는 polish 는 textbook 도 acceptable defer
+
+
+
+### R51.132 — R51.132 §5.38 — R51.131 publishable typo + over-length 정정 (audit immutable, ledger anchored)
+
+**Changes**:
+- set_changelog_publishable_changes: changes_bullets 4건 압축 — 165→<=100 char + '너뻘'→'별도'
+- set_changelog_publishable_carry_forward: carry 2건 typo — '반아'→'받아', '도ҫacceptable'→'도 acceptable'
+- mnemosyne.toml: [[publishable_override_ledger]] row 1건 추가 — content_hash_after 01c0589...
+
+
+
+**Verification**:
+- validate_workspace: entries=11 ledger_rows=16 — R51.131 divergence anchored (직전 10/15)
+- audit half immutable: decision_summary / changes / carry audit 측 frozen 보존 (R294 ledger)
+- code 변경 0 — cargo test 1722/0/8 baseline 무변동, clippy 0 warning
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- R51.107 carry close 자체는 R51.131 audit-only 로 land 완료 (substrate textbook 정통)
+- host mnemosyne-cli emit-publishable-override-ledger-draft subcommand 미지원 회피
+- validate_workspace stderr hint = anchor sha256 정통 path (cli rebuild 불요)
 
 
 

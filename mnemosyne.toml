@@ -169,3 +169,16 @@ fields = ["publishable_decision_summary", "publishable_verification_bullets"]
 reason = "R47.7.4.3 framing 정정 — 'wrap 0 확정' = hypothetical paint_producer path 한정 명시. winit actual frame 측정 X (viewport mandatory) + R47.7.5 carry"
 applied_in = "pinion R47.7.4.3.1+"
 content_hash_after = "ac59aa7cb7df26db3bfb6007e714dc0001db97874bcd4cea236065db95182d96"
+
+# R51.132 incident — R51.131 typo + over-length 정정.
+# changes_bullets: "너뻘 부채" → "별도 부채" + 165 char → 100 char 압축
+# carry_forward_bullets: "반아" → "받아", "도ҫacceptable" → "도 acceptable"
+# audit half 는 frozen 유지 (R294 ledger), publishable 만 정명료성 향상.
+
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "R51.131"
+fields = ["publishable_changes_bullets", "publishable_carry_forward_bullets"]
+reason = "R51.131 publishable half typo + over-length 정정 — changes 의 '너뻘'→'별도' + 165→100 char 압축; carry 의 '반아'→'받아', '도ҫacceptable'→'도 acceptable' (audit half immutable, publishable 명료성 향상)"
+applied_in = "pinion R51.132"
+content_hash_after = "01c058933f9601378997e790f8155b2520eac6b62c79f6538bba0bc537994a2b"
