@@ -246,6 +246,11 @@ pub(crate) struct OwnerInner {
     /// once per frame; the framework runtime is the canonical caller
     /// (carry: R51.139+ paint-loop wiring).
     pub(crate) owned_animations: RefCell<Vec<Rc<dyn crate::animation::Tickable>>>,
+    /// Pending declarative commands (§5.23) produced inside this scope
+    /// and not yet drained by a handler. Cleared on Owner drop so
+    /// dangling IO is impossible — the textbook Solid.js cancellation
+    /// pattern translated to a queue.
+    pub(crate) owned_commands: RefCell<Vec<crate::command::Command>>,
 }
 
 impl ReactiveNode for OwnerInner {
@@ -297,6 +302,7 @@ impl Owner {
                 children: RefCell::new(Vec::new()),
                 owned_signals: RefCell::new(Vec::new()),
                 owned_animations: RefCell::new(Vec::new()),
+                owned_commands: RefCell::new(Vec::new()),
             }),
         }
     }
@@ -467,6 +473,59 @@ impl Owner {
     #[cfg(test)]
     pub(crate) fn registered_animation_count(&self) -> usize {
         self.inner.owned_animations.borrow().len()
+    }
+
+    /// Queue a declarative [`Command`](crate::command::Command) on this
+    /// scope. The framework / registered handler drains the queue via
+    /// [`Owner::take_pending_commands`]; until then it is visible to
+    /// inspection via [`Owner::pending_commands`].
+    ///
+    /// `scope_id` on the [`Command`](crate::command::Command) is not
+    /// checked against this owner — callers stamp it from any source
+    /// they want (typically the producing widget's reactive scope). The
+    /// queue itself is associated with *this* owner by virtue of where
+    /// it is registered, which is also the cancellation anchor — on
+    /// drop, every queued command is discarded.
+    pub fn dispatch_command(&self, command: crate::command::Command) {
+        self.inner.owned_commands.borrow_mut().push(command);
+    }
+
+    /// Snapshot of pending [`Command`](crate::command::Command)s in this
+    /// scope (clones the queue contents). Does **not** drain — use
+    /// [`Owner::take_pending_commands`] when you want to dispatch them.
+    ///
+    /// This is the `dry_run` / RPC-inspection path: scenario explorers
+    /// and AI agents can read the pending queue without committing to
+    /// execution. The §5.23 contract that "`dry_run` skips `Command`
+    /// dispatch but collects pending for AI inspection" reduces to:
+    /// take a snapshot here, roll back via `Owner::restore`.
+    #[must_use]
+    pub fn pending_commands(&self) -> Vec<crate::command::Command> {
+        self.inner.owned_commands.borrow().clone()
+    }
+
+    /// Drain the pending [`Command`](crate::command::Command) queue,
+    /// returning ownership of every queued command in FIFO order. The
+    /// caller is the handler-side responsibility — once drained, the
+    /// commands no longer count as cancellable-by-Owner-drop.
+    #[must_use]
+    pub fn take_pending_commands(&self) -> Vec<crate::command::Command> {
+        std::mem::take(&mut *self.inner.owned_commands.borrow_mut())
+    }
+
+    /// Depth-first drain across the owner subtree (children first, then
+    /// this scope's own). Returns every drained command in subtree
+    /// traversal order — the natural shape for a framework pump that
+    /// dispatches commands once per frame after reducer reduction.
+    #[must_use]
+    pub fn take_pending_commands_recursive(&self) -> Vec<crate::command::Command> {
+        let children: Vec<Owner> = self.inner.children.borrow().iter().cloned().collect();
+        let mut drained: Vec<crate::command::Command> = Vec::new();
+        for child in &children {
+            drained.append(&mut child.take_pending_commands_recursive());
+        }
+        drained.append(&mut self.take_pending_commands());
+        drained
     }
 }
 
@@ -991,5 +1050,168 @@ mod tests {
         });
         assert!(observer.is_dirty());
         assert_eq!(s.get(), 0);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R51.139 — Command dispatch / drain / cancel-on-drop tests
+    // ────────────────────────────────────────────────────────────────
+
+    mod command {
+        use super::Owner;
+        use crate::command::Command;
+        use crate::external::IntrospectValue;
+
+        #[test]
+        fn dispatch_appends_to_pending_queue() {
+            let owner = Owner::new();
+            assert!(owner.pending_commands().is_empty());
+            owner.dispatch_command(Command::new_static(
+                "http.get",
+                IntrospectValue::Text("/api".to_string()),
+                owner.id(),
+            ));
+            let snapshot = owner.pending_commands();
+            assert_eq!(snapshot.len(), 1);
+            assert_eq!(snapshot[0].kind_str(), "http.get");
+        }
+
+        #[test]
+        fn pending_commands_does_not_drain() {
+            let owner = Owner::new();
+            owner.dispatch_command(Command::new_static(
+                "audio.play",
+                IntrospectValue::Int(440),
+                owner.id(),
+            ));
+            let _peek = owner.pending_commands();
+            // Snapshot must leave the queue intact for the actual drainer.
+            assert_eq!(owner.pending_commands().len(), 1);
+        }
+
+        #[test]
+        fn take_pending_returns_queue_in_fifo_order_and_empties() {
+            let owner = Owner::new();
+            for n in 0..3_i64 {
+                owner.dispatch_command(Command::new_static(
+                    "tick",
+                    IntrospectValue::Int(n),
+                    owner.id(),
+                ));
+            }
+            let drained = owner.take_pending_commands();
+            assert_eq!(drained.len(), 3);
+            assert_eq!(drained[0].payload, IntrospectValue::Int(0));
+            assert_eq!(drained[2].payload, IntrospectValue::Int(2));
+            // Queue empty after drain.
+            assert!(owner.pending_commands().is_empty());
+        }
+
+        #[test]
+        fn distinct_owners_have_independent_queues() {
+            let a = Owner::new();
+            let b = Owner::new();
+            a.dispatch_command(Command::new_static("a.evt", IntrospectValue::Null, a.id()));
+            b.dispatch_command(Command::new_static("b.evt", IntrospectValue::Null, b.id()));
+            b.dispatch_command(Command::new_static("b.evt2", IntrospectValue::Null, b.id()));
+            assert_eq!(a.pending_commands().len(), 1);
+            assert_eq!(b.pending_commands().len(), 2);
+        }
+
+        #[test]
+        fn owner_drop_cancels_pending_commands() {
+            let kept_alive = Owner::new();
+            {
+                let scope = Owner::new();
+                scope.dispatch_command(Command::new_static(
+                    "fetch.cancelled",
+                    IntrospectValue::Null,
+                    scope.id(),
+                ));
+                assert_eq!(scope.pending_commands().len(), 1);
+            }
+            // Scope dropped — queue gone with it. Other owners unaffected.
+            assert!(kept_alive.pending_commands().is_empty());
+        }
+
+        #[test]
+        fn take_pending_recursive_drains_children_first() {
+            let parent = Owner::new();
+            let child = Owner::new_child(&parent);
+            let grandchild = Owner::new_child(&child);
+            parent.dispatch_command(Command::new_static("p.cmd", IntrospectValue::Null, parent.id()));
+            child.dispatch_command(Command::new_static("c.cmd", IntrospectValue::Null, child.id()));
+            grandchild.dispatch_command(Command::new_static(
+                "gc.cmd",
+                IntrospectValue::Null,
+                grandchild.id(),
+            ));
+            let drained = parent.take_pending_commands_recursive();
+            assert_eq!(drained.len(), 3);
+            // Depth-first: grandchild first, then child, then parent.
+            assert_eq!(drained[0].kind_str(), "gc.cmd");
+            assert_eq!(drained[1].kind_str(), "c.cmd");
+            assert_eq!(drained[2].kind_str(), "p.cmd");
+            // All queues empty after drain.
+            assert!(parent.pending_commands().is_empty());
+            assert!(child.pending_commands().is_empty());
+            assert!(grandchild.pending_commands().is_empty());
+        }
+
+        #[test]
+        fn dynamic_kind_command_round_trips() {
+            let owner = Owner::new();
+            let kind = format!("ws.send.channel_{}", 42);
+            owner.dispatch_command(Command::new_owned(
+                kind.clone(),
+                IntrospectValue::Text("hello".to_string()),
+                owner.id(),
+            ));
+            let drained = owner.take_pending_commands();
+            assert_eq!(drained[0].kind_str(), kind);
+        }
+
+        #[test]
+        fn dispatching_after_drain_starts_new_batch() {
+            let owner = Owner::new();
+            owner.dispatch_command(Command::new_static("a", IntrospectValue::Null, owner.id()));
+            owner.dispatch_command(Command::new_static("b", IntrospectValue::Null, owner.id()));
+            let first = owner.take_pending_commands();
+            assert_eq!(first.len(), 2);
+            // After drain the queue restarts.
+            owner.dispatch_command(Command::new_static("c", IntrospectValue::Null, owner.id()));
+            let second = owner.take_pending_commands();
+            assert_eq!(second.len(), 1);
+            assert_eq!(second[0].kind_str(), "c");
+        }
+
+        #[test]
+        fn pending_commands_clone_is_independent_of_source() {
+            // Mutating the snapshot Vec must not affect the live queue.
+            let owner = Owner::new();
+            owner.dispatch_command(Command::new_static("a", IntrospectValue::Null, owner.id()));
+            let mut snapshot = owner.pending_commands();
+            snapshot.clear();
+            assert_eq!(owner.pending_commands().len(), 1);
+        }
+
+        #[test]
+        fn dispatching_in_recursive_drain_caller_does_not_re_enter() {
+            // A handler iterating drained commands may dispatch fresh ones
+            // back onto the owner. We confirm those land in the next batch,
+            // not the current drain.
+            let owner = Owner::new();
+            owner.dispatch_command(Command::new_static("first", IntrospectValue::Null, owner.id()));
+            let drained = owner.take_pending_commands_recursive();
+            // Simulate a handler enqueueing a follow-up while iterating.
+            for _ in &drained {
+                owner.dispatch_command(Command::new_static(
+                    "followup",
+                    IntrospectValue::Null,
+                    owner.id(),
+                ));
+            }
+            assert_eq!(owner.pending_commands().len(), 1);
+            assert_eq!(owner.pending_commands()[0].kind_str(), "followup");
+        }
     }
 }

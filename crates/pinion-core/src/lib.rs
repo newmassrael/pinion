@@ -1,5 +1,6 @@
 pub mod animation;
 pub mod app;
+pub mod command;
 pub mod event;
 pub mod external;
 pub mod frame;
@@ -26,6 +27,7 @@ pub use animation::{
     Animatable, AnimRect, AnimVec2, AnimVec4, Animation, Easing, SpringConfig, SpringState,
     Tickable, Tween,
 };
+pub use command::Command;
 pub use event::Event;
 pub use renderer::WidgetRenderer;
 pub use external::External;

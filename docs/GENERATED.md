@@ -1231,6 +1231,13 @@ fn main() {
 - crates/pinion-core/src/reactive/effect.rs:EffectInner::rerun
 - crates/pinion-core/src/reactive/effect.rs:EffectInner::mark_dirty
 - crates/pinion-core/src/reactive/owner.rs:Owner::on_cleanup
+- crates/pinion-core/src/command.rs
+- crates/pinion-core/src/command.rs:Command
+- crates/pinion-core/src/command.rs:Command::new_static
+- crates/pinion-core/src/reactive/owner.rs:Owner::dispatch_command
+- crates/pinion-core/src/reactive/owner.rs:Owner::pending_commands
+- crates/pinion-core/src/reactive/owner.rs:Owner::take_pending_commands
+- crates/pinion-core/src/reactive/owner.rs:Owner::take_pending_commands_recursive
 
 
 
@@ -5814,6 +5821,38 @@ router.pointer_down(&mut state_scene);
 - Animation 의 Owner-tied drop = registry 자동 release (이미 land); driver tick caller R51.139 carry
 - Animation::set_target 비-Signal API; reactive subscription 은 Animation::value/signal 만 정통
 - rest_epsilon = const default (0.01 sub-pixel), per-Animation 변경 API 는 evidence-first carry
+
+
+
+### R51.139 — §5.23 Command&lt;I&gt; declarative struct + Owner-tied pending queue (R52 axis B substrate)
+
+**Changes**:
+- crates/pinion-core/src/command.rs 신규 (~145 LOC): Command wire-form struct (Intent mirror)
+- Owner::dispatch_command + pending_commands snapshot + take_pending_commands FIFO drain
+- Owner::take_pending_commands_recursive: depth-first subtree drain (children → self order)
+- Owner drop cancels pending queue (cancellation via Owner-tied lifetime, Solid 패턴)
+- Command kind=Cow<str> + payload=IntrospectValue + scope_id=u64 (Serialize-friendly for RPC)
+- 14 신규 tests: dispatch/snapshot/FIFO drain/drop-cancel/recursive/follow-up
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1801 pass / 0 fail / 8 ignored (+14)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- clippy reactive fix 5건: doc_markdown x3 + must_use_candidate x2 (lesson #149 또 위반)
+- mnemosyne validate_workspace: entries=311 / T1=0 / T3=0 / GENERATED.md=sync (post-mutation)
+
+
+
+**Impact**: §5.23, §5.20
+
+
+**Carry forward**:
+- R51.140: Handler trait (async dispatch surface) + boot-time registry — framework-side carry
+- R51.141+: scene/commands RPC method (10th) — pinion-rpc 측 pending queue surface
+- Update fn signature: Update(&mut Model, Intent) → Vec<Command> — Reducer integration carry
+- SCE schema for declarative command tables + Forge codegen (R51.x+ axis, evidence-first carry)
+- Cancellation: 신규 Command 같은 scope 가 prior in-flight 취소 (Solid pattern) — R51.140+ carry
 
 
 
