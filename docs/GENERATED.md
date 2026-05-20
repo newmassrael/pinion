@@ -3232,6 +3232,7 @@ router.pointer_down(&mut state_scene);
 - R51.111 — TUI input dispatch: crossterm KeyEvent → W3C key str + ButtonExternal first interaction
 - R51.112 — TUI mouse dispatch: cell→pixel + InputRouter wire-up + EnableMouseCapture lifecycle
 - R51.113 — hello-toggle-tui 2nd TUI binding land (substrate-incompleteness-signal evidence)
+- R51.115 — paint::to_buffer Scene::Box + ContainerNode.style mapping (border ┌─┐│└─┘ + bg fill)
 
 
 
@@ -3290,6 +3291,10 @@ router.pointer_down(&mut state_scene);
 - examples/hello-toggle-tui/Cargo.toml
 - examples/hello-toggle-tui/src/main.rs
 - examples/hello-toggle-tui/src/main.rs:HelloToggleTui
+- crates/pinion-tui/src/paint.rs:paint_box_style
+- crates/pinion-tui/src/paint.rs:paint_box
+- crates/pinion-tui/src/paint.rs:paint_container
+- crates/pinion-tui/src/paint.rs:color_to_tui
 
 
 
