@@ -4,6 +4,7 @@ pub mod external;
 pub mod frame;
 pub mod intent;
 pub mod reactive;
+pub mod renderer;
 pub mod revision;
 pub mod scene;
 pub mod style;
@@ -14,6 +15,7 @@ pub mod widgets;
 mod multi_window;
 
 pub use event::Event;
+pub use renderer::WidgetRenderer;
 pub use external::External;
 pub use frame::Frame;
 pub use intent::{Intent, IntentTag};

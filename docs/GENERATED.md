@@ -3222,6 +3222,7 @@ router.pointer_down(&mut state_scene);
 - R51.108 — ShellCore substrate winit-free 분리 land (Touch / TouchPhase / Modifiers pinion lift)
 - R51.109.0 — pinion-tui crate skeleton land (ratatui 0.29 + crossterm 0.28 + TuiRenderer placeholder)
 - R51.109.1 — WidgetRenderer trait + VelloContext + macro 2 impl (backend-agnostic dispatch land)
+- R51.109.2 — WidgetRenderer lift to pinion-core + TuiRenderer<B> impl land (2nd backend)
 
 
 
@@ -3253,6 +3254,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/lib.rs:TuiRenderer
 - crates/pinion-shell/src/lib.rs:WidgetRenderer
 - crates/pinion-shell/src/lib.rs:VelloContext
+- crates/pinion-core/src/renderer.rs
+- crates/pinion-core/src/renderer.rs:WidgetRenderer
+- crates/pinion-tui/src/lib.rs:TuiContext
 
 
 
@@ -10348,6 +10352,38 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.20
+
+
+
+### Round 495 — R51.109.2 §5.41 WidgetRenderer trait pinion-core lift + TuiRenderer<B: Backend> 첫 2nd impl land — [[substrate-incompleteness-signal]] 정통 (trait + 두 impl 동시, premature abstraction 회피)
+
+**Changes**:
+- pinion-core/src/renderer.rs 신설 — WidgetRenderer trait (Frame + Context + render + resize) lift
+- pinion-shell: WidgetRenderer trait def 제거, pub use pinion_core::WidgetRenderer re-export
+- pinion-tui: pinion-core dep + TuiContext + TuiRenderer<B: ratatui::Backend>
+- TuiRenderer 의 WidgetRenderer impl (terminal.draw closure 로 buffer cells copy)
+- substrate-incompleteness-signal 정합: trait + first 2 impl (Vello + Tui) 동시 land
+- test infra: TestBackend smoke + impl trait bound 컴파일 검증
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello clean (trait move 무회귀)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning
+- cargo test --workspace --features pinion-runtime/vello = 1662 pass / 0 fail (+2 신규)
+- pinion-tui 는 vello / winit transitive 0 (cross-backend pollution 검증)
+
+
+
+**Impact**: §2, §5.2, §5.16, §5.41
+
+
+**Carry forward**:
+- R51.110 — paint::to_buffer (Scene → ratatui::Buffer 매핑) + hello-button TUI dogfood
+- R51.110 — pinion-tui-shell run::<V>() entry point (winit-free ApplicationHandler analog)
+- TuiContext palette / colour depth field = R51.111+ (hello-button 평가 후)
+- WidgetView::Renderer bound 의 TUI binding 시 generic 또는 alternate trait = R51.110 결정
+- TuiRenderer<B> generic monomorphization — production CrosstermBackend / test TestBackend
 
 
 

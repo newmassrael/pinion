@@ -129,58 +129,12 @@ impl Default for VelloContext {
     }
 }
 
-/// R51.109.1 §5.41 — backend-agnostic widget renderer trait.
-///
-/// Single dispatch boundary between the shell's render loop and the
-/// concrete backend. Each `WidgetRenderer` impl owns its
-/// backend-specific surface (Vello → wgpu, TUI → terminal); the
-/// shell only knows about the `Frame` + `Context` associated types
-/// and calls `render` once per frame.
-///
-/// The two visible backends:
-///
-/// | Backend | `Frame` | `Context` | crate |
-/// |---|---|---|---|
-/// | Vello GUI (§5.16) | `vello::Scene` | [`VelloContext`] | `pinion-shell` (codegen via [`vello_renderer_impl!`]) |
-/// | ratatui TUI (§5.41) | `ratatui::Buffer` | `pinion_tui::TuiContext` | `pinion-tui` (R51.109.2) |
-///
-/// `Sized` so the shell can store `Box<Self>` in `RenderState::Active`
-/// without object-safety constraints; zero-virtual-dispatch in the
-/// hot path (no `dyn WidgetRenderer`) per §5.16 R45 R51.16 guarantee.
-/// `Context: Copy` so the shell passes by value per frame without
-/// allocation; `Error: Display` so the shell can `eprintln!` any
-/// failure without forcing the application into the concrete error.
-pub trait WidgetRenderer: Sized {
-    /// Concrete error type emitted by `render`. The codegen template
-    /// emits `HelloFooRendererError` for Vello consumers; TUI
-    /// implementations surface `std::io::Error` directly.
-    type Error: core::fmt::Display;
-
-    /// Backend-specific painted-output type. The shell's render
-    /// pipeline builds this via the backend-specific paint adapter
-    /// (`paint_adapter::to_vello` for GUI, `paint_adapter::to_tui`
-    /// for TUI) then hands it to the renderer.
-    type Frame;
-
-    /// Backend-specific frame-level render hints (base color for
-    /// Vello, palette for TUI, etc.). `Copy` so the shell passes by
-    /// value per frame.
-    type Context: Copy;
-
-    /// Submit one painted frame against the backend's surface.
-    ///
-    /// # Errors
-    /// Implementation-defined — frame submission failure, swapchain
-    /// loss (Vello), IO error writing terminal cells (TUI), etc.
-    fn render(
-        &mut self,
-        frame: &Self::Frame,
-        ctx: Self::Context,
-    ) -> Result<(), Self::Error>;
-
-    /// Resize the backend surface to match a new logical dimension.
-    fn resize(&mut self, width: u32, height: u32);
-}
+// R51.109.2 §5.41 — `WidgetRenderer` trait moved to `pinion-core` so
+// the TUI backend crate (`pinion-tui`) can implement it without
+// transitively pulling Vello / wgpu through pinion-shell. Re-export
+// preserves every existing `pinion_shell::WidgetRenderer` callsite
+// (app.rs render dispatch, `vello_renderer_impl!` macro path).
+pub use pinion_core::WidgetRenderer;
 
 /// R51.109.1 §5.41 — Vello specialization of [`WidgetRenderer`].
 ///

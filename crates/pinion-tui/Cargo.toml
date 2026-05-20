@@ -11,6 +11,13 @@ description = "R51.109 §5.41 cell-based render mode primitive — ratatui Backe
 workspace = true
 
 [dependencies]
+# §5.41 R51.109.2 — `WidgetRenderer` trait lives in pinion-core so the
+# TUI backend depends only on the lowest-level crate (no winit / wgpu
+# transitive). pinion-shell stays the Vello-coupled binary path; this
+# crate the ratatui-coupled binary path; both implement the same
+# substrate trait.
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+
 # §5.41 R51.109.0 — Rust TUI rendering library. Cell-based scene
 # render target (§2 #6 GUI/TUI dual). Linebender-adjacent maintainer
 # continuity; egui / iced / bubbletea-class adoption baseline. The
