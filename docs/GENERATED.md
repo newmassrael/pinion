@@ -2732,6 +2732,7 @@ router.pointer_down(&mut state_scene);
 - R51.99 — hello-listbox type-ahead 점프 (printable 문자→다음 매칭 옵션, WAI-ARIA APG)
 - R51.100 — ListBox JSON-RPC e2e 단/다중 모드 + composite cancel + selected.<i> per-row 검증
 - R51.102 — WidgetTransition::detect → Vec<Intent>, Snapshot: Clone, ListBox 다중 emit substrate
+- R51.103 — type-ahead 다문자 prefix 버퍼 (500ms 타임아웃) + Unicode case fold (i18n)
 
 
 

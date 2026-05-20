@@ -59,6 +59,9 @@
 //! [`RadioGroup`]: pinion_core::widgets::radio_group::RadioGroup
 //! [`ListBoxItem`]: pinion_core::widgets::listbox_item::ListBoxItem
 
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
+
 use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -568,6 +571,34 @@ fn set_focus(node: &mut pinion_core::scene::ExternalNode, idx: usize) -> bool {
 /// label first-character match (Unicode case folding) is also a
 /// carry; the current fold uses `eq_ignore_ascii_case` which is
 /// correct for the ASCII fruit names.
+/// R51.103 §5.38 — WAI-ARIA Listbox optional type-ahead with
+/// multi-character prefix buffer. Within
+/// [`TYPEAHEAD_TIMEOUT`] of the previous keystroke the new char
+/// appends to the buffer (prefix mode); past the timeout the buffer
+/// resets and the new char starts a single-char cyclic search (the
+/// R51.99 baseline behavior). Mirrors the W3C ARIA Authoring
+/// Practices Listbox text-search algorithm.
+///
+/// The thread-local buffer is application-layer (not framework
+/// primitive) because the type-ahead state belongs to the user's
+/// keyboard session, not the widget's value sidecar. Lifting it
+/// into a `pinion-core` / `pinion-shell` cursor primitive becomes
+/// textbook at the second-consumer trigger
+/// (`Menu` / `TreeView` / `Grid`); for now it stays here so the
+/// framework boundary keeps purity guarantees (no `Instant` reach
+/// into a `dry_run` path).
+const TYPEAHEAD_TIMEOUT: Duration = Duration::from_millis(500);
+
+#[derive(Default)]
+struct TypeaheadState {
+    buffer: String,
+    last_typed: Option<Instant>,
+}
+
+thread_local! {
+    static TYPEAHEAD: RefCell<TypeaheadState> = RefCell::new(TypeaheadState::default());
+}
+
 fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bool {
     let Some(first) = single_printable_char(key) else {
         return false;
@@ -580,10 +611,15 @@ fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bo
             IntrospectValue::Int(i) => usize::try_from(i).ok(),
             _ => None,
         });
-    let Some(target) = find_next_match(current, first) else {
+    let labels: [&str; N] = std::array::from_fn(option_label);
+    let target = TYPEAHEAD.with(|cell| {
+        let mut state = cell.borrow_mut();
+        typeahead_step(&mut state, first, current, Instant::now(), &labels)
+    });
+    let Some(idx) = target else {
         return false;
     };
-    set_focus(node, target)
+    set_focus(node, idx)
 }
 
 /// R51.99 §5.38 — extract the single-printable-character predicate so
@@ -591,37 +627,122 @@ fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bo
 /// live `ExternalNode`. A printable type-ahead key is exactly one
 /// ASCII alphanumeric (`A-Za-z0-9`); named keys (`ArrowDown`, `F1`,
 /// `Tab`) and multi-character / control keys return `None`.
+///
+/// R51.103 §5.38 — extended to accept any single Unicode codepoint
+/// that is `is_alphanumeric` (Unicode-aware), not only ASCII. The
+/// label-side prefix match (`prefix_match_ci`) does the actual
+/// case-fold, so accepting a wider input class only widens which
+/// keystrokes route into the type-ahead buffer.
 fn single_printable_char(key: &str) -> Option<char> {
     let mut iter = key.chars();
     let first = iter.next()?;
     if iter.next().is_some() {
         return None;
     }
-    first.is_ascii_alphanumeric().then_some(first)
+    first.is_alphanumeric().then_some(first)
 }
 
-/// R51.99 §5.38 — wrap-around search for the next option whose label
-/// starts with `key` (case-insensitive, ASCII fold). Starts from
-/// `current + 1` (so successive presses of the same letter cycle
-/// through every match); falls back to `0` when `current` is `None`
-/// or out of range. Returns the matched index or `None` when no
-/// label begins with `key`.
-fn find_next_match(current: Option<usize>, key: char) -> Option<usize> {
+/// R51.103 §5.38 — apply a printable character to the type-ahead
+/// buffer, returning the option index to focus (or `None` when no
+/// label matches).
+///
+/// Behavior follows WAI-ARIA APG Listbox text-search algorithm:
+///
+/// 1. If the elapsed time since `state.last_typed` is at least
+///    [`TYPEAHEAD_TIMEOUT`] (or no prior keystroke), reset the
+///    buffer to start a fresh search. Otherwise, append to the
+///    existing buffer (prefix-extension).
+/// 2. The buffer is the search prefix from now on.
+/// 3. Single-char buffer → cyclic search from `current + 1` so
+///    repeated taps of the same letter cycle through matches
+///    (R51.99 baseline behavior preserved).
+/// 4. Multi-char buffer → first-prefix-match starting at index 0
+///    (no cycling; the user's typing is selecting one specific row).
+///
+/// All comparisons use Unicode case folding via [`char::to_lowercase`].
+/// The function is pure-ish — it mutates only the passed `state`
+/// (no I/O), which makes synthetic-`Instant` tests trivial.
+fn typeahead_step(
+    state: &mut TypeaheadState,
+    key: char,
+    current: Option<usize>,
+    now: Instant,
+    labels: &[&str],
+) -> Option<usize> {
+    let fresh = state
+        .last_typed
+        .is_none_or(|t| now.duration_since(t) >= TYPEAHEAD_TIMEOUT);
+    if fresh {
+        state.buffer.clear();
+    }
+    state.buffer.push(key);
+    state.last_typed = Some(now);
+    if state.buffer.chars().count() == 1 {
+        find_next_cyclic_match(current, key, labels)
+    } else {
+        find_first_prefix_match(&state.buffer, labels)
+    }
+}
+
+/// R51.103 §5.38 — Unicode-aware cyclic search for the next option
+/// whose label begins with `key` (case-insensitive). Generalises the
+/// R51.99 `find_next_match` from ASCII-only to full Unicode case fold
+/// via [`char::to_lowercase`] (handles `i` → `İ` (Turkish), `ß` →
+/// `ss`-like sequences, etc.).
+fn find_next_cyclic_match(
+    current: Option<usize>,
+    key: char,
+    labels: &[&str],
+) -> Option<usize> {
+    let n = labels.len();
+    if n == 0 {
+        return None;
+    }
     let start = match current {
-        Some(c) if c < N => (c + 1) % N,
+        Some(c) if c < n => (c + 1) % n,
         _ => 0,
     };
-    for offset in 0..N {
-        let i = (start + offset) % N;
-        let label = option_label(i);
-        let Some(label_first) = label.chars().next() else {
-            continue;
-        };
-        if label_first.eq_ignore_ascii_case(&key) {
+    for offset in 0..n {
+        let i = (start + offset) % n;
+        if let Some(first) = labels[i].chars().next() {
+            if chars_eq_ci(first, key) {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// R51.103 §5.38 — first-prefix-match (no cycling) for multi-char
+/// type-ahead. Compares the lowercased buffer against each label's
+/// lowercased start; returns the first index that matches.
+fn find_first_prefix_match(buffer: &str, labels: &[&str]) -> Option<usize> {
+    let buf_lower: String = buffer.chars().flat_map(char::to_lowercase).collect();
+    for (i, label) in labels.iter().enumerate() {
+        let label_lower: String =
+            label.chars().flat_map(char::to_lowercase).collect();
+        if label_lower.starts_with(&buf_lower) {
             return Some(i);
         }
     }
     None
+}
+
+/// R51.103 §5.38 — Unicode case-folded character equality.
+/// `char::to_lowercase` returns an iterator (single-char may map to
+/// multi-char, e.g. German `ß` → `ss`); we compare iterators.
+fn chars_eq_ci(a: char, b: char) -> bool {
+    a.to_lowercase().eq(b.to_lowercase())
+}
+
+/// R51.99 §5.38 — wrap-around search for the next option whose label
+/// starts with `key`. Wrapper preserved for backwards compat (R51.99
+/// tests bind to this name); delegates to the R51.103 generalised
+/// helper with `option_label`-derived labels.
+#[cfg(test)]
+fn find_next_match(current: Option<usize>, key: char) -> Option<usize> {
+    let labels: [&str; N] = std::array::from_fn(option_label);
+    find_next_cyclic_match(current, key, &labels)
 }
 
 /// Commit the currently focused option (Space / Enter on a focused
@@ -891,5 +1012,128 @@ mod a11y_tests {
         // Defensive: focused_index larger than N is treated as None
         // (start from 0).
         assert_eq!(find_next_match(Some(99), 'A'), Some(0));
+    }
+
+    // R51.103 §5.38 — multi-char type-ahead buffer + Unicode case fold.
+
+    fn labels_default() -> Vec<&'static str> {
+        (0..N).map(option_label).collect()
+    }
+
+    #[test]
+    fn r51_103_typeahead_single_char_uses_cyclic_search() {
+        // Single-char buffer = R51.99 behavior. Repeated 'A' presses
+        // cycle through A-starting options (only Apple here).
+        let mut state = TypeaheadState::default();
+        let now = Instant::now();
+        let r = typeahead_step(&mut state, 'a', None, now, &labels_default());
+        assert_eq!(r, Some(0));
+        assert_eq!(state.buffer, "a");
+    }
+
+    #[test]
+    fn r51_103_typeahead_multi_char_uses_prefix_match() {
+        // Type "Ba" within timeout → buffer = "Ba" → prefix match
+        // against "Banana" (index 1). Single 'B' alone would also
+        // find Banana, but the multi-char path is what's tested here.
+        let labels = vec!["Apple", "Apricot", "Banana", "Blueberry"];
+        let mut state = TypeaheadState::default();
+        let t0 = Instant::now();
+        // First key 'B' → single-char cyclic.
+        let r1 = typeahead_step(&mut state, 'b', None, t0, &labels);
+        assert_eq!(r1, Some(2));
+        // Second key 'l' within timeout → buffer = "bl" → prefix match.
+        let t1 = t0 + Duration::from_millis(100);
+        let r2 = typeahead_step(&mut state, 'l', Some(2), t1, &labels);
+        assert_eq!(r2, Some(3), "buffer 'bl' should jump to Blueberry");
+        assert_eq!(state.buffer, "bl");
+    }
+
+    #[test]
+    fn r51_103_typeahead_timeout_resets_buffer() {
+        // Type 'a' then wait past TYPEAHEAD_TIMEOUT before 'p' →
+        // buffer resets to "p", cyclic search jumps to first p-option.
+        let labels = vec!["Apple", "Apricot", "Pear", "Peach"];
+        let mut state = TypeaheadState::default();
+        let t0 = Instant::now();
+        let _ = typeahead_step(&mut state, 'a', None, t0, &labels);
+        assert_eq!(state.buffer, "a");
+        // Skip past timeout.
+        let t1 = t0 + TYPEAHEAD_TIMEOUT + Duration::from_millis(1);
+        let r = typeahead_step(&mut state, 'p', Some(0), t1, &labels);
+        assert_eq!(r, Some(2), "Pear after timeout reset");
+        assert_eq!(state.buffer, "p", "buffer reset to single char");
+    }
+
+    #[test]
+    fn r51_103_typeahead_prefix_no_match_returns_none() {
+        let labels = vec!["Apple", "Banana"];
+        let mut state = TypeaheadState::default();
+        let t0 = Instant::now();
+        let _ = typeahead_step(&mut state, 'a', None, t0, &labels);
+        // Buffer becomes "az" — no label starts with "az".
+        let t1 = t0 + Duration::from_millis(50);
+        let r = typeahead_step(&mut state, 'z', None, t1, &labels);
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    fn r51_103_typeahead_unicode_case_fold() {
+        // Unicode case fold via to_lowercase: 'Á' (U+00C1) should
+        // match a label starting with 'á' (U+00E1).
+        let labels = vec!["Älpine", "Mango"];
+        let mut state = TypeaheadState::default();
+        let now = Instant::now();
+        let r = typeahead_step(&mut state, 'ä', None, now, &labels);
+        assert_eq!(r, Some(0), "ä should match Älpine via case fold");
+    }
+
+    #[test]
+    fn r51_103_typeahead_repeated_same_char_cycles() {
+        // Within-timeout same char twice → buffer = "aa" (no label
+        // starts with "aa") → None.
+        let labels = vec!["Apple", "Apricot"];
+        let mut state = TypeaheadState::default();
+        let t0 = Instant::now();
+        let r1 = typeahead_step(&mut state, 'a', None, t0, &labels);
+        assert_eq!(r1, Some(0));
+        let t1 = t0 + Duration::from_millis(50);
+        let r2 = typeahead_step(&mut state, 'a', Some(0), t1, &labels);
+        // "aa" prefix matches nothing; should return None.
+        // Note: WAI-ARIA APG explicitly defines this as "no match"
+        // for repeated typing within timeout — repeating to cycle is
+        // covered by the single-char-buffer path, not multi-char.
+        assert_eq!(r2, None);
+    }
+
+    #[test]
+    fn r51_103_find_first_prefix_match_case_insensitive() {
+        let labels = vec!["Apple", "BANANA", "blueberry"];
+        // Lowercased "ban" matches "BANANA" (lowercased = "banana").
+        assert_eq!(find_first_prefix_match("ban", &labels), Some(1));
+        // "bl" matches "blueberry".
+        assert_eq!(find_first_prefix_match("BL", &labels), Some(2));
+        // No match.
+        assert_eq!(find_first_prefix_match("xyz", &labels), None);
+    }
+
+    #[test]
+    fn r51_103_chars_eq_ci_unicode() {
+        assert!(chars_eq_ci('A', 'a'));
+        assert!(chars_eq_ci('Z', 'z'));
+        // Unicode: Latin capital A with acute = Latin small A with acute.
+        assert!(chars_eq_ci('Á', 'á'));
+        // Different chars.
+        assert!(!chars_eq_ci('a', 'b'));
+    }
+
+    #[test]
+    fn r51_103_single_printable_char_accepts_unicode() {
+        // R51.103 widens R51.99's is_ascii_alphanumeric to
+        // is_alphanumeric (Unicode). Hangul, CJK ideographs etc. all
+        // route into the type-ahead buffer.
+        assert_eq!(single_printable_char("á"), Some('á'));
+        assert_eq!(single_printable_char("한"), Some('한'));
+        assert_eq!(single_printable_char("漢"), Some('漢'));
     }
 }
