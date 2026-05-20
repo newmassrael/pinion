@@ -4405,7 +4405,8 @@
         "R51.112 — TUI mouse dispatch: cell→pixel + InputRouter wire-up + EnableMouseCapture lifecycle",
         "R51.113 — hello-toggle-tui 2nd TUI binding land (substrate-incompleteness-signal evidence)",
         "R51.115 — paint::to_buffer Scene::Box + ContainerNode.style mapping (border ┌─┐│└─┘ + bg fill)",
-        "R51.116 — hello-button-tui / hello-toggle-tui view BoxStyle 적용 (substrate evidence-first)"
+        "R51.116 — hello-button-tui / hello-toggle-tui view BoxStyle 적용 (substrate evidence-first)",
+        "R51.117 — ShellCoreTui<V> substrate extraction (headless test infra + R51.92.1 parity)"
       ],
       "alternatives_rejected": [
         {
@@ -4608,6 +4609,17 @@
         {
           "file": "crates/pinion-tui/src/paint.rs",
           "symbol": "color_to_tui"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui"
+        },
+        {
+          "file": "crates/pinion-tui/src/shell.rs",
+          "symbol": "commit_paint"
         }
       ],
       "decision_status": "active"

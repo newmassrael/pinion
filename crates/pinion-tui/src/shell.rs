@@ -1,5 +1,5 @@
-//! R51.110.2 / R51.111 / R51.112 §5.41 — TUI shell entry point
-//! (crossterm event loop).
+//! R51.110.2 / R51.111 / R51.112 / R51.117 §5.41 — TUI shell entry
+//! point (crossterm event loop).
 //!
 //! [`run`] is the TUI sibling of `pinion_shell::run::<V>()`. It owns
 //! the crossterm raw-mode lifecycle (enable on entry, disable via
@@ -84,17 +84,13 @@
 use std::io::{self, Stdout, stdout};
 use std::time::Duration;
 
-use pinion_core::external::IntrospectValue;
 use pinion_core::renderer::WidgetRenderer;
-use pinion_core::scene::ExternalNode;
-use pinion_core::{Frame, Scene};
-use pinion_runtime::input::{InputRouter, PointerId};
-use pinion_runtime::intent_queue::{walk_scene_and_drain, IntentQueue};
+use pinion_core::Scene;
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
-use crate::{TuiContext, TuiRenderer, WidgetViewTui};
+use crate::{ShellCoreTui, TuiContext, TuiRenderer, WidgetViewTui};
 
 /// R51.110.2 / R51.112 §5.41 — RAII guard restoring the terminal on
 /// drop.
@@ -154,20 +150,11 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
     let backend = CrosstermBackend::new(stdout());
     let mut renderer = TuiRenderer::new(backend)?;
 
-    // Construct the application's live state scene + read its
-    // cached projection. The §5.15 `Scene::External` carries the
-    // SCXML statechart; both the R51.111 keyboard path and the
-    // R51.112 mouse path reach it via direct walk + InputRouter
-    // hit-test against the most-recent paint scene.
-    let external = V::create_external();
-    let mut scene = Scene::External(ExternalNode::new(external).with_tag(V::tag()));
-    let mut state = V::read_state(&scene);
-    let mut intent_queue = IntentQueue::new();
-    // R51.112 §5.41 — winit-free pointer router. The substrate's
-    // `update_paint_scene` retains the latest visual layout so
-    // mouse coords resolve hover targets across resize / state
-    // changes. Mirrors `ShellCore`'s router slot in the Vello path.
-    let mut router = InputRouter::new();
+    // R51.117 §5.41 — the dispatch substrate ([`ShellCoreTui<V>`])
+    // owns the renderer-agnostic state (state scene, cached state,
+    // router, intent queue). This surface only sequences calls +
+    // commits the painted buffer through the live renderer.
+    let mut core = ShellCoreTui::<V>::new();
 
     let (mut cols, mut rows) = V::initial_size();
 
@@ -175,8 +162,8 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
     // hit-test snapshot before the first mouse event reaches the
     // event loop — without this prime, a `Down(Left)` before any
     // `Moved` would see an empty hover map and miss the widget.
-    let initial_paint = paint_frame::<V>(state, cols, rows, &mut renderer)?;
-    router.update_paint_scene(initial_paint, &mut scene);
+    let initial_paint = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
+    core.update_paint_scene(initial_paint);
 
     // Event loop. `poll` timeout = 100ms balances responsiveness
     // (sub-frame for typical typing latency) against CPU wake
@@ -209,48 +196,34 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
                 let Some(key_str) = crate::input::key_str_from_event(&key) else {
                     continue;
                 };
-                if dispatch_key::<V>(&mut scene, &key_str) {
-                    drain_and_repaint::<V>(
-                        &mut scene,
-                        &mut state,
-                        &mut intent_queue,
-                        &mut router,
-                        cols,
-                        rows,
-                        &mut renderer,
-                    )?;
+                if core.dispatch_key(&key_str) && core.refresh_state() {
+                    let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
+                    core.update_paint_scene(paint_scene);
                 }
             }
             crossterm::event::Event::Mouse(me) => {
                 // R51.112 §5.41 — bridge crossterm cell coords into
-                // the substrate's pixel-coord pointer router. The
-                // SCXML statechart sees the same `PointerEnter` /
+                // the substrate's pixel-coord pointer router via
+                // [`crate::input::cell_to_pixel`]. The SCXML
+                // statechart sees the same `PointerEnter` /
                 // `PointerDown` / `PointerUp` events the Vello path
                 // produces, so the `Pressed → Hover` click intent
                 // arms identically.
                 let (x, y) = crate::input::cell_to_pixel(me.column, me.row);
-                let dispatched = dispatch_mouse(&mut router, &mut scene, me.kind, x, y);
-                if dispatched {
-                    drain_and_repaint::<V>(
-                        &mut scene,
-                        &mut state,
-                        &mut intent_queue,
-                        &mut router,
-                        cols,
-                        rows,
-                        &mut renderer,
-                    )?;
+                if dispatch_mouse(&mut core, me.kind, x, y) && core.refresh_state() {
+                    let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
+                    core.update_paint_scene(paint_scene);
                 }
             }
             crossterm::event::Event::Resize(new_cols, new_rows) => {
                 cols = new_cols;
                 rows = new_rows;
-                let paint_scene = paint_frame::<V>(state, cols, rows, &mut renderer)?;
-                router.update_paint_scene(paint_scene, &mut scene);
+                let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
+                core.update_paint_scene(paint_scene);
             }
             _ => {
                 // Paste / focus events — ignored this round.
-                // R51.113+ wires them as the substrate-incompleteness
+                // R51.118+ wires them as the substrate-incompleteness
                 // -signal triggers surface.
             }
         }
@@ -259,74 +232,31 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
     Ok(())
 }
 
-/// R51.111 §5.41 — dispatch one W3C-named key through the binding's
-/// `keybinding` → `apply_key` chain. Returns `true` if either hook
-/// reported the key handled (the caller then drains intents +
-/// refreshes cached state + repaints on visible change).
+/// R51.112 / R51.117 §5.41 — bridge one `MouseEventKind` into the
+/// substrate's [`ShellCoreTui<V>`] dispatch methods. Returns `true`
+/// when an event was routed (the caller then refreshes state +
+/// repaints); `false` for events the substrate intentionally
+/// absorbs (right / middle button, scroll wheel — Tier-1 widget
+/// catalogue has no semantics for them).
 ///
-/// Mirrors `pinion_shell::ShellCore::handle_character_key` /
-/// `handle_named_key`: typed enum route first (the SCXML
-/// `invoke("send", Text(<event-name>))` path), raw key-string
-/// fallback second (the `apply_key` escape hatch widgets use for
-/// keys without a typed event variant).
-fn dispatch_key<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
-    scene: &mut Scene,
-    key_str: &str,
-) -> bool {
-    if let Some(event) = V::keybinding(key_str) {
-        let name = V::event_name(event);
-        return forward_event(scene, name);
-    }
-    // Focus is implicit at this cut — single-widget shell. The
-    // substrate hands the binding's own tag through so widgets that
-    // gate on `focused == Some(Self::tag())` (the Vello catalogue's
-    // `apply_key` convention) recognise themselves as the activation
-    // target.
-    V::apply_key(scene, Some(V::tag()), key_str)
-}
-
-/// R51.111 §5.41 — route a typed event name through the state
-/// scene's `Scene::External::invoke("send", Text(<name>))` path.
-/// Returns `true` when the underlying `ExternalIntrospect::invoke`
-/// reports success.
-fn forward_event(scene: &mut Scene, event_name: &str) -> bool {
-    let Scene::External(node) = scene else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
-    };
-    intro
-        .invoke("send", IntrospectValue::Text(event_name.to_string()))
-        .is_ok()
-}
-
-/// R51.112 §5.41 — bridge one `MouseEventKind` to the substrate's
-/// [`InputRouter`]. Returns `true` when an event reached the router
-/// (the caller then drains intents + refreshes state + repaints);
-/// `false` for events the substrate intentionally absorbs (right /
-/// middle button, scroll wheel — Tier-1 widget catalogue has no
-/// semantics for them).
-///
-/// Mirrors the `winit::event::WindowEvent::CursorMoved` /
-/// `MouseInput { state, button: Left }` arms in
-/// `pinion_shell::app::AppShell::window_event`: cell-space coords
-/// have already been converted to pixel-space via
-/// [`crate::input::cell_to_pixel`] so the router treats both inputs
-/// uniformly. `Down(Left)` runs a `cursor_moved` first so the hover
-/// target reflects the press location before the press dispatches
-/// (otherwise a click on a widget not yet hovered would miss).
-fn dispatch_mouse(
-    router: &mut InputRouter,
-    scene: &mut Scene,
+/// `Down(Left)` runs `cursor_moved` first so the substrate's hover
+/// target reflects the press location before `pointer_down`
+/// dispatches (otherwise a click on a widget not yet hovered would
+/// miss). `Drag(Left)` reuses `cursor_moved` — the substrate's
+/// capture-aware branch handles drag-aware widgets internally.
+fn dispatch_mouse<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
+    core: &mut ShellCoreTui<V>,
     kind: crossterm::event::MouseEventKind,
     x: f64,
     y: f64,
 ) -> bool {
     use crossterm::event::{MouseButton, MouseEventKind};
     match kind {
-        MouseEventKind::Moved => {
-            router.cursor_moved(PointerId::MOUSE, x, y, scene);
+        // Plain move and left-button drag both forward a cursor
+        // position to the router — drag-aware capture is handled
+        // inside the router so the surface arm collapses.
+        MouseEventKind::Moved | MouseEventKind::Drag(MouseButton::Left) => {
+            core.cursor_moved(x, y);
             true
         }
         MouseEventKind::Down(MouseButton::Left) => {
@@ -334,87 +264,38 @@ fn dispatch_mouse(
             // correct hover target. Vello shell's
             // `cursor_moved → mouse_pressed` ordering relies on the
             // same invariant.
-            router.cursor_moved(PointerId::MOUSE, x, y, scene);
-            router.pointer_down(PointerId::MOUSE, scene);
+            core.cursor_moved(x, y);
+            core.pointer_down();
             true
         }
         MouseEventKind::Up(MouseButton::Left) => {
-            router.pointer_up(PointerId::MOUSE, scene);
+            core.pointer_up();
             true
         }
-        MouseEventKind::Drag(MouseButton::Left) => {
-            // Drag = cursor move with the left button held. The
-            // router's capture-aware branch forwards to the
-            // captured widget's `External::pointer_move` when a
-            // drag-aware widget holds the lock; free-mode drags
-            // refresh the hover target like a plain `Moved`.
-            router.cursor_moved(PointerId::MOUSE, x, y, scene);
-            true
-        }
-        // Right / middle / wheel — no Tier-1 widget reacts. R51.113+
+        // Right / middle / wheel — no Tier-1 widget reacts. R51.118+
         // surfaces a substrate-incompleteness-signal once a widget
         // (context menu, scroll container) needs them.
         _ => false,
     }
 }
 
-/// R51.111 / R51.112 §5.41 — shared post-dispatch tail: drain §5.20
-/// intents, refresh cached state, repaint on visible change, and
-/// hand the new paint scene to the router for the next round's
-/// hit-test.
+/// R51.117 §5.41 — render one frame of the substrate's current
+/// cached state into the live terminal + return the painted scene
+/// so the caller can hand it to
+/// [`ShellCoreTui::update_paint_scene`].
 ///
-/// Both the keyboard and mouse dispatch arms route through here so
-/// the SCXML statechart's emit / refresh / paint pipeline is
-/// identical regardless of input source — the §6.3 `dry_run` purity
-/// invariant remains intact (no input-side state leaks into the
-/// view-fn output) and the `tui: intent ...` / `tui: state ...`
-/// stderr trace lines align across both paths.
-fn drain_and_repaint<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
-    scene: &mut Scene,
-    state: &mut V::State,
-    intent_queue: &mut IntentQueue,
-    router: &mut InputRouter,
-    cols: u16,
-    rows: u16,
-    renderer: &mut TuiRenderer<CrosstermBackend<Stdout>>,
-) -> io::Result<()> {
-    walk_scene_and_drain(scene, intent_queue);
-    for intent in intent_queue.drain() {
-        eprintln!(
-            "tui: intent {} payload={:?}",
-            intent.tag_str(),
-            intent.payload,
-        );
-    }
-    let new_state = V::read_state(scene);
-    if new_state != *state {
-        eprintln!("tui: state {state:?} -> {new_state:?}");
-        *state = new_state;
-        let paint_scene = paint_frame::<V>(*state, cols, rows, renderer)?;
-        router.update_paint_scene(paint_scene, scene);
-    }
-    Ok(())
-}
-
-/// Helper that runs the paint pipeline once for the given state +
-/// terminal dimensions, commits via the renderer, then returns the
-/// freshly-painted scene so the caller can hand it to
-/// [`InputRouter::update_paint_scene`]. The R51.112 mouse path needs
-/// the paint scene retention (hover targets resolve against the
-/// most-recent visual layout); the keyboard path consumes it on
-/// state change so a Tab focus traversal sees fresh hit-test data.
-fn paint_frame<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
-    state: V::State,
+/// Pure surface helper: the substrate's `compute_paint_scene` is
+/// the only thing that touches `V::view`; this function adds the
+/// ratatui buffer allocation + the `WidgetRenderer::render` commit.
+/// Returning the paint scene keeps the substrate's R51.112
+/// `InputRouter` hit-test snapshot in sync with the visible state.
+fn commit_paint<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
+    core: &ShellCoreTui<V>,
     cols: u16,
     rows: u16,
     renderer: &mut TuiRenderer<CrosstermBackend<Stdout>>,
 ) -> io::Result<Scene> {
-    // Build the paint scene via the binding's view-fn, walk it
-    // into the ratatui buffer, then commit via the renderer.
-    // Returning the paint scene keeps the substrate's R51.112
-    // InputRouter hit-test snapshot in sync with the visible state.
-    let frame = Frame::new();
-    let paint_scene = V::view(state, &frame);
+    let paint_scene = core.compute_paint_scene();
     let mut buf = Buffer::empty(Rect::new(0, 0, cols, rows));
     crate::paint::to_buffer(&paint_scene, &mut buf);
     renderer.render(&buf, TuiContext::default())?;
