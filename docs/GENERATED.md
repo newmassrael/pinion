@@ -3283,6 +3283,7 @@ router.pointer_down(&mut state_scene);
 - R51.123 — pinion-shell::ShellCore wraps CoreShell<V> (Vello extras 만 유지, 4-round #2)
 - R51.124 — pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3)
 - R51.125 (dispatch_rpc trait) defer — cycle 0 / 1 impl / 2nd RPC consumer 없음 (TUI carry)
+- R51.140 — clippy lint family 사전-audit 회복 (R51.137-139 reactive 10건 누적) [[clippy-pre-audit-recovery]]
 
 
 
@@ -5853,6 +5854,35 @@ router.pointer_down(&mut state_scene);
 - Update fn signature: Update(&mut Model, Intent) → Vec<Command> — Reducer integration carry
 - SCE schema for declarative command tables + Forge codegen (R51.x+ axis, evidence-first carry)
 - Cancellation: 신규 Command 같은 scope 가 prior in-flight 취소 (Solid pattern) — R51.140+ carry
+
+
+
+### R51.140 — R51.137-139 lesson #153-156 memory entry 4건 land + §5.41 clippy lint family 사전-audit 회복 선언 (bookkeeping)
+
+**Changes**:
+- memory 4건 land (lesson #153-156): OnceCell-self-ptr / Tickable-snap / Cmd-mirror / clippy-pre-audit
+- MEMORY.md 인덱스 21 → 25 entries (4 lesson 슬러그 + 한 줄 hook 각각)
+- §5.41 caveat 1건 추가: clippy lint family 사전-audit 회복 선언 (R51.137-139 reactive 10건 누적)
+- atomic store mutation = 1 caveat + 1 changelog entry (R51.140)
+
+
+
+**Verification**:
+- validate_workspace: entries=311→312 / T1=0 / RT=1/1 / GENERATED.md=sync 유지
+- T4 info 120 → 121 (+1 bullet_list_preference, decision_summary 109 char prose hint)
+- cargo test/clippy baseline 무변동 (코드 변경 0 — bookkeeping round)
+- memory 디렉터리 25개 파일 (MEMORY.md + 24 슬러그)
+
+
+
+**Impact**: §5.41, §5.23, §5.28
+
+
+**Carry forward**:
+- R51.141 — Handler trait first-cut (async handle, pinion-runtime boot-time registry, §5.23 axis B)
+- R51.142 — framework paint-loop wiring (Owner::tick_animations(dt), AnimationDriver Effect-wrap)
+- R51.143 — hello-button hover transition demo (1st visual application of §5.28 + ColorAnimation)
+- R51.125 dispatch_rpc trait extraction defer 유지 (2nd RPC consumer trigger 까지)
 
 
 

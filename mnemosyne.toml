@@ -213,3 +213,18 @@ fields = ["publishable_verification_bullets", "publishable_carry_forward_bullets
 reason = "R51.135 publishable_verification[1] 103→72 char + carry_forward[1] 115→84 char 즉시 청산 (전자 'all-targets --features' clippy 옵션 단축, 후자 'production paths 이' 제거). audit immutable T4 info 120→121 permanent carry"
 applied_in = "pinion R51.135"
 content_hash_after = "b47fe08c1938425b3a167d413b0b10abe25b7fdb625d68dfcd33d81bd556db4d"
+
+# R51.140 incident — R51.140 verification_bullets[1] audit accuracy
+# 정정 — 'T4 info 무변동' (예측) → 'T4 info 120 → 121 (+1
+# bullet_list_preference, decision_summary 109 char prose hint)' (실제).
+# bookkeeping round 의 verification 이 사후 부정확 → publishable 정정,
+# audit half immutable (Round 296 body-split gate). lesson: verification
+# bullet 은 actual numbers 로 작성, 사전 prediction 금지.
+
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "R51.140"
+fields = ["publishable_verification_bullets"]
+reason = "R51.140 publishable_verification[1] audit accuracy 정정 — 'T4 info 무변동' (예측) → 'T4 info 120 → 121 (+1 bullet_list_preference, decision_summary 109 char prose hint)' (실제). audit immutable T4 info 120→121 permanent carry"
+applied_in = "pinion R51.140"
+content_hash_after = "8a445d1a2c635fbdcdb2596e1a00731c8de275b12ecba364e2273af605654282"
