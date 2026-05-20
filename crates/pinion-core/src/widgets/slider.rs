@@ -185,18 +185,18 @@ impl WidgetTransition for Slider {
         before: Self::Snapshot,
         _event: Self::Event,
         after: Self::Snapshot,
-    ) -> Option<Intent> {
+    ) -> Vec<Intent> {
         let (before_state, _) = before;
         let (after_state, after_value) = after;
         if matches!(before_state, SliderState::Dragging)
             && matches!(after_state, SliderState::Hover)
         {
-            Some(Intent::new_static(
+            vec![Intent::new_static(
                 "value_committed",
                 IntrospectValue::Float(f64::from(after_value)),
-            ))
+            )]
         } else {
-            None
+            Vec::new()
         }
     }
 }

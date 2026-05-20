@@ -77,15 +77,15 @@ impl WidgetTransition for Button {
         before: Self::Snapshot,
         event: Self::Event,
         after: Self::Snapshot,
-    ) -> Option<Intent> {
+    ) -> Vec<Intent> {
         let pointer_click =
             matches!(before, ButtonState::Pressed) && matches!(after, ButtonState::Hover);
         let keyboard_click = matches!(event, ButtonEvent::KeyboardActivate)
             && !matches!(before, ButtonState::Disabled);
         if pointer_click || keyboard_click {
-            Some(Intent::new_static("click", IntrospectValue::Null))
+            vec![Intent::new_static("click", IntrospectValue::Null)]
         } else {
-            None
+            Vec::new()
         }
     }
 }

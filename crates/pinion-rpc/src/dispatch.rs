@@ -905,8 +905,8 @@ fn handle_scene_locate_region(scene: &Scene, params: Option<&Value>) -> Result<V
         let raw = params
             .get(k)
             .and_then(Value::as_u64)
-            .ok_or_else(|| RpcError::invalid_params(&format!("params.{k} missing or not a non-negative integer")))?;
-        u32::try_from(raw).map_err(|_| RpcError::invalid_params(&format!("params.{k} exceeds u32 range")))
+            .ok_or_else(|| RpcError::invalid_params(format!("params.{k} missing or not a non-negative integer")))?;
+        u32::try_from(raw).map_err(|_| RpcError::invalid_params(format!("params.{k} exceeds u32 range")))
     };
     let x = read_u32("x")?;
     let y = read_u32("y")?;
@@ -980,10 +980,10 @@ where
         return Err(RpcError::invalid_params("missing params"));
     };
     let typed: LayoutQueryParams = serde_json::from_value(params.clone())
-        .map_err(|e| RpcError::invalid_params(&format!("params shape: {e}")))?;
+        .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
     match layout_query(&typed, paint_producer, last_paint_layout) {
         Ok(node) => serde_json::to_value(&node)
-            .map_err(|e| RpcError::invalid_params(&format!("serialize: {e}"))),
+            .map_err(|e| RpcError::invalid_params(format!("serialize: {e}"))),
         Err(err) => Err(layout_query_error_to_rpc(err)),
     }
 }
@@ -1012,10 +1012,10 @@ where
         return Err(RpcError::invalid_params("missing params"));
     };
     let typed: ResizeParams = serde_json::from_value(params.clone())
-        .map_err(|e| RpcError::invalid_params(&format!("params shape: {e}")))?;
+        .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
     match resize(typed, resize_request) {
         Ok(outcome) => serde_json::to_value(outcome)
-            .map_err(|e| RpcError::invalid_params(&format!("serialize: {e}"))),
+            .map_err(|e| RpcError::invalid_params(format!("serialize: {e}"))),
         Err(err) => Err(resize_error_to_rpc(err)),
     }
 }
@@ -1254,10 +1254,10 @@ fn parse_view_blueprint(v: &Value) -> Result<ViewBlueprint, RpcError> {
                 tag,
             })
         }
-        "Effect" | "External" => Err(RpcError::invalid_params(&format!(
+        "Effect" | "External" => Err(RpcError::invalid_params(format!(
             "params.replacement.kind {kind} not supported by wire (closed-by-design — Effect lacks declarative shape; External needs factory registry)"
         ))),
-        other => Err(RpcError::invalid_params(&format!(
+        other => Err(RpcError::invalid_params(format!(
             "params.replacement.kind unrecognised: {other} (expected one of: Box, Container, Text, Path, Image)"
         ))),
     }
@@ -1345,7 +1345,7 @@ fn parse_image_style(v: Option<&Value>) -> Result<pinion_core::style::ImageStyle
             "Cover" => pinion_core::style::Fit::Cover,
             "Tile" => pinion_core::style::Fit::Tile,
             other => {
-                return Err(RpcError::invalid_params(&format!(
+                return Err(RpcError::invalid_params(format!(
                     "params.replacement.style.fit unrecognised: {other} (expected Fill/Contain/Cover/Tile)"
                 )));
             }
@@ -1382,11 +1382,11 @@ fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcE
     };
     let read_point = |field: &str| -> Result<PathPoint, RpcError> {
         let obj = v.get(field).ok_or_else(|| {
-            RpcError::invalid_params(&format!("params.replacement.commands[].{field} missing"))
+            RpcError::invalid_params(format!("params.replacement.commands[].{field} missing"))
         })?;
         let read_coord = |axis: &str| -> Result<f32, RpcError> {
             let n = obj.get(axis).and_then(Value::as_f64).ok_or_else(|| {
-                RpcError::invalid_params(&format!(
+                RpcError::invalid_params(format!(
                     "params.replacement.commands[].{field}.{axis} missing or not numeric"
                 ))
             })?;
@@ -1395,7 +1395,7 @@ fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcE
             // the f32 narrowing has explicit bounded-finite preconditions
             // rather than relying on `as` truncation semantics.
             if !n.is_finite() {
-                return Err(RpcError::invalid_params(&format!(
+                return Err(RpcError::invalid_params(format!(
                     "params.replacement.commands[].{field}.{axis} must be finite"
                 )));
             }
@@ -1416,7 +1416,7 @@ fn parse_path_command(v: &Value) -> Result<pinion_core::scene::PathCommand, RpcE
             end: read_point("end")?,
         }),
         "Close" => Ok(PathCommand::Close),
-        other => Err(RpcError::invalid_params(&format!(
+        other => Err(RpcError::invalid_params(format!(
             "params.replacement.commands[].op unrecognised: {other} (expected MoveTo/LineTo/CurveTo/Close)"
         ))),
     }
@@ -1431,12 +1431,12 @@ fn parse_rect(v: Option<&Value>) -> Result<pinion_core::scene::Rect, RpcError> {
     };
     let read = |field: &str| -> Result<u32, RpcError> {
         let n = obj.get(field).and_then(Value::as_u64).ok_or_else(|| {
-            RpcError::invalid_params(&format!(
+            RpcError::invalid_params(format!(
                 "params.replacement.rect.{field} missing or not an unsigned integer"
             ))
         })?;
         u32::try_from(n).map_err(|_| {
-            RpcError::invalid_params(&format!("params.replacement.rect.{field} exceeds u32 range"))
+            RpcError::invalid_params(format!("params.replacement.rect.{field} exceeds u32 range"))
         })
     };
     Ok(pinion_core::scene::Rect::new(
@@ -1650,12 +1650,12 @@ fn handle_font_parse(
     let mut bytes: Vec<u8> = Vec::with_capacity(bytes_arr.len());
     for (i, v) in bytes_arr.iter().enumerate() {
         let Some(n) = v.as_u64() else {
-            return Err(RpcError::invalid_params(&format!(
+            return Err(RpcError::invalid_params(format!(
                 "params.bytes[{i}] not an unsigned integer"
             )));
         };
         let byte = u8::try_from(n).map_err(|_| {
-            RpcError::invalid_params(&format!("params.bytes[{i}] = {n} out of u8 range"))
+            RpcError::invalid_params(format!("params.bytes[{i}] = {n} out of u8 range"))
         })?;
         bytes.push(byte);
     }
@@ -1879,7 +1879,7 @@ fn handle_text_normalize(params: Option<&Value>) -> Result<Value, RpcError> {
         "NFKC" => NormalizeForm::Nfkc,
         "NFKD" => NormalizeForm::Nfkd,
         other => {
-            return Err(RpcError::invalid_params(&format!(
+            return Err(RpcError::invalid_params(format!(
                 "params.form must be NFC/NFD/NFKC/NFKD (got {other:?})"
             )));
         }

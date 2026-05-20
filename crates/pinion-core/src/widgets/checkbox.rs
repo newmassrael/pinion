@@ -128,7 +128,7 @@ impl WidgetTransition for Checkbox {
         before: Self::Snapshot,
         event: Self::Event,
         after: Self::Snapshot,
-    ) -> Option<Intent> {
+    ) -> Vec<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
         let pointer_check = matches!(before_state, CheckboxState::Pressed)
@@ -140,12 +140,12 @@ impl WidgetTransition for Checkbox {
         let keyboard_check =
             matches!(event, CheckboxEvent::KeyboardActivate) && before_value != after_value;
         if pointer_check || keyboard_check {
-            Some(Intent::new_static(
+            vec![Intent::new_static(
                 "checked",
                 IntrospectValue::Bool(after_value),
-            ))
+            )]
         } else {
-            None
+            Vec::new()
         }
     }
 }

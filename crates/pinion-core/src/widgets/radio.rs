@@ -137,7 +137,7 @@ impl WidgetTransition for Radio {
         before: Self::Snapshot,
         event: Self::Event,
         after: Self::Snapshot,
-    ) -> Option<Intent> {
+    ) -> Vec<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
         let pointer_select = matches!(before_state, RadioState::Pressed)
@@ -152,9 +152,9 @@ impl WidgetTransition for Radio {
             && !before_value
             && after_value;
         if pointer_select || keyboard_select {
-            Some(Intent::new_static("selected", IntrospectValue::Null))
+            vec![Intent::new_static("selected", IntrospectValue::Null)]
         } else {
-            None
+            Vec::new()
         }
     }
 }

@@ -155,7 +155,7 @@ impl WidgetTransition for Toggle {
         before: Self::Snapshot,
         event: Self::Event,
         after: Self::Snapshot,
-    ) -> Option<Intent> {
+    ) -> Vec<Intent> {
         let (before_state, before_value) = before;
         let (after_state, after_value) = after;
         let pointer_toggle = matches!(before_state, ToggleState::Pressed)
@@ -167,12 +167,12 @@ impl WidgetTransition for Toggle {
         let keyboard_toggle =
             matches!(event, ToggleEvent::KeyboardActivate) && before_value != after_value;
         if pointer_toggle || keyboard_toggle {
-            Some(Intent::new_static(
+            vec![Intent::new_static(
                 "toggle",
                 IntrospectValue::Bool(after_value),
-            ))
+            )]
         } else {
-            None
+            Vec::new()
         }
     }
 }

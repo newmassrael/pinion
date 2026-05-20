@@ -394,42 +394,65 @@ impl Default for ListBox {
     }
 }
 
-/// `ListBox` transition contract (R51.12 substrate). Same shape as
-/// [`crate::widgets::RadioGroup`]: event pairs the item index with
-/// the underlying [`ListboxItemEvent`]; snapshot is the list's
-/// **single-select** `selected_index` option; detect emits
-/// `"selected"` with the new index as [`IntrospectValue::Int`]
-/// whenever selection moves.
+/// R51.102 §5.38 — `ListBox` snapshot capturing both the
+/// selection-cardinality mode and the per-item selection bitmap so
+/// the trait-level `detect` can express single-select-replace and
+/// multi-select-toggle in one rule. The Vec heap-allocates once per
+/// `IntentEmitter::dispatch` call (i.e. once per user input event);
+/// the cost is negligible for the AI / UI dispatch frequencies, but
+/// motivates the `Snapshot: Clone` (not `Copy`) trait bound — see
+/// [`WidgetTransition`] for the bound rationale.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListBoxSnapshot {
+    multiselect: bool,
+    bits: Vec<bool>,
+}
+
+/// `ListBox` transition contract (R51.12 substrate). Event pairs the
+/// item index with the underlying [`ListboxItemEvent`]. R51.102 §5.38
+/// — snapshot captures mode + the full per-item bitmap so the
+/// trait-level `detect` handles both single-select (replace, emit
+/// one `"selected"` per gained row) and multi-select (toggle, emit
+/// one `"selected"` per *changed* row in either direction).
 ///
-/// Selection transitions that emit (single-select mode only):
+/// Single-select transitions (`multiselect = false`):
 ///
-/// * `None → Some(i)` — first selection
-/// * `Some(a) → Some(b)` where `a != b` — switch
+/// * `None → Some(i)` — one row gained ⇒ `vec![Int(i)]`
+/// * `Some(a) → Some(b)` (`a != b`) — `a` lost, `b` gained ⇒ filter
+///   to gained ⇒ `vec![Int(b)]`
+/// * `Some(a) → Some(a)` — bitmap unchanged ⇒ `Vec::new()`
+/// * `Some(a) → None` — only reachable via
+///   [`set_selected`](ListBox::set_selected) (admin), `send` cannot
+///   produce it from a non-idle row
+/// * `None → None` — no-op ⇒ `Vec::new()`
 ///
-/// Transitions that stay silent (idempotent + clear):
+/// Multi-select transitions (`multiselect = true`):
 ///
-/// * `Some(a) → Some(a)` — re-activate same item
-/// * `Some(a) → None` — clear (only reachable via
-///   [`set_selected`](ListBox::set_selected), not via `send`)
-/// * `None → None` — no-op (non-activating event)
+/// * one row toggled (false → true *or* true → false) — emit
+///   `vec![Int(i)]` for that row; AI follow-up `selected.<i>` query
+///   learns the new boolean. Successive toggles on the same row emit
+///   toggle-on then toggle-off intents back-to-back (both with the
+///   same row index payload).
+/// * unchanged bitmap — `Vec::new()`.
 ///
-/// R51.98 §5.38 — **multi-select mode is invisible to this contract**.
-/// The snapshot is `self.selected`, which is never written in
-/// multi-mode (mode mismatch with the "sole selected index" axis), so
-/// every `detect` invocation in multi-mode evaluates `None → None`
-/// and returns `None`. Multi-mode intent emission is the External
-/// adapter's responsibility: [`ListBoxExternal::send`] inspects the
-/// addressed item's value before/after the dispatch and pushes a
-/// `"selected"` intent with the toggled index when the bit flipped.
-/// Future substrate refactor (carry `R59 WidgetTransition::detect ->
-/// Vec<Intent>`) would let the contract carry the multi-mode emit
-/// natively without adapter-side bypass.
+/// The rule is single-shape:
+/// > Emit `Int(i)` for every index `i` whose bit changed, gated in
+/// > single-select mode to the `false → true` direction only.
+///
+/// Single-select gating preserves the pre-R51.102 emit-shape
+/// (siblings deselect silently, only the new selection raises an
+/// intent) — RadioGroup-class semantic. Multi-select drops the gate
+/// because the toggle-off carries genuine information the AI client
+/// needs.
 impl WidgetTransition for ListBox {
     type Event = (usize, ListboxItemEvent);
-    type Snapshot = Option<usize>;
+    type Snapshot = ListBoxSnapshot;
 
     fn snapshot(&self) -> Self::Snapshot {
-        self.selected
+        ListBoxSnapshot {
+            multiselect: self.multiselect,
+            bits: self.items.iter().map(ListBoxItem::is_selected).collect(),
+        }
     }
 
     fn drive(&mut self, event: Self::Event) {
@@ -441,19 +464,35 @@ impl WidgetTransition for ListBox {
         before: Self::Snapshot,
         _event: Self::Event,
         after: Self::Snapshot,
-    ) -> Option<Intent> {
-        if before != after {
-            if let Some(idx) = after {
-                return Some(Intent::new_static(
+    ) -> Vec<Intent> {
+        // Multi-select carries through the after snapshot's mode flag;
+        // the contract panics on mismatched lengths only in
+        // debug_assertions (the inner widget's bitmap can't change
+        // length mid-dispatch by construction).
+        debug_assert_eq!(before.bits.len(), after.bits.len());
+        debug_assert_eq!(before.multiselect, after.multiselect);
+        let multi = after.multiselect;
+        let mut out = Vec::new();
+        for (i, (b, a)) in
+            before.bits.iter().zip(after.bits.iter()).enumerate()
+        {
+            if b == a {
+                continue;
+            }
+            // Single-select: only emit on row gain (matches pre-R51.102
+            // RadioGroup-class semantic of one intent per activation).
+            // Multi-select: emit on every flip (toggle-on + toggle-off
+            // carry independent meaning).
+            if multi || (!*b && *a) {
+                out.push(Intent::new_static(
                     "selected",
                     IntrospectValue::Int(
-                        i64::try_from(idx)
-                            .expect("ListBox index must fit in i64"),
+                        i64::try_from(i).expect("ListBox index fits in i64"),
                     ),
                 ));
             }
         }
-        None
+        out
     }
 }
 
@@ -488,44 +527,26 @@ impl ListBoxExternal {
         self.em.inner.is_multiselect()
     }
 
-    /// Drive `event` to the item at `index`. Queues a `"selected"`
-    /// intent with the toggled index as payload on every value flip.
+    /// Drive `event` to the item at `index`. Queues `"selected"`
+    /// intents per row that flipped, payload = the flipped index as
+    /// [`IntrospectValue::Int`].
     ///
     /// **Single-select mode** — emits on `None → Some(i)` /
     /// `Some(a) → Some(b)` via the [`WidgetTransition::detect`]
-    /// rule; payload is the new `selected_index`.
+    /// gain-only filter; payload is the new `selected_index`.
     ///
     /// **Multi-select mode** (R51.98 §5.38) — emits on any `false ↔
     /// true` flip of the addressed row; payload is the toggled
     /// `index`. The follow-up `selected.<index>` query confirms the
     /// new boolean state. Two consecutive activations on the same
-    /// row emit twice (toggle-on, toggle-off). The emit happens
-    /// outside [`IntentEmitter::dispatch`] because the trait-level
-    /// detect rule is single-mode only (see the impl doc on
-    /// [`WidgetTransition`] for [`ListBox`] — multi-mode is invisible
-    /// to the trait snapshot).
+    /// row emit twice (toggle-on, toggle-off).
     ///
-    /// # Panics
-    /// * Panics if `index >= count()` (forwarded from
-    ///   [`ListBox::send`]).
-    /// * Panics if `index` does not fit in `i64` (multi-mode only;
-    ///   guarded by `usize <= i64::MAX` on every supported target).
+    /// R51.102 §5.38 — both modes flow through the same
+    /// [`IntentEmitter::dispatch`] pipeline; the multi-mode adapter-
+    /// side manual emit carry from R51.98 is retired (the
+    /// trait-level `detect` now returns `Vec<Intent>`).
     pub fn send(&mut self, index: usize, event: ListboxItemEvent) {
-        if self.em.inner.is_multiselect() {
-            let was = self.em.inner.is_selected(index);
-            self.em.dispatch((index, event));
-            let now = self.em.inner.is_selected(index);
-            if was != now {
-                self.em.push(Intent::new_static(
-                    "selected",
-                    IntrospectValue::Int(
-                        i64::try_from(index).expect("ListBox index fits in i64"),
-                    ),
-                ));
-            }
-        } else {
-            self.em.dispatch((index, event));
-        }
+        self.em.dispatch((index, event));
     }
 
     /// Number of items in the wrapped list.

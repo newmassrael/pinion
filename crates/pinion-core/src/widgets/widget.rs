@@ -164,10 +164,17 @@ pub trait WidgetTransition {
     /// borrowing or cloning — SCXML event enums are cheap unit
     /// variants on every Tier-1 widget today.
     type Event: Copy;
-    /// A cheap, owned view of everything the detection step needs
-    /// from the widget — usually the SCXML state, optionally tupled
-    /// with a value sidecar (`bool`, `f32`, ...).
-    type Snapshot: Copy;
+    /// An owned view of everything the detection step needs from the
+    /// widget — usually the SCXML state, optionally tupled with a
+    /// value sidecar (`bool`, `f32`, ...). R51.102 §5.38 — the bound
+    /// is `Clone` (not `Copy`) so widgets that need an instance-sized
+    /// snapshot (e.g. `ListBox`'s `Vec<bool>` selection bitmap) can
+    /// fit. Copy snapshots (every other Tier-1 widget today) auto-
+    /// satisfy `Clone`; the dispatch pipeline moves the snapshot into
+    /// `detect` and never re-uses it, so the heap allocation cost is
+    /// "one Vec per user input event" for `ListBox` and zero for
+    /// every other widget.
+    type Snapshot: Clone;
 
     /// Capture the current widget snapshot. Called before and after
     /// each [`drive`](WidgetTransition::drive) call.
@@ -179,9 +186,9 @@ pub trait WidgetTransition {
     fn drive(&mut self, event: Self::Event);
 
     /// Decide whether the (`before`, `event`, `after`) triple signals
-    /// an emitting transition; return the intent to push or `None`
-    /// when the transition is silent on the §5.20 channel. Pure
-    /// function — does not borrow widget state.
+    /// an emitting transition; return the intents to push (zero or
+    /// more) on the §5.20 channel. Pure function — does not borrow
+    /// widget state.
     ///
     /// R51.54 §5.39 — the `event` argument lets internal transitions
     /// (state-stable, e.g. ARIA `keyboard_activate`) emit intents
@@ -189,22 +196,31 @@ pub trait WidgetTransition {
     /// the detection rule for a state-stable click would be
     /// indistinguishable from a no-op.
     ///
+    /// R51.102 §5.38 — the return shape is `Vec<Intent>` (was
+    /// `Option<Intent>` pre-R51.102). Tier-1 atomic widgets keep
+    /// 0-or-1 semantics by returning `Vec::new()` or `vec![intent]`;
+    /// composite widgets that mutate multiple value sidecars per
+    /// user input (the `ListBox` multi-select toggle being the first
+    /// instance, R51.98) emit one entry per changed slot. The
+    /// emptier-than-one common case allocates an empty `Vec`
+    /// (`(0, 0, 0)` triple on the stack, no heap) per dispatch.
+    ///
     /// `#[must_use]` because dropping the result silently loses the
-    /// intent — every emitting transition has a downstream listener
-    /// expecting the §5.20 channel, so ignoring an emitted intent is
-    /// always a bug. The [`IntentEmitter::dispatch`] pipeline
-    /// consumes the return; direct callers should never discard it.
+    /// intents — every emitting transition has a downstream listener
+    /// expecting the §5.20 channel. The [`IntentEmitter::dispatch`]
+    /// pipeline consumes the return; direct callers should never
+    /// discard it.
     #[must_use]
     fn detect(
         before: Self::Snapshot,
         event: Self::Event,
         after: Self::Snapshot,
-    ) -> Option<Intent>;
+    ) -> Vec<Intent>;
 }
 
 impl<W: WidgetTransition> IntentEmitter<W> {
     /// R51.12 §5.38 — drive `event` through the wrapped widget and
-    /// queue any [`Intent`] the transition produces.
+    /// queue any [`Intent`]s the transition produces.
     ///
     /// Encodes the textbook snapshot → drive → detect → push pipeline
     /// once; every Tier-1 `*External::send` delegates to this method
@@ -212,11 +228,16 @@ impl<W: WidgetTransition> IntentEmitter<W> {
     /// substrate-vs-application boundary stays clean: `IntentEmitter`
     /// owns the pipeline shape, the widget owns its three
     /// [`WidgetTransition`] associated items.
+    ///
+    /// R51.102 §5.38 — pushes every entry returned by `detect`.
+    /// Multi-emit widgets (`ListBox` multi-select, R51.98) reach the
+    /// §5.20 channel through this loop instead of the pre-R51.102
+    /// External-adapter manual push (now retired).
     pub fn dispatch(&mut self, event: W::Event) {
         let before = self.inner.snapshot();
         self.inner.drive(event);
         let after = self.inner.snapshot();
-        if let Some(intent) = W::detect(before, event, after) {
+        for intent in W::detect(before, event, after) {
             self.push(intent);
         }
     }
@@ -272,14 +293,14 @@ mod tests {
             before: Self::Snapshot,
             _event: Self::Event,
             after: Self::Snapshot,
-        ) -> Option<Intent> {
+        ) -> Vec<Intent> {
             // Direction-sensitive: only the canonical 1 → 2 transition
             // emits, so reverse and unrelated transitions stay silent
             // and the tests can distinguish (before, after) ordering.
             if before == 1 && after == 2 {
-                Some(Intent::new_static("stub.fire", IntrospectValue::Null))
+                vec![Intent::new_static("stub.fire", IntrospectValue::Null)]
             } else {
-                None
+                Vec::new()
             }
         }
     }

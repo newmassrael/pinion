@@ -273,19 +273,19 @@ impl WidgetTransition for RadioGroup {
         before: Self::Snapshot,
         _event: Self::Event,
         after: Self::Snapshot,
-    ) -> Option<Intent> {
+    ) -> Vec<Intent> {
         if before != after {
             if let Some(idx) = after {
-                return Some(Intent::new_static(
+                return vec![Intent::new_static(
                     "selected",
                     IntrospectValue::Int(
                         i64::try_from(idx)
                             .expect("RadioGroup index must fit in i64"),
                     ),
-                ));
+                )];
             }
         }
-        None
+        Vec::new()
     }
 }
 
