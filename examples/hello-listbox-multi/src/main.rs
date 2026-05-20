@@ -38,7 +38,7 @@
 //! frame skip (R51.75).
 
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole};
 use pinion_core::external::{External, IntrospectValue};
@@ -49,6 +49,7 @@ use pinion_core::style::{
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::{Color, Frame, Scene};
+use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -438,20 +439,15 @@ fn active_option_index(state: ListState) -> usize {
     state.focused.unwrap_or(0)
 }
 
-const TYPEAHEAD_TIMEOUT: Duration = Duration::from_millis(500);
-
-#[derive(Default)]
-struct TypeaheadState {
-    buffer: String,
-    last_typed: Option<Instant>,
-}
-
+// R51.106 §5.38 — type-ahead state lifted to
+// `pinion_shell::typeahead` substrate; this binary now holds only
+// the per-window thread-local cursor.
 thread_local! {
-    static TYPEAHEAD: RefCell<TypeaheadState> = RefCell::new(TypeaheadState::default());
+    static TYPEAHEAD: RefCell<TypeaheadCursor> = RefCell::new(TypeaheadCursor::new());
 }
 
 fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bool {
-    let Some(first) = single_printable_char(key) else {
+    let Some(first) = is_typeahead_char(key) else {
         return false;
     };
     let current = node
@@ -464,84 +460,13 @@ fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bo
         });
     let labels: [&str; N] = std::array::from_fn(option_label);
     let target = TYPEAHEAD.with(|cell| {
-        let mut state = cell.borrow_mut();
-        typeahead_step(&mut state, first, current, Instant::now(), &labels)
+        let mut cursor = cell.borrow_mut();
+        cursor.step(first, current, Instant::now(), &labels)
     });
     let Some(idx) = target else {
         return false;
     };
     set_focus(node, idx)
-}
-
-fn single_printable_char(key: &str) -> Option<char> {
-    let mut iter = key.chars();
-    let first = iter.next()?;
-    if iter.next().is_some() {
-        return None;
-    }
-    first.is_alphanumeric().then_some(first)
-}
-
-fn typeahead_step(
-    state: &mut TypeaheadState,
-    key: char,
-    current: Option<usize>,
-    now: Instant,
-    labels: &[&str],
-) -> Option<usize> {
-    let fresh = state
-        .last_typed
-        .is_none_or(|t| now.duration_since(t) >= TYPEAHEAD_TIMEOUT);
-    if fresh {
-        state.buffer.clear();
-    }
-    state.buffer.push(key);
-    state.last_typed = Some(now);
-    if state.buffer.chars().count() == 1 {
-        find_next_cyclic_match(current, key, labels)
-    } else {
-        find_first_prefix_match(&state.buffer, labels)
-    }
-}
-
-fn find_next_cyclic_match(
-    current: Option<usize>,
-    key: char,
-    labels: &[&str],
-) -> Option<usize> {
-    let n = labels.len();
-    if n == 0 {
-        return None;
-    }
-    let start = match current {
-        Some(c) if c < n => (c + 1) % n,
-        _ => 0,
-    };
-    for offset in 0..n {
-        let i = (start + offset) % n;
-        if let Some(first) = labels[i].chars().next() {
-            if chars_eq_ci(first, key) {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
-
-fn find_first_prefix_match(buffer: &str, labels: &[&str]) -> Option<usize> {
-    let buf_lower: String = buffer.chars().flat_map(char::to_lowercase).collect();
-    for (i, label) in labels.iter().enumerate() {
-        let label_lower: String =
-            label.chars().flat_map(char::to_lowercase).collect();
-        if label_lower.starts_with(&buf_lower) {
-            return Some(i);
-        }
-    }
-    None
-}
-
-fn chars_eq_ci(a: char, b: char) -> bool {
-    a.to_lowercase().eq(b.to_lowercase())
 }
 
 fn parse_listbox_item_state(name: &str) -> ListboxItemState {
@@ -658,19 +583,23 @@ mod a11y_tests {
 
     #[test]
     fn r51_104_typeahead_multi_char_jumps_to_apricot() {
+        // R51.106 substrate test: the binary's overlapping-prefix
+        // labels indeed reach Apricot via 'apr' through the lifted
+        // `TypeaheadCursor`. Algorithm tests live in
+        // `pinion_shell::typeahead`; this is the integration assertion
+        // for the binary's specific label set.
+        use std::time::Duration;
         let labels: [&str; N] = std::array::from_fn(option_label);
-        let mut state = TypeaheadState::default();
+        let mut cursor = TypeaheadCursor::new();
         let t0 = Instant::now();
-        let r1 = typeahead_step(&mut state, 'a', None, t0, &labels);
-        assert_eq!(r1, Some(0), "Apple first");
-        // Within timeout, type 'p' → buffer 'ap' → first prefix match
-        // = Apple (still 0). Try 'ar' to land on Apricot.
+        assert_eq!(cursor.step('a', None, t0, &labels), Some(0));
         let t1 = t0 + Duration::from_millis(50);
-        let r2 = typeahead_step(&mut state, 'p', Some(0), t1, &labels);
-        assert_eq!(r2, Some(0), "Apple matches 'ap'");
-        // Continue: type 'r' → buffer 'apr' → only Apricot matches.
+        assert_eq!(cursor.step('p', Some(0), t1, &labels), Some(0));
         let t2 = t1 + Duration::from_millis(50);
-        let r3 = typeahead_step(&mut state, 'r', Some(0), t2, &labels);
-        assert_eq!(r3, Some(1), "Apricot uniquely matches 'apr'");
+        assert_eq!(
+            cursor.step('r', Some(0), t2, &labels),
+            Some(1),
+            "Apricot uniquely matches 'apr'"
+        );
     }
 }

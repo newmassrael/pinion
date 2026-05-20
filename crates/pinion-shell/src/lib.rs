@@ -56,6 +56,7 @@ use winit::window::Window;
 
 mod app;
 mod substrate;
+pub mod typeahead;
 
 pub use app::{run, AppShell};
 pub use substrate::{AccessEmitDecision, ShellCore};

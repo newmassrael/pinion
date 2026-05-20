@@ -2735,6 +2735,7 @@ router.pointer_down(&mut state_scene);
 - R51.103 — type-ahead 다문자 prefix 버퍼 (500ms 타임아웃) + Unicode case fold (i18n)
 - R51.104 — hello-listbox-multi 시각 demo (N=6, aria-multiselectable, 토글 시연)
 - R51.105 — ListBox dispatch bench (N=4~20, 1-4 µs/이벤트 → Vec<bool> snapshot 채택, SmallVec 보류)
+- R51.106 — type-ahead substrate lift → pinion_shell::typeahead (2 consumer 트리거, ~150 LOC 청산)
 
 
 
@@ -2815,6 +2816,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::with_multiselect
 - crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::is_multiselect
 - crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::selected_indices
+- crates/pinion-shell/src/typeahead.rs:TypeaheadCursor
+- crates/pinion-shell/src/typeahead.rs:TypeaheadCursor::step
 
 
 
