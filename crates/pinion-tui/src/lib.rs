@@ -63,6 +63,8 @@
 pub use crossterm;
 pub use ratatui;
 
+pub mod paint;
+
 use std::io;
 
 use pinion_core::WidgetRenderer;

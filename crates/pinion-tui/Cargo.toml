@@ -32,3 +32,19 @@ ratatui = { workspace = true }
 # `KeyEvent` / `MouseEvent` types without going through ratatui's
 # re-export.
 crossterm = { workspace = true }
+
+# §5.41 R51.110.0 — Unicode grapheme cluster iteration for the
+# Scene → ratatui::Buffer paint walker. The `TextNode.content` field
+# carries arbitrary UTF-8 (CJK, emoji, combining marks), and TUI
+# cells are grapheme-cluster-sized — splitting on raw `char`
+# boundaries would mis-render combining sequences. Already a
+# transitive ratatui / parley dep; promoted to direct so pinion-tui
+# does not implicit-depend through the re-export chain.
+unicode-segmentation = "1.12"
+
+# §5.41 R51.110.0 — Unicode East Asian Width property for the
+# Scene → ratatui::Buffer paint walker. Wide graphemes (CJK,
+# fullwidth Latin, some emoji) consume two terminal cells; narrow
+# graphemes consume one. The paint walker must advance the column
+# cursor by the actual cell-width to avoid overlapping placement.
+unicode-width = "0.2"

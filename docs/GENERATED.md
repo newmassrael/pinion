@@ -3223,6 +3223,7 @@ router.pointer_down(&mut state_scene);
 - R51.109.0 — pinion-tui crate skeleton land (ratatui 0.29 + crossterm 0.28 + TuiRenderer placeholder)
 - R51.109.1 — WidgetRenderer trait + VelloContext + macro 2 impl (backend-agnostic dispatch land)
 - R51.109.2 — WidgetRenderer lift to pinion-core + TuiRenderer<B> impl land (2nd backend)
+- R51.110.0 — pinion_tui::paint::to_buffer text-first 매핑 land (Box/Path/Image 는 R51.111+)
 
 
 
@@ -3257,6 +3258,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/renderer.rs
 - crates/pinion-core/src/renderer.rs:WidgetRenderer
 - crates/pinion-tui/src/lib.rs:TuiContext
+- crates/pinion-tui/src/paint.rs
+- crates/pinion-tui/src/paint.rs:to_buffer
+- crates/pinion-tui/src/paint.rs:paint_text
 
 
 
@@ -10405,6 +10409,37 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.20
+
+
+
+### Round 496 — R51.110.0 §5.41 pinion_tui::paint::to_buffer text-first 매핑 land — Scene→ratatui::Buffer grapheme cluster paint walker (Box/Path/Image 는 R51.111+ alongside hello-button TUI dogfood)
+
+**Changes**:
+- pinion-tui/src/paint.rs 신설 — to_buffer + paint_text + pixel_to_cell_origin
+- unicode-segmentation 1.12 + unicode-width 0.2 direct deps 추가 (grapheme + cell width)
+- Scene match: Container 재귀 + Text paint + wildcard no-op (§3 escape 정합)
+- 9 paint test: ASCII / pixel scaling / CJK width / 경계 / right-edge / Container 재귀 / 빈 content / Box skip / saturate
+- PIXEL_PER_CELL_X=8 / PIXEL_PER_CELL_Y=16 placeholder constants (8×16 바이트맵 baseline)
+
+
+
+**Verification**:
+- cargo check -p pinion-tui --tests clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning
+- cargo test --workspace --features pinion-runtime/vello = 1671 pass / 0 fail (+9 paint)
+- pinion-tui no vello/winit transitive (cross-backend pollution 0 유지)
+
+
+
+**Impact**: §2, §3, §5.2, §5.41
+
+
+**Carry forward**:
+- R51.110.1 — WidgetViewTui trait + pinion_tui::run_test::<V>() 단일 frame substrate
+- R51.110.2 — examples/hello-button-tui first client + crossterm event loop
+- R51.111+ — Box border/bg paint, Path/Image unicode-art 매핑 (dogfood mismatch 이후)
+- PIXEL_PER_CELL_X/Y = 8×16 placeholder, cell-native coord axis 는 R51.111+ 수정
+- right-edge truncation 의 ellipsis policy = R51.111+ (§5.36 text layout cache TUI 안정화 후)
 
 
 
