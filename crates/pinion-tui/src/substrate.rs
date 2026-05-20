@@ -48,10 +48,12 @@
 //!   through the `PIXEL_PER_CELL_*` placeholder. Carry until a
 //!   binding surfaces a real terminal cell-size mismatch.
 
+use std::cell::Cell;
 use std::io;
+use std::time::Instant;
 
 use pinion_core::intent::Intent;
-use pinion_core::{Frame, Scene};
+use pinion_core::{Frame, Owner, Scene};
 use pinion_runtime::{CoreShell, DispatchTail, PointerId};
 
 use crate::WidgetViewTui;
@@ -98,6 +100,25 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// undisturbed. Tests use an in-memory `Vec<u8>` sink to assert
     /// against the captured lines.
     log_sink: Option<Box<dyn io::Write + Send>>,
+
+    /// R51.144 §5.28 — wall-clock timestamp of the previous
+    /// [`Self::compute_paint_scene`] entry, used to compute `dt` for
+    /// the next paint.
+    ///
+    /// Wrapped in [`Cell`] so the accessor keeps its `&self` shape —
+    /// the surface's [`crate::shell::commit_paint`] takes the
+    /// substrate by shared borrow (`&ShellCoreTui<V>`) and the
+    /// borrow rules of `&mut` would force every call site to re-thread
+    /// a mutable reference through paths that otherwise stay sync.
+    /// [`Instant`] is `Copy` so [`Cell::get`] / [`Cell::set`] are
+    /// the canonical zero-overhead pattern here.
+    ///
+    /// First paint: `None` → `dt = 0.0` (no prior timestamp). Per
+    /// §5.28 R33 spring solver behavior at `dt=0` is "no progress",
+    /// so the first frame leaves at-rest animations untouched and
+    /// starts moving ones stay at construction baseline until the
+    /// second paint measures the elapsed delta.
+    last_paint_instant: Cell<Option<Instant>>,
 }
 
 impl<V: WidgetViewTui> Default for ShellCoreTui<V> {
@@ -122,6 +143,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         Self {
             core: CoreShell::new(),
             log_sink: None,
+            last_paint_instant: Cell::new(None),
         }
     }
 
@@ -163,9 +185,24 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         self.core.cached_state()
     }
 
+    /// R51.144 §5.28 — delegates to
+    /// [`CoreShell::root_owner`](pinion_runtime::CoreShell::root_owner).
+    ///
+    /// The TUI binding's view fn attaches its [`Animation<T>`](pinion_core::Animation)
+    /// instances here; [`Self::compute_paint_scene`] ticks the list
+    /// once per paint cycle with the measured `dt`. Drop on
+    /// `ShellCoreTui` cascades through the wrapped
+    /// [`CoreShell`](pinion_runtime::CoreShell) into the
+    /// [`Owner`] drop semantics, cancelling every pending
+    /// [`Command`](pinion_core::Command) (Solid pattern).
+    #[must_use]
+    pub fn root_owner(&self) -> &Owner {
+        self.core.root_owner()
+    }
+
     /// Build the binding's paint scene from the current cached
     /// state. Pure sync per §6.3 R51.27 `dry_run`: identical
-    /// `(state, frame)` always yields the same `Scene`.
+    /// `(state, frame, owner_state)` always yields the same `Scene`.
     ///
     /// R51.124 §5.41 — the substrate no longer drives
     /// `compute_layout`; the TUI paint walker maps the
@@ -174,9 +211,29 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// (`pinion_shell::ShellCore::compute_paint_scene`) keeps its
     /// own (w, h) signature because parley needs the viewport to
     /// shape text against.
+    ///
+    /// R51.144 §5.28 — per-paint pump now measures `dt` against the
+    /// previous paint's [`Instant`], advances every animation
+    /// registered on [`Self::root_owner`] through
+    /// [`CoreShell::tick_animations`](pinion_runtime::CoreShell::tick_animations),
+    /// and threads the same `dt` into [`Frame::with_dt`](pinion_core::Frame::with_dt)
+    /// so deterministic-time-dependent view-fn logic (Tween
+    /// progress reads, etc.) sees the matching delta. First paint:
+    /// `dt = 0.0`.
+    ///
+    /// `&self` (not `&mut self`) because [`crate::shell::commit_paint`]
+    /// takes the substrate by shared borrow; the timing field uses
+    /// [`Cell`] interior mutability so the signature stays sync.
     #[must_use]
     pub fn compute_paint_scene(&self) -> Scene {
-        let frame = Frame::new();
+        let now = Instant::now();
+        let dt = self
+            .last_paint_instant
+            .get()
+            .map_or(0.0_f32, |prev| now.duration_since(prev).as_secs_f32());
+        self.last_paint_instant.set(Some(now));
+        self.core.tick_animations(dt);
+        let frame = Frame::with_dt(dt);
         V::view(*self.core.cached_state(), &frame)
     }
 
@@ -496,5 +553,98 @@ mod tests {
             !captured.contains("tui: state"),
             "no visible state change should produce no state log; got:\n{captured}",
         );
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // R51.144 §5.28 — paint cycle dt + tick_animations wiring.
+    // ───────────────────────────────────────────────────────────────
+
+    mod r51_144_paint_cycle_dt {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use std::thread::sleep;
+        use std::time::Duration;
+
+        use pinion_core::animation::Tickable;
+
+        use super::{ShellCoreTui, TestButtonView};
+
+        /// Records every `tick(dt)` the substrate dispatches.
+        struct TickRecorder {
+            ticks: Cell<u32>,
+            last_dt: Cell<f32>,
+        }
+
+        impl TickRecorder {
+            fn new() -> Self {
+                Self {
+                    ticks: Cell::new(0),
+                    last_dt: Cell::new(f32::NAN),
+                }
+            }
+        }
+
+        impl Tickable for TickRecorder {
+            fn tick(&self, dt: f32) {
+                self.ticks.set(self.ticks.get() + 1);
+                self.last_dt.set(dt);
+            }
+            fn is_at_rest(&self, _epsilon: f32) -> bool {
+                false
+            }
+        }
+
+        #[test]
+        fn first_compute_paint_scene_ticks_with_zero_dt() {
+            // R51.144 — first call has no previous timestamp, so
+            // `dt = 0.0`. At-rest animations stay at rest.
+            let recorder = Rc::new(TickRecorder::new());
+            let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            core.root_owner().register_animation(recorder.clone());
+
+            let _scene = core.compute_paint_scene();
+
+            assert_eq!(recorder.ticks.get(), 1);
+            assert_eq!(
+                recorder.last_dt.get().to_bits(),
+                0.0_f32.to_bits(),
+                "first paint sees dt=0",
+            );
+        }
+
+        #[test]
+        fn second_compute_paint_scene_measures_real_dt() {
+            // R51.144 — second call measures `now - prev` against
+            // the stored `Cell<Option<Instant>>`. A 5ms sleep
+            // guarantees `dt > 0.001` without making the test
+            // brittle on slow machines.
+            let recorder = Rc::new(TickRecorder::new());
+            let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            core.root_owner().register_animation(recorder.clone());
+
+            let _scene1 = core.compute_paint_scene();
+            sleep(Duration::from_millis(5));
+            let _scene2 = core.compute_paint_scene();
+
+            assert_eq!(recorder.ticks.get(), 2);
+            let dt = recorder.last_dt.get();
+            assert!(dt > 0.001, "5ms sleep → dt > 1ms (saw {dt})");
+            assert!(dt < 1.0, "dt should not exceed 1s (saw {dt})");
+        }
+
+        #[test]
+        fn compute_paint_scene_takes_shared_borrow() {
+            // R51.144 — interior mutability via `Cell` lets the
+            // surface call `compute_paint_scene` through a shared
+            // borrow. The pre-R51.144 signature was already `&self`;
+            // the new dt field must NOT force `&mut self` because
+            // the TUI `commit_paint` takes `&ShellCoreTui<V>`.
+            let core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            let core_ref: &ShellCoreTui<TestButtonView> = &core;
+            // Compile + run two shared-borrow calls in sequence —
+            // proves the field's interior mutability path works.
+            let _a = core_ref.compute_paint_scene();
+            let _b = core_ref.compute_paint_scene();
+        }
     }
 }

@@ -1543,6 +1543,7 @@ fn main() {
 - R33: SCE schema: animated block declares Signal + config; Forge emits Animated<T> init.
 - R51.142 — CoreShell<V>::root_owner + tick_animations land (§5.28 paint-loop driver surface)
 - R51.143 — ShellCore (Vello) paint cycle dt wiring + root_owner forward (#1/2; TUI R51.144)
+- R51.144 — ShellCoreTui (TUI) paint cycle dt wiring 평행 (#2/2; Cell interior mutability)
 
 
 
@@ -1578,6 +1579,8 @@ fn main() {
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::tick_animations
 - crates/pinion-shell/src/substrate.rs:ShellCore::root_owner
 - crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::root_owner
+- crates/pinion-tui/src/substrate.rs:ShellCoreTui::compute_paint_scene
 
 
 
@@ -5984,6 +5987,34 @@ router.pointer_down(&mut state_scene);
 - R51.145 — hello-button hover transition demo (1st visual application, ColorAnimation)
 - R51.146 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)
 - dt frame budget cap (background/long-pause robustness, 100ms 또는 1/30s clamp 정통)
+
+
+
+### R51.144 — §5.28 ShellCoreTui (TUI) paint cycle dt 측정 + tick_animations + Frame::with_dt wiring (#2/2)
+
+**Changes**:
+- pinion-tui/src/substrate.rs: last_paint_instant: Cell<Option<Instant>> + root_owner forward
+- compute_paint_scene (&self): Cell interior mut + dt 측정 + tick_animations + Frame::with_dt
+- 3 신규 inline tests (first dt=0 / second dt>1ms / shared-borrow signature 검증)
+
+
+
+**Verification**:
+- 1823 → 1826 tests (+3 신규 inline), 0 failed, 8 ignored
+- clippy --features pinion-runtime/vello = 0 warnings
+- entries 315 → 316, T1=0, RT=1/1, GENERATED.md=sync
+- §5.28 R52 axis 백엔드 wiring 양쪽 완료 (Vello R51.143 + TUI R51.144)
+
+
+
+**Impact**: §5.28, §5.41, §6.3
+
+
+**Carry forward**:
+- R51.145 — hello-button hover transition demo (1st visual application, ColorAnimation)
+- R51.146 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)
+- R51.147 — Handler executor binding (R51.141 carry, pinion-rpc/pinion-shell tokio runtime)
+- dt frame budget cap (background pause robustness, 100ms 또는 1/30s clamp 정통 carry)
 
 
 
