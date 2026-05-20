@@ -66,8 +66,11 @@
 //! hit-test snapshot refreshes. The view fn stays a pure
 //! `Fn(state, &Frame) -> Scene` per §6.3 R51.27 `dry_run` invariant.
 
+use std::cell::Cell;
+
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
+use pinion_core::reactive::{Effect, Signal};
 use pinion_core::scene::ExternalNode;
 use pinion_core::{Owner, Scene, WidgetCore};
 
@@ -126,6 +129,78 @@ pub struct CoreShell<V: WidgetCore> {
     /// pattern; matches the [`Owner`] drop semantics R51.137 +
     /// R51.139 land).
     root_owner: Owner,
+
+    /// R51.149 §5.28 — monotonic frame counter that drives the
+    /// substrate's reactive animation pump.
+    ///
+    /// Backends call [`Self::tick_animations`] each paint cycle with
+    /// the measured `dt`; the implementation stores the value into
+    /// [`Self::last_dt`] then increments this counter, which fires the
+    /// [`Self::_animation_driver`] [`Effect`]. A monotonic counter
+    /// (not the raw `dt` itself) sidesteps [`Signal::set`]'s
+    /// equality-skip: two paints with the same `dt` would otherwise
+    /// look identical to the signal and the second tick would never
+    /// fire. The counter pattern matches the canonical `SolidJS` /
+    /// Leptos `createSignal(0); raf(() => setCount(c => c + 1))` shape
+    /// — value-irrelevant signal as the subscription-firing mechanism.
+    ///
+    /// The §5.28 R33 spec calls this the "framework `AnimationDriver`" —
+    /// the reactive routing of the paint clock through pinion's
+    /// `Effect` primitive. Any application-side reactive subscriber
+    /// can also read this signal to react to the paint clock without
+    /// standing up a duplicate counter, opening the door to
+    /// SCE-emitted "frame-driven" declarative bindings in later
+    /// rounds.
+    ///
+    /// Field private — the spec only exposes
+    /// [`Self::tick_animations`] (write side) and an accessor
+    /// [`Self::frame_signal`] (read side) for application observers.
+    frame_signal: Signal<u64>,
+
+    /// R51.149 §5.28 — most-recent `dt` value (seconds) captured
+    /// before [`Self::frame_signal`] is bumped. The
+    /// [`Self::_animation_driver`] Effect reads this inside its
+    /// re-run closure — the counter fires the subscription cascade,
+    /// the cell carries the actual `dt` to the spring solver.
+    ///
+    /// `Rc<Cell<f32>>` (not bare `Cell`) so the driver Effect can
+    /// capture an alias by `Rc::clone` at construction — both the
+    /// struct field and the Effect body access the *same* cell, so
+    /// every `Self::tick_animations` write is visible to the next
+    /// Effect re-run verbatim. `Cell` (not `Signal`) because the
+    /// value is only ever read from inside the driver Effect, never
+    /// auto-subscribed; an extra Signal here would create a
+    /// redundant observer list with no downstream consumers.
+    last_dt: std::rc::Rc<Cell<f32>>,
+
+    /// R51.149 §5.28 — monotonic frame counter mirror.
+    ///
+    /// [`Self::frame_signal`] is the reactive surface (fires Effects
+    /// on change); this `Cell` is the substrate's own write-side
+    /// scratch — `tick_animations` reads it, increments, writes back,
+    /// then pushes the new value to the signal. Keeping the
+    /// next-value computation out of `Signal::get` avoids
+    /// auto-subscribing whatever scope is on the
+    /// `CURRENT_OWNER` stack when the caller (the backend's paint
+    /// cycle) might be operating inside an unrelated reactive context
+    /// in some future call path. Strictly an implementation detail.
+    next_frame_count: Cell<u64>,
+
+    /// R51.149 §5.28 — reactive animation driver Effect, anchored to
+    /// [`Self::root_owner`] and subscribed to [`Self::frame_signal`].
+    ///
+    /// Held as a field to keep the underlying `Rc<EffectInner>` alive
+    /// for the substrate's lifetime; [`Effect::new`](pinion_core::reactive::Effect)
+    /// registers an owner-tied `on_cleanup` that cancels the Effect
+    /// when [`Self::root_owner`] drops, so the field naturally
+    /// evaporates at shutdown.
+    ///
+    /// The `_` prefix matches Rust convention for "value held for its
+    /// side effects, never read directly". Reads happen exclusively
+    /// through the reactive cascade
+    /// ([`Signal::set`](pinion_core::reactive::Signal::set) on
+    /// [`Self::frame_signal`]).
+    _animation_driver: Effect,
 }
 
 /// R51.122 §5.41 — post-dispatch bookkeeping artifact returned by
@@ -221,12 +296,45 @@ impl<V: WidgetCore> CoreShell<V> {
             ExternalNode::new(V::create_external()).with_tag(V::tag()),
         );
         let cached_state = V::read_state(&scene);
+        let root_owner = Owner::new();
+        let frame_signal = Signal::new(0_u64);
+        let last_dt: std::rc::Rc<Cell<f32>> = std::rc::Rc::new(Cell::new(0.0_f32));
+
+        // R51.149 §5.28 — build the framework AnimationDriver as a
+        // reactive `Effect` subscribing to `frame_signal`. Each
+        // [`Self::tick_animations`] call stores the new `dt` into
+        // [`Self::last_dt`] then increments the frame counter,
+        // firing this Effect; the closure reads back the `dt` and
+        // dispatches into `Owner::tick_animations(dt)`. Eager
+        // initial run executes against the construction baseline
+        // (`dt = 0.0`, empty animation registry) — a deliberate
+        // no-op that primes the subscription so the first real
+        // tick fires.
+        let owner_for_driver = root_owner.clone();
+        let owner_for_closure = root_owner.clone();
+        let signal_for_driver = frame_signal.clone();
+        let dt_for_closure = std::rc::Rc::clone(&last_dt);
+        let animation_driver = root_owner.run(|| {
+            Effect::new(&owner_for_driver, move || {
+                // `get()` subscribes to the counter on the eager
+                // initial run; subsequent re-runs trigger off
+                // `Signal::set` in `tick_animations`.
+                let _frame = signal_for_driver.get();
+                let dt = dt_for_closure.get();
+                owner_for_closure.tick_animations(dt);
+            })
+        });
+
         Self {
             scene,
             cached_state,
             router: InputRouter::new(),
             intent_queue: IntentQueue::new(),
-            root_owner: Owner::new(),
+            root_owner,
+            frame_signal,
+            last_dt,
+            next_frame_count: Cell::new(1_u64),
+            _animation_driver: animation_driver,
         }
     }
 
@@ -292,7 +400,43 @@ impl<V: WidgetCore> CoreShell<V> {
     /// inside their tick callback do not break the sweep — the new
     /// registrations pick up on the next frame instead.
     pub fn tick_animations(&self, dt: f32) {
-        self.root_owner.tick_animations(dt);
+        // R51.149 §5.28 — store the new dt into the shared
+        // `Rc<Cell>` then bump the monotonic frame counter. The
+        // counter bump fires the `_animation_driver` Effect
+        // synchronously (outside any active batch); the Effect body
+        // reads back the stored `dt` and dispatches into
+        // `Owner::tick_animations(dt)` against `root_owner` so every
+        // registered spring advances by exactly one tick. Same
+        // observable behaviour as the pre-R51.149 direct call, with
+        // the spec-canonical reactive routing (R51.137 Effect /
+        // §5.28 R33).
+        //
+        // `next_frame_count` is read without subscribing — the
+        // monotonic step lives in a `Cell` outside the reactive
+        // graph; only `frame_signal.set` enters the cascade.
+        self.last_dt.set(dt);
+        let next = self.next_frame_count.get();
+        self.next_frame_count.set(next.wrapping_add(1));
+        self.frame_signal.set(next);
+    }
+
+    /// R51.149 §5.28 — read-only borrow of the per-frame counter
+    /// signal that drives the substrate's animation pump.
+    ///
+    /// Increments monotonically on every [`Self::tick_animations`]
+    /// call. Application-side reactive subscribers (Computed /
+    /// Effect / future SCE-emitted "frame-driven" bindings) can
+    /// call [`Signal::get`](pinion_core::reactive::Signal::get) on
+    /// this signal to react in lockstep with the paint clock — the
+    /// counter value itself is opaque (it just fires the cascade);
+    /// for the actual per-frame delta-time, the substrate exposes
+    /// it through the framework `AnimationDriver`'s tick routing, not
+    /// through this signal. The signal-of-counter shape sidesteps
+    /// [`Signal::set`]'s equality-skip so successive ticks with
+    /// identical `dt` still propagate.
+    #[must_use]
+    pub fn frame_signal(&self) -> &Signal<u64> {
+        &self.frame_signal
     }
 
     /// R51.147 §5.28 — `true` when any animation registered on this
@@ -849,6 +993,96 @@ mod tests {
         }
         assert_eq!(recorder.ticks.get(), 5);
         assert_eq!(recorder.last_dt.get().to_bits(), 0.01_f32.to_bits());
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R51.149 §5.28 — Effect-driven AnimationDriver tests.
+    //
+    // The spec진본화 (§5.28 R33 framework AnimationDriver) routes the
+    // `tick_animations(dt)` call through a reactive Effect subscribed
+    // to a monotonic frame counter signal. The tests below pin down
+    // the load-bearing invariants:
+    //
+    // - frame_signal counter monotonically increments on every tick
+    // - the Effect re-runs on each counter bump (verified through
+    //   the Tickable recorder)
+    // - identical dt values across ticks still propagate (sidesteps
+    //   Signal::set's equality-skip via the counter pattern)
+    // - last_dt mirrors the most-recent value passed to
+    //   tick_animations
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r51_149_frame_signal_starts_at_zero() {
+        // R51.149 — counter initial value (Signal::new(0_u64)). The
+        // eager Effect run subscribes at construction without
+        // bumping the counter.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        assert_eq!(core.frame_signal().get(), 0_u64);
+    }
+
+    #[test]
+    fn r51_149_tick_animations_bumps_frame_counter() {
+        // R51.149 — every tick increments the counter by exactly 1.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        assert_eq!(core.frame_signal().get(), 0_u64);
+        core.tick_animations(1.0 / 60.0);
+        assert_eq!(core.frame_signal().get(), 1_u64);
+        core.tick_animations(1.0 / 60.0);
+        assert_eq!(core.frame_signal().get(), 2_u64);
+    }
+
+    #[test]
+    fn r51_149_identical_dt_still_propagates_through_effect() {
+        // R51.149 load-bearing — the pre-R51.149 attempt at a raw
+        // `Signal<f32>` dt-signal would equality-skip when two ticks
+        // pushed the same dt; the counter-based design must dispatch
+        // both ticks regardless of dt repetition. The test pushes
+        // the same dt five times and asserts five Tickable dispatches.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let recorder = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(recorder.clone());
+        for _ in 0..5 {
+            core.tick_animations(0.016_666_67);
+        }
+        assert_eq!(
+            recorder.ticks.get(),
+            5,
+            "identical dt across ticks must each re-fire the Effect (not equality-skip)",
+        );
+        assert_eq!(
+            recorder.last_dt.get().to_bits(),
+            0.016_666_67_f32.to_bits(),
+        );
+    }
+
+    #[test]
+    fn r51_149_application_effect_can_observe_frame_signal() {
+        // R51.149 — applications subscribing to `frame_signal` see
+        // the per-tick counter cascade. Verifies the public accessor
+        // is wired into the same Signal the substrate's internal
+        // driver fires on.
+        use std::cell::Cell;
+        use pinion_core::reactive::Effect;
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let observed = Rc::new(Cell::new(0_u32));
+        let observed_clone = Rc::clone(&observed);
+        let signal_clone = core.frame_signal().clone();
+        let _user_effect = core.root_owner().run(|| {
+            Effect::new(core.root_owner(), move || {
+                let _frame = signal_clone.get();
+                observed_clone.set(observed_clone.get() + 1);
+            })
+        });
+        // Eager initial run already counted 1.
+        let baseline = observed.get();
+        core.tick_animations(0.01);
+        core.tick_animations(0.02);
+        assert_eq!(
+            observed.get(),
+            baseline + 2,
+            "application Effect must re-run on each tick_animations bump",
+        );
     }
 
     #[test]

@@ -1595,6 +1595,7 @@ fn main() {
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::any_animation_active
 - crates/pinion-tui/src/shell.rs:run
 - examples/hello-button-tui/src/main.rs:drive_hover_progress
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::frame_signal
 
 
 
@@ -6151,6 +6152,36 @@ router.pointer_down(&mut state_scene);
 - R51.150+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
 - R51.151+ application context API (avoid thread_local OnceCell view-fn pattern)
 - memory entries #157-166 lessons partial land (5 of ~9), 잔여 carry
+
+
+
+### R51.149 — §5.28 R33 framework AnimationDriver 진본화 — CoreShell tick_animations 가 reactive Effect (frame_signal counter)을 통해 dispatch
+
+**Changes**:
+- pinion-runtime CoreShell + frame_signal Signal<u64> + last_dt Rc<Cell<f32>> + driver Effect
+- tick_animations(dt) = last_dt.set(dt) + frame_signal.set(counter++)
+- driver Effect subscribes frame_signal; eager initial run = noop primer
+- monotonic counter sidesteps Signal equality-skip — identical dt 5 ticks dispatch 5 times
+- frame_signal() 공개 accessor — applications observe paint clock without separate counter
+- Effect-driven routing = §5.28 R33 framework AnimationDriver 진본화
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1860 passed / 0 failed / 8 ignored
+- baseline 1856 → 1860 (+4 R51.149 in core_shell)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- existing 20 core_shell tests unchanged (observable behavior preserved)
+
+
+
+**Impact**: §5.28, §5.22, §5.41
+
+
+**Carry forward**:
+- R51.150+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
+- R51.151+ application context API (avoid thread_local OnceCell view-fn pattern)
+- memory entry #168 — Effect-driven driver + monotonic counter pattern
 
 
 
