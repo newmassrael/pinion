@@ -32,6 +32,15 @@ pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
 # dispatch on both backends — different input sources, identical
 # substrate path.
 
+# §5.41 R51.118 — pinion-native AccessNode / AriaRole / AccessState
+# surface. The TUI a11y substrate's first cut: `WidgetViewTui::
+# access_node` default + per-binding overrides land the same
+# semantic-tree contribution shape the Vello side already carries.
+# AT integration (PTY screen reader path or future AccessKit-TUI)
+# is carry-forward; this dep promotes the surface so the trait
+# returns a concrete `Vec<AccessNode>` instead of an erased type.
+pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
+
 # §5.41 R51.109.0 — Rust TUI rendering library. Cell-based scene
 # render target (§2 #6 GUI/TUI dual). Linebender-adjacent maintainer
 # continuity; egui / iced / bubbletea-class adoption baseline. The

@@ -51,6 +51,7 @@
 use std::borrow::Cow;
 use std::io::Stdout;
 
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
@@ -197,6 +198,25 @@ impl WidgetViewTui for HelloToggleTui {
     /// per WAI-ARIA APG so both keys land here).
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
+    }
+
+    /// R51.118 §5.41 — AT-side semantic node (TUI parity with the
+    /// Vello hello-toggle binding). `AriaRole::Switch` carries the
+    /// On/Off value via [`AccessValue::Bool`]; `state.checked`
+    /// mirrors the same boolean so AT clients reading either field
+    /// see a consistent on/off state.
+    fn access_node(state: &Self::State, focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, on) = *state;
+        let access_state = AccessState {
+            focused: focused == Some(Self::tag()),
+            disabled: matches!(interaction, ToggleState::Disabled),
+            hovered: matches!(interaction, ToggleState::Hover),
+            pressed: matches!(interaction, ToggleState::Pressed),
+            checked: Some(on),
+        };
+        vec![AccessNode::new(Self::tag(), AriaRole::Switch)
+            .with_value(AccessValue::Bool(on))
+            .with_state(access_state)]
     }
 }
 

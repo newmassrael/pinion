@@ -59,6 +59,7 @@
 
 use std::io::Stdout;
 
+use pinion_a11y::{AccessNode, AccessState, AriaRole};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
@@ -219,6 +220,21 @@ impl WidgetViewTui for HelloButtonTui {
     /// this impl through the generic `WidgetView` merge.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
+    }
+
+    /// R51.118 §5.41 — AT-side semantic node (TUI parity with the
+    /// Vello hello-button binding). Same `AriaRole::Button` + state
+    /// flags shape; consumed by the future PTY screen reader /
+    /// AccessKit-TUI integration once the §5.41 a11y adapter lands.
+    fn access_node(state: &Self::State, focused: Option<&str>) -> Vec<AccessNode> {
+        let access_state = AccessState {
+            focused: focused == Some(Self::tag()),
+            disabled: matches!(state, ButtonState::Disabled),
+            hovered: matches!(state, ButtonState::Hover),
+            pressed: matches!(state, ButtonState::Pressed),
+            checked: None,
+        };
+        vec![AccessNode::new(Self::tag(), AriaRole::Button).with_state(access_state)]
     }
 }
 

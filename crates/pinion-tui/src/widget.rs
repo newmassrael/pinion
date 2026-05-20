@@ -44,6 +44,7 @@
 //! Future R51.111+ items (input dispatch, focus management, a11y)
 //! land as carries once their first concrete TUI consumer surfaces.
 
+use pinion_a11y::AccessNode;
 use pinion_core::external::External;
 use pinion_core::renderer::WidgetRenderer;
 use pinion_core::{Frame, Scene};
@@ -170,6 +171,37 @@ pub trait WidgetViewTui: 'static {
     #[must_use]
     fn apply_key(_scene: &mut Scene, _focused: Option<&str>, _key: &str) -> bool {
         false
+    }
+
+    /// R51.118 §5.41 — accessibility semantic tree contribution
+    /// (TUI sibling of `pinion_shell::WidgetView::access_node`).
+    ///
+    /// Return one [`AccessNode`] per AT-visible tag the widget
+    /// paints (atomic widgets emit a single node; composite
+    /// widgets emit the parent + one per child). Bounds are filled
+    /// in by the shell after layout — widgets need not (and should
+    /// not) resolve pixel rects here. The `focused` argument
+    /// carries the substrate's currently-focused tag so each
+    /// [`AccessNode::state`] can set its `focused` flag without the
+    /// widget tracking focus state independently.
+    ///
+    /// The R51.118 substrate cut adds the trait surface; the AT
+    /// integration (PTY screen reader path or future AccessKit-TUI
+    /// adapter) is carry-forward. Bindings that override here
+    /// surface accessible state for the eventual AT consumer with
+    /// the same shape the GUI side already produces — so the
+    /// pinion-a11y `enrich_names_from_scene` pipeline applies
+    /// uniformly across both backends.
+    ///
+    /// Default returns an empty vector — widgets that opt out are
+    /// AT-invisible (a deliberate intent declaration; see WAI-ARIA
+    /// Authoring Practices on `role="presentation"`).
+    #[must_use]
+    fn access_node(
+        _state: &Self::State,
+        _focused: Option<&str>,
+    ) -> Vec<AccessNode> {
+        Vec::new()
     }
 }
 

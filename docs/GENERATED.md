@@ -3235,6 +3235,7 @@ router.pointer_down(&mut state_scene);
 - R51.115 — paint::to_buffer Scene::Box + ContainerNode.style mapping (border ┌─┐│└─┘ + bg fill)
 - R51.116 — hello-button-tui / hello-toggle-tui view BoxStyle 적용 (substrate evidence-first)
 - R51.117 — ShellCoreTui<V> substrate extraction (headless test infra + R51.92.1 parity)
+- R51.118 — WidgetViewTui::access_node default + 2 TUI binding override (TUI a11y substrate first cut)
 
 
 
@@ -3300,6 +3301,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/substrate.rs
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui
 - crates/pinion-tui/src/shell.rs:commit_paint
+- crates/pinion-tui/src/widget.rs:WidgetViewTui::access_node
 
 
 

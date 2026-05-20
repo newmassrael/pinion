@@ -15,5 +15,6 @@ name = "hello-button-tui"
 path = "src/main.rs"
 
 [dependencies]
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }

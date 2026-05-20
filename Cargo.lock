@@ -1503,6 +1503,7 @@ dependencies = [
 name = "hello-button-tui"
 version = "0.0.1"
 dependencies = [
+ "pinion-a11y",
  "pinion-core",
  "pinion-tui",
 ]
@@ -1599,6 +1600,7 @@ dependencies = [
 name = "hello-toggle-tui"
 version = "0.0.1"
 dependencies = [
+ "pinion-a11y",
  "pinion-core",
  "pinion-tui",
 ]
@@ -2815,6 +2817,7 @@ name = "pinion-tui"
 version = "0.0.1"
 dependencies = [
  "crossterm",
+ "pinion-a11y",
  "pinion-core",
  "pinion-runtime",
  "ratatui",
