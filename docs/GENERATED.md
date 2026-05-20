@@ -1323,6 +1323,7 @@ fn main() {
 - examples/hello-commands-tui/src/main.rs
 - examples/hello-commands-tui/src/main.rs:HelloCommandsTui
 - examples/hello-commands-tui/src/main.rs:queue_one_shot_demo_command
+- crates/pinion-core/src/widget_core.rs:WidgetCore::update
 
 
 
@@ -6724,6 +6725,35 @@ router.pointer_down(&mut state_scene);
 
 **Carry forward**:
 - Visual feedback — dispatch_intent 시 Signal 업데이트 로 view fn 에 술해 적달 (별 R51.166+)
+
+
+
+### R51.166 — §5.23 R27 — WidgetCore::update reducer substrate trait method (default no-op); R27 axis A first round
+
+**Changes**:
+- crates/pinion-core/src/widget_core.rs: WidgetCore::update(&mut Self::State, &Intent) -> Vec<Command> added with Vec::new() default impl — every existing impl keeps compiling unchanged
+- crates/pinion-core/src/widget_core.rs: r51_166_tests inline cfg module (3 tests): default no-op + custom reducer state+command emission + intent borrow contract
+- doc: §5.23 R27 Update(&mut Model, Intent) -> Vec<Command<Intent>> signature cited; R51.167-170 wiring carry enumerated (CoreShell route / Intent.payload SCXML send / hello-commands real flow / Forge codegen)
+- doc: borrow rationale — Intent is Clone, framework retains authoritative copy, reducer reads tag/payload without consuming so SCXML send path stays unaffected
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib r51_166: 3 pass
+- cargo test --workspace --features pinion-runtime/vello: 1987 pass / 0 fail / 10 ignored (+3 vs R51.165 baseline 1984)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (doc_markdown reactive: §6.3 `dry_run` backtick fix during the round)
+- mnemosyne validate_workspace baseline: T1=0 / RT=1/1 / T4 unchanged
+
+
+
+**Impact**: §5.23, §5.20, §5.41, §6.3
+
+
+**Carry forward**:
+- R51.167 — CoreShell::dispatch_intent routes Intent through <V as WidgetCore>::update before SCXML send; produced Vec<Command> queued via Owner::dispatch_command
+- R51.168 — Intent.payload typed routing through SCXML invoke send (currently tag-only path drops payload)
+- R51.169 — hello-commands(-tui) migrate from R51.163 Owner::cache one-shot hack to reducer-driven Command flow
+- R51.170 — Forge codegen emits update body from SCE schema effect + command tables
 
 
 
