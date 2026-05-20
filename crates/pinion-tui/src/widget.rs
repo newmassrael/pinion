@@ -127,6 +127,50 @@ pub trait WidgetViewTui: 'static {
     fn initial_size() -> (u16, u16) {
         (80, 24)
     }
+
+    /// R51.111 §5.41 — optional keyboard event mapping. The shell
+    /// consults this on every key press whose W3C `KeyboardEvent.key`
+    /// string the input bridge can produce; `None` means "no
+    /// keybinding for this key" and the shell falls through to
+    /// [`Self::apply_key`]. `Esc` / `Tab` / `BackTab` are
+    /// shell-reserved and never reach this hook.
+    ///
+    /// Mirrors `pinion_shell::WidgetView::keybinding`. Default returns
+    /// `None` so widgets without keyboard affordances need no
+    /// override.
+    #[must_use]
+    fn keybinding(_key: &str) -> Option<Self::Event> {
+        None
+    }
+
+    /// R51.111 §5.41 — escape hatch for keyboard affordances that the
+    /// enum-typed [`keybinding`](Self::keybinding) channel cannot
+    /// express. The shell consults this AFTER `keybinding` returns
+    /// `None`. Receives the authoritative state scene `&mut` so the
+    /// widget can walk to the matching [`Scene::External`] and call
+    /// `ExternalIntrospect::invoke` / `intervene` — the same side
+    /// door the RPC `scene/invoke` route uses, and the same path
+    /// `pinion_shell::WidgetView::apply_key` writes against.
+    ///
+    /// `focused` carries the substrate's currently-focused tag so
+    /// widgets that match against it route keys only when their own
+    /// tag is the focus target. The R51.111 TUI shell passes
+    /// `Some(Self::tag())` unconditionally because focus management
+    /// is carry-forward (R51.112+ TUI `FocusManager`); single-widget
+    /// dogfood bindings see implicit focus on their sole tag.
+    ///
+    /// Returns `true` if the key was handled (the shell refreshes
+    /// cached state, drains intents, and repaints on visible change).
+    /// Returns `false` to defer to whatever fallback the shell adds
+    /// next (none today; same swallow semantics as an unmatched
+    /// `keybinding`).
+    ///
+    /// Default returns `false` for every key — widgets without
+    /// keyboard affordances beyond `keybinding` need no override.
+    #[must_use]
+    fn apply_key(_scene: &mut Scene, _focused: Option<&str>, _key: &str) -> bool {
+        false
+    }
 }
 
 /// R51.110.1 §5.41 — render one frame of `V` into a fresh

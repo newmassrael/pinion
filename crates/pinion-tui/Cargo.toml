@@ -18,6 +18,20 @@ workspace = true
 # substrate trait.
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
 
+# §5.41 R51.111 — abstract `Modifiers` vocabulary the substrate uses
+# for input dispatch. pinion-runtime carries the winit-free
+# `Modifiers` / `Touch` types (R51.108 lift) so the TUI crossterm
+# bridge converts to the same shape the Vello shell's
+# `winit_modifiers_to_pinion` helper produces. No transitive winit /
+# wgpu — pinion-runtime is the §5.35 input + §5.36 layout substrate.
+pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
+
+# §5.41 R51.111 — intent drain primitive (`walk_scene_and_drain`)
+# shared with `pinion-shell::ShellCore`. The same scene-walk pulls
+# §5.20 intents out of the `Scene::External` node after each input
+# dispatch on both backends — different input sources, identical
+# substrate path.
+
 # §5.41 R51.109.0 — Rust TUI rendering library. Cell-based scene
 # render target (§2 #6 GUI/TUI dual). Linebender-adjacent maintainer
 # continuity; egui / iced / bubbletea-class adoption baseline. The

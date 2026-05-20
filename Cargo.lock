@@ -2808,6 +2808,7 @@ version = "0.0.1"
 dependencies = [
  "crossterm",
  "pinion-core",
+ "pinion-runtime",
  "ratatui",
  "unicode-segmentation",
  "unicode-width 0.2.0",

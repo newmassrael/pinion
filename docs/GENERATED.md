@@ -3226,6 +3226,7 @@ router.pointer_down(&mut state_scene);
 - R51.110.0 — pinion_tui::paint::to_buffer text-first 매핑 land (Box/Path/Image 는 R51.111+)
 - R51.110.1 — WidgetViewTui trait + render_one_frame helper land (event loop R51.110.2)
 - R51.110.2 — pinion_tui::run + hello-button-tui first dogfood land (crossterm event loop, Esc exit)
+- R51.111 — TUI input dispatch: crossterm KeyEvent → W3C key str + ButtonExternal first interaction
 
 
 
@@ -3270,6 +3271,13 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/shell.rs:run
 - examples/hello-button-tui/src/main.rs
 - examples/hello-button-tui/src/main.rs:HelloButtonTui
+- crates/pinion-tui/src/input.rs
+- crates/pinion-tui/src/input.rs:key_str_from_event
+- crates/pinion-tui/src/input.rs:modifiers_from_crossterm
+- crates/pinion-tui/src/shell.rs:dispatch_key
+- crates/pinion-tui/src/shell.rs:forward_event
+- crates/pinion-tui/src/widget.rs:WidgetViewTui::apply_key
+- crates/pinion-tui/src/widget.rs:WidgetViewTui::keybinding
 
 
 
