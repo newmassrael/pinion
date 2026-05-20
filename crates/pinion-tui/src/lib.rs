@@ -64,8 +64,10 @@ pub use crossterm;
 pub use ratatui;
 
 pub mod paint;
+pub mod shell;
 pub mod widget;
 
+pub use shell::run;
 pub use widget::{WidgetViewTui, render_one_frame};
 
 use std::io;

@@ -1,0 +1,19 @@
+[package]
+name = "hello-button-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.110.2 §5.41 first TUI dogfood — static hello-button view rendered to the terminal via pinion-tui (cell-based render mode, §2 #6 GUI/TUI dual invariant)"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hello-button-tui"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }

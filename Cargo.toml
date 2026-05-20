@@ -15,6 +15,7 @@ members = [
     "crates/pinion-shell",
     "crates/pinion-tui",
     "examples/hello-button",
+    "examples/hello-button-tui",
     "examples/hello-toggle",
     "examples/hello-checkbox",
     "examples/hello-radio",

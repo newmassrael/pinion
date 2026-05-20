@@ -1500,6 +1500,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-button-tui"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+ "pinion-tui",
+]
+
+[[package]]
 name = "hello-checkbox"
 version = "0.0.1"
 dependencies = [

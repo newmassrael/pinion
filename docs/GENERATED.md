@@ -3225,6 +3225,7 @@ router.pointer_down(&mut state_scene);
 - R51.109.2 — WidgetRenderer lift to pinion-core + TuiRenderer<B> impl land (2nd backend)
 - R51.110.0 — pinion_tui::paint::to_buffer text-first 매핑 land (Box/Path/Image 는 R51.111+)
 - R51.110.1 — WidgetViewTui trait + render_one_frame helper land (event loop R51.110.2)
+- R51.110.2 — pinion_tui::run + hello-button-tui first dogfood land (crossterm event loop, Esc exit)
 
 
 
@@ -3265,6 +3266,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/widget.rs
 - crates/pinion-tui/src/widget.rs:WidgetViewTui
 - crates/pinion-tui/src/widget.rs:render_one_frame
+- crates/pinion-tui/src/shell.rs
+- crates/pinion-tui/src/shell.rs:run
+- examples/hello-button-tui/src/main.rs
+- examples/hello-button-tui/src/main.rs:HelloButtonTui
 
 
 
@@ -10516,6 +10521,39 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.12, §5.15, §5.20
+
+
+
+### Round 498 — R51.110.2 §5.41 pinion_tui::run + hello-button-tui first TUI dogfood land — §2 #6 GUI/TUI dual invariant first visible substrate evaluation (crossterm event loop + Esc exit + Resize repaint, input dispatch 는 R51.111+ carry)
+
+**Changes**:
+- pinion-tui/src/shell.rs 신설 — run::<V>() crossterm raw mode + alternate screen + RAII guard
+- TerminalGuard Drop — panic-safe 터미널 restore (raw mode off + leave alt screen)
+- event loop: poll(100ms) + Esc 종료 + Resize repaint + 다른 이벤트 swallow
+- examples/hello-button-tui 신설 — first visual TUI dogfood (static label + exit hint)
+- workspace member 등록 + dep 구조 (pinion-core + pinion-tui)
+- input dispatch / SCXML wire-up = R51.111+ carry ([[substrate-incompleteness-signal]] 정육)
+
+
+
+**Verification**:
+- cargo check -p hello-button-tui clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning
+- cargo test --workspace --features pinion-runtime/vello = 1674 pass / 0 fail (regression 없음)
+- 수동 dogfood: cargo run -p hello-button-tui → 터미널에 hello-button 표시 + Esc 종료
+
+
+
+**Impact**: §2, §5.15, §5.41
+
+
+**Carry forward**:
+- R51.111 — input dispatch via InputRouter (crossterm KeyEvent/Mouse → Scene::External invoke)
+- R51.111 — state 변경 → repaint cycle (현재 는 동일 state 재그림)
+- R51.111 — hello-button SCXML statechart 실제 연결 (StubExternal 교체)
+- R51.112+ — Box border/bg paint, focus ring, a11y AccessKit-TUI (또는 PTY screen reader path)
+- WidgetViewTui vs WidgetView merge 평가 = 2nd TUI binding 등장 시 trigger
+- PIXEL_PER_CELL 8×16 → cell-native coord 전환 = 2nd TUI binding 시 mismatch 평가
 
 
 
