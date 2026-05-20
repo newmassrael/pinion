@@ -3951,7 +3951,8 @@
         "R51.97 — hello-listbox 예제 (WAI-ARIA Listbox 키보드 모델: Arrow=focus, Space/Enter=commit, AT integration)",
         "R51.98 — AccessNode.selected (aria-selected) + multiselectable (aria-multiselectable) wire-up",
         "R51.98 — hello-listbox ListBoxOption aria-checked→aria-selected 정정 (axis 분리, WAI-ARIA APG)",
-        "R51.101 — dispatch.rs invalid_params(&str) wrapper 제거 (R51.89.1 carry; 129 caller 직접 호출)"
+        "R51.101 — dispatch.rs invalid_params(&str) wrapper 제거 (R51.89.1 carry; 129 caller 직접 호출)",
+        "R51.121.1 — WidgetA11y supertrait (pinion-a11y) 로 a11y 3 method 이동, audit citation 정정"
       ],
       "alternatives_rejected": [
         {
@@ -4025,10 +4026,6 @@
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetView::access_node"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "AppShell::handle_accesskit_event"
         },
         {
@@ -4062,10 +4059,6 @@
         {
           "file": "examples/hello-slider-vertical/src/main.rs",
           "symbol": "SliderVerticalView::access_node"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetView::access_focus_target"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
@@ -4108,10 +4101,6 @@
         {
           "file": "crates/pinion-a11y/src/scene_label.rs",
           "symbol": "enrich_names_from_scene"
-        },
-        {
-          "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetView::access_child_invoke"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
@@ -4342,6 +4331,25 @@
         {
           "file": "crates/pinion-a11y/src/node.rs",
           "symbol": "AccessNode::with_multiselectable"
+        },
+        {
+          "file": "crates/pinion-a11y/src/widget_a11y.rs"
+        },
+        {
+          "file": "crates/pinion-a11y/src/widget_a11y.rs",
+          "symbol": "WidgetA11y"
+        },
+        {
+          "file": "crates/pinion-a11y/src/widget_a11y.rs",
+          "symbol": "WidgetA11y::access_node"
+        },
+        {
+          "file": "crates/pinion-a11y/src/widget_a11y.rs",
+          "symbol": "WidgetA11y::access_focus_target"
+        },
+        {
+          "file": "crates/pinion-a11y/src/widget_a11y.rs",
+          "symbol": "WidgetA11y::access_child_invoke"
         }
       ],
       "decision_status": "active"
@@ -6832,6 +6840,42 @@
         "blanket impl WidgetA11y for T: WidgetCore 비적용 — Rust specialization 없이는 composite override 불가",
         "Self::tag() 호출 시 supertrait method dispatch 정통 — <Self as WidgetCore>::tag() 명시 우선 (ambiguity 회피 + audit grep)",
         "TUI focus management hardcode + cell-native coord + AT integration 등 잔여 carry 그대로"
+      ]
+    },
+    "R51.121.1": {
+      "decision_summary": "R51.121.1 §5.40 — R51.121 supertrait split follow-up: WidgetView::access_* stale citation 청산 + WidgetA11y impl 추가",
+      "changes_bullets": [
+        "§5.40 stale removal 3 — WidgetView::{access_node, access_focus_target, access_child_invoke}",
+        "§5.40 add 5 — widget_a11y.rs + WidgetA11y trait + 3 method (access_node / access_focus_target / access_child_invoke)",
+        "§5.40 caveat — R51.121 supertrait split lesson 명시"
+      ],
+      "verification_bullets": [
+        "mnemosyne validate_workspace = entries=250 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync",
+        "atomic audit accuracy 회복 — R51.121 후 stale 3 → 0",
+        "R51.119 lesson 정통 적용 (refactor 후 atomic citation 즉시 cleanup)"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.121 의 §5.16 audit 결과 — stale 0 (WidgetView trait 자체 구조 변화 없음, citation valid)"
+      ],
+      "publishable_decision_summary": "R51.121.1 §5.40 — R51.121 supertrait split follow-up: WidgetView::access_* stale citation 청산 + WidgetA11y impl 추가",
+      "publishable_changes_bullets": [
+        "§5.40 stale removal 3 — WidgetView::{access_node, access_focus_target, access_child_invoke}",
+        "§5.40 add 5 — widget_a11y.rs + WidgetA11y trait + 3 method (access_node / access_focus_target / access_child_invoke)",
+        "§5.40 caveat — R51.121 supertrait split lesson 명시"
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne validate_workspace = entries=250 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync",
+        "atomic audit accuracy 회복 — R51.121 후 stale 3 → 0",
+        "R51.119 lesson 정통 적용 (refactor 후 atomic citation 즉시 cleanup)"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.121 의 §5.16 audit 결과 — stale 0 (WidgetView trait 자체 구조 변화 없음, citation valid)"
       ]
     },
     "R51.33": {

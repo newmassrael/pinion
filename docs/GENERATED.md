@@ -3055,6 +3055,7 @@ router.pointer_down(&mut state_scene);
 - R51.98 — AccessNode.selected (aria-selected) + multiselectable (aria-multiselectable) wire-up
 - R51.98 — hello-listbox ListBoxOption aria-checked→aria-selected 정정 (axis 분리, WAI-ARIA APG)
 - R51.101 — dispatch.rs invalid_params(&str) wrapper 제거 (R51.89.1 carry; 129 caller 직접 호출)
+- R51.121.1 — WidgetA11y supertrait (pinion-a11y) 로 a11y 3 method 이동, audit citation 정정
 
 
 
@@ -3082,7 +3083,6 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-a11y/src/action.rs:AccessAction
 - crates/pinion-a11y/src/action.rs:translate_action
 - crates/pinion-shell/src/lib.rs:AppEvent::AccessKit
-- crates/pinion-shell/src/lib.rs:WidgetView::access_node
 - crates/pinion-shell/src/lib.rs:AppShell::handle_accesskit_event
 - crates/pinion-shell/src/lib.rs:AppShell::forward_to_accesskit
 - crates/pinion-runtime/src/input.rs:rect_for_tag
@@ -3092,7 +3092,6 @@ router.pointer_down(&mut state_scene);
 - examples/hello-radio/src/main.rs:RadioView::access_node
 - examples/hello-slider/src/main.rs:SliderView::access_node
 - examples/hello-slider-vertical/src/main.rs:SliderVerticalView::access_node
-- crates/pinion-shell/src/lib.rs:WidgetView::access_focus_target
 - examples/hello-radio-group/src/main.rs:RadioGroupView::access_node
 - examples/hello-radio-group/src/main.rs:RadioGroupView::access_focus_target
 - crates/pinion-shell/src/lib.rs:AppShell::handle_action_request
@@ -3104,7 +3103,6 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/scene.rs:ContainerNode::with_aria_label
 - crates/pinion-a11y/src/scene_label.rs
 - crates/pinion-a11y/src/scene_label.rs:enrich_names_from_scene
-- crates/pinion-shell/src/lib.rs:WidgetView::access_child_invoke
 - examples/hello-radio-group/src/main.rs:RadioGroupView::access_child_invoke
 - crates/pinion-a11y/src/focus.rs
 - crates/pinion-a11y/src/focus.rs:AccessFocus
@@ -3164,6 +3162,11 @@ router.pointer_down(&mut state_scene);
 - examples/hello-listbox/src/main.rs:ListBoxView
 - crates/pinion-a11y/src/node.rs:AccessNode::with_selected
 - crates/pinion-a11y/src/node.rs:AccessNode::with_multiselectable
+- crates/pinion-a11y/src/widget_a11y.rs
+- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y
+- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_node
+- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_focus_target
+- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_child_invoke
 
 
 
@@ -4809,6 +4812,30 @@ router.pointer_down(&mut state_scene);
 - blanket impl WidgetA11y for T: WidgetCore 비적용 — Rust specialization 없이는 composite override 불가
 - Self::tag() 호출 시 supertrait method dispatch 정통 — <Self as WidgetCore>::tag() 명시 우선 (ambiguity 회피 + audit grep)
 - TUI focus management hardcode + cell-native coord + AT integration 등 잔여 carry 그대로
+
+
+
+### R51.121.1 — R51.121.1 §5.40 — R51.121 supertrait split follow-up: WidgetView::access_* stale citation 청산 + WidgetA11y impl 추가
+
+**Changes**:
+- §5.40 stale removal 3 — WidgetView::{access_node, access_focus_target, access_child_invoke}
+- §5.40 add 5 — widget_a11y.rs + WidgetA11y trait + 3 method (access_node / access_focus_target / access_child_invoke)
+- §5.40 caveat — R51.121 supertrait split lesson 명시
+
+
+
+**Verification**:
+- mnemosyne validate_workspace = entries=250 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync
+- atomic audit accuracy 회복 — R51.121 후 stale 3 → 0
+- R51.119 lesson 정통 적용 (refactor 후 atomic citation 즉시 cleanup)
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- R51.121 의 §5.16 audit 결과 — stale 0 (WidgetView trait 자체 구조 변화 없음, citation valid)
 
 
 
