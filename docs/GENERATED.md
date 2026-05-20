@@ -3242,6 +3242,7 @@ router.pointer_down(&mut state_scene);
 - R51.119 — atomic stale citation cleanup (R51.117 substrate move: 4 removes + 7 adds)
 - R51.120 — substrate stderr → optional file sink (alternate screen 보호, PINION_TUI_LOG opt-in)
 - R51.121 — WidgetCore + WidgetA11y supertrait split, WidgetView/Tui = Renderer + initial_size 만 (ISP)
+- R51.122 — pinion-runtime::CoreShell<V> substrate 신설 (R51.122-R51.125 4-round 분할 중 #1)
 
 
 
@@ -3314,6 +3315,21 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widget_core.rs:WidgetCore
 - crates/pinion-a11y/src/widget_a11y.rs
 - crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y
+- crates/pinion-runtime/src/core_shell.rs
+- crates/pinion-runtime/src/core_shell.rs:CoreShell
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::new
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::forward
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::apply_key
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::cursor_moved
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::cursor_left
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_down
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_up
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_cancel
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::touch_event
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::tail
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::update_paint_scene
+- crates/pinion-runtime/src/core_shell.rs:DispatchTail
+- crates/pinion-runtime/src/core_shell.rs:StateChange
 
 
 
@@ -11372,6 +11388,37 @@ router.pointer_down(&mut state_scene);
 - Phase 2 axis ratify per R41 §5.16 4-phase plan
 - derive macro WidgetTransition partial — evaluated as premature at N=6 widgets; revisit at N=15+
 - pinion-shell doc-tested example smoke (R51.30 carry)
+
+
+
+### Round 522 — R51.122 §5.41 — pinion-runtime::CoreShell<V: WidgetCore> substrate 신설 (4-round 분할 #1)
+
+**Changes**:
+- crates/pinion-runtime/src/core_shell.rs 신설 (~470 LOC: CoreShell + DispatchTail + StateChange + 13 unit tests)
+- CoreShell<V: WidgetCore> 4 fields: scene + cached_state + router + intent_queue (backend-agnostic)
+- DispatchTail<S> = { intents: Vec<Intent>, state_change: Option<StateChange<S>> } — dispatch method 반환 shape
+- 12 dispatch primitives: new/scene/scene_mut/cached_state/update_paint_scene/tail/forward/apply_key/cursor_moved/cursor_left/pointer_down/pointer_up/pointer_cancel/touch_event
+- pinion-runtime/src/lib.rs: pub mod core_shell + pub use {CoreShell, DispatchTail, StateChange}
+- TouchPhase match exhaustive (same-crate 무 #[non_exhaustive] wildcard arm 제거)
+- dep direction 0 변경: pinion-runtime 의 기존 pinion-core + pinion-text 만 사용, pinion-a11y / pinion-rpc 0 의존
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1722 pass / 0 fail / 8 ignored (+13 신규 CoreShell unit tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (deny(warnings) + pedantic deny baseline 유지)
+- mnemosyne validate_workspace: entries=251 / sections=58 / T1=0 / round-trip=1/1 / GENERATED.md=sync
+- 13 신규 tests cover: constructor / default / tail empty / forward intent / apply_key None/Some + wrong focus / pointer cycle / cursor_left / touch start+end + cancel / keybinding / update_paint_scene
+
+
+
+**Impact**: §5.41
+
+
+**Carry forward**:
+- R51.123 — pinion-shell::ShellCore = CoreShell wrap (Vello extras: focus/modifiers/text_cache/previews/revision/last_paint/AT caches/redraw)
+- R51.124 — pinion-tui::ShellCoreTui = CoreShell wrap (TUI extras: log_sink + refresh_state→tail bridge)
+- R51.125 — dispatch_rpc trait extraction (ShellDispatch trait in pinion-runtime, impl in pinion-shell, cycle 회피)
 
 
 

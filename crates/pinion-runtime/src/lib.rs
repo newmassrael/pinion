@@ -10,8 +10,12 @@
 //! framework primitive that replaced inline paint walkers in
 //! consumer examples. R51.52 added [`focus`] — the §5.39 focus model
 //! primitive that owns the focused-widget identity for key dispatch
-//! and ARIA visual indication.
+//! and ARIA visual indication. R51.122 added [`core_shell`] — the
+//! §5.41 backend-agnostic dispatch substrate `CoreShell<V: WidgetCore>`
+//! that the Vello + TUI backends compose to share the
+//! `scene` + `cached_state` + `router` + `intent_queue` plumbing.
 
+pub mod core_shell;
 pub mod focus;
 pub mod input;
 pub mod intent_queue;
@@ -20,6 +24,7 @@ pub mod layout;
 pub mod paint_adapter;
 pub mod window;
 
+pub use core_shell::{CoreShell, DispatchTail, StateChange};
 pub use focus::FocusManager;
 pub use input::{rect_for_tag, InputRouter, Modifiers, PointerId, Touch, TouchPhase};
 pub use intent_queue::{walk_scene_and_drain, IntentQueue};
