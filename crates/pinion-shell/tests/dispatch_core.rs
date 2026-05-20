@@ -27,7 +27,6 @@
 // this fixture keeps the workspace baseline strict.
 #![allow(clippy::unused_self, clippy::unnecessary_wraps)]
 
-use core::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -42,54 +41,15 @@ use pinion_core::external::{
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, Color};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_shell::{vello_renderer_impl, ShellCore, WidgetView};
+use pinion_shell::test_fixtures::TestRenderer;
+use pinion_shell::{ShellCore, WidgetView};
 
-// ---------- Test-fixture VelloRenderer ----------------------------------
-//
-// Mirrors the pinion-forge codegen template: an inherent
-// `async new` / `render` / `resize` triple wrapped by
-// `vello_renderer_impl!` to satisfy the `WidgetView::Renderer` bound.
-// The shell's dispatch path never touches the renderer, so the bodies
-// are empty.
-
-struct TestRenderer;
-
-#[derive(Debug)]
-enum TestRendererError {}
-
-impl fmt::Display for TestRendererError {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {}
-    }
-}
-
-impl std::error::Error for TestRendererError {}
-
-impl TestRenderer {
-    #[allow(clippy::unused_async)]
-    async fn new<W>(
-        _target: W,
-        _width: u32,
-        _height: u32,
-    ) -> Result<Self, TestRendererError>
-    where
-        W: Into<vello::wgpu::SurfaceTarget<'static>>,
-    {
-        Ok(Self)
-    }
-
-    fn render(
-        &mut self,
-        _scene: &vello::Scene,
-        _base: vello::peniko::Color,
-    ) -> Result<(), TestRendererError> {
-        Ok(())
-    }
-
-    fn resize(&mut self, _w: u32, _h: u32) {}
-}
-
-vello_renderer_impl!(TestRenderer, TestRendererError);
+// R51.179 §5.41 — `TestRenderer` lives in
+// `pinion_shell::test_fixtures` (R51.175 lift). The original inline
+// definition here predated the lift and duplicated the same
+// `VelloRenderer`-conforming stub byte-for-byte; this round drops
+// the duplicate and pulls the shared symbol through the local
+// `test-fixtures` feature path (self dev-dep in Cargo.toml).
 
 // ---------- Test-fixture External --------------------------------------
 //

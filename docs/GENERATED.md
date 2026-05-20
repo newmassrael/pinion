@@ -7105,6 +7105,33 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.179 — R51.179 §5.41 dispatch_core.rs TestRenderer dedup (drop inline, use lifted symbol)
+
+**Changes**:
+- pinion-shell/tests/dispatch_core.rs — inline TestRenderer + TestRendererError + impl block (-50 LOC)
+- pinion-shell/tests/dispatch_core.rs — `use pinion_shell::test_fixtures::TestRenderer` import
+- pinion-shell/tests/dispatch_core.rs — now-unused `core::fmt` + `vello_renderer_impl!` removed
+
+
+
+**Verification**:
+- cargo test (vello) = 2004 / 0 / 10 (unchanged from R51.178)
+- cargo clippy 0 warnings (strict baseline maintained)
+- dispatch_core.rs LOC trimmed by 50 (duplicate stub replaced by lifted symbol)
+
+
+
+**Impact**: §5.41
+
+
+**Carry forward**:
+- R51.180 — Forge codegen emits update body from SCE schema (SCE upstream RFC carry)
+- R51.181 — Intent.payload typed routing through SCXML invoke send (wait first consumer)
+- R51.182 — framework cascade detect debug-assert (lift on first concrete cascade evidence)
+- R51.183 — app Model field wait (Owner::cache<S> lift OR CoreShell.app_state<S>) first consumer
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
