@@ -26,6 +26,17 @@ pinion-text = { path = "../pinion-text", version = "0.0.1" }
 # §5.21 R23/R24 layout system. Confined to pinion-runtime per the
 # spec lock — pinion-core stays free of any layout-engine dep.
 taffy = "0.7"
+# R51.156 §5.23 — backs `BlockOnExecutor` (reference `Executor` impl
+# in `command::executor`). `block_on` is a synchronous polling
+# primitive (no IO reactor, no thread spawn, ~30 KiB compile cost), so
+# pulling it as a regular dep does not promote pinion-runtime into an
+# async runtime — the abstract `Executor` trait stays the contract,
+# and production backends (`pinion-shell` / `pinion-tui` /
+# `pinion-rpc`) still provide their own tokio / async-executor impls
+# at the §6.3 boundary. `BlockOnExecutor` is the test fixture +
+# CLI / embedded fallback the trait would otherwise force every
+# consumer to re-implement.
+futures-executor = "0.3"
 # §5.16 R46.3.1 paint_adapter Scene → vello::Scene walker. Optional —
 # only consumers building the Vello render path enable this feature.
 # Workspace pin matches Vello's transitive wgpu version (see workspace
@@ -37,12 +48,6 @@ vello = { workspace = true, optional = true }
 # the `core_shell` substrate test suite so the runtime + TUI crates
 # share one canonical WidgetCore binding instead of two copies.
 pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
-# R51.141 §5.23 — minimal executor-only futures crate so the §5.23
-# `HandlerRegistry` tests can drive the trait's `HandlerFuture` to
-# completion. Dev-only: pinion-runtime stays async-runtime-agnostic at
-# the public surface (executor binding belongs at pinion-rpc /
-# pinion-shell per §6.3).
-futures-executor = "0.3"
 
 [lints]
 workspace = true

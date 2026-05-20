@@ -17,7 +17,11 @@
 //! R51.141 added [`command`] — the §5.23 [`Handler`] trait +
 //! [`HandlerRegistry`] async dispatch surface that completes the
 //! `Command` two-layer effects model (R51.139 substrate + R51.141
-//! dispatch). R51.145 added [`frame_pacing`] — the §5.28 per-frame
+//! dispatch). R51.156 extended [`command`] with the [`Executor`] +
+//! [`IntentSink`] traits and the [`CommandExecutor`] composite that
+//! closes the R27 dispatch loop: `Command → Handler future →
+//! Executor::spawn → Intent → IntentSink → UI thread re-dispatch`.
+//! R51.145 added [`frame_pacing`] — the §5.28 per-frame
 //! `dt` clamp helper that protects the spring solver against
 //! background-resume / debugger-pause `dt` spikes.
 
@@ -32,7 +36,10 @@ pub mod layout;
 pub mod paint_adapter;
 pub mod window;
 
-pub use command::{Handler, HandlerFuture, HandlerRegistry};
+pub use command::{
+    BlockOnExecutor, BoxFuture, CommandExecutor, CommandTaskHandle, Executor, Handler,
+    HandlerFuture, HandlerRegistry, IntentSink, VecSink,
+};
 pub use core_shell::{CoreShell, DispatchTail, StateChange};
 pub use focus::FocusManager;
 pub use frame_pacing::{clamp_frame_dt, MAX_FRAME_DT_SECS};

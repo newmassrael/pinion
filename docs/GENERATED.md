@@ -1256,6 +1256,28 @@ fn main() {
 - crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::register
 - crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::unregister
 - crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::dispatch
+- crates/pinion-runtime/src/command/executor.rs
+- crates/pinion-runtime/src/command/executor.rs:Executor
+- crates/pinion-runtime/src/command/executor.rs:BoxFuture
+- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle
+- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::new
+- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::no_op
+- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::cancel
+- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::is_cancelled
+- crates/pinion-runtime/src/command/executor.rs:CommandExecutor
+- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::new
+- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::registry
+- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::dispatch
+- crates/pinion-runtime/src/command/executor.rs:BlockOnExecutor
+- crates/pinion-runtime/src/command/sink.rs
+- crates/pinion-runtime/src/command/sink.rs:IntentSink
+- crates/pinion-runtime/src/command/sink.rs:IntentSink::send
+- crates/pinion-runtime/src/command/sink.rs:VecSink
+- crates/pinion-runtime/src/command/sink.rs:VecSink::new
+- crates/pinion-runtime/src/command/sink.rs:VecSink::drain
+- crates/pinion-runtime/src/command/sink.rs:VecSink::snapshot
+- crates/pinion-runtime/src/command/sink.rs:VecSink::len
+- crates/pinion-runtime/src/command/sink.rs:VecSink::is_empty
 
 
 
@@ -6340,6 +6362,42 @@ router.pointer_down(&mut state_scene);
 - R51.156+ 다른 examples (hello-toggle/hello-listbox/hello-radio) IntrospectValue 패턴 migration
 - R51.157+ §5.23 Handler executor binding (multi-round)
 - R51.158+ access_node / access_child_invoke root_owner wrap (대칭 완성)
+
+
+
+### R51.156 — §5.23 Executor + IntentSink trait + CommandExecutor composite — R27 dispatch loop final binding substrate
+
+**Changes**:
+- pinion-runtime/src/command/executor.rs (신규 ~430 LOC): Executor trait + BoxFuture alias
+- executor.rs: CommandTaskHandle (Arc cancel callback + AtomicBool 이중 cancel guard, Clone 공유)
+- executor.rs: CommandExecutor composite (registry+executor+sink) + #[must_use] dispatch
+- executor.rs: BlockOnExecutor 레퍼런스 impl (futures_executor::block_on, sync) + Debug
+- pinion-runtime/src/command/sink.rs (신규 ~190 LOC): IntentSink trait (Send+Sync+'static)
+- sink.rs: VecSink 테스트 픽스처 (Arc<Mutex<Vec<Intent>>>, drain/snapshot/len/is_empty)
+- pinion-runtime/src/command/mod.rs: 새 module 등록 + pub use 갱신
+- pinion-runtime/src/lib.rs: command 8개 신규 심볼 pub use
+- pinion-runtime/Cargo.toml: futures-executor 0.3 dev-dep → 일반 dep 승격 (block_on sync helper)
+- 테스트 +23 (executor.rs 16개 + sink.rs 7개)
+
+
+
+**Verification**:
+- cargo check -p pinion-runtime --features vello → 0 error
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning
+- cargo test --workspace --features pinion-runtime/vello → 1924 pass / 0 fail / 9 ignored (직전 1901/0/8 대비 +23 pass)
+- BlockOnExecutor가 future를 spawn 내부에서 block_on 완료까지 구동, sink 정확히 1회 호출 확인
+- CommandTaskHandle::cancel idempotent (Acqrel swap guard) + Clone 시 cancelled flag 공유 검증
+- CommandExecutor::dispatch unknown kind None + known kind sink 라우팅 + scope_id round-trip 확인
+
+
+
+**Impact**: §5.23, §5.20, §5.22, §6.3
+
+
+**Carry forward**:
+- R51.157 — CoreShell::dispatch_pending_commands drain pump + Option<Arc<CommandExecutor>> 필드
+- R51.158 — per-scope BTreeMap<scope_id, CommandTaskHandle> cancellation (R27 Solid 패턴)
+- R51.159 — pinion-shell tokio current-thread Executor + EventLoopProxy IntentSink + AppEvent::IntentArrived
 
 
 
