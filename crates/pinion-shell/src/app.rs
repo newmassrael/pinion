@@ -459,14 +459,17 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
+            // R51.108 §5.41 — convert at the winit boundary so the
+            // substrate sees only the abstract `pinion_runtime::Touch`.
             WindowEvent::Touch(touch) => {
-                self.core.touch_event(touch);
+                self.core.touch_event(winit_touch_to_pinion(touch));
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 // R51.53 §5.39 — winit emits `KeyEvent` without
                 // modifier state, so cache the most-recent value
                 // out-of-band for Shift+Tab detection.
-                self.core.set_modifiers(modifiers.state());
+                // R51.108 §5.41 — convert at the winit boundary.
+                self.core.set_modifiers(winit_modifiers_to_pinion(modifiers.state()));
             }
             WindowEvent::Focused(focused) => {
                 // R51.59 §5.39 — Window blur / refocus. ARIA Focus
@@ -559,6 +562,41 @@ fn spawn_stdin_rpc_reader(proxy: EventLoopProxy<AppEvent>) {
             }
         }
     });
+}
+
+/// R51.108 §5.41 — convert a `winit::event::Touch` to the
+/// substrate-local [`pinion_runtime::Touch`] at the winit boundary so
+/// `ShellCore` stays winit-free for the §2 #6 GUI/TUI dual invariant.
+/// `winit::event::Touch::id` already matches the abstract `id: u64`;
+/// `location: PhysicalPosition<f64>` decomposes to `(x, y)`; the
+/// four-variant `TouchPhase` enum maps 1:1.
+fn winit_touch_to_pinion(touch: winit::event::Touch) -> pinion_runtime::Touch {
+    pinion_runtime::Touch {
+        id: touch.id,
+        x: touch.location.x,
+        y: touch.location.y,
+        phase: match touch.phase {
+            winit::event::TouchPhase::Started => pinion_runtime::TouchPhase::Started,
+            winit::event::TouchPhase::Moved => pinion_runtime::TouchPhase::Moved,
+            winit::event::TouchPhase::Ended => pinion_runtime::TouchPhase::Ended,
+            winit::event::TouchPhase::Cancelled => pinion_runtime::TouchPhase::Cancelled,
+        },
+    }
+}
+
+/// R51.108 §5.41 — convert a `winit::keyboard::ModifiersState` to the
+/// substrate-local [`pinion_runtime::Modifiers`] at the winit boundary.
+/// The four W3C DOM Level 3 modifier bits map 1:1 (winit's `super_key`
+/// is the Meta / Cmd / Win key in the abstract vocabulary).
+fn winit_modifiers_to_pinion(
+    modifiers: winit::keyboard::ModifiersState,
+) -> pinion_runtime::Modifiers {
+    pinion_runtime::Modifiers {
+        shift: modifiers.shift_key(),
+        ctrl: modifiers.control_key(),
+        alt: modifiers.alt_key(),
+        meta: modifiers.super_key(),
+    }
 }
 
 /// Run the visual binary end-to-end: build the winit event loop with

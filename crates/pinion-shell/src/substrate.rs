@@ -34,11 +34,9 @@ use pinion_rpc::{
 };
 use pinion_runtime::{
     compute_layout, rect_for_tag, walk_scene_and_drain, FocusManager, InputRouter,
-    IntentQueue, PointerId,
+    IntentQueue, Modifiers, PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
-use winit::event::{Touch, TouchPhase};
-use winit::keyboard::ModifiersState;
 
 use super::WidgetView;
 
@@ -135,16 +133,23 @@ pub struct ShellCore<V: WidgetView> {
     /// mutation routed through the substrate's focus-handling
     /// methods (`handle_focus_traverse`, `click_to_focus`, …).
     focus: FocusManager,
-    /// R51.53 §5.39 — winit [`ModifiersState`] cache. Refreshed by
-    /// `WindowEvent::ModifiersChanged`; consulted on every
-    /// `KeyboardInput` for Shift detection (Shift+Tab = `focus_prev`).
-    /// winit emits `KeyEvent` without modifier state, so the shell
-    /// has to track it out-of-band.
+    /// R51.53 §5.39 — abstract [`Modifiers`] cache. Refreshed by the
+    /// winit-side `WindowEvent::ModifiersChanged` (converted to the
+    /// `pinion_runtime::Modifiers` shape at the `app.rs` boundary);
+    /// consulted on every `KeyboardInput` for Shift detection
+    /// (Shift+Tab = `focus_prev`). winit emits `KeyEvent` without
+    /// modifier state, so the shell has to track it out-of-band.
+    ///
+    /// R51.108 §5.41 — type lifted from `winit::keyboard::ModifiersState`
+    /// to the substrate-local `pinion_runtime::Modifiers` so the
+    /// dispatch path stays backend-agnostic for the TUI / mobile /
+    /// RPC-driven input source the §2 #6 GUI/TUI dual invariant
+    /// requires.
     ///
     /// R51.83 §5.40 — private. `AppShell::handle_key_press` reads
     /// only the Shift bit via [`Self::modifiers_shift_key`];
     /// mutation happens through [`Self::set_modifiers`].
-    modifiers: ModifiersState,
+    modifiers: Modifiers,
     /// R47.3 §5.36 — owned [`LayoutCache`] (LRU 256). `paint_adapter`'s
     /// Text arm consults this cache for every `Scene::Text` it walks
     /// so the view fn's static labels shape once on first paint and
@@ -297,7 +302,7 @@ impl<V: WidgetView> ShellCore<V> {
             revision: SceneRevision::default(),
             router: InputRouter::new(),
             focus,
-            modifiers: ModifiersState::empty(),
+            modifiers: Modifiers::empty(),
             text_cache: LayoutCache::new(),
             last_paint_layout: None,
             last_access_tag_map: HashMap::new(),
@@ -407,8 +412,8 @@ impl<V: WidgetView> ShellCore<V> {
         &mut self.text_cache
     }
 
-    /// R51.83 §5.40 — Shift modifier bit from the cached winit
-    /// [`ModifiersState`].
+    /// R51.83 §5.40 — Shift modifier bit from the cached
+    /// [`Modifiers`] state (R51.108 §5.41 winit-free).
     ///
     /// `AppShell::handle_key_press` reads the Shift bit to decide
     /// whether `Tab` calls [`Self::handle_focus_traverse`] in the
@@ -420,9 +425,10 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
 
-    /// R51.45 §5.35 — winit [`Touch`] dispatch. Each finger mints a
-    /// distinct [`PointerId::touch(finger_id)`] so two simultaneous
-    /// touches drive two widgets without aliasing the capture lock.
+    /// R51.45 §5.35 — abstract [`Touch`] dispatch (R51.108 §5.41
+    /// winit-free). Each finger mints a distinct
+    /// [`PointerId::touch(finger_id)`] so two simultaneous touches
+    /// drive two widgets without aliasing the capture lock.
     ///
     /// * [`TouchPhase::Started`] runs a synthetic
     ///   [`InputRouter::cursor_moved`] first so the hover target
@@ -450,22 +456,12 @@ impl<V: WidgetView> ShellCore<V> {
         let pid = PointerId::touch(touch.id);
         match touch.phase {
             TouchPhase::Started => {
-                self.router.cursor_moved(
-                    pid,
-                    touch.location.x,
-                    touch.location.y,
-                    &mut self.scene,
-                );
+                self.router.cursor_moved(pid, touch.x, touch.y, &mut self.scene);
                 self.router.pointer_down(pid, &mut self.scene);
                 self.click_to_focus(pid);
             }
             TouchPhase::Moved => {
-                self.router.cursor_moved(
-                    pid,
-                    touch.location.x,
-                    touch.location.y,
-                    &mut self.scene,
-                );
+                self.router.cursor_moved(pid, touch.x, touch.y, &mut self.scene);
             }
             TouchPhase::Ended => {
                 self.router.pointer_up(pid, &mut self.scene);
@@ -475,6 +471,13 @@ impl<V: WidgetView> ShellCore<V> {
                 self.router.pointer_cancel(pid, &mut self.scene);
                 self.router.cursor_left(pid, &mut self.scene);
             }
+            // R51.108 §5.41 — `TouchPhase` is `#[non_exhaustive]`
+            // for SemVer-minor variant additions (§5.13 hedge
+            // precedent). Future phases (e.g. stylus hover, force
+            // change) reach this arm as a no-op until an explicit
+            // handler lands; ignoring is safer than panicking for
+            // unknown input events.
+            _ => {}
         }
     }
 
@@ -606,20 +609,29 @@ impl<V: WidgetView> ShellCore<V> {
         self.drain_intents();
     }
 
-    /// R51.80 §5.35 — winit `WindowEvent::Touch` dispatch. Delegates
-    /// to the multi-pointer [`Self::handle_touch`] (R51.45 §5.35)
-    /// then refreshes cached state + drains intents.
+    /// R51.80 §5.35 — abstract touch event dispatch (R51.108 §5.41
+    /// winit-free). The surface-side `AppShell` converts a
+    /// `winit::event::Touch` to [`Touch`] at the window-system
+    /// boundary; future TUI / mobile / RPC paths construct the same
+    /// abstract event directly. Delegates to the multi-pointer
+    /// [`Self::handle_touch`] (R51.45 §5.35) then refreshes cached
+    /// state + drains intents.
     pub fn touch_event(&mut self, touch: Touch) {
         self.handle_touch(touch);
         self.refresh_state();
         self.drain_intents();
     }
 
-    /// R51.80 §5.39 — winit `WindowEvent::ModifiersChanged` cache.
-    /// `KeyEvent` carries no modifier state in winit; the substrate
-    /// remembers the most-recent `ModifiersChanged` so the
+    /// R51.80 §5.39 — modifier-key cache update. `KeyEvent` carries no
+    /// modifier state in winit; the substrate remembers the
+    /// most-recent `ModifiersChanged` so the
     /// `AppShell::handle_key_press` Tab arm can branch on Shift.
-    pub fn set_modifiers(&mut self, modifiers: ModifiersState) {
+    ///
+    /// R51.108 §5.41 — signature lifted from
+    /// `winit::keyboard::ModifiersState` to the abstract
+    /// [`Modifiers`] so the substrate stays backend-agnostic for the
+    /// §2 #6 GUI/TUI dual invariant.
+    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
     }
 

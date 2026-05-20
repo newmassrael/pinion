@@ -4385,7 +4385,8 @@
         "framework-first — pinion-tui crate ratatui dep optional, framework 강제 0",
         "Animation (R52 후보) / Scroll (R55) / Vector path (R53) R52+ axis 와 직교 (TUI 무영향)",
         "windows terminal / xterm / iterm2 capability 매트릭스 = R51.110+ manual test carry",
-        "ColorBrush RGBA → ANSI color 매핑 + TextAlign wrap policy = R51.109 substrate 결정"
+        "ColorBrush RGBA → ANSI color 매핑 + TextAlign wrap policy = R51.109 substrate 결정",
+        "R51.108 — ShellCore substrate winit-free 분리 land (Touch / TouchPhase / Modifiers pinion lift)"
       ],
       "alternatives_rejected": [
         {
@@ -4425,6 +4426,36 @@
         "5.15",
         "5.16",
         "5.40"
+      ],
+      "implementations": [
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "TouchPhase"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "Touch"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "Modifiers"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "Modifiers::empty"
+        },
+        {
+          "file": "crates/pinion-runtime/src/input.rs",
+          "symbol": "Modifiers::shift_key"
+        },
+        {
+          "file": "crates/pinion-shell/src/app.rs",
+          "symbol": "winit_touch_to_pinion"
+        },
+        {
+          "file": "crates/pinion-shell/src/app.rs",
+          "symbol": "winit_modifiers_to_pinion"
+        }
       ],
       "decision_status": "active"
     },
@@ -15980,6 +16011,74 @@
       "publishable_impact_refs": [
         "5.4",
         "5.38"
+      ]
+    },
+    "Round 492": {
+      "decision_summary": "R51.108 §5.41 substrate winit-free — TouchPhase / Touch / Modifiers 추상 type 신설, ShellCore winit import 0 ([[substrate-incompleteness-signal]] 적용 + RFC carry split: R51.108=substrate / R51.109=WidgetRenderer trait+TuiRenderer)",
+      "changes_bullets": [
+        "pinion_runtime: TouchPhase / Touch / Modifiers abstract types 신설 (§5.13 hedge + W3C DOM Level 3 정합)",
+        "ShellCore (substrate.rs) winit import 0: Touch / TouchPhase / Modifiers 모두 pinion_runtime",
+        "ShellCore::modifiers field type ModifiersState → Modifiers (§5.40 / §5.41 정합)",
+        "ShellCore::set_modifiers / touch_event signature winit→pinion type 추상화",
+        "app.rs winit_touch_to_pinion / winit_modifiers_to_pinion 변환 helper (winit boundary)",
+        "RFC carry split: R51.108=InputRouter substrate only, R51.109=WidgetRenderer trait + TuiRenderer (premature abstraction 회피)",
+        "Modifiers #[allow(clippy::struct_excessive_bools)] = W3C KeyboardEvent shiftKey/ctrlKey/altKey/metaKey 정통 정합",
+        "TouchPhase #[non_exhaustive] + wildcard arm = §5.13 hedge 정통 (새 phase 시 explicit arm)"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello = 1657 pass / 0 fail / 8 ignored (baseline 유지)",
+        "substrate.rs grep `use winit\\|use accesskit_winit` = 0 (winit import 청산 검증)"
+      ],
+      "impact_refs": [
+        "2",
+        "5.13",
+        "5.35",
+        "5.39",
+        "5.40",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R51.109 — WidgetRenderer trait + TuiRenderer + paint_adapter::to_tui first 2 impl 동시 land",
+        "R51.110 — hello-button TUI dogfood first-client substrate 평가",
+        "Modifiers struct_excessive_bools allow = W3C precedent, future bitflag 정통 시 R52+ 평가",
+        "TouchPhase non_exhaustive + wildcard arm = 새 phase 등장 시 explicit arm 추가 정통",
+        "Modifiers control_key / alt_key / meta_key accessor 3개 현재 caller 0 (R51.109+ key shortcut)",
+        "app.rs internal helper functions (winit_touch_to_pinion, winit_modifiers_to_pinion) 은 winit-coupled 변환 layer"
+      ],
+      "publishable_decision_summary": "R51.108 §5.41 substrate winit-free — TouchPhase / Touch / Modifiers 추상 type 신설, ShellCore winit import 0 ([[substrate-incompleteness-signal]] 적용 + RFC carry split: R51.108=substrate / R51.109=WidgetRenderer trait+TuiRenderer)",
+      "publishable_changes_bullets": [
+        "pinion_runtime: TouchPhase / Touch / Modifiers abstract types 신설 (§5.13 hedge + W3C DOM Level 3 정합)",
+        "ShellCore (substrate.rs) winit import 0: Touch / TouchPhase / Modifiers 모두 pinion_runtime",
+        "ShellCore::modifiers field type ModifiersState → Modifiers (§5.40 / §5.41 정합)",
+        "ShellCore::set_modifiers / touch_event signature winit→pinion type 추상화",
+        "app.rs winit_touch_to_pinion / winit_modifiers_to_pinion 변환 helper (winit boundary)",
+        "RFC carry split: R51.108=InputRouter substrate only, R51.109=WidgetRenderer trait + TuiRenderer (premature abstraction 회피)",
+        "Modifiers #[allow(clippy::struct_excessive_bools)] = W3C KeyboardEvent shiftKey/ctrlKey/altKey/metaKey 정통 정합",
+        "TouchPhase #[non_exhaustive] + wildcard arm = §5.13 hedge 정통 (새 phase 시 explicit arm)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace --features pinion-runtime/vello clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello = 1657 pass / 0 fail / 8 ignored (baseline 유지)",
+        "substrate.rs grep `use winit\\|use accesskit_winit` = 0 (winit import 청산 검증)"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.13",
+        "5.35",
+        "5.39",
+        "5.40",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.109 — WidgetRenderer trait + TuiRenderer + paint_adapter::to_tui first 2 impl 동시 land",
+        "R51.110 — hello-button TUI dogfood first-client substrate 평가",
+        "Modifiers struct_excessive_bools allow = W3C precedent, future bitflag 정통 시 R52+ 평가",
+        "TouchPhase non_exhaustive + wildcard arm = 새 phase 등장 시 explicit arm 추가 정통",
+        "Modifiers control_key / alt_key / meta_key accessor 3개 현재 caller 0 (R51.109+ key shortcut)",
+        "app.rs internal helper functions (winit_touch_to_pinion, winit_modifiers_to_pinion) 은 winit-coupled 변환 layer"
       ]
     },
     "Round 492 — R51.3 §5.38 SCE sce:template adopt: button + toggle byte-복붙 청산, multi-widget catalog substrate": {
