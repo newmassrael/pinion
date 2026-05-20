@@ -213,7 +213,13 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
                 let Some(key_str) = crate::input::key_str_from_event(&key) else {
                     continue;
                 };
-                if core.dispatch_key(&key_str) && core.refresh_state() {
+                // R51.124 §5.41 — `dispatch_key` returns `true`
+                // when the cached state changed (auto-tail
+                // collapsed the pre-R51.124 explicit
+                // `refresh_state` call); the surface repaints on
+                // `true` so the new SCXML projection lands on
+                // screen.
+                if core.dispatch_key(&key_str) {
                     let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
                     core.update_paint_scene(paint_scene);
                 }
@@ -227,7 +233,12 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
                 // produces, so the `Pressed → Hover` click intent
                 // arms identically.
                 let (x, y) = crate::input::cell_to_pixel(me.column, me.row);
-                if dispatch_mouse(&mut core, me.kind, x, y) && core.refresh_state() {
+                // R51.124 §5.41 — `dispatch_mouse` returns `true`
+                // when the underlying [`ShellCoreTui::cursor_moved`]
+                // / `pointer_down` / `pointer_up` call reported a
+                // visible state transition; the surface repaints
+                // on `true`.
+                if dispatch_mouse(&mut core, me.kind, x, y) {
                     let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
                     core.update_paint_scene(paint_scene);
                 }
@@ -268,27 +279,28 @@ fn dispatch_mouse<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdou
     y: f64,
 ) -> bool {
     use crossterm::event::{MouseButton, MouseEventKind};
+    // R51.124 §5.41 — every `core.X` call returns the
+    // state-changed bool directly; the surface needs to repaint
+    // when ANY of the dispatch arms transitioned the cached state,
+    // so `|` (not `||`) preserves both observations for the
+    // multi-step `Down(Left)` arm.
     match kind {
         // Plain move and left-button drag both forward a cursor
         // position to the router — drag-aware capture is handled
         // inside the router so the surface arm collapses.
         MouseEventKind::Moved | MouseEventKind::Drag(MouseButton::Left) => {
-            core.cursor_moved(x, y);
-            true
+            core.cursor_moved(x, y)
         }
         MouseEventKind::Down(MouseButton::Left) => {
             // Sync the cursor first so `pointer_down` sees the
             // correct hover target. Vello shell's
             // `cursor_moved → mouse_pressed` ordering relies on the
             // same invariant.
-            core.cursor_moved(x, y);
-            core.pointer_down();
-            true
+            let cursor_change = core.cursor_moved(x, y);
+            let down_change = core.pointer_down();
+            cursor_change | down_change
         }
-        MouseEventKind::Up(MouseButton::Left) => {
-            core.pointer_up();
-            true
-        }
+        MouseEventKind::Up(MouseButton::Left) => core.pointer_up(),
         // Right / middle / wheel — no Tier-1 widget reacts. R51.118+
         // surfaces a substrate-incompleteness-signal once a widget
         // (context menu, scroll container) needs them.

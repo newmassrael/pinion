@@ -3244,6 +3244,7 @@ router.pointer_down(&mut state_scene);
 - R51.121 — WidgetCore + WidgetA11y supertrait split, WidgetView/Tui = Renderer + initial_size 만 (ISP)
 - R51.122 — pinion-runtime::CoreShell<V> substrate 신설 (R51.122-R51.125 4-round 분할 중 #1)
 - R51.123 — pinion-shell::ShellCore wraps CoreShell<V> (Vello extras 만 유지, 4-round #2)
+- R51.124 — pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3)
 
 
 
@@ -3304,7 +3305,6 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui
 - crates/pinion-tui/src/shell.rs:commit_paint
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::dispatch_key
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::refresh_state
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::cursor_moved
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_down
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_up
@@ -11453,6 +11453,36 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - R51.124 — pinion-tui::ShellCoreTui = CoreShell wrap (TUI extras: log_sink + refresh_state→tail bridge)
 - R51.125 — dispatch_rpc trait extraction (ShellDispatch trait in pinion-runtime)
+
+
+
+### Round 524 — R51.124 §5.41 — pinion-tui::ShellCoreTui = CoreShell wrap (TUI extension), 4-round 분할 #3
+
+**Changes**:
+- crates/pinion-tui/src/substrate.rs: 5 fields (scene/cached_state/router/intent_queue/_phantom) 제거 + core: CoreShell<V> + log_sink 두 fields
+- dispatch_key/cursor_moved/pointer_down/pointer_up: 이제 bool 반환 (state_changed) auto-tail. 별도 refresh_state 호출 필요 없음
+- ShellCoreTui::refresh_state 메서드 제거 (atomic stale citation 동시 제거 — R51.119 lesson)
+- ShellCoreTui::forward_event private helper 제거 (core.forward(event) 가 typed event 받음)
+- handle_tail private helper 추가: log_sink 로 intent + state_change 출력 + state_changed bool 반환
+- compute_paint_scene: V::view(*core.cached_state(), &Frame::new()) — compute_layout 없음 (TUI 패턴 유지)
+- crates/pinion-tui/src/shell.rs: dispatch_key + dispatch_mouse 호출처가 더 이상 .refresh_state() 체이닝 안 함
+- dispatch_mouse: && 대신 | (bitwise or) 사용 — Down(Left) arm 두 dispatch 모두의 state_changed 관측 유지
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1722 pass / 0 fail / 8 ignored (variance 0, ShellCoreTui tests 의미는 같음, return shape 만 조정)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace: entries=253 / sections=58 / T1=0 / round-trip=1/1 / GENERATED.md=sync
+- atomic stale citation 0 (ShellCoreTui::refresh_state remove + R51.124 caveat add)
+
+
+
+**Impact**: §5.41
+
+
+**Carry forward**:
+- R51.125 — dispatch_rpc trait extraction (ShellDispatch trait in pinion-runtime + impl in pinion-shell, pinion-rpc → pinion-runtime direction 유지)
 
 
 
