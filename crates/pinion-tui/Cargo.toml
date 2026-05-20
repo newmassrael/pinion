@@ -10,6 +10,18 @@ description = "R51.109 §5.41 cell-based render mode primitive — ratatui Backe
 [lints]
 workspace = true
 
+# R51.178 §5.41 — expose `pinion_tui::test_fixtures` (TUI-side
+# WidgetViewTui impl for the shared ButtonFixture / EchoButtonFixture
+# reducer fixtures) to downstream `dev-dependencies` so the substrate
+# test module reuses one canonical impl instead of repeating it
+# inline across two test modules. Forwards `test-fixtures` into the
+# supertrait crates (`pinion-core` for the types, `pinion-a11y` for
+# the blank WidgetA11y impls) so the symbols surface at the same
+# time the TUI-side impls compile. Mirrors the R51.175 pinion-shell
+# precedent for end-to-end backend parity.
+[features]
+test-fixtures = ["pinion-core/test-fixtures", "pinion-a11y/test-fixtures"]
+
 [dependencies]
 # §5.41 R51.109.2 — `WidgetRenderer` trait lives in pinion-core so the
 # TUI backend depends only on the lowest-level crate (no winit / wgpu
@@ -90,3 +102,9 @@ pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fi
 # for `ButtonFixture` so the test module's `WidgetViewTui` impl
 # resolves the supertrait chain without an orphan-rule violation.
 pinion-a11y = { path = "../pinion-a11y", version = "0.0.1", features = ["test-fixtures"] }
+# R51.178 §5.41 — self path-dep so the substrate test module picks up
+# `pinion_tui::test_fixtures` (the cfg-gated TUI-side WidgetViewTui
+# impls for ButtonFixture + EchoButtonFixture). Mirrors the
+# R51.175 pinion-shell precedent; production builds stay
+# feature-free, the dev build adds the fixture module.
+pinion-tui = { path = ".", features = ["test-fixtures"] }

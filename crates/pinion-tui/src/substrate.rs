@@ -499,16 +499,15 @@ mod tests {
     use super::*;
     use pinion_core::test_fixtures::ButtonFixture as TestButtonView;
     use pinion_core::widgets::button::ButtonState;
-    use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
-    // The `WidgetA11y` impl for `ButtonFixture` lives in pinion-a11y
-    // (orphan rule: trait is defined there). The dev-dependency
-    // pulls in pinion-a11y's `test-fixtures` feature so the impl is
-    // visible during the substrate test build.
-    impl WidgetViewTui for TestButtonView {
-        type Renderer = crate::TuiRenderer<TestBackend>;
-    }
+    // R51.178 §5.41 — `WidgetViewTui` impl for `ButtonFixture` (=
+    // `TestButtonView` alias above) lifted to
+    // `crate::test_fixtures`. The cfg-gated module is automatically
+    // in scope inside this `#[cfg(test)]` block, so its `impl
+    // WidgetViewTui for ButtonFixture` is visible without an
+    // explicit `use` — Rust applies trait impls in scope, not the
+    // module path itself.
 
     /// Minimal `Default` impl helper for buffer construction tests
     /// (avoids the verbose `Buffer::empty` call site).
@@ -1117,11 +1116,11 @@ mod tests {
         use super::*;
         use pinion_core::external::IntrospectValue;
         use pinion_core::test_fixtures::EchoButtonFixture;
-        use ratatui::backend::TestBackend;
 
-        impl WidgetViewTui for EchoButtonFixture {
-            type Renderer = crate::TuiRenderer<TestBackend>;
-        }
+        // R51.178 §5.41 — `WidgetViewTui` impl for
+        // `EchoButtonFixture` lifted to `crate::test_fixtures`.
+        // The outer `mod tests` block's `use crate::test_fixtures
+        // as _;` already activates the impl for this sub-module.
 
         #[test]
         fn dispatch_intent_queues_reducer_commands_on_root_owner() {

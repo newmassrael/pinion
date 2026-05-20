@@ -70,6 +70,17 @@ pub mod shell;
 pub mod substrate;
 pub mod widget;
 
+// R51.178 §5.41 — shared TUI-side test fixture surface. Exposes the
+// `WidgetViewTui` impls for `pinion_core::test_fixtures::
+// {ButtonFixture, EchoButtonFixture}` so the substrate test module
+// reuses one canonical fixture across the R51.168/169 wiring sub-
+// modules instead of repeating the impls inline. Gated behind the
+// `test-fixtures` feature (which forwards into the pinion-core +
+// pinion-a11y supertrait crates) so production binaries never see
+// the symbols. Mirrors the R51.175 pinion-shell precedent.
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod test_fixtures;
+
 pub use executor::{build_executor_and_sink, MpscIntentSink, TokioExecutor};
 pub use input::{cell_to_pixel, key_str_from_event, modifiers_from_crossterm};
 pub use shell::{run, run_with_handlers};

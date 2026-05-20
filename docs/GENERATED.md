@@ -7077,6 +7077,34 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.178 — R51.178 §5.41 pinion-tui::test_fixtures lift (TUI symmetry with R51.175 pinion-shell)
+
+**Changes**:
+- pinion-tui/Cargo.toml — [features] test-fixtures + self path-dep dev-dep entry
+- pinion-tui/src/lib.rs — cfg-gated `pub mod test_fixtures`
+- pinion-tui/src/test_fixtures.rs (new) — impl WidgetViewTui for ButtonFixture + EchoButtonFixture
+- pinion-tui/src/substrate.rs — inline impls (2 sites) replaced by lifted module reference
+
+
+
+**Verification**:
+- cargo test (vello) = 2004 / 0 / 10 (unchanged from R51.177; same test count post-lift)
+- cargo clippy 0 warnings (strict baseline maintained)
+- ratify: shell + tui now mirror-symmetric test_fixtures modules (R51.175 + R51.178)
+
+
+
+**Impact**: §5.41, §5.23
+
+
+**Carry forward**:
+- R51.179 — Forge codegen emits update body from SCE schema (SCE upstream RFC carry)
+- R51.180 — Intent.payload typed routing through SCXML invoke send (wait first consumer)
+- R51.181 — framework cascade detect debug-assert (lift on first concrete cascade evidence)
+- R51.182 — app Model field wait (Owner::cache<S> lift OR CoreShell.app_state<S>) first consumer
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
