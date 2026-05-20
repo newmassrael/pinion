@@ -49,6 +49,22 @@ pub const PIXEL_PER_CELL_X: u32 = 8;
 /// 8×16 bitmap font baseline). See [`PIXEL_PER_CELL_X`].
 pub const PIXEL_PER_CELL_Y: u32 = 16;
 
+// R51.130 §5.41 — Unicode light box-drawing set (U+2500..U+2518).
+// Lifted as `\u{XXXX}`-escaped constants so the Rust source carries
+// only ASCII codepoints; the actual glyph lives in this comment only.
+// Set: ─ │ ┌ ┐ └ ┘ (horizontal, vertical, top-left, top-right,
+// bottom-left, bottom-right). The light weight is intentional —
+// heavy / double / rounded variants would mis-match the single-cell
+// border thickness the paint walker draws (TUI cells are discrete;
+// `BoxStyle::border.width` and `corner_radius` have no sub-cell
+// resolution to map onto).
+const BOX_HORIZONTAL: &str = "\u{2500}";
+const BOX_VERTICAL: &str = "\u{2502}";
+const BOX_TOP_LEFT: &str = "\u{250C}";
+const BOX_TOP_RIGHT: &str = "\u{2510}";
+const BOX_BOTTOM_LEFT: &str = "\u{2514}";
+const BOX_BOTTOM_RIGHT: &str = "\u{2518}";
+
 /// Walk `scene` and write its painted state into `buf`. Recurses
 /// through [`Scene::Container`] children, paints [`Scene::Text`]
 /// nodes via [`paint_text`], skips other primitives (R51.111+
@@ -143,33 +159,33 @@ fn paint_box_style(rect: &Rect, style: &BoxStyle, buf: &mut Buffer) {
         // Horizontal edges (excluding corners).
         for x in (left + 1)..right {
             buf[(buf_area.x + x, buf_area.y + top)]
-                .set_symbol("─")
+                .set_symbol(BOX_HORIZONTAL)
                 .set_fg(fg);
             buf[(buf_area.x + x, buf_area.y + bottom)]
-                .set_symbol("─")
+                .set_symbol(BOX_HORIZONTAL)
                 .set_fg(fg);
         }
         // Vertical edges (excluding corners).
         for y in (top + 1)..bottom {
             buf[(buf_area.x + left, buf_area.y + y)]
-                .set_symbol("│")
+                .set_symbol(BOX_VERTICAL)
                 .set_fg(fg);
             buf[(buf_area.x + right, buf_area.y + y)]
-                .set_symbol("│")
+                .set_symbol(BOX_VERTICAL)
                 .set_fg(fg);
         }
-        // Corners — Unicode light box-drawing set (U+250C..U+2518).
+        // Corners.
         buf[(buf_area.x + left, buf_area.y + top)]
-            .set_symbol("┌")
+            .set_symbol(BOX_TOP_LEFT)
             .set_fg(fg);
         buf[(buf_area.x + right, buf_area.y + top)]
-            .set_symbol("┐")
+            .set_symbol(BOX_TOP_RIGHT)
             .set_fg(fg);
         buf[(buf_area.x + left, buf_area.y + bottom)]
-            .set_symbol("└")
+            .set_symbol(BOX_BOTTOM_LEFT)
             .set_fg(fg);
         buf[(buf_area.x + right, buf_area.y + bottom)]
-            .set_symbol("┘")
+            .set_symbol(BOX_BOTTOM_RIGHT)
             .set_fg(fg);
     }
 }

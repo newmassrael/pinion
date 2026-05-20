@@ -5525,6 +5525,33 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.130 — R51.130 §5.41 — TUI paint box-drawing chars `\u{XXXX}` escape + named const lift (baseline carry "Rust source 내 non-ASCII literal" 청산)
+
+**Changes**:
+- crates/pinion-tui/src/paint.rs — 6 named const BOX_{HORIZONTAL/VERTICAL/TOP_LEFT/TOP_RIGHT/BOTTOM_LEFT/BOTTOM_RIGHT} 신설 (U+2500..U+2518 light set)
+- 8 개 set_symbol("─")/...("┘") inline Unicode literal 제거 — named const 참조로 아스키 source baseline 회복
+- doc comment 은 actual glyph 1회 명시 (─ │ ┌ ┐ └ ┘) — reader navigation 속을 유지
+- behavior 변경 0 — 모든 const 가 원본과 동일 곡Ş프 (UTF-8 byte sequence 부함)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1722 / 0 / 8 유지
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace = entries=301 → 302 / sections=58 / T1=0 / RT=1/1 / sync
+- Rust source ASCII baseline 회복 — box-drawing chars 은 doc string + const 값 내부 (\u{XXXX} escape)
+
+
+
+**Impact**: §5.41
+
+
+**Carry forward**:
+- box-drawing const 파트트 정통 — future heavy/double/rounded 바리언트 추가 시 동일 패턴 적용 (BOX_HEAVY_HORIZONTAL = "\u{2501}" 등)
+- BoxStyle 의 corner_radius / placement / width 는 R51.115 paint_box_style doc 에서 이미 cell-unit 분기 명시 — 자체 carry 추가 없음
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
