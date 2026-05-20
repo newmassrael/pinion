@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R51.104 §5.38 ListBox multi-select first-client: pinion-forge
+  renderer manifest. Identical shape to the other hello-* renderers;
+  only the struct name diverges. backend=vello + default Area
+  antialiasing.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloListboxMultiRenderer"
+        backend="vello"/>
