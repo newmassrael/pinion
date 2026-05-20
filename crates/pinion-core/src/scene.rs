@@ -133,6 +133,37 @@ impl Scene {
                 }
             }
         }
+        // R55.A.2 §5.45 — `Scroll` descends into `content` with the
+        // offset translation applied. The viewport-contains check
+        // above already gated this branch on `(x, y)` landing inside
+        // the clip; here we convert viewport-relative coordinates
+        // into content-intrinsic ones and recurse. If the
+        // translation lands outside the content (negative coordinate
+        // because the offset moved content past the origin, or
+        // beyond the content's outermost rect), the scroll container
+        // itself is the deepest hit — same fallback shape as the
+        // empty-content Container case.
+        if let Scene::Scroll(s) = self {
+            let vx = x.saturating_sub(s.viewport.x);
+            let vy = y.saturating_sub(s.viewport.y);
+            // Promote to i64 so a negative offset plus a small
+            // viewport-local coordinate never wraps around the u32
+            // ceiling, and the saturating add overflow at
+            // `i32::MAX` cannot bite either.
+            let cx = i64::from(vx).checked_add(i64::from(s.offset_x));
+            let cy = i64::from(vy).checked_add(i64::from(s.offset_y));
+            if let (Some(cx), Some(cy)) = (cx, cy)
+                && cx >= 0
+                && cy >= 0
+                && let (Ok(cx_u), Ok(cy_u)) = (u32::try_from(cx), u32::try_from(cy))
+                && let Some(child_hit) = s.content.hit_test(cx_u, cy_u)
+            {
+                return Some(child_hit);
+            }
+            // Translation fell outside the content (or content
+            // itself reported no hit) — return the scroll container
+            // as the deepest hit.
+        }
         Some(HitPath { segments: Vec::new(), bbox: self.rect() })
     }
 
@@ -1676,5 +1707,76 @@ mod tests {
         assert_eq!(scroll.offset_x, 0);
         assert_eq!(scroll.offset_y, 0);
         assert!(scroll.tag.is_none());
+    }
+
+    #[test]
+    fn r55_a2_hit_test_descends_into_scrolled_content() {
+        // R55.A.2 — a hit inside the viewport translates by the
+        // current offset and resolves against the content. With
+        // offset_y=100, the viewport row 0 maps to content row 100,
+        // so a viewport-relative (5, 10) lands at content
+        // intrinsic (5, 110) — inside the content box.
+        let content = box_at(0, 0, 200, 400);
+        let scroll =
+            ScrollNode::new(Rect::new(50, 60, 100, 100), content).with_offset(0, 100);
+        let scene = Scene::Scroll(scroll);
+        // Pick a point inside the viewport: viewport.x=50, vx=5 →
+        // content_x = 5 + 0 = 5; viewport.y=60, vy=10 →
+        // content_y = 10 + 100 = 110. Content box is 200×400
+        // intrinsic, so (5, 110) is inside.
+        let hit = scene.hit_test(55, 70).expect("hit lands in content");
+        assert_eq!(hit.bbox, Rect::new(0, 0, 200, 400));
+    }
+
+    #[test]
+    fn r55_a2_hit_test_outside_viewport_misses() {
+        // R55.A.2 — a hit outside the viewport never descends.
+        // The content's intrinsic geometry exceeds the viewport but
+        // is hidden by the clip.
+        let content = box_at(0, 0, 500, 500);
+        let scene = Scene::Scroll(ScrollNode::new(
+            Rect::new(10, 10, 50, 50),
+            content,
+        ));
+        // Inside content intrinsic (200, 200) but outside viewport.
+        assert!(scene.hit_test(200, 200).is_none());
+    }
+
+    #[test]
+    fn r55_a2_hit_test_inside_viewport_outside_content_returns_scroll_rect() {
+        // R55.A.2 — viewport contains the point but the translated
+        // content coordinate falls past the content's bbox. The
+        // scroll container itself is then the deepest hit (same
+        // fallback as a Container with no matching child).
+        let content = box_at(0, 0, 10, 10);
+        let scroll =
+            ScrollNode::new(Rect::new(0, 0, 100, 100), content).with_offset(50, 50);
+        let scene = Scene::Scroll(scroll);
+        // viewport-local (5, 5) + offset (50, 50) = (55, 55),
+        // outside the 10×10 content box.
+        let hit = scene.hit_test(5, 5).expect("viewport contains the point");
+        // The scroll container's viewport is the resolved bbox.
+        assert_eq!(hit.bbox, Rect::new(0, 0, 100, 100));
+        assert!(hit.segments.is_empty());
+    }
+
+    #[test]
+    fn r55_a2_hit_test_through_container_into_scroll() {
+        // R55.A.2 — a Container parent over a Scroll child surfaces
+        // the Scroll's descent result with the parent's path segment
+        // (idx or tag) prepended. End-to-end:
+        // Container("root") > Scroll(viewport=10..60) > Box(...)
+        let inner = box_at(0, 0, 100, 100);
+        let scroll = ScrollNode::new(Rect::new(10, 10, 50, 50), inner)
+            .with_tag("scroll_box");
+        let scene = container_at(0, 0, 100, 100, vec![Scene::Scroll(scroll)]);
+        // Hit at (20, 20): inside root container, inside scroll
+        // viewport (vx=10, vy=10), inside content (0, 0) + (10, 10)
+        // = (10, 10).
+        let hit = scene.hit_test(20, 20).expect("hits content");
+        assert_eq!(hit.bbox, Rect::new(0, 0, 100, 100));
+        // The path's first segment is the Scroll's tag (tag wins
+        // over index per Container's hit_test rule).
+        assert_eq!(hit.segments.first().map(String::as_str), Some("scroll_box"));
     }
 }

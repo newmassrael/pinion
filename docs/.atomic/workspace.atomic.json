@@ -11123,6 +11123,60 @@
         "R51.187 R55.G — ListBox + future Grid/CardList composite integration through Scroll wrap"
       ]
     },
+    "R51.181": {
+      "decision_summary": "R51.181 §5.45 R55.A.2 Scene::hit_test descends through ScrollNode with offset translation",
+      "changes_bullets": [
+        "pinion-core::scene::Scene::hit_test — Scroll arm descends content with offset-translated coords",
+        "pinion-core::scene::Scene::hit_test — i64 promotion avoids u32 wrap on negative-offset edge",
+        "pinion-core::scene::Scene::hit_test — viewport-contains gate kept; outside-viewport returns None",
+        "pinion-core::scene::tests — 4 R55.A.2 descent tests (in/out/clip-fallback/parent-route)"
+      ],
+      "verification_bullets": [
+        "cargo test (vello) = 2012 / 0 / 10 (+4 R55.A.2 descent tests; was 2008)",
+        "cargo clippy 0 warnings (i64 promotion sidesteps cast_sign_loss / cast_possible_wrap)",
+        "ratify: hit_test offset translation is half-open viewport contains + i64 promotion"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.32"
+      ],
+      "carry_forward_bullets": [
+        "R51.182 R55.A.3 — lookup_path / lookup_path_ref / lookup_path_mut Scroll passthrough",
+        "R51.183 R55.A.4 — collect_intersections / hit_test_region offset-translated descent",
+        "R51.184 R55.B — ScrollState scope-id keyed (Owner::cache + Animation<f32>)",
+        "R51.185 R55.C — wheel + arrow + PgUp/PgDn + Home/End input mapping (Event extension)",
+        "R51.186 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag statechart",
+        "R51.187 R55.E — paint clipping at Vello + TUI boundaries",
+        "R51.188 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)",
+        "R51.189 R55.G — ListBox + future composite integration through Scroll wrap"
+      ],
+      "publishable_decision_summary": "R51.181 §5.45 R55.A.2 Scene::hit_test descends through ScrollNode with offset translation",
+      "publishable_changes_bullets": [
+        "pinion-core::scene::Scene::hit_test — Scroll arm descends content with offset-translated coords",
+        "pinion-core::scene::Scene::hit_test — i64 promotion avoids u32 wrap on negative-offset edge",
+        "pinion-core::scene::Scene::hit_test — viewport-contains gate kept; outside-viewport returns None",
+        "pinion-core::scene::tests — 4 R55.A.2 descent tests (in/out/clip-fallback/parent-route)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test (vello) = 2012 / 0 / 10 (+4 R55.A.2 descent tests; was 2008)",
+        "cargo clippy 0 warnings (i64 promotion sidesteps cast_sign_loss / cast_possible_wrap)",
+        "ratify: hit_test offset translation is half-open viewport contains + i64 promotion"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.32"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.182 R55.A.3 — lookup_path / lookup_path_ref / lookup_path_mut Scroll passthrough",
+        "R51.183 R55.A.4 — collect_intersections / hit_test_region offset-translated descent",
+        "R51.184 R55.B — ScrollState scope-id keyed (Owner::cache + Animation<f32>)",
+        "R51.185 R55.C — wheel + arrow + PgUp/PgDn + Home/End input mapping (Event extension)",
+        "R51.186 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag statechart",
+        "R51.187 R55.E — paint clipping at Vello + TUI boundaries",
+        "R51.188 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)",
+        "R51.189 R55.G — ListBox + future composite integration through Scroll wrap"
+      ]
+    },
     "R51.33": {
       "decision_summary": "R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate",
       "changes_bullets": [
