@@ -1163,6 +1163,7 @@ fn main() {
 - crates/pinion-core/src/reactive/owner.rs:OwnerHandleGuard
 - crates/pinion-core/src/reactive/owner.rs:Owner::cache
 - crates/pinion-core/src/reactive/owner.rs:Owner::cache_contains
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::apply_key
 
 
 
@@ -6246,6 +6247,36 @@ router.pointer_down(&mut state_scene);
 - R51.152+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
 - R51.153+ Owner::cache positional/macro variant (call-site identity)
 - R51.154+ Color::Animatable trait 정식 binding (lerp 자체적으로 trait method)
+
+
+
+### R51.152 — §5.22 CoreShell::apply_key V::apply_key root_owner.run wrap + hello-listbox*/hello-listbox-multi typeahead thread_local 청산
+
+**Changes**:
+- CoreShell::apply_key 가 V::apply_key 호출을 root_owner.run() wrap
+- Owner::current() 가 apply_key 안에서 root_owner 으로 resolve (R51.146 sibling)
+- hello-listbox thread_local TYPEAHEAD → owner.cache('hello_listbox::typeahead')
+- hello-listbox-multi 동일 적용 (hello_listbox_multi::typeahead)
+- Owner::cache 두 번째 consumer (R51.150 [[abstraction-needs-second-consumer]] 충족)
+- test-fixture TestView::apply_key 가 Owner::current() observation 기록 (R51.146 pattern)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1882 passed / 0 failed / 8 ignored
+- baseline 1878 → 1882 (+4 R51.152: 1 core_shell + 3 pinion-shell apply_key wrap tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- hello-listbox + hello-listbox-multi 기존 a11y tests 9+ 모두 통과 (regress 0)
+
+
+
+**Impact**: §5.22, §5.41
+
+
+**Carry forward**:
+- R51.153+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
+- R51.154+ access_node / access_child_invoke 도 root_owner wrap (대칭 완성)
+- R51.155+ Owner::cache positional/macro variant (call-site identity DX)
 
 
 

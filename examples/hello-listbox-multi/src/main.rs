@@ -48,7 +48,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -445,11 +445,13 @@ fn active_option_index(state: ListState) -> usize {
 }
 
 // R51.106 §5.38 — type-ahead state lifted to
-// `pinion_shell::typeahead` substrate; this binary now holds only
-// the per-window thread-local cursor.
-thread_local! {
-    static TYPEAHEAD: RefCell<TypeaheadCursor> = RefCell::new(TypeaheadCursor::new());
-}
+// `pinion_shell::typeahead` substrate.
+//
+// R51.152 §5.22 — owner-cache key for the typeahead cursor. Mirrors
+// the hello-listbox sibling: cursor lives on the binding's root
+// [`Owner`] (R51.150 cache), dropping with the shell. The pre-R51.152
+// `thread_local! TYPEAHEAD` workaround is gone.
+const TYPEAHEAD_KEY: &str = "hello_listbox_multi::typeahead";
 
 fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bool {
     let Some(first) = is_typeahead_char(key) else {
@@ -464,10 +466,16 @@ fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bo
             _ => None,
         });
     let labels: [&str; N] = std::array::from_fn(option_label);
-    let target = TYPEAHEAD.with(|cell| {
-        let mut cursor = cell.borrow_mut();
-        cursor.step(first, current, Instant::now(), &labels)
-    });
+    // R51.152 — `Owner::current()` resolves to root scope inside the
+    // CoreShell::apply_key wrap (R51.152). Mirror of hello-listbox.
+    let owner = Owner::current().expect(
+        "hello-listbox-multi apply_key must run inside CoreShell::apply_key wrap (R51.152)",
+    );
+    let cursor_cell: std::rc::Rc<RefCell<TypeaheadCursor>> =
+        owner.cache(TYPEAHEAD_KEY, || RefCell::new(TypeaheadCursor::new()));
+    let target = cursor_cell
+        .borrow_mut()
+        .step(first, current, Instant::now(), &labels);
     let Some(idx) = target else {
         return false;
     };

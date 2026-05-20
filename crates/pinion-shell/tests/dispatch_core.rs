@@ -175,6 +175,12 @@ static EVENT_NAME_LOG: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 // `root_owner().run(...)`. Reset by `reset_mocks`.
 static OBSERVED_OWNER_ID: Mutex<Option<u64>> = Mutex::new(None);
 
+// R51.152 §5.22 — captures the `Owner::current()` observation each
+// time `TestView::apply_key` runs so the R51.152 apply_key-owner-wrap
+// test can assert the substrate wraps `V::apply_key` in
+// `root_owner().run(...)`.
+static OBSERVED_OWNER_ID_APPLY_KEY: Mutex<Option<u64>> = Mutex::new(None);
+
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
@@ -183,6 +189,7 @@ fn reset_mocks() {
     KEYBINDING_RETURNS_SOME.store(false, Ordering::SeqCst);
     EVENT_NAME_LOG.lock().unwrap().clear();
     *OBSERVED_OWNER_ID.lock().unwrap() = None;
+    *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap() = None;
 }
 
 struct TestView;
@@ -254,6 +261,12 @@ impl WidgetCore for TestView {
             .lock()
             .unwrap()
             .push((focused.map(ToOwned::to_owned), key.to_owned()));
+        // R51.152 §5.22 — record Owner::current() observation so the
+        // apply_key-owner-wrap test asserts CoreShell wraps the call
+        // in `root_owner().run(...)`. Other tests reset the static
+        // via reset_mocks and ignore it.
+        *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap() =
+            pinion_core::Owner::current().map(|o| o.id());
         APPLY_KEY_RETURNS.load(Ordering::SeqCst)
     }
 }
@@ -1092,6 +1105,79 @@ mod r51_143_paint_cycle_dt {
             5,
             "five paints → five ticks (substrate is per-call, never throttled)",
         );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R51.152 §5.22 — V::apply_key runs under `root_owner().run(...)` so
+// `Owner::current()` resolves from inside the keyboard handler.
+// Application code (typeahead cursors etc.) can call
+// `Owner::current().cache(...)` (R51.150) without thread-local
+// workarounds.
+// ─────────────────────────────────────────────────────────────────────
+
+mod r51_152_apply_key_owner_wrap {
+    use std::sync::atomic::Ordering;
+
+    use super::{
+        reset_mocks, ShellCore, TestView, APPLY_KEY_RETURNS, OBSERVED_OWNER_ID_APPLY_KEY,
+        TEST_LOCK,
+    };
+
+    #[test]
+    fn apply_key_runs_under_root_owner() {
+        // R51.152 — substrate wraps V::apply_key in
+        // root_owner().run(...). Inside TestView::apply_key the
+        // OBSERVED_OWNER_ID_APPLY_KEY captures Owner::current().id()
+        // and we expect it to match the binding's root_owner().id().
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+        let expected = core.root_owner().id();
+
+        core.apply_key("Enter");
+
+        let observed = *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap();
+        assert_eq!(
+            observed,
+            Some(expected),
+            "V::apply_key must observe the substrate's root_owner via Owner::current()",
+        );
+    }
+
+    #[test]
+    fn current_returns_to_none_after_apply_key_exits() {
+        // R51.152 — RAII pop: the wrap is symmetric.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(true, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+        core.apply_key("Enter");
+
+        assert!(
+            pinion_core::Owner::current().is_none(),
+            "OwnerHandleGuard must pop on apply_key exit",
+        );
+    }
+
+    #[test]
+    fn apply_key_unhandled_still_wraps_owner() {
+        // R51.152 — even when apply_key returns false (unhandled),
+        // the substrate still wraps in root_owner.run; Owner::current()
+        // inside the handler must resolve.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+        let expected = core.root_owner().id();
+        core.apply_key("AnyKey");
+
+        let observed = *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap();
+        assert_eq!(observed, Some(expected));
     }
 }
 

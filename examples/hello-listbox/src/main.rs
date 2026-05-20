@@ -70,7 +70,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -538,14 +538,18 @@ fn set_focus(node: &mut pinion_core::scene::ExternalNode, idx: usize) -> bool {
 // R51.106 §5.38 — type-ahead state lifted to
 // `pinion_shell::typeahead` substrate after the second consumer
 // (hello-listbox-multi) landed; this binary now holds only the
-// per-window thread-local cursor and delegates the algorithm + the
+// per-binding typeahead cursor and delegates the algorithm + the
 // reset window constant to the substrate. R51.99/R51.103 historical
 // behavior (single-char cyclic + multi-char prefix + 500 ms
 // timeout + Unicode case fold) is preserved verbatim through the
 // `TypeaheadCursor::step` contract.
-thread_local! {
-    static TYPEAHEAD: RefCell<TypeaheadCursor> = RefCell::new(TypeaheadCursor::new());
-}
+//
+// R51.152 §5.22 — owner-cache key for the typeahead cursor. Replaces
+// the pre-R51.152 `thread_local! TYPEAHEAD` workaround per the
+// R51.150 `[[textbook-long-term-correct]]` recovery: the cursor now
+// lives on the binding's root [`Owner`] and drops with the shell
+// (no stale state across multiple shells in the same thread).
+const TYPEAHEAD_KEY: &str = "hello_listbox::typeahead";
 
 fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bool {
     let Some(first) = is_typeahead_char(key) else {
@@ -560,10 +564,17 @@ fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bo
             _ => None,
         });
     let labels: [&str; N] = std::array::from_fn(option_label);
-    let target = TYPEAHEAD.with(|cell| {
-        let mut cursor = cell.borrow_mut();
-        cursor.step(first, current, Instant::now(), &labels)
-    });
+    // R51.152 — `Owner::current()` resolves to the shell's root scope
+    // because `CoreShell::apply_key` wraps the dispatch in
+    // `root_owner().run(...)`. Panicking here means the apply_key
+    // path is bypassing the framework wrap (a broken integration).
+    let owner = Owner::current()
+        .expect("hello-listbox apply_key must run inside CoreShell::apply_key wrap (R51.152)");
+    let cursor_cell: std::rc::Rc<RefCell<TypeaheadCursor>> =
+        owner.cache(TYPEAHEAD_KEY, || RefCell::new(TypeaheadCursor::new()));
+    let target = cursor_cell
+        .borrow_mut()
+        .step(first, current, Instant::now(), &labels);
     let Some(idx) = target else {
         return false;
     };
