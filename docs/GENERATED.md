@@ -3224,6 +3224,7 @@ router.pointer_down(&mut state_scene);
 - R51.109.1 — WidgetRenderer trait + VelloContext + macro 2 impl (backend-agnostic dispatch land)
 - R51.109.2 — WidgetRenderer lift to pinion-core + TuiRenderer<B> impl land (2nd backend)
 - R51.110.0 — pinion_tui::paint::to_buffer text-first 매핑 land (Box/Path/Image 는 R51.111+)
+- R51.110.1 — WidgetViewTui trait + render_one_frame helper land (event loop R51.110.2)
 
 
 
@@ -3261,6 +3262,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/paint.rs
 - crates/pinion-tui/src/paint.rs:to_buffer
 - crates/pinion-tui/src/paint.rs:paint_text
+- crates/pinion-tui/src/widget.rs
+- crates/pinion-tui/src/widget.rs:WidgetViewTui
+- crates/pinion-tui/src/widget.rs:render_one_frame
 
 
 
@@ -10461,6 +10465,38 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact**: §5.38, §5.20
+
+
+
+### Round 497 — R51.110.1 §5.41 WidgetViewTui trait + render_one_frame helper land — TUI widget binding contract substrate (run::<V>() 의 foundation, event loop R51.110.2 carry)
+
+**Changes**:
+- pinion-tui/src/widget.rs 신설 — WidgetViewTui trait + render_one_frame helper
+- WidgetViewTui = WidgetView 의 TUI sibling (alternate trait, generic merge = 2nd binding 시 평가)
+- trait methods: State / Event / Renderer + create_external + tag + read_state + view + event_name + title + initial_size
+- initial_size default (80, 24) = 산업 baseline terminal 사이즈
+- render_one_frame::<V>(state, cols, rows) -> Buffer = test harness + R51.110.2 foundation
+- 3 widget test: DummyView + state diff + initial_size default
+
+
+
+**Verification**:
+- cargo check -p pinion-tui --tests clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning
+- cargo test --workspace --features pinion-runtime/vello = 1674 pass / 0 fail (+3 widget)
+- WidgetViewTui::Renderer bound = WidgetRenderer<Frame=Buffer, Context=TuiContext> + 'static
+
+
+
+**Impact**: §2, §5.41
+
+
+**Carry forward**:
+- R51.110.2 — pinion_tui::run::<V: WidgetViewTui>() crossterm 이벤트 루프 + alternate screen + raw mode
+- R51.110.2 — examples/hello-button-tui first client + Escape-to-exit + 단일 frame paint
+- WidgetViewTui vs WidgetView merge = R51.111+ 2nd binding 시 평가 (substrate-incompleteness-signal)
+- render_one_frame ZST Frame argument = pinion-core Frame ZST 정합 (per-frame dimension 없음)
+- input dispatch / focus / a11y / keybinding hooks = R51.111+ (2nd TUI binding 등장 시)
 
 
 

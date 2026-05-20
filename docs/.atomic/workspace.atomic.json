@@ -4390,7 +4390,8 @@
         "R51.109.0 — pinion-tui crate skeleton land (ratatui 0.29 + crossterm 0.28 + TuiRenderer placeholder)",
         "R51.109.1 — WidgetRenderer trait + VelloContext + macro 2 impl (backend-agnostic dispatch land)",
         "R51.109.2 — WidgetRenderer lift to pinion-core + TuiRenderer<B> impl land (2nd backend)",
-        "R51.110.0 — pinion_tui::paint::to_buffer text-first 매핑 land (Box/Path/Image 는 R51.111+)"
+        "R51.110.0 — pinion_tui::paint::to_buffer text-first 매핑 land (Box/Path/Image 는 R51.111+)",
+        "R51.110.1 — WidgetViewTui trait + render_one_frame helper land (event loop R51.110.2)"
       ],
       "alternatives_rejected": [
         {
@@ -4499,6 +4500,17 @@
         {
           "file": "crates/pinion-tui/src/paint.rs",
           "symbol": "paint_text"
+        },
+        {
+          "file": "crates/pinion-tui/src/widget.rs"
+        },
+        {
+          "file": "crates/pinion-tui/src/widget.rs",
+          "symbol": "WidgetViewTui"
+        },
+        {
+          "file": "crates/pinion-tui/src/widget.rs",
+          "symbol": "render_one_frame"
         }
       ],
       "decision_status": "active"
@@ -16519,6 +16531,60 @@
       "publishable_impact_refs": [
         "5.38",
         "5.20"
+      ]
+    },
+    "Round 497": {
+      "decision_summary": "R51.110.1 §5.41 WidgetViewTui trait + render_one_frame helper land — TUI widget binding contract substrate (run::<V>() 의 foundation, event loop R51.110.2 carry)",
+      "changes_bullets": [
+        "pinion-tui/src/widget.rs 신설 — WidgetViewTui trait + render_one_frame helper",
+        "WidgetViewTui = WidgetView 의 TUI sibling (alternate trait, generic merge = 2nd binding 시 평가)",
+        "trait methods: State / Event / Renderer + create_external + tag + read_state + view + event_name + title + initial_size",
+        "initial_size default (80, 24) = 산업 baseline terminal 사이즈",
+        "render_one_frame::<V>(state, cols, rows) -> Buffer = test harness + R51.110.2 foundation",
+        "3 widget test: DummyView + state diff + initial_size default"
+      ],
+      "verification_bullets": [
+        "cargo check -p pinion-tui --tests clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello = 1674 pass / 0 fail (+3 widget)",
+        "WidgetViewTui::Renderer bound = WidgetRenderer<Frame=Buffer, Context=TuiContext> + 'static"
+      ],
+      "impact_refs": [
+        "2",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R51.110.2 — pinion_tui::run::<V: WidgetViewTui>() crossterm 이벤트 루프 + alternate screen + raw mode",
+        "R51.110.2 — examples/hello-button-tui first client + Escape-to-exit + 단일 frame paint",
+        "WidgetViewTui vs WidgetView merge = R51.111+ 2nd binding 시 평가 (substrate-incompleteness-signal)",
+        "render_one_frame ZST Frame argument = pinion-core Frame ZST 정합 (per-frame dimension 없음)",
+        "input dispatch / focus / a11y / keybinding hooks = R51.111+ (2nd TUI binding 등장 시)"
+      ],
+      "publishable_decision_summary": "R51.110.1 §5.41 WidgetViewTui trait + render_one_frame helper land — TUI widget binding contract substrate (run::<V>() 의 foundation, event loop R51.110.2 carry)",
+      "publishable_changes_bullets": [
+        "pinion-tui/src/widget.rs 신설 — WidgetViewTui trait + render_one_frame helper",
+        "WidgetViewTui = WidgetView 의 TUI sibling (alternate trait, generic merge = 2nd binding 시 평가)",
+        "trait methods: State / Event / Renderer + create_external + tag + read_state + view + event_name + title + initial_size",
+        "initial_size default (80, 24) = 산업 baseline terminal 사이즈",
+        "render_one_frame::<V>(state, cols, rows) -> Buffer = test harness + R51.110.2 foundation",
+        "3 widget test: DummyView + state diff + initial_size default"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check -p pinion-tui --tests clean",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello = 1674 pass / 0 fail (+3 widget)",
+        "WidgetViewTui::Renderer bound = WidgetRenderer<Frame=Buffer, Context=TuiContext> + 'static"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.110.2 — pinion_tui::run::<V: WidgetViewTui>() crossterm 이벤트 루프 + alternate screen + raw mode",
+        "R51.110.2 — examples/hello-button-tui first client + Escape-to-exit + 단일 frame paint",
+        "WidgetViewTui vs WidgetView merge = R51.111+ 2nd binding 시 평가 (substrate-incompleteness-signal)",
+        "render_one_frame ZST Frame argument = pinion-core Frame ZST 정합 (per-frame dimension 없음)",
+        "input dispatch / focus / a11y / keybinding hooks = R51.111+ (2nd TUI binding 등장 시)"
       ]
     },
     "Round 497 — R51.8 §5.38/§5.12 Toggle e2e RPC dispatch — wire-form 검증": {

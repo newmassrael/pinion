@@ -64,6 +64,9 @@ pub use crossterm;
 pub use ratatui;
 
 pub mod paint;
+pub mod widget;
+
+pub use widget::{WidgetViewTui, render_one_frame};
 
 use std::io;
 
