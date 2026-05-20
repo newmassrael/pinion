@@ -1283,6 +1283,9 @@ fn main() {
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::clear_executor
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::executor
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::dispatch_pending_commands
+- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::cancel_scope
+- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::in_flight_len
+- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::has_in_flight
 
 
 
@@ -6434,6 +6437,38 @@ router.pointer_down(&mut state_scene);
 - R51.158 — CommandExecutor.in_flight: Mutex<BTreeMap<scope_id, CommandTaskHandle>> 경쟁취소
 - R51.159 — pinion-shell ShellCore.ShellCore::dispatch_pending_commands 쉬프들 wire-up + tokio current-thread
 - R51.160 — pinion-tui ShellCoreTui drain pump 동명령 + IntentSink
+
+
+
+### R51.158 — §5.23 R27 Solid 패턴 per-scope cancellation — CommandExecutor.in_flight tracker + cancel_scope
+
+**Changes**:
+- pinion-runtime/src/command/executor.rs: CommandExecutor.in_flight: Mutex<BTreeMap<u64, CommandTaskHandle>> 신규 필드
+- CommandExecutor::dispatch 증강: scope_id 기반 prior handle remove + cancel 선행 후 new task spawn + tracker insert
+- CommandExecutor::cancel_scope(scope_id) 명시 cancel API + Mutex poisoned panic doc
+- CommandExecutor::in_flight_len + has_in_flight 접근자 (테스트 + scene/commands carry)
+- Debug 출력에 in_flight_len 추가
+- executor tests +10 (insert/unknown-no-pollute/same-scope-cancel/different-scopes/cancel API 계열)
+
+
+
+**Verification**:
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning
+- cargo test --workspace --features pinion-runtime/vello → 1943 pass / 0 fail / 10 ignored (직전 1933/0/10 +10 pass)
+- r51_158_dispatch_same_scope_cancels_prior_handle: AtomicBool flag clone-family 공유 교차 검증
+- r51_158_dispatch_three_times_same_scope_only_latest_tracked: 연속 cancel 순서 (id 1,2 cancelled, 3 alive)
+- r51_158_cancel_scope_with_tracking_executor_observes_callback_fire: TrackingExecutor 로 executor-side cancel 실행 확인
+
+
+
+**Impact**: §5.23, §5.22
+
+
+**Carry forward**:
+- R51.159 — pinion-shell tokio current-thread Executor impl + EventLoopProxy IntentSink
+- pinion-shell AppEvent::IntentArrived variant + user_event arm → ShellCore::dispatch_intent
+- ShellCore: CoreShell drain pump 호출 도메인 (handle_tail 후 / event 종료 시)
+- R51.160 — pinion-tui ShellCoreTui drain pump + IntentSink dual-backend symmetry
 
 
 

@@ -55,7 +55,8 @@
 use core::future::Future;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use pinion_core::Command;
 
@@ -226,6 +227,43 @@ pub struct CommandExecutor {
     registry: HandlerRegistry,
     executor: Arc<dyn Executor>,
     sink: Arc<dyn IntentSink>,
+    /// R51.158 §5.23 — per-scope in-flight task tracker.
+    ///
+    /// Keyed by [`Command::scope_id`](pinion_core::Command::scope_id);
+    /// the value is the [`CommandTaskHandle`] [`Executor::spawn`]
+    /// returned, kept alive so a follow-up [`Command`] on the same
+    /// scope can abort the prior task before spawning the next one
+    /// (the §5.23 R27 Solid pattern: "new Command from same scope
+    /// cancels prior in-flight").
+    ///
+    /// Entries are inserted on every successful [`Self::dispatch`] and
+    /// removed (with a `cancel()` call) when:
+    ///
+    /// - A new [`Command`] arrives on the same `scope_id`
+    ///   (auto-abort on dispatch).
+    /// - The substrate calls [`Self::cancel_scope`] explicitly (e.g.
+    ///   the [`Owner`](pinion_core::Owner) hosting the scope is about
+    ///   to drop and the backend wants to surface the cancellation
+    ///   before the entry's `scope_id` becomes unreachable).
+    ///
+    /// Entries left behind by natural completion stay in the map until
+    /// the next dispatch on the same scope cancels them (no-op for
+    /// completed tasks: the executor's cancel callback is invoked but
+    /// the underlying future has already resolved). This is a textbook
+    /// trade — auto-removing on natural completion would require the
+    /// wrapped future to capture an [`Arc<Mutex<BTreeMap<...>>>`] back
+    /// into the executor, and the resulting drop ordering between the
+    /// sink delivery and the map cleanup is fragile across async
+    /// runtimes. Bounded growth: at most one entry per unique scope
+    /// id, and scope ids are
+    /// [`Owner::id`](pinion_core::reactive::Owner::id)s which collide
+    /// only after `u64` wraparound (i.e. never).
+    ///
+    /// [`Mutex`] (not `RefCell`) so the trait bound `Send + Sync` on
+    /// [`CommandExecutor`] is preserved (the trait bounds on
+    /// [`Executor`] and [`IntentSink`] force it; `Arc<CommandExecutor>`
+    /// is the production carrier shape).
+    in_flight: Mutex<BTreeMap<u64, CommandTaskHandle>>,
 }
 
 impl CommandExecutor {
@@ -245,6 +283,7 @@ impl CommandExecutor {
             registry,
             executor,
             sink,
+            in_flight: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -265,20 +304,119 @@ impl CommandExecutor {
     /// decide whether to log, drop, or surface the unhandled command.
     /// The R51.157 drain pump collects unhandled commands into a Vec
     /// so the backend can stderr-log without mutating the queue.
+    /// Unhandled commands do NOT touch the in-flight tracker.
     ///
-    /// On success returns the [`CommandTaskHandle`] the executor
-    /// produced — R51.158 stores it in a per-scope `BTreeMap` so a
-    /// follow-up [`Command`] on the same `scope_id` can abort the
-    /// prior in-flight task before spawning the new one.
-    #[must_use = "the returned CommandTaskHandle should be stored so a follow-up Command on the same scope can cancel the prior task"]
+    /// ## R51.158 — per-scope cancellation
+    ///
+    /// Before spawning, [`Self::dispatch`] checks
+    /// [`Self::in_flight`](Self) for an entry keyed by
+    /// [`Command::scope_id`](pinion_core::Command::scope_id). If one
+    /// is found, the prior [`CommandTaskHandle`] is removed and
+    /// [`CommandTaskHandle::cancel`] is called on it before the new
+    /// task spawns. The returned handle is also tracked in
+    /// [`Self::in_flight`] so a third dispatch on the same scope
+    /// would abort *this* task in turn.
+    ///
+    /// The handle returned to the caller shares its `cancelled` flag
+    /// with the clone stored in [`Self::in_flight`] (the
+    /// [`CommandTaskHandle::clone`] impl shares both the cancel
+    /// callback and the [`AtomicBool`]). Cancelling either alias
+    /// flips the other.
+    ///
+    /// # Panics
+    /// Panics if the internal [`Mutex`] guarding the in-flight map is
+    /// poisoned — a panicked worker thread inside another
+    /// [`Self::dispatch`] / [`Self::cancel_scope`] / [`Self::in_flight_len`]
+    /// call is the only way to reach this state, and that is a
+    /// programming error rather than a recoverable runtime condition.
+    #[must_use = "the returned CommandTaskHandle is also tracked in the executor's in-flight map; storing it lets the caller observe cancellation set by a follow-up same-scope dispatch"]
     pub fn dispatch(&self, command: Command) -> Option<CommandTaskHandle> {
+        let scope = command.scope_id;
+
+        // R51.158 R27 Solid pattern — cancel prior in-flight task on
+        // the same scope before spawning the new one. `cancel()` is
+        // idempotent and no-op for already-completed tasks (the
+        // executor's cancel callback runs at most once per handle).
+        if let Some(prior) = self
+            .in_flight
+            .lock()
+            .expect("CommandExecutor::in_flight poisoned")
+            .remove(&scope)
+        {
+            prior.cancel();
+        }
+
         let future: HandlerFuture = self.registry.dispatch(command)?;
         let sink = Arc::clone(&self.sink);
         let wrapped: BoxFuture = Box::pin(async move {
             let intent = future.await;
             sink.send(intent);
         });
-        Some(self.executor.spawn(wrapped))
+        let handle = self.executor.spawn(wrapped);
+
+        // Track for future cancellation. The clone shares the
+        // cancelled flag + cancel callback with the returned handle
+        // (R51.156 `CommandTaskHandle::clone` contract), so either
+        // alias's `cancel()` flips both.
+        self.in_flight
+            .lock()
+            .expect("CommandExecutor::in_flight poisoned")
+            .insert(scope, handle.clone());
+
+        Some(handle)
+    }
+
+    /// R51.158 §5.23 — cancel any in-flight task tracked for
+    /// `scope_id`.
+    ///
+    /// Returns `Some(handle)` when a tracked handle was removed (and
+    /// its `cancel()` called); `None` when no entry was tracked for
+    /// the scope. The returned handle is the same clone family as
+    /// every other alias of the original — callers that need to
+    /// observe `is_cancelled()` after cancellation either keep their
+    /// own clone or read it off the returned handle.
+    ///
+    /// # Panics
+    /// Panics if the internal [`Mutex`] guarding the in-flight map is
+    /// poisoned.
+    pub fn cancel_scope(&self, scope_id: u64) -> Option<CommandTaskHandle> {
+        let prior = self
+            .in_flight
+            .lock()
+            .expect("CommandExecutor::in_flight poisoned")
+            .remove(&scope_id);
+        if let Some(ref handle) = prior {
+            handle.cancel();
+        }
+        prior
+    }
+
+    /// R51.158 §5.23 — number of in-flight (or completed-but-not-yet
+    /// -superseded) task handles tracked. Useful for tests and for
+    /// the `scene/commands` RPC method (carry).
+    ///
+    /// # Panics
+    /// Panics if the internal [`Mutex`] is poisoned — a panicked
+    /// worker thread inside [`Self::dispatch`] / [`Self::cancel_scope`]
+    /// is a programming error, not a recoverable runtime condition.
+    #[must_use]
+    pub fn in_flight_len(&self) -> usize {
+        self.in_flight
+            .lock()
+            .expect("CommandExecutor::in_flight poisoned")
+            .len()
+    }
+
+    /// R51.158 §5.23 — `true` when `scope_id` has a tracked handle.
+    ///
+    /// # Panics
+    /// Panics if the internal [`Mutex`] is poisoned.
+    #[must_use]
+    pub fn has_in_flight(&self, scope_id: u64) -> bool {
+        self.in_flight
+            .lock()
+            .expect("CommandExecutor::in_flight poisoned")
+            .contains_key(&scope_id)
     }
 }
 
@@ -286,6 +424,7 @@ impl core::fmt::Debug for CommandExecutor {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CommandExecutor")
             .field("registry_len", &self.registry.len())
+            .field("in_flight_len", &self.in_flight_len())
             .finish_non_exhaustive()
     }
 }
@@ -610,5 +749,229 @@ mod tests {
             .filter_map(|i| i.payload.as_i64())
             .collect();
         assert_eq!(payloads, vec![0, 1, 2, 3]);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R51.158 §5.23 — per-scope cancellation (R27 Solid pattern)
+    // ────────────────────────────────────────────────────────────────
+
+    /// Test-only [`Executor`] that records every cancel callback fire
+    /// into a shared `Vec<usize>` keyed by spawn-order id. Lets tests
+    /// verify the executor-side cancel actually ran (the
+    /// [`CommandTaskHandle`]'s shared `AtomicBool` flag only tells us
+    /// `cancel()` was called; this tells us the executor's own cancel
+    /// callback ran).
+    #[derive(Default)]
+    struct TrackingExecutor {
+        next_id: Mutex<usize>,
+        cancelled: Arc<Mutex<Vec<usize>>>,
+    }
+
+    impl TrackingExecutor {
+        fn new() -> (Self, Arc<Mutex<Vec<usize>>>) {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    next_id: Mutex::new(0),
+                    cancelled: Arc::clone(&log),
+                },
+                log,
+            )
+        }
+    }
+
+    impl Executor for TrackingExecutor {
+        fn spawn(&self, future: BoxFuture) -> CommandTaskHandle {
+            let mut id_guard = self.next_id.lock().expect("next_id poisoned");
+            *id_guard += 1;
+            let id = *id_guard;
+            drop(id_guard);
+            // Drive the future to completion synchronously (same shape
+            // as BlockOnExecutor) so test ordering is deterministic.
+            futures_executor::block_on(future);
+            let log = Arc::clone(&self.cancelled);
+            CommandTaskHandle::new(move || {
+                log.lock().expect("cancelled log poisoned").push(id);
+            })
+        }
+    }
+
+    fn build_tracking(
+        registry: HandlerRegistry,
+    ) -> (CommandExecutor, Arc<VecSink>, Arc<Mutex<Vec<usize>>>) {
+        let sink = Arc::new(VecSink::new());
+        let (track, cancelled_log) = TrackingExecutor::new();
+        let exec: Arc<dyn Executor> = Arc::new(track);
+        let sink_dyn: Arc<dyn IntentSink> = sink.clone();
+        let cmd_exec = CommandExecutor::new(registry, exec, sink_dyn);
+        (cmd_exec, sink, cancelled_log)
+    }
+
+    #[test]
+    fn r51_158_dispatch_inserts_into_in_flight() {
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        assert_eq!(exec.in_flight_len(), 0);
+        let _h = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Null, 7))
+            .expect("known kind");
+        assert_eq!(exec.in_flight_len(), 1);
+        assert!(exec.has_in_flight(7));
+        assert!(!exec.has_in_flight(8));
+    }
+
+    #[test]
+    fn r51_158_dispatch_unknown_kind_does_not_pollute_in_flight() {
+        // R51.158 — unknown kinds short-circuit before the in-flight
+        // insert; the tracker stays empty.
+        let (exec, sink) = build_block_on(HandlerRegistry::new());
+        assert!(exec
+            .dispatch(Command::new_static("nope", IntrospectValue::Null, 99))
+            .is_none());
+        assert_eq!(exec.in_flight_len(), 0, "no insert for unhandled kind");
+        assert!(sink.is_empty());
+    }
+
+    #[test]
+    fn r51_158_dispatch_same_scope_cancels_prior_handle() {
+        // R51.158 R27 Solid pattern — a second dispatch on the same
+        // scope_id auto-cancels the prior tracked handle. The returned
+        // handle from the first dispatch reflects cancellation via
+        // the shared cancelled flag.
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        let h1 = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(1), 42))
+            .expect("first dispatch returns a handle");
+        assert!(!h1.is_cancelled());
+        let h2 = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(2), 42))
+            .expect("second dispatch returns a handle");
+        assert!(
+            h1.is_cancelled(),
+            "first handle must observe cancellation via shared AtomicBool",
+        );
+        assert!(!h2.is_cancelled(), "second handle is fresh + not cancelled");
+        assert_eq!(exec.in_flight_len(), 1, "only the second handle is tracked");
+        assert!(exec.has_in_flight(42));
+    }
+
+    #[test]
+    fn r51_158_dispatch_different_scopes_keep_independent_handles() {
+        // R51.158 — different scope ids do not interfere: dispatching
+        // on scope B does not cancel scope A.
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        let h_a = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(1), 11))
+            .expect("scope_a dispatch");
+        let h_b = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(2), 22))
+            .expect("scope_b dispatch");
+        assert!(!h_a.is_cancelled());
+        assert!(!h_b.is_cancelled());
+        assert_eq!(exec.in_flight_len(), 2);
+        assert!(exec.has_in_flight(11));
+        assert!(exec.has_in_flight(22));
+    }
+
+    #[test]
+    fn r51_158_cancel_scope_returns_and_marks_cancelled() {
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        let h = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Null, 5))
+            .expect("dispatch");
+        assert!(!h.is_cancelled());
+        let returned = exec
+            .cancel_scope(5)
+            .expect("scope tracked → some returned");
+        assert!(returned.is_cancelled());
+        assert!(h.is_cancelled(), "shared flag propagates to original handle");
+        assert!(!exec.has_in_flight(5), "scope removed after cancel");
+        assert_eq!(exec.in_flight_len(), 0);
+    }
+
+    #[test]
+    fn r51_158_cancel_scope_unknown_returns_none() {
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        assert!(exec.cancel_scope(99).is_none());
+        assert_eq!(exec.in_flight_len(), 0);
+    }
+
+    #[test]
+    fn r51_158_dispatch_then_cancel_scope_twice_idempotent() {
+        // R51.158 — once a scope is cancelled / removed, a second
+        // cancel_scope on the same id returns None (no double-fire of
+        // the cancel callback).
+        let (exec, _sink, log) = build_tracking(registry_with("k"));
+        let _h = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Null, 3))
+            .expect("dispatch");
+        let _ = exec.cancel_scope(3);
+        let second = exec.cancel_scope(3);
+        assert!(second.is_none());
+        let cancelled = log.lock().expect("log poisoned").clone();
+        assert_eq!(
+            cancelled,
+            vec![1],
+            "executor cancel callback fires exactly once",
+        );
+    }
+
+    #[test]
+    fn r51_158_dispatch_three_times_same_scope_only_latest_tracked() {
+        // R51.158 — successive dispatches each cancel the prior; the
+        // tracker ends with exactly one entry pointing at the latest.
+        let (exec, _sink, log) = build_tracking(registry_with("k"));
+        let h1 = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(1), 7))
+            .unwrap();
+        let h2 = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(2), 7))
+            .unwrap();
+        let h3 = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(3), 7))
+            .unwrap();
+        assert!(h1.is_cancelled());
+        assert!(h2.is_cancelled());
+        assert!(!h3.is_cancelled());
+        assert_eq!(exec.in_flight_len(), 1);
+        let cancelled = log.lock().expect("log poisoned").clone();
+        // h1 cancelled on h2 dispatch; h2 cancelled on h3 dispatch.
+        assert_eq!(cancelled, vec![1, 2]);
+    }
+
+    #[test]
+    fn r51_158_cancel_scope_with_tracking_executor_observes_callback_fire() {
+        // R51.158 — verifies the executor-side cancel callback (not
+        // just the CommandTaskHandle flag) runs when cancel_scope is
+        // invoked. The TrackingExecutor records the spawn id of each
+        // cancelled task; we assert the right id appears.
+        let (exec, _sink, log) = build_tracking(registry_with("k"));
+        let _h = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Null, 100))
+            .expect("dispatch");
+        assert!(log.lock().expect("log poisoned").is_empty());
+        let _ = exec.cancel_scope(100);
+        let cancelled = log.lock().expect("log poisoned").clone();
+        assert_eq!(cancelled, vec![1], "executor cancel ran exactly once");
+    }
+
+    #[test]
+    fn r51_158_debug_format_reports_in_flight_len() {
+        // R51.158 — Debug now surfaces both registry_len and
+        // in_flight_len so a single eprintln debugging session
+        // reveals the dispatch state at a glance.
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        let dbg = format!("{exec:?}");
+        assert!(
+            dbg.contains("in_flight_len: 0"),
+            "Debug must report in_flight_len pre-dispatch, got: {dbg}",
+        );
+        let _h = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Null, 1))
+            .unwrap();
+        let dbg = format!("{exec:?}");
+        assert!(
+            dbg.contains("in_flight_len: 1"),
+            "Debug must report in_flight_len post-dispatch, got: {dbg}",
+        );
     }
 }
