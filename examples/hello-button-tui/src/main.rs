@@ -61,8 +61,9 @@ use std::io::Stdout;
 
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::{Frame, style};
+use pinion_core::{Color, Frame, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
@@ -109,43 +110,60 @@ impl WidgetViewTui for HelloButtonTui {
     }
 
     fn view(state: Self::State, _frame: &Frame) -> Scene {
-        // R51.111 — paint a different label per state so a
-        // keystroke's effect is visually verifiable in the live
-        // terminal.
+        // R51.111 — paint a different label per state.
         // R51.112 — wrap the label in an inner `Container` carrying
         // the binding's tag so the substrate's `InputRouter`
-        // hit-tests only the button's visual surface, not the entire
-        // outer background. Mouse coords outside this inner rect
-        // resolve to no widget (the substrate's free-mode default),
-        // matching the Vello hello-button's "button-shaped click
-        // area" UX.
+        // hit-tests only the button's visual surface.
+        // R51.115 / R51.116 — apply a `BoxStyle` to the button
+        // container: state-coloured background fill + a single-cell
+        // light box-drawing border. Now the visible state matches
+        // the Vello hello-button's colour scheme on a terminal:
+        // white-ish Idle, light-grey Hover, dark Pressed, red
+        // Disabled.
+
+        // Button colour scheme — same RGB triples the Vello
+        // hello-button uses so the two backends paint with visual
+        // parity.
+        let bg_fill: Color = match state {
+            ButtonState::Idle => Color::rgb(0xff, 0xff, 0xff),
+            ButtonState::Hover => Color::rgb(0xd0, 0xd0, 0xd0),
+            ButtonState::Pressed => Color::rgb(0x50, 0x50, 0x50),
+            ButtonState::Disabled => Color::rgb(0xb0, 0x20, 0x20),
+        };
+        let border_color: Color = match state {
+            ButtonState::Pressed | ButtonState::Disabled => {
+                Color::rgb(0xe0, 0xe0, 0xe0)
+            }
+            _ => Color::rgb(0x40, 0x40, 0x40),
+        };
 
         let label_str: &'static str = match state {
-            ButtonState::Idle => "[ Click me!  ]",
-            ButtonState::Hover => "[ Hovered    ]",
-            ButtonState::Pressed => "[ PRESSED    ]",
-            ButtonState::Disabled => "[ Disabled   ]",
+            ButtonState::Idle => "Click me!",
+            ButtonState::Hover => "Hovered",
+            ButtonState::Pressed => "PRESSED",
+            ButtonState::Disabled => "Disabled",
         };
 
         let mut label = TextNode::default();
         label_str.clone_into(&mut label.content);
-        // Label rect = pixel (16..128, 32..48) = cell (2..16, 2..3).
-        // 14 cells wide, 1 row tall — covers the 14-char label.
-        label.rect = Rect::new(16, 32, 112, 16);
+        // Label sits inside the button border:
+        // button rect cell (2..18, 2..5) = pixel (16..144, 32..80);
+        // label rect cell (4..15, 3..4) = pixel (32..120, 48..64).
+        label.rect = Rect::new(32, 48, 88, 16);
         label.style = style::TextStyle::default();
 
         let mut button = ContainerNode::default();
-        // Button rect matches the label rect exactly so the
-        // InputRouter's hit-test maps clicks on the visible label
-        // cells to the SCXML statechart.
-        button.rect = Rect::new(16, 32, 112, 16);
+        // Button rect = 16 cells × 3 rows so the border has room
+        // for distinct corners + edges + interior text.
+        button.rect = Rect::new(16, 32, 128, 48);
         button.tag = Some(std::borrow::Cow::Borrowed(Self::tag()));
+        button.style = BoxStyle::filled(bg_fill).with_border(Border::new(border_color, 1));
         button.children.push(Scene::Text(label));
 
         let mut hint = TextNode::default();
         "Space/Enter/click = activate, d/e = disable/enable, Esc = quit"
             .clone_into(&mut hint.content);
-        hint.rect = Rect::new(16, 80, 512, 16);
+        hint.rect = Rect::new(16, 96, 512, 16);
         hint.style = style::TextStyle::default();
 
         let mut container = ContainerNode::default();

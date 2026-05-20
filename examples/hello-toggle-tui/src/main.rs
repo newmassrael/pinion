@@ -53,8 +53,9 @@ use std::io::Stdout;
 
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
+use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{Frame, style};
+use pinion_core::{Color, Frame, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
@@ -98,32 +99,45 @@ impl WidgetViewTui for HelloToggleTui {
 
     fn view(state: Self::State, _frame: &Frame) -> Scene {
         let (interaction, on) = state;
-        // Label encodes the (interaction, value) cross product as
-        // ASCII so the substrate's text-only paint walker
-        // (R51.110.0 cut) can render every variant. The constant
-        // 7-character width keeps the `Container.rect` hit-test
-        // stable across state transitions — the click target stays
-        // anchored at the same cells whichever variant is showing.
+        // R51.115 / R51.116 — Toggle visualised as a bordered cell
+        // pill carrying an `OFF` / `ON` label, with the background
+        // colour encoding the (interaction, value) cross product
+        // (mirrors the Vello hello-toggle's track colour scheme).
+
+        // Track colour cross product (state × value). Off column =
+        // greyscale, On column = green accent (system "active"
+        // affordance). Pressed darkens; Disabled is muted brown-grey.
+        let bg_fill: Color = match (interaction, on) {
+            (ToggleState::Idle, false) => Color::rgb(0x40, 0x40, 0x40),
+            (ToggleState::Hover, false) => Color::rgb(0x55, 0x55, 0x55),
+            (ToggleState::Pressed, false) => Color::rgb(0x30, 0x30, 0x30),
+            (ToggleState::Idle, true) => Color::rgb(0x30, 0xa0, 0x50),
+            (ToggleState::Hover, true) => Color::rgb(0x40, 0xb0, 0x60),
+            (ToggleState::Pressed, true) => Color::rgb(0x20, 0x70, 0x40),
+            (ToggleState::Disabled, _) => Color::rgb(0x4a, 0x42, 0x38),
+        };
+        let border_color = Color::rgb(0xe0, 0xe0, 0xe0);
+
         let label_str: &'static str = match (interaction, on) {
-            (ToggleState::Disabled, _) => "[ DIS ]",
-            (ToggleState::Pressed, false) => "[ off ]",
-            (ToggleState::Pressed, true) => "[ on  ]",
-            (ToggleState::Hover, false) => "[<OFF>]",
-            (ToggleState::Hover, true) => "[< ON>]",
-            (_, false) => "[ OFF ]",
-            (_, true) => "[ ON  ]",
+            (ToggleState::Disabled, _) => " DIS ",
+            (_, false) => " OFF ",
+            (_, true) => " ON  ",
         };
 
         let mut label = TextNode::default();
         label_str.clone_into(&mut label.content);
-        // Label rect = pixel (16..72, 32..48) = cell (2..9, 2..3).
-        // 7 cells wide; the inner Container hit-test matches exactly.
-        label.rect = Rect::new(16, 32, 56, 16);
+        // Label sits inside the toggle border:
+        // toggle rect cell (2..12, 2..5) = pixel (16..96, 32..80);
+        // label rect cell (3..8, 3..4) = pixel (24..64, 48..64).
+        label.rect = Rect::new(24, 48, 40, 16);
         label.style = style::TextStyle::default();
 
         let mut toggle_box = ContainerNode::default();
-        toggle_box.rect = Rect::new(16, 32, 56, 16);
+        // Toggle rect = 10 cells × 3 rows so the border has room.
+        toggle_box.rect = Rect::new(16, 32, 80, 48);
         toggle_box.tag = Some(Cow::Borrowed(Self::tag()));
+        toggle_box.style =
+            BoxStyle::filled(bg_fill).with_border(Border::new(border_color, 1));
         toggle_box.children.push(Scene::Text(label));
 
         let mut status = TextNode::default();
@@ -133,13 +147,13 @@ impl WidgetViewTui for HelloToggleTui {
             if on { "On" } else { "Off" },
         );
         status_str.clone_into(&mut status.content);
-        status.rect = Rect::new(16, 64, 400, 16);
+        status.rect = Rect::new(16, 96, 400, 16);
         status.style = style::TextStyle::default();
 
         let mut hint = TextNode::default();
         "Space/Enter/click = toggle, d/e = disable/enable, Esc = quit"
             .clone_into(&mut hint.content);
-        hint.rect = Rect::new(16, 96, 480, 16);
+        hint.rect = Rect::new(16, 128, 480, 16);
         hint.style = style::TextStyle::default();
 
         let mut container = ContainerNode::default();

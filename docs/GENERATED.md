@@ -3233,6 +3233,7 @@ router.pointer_down(&mut state_scene);
 - R51.112 — TUI mouse dispatch: cell→pixel + InputRouter wire-up + EnableMouseCapture lifecycle
 - R51.113 — hello-toggle-tui 2nd TUI binding land (substrate-incompleteness-signal evidence)
 - R51.115 — paint::to_buffer Scene::Box + ContainerNode.style mapping (border ┌─┐│└─┘ + bg fill)
+- R51.116 — hello-button-tui / hello-toggle-tui view BoxStyle 적용 (substrate evidence-first)
 
 
 
