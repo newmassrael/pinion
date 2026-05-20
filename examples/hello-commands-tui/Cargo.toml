@@ -1,0 +1,24 @@
+[package]
+name = "hello-commands-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.164 §5.23 §2 #6 TUI sibling of hello-commands — view-fn one-shot dispatch + run_with_handlers + Handler echo cycle on the cell-based render mode"
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hello-commands-tui"
+path = "src/main.rs"
+
+[dependencies]
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.156–R51.158 §5.23 — Handler / Registry / Command primitives.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+# R51.160 §5.23 — TUI `run_with_handlers` entry point + TuiRenderer.
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }

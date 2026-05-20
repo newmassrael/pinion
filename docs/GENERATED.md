@@ -1320,6 +1320,9 @@ fn main() {
 - examples/hello-commands/src/main.rs:queue_one_shot_demo_command
 - examples/hello-commands/src/main.rs:CommandsView
 - examples/hello-commands/src/main.rs:echo_handler
+- examples/hello-commands-tui/src/main.rs
+- examples/hello-commands-tui/src/main.rs:HelloCommandsTui
+- examples/hello-commands-tui/src/main.rs:queue_one_shot_demo_command
 
 
 
@@ -3476,6 +3479,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/core_shell.rs:DispatchTail
 - crates/pinion-runtime/src/core_shell.rs:StateChange
 - crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
+- examples/hello-commands-tui/src/main.rs
 
 
 
@@ -6666,6 +6670,35 @@ router.pointer_down(&mut state_scene);
 - Visual feedback (state = command_arrived) — SCXML 확장 필요, 현재는 stderr trace 만 표면
 - tokio::time::sleep 기반 async 해들러 (지연 관찰) 시연 추가
 - demo example — hello-commands-tui 관결 차베이 (TUI 쓸 실제 용례 확보)
+
+
+
+### R51.164 — §5.23 §2 #6 hello-commands-tui — TUI sibling of hello-commands, GUI/TUI dual invariant 대칭 데모
+
+**Changes**:
+- examples/hello-commands-tui/ 신규 binary (Cargo.toml + src/main.rs)
+- queue_one_shot_demo_command: Owner::cache idempotent guard (Vello sibling 동일 패턴, key 접두어 분기)
+- pinion_tui::run_with_handlers → echo Handler 워커 스레드 처리 → MpscIntentSink → shell loop try_recv → dispatch_intent
+- silent stderr (raw-mode + alternate-screen 항 철칙 준수), 트레이스 = PINION_TUI_LOG=path 옷인
+- workspace Cargo.toml members 추가 (한 줄)
+
+
+
+**Verification**:
+- cargo check -p hello-commands-tui → 0 error
+- cargo clippy -p hello-commands-tui --all-targets → 0 warning
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning
+- cargo run -p hello-commands-tui (PINION_TUI_LOG=/tmp/x.log) 시 tui: intent-feedback echo.demo.echo 관찰 가능
+
+
+
+**Impact**: §5.23, §5.41, §2
+
+
+**Carry forward**:
+- Visual feedback (SCXML 결과 어쨌 상태 전이 계석) — 현재는 log_sink 트레이스만
+- async delay (tokio::time::sleep) — 시간 상석 시연 추가
+- PINION_TUI_LOG fallback 결재 시 기본 silent (alt-screen safe)
 
 
 
