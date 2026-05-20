@@ -6843,6 +6843,726 @@
         "carry: pointer_cancel 의 RPC dual — 'scene/invoke send PointerCancel' wire 이벤트 가 이미 자동 지원됨 (parse_*_event PointerCancel arm). AI 클라이언트가 외부 cancel 시너리오를 재현 가능"
       ]
     },
+    "R51.100": {
+      "decision_summary": "R51.100 §5.38 — ListBox JSON-RPC e2e (single + multi mode invoke 검증)",
+      "changes_bullets": [
+        "crates/pinion-rpc/tests — ListBox single/multi e2e: query/dispatch/intervene/screenshot",
+        "selected.<i> per-row + multi-mode intent payload 검증"
+      ],
+      "verification_bullets": [
+        "e2e 수십 건 통과, JSON-RPC 2.0 경자 valid"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.7"
+      ],
+      "publishable_decision_summary": "R51.100 §5.38 — ListBox JSON-RPC e2e (single + multi mode invoke 검증)",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc/tests — ListBox single/multi e2e: query/dispatch/intervene/screenshot",
+        "selected.<i> per-row + multi-mode intent payload 검증"
+      ],
+      "publishable_verification_bullets": [
+        "e2e 수십 건 통과, JSON-RPC 2.0 경자 valid"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.7"
+      ]
+    },
+    "R51.101": {
+      "decision_summary": "R51.101 §5.40 — invalid_params 래퍼 제거 (R51.89.1 follow-up, dispatch.rs literal 0 도달)",
+      "changes_bullets": [
+        "crates/pinion-rpc/src/dispatch.rs — fn invalid_params(&str) wrapper 제거",
+        "30+ caller 가 RpcError::invalid_params builder 직접 호출",
+        "literal 0, builder primitive 조건 부재"
+      ],
+      "verification_bullets": [
+        "cargo test 전원 통과, R51.89/89.1 framework primitive surface complete"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.7"
+      ],
+      "publishable_decision_summary": "R51.101 §5.40 — invalid_params 래퍼 제거 (R51.89.1 follow-up, dispatch.rs literal 0 도달)",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc/src/dispatch.rs — fn invalid_params(&str) wrapper 제거",
+        "30+ caller 가 RpcError::invalid_params builder 직접 호출",
+        "literal 0, builder primitive 조건 부재"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 전원 통과, R51.89/89.1 framework primitive surface complete"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.7"
+      ]
+    },
+    "R51.102": {
+      "decision_summary": "R51.102 §5.38 — WidgetTransition::detect → Vec<Intent> (substrate API alloc discipline, data-driven SmallVec vs Vec 결정)",
+      "changes_bullets": [
+        "crates/pinion-core/src/widget_transition.rs — WidgetTransition::detect signature change",
+        "5 widget impl 액소 1 intent 대부분 이지만 multi-select 이 N=4 alloc requirement",
+        "criterion bench (R51.105) 가 alloc cost 결정 evidence"
+      ],
+      "verification_bullets": [
+        "cargo test 전원 통과",
+        "noise envelope ±5% 단년 변화 < 1%"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "publishable_decision_summary": "R51.102 §5.38 — WidgetTransition::detect → Vec<Intent> (substrate API alloc discipline, data-driven SmallVec vs Vec 결정)",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widget_transition.rs — WidgetTransition::detect signature change",
+        "5 widget impl 액소 1 intent 대부분 이지만 multi-select 이 N=4 alloc requirement",
+        "criterion bench (R51.105) 가 alloc cost 결정 evidence"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 전원 통과",
+        "noise envelope ±5% 단년 변화 < 1%"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ]
+    },
+    "R51.103": {
+      "decision_summary": "R51.103 §5.38 — type-ahead 다문자 + i18n (Unicode grapheme + UAX #29 boundary)",
+      "changes_bullets": [
+        "examples/hello-listbox — type-ahead buffer 다문자 prefix match",
+        "Latin / CJK / emoji / combining mark 증명 테스트 + manual demo"
+      ],
+      "verification_bullets": [
+        "UAX #29 grapheme boundary 정통 (unicode-segmentation)"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "publishable_decision_summary": "R51.103 §5.38 — type-ahead 다문자 + i18n (Unicode grapheme + UAX #29 boundary)",
+      "publishable_changes_bullets": [
+        "examples/hello-listbox — type-ahead buffer 다문자 prefix match",
+        "Latin / CJK / emoji / combining mark 증명 테스트 + manual demo"
+      ],
+      "publishable_verification_bullets": [
+        "UAX #29 grapheme boundary 정통 (unicode-segmentation)"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ]
+    },
+    "R51.104": {
+      "decision_summary": "R51.104 §5.38 — hello-listbox-multi 시각 demo + Cargo.lock 동반 commit (R51.104 + R51.104 caveat append 통합)",
+      "changes_bullets": [
+        "examples/hello-listbox-multi (new binary) — multi-select visual demo",
+        "Ctrl/Shift modifier extend 입력 — cell-style row selection",
+        "Cargo.lock 동반 commit + atomic store caveat append"
+      ],
+      "verification_bullets": [
+        "cargo run -p hello-listbox-multi — visual confirm",
+        "Cargo.toml workspace.members += examples/hello-listbox-multi"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "publishable_decision_summary": "R51.104 §5.38 — hello-listbox-multi 시각 demo + Cargo.lock 동반 commit (R51.104 + R51.104 caveat append 통합)",
+      "publishable_changes_bullets": [
+        "examples/hello-listbox-multi (new binary) — multi-select visual demo",
+        "Ctrl/Shift modifier extend 입력 — cell-style row selection",
+        "Cargo.lock 동반 commit + atomic store caveat append"
+      ],
+      "publishable_verification_bullets": [
+        "cargo run -p hello-listbox-multi — visual confirm",
+        "Cargo.toml workspace.members += examples/hello-listbox-multi"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ]
+    },
+    "R51.105": {
+      "decision_summary": "R51.105 §5.38 — ListBox dispatch criterion bench (data-driven Snapshot=Vec<bool> alloc cost 측정)",
+      "changes_bullets": [
+        "crates/pinion-core/benches/listbox_dispatch.rs 신규",
+        "criterion micro-bench: per-user-input alloc cost (Snapshot=Vec<bool>)",
+        "SmallVec-vs-Vec data-driven 결정 evidence (R51.102 의 문법 원자)"
+      ],
+      "verification_bullets": [
+        "cargo bench -p pinion-core --bench listbox_dispatch -- --quick",
+        "noise envelope ±5% 4+ samples"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "publishable_decision_summary": "R51.105 §5.38 — ListBox dispatch criterion bench (data-driven Snapshot=Vec<bool> alloc cost 측정)",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/benches/listbox_dispatch.rs 신규",
+        "criterion micro-bench: per-user-input alloc cost (Snapshot=Vec<bool>)",
+        "SmallVec-vs-Vec data-driven 결정 evidence (R51.102 의 문법 원자)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo bench -p pinion-core --bench listbox_dispatch -- --quick",
+        "noise envelope ±5% 4+ samples"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ]
+    },
+    "R51.106": {
+      "decision_summary": "R51.106 §5.38 — type-ahead → pinion_shell::typeahead (substrate-incompleteness-signal 2nd consumer trigger)",
+      "changes_bullets": [
+        "crates/pinion-shell/src/typeahead.rs 신설 — buffer + timeout + prefix match substrate",
+        "examples/hello-listbox 의 application-level inline 구현 청산, framework primitive 으로 승격"
+      ],
+      "verification_bullets": [
+        "substrate-incompleteness-signal 2nd consumer trigger (hello-listbox + future binding)",
+        "cargo test 전원 통과"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_decision_summary": "R51.106 §5.38 — type-ahead → pinion_shell::typeahead (substrate-incompleteness-signal 2nd consumer trigger)",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/typeahead.rs 신설 — buffer + timeout + prefix match substrate",
+        "examples/hello-listbox 의 application-level inline 구현 청산, framework primitive 으로 승격"
+      ],
+      "publishable_verification_bullets": [
+        "substrate-incompleteness-signal 2nd consumer trigger (hello-listbox + future binding)",
+        "cargo test 전원 통과"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ]
+    },
+    "R51.107": {
+      "decision_summary": "R51.107 §5.41 — TUI 백엔드 axis RFC (§2 invariant #6 GUI/TUI dual 의 cell-based render mode primitive)",
+      "changes_bullets": [
+        "docs/.atomic §5.41 신규 — TUI 백엔드 axis (Cell-based scene render target)",
+        "ratatui Backend + crossterm event source 의 sibling pipeline 정통화",
+        "pinion-shell (Vello-coupled binary path) ↔ pinion-tui (ratatui-coupled) 공존 결정"
+      ],
+      "verification_bullets": [
+        "§2 #6 invariant 관철 — one scene, two render dispatch paths",
+        "Linebender-adjacent maintainer continuity + egui/iced/bubbletea-class adoption baseline"
+      ],
+      "impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "R51.108 = substrate winit-free 분리",
+        "R51.109+ = pinion-tui crate skeleton 구축"
+      ],
+      "publishable_decision_summary": "R51.107 §5.41 — TUI 백엔드 axis RFC (§2 invariant #6 GUI/TUI dual 의 cell-based render mode primitive)",
+      "publishable_changes_bullets": [
+        "docs/.atomic §5.41 신규 — TUI 백엔드 axis (Cell-based scene render target)",
+        "ratatui Backend + crossterm event source 의 sibling pipeline 정통화",
+        "pinion-shell (Vello-coupled binary path) ↔ pinion-tui (ratatui-coupled) 공존 결정"
+      ],
+      "publishable_verification_bullets": [
+        "§2 #6 invariant 관철 — one scene, two render dispatch paths",
+        "Linebender-adjacent maintainer continuity + egui/iced/bubbletea-class adoption baseline"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.108 = substrate winit-free 분리",
+        "R51.109+ = pinion-tui crate skeleton 구축"
+      ]
+    },
+    "R51.108": {
+      "decision_summary": "R51.108 §5.41 — substrate winit-free 분리 (pinion-runtime 의 Modifiers/Touch types lift, TUI bridge 동일 shape)",
+      "changes_bullets": [
+        "crates/pinion-shell — winit-coupled types 제거, pinion-runtime 로 lift",
+        "crates/pinion-runtime — abstract Modifiers / Touch / TouchPhase / PointerId 정통",
+        "pinion-shell::winit_modifiers_to_pinion helper + future pinion-tui::crossterm_modifiers_to_pinion 평행"
+      ],
+      "verification_bullets": [
+        "cargo test 전원 통과, dep direction (pinion-runtime no winit) 관철"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.35"
+      ],
+      "publishable_decision_summary": "R51.108 §5.41 — substrate winit-free 분리 (pinion-runtime 의 Modifiers/Touch types lift, TUI bridge 동일 shape)",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell — winit-coupled types 제거, pinion-runtime 로 lift",
+        "crates/pinion-runtime — abstract Modifiers / Touch / TouchPhase / PointerId 정통",
+        "pinion-shell::winit_modifiers_to_pinion helper + future pinion-tui::crossterm_modifiers_to_pinion 평행"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 전원 통과, dep direction (pinion-runtime no winit) 관철"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.35"
+      ]
+    },
+    "R51.109.0": {
+      "decision_summary": "R51.109.0 §5.41 — pinion-tui crate skeleton (cell-based render mode primitive scaffold)",
+      "changes_bullets": [
+        "crates/pinion-tui (new crate) 신설 — Cargo.toml + lib.rs skeleton",
+        "deps: pinion-core + pinion-runtime + pinion-a11y + ratatui + crossterm + unicode-segmentation + unicode-width",
+        "no winit/wgpu transitive (관철)"
+      ],
+      "verification_bullets": [
+        "Cargo.toml workspace.members += crates/pinion-tui",
+        "cargo check --workspace = 0 errors"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.109.0 §5.41 — pinion-tui crate skeleton (cell-based render mode primitive scaffold)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui (new crate) 신설 — Cargo.toml + lib.rs skeleton",
+        "deps: pinion-core + pinion-runtime + pinion-a11y + ratatui + crossterm + unicode-segmentation + unicode-width",
+        "no winit/wgpu transitive (관철)"
+      ],
+      "publishable_verification_bullets": [
+        "Cargo.toml workspace.members += crates/pinion-tui",
+        "cargo check --workspace = 0 errors"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.109.1": {
+      "decision_summary": "R51.109.1 §5.41 — WidgetRenderer trait 분리 (pinion-core 로 lift, dep direction 정통)",
+      "changes_bullets": [
+        "crates/pinion-core/src/renderer.rs — WidgetRenderer trait lift",
+        "pinion-shell::Renderer 이 WidgetRenderer impl, pinion-tui 가 동일 surface",
+        "Vello ↔ ratatui 공존 substrate"
+      ],
+      "verification_bullets": [
+        "cargo test 전원 통과, trait location = lowest layer (pinion-core)"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.109.1 §5.41 — WidgetRenderer trait 분리 (pinion-core 로 lift, dep direction 정통)",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/renderer.rs — WidgetRenderer trait lift",
+        "pinion-shell::Renderer 이 WidgetRenderer impl, pinion-tui 가 동일 surface",
+        "Vello ↔ ratatui 공존 substrate"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 전원 통과, trait location = lowest layer (pinion-core)"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.109.2": {
+      "decision_summary": "R51.109.2 §5.41 — WidgetRenderer lift + TuiRenderer<B> (production CrosstermBackend / test TestBackend monomorph)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/renderer.rs — TuiRenderer<B: ratatui::backend::Backend>",
+        "production = CrosstermBackend<Stdout>, test = TestBackend (헤드리스 검증 인프라)",
+        "WidgetRenderer impl — width(), height() returns u16 cells"
+      ],
+      "verification_bullets": [
+        "cargo test 전원 통과, monomorphization 검증"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.109.2 §5.41 — WidgetRenderer lift + TuiRenderer<B> (production CrosstermBackend / test TestBackend monomorph)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/renderer.rs — TuiRenderer<B: ratatui::backend::Backend>",
+        "production = CrosstermBackend<Stdout>, test = TestBackend (헤드리스 검증 인프라)",
+        "WidgetRenderer impl — width(), height() returns u16 cells"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 전원 통과, monomorphization 검증"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.110.0": {
+      "decision_summary": "R51.110.0 §5.41 — Scene→Buffer text-first 매핑 (UAX #11/#29 grapheme + East Asian Width)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/paint.rs — Scene::Container/Text → ratatui::buffer::Buffer cells",
+        "unicode-segmentation grapheme cluster iter + unicode-width East Asian Width",
+        "wide grapheme (CJK / fullwidth Latin / some emoji) 2 cells, narrow 1 cell"
+      ],
+      "verification_bullets": [
+        "CJK ‘한글’ + emoji + combining mark 재현 valid",
+        "cargo test 수십 건 통과"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.110.0 §5.41 — Scene→Buffer text-first 매핑 (UAX #11/#29 grapheme + East Asian Width)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/paint.rs — Scene::Container/Text → ratatui::buffer::Buffer cells",
+        "unicode-segmentation grapheme cluster iter + unicode-width East Asian Width",
+        "wide grapheme (CJK / fullwidth Latin / some emoji) 2 cells, narrow 1 cell"
+      ],
+      "publishable_verification_bullets": [
+        "CJK ‘한글’ + emoji + combining mark 재현 valid",
+        "cargo test 수십 건 통과"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.110.1": {
+      "decision_summary": "R51.110.1 §5.41 — WidgetViewTui trait + render_one_frame (TUI binding surface, WidgetView 의 alternate)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/widget.rs — WidgetViewTui<V: WidgetCore>: Renderer + initial_size",
+        "render_one_frame — single Scene paint cycle 의 commit",
+        "WidgetViewTui = WidgetView 의 cell-native alternate trait"
+      ],
+      "verification_bullets": [
+        "TUI binding surface 정통 — trait substrate-incompleteness trigger 관용"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.110.1 §5.41 — WidgetViewTui trait + render_one_frame (TUI binding surface, WidgetView 의 alternate)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/widget.rs — WidgetViewTui<V: WidgetCore>: Renderer + initial_size",
+        "render_one_frame — single Scene paint cycle 의 commit",
+        "WidgetViewTui = WidgetView 의 cell-native alternate trait"
+      ],
+      "publishable_verification_bullets": [
+        "TUI binding surface 정통 — trait substrate-incompleteness trigger 관용"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.110.2": {
+      "decision_summary": "R51.110.2 §5.41 — run::<V> + hello-button-tui first dogfood (TUI binding first land, RAII TerminalGuard panic-safe)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/run.rs — run::<V>() entry, TerminalGuard Drop = raw mode off + leave alt screen + disable mouse",
+        "examples/hello-button-tui (new binary) — first dogfood example",
+        "Cargo.toml workspace.members += examples/hello-button-tui"
+      ],
+      "verification_bullets": [
+        "cargo run -p hello-button-tui — visual confirm",
+        "TerminalGuard panic-safe = panic 이도 terminal 정상 복구"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.110.2 §5.41 — run::<V> + hello-button-tui first dogfood (TUI binding first land, RAII TerminalGuard panic-safe)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/run.rs — run::<V>() entry, TerminalGuard Drop = raw mode off + leave alt screen + disable mouse",
+        "examples/hello-button-tui (new binary) — first dogfood example",
+        "Cargo.toml workspace.members += examples/hello-button-tui"
+      ],
+      "publishable_verification_bullets": [
+        "cargo run -p hello-button-tui — visual confirm",
+        "TerminalGuard panic-safe = panic 이도 terminal 정상 복구"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.111": {
+      "decision_summary": "R51.111 §5.41 — TUI input dispatch + SCXML wire-up (keyboard event → WidgetCore::apply_key → SCXML transition)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/run.rs — crossterm event loop poll timeout + KeyEvent → apply_key",
+        "abstract Modifiers vocabulary (pinion-runtime) substrate 사용",
+        "walk_scene_and_drain intent drain primitive 공유 (pinion-shell 과 동일)"
+      ],
+      "verification_bullets": [
+        "cargo test 수십 건, SCXML transition 관측 valid"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.35"
+      ],
+      "publishable_decision_summary": "R51.111 §5.41 — TUI input dispatch + SCXML wire-up (keyboard event → WidgetCore::apply_key → SCXML transition)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/run.rs — crossterm event loop poll timeout + KeyEvent → apply_key",
+        "abstract Modifiers vocabulary (pinion-runtime) substrate 사용",
+        "walk_scene_and_drain intent drain primitive 공유 (pinion-shell 과 동일)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 수십 건, SCXML transition 관측 valid"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.35"
+      ]
+    },
+    "R51.112": {
+      "decision_summary": "R51.112 §5.41 — TUI mouse dispatch + InputRouter wire-up (crossterm MouseEvent → cell→pixel coord → InputRouter)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/run.rs — crossterm MouseEvent dispatch 라우팅",
+        "PIXEL_PER_CELL 8×16 placeholder 공유, cell-native coord axis 캐리",
+        "cursor_moved / pointer_down / pointer_up / pointer_cancel 재사용 (pinion-runtime API)"
+      ],
+      "verification_bullets": [
+        "cargo test 수십 건",
+        "TUI hit-test resolve 검증"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "PIXEL_PER_CELL 8×16 placeholder — 2nd TUI binding mismatch 시 cell-native axis 평가"
+      ],
+      "publishable_decision_summary": "R51.112 §5.41 — TUI mouse dispatch + InputRouter wire-up (crossterm MouseEvent → cell→pixel coord → InputRouter)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/run.rs — crossterm MouseEvent dispatch 라우팅",
+        "PIXEL_PER_CELL 8×16 placeholder 공유, cell-native coord axis 캐리",
+        "cursor_moved / pointer_down / pointer_up / pointer_cancel 재사용 (pinion-runtime API)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 수십 건",
+        "TUI hit-test resolve 검증"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "PIXEL_PER_CELL 8×16 placeholder — 2nd TUI binding mismatch 시 cell-native axis 평가"
+      ]
+    },
+    "R51.113": {
+      "decision_summary": "R51.113 §5.41 — hello-toggle-tui 2nd TUI binding land (TUI binding pattern lock-in)",
+      "changes_bullets": [
+        "examples/hello-toggle-tui (new binary) — 2nd TUI binding, ToggleView WidgetViewTui impl",
+        "Cargo.toml workspace.members += examples/hello-toggle-tui"
+      ],
+      "verification_bullets": [
+        "cargo run -p hello-toggle-tui — visual confirm",
+        "TUI binding API 고정 evidence (substrate-incompleteness-signal trigger 회피)"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.113 §5.41 — hello-toggle-tui 2nd TUI binding land (TUI binding pattern lock-in)",
+      "publishable_changes_bullets": [
+        "examples/hello-toggle-tui (new binary) — 2nd TUI binding, ToggleView WidgetViewTui impl",
+        "Cargo.toml workspace.members += examples/hello-toggle-tui"
+      ],
+      "publishable_verification_bullets": [
+        "cargo run -p hello-toggle-tui — visual confirm",
+        "TUI binding API 고정 evidence (substrate-incompleteness-signal trigger 회피)"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.114": {
+      "decision_summary": "R51.114 §5.38 — ARIA activate helper DRY 청산 (apply_aria_activate widget helper, Button/Switch/Toggle Space single sweep)",
+      "changes_bullets": [
+        "crates/pinion-core/src/widgets/aria.rs — apply_aria_activate(scene, focused, key, tag) helper",
+        "Button + Switch + ToggleButton apply_key 가 해당 helper 호출 으로 일원화",
+        "Checkbox/Radio/Slider 은 별도 spec (Space only / arrow / arrow+Home+End+PgUp+PgDn) 이므로 제외"
+      ],
+      "verification_bullets": [
+        "cargo test 전원 통과, WAI-ARIA APG button activation pattern 관철"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_decision_summary": "R51.114 §5.38 — ARIA activate helper DRY 청산 (apply_aria_activate widget helper, Button/Switch/Toggle Space single sweep)",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widgets/aria.rs — apply_aria_activate(scene, focused, key, tag) helper",
+        "Button + Switch + ToggleButton apply_key 가 해당 helper 호출 으로 일원화",
+        "Checkbox/Radio/Slider 은 별도 spec (Space only / arrow / arrow+Home+End+PgUp+PgDn) 이므로 제외"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 전원 통과, WAI-ARIA APG button activation pattern 관철"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ]
+    },
+    "R51.115": {
+      "decision_summary": "R51.115 §5.41 — Scene::Box + ContainerNode style paint (TUI border + bg, BoxStyle 의 cell-unit 분기)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/paint.rs — Scene::Container.style (BoxStyle) → ratatui buffer cells",
+        "Box drawing chars U+2500..U+2518 — doc string 에만 Unicode literal (Rust source 는 \\u{XXXX} escape)",
+        "corner_radius / placement / width = TUI 의미 없음 (cell unit, sub-cell 0) 명시"
+      ],
+      "verification_bullets": [
+        "cargo test 수십 건, visual confirm box border rendering"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "Box paint corner_radius/placement TUI cleanup — cell-unit 의미 분기 명시 cosmetic"
+      ],
+      "publishable_decision_summary": "R51.115 §5.41 — Scene::Box + ContainerNode style paint (TUI border + bg, BoxStyle 의 cell-unit 분기)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/paint.rs — Scene::Container.style (BoxStyle) → ratatui buffer cells",
+        "Box drawing chars U+2500..U+2518 — doc string 에만 Unicode literal (Rust source 는 \\u{XXXX} escape)",
+        "corner_radius / placement / width = TUI 의미 없음 (cell unit, sub-cell 0) 명시"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 수십 건, visual confirm box border rendering"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Box paint corner_radius/placement TUI cleanup — cell-unit 의미 분기 명시 cosmetic"
+      ]
+    },
+    "R51.116": {
+      "decision_summary": "R51.116 §5.41 — TUI button/toggle view BoxStyle 적용 (hello-button-tui + hello-toggle-tui visual polish)",
+      "changes_bullets": [
+        "examples/hello-button-tui + hello-toggle-tui view fn — BoxStyle (border + bg) 적용",
+        "R51.115 paint primitive 의 2nd consumer evidence"
+      ],
+      "verification_bullets": [
+        "cargo run -p hello-button-tui / hello-toggle-tui — visual confirm"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.116 §5.41 — TUI button/toggle view BoxStyle 적용 (hello-button-tui + hello-toggle-tui visual polish)",
+      "publishable_changes_bullets": [
+        "examples/hello-button-tui + hello-toggle-tui view fn — BoxStyle (border + bg) 적용",
+        "R51.115 paint primitive 의 2nd consumer evidence"
+      ],
+      "publishable_verification_bullets": [
+        "cargo run -p hello-button-tui / hello-toggle-tui — visual confirm"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.117": {
+      "decision_summary": "R51.117 §5.41 — ShellCoreTui substrate extraction (TUI dispatch substrate first-cut, pinion-shell::ShellCore parity)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/substrate.rs 신규 — ShellCoreTui<V> dispatch substrate",
+        "scene + cached_state + router + intent_queue + _phantom 5 fields",
+        "dispatch_key / cursor_moved / pointer_down / pointer_up / refresh_state two-call 패턴"
+      ],
+      "verification_bullets": [
+        "cargo test 수십 건 통과",
+        "first-cut surface — R51.122-R51.124 4-round lift 으로 이행 예정 (CoreShell composition substrate)"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R51.122-R51.124 = CoreShell substrate lift cascade (strategic 부채 #1)",
+        "refresh_state two-call 패턴 = R51.124 에서 auto-tail single-call 으로 청산 예정"
+      ],
+      "publishable_decision_summary": "R51.117 §5.41 — ShellCoreTui substrate extraction (TUI dispatch substrate first-cut, pinion-shell::ShellCore parity)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/substrate.rs 신규 — ShellCoreTui<V> dispatch substrate",
+        "scene + cached_state + router + intent_queue + _phantom 5 fields",
+        "dispatch_key / cursor_moved / pointer_down / pointer_up / refresh_state two-call 패턴"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 수십 건 통과",
+        "first-cut surface — R51.122-R51.124 4-round lift 으로 이행 예정 (CoreShell composition substrate)"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.122-R51.124 = CoreShell substrate lift cascade (strategic 부채 #1)",
+        "refresh_state two-call 패턴 = R51.124 에서 auto-tail single-call 으로 청산 예정"
+      ]
+    },
+    "R51.118": {
+      "decision_summary": "R51.118 §5.41 — TUI a11y substrate first cut (pinion-native AccessNode/AriaRole/AccessState/AccessValue + WidgetViewTui::access_node)",
+      "changes_bullets": [
+        "crates/pinion-tui 의 WidgetViewTui trait + access_node default vec![] (TUI a11y 첫 cut)",
+        "pinion-a11y dep direct 승격 — AccessNode 을 구체 Vec<AccessNode> 로 노출",
+        "AT integration carry-forward — PTY screen reader path 또는 미래 AccessKit-TUI"
+      ],
+      "verification_bullets": [
+        "cargo test 수십 건, dep direction (pinion-tui → pinion-a11y, no transitive winit) 관철"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "AT integration (PTY 또는 AccessKit-TUI) — 새 axis carry"
+      ],
+      "publishable_decision_summary": "R51.118 §5.41 — TUI a11y substrate first cut (pinion-native AccessNode/AriaRole/AccessState/AccessValue + WidgetViewTui::access_node)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui 의 WidgetViewTui trait + access_node default vec![] (TUI a11y 첫 cut)",
+        "pinion-a11y dep direct 승격 — AccessNode 을 구체 Vec<AccessNode> 로 노출",
+        "AT integration carry-forward — PTY screen reader path 또는 미래 AccessKit-TUI"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 수십 건, dep direction (pinion-tui → pinion-a11y, no transitive winit) 관철"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "AT integration (PTY 또는 AccessKit-TUI) — 새 axis carry"
+      ]
+    },
+    "R51.119": {
+      "decision_summary": "R51.119 §5.41 — atomic stale citation cleanup (R51.117 substrate lift 후 후속 audit, refactor 후 즉시 cleanup lesson)",
+      "changes_bullets": [
+        "docs/.atomic §5.41 stale citation 제거 — ShellCoreTui first-cut 구조 관련",
+        "lesson: refactor + atomic cleanup same-round (R51.124 + R51.121.1 이후 동일 패턴 적용)"
+      ],
+      "verification_bullets": [
+        "mnemosyne validate_workspace = T1=0 유지, atomic audit accuracy 회복"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "publishable_decision_summary": "R51.119 §5.41 — atomic stale citation cleanup (R51.117 substrate lift 후 후속 audit, refactor 후 즉시 cleanup lesson)",
+      "publishable_changes_bullets": [
+        "docs/.atomic §5.41 stale citation 제거 — ShellCoreTui first-cut 구조 관련",
+        "lesson: refactor + atomic cleanup same-round (R51.124 + R51.121.1 이후 동일 패턴 적용)"
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne validate_workspace = T1=0 유지, atomic audit accuracy 회복"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ]
+    },
+    "R51.120": {
+      "decision_summary": "R51.120 §5.41 — substrate stderr → optional file sink (alternate screen 보호, PINION_TUI_LOG opt-in)",
+      "changes_bullets": [
+        "crates/pinion-tui/src/substrate.rs — log_sink: Option<Box<dyn Write>> (silent default 정통)",
+        "PINION_TUI_LOG=path env var opt-in — file sink 만 개방 (사용자 visual report 계기)",
+        "lesson: alternate screen + stderr write = ratatui cell cache unsync, TUI shell 의 eprintln!/println! under raw mode + alternate screen 금지"
+      ],
+      "verification_bullets": [
+        "cargo run -p hello-button-tui — alternate screen cell overwrite 관찰 0",
+        "PINION_TUI_LOG=/tmp/tui.log 세션 로 디버그 valid"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "lesson — alternate screen + stderr write = anti-pattern, silent default 정통 (file sink 만)"
+      ],
+      "publishable_decision_summary": "R51.120 §5.41 — substrate stderr → optional file sink (alternate screen 보호, PINION_TUI_LOG opt-in)",
+      "publishable_changes_bullets": [
+        "crates/pinion-tui/src/substrate.rs — log_sink: Option<Box<dyn Write>> (silent default 정통)",
+        "PINION_TUI_LOG=path env var opt-in — file sink 만 개방 (사용자 visual report 계기)",
+        "lesson: alternate screen + stderr write = ratatui cell cache unsync, TUI shell 의 eprintln!/println! under raw mode + alternate screen 금지"
+      ],
+      "publishable_verification_bullets": [
+        "cargo run -p hello-button-tui — alternate screen cell overwrite 관찰 0",
+        "PINION_TUI_LOG=/tmp/tui.log 세션 로 디버그 valid"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "lesson — alternate screen + stderr write = anti-pattern, silent default 정통 (file sink 만)"
+      ]
+    },
     "R51.121": {
       "decision_summary": "R51.121 §5.41 — WidgetCore + WidgetA11y supertrait split: WidgetView/WidgetViewTui 가 Renderer + initial_size 만 남김 (ISP 정통)",
       "changes_bullets": [
@@ -9921,6 +10641,536 @@
         "future R5x.y — RadioGroup arrow keys 가 selected commit 없이 focused_index 만 이동 하는 listbox-style roving 옵션 (현재 radio-group 관례대로 immediate activate 유지)",
         "future R5x.y — listbox / menu / treeview / tab composite widget 가 같은 focused_index 패턴 공유 — RadioGroup 의 설계가 제일 설계 구독",
         "R51.84 carry 잠재: with_aria_label rename / handle_focus_traverse early return — 재검토"
+      ]
+    },
+    "R51.88": {
+      "decision_summary": "R51.88 §5.40 — AccessFocus::with_active_descendant builder 제거 (R51.84 회수, strict YAGNI 일관)",
+      "changes_bullets": [
+        "crates/pinion-a11y/src/focus.rs — with_active_descendant builder 제거, composite 가 필드 직접 구성",
+        "doc-comment ignore 예제 동반 제거, R51.84 회귀 테스트 R51.88 대체",
+        "caller 0 + R51.86 strict YAGNI 일관 — 2-field struct actual axis 는 atomic + composite shorthand cover"
+      ],
+      "verification_bullets": [
+        "cargo test 기존 몀테스트 필드 직접 구성으로 재작성 + 전원 통과",
+        "future widget 의 conditional active descendant 필요 시 additive 재도입"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "chain delegate 명시 제거 — future builder 도입 시 우선 evidence 필요"
+      ],
+      "publishable_decision_summary": "R51.88 §5.40 — AccessFocus::with_active_descendant builder 제거 (R51.84 회수, strict YAGNI 일관)",
+      "publishable_changes_bullets": [
+        "crates/pinion-a11y/src/focus.rs — with_active_descendant builder 제거, composite 가 필드 직접 구성",
+        "doc-comment ignore 예제 동반 제거, R51.84 회귀 테스트 R51.88 대체",
+        "caller 0 + R51.86 strict YAGNI 일관 — 2-field struct actual axis 는 atomic + composite shorthand cover"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 기존 몀테스트 필드 직접 구성으로 재작성 + 전원 통과",
+        "future widget 의 conditional active descendant 필요 시 additive 재도입"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "chain delegate 명시 제거 — future builder 도입 시 우선 evidence 필요"
+      ]
+    },
+    "R51.89": {
+      "decision_summary": "R51.89 §5.40 — RpcError builder API + focus DRY 회수 (R51.85 framework 우회 정정)",
+      "changes_bullets": [
+        "crates/pinion-rpc/src/dispatch.rs — RpcError::new(code, message) base + with_data(Value) / with_data_string chain + invalid_params/internal_error convenience",
+        "crates/pinion-rpc/src/focus.rs — err_invalid_params + err_internal helper 2 개 제거, 잔존 3 helper 는 builder 경유 (literal 0)",
+        "focus 2 helper 는 RpcError builder 부재 의 우회 — builder land 후 안정 대체"
+      ],
+      "verification_bullets": [
+        "dispatch 49 literal sweep 은 R51.89.1 carry (evidence-first)",
+        "cargo test 전원 통과"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.89.1 = dispatch.rs 14 site full sweep (R51.89 follow-up)"
+      ],
+      "publishable_decision_summary": "R51.89 §5.40 — RpcError builder API + focus DRY 회수 (R51.85 framework 우회 정정)",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc/src/dispatch.rs — RpcError::new(code, message) base + with_data(Value) / with_data_string chain + invalid_params/internal_error convenience",
+        "crates/pinion-rpc/src/focus.rs — err_invalid_params + err_internal helper 2 개 제거, 잔존 3 helper 는 builder 경유 (literal 0)",
+        "focus 2 helper 는 RpcError builder 부재 의 우회 — builder land 후 안정 대체"
+      ],
+      "publishable_verification_bullets": [
+        "dispatch 49 literal sweep 은 R51.89.1 carry (evidence-first)",
+        "cargo test 전원 통과"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.89.1 = dispatch.rs 14 site full sweep (R51.89 follow-up)"
+      ]
+    },
+    "R51.89.1": {
+      "decision_summary": "R51.89.1 §5.40 — dispatch.rs RpcError 14 site full sweep (R51.89 builder primitive full propagation)",
+      "changes_bullets": [
+        "14 _error_to_rpc 함수 RpcError::invalid_params(variant) 통일",
+        "apply_error_to_rpc = new(-32602).with_data(Object) builder, font_error_to_rpc = new(code, message).with_data_string(variant), serialize_outcome = internal_error",
+        "parse_typed_proposal UnknownProposalKind arm builder, response_result_none_is_elided_on_serialize 회귀 builder",
+        "dispatch.rs::invalid_params(&str) wrapper 30+ caller 호환 쟠존 (RpcError::invalid_params delegate 만)"
+      ],
+      "verification_bullets": [
+        "struct-literal RpcError 구성 0 (정의 + impl + fn return type 제외)",
+        "cargo test = 1527 pass 불변"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.7"
+      ],
+      "publishable_decision_summary": "R51.89.1 §5.40 — dispatch.rs RpcError 14 site full sweep (R51.89 builder primitive full propagation)",
+      "publishable_changes_bullets": [
+        "14 _error_to_rpc 함수 RpcError::invalid_params(variant) 통일",
+        "apply_error_to_rpc = new(-32602).with_data(Object) builder, font_error_to_rpc = new(code, message).with_data_string(variant), serialize_outcome = internal_error",
+        "parse_typed_proposal UnknownProposalKind arm builder, response_result_none_is_elided_on_serialize 회귀 builder",
+        "dispatch.rs::invalid_params(&str) wrapper 30+ caller 호환 쟠존 (RpcError::invalid_params delegate 만)"
+      ],
+      "publishable_verification_bullets": [
+        "struct-literal RpcError 구성 0 (정의 + impl + fn return type 제외)",
+        "cargo test = 1527 pass 불변"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.7"
+      ]
+    },
+    "R51.90": {
+      "decision_summary": "R51.90 §5.40 — RadioGroup activate edge focused sync (WAI-ARIA APG roving-tabindex first-class)",
+      "changes_bullets": [
+        "crates/pinion-core/src/widgets/radio_group.rs send 의 !was && now branch 에 self.focused = Some(index)",
+        "focused_index/set_focused_index doc 에 R51.90 sync 명시, r51_87 diverge 주석 R51.90 collapse 갱신",
+        "R51.90 7 신규 테스트 추가"
+      ],
+      "verification_bullets": [
+        "activate path 가 send 경유 — 단일 사이트 정사, AT-only Focus 분기 보존",
+        "cargo test 전원 통과"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "publishable_decision_summary": "R51.90 §5.40 — RadioGroup activate edge focused sync (WAI-ARIA APG roving-tabindex first-class)",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widgets/radio_group.rs send 의 !was && now branch 에 self.focused = Some(index)",
+        "focused_index/set_focused_index doc 에 R51.90 sync 명시, r51_87 diverge 주석 R51.90 collapse 갱신",
+        "R51.90 7 신규 테스트 추가"
+      ],
+      "publishable_verification_bullets": [
+        "activate path 가 send 경유 — 단일 사이트 정사, AT-only Focus 분기 보존",
+        "cargo test 전원 통과"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ]
+    },
+    "R51.91": {
+      "decision_summary": "R51.91 §5.40 — InterveneError::OutOfRange variant (R51.87 TypeMismatch 차용 정정)",
+      "changes_bullets": [
+        "crates/pinion-core/src/external.rs — InterveneError::OutOfRange variant 신설 (additive), TypeMismatch vs OutOfRange 도메인 경계 doc",
+        "crates/pinion-core/src/widgets/radio_group.rs — resolve_index_intervene helper 추출, selected/focused_index OutOfRange 발사",
+        "기존 2 회귀 테스트 OutOfRange 검증 + R51.91 신규 4 테스트"
+      ],
+      "verification_bullets": [
+        "enum 은 #[non_exhaustive] 이므로 breaking change 0",
+        "cargo test 전원 통과"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.20"
+      ],
+      "carry_forward_bullets": [
+        "composite 신설 시 동일 패턴 공유 (RadioGroup 외 widget)"
+      ],
+      "publishable_decision_summary": "R51.91 §5.40 — InterveneError::OutOfRange variant (R51.87 TypeMismatch 차용 정정)",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/external.rs — InterveneError::OutOfRange variant 신설 (additive), TypeMismatch vs OutOfRange 도메인 경계 doc",
+        "crates/pinion-core/src/widgets/radio_group.rs — resolve_index_intervene helper 추출, selected/focused_index OutOfRange 발사",
+        "기존 2 회귀 테스트 OutOfRange 검증 + R51.91 신규 4 테스트"
+      ],
+      "publishable_verification_bullets": [
+        "enum 은 #[non_exhaustive] 이므로 breaking change 0",
+        "cargo test 전원 통과"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.20"
+      ],
+      "publishable_carry_forward_bullets": [
+        "composite 신설 시 동일 패턴 공유 (RadioGroup 외 widget)"
+      ]
+    },
+    "R51.92": {
+      "decision_summary": "R51.92 §5.40 — pinion-shell substrate 모듈 분할 (lib.rs 990 → 470 LOC, R51.83 visibility substantive)",
+      "changes_bullets": [
+        "crates/pinion-shell/src/substrate.rs 신규 (~700 LOC) — ShellCore + AccessEmitDecision + impl",
+        "crates/pinion-shell/src/lib.rs — 동일 콘텐트 제거 + mod substrate + pub use re-export, imports 재조정",
+        "AppShell + ApplicationHandler + run + helpers 는 lib.rs 잔존 (R51.92.1 follow-up)"
+      ],
+      "verification_bullets": [
+        "cargo test = 1527 pass 불변, atomic 15 binding 경로 이전",
+        "ShellCore 14 필드 substrate 내부 private, AppShell 은 pub accessor + dispatch 만 호출"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R51.92.1 = app.rs 신규 3-모듈 textbook 완성 follow-up"
+      ],
+      "publishable_decision_summary": "R51.92 §5.40 — pinion-shell substrate 모듈 분할 (lib.rs 990 → 470 LOC, R51.83 visibility substantive)",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/substrate.rs 신규 (~700 LOC) — ShellCore + AccessEmitDecision + impl",
+        "crates/pinion-shell/src/lib.rs — 동일 콘텐트 제거 + mod substrate + pub use re-export, imports 재조정",
+        "AppShell + ApplicationHandler + run + helpers 는 lib.rs 잔존 (R51.92.1 follow-up)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test = 1527 pass 불변, atomic 15 binding 경로 이전",
+        "ShellCore 14 필드 substrate 내부 private, AppShell 은 pub accessor + dispatch 만 호출"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.92.1 = app.rs 신규 3-모듈 textbook 완성 follow-up"
+      ]
+    },
+    "R51.92.1": {
+      "decision_summary": "R51.92.1 §5.40 — app.rs 모듈 분할 textbook 완성 (3-모듈 substrate + app + lib)",
+      "changes_bullets": [
+        "crates/pinion-shell/src/app.rs 신규 (~480 LOC) — AppShell + impls + helpers + run",
+        "crates/pinion-shell/src/lib.rs — 동일 콘텐트 제거 + mod app + pub use, imports 축소",
+        "AppShell 필드 + core: ShellCore 참조 전원 app.rs 내부 진정 private"
+      ],
+      "verification_bullets": [
+        "cargo test = 1527 pass 불변",
+        "lib.rs 990 → 470 LOC (R51.92 + R51.92.1 누적)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.16"
+      ],
+      "publishable_decision_summary": "R51.92.1 §5.40 — app.rs 모듈 분할 textbook 완성 (3-모듈 substrate + app + lib)",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/app.rs 신규 (~480 LOC) — AppShell + impls + helpers + run",
+        "crates/pinion-shell/src/lib.rs — 동일 콘텐트 제거 + mod app + pub use, imports 축소",
+        "AppShell 필드 + core: ShellCore 참조 전원 app.rs 내부 진정 private"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test = 1527 pass 불변",
+        "lib.rs 990 → 470 LOC (R51.92 + R51.92.1 누적)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.16"
+      ]
+    },
+    "R51.93": {
+      "decision_summary": "R51.93 §5.35 — TouchPhase::Cancelled fix (OS-revoked touch 의 click/toggle/checked/selected/committed intent 발사 차단)",
+      "changes_bullets": [
+        "standard_button.sce-template + slider.scxml — pressed/hover/dragging pointer_cancel → idle",
+        "5 widget parse_*_event 가 PointerCancel 매핑, InputRouter::pointer_cancel(pid, scene) 신설, substrate handle_touch Cancelled 가 pointer_cancel 경유",
+        "13 R51.93 회귀 테스트"
+      ],
+      "verification_bullets": [
+        "cargo test = 1540 pass",
+        "4-finger 제스처/전화/알림/앤스위쳐/엣지 OS revoke = click intent 0"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.93.1 = composite (RadioGroup) cancel 회귀 테스트",
+        "R51.93.2 = Slider value sidecar cancel invariant 회귀 테스트"
+      ],
+      "publishable_decision_summary": "R51.93 §5.35 — TouchPhase::Cancelled fix (OS-revoked touch 의 click/toggle/checked/selected/committed intent 발사 차단)",
+      "publishable_changes_bullets": [
+        "standard_button.sce-template + slider.scxml — pressed/hover/dragging pointer_cancel → idle",
+        "5 widget parse_*_event 가 PointerCancel 매핑, InputRouter::pointer_cancel(pid, scene) 신설, substrate handle_touch Cancelled 가 pointer_cancel 경유",
+        "13 R51.93 회귀 테스트"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test = 1540 pass",
+        "4-finger 제스처/전화/알림/앤스위쳐/엣지 OS revoke = click intent 0"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.93.1 = composite (RadioGroup) cancel 회귀 테스트",
+        "R51.93.2 = Slider value sidecar cancel invariant 회귀 테스트"
+      ]
+    },
+    "R51.93.1": {
+      "decision_summary": "R51.93.1 §5.40 — RadioGroup 합성 cancel 회귀 테스트 (R51.93 template 수정 composite 전파 lock-in)",
+      "changes_bullets": [
+        "r51_93_composite_pointer_cancel_does_not_select_row 신규 테스트",
+        "0:Enter → 0:Down → 0:Cancel wire-format 시 selected/focused 불변 검증",
+        "‘selected’ intent 미발사 검증"
+      ],
+      "verification_bullets": [
+        "cargo test = 1541 pass"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.35"
+      ],
+      "publishable_decision_summary": "R51.93.1 §5.40 — RadioGroup 합성 cancel 회귀 테스트 (R51.93 template 수정 composite 전파 lock-in)",
+      "publishable_changes_bullets": [
+        "r51_93_composite_pointer_cancel_does_not_select_row 신규 테스트",
+        "0:Enter → 0:Down → 0:Cancel wire-format 시 selected/focused 불변 검증",
+        "‘selected’ intent 미발사 검증"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test = 1541 pass"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.35"
+      ]
+    },
+    "R51.93.2": {
+      "decision_summary": "R51.93.2 §5.35 — Slider value sidecar cancel invariant (cancel은 commit 만 억제, value 보존)",
+      "changes_bullets": [
+        "r51_93 slider 테스트: PointerCancel 후 value 0.5 assert",
+        "문서화된 spec lock: cancel 은 commit 만 억제 (value 보존)"
+      ],
+      "verification_bullets": [
+        "cargo test = 1542 pass"
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "publishable_decision_summary": "R51.93.2 §5.35 — Slider value sidecar cancel invariant (cancel은 commit 만 억제, value 보존)",
+      "publishable_changes_bullets": [
+        "r51_93 slider 테스트: PointerCancel 후 value 0.5 assert",
+        "문서화된 spec lock: cancel 은 commit 만 억제 (value 보존)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test = 1542 pass"
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ]
+    },
+    "R51.94": {
+      "decision_summary": "R51.94 §5.40 — tag_to_node_id debug_assert injective (NodeId 충돌 debug-build 즉시 검출)",
+      "changes_bullets": [
+        "crates/pinion-a11y/src/access_tree.rs build 가 debug_assertions cfg 에서 NodeId 중복 검증",
+        "ROOT_NODE_ID + 각 tag 의 NodeId HashSet insert",
+        "충돌 시 panic 이 tag 명 + 해소 가이드"
+      ],
+      "verification_bullets": [
+        "확률 ≈ N²/2^64 사실상 0, release cost 0",
+        "cargo test = 1541 pass"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "publishable_decision_summary": "R51.94 §5.40 — tag_to_node_id debug_assert injective (NodeId 충돌 debug-build 즉시 검출)",
+      "publishable_changes_bullets": [
+        "crates/pinion-a11y/src/access_tree.rs build 가 debug_assertions cfg 에서 NodeId 중복 검증",
+        "ROOT_NODE_ID + 각 tag 의 NodeId HashSet insert",
+        "충돌 시 panic 이 tag 명 + 해소 가이드"
+      ],
+      "publishable_verification_bullets": [
+        "확률 ≈ N²/2^64 사실상 0, release cost 0",
+        "cargo test = 1541 pass"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ]
+    },
+    "R51.95": {
+      "decision_summary": "R51.95 §5.38 — ListBoxItem widget primitive (ListBox composite 의 item primitive, WAI-ARIA Listbox Option role)",
+      "changes_bullets": [
+        "crates/pinion-core/src/widgets/listbox_item.scxml + listbox_item.rs — ListBoxItem + ListBoxItemExternal",
+        "standard_button template + listbox_item.activate event",
+        "15 R51.95 회귀 테스트 (R51.93 cancel + keyboard activate 포함)",
+        "mod.rs + build.rs 등록"
+      ],
+      "verification_bullets": [
+        "cargo test = 1556 pass",
+        "Radio 패턴 평행, WAI-ARIA Listbox Option role 노출 예정"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R51.96 = ListBox composite (single-select) follow-up"
+      ],
+      "publishable_decision_summary": "R51.95 §5.38 — ListBoxItem widget primitive (ListBox composite 의 item primitive, WAI-ARIA Listbox Option role)",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widgets/listbox_item.scxml + listbox_item.rs — ListBoxItem + ListBoxItemExternal",
+        "standard_button template + listbox_item.activate event",
+        "15 R51.95 회귀 테스트 (R51.93 cancel + keyboard activate 포함)",
+        "mod.rs + build.rs 등록"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test = 1556 pass",
+        "Radio 패턴 평행, WAI-ARIA Listbox Option role 노출 예정"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.96 = ListBox composite (single-select) follow-up"
+      ]
+    },
+    "R51.96": {
+      "decision_summary": "R51.96 §5.38 — ListBox composite (single-select) — ListBoxItem children + roving-tabindex + active-descendant",
+      "changes_bullets": [
+        "crates/pinion-core/src/widgets/listbox.scxml + listbox.rs — ListBox composite (RadioGroup 패턴 평행)",
+        "WAI-ARIA roving-tabindex + ArrowUp/Down + Home/End + Space/Enter activate",
+        "selected: Option<usize> + focused: Option<usize> sidecar"
+      ],
+      "verification_bullets": [
+        "cargo test 신규 수십 테스트 통과",
+        "R51.96.1 = AriaRole Listbox + ListBoxOption follow-up"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_decision_summary": "R51.96 §5.38 — ListBox composite (single-select) — ListBoxItem children + roving-tabindex + active-descendant",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widgets/listbox.scxml + listbox.rs — ListBox composite (RadioGroup 패턴 평행)",
+        "WAI-ARIA roving-tabindex + ArrowUp/Down + Home/End + Space/Enter activate",
+        "selected: Option<usize> + focused: Option<usize> sidecar"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 신규 수십 테스트 통과",
+        "R51.96.1 = AriaRole Listbox + ListBoxOption follow-up"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ]
+    },
+    "R51.96.1": {
+      "decision_summary": "R51.96.1 §5.40 — AriaRole Listbox + ListBoxOption (R51.96 ListBox composite a11y surface)",
+      "changes_bullets": [
+        "crates/pinion-a11y/src/role.rs — AriaRole::Listbox + AriaRole::ListBoxOption variants",
+        "ListBox composite 의 AccessNode 노출 shape 정통화"
+      ],
+      "verification_bullets": [
+        "cargo test 전원 통과, accesskit lowering valid"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_decision_summary": "R51.96.1 §5.40 — AriaRole Listbox + ListBoxOption (R51.96 ListBox composite a11y surface)",
+      "publishable_changes_bullets": [
+        "crates/pinion-a11y/src/role.rs — AriaRole::Listbox + AriaRole::ListBoxOption variants",
+        "ListBox composite 의 AccessNode 노출 shape 정통화"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test 전원 통과, accesskit lowering valid"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ]
+    },
+    "R51.97": {
+      "decision_summary": "R51.97 §5.38 — hello-listbox 예제 (ListBox composite first dogfood, paint-side N=4 amortization)",
+      "changes_bullets": [
+        "examples/hello-listbox (new binary) — Cargo.toml + app.pinion.xml + build.rs + src/main.rs",
+        "ListBoxView WidgetView impl 의 view fn — 4 item ListBox, keybinding d/e (Disable/Enable)",
+        "Cargo.toml workspace.members += examples/hello-listbox"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace = 0 errors",
+        "substrate amortization 유지 — pinion-shell API 변경 0"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "publishable_decision_summary": "R51.97 §5.38 — hello-listbox 예제 (ListBox composite first dogfood, paint-side N=4 amortization)",
+      "publishable_changes_bullets": [
+        "examples/hello-listbox (new binary) — Cargo.toml + app.pinion.xml + build.rs + src/main.rs",
+        "ListBoxView WidgetView impl 의 view fn — 4 item ListBox, keybinding d/e (Disable/Enable)",
+        "Cargo.toml workspace.members += examples/hello-listbox"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace = 0 errors",
+        "substrate amortization 유지 — pinion-shell API 변경 0"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ]
+    },
+    "R51.98": {
+      "decision_summary": "R51.98 §5.38 — ListBox multi-select mode (aria-multiselectable + Ctrl/Shift extend)",
+      "changes_bullets": [
+        "crates/pinion-core/src/widgets/listbox.rs — multi-select mode + Vec<bool> snapshot",
+        "Ctrl/Shift modifier extend + click contiguous range",
+        "WAI-ARIA aria-multiselectable=true a11y surface"
+      ],
+      "verification_bullets": [
+        "cargo test = ListBox multi-mode 신규 테스트 수십 건",
+        "single ↔ multi mode runtime toggle"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_decision_summary": "R51.98 §5.38 — ListBox multi-select mode (aria-multiselectable + Ctrl/Shift extend)",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widgets/listbox.rs — multi-select mode + Vec<bool> snapshot",
+        "Ctrl/Shift modifier extend + click contiguous range",
+        "WAI-ARIA aria-multiselectable=true a11y surface"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test = ListBox multi-mode 신규 테스트 수십 건",
+        "single ↔ multi mode runtime toggle"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ]
+    },
+    "R51.99": {
+      "decision_summary": "R51.99 §5.38 — hello-listbox type-ahead 점프 (Unicode i18n grapheme cluster prefix match)",
+      "changes_bullets": [
+        "examples/hello-listbox — type-ahead buffer + 500ms timeout reset",
+        "unicode-segmentation prefix match (Latin / CJK / emoji)"
+      ],
+      "verification_bullets": [
+        "multi-window thread-local buffer 한계 보존 — polish carry"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "R51.107 type-ahead polish 후보 (buffer-no-reset + multi-window)"
+      ],
+      "publishable_decision_summary": "R51.99 §5.38 — hello-listbox type-ahead 점프 (Unicode i18n grapheme cluster prefix match)",
+      "publishable_changes_bullets": [
+        "examples/hello-listbox — type-ahead buffer + 500ms timeout reset",
+        "unicode-segmentation prefix match (Latin / CJK / emoji)"
+      ],
+      "publishable_verification_bullets": [
+        "multi-window thread-local buffer 한계 보존 — polish carry"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.107 type-ahead polish 후보 (buffer-no-reset + multi-window)"
       ]
     },
     "Round 1": {
