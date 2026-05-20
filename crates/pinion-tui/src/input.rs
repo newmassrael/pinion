@@ -1,4 +1,4 @@
-//! R51.111 §5.41 — crossterm → pinion input conversion.
+//! R51.111 / R51.112 §5.41 — crossterm → pinion input conversion.
 //!
 //! Bridges the crossterm `KeyEvent` / `MouseEvent` vocabulary to the
 //! substrate-internal shape (`pinion_runtime::Modifiers` plus the W3C
@@ -30,6 +30,8 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pinion_runtime::Modifiers;
+
+use crate::paint::{PIXEL_PER_CELL_X, PIXEL_PER_CELL_Y};
 
 /// R51.111 §5.41 — convert a crossterm `KeyEvent` into the W3C
 /// `KeyboardEvent.key` string the `WidgetViewTui::apply_key` /
@@ -99,6 +101,28 @@ pub fn modifiers_from_crossterm(modifiers: KeyModifiers) -> Modifiers {
             || modifiers.contains(KeyModifiers::META)
             || modifiers.contains(KeyModifiers::HYPER),
     }
+}
+
+/// R51.112 §5.41 — convert a crossterm mouse cell coordinate
+/// `(column, row)` into the abstract pixel `(x, y)` the substrate's
+/// [`pinion_runtime::input::InputRouter`] expects.
+///
+/// The substrate is pixel-coord native (DPI-aware logical pixels,
+/// same axis the Vello shell's winit `CursorMoved` reports). The TUI
+/// path multiplies cell coords by [`PIXEL_PER_CELL_X`] /
+/// [`PIXEL_PER_CELL_Y`] — the same constants
+/// [`crate::paint::to_buffer`] uses for the inverse direction — so
+/// `Scene::Container.rect` hit-tests align with the visible cell
+/// geometry. Once the cell-native coord axis lands (R51.113+ carry,
+/// substrate-incompleteness-signal on a real cell mismatch), this
+/// helper folds away and the substrate becomes generic over coord
+/// units.
+#[must_use]
+pub fn cell_to_pixel(column: u16, row: u16) -> (f64, f64) {
+    (
+        f64::from(column) * f64::from(PIXEL_PER_CELL_X),
+        f64::from(row) * f64::from(PIXEL_PER_CELL_Y),
+    )
 }
 
 #[cfg(test)]
@@ -213,5 +237,31 @@ mod tests {
         // widget in pinion's catalogue branches finer-grained.
         let m = modifiers_from_crossterm(KeyModifiers::META);
         assert!(m.meta);
+    }
+
+    #[test]
+    fn cell_to_pixel_origin_is_zero() {
+        // R51.112 — cell (0, 0) → pixel (0.0, 0.0). The substrate's
+        // pixel coord space shares the top-left origin with the
+        // terminal's cell coord space; no axis flip.
+        assert_eq!(cell_to_pixel(0, 0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn cell_to_pixel_scales_by_pixel_per_cell_constants() {
+        // R51.112 — cell (3, 2) → pixel (24, 32) under the 8×16
+        // placeholder. Matches the inverse direction in
+        // `paint::to_buffer` so a `Scene::Container.rect` of
+        // pixel (24, 32) hit-tests the cell at (3, 2) exactly.
+        assert_eq!(cell_to_pixel(3, 2), (24.0, 32.0));
+    }
+
+    #[test]
+    fn cell_to_pixel_far_corner_does_not_overflow() {
+        // R51.112 — u16::MAX cell coord widens into f64 without
+        // truncation: 65535 * 16 = 1_048_560, well within f64 mantissa.
+        let (x, y) = cell_to_pixel(u16::MAX, u16::MAX);
+        assert!((x - 524_280.0).abs() < f64::EPSILON);
+        assert!((y - 1_048_560.0).abs() < f64::EPSILON);
     }
 }

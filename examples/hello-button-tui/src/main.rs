@@ -1,4 +1,4 @@
-//! R51.110.2 / R51.111 §5.41 — first hello-button TUI dogfood.
+//! R51.110.2 / R51.111 / R51.112 §5.41 — first hello-button TUI dogfood.
 //!
 //! Demonstrates the cell-based render mode substrate end-to-end:
 //! `WidgetViewTui` binding + `pinion_tui::run::<V>()` event loop +
@@ -13,20 +13,29 @@
 //! ```
 //!
 //! The terminal switches to the alternate screen, paints a
-//! button-shaped text label, and waits for keyboard input:
+//! button-shaped text label, and waits for keyboard / mouse input:
 //!
 //! - **Space** / **Enter**: keyboard-activate the button (mirrors
 //!   WAI-ARIA Authoring Practices Button keyboard pattern). The
 //!   SCXML statechart raises the internal `button.activate` event
 //!   without changing visible state; `Button::detect` emits a
 //!   `"click"` intent and the shell logs it to stderr.
+//! - **Mouse click on the `[ Click me! ]` cells**: pointer-driven
+//!   click (R51.112). The substrate's `InputRouter` resolves the
+//!   cell coord against the button's tag, dispatches
+//!   `PointerEnter` / `PointerDown` / `PointerUp` to the SCXML
+//!   statechart, and the `Pressed → Hover` transition emits the
+//!   same `"click"` intent the keyboard path produces.
 //! - **d** / **e**: disable / enable the button. The visual state
 //!   flips between `[ Click me! ]` and `[ Disabled ]`; while
-//!   disabled, Space / Enter is silently absorbed (ARIA spec).
-//! - **Esc**: graceful exit (RAII guard restores the terminal).
+//!   disabled, Space / Enter and mouse clicks are silently absorbed
+//!   (ARIA spec).
+//! - **Esc**: graceful exit (RAII guard restores the terminal +
+//!   disables mouse capture).
 //!
-//! Resize triggers a repaint at the new dimensions; mouse / paste
-//! events are ignored (R51.112+ wires the mouse path).
+//! Resize triggers a repaint at the new dimensions; paste / focus
+//! events are ignored (R51.113+ carries those once a binding
+//! surfaces the trigger).
 //!
 //! This dogfood validates:
 //! - pinion-tui's substrate compiles + links against a real
@@ -40,13 +49,13 @@
 //!   `invoke("send", Text(<name>))` channel and the §5.20 intent
 //!   drain harvests the resulting `"click"` event.
 //!
-//! Carry forward to R51.112+:
-//! - Mouse click via crossterm `Event::Mouse` →
-//!   `InputRouter::pointer_down` (currently mouse events are
-//!   ignored).
+//! Carry forward to R51.113+:
 //! - Multi-widget focus management once a second focusable TUI
 //!   binding lands ([[substrate-incompleteness-signal]] trigger).
 //! - TUI a11y (PTY screen reader path or AccessKit-TUI).
+//! - `Backend::Tui` axis on `External::backends` (today the binding
+//!   declares `Backend::Gui` because no dedicated TUI flag exists
+//!   in the §5.15 backend taxonomy).
 
 use std::io::Stdout;
 
@@ -102,8 +111,15 @@ impl WidgetViewTui for HelloButtonTui {
     fn view(state: Self::State, _frame: &Frame) -> Scene {
         // R51.111 — paint a different label per state so a
         // keystroke's effect is visually verifiable in the live
-        // terminal (the previous R51.110.2 cut painted a static
-        // label and could not visualise the SCXML transition).
+        // terminal.
+        // R51.112 — wrap the label in an inner `Container` carrying
+        // the binding's tag so the substrate's `InputRouter`
+        // hit-tests only the button's visual surface, not the entire
+        // outer background. Mouse coords outside this inner rect
+        // resolve to no widget (the substrate's free-mode default),
+        // matching the Vello hello-button's "button-shaped click
+        // area" UX.
+
         let label_str: &'static str = match state {
             ButtonState::Idle => "[ Click me!  ]",
             ButtonState::Hover => "[ Hovered    ]",
@@ -113,18 +129,28 @@ impl WidgetViewTui for HelloButtonTui {
 
         let mut label = TextNode::default();
         label_str.clone_into(&mut label.content);
-        label.rect = Rect::new(16, 32, 200, 16);
+        // Label rect = pixel (16..128, 32..48) = cell (2..16, 2..3).
+        // 14 cells wide, 1 row tall — covers the 14-char label.
+        label.rect = Rect::new(16, 32, 112, 16);
         label.style = style::TextStyle::default();
 
+        let mut button = ContainerNode::default();
+        // Button rect matches the label rect exactly so the
+        // InputRouter's hit-test maps clicks on the visible label
+        // cells to the SCXML statechart.
+        button.rect = Rect::new(16, 32, 112, 16);
+        button.tag = Some(std::borrow::Cow::Borrowed(Self::tag()));
+        button.children.push(Scene::Text(label));
+
         let mut hint = TextNode::default();
-        "Space/Enter = activate, d/e = disable/enable, Esc = quit"
+        "Space/Enter/click = activate, d/e = disable/enable, Esc = quit"
             .clone_into(&mut hint.content);
-        hint.rect = Rect::new(16, 80, 480, 16);
+        hint.rect = Rect::new(16, 80, 512, 16);
         hint.style = style::TextStyle::default();
 
         let mut container = ContainerNode::default();
         container.rect = Rect::new(0, 0, 640, 240);
-        container.children.push(Scene::Text(label));
+        container.children.push(Scene::Container(button));
         container.children.push(Scene::Text(hint));
 
         Scene::Container(container)

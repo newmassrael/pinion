@@ -68,7 +68,7 @@ pub mod paint;
 pub mod shell;
 pub mod widget;
 
-pub use input::{key_str_from_event, modifiers_from_crossterm};
+pub use input::{cell_to_pixel, key_str_from_event, modifiers_from_crossterm};
 pub use shell::run;
 pub use widget::{WidgetViewTui, render_one_frame};
 

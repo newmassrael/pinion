@@ -3227,6 +3227,7 @@ router.pointer_down(&mut state_scene);
 - R51.110.1 — WidgetViewTui trait + render_one_frame helper land (event loop R51.110.2)
 - R51.110.2 — pinion_tui::run + hello-button-tui first dogfood land (crossterm event loop, Esc exit)
 - R51.111 — TUI input dispatch: crossterm KeyEvent → W3C key str + ButtonExternal first interaction
+- R51.112 — TUI mouse dispatch: cell→pixel + InputRouter wire-up + EnableMouseCapture lifecycle
 
 
 
@@ -3278,6 +3279,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/shell.rs:forward_event
 - crates/pinion-tui/src/widget.rs:WidgetViewTui::apply_key
 - crates/pinion-tui/src/widget.rs:WidgetViewTui::keybinding
+- crates/pinion-tui/src/input.rs:cell_to_pixel
+- crates/pinion-tui/src/shell.rs:dispatch_mouse
+- crates/pinion-tui/src/shell.rs:drain_and_repaint
+- crates/pinion-tui/src/shell.rs:paint_frame
 
 
 

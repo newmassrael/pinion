@@ -4393,7 +4393,8 @@
         "R51.110.0 — pinion_tui::paint::to_buffer text-first 매핑 land (Box/Path/Image 는 R51.111+)",
         "R51.110.1 — WidgetViewTui trait + render_one_frame helper land (event loop R51.110.2)",
         "R51.110.2 — pinion_tui::run + hello-button-tui first dogfood land (crossterm event loop, Esc exit)",
-        "R51.111 — TUI input dispatch: crossterm KeyEvent → W3C key str + ButtonExternal first interaction"
+        "R51.111 — TUI input dispatch: crossterm KeyEvent → W3C key str + ButtonExternal first interaction",
+        "R51.112 — TUI mouse dispatch: cell→pixel + InputRouter wire-up + EnableMouseCapture lifecycle"
       ],
       "alternatives_rejected": [
         {
@@ -4554,6 +4555,22 @@
         {
           "file": "crates/pinion-tui/src/widget.rs",
           "symbol": "WidgetViewTui::keybinding"
+        },
+        {
+          "file": "crates/pinion-tui/src/input.rs",
+          "symbol": "cell_to_pixel"
+        },
+        {
+          "file": "crates/pinion-tui/src/shell.rs",
+          "symbol": "dispatch_mouse"
+        },
+        {
+          "file": "crates/pinion-tui/src/shell.rs",
+          "symbol": "drain_and_repaint"
+        },
+        {
+          "file": "crates/pinion-tui/src/shell.rs",
+          "symbol": "paint_frame"
         }
       ],
       "decision_status": "active"
