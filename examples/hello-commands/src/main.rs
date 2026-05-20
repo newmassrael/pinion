@@ -207,7 +207,7 @@ impl WidgetCore for CommandsView {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
-    fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
+    fn update(_state: Self::State, intent: &Intent) -> Vec<Command> {
         // R51.170 §5.23 R27 — reducer-driven dogfood. Match the
         // SCXML-emitted `main_btn.click` intent and emit a
         // `demo.echo` Command describing the async work. The

@@ -183,7 +183,7 @@ impl WidgetCore for HelloCommandsTui {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
-    fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
+    fn update(_state: Self::State, intent: &Intent) -> Vec<Command> {
         // R51.170 §5.23 R27 — TUI mirror of the Vello reducer
         // dogfood. R51.169 handle_tail routing pumps the drained
         // click through this reducer so the dispatch loop runs

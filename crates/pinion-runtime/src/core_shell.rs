@@ -471,13 +471,17 @@ impl<V: WidgetCore> CoreShell<V> {
     /// on TUI) flows through this method before reaching the SCXML
     /// `invoke("send", …)` channel.
     ///
-    /// The cached projection [`WidgetCore::read_state`] yields is
-    /// mutated transiently by the reducer; writing the mutation back
-    /// into the authoritative [`Scene`] is the R51.168 carry.
-    /// First-cut land surfaces the **declarative `Vec<Command>` half**
-    /// of the §5.23 R27 contract — every command lands on the owner
-    /// queue so [`Self::dispatch_pending_commands`] reaches the
-    /// registered handler on the next pump.
+    /// R51.173 §5.23 R27 — the cached projection
+    /// [`WidgetCore::read_state`] yields is handed to the reducer
+    /// **by value** (the spec's `&mut Model` carries an SCXML-shaped
+    /// Model in pinion, which lives on [`Scene::External`] not on
+    /// the cached snapshot — see [[scxml-as-model-update-transient]]).
+    /// The reducer reads the snapshot and emits the declarative
+    /// `Vec<Command>` half of the §5.23 R27 contract. Every command
+    /// lands on the owner queue so
+    /// [`Self::dispatch_pending_commands`] reaches the registered
+    /// handler on the next pump; state changes flow back through the
+    /// `Command` → `Handler` → produced `Intent` → SCXML send loop.
     ///
     /// Returns the same `Vec<Command>` the reducer produced so
     /// callers (and tests) can introspect what was queued without a
@@ -495,10 +499,11 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `V::view` (R51.146) and `V::apply_key` (R51.152).
     #[must_use = "the returned commands are already queued; ignore explicitly with `let _ = …` if you do not need them"]
     pub fn route_intent_through_update(&self, intent: &Intent) -> Vec<Command> {
-        let mut state = V::read_state(&self.scene);
-        let commands = self
-            .root_owner
-            .run(|| V::update(&mut state, intent));
+        // R51.173 §5.23 R27 — by-value snapshot. `V::State: Copy`
+        // already constrains the type; no `&mut` borrow is taken so
+        // the call site reads as a pure snapshot pass.
+        let state = V::read_state(&self.scene);
+        let commands = self.root_owner.run(|| V::update(state, intent));
         for cmd in &commands {
             self.root_owner.dispatch_command(cmd.clone());
         }
@@ -1668,7 +1673,7 @@ mod tests {
             "OwnerCapture"
         }
 
-        fn update(_state: &mut Self::State, _intent: &Intent) -> Vec<Command> {
+        fn update(_state: Self::State, _intent: &Intent) -> Vec<Command> {
             R51_171_CAPTURED_OWNER_ID.store(
                 pinion_core::Owner::current().map_or(0, |o| o.id()),
                 AtomicOrdering::SeqCst,

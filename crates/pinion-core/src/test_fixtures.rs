@@ -147,7 +147,11 @@ impl WidgetCore for EchoButtonFixture {
         "EchoBtn"
     }
 
-    fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
+    fn update(_state: Self::State, intent: &Intent) -> Vec<Command> {
+        // R51.173 §5.23 R27 — by-value snapshot. The fixture
+        // discards the snapshot (no state-dependent branching) and
+        // emits one `echo.reply` per incoming Intent so the wiring
+        // tests can count the queued commands deterministically.
         vec![Command::new_static(
             "echo.reply",
             IntrospectValue::Text(intent.tag_str().to_string()),

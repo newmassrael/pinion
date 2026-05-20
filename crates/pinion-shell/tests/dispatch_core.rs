@@ -305,7 +305,7 @@ impl WidgetCore for TestView {
     }
 
     fn update(
-        _state: &mut Self::State,
+        _state: Self::State,
         intent: &pinion_core::Intent,
     ) -> Vec<pinion_core::Command> {
         // R51.168 §5.23 R27 — log the intent and conditionally emit

@@ -199,46 +199,35 @@ pub trait WidgetCore: 'static {
     /// handler dispatch.
     ///
     /// The framework's §5.23 R27 contract is
-    /// `Update(&mut Model, Intent) -> Vec<Command<Intent>>`: a pure
-    /// reducer that mutates the application-side `Model`/state and
-    /// returns a declarative list of IO/async work for the framework
-    /// (or registered `Handler`) to execute. Commands are *described*
-    /// here and *executed* outside reducer purity — preserving the
-    /// §6.3 `dry_run` invariant (the reducer is replayable, only the
-    /// `Command` dispatch is the side-effecting boundary).
+    /// `Update(Model, Intent) -> Vec<Command<Intent>>`: a pure
+    /// reducer that reads the application-side `Model`/state snapshot
+    /// and returns a declarative list of IO/async work for the
+    /// framework (or registered `Handler`) to execute. Commands are
+    /// *described* here and *executed* outside reducer purity —
+    /// preserving the §6.3 `dry_run` invariant (the reducer is
+    /// replayable, only the `Command` dispatch is the side-effecting
+    /// boundary).
     ///
-    /// ## Wiring path (R51.166-170)
+    /// ## Why `Self::State` by-value, not `&mut Model`?
     ///
-    /// - **R51.166** (this round) — substrate only: trait method
-    ///   added with a default `Vec::new()` no-op so every existing
-    ///   `impl WidgetCore for X` keeps compiling unchanged; the
-    ///   `[[substrate-incompleteness-signal]]` is avoided by
-    ///   defaulting (no caller forced into boilerplate).
-    /// - **R51.167** (carry) — `CoreShell::dispatch_intent` routes
-    ///   every incoming [`Intent`] through `<V as WidgetCore>::update`
-    ///   before forwarding the original intent to the SCXML
-    ///   `invoke("send", …)` channel; produced `Vec<Command>` is
-    ///   queued onto the active [`Owner`](crate::reactive::Owner) via
-    ///   `dispatch_command`.
-    /// - **R51.168** (carry) — `Intent.payload` typed routing through
-    ///   the SCXML invoke send (currently the tag-only path drops the
-    ///   payload — see direct-session carry "Intent.payload SCXML
-    ///   send 누락").
-    /// - **R51.169** (carry) — `hello-commands(-tui)` migrate from
-    ///   the R51.163 `Owner::cache` one-shot hack to the real
-    ///   reducer-driven Command flow.
-    /// - **R51.170** (carry) — Forge codegen emits the `update` body
-    ///   from SCE schema `effect` + `command` tables.
+    /// R51.173 §5.23 R27 — the spec text "`Update(&mut Model, Intent)
+    /// -> Vec<Command>`" reads as if the reducer mutates the
+    /// application-side Model in place. In pinion the Model is the
+    /// SCXML statechart wired through [`Scene::External`] (§5.15),
+    /// not the cached projection: `Self::State` is the
+    /// `Copy + Debug + PartialEq` snapshot [`Self::read_state`]
+    /// extracts on every paint cycle, and the next paint's
+    /// `read_state` re-derives it from the live `Scene`. Mutating the
+    /// snapshot has no observable effect on the authoritative state.
     ///
-    /// ## Why `&mut Self::State` here, not `&mut Model`?
-    ///
-    /// `WidgetCore::State` IS the widget's slice of the application
-    /// model: it's the cached projection [`Self::read_state`] extracts
-    /// from the live `Scene`, and `Copy + Debug + PartialEq` already
-    /// constrain it to a value-typed snapshot. Reducer mutation
-    /// happens *here* on the cached state, and the framework persists
-    /// it back to the `Scene::External` via the existing intervene
-    /// channel on the next paint cycle (R51.167 carry wires this).
+    /// Passing `Self::State` by value (not `&mut`) makes that design
+    /// choice explicit: the reducer reads its widget's slice as a
+    /// `Copy` snapshot and returns Commands. State changes flow
+    /// through `Command` → registered `Handler` → produced `Intent`
+    /// → SCXML `invoke("send", …)` channel → statechart transition
+    /// → next-frame `read_state`, not through reducer assignment.
+    /// See [[scxml-as-model-update-transient]] for the
+    /// design rationale.
     ///
     /// ## Why borrow [`Intent`], not consume?
     ///
@@ -256,7 +245,7 @@ pub trait WidgetCore: 'static {
     /// `hello-commands(-tui)`) need no override. The reducer-driven
     /// Command flow opts in per widget binding.
     #[must_use]
-    fn update(_state: &mut Self::State, _intent: &Intent) -> Vec<Command> {
+    fn update(_state: Self::State, _intent: &Intent) -> Vec<Command> {
         Vec::new()
     }
 }
@@ -282,13 +271,17 @@ mod r51_166_tests {
 
     #[test]
     fn default_update_returns_empty_vec() {
-        let mut state = ButtonState::Idle;
+        // R51.173 §5.23 R27 — by-value snapshot. `ButtonState: Copy`
+        // makes the call site identical to a borrow at the source
+        // level (no `&mut` taken), and the default impl returns an
+        // empty `Vec<Command>` so the no-override path is observably
+        // inert.
+        let state = ButtonState::Idle;
         let intent = Intent::new_static("test_btn.click", IntrospectValue::Null);
-        let commands = <ButtonFixture as WidgetCore>::update(&mut state, &intent);
+        let commands = <ButtonFixture as WidgetCore>::update(state, &intent);
         assert!(commands.is_empty());
-        // Default impl must NOT mutate caller-provided state — the
-        // §6.3 `dry_run` invariant relies on the reducer being a
-        // pure identity when overridden.
+        // Caller's state binding is unaffected (by-value copy did
+        // not move out of the local).
         assert_eq!(state, ButtonState::Idle);
     }
 
@@ -328,29 +321,42 @@ mod r51_166_tests {
             "EchoReducer"
         }
 
-        fn update(state: &mut Self::State, intent: &Intent) -> Vec<Command> {
-            state.0 = state.0.saturating_add(1);
+        fn update(state: Self::State, intent: &Intent) -> Vec<Command> {
+            // R51.173 §5.23 R27 — by-value snapshot read. The
+            // reducer derives the next counter value from the
+            // snapshot and bakes it into the emitted Command's
+            // `scope_id`. Any persistence of the new counter lives
+            // in the authoritative model (the SCXML statechart on
+            // `Scene::External`), not in the local `state` binding —
+            // see [[scxml-as-model-update-transient]].
+            let next = state.0.saturating_add(1);
             vec![Command::new_static(
                 "echo.reply",
                 IntrospectValue::Text(intent.tag_str().to_string()),
-                u64::from(state.0),
+                u64::from(next),
             )]
         }
     }
 
     #[test]
-    fn custom_update_mutates_state_and_emits_command() {
-        let mut state = CounterState(0);
+    fn custom_update_reads_state_snapshot_and_emits_command() {
+        // R51.173 §5.23 R27 — reducer reads the snapshot by value
+        // and bakes the derived value into the Command. Caller's
+        // `state` binding remains unchanged because the reducer
+        // never observed a mutable reference to it.
+        let state = CounterState(0);
         let intent = Intent::new_static("echo_reducer.tick", IntrospectValue::Null);
-        let commands = <EchoReducerFixture as WidgetCore>::update(&mut state, &intent);
-        assert_eq!(state, CounterState(1));
+        let commands = <EchoReducerFixture as WidgetCore>::update(state, &intent);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].kind_str(), "echo.reply");
         assert_eq!(
             commands[0].payload,
             IntrospectValue::Text("echo_reducer.tick".to_string())
         );
+        // Derived next value: 0 → 1 (snapshot + 1 baked into scope_id).
         assert_eq!(commands[0].scope_id, 1);
+        // Caller's binding unaffected (Copy snapshot).
+        assert_eq!(state, CounterState(0));
     }
 
     #[test]
@@ -360,15 +366,22 @@ mod r51_166_tests {
         // borrow signature lets the same intent feed multiple
         // observers on the dispatch path (R51.167 routes it to the
         // SCXML send channel AFTER the reducer runs).
-        let mut state_a = CounterState(0);
-        let mut state_b = CounterState(10);
+        //
+        // R51.173 §5.23 R27 — by-value state snapshot means each
+        // call reads the local independently; the reducer's derived
+        // value reflects the snapshot at call time. Caller's
+        // bindings remain unchanged.
+        let state_a = CounterState(0);
+        let state_b = CounterState(10);
         let intent = Intent::new_static("echo_reducer.shared", IntrospectValue::Null);
-        let cmds_a = <EchoReducerFixture as WidgetCore>::update(&mut state_a, &intent);
-        let cmds_b = <EchoReducerFixture as WidgetCore>::update(&mut state_b, &intent);
-        assert_eq!(state_a, CounterState(1));
-        assert_eq!(state_b, CounterState(11));
+        let cmds_a = <EchoReducerFixture as WidgetCore>::update(state_a, &intent);
+        let cmds_b = <EchoReducerFixture as WidgetCore>::update(state_b, &intent);
+        // Derived next values baked into scope_id: 0+1 / 10+1.
         assert_eq!(cmds_a[0].scope_id, 1);
         assert_eq!(cmds_b[0].scope_id, 11);
+        // Caller's snapshots unaffected (Copy).
+        assert_eq!(state_a, CounterState(0));
+        assert_eq!(state_b, CounterState(10));
         // Intent is still usable after both calls — confirms borrow,
         // not move.
         assert_eq!(intent.tag_str(), "echo_reducer.shared");

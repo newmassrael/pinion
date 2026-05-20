@@ -10656,6 +10656,66 @@
         "R51.175 — if a future widget needs payload-driven SCXML transitions, extend invoke('send', ...) contract to accept Json({tag, payload}) and update all 8 widget Externals (button/toggle/checkbox/radio/radio_group/slider/listbox/listbox_item)"
       ]
     },
+    "R51.173": {
+      "decision_summary": "R51.173 §5.23 R27 — WidgetCore::update by-value snapshot makes SCXML-as-Model design explicit",
+      "changes_bullets": [
+        "pinion-core::WidgetCore::update — signature now `(state: Self::State, intent: &Intent)` (by-value)",
+        "pinion-core::r51_166_tests — 3 inline tests use by-value call sites; mutation-assert renamed",
+        "pinion-core::test_fixtures::EchoButtonFixture::update — by-value snapshot signature",
+        "pinion-runtime::CoreShell::route_intent_through_update — `let state` + V::update(state, intent)",
+        "pinion-runtime::OwnerCaptureButton::update (r51_171 test) — by-value signature",
+        "pinion-shell::tests::dispatch_core::TestView::update — by-value signature",
+        "examples/hello-commands::CommandsView::update — by-value signature",
+        "examples/hello-commands-tui::HelloCommandsTui::update — by-value signature"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2001 pass / 0 fail / 10 ignored",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict)",
+        "decision: A1 (immutable by-value) over A2 (app_state<S> field); SCXML-as-Model docs explicit"
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.41",
+        "5.20",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "R51.174 — Forge codegen emits update body from SCE schema effect+command tables (SCE RFC carry)",
+        "R51.175 — Intent.payload typed routing through SCXML invoke send (wait first concrete consumer)",
+        "R51.176 — app Model field decision wait (Owner::cache<S> lift OR CoreShell.app_state<S>)",
+        "R51.177 — handler cascade guard (reducer reactivity lurking risk; kind whitelist or scope_id)",
+        "R51.178 — shell test scaffold lift pinion-shell::test_fixtures::impl WidgetView (process maturity)"
+      ],
+      "publishable_decision_summary": "R51.173 §5.23 R27 — WidgetCore::update by-value snapshot makes SCXML-as-Model design explicit",
+      "publishable_changes_bullets": [
+        "pinion-core::WidgetCore::update — signature now `(state: Self::State, intent: &Intent)` (by-value)",
+        "pinion-core::r51_166_tests — 3 inline tests use by-value call sites; mutation-assert renamed",
+        "pinion-core::test_fixtures::EchoButtonFixture::update — by-value snapshot signature",
+        "pinion-runtime::CoreShell::route_intent_through_update — `let state` + V::update(state, intent)",
+        "pinion-runtime::OwnerCaptureButton::update (r51_171 test) — by-value signature",
+        "pinion-shell::tests::dispatch_core::TestView::update — by-value signature",
+        "examples/hello-commands::CommandsView::update — by-value signature",
+        "examples/hello-commands-tui::HelloCommandsTui::update — by-value signature"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2001 pass / 0 fail / 10 ignored",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict)",
+        "decision: A1 (immutable by-value) over A2 (app_state<S> field); SCXML-as-Model docs explicit"
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.41",
+        "5.20",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.174 — Forge codegen emits update body from SCE schema effect+command tables (SCE RFC carry)",
+        "R51.175 — Intent.payload typed routing through SCXML invoke send (wait first concrete consumer)",
+        "R51.176 — app Model field decision wait (Owner::cache<S> lift OR CoreShell.app_state<S>)",
+        "R51.177 — handler cascade guard (reducer reactivity lurking risk; kind whitelist or scope_id)",
+        "R51.178 — shell test scaffold lift pinion-shell::test_fixtures::impl WidgetView (process maturity)"
+      ]
+    },
     "R51.33": {
       "decision_summary": "R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate",
       "changes_bullets": [

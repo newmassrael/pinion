@@ -6933,6 +6933,39 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.173 — R51.173 §5.23 R27 — WidgetCore::update by-value snapshot makes SCXML-as-Model design explicit
+
+**Changes**:
+- pinion-core::WidgetCore::update — signature now `(state: Self::State, intent: &Intent)` (by-value)
+- pinion-core::r51_166_tests — 3 inline tests use by-value call sites; mutation-assert renamed
+- pinion-core::test_fixtures::EchoButtonFixture::update — by-value snapshot signature
+- pinion-runtime::CoreShell::route_intent_through_update — `let state` + V::update(state, intent)
+- pinion-runtime::OwnerCaptureButton::update (r51_171 test) — by-value signature
+- pinion-shell::tests::dispatch_core::TestView::update — by-value signature
+- examples/hello-commands::CommandsView::update — by-value signature
+- examples/hello-commands-tui::HelloCommandsTui::update — by-value signature
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2001 pass / 0 fail / 10 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (strict)
+- decision: A1 (immutable by-value) over A2 (app_state<S> field); SCXML-as-Model docs explicit
+
+
+
+**Impact**: §5.23, §5.41, §5.20, §6.3
+
+
+**Carry forward**:
+- R51.174 — Forge codegen emits update body from SCE schema effect+command tables (SCE RFC carry)
+- R51.175 — Intent.payload typed routing through SCXML invoke send (wait first concrete consumer)
+- R51.176 — app Model field decision wait (Owner::cache<S> lift OR CoreShell.app_state<S>)
+- R51.177 — handler cascade guard (reducer reactivity lurking risk; kind whitelist or scope_id)
+- R51.178 — shell test scaffold lift pinion-shell::test_fixtures::impl WidgetView (process maturity)
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
