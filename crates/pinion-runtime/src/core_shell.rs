@@ -251,6 +251,17 @@ impl<V: WidgetCore> CoreShell<V> {
         self.router.update_paint_scene(paint_scene, &mut self.scene);
     }
 
+    /// R51.122 §5.41 — read-only proxy to the underlying
+    /// [`InputRouter::hover_target`]. Backends use this to read the
+    /// current hover target for `click_to_focus` style follow-up
+    /// (the Vello shell's W3C HTML-style "press on focusable widget
+    /// focuses it; press on background blurs" rule), without
+    /// exposing the router's mutable interior.
+    #[must_use]
+    pub fn hover_target(&self, pid: PointerId) -> Option<&str> {
+        self.router.hover_target(pid)
+    }
+
     /// R51.122 §5.41 — drain the post-dispatch bookkeeping artifacts
     /// (intents + optional state change) without running any input
     /// dispatch arm.

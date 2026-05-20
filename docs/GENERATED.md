@@ -3243,6 +3243,7 @@ router.pointer_down(&mut state_scene);
 - R51.120 — substrate stderr → optional file sink (alternate screen 보호, PINION_TUI_LOG opt-in)
 - R51.121 — WidgetCore + WidgetA11y supertrait split, WidgetView/Tui = Renderer + initial_size 만 (ISP)
 - R51.122 — pinion-runtime::CoreShell<V> substrate 신설 (R51.122-R51.125 4-round 분할 중 #1)
+- R51.123 — pinion-shell::ShellCore wraps CoreShell<V> (Vello extras 만 유지, 4-round #2)
 
 
 
@@ -11419,6 +11420,39 @@ router.pointer_down(&mut state_scene);
 - R51.123 — pinion-shell::ShellCore = CoreShell wrap (Vello extras: focus/modifiers/text_cache/previews/revision/last_paint/AT caches/redraw)
 - R51.124 — pinion-tui::ShellCoreTui = CoreShell wrap (TUI extras: log_sink + refresh_state→tail bridge)
 - R51.125 — dispatch_rpc trait extraction (ShellDispatch trait in pinion-runtime, impl in pinion-shell, cycle 회피)
+
+
+
+### Round 523 — R51.123 §5.41 — pinion-shell::ShellCore = CoreShell wrap (Vello extension), 4-round 분할 #2
+
+**Changes**:
+- crates/pinion-shell/src/substrate.rs: 4 fields (scene/cached_state/intent_queue/router) 제거 + core: CoreShell<V> 1 field 추가
+- ShellCore::new() body: CoreShell::new() 초기화 + Vello extras (focus seeding, RPC ledger, OCC, parley LayoutCache)
+- ShellCore::scene/cached_state 점근자 → self.core.scene() / self.core.cached_state() proxy
+- dispatch method body: forward/apply_key/cursor_*/pointer_*/touch_event → self.core.X() + handle_tail(&tail) pattern
+- fn handle_tail(&mut self, tail: &DispatchTail<V::State>) helper 추가: intents eprintln + state_change eprintln + request_redraw
+- drain_intents / refresh_state private helpers 제거 (handle_tail 으로 통합)
+- dispatch_rpc: disjoint-field borrow split 재작성 (core.scene_mut() / core.cached_state() / Vello extras)
+- click_to_focus: self.router.hover_target → self.core.hover_target proxy
+- handle_touch: TouchPhase::Started 의 click_to_focus Vello-only follow-up 만 유지, 나머지 phase 는 core.touch_event() 일임
+- apply_a11y_key + dispatch_access_action: scene/apply_key/access_child_invoke 는 core.scene_mut() / core.apply_key()
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1722 pass / 0 fail / 8 ignored (variance 0, ShellCore public API 변경 0)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (deny(warnings) + pedantic deny baseline 유지)
+- mnemosyne validate_workspace: entries=252 / sections=58 / T1=0 / round-trip=1/1 / GENERATED.md=sync
+- ShellCore public method signature 0 변경 (AppShell + tests 0 일부만 수정)
+
+
+
+**Impact**: §5.41
+
+
+**Carry forward**:
+- R51.124 — pinion-tui::ShellCoreTui = CoreShell wrap (TUI extras: log_sink + refresh_state→tail bridge)
+- R51.125 — dispatch_rpc trait extraction (ShellDispatch trait in pinion-runtime)
 
 
 

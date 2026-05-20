@@ -14,7 +14,18 @@
 //! substrate only through the accessor / dispatch methods declared
 //! `pub` here.
 //!
-//! See [[substrate-incompleteness-signal]] (the R51.29 → R51.30
+//! R51.123 §5.41 — the backend-agnostic dispatch core
+//! ([`pinion_runtime::CoreShell<V>`]) lives behind a single
+//! `core: CoreShell<V>` field. Every dispatch method on this struct
+//! now reduces to "call `core.X` → log the returned
+//! [`pinion_runtime::DispatchTail`] → bump backend-specific
+//! bookkeeping (OCC revision, focus, redraw flag)". The four pieces
+//! the lift moved out (`scene`, `cached_state`, `router`,
+//! `intent_queue`) live inside `core`; this struct keeps only the
+//! Vello-specific state (focus / modifiers / `text_cache` / previews
+//! / revision / `last_paint_layout` / `last_access_*` / `redraw_requested`).
+//!
+//! See `substrate-incompleteness-signal` (the R51.29 → R51.30
 //! refactor that birthed the shell) and `claim-accuracy-self-audit`
 //! (the R51.80 → R51.83 → R51.92 lesson that "wrapper added" /
 //! "visibility downgraded" / "module split" are three different
@@ -27,14 +38,13 @@ use pinion_a11y::{
     tag_to_node_id, translate_action, AccessAction, AccessFocus, AccessNode,
     PinionAccessAction, ROOT_NODE_ID,
 };
-use pinion_core::external::IntrospectValue;
 use pinion_core::{Frame, Scene, SceneRevision};
 use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
-    compute_layout, rect_for_tag, walk_scene_and_drain, FocusManager, InputRouter,
-    IntentQueue, Modifiers, PointerId, Touch, TouchPhase,
+    compute_layout, rect_for_tag, CoreShell, DispatchTail, FocusManager, Modifiers,
+    PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
 
@@ -69,32 +79,20 @@ use super::WidgetView;
 /// surface module (`AppShell` in `lib.rs`) can only reach the
 /// dispatch path through the `pub` methods on this `impl` block.
 pub struct ShellCore<V: WidgetView> {
-    /// Authoritative state scene — owns the live widget External via
-    /// `Box<dyn External>`. Both winit input (via the `InputRouter`)
-    /// and RPC dispatch (via the `DispatchContext`) reach the SCXML
-    /// statechart through this single scene.
+    /// R51.123 §5.41 — backend-agnostic dispatch substrate.
     ///
-    /// R51.83 §5.40 — private. Read-only access via [`Self::scene`];
-    /// mutation happens through the [`ShellCore`] dispatch methods
-    /// (`forward`, `apply_key`, `cursor_moved`, …) so the substrate
-    /// stays the sole writer.
-    scene: Scene,
-    /// Cached projection of the introspect state, kept in sync by
-    /// `refresh_state` after every input. Drives change-detection
-    /// for the redraw request + the view fn's input.
+    /// Owns the four pieces of state the lift moved out of this
+    /// struct: `scene`, `cached_state`, `router`, `intent_queue`.
+    /// Every dispatch method on `ShellCore` reduces to "call `core.X`
+    /// for the SCXML / router work, then handle the returned
+    /// [`DispatchTail`] (log intents + log state change + bump
+    /// `redraw_requested` on visible-state transition)".
     ///
-    /// R51.83 §5.40 — private. Read-only access via
-    /// [`Self::cached_state`]; mutation happens inside `refresh_state`.
-    cached_state: V::State,
-    /// §5.20 intent harvest buffer. Refilled by `drain_intents` after
-    /// every winit / RPC event; consumed by stderr logging. The
-    /// `scene/intents` RPC method drains the same source independently
-    /// since the underlying `External::pending_intents` is the single
-    /// queue.
-    ///
-    /// R51.83 §5.40 — private. Substrate-internal harvest queue; no
-    /// external observer (the RPC drain reaches the External directly).
-    intent_queue: IntentQueue,
+    /// The TUI sibling (`pinion_tui::ShellCoreTui`) composes the same
+    /// [`CoreShell`] inner struct so both backends share scene +
+    /// router + intent-queue handling without duplicating the
+    /// dispatch arms (R51.123 / R51.124 / R51.125 4-round split).
+    core: CoreShell<V>,
     /// §5.34 preview lifecycle ledger — passed into every
     /// `pinion_rpc::dispatch` call alongside the scene. Lifecycle RPC
     /// methods read or mutate it through interior mutability;
@@ -112,14 +110,6 @@ pub struct ShellCore<V: WidgetView> {
     /// [`Self::revision`] (returns the current `u64`); mutation
     /// happens through the substrate dispatch methods only.
     revision: SceneRevision,
-    /// R48 §5.35 framework-side input dispatch primitive. Owns the
-    /// retained paint scene + cursor state + `hover_target` and
-    /// routes pointer events to the matching `ExternalNode` in
-    /// `self.scene` (the one tagged `V::tag()`).
-    ///
-    /// R51.83 §5.40 — private. The substrate's pointer-event wrappers
-    /// (`cursor_moved`, `mouse_pressed`, …) are the only callers.
-    router: InputRouter,
     /// R51.53 §5.39 framework-side focus state owner. Tab/Shift+Tab
     /// traverses [`FocusManager::tab_order`] (seeded from
     /// `V::focusable_tags()` at boot); click on a tagged widget
@@ -159,7 +149,8 @@ pub struct ShellCore<V: WidgetView> {
     ///
     /// R51.83 §5.40 — private. The vello-side paint pipeline reaches
     /// the cache through [`Self::text_cache_mut`]; substrate-internal
-    /// callers use the field directly.
+    /// callers (`compute_paint_scene`, `dispatch_rpc`'s producer
+    /// closure) use the field directly.
     text_cache: LayoutCache,
     /// R47.7.5 §5.12 — most recent winit-rendered frame's paint scene
     /// projected into a [`LayoutNode`] tree. Refreshed at the end of
@@ -265,22 +256,22 @@ impl<V: WidgetView> ShellCore<V> {
     /// the winit / wgpu / AccessKit surface (which lives on
     /// [`crate::AppShell`] and is constructed lazily on `resumed`).
     /// Headless tests build only this struct.
+    ///
+    /// R51.123 §5.41 — the scene + cached-state bootstrapping moves
+    /// into [`CoreShell::new`] (composed via `core: CoreShell::new()`
+    /// below); this constructor adds the Vello-specific extras
+    /// (focus seeding, AccessKit caches, redraw flag, OCC token, RPC
+    /// preview ledger, parley `LayoutCache`).
     #[must_use]
     pub fn new() -> Self {
-        use pinion_core::scene::ExternalNode;
-        // R22 §5.20: the scene-side `ExternalNode.tag` supplies the
-        // widget identifier used as the intent-tag prefix. The widget
-        // External itself emits the kind (e.g. "click", "toggle"); the
-        // runtime walk composes `<tag>.<kind>` on drain.
-        let scene = Scene::External(
-            ExternalNode::new(V::create_external()).with_tag(V::tag()),
-        );
-        // Initial cached state via the same introspect channel
-        // everything else uses — single source of truth.
-        let cached_state = V::read_state(&scene);
+        let core = CoreShell::<V>::new();
+        // Log the initial state read through the §5.15 introspect
+        // channel — same trace line shape AppShell relied on
+        // pre-R51.123 so the dogfood eprintln + RPC-side observer
+        // both see the boot-time state.
         eprintln!(
             "shell: initial state = {}",
-            V::fmt_state_log(&cached_state),
+            V::fmt_state_log(core.cached_state()),
         );
         // R51.53 §5.39 — seed FocusManager with the binding's
         // `focusable_tags()` enumeration. The default impl returns
@@ -295,12 +286,9 @@ impl<V: WidgetView> ShellCore<V> {
             .collect();
         focus.update_focusable_tags(tags);
         Self {
-            scene,
-            cached_state,
-            intent_queue: IntentQueue::new(),
+            core,
             previews: PreviewLedger::default(),
             revision: SceneRevision::default(),
-            router: InputRouter::new(),
             focus,
             modifiers: Modifiers::empty(),
             text_cache: LayoutCache::new(),
@@ -342,9 +330,10 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R51.76 §5.40 — borrow the cached state projection. Tests
     /// observe widget state transitions through this accessor.
+    /// R51.123 §5.41 — delegates to [`CoreShell::cached_state`].
     #[must_use]
     pub fn cached_state(&self) -> &V::State {
-        &self.cached_state
+        self.core.cached_state()
     }
 
     /// R51.76 §5.40 — current §5.34 R40.4 OCC revision counter
@@ -360,9 +349,10 @@ impl<V: WidgetView> ShellCore<V> {
     /// R51.76 §5.40 — borrow the live state scene. Tests reach the
     /// widget External through `Scene::External(node) => node.handle`
     /// when verifying introspect side effects.
+    /// R51.123 §5.41 — delegates to [`CoreShell::scene`].
     #[must_use]
     pub fn scene(&self) -> &Scene {
-        &self.scene
+        self.core.scene()
     }
 
     /// R51.76 §5.40 — drain the redraw flag set by `request_redraw`.
@@ -426,59 +416,26 @@ impl<V: WidgetView> ShellCore<V> {
 
 
     /// R51.45 §5.35 — abstract [`Touch`] dispatch (R51.108 §5.41
-    /// winit-free). Each finger mints a distinct
+    /// winit-free, R51.122 §5.41 router-side lift into
+    /// [`CoreShell::touch_event`]). Each finger mints a distinct
     /// [`PointerId::touch(finger_id)`] so two simultaneous touches
-    /// drive two widgets without aliasing the capture lock.
-    ///
-    /// * [`TouchPhase::Started`] runs a synthetic
-    ///   [`InputRouter::cursor_moved`] first so the hover target
-    ///   resolves under the press point before the
-    ///   [`InputRouter::pointer_down`] lands — mirrors the mouse
-    ///   case where `CursorMoved` always precedes `MouseInput`.
-    /// * [`TouchPhase::Moved`] forwards the new position.
-    /// * [`TouchPhase::Ended`] runs `pointer_up` then `cursor_left`
-    ///   so the post-release hover refresh fires and the finger's
-    ///   cursor state is dropped (a future touch with the same
-    ///   finger id is a new gesture per winit's `WindowEvent::Touch`
-    ///   contract).
-    /// * [`TouchPhase::Cancelled`] (R51.93 §5.35 §5.13) runs
-    ///   [`InputRouter::pointer_cancel`] (not `pointer_up`) so the
-    ///   widget statechart sees `PointerCancel` instead of `PointerUp`
-    ///   and routes `Pressed → Idle` without raising the activate
-    ///   event. The trailing `cursor_left` still runs to drop the
-    ///   finger's cursor state. Pre-R51.93 routed Cancelled through
-    ///   `pointer_up` and silently committed `click` / `toggle` /
-    ///   `selected` / `value_committed` intents the OS-revoked
-    ///   gesture did not authorise (4-finger gesture, phone-call
-    ///   interrupt, notification pull-down, edge-swipe back nav,
-    ///   app-switcher).
-    fn handle_touch(&mut self, touch: Touch) {
+    /// drive two widgets without aliasing the capture lock. The
+    /// substrate routes the phase-specific router calls inside
+    /// [`CoreShell::touch_event`] (`Started` → `cursor_moved` +
+    /// `pointer_down`; `Moved` → `cursor_moved`; `Ended` →
+    /// `pointer_up` + `cursor_left`; `Cancelled` (R51.93 §5.35
+    /// §5.13) → `pointer_cancel` + `cursor_left`); this method adds
+    /// the Vello-only `click_to_focus` follow-up for the press phase
+    /// (`Started`) so a tap on a tagged focusable widget aliases
+    /// `FocusManager::focus_set`.
+    fn handle_touch(&mut self, touch: Touch) -> DispatchTail<V::State> {
+        let phase = touch.phase;
         let pid = PointerId::touch(touch.id);
-        match touch.phase {
-            TouchPhase::Started => {
-                self.router.cursor_moved(pid, touch.x, touch.y, &mut self.scene);
-                self.router.pointer_down(pid, &mut self.scene);
-                self.click_to_focus(pid);
-            }
-            TouchPhase::Moved => {
-                self.router.cursor_moved(pid, touch.x, touch.y, &mut self.scene);
-            }
-            TouchPhase::Ended => {
-                self.router.pointer_up(pid, &mut self.scene);
-                self.router.cursor_left(pid, &mut self.scene);
-            }
-            TouchPhase::Cancelled => {
-                self.router.pointer_cancel(pid, &mut self.scene);
-                self.router.cursor_left(pid, &mut self.scene);
-            }
-            // R51.108 §5.41 — `TouchPhase` is `#[non_exhaustive]`
-            // for SemVer-minor variant additions (§5.13 hedge
-            // precedent). Future phases (e.g. stylus hover, force
-            // change) reach this arm as a no-op until an explicit
-            // handler lands; ignoring is safer than panicking for
-            // unknown input events.
-            _ => {}
+        let tail = self.core.touch_event(touch);
+        if matches!(phase, TouchPhase::Started) {
+            self.click_to_focus(pid);
         }
+        tail
     }
 
     /// Translate a typed widget event into the symbolic
@@ -486,33 +443,35 @@ impl<V: WidgetView> ShellCore<V> {
     /// `scene/invoke` route uses. Failures from the statechart
     /// (`InvokeError::Rejected` etc.) are swallowed: the SCXML decides
     /// whether a given transition fires.
+    ///
+    /// R51.123 §5.41 — body delegates to [`CoreShell::forward`]
+    /// (which performs the `invoke` + post-dispatch tail); the
+    /// Vello-side post-tail bookkeeping (OCC revision bump per §5.34
+    /// R40.4, transition-log eprintln, redraw flag on state change)
+    /// happens in [`Self::handle_tail`].
     pub fn forward(&mut self, event: V::Event) {
-        let name = V::event_name(event);
-        if let Scene::External(node) = &mut self.scene {
-            if let Some(intro) = node.handle.introspect_mut() {
-                let _ = intro.invoke("send", IntrospectValue::Text(name.to_string()));
-            }
-        }
+        let tail = self.core.forward(event);
         // §5.34 R40.4: winit-side input bypasses the RPC dispatcher,
         // so bump the OCC revision token directly. Spurious bumps for
         // SCXML-rejected events are acceptable per the
         // conservative-bump policy.
         self.revision.bump();
-        self.refresh_state();
-        self.drain_intents();
+        self.handle_tail(&tail);
     }
 
     /// R51.37 §5.35 — route a key string through
-    /// [`WidgetView::apply_key`] and, on handled (`true`), run the
+    /// [`WidgetView::apply_key`] and, on handled
+    /// (`Some(DispatchTail)` from [`CoreShell::apply_key`]), run the
     /// same post-input bookkeeping as [`Self::forward`]: bump the
     /// §5.34 revision, re-read cached state (paint on visible
-    /// change), drain pending intents. Unhandled keys are swallowed
-    /// quietly (same shape as an unmatched [`WidgetView::keybinding`]).
+    /// change), drain pending intents. Unhandled keys (`None` return)
+    /// are swallowed quietly (same shape as an unmatched
+    /// [`WidgetView::keybinding`]).
     pub fn apply_key(&mut self, key: &str) {
-        if V::apply_key(&mut self.scene, self.focus.focused(), key) {
+        let focused = self.focus.focused().map(str::to_owned);
+        if let Some(tail) = self.core.apply_key(focused.as_deref(), key) {
             self.revision.bump();
-            self.refresh_state();
-            self.drain_intents();
+            self.handle_tail(&tail);
         }
     }
 
@@ -573,53 +532,49 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
     /// R51.80 §5.35 — winit `CursorMoved` dispatch decoupled from
-    /// winit at the [`ShellCore`] surface. Forwards through the
-    /// [`InputRouter`] (which routes to the matching
-    /// `Scene::External` via tag hit-test), then refreshes cached
-    /// state + drains intents.
+    /// winit at the [`ShellCore`] surface. Forwards through
+    /// [`CoreShell::cursor_moved`] (which performs the router walk +
+    /// post-dispatch tail), then routes the tail through
+    /// [`Self::handle_tail`].
     pub fn cursor_moved(&mut self, pid: PointerId, x: f64, y: f64) {
-        self.router.cursor_moved(pid, x, y, &mut self.scene);
-        self.refresh_state();
-        self.drain_intents();
+        let tail = self.core.cursor_moved(pid, x, y);
+        self.handle_tail(&tail);
     }
 
     /// R51.80 §5.35 — winit `CursorLeft` dispatch decoupled from
     /// winit at the [`ShellCore`] surface.
     pub fn cursor_left(&mut self, pid: PointerId) {
-        self.router.cursor_left(pid, &mut self.scene);
-        self.refresh_state();
-        self.drain_intents();
+        let tail = self.core.cursor_left(pid);
+        self.handle_tail(&tail);
     }
 
     /// R51.80 §5.35 — winit `MouseInput { Pressed, Left }` dispatch.
-    /// Combines `InputRouter::pointer_down` with the §5.39
+    /// Combines [`CoreShell::pointer_down`] with the §5.39
     /// click-to-focus rule (the same path
-    /// `TouchPhase::Started` runs after a synthetic cursor move).
+    /// [`TouchPhase::Started`] runs after a synthetic cursor move).
     pub fn mouse_pressed(&mut self, pid: PointerId) {
-        self.router.pointer_down(pid, &mut self.scene);
+        let tail = self.core.pointer_down(pid);
         self.click_to_focus(pid);
-        self.refresh_state();
-        self.drain_intents();
+        self.handle_tail(&tail);
     }
 
     /// R51.80 §5.35 — winit `MouseInput { Released, Left }` dispatch.
     pub fn mouse_released(&mut self, pid: PointerId) {
-        self.router.pointer_up(pid, &mut self.scene);
-        self.refresh_state();
-        self.drain_intents();
+        let tail = self.core.pointer_up(pid);
+        self.handle_tail(&tail);
     }
 
     /// R51.80 §5.35 — abstract touch event dispatch (R51.108 §5.41
-    /// winit-free). The surface-side `AppShell` converts a
-    /// `winit::event::Touch` to [`Touch`] at the window-system
-    /// boundary; future TUI / mobile / RPC paths construct the same
-    /// abstract event directly. Delegates to the multi-pointer
-    /// [`Self::handle_touch`] (R51.45 §5.35) then refreshes cached
-    /// state + drains intents.
+    /// winit-free, R51.122 §5.41 router-side lift). The surface-side
+    /// `AppShell` converts a `winit::event::Touch` to [`Touch`] at
+    /// the window-system boundary; future TUI / mobile / RPC paths
+    /// construct the same abstract event directly. Delegates to
+    /// [`Self::handle_touch`] (which calls [`CoreShell::touch_event`]
+    /// plus the Vello-only `click_to_focus` follow-up on the press
+    /// phase) then routes the dispatch tail.
     pub fn touch_event(&mut self, touch: Touch) {
-        self.handle_touch(touch);
-        self.refresh_state();
-        self.drain_intents();
+        let tail = self.handle_touch(touch);
+        self.handle_tail(&tail);
     }
 
     /// R51.80 §5.39 — modifier-key cache update. `KeyEvent` carries no
@@ -668,7 +623,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// each freshly shaped text run for the next frame's cache hit).
     pub fn compute_paint_scene(&mut self, w: u32, h: u32) -> Scene {
         let frame = Frame::new();
-        let mut paint_scene = V::view(self.cached_state, &frame);
+        let mut paint_scene = V::view(*self.core.cached_state(), &frame);
         compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
         paint_scene
     }
@@ -692,18 +647,15 @@ impl<V: WidgetView> ShellCore<V> {
         paint_scene: &Scene,
     ) -> (Vec<AccessNode>, Option<AccessFocus>) {
         let focused = self.focus.focused().map(str::to_owned);
-        let mut nodes =
-            V::access_node(&self.cached_state, focused.as_deref());
+        let cached = self.core.cached_state();
+        let mut nodes = V::access_node(cached, focused.as_deref());
         pinion_a11y::enrich_names_from_scene(&mut nodes, paint_scene);
         for node in &mut nodes {
             if let Some(rect) = rect_for_tag(paint_scene, &node.tag) {
                 node.bounds = Some(rect);
             }
         }
-        let at_focus = V::access_focus_target(
-            &self.cached_state,
-            focused.as_deref(),
-        );
+        let at_focus = V::access_focus_target(cached, focused.as_deref());
         (nodes, at_focus)
     }
 
@@ -718,9 +670,9 @@ impl<V: WidgetView> ShellCore<V> {
     /// dispatcher, so the substrate has to close the loop here).
     pub fn finalize_frame(&mut self, paint_scene: Scene) {
         self.last_paint_layout = Some(build_layout_node(&paint_scene, "/0"));
-        self.router.update_paint_scene(paint_scene, &mut self.scene);
-        self.refresh_state();
-        self.drain_intents();
+        self.core.update_paint_scene(paint_scene);
+        let tail = self.core.tail();
+        self.handle_tail(&tail);
     }
 
     /// R51.53 §5.39 — click → focus auto-set / background → clear.
@@ -733,7 +685,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`FocusManager::focus_set`] guard rejects unknown tags so
     /// the no-op falls out naturally.
     fn click_to_focus(&mut self, pid: PointerId) {
-        if let Some(target) = self.router.hover_target(pid).map(str::to_owned) {
+        if let Some(target) = self.core.hover_target(pid).map(str::to_owned) {
             if !self.focus.focus_set(&target) {
                 // Tagged but non-focusable (decoration) — leave focus
                 // unchanged. The W3C HTML convention says only
@@ -781,14 +733,17 @@ impl<V: WidgetView> ShellCore<V> {
         // and trigger a redraw to refresh the focus ring.
         let focus_before = self.focus.focused().map(str::to_owned);
         let resp = {
-            // Disjoint-field split mutable borrows so the producer
-            // closure can capture `cached_state` + `text_cache` while
-            // the dispatcher still gets `scene` + `previews` + `revision`.
-            let scene_ptr = &mut self.scene;
+            // Disjoint-field split mutable borrows. R51.123 §5.41 —
+            // `scene` + `cached_state` live behind
+            // `self.core: CoreShell<V>`; the producer closure reads
+            // `cached_state` (`Copy`) and the dispatcher takes the
+            // scene mut via `core.scene_mut()`. `previews` / `revision`
+            // / `focus` / `text_cache` stay on the Vello extras.
+            let cached_state = *self.core.cached_state();
+            let scene_ptr = self.core.scene_mut();
             let previews = &self.previews;
             let revision = &self.revision;
             let focus_ptr = &mut self.focus;
-            let cached_state = self.cached_state;
             let text_cache_ptr = &mut self.text_cache;
             let last_paint = self.last_paint_layout.as_ref();
             let mut produce = |w: u32, h: u32| -> Scene {
@@ -810,8 +765,8 @@ impl<V: WidgetView> ShellCore<V> {
             }
             dispatch(&mut ctx, request)
         };
-        self.refresh_state();
-        self.drain_intents();
+        let tail = self.core.tail();
+        self.handle_tail(&tail);
         // R51.73 §5.40 — `focus/set` from the AI client must trigger
         // a redraw so the focus ring repaints on the new target. The
         // before/after comparison catches every focus-mutating
@@ -822,32 +777,38 @@ impl<V: WidgetView> ShellCore<V> {
         resp
     }
 
-    /// §5.20 live dogfood: walk the scene, drain any pending intents
-    /// into the local queue, log each one to stderr. The
-    /// `scene/intents` RPC method races with this drain — whichever
-    /// caller harvests first wins (poll-form, single-consumer v0).
-    fn drain_intents(&mut self) {
-        walk_scene_and_drain(&mut self.scene, &mut self.intent_queue);
-        for intent in self.intent_queue.drain() {
+    /// R51.123 §5.41 — Vello-side post-dispatch bookkeeping for a
+    /// [`DispatchTail`] returned by any [`CoreShell`] dispatch
+    /// method.
+    ///
+    /// Logs each drained §5.20 intent to stderr (the dogfood
+    /// trace line shape [`crate::AppShell`] and downstream observers
+    /// rely on); logs the cached-state transition (`from -> to`) and
+    /// sets `redraw_requested` so the next event-loop iteration
+    /// triggers a repaint when the visible state changed; both are
+    /// no-ops when the tail is empty (no intents, no state change).
+    /// The `scene/intents` RPC method races with this drain —
+    /// whichever caller harvests first wins (poll-form,
+    /// single-consumer v0 per §5.20).
+    ///
+    /// Takes [`DispatchTail`] by reference because the
+    /// substrate-side reads (`tail.intents` iter, `tail.state_change`
+    /// copy) consume nothing; the caller owns the `Vec<Intent>` and
+    /// drops it on return.
+    fn handle_tail(&mut self, tail: &DispatchTail<V::State>) {
+        for intent in &tail.intents {
             eprintln!(
                 "shell: intent {} payload={:?}",
                 intent.tag_str(),
                 intent.payload,
             );
         }
-    }
-
-    /// Re-read the cached state from the live scene; log and repaint
-    /// if it changed since the previous refresh.
-    fn refresh_state(&mut self) {
-        let now = V::read_state(&self.scene);
-        if now != self.cached_state {
+        if let Some(sc) = tail.state_change {
             eprintln!(
                 "shell: state {} -> {}",
-                V::fmt_state_log(&self.cached_state),
-                V::fmt_state_log(&now),
+                V::fmt_state_log(&sc.before),
+                V::fmt_state_log(&sc.after),
             );
-            self.cached_state = now;
             self.request_redraw();
         }
     }
@@ -1014,10 +975,10 @@ impl<V: WidgetView> ShellCore<V> {
                     // back to the atomic `apply_key` chain (no
                     // keyboard equivalent for "make this the active
                     // descendant").
-                    let _ = V::access_child_invoke(&mut self.scene, sub, action.kind);
+                    let _ = V::access_child_invoke(self.core.scene_mut(), sub, action.kind);
                     self.revision.bump();
-                    self.refresh_state();
-                    self.drain_intents();
+                    let tail = self.core.tail();
+                    self.handle_tail(&tail);
                 }
                 self.request_redraw();
             }
@@ -1030,10 +991,10 @@ impl<V: WidgetView> ShellCore<V> {
                     // refresh / drain bookkeeping `apply_a11y_key`
                     // performs so AT-driven activation matches the
                     // keyboard path 1:1.
-                    if V::access_child_invoke(&mut self.scene, sub, action.kind) {
+                    if V::access_child_invoke(self.core.scene_mut(), sub, action.kind) {
                         self.revision.bump();
-                        self.refresh_state();
-                        self.drain_intents();
+                        let tail = self.core.tail();
+                        self.handle_tail(&tail);
                         self.request_redraw();
                         return;
                     }
@@ -1055,12 +1016,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// §5.34 OCC revision, re-read cached state, drain pending
     /// intents on handled, request a redraw regardless so the
     /// AT-side activation surfaces visually.
+    ///
+    /// R51.123 §5.41 — body delegates to [`CoreShell::apply_key`];
+    /// the focus mutation happens before the dispatch so
+    /// `core.apply_key` sees the just-focused tag in the
+    /// `Some(tag)` argument.
     fn apply_a11y_key(&mut self, tag: &str, key: &str) {
         self.focus.focus_set(tag);
-        if V::apply_key(&mut self.scene, Some(tag), key) {
+        if let Some(tail) = self.core.apply_key(Some(tag), key) {
             self.revision.bump();
-            self.refresh_state();
-            self.drain_intents();
+            self.handle_tail(&tail);
         }
         self.request_redraw();
     }
