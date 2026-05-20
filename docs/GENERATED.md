@@ -6820,6 +6820,36 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.169 — §5.23 R27 — handle_tail (shell + tui) routes drained intents through V::update; closes input → drain → reducer arc
+
+**Changes**:
+- crates/pinion-shell/src/substrate.rs: handle_tail for-loop now calls self.core.route_intent_through_update(intent) for every drained §5.20 Intent before dispatch_pending_commands runs
+- crates/pinion-tui/src/substrate.rs: handle_tail mirror; both backends close the R27 input → drain → reducer arc identically
+- crates/pinion-shell/tests/dispatch_core.rs: EXTERNAL_DRAIN_INTENT static + TestExternal::{is_dirty, drain_intents} overrides (drain scaffold); 2 R51.169 tests (echo on drain / default empty on drain)
+- crates/pinion-tui/src/substrate.rs: 2 R51.169 tests using EchoButtonFixture (dispatch_intent fires both incoming+drained reducers → 2 commands; default reducer → 0 commands)
+
+
+
+**Verification**:
+- cargo test -p pinion-shell --test dispatch_core r51_169: 2 pass
+- cargo test -p pinion-tui --lib r51_169: 2 pass
+- cargo test --workspace --features pinion-runtime/vello: 2000 pass / 0 fail / 10 ignored (+16 vs R51.165 baseline 1984)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- mnemosyne validate_workspace: entries=340 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.23, §5.20, §5.41, §6.3
+
+
+**Carry forward**:
+- R51.170 — hello-commands(-tui) migrate from R51.163 Owner::cache one-shot hack to reducer-driven Command flow; with drain → reducer wired (R51.169), CommandsView::update(intent.tag == main_btn.click) can emit demo.echo Command directly
+- R51.171 — Intent.payload typed routing through SCXML invoke send (still tag-only path drops payload — not yet addressed)
+- R51.172 — V::update state writeback semantics clarification: &mut state mutation currently transient (Scene::External SCXML send is authoritative); design choice between Elm-style separate Model field vs SCXML-as-Model carry
+- R51.173 — Forge codegen emits update body from SCE schema effect + command tables (SCE upstream RFC carry per [[sce-upstream-debts]])
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

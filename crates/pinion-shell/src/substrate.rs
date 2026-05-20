@@ -938,6 +938,13 @@ impl<V: WidgetView> ShellCore<V> {
                 intent.tag_str(),
                 intent.payload,
             );
+            // R51.169 §5.23 R27 — every drained intent flows through
+            // `V::update` so reducer-produced `Vec<Command>` from
+            // widget-side state transitions (e.g. button.click,
+            // toggle.changed) joins the same owner queue the
+            // async-re-feed path uses. Closes the R27 dispatch loop's
+            // input → drain → reducer arc.
+            let _ = self.core.route_intent_through_update(intent);
         }
         if let Some(sc) = tail.state_change {
             eprintln!(

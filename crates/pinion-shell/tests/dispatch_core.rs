@@ -120,6 +120,20 @@ impl External for TestExternal {
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
     }
+    fn is_dirty(&self) -> bool {
+        // R51.169 §5.23 R27 — test drain mock. `walk_scene_and_drain`
+        // skips `drain_intents` unless this returns true; the wiring
+        // tests below toggle the static queue to exercise the
+        // SCXML-side drain → V::update path.
+        EXTERNAL_DRAIN_INTENT.lock().unwrap().is_some()
+    }
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(pinion_core::Intent)) {
+        // R51.169 — pops the queued intent (one-shot) and pushes it
+        // into the drain sink so the substrate's tail() collects it.
+        if let Some(intent) = EXTERNAL_DRAIN_INTENT.lock().unwrap().take() {
+            sink(intent);
+        }
+    }
 }
 
 impl ExternalIntrospect for TestExternal {
@@ -190,6 +204,14 @@ static OBSERVED_OWNER_ID_APPLY_KEY: Mutex<Option<u64>> = Mutex::new(None);
 static UPDATE_EMITS_ECHO_COMMAND: AtomicBool = AtomicBool::new(false);
 static UPDATE_INTENT_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+// R51.169 §5.23 R27 — one-shot drain queue for `TestExternal`. A
+// `forward(()) → tail()` cycle pops the queued intent (if any) and
+// surfaces it through `walk_scene_and_drain` so the wiring test
+// exercises the SCXML-side drain → V::update path identically to
+// real widgets like `ButtonExternal` whose statecharts emit click
+// intents on transition.
+static EXTERNAL_DRAIN_INTENT: Mutex<Option<pinion_core::Intent>> = Mutex::new(None);
+
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
@@ -201,6 +223,7 @@ fn reset_mocks() {
     *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap() = None;
     UPDATE_EMITS_ECHO_COMMAND.store(false, Ordering::SeqCst);
     UPDATE_INTENT_LOG.lock().unwrap().clear();
+    *EXTERNAL_DRAIN_INTENT.lock().unwrap() = None;
 }
 
 struct TestView;
@@ -1566,6 +1589,86 @@ mod r51_168_dispatch_intent_reducer_routing {
         assert!(
             core.root_owner().pending_commands().is_empty(),
             "default reducer must not queue any commands",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// R51.169 §5.23 R27 — `handle_tail` routes every drained
+// §5.20 [`Intent`] through `V::update` so widget-side state
+// transitions (button.click, toggle.changed, …) emit `Vec<Command>`
+// into the same owner queue the async-re-feed path uses. Closes the
+// R27 dispatch loop's input → drain → reducer arc on the Vello side.
+// ─────────────────────────────────────────────────────────────────────────
+
+mod r51_169_handle_tail_drain_routing {
+    use super::*;
+    use pinion_core::Intent;
+
+    #[test]
+    fn drained_intent_runs_through_update_reducer() {
+        // R51.169 — push a synthetic drain intent into the
+        // TestExternal queue, set the reducer mock to emit, then
+        // call `forward(())` which advances the dispatch path:
+        // SCXML `invoke("send", ...)` → no-op → `tail()` →
+        // `walk_scene_and_drain` pops the intent → `handle_tail`
+        // routes it through `V::update` (R51.169 wiring) → echo
+        // command queued on the owner.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        UPDATE_EMITS_ECHO_COMMAND.store(true, Ordering::SeqCst);
+        *EXTERNAL_DRAIN_INTENT.lock().unwrap() = Some(Intent::new_static(
+            "drain_event",
+            IntrospectValue::Null,
+        ));
+
+        let mut core = ShellCore::<TestView>::new();
+        core.forward(());
+
+        let pending = core.root_owner().pending_commands();
+        assert_eq!(
+            pending.len(),
+            1,
+            "drained intent must produce exactly one reducer-emitted command",
+        );
+        assert_eq!(pending[0].kind_str(), "test.echo");
+        // Drain prefix wraps `drain_event` with TestView's tag
+        // ("test") per the §5.20 R22 widget-tag convention.
+        assert_eq!(
+            pending[0].payload,
+            IntrospectValue::Text("test.drain_event".to_string()),
+        );
+
+        let log = UPDATE_INTENT_LOG.lock().unwrap();
+        assert!(
+            log.iter().any(|t| t == "test.drain_event"),
+            "reducer must observe the drained intent (log={log:?})",
+        );
+    }
+
+    #[test]
+    fn default_reducer_keeps_queue_empty_on_drain() {
+        // R51.169 — default reducer leaves the queue empty even when
+        // a drain occurs, proving the new wiring is semantically
+        // transparent on the no-op path.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        *EXTERNAL_DRAIN_INTENT.lock().unwrap() = Some(Intent::new_static(
+            "drain_event",
+            IntrospectValue::Null,
+        ));
+
+        let mut core = ShellCore::<TestView>::new();
+        core.forward(());
+
+        assert!(
+            core.root_owner().pending_commands().is_empty(),
+            "default reducer must not queue commands on drain",
+        );
+        let log = UPDATE_INTENT_LOG.lock().unwrap();
+        assert!(
+            log.iter().any(|t| t == "test.drain_event"),
+            "default reducer is still called (logs the intent) but emits no commands",
         );
     }
 }

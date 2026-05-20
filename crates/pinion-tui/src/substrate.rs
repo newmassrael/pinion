@@ -357,6 +357,13 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     fn handle_tail(&mut self, tail: &DispatchTail<V::State>) -> bool {
         for intent in &tail.intents {
             self.log_intent(intent);
+            // R51.169 §5.23 R27 — every drained intent flows through
+            // `V::update` so reducer-produced `Vec<Command>` from
+            // widget-side state transitions joins the same owner
+            // queue the async-re-feed path uses. Mirrors the Vello
+            // side; both backends close the R27 dispatch loop's
+            // input → drain → reducer arc identically.
+            let _ = self.core.route_intent_through_update(intent);
         }
         let state_changed = if let Some(sc) = tail.state_change {
             self.log_state_change(&sc.before, &sc.after);
@@ -1163,6 +1170,79 @@ mod tests {
             assert!(
                 core.root_owner().pending_commands().is_empty(),
                 "default reducer must not queue any commands",
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R51.169 §5.23 R27 — `handle_tail` routes every drained
+    // §5.20 Intent through `V::update` so widget-side state
+    // transitions (button.click, toggle.changed, …) emit
+    // `Vec<Command>` into the same owner queue the async-re-feed
+    // path uses. Closes the R27 dispatch loop's
+    // input → drain → reducer arc on the TUI side.
+    //
+    // Uses `dispatch_intent("KeyboardActivate")` which (a) fires
+    // the R51.168 incoming-intent reducer pass for the carrier
+    // intent, then (b) sends the tag through `invoke("send", …)`
+    // so the `ButtonExternal` SCXML transitions and emits
+    // `echo_btn.click` on drain, then (c) routes the drained intent
+    // through `V::update` again (R51.169 wiring). Two reducer-emitted
+    // commands therefore land on the owner queue: the incoming-side
+    // one and the drain-side one. A regression in either wiring
+    // breaks the count.
+    // ─────────────────────────────────────────────────────────────────
+
+    mod r51_169_handle_tail_drain_routing {
+        use super::*;
+        use pinion_core::external::IntrospectValue;
+        use pinion_core::test_fixtures::EchoButtonFixture;
+
+        #[test]
+        fn drained_intent_runs_through_update_reducer() {
+            // R51.169 — KeyboardActivate via dispatch_intent triggers
+            // BOTH the incoming-intent reducer (R51.168) and the
+            // drained-intent reducer (R51.169). EchoButtonFixture's
+            // `update` emits one command per intent, so two
+            // commands land on the queue with distinct payloads.
+            let mut core: ShellCoreTui<EchoButtonFixture> = ShellCoreTui::new();
+            let intent = Intent::new_static("KeyboardActivate", IntrospectValue::Null);
+            let _ = core.dispatch_intent(&intent);
+
+            let pending = core.root_owner().pending_commands();
+            assert_eq!(
+                pending.len(),
+                2,
+                "incoming reducer + drained reducer must each queue one command",
+            );
+
+            // Carrier intent (incoming) payload — the tag we passed.
+            assert!(
+                pending.iter().any(|c| c.payload
+                    == IntrospectValue::Text("KeyboardActivate".to_string())),
+                "incoming intent reducer must observe `KeyboardActivate`",
+            );
+            // Drained click intent payload — `<tag>.<kind>`
+            // (R51.122 reference).
+            assert!(
+                pending.iter().any(|c| c.payload
+                    == IntrospectValue::Text("echo_btn.click".to_string())),
+                "drained intent reducer must observe `echo_btn.click`",
+            );
+        }
+
+        #[test]
+        fn default_reducer_keeps_queue_empty_on_drain() {
+            // R51.169 — TestButtonView (= ButtonFixture, default
+            // no-op update) keeps the queue empty even when the
+            // drain emits an intent. Confirms the wiring is
+            // semantically transparent on the no-op path.
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            let intent = Intent::new_static("KeyboardActivate", IntrospectValue::Null);
+            let _ = core.dispatch_intent(&intent);
+            assert!(
+                core.root_owner().pending_commands().is_empty(),
+                "default reducer must not queue commands on drain either",
             );
         }
     }
