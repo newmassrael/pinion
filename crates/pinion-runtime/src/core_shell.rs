@@ -69,7 +69,7 @@
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::scene::ExternalNode;
-use pinion_core::{Scene, WidgetCore};
+use pinion_core::{Owner, Scene, WidgetCore};
 
 use crate::input::{InputRouter, PointerId, Touch, TouchPhase};
 use crate::intent_queue::{walk_scene_and_drain, IntentQueue};
@@ -112,6 +112,20 @@ pub struct CoreShell<V: WidgetCore> {
     cached_state: V::State,
     router: InputRouter,
     intent_queue: IntentQueue,
+    /// R51.142 §5.28 — root reactive scope for this widget binding.
+    ///
+    /// [`Animation<T>`](pinion_core::Animation) instances created in
+    /// the view fn (or by SCE-generated `animated` declarations) attach
+    /// to this [`Owner`] through
+    /// [`Owner::register_animation`](pinion_core::reactive::Owner::register_animation).
+    /// Backends (Vello, TUI) call [`Self::tick_animations`] once per
+    /// paint cycle with the measured `dt` so the spring solver advances
+    /// in lockstep with the frame budget. On `CoreShell` drop the owner
+    /// drops too — every animation and pending [`Command`](pinion_core::Command)
+    /// scoped to this binding evaporates with it (Solid cancellation
+    /// pattern; matches the [`Owner`] drop semantics R51.137 +
+    /// R51.139 land).
+    root_owner: Owner,
 }
 
 /// R51.122 §5.41 — post-dispatch bookkeeping artifact returned by
@@ -212,6 +226,7 @@ impl<V: WidgetCore> CoreShell<V> {
             cached_state,
             router: InputRouter::new(),
             intent_queue: IntentQueue::new(),
+            root_owner: Owner::new(),
         }
     }
 
@@ -241,6 +256,43 @@ impl<V: WidgetCore> CoreShell<V> {
     #[must_use]
     pub fn cached_state(&self) -> &V::State {
         &self.cached_state
+    }
+
+    /// R51.142 §5.28 — read-only borrow of the root reactive scope
+    /// owned by this binding.
+    ///
+    /// Used by the view fn (or SCE-emitted code) to attach
+    /// [`Animation<T>`](pinion_core::Animation) instances and
+    /// [`Effect`](pinion_core::Effect) closures to this widget's
+    /// lifetime. Drop on `CoreShell` propagates through
+    /// [`Owner`] drop, which cascades to children and cancels every
+    /// pending [`Command`](pinion_core::Command) (Solid pattern,
+    /// R51.139). Borrowed read-only because [`Owner`] is itself
+    /// reference-counted internally — registrations on a clone reach
+    /// the same scope, so callers that need an owned handle can
+    /// `clone()` the borrow without losing the lifetime tie.
+    #[must_use]
+    pub fn root_owner(&self) -> &Owner {
+        &self.root_owner
+    }
+
+    /// R51.142 §5.28 — advance every animation registered on the
+    /// [`root_owner`](Self::root_owner) by `dt` seconds.
+    ///
+    /// Backends call this once per paint cycle with the measured
+    /// delta between frames (the same `dt` passed to
+    /// [`Frame::with_dt`](pinion_core::Frame::with_dt) for the view
+    /// fn). On the first paint or any synthetic flush the caller
+    /// should pass `0.0`; spring solvers leave at-rest animations
+    /// untouched at zero `dt` so the call is idempotent.
+    ///
+    /// The tick walks children depth-first before this scope (R51.138
+    /// cascade order) and snapshots the animation list before
+    /// iterating, so handlers registering or unregistering animations
+    /// inside their tick callback do not break the sweep — the new
+    /// registrations pick up on the next frame instead.
+    pub fn tick_animations(&self, dt: f32) {
+        self.root_owner.tick_animations(dt);
     }
 
     /// R51.122 §5.41 — hand a freshly-painted scene to the
@@ -675,5 +727,122 @@ mod tests {
             t.state_change.expect("Idle → Hover after paint").after,
             ButtonState::Hover,
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R51.142 §5.28 — root_owner + tick_animations substrate tests.
+    // ─────────────────────────────────────────────────────────────────
+
+    use pinion_core::animation::Tickable;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// Test-only [`Tickable`] that records every `tick(dt)` it sees so a
+    /// test can assert the substrate forwarded the right delta into
+    /// the right number of dispatches.
+    struct TickRecorder {
+        last_dt: Cell<f32>,
+        ticks: Cell<u32>,
+    }
+
+    impl TickRecorder {
+        fn new() -> Self {
+            Self {
+                last_dt: Cell::new(f32::NAN),
+                ticks: Cell::new(0),
+            }
+        }
+    }
+
+    impl Tickable for TickRecorder {
+        fn tick(&self, dt: f32) {
+            self.last_dt.set(dt);
+            self.ticks.set(self.ticks.get() + 1);
+        }
+
+        fn is_at_rest(&self, _epsilon: f32) -> bool {
+            // Always non-rest so [`Owner::tick_animations`] never
+            // short-circuits the dispatch and the test records every
+            // tick.
+            false
+        }
+    }
+
+    #[test]
+    fn root_owner_accessor_yields_usable_owner() {
+        // R51.142 — `root_owner()` exposes the binding's reactive
+        // scope so [`Owner::register_animation`] succeeds against it.
+        // Two reads return references to the same owner instance:
+        // animations registered through either handle land in the
+        // same tick list.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let recorder = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(recorder.clone());
+        // A second borrow registers another tickable — both ticks
+        // dispatch from the same internal vec on the next sweep.
+        let recorder_b = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(recorder_b.clone());
+        core.tick_animations(1.0 / 60.0);
+        assert_eq!(recorder.ticks.get(), 1);
+        assert_eq!(recorder_b.ticks.get(), 1);
+    }
+
+    #[test]
+    fn tick_animations_forwards_dt_to_registered_tickables() {
+        // R51.142 — the substrate's `tick_animations(dt)` is the
+        // exact `dt` the registered Tickables observe in their
+        // `tick(dt)` callback. No clamping, no scaling.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let recorder = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(recorder.clone());
+        core.tick_animations(0.016_666_67);
+        assert_eq!(recorder.ticks.get(), 1);
+        assert_eq!(recorder.last_dt.get().to_bits(), 0.016_666_67_f32.to_bits());
+    }
+
+    #[test]
+    fn tick_animations_idempotent_with_zero_dt_when_owner_empty() {
+        // R51.142 — calling `tick_animations(0.0)` on a fresh
+        // substrate with no registered animations is a no-op. The
+        // first paint or any synthetic flush passes `dt=0` and the
+        // call must not panic / allocate / touch state.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        core.tick_animations(0.0);
+        core.tick_animations(0.0);
+        // Cached state unchanged — animations were never registered
+        // so the visible Button state stays at the construction
+        // baseline.
+        assert_eq!(*core.cached_state(), ButtonState::Idle);
+    }
+
+    #[test]
+    fn tick_animations_drives_registered_animation_repeatedly() {
+        // R51.142 — successive ticks accumulate dispatches without
+        // unregistering or skipping the tickable; the substrate
+        // never assumes one-shot semantics.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let recorder = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(recorder.clone());
+        for _ in 0..5 {
+            core.tick_animations(0.01);
+        }
+        assert_eq!(recorder.ticks.get(), 5);
+        assert_eq!(recorder.last_dt.get().to_bits(), 0.01_f32.to_bits());
+    }
+
+    #[test]
+    fn root_owner_drop_drops_registered_animations() {
+        // R51.142 — when the substrate goes out of scope the
+        // [`Owner`] inside drops too, releasing every animation Rc
+        // it held. Verified via strong_count: the only outstanding
+        // strong reference outside the substrate is the test's local
+        // Rc, so after the drop strong_count is 1.
+        let recorder = Rc::new(TickRecorder::new());
+        {
+            let core: CoreShell<TestButton> = CoreShell::new();
+            core.root_owner().register_animation(recorder.clone());
+            assert!(Rc::strong_count(&recorder) >= 2);
+        }
+        assert_eq!(Rc::strong_count(&recorder), 1);
     }
 }

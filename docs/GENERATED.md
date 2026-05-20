@@ -1541,6 +1541,7 @@ fn main() {
 - R33: dry_run predicts steady-state (target value); does not simulate tick sequence.
 - R33: Frame.dt field added per §6.3 (Frame ZST evolves); deterministic time source.
 - R33: SCE schema: animated block declares Signal + config; Forge emits Animated<T> init.
+- R51.142 — CoreShell<V>::root_owner + tick_animations land (§5.28 paint-loop driver surface)
 
 
 
@@ -1572,6 +1573,8 @@ fn main() {
 - crates/pinion-core/src/animation.rs:Animation::new
 - crates/pinion-core/src/reactive/owner.rs:Owner::register_animation
 - crates/pinion-core/src/reactive/owner.rs:Owner::tick_animations
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::root_owner
+- crates/pinion-runtime/src/core_shell.rs:CoreShell::tick_animations
 
 
 
@@ -5922,6 +5925,34 @@ router.pointer_down(&mut state_scene);
 - R51.143 — Solid in-flight cancellation (JoinHandle / CancellationToken per executor)
 - R51.144 — scene/commands RPC method (10th typed method, §5.7 + §5.23 inspection)
 - Update(&mut Model, Intent) -> Vec<Command> reducer signature evolution carry
+
+
+
+### R51.142 — §5.28 CoreShell<V> root_owner + tick_animations 추가 — backend paint-loop animation tick surface
+
+**Changes**:
+- pinion-runtime/src/core_shell.rs: root_owner: Owner field + 2 pub methods 추가
+- CoreShell::root_owner() &Owner accessor + CoreShell::tick_animations(dt) driver hook
+- 5 신규 tests (root_owner usable / dt forward / zero-dt idempotent / repeat tick / drop cascade)
+
+
+
+**Verification**:
+- 1815 → 1820 tests (+5 신규), 0 failed, 8 ignored
+- clippy --features pinion-runtime/vello = 0 warnings
+- entries 313 → 314, T1=0, RT=1/1, GENERATED.md=sync
+- ShellCore / ShellCoreTui wrap carry 0 (composition transparent; 1815→1820=+5 정합)
+
+
+
+**Impact**: §5.28, §5.41, §6.3
+
+
+**Carry forward**:
+- R51.143 — Vello + TUI paint cycle 측 dt 측정 + tick_animations 호출 + Frame::with_dt(dt) 전환
+- R51.144 — hello-button hover transition demo (1st visual application, ColorAnimation use case)
+- R51.145 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)
+- R51.146 — Handler executor binding (R51.141 carry, pinion-rpc/pinion-shell tokio runtime owner)
 
 
 

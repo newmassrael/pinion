@@ -1690,7 +1690,8 @@
         "R33: AnimationDriver = framework Effect; ticks all active Animated per frame; cancel on Owner drop.",
         "R33: dry_run predicts steady-state (target value); does not simulate tick sequence.",
         "R33: Frame.dt field added per §6.3 (Frame ZST evolves); deterministic time source.",
-        "R33: SCE schema: animated block declares Signal + config; Forge emits Animated<T> init."
+        "R33: SCE schema: animated block declares Signal + config; Forge emits Animated<T> init.",
+        "R51.142 — CoreShell<V>::root_owner + tick_animations land (§5.28 paint-loop driver surface)"
       ],
       "alternatives_rejected": [
         {
@@ -1774,6 +1775,14 @@
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
           "symbol": "Owner::tick_animations"
+        },
+        {
+          "file": "crates/pinion-runtime/src/core_shell.rs",
+          "symbol": "CoreShell::root_owner"
+        },
+        {
+          "file": "crates/pinion-runtime/src/core_shell.rs",
+          "symbol": "CoreShell::tick_animations"
         }
       ],
       "decision_status": "active"
@@ -8701,6 +8710,54 @@
         "R51.143 — Solid in-flight cancellation (JoinHandle / CancellationToken per executor)",
         "R51.144 — scene/commands RPC method (10th typed method, §5.7 + §5.23 inspection)",
         "Update(&mut Model, Intent) -> Vec<Command> reducer signature evolution carry"
+      ]
+    },
+    "R51.142": {
+      "decision_summary": "§5.28 CoreShell<V> root_owner + tick_animations 추가 — backend paint-loop animation tick surface",
+      "changes_bullets": [
+        "pinion-runtime/src/core_shell.rs: root_owner: Owner field + 2 pub methods 추가",
+        "CoreShell::root_owner() &Owner accessor + CoreShell::tick_animations(dt) driver hook",
+        "5 신규 tests (root_owner usable / dt forward / zero-dt idempotent / repeat tick / drop cascade)"
+      ],
+      "verification_bullets": [
+        "1815 → 1820 tests (+5 신규), 0 failed, 8 ignored",
+        "clippy --features pinion-runtime/vello = 0 warnings",
+        "entries 313 → 314, T1=0, RT=1/1, GENERATED.md=sync",
+        "ShellCore / ShellCoreTui wrap carry 0 (composition transparent; 1815→1820=+5 정합)"
+      ],
+      "impact_refs": [
+        "5.28",
+        "5.41",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "R51.143 — Vello + TUI paint cycle 측 dt 측정 + tick_animations 호출 + Frame::with_dt(dt) 전환",
+        "R51.144 — hello-button hover transition demo (1st visual application, ColorAnimation use case)",
+        "R51.145 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)",
+        "R51.146 — Handler executor binding (R51.141 carry, pinion-rpc/pinion-shell tokio runtime owner)"
+      ],
+      "publishable_decision_summary": "§5.28 CoreShell<V> root_owner + tick_animations 추가 — backend paint-loop animation tick surface",
+      "publishable_changes_bullets": [
+        "pinion-runtime/src/core_shell.rs: root_owner: Owner field + 2 pub methods 추가",
+        "CoreShell::root_owner() &Owner accessor + CoreShell::tick_animations(dt) driver hook",
+        "5 신규 tests (root_owner usable / dt forward / zero-dt idempotent / repeat tick / drop cascade)"
+      ],
+      "publishable_verification_bullets": [
+        "1815 → 1820 tests (+5 신규), 0 failed, 8 ignored",
+        "clippy --features pinion-runtime/vello = 0 warnings",
+        "entries 313 → 314, T1=0, RT=1/1, GENERATED.md=sync",
+        "ShellCore / ShellCoreTui wrap carry 0 (composition transparent; 1815→1820=+5 정합)"
+      ],
+      "publishable_impact_refs": [
+        "5.28",
+        "5.41",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.143 — Vello + TUI paint cycle 측 dt 측정 + tick_animations 호출 + Frame::with_dt(dt) 전환",
+        "R51.144 — hello-button hover transition demo (1st visual application, ColorAnimation use case)",
+        "R51.145 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)",
+        "R51.146 — Handler executor binding (R51.141 carry, pinion-rpc/pinion-shell tokio runtime owner)"
       ]
     },
     "R51.33": {
