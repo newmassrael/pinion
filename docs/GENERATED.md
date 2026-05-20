@@ -1223,6 +1223,16 @@ fn main() {
 
 
 
+**Implementations**:
+- crates/pinion-core/src/reactive/effect.rs
+- crates/pinion-core/src/reactive/effect.rs:Effect
+- crates/pinion-core/src/reactive/effect.rs:EffectInner
+- crates/pinion-core/src/reactive/effect.rs:Effect::new
+- crates/pinion-core/src/reactive/effect.rs:EffectInner::rerun
+- crates/pinion-core/src/reactive/effect.rs:EffectInner::mark_dirty
+- crates/pinion-core/src/reactive/owner.rs:Owner::on_cleanup
+
+
 
 ### §5.24. Semantic tree (role / state / actions)
 
@@ -5733,6 +5743,39 @@ router.pointer_down(&mut state_scene);
 - Color/Rect Animatable impl — caller-explicit linear path 정통 (R51.134 carry)
 - premultiplied-linear vs straight-linear alpha quality round
 - EaseInQuart/Quint/EaseInOutBack 등 extended curves — evidence-first
+
+
+
+### R51.137 — §5.23 Effect substrate first-cut — eager-rerun Owner-tied reactive scope (R52 critical path)
+
+**Changes**:
+- crates/pinion-core/src/reactive/effect.rs 신규 (~520 LOC): Effect / EffectInner + ReactiveNode impl
+- Effect::new(owner, FnMut) — eager initial run + lazy Signal subscription + cycle detect (in_run)
+- EffectInner::rerun(self: &Rc<Self>) — drains source_cleanups, run_with_node, panic-safe RAII
+- mark_dirty → weak_self.upgrade() → rerun (OnceCell self-pointer, dyn-safe ReactiveNode preserved)
+- Owner::on_cleanup(Box<FnOnce>) public method — Effect 의 owner-tied cancellation 등록 entry
+- reactive::Effect re-export at mod.rs + lib.rs (Computed sibling, public surface)
+- +15 신규 tests: eager/dep-track/equality-skip/owner-drop/cascade/dyn-dep/batch/cycle/panic
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1774 pass / 0 fail / 8 ignored (+15)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- Effect/Signal/Computed substrate sibling shape — `Rc<dyn ReactiveNode>` 동일 dispatch path
+- mnemosyne validate_workspace: entries=309 / T1=0 / T3=0 / GENERATED.md=sync (post-mutation)
+
+
+
+**Impact**: §5.23, §5.22
+
+
+**Carry forward**:
+- R51.138: §5.28 AnimationDriver concrete (Animated<T> wraps Signal<T>, Spring/Tween + Effect tick)
+- R51.139: hello-button hover transition demo (1st application, visual evidence path)
+- §5.23 Command<Intent> + Handler trait substrate — async/IO escape hatch (R52 carry)
+- Effect dry_run skip — §2 #3 substrate (R51.140+ carry, requires thread-local dry_run flag)
+- Owner topological order across siblings — current order = registration; explicit topo carry
 
 
 

@@ -5,12 +5,14 @@
 //! hot-reload snapshot protocol can round-trip values across code swaps.
 
 pub mod computed;
+pub mod effect;
 pub mod introspect;
 pub mod owner;
 pub mod resource;
 pub mod signal;
 
 pub use computed::Computed;
+pub use effect::Effect;
 pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
 pub use resource::{FetchToken, LocalSpawner, Resource, ResourceState};

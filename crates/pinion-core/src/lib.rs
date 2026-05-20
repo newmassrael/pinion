@@ -32,9 +32,9 @@ pub use widget_core::WidgetCore;
 pub use frame::Frame;
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
-    Computed, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner, Owner, OwnerSnapshot,
-    Resource, ResourceState, Signal, SignalExternal, SnapshotRestoreError, SnapshotableSignal,
-    batch,
+    Computed, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner, Owner,
+    OwnerSnapshot, Resource, ResourceState, Signal, SignalExternal, SnapshotRestoreError,
+    SnapshotableSignal, batch,
 };
 pub use revision::SceneRevision;
 pub use scene::{HitPath, Scene};

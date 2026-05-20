@@ -393,6 +393,22 @@ impl Owner {
     pub fn id(&self) -> u64 {
         self.inner.id
     }
+
+    /// Register a cleanup closure that runs when this owner drops, in
+    /// registration order (FIFO). Cascades after children — `OwnerInner::drop`
+    /// clears `children` first so descendant cleanups run before ours.
+    ///
+    /// The closure is wrapped in `catch_unwind` at drain time (via
+    /// `run_cleanups_isolated`) so a panicking cleanup cannot abort sibling
+    /// cleanups via double-panic during `Drop`.
+    ///
+    /// This is the public entry point used by `Effect::new` (§5.23) to bind
+    /// an effect's lifetime to a scope. The internal `ReactiveNode`-trait
+    /// surface (`add_subscription_cleanup`) is reserved for the observer-list
+    /// teardown path used by `Signal::subscribe` / `Computed::subscribe_observer`.
+    pub fn on_cleanup(&self, cleanup: Box<dyn FnOnce()>) {
+        self.inner.cleanups.borrow_mut().push(cleanup);
+    }
 }
 
 impl Default for Owner {
