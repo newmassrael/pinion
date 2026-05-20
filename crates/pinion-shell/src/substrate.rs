@@ -1001,10 +1001,26 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// R51.159 first-cut routes the intent's tag through the same
     /// `invoke("send", Text(tag))` channel typed widget events use
-    /// ([`CoreShell::forward`]). The
-    /// [`Intent::payload`](pinion_core::Intent) is logged but not yet
-    /// threaded into the SCXML send (carry: payload-aware SCXML send
-    /// is part of the Update-reducer signature evolution).
+    /// ([`CoreShell::forward`]).
+    ///
+    /// R51.172 §5.23 R27 design clarification — the
+    /// [`Intent::payload`](pinion_core::Intent) is NOT threaded into
+    /// the SCXML invoke send by design. Pinion's split is:
+    ///
+    /// - **SCXML statechart** = `Model` mutation; transitions on
+    ///   event *names* only (`PointerUp`, `KeyboardActivate`,
+    ///   `echo.demo.echo`, …). The pinion SCXML wrapping does not
+    ///   surface event data to transition guards.
+    /// - **`WidgetCore::update`** (R51.166-171) = reducer; receives
+    ///   the *full* [`Intent`] (tag **and** payload) and decides
+    ///   what `Vec<Command>` to emit. Payload is consumed here.
+    ///
+    /// The R51.159-era "payload-aware SCXML send" carry resolves to
+    /// "the reducer is where payload belongs". If a future widget
+    /// needs payload-driven state transitions, the SCXML invoke
+    /// contract would extend to `IntrospectValue::Json({"tag",
+    /// "payload"})` and every `"send"` handler would learn the new
+    /// shape — but no current widget has that need.
     pub fn dispatch_intent(&mut self, intent: &Intent) {
         eprintln!(
             "shell: intent-feedback {} payload={:?}",

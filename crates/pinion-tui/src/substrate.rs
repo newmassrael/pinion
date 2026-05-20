@@ -457,9 +457,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// ```
     ///
     /// Returns `true` when the SCXML transition shifted the visible
-    /// cached state (the surface repaints on `true`). The Intent
-    /// payload is logged but not yet threaded into the SCXML send
-    /// (carry: Update-reducer signature evolution).
+    /// cached state (the surface repaints on `true`).
+    ///
+    /// R51.172 §5.23 R27 design clarification — payload is consumed
+    /// by `WidgetCore::update` (the reducer wired by R51.168 +
+    /// R51.169), not by the SCXML invoke send. The state machine
+    /// transitions on event names only; payload-bearing side effects
+    /// flow through the reducer's `Vec<Command>` return. Mirrors the
+    /// Vello-side rationale on
+    /// [`ShellCore::dispatch_intent`](pinion_shell::ShellCore::dispatch_intent).
     pub fn dispatch_intent(&mut self, intent: &Intent) -> bool {
         if let Some(sink) = &mut self.log_sink {
             let _ = writeln!(

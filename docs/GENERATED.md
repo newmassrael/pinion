@@ -6907,6 +6907,32 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.172 — §5.23 R27 design clarification — Intent.payload consumed by reducer (V::update), SCXML invoke send remains tag-only by design
+
+**Changes**:
+- crates/pinion-shell/src/substrate.rs: dispatch_intent doc rewrites the R51.159 'payload-aware SCXML send carry' as a design choice: SCXML = name-keyed Model, V::update = payload-consuming reducer
+- crates/pinion-tui/src/substrate.rs: ShellCoreTui::dispatch_intent mirror doc update; cross-references the Vello rationale
+- 3 memory entries land: widgetcore-update-substrate-pattern (R51.166-171 land lessons), scxml-as-model-update-transient (Model semantics), reducer-incoming-vs-drain-symmetry (two arc wiring)
+
+
+
+**Verification**:
+- cargo check --workspace --features pinion-runtime/vello: clean (doc-only changes)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- mnemosyne validate_workspace: entries=343 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.23, §5.20, §5.41
+
+
+**Carry forward**:
+- R51.173 — V::update state writeback semantics: docs added but no concrete API; if a future widget needs application-side Model beyond SCXML state, design Owner::cache<S> lift OR CoreShell.app_state<S> field
+- R51.174 — Forge codegen emits V::update body from SCE schema effect + command tables (SCE upstream RFC carry per [[sce-upstream-debts]])
+- R51.175 — if a future widget needs payload-driven SCXML transitions, extend invoke('send', ...) contract to accept Json({tag, payload}) and update all 8 widget Externals (button/toggle/checkbox/radio/radio_group/slider/listbox/listbox_item)
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
