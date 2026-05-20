@@ -185,20 +185,20 @@ impl WidgetCore for HelloCommandsTui {
 
     fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
         // R51.170 §5.23 R27 — TUI mirror of the Vello reducer
-        // dogfood. Match the SCXML-emitted
-        // `hello_commands_tui.click` intent and emit a `demo.echo`
-        // Command describing the async work. R51.169 handle_tail
-        // routing pumps the drained click through this reducer so
-        // the dispatch loop runs without the pre-R51.170 view-fn
-        // one-shot HACK.
+        // dogfood. R51.169 handle_tail routing pumps the drained
+        // click through this reducer so the dispatch loop runs
+        // without the pre-R51.170 view-fn one-shot HACK.
         //
-        // scope_id = 0; see the Vello sibling for the R51.171
-        // [[callback-root-owner-wrap]] carry note.
+        // R51.171 §5.22 R26 — `Owner::current()` resolves to the
+        // substrate's root owner (route_intent_through_update wraps
+        // the call in `root_owner.run(...)`); scope_id tags the
+        // Command for `scene/commands` RPC inspection.
         if intent.tag_str() == CLICK_INTENT_TAG {
+            let scope_id = pinion_core::Owner::current().map_or(0, |o| o.id());
             vec![Command::new_static(
                 DEMO_KIND,
                 IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
-                0,
+                scope_id,
             )]
         } else {
             Vec::new()

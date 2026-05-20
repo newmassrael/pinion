@@ -216,18 +216,18 @@ impl WidgetCore for CommandsView {
         // triggers the dispatch loop without the pre-R51.170
         // view-fn one-shot HACK.
         //
-        // scope_id is `0` because the substrate does not yet wrap
-        // `V::update` in `Owner::current()` — see the R51.171 carry
-        // for the [[callback-root-owner-wrap]] lift. Pinning to 0
-        // costs only the RPC inspection label; the dispatch /
-        // cancellation behaviour is unaffected because the
-        // framework attributes ownership through the queueing
-        // `root_owner` itself.
+        // R51.171 §5.22 R26 — `Owner::current()` resolves to the
+        // substrate's root owner because
+        // `CoreShell::route_intent_through_update` wraps this call
+        // in `root_owner.run(...)`. Tagging the Command with the
+        // producing scope id surfaces the right scope to the
+        // `scene/commands` RPC inspector ([[callback-root-owner-wrap]]).
         if intent.tag_str() == CLICK_INTENT_TAG {
+            let scope_id = pinion_core::Owner::current().map_or(0, |o| o.id());
             vec![Command::new_static(
                 DEMO_KIND,
                 IntrospectValue::Text(DEMO_PAYLOAD.to_string()),
-                0,
+                scope_id,
             )]
         } else {
             Vec::new()

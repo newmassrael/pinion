@@ -6879,6 +6879,34 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.171 — §5.23 R27 / §5.22 R26 — route_intent_through_update wraps V::update in root_owner.run ([[callback-root-owner-wrap]])
+
+**Changes**:
+- crates/pinion-runtime/src/core_shell.rs: route_intent_through_update wraps V::update(&mut state, intent) in self.root_owner.run(...) so Owner::current() resolves to root_owner inside the reducer
+- crates/pinion-runtime/src/core_shell.rs: r51_171 test (OwnerCaptureButton fixture + AtomicU64 sentinel u64::MAX) verifies Owner::current() id matches root_owner().id()
+- examples/hello-commands/src/main.rs: CommandsView::update uses pinion_core::Owner::current().map_or(0, |o| o.id()) for Command.scope_id (canonical RPC-introspection-friendly pattern)
+- examples/hello-commands-tui/src/main.rs: HelloCommandsTui::update mirror (same Owner::current() lookup)
+
+
+
+**Verification**:
+- cargo test -p pinion-runtime --lib r51_171: 1 pass
+- cargo test --workspace --features pinion-runtime/vello: 2001 pass / 0 fail / 10 ignored (+17 vs R51.165 baseline 1984)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- mnemosyne validate_workspace: entries=342 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.23, §5.22, §5.41, §6.3
+
+
+**Carry forward**:
+- R51.172 — Intent.payload typed routing through SCXML invoke send (still tag-only path drops payload — textbook R27 spec 1/3 remaining gap)
+- R51.173 — V::update state writeback semantics design decision: pinion has SCXML-as-Model so &mut state is transient; document the contract OR add a separate application Model field
+- R51.174 — Forge codegen emits update body from SCE schema effect + command tables (SCE upstream RFC carry per [[sce-upstream-debts]])
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

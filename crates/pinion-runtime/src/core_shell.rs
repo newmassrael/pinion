@@ -483,10 +483,22 @@ impl<V: WidgetCore> CoreShell<V> {
     /// callers (and tests) can introspect what was queued without a
     /// second owner snapshot. The commands are already on the queue
     /// — drop the return value if the caller has no use for it.
+    ///
+    /// R51.171 §5.22 R26 — the reducer call site is wrapped in
+    /// [`Owner::run`] so [`Owner::current`] resolves to the same
+    /// [`root_owner`](Self::root_owner) the framework queues
+    /// commands on. Reducer authors that want to tag their emitted
+    /// `Command` with the producing scope can write
+    /// `Owner::current().map_or(0, |o| o.id())` without reaching
+    /// through the substrate, mirroring the
+    /// [[callback-root-owner-wrap]] pattern already applied to
+    /// `V::view` (R51.146) and `V::apply_key` (R51.152).
     #[must_use = "the returned commands are already queued; ignore explicitly with `let _ = …` if you do not need them"]
     pub fn route_intent_through_update(&self, intent: &Intent) -> Vec<Command> {
         let mut state = V::read_state(&self.scene);
-        let commands = V::update(&mut state, intent);
+        let commands = self
+            .root_owner
+            .run(|| V::update(&mut state, intent));
         for cmd in &commands {
             self.root_owner.dispatch_command(cmd.clone());
         }
@@ -1611,6 +1623,84 @@ mod tests {
         assert_eq!(
             pending[1].payload,
             IntrospectValue::Text("echo_btn.b".to_string()),
+        );
+    }
+
+    // R51.171 §5.22 R26 — `route_intent_through_update` wraps the
+    // `V::update` call in `root_owner.run(...)` so
+    // `Owner::current()` inside the reducer resolves to the
+    // substrate's root owner. Mirrors the
+    // [[callback-root-owner-wrap]] pattern already applied to
+    // `V::view` (R51.146) and `V::apply_key` (R51.152).
+
+    use pinion_core::External;
+    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+    static R51_171_CAPTURED_OWNER_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct OwnerCaptureButton;
+
+    impl WidgetCore for OwnerCaptureButton {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn External> {
+            <EchoButton as WidgetCore>::create_external()
+        }
+
+        fn tag() -> &'static str {
+            "owner_capture_btn"
+        }
+
+        fn read_state(scene: &Scene) -> Self::State {
+            <EchoButton as WidgetCore>::read_state(scene)
+        }
+
+        fn view(state: Self::State, frame: &Frame) -> Scene {
+            <EchoButton as WidgetCore>::view(state, frame)
+        }
+
+        fn event_name(event: Self::Event) -> &'static str {
+            <EchoButton as WidgetCore>::event_name(event)
+        }
+
+        fn title() -> &'static str {
+            "OwnerCapture"
+        }
+
+        fn update(_state: &mut Self::State, _intent: &Intent) -> Vec<Command> {
+            R51_171_CAPTURED_OWNER_ID.store(
+                pinion_core::Owner::current().map_or(0, |o| o.id()),
+                AtomicOrdering::SeqCst,
+            );
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn r51_171_update_runs_inside_root_owner_run_scope() {
+        // R51.171 — `Owner::current()` inside `V::update` must
+        // resolve to the substrate's root owner so reducer authors
+        // can attribute `Command.scope_id` (RPC introspection
+        // label) without reaching through framework internals.
+        // Seed the capture with a sentinel id no Owner uses
+        // (u64::MAX), so a NOOP wrap that leaves Owner::current()
+        // == None would surface as `captured == u64::MAX` instead
+        // of a coincidental 0.
+        R51_171_CAPTURED_OWNER_ID.store(u64::MAX, AtomicOrdering::SeqCst);
+        let core: CoreShell<OwnerCaptureButton> = CoreShell::new();
+        let expected = core.root_owner().id();
+        let intent = Intent::new_static("oc.tick", IntrospectValue::Null);
+        let _ = core.route_intent_through_update(&intent);
+        let captured = R51_171_CAPTURED_OWNER_ID.load(AtomicOrdering::SeqCst);
+        assert_ne!(
+            captured,
+            u64::MAX,
+            "V::update must actually run (sentinel still set)",
+        );
+        assert_eq!(
+            captured, expected,
+            "Owner::current() inside V::update must equal root_owner.id()",
         );
     }
 }
