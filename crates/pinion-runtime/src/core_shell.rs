@@ -1554,54 +1554,12 @@ mod tests {
     // R51.167 §5.23 R27 — `route_intent_through_update` calls the
     // `WidgetCore::update` reducer and queues every produced
     // `Command` on the substrate's `root_owner`. Tests exercise
-    // the default-reducer (empty) path on `TestButton` and an
-    // overriding reducer fixture (`EchoButton`) that emits one
-    // command per intent.
-
-    use pinion_core::external::External;
-    use pinion_core::widgets::button::ButtonExternal;
-
-    /// R51.167 reducer-test fixture: same paint / `read_state` /
-    /// `event_name` surface as `TestButton`, but the reducer emits
-    /// one `echo.reply` `Command` per incoming intent.
-    struct EchoButton;
-
-    impl WidgetCore for EchoButton {
-        type State = ButtonState;
-        type Event = ButtonEvent;
-
-        fn create_external() -> Box<dyn External> {
-            Box::new(ButtonExternal::new())
-        }
-
-        fn tag() -> &'static str {
-            "echo_btn"
-        }
-
-        fn read_state(scene: &Scene) -> Self::State {
-            <TestButton as WidgetCore>::read_state(scene)
-        }
-
-        fn view(state: Self::State, frame: &Frame) -> Scene {
-            <TestButton as WidgetCore>::view(state, frame)
-        }
-
-        fn event_name(event: Self::Event) -> &'static str {
-            <TestButton as WidgetCore>::event_name(event)
-        }
-
-        fn title() -> &'static str {
-            "EchoBtn"
-        }
-
-        fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
-            vec![Command::new_static(
-                "echo.reply",
-                IntrospectValue::Text(intent.tag_str().to_string()),
-                42,
-            )]
-        }
-    }
+    // the default-reducer (empty) path on `TestButton` and the
+    // shared override fixture
+    // [`pinion_core::test_fixtures::EchoButtonFixture`] (lifted to
+    // `pinion-core::test_fixtures` so the R51.168 shell + tui
+    // wiring tests reuse the same `update` body).
+    use pinion_core::test_fixtures::EchoButtonFixture as EchoButton;
 
     #[test]
     fn r51_167_route_intent_default_reducer_yields_empty() {

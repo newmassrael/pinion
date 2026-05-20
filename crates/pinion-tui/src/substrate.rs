@@ -462,6 +462,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 intent.payload,
             );
         }
+        // R51.168 §5.23 R27 — reducer step: run `V::update` first so
+        // any returned `Vec<Command>` lands on the root owner's queue,
+        // then advance the SCXML statechart via `invoke("send", tag)`.
+        // Mirrors the Vello path so both backends drive identical
+        // dispatch ordering.
+        let _ = self.core.route_intent_through_update(intent);
         if let Scene::External(node) = self.core.scene_mut()
             && let Some(intro) = node.handle.introspect_mut()
         {
@@ -1075,6 +1081,88 @@ mod tests {
                 core.root_owner().pending_commands().len(),
                 1,
                 "no executor → queue preserved",
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R51.168 §5.23 R27 — `ShellCoreTui::dispatch_intent` wires the
+    // `CoreShell::route_intent_through_update` substrate API before
+    // the SCXML `invoke("send", tag)` call. Mirrors the Vello-side
+    // r51_168_dispatch_intent_reducer_routing block in pinion-shell.
+    //
+    // Uses `pinion_core::test_fixtures::EchoButtonFixture` (lifted
+    // R51.167) — its `WidgetCore::update` override emits one
+    // `echo.reply` Command per intent so the wiring test can assert
+    // the reducer ran and the produced command landed on the owner
+    // queue. The `WidgetViewTui` impl is inline below (orphan rule:
+    // the trait is local to pinion-tui, the type is foreign to
+    // pinion-core — `impl LocalTrait for ForeignType` is allowed).
+    // ─────────────────────────────────────────────────────────────────
+
+    mod r51_168_dispatch_intent_reducer_routing {
+        use super::*;
+        use pinion_core::external::IntrospectValue;
+        use pinion_core::test_fixtures::EchoButtonFixture;
+        use ratatui::backend::TestBackend;
+
+        impl WidgetViewTui for EchoButtonFixture {
+            type Renderer = crate::TuiRenderer<TestBackend>;
+        }
+
+        #[test]
+        fn dispatch_intent_queues_reducer_commands_on_root_owner() {
+            // R51.168 — EchoButtonFixture's `update` emits one
+            // `echo.reply` Command per intent; the TUI dispatch
+            // path must run the reducer before the SCXML send and
+            // queue the command on the substrate's root owner.
+            let mut core: ShellCoreTui<EchoButtonFixture> = ShellCoreTui::new();
+            let intent = Intent::new_static("echo_btn.tick", IntrospectValue::Null);
+            let _ = core.dispatch_intent(&intent);
+            let pending = core.root_owner().pending_commands();
+            assert_eq!(pending.len(), 1, "reducer command must be queued");
+            assert_eq!(pending[0].kind_str(), "echo.reply");
+            assert_eq!(
+                pending[0].payload,
+                IntrospectValue::Text("echo_btn.tick".to_string()),
+            );
+        }
+
+        #[test]
+        fn dispatch_intent_accumulates_reducer_commands_across_calls() {
+            // R51.168 — multiple intents pile their reducer-produced
+            // commands on the queue in FIFO order, so a later
+            // handle_tail pump reaches every handler on the TUI side
+            // identically to the Vello side.
+            let mut core: ShellCoreTui<EchoButtonFixture> = ShellCoreTui::new();
+            let i1 = Intent::new_static("echo_btn.a", IntrospectValue::Null);
+            let i2 = Intent::new_static("echo_btn.b", IntrospectValue::Null);
+            let _ = core.dispatch_intent(&i1);
+            let _ = core.dispatch_intent(&i2);
+            let pending = core.root_owner().pending_commands();
+            assert_eq!(pending.len(), 2);
+            assert_eq!(
+                pending[0].payload,
+                IntrospectValue::Text("echo_btn.a".to_string()),
+            );
+            assert_eq!(
+                pending[1].payload,
+                IntrospectValue::Text("echo_btn.b".to_string()),
+            );
+        }
+
+        #[test]
+        fn default_reducer_keeps_queue_empty_under_dispatch_intent() {
+            // R51.168 — the default `Vec::new()` reducer on
+            // TestButtonView leaves the owner queue untouched,
+            // proving the wiring is semantically transparent when
+            // no override is in play.
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            let intent = Intent::new_static("test_btn.click", IntrospectValue::Null);
+            let _ = core.dispatch_intent(&intent);
+            assert!(
+                core.root_owner().pending_commands().is_empty(),
+                "default reducer must not queue any commands",
             );
         }
     }

@@ -13,7 +13,9 @@
 
 use std::borrow::Cow;
 
+use crate::command::Command;
 use crate::external::{External, IntrospectValue};
+use crate::intent::Intent;
 use crate::scene::{ContainerNode, Rect, Scene, TextNode};
 use crate::widget_core::WidgetCore;
 use crate::widgets::aria;
@@ -95,5 +97,61 @@ impl WidgetCore for ButtonFixture {
 
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         aria::apply_aria_activate(scene, focused, key, Self::tag())
+    }
+}
+
+/// R51.167 §5.23 R27 — substrate-level reducer test fixture.
+///
+/// Reuses [`ButtonFixture`]'s External / paint / `read_state` /
+/// `event_name` surface (the SCXML statechart and view geometry are
+/// identical) but overrides [`WidgetCore::update`] to emit one
+/// `echo.reply` [`Command`] per incoming [`Intent`]. Used by:
+///
+/// - `pinion-runtime::core_shell::tests` — R51.167 substrate API
+///   `route_intent_through_update` assertions.
+/// - `pinion-shell::substrate::tests` — R51.168 `dispatch_intent`
+///   wires the reducer step BEFORE the SCXML invoke send.
+/// - `pinion-tui::substrate::tests` — R51.168 TUI-side mirror.
+///
+/// Keeping the fixture in `pinion-core::test_fixtures` (rather than
+/// duplicating it per backend) lets the three test sites assert
+/// identical reducer behaviour without reimplementing the
+/// `ButtonExternal` carrier each time.
+pub struct EchoButtonFixture;
+
+impl WidgetCore for EchoButtonFixture {
+    type State = ButtonState;
+    type Event = ButtonEvent;
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(ButtonExternal::new())
+    }
+
+    fn tag() -> &'static str {
+        "echo_btn"
+    }
+
+    fn read_state(scene: &Scene) -> Self::State {
+        <ButtonFixture as WidgetCore>::read_state(scene)
+    }
+
+    fn view(state: Self::State, frame: &Frame) -> Scene {
+        <ButtonFixture as WidgetCore>::view(state, frame)
+    }
+
+    fn event_name(event: Self::Event) -> &'static str {
+        <ButtonFixture as WidgetCore>::event_name(event)
+    }
+
+    fn title() -> &'static str {
+        "EchoBtn"
+    }
+
+    fn update(_state: &mut Self::State, intent: &Intent) -> Vec<Command> {
+        vec![Command::new_static(
+            "echo.reply",
+            IntrospectValue::Text(intent.tag_str().to_string()),
+            42,
+        )]
     }
 }

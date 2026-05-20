@@ -181,6 +181,15 @@ static OBSERVED_OWNER_ID: Mutex<Option<u64>> = Mutex::new(None);
 // `root_owner().run(...)`.
 static OBSERVED_OWNER_ID_APPLY_KEY: Mutex<Option<u64>> = Mutex::new(None);
 
+// R51.168 §5.23 R27 — gate for the `TestView::update` reducer mock.
+// Default `false` keeps the reducer a pure no-op so existing dispatch
+// tests (which assert specific `pending_commands` counts) are
+// unaffected. R51.168 wiring tests flip this to `true` so the reducer
+// emits one `test.echo` command per intent and the test can verify
+// the command landed on the root owner's queue.
+static UPDATE_EMITS_ECHO_COMMAND: AtomicBool = AtomicBool::new(false);
+static UPDATE_INTENT_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
@@ -190,6 +199,8 @@ fn reset_mocks() {
     EVENT_NAME_LOG.lock().unwrap().clear();
     *OBSERVED_OWNER_ID.lock().unwrap() = None;
     *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap() = None;
+    UPDATE_EMITS_ECHO_COMMAND.store(false, Ordering::SeqCst);
+    UPDATE_INTENT_LOG.lock().unwrap().clear();
 }
 
 struct TestView;
@@ -268,6 +279,29 @@ impl WidgetCore for TestView {
         *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap() =
             pinion_core::Owner::current().map(|o| o.id());
         APPLY_KEY_RETURNS.load(Ordering::SeqCst)
+    }
+
+    fn update(
+        _state: &mut Self::State,
+        intent: &pinion_core::Intent,
+    ) -> Vec<pinion_core::Command> {
+        // R51.168 §5.23 R27 — log the intent and conditionally emit
+        // a `test.echo` command so the wiring test can assert that
+        // `ShellCore::dispatch_intent` actually routed the intent
+        // through `WidgetCore::update` before the SCXML send.
+        UPDATE_INTENT_LOG
+            .lock()
+            .unwrap()
+            .push(intent.tag_str().to_owned());
+        if UPDATE_EMITS_ECHO_COMMAND.load(Ordering::SeqCst) {
+            vec![pinion_core::Command::new_static(
+                "test.echo",
+                IntrospectValue::Text(intent.tag_str().to_owned()),
+                0,
+            )]
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -1454,6 +1488,84 @@ mod r51_159_command_executor_wiring {
             core.root_owner().pending_commands().len(),
             1,
             "no executor → drain pump is no-op; queue preserved",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// R51.168 §5.23 R27 — `ShellCore::dispatch_intent` wires the
+// `CoreShell::route_intent_through_update` substrate API before the
+// SCXML `invoke("send", tag)` call. Verifies that the reducer is
+// called (intent observed in `UPDATE_INTENT_LOG`) and the produced
+// `Vec<Command>` lands on the root owner's queue.
+//
+// Default-reducer behaviour is asserted indirectly: every existing
+// R51.159 test runs through the now-wired dispatch path with
+// `UPDATE_EMITS_ECHO_COMMAND` left at `false`, so a regression in
+// the wiring would surface as a test failure elsewhere.
+// ─────────────────────────────────────────────────────────────────────────
+
+mod r51_168_dispatch_intent_reducer_routing {
+    use super::*;
+    use pinion_core::Intent;
+
+    #[test]
+    fn dispatch_intent_calls_update_reducer() {
+        // R51.168 — the wiring observation: dispatch_intent must
+        // invoke V::update before the SCXML send, and the intent
+        // payload must reach the reducer unchanged.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let intent = Intent::new_static("test.click", IntrospectValue::Null);
+        core.dispatch_intent(&intent);
+
+        let log = UPDATE_INTENT_LOG.lock().unwrap();
+        assert_eq!(
+            *log,
+            vec!["test.click".to_string()],
+            "dispatch_intent must call WidgetCore::update with the incoming intent",
+        );
+    }
+
+    #[test]
+    fn dispatch_intent_queues_reducer_commands_on_root_owner() {
+        // R51.168 — reducer-produced Vec<Command> must land on the
+        // substrate's root owner queue so the next handle_tail pump
+        // routes them through the registered handlers.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        UPDATE_EMITS_ECHO_COMMAND.store(true, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+        let intent = Intent::new_static("test.echo_in", IntrospectValue::Null);
+        core.dispatch_intent(&intent);
+
+        let pending = core.root_owner().pending_commands();
+        assert_eq!(pending.len(), 1, "reducer command must be queued");
+        assert_eq!(pending[0].kind_str(), "test.echo");
+        assert_eq!(
+            pending[0].payload,
+            IntrospectValue::Text("test.echo_in".to_string()),
+        );
+    }
+
+    #[test]
+    fn default_reducer_keeps_queue_empty_under_dispatch_intent() {
+        // R51.168 — the default `Vec::new()` reducer (mock flag off)
+        // leaves the owner queue empty, proving the wiring is
+        // semantically transparent when no override is in play.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let intent = Intent::new_static("test.no_op", IntrospectValue::Null);
+        core.dispatch_intent(&intent);
+
+        assert!(
+            core.root_owner().pending_commands().is_empty(),
+            "default reducer must not queue any commands",
         );
     }
 }

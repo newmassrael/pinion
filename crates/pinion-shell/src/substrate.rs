@@ -1004,6 +1004,13 @@ impl<V: WidgetView> ShellCore<V> {
             intent.tag_str(),
             intent.payload,
         );
+        // R51.168 §5.23 R27 — reducer step: run `V::update` first so
+        // any returned `Vec<Command>` lands on the root owner's queue,
+        // then advance the SCXML statechart via `invoke("send", tag)`.
+        // Mirrors the Elm/Iced ordering (Update before Cmd dispatch);
+        // the substrate API queues the commands itself so dropping the
+        // return value here is correct.
+        let _ = self.core.route_intent_through_update(intent);
         if let pinion_core::Scene::External(node) = self.core.scene_mut()
             && let Some(intro) = node.handle.introspect_mut()
         {

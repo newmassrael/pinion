@@ -22,8 +22,15 @@
 //!
 //! [`ButtonFixture`]: pinion_core::test_fixtures::ButtonFixture
 
-use pinion_core::test_fixtures::ButtonFixture;
+use pinion_core::test_fixtures::{ButtonFixture, EchoButtonFixture};
 
 use crate::widget_a11y::WidgetA11y;
 
 impl WidgetA11y for ButtonFixture {}
+
+/// R51.168 §5.40 §5.23 — atomic-default `WidgetA11y` impl for the
+/// reducer test fixture [`EchoButtonFixture`]. Same default-empty
+/// shape as [`ButtonFixture`]; the orphan-rule placement rationale
+/// applies identically (trait lives here, fixture lives in
+/// `pinion-core`).
+impl WidgetA11y for EchoButtonFixture {}

@@ -1325,6 +1325,7 @@ fn main() {
 - examples/hello-commands-tui/src/main.rs:queue_one_shot_demo_command
 - crates/pinion-core/src/widget_core.rs:WidgetCore::update
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::route_intent_through_update
+- crates/pinion-core/src/test_fixtures.rs:EchoButtonFixture
 
 
 
@@ -6783,6 +6784,39 @@ router.pointer_down(&mut state_scene);
 - R51.169 — ShellCore::dispatch_intent (shell + tui) calls route_intent_through_update before forwarding to SCXML invoke send
 - R51.170 — Intent.payload typed routing through SCXML send (currently tag-only path drops payload)
 - R51.171 — hello-commands(-tui) migrate from R51.163 Owner::cache one-shot hack to reducer-driven Command flow
+
+
+
+### R51.168 — §5.23 R27 — ShellCore + ShellCoreTui dispatch_intent wire route_intent_through_update before SCXML send; EchoButtonFixture lifted
+
+**Changes**:
+- crates/pinion-shell/src/substrate.rs: ShellCore::dispatch_intent calls self.core.route_intent_through_update(intent) BEFORE the invoke("send", tag) channel — Elm/Iced ordering (Update before Cmd dispatch)
+- crates/pinion-tui/src/substrate.rs: ShellCoreTui::dispatch_intent mirror; both backends now drive identical reducer-before-SCXML ordering
+- crates/pinion-core/src/test_fixtures.rs: EchoButtonFixture lifted from inline core_shell.rs tests — reusable WidgetCore::update override fixture (echo.reply Command per intent) for the 3 R51.167/168 test sites
+- crates/pinion-a11y/src/test_fixtures.rs: blank WidgetA11y impl for EchoButtonFixture (orphan-rule placement: trait lives here)
+- crates/pinion-runtime/src/core_shell.rs: inline EchoButton removed, R51.167 tests use lifted fixture via `use pinion_core::test_fixtures::EchoButtonFixture as EchoButton`
+- crates/pinion-shell/tests/dispatch_core.rs: TestView::update mock (UPDATE_EMITS_ECHO_COMMAND flag + UPDATE_INTENT_LOG); 3 R51.168 wiring tests (reducer called / commands queued / default empty)
+- crates/pinion-tui/src/substrate.rs: r51_168_dispatch_intent_reducer_routing mod with inline impl WidgetViewTui for EchoButtonFixture; 3 wiring tests (queued / FIFO accumulate / default empty)
+
+
+
+**Verification**:
+- cargo test -p pinion-shell --test dispatch_core r51_168: 3 pass
+- cargo test -p pinion-tui --lib r51_168: 3 pass
+- cargo test --workspace --features pinion-runtime/vello: 1996 pass / 0 fail / 10 ignored (+12 vs R51.165 baseline 1984; +6 vs R51.167)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (doc_markdown reactive: 3 backtick fixes on test_fixtures.rs)
+- mnemosyne validate_workspace: entries=339 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.23, §5.41, §5.40, §6.3
+
+
+**Carry forward**:
+- R51.169 — state writeback: V::update mutated state propagates back to Scene::External (currently mutation lives only in transient cached projection)
+- R51.170 — Intent.payload typed routing through SCXML invoke send (currently tag-only path drops payload)
+- R51.171 — hello-commands(-tui) migrate from R51.163 Owner::cache one-shot hack to reducer-driven Command flow
+- R51.172 — Forge codegen emits update body from SCE schema effect + command tables (SCE upstream RFC carry per [[sce-upstream-debts]])
 
 
 
