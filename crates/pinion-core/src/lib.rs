@@ -23,7 +23,8 @@ pub mod test_fixtures;
 mod multi_window;
 
 pub use animation::{
-    Animatable, AnimRect, AnimVec2, AnimVec4, Easing, SpringConfig, SpringState, Tween,
+    Animatable, AnimRect, AnimVec2, AnimVec4, Animation, Easing, SpringConfig, SpringState,
+    Tickable, Tween,
 };
 pub use event::Event;
 pub use renderer::WidgetRenderer;

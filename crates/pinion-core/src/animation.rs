@@ -1,21 +1,22 @@
-//! §5.28 — animation primitive substrate (R51.133 첫 land).
+//! §5.28 — animation primitive substrate (R51.133 첫 land, R51.138 Signal wrap).
 //!
 //! ## Charter (§5.28 ratified at R33)
 //!
 //! Spring-physics first; tween/keyframe 은 special case of a critically
-//! damped spring. `Animated<T>` wraps a [`Signal<T>`](crate::reactive::Signal)
+//! damped spring. [`Animation<T>`] wraps a [`Signal<T>`](crate::reactive::Signal)
 //! with [`SpringConfig`] (stiffness / damping / mass); semi-implicit Euler
 //! solver; interruptible (a new target preserves velocity). Industry
 //! canonical: `SwiftUI` `Animation` / React Spring / `Compose`
 //! `animateXxxAsState`.
 //!
-//! ## Scope (R51.133)
+//! ## Scope (R51.133 substrate + R51.138 wrap)
 //!
-//! Pure substrate primitive only. No ambient time source (caller-injected
-//! `dt`), no `Signal` integration yet — keeps the §2 invariant #3
-//! `dry_run` guarantee intact: identical `(state, config, dt)` always
-//! returns the identical next state, so a scenario explorer can fast-
-//! forward without side effects.
+//! Pure substrate primitive plus the [`Signal`](crate::reactive::Signal)-
+//! bound wrapper. [`Animation::tick`] is the only mutating entry; it remains
+//! caller-driven (driver injects `dt` from `Frame.dt`, §6.3) so the §2
+//! invariant #3 `dry_run` guarantee survives: identical `(state, config, dt)`
+//! sequences always yield identical [`Signal`](crate::reactive::Signal)
+//! evolution, so a scenario explorer can fast-forward without side effects.
 //!
 //! - [`Animatable`] trait: vector-arithmetic interface
 //!   (`zero` / `add` / `sub` / `scale` / `approx_zero`). Default
@@ -32,18 +33,17 @@
 //!   target triple, plus a pure [`SpringState::step`] (semi-implicit
 //!   Euler) and [`SpringState::is_done`] (epsilon-based settle).
 //!
-//! ## Carry (R51.134+)
+//! ## Carry (R51.139+)
 //!
-//! - [`Color`](crate::style::Color) / [`Rect`](crate::scene::Rect)
-//!   `Animatable` impls via a linear-RGBA / continuous-rect conversion
-//!   helper (saturating u8 / u32 arithmetic is incorrect for spring
-//!   integration — needs an `f32` shadow space).
-//! - `AnimationDriver` [`Effect`](crate::reactive) substrate driving
-//!   `Signal` ticks per `Frame.dt`, cancelable via `Owner` drop.
-//! - `Animated<T>` ergonomic wrapper over [`Signal<T>`](crate::reactive::Signal).
+//! - Framework runtime integration: paint-loop call to
+//!   [`Owner::tick_animations`](crate::reactive::Owner::tick_animations)
+//!   inside an [`Effect`](crate::reactive::Effect) driven by `Frame.dt`
+//!   (§6.3). The substrate already supports the call; only the wiring
+//!   from the runtime crate is outstanding.
+//! - `hello-button` hover transition (1st application / visual evidence).
 //! - SCE schema for declarative animated bindings; Forge emit.
-//! - Curve-based easing enum (`Linear` / `EaseInQuad` / …) as the
-//!   tween special case.
+//! - Additional easings (`EaseInQuart` / `EaseInBack` / `EaseInElastic`),
+//!   gated on evidence-first carry.
 //!
 //! ## Interruptibility
 //!
@@ -116,7 +116,7 @@ impl Animatable for f32 {
 /// time. Use `f32` here (not `u32`) so the spring solver can produce
 /// sub-pixel intermediate values during integration — quantization
 /// happens at the `paint_adapter` boundary, not inside the animation.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimVec2 {
     pub x: f32,
     pub y: f32,
@@ -156,7 +156,7 @@ impl Animatable for AnimVec2 {
 /// [`Color`](crate::style::Color) `Animatable` impl converts to
 /// `AnimVec4` (linear sRGB or premultiplied-linear, TBD at land time)
 /// before the integration step.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimVec4 {
     pub x: f32,
     pub y: f32,
@@ -217,7 +217,7 @@ impl Animatable for AnimVec4 {
 /// Use this (not [`AnimVec4`]) when the four components are
 /// semantically `x` / `y` / `w` / `h` — the named fields are the
 /// only thing distinguishing it from a generic 4-vector.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimRect {
     pub x: f32,
     pub y: f32,
@@ -553,11 +553,214 @@ impl<T: Animatable> SpringState<T> {
 
     /// `true` when both displacement (`target - current`) and velocity
     /// fall component-wise below `epsilon` — the natural rest
-    /// predicate for the [`AnimationDriver`] (carry) to stop ticking.
+    /// predicate for [`Animation::is_at_rest`] / driver tick-skip.
     #[must_use]
     pub fn is_done(self, epsilon: f32) -> bool {
         self.target.sub(self.current).approx_zero(epsilon)
             && self.velocity.approx_zero(epsilon)
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// R51.138 — `Animation<T>` Signal wrapper + `Tickable` trait
+// ────────────────────────────────────────────────────────────────────────
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+use crate::reactive::{Owner, Signal};
+
+/// Object-safe surface for the [`Owner`] tick dispatch.
+///
+/// [`Owner::tick_animations`] walks the registry as `&dyn Tickable` so all
+/// concrete `T`s share one storage type. Both methods take `&self` — the
+/// implementor handles interior mutation (typically via `RefCell` /
+/// `Signal::set`).
+pub trait Tickable {
+    /// Advance internal state by `dt` seconds. Implementations are expected
+    /// to be no-ops once the underlying state has settled
+    /// ([`Tickable::is_at_rest`] returns `true`).
+    fn tick(&self, dt: f32);
+
+    /// Whether further `tick` calls would meaningfully change observable
+    /// state. The framework driver uses this to short-circuit settled
+    /// animations and avoid re-firing every subscribed effect once per
+    /// frame for the rest of the program's lifetime.
+    fn is_at_rest(&self, epsilon: f32) -> bool;
+}
+
+/// Spring-animated value bound to a [`Signal<T>`](crate::reactive::Signal).
+///
+/// Construct with [`Animation::new`] (binds the animation to an [`Owner`]
+/// for tick dispatch). Move the target with [`Animation::set_target`] —
+/// the existing velocity carries through, so the value evolves
+/// continuously through interruptions (the canonical `SwiftUI` /
+/// `Compose` interrupt semantics).
+///
+/// Reads via [`Animation::value`] — or, more usefully, subscribe to the
+/// underlying [`Signal`](crate::reactive::Signal) via [`Animation::signal`]
+/// so a [`Computed`](crate::reactive::Computed) /
+/// [`Effect`](crate::reactive::Effect) automatically tracks frame
+/// updates.
+///
+/// Cloning yields a shared handle — both observe the same
+/// [`Signal`](crate::reactive::Signal) and the same spring state.
+///
+/// # Type bounds
+///
+/// Mirrors [`Signal<T>`](crate::reactive::Signal): `T` must be
+/// [`Animatable`] (for the solver) and `Clone + PartialEq + Serialize +
+/// DeserializeOwned + 'static` (for the [`Signal`](crate::reactive::Signal)
+/// host).
+pub struct Animation<T>
+where
+    T: Animatable + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    inner: Rc<AnimationInner<T>>,
+}
+
+struct AnimationInner<T>
+where
+    T: Animatable + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    state: RefCell<SpringState<T>>,
+    config: SpringConfig,
+    signal: Signal<T>,
+    /// Rest threshold — component-wise displacement + velocity epsilon below
+    /// which the spring is considered settled. The default
+    /// ([`Animation::DEFAULT_REST_EPSILON`]) matches the visual noise floor
+    /// for screen-scale animations (sub-pixel motion).
+    rest_epsilon: f32,
+}
+
+impl<T> Tickable for AnimationInner<T>
+where
+    T: Animatable + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    fn tick(&self, dt: f32) {
+        // Snapshot under borrow_mut, step out-of-borrow, write back, then
+        // call `Signal::set` — Signal's own equality check skips the
+        // notification cascade when the value did not actually move.
+        let stepped = {
+            let state = *self.state.borrow();
+            state.step(self.config, dt)
+        };
+        *self.state.borrow_mut() = stepped;
+        self.signal.set(stepped.current);
+    }
+
+    fn is_at_rest(&self, epsilon: f32) -> bool {
+        self.state.borrow().is_done(epsilon)
+    }
+}
+
+impl<T> Animation<T>
+where
+    T: Animatable + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    /// Sub-pixel rest threshold — animation considered settled when both
+    /// displacement-from-target and velocity drop below this component-wise.
+    pub const DEFAULT_REST_EPSILON: f32 = 0.01;
+
+    /// Construct a spring-animated value at rest at `initial`, registered
+    /// for tick dispatch on `owner`. Re-target via [`Animation::set_target`].
+    ///
+    /// The animation lives as long as either (a) the caller's handle or
+    /// (b) `owner`'s tick registry references it. Dropping `owner` removes
+    /// the registry entry so subsequent
+    /// [`Owner::tick_animations`](crate::reactive::Owner::tick_animations)
+    /// calls no longer step this animation — but the caller's handle can
+    /// still read [`Animation::value`] for the last computed value.
+    #[must_use]
+    pub fn new(owner: &Owner, initial: T, config: SpringConfig) -> Self {
+        let inner = Rc::new(AnimationInner {
+            state: RefCell::new(SpringState::at_rest(initial)),
+            config,
+            signal: Signal::new(initial),
+            rest_epsilon: Self::DEFAULT_REST_EPSILON,
+        });
+        let as_tickable: Rc<dyn Tickable> = Rc::clone(&inner) as Rc<dyn Tickable>;
+        owner.register_animation(as_tickable);
+        Self { inner }
+    }
+
+    /// Re-target the spring. Velocity carries through, so the animation
+    /// continues smoothly across the target change — no discontinuity.
+    pub fn set_target(&self, target: T) {
+        self.inner.state.borrow_mut().target = target;
+    }
+
+    /// Current target value.
+    #[must_use]
+    pub fn target(&self) -> T {
+        self.inner.state.borrow().target
+    }
+
+    /// Current displayed value — the most recently
+    /// [`Signal::set`](crate::reactive::Signal::set) value, mirroring the
+    /// spring's `current`. Auto-subscribes the active reactive scope (same
+    /// rules as [`Signal::get`](crate::reactive::Signal::get)).
+    #[must_use]
+    pub fn value(&self) -> T {
+        self.inner.signal.get()
+    }
+
+    /// Underlying [`Signal`](crate::reactive::Signal). Subscribe through
+    /// this when building [`Computed`](crate::reactive::Computed) /
+    /// [`Effect`](crate::reactive::Effect) chains that depend on the
+    /// animated value.
+    #[must_use]
+    pub fn signal(&self) -> &Signal<T> {
+        &self.inner.signal
+    }
+
+    /// Spring tuning (read-only).
+    #[must_use]
+    pub fn config(&self) -> SpringConfig {
+        self.inner.config
+    }
+
+    /// Whether the spring has settled under the wrapper's epsilon
+    /// (configured at construction; defaults to
+    /// [`Animation::DEFAULT_REST_EPSILON`]).
+    #[must_use]
+    pub fn is_at_rest(&self) -> bool {
+        self.inner.is_at_rest(self.inner.rest_epsilon)
+    }
+
+    /// Snapshot of the internal spring triple — exposes velocity for
+    /// interrupt-aware re-targeting strategies and diagnostics. The
+    /// `current` field mirrors [`Animation::value`]; the `velocity` field
+    /// is the one no `Signal` snapshot can supply.
+    #[must_use]
+    pub fn spring_state(&self) -> SpringState<T> {
+        *self.inner.state.borrow()
+    }
+}
+
+impl<T> Clone for Animation<T>
+where
+    T: Animatable + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: Rc::clone(&self.inner),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for Animation<T>
+where
+    T: Animatable + Clone + PartialEq + Serialize + DeserializeOwned + 'static + std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Animation")
+            .field("state", &*self.inner.state.borrow())
+            .field("config", &self.inner.config)
+            .finish_non_exhaustive()
     }
 }
 
@@ -847,5 +1050,223 @@ mod tests {
         let a = t.current();
         let b = t.current();
         assert!((a - b).abs() < 1e-6);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // R51.138 — Animation<T> wrapper tests
+    // ──────────────────────────────────────────────────────────────────
+
+    mod animation {
+        use super::super::{Animation, AnimVec2, SpringConfig};
+        use crate::reactive::{Effect, Owner};
+        use std::cell::{Cell, RefCell};
+        use std::rc::Rc;
+
+        #[test]
+        fn new_starts_at_rest_at_initial_value() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            assert!((a.value() - 0.0).abs() < 1e-6);
+            assert!((a.target() - 0.0).abs() < 1e-6);
+            assert!(a.is_at_rest());
+        }
+
+        #[test]
+        fn set_target_advances_value_over_ticks() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            a.set_target(100.0);
+            assert!((a.target() - 100.0).abs() < 1e-6);
+            // Initially still at rest position; first tick begins motion.
+            let dt = 1.0 / 60.0;
+            for _ in 0..300 {
+                owner.tick_animations(dt);
+            }
+            assert!((a.value() - 100.0).abs() < 0.5, "got {}", a.value());
+            assert!(a.is_at_rest());
+        }
+
+        #[test]
+        fn tick_via_owner_drives_all_registered_animations() {
+            let owner = Owner::new();
+            let first = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            let second = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            first.set_target(50.0);
+            second.set_target(-50.0);
+            assert_eq!(owner.registered_animation_count(), 2);
+            let dt = 1.0 / 60.0;
+            for _ in 0..300 {
+                owner.tick_animations(dt);
+            }
+            assert!((first.value() - 50.0).abs() < 0.5);
+            assert!((second.value() - -50.0).abs() < 0.5);
+        }
+
+        #[test]
+        fn interrupt_preserves_velocity() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            a.set_target(100.0);
+            let dt = 1.0 / 60.0;
+            for _ in 0..10 {
+                owner.tick_animations(dt);
+            }
+            let mid_velocity = a.spring_state().velocity;
+            assert!(mid_velocity.abs() > 0.0, "expected motion before retarget");
+            a.set_target(50.0);
+            // Velocity carries through the retarget unchanged.
+            assert!((a.spring_state().velocity - mid_velocity).abs() < 1e-6);
+        }
+
+        #[test]
+        fn signal_notifies_effect_on_each_value_change() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            let observed: Rc<RefCell<Vec<f32>>> = Rc::new(RefCell::new(Vec::new()));
+            let a_for_effect = a.clone();
+            let observed_for_effect = Rc::clone(&observed);
+            let _e = Effect::new(&owner, move || {
+                observed_for_effect.borrow_mut().push(a_for_effect.value());
+            });
+            // Eager run captures 0.0.
+            assert_eq!(*observed.borrow(), vec![0.0]);
+            a.set_target(100.0);
+            // Re-targeting alone does not fire the effect — only Signal::set does.
+            assert_eq!(observed.borrow().len(), 1);
+            owner.tick_animations(1.0 / 60.0);
+            // First tick moved the value → effect re-ran exactly once.
+            assert_eq!(observed.borrow().len(), 2);
+        }
+
+        #[test]
+        fn tick_batches_writes_so_multi_animation_effect_fires_once_per_frame() {
+            let owner = Owner::new();
+            let first = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            let second = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            first.set_target(100.0);
+            second.set_target(200.0);
+
+            let runs = Rc::new(Cell::new(0_u32));
+            let first_for_effect = first.clone();
+            let second_for_effect = second.clone();
+            let runs_for_effect = Rc::clone(&runs);
+            let _e = Effect::new(&owner, move || {
+                runs_for_effect.set(runs_for_effect.get() + 1);
+                let _ = first_for_effect.value();
+                let _ = second_for_effect.value();
+            });
+            assert_eq!(runs.get(), 1, "eager initial run");
+
+            owner.tick_animations(1.0 / 60.0);
+            // Both animations stepped during the same batch — the effect
+            // subscribed to both should fire exactly once for the frame.
+            assert_eq!(runs.get(), 2, "frame coalesces to single rerun");
+        }
+
+        #[test]
+        fn equality_skipping_tick_does_not_fire_effect() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            // No target change → at rest → spring step is a no-op → Signal::set
+            // hits the equality skip → effect does not re-fire.
+            let runs = Rc::new(Cell::new(0_u32));
+            let a_for_effect = a.clone();
+            let runs_for_effect = Rc::clone(&runs);
+            let _e = Effect::new(&owner, move || {
+                runs_for_effect.set(runs_for_effect.get() + 1);
+                let _ = a_for_effect.value();
+            });
+            assert_eq!(runs.get(), 1);
+            for _ in 0..10 {
+                owner.tick_animations(1.0 / 60.0);
+            }
+            assert_eq!(runs.get(), 1, "settled animation must not re-fire effect");
+        }
+
+        #[test]
+        fn dropping_owner_unregisters_animation_from_tick() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            a.set_target(100.0);
+            owner.tick_animations(1.0 / 60.0);
+            let after_one_tick = a.value();
+            assert!(after_one_tick > 0.0, "animation moved during first tick");
+            drop(owner);
+            // The caller's handle survives, but no driver is calling tick.
+            let still_same = a.value();
+            assert!(
+                (still_same - after_one_tick).abs() < 1e-6,
+                "value frozen after owner drop"
+            );
+        }
+
+        // Hand-rolled Tickable witness used by the depth-first ordering test
+        // below — `Animation<T>` itself is order-agnostic so we use a probe
+        // instead. Defined at module scope so `items_after_statements`
+        // (clippy::pedantic) does not fire on a function-local item.
+        use super::super::Tickable;
+        struct Probe(&'static str, Rc<RefCell<Vec<&'static str>>>);
+        impl Tickable for Probe {
+            fn tick(&self, _dt: f32) {
+                self.1.borrow_mut().push(self.0);
+            }
+            fn is_at_rest(&self, _epsilon: f32) -> bool {
+                true
+            }
+        }
+
+        #[test]
+        fn child_owner_animations_tick_before_parent_animations() {
+            let parent = Owner::new();
+            let child = Owner::new_child(&parent);
+            let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+            parent.register_animation(Rc::new(Probe("parent", Rc::clone(&log))));
+            child.register_animation(Rc::new(Probe("child", Rc::clone(&log))));
+            parent.tick_animations(1.0 / 60.0);
+            assert_eq!(*log.borrow(), vec!["child", "parent"]);
+        }
+
+        #[test]
+        fn anim_vec2_animation_converges() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, AnimVec2::new(0.0, 0.0), SpringConfig::DEFAULT);
+            a.set_target(AnimVec2::new(50.0, -30.0));
+            let dt = 1.0 / 60.0;
+            for _ in 0..300 {
+                owner.tick_animations(dt);
+            }
+            let v = a.value();
+            assert!((v.x - 50.0).abs() < 0.5);
+            assert!((v.y - -30.0).abs() < 0.5);
+            assert!(a.is_at_rest());
+        }
+
+        #[test]
+        fn clone_handles_share_state() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            let alias = a.clone();
+            a.set_target(100.0);
+            assert!((alias.target() - 100.0).abs() < 1e-6);
+            owner.tick_animations(1.0 / 60.0);
+            assert!((alias.value() - a.value()).abs() < 1e-6);
+        }
+
+        #[test]
+        fn registry_count_grows_with_construction() {
+            let owner = Owner::new();
+            assert_eq!(owner.registered_animation_count(), 0);
+            let _a1 = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+            assert_eq!(owner.registered_animation_count(), 1);
+            let _a2 = Animation::new(&owner, 0.0_f32, SpringConfig::GENTLE);
+            assert_eq!(owner.registered_animation_count(), 2);
+        }
+
+        #[test]
+        fn config_accessor_returns_construction_value() {
+            let owner = Owner::new();
+            let a = Animation::new(&owner, 0.0_f32, SpringConfig::WOBBLY);
+            assert_eq!(a.config(), SpringConfig::WOBBLY);
+        }
     }
 }

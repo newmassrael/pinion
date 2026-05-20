@@ -241,6 +241,11 @@ pub(crate) struct OwnerInner {
     pub(crate) cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
     pub(crate) children: RefCell<Vec<Owner>>,
     pub(crate) owned_signals: RefCell<Vec<Box<dyn SnapshotableSignal>>>,
+    /// Tick-driven primitives registered through
+    /// [`Owner::register_animation`]. Walked by [`Owner::tick_animations`]
+    /// once per frame; the framework runtime is the canonical caller
+    /// (carry: R51.139+ paint-loop wiring).
+    pub(crate) owned_animations: RefCell<Vec<Rc<dyn crate::animation::Tickable>>>,
 }
 
 impl ReactiveNode for OwnerInner {
@@ -291,6 +296,7 @@ impl Owner {
                 cleanups: RefCell::new(Vec::new()),
                 children: RefCell::new(Vec::new()),
                 owned_signals: RefCell::new(Vec::new()),
+                owned_animations: RefCell::new(Vec::new()),
             }),
         }
     }
@@ -408,6 +414,59 @@ impl Owner {
     /// teardown path used by `Signal::subscribe` / `Computed::subscribe_observer`.
     pub fn on_cleanup(&self, cleanup: Box<dyn FnOnce()>) {
         self.inner.cleanups.borrow_mut().push(cleanup);
+    }
+
+    /// Register a [`Tickable`](crate::animation::Tickable) for per-frame
+    /// dispatch through [`Owner::tick_animations`]. Used internally by
+    /// [`Animation::new`](crate::animation::Animation::new); applications
+    /// rarely call this directly.
+    ///
+    /// The registry keeps a strong `Rc<dyn Tickable>`; dropping this owner
+    /// releases that reference, so a [`Tickable`](crate::animation::Tickable)
+    /// whose only other holder was the caller's
+    /// [`Animation`](crate::animation::Animation) handle drops at the same
+    /// time as the owner.
+    pub fn register_animation(&self, tickable: Rc<dyn crate::animation::Tickable>) {
+        self.inner.owned_animations.borrow_mut().push(tickable);
+    }
+
+    /// Advance every registered animation by `dt` seconds — depth-first
+    /// across the owner subtree, so child scopes tick before this scope's
+    /// own registrations. Wrapped in [`batch`] so all
+    /// [`Signal::set`](crate::reactive::Signal::set) writes coalesce into
+    /// exactly one cascade per subscribed downstream
+    /// [`Computed`](crate::reactive::Computed) /
+    /// [`Effect`](crate::reactive::Effect) — the textbook
+    /// frame-coherence guarantee.
+    ///
+    /// Implementation note — both registry walks snapshot via `Rc::clone`
+    /// before releasing the `RefCell` borrow so an animation that
+    /// (re)registers another animation during its own `tick` does not
+    /// trigger a `BorrowMutError` (mirrors `SubscriberSet::snapshot` in
+    /// `dispatch_dirty`).
+    pub fn tick_animations(&self, dt: f32) {
+        // Snapshot children first; descend depth-first.
+        let children: Vec<Owner> = self.inner.children.borrow().iter().cloned().collect();
+        let anims: Vec<Rc<dyn crate::animation::Tickable>> = self
+            .inner
+            .owned_animations
+            .borrow()
+            .iter()
+            .map(Rc::clone)
+            .collect();
+        batch(|| {
+            for child in &children {
+                child.tick_animations(dt);
+            }
+            for anim in &anims {
+                anim.tick(dt);
+            }
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn registered_animation_count(&self) -> usize {
+        self.inner.owned_animations.borrow().len()
     }
 }
 

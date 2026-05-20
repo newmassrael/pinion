@@ -1549,6 +1549,12 @@ fn main() {
 - crates/pinion-core/src/style.rs:Color::from_linear
 - crates/pinion-core/src/animation.rs:Easing
 - crates/pinion-core/src/animation.rs:Tween
+- crates/pinion-core/src/animation.rs:Animation
+- crates/pinion-core/src/animation.rs:AnimationInner
+- crates/pinion-core/src/animation.rs:Tickable
+- crates/pinion-core/src/animation.rs:Animation::new
+- crates/pinion-core/src/reactive/owner.rs:Owner::register_animation
+- crates/pinion-core/src/reactive/owner.rs:Owner::tick_animations
 
 
 
@@ -5776,6 +5782,38 @@ router.pointer_down(&mut state_scene);
 - §5.23 Command<Intent> + Handler trait substrate — async/IO escape hatch (R52 carry)
 - Effect dry_run skip — §2 #3 substrate (R51.140+ carry, requires thread-local dry_run flag)
 - Owner topological order across siblings — current order = registration; explicit topo carry
+
+
+
+### R51.138 — §5.28 Animation&lt;T&gt; Signal wrapper + Tickable trait + Owner tick registry
+
+**Changes**:
+- Animation<T> 신규: Signal<T> wrap + SpringState + 타겟 + Tickable impl (~210 LOC)
+- Tickable trait (tick + is_at_rest): object-safe surface, Owner 가 Rc<dyn Tickable> 으로 저장
+- Owner::register_animation(Rc<dyn Tickable>) + Owner::tick_animations(dt) public API
+- tick = batch + depth-first cascade (children→self) + snapshot pattern (mid-tick register safe)
+- AnimVec2/4/Rect: serde::Serialize+Deserialize derive 추가 (Signal<T> bound 충족)
+- 13 신규 tests: at-rest / tick / interrupt / signal-fire / batch-coherence / drop / depth-first
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1787 pass / 0 fail / 8 ignored (+13)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- clippy reactive fix 4건: clone_on_copy x2 + items_after_statements x2 (사전 audit 미적용 lesson)
+- mnemosyne validate_workspace: entries=310 / T1=0 / T3=0 / GENERATED.md=sync (post-mutation)
+
+
+
+**Impact**: §5.28, §5.22
+
+
+**Carry forward**:
+- R51.139: framework runtime paint-loop → Owner::tick_animations(Frame.dt) integration (Effect wrap)
+- R51.140: hello-button hover transition demo (1st application / visual evidence path)
+- Animation 의 Owner-tied drop = registry 자동 release (이미 land); driver tick caller R51.139 carry
+- Animation::set_target 비-Signal API; reactive subscription 은 Animation::value/signal 만 정통
+- rest_epsilon = const default (0.01 sub-pixel), per-Animation 변경 API 는 evidence-first carry
 
 
 
