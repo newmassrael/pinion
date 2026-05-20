@@ -3245,6 +3245,7 @@ router.pointer_down(&mut state_scene);
 - R51.122 — pinion-runtime::CoreShell<V> substrate 신설 (R51.122-R51.125 4-round 분할 중 #1)
 - R51.123 — pinion-shell::ShellCore wraps CoreShell<V> (Vello extras 만 유지, 4-round #2)
 - R51.124 — pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3)
+- R51.125 (dispatch_rpc trait) defer — cycle 0 / 1 impl / 2nd RPC consumer 없음 (TUI carry)
 
 
 
