@@ -244,6 +244,48 @@ pub trait WidgetCore: 'static {
     /// side-effects (the entire current example catalogue except
     /// `hello-commands(-tui)`) need no override. The reducer-driven
     /// Command flow opts in per widget binding.
+    ///
+    /// ## Cascade discipline
+    ///
+    /// R51.177 §5.23 R27 — the substrate calls `update` twice per
+    /// dispatch cycle (once for the incoming carrier intent through
+    /// `ShellCore::dispatch_intent`, once for each drained widget
+    /// intent through `handle_tail`). If a registered `Handler`
+    /// emits an [`Intent`] whose tag the same reducer also matches,
+    /// the substrate re-enters the dispatch loop and the reducer
+    /// re-emits — a self-referential cascade.
+    ///
+    /// pinion follows the Elm / Iced / Redux convention here: the
+    /// framework does **not** install a cascade guard. Reducer
+    /// authors carry the discipline:
+    ///
+    /// 1. Match on **specific** intent tags via
+    ///    `match intent.tag_str() { "main_btn.click" => …, _ => Vec::new() }`.
+    ///    A wildcard-emit reducer (every intent returns the same
+    ///    command) is acceptable in tests (see
+    ///    [`crate::test_fixtures::EchoButtonFixture`]) but produces
+    ///    a guaranteed infinite loop in production whenever a
+    ///    handler echoes any intent back through the SCXML send
+    ///    channel.
+    /// 2. If a handler's produced `Intent` tag overlaps with an
+    ///    intent the same reducer emits a `Command` for, namespace
+    ///    the handler's response (`hello-commands` uses `echo.<kind>`
+    ///    for handler-produced intents so the reducer's
+    ///    `<tag>.click` match arm never aliases) or use
+    ///    [`Owner::cache`](crate::reactive::Owner::cache) to gate
+    ///    the second emission.
+    /// 3. The §5.7 `scene/commands` RPC method surfaces the pending
+    ///    and in-flight Command queue at any time — a runaway
+    ///    reducer accumulates visible queue depth that AI clients
+    ///    can introspect mid-flight (the pinion-unique
+    ///    observability advantage over Elm / Iced).
+    ///
+    /// Framework-level enforcement (kind whitelist, scope-id
+    /// reentry counter) remains a future axis once a concrete
+    /// widget consumer demonstrates the need; the cost of
+    /// instrumenting every dispatch step on every cycle exceeds
+    /// the prevention benefit against a discipline failure no
+    /// current binding exhibits.
     #[must_use]
     fn update(_state: Self::State, _intent: &Intent) -> Vec<Command> {
         Vec::new()

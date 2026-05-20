@@ -7050,6 +7050,33 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.177 — R51.177 §5.23 R27 reducer cascade discipline docs (Elm/Iced/Redux canonical, no framework guard)
+
+**Changes**:
+- pinion-core::WidgetCore::update doc — new `## Cascade discipline` section (3 rules)
+- pinion-core::test_fixtures::EchoButtonFixture::update doc — test-only cascade-unsafe note
+- memory entry: reducer-cascade-discipline.md (process maturity)
+
+
+
+**Verification**:
+- cargo test (vello) = 2004 / 0 / 10 (unchanged; doc-only round)
+- cargo clippy 0 warnings (doc_lazy_continuation: `+` markdown list marker escaped to `and`)
+- ratify: Elm/Iced/Redux convention — no framework cascade guard; reducer discipline + scene/commands observability
+
+
+
+**Impact**: §5.23, §5.20, §5.7
+
+
+**Carry forward**:
+- R51.178 — app Model field wait (Owner::cache<S> lift OR CoreShell.app_state<S>) first consumer
+- R51.179 — Forge codegen emits update body from SCE schema (SCE upstream RFC carry)
+- R51.180 — Intent.payload typed routing through SCXML invoke send (wait first consumer)
+- R51.181 — framework cascade detect debug-assert (lift on first concrete cascade evidence)
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

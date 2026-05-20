@@ -152,6 +152,17 @@ impl WidgetCore for EchoButtonFixture {
         // discards the snapshot (no state-dependent branching) and
         // emits one `echo.reply` per incoming Intent so the wiring
         // tests can count the queued commands deterministically.
+        //
+        // R51.177 §5.23 R27 — **test-only intentionally cascade-
+        // unsafe**. Production reducers MUST match specific tags
+        // (see `WidgetCore::update`'s "Cascade discipline" section)
+        // because a wildcard-emit reducer paired with a handler
+        // that echoes its intent through the SCXML send channel
+        // forms an infinite loop. The substrate calls `update`
+        // twice per cycle (R51.168 incoming + R51.169 drain), and
+        // this fixture catches both — that asymmetry is what the
+        // R51.168/169 wiring tests assert. Do NOT copy this body
+        // into a widget binding.
         vec![Command::new_static(
             "echo.reply",
             IntrospectValue::Text(intent.tag_str().to_string()),
