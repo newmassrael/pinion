@@ -72,6 +72,15 @@ unicode-segmentation = "1.12"
 # cursor by the actual cell-width to avoid overlapping placement.
 unicode-width = "0.2"
 
+# R51.160 §5.23 — tokio multi-thread runtime backs the TUI shell's
+# concrete `Executor` impl, sibling of `pinion_shell::TokioExecutor`.
+# Per-backend duplication is intentional at this round: each shell
+# crate owns its async runtime binding so neither pulls the other's
+# winit / wgpu / ratatui transitive deps. A future DRY extraction
+# (e.g. `pinion-async` crate) lifts the shared impl once a third
+# backend (mobile / RPC-only) lands.
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+
 [dev-dependencies]
 # R51.127 §5.41 — pull `pinion_core::test_fixtures::ButtonFixture` into
 # the `ShellCoreTui` substrate test suite so the TUI + runtime crates

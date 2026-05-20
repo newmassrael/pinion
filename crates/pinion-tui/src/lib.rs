@@ -63,14 +63,16 @@
 pub use crossterm;
 pub use ratatui;
 
+pub mod executor;
 pub mod input;
 pub mod paint;
 pub mod shell;
 pub mod substrate;
 pub mod widget;
 
+pub use executor::{build_executor_and_sink, MpscIntentSink, TokioExecutor};
 pub use input::{cell_to_pixel, key_str_from_event, modifiers_from_crossterm};
-pub use shell::run;
+pub use shell::{run, run_with_handlers};
 pub use substrate::ShellCoreTui;
 pub use widget::{WidgetViewTui, render_one_frame};
 

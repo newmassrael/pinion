@@ -50,11 +50,12 @@
 
 use std::cell::Cell;
 use std::io;
+use std::sync::Arc;
 use std::time::Instant;
 
 use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene};
-use pinion_runtime::{clamp_frame_dt, CoreShell, DispatchTail, PointerId};
+use pinion_runtime::{clamp_frame_dt, CommandExecutor, CoreShell, DispatchTail, PointerId};
 
 use crate::WidgetViewTui;
 
@@ -339,6 +340,16 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// cached state changed; the surface repaints on `true` so the
     /// new SCXML projection lands on screen.
     ///
+    /// R51.160 §5.23 — after the intent + state-change bookkeeping,
+    /// also drains any [`pinion_core::Command`] the SCXML transition
+    /// queued through [`CoreShell::dispatch_pending_commands`]. With
+    /// no executor installed the drain is a no-op; with an executor
+    /// installed (the `run_with_handlers` entry point) the resolved
+    /// [`Intent`]s travel back through the [`MpscIntentSink`] for
+    /// `try_recv` drain in the shell's event loop. Unhandled kinds
+    /// route through the same [`Self::log_sink`] (so the
+    /// alternate-screen safety carries — no stderr writes).
+    ///
     /// Takes [`DispatchTail`] by reference because the
     /// substrate-side reads consume nothing — the `Vec<Intent>` is
     /// iterated in place and dropped with the tail when the
@@ -347,11 +358,18 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         for intent in &tail.intents {
             self.log_intent(intent);
         }
-        if let Some(sc) = tail.state_change {
+        let state_changed = if let Some(sc) = tail.state_change {
             self.log_state_change(&sc.before, &sc.after);
-            return true;
+            true
+        } else {
+            false
+        };
+        // R51.160 §5.23 — drain pending Commands the dispatch arm
+        // queued (no-op when no executor installed).
+        for cmd in self.core.dispatch_pending_commands() {
+            self.log_unhandled_command(&cmd);
         }
-        false
+        state_changed
     }
 
     /// R51.120 §5.41 — write one intent trace line to the
@@ -378,6 +396,82 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         if let Some(sink) = &mut self.log_sink {
             let _ = writeln!(sink, "tui: state {before:?} -> {after:?}");
         }
+    }
+
+    /// R51.160 §5.23 — write one unhandled-command trace line to
+    /// the substrate's [`Self::log_sink`] (no-op when silent).
+    /// Mirrors the Vello sibling's `eprintln!` shape but routes
+    /// through the log sink so the alternate-screen invariant
+    /// holds.
+    fn log_unhandled_command(&mut self, cmd: &pinion_core::Command) {
+        if let Some(sink) = &mut self.log_sink {
+            let _ = writeln!(
+                sink,
+                "tui: command unhandled kind={} payload={:?}",
+                cmd.kind_str(),
+                cmd.payload,
+            );
+        }
+    }
+
+    /// R51.160 §5.23 — install or replace the
+    /// [`CommandExecutor`](pinion_runtime::CommandExecutor) the
+    /// substrate's [`Self::handle_tail`] drains pending
+    /// [`pinion_core::Command`]s into. Forwards to
+    /// [`CoreShell::set_executor`](pinion_runtime::CoreShell::set_executor).
+    pub fn set_command_executor(
+        &mut self,
+        executor: Arc<CommandExecutor>,
+    ) -> Option<Arc<CommandExecutor>> {
+        self.core.set_executor(executor)
+    }
+
+    /// R51.160 §5.23 — read-only borrow of the currently-installed
+    /// [`CommandExecutor`]. `None` until
+    /// [`Self::set_command_executor`] runs.
+    #[must_use]
+    pub fn command_executor(&self) -> Option<&Arc<CommandExecutor>> {
+        self.core.executor()
+    }
+
+    /// R51.160 §5.23 — re-feed a resolved [`Intent`] (arriving via
+    /// [`MpscIntentSink`](crate::MpscIntentSink) → `mpsc::Receiver`
+    /// `try_recv` in the shell's event loop) into the SCXML `send`
+    /// channel.
+    ///
+    /// Closing step of the §5.23 R27 dispatch loop on the TUI side:
+    ///
+    /// ```text
+    /// Owner.dispatch_command(cmd)
+    ///   → CommandExecutor::dispatch → tokio worker → Intent
+    ///   → MpscIntentSink::send → mpsc::Sender
+    ///   → shell loop try_recv → ShellCoreTui::dispatch_intent
+    ///   → Scene::External invoke("send", tag) → SCXML transition.
+    /// ```
+    ///
+    /// Returns `true` when the SCXML transition shifted the visible
+    /// cached state (the surface repaints on `true`). The Intent
+    /// payload is logged but not yet threaded into the SCXML send
+    /// (carry: Update-reducer signature evolution).
+    pub fn dispatch_intent(&mut self, intent: &Intent) -> bool {
+        if let Some(sink) = &mut self.log_sink {
+            let _ = writeln!(
+                sink,
+                "tui: intent-feedback {} payload={:?}",
+                intent.tag_str(),
+                intent.payload,
+            );
+        }
+        if let Scene::External(node) = self.core.scene_mut()
+            && let Some(intro) = node.handle.introspect_mut()
+        {
+            let _ = intro.invoke(
+                "send",
+                pinion_core::external::IntrospectValue::Text(intent.tag_str().to_string()),
+            );
+        }
+        let tail = self.core.tail();
+        self.handle_tail(&tail)
     }
 }
 
@@ -831,6 +925,157 @@ mod tests {
 
             assert_eq!(after_first, Some(expected));
             assert_eq!(after_second, Some(expected));
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // R51.160 §5.23 — pinion-tui CommandExecutor wiring tests.
+    //
+    // Sibling of pinion-shell's r51_159_command_executor_wiring
+    // integration tests. Verifies the TUI substrate's
+    // set_command_executor / command_executor / dispatch_intent
+    // surface and that handle_tail drains commands on every dispatch
+    // arm when an executor is installed.
+    // ───────────────────────────────────────────────────────────────
+
+    mod r51_160_command_executor_wiring {
+        use std::sync::Arc;
+
+        use pinion_core::external::IntrospectValue;
+        use pinion_core::{Command, Intent};
+        use pinion_runtime::{
+            BlockOnExecutor, CommandExecutor, Executor, HandlerFuture, HandlerRegistry,
+            IntentSink, VecSink,
+        };
+
+        use super::super::ShellCoreTui;
+        use super::TestButtonView;
+
+        fn echo_handler() -> Arc<dyn pinion_runtime::Handler> {
+            Arc::new(|cmd: Command| -> HandlerFuture {
+                Box::pin(async move {
+                    Intent::new_owned(
+                        format!("echo.{}", cmd.kind_str()),
+                        cmd.payload,
+                    )
+                })
+            })
+        }
+
+        fn build_executor(
+            kinds: &[&'static str],
+        ) -> (Arc<CommandExecutor>, Arc<VecSink>) {
+            let mut reg = HandlerRegistry::new();
+            for k in kinds {
+                reg.register(*k, echo_handler());
+            }
+            let sink = Arc::new(VecSink::new());
+            let exec: Arc<dyn Executor> = Arc::new(BlockOnExecutor);
+            let sink_dyn: Arc<dyn IntentSink> = sink.clone();
+            let cmd_exec = Arc::new(CommandExecutor::new(reg, exec, sink_dyn));
+            (cmd_exec, sink)
+        }
+
+        #[test]
+        fn set_command_executor_installs_and_returns_prior() {
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            assert!(core.command_executor().is_none());
+            let (first, _sink) = build_executor(&[]);
+            let first_ptr = Arc::as_ptr(&first).cast::<()>() as usize;
+            assert!(core.set_command_executor(first).is_none());
+            let installed = core.command_executor().expect("install yields Some");
+            assert_eq!(Arc::as_ptr(installed).cast::<()>() as usize, first_ptr);
+
+            let (second, _sink_b) = build_executor(&[]);
+            let prior = core
+                .set_command_executor(second)
+                .expect("replace returns prior");
+            assert_eq!(Arc::as_ptr(&prior).cast::<()>() as usize, first_ptr);
+        }
+
+        #[test]
+        fn dispatch_key_drain_pumps_handled_command_to_sink() {
+            // R51.160 — queue a command on root_owner; dispatch_key
+            // (any dispatch arm) routes through handle_tail which
+            // calls dispatch_pending_commands. The resolved Intent
+            // arrives at the sink.
+            let (executor, sink) = build_executor(&["audio.play"]);
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            let _ = core.set_command_executor(executor);
+
+            let scope_id = core.root_owner().id();
+            core.root_owner().dispatch_command(Command::new_static(
+                "audio.play",
+                IntrospectValue::Int(440),
+                scope_id,
+            ));
+            assert_eq!(core.root_owner().pending_commands().len(), 1);
+
+            // Trigger any dispatch arm — `d` keybinding fires the
+            // Disable event on TestButton which routes through
+            // forward → handle_tail → dispatch_pending_commands.
+            let _ = core.dispatch_key("d");
+
+            assert!(core.root_owner().pending_commands().is_empty());
+            let drained = sink.drain();
+            assert_eq!(drained.len(), 1);
+            assert_eq!(drained[0].tag_str(), "echo.audio.play");
+        }
+
+        #[test]
+        fn dispatch_key_drain_pumps_unhandled_command_returns_to_log() {
+            let (executor, sink) = build_executor(&["other.kind"]);
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            let _ = core.set_command_executor(executor);
+
+            let scope_id = core.root_owner().id();
+            core.root_owner().dispatch_command(Command::new_static(
+                "missing.kind",
+                IntrospectValue::Null,
+                scope_id,
+            ));
+            let _ = core.dispatch_key("d");
+
+            assert!(core.root_owner().pending_commands().is_empty());
+            assert!(sink.is_empty(), "unregistered → sink stays empty");
+        }
+
+        #[test]
+        fn dispatch_intent_routes_through_scxml_and_returns_change_bool() {
+            // R51.160 — dispatch_intent re-feeds an Intent via
+            // invoke("send", Text(tag)). For TestButton, the
+            // "Disable" event flips Idle → Disabled (visible
+            // change), so dispatch_intent returns true.
+            use pinion_core::widgets::button::ButtonState;
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            assert_eq!(*core.cached_state(), ButtonState::Idle);
+            let intent = Intent::new_static("Disable", IntrospectValue::Null);
+            let visible_change = core.dispatch_intent(&intent);
+            assert!(
+                visible_change,
+                "Idle → Disabled visible state change must surface",
+            );
+            assert_eq!(*core.cached_state(), ButtonState::Disabled);
+        }
+
+        #[test]
+        fn no_executor_dispatch_keeps_queue_intact() {
+            // R51.160 — without an executor installed, the drain
+            // step is a no-op; pending commands stay parked.
+            let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+            assert!(core.command_executor().is_none());
+            let scope_id = core.root_owner().id();
+            core.root_owner().dispatch_command(Command::new_static(
+                "foo",
+                IntrospectValue::Null,
+                scope_id,
+            ));
+            let _ = core.dispatch_key("d");
+            assert_eq!(
+                core.root_owner().pending_commands().len(),
+                1,
+                "no executor → queue preserved",
+            );
         }
     }
 }

@@ -84,14 +84,17 @@
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, Stdout, stdout};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use pinion_core::renderer::WidgetRenderer;
-use pinion_core::Scene;
+use pinion_core::{Intent, Scene};
+use pinion_runtime::{CommandExecutor, HandlerRegistry};
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::executor::build_executor_and_sink;
 use crate::{ShellCoreTui, TuiContext, TuiRenderer, WidgetViewTui};
 
 /// R51.110.2 / R51.112 §5.41 — RAII guard restoring the terminal on
@@ -147,6 +150,12 @@ const REST_EPSILON: f32 = pinion_core::Animation::<f32>::DEFAULT_REST_EPSILON;
 /// reading crossterm events until `Esc` is pressed. The terminal is
 /// always restored on exit (RAII guard).
 ///
+/// R51.160 §5.23 — no [`CommandExecutor`] is installed by this entry
+/// point; pending [`pinion_core::Command`] queues stay parked on the
+/// owner side and never fire. Use [`run_with_handlers`] to register
+/// async [`Handler`](pinion_runtime::Handler)s and bind a tokio
+/// runtime + intent-arrival mpsc channel.
+///
 /// # Errors
 /// Propagates `std::io::Error` from any crossterm / ratatui call:
 /// raw-mode enable, alternate-screen enter, title set, terminal
@@ -157,6 +166,52 @@ const REST_EPSILON: f32 = pinion_core::Animation::<f32>::DEFAULT_REST_EPSILON;
 /// [`WidgetViewTui::read_state`] is unreachable because the scene
 /// is constructed in this function and never moved.
 pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>() -> io::Result<()> {
+    run_impl::<V>(None)
+}
+
+/// R51.160 §5.23 — variant of [`run`] that installs a
+/// [`CommandExecutor`](pinion_runtime::CommandExecutor) at boot so
+/// pending [`pinion_core::Command`]s queued by reducer fallout or
+/// SCXML transitions reach their registered
+/// [`Handler`](pinion_runtime::Handler)s asynchronously.
+///
+/// Composes:
+///
+/// - A tokio multi-thread [`TokioExecutor`](crate::TokioExecutor) (1
+///   worker thread, `enable_all`) backing
+///   [`Executor::spawn`](pinion_runtime::Executor).
+/// - A [`MpscIntentSink`](crate::MpscIntentSink) wrapping the
+///   [`mpsc::Sender<Intent>`] half of a channel; the shell's event
+///   loop calls `try_recv` between every crossterm `poll` tick to
+///   drain arrivals and route them through
+///   [`ShellCoreTui::dispatch_intent`](crate::ShellCoreTui).
+/// - The supplied `registry` of [`Handler`](pinion_runtime::Handler)
+///   impls keyed by [`pinion_core::Command::kind_str`].
+///
+/// # Errors
+/// Propagates the same set as [`run`] plus
+/// [`crate::TokioExecutor::new`] failure.
+///
+/// # Panics
+/// Same as [`run`].
+pub fn run_with_handlers<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
+    registry: HandlerRegistry,
+) -> io::Result<()> {
+    let (executor, sink, rx) = build_executor_and_sink()?;
+    let cmd_exec = Arc::new(CommandExecutor::new(registry, executor, sink));
+    run_impl::<V>(Some((cmd_exec, rx)))
+}
+
+/// R51.160 §5.23 — shared event-loop body for [`run`] and
+/// [`run_with_handlers`]. When `commands` is `Some`, the
+/// [`CommandExecutor`] is injected into the substrate and the
+/// matching [`mpsc::Receiver`] is drained on every event-loop
+/// iteration so intents arriving from completed [`Handler`]
+/// futures reach the SCXML `send` channel without waiting for an
+/// input event.
+fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
+    commands: Option<(Arc<CommandExecutor>, mpsc::Receiver<Intent>)>,
+) -> io::Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     crossterm::execute!(
         stdout(),
@@ -190,6 +245,16 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
         core.set_log_sink(Box::new(file));
     }
 
+    // R51.160 §5.23 — split the optional commands tuple into the
+    // executor handle (injected into the substrate) and the intent
+    // receiver (drained in the loop body).
+    let intent_rx: Option<mpsc::Receiver<Intent>> = if let Some((cmd_exec, rx)) = commands {
+        let _ = core.set_command_executor(cmd_exec);
+        Some(rx)
+    } else {
+        None
+    };
+
     let (mut cols, mut rows) = V::initial_size();
 
     // Initial paint. The returned paint scene seeds the router's
@@ -202,6 +267,25 @@ pub fn run<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>()
     // Event loop. See module-level [`IDLE_POLL_MS`] / [`ACTIVE_POLL_MS`]
     // / [`REST_EPSILON`] for the R51.148 §5.28 adaptive-poll rationale.
     loop {
+        // R51.160 §5.23 — drain any Intents that arrived from
+        // completed Command futures since the previous loop turn.
+        // `try_recv` is non-blocking; if the channel is empty we
+        // skip the inner loop entirely. Each dispatched intent
+        // routes through the SCXML `send` channel; on visible state
+        // change we commit a fresh paint before the next event poll.
+        if let Some(rx) = &intent_rx {
+            let mut commit_after_drain = false;
+            while let Ok(intent) = rx.try_recv() {
+                if core.dispatch_intent(&intent) {
+                    commit_after_drain = true;
+                }
+            }
+            if commit_after_drain {
+                let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
+                core.update_paint_scene(paint_scene);
+            }
+        }
+
         let poll_timeout = if core.any_animation_active(REST_EPSILON) {
             Duration::from_millis(ACTIVE_POLL_MS)
         } else {

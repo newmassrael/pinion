@@ -1591,6 +1591,45 @@
         {
           "file": "crates/pinion-shell/src/substrate.rs",
           "symbol": "ShellCore::dispatch_intent"
+        },
+        {
+          "file": "crates/pinion-tui/src/executor.rs"
+        },
+        {
+          "file": "crates/pinion-tui/src/executor.rs",
+          "symbol": "TokioExecutor"
+        },
+        {
+          "file": "crates/pinion-tui/src/executor.rs",
+          "symbol": "TokioExecutor::new"
+        },
+        {
+          "file": "crates/pinion-tui/src/executor.rs",
+          "symbol": "MpscIntentSink"
+        },
+        {
+          "file": "crates/pinion-tui/src/executor.rs",
+          "symbol": "MpscIntentSink::new"
+        },
+        {
+          "file": "crates/pinion-tui/src/executor.rs",
+          "symbol": "build_executor_and_sink"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::set_command_executor"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::command_executor"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui::dispatch_intent"
+        },
+        {
+          "file": "crates/pinion-tui/src/shell.rs",
+          "symbol": "run_with_handlers"
         }
       ],
       "decision_status": "active"
@@ -9862,6 +9901,64 @@
       ],
       "publishable_carry_forward_bullets": [
         "R51.160 — pinion-tui ShellCoreTui drain pump 동명령 + mpsc IntentSink",
+        "Intent.payload SCXML send 채널 전파 (Update reducer signature evolution)",
+        "scene/commands RPC method (10th method, 폈딩 큐와 in-flight 스냅샷)",
+        "demo example — 실제 Handler 접속 (http.get / clipboard.write 수준 fixture)"
+      ]
+    },
+    "R51.160": {
+      "decision_summary": "§5.23 pinion-tui tokio Executor + MpscIntentSink — §2 #6 GUI/TUI dual invariant CommandExecutor 대칭",
+      "changes_bullets": [
+        "pinion-tui/src/executor.rs 신규: TokioExecutor (Vello sibling) + MpscIntentSink (Sender<Intent>)",
+        "ExecutorSinkBundle type alias + build_executor_and_sink 편의 helper",
+        "ShellCoreTui::set_command_executor / command_executor / dispatch_intent (alternate-screen 안전 log_sink 라우팅)",
+        "shell::run_with_handlers 진입점 + run_impl shared 이벤트 루프 + mpsc try_recv 드레인",
+        "ShellCoreTui::handle_tail 증강: dispatch_pending_commands + log_unhandled_command (스타더아웃 머스트 X)",
+        "pinion-tui/Cargo.toml tokio 1 dep (rt, rt-multi-thread, macros, time, sync)",
+        "pinion-tui tests +12 (executor 7 + substrate 5)"
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello → 1964 pass / 0 fail / 10 ignored (직전 1952 +12)",
+        "tokio_executor_cancel_aborts_pending_future: TUI side에서도 abort 관찰 (Vello 동하일)",
+        "dispatch_key_drain_pumps_handled_command_to_sink: TUI 포트 dispatch 후 sink 도착",
+        "dispatch_intent_routes_through_scxml_and_returns_change_bool: 재주입 경로 Disable 이벤트 시각 전이 확인"
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.41",
+        "6.3"
+      ],
+      "carry_forward_bullets": [
+        "TokioExecutor DRY 추출 — 3번째 백엔드 (모바일 / RPC-only) 액 시 pinion-async crate",
+        "Intent.payload SCXML send 채널 전파 (Update reducer signature evolution)",
+        "scene/commands RPC method (10th method, 폈딩 큐와 in-flight 스냅샷)",
+        "demo example — 실제 Handler 접속 (http.get / clipboard.write 수준 fixture)"
+      ],
+      "publishable_decision_summary": "§5.23 pinion-tui tokio Executor + MpscIntentSink — §2 #6 GUI/TUI dual invariant CommandExecutor 대칭",
+      "publishable_changes_bullets": [
+        "pinion-tui/src/executor.rs 신규: TokioExecutor (Vello sibling) + MpscIntentSink (Sender<Intent>)",
+        "ExecutorSinkBundle type alias + build_executor_and_sink 편의 helper",
+        "ShellCoreTui::set_command_executor / command_executor / dispatch_intent (alternate-screen 안전 log_sink 라우팅)",
+        "shell::run_with_handlers 진입점 + run_impl shared 이벤트 루프 + mpsc try_recv 드레인",
+        "ShellCoreTui::handle_tail 증강: dispatch_pending_commands + log_unhandled_command (스타더아웃 머스트 X)",
+        "pinion-tui/Cargo.toml tokio 1 dep (rt, rt-multi-thread, macros, time, sync)",
+        "pinion-tui tests +12 (executor 7 + substrate 5)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello → 1964 pass / 0 fail / 10 ignored (직전 1952 +12)",
+        "tokio_executor_cancel_aborts_pending_future: TUI side에서도 abort 관찰 (Vello 동하일)",
+        "dispatch_key_drain_pumps_handled_command_to_sink: TUI 포트 dispatch 후 sink 도착",
+        "dispatch_intent_routes_through_scxml_and_returns_change_bool: 재주입 경로 Disable 이벤트 시각 전이 확인"
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.41",
+        "6.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TokioExecutor DRY 추출 — 3번째 백엔드 (모바일 / RPC-only) 액 시 pinion-async crate",
         "Intent.payload SCXML send 채널 전파 (Update reducer signature evolution)",
         "scene/commands RPC method (10th method, 폈딩 큐와 in-flight 스냅샷)",
         "demo example — 실제 Handler 접속 (http.get / clipboard.write 수준 fixture)"
