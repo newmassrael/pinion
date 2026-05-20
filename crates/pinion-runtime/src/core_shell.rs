@@ -1639,9 +1639,18 @@ mod tests {
     // `V::view` (R51.146) and `V::apply_key` (R51.152).
 
     use pinion_core::External;
-    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+    use std::sync::Mutex;
 
-    static R51_171_CAPTURED_OWNER_ID: AtomicU64 = AtomicU64::new(0);
+    /// R51.176 §5.22 — single-use capture slot for the `r51_171`
+    /// `Owner::current()` observation. `Option<u64>` ranges over the
+    /// two test phases naturally: `None` at entry means "reducer has
+    /// not been called yet" (caught by `.expect(...)` if the wrap
+    /// regressed to a NOOP), `Some(id)` after the call carries the
+    /// captured `Owner::current()` value. Mutex over plain atomic
+    /// keeps the sentinel and the value in the same type so future
+    /// test additions cannot store a "captured 0" that aliases with
+    /// the initial state.
+    static R51_171_CAPTURED_OWNER_ID: Mutex<Option<u64>> = Mutex::new(None);
 
     struct OwnerCaptureButton;
 
@@ -1674,10 +1683,8 @@ mod tests {
         }
 
         fn update(_state: Self::State, _intent: &Intent) -> Vec<Command> {
-            R51_171_CAPTURED_OWNER_ID.store(
-                pinion_core::Owner::current().map_or(0, |o| o.id()),
-                AtomicOrdering::SeqCst,
-            );
+            *R51_171_CAPTURED_OWNER_ID.lock().unwrap() =
+                Some(pinion_core::Owner::current().map_or(0, |o| o.id()));
             Vec::new()
         }
     }
@@ -1688,21 +1695,27 @@ mod tests {
         // resolve to the substrate's root owner so reducer authors
         // can attribute `Command.scope_id` (RPC introspection
         // label) without reaching through framework internals.
-        // Seed the capture with a sentinel id no Owner uses
-        // (u64::MAX), so a NOOP wrap that leaves Owner::current()
-        // == None would surface as `captured == u64::MAX` instead
-        // of a coincidental 0.
-        R51_171_CAPTURED_OWNER_ID.store(u64::MAX, AtomicOrdering::SeqCst);
+        //
+        // R51.176 §5.22 — `Option<u64>` sentinel + `.expect(...)`
+        // replaces the R51.171 `AtomicU64::new(0)` / `u64::MAX`
+        // sentinel pair. `None` at entry is the unambiguous "not
+        // yet captured" state; a NOOP `root_owner.run` would leave
+        // the slot at `None` (caught by `.expect(...)`). The
+        // captured value is then asserted equal to the substrate's
+        // own `root_owner().id()` — no assumption is made about the
+        // numeric range of that id (`next_node_id` is a thread-local
+        // counter that starts at 0, so the first owner allocated on
+        // a given test thread may legitimately carry id `0`; only
+        // the equality matters for the wrap contract).
+        *R51_171_CAPTURED_OWNER_ID.lock().unwrap() = None;
         let core: CoreShell<OwnerCaptureButton> = CoreShell::new();
         let expected = core.root_owner().id();
         let intent = Intent::new_static("oc.tick", IntrospectValue::Null);
         let _ = core.route_intent_through_update(&intent);
-        let captured = R51_171_CAPTURED_OWNER_ID.load(AtomicOrdering::SeqCst);
-        assert_ne!(
-            captured,
-            u64::MAX,
-            "V::update must actually run (sentinel still set)",
-        );
+        let captured = R51_171_CAPTURED_OWNER_ID
+            .lock()
+            .unwrap()
+            .expect("V::update must run (capture slot was cleared at entry)");
         assert_eq!(
             captured, expected,
             "Owner::current() inside V::update must equal root_owner.id()",

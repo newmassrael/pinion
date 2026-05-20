@@ -7023,6 +7023,33 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.176 — R51.176 §5.22 r51_171 test fragility polish: Option<u64> sentinel replaces AtomicU64 + u64::MAX
+
+**Changes**:
+- pinion-runtime::core_shell::tests::R51_171_CAPTURED_OWNER_ID — Mutex<Option<u64>> (was AtomicU64)
+- OwnerCaptureButton::update — stores Some(id); test entry clears to None
+- r51_171_update_runs_inside_root_owner_run_scope — .expect(...) replaces u64::MAX inequality
+
+
+
+**Verification**:
+- cargo test (vello) = 2004 / 0 / 10 (unchanged from R51.175; same test count post-polish)
+- cargo clippy 0 warnings (strict baseline; doc_markdown backtick fix for `r51_171`)
+- ratify: None sentinel ambiguity-free (no aliasing with legitimate `0` Owner::id())
+
+
+
+**Impact**: §5.22, §5.23
+
+
+**Carry forward**:
+- R51.177 — handler cascade guard (reducer reactivity lurking risk; kind whitelist or scope_id)
+- R51.178 — app Model field wait (Owner::cache<S> lift OR CoreShell.app_state<S>) first consumer
+- R51.179 — Forge codegen emits update body from SCE schema (SCE upstream RFC carry)
+- R51.180 — Intent.payload typed routing through SCXML invoke send (wait first consumer)
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
