@@ -31,8 +31,6 @@
 //!     `paint_adapter::to_vello` (called from the shell) walks the
 //!     tree into a `vello::Scene` and `HelloButtonRenderer` submits it.
 
-use std::cell::OnceCell;
-
 use pinion_core::animation::SpringConfig;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -67,45 +65,45 @@ const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
 const BTN_W: u32 = 160;
 const BTN_H: u32 = 80;
 
-// R51.147 §5.28 — per-binding `Animation<f32>` driving the
-// idle ↔ hover lightness transition. Cached in a `thread_local` so
-// the view fn instantiates the animation exactly once on the first
-// paint; subsequent calls just `set_target` and read the current
-// value. The lifetime ties to the binding's
-// [`pinion_shell::ShellCore::root_owner`] via
-// [`Owner::current()`](pinion_core::Owner::current) (R51.146 wrap),
-// so when the shell drops the animation drops with it. A future
-// cleaner-application-context API (carry: R51.148+) will let bindings
-// declare animations without thread-local plumbing.
-thread_local! {
-    static HOVER_ANIM: OnceCell<Animation<f32>> = const { OnceCell::new() };
-}
+/// R51.150 §5.22 — string key identifying the hover-progress
+/// [`Animation`] in the binding's owner-scoped cache. A `&'static str`
+/// per [`Owner::cache`]'s contract; the unique name guarantees no
+/// collision with future cached values inside the same scope.
+const HOVER_ANIM_KEY: &str = "hello_button::hover_progress";
 
-/// R51.147 §5.28 — drive the hover progress animation off the current
-/// [`ButtonState`] and return the displayed value in `[0.0, 1.0]`.
+/// R51.147 §5.28 + R51.150 §5.22 — drive the hover progress animation
+/// off the current [`ButtonState`] and return the displayed value in
+/// `[0.0, 1.0]`.
 ///
-/// The first call instantiates the animation on the binding's root
-/// [`Owner`] via [`Owner::current()`] (R51.146). Idle / Pressed /
-/// Disabled target `0.0`; Hover targets `1.0`. The spring carries
-/// velocity through re-targets so transitioning Idle → Hover → Idle
-/// without waiting for settle looks natural.
+/// Materialises (on first call) the [`Animation<f32>`] inside the
+/// binding's root [`Owner`] via [`Owner::cache`] (R51.150). The
+/// animation lives for as long as the shell — owner drop releases
+/// the cache map, dropping the animation and unregistering it from
+/// the tick list. Idle / Pressed / Disabled target `0.0`; Hover
+/// targets `1.0`. The spring carries velocity through re-targets so
+/// transitioning Idle → Hover → Idle without waiting for settle looks
+/// natural.
+///
+/// Pre-R51.150 used a thread-local `OnceCell<Animation<f32>>` —
+/// `[[textbook-long-term-correct]]` violation since the cell survived
+/// shell drops and aliased across multiple shells in the same thread.
+/// The [`Owner::cache`] primitive replaces that workaround with the
+/// canonical `SolidJS` / Leptos `useMemo` / React `useRef` shape:
+/// per-owner instance, dropped with the owner.
 fn drive_hover_progress(state: ButtonState) -> f32 {
-    HOVER_ANIM.with(|cell| {
-        let anim = cell.get_or_init(|| {
-            // R51.146 — `Owner::current()` resolves to the shell's
-            // `root_owner` because `compute_paint_scene` wrapped this
-            // call in `root_owner().run(...)`. Panicking here means
-            // the view fn is running outside the framework wrap (a
-            // broken integration); we choose loud failure over a
-            // silently-broken animation.
-            let owner = Owner::current()
-                .expect("hello-button view fn must run inside ShellCore::root_owner().run(...)");
-            Animation::new(&owner, 0.0_f32, SpringConfig::default())
-        });
-        let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
-        anim.set_target(target);
-        anim.value()
-    })
+    // R51.146 — `Owner::current()` resolves to the shell's
+    // `root_owner` because `compute_paint_scene` wrapped this call in
+    // `root_owner().run(...)`. Panicking here means the view fn is
+    // running outside the framework wrap (a broken integration); we
+    // choose loud failure over a silently-broken animation.
+    let owner = Owner::current()
+        .expect("hello-button view fn must run inside ShellCore::root_owner().run(...)");
+    let anim: std::rc::Rc<Animation<f32>> = owner.cache(HOVER_ANIM_KEY, || {
+        Animation::new(&owner, 0.0_f32, SpringConfig::default())
+    });
+    let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
+    anim.set_target(target);
+    anim.value()
 }
 
 /// R51.147 §5.28 — linear interpolate a single-channel grayscale fill

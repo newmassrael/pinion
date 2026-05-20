@@ -48,7 +48,7 @@
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::{Rc, Weak};
 
@@ -267,6 +267,20 @@ pub(crate) struct OwnerInner {
     /// dangling IO is impossible — the textbook Solid.js cancellation
     /// pattern translated to a queue.
     pub(crate) owned_commands: RefCell<Vec<crate::command::Command>>,
+    /// R51.150 §5.22 — owner-scoped typed cache keyed by `&'static str`.
+    ///
+    /// Application code accesses through [`Owner::cache`]; the entry
+    /// type is `Rc<dyn Any>` so a single map carries heterogeneous
+    /// values (one `Animation<f32>` for hover, a different
+    /// `Computed<u32>` for derived state, a `Resource<...>` for an
+    /// async fetch — all keyed by distinct string names).
+    ///
+    /// Use case: per-binding caches (animations, resources, expensive
+    /// derived values, IO handles) that the view fn instantiates on
+    /// the first paint and reuses on subsequent paints. Cleared on
+    /// owner drop so cached values evaporate with the binding —
+    /// matches the Solid.js `createMemo` / React `useRef` lifecycle.
+    pub(crate) cache: RefCell<HashMap<&'static str, Rc<dyn Any>>>,
 }
 
 impl ReactiveNode for OwnerInner {
@@ -319,6 +333,7 @@ impl Owner {
                 owned_signals: RefCell::new(Vec::new()),
                 owned_animations: RefCell::new(Vec::new()),
                 owned_commands: RefCell::new(Vec::new()),
+                cache: RefCell::new(HashMap::new()),
             }),
         }
     }
@@ -657,6 +672,107 @@ impl Owner {
         }
         drained.append(&mut self.take_pending_commands());
         drained
+    }
+
+    /// R51.150 §5.22 — owner-scoped typed cache for per-binding
+    /// heap-allocated state.
+    ///
+    /// On the first call with a given `key`, invokes `factory()` and
+    /// stores the result. On every subsequent call with the same
+    /// `key` returns the cached value verbatim without re-running
+    /// the factory. The returned [`Rc<V>`] aliases the same heap
+    /// allocation across calls, so subsequent reads see the same
+    /// instance and any interior-mutability state (e.g. an
+    /// [`Animation`](crate::animation::Animation) handle's
+    /// [`SpringState`](crate::animation::SpringState)) persists across
+    /// view-fn re-paints.
+    ///
+    /// ## Lifetime
+    ///
+    /// Cached values live for as long as the owner; on
+    /// [`Owner`] drop the [`HashMap`] drops, releasing the last
+    /// strong [`Rc`] reference and dropping every cached value with
+    /// its registered cleanups (animations unregister from the tick
+    /// list, signals release their observers, etc.). Sibling owners
+    /// have independent caches.
+    ///
+    /// ## Replaces the thread-local `OnceCell` workaround
+    ///
+    /// Pre-R51.150 application code (R51.147 / R51.148 visual demos)
+    /// reached for `thread_local! { static X: OnceCell<Animation<f32>> }`
+    /// to materialise a per-binding animation in the view fn. The
+    /// workaround was a `[[textbook-long-term-correct]]` violation:
+    /// `thread_local` caches survive shell drops (stale animation
+    /// pinned to a dead owner), collide across multiple shells in
+    /// the same thread, and conflate the *substrate's* reactive
+    /// scope with the *thread's* memory. [`Owner::cache`] is the
+    /// canonical `SolidJS` / Leptos `useMemo` / React `useRef` shape
+    /// — value attached to the reactive owner, dropped with it,
+    /// independent across instances.
+    ///
+    /// ## Key collision and type safety
+    ///
+    /// `key` is a `&'static str` for ergonomics (`"hover_anim"` literal
+    /// in the view fn). The same key from the same call site naturally
+    /// reuses the cached entry — that is the intended semantics. The
+    /// same key with a *different* `V` is a programming error: the
+    /// `Rc::downcast` fails and this method panics with a diagnostic
+    /// message naming the key and the conflicting types. Use distinct
+    /// string keys for distinct values inside the same scope; for
+    /// generic-typed caches use the type name as part of the key
+    /// (`"hover_anim_f32"`).
+    ///
+    /// ## Panics
+    ///
+    /// Panics if a previous call with the same `key` stored a value of
+    /// a different concrete type. This is a load-bearing assertion:
+    /// silently re-running the factory under a type mismatch would
+    /// hand back a fresh instance every paint, defeating the cache's
+    /// own contract.
+    pub fn cache<V, F>(&self, key: &'static str, factory: F) -> Rc<V>
+    where
+        V: 'static,
+        F: FnOnce() -> V,
+    {
+        // First-call vs reuse decision under a single borrow. The
+        // `or_insert_with` arm fires `factory()` exactly once on miss;
+        // the returned `Rc<dyn Any>` is shared across every call site.
+        let any_rc: Rc<dyn Any> = {
+            let mut cache = self.inner.cache.borrow_mut();
+            Rc::clone(
+                cache
+                    .entry(key)
+                    .or_insert_with(|| Rc::new(factory()) as Rc<dyn Any>),
+            )
+        };
+        // Borrow released before the `downcast` — the downcast call
+        // itself is `Rc::clone`-equivalent (it bumps the strong count
+        // and rewraps as `Rc<V>`), no borrow re-entry.
+        Rc::downcast::<V>(any_rc).unwrap_or_else(|_| {
+            panic!(
+                "Owner::cache key {key:?} already holds a value of a different type; \
+                 use distinct keys for distinct types within the same owner scope",
+            );
+        })
+    }
+
+    /// R51.150 §5.22 — `true` when `key` has been populated by a
+    /// previous [`Owner::cache`] call on this owner.
+    ///
+    /// Returns `false` for un-touched keys and for keys whose cached
+    /// values have been dropped by an owner reset (not currently
+    /// implemented; the cache lives for the owner's lifetime today).
+    /// Primarily for diagnostics and tests; application code should
+    /// just call [`Owner::cache`] — the lazy-init contract handles
+    /// the missing-key case transparently.
+    #[must_use]
+    pub fn cache_contains(&self, key: &'static str) -> bool {
+        self.inner.cache.borrow().contains_key(key)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_size(&self) -> usize {
+        self.inner.cache.borrow().len()
     }
 }
 
@@ -1209,6 +1325,172 @@ mod tests {
         });
         assert!(observer.is_dirty());
         assert_eq!(s.get(), 0);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R51.150 §5.22 — Owner::cache primitive tests.
+    //
+    // Replaces the thread_local OnceCell workaround the R51.147 /
+    // R51.148 visual demos shipped with. The tests pin down:
+    //
+    // - Fresh owner has empty cache.
+    // - First call invokes factory; subsequent calls reuse.
+    // - Same key returned Rc aliases (same heap allocation).
+    // - Different keys are independent.
+    // - Distinct types under distinct keys coexist.
+    // - Same key with mismatched type panics (load-bearing contract).
+    // - Owner drop releases cached value (verified via Rc strong count).
+    // - Sibling owners have isolated caches.
+    // ────────────────────────────────────────────────────────────────
+
+    mod cache {
+        use super::Owner;
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        #[test]
+        fn fresh_owner_cache_is_empty() {
+            let owner = Owner::new();
+            assert_eq!(owner.cache_size(), 0);
+            assert!(!owner.cache_contains("foo"));
+        }
+
+        #[test]
+        fn first_call_invokes_factory_and_caches() {
+            let owner = Owner::new();
+            let factory_calls = Rc::new(Cell::new(0_u32));
+            let calls_clone = Rc::clone(&factory_calls);
+            let v: Rc<u32> = owner.cache("key", move || {
+                calls_clone.set(calls_clone.get() + 1);
+                42_u32
+            });
+            assert_eq!(*v, 42);
+            assert_eq!(factory_calls.get(), 1);
+            assert_eq!(owner.cache_size(), 1);
+            assert!(owner.cache_contains("key"));
+        }
+
+        #[test]
+        fn subsequent_calls_reuse_without_invoking_factory() {
+            let owner = Owner::new();
+            let factory_calls = Rc::new(Cell::new(0_u32));
+            for expected_value in [10_u32, 10, 10, 10] {
+                let calls_clone = Rc::clone(&factory_calls);
+                let v: Rc<u32> = owner.cache("k", move || {
+                    calls_clone.set(calls_clone.get() + 1);
+                    expected_value
+                });
+                assert_eq!(*v, 10);
+            }
+            assert_eq!(
+                factory_calls.get(),
+                1,
+                "factory must run exactly once for the same key",
+            );
+        }
+
+        #[test]
+        fn same_key_returns_aliased_rc() {
+            // The cache stores `Rc<dyn Any>` once; every cache call
+            // hands back an `Rc<V>` that points at the same heap
+            // allocation. We verify via `Rc::ptr_eq`.
+            let owner = Owner::new();
+            let a: Rc<String> = owner.cache("greet", || String::from("hello"));
+            let b: Rc<String> = owner.cache("greet", || String::from("never-fires"));
+            assert!(Rc::ptr_eq(&a, &b), "second cache call must alias first");
+            assert_eq!(*a, "hello");
+            assert_eq!(*b, "hello");
+        }
+
+        #[test]
+        fn distinct_keys_isolate_values() {
+            let owner = Owner::new();
+            let a: Rc<u32> = owner.cache("a", || 1_u32);
+            let b: Rc<u32> = owner.cache("b", || 2_u32);
+            assert_eq!(*a, 1);
+            assert_eq!(*b, 2);
+            assert!(!Rc::ptr_eq(&a, &b));
+            assert_eq!(owner.cache_size(), 2);
+        }
+
+        #[test]
+        fn distinct_types_coexist_under_distinct_keys() {
+            let owner = Owner::new();
+            let int_val: Rc<u32> = owner.cache("int", || 7_u32);
+            let str_val: Rc<String> = owner.cache("str", || String::from("seven"));
+            let cell_val: Rc<Cell<f32>> = owner.cache("cell", || Cell::new(1.5_f32));
+            assert_eq!(*int_val, 7);
+            assert_eq!(*str_val, "seven");
+            assert_eq!(cell_val.get().to_bits(), 1.5_f32.to_bits());
+            // Mutate through interior mutability — second cache call
+            // must observe the same Cell.
+            cell_val.set(2.5);
+            let cell_val_2: Rc<Cell<f32>> = owner.cache("cell", || Cell::new(99.0_f32));
+            assert!(Rc::ptr_eq(&cell_val, &cell_val_2));
+            assert_eq!(cell_val_2.get().to_bits(), 2.5_f32.to_bits());
+        }
+
+        #[test]
+        #[should_panic(expected = "Owner::cache key")]
+        fn same_key_mismatched_type_panics() {
+            let owner = Owner::new();
+            let _u: Rc<u32> = owner.cache("k", || 1_u32);
+            // Same key, different concrete type — must panic.
+            let _s: Rc<String> = owner.cache("k", || String::from("type-mismatch"));
+        }
+
+        #[test]
+        fn owner_drop_releases_cached_value() {
+            // The owner holds the only strong Rc beyond the test's
+            // local clone. After owner drop, strong_count drops to 1.
+            let probe: Rc<u32>;
+            {
+                let owner = Owner::new();
+                probe = owner.cache("v", || 100_u32);
+                // owner + this fn's `probe` = 2 strong refs.
+                assert!(Rc::strong_count(&probe) >= 2);
+            }
+            // owner dropped → its cache HashMap drops → its Rc<dyn Any>
+            // drops, leaving only the probe alive.
+            assert_eq!(Rc::strong_count(&probe), 1);
+        }
+
+        #[test]
+        fn sibling_owners_have_independent_caches() {
+            let a = Owner::new();
+            let b = Owner::new();
+            let av: Rc<u32> = a.cache("shared", || 11_u32);
+            let bv: Rc<u32> = b.cache("shared", || 22_u32);
+            assert_eq!(*av, 11);
+            assert_eq!(*bv, 22);
+            assert!(!Rc::ptr_eq(&av, &bv));
+        }
+
+        #[test]
+        fn cache_call_inside_run_resolves_via_current_owner() {
+            // The application-side hello-button pattern: view fn runs
+            // inside `Owner::run`, calls `Owner::current()` to grab
+            // the active scope, then uses `cache` on that handle.
+            let owner = Owner::new();
+            let observed: Rc<Cell<Option<u64>>> = Rc::new(Cell::new(None));
+            let owned_id = owner.id();
+            {
+                let observed_clone = Rc::clone(&observed);
+                owner.run(|| {
+                    let current = Owner::current().expect("inside run");
+                    let v: Rc<u32> = current.cache("inside", || 7_u32);
+                    assert_eq!(*v, 7);
+                    observed_clone.set(Some(current.id()));
+                });
+            }
+            assert_eq!(observed.get(), Some(owned_id));
+            // Re-entering the same owner's run reaches the same cache.
+            owner.run(|| {
+                let current = Owner::current().expect("inside run again");
+                let v: Rc<u32> = current.cache("inside", || 99_u32);
+                assert_eq!(*v, 7, "second call must reuse the cached value");
+            });
+        }
     }
 
     // ────────────────────────────────────────────────────────────────

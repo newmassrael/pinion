@@ -57,7 +57,6 @@
 //!   declares `Backend::Gui` because no dedicated TUI flag exists
 //!   in the §5.15 backend taxonomy).
 
-use std::cell::OnceCell;
 use std::io::Stdout;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
@@ -70,32 +69,28 @@ use pinion_core::{Animation, Color, Frame, Owner, WidgetCore, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
-// R51.148 §5.28 — per-binding `Animation<f32>` driving the
-// idle ↔ hover lightness transition. Mirrors the Vello `hello-button`
-// (R51.147) pattern: cached in a `thread_local` so the view fn
-// instantiates the animation exactly once on the first paint; later
-// calls just `set_target` and read the current value. Lifetime ties
-// to the binding's [`pinion_tui::ShellCoreTui::root_owner`] via
-// [`Owner::current()`](pinion_core::Owner::current) (R51.146 wrap).
-thread_local! {
-    static HOVER_ANIM: OnceCell<Animation<f32>> = const { OnceCell::new() };
-}
+/// R51.150 §5.22 — owner-cache key for the TUI hover-progress
+/// [`Animation`]. Distinct prefix from the Vello sibling
+/// (`hello_button::*`) so the two examples can run side-by-side under
+/// future shared infrastructure without key collision.
+const HOVER_ANIM_KEY: &str = "hello_button_tui::hover_progress";
 
-/// R51.148 §5.28 — drive the hover progress animation and return the
-/// displayed value in `[0.0, 1.0]`. Hover targets `1.0`; every other
-/// state targets `0.0`.
+/// R51.148 §5.28 + R51.150 §5.22 — drive the hover progress animation
+/// and return the displayed value in `[0.0, 1.0]`. Hover targets
+/// `1.0`; every other state targets `0.0`. Mirrors the Vello
+/// `hello-button` pattern verbatim, with the same R51.150 owner-cache
+/// replacement of the pre-R51.150 `thread_local OnceCell` workaround
+/// (see `hello-button/src/main.rs` for the long-form rationale).
 fn drive_hover_progress(state: ButtonState) -> f32 {
-    HOVER_ANIM.with(|cell| {
-        let anim = cell.get_or_init(|| {
-            let owner = Owner::current().expect(
-                "hello-button-tui view fn must run inside ShellCoreTui::root_owner().run(...)",
-            );
-            Animation::new(&owner, 0.0_f32, SpringConfig::default())
-        });
-        let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
-        anim.set_target(target);
-        anim.value()
-    })
+    let owner = Owner::current().expect(
+        "hello-button-tui view fn must run inside ShellCoreTui::root_owner().run(...)",
+    );
+    let anim: std::rc::Rc<Animation<f32>> = owner.cache(HOVER_ANIM_KEY, || {
+        Animation::new(&owner, 0.0_f32, SpringConfig::default())
+    });
+    let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
+    anim.set_target(target);
+    anim.value()
 }
 
 /// R51.148 §5.28 — linear interpolate a single-channel grayscale fill

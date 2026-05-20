@@ -1161,6 +1161,8 @@ fn main() {
 - crates/pinion-core/src/reactive/owner.rs:Owner::current
 - crates/pinion-core/src/reactive/owner.rs:CURRENT_OWNER_HANDLE
 - crates/pinion-core/src/reactive/owner.rs:OwnerHandleGuard
+- crates/pinion-core/src/reactive/owner.rs:Owner::cache
+- crates/pinion-core/src/reactive/owner.rs:Owner::cache_contains
 
 
 
@@ -6182,6 +6184,37 @@ router.pointer_down(&mut state_scene);
 - R51.150+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
 - R51.151+ application context API (avoid thread_local OnceCell view-fn pattern)
 - memory entry #168 — Effect-driven driver + monotonic counter pattern
+
+
+
+### R51.150 — §5.22 Owner::cache primitive + hello-button*/hello-button-tui thread_local OnceCell 청산 (useMemo/useRef 정통 mirror)
+
+**Changes**:
+- pinion-core Owner::cache<V>(key, factory) -> Rc<V> 정통 primitive (lazy-init)
+- OwnerInner.cache: RefCell<HashMap<&str, Rc<dyn Any>>> field + downcast pattern
+- Owner::cache_contains(key) -> bool diagnostic accessor
+- hello-button drive_hover_progress thread_local OnceCell → Owner::current().cache
+- hello-button-tui 동일 패턴 적용 (hello_button_tui::hover_progress key)
+- application-side workaround 청산 ([[textbook-long-term-correct]] 위반 회복)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1870 passed / 0 failed / 8 ignored
+- baseline 1860 → 1870 (+10 R51.150 cache tests across 10 scenarios)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- same_key_mismatched_type_panics 테스트 통과 (load-bearing 계약)
+
+
+
+**Impact**: §5.22, §5.28
+
+
+**Carry forward**:
+- R51.151+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
+- R51.152+ lerp_grayscale framework primitive 화 (hello-button + hello-button-tui DRY)
+- R51.153+ Owner::cache positional/macro variant (call-site identity ergonomic)
+- memory entry #169 — Owner::cache substrate (useMemo/useRef 정통 mirror)
 
 
 
