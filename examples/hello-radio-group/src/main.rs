@@ -42,8 +42,10 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
-use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_a11y::{
+    AccessAction, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y,
+};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -195,7 +197,7 @@ fn tier_label(index: usize) -> &'static str {
 
 struct RadioGroupView;
 
-impl WidgetView for RadioGroupView {
+impl WidgetCore for RadioGroupView {
     type State = GroupState;
     // The composite drives every state change through `apply_key`
     // (typed wire format `"<i>:<EventName>"`) and the InputRouter
@@ -203,7 +205,6 @@ impl WidgetView for RadioGroupView {
     // through `event_name`. `()` satisfies the trait's `Copy`
     // bound without introducing an unused variant.
     type Event = ();
-    type Renderer = HelloRadioGroupRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(RadioGroupExternal::new(N))
@@ -267,10 +268,6 @@ impl WidgetView for RadioGroupView {
         "pinion hello-radio-group (R51.44 §5.38 composite hit-target)"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-
     fn keybinding(_key: &str) -> Option<()> {
         // Every key the composite cares about flows through
         // `apply_key` so the enum-typed channel stays unused. The
@@ -319,6 +316,30 @@ impl WidgetView for RadioGroupView {
         true
     }
 
+    fn fmt_state_log(state: &GroupState) -> String {
+        let rows = state
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, (s, sel))| {
+                format!(
+                    "{i}={}{}",
+                    radio_state_short(*s),
+                    if *sel { "+" } else { "-" },
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        // R51.87 §5.40 — focused_index in the log so stderr traces
+        // distinguish AT navigation from selection commits.
+        match state.focused {
+            Some(idx) => format!("{rows} focused={idx}"),
+            None => rows,
+        }
+    }
+}
+
+impl WidgetA11y for RadioGroupView {
     /// R51.66 §5.40 — composite AccessKit semantic tree contribution.
     /// Emits N+1 nodes: one `AriaRole::RadioGroup` parent holding
     /// every radio's sub-tag as a child, plus one
@@ -336,10 +357,10 @@ impl WidgetView for RadioGroupView {
     /// node is untagged background fill) so it stays as an explicit
     /// override on the parent `AccessNode`.
     fn access_node(state: &GroupState, focused: Option<&str>) -> Vec<AccessNode> {
-        let group_focused = focused == Some(Self::tag());
+        let group_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_idx = active_radio_index(*state);
         let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
-        let mut group = AccessNode::new(Self::tag(), AriaRole::RadioGroup)
+        let mut group = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::RadioGroup)
             .with_name("Subscription tier");
         for i in 0..N {
             group = group.with_child(format!("{PRIMARY_TAG}#{i}"));
@@ -377,10 +398,10 @@ impl WidgetView for RadioGroupView {
         state: &GroupState,
         focused: Option<&str>,
     ) -> Option<AccessFocus> {
-        if focused == Some(Self::tag()) {
+        if focused == Some(<Self as WidgetCore>::tag()) {
             let idx = active_radio_index(*state);
             Some(AccessFocus::composite(
-                Self::tag(),
+                <Self as WidgetCore>::tag(),
                 format!("{PRIMARY_TAG}#{idx}"),
             ))
         } else {
@@ -426,23 +447,6 @@ impl WidgetView for RadioGroupView {
                 }
                 true
             }
-            // R51.87 §5.40 — composite Focus on a specific child now
-            // mutates the parent's `focused_index` (independent of
-            // `selected_index`). The shell's R51.82
-            // `dispatch_access_action::Focus` arm already ran
-            // `focus.focus_set(parent_tag)` before this hook; here
-            // we mark the addressed row as the active descendant so
-            // the next `access_focus_target` call reports the
-            // AT-addressed radio instead of the selected one. AT
-            // navigation (arrow keys without Enter, AT-side Focus)
-            // can now move between rows without committing a
-            // selection — WAI-ARIA roving-tabindex textbook model.
-            //
-            // `i64::try_from(idx)` is infallible for `idx < N` with
-            // small `N`; the underlying `intervene` already validates
-            // the range and rejects out-of-range as `TypeMismatch`,
-            // which we swallow here (the `idx >= N` guard above
-            // already rejected anyway).
             AccessAction::Focus => {
                 if let Ok(i) = i64::try_from(idx) {
                     let _ = intro.intervene(
@@ -457,27 +461,13 @@ impl WidgetView for RadioGroupView {
             }
         }
     }
+}
 
-    fn fmt_state_log(state: &GroupState) -> String {
-        let rows = state
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(i, (s, sel))| {
-                format!(
-                    "{i}={}{}",
-                    radio_state_short(*s),
-                    if *sel { "+" } else { "-" },
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        // R51.87 §5.40 — focused_index in the log so stderr traces
-        // distinguish AT navigation from selection commits.
-        match state.focused {
-            Some(idx) => format!("{rows} focused={idx}"),
-            None => rows,
-        }
+impl WidgetView for RadioGroupView {
+    type Renderer = HelloRadioGroupRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 

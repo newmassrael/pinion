@@ -321,10 +321,9 @@ mod tests {
     /// [`InputRouter`] hit-tests resolve.
     struct TestButtonView;
 
-    impl WidgetViewTui for TestButtonView {
+    impl pinion_core::WidgetCore for TestButtonView {
         type State = ButtonState;
         type Event = pinion_core::widgets::button::ButtonEvent;
-        type Renderer = crate::TuiRenderer<TestBackend>;
 
         fn create_external() -> Box<dyn External> {
             Box::new(ButtonExternal::new())
@@ -389,6 +388,12 @@ mod tests {
         fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
             pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
         }
+    }
+
+    impl pinion_a11y::WidgetA11y for TestButtonView {}
+
+    impl WidgetViewTui for TestButtonView {
+        type Renderer = crate::TuiRenderer<TestBackend>;
     }
 
     /// Minimal `Default` impl helper for buffer construction tests

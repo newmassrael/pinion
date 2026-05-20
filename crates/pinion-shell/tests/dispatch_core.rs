@@ -33,7 +33,7 @@ use std::sync::Mutex;
 
 use pinion_a11y::{
     tag_to_node_id, AccessAction, AccessFocus, AccessNode, AccessValue, AriaRole,
-    PinionAccessAction,
+    PinionAccessAction, WidgetA11y,
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -41,7 +41,7 @@ use pinion_core::external::{
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, Color};
-use pinion_core::{Frame, Scene};
+use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, ShellCore, WidgetView};
 
 // ---------- Test-fixture VelloRenderer ----------------------------------
@@ -180,10 +180,9 @@ fn reset_mocks() {
 
 struct TestView;
 
-impl WidgetView for TestView {
+impl WidgetCore for TestView {
     type State = i32;
     type Event = ();
-    type Renderer = TestRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(TestExternal::default())
@@ -236,10 +235,6 @@ impl WidgetView for TestView {
         "test"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (8, 8)
-    }
-
     fn apply_key(_scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         APPLY_KEY_LOG
             .lock()
@@ -247,7 +242,9 @@ impl WidgetView for TestView {
             .push((focused.map(ToOwned::to_owned), key.to_owned()));
         APPLY_KEY_RETURNS.load(Ordering::SeqCst)
     }
+}
 
+impl WidgetA11y for TestView {
     fn access_child_invoke(
         _scene: &mut Scene,
         sub_tag: &str,
@@ -258,6 +255,14 @@ impl WidgetView for TestView {
             .unwrap()
             .push((sub_tag.to_owned(), action));
         CHILD_INVOKE_RETURNS.load(Ordering::SeqCst)
+    }
+}
+
+impl WidgetView for TestView {
+    type Renderer = TestRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (8, 8)
     }
 }
 

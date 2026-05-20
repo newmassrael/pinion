@@ -56,8 +56,8 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
-use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -218,10 +218,9 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
 
 struct SliderView;
 
-impl WidgetView for SliderView {
+impl WidgetCore for SliderView {
     type State = (SliderState, f32);
     type Event = SliderEvent;
-    type Renderer = HelloSliderRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(SliderExternal::new())
@@ -271,10 +270,6 @@ impl WidgetView for SliderView {
         "pinion hello-slider (R51.35 §5.38 pinion-shell + R51.34 capture)"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-
     fn keybinding(key: &str) -> Option<SliderEvent> {
         match key {
             "d" => Some(SliderEvent::Disable),
@@ -293,23 +288,7 @@ impl WidgetView for SliderView {
     /// `intervene("value", Float)` — the same side door the RPC
     /// `scene/intervene` route uses, so the AI client observes
     /// keyboard mutations identically to drag-driven mutations.
-    ///
-    /// ARIA convention: a disabled slider ignores keyboard input,
-    /// so the override returns `false` (unhandled) while the state
-    /// machine is in [`SliderState::Disabled`]. The disabled gate
-    /// reads `query("state")` rather than checking the cached
-    /// projection: the cached state lags one shell tick behind a
-    /// just-arrived `Disable` SCXML transition, and the AI-client
-    /// contract uses the live introspect channel.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
-        // R51.56 §5.39 — focused-only routing. The pre-R51.53
-        // broadcast model fired Arrow / Home / End / Page* on every
-        // `WidgetView::apply_key` regardless of focus, which aliased
-        // the slider with any sibling widget that consumed the same
-        // keys (Slider arrows + RadioGroup arrows on the same screen
-        // would step both). Gating on `focused == Self::tag()`
-        // restricts dispatch to the focused slider — matches the
-        // W3C ARIA Slider keyboard contract verbatim.
         if focused != Some(Self::tag()) {
             return false;
         }
@@ -341,13 +320,18 @@ impl WidgetView for SliderView {
             .is_ok()
     }
 
+    fn fmt_state_log(state: &(SliderState, f32)) -> String {
+        format!("{} / {:.2}", slider_state_name(state.0), state.1)
+    }
+}
+
+impl WidgetA11y for SliderView {
     /// R51.65 §5.40 — AccessKit semantic tree contribution. Emits a
     /// single `AriaRole::Slider` node carrying an `AccessValue::Float`
     /// with `min` / `max` matching the widget's normalized [0.0, 1.0]
     /// range (the same range the introspect schema's `"value"` key
     /// reports). `state.checked` stays `None` (Slider is not a
-    /// check-like widget). `Action::Increment` / `Action::Decrement`
-    /// dispatch lands at R51.67 wiring.
+    /// check-like widget).
     ///
     /// R51.69 §5.40 — the accessible name comes from the track
     /// container's `aria_label` override (set in `view`) so the
@@ -355,19 +339,23 @@ impl WidgetView for SliderView {
     fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, value) = (state.0, state.1);
         let access_state = AccessState {
-            focused: focused == Some(Self::tag()),
+            focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(interaction, SliderState::Disabled),
             hovered: matches!(interaction, SliderState::Hover),
             pressed: matches!(interaction, SliderState::Dragging),
             checked: None,
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::Slider)
+        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
             .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })
             .with_state(access_state)]
     }
+}
 
-    fn fmt_state_log(state: &(SliderState, f32)) -> String {
-        format!("{} / {:.2}", slider_state_name(state.0), state.1)
+impl WidgetView for SliderView {
+    type Renderer = HelloSliderRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 

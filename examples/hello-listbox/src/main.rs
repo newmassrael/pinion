@@ -62,7 +62,7 @@
 use std::cell::RefCell;
 use std::time::Instant;
 
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -70,7 +70,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::{Color, Frame, Scene};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -245,7 +245,7 @@ fn option_label(index: usize) -> &'static str {
 
 struct ListBoxView;
 
-impl WidgetView for ListBoxView {
+impl WidgetCore for ListBoxView {
     type State = ListState;
     // The composite drives every state change through `apply_key`
     // (typed wire format `"<i>:<EventName>"` for commits, direct
@@ -253,7 +253,6 @@ impl WidgetView for ListBoxView {
     // channel typed event slot stays unused. `()` satisfies the
     // trait's `Copy` bound without an unused variant.
     type Event = ();
-    type Renderer = HelloListboxRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(ListBoxExternal::new(N))
@@ -303,10 +302,6 @@ impl WidgetView for ListBoxView {
 
     fn title() -> &'static str {
         "pinion hello-listbox (R51.97 §5.38 Listbox composite)"
-    }
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
     }
 
     fn keybinding(_key: &str) -> Option<()> {
@@ -365,6 +360,28 @@ impl WidgetView for ListBoxView {
         }
     }
 
+    fn fmt_state_log(state: &ListState) -> String {
+        let rows = state
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, (s, sel))| {
+                format!(
+                    "{i}={}{}",
+                    listbox_state_short(*s),
+                    if *sel { "+" } else { "-" },
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        match state.focused {
+            Some(idx) => format!("{rows} focused={idx}"),
+            None => rows,
+        }
+    }
+}
+
+impl WidgetA11y for ListBoxView {
     /// R51.96.1 §5.40 — composite AccessKit semantic tree
     /// contribution. Emits N+1 nodes: one `AriaRole::Listbox` parent
     /// holding every option's sub-tag as a child, plus one
@@ -379,10 +396,10 @@ impl WidgetView for ListBoxView {
     /// so it stays as an explicit override on the parent
     /// `AccessNode`.
     fn access_node(state: &ListState, focused: Option<&str>) -> Vec<AccessNode> {
-        let list_focused = focused == Some(Self::tag());
+        let list_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_idx = active_option_index(*state);
         let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
-        let mut list = AccessNode::new(Self::tag(), AriaRole::Listbox)
+        let mut list = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Listbox)
             .with_name("Fruit picker");
         for i in 0..N {
             list = list.with_child(format!("{PRIMARY_TAG}#{i}"));
@@ -393,13 +410,7 @@ impl WidgetView for ListBoxView {
             // R51.98 §5.40 — ListBoxOption uses WAI-ARIA
             // `aria-selected` (container-membership axis), not
             // `aria-checked` (two-state truthy axis used by Switch /
-            // CheckBox / RadioButton). The R51.97 hello-listbox
-            // emitted `state.checked + AccessValue::Bool` for option
-            // selection; that conflated the two ARIA axes and
-            // misreported the option to AT (NVDA / VoiceOver would
-            // announce "checked" instead of "selected"). The option's
-            // accessible name comes from its TextNode label via
-            // `enrich_names_from_scene` — no `AccessValue` needed.
+            // CheckBox / RadioButton).
             let access_state = AccessState {
                 focused: list_focused && i == active_idx,
                 disabled: matches!(item_state, ListboxItemState::Disabled),
@@ -419,17 +430,15 @@ impl WidgetView for ListBoxView {
     /// R51.71 §5.40 — composite focus model. When the listbox itself
     /// is focused, return [`AccessFocus::composite`] with the parent
     /// tag as the `TreeUpdate::focus` target and the active option's
-    /// sub-tag as the `aria-activedescendant`. Pinion-shell focus
-    /// ring and key dispatch address `"main_list"` itself; only
-    /// AccessKit consumers see the descendant hint.
+    /// sub-tag as the `aria-activedescendant`.
     fn access_focus_target(
         state: &ListState,
         focused: Option<&str>,
     ) -> Option<AccessFocus> {
-        if focused == Some(Self::tag()) {
+        if focused == Some(<Self as WidgetCore>::tag()) {
             let idx = active_option_index(*state);
             Some(AccessFocus::composite(
-                Self::tag(),
+                <Self as WidgetCore>::tag(),
                 format!("{PRIMARY_TAG}#{idx}"),
             ))
         } else {
@@ -437,20 +446,7 @@ impl WidgetView for ListBoxView {
         }
     }
 
-    /// R51.70 §5.40 — composite child action dispatch. Mirrors the
-    /// `commit_focused` wire-format path
-    /// (`PointerEnter` / `Down` / `Up` / `Leave` against
-    /// `format!("{idx}:{ev}")`) when an AT invokes
-    /// `AccessKit::Action::Click` / `Default` on a specific option's
-    /// `NodeId` (`"main_list#<i>"`).
-    ///
-    /// `Click` / `Default` activate the addressed option (mutual
-    /// exclusion + `"selected"` intent fires through the standard
-    /// composite path). `Focus` mutates the parent's `focused_index`
-    /// to mark the addressed row as the active descendant without
-    /// committing — the WAI-ARIA Listbox roving-tabindex textbook
-    /// model. Other actions decline so the shell stays in charge of
-    /// the fallback chain.
+    /// R51.70 §5.40 — composite child action dispatch.
     fn access_child_invoke(scene: &mut Scene, sub_tag: &str, action: AccessAction) -> bool {
         let Ok(idx) = sub_tag.parse::<usize>() else {
             return false;
@@ -488,25 +484,13 @@ impl WidgetView for ListBoxView {
             }
         }
     }
+}
 
-    fn fmt_state_log(state: &ListState) -> String {
-        let rows = state
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(i, (s, sel))| {
-                format!(
-                    "{i}={}{}",
-                    listbox_state_short(*s),
-                    if *sel { "+" } else { "-" },
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        match state.focused {
-            Some(idx) => format!("{rows} focused={idx}"),
-            None => rows,
-        }
+impl WidgetView for ListBoxView {
+    type Renderer = HelloListboxRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 

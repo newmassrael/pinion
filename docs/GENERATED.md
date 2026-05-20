@@ -3238,6 +3238,7 @@ router.pointer_down(&mut state_scene);
 - R51.118 — WidgetViewTui::access_node default + 2 TUI binding override (TUI a11y substrate first cut)
 - R51.119 — atomic stale citation cleanup (R51.117 substrate move: 4 removes + 7 adds)
 - R51.120 — substrate stderr → optional file sink (alternate screen 보호, PINION_TUI_LOG opt-in)
+- R51.121 — WidgetCore + WidgetA11y supertrait split, WidgetView/Tui = Renderer + initial_size 만 (ISP)
 
 
 
@@ -3285,8 +3286,6 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/input.rs
 - crates/pinion-tui/src/input.rs:key_str_from_event
 - crates/pinion-tui/src/input.rs:modifiers_from_crossterm
-- crates/pinion-tui/src/widget.rs:WidgetViewTui::apply_key
-- crates/pinion-tui/src/widget.rs:WidgetViewTui::keybinding
 - crates/pinion-tui/src/input.rs:cell_to_pixel
 - crates/pinion-tui/src/shell.rs:dispatch_mouse
 - examples/hello-toggle-tui/Cargo.toml
@@ -3299,7 +3298,6 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/substrate.rs
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui
 - crates/pinion-tui/src/shell.rs:commit_paint
-- crates/pinion-tui/src/widget.rs:WidgetViewTui::access_node
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::dispatch_key
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::refresh_state
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::cursor_moved
@@ -3309,6 +3307,10 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::update_paint_scene
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::set_log_sink
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::with_log_sink
+- crates/pinion-core/src/widget_core.rs
+- crates/pinion-core/src/widget_core.rs:WidgetCore
+- crates/pinion-a11y/src/widget_a11y.rs
+- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y
 
 
 
@@ -4774,6 +4776,39 @@ router.pointer_down(&mut state_scene);
 **Carry forward**:
 - carry: pre-R51.93 의 종속적 mock test fixture 가 PointerUp 만 쓴다면 cancel path coverage 가 아직 일면적 — future widget composite 신설 시 PointerCancel 경로도 테스트 포함 권고
 - carry: pointer_cancel 의 RPC dual — 'scene/invoke send PointerCancel' wire 이벤트 가 이미 자동 지원됨 (parse_*_event PointerCancel arm). AI 클라이언트가 외부 cancel 시너리오를 재현 가능
+
+
+
+### R51.121 — R51.121 §5.41 — WidgetCore + WidgetA11y supertrait split: WidgetView/WidgetViewTui 가 Renderer + initial_size 만 남김 (ISP 정통)
+
+**Changes**:
+- crates/pinion-core/src/widget_core.rs 신설 — WidgetCore trait (state/event/create_external/tag/read_state/view/event_name/title/keybinding/apply_key/focusable_tags/fmt_state_log)
+- crates/pinion-a11y/src/widget_a11y.rs 신설 — WidgetA11y: WidgetCore supertrait (access_node/access_focus_target/access_child_invoke)
+- crates/pinion-shell/src/lib.rs WidgetView 변환: pinion_a11y::WidgetA11y supertrait + Renderer + initial_size (u32×u32) 만
+- crates/pinion-tui/src/widget.rs WidgetViewTui 변환: WidgetA11y supertrait + Renderer + initial_size (u16×u16, default 80×24)
+- 11 binding (9 GUI + 2 TUI) impl atomic 분할 — impl WidgetCore + impl WidgetA11y + impl WidgetView/Tui
+- substrate tests / smoke / dispatch_core / DummyView fixture 3-impl-block 분할 동시 land
+- stale citations cleanup — WidgetViewTui::{apply_key,keybinding,access_node} 제거 (supertrait 이동)
+
+
+
+**Verification**:
+- cargo check --workspace 통과
+- cargo test --workspace --features pinion-runtime/vello = 1709 pass / 0 fail / 8 ignored (baseline 유지, behavior 변경 0)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace = entries=249 / sections=58 / T1=0 / RT=1/1 / GENERATED.md=sync
+
+
+
+**Impact**: §5.41, §5.16, §5.40
+
+
+**Carry forward**:
+- WidgetCore::view 가 §6.3 view-fn purity invariant 유지 (sync + pure same (state, frame) → same Scene)
+- initial_size return type unit (u32×u32 pixels vs u16×u16 cells) 의도적 분기 — backend native 단위
+- blanket impl WidgetA11y for T: WidgetCore 비적용 — Rust specialization 없이는 composite override 불가
+- Self::tag() 호출 시 supertrait method dispatch 정통 — <Self as WidgetCore>::tag() 명시 우선 (ambiguity 회피 + audit grep)
+- TUI focus management hardcode + cell-native coord + AT integration 등 잔여 carry 그대로
 
 
 

@@ -25,8 +25,8 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 // pinion-forge codegen output. Defines `pub struct HelloToggleRenderer`
@@ -183,10 +183,9 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 /// Off/On value sidecar [`Toggle::is_on`].
 struct ToggleView;
 
-impl WidgetView for ToggleView {
+impl WidgetCore for ToggleView {
     type State = (ToggleState, bool);
     type Event = ToggleEvent;
-    type Renderer = HelloToggleRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(ToggleExternal::new())
@@ -232,10 +231,6 @@ impl WidgetView for ToggleView {
         "pinion hello-toggle (R51.30 §5.38 pinion-shell)"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-
     fn keybinding(key: &str) -> Option<ToggleEvent> {
         match key {
             "d" => Some(ToggleEvent::Disable),
@@ -254,6 +249,16 @@ impl WidgetView for ToggleView {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
+    fn fmt_state_log(state: &(ToggleState, bool)) -> String {
+        format!(
+            "{} / {}",
+            toggle_state_name(state.0),
+            if state.1 { "On" } else { "Off" },
+        )
+    }
+}
+
+impl WidgetA11y for ToggleView {
     /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
     /// single `AriaRole::Switch` node (toggle button per WAI-ARIA;
     /// distinct from `AriaRole::CheckBox` because Switch carries
@@ -269,23 +274,23 @@ impl WidgetView for ToggleView {
     fn access_node(state: &(ToggleState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, on) = (state.0, state.1);
         let access_state = AccessState {
-            focused: focused == Some(Self::tag()),
+            focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(interaction, ToggleState::Disabled),
             hovered: matches!(interaction, ToggleState::Hover),
             pressed: matches!(interaction, ToggleState::Pressed),
             checked: Some(on),
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::Switch)
+        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Switch)
             .with_value(AccessValue::Bool(on))
             .with_state(access_state)]
     }
+}
 
-    fn fmt_state_log(state: &(ToggleState, bool)) -> String {
-        format!(
-            "{} / {}",
-            toggle_state_name(state.0),
-            if state.1 { "On" } else { "Off" },
-        )
+impl WidgetView for ToggleView {
+    type Renderer = HelloToggleRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 

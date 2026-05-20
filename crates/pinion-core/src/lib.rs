@@ -9,6 +9,7 @@ pub mod revision;
 pub mod scene;
 pub mod style;
 pub mod topology;
+pub mod widget_core;
 pub mod widgets;
 
 #[cfg(test)]
@@ -17,6 +18,7 @@ mod multi_window;
 pub use event::Event;
 pub use renderer::WidgetRenderer;
 pub use external::External;
+pub use widget_core::WidgetCore;
 pub use frame::Frame;
 pub use intent::{Intent, IntentTag};
 pub use reactive::{

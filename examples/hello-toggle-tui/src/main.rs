@@ -51,12 +51,12 @@
 use std::borrow::Cow;
 use std::io::Stdout;
 
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{Color, Frame, style};
+use pinion_core::{Color, Frame, WidgetCore, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
@@ -64,15 +64,13 @@ use pinion_tui::{TuiRenderer, WidgetViewTui};
 /// instantiates the substrate around this binding.
 struct HelloToggleTui;
 
-impl WidgetViewTui for HelloToggleTui {
+impl WidgetCore for HelloToggleTui {
     /// Joint `(interaction, value)` — same shape as the Vello
     /// `hello-toggle` binding. The substrate's `read_state` lifts
     /// both fields through the §5.15 introspect channel each frame.
     type State = (ToggleState, bool);
 
     type Event = ToggleEvent;
-
-    type Renderer = TuiRenderer<CrosstermBackend<Stdout>>;
 
     fn create_external() -> Box<dyn External> {
         Box::new(ToggleExternal::new())
@@ -199,25 +197,34 @@ impl WidgetViewTui for HelloToggleTui {
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
+}
 
+impl WidgetA11y for HelloToggleTui {
     /// R51.118 §5.41 — AT-side semantic node (TUI parity with the
     /// Vello hello-toggle binding). `AriaRole::Switch` carries the
     /// On/Off value via [`AccessValue::Bool`]; `state.checked`
     /// mirrors the same boolean so AT clients reading either field
     /// see a consistent on/off state.
-    fn access_node(state: &Self::State, focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(
+        state: &(ToggleState, bool),
+        focused: Option<&str>,
+    ) -> Vec<AccessNode> {
         let (interaction, on) = *state;
         let access_state = AccessState {
-            focused: focused == Some(Self::tag()),
+            focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(interaction, ToggleState::Disabled),
             hovered: matches!(interaction, ToggleState::Hover),
             pressed: matches!(interaction, ToggleState::Pressed),
             checked: Some(on),
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::Switch)
+        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Switch)
             .with_value(AccessValue::Bool(on))
             .with_state(access_state)]
     }
+}
+
+impl WidgetViewTui for HelloToggleTui {
+    type Renderer = TuiRenderer<CrosstermBackend<Stdout>>;
 }
 
 fn parse_toggle_state(name: &str) -> ToggleState {

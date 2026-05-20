@@ -35,8 +35,8 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::slider::{SliderAxis, SliderEvent, SliderExternal, SliderState};
-use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -178,10 +178,9 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
 
 struct SliderVerticalView;
 
-impl WidgetView for SliderVerticalView {
+impl WidgetCore for SliderVerticalView {
     type State = (SliderState, f32);
     type Event = SliderEvent;
-    type Renderer = HelloSliderVerticalRenderer;
 
     fn create_external() -> Box<dyn External> {
         // R51.39 §5.38 — the only line that diverges from
@@ -237,10 +236,6 @@ impl WidgetView for SliderVerticalView {
         "pinion hello-slider-vertical (R51.46 §5.38 SliderAxis::Vertical)"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-
     fn keybinding(key: &str) -> Option<SliderEvent> {
         match key {
             "d" => Some(SliderEvent::Disable),
@@ -257,11 +252,6 @@ impl WidgetView for SliderVerticalView {
     /// direction. Disabled state ignores keyboard input per the
     /// same ARIA contract.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
-        // R51.56 §5.39 — focused-only routing (parity with horizontal
-        // `hello-slider`). Orientation is decoupled from the focus
-        // contract: a vertical slider routes the same way as a
-        // horizontal one — the W3C ARIA Slider keyboard contract is
-        // orientation-invariant.
         if focused != Some(Self::tag()) {
             return false;
         }
@@ -296,28 +286,35 @@ impl WidgetView for SliderVerticalView {
     fn fmt_state_log(state: &(SliderState, f32)) -> String {
         format!("{} / {:.2}", slider_state_name(state.0), state.1)
     }
+}
 
+impl WidgetA11y for SliderVerticalView {
     /// R51.65 §5.40 — AccessKit semantic tree contribution for the
     /// vertical slider variant. Same role / value semantics as the
     /// horizontal slider; orientation is conveyed visually + by the
     /// distinct widget tag (`main_slider_v`) — a future round adds an
     /// `accesskit::Orientation` field to [`AccessNode`] once a
     /// non-slider orientation consumer exists (carry).
-    ///
-    /// R51.69 §5.40 — the accessible name is sourced from the track
-    /// column's `aria_label` override (set in `view`).
     fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, value) = (state.0, state.1);
         let access_state = AccessState {
-            focused: focused == Some(Self::tag()),
+            focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(interaction, SliderState::Disabled),
             hovered: matches!(interaction, SliderState::Hover),
             pressed: matches!(interaction, SliderState::Dragging),
             checked: None,
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::Slider)
+        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
             .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })
             .with_state(access_state)]
+    }
+}
+
+impl WidgetView for SliderVerticalView {
+    type Renderer = HelloSliderVerticalRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 

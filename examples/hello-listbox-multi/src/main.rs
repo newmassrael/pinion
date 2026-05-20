@@ -40,7 +40,7 @@
 use std::cell::RefCell;
 use std::time::Instant;
 
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -48,7 +48,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::{Color, Frame, Scene};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -178,10 +178,9 @@ fn option_label(index: usize) -> &'static str {
 
 struct ListBoxMultiView;
 
-impl WidgetView for ListBoxMultiView {
+impl WidgetCore for ListBoxMultiView {
     type State = ListState;
     type Event = ();
-    type Renderer = HelloListboxMultiRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(ListBoxExternal::with_multiselect(N))
@@ -231,10 +230,6 @@ impl WidgetView for ListBoxMultiView {
         "pinion hello-listbox-multi (R51.104 §5.38 aria-multiselectable)"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-
     fn keybinding(_key: &str) -> Option<()> {
         None
     }
@@ -260,16 +255,38 @@ impl WidgetView for ListBoxMultiView {
         }
     }
 
+    fn fmt_state_log(state: &ListState) -> String {
+        let rows = state
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, (s, sel))| {
+                format!(
+                    "{i}={}{}",
+                    listbox_state_short(*s),
+                    if *sel { "+" } else { "-" },
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        match state.focused {
+            Some(idx) => format!("{rows} focused={idx}"),
+            None => rows,
+        }
+    }
+}
+
+impl WidgetA11y for ListBoxMultiView {
     /// Emits N + 1 nodes: parent listbox with `aria-multiselectable=true`,
     /// plus one `ListBoxOption` per index with explicit
     /// `aria-selected=true|false` so AT can announce both directions
     /// in a multi-select container (the "explicit false" branch of
     /// WAI-ARIA 1.2 §6.6.7).
     fn access_node(state: &ListState, focused: Option<&str>) -> Vec<AccessNode> {
-        let list_focused = focused == Some(Self::tag());
+        let list_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_idx = active_option_index(*state);
         let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
-        let mut list = AccessNode::new(Self::tag(), AriaRole::Listbox)
+        let mut list = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Listbox)
             .with_name("Fruit picker (multi-select)")
             .with_multiselectable();
         for i in 0..N {
@@ -298,10 +315,10 @@ impl WidgetView for ListBoxMultiView {
         state: &ListState,
         focused: Option<&str>,
     ) -> Option<AccessFocus> {
-        if focused == Some(Self::tag()) {
+        if focused == Some(<Self as WidgetCore>::tag()) {
             let idx = active_option_index(*state);
             Some(AccessFocus::composite(
-                Self::tag(),
+                <Self as WidgetCore>::tag(),
                 format!("{PRIMARY_TAG}#{idx}"),
             ))
         } else {
@@ -346,25 +363,13 @@ impl WidgetView for ListBoxMultiView {
             }
         }
     }
+}
 
-    fn fmt_state_log(state: &ListState) -> String {
-        let rows = state
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(i, (s, sel))| {
-                format!(
-                    "{i}={}{}",
-                    listbox_state_short(*s),
-                    if *sel { "+" } else { "-" },
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        match state.focused {
-            Some(idx) => format!("{rows} focused={idx}"),
-            None => rows,
-        }
+impl WidgetView for ListBoxMultiView {
+    type Renderer = HelloListboxMultiRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 

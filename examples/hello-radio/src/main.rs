@@ -33,8 +33,8 @@ use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::radio::{RadioEvent, RadioExternal, RadioState};
-use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -143,10 +143,9 @@ fn view(state: RadioState, selected: bool, _frame: &Frame) -> Scene {
 
 struct RadioView;
 
-impl WidgetView for RadioView {
+impl WidgetCore for RadioView {
     type State = (RadioState, bool);
     type Event = RadioEvent;
-    type Renderer = HelloRadioRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(RadioExternal::new())
@@ -192,10 +191,6 @@ impl WidgetView for RadioView {
         "pinion hello-radio (R51.33 §5.38 pinion-shell)"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-
     fn keybinding(key: &str) -> Option<RadioEvent> {
         match key {
             "d" => Some(RadioEvent::Disable),
@@ -229,6 +224,16 @@ impl WidgetView for RadioView {
             .is_ok()
     }
 
+    fn fmt_state_log(state: &(RadioState, bool)) -> String {
+        format!(
+            "{} / {}",
+            radio_state_name(state.0),
+            if state.1 { "selected" } else { "unselected" },
+        )
+    }
+}
+
+impl WidgetA11y for RadioView {
     /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
     /// single `AriaRole::RadioButton` node; `value` + `state.checked`
     /// mirror the boolean selected state. A grouped Radio (R51.66
@@ -242,23 +247,25 @@ impl WidgetView for RadioView {
     fn access_node(state: &(RadioState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, selected) = (state.0, state.1);
         let access_state = AccessState {
-            focused: focused == Some(Self::tag()),
+            focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(interaction, RadioState::Disabled),
             hovered: matches!(interaction, RadioState::Hover),
             pressed: matches!(interaction, RadioState::Pressed),
             checked: Some(selected),
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::RadioButton)
-            .with_value(AccessValue::Bool(selected))
-            .with_state(access_state)]
+        vec![
+            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::RadioButton)
+                .with_value(AccessValue::Bool(selected))
+                .with_state(access_state),
+        ]
     }
+}
 
-    fn fmt_state_log(state: &(RadioState, bool)) -> String {
-        format!(
-            "{} / {}",
-            radio_state_name(state.0),
-            if state.1 { "selected" } else { "unselected" },
-        )
+impl WidgetView for RadioView {
+    type Renderer = HelloRadioRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 

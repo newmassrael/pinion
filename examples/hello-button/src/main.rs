@@ -37,8 +37,8 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessNode, AccessState, AriaRole};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 // pinion-forge codegen output. Defines `pub struct HelloButtonRenderer`
@@ -129,10 +129,9 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 /// of this type. The unit struct exists solely as the impl carrier.
 struct ButtonView;
 
-impl WidgetView for ButtonView {
+impl WidgetCore for ButtonView {
     type State = ButtonState;
     type Event = ButtonEvent;
-    type Renderer = HelloButtonRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(ButtonExternal::new())
@@ -176,10 +175,6 @@ impl WidgetView for ButtonView {
         "pinion hello-button (R51.30 §5.16 pinion-shell)"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-
     fn keybinding(key: &str) -> Option<ButtonEvent> {
         match key {
             "d" => Some(ButtonEvent::Disable),
@@ -196,12 +191,12 @@ impl WidgetView for ButtonView {
     /// emits a `"click"` intent (parity with the `Pressed → Hover`
     /// pointer path). `Disabled` ignores activation; the SCXML
     /// transition is absent from that state per the ARIA spec.
-    ///
-    /// `focused` must match `Self::tag()` — the `FocusManager`
-    /// dispatches the same key to every `WidgetView::apply_key`
-    /// implementation but each widget gates on its own tag so
-    /// activation never leaks to the wrong widget when multiple
-    /// focusable controls share a screen.
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
+    }
+}
+
+impl WidgetA11y for ButtonView {
     /// R51.63 §5.40 — AccessKit semantic tree contribution. Emits a
     /// single `AriaRole::Button` node whose `state_flags` mirror the
     /// four `ButtonState` variants 1:1 (`Idle` = no flags, `Hover` =
@@ -214,24 +209,29 @@ impl WidgetView for ButtonView {
     /// here. `AppShell` calls `enrich_names_from_scene` with the
     /// paint scene after `view`, and the WAI-ARIA name-from-contents
     /// rule lifts the button's label text (`"Click me!"` or
-    /// `"Disabled"`) directly out of the scene's `TextNode`. The
-    /// duplicate match block this impl used to carry is now a single
-    /// match in the `view` function — DRY restored. AT clients
-    /// (Narrator / `VoiceOver` / Orca / `TalkBack`) see the same
-    /// label the visible button shows.
+    /// `"Disabled"`) directly out of the scene's `TextNode`. AT
+    /// clients (Narrator / `VoiceOver` / Orca / `TalkBack`) see the
+    /// same label the visible button shows.
     fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
         let access_state = AccessState {
-            focused: focused == Some(Self::tag()),
+            focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(state, ButtonState::Disabled),
             hovered: matches!(state, ButtonState::Hover),
             pressed: matches!(state, ButtonState::Pressed),
             checked: None,
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::Button).with_state(access_state)]
+        vec![
+            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)
+                .with_state(access_state),
+        ]
     }
+}
 
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
-        pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
+impl WidgetView for ButtonView {
+    type Renderer = HelloButtonRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 

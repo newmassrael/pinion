@@ -59,12 +59,12 @@
 
 use std::io::Stdout;
 
-use pinion_a11y::{AccessNode, AccessState, AriaRole};
+use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, style};
+use pinion_core::{Color, Frame, WidgetCore, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
@@ -72,7 +72,7 @@ use pinion_tui::{TuiRenderer, WidgetViewTui};
 /// instantiates the substrate around this binding.
 struct HelloButtonTui;
 
-impl WidgetViewTui for HelloButtonTui {
+impl WidgetCore for HelloButtonTui {
     /// R51.111 — cached projection of the SCXML widget's
     /// [`ButtonState`]. The shell's `read_state` hook lifts this
     /// from the live `Scene::External` each frame; on every
@@ -81,13 +81,11 @@ impl WidgetViewTui for HelloButtonTui {
     type State = ButtonState;
 
     /// The shell drives typed events through
-    /// [`WidgetViewTui::keybinding`]; this binding's `d` / `e`
+    /// [`WidgetCore::keybinding`]; this binding's `d` / `e`
     /// shortcuts produce raw `ButtonEvent` variants, while
     /// `Space` / `Enter` go through [`apply_key`] (the W3C-named
     /// keyboard activation path).
     type Event = pinion_core::widgets::button::ButtonEvent;
-
-    type Renderer = TuiRenderer<CrosstermBackend<Stdout>>;
 
     fn create_external() -> Box<dyn External> {
         Box::new(ButtonExternal::new())
@@ -214,28 +212,33 @@ impl WidgetViewTui for HelloButtonTui {
     /// SCXML event; `Button::detect` emits a `"click"` intent the
     /// shell logs to stderr. `Disabled` ignores activation per the
     /// ARIA spec (the SCXML transition is absent from that state).
-    ///
-    /// Identical surface to the Vello hello-button's `apply_key`
-    /// — once a multi-binding TUI shell lands, both backends share
-    /// this impl through the generic `WidgetView` merge.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
+}
 
+impl WidgetA11y for HelloButtonTui {
     /// R51.118 §5.41 — AT-side semantic node (TUI parity with the
     /// Vello hello-button binding). Same `AriaRole::Button` + state
     /// flags shape; consumed by the future PTY screen reader /
     /// AccessKit-TUI integration once the §5.41 a11y adapter lands.
-    fn access_node(state: &Self::State, focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
         let access_state = AccessState {
-            focused: focused == Some(Self::tag()),
+            focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(state, ButtonState::Disabled),
             hovered: matches!(state, ButtonState::Hover),
             pressed: matches!(state, ButtonState::Pressed),
             checked: None,
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::Button).with_state(access_state)]
+        vec![
+            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)
+                .with_state(access_state),
+        ]
     }
+}
+
+impl WidgetViewTui for HelloButtonTui {
+    type Renderer = TuiRenderer<CrosstermBackend<Stdout>>;
 }
 
 fn parse_button_state(name: &str) -> ButtonState {

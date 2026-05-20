@@ -40,7 +40,8 @@ use pinion_core::external::{
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, Color};
-use pinion_core::{Frame, Scene};
+use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_a11y::WidgetA11y;
 use pinion_shell::{run, vello_renderer_impl, WidgetView};
 
 /// Mirror of the pinion-forge codegen output: a renderer struct that
@@ -154,10 +155,9 @@ impl ExternalIntrospect for SmokeExternal {
 /// hit-tests against a non-empty surface.
 struct SmokeView;
 
-impl WidgetView for SmokeView {
+impl WidgetCore for SmokeView {
     type State = ();
     type Event = ();
-    type Renderer = SmokeRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(SmokeExternal::default())
@@ -187,6 +187,12 @@ impl WidgetView for SmokeView {
     fn title() -> &'static str {
         "smoke"
     }
+}
+
+impl WidgetA11y for SmokeView {}
+
+impl WidgetView for SmokeView {
+    type Renderer = SmokeRenderer;
 
     fn initial_size() -> (u32, u32) {
         (8, 8)

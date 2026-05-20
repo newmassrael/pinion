@@ -22,8 +22,8 @@ use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::checkbox::{CheckboxEvent, CheckboxExternal, CheckboxState};
-use pinion_core::{Color, Frame, Scene};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -145,10 +145,9 @@ fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
 
 struct CheckboxView;
 
-impl WidgetView for CheckboxView {
+impl WidgetCore for CheckboxView {
     type State = (CheckboxState, bool);
     type Event = CheckboxEvent;
-    type Renderer = HelloCheckboxRenderer;
 
     fn create_external() -> Box<dyn External> {
         Box::new(CheckboxExternal::new())
@@ -193,10 +192,6 @@ impl WidgetView for CheckboxView {
         "pinion hello-checkbox (R51.32 §5.38 pinion-shell)"
     }
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-
     fn keybinding(key: &str) -> Option<CheckboxEvent> {
         match key {
             "d" => Some(CheckboxEvent::Disable),
@@ -229,6 +224,16 @@ impl WidgetView for CheckboxView {
             .is_ok()
     }
 
+    fn fmt_state_log(state: &(CheckboxState, bool)) -> String {
+        format!(
+            "{} / {}",
+            checkbox_state_name(state.0),
+            if state.1 { "checked" } else { "unchecked" },
+        )
+    }
+}
+
+impl WidgetA11y for CheckboxView {
     /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
     /// single `AriaRole::CheckBox` node; `value` and `state.checked`
     /// both carry the boolean checked state (lockstep with the
@@ -243,23 +248,23 @@ impl WidgetView for CheckboxView {
     fn access_node(state: &(CheckboxState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, checked) = (state.0, state.1);
         let access_state = AccessState {
-            focused: focused == Some(Self::tag()),
+            focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(interaction, CheckboxState::Disabled),
             hovered: matches!(interaction, CheckboxState::Hover),
             pressed: matches!(interaction, CheckboxState::Pressed),
             checked: Some(checked),
         };
-        vec![AccessNode::new(Self::tag(), AriaRole::CheckBox)
+        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::CheckBox)
             .with_value(AccessValue::Bool(checked))
             .with_state(access_state)]
     }
+}
 
-    fn fmt_state_log(state: &(CheckboxState, bool)) -> String {
-        format!(
-            "{} / {}",
-            checkbox_state_name(state.0),
-            if state.1 { "checked" } else { "unchecked" },
-        )
+impl WidgetView for CheckboxView {
+    type Renderer = HelloCheckboxRenderer;
+
+    fn initial_size() -> (u32, u32) {
+        (WIN_W, WIN_H)
     }
 }
 
