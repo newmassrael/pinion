@@ -586,6 +586,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 - crates/pinion-core/src/widgets/button.rs:ButtonStateSnapshot
 - crates/pinion-core/src/external.rs:External::wants_pointer_capture
 - crates/pinion-core/src/external.rs:External::pointer_move
+- crates/pinion-core/src/external.rs:IntrospectValue::as_f32
+- crates/pinion-core/src/external.rs:IntrospectValue::as_i32
 
 
 
@@ -6308,6 +6310,36 @@ router.pointer_down(&mut state_scene);
 - R51.155+ Owner::cache positional/macro variant (call-site identity DX)
 - R51.156+ §5.23 Handler executor binding (tokio::spawn + Command queue drain)
 - R51.157+ access_node / access_child_invoke root_owner wrap (대칭)
+
+
+
+### R51.155 — §5.15 IntrospectValue typed accessors (as_bool/i64/i32/usize/f64/f32/str/is_null) + slider 마지막 #[allow(cast)] 청산
+
+**Changes**:
+- IntrospectValue::as_bool/as_i64/as_i32/as_usize/as_f64/as_f32/as_str/is_null primitives
+- as_i32 narrowing failure surfaces None (안전 대안)
+- as_usize negative 거부 (usize bound 정합)
+- as_f32 f64→f32 truncation 캡슐화 (#[allow(cast)] containment)
+- hello-slider 2건 + hello-slider-vertical 2건 IntrospectValue::Float match → as_f32
+- #[allow(clippy::cast_possible_truncation)] 4건 추가 제거
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1901 passed / 0 failed / 8 ignored
+- baseline 1891 → 1901 (+10 R51.155: bool/i64/i32 narrow/i32 reject/usize/f64/f32/f32 reject/str/is_null)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- as_i32 i32::MAX+1 narrowing → None (silent truncation 회피)
+
+
+
+**Impact**: §5.15
+
+
+**Carry forward**:
+- R51.156+ 다른 examples (hello-toggle/hello-listbox/hello-radio) IntrospectValue 패턴 migration
+- R51.157+ §5.23 Handler executor binding (multi-round)
+- R51.158+ access_node / access_child_invoke root_owner wrap (대칭 완성)
 
 
 

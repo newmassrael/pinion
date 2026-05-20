@@ -154,6 +154,94 @@ pub enum IntrospectValue {
     Json(serde_json::Value),
 }
 
+impl IntrospectValue {
+    /// R51.155 §5.15 — extract a `bool` payload. Returns `Some(b)`
+    /// only when the variant is [`Self::Bool`]; every other variant
+    /// (including `Json(serde_json::Value::Bool(_))`) returns `None`
+    /// so the typed-extraction path stays unambiguous.
+    #[must_use]
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// R51.155 §5.15 — extract an `i64` payload. Returns `None` for
+    /// non-[`Self::Int`] variants; numeric coercions (`Float → i64`,
+    /// `Json::Number → i64`) are intentional opt-outs.
+    #[must_use]
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// R51.155 §5.15 — extract an `i64` payload narrowed to `i32`.
+    /// Returns `None` when the variant is not [`Self::Int`] or when
+    /// the stored value falls outside the `i32` range — narrowing
+    /// failures are surfaced rather than silently truncated.
+    /// Convenient for the common composite-widget index path
+    /// (`focused_index` / `selected_index` introspect slots return
+    /// non-negative `Int`).
+    #[must_use]
+    pub fn as_i32(&self) -> Option<i32> {
+        self.as_i64().and_then(|v| i32::try_from(v).ok())
+    }
+
+    /// R51.155 §5.15 — extract an `i64` payload narrowed to `usize`.
+    /// Returns `None` for non-[`Self::Int`] variants and for negative
+    /// integers (which can't be a `usize`).
+    #[must_use]
+    pub fn as_usize(&self) -> Option<usize> {
+        self.as_i64().and_then(|v| usize::try_from(v).ok())
+    }
+
+    /// R51.155 §5.15 — extract a `f64` payload. Returns `None` for
+    /// non-[`Self::Float`] variants; integer-to-float coercion is an
+    /// intentional opt-out.
+    #[must_use]
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    /// R51.155 §5.15 — extract a `f64` payload narrowed to `f32`.
+    /// Returns `None` for non-[`Self::Float`] variants; the `f64 →
+    /// f32` narrowing is a documented truncation (precision loss for
+    /// values past f32's representable range, NaN passes through).
+    /// Encapsulates the previous per-call-site
+    /// `#[allow(clippy::cast_possible_truncation)]` lints that
+    /// hello-slider*/hello-slider-vertical sprinkled around their
+    /// `IntrospectValue::Float(v) => v as f32` matches.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn as_f32(&self) -> Option<f32> {
+        self.as_f64().map(|v| v as f32)
+    }
+
+    /// R51.155 §5.15 — extract a `&str` payload. Returns `None` for
+    /// non-[`Self::Text`] variants; `Json::String` is opt-out (the
+    /// JSON path goes through `as_json`).
+    #[must_use]
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// R51.155 §5.15 — `true` iff the variant is [`Self::Null`].
+    /// Diagnostic helper paired with the typed accessors above.
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+}
+
 /// Failure modes for [`ExternalIntrospect::intervene`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -779,5 +867,114 @@ mod tests {
         assert_eq!(err, InvokeError::UnknownPath);
         // Silence the unused stub binding.
         let _ = &mut stub;
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // R51.155 §5.15 — IntrospectValue typed accessors.
+    // ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn as_bool_extracts_only_bool_variant() {
+        assert_eq!(IntrospectValue::Bool(true).as_bool(), Some(true));
+        assert_eq!(IntrospectValue::Bool(false).as_bool(), Some(false));
+        assert_eq!(IntrospectValue::Null.as_bool(), None);
+        assert_eq!(IntrospectValue::Int(1).as_bool(), None);
+        assert_eq!(IntrospectValue::Float(1.0).as_bool(), None);
+        assert_eq!(IntrospectValue::Text("true".into()).as_bool(), None);
+    }
+
+    #[test]
+    fn as_i64_extracts_only_int_variant() {
+        assert_eq!(IntrospectValue::Int(42).as_i64(), Some(42));
+        assert_eq!(IntrospectValue::Int(-1).as_i64(), Some(-1));
+        assert_eq!(IntrospectValue::Float(1.0).as_i64(), None);
+        assert_eq!(IntrospectValue::Null.as_i64(), None);
+        assert_eq!(IntrospectValue::Bool(true).as_i64(), None);
+    }
+
+    #[test]
+    fn as_i32_narrows_in_range_int() {
+        assert_eq!(IntrospectValue::Int(42).as_i32(), Some(42));
+        assert_eq!(
+            IntrospectValue::Int(i64::from(i32::MAX)).as_i32(),
+            Some(i32::MAX),
+        );
+        assert_eq!(
+            IntrospectValue::Int(i64::from(i32::MIN)).as_i32(),
+            Some(i32::MIN),
+        );
+    }
+
+    #[test]
+    fn as_i32_rejects_out_of_range_int() {
+        assert_eq!(
+            IntrospectValue::Int(i64::from(i32::MAX) + 1).as_i32(),
+            None,
+            "narrowing failure surfaces as None, not silent truncation",
+        );
+        assert_eq!(
+            IntrospectValue::Int(i64::from(i32::MIN) - 1).as_i32(),
+            None,
+        );
+    }
+
+    #[test]
+    fn as_usize_rejects_negative() {
+        assert_eq!(IntrospectValue::Int(0).as_usize(), Some(0));
+        assert_eq!(IntrospectValue::Int(42).as_usize(), Some(42));
+        assert_eq!(
+            IntrospectValue::Int(-1).as_usize(),
+            None,
+            "negative ints can't be usize",
+        );
+    }
+
+    #[test]
+    fn as_f64_extracts_only_float_variant() {
+        assert_eq!(IntrospectValue::Float(1.5).as_f64(), Some(1.5));
+        assert_eq!(IntrospectValue::Float(0.0).as_f64(), Some(0.0));
+        assert_eq!(IntrospectValue::Int(1).as_f64(), None);
+        assert_eq!(IntrospectValue::Null.as_f64(), None);
+    }
+
+    #[test]
+    fn as_f32_narrows_with_documented_truncation() {
+        assert_eq!(
+            IntrospectValue::Float(0.5).as_f32().map(f32::to_bits),
+            Some(0.5_f32.to_bits()),
+        );
+        // f64 → f32 truncation: pi in f64 vs f32.
+        let pi = IntrospectValue::Float(std::f64::consts::PI).as_f32();
+        assert!(pi.is_some());
+        // Round-trip precision lost — but the truncation is documented.
+        let pi_f32 = pi.unwrap();
+        let diff = (pi_f32 - std::f32::consts::PI).abs();
+        assert!(diff < 1e-6, "as_f32 truncation lands close to f32 const");
+    }
+
+    #[test]
+    fn as_f32_returns_none_for_non_float_variants() {
+        assert_eq!(IntrospectValue::Int(1).as_f32(), None);
+        assert_eq!(IntrospectValue::Null.as_f32(), None);
+        assert_eq!(IntrospectValue::Bool(true).as_f32(), None);
+    }
+
+    #[test]
+    fn as_str_extracts_only_text_variant() {
+        assert_eq!(
+            IntrospectValue::Text("hello".to_string()).as_str(),
+            Some("hello"),
+        );
+        assert_eq!(IntrospectValue::Null.as_str(), None);
+        assert_eq!(IntrospectValue::Int(1).as_str(), None);
+    }
+
+    #[test]
+    fn is_null_distinguishes_null_only() {
+        assert!(IntrospectValue::Null.is_null());
+        assert!(!IntrospectValue::Bool(false).is_null());
+        assert!(!IntrospectValue::Int(0).is_null());
+        assert!(!IntrospectValue::Float(0.0).is_null());
+        assert!(!IntrospectValue::Text(String::new()).is_null());
     }
 }

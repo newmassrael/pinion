@@ -241,12 +241,14 @@ impl WidgetCore for SliderView {
                 } else {
                     SliderState::Idle
                 };
-                #[allow(clippy::cast_possible_truncation)]
-                let value = if let Some(IntrospectValue::Float(v)) = intro.query("value") {
-                    v as f32
-                } else {
-                    0.0
-                };
+                // R51.155 §5.15 — `IntrospectValue::as_f32` folds
+                // the `Float(v) => v as f32` match + the
+                // `#[allow(clippy::cast_possible_truncation)]` lint
+                // (f64 → f32 narrowing) into the framework primitive.
+                let value = intro
+                    .query("value")
+                    .and_then(|v| v.as_f32())
+                    .unwrap_or(0.0);
                 return (state, value);
             }
         }
@@ -404,13 +406,10 @@ mod tests {
             panic!("expected External root");
         };
         let intro = node.handle.introspect().expect("introspect opted in");
-        let Some(IntrospectValue::Float(v)) = intro.query("value") else {
-            panic!("value path returns Float");
-        };
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            v as f32
-        }
+        intro
+            .query("value")
+            .and_then(|v| v.as_f32())
+            .expect("value path returns Float")
     }
 
     #[test]
