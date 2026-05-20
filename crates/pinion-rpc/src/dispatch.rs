@@ -29,11 +29,12 @@
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::style::{Border, BoxStyle, Color};
-use pinion_core::{Scene, SceneRevision};
+use pinion_core::{Owner, Scene, SceneRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::click::{click, ClickError, ClickOutcome};
+use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::font::{self, FontError, FontRegistry};
 use crate::intents::{drain_intents, IntentsError};
@@ -248,6 +249,17 @@ pub struct DispatchContext<'a> {
     /// embedder may opt out of focus surfacing for headless test
     /// fixtures that have no `FocusManager`.
     pub focus_manager: Option<&'a mut pinion_runtime::FocusManager>,
+
+    /// R51.161 §5.23 — substrate's root [`Owner`] handle the §5.23
+    /// `scene/commands` RPC method peeks for pending
+    /// [`Command`](pinion_core::Command) introspection.
+    ///
+    /// `None` causes `scene/commands` to fail with
+    /// `commands view unavailable`; non-command methods ignore the
+    /// field. Read-only (`&Owner`): the method takes a non-draining
+    /// snapshot so the framework pump's drain on the next dispatch
+    /// cycle stays correct.
+    pub commands_owner: Option<&'a Owner>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -270,6 +282,7 @@ impl<'a> DispatchContext<'a> {
             last_paint_layout: None,
             font_registry: None,
             focus_manager: None,
+            commands_owner: None,
         }
     }
 
@@ -334,6 +347,17 @@ impl<'a> DispatchContext<'a> {
         self.focus_manager = Some(focus);
         self
     }
+
+    /// R51.161 §5.23 — builder: attach the substrate's root
+    /// [`Owner`] handle so `scene/commands` can peek the pending
+    /// [`Command`](pinion_core::Command) queue. Read-only borrow —
+    /// the RPC method snapshots without draining so the framework
+    /// pump on the next dispatch cycle still observes the queue.
+    #[must_use]
+    pub fn with_commands_owner(mut self, owner: &'a Owner) -> Self {
+        self.commands_owner = Some(owner);
+        self
+    }
 }
 
 /// Dispatch one JSON-RPC 2.0 frame against `ctx`.
@@ -383,6 +407,8 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     // R47.7.5 — snapshot read-only; safe to copy the &LayoutNode out
     // of the context for the dispatch lifetime.
     let last_paint_layout = ctx.last_paint_layout;
+    // R51.161 §5.23 — read-only borrow snapshot for scene/commands.
+    let commands_owner = ctx.commands_owner;
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
     // copy the optional reference out for the dispatch lifetime so
     // the registry slot itself is not consumed.
@@ -427,6 +453,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
         "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
         "scene/intents" => handle_scene_intents(scene),
+        "scene/commands" => handle_scene_commands(commands_owner),
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
@@ -855,6 +882,36 @@ fn intents_error_to_rpc(err: IntentsError) -> RpcError {
     // match is exhaustive over the empty set via `match err {}`. The
     // wildcard guard preserves a clean error surface when future
     // variants land.
+    match err {}
+}
+
+/// R51.161 §5.23 — `scene/commands` typed handler. 10th method per
+/// §5.7. Returns `{ pending: [...] }` carrying every queued
+/// [`Command`](pinion_core::Command) on the substrate's root
+/// [`Owner`] sub-tree, without draining. `result.in_flight: [...]`
+/// is R51.162+ carry — requires extending
+/// `pinion_runtime::CommandExecutor.in_flight` to track kind +
+/// payload alongside the [`CommandTaskHandle`](pinion_runtime::CommandTaskHandle).
+fn handle_scene_commands(commands_owner: Option<&Owner>) -> Result<Value, RpcError> {
+    let Some(owner) = commands_owner else {
+        return Err(RpcError::invalid_params("commands view unavailable"));
+    };
+    let pending = list_pending_commands(owner).map_err(commands_error_to_rpc)?;
+    // Serialize the typed view; `PendingCommandView` is Serialize so
+    // serde renders the canonical wire shape directly.
+    let pending_json = serde_json::to_value(&pending).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/commands: failed to serialize pending list: {e}",
+        ))
+    })?;
+    let mut obj = serde_json::Map::new();
+    obj.insert("pending".to_string(), pending_json);
+    Ok(Value::Object(obj))
+}
+
+fn commands_error_to_rpc(err: CommandsError) -> RpcError {
+    // `CommandsError` is `#[non_exhaustive]` with no v0 variants —
+    // see [`crate::commands::CommandsError`].
     match err {}
 }
 
@@ -1929,7 +1986,7 @@ fn query_error_to_rpc(err: QueryError) -> RpcError {
     RpcError::invalid_params(variant)
 }
 
-fn introspect_value_to_json(value: IntrospectValue) -> Value {
+pub(crate) fn introspect_value_to_json(value: IntrospectValue) -> Value {
     match value {
         IntrospectValue::Bool(b) => Value::Bool(b),
         IntrospectValue::Int(n) => Value::Number(n.into()),

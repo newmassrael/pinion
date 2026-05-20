@@ -866,6 +866,11 @@ impl<V: WidgetView> ShellCore<V> {
             if let Some(snapshot) = last_paint {
                 ctx = ctx.with_last_paint_layout(snapshot);
             }
+            // R51.161 §5.23 — surface the root [`Owner`] handle so
+            // `scene/commands` can peek the pending Command queue
+            // without draining (Owner is reachable via the cloned
+            // handle above; lifetime ties through the borrow split).
+            ctx = ctx.with_commands_owner(&root_owner);
             dispatch(&mut ctx, request)
         };
         let tail = self.core.tail();

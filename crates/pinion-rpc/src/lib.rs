@@ -10,6 +10,7 @@
 //! point live in [`dispatch`].
 
 pub mod click;
+pub mod commands;
 pub mod dispatch;
 pub mod dry_run;
 pub mod focus;
@@ -29,6 +30,7 @@ pub mod text;
 pub mod wait_for;
 
 pub use click::{click, ClickError, ClickOutcome};
+pub use commands::{list_pending_commands, CommandsError, PendingCommandView};
 pub use dispatch::{dispatch, DispatchContext, Request, RequestId, Response, RpcError};
 pub use dry_run::{dry_run, DryRunError};
 pub use focus::{

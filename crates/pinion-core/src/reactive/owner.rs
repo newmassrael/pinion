@@ -674,6 +674,31 @@ impl Owner {
         drained
     }
 
+    /// R51.161 §5.23 — peek at every pending [`Command`](crate::command::Command)
+    /// in this scope and every descendant scope without consuming them.
+    ///
+    /// Sibling of [`Self::take_pending_commands_recursive`] but
+    /// non-mutating: the returned `Vec` is a clone of the queued
+    /// commands so the underlying queues stay populated. The
+    /// `scene/commands` RPC method (R51.161, §5.7 10th method) calls
+    /// this so an AI agent can inspect the pending dispatch surface
+    /// without forcing the framework pump to drain.
+    ///
+    /// Traversal order matches the drain sibling: children
+    /// depth-first, then this scope's own commands. Deterministic so
+    /// two snapshots taken at the same logical instant hash
+    /// identically.
+    #[must_use]
+    pub fn pending_commands_recursive(&self) -> Vec<crate::command::Command> {
+        let children: Vec<Owner> = self.inner.children.borrow().iter().cloned().collect();
+        let mut snapshot: Vec<crate::command::Command> = Vec::new();
+        for child in &children {
+            snapshot.extend(child.pending_commands_recursive());
+        }
+        snapshot.extend(self.pending_commands());
+        snapshot
+    }
+
     /// R51.150 §5.22 — owner-scoped typed cache for per-binding
     /// heap-allocated state.
     ///
@@ -1886,6 +1911,54 @@ mod tests {
             assert!(parent.pending_commands().is_empty());
             assert!(child.pending_commands().is_empty());
             assert!(grandchild.pending_commands().is_empty());
+        }
+
+        #[test]
+        fn r51_161_pending_commands_recursive_does_not_drain() {
+            // R51.161 — sibling of `take_pending_commands_recursive`
+            // that snapshots without consuming. The same depth-first
+            // traversal order; queues stay populated after the call so
+            // the framework pump can still drain them on the next
+            // dispatch cycle.
+            let parent = Owner::new();
+            let child = Owner::new_child(&parent);
+            let grandchild = Owner::new_child(&child);
+            parent.dispatch_command(Command::new_static("p.cmd", IntrospectValue::Null, parent.id()));
+            child.dispatch_command(Command::new_static("c.cmd", IntrospectValue::Null, child.id()));
+            grandchild.dispatch_command(Command::new_static(
+                "gc.cmd",
+                IntrospectValue::Null,
+                grandchild.id(),
+            ));
+            let snapshot = parent.pending_commands_recursive();
+            assert_eq!(snapshot.len(), 3);
+            assert_eq!(snapshot[0].kind_str(), "gc.cmd");
+            assert_eq!(snapshot[1].kind_str(), "c.cmd");
+            assert_eq!(snapshot[2].kind_str(), "p.cmd");
+            // Queues preserved — a subsequent drain returns the same
+            // three commands.
+            assert_eq!(parent.pending_commands().len(), 1);
+            assert_eq!(child.pending_commands().len(), 1);
+            assert_eq!(grandchild.pending_commands().len(), 1);
+            let drained = parent.take_pending_commands_recursive();
+            assert_eq!(drained.len(), 3);
+        }
+
+        #[test]
+        fn r51_161_pending_commands_recursive_empty_owner_returns_empty_vec() {
+            let parent = Owner::new();
+            let _child = Owner::new_child(&parent);
+            assert!(parent.pending_commands_recursive().is_empty());
+        }
+
+        #[test]
+        fn r51_161_pending_commands_recursive_snapshot_clone_is_independent() {
+            // Mutating the snapshot must not affect the live queue.
+            let owner = Owner::new();
+            owner.dispatch_command(Command::new_static("a", IntrospectValue::Null, owner.id()));
+            let mut snapshot = owner.pending_commands_recursive();
+            snapshot.clear();
+            assert_eq!(owner.pending_commands().len(), 1);
         }
 
         #[test]

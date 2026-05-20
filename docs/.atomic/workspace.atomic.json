@@ -1630,6 +1630,29 @@
         {
           "file": "crates/pinion-tui/src/shell.rs",
           "symbol": "run_with_handlers"
+        },
+        {
+          "file": "crates/pinion-core/src/reactive/owner.rs",
+          "symbol": "Owner::pending_commands_recursive"
+        },
+        {
+          "file": "crates/pinion-rpc/src/commands.rs"
+        },
+        {
+          "file": "crates/pinion-rpc/src/commands.rs",
+          "symbol": "CommandsError"
+        },
+        {
+          "file": "crates/pinion-rpc/src/commands.rs",
+          "symbol": "PendingCommandView"
+        },
+        {
+          "file": "crates/pinion-rpc/src/commands.rs",
+          "symbol": "list_pending_commands"
+        },
+        {
+          "file": "crates/pinion-rpc/src/dispatch.rs",
+          "symbol": "DispatchContext::with_commands_owner"
         }
       ],
       "decision_status": "active"
@@ -5310,6 +5333,12 @@
       ],
       "impact_scope": [
         "2"
+      ],
+      "implementations": [
+        {
+          "file": "crates/pinion-rpc/src/commands.rs",
+          "symbol": "list_pending_commands"
+        }
       ],
       "decision_status": "active"
     },
@@ -9962,6 +9991,60 @@
         "Intent.payload SCXML send 채널 전파 (Update reducer signature evolution)",
         "scene/commands RPC method (10th method, 폈딩 큐와 in-flight 스냅샷)",
         "demo example — 실제 Handler 접속 (http.get / clipboard.write 수준 fixture)"
+      ]
+    },
+    "R51.161": {
+      "decision_summary": "§5.23 §5.7 scene/commands 10th RPC 메서드 — pending Command snapshot AI introspection",
+      "changes_bullets": [
+        "pinion-core/src/reactive/owner.rs: Owner::pending_commands_recursive() 신규 — 재귀 픽 대이프디르 순서, 드레인 없음",
+        "pinion-rpc/src/commands.rs 신규: CommandsError + PendingCommandView (Serialize) + list_pending_commands",
+        "pinion-rpc/src/dispatch.rs: DispatchContext.commands_owner 필드 + with_commands_owner builder + scene/commands 아름",
+        "introspect_value_to_json pub(crate) 승격 + commands.rs 공유 (DRY)",
+        "pinion-shell ShellCore::dispatch_rpc: with_commands_owner(&root_owner) 주입",
+        "테스트 +11 (owner 3 + commands 8)"
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello → 1975 pass / 0 fail / 10 ignored (직전 1964 +11)",
+        "r51_161_pending_commands_recursive_does_not_drain: 스냅샷 서롤 결과 큐 유지 확인",
+        "pending_traversal_is_children_first_then_root: 재귀 순서 검증 (드레인 식별자와 일치)",
+        "introspect_value_*_payload_maps_to_*: Null/Bool/Int/Float/Text JSON 툦이도 검증"
+      ],
+      "impact_refs": [
+        "5.23",
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "R51.162 — result.in_flight: [...] 안속 활동 소개 (CommandExecutor.in_flight tracker 에 kind+payload 필드 확장)",
+        "scope_id → widget tag lookup (어느 widget 특정의 owner_id 공유)",
+        "path filter 젤러니 설정 (scene/intents 동명 carry, 멀티윈도우 carry)"
+      ],
+      "publishable_decision_summary": "§5.23 §5.7 scene/commands 10th RPC 메서드 — pending Command snapshot AI introspection",
+      "publishable_changes_bullets": [
+        "pinion-core/src/reactive/owner.rs: Owner::pending_commands_recursive() 신규 — 재귀 픽 대이프디르 순서, 드레인 없음",
+        "pinion-rpc/src/commands.rs 신규: CommandsError + PendingCommandView (Serialize) + list_pending_commands",
+        "pinion-rpc/src/dispatch.rs: DispatchContext.commands_owner 필드 + with_commands_owner builder + scene/commands 아름",
+        "introspect_value_to_json pub(crate) 승격 + commands.rs 공유 (DRY)",
+        "pinion-shell ShellCore::dispatch_rpc: with_commands_owner(&root_owner) 주입",
+        "테스트 +11 (owner 3 + commands 8)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning",
+        "cargo test --workspace --features pinion-runtime/vello → 1975 pass / 0 fail / 10 ignored (직전 1964 +11)",
+        "r51_161_pending_commands_recursive_does_not_drain: 스냅샷 서롤 결과 큐 유지 확인",
+        "pending_traversal_is_children_first_then_root: 재귀 순서 검증 (드레인 식별자와 일치)",
+        "introspect_value_*_payload_maps_to_*: Null/Bool/Int/Float/Text JSON 툦이도 검증"
+      ],
+      "publishable_impact_refs": [
+        "5.23",
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.162 — result.in_flight: [...] 안속 활동 소개 (CommandExecutor.in_flight tracker 에 kind+payload 필드 확장)",
+        "scope_id → widget tag lookup (어느 widget 특정의 owner_id 공유)",
+        "path filter 젤러니 설정 (scene/intents 동명 carry, 멀티윈도우 carry)"
       ]
     },
     "R51.33": {
