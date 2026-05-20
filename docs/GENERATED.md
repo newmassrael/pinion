@@ -3228,6 +3228,7 @@ router.pointer_down(&mut state_scene);
 - R51.110.2 — pinion_tui::run + hello-button-tui first dogfood land (crossterm event loop, Esc exit)
 - R51.111 — TUI input dispatch: crossterm KeyEvent → W3C key str + ButtonExternal first interaction
 - R51.112 — TUI mouse dispatch: cell→pixel + InputRouter wire-up + EnableMouseCapture lifecycle
+- R51.113 — hello-toggle-tui 2nd TUI binding land (substrate-incompleteness-signal evidence)
 
 
 
@@ -3283,6 +3284,9 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-tui/src/shell.rs:dispatch_mouse
 - crates/pinion-tui/src/shell.rs:drain_and_repaint
 - crates/pinion-tui/src/shell.rs:paint_frame
+- examples/hello-toggle-tui/Cargo.toml
+- examples/hello-toggle-tui/src/main.rs
+- examples/hello-toggle-tui/src/main.rs:HelloToggleTui
 
 
 

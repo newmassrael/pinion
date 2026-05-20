@@ -1,0 +1,19 @@
+[package]
+name = "hello-toggle-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R51.113 §5.41 second TUI dogfood — Toggle widget in the cell-based render mode (Off/On sidecar + Idle/Hover/Pressed/Disabled interaction × keyboard + mouse dispatch)"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hello-toggle-tui"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
