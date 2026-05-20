@@ -301,91 +301,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::external::{External, IntrospectValue};
-    use pinion_core::scene::{ContainerNode, Rect, TextNode};
-    use pinion_core::widgets::aria;
-    use pinion_core::widgets::button::{ButtonExternal, ButtonEvent, ButtonState};
-    use pinion_core::WidgetCore;
+    use pinion_core::test_fixtures::ButtonFixture as TestButtonView;
+    use pinion_core::widgets::button::ButtonState;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
-    /// Minimal binding for substrate-level tests. Carries a
-    /// [`ButtonExternal`] so the SCXML statechart transitions
-    /// observable + intent-emitting; the view fn paints a
-    /// 4×3-cell button rect tagged `test_btn` so the
-    /// [`pinion_runtime::InputRouter`] hit-tests resolve.
-    struct TestButtonView;
-
-    impl WidgetCore for TestButtonView {
-        type State = ButtonState;
-        type Event = ButtonEvent;
-
-        fn create_external() -> Box<dyn External> {
-            Box::new(ButtonExternal::new())
-        }
-
-        fn tag() -> &'static str {
-            "test_btn"
-        }
-
-        fn read_state(scene: &Scene) -> Self::State {
-            if let Scene::External(node) = scene
-                && let Some(intro) = node.handle.introspect()
-                && let Some(IntrospectValue::Text(name)) = intro.query("state")
-            {
-                return match name.as_str() {
-                    "Hover" => ButtonState::Hover,
-                    "Pressed" => ButtonState::Pressed,
-                    "Disabled" => ButtonState::Disabled,
-                    _ => ButtonState::Idle,
-                };
-            }
-            ButtonState::Idle
-        }
-
-        fn view(_state: Self::State, _frame: &Frame) -> Scene {
-            // 4×3-cell button rect = pixel (0..32, 0..48) — the
-            // top-left cell of the buffer covers the button.
-            let mut button = ContainerNode::default();
-            button.rect = Rect::new(0, 0, 32, 48);
-            button.tag = Some(std::borrow::Cow::Borrowed("test_btn"));
-            button.children.push(Scene::Text(TextNode::default()));
-            Scene::Container(button)
-        }
-
-        fn event_name(event: Self::Event) -> &'static str {
-            match event {
-                ButtonEvent::PointerEnter => "PointerEnter",
-                ButtonEvent::PointerLeave => "PointerLeave",
-                ButtonEvent::PointerDown => "PointerDown",
-                ButtonEvent::PointerUp => "PointerUp",
-                ButtonEvent::PointerCancel => "PointerCancel",
-                ButtonEvent::KeyboardActivate => "KeyboardActivate",
-                ButtonEvent::Disable => "Disable",
-                ButtonEvent::Enable => "Enable",
-                _ => "__internal__",
-            }
-        }
-
-        fn title() -> &'static str {
-            "Test"
-        }
-
-        fn keybinding(key: &str) -> Option<Self::Event> {
-            match key {
-                "d" => Some(ButtonEvent::Disable),
-                "e" => Some(ButtonEvent::Enable),
-                _ => None,
-            }
-        }
-
-        fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
-            aria::apply_aria_activate(scene, focused, key, Self::tag())
-        }
-    }
-
-    impl pinion_a11y::WidgetA11y for TestButtonView {}
-
+    // The `WidgetA11y` impl for `ButtonFixture` lives in pinion-a11y
+    // (orphan rule: trait is defined there). The dev-dependency
+    // pulls in pinion-a11y's `test-fixtures` feature so the impl is
+    // visible during the substrate test build.
     impl WidgetViewTui for TestButtonView {
         type Renderer = crate::TuiRenderer<TestBackend>;
     }

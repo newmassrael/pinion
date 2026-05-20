@@ -430,85 +430,9 @@ impl<V: WidgetCore> CoreShell<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::external::External;
-    use pinion_core::scene::{ContainerNode, Rect, TextNode};
-    use pinion_core::widgets::aria;
-    use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+    use pinion_core::test_fixtures::ButtonFixture as TestButton;
+    use pinion_core::widgets::button::{ButtonEvent, ButtonState};
     use pinion_core::Frame;
-
-    /// Minimal binding for substrate-level tests. Carries a
-    /// [`ButtonExternal`] so the SCXML statechart is observable +
-    /// intent-emitting; the view fn paints a 32×48-pixel button rect
-    /// tagged `test_btn` so the [`InputRouter`] hit-tests resolve.
-    struct TestButton;
-
-    impl WidgetCore for TestButton {
-        type State = ButtonState;
-        type Event = ButtonEvent;
-
-        fn create_external() -> Box<dyn External> {
-            Box::new(ButtonExternal::new())
-        }
-
-        fn tag() -> &'static str {
-            "test_btn"
-        }
-
-        fn read_state(scene: &Scene) -> Self::State {
-            if let Scene::External(node) = scene
-                && let Some(intro) = node.handle.introspect()
-                && let Some(IntrospectValue::Text(name)) = intro.query("state")
-            {
-                return match name.as_str() {
-                    "Hover" => ButtonState::Hover,
-                    "Pressed" => ButtonState::Pressed,
-                    "Disabled" => ButtonState::Disabled,
-                    _ => ButtonState::Idle,
-                };
-            }
-            ButtonState::Idle
-        }
-
-        fn view(_state: Self::State, _frame: &Frame) -> Scene {
-            // 32×48-pixel rect — the cursor lands in the rect for
-            // any (x, y) where `0 <= x < 32` and `0 <= y < 48`.
-            let mut button = ContainerNode::default();
-            button.rect = Rect::new(0, 0, 32, 48);
-            button.tag = Some(std::borrow::Cow::Borrowed("test_btn"));
-            button.children.push(Scene::Text(TextNode::default()));
-            Scene::Container(button)
-        }
-
-        fn event_name(event: Self::Event) -> &'static str {
-            match event {
-                ButtonEvent::PointerEnter => "PointerEnter",
-                ButtonEvent::PointerLeave => "PointerLeave",
-                ButtonEvent::PointerDown => "PointerDown",
-                ButtonEvent::PointerUp => "PointerUp",
-                ButtonEvent::PointerCancel => "PointerCancel",
-                ButtonEvent::KeyboardActivate => "KeyboardActivate",
-                ButtonEvent::Disable => "Disable",
-                ButtonEvent::Enable => "Enable",
-                _ => "__internal__",
-            }
-        }
-
-        fn title() -> &'static str {
-            "Test"
-        }
-
-        fn keybinding(key: &str) -> Option<Self::Event> {
-            match key {
-                "d" => Some(ButtonEvent::Disable),
-                "e" => Some(ButtonEvent::Enable),
-                _ => None,
-            }
-        }
-
-        fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
-            aria::apply_aria_activate(scene, focused, key, Self::tag())
-        }
-    }
 
     #[test]
     fn constructor_seeds_cached_state_from_introspect() {

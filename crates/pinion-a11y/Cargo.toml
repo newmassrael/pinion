@@ -10,6 +10,16 @@ description = "R51.61 §5.40 — AccessKit-backed accessibility substrate. Stabl
 [lints]
 workspace = true
 
+[features]
+default = []
+# R51.127 §5.40 — forward pinion-core's `test-fixtures` so the
+# `WidgetA11y` blanket-default impl for `ButtonFixture` is exposed
+# alongside the WidgetCore impl. pinion-tui's substrate tests pull
+# both crates' `test-fixtures` features in tandem so the empty-body
+# a11y impl satisfies the WidgetViewTui supertrait chain without
+# orphan-rule violation in the downstream test module.
+test-fixtures = ["pinion-core/test-fixtures"]
+
 [dependencies]
 # pinion-native Rect (u32) source that AccessTreeBuilder converts to
 # accesskit::Rect (f64) at build time. Reused so the public WidgetView

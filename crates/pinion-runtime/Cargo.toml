@@ -32,5 +32,11 @@ taffy = "0.7"
 # Cargo.toml comment for the §5.16 R41 path C rationale).
 vello = { workspace = true, optional = true }
 
+[dev-dependencies]
+# R51.127 §5.41 — pull `pinion_core::test_fixtures::ButtonFixture` into
+# the `core_shell` substrate test suite so the runtime + TUI crates
+# share one canonical WidgetCore binding instead of two copies.
+pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
+
 [lints]
 workspace = true

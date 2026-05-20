@@ -12,6 +12,12 @@ pub mod topology;
 pub mod widget_core;
 pub mod widgets;
 
+// R51.127 §5.41 — substrate-level test fixtures shared across
+// `pinion-runtime` + `pinion-tui` test suites. Gated behind the
+// `test-fixtures` feature so production binaries never see them.
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod test_fixtures;
+
 #[cfg(test)]
 mod multi_window;
 

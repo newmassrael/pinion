@@ -4984,6 +4984,38 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.127 — R51.127 §5.41 — pinion-core::test_fixtures::ButtonFixture shared lift: pinion-runtime + pinion-tui 두 test suite 의 ~75 LOC TestButton 중복 청산
+
+**Changes**:
+- crates/pinion-core/src/test_fixtures.rs 신설 (+99 LOC) — ButtonFixture struct + WidgetCore impl (state/event/external/tag/read_state/view/event_name/title/keybinding/apply_key) one canonical copy
+- crates/pinion-core/src/lib.rs += `#[cfg(any(test, feature = "test-fixtures"))] pub mod test_fixtures;` (production binary 영향 0)
+- crates/pinion-core/Cargo.toml += `[features] test-fixtures = []` (downstream dev-dep feature flag)
+- crates/pinion-a11y/Cargo.toml += `[features] test-fixtures = ["pinion-core/test-fixtures"]` + crates/pinion-a11y/src/widget_a11y.rs `impl WidgetA11y for ButtonFixture {}` (atomic-default, orphan rule 회피)
+- crates/pinion-runtime/Cargo.toml [dev-dependencies] += pinion-core features=["test-fixtures"]; crates/pinion-runtime/src/core_shell.rs#tests — TestButton struct + WidgetCore impl ~76 LOC 제거, `use ButtonFixture as TestButton`
+- crates/pinion-tui/Cargo.toml [dev-dependencies] += pinion-core + pinion-a11y features; crates/pinion-tui/src/substrate.rs#tests — TestButtonView struct + WidgetCore + WidgetA11y impl ~80 LOC 제거, `use ButtonFixture as TestButtonView`
+- WidgetViewTui impl 은 backend-local trait 이므로 pinion-tui tests 안에 유지 (orphan rule OK), 종합 육구에 좌우 없이 textbook ISP 3-impl-block split 일관
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1722 / 0 / 8 (R51.126 baseline 유지, behavior 0 변경)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (workspace.lints strict 유지, doc_lazy_continuation + field_reassign_with_default 정통 공공)
+- git diff --stat: 9 files changed, -145 LOC net (pinion-core +99 new, pinion-runtime -75, pinion-tui -80, 3 Cargo.toml +18, pinion-a11y impl +13)
+- behavior 변경 0 — ButtonFixture 에서 view fn 이 struct literal 으로 재작성되었으나 명이는 원본과 동일 (Rect (0,0,32,48) tag test_btn 1 TextNode child)
+
+
+
+**Impact**: §5.41, §5.40, §5.16
+
+
+**Carry forward**:
+- R51.128 = R51.88-R51.120 changelog gap (~33 entries) 백필 아직 남아있음 — heavy bookkeeping, audit trail commit↔ledger drift 완전 회복
+- test-fixtures feature flag pattern = test scaffolding cross-crate share 의 정통 — production binary 조거 보존 + downstream dev-dep 설정으로 노출
+- future fixtures 추가 시 이 패턴 따르기 — ButtonFixture 외 ToggleFixture / CheckboxFixture / RadioFixture / SliderFixture 등은 아직 필요 시 종속 자동 lift
+- WidgetA11y blanket impl strategy 제한 — Rust specialization 부재로 blanket `impl WidgetA11y for T: WidgetCore` 불가 (composite override 충돌), per-fixture explicit impl 제한
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

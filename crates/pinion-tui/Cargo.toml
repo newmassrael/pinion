@@ -71,3 +71,13 @@ unicode-segmentation = "1.12"
 # graphemes consume one. The paint walker must advance the column
 # cursor by the actual cell-width to avoid overlapping placement.
 unicode-width = "0.2"
+
+[dev-dependencies]
+# R51.127 §5.41 — pull `pinion_core::test_fixtures::ButtonFixture` into
+# the `ShellCoreTui` substrate test suite so the TUI + runtime crates
+# share one canonical WidgetCore binding instead of two copies.
+pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
+# R51.127 §5.40 — pull pinion-a11y's atomic-default `WidgetA11y` impl
+# for `ButtonFixture` so the test module's `WidgetViewTui` impl
+# resolves the supertrait chain without an orphan-rule violation.
+pinion-a11y = { path = "../pinion-a11y", version = "0.0.1", features = ["test-fixtures"] }

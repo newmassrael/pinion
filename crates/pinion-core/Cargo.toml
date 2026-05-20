@@ -10,6 +10,15 @@ description = "Core scene primitives, Style trait, and view-fn types"
 [lints]
 workspace = true
 
+[features]
+default = []
+# R51.127 §5.41 — expose `pinion_core::test_fixtures` (ButtonFixture
+# substrate-level binding) to downstream `dev-dependencies` so the
+# `pinion-runtime` + `pinion-tui` test suites share one canonical
+# fixture instead of two near-identical copies. Never enabled by
+# production consumers.
+test-fixtures = []
+
 [dependencies]
 sce-rust-runtime = { path = "../../vendor/sce/sce-rust-runtime", default-features = false }
 serde = { workspace = true }
