@@ -46,6 +46,7 @@
 
 use pinion_core::Command;
 use pinion_core::Owner;
+use pinion_runtime::CommandExecutor;
 use serde::Serialize;
 
 use crate::dispatch::introspect_value_to_json;
@@ -96,6 +97,25 @@ pub fn list_pending_commands(owner: &Owner) -> Result<Vec<PendingCommandView>, C
     Ok(snapshot.into_iter().map(command_to_view).collect())
 }
 
+/// R51.162 §5.23 — snapshot every in-flight (or completed-but-not
+/// -yet-superseded) [`Command`] tracked by `executor`.
+///
+/// Non-draining: the underlying tracker stays populated so a
+/// subsequent same-scope dispatch can still abort the prior entry
+/// (R27 Solid pattern). The resulting `Vec` follows the executor's
+/// internal `BTreeMap` iteration order (`scope_id` ascending), the
+/// same shape [`CommandExecutor::in_flight_snapshot`] returns.
+///
+/// # Errors
+///
+/// Reserved — see [`CommandsError`]. v0 always returns `Ok`.
+pub fn list_in_flight_commands(
+    executor: &CommandExecutor,
+) -> Result<Vec<PendingCommandView>, CommandsError> {
+    let snapshot = executor.in_flight_snapshot();
+    Ok(snapshot.into_iter().map(command_to_view).collect())
+}
+
 fn command_to_view(cmd: Command) -> PendingCommandView {
     PendingCommandView {
         kind: cmd.kind_str().to_string(),
@@ -108,6 +128,10 @@ fn command_to_view(cmd: Command) -> PendingCommandView {
 mod tests {
     use super::*;
     use pinion_core::external::IntrospectValue;
+    use pinion_runtime::{
+        BlockOnExecutor, Executor, HandlerFuture, HandlerRegistry, IntentSink, VecSink,
+    };
+    use std::sync::Arc;
 
     #[test]
     fn empty_owner_returns_empty_pending_list() {
@@ -207,5 +231,74 @@ mod tests {
         ));
         let pending = list_pending_commands(&owner).unwrap();
         assert_eq!(pending[0].payload, serde_json::Value::Bool(true));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R51.162 §5.23 — list_in_flight_commands tests
+    // ────────────────────────────────────────────────────────────────
+
+    fn echo_handler() -> Arc<dyn pinion_runtime::Handler> {
+        Arc::new(|cmd: Command| -> HandlerFuture {
+            Box::pin(async move {
+                pinion_core::Intent::new_owned(
+                    format!("echo.{}", cmd.kind_str()),
+                    cmd.payload,
+                )
+            })
+        })
+    }
+
+    fn build_executor(kinds: &[&'static str]) -> pinion_runtime::CommandExecutor {
+        let mut reg = HandlerRegistry::new();
+        for k in kinds {
+            reg.register(*k, echo_handler());
+        }
+        let sink: Arc<dyn IntentSink> = Arc::new(VecSink::new());
+        let exec: Arc<dyn Executor> = Arc::new(BlockOnExecutor);
+        pinion_runtime::CommandExecutor::new(reg, exec, sink)
+    }
+
+    #[test]
+    fn r51_162_list_in_flight_empty_executor_returns_empty() {
+        let exec = build_executor(&[]);
+        let in_flight = list_in_flight_commands(&exec).unwrap();
+        assert!(in_flight.is_empty());
+    }
+
+    #[test]
+    fn r51_162_list_in_flight_surfaces_dispatched_command_view() {
+        let exec = build_executor(&["http.get"]);
+        let _h = exec
+            .dispatch(Command::new_static(
+                "http.get",
+                IntrospectValue::Text("/api".into()),
+                7,
+            ))
+            .unwrap();
+        let in_flight = list_in_flight_commands(&exec).unwrap();
+        assert_eq!(in_flight.len(), 1);
+        assert_eq!(in_flight[0].kind, "http.get");
+        assert_eq!(
+            in_flight[0].payload,
+            serde_json::Value::String("/api".into()),
+        );
+        assert_eq!(in_flight[0].scope_id, 7);
+    }
+
+    #[test]
+    fn r51_162_list_in_flight_orders_by_scope_id_ascending() {
+        let exec = build_executor(&["k"]);
+        let _a = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(2), 50))
+            .unwrap();
+        let _b = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(1), 20))
+            .unwrap();
+        let _c = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(3), 80))
+            .unwrap();
+        let in_flight = list_in_flight_commands(&exec).unwrap();
+        let ids: Vec<u64> = in_flight.iter().map(|v| v.scope_id).collect();
+        assert_eq!(ids, vec![20, 50, 80]);
     }
 }

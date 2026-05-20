@@ -1313,6 +1313,9 @@ fn main() {
 - crates/pinion-rpc/src/commands.rs:PendingCommandView
 - crates/pinion-rpc/src/commands.rs:list_pending_commands
 - crates/pinion-rpc/src/dispatch.rs:DispatchContext::with_commands_owner
+- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::in_flight_snapshot
+- crates/pinion-rpc/src/commands.rs:list_in_flight_commands
+- crates/pinion-rpc/src/dispatch.rs:DispatchContext::with_commands_executor
 
 
 
@@ -6597,6 +6600,37 @@ router.pointer_down(&mut state_scene);
 - R51.162 — result.in_flight: [...] 안속 활동 소개 (CommandExecutor.in_flight tracker 에 kind+payload 필드 확장)
 - scope_id → widget tag lookup (어느 widget 특정의 owner_id 공유)
 - path filter 젤러니 설정 (scene/intents 동명 carry, 멀티윈도우 carry)
+
+
+
+### R51.162 — §5.23 §5.7 scene/commands result.in_flight 보강 — CommandExecutor 추적 확장
+
+**Changes**:
+- pinion-runtime/src/command/executor.rs: in_flight 값을 (Command, Handle) tuple 로 확장 (내부 InFlightEntry)
+- CommandExecutor::in_flight_snapshot() → Vec<Command> (BTreeMap scope_id ascending)
+- pinion-rpc/src/commands.rs: list_in_flight_commands(&CommandExecutor) 추가
+- pinion-rpc/src/dispatch.rs: DispatchContext.commands_executor + with_commands_executor + scene/commands { pending, in_flight }
+- pinion-shell ShellCore::dispatch_rpc: 축소된 executor Arc 클론 + with_commands_executor 조립
+- 테스트 +9 (executor 6 + commands 3)
+
+
+
+**Verification**:
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → 0 warning
+- cargo test --workspace --features pinion-runtime/vello → 1984 pass / 0 fail / 10 ignored (직전 1975 +9)
+- r51_162_in_flight_snapshot_deterministic_btreemap_order: scope_id ascending 절대 순서
+- r51_162_in_flight_snapshot_replaces_on_same_scope_dispatch: 재디스패치 시 뛹석
+- r51_162_list_in_flight_orders_by_scope_id_ascending: RPC View 툦이도 순서 일치
+
+
+
+**Impact**: §5.23, §5.7, §5.12
+
+
+**Carry forward**:
+- scope_id → widget tag lookup (composite scope 자동 용어 극한자)
+- path filter 젤러니 설정
+- demo example 접속 (http.get / clipboard.write Handler 등록 예제)
 
 
 

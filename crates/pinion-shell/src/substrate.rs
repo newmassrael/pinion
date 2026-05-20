@@ -32,6 +32,7 @@
 //! substantive depths of the same encapsulation claim).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use accesskit::NodeId;
@@ -843,6 +844,13 @@ impl<V: WidgetView> ShellCore<V> {
             // path still land on the binding's owner.
             let cached_state = *self.core.cached_state();
             let root_owner = self.core.root_owner().clone();
+            // R51.162 §5.23 — grab the executor Arc-clone before
+            // `scene_mut` reborrows `self.core` mutably. `Arc::clone`
+            // is cheap (one atomic bump) and unblocks the borrow
+            // split so the dispatcher can hand `&CommandExecutor`
+            // into the with_commands_executor builder below.
+            let executor_for_rpc: Option<Arc<CommandExecutor>> =
+                self.core.executor().cloned();
             let scene_ptr = self.core.scene_mut();
             let previews = &self.previews;
             let revision = &self.revision;
@@ -871,6 +879,14 @@ impl<V: WidgetView> ShellCore<V> {
             // without draining (Owner is reachable via the cloned
             // handle above; lifetime ties through the borrow split).
             ctx = ctx.with_commands_owner(&root_owner);
+            // R51.162 §5.23 — also surface the CommandExecutor for
+            // in-flight introspection. The `executor_for_rpc` Arc
+            // clone was taken above (before the `scene_mut` reborrow);
+            // hand `&CommandExecutor` (no Arc-ness leak into
+            // pinion-rpc) to the builder.
+            if let Some(exec_arc) = executor_for_rpc.as_ref() {
+                ctx = ctx.with_commands_executor(exec_arc.as_ref());
+            }
             dispatch(&mut ctx, request)
         };
         let tail = self.core.tail();

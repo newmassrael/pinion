@@ -30,7 +30,9 @@ pub mod text;
 pub mod wait_for;
 
 pub use click::{click, ClickError, ClickOutcome};
-pub use commands::{list_pending_commands, CommandsError, PendingCommandView};
+pub use commands::{
+    list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
+};
 pub use dispatch::{dispatch, DispatchContext, Request, RequestId, Response, RpcError};
 pub use dry_run::{dry_run, DryRunError};
 pub use focus::{

@@ -260,6 +260,17 @@ pub struct DispatchContext<'a> {
     /// snapshot so the framework pump's drain on the next dispatch
     /// cycle stays correct.
     pub commands_owner: Option<&'a Owner>,
+
+    /// R51.162 §5.23 — substrate's [`CommandExecutor`](pinion_runtime::CommandExecutor)
+    /// handle the §5.23 `scene/commands` RPC method peeks for
+    /// in-flight [`Command`](pinion_core::Command) introspection.
+    ///
+    /// Optional: when `None`, `scene/commands` still works against
+    /// the pending-side [`Self::commands_owner`] but the
+    /// `result.in_flight` array is empty. Backends inject this
+    /// alongside [`Self::commands_owner`] for full pending +
+    /// in-flight symmetry.
+    pub commands_executor: Option<&'a pinion_runtime::CommandExecutor>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -283,6 +294,7 @@ impl<'a> DispatchContext<'a> {
             font_registry: None,
             focus_manager: None,
             commands_owner: None,
+            commands_executor: None,
         }
     }
 
@@ -358,6 +370,21 @@ impl<'a> DispatchContext<'a> {
         self.commands_owner = Some(owner);
         self
     }
+
+    /// R51.162 §5.23 — builder: attach the substrate's
+    /// [`CommandExecutor`](pinion_runtime::CommandExecutor) handle so
+    /// `scene/commands` can include the `result.in_flight` array
+    /// (non-draining snapshot of every executor-tracked task). Pair
+    /// with [`Self::with_commands_owner`] for full pending +
+    /// in-flight symmetry.
+    #[must_use]
+    pub fn with_commands_executor(
+        mut self,
+        executor: &'a pinion_runtime::CommandExecutor,
+    ) -> Self {
+        self.commands_executor = Some(executor);
+        self
+    }
 }
 
 /// Dispatch one JSON-RPC 2.0 frame against `ctx`.
@@ -409,6 +436,8 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     let last_paint_layout = ctx.last_paint_layout;
     // R51.161 §5.23 — read-only borrow snapshot for scene/commands.
     let commands_owner = ctx.commands_owner;
+    // R51.162 §5.23 — executor borrow for in-flight projection.
+    let commands_executor = ctx.commands_executor;
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
     // copy the optional reference out for the dispatch lifetime so
     // the registry slot itself is not consumed.
@@ -453,7 +482,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
         "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
         "scene/intents" => handle_scene_intents(scene),
-        "scene/commands" => handle_scene_commands(commands_owner),
+        "scene/commands" => handle_scene_commands(commands_owner, commands_executor),
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
@@ -885,27 +914,49 @@ fn intents_error_to_rpc(err: IntentsError) -> RpcError {
     match err {}
 }
 
-/// R51.161 §5.23 — `scene/commands` typed handler. 10th method per
-/// §5.7. Returns `{ pending: [...] }` carrying every queued
-/// [`Command`](pinion_core::Command) on the substrate's root
-/// [`Owner`] sub-tree, without draining. `result.in_flight: [...]`
-/// is R51.162+ carry — requires extending
-/// `pinion_runtime::CommandExecutor.in_flight` to track kind +
-/// payload alongside the [`CommandTaskHandle`](pinion_runtime::CommandTaskHandle).
-fn handle_scene_commands(commands_owner: Option<&Owner>) -> Result<Value, RpcError> {
+/// R51.161 §5.23 + R51.162 §5.23 — `scene/commands` typed handler.
+/// 10th method per §5.7. Returns
+/// `{ pending: [...], in_flight: [...] }`:
+///
+/// - `pending` — every queued [`Command`](pinion_core::Command) on
+///   the substrate's root [`Owner`] sub-tree, in
+///   [`Owner::pending_commands_recursive`](pinion_core::reactive::Owner::pending_commands_recursive)
+///   traversal order. Non-draining.
+/// - `in_flight` — every command currently tracked by the
+///   [`CommandExecutor`](pinion_runtime::CommandExecutor)
+///   `in_flight` map (R51.158 cancellation tracker), in `scope_id`
+///   ascending order via the underlying [`BTreeMap`].
+///
+/// `commands_owner` is required (pending source); `commands_executor`
+/// is optional — when absent, `result.in_flight` is an empty array.
+fn handle_scene_commands(
+    commands_owner: Option<&Owner>,
+    commands_executor: Option<&pinion_runtime::CommandExecutor>,
+) -> Result<Value, RpcError> {
     let Some(owner) = commands_owner else {
         return Err(RpcError::invalid_params("commands view unavailable"));
     };
     let pending = list_pending_commands(owner).map_err(commands_error_to_rpc)?;
-    // Serialize the typed view; `PendingCommandView` is Serialize so
-    // serde renders the canonical wire shape directly.
     let pending_json = serde_json::to_value(&pending).map_err(|e| {
         RpcError::internal_error(format!(
             "scene/commands: failed to serialize pending list: {e}",
         ))
     })?;
+    // R51.162 §5.23 — snapshot in-flight commands (empty when no
+    // executor injected) and project through the same view shape.
+    let in_flight_views: Vec<crate::commands::PendingCommandView> = commands_executor
+        .map(crate::commands::list_in_flight_commands)
+        .transpose()
+        .map_err(commands_error_to_rpc)?
+        .unwrap_or_default();
+    let in_flight_json = serde_json::to_value(&in_flight_views).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/commands: failed to serialize in_flight list: {e}",
+        ))
+    })?;
     let mut obj = serde_json::Map::new();
     obj.insert("pending".to_string(), pending_json);
+    obj.insert("in_flight".to_string(), in_flight_json);
     Ok(Value::Object(obj))
 }
 

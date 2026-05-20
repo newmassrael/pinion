@@ -230,11 +230,22 @@ pub struct CommandExecutor {
     /// R51.158 §5.23 — per-scope in-flight task tracker.
     ///
     /// Keyed by [`Command::scope_id`](pinion_core::Command::scope_id);
-    /// the value is the [`CommandTaskHandle`] [`Executor::spawn`]
-    /// returned, kept alive so a follow-up [`Command`] on the same
-    /// scope can abort the prior task before spawning the next one
-    /// (the §5.23 R27 Solid pattern: "new Command from same scope
-    /// cancels prior in-flight").
+    /// the value carries the [`Command`] dispatched on that scope plus
+    /// the [`CommandTaskHandle`] [`Executor::spawn`] returned. Kept
+    /// alive so:
+    ///
+    /// - A follow-up [`Command`] on the same scope can abort the
+    ///   prior task before spawning the next one (the §5.23 R27 Solid
+    ///   pattern: "new Command from same scope cancels prior
+    ///   in-flight").
+    /// - R51.162 §5.23 — the `scene/commands` RPC method can surface
+    ///   the kind + payload of every in-flight task to AI agents for
+    ///   inspection via [`Self::in_flight_snapshot`]. Pre-R51.162 the
+    ///   value was just the handle; storing the [`Command`] alongside
+    ///   pays one [`Command::clone`] per dispatch in exchange for full
+    ///   introspection symmetry with the pending-side
+    ///   [`Owner::pending_commands_recursive`](pinion_core::reactive::Owner::pending_commands_recursive)
+    ///   shape.
     ///
     /// Entries are inserted on every successful [`Self::dispatch`] and
     /// removed (with a `cancel()` call) when:
@@ -263,7 +274,20 @@ pub struct CommandExecutor {
     /// [`CommandExecutor`] is preserved (the trait bounds on
     /// [`Executor`] and [`IntentSink`] force it; `Arc<CommandExecutor>`
     /// is the production carrier shape).
-    in_flight: Mutex<BTreeMap<u64, CommandTaskHandle>>,
+    in_flight: Mutex<BTreeMap<u64, InFlightEntry>>,
+}
+
+/// R51.162 §5.23 — value stored in [`CommandExecutor::in_flight`].
+///
+/// Holds the [`Command`] dispatched (for introspection via
+/// [`CommandExecutor::in_flight_snapshot`]) plus the
+/// [`CommandTaskHandle`] returned by the executor (for cancellation).
+/// `pub(crate)` because callers reach the entry only through
+/// the [`CommandExecutor`] accessors — no need to expose the layout
+/// at the crate surface.
+pub(crate) struct InFlightEntry {
+    pub(crate) command: Command,
+    pub(crate) handle: CommandTaskHandle,
 }
 
 impl CommandExecutor {
@@ -343,9 +367,14 @@ impl CommandExecutor {
             .expect("CommandExecutor::in_flight poisoned")
             .remove(&scope)
         {
-            prior.cancel();
+            prior.handle.cancel();
         }
 
+        // R51.162 §5.23 — clone the command so the in-flight tracker
+        // can surface kind + payload through `in_flight_snapshot`
+        // while the original ownership moves into the registry
+        // dispatch path (which itself moves it into the future).
+        let command_for_tracker = command.clone();
         let future: HandlerFuture = self.registry.dispatch(command)?;
         let sink = Arc::clone(&self.sink);
         let wrapped: BoxFuture = Box::pin(async move {
@@ -361,7 +390,13 @@ impl CommandExecutor {
         self.in_flight
             .lock()
             .expect("CommandExecutor::in_flight poisoned")
-            .insert(scope, handle.clone());
+            .insert(
+                scope,
+                InFlightEntry {
+                    command: command_for_tracker,
+                    handle: handle.clone(),
+                },
+            );
 
         Some(handle)
     }
@@ -385,10 +420,39 @@ impl CommandExecutor {
             .lock()
             .expect("CommandExecutor::in_flight poisoned")
             .remove(&scope_id);
-        if let Some(ref handle) = prior {
-            handle.cancel();
+        if let Some(ref entry) = prior {
+            entry.handle.cancel();
         }
-        prior
+        prior.map(|entry| entry.handle)
+    }
+
+    /// R51.162 §5.23 — non-draining snapshot of every in-flight (or
+    /// completed-but-not-yet-superseded) [`Command`] tracked by this
+    /// executor.
+    ///
+    /// Returns the [`Command`]s in `BTreeMap` iteration order
+    /// (`scope_id` ascending), deterministic for two snapshots taken
+    /// at the same logical instant — matters for AI introspection
+    /// where the same query must hash identically. Cloned out of the
+    /// tracker so callers can drop the lock immediately and the
+    /// underlying map keeps tracking subsequent dispatches.
+    ///
+    /// Companion to
+    /// [`Owner::pending_commands_recursive`](pinion_core::reactive::Owner::pending_commands_recursive)
+    /// on the pending side; the §5.23 `scene/commands` RPC method
+    /// (R51.161 + R51.162) merges both into the
+    /// `{ pending: [...], in_flight: [...] }` wire shape.
+    ///
+    /// # Panics
+    /// Panics if the internal [`Mutex`] is poisoned.
+    #[must_use]
+    pub fn in_flight_snapshot(&self) -> Vec<Command> {
+        self.in_flight
+            .lock()
+            .expect("CommandExecutor::in_flight poisoned")
+            .values()
+            .map(|entry| entry.command.clone())
+            .collect()
     }
 
     /// R51.158 §5.23 — number of in-flight (or completed-but-not-yet
@@ -973,5 +1037,109 @@ mod tests {
             dbg.contains("in_flight_len: 1"),
             "Debug must report in_flight_len post-dispatch, got: {dbg}",
         );
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R51.162 §5.23 — in_flight_snapshot introspection
+    // ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r51_162_in_flight_snapshot_empty_when_no_dispatches() {
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        let snap = exec.in_flight_snapshot();
+        assert!(snap.is_empty());
+    }
+
+    #[test]
+    fn r51_162_in_flight_snapshot_surfaces_kind_payload_scope() {
+        // R51.162 — every entry exposes the dispatched Command intact:
+        // kind + payload + scope_id, ready for the scene/commands wire
+        // shape.
+        let (exec, _sink) = build_block_on(registry_with("http.get"));
+        let _h = exec
+            .dispatch(Command::new_static(
+                "http.get",
+                IntrospectValue::Text("/api/v1".into()),
+                42,
+            ))
+            .unwrap();
+        let snap = exec.in_flight_snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].kind_str(), "http.get");
+        assert_eq!(snap[0].payload, IntrospectValue::Text("/api/v1".into()));
+        assert_eq!(snap[0].scope_id, 42);
+    }
+
+    #[test]
+    fn r51_162_in_flight_snapshot_deterministic_btreemap_order() {
+        // R51.162 — BTreeMap iteration is lexicographic by key
+        // (scope_id ascending). Two snapshots taken at the same
+        // logical instant must hash identically.
+        let mut reg = HandlerRegistry::new();
+        reg.register("a", echo_handler());
+        reg.register("b", echo_handler());
+        let (exec, _sink) = build_block_on(reg);
+        // Dispatch in mixed scope-id order; snapshot must reorder.
+        let _h_b = exec
+            .dispatch(Command::new_static("a", IntrospectValue::Int(2), 50))
+            .unwrap();
+        let _h_a = exec
+            .dispatch(Command::new_static("a", IntrospectValue::Int(1), 20))
+            .unwrap();
+        let _h_c = exec
+            .dispatch(Command::new_static("b", IntrospectValue::Int(3), 80))
+            .unwrap();
+        let snap = exec.in_flight_snapshot();
+        let scope_ids: Vec<u64> = snap.iter().map(|c| c.scope_id).collect();
+        assert_eq!(scope_ids, vec![20, 50, 80]);
+    }
+
+    #[test]
+    fn r51_162_in_flight_snapshot_excludes_cancelled_scope() {
+        // R51.162 — cancel_scope removes the entry from the tracker;
+        // subsequent snapshot must not include it.
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        let _h_a = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Null, 11))
+            .unwrap();
+        let _h_b = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Null, 22))
+            .unwrap();
+        assert_eq!(exec.in_flight_snapshot().len(), 2);
+        let _ = exec.cancel_scope(11);
+        let snap = exec.in_flight_snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].scope_id, 22);
+    }
+
+    #[test]
+    fn r51_162_in_flight_snapshot_replaces_on_same_scope_dispatch() {
+        // R51.162 — same-scope dispatch cancels the prior entry +
+        // inserts the new one. Snapshot reflects only the latest.
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        let _h1 = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(1), 7))
+            .unwrap();
+        let _h2 = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Int(2), 7))
+            .unwrap();
+        let snap = exec.in_flight_snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].payload, IntrospectValue::Int(2));
+    }
+
+    #[test]
+    fn r51_162_in_flight_snapshot_clones_independent_of_tracker() {
+        // R51.162 — the returned Vec is owned; mutating it must not
+        // affect the underlying tracker (matches the
+        // `pending_commands` clone-independence guarantee).
+        let (exec, _sink) = build_block_on(registry_with("k"));
+        let _h = exec
+            .dispatch(Command::new_static("k", IntrospectValue::Null, 1))
+            .unwrap();
+        let mut snap = exec.in_flight_snapshot();
+        snap.clear();
+        // Tracker still holds the entry.
+        assert_eq!(exec.in_flight_len(), 1);
     }
 }
