@@ -138,14 +138,3 @@ pub trait WidgetA11y: WidgetCore {
         false
     }
 }
-
-// R51.127 §5.40 — atomic-default WidgetA11y impl for the shared
-// [`pinion_core::test_fixtures::ButtonFixture`]. The trait's three
-// methods all carry default bodies that are correct for atomic
-// widgets, so an empty `impl` block is the canonical no-op binding.
-// Lives here (not in pinion-core) because of the
-// `WidgetA11y: WidgetCore` supertrait + orphan rule: WidgetA11y is
-// defined in this crate, so a downstream test crate cannot `impl
-// WidgetA11y for ButtonFixture` directly.
-#[cfg(any(test, feature = "test-fixtures"))]
-impl WidgetA11y for pinion_core::test_fixtures::ButtonFixture {}

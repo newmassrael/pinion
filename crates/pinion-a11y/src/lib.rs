@@ -54,6 +54,12 @@ pub mod scene_label;
 pub mod tree;
 pub mod widget_a11y;
 
+// R51.129 §5.40 — `WidgetA11y` impl for `pinion_core::test_fixtures::
+// ButtonFixture`. Gated on the `test-fixtures` feature; never reaches
+// production binaries.
+#[cfg(any(test, feature = "test-fixtures"))]
+mod test_fixtures;
+
 pub use action::{translate_action, AccessAction, PinionAccessAction};
 pub use focus::AccessFocus;
 pub use node::{AccessNode, AccessState, AccessValue};

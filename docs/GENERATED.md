@@ -5498,6 +5498,33 @@ router.pointer_down(&mut state_scene);
 
 
 
+### R51.129 — R51.129 §5.40 — WidgetA11y test-fixtures impl 별도 module 분리 (R51.127 정정 보고 #c 청산, trait 정의 파일은 trait 자체에 집중)
+
+**Changes**:
+- crates/pinion-a11y/src/test_fixtures.rs 신설 (+30 LOC) — ButtonFixture WidgetA11y impl 전용 module, feature `test-fixtures` gated
+- crates/pinion-a11y/src/lib.rs += `#[cfg(any(test, feature = "test-fixtures"))] mod test_fixtures;` (private module, public re-export 불요)
+- crates/pinion-a11y/src/widget_a11y.rs — R51.127 에서 추가한 `impl WidgetA11y for ButtonFixture {}` block 13 LOC 제거 (trait 정의 파일 separation of concerns)
+- feature gate 동일 (`test-fixtures = ["pinion-core/test-fixtures"]`) — downstream API 변경 0, dev-dep 설정 변경 불요
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 1722 / 0 / 8 유지
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace = entries=301 / sections=58 / T1=0 / RT=1/1 / sync
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- test-fixtures module 구조 정통 — 미래 추가 fixture (ToggleFixture / CheckboxFixture / RadioFixture) 동일 패턴 적용
+- [[test-fixtures-feature-gate-pattern]] memory lesson 의 구체 evidence 갱신
+- trait 정의 파일 의 cohabitation 제거 — widget_a11y.rs 는 이제 trait 자체만 carry
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
