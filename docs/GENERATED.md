@@ -1544,6 +1544,7 @@ fn main() {
 - R51.142 — CoreShell<V>::root_owner + tick_animations land (§5.28 paint-loop driver surface)
 - R51.143 — ShellCore (Vello) paint cycle dt wiring + root_owner forward (#1/2; TUI R51.144)
 - R51.144 — ShellCoreTui (TUI) paint cycle dt wiring 평행 (#2/2; Cell interior mutability)
+- R51.145 — clamp_frame_dt helper + MAX_FRAME_DT_SECS (1/30s) cap; 양 backend apply
 
 
 
@@ -1581,6 +1582,9 @@ fn main() {
 - crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::root_owner
 - crates/pinion-tui/src/substrate.rs:ShellCoreTui::compute_paint_scene
+- crates/pinion-runtime/src/frame_pacing.rs
+- crates/pinion-runtime/src/frame_pacing.rs:MAX_FRAME_DT_SECS
+- crates/pinion-runtime/src/frame_pacing.rs:clamp_frame_dt
 
 
 
@@ -6015,6 +6019,35 @@ router.pointer_down(&mut state_scene);
 - R51.146 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)
 - R51.147 — Handler executor binding (R51.141 carry, pinion-rpc/pinion-shell tokio runtime)
 - dt frame budget cap (background pause robustness, 100ms 또는 1/30s clamp 정통 carry)
+
+
+
+### R51.145 — §5.28 clamp_frame_dt (1/30s cap) helper land — 양 backend compute_paint_scene apply
+
+**Changes**:
+- pinion-runtime/src/frame_pacing.rs 신설 (MAX_FRAME_DT_SECS + clamp_frame_dt, NaN guard)
+- ShellCore (Vello) + ShellCoreTui (TUI) compute_paint_scene: raw_dt → clamp_frame_dt
+- lib.rs: pub mod frame_pacing + pub use clamp_frame_dt, MAX_FRAME_DT_SECS
+- 6 신규 tests (zero/typical/long-pause/negative/NaN/anchor)
+
+
+
+**Verification**:
+- 1826 → 1832 tests (+6 신규 frame_pacing), 0 failed, 8 ignored
+- clippy 0 warnings (lesson #149 회복 1 reactive doc_markdown 'SwiftUI' backtick 정직 보고)
+- entries 316 → 317, T1=0, RT=1/1, GENERATED.md=sync
+- NaN test가 실제 defect catch (f32::clamp NaN propagate) — 명시 guard 추가
+
+
+
+**Impact**: §5.28, §5.41, §6.3
+
+
+**Carry forward**:
+- R51.146 — hello-button hover demo (view-fn ↔ Animation 통합 substrate 선결 carry)
+- R51.147 — AnimationDriver Effect-wrap (§5.28 R33 'framework Effect' 진본화)
+- R51.148 — Handler executor binding (R51.141 carry, tokio dispatch)
+- view-fn ↔ Owner context substrate gap — Owner::current() public + run() framework wrap
 
 
 

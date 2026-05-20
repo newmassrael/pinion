@@ -44,8 +44,8 @@ use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
-    compute_layout, rect_for_tag, CoreShell, DispatchTail, FocusManager, Modifiers,
-    PointerId, Touch, TouchPhase,
+    clamp_frame_dt, compute_layout, rect_for_tag, CoreShell, DispatchTail, FocusManager,
+    Modifiers, PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
 
@@ -680,10 +680,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// animation queue — every mutation is documented + tested.
     pub fn compute_paint_scene(&mut self, w: u32, h: u32) -> Scene {
         let now = Instant::now();
-        let dt = self
+        let raw_dt = self
             .last_paint_instant
             .map_or(0.0_f32, |prev| now.duration_since(prev).as_secs_f32());
         self.last_paint_instant = Some(now);
+        // R51.145 §5.28 — clamp before reaching the spring solver +
+        // the view fn so background-resume / debugger-pause does not
+        // destabilize the semi-implicit Euler integrator. Healthy
+        // 60fps frames pass through unchanged; only paused / blocked
+        // resumes get capped.
+        let dt = clamp_frame_dt(raw_dt);
         self.core.tick_animations(dt);
         let frame = Frame::with_dt(dt);
         let mut paint_scene = V::view(*self.core.cached_state(), &frame);

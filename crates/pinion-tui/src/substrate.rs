@@ -54,7 +54,7 @@ use std::time::Instant;
 
 use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene};
-use pinion_runtime::{CoreShell, DispatchTail, PointerId};
+use pinion_runtime::{clamp_frame_dt, CoreShell, DispatchTail, PointerId};
 
 use crate::WidgetViewTui;
 
@@ -227,11 +227,15 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     #[must_use]
     pub fn compute_paint_scene(&self) -> Scene {
         let now = Instant::now();
-        let dt = self
+        let raw_dt = self
             .last_paint_instant
             .get()
             .map_or(0.0_f32, |prev| now.duration_since(prev).as_secs_f32());
         self.last_paint_instant.set(Some(now));
+        // R51.145 §5.28 — clamp before reaching the spring solver +
+        // the view fn (see `pinion_runtime::clamp_frame_dt` for the
+        // rationale; mirrors the Vello sibling exactly).
+        let dt = clamp_frame_dt(raw_dt);
         self.core.tick_animations(dt);
         let frame = Frame::with_dt(dt);
         V::view(*self.core.cached_state(), &frame)
