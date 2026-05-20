@@ -14,7 +14,12 @@
 //! §5.41 backend-agnostic dispatch substrate `CoreShell<V: WidgetCore>`
 //! that the Vello + TUI backends compose to share the
 //! `scene` + `cached_state` + `router` + `intent_queue` plumbing.
+//! R51.141 added [`command`] — the §5.23 [`Handler`] trait +
+//! [`HandlerRegistry`] async dispatch surface that completes the
+//! `Command` two-layer effects model (R51.139 substrate + R51.141
+//! dispatch).
 
+pub mod command;
 pub mod core_shell;
 pub mod focus;
 pub mod input;
@@ -24,6 +29,7 @@ pub mod layout;
 pub mod paint_adapter;
 pub mod window;
 
+pub use command::{Handler, HandlerFuture, HandlerRegistry};
 pub use core_shell::{CoreShell, DispatchTail, StateChange};
 pub use focus::FocusManager;
 pub use input::{rect_for_tag, InputRouter, Modifiers, PointerId, Touch, TouchPhase};

@@ -1209,6 +1209,7 @@ fn main() {
 - R27: scene/commands = 10th RPC method; lists pending in-flight Commands typed-introspectable.
 - R27: view-fn no Effect/Command access; read-only Signal context; writes go via Intent.
 - R27: Effect propagation = Owner tree topological order; sibling order = registration order.
+- R51.141 — Handler + HandlerRegistry first-cut land (pinion-runtime, BoxFuture, executor carry)
 
 
 
@@ -1238,6 +1239,15 @@ fn main() {
 - crates/pinion-core/src/reactive/owner.rs:Owner::pending_commands
 - crates/pinion-core/src/reactive/owner.rs:Owner::take_pending_commands
 - crates/pinion-core/src/reactive/owner.rs:Owner::take_pending_commands_recursive
+- crates/pinion-runtime/src/command/mod.rs
+- crates/pinion-runtime/src/command/handler.rs
+- crates/pinion-runtime/src/command/handler.rs:Handler
+- crates/pinion-runtime/src/command/handler.rs:HandlerFuture
+- crates/pinion-runtime/src/command/registry.rs
+- crates/pinion-runtime/src/command/registry.rs:HandlerRegistry
+- crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::register
+- crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::unregister
+- crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::dispatch
 
 
 
@@ -5883,6 +5893,35 @@ router.pointer_down(&mut state_scene);
 - R51.142 — framework paint-loop wiring (Owner::tick_animations(dt), AnimationDriver Effect-wrap)
 - R51.143 — hello-button hover transition demo (1st visual application of §5.28 + ColorAnimation)
 - R51.125 dispatch_rpc trait extraction defer 유지 (2nd RPC consumer trigger 까지)
+
+
+
+### R51.141 — §5.23 Handler trait + HandlerRegistry first-cut land — pinion-runtime async dispatch substrate
+
+**Changes**:
+- pinion-runtime/src/command/{mod,handler,registry}.rs 신설 (3 파일, ~350 LOC)
+- Handler trait (object-safe BoxFuture dispatch) + HandlerRegistry (BTreeMap kind→Arc<dyn Handler>)
+- lib.rs: pub mod command + Handler/HandlerFuture/HandlerRegistry re-exports
+- futures-executor dev-dep 추가 (test block_on; runtime-agnostic public surface)
+
+
+
+**Verification**:
+- 1801 → 1815 tests (+14 신규: handler 3 + registry 11), 0 failed, 8 ignored
+- clippy --features pinion-runtime/vello = 0 warnings
+- entries 312 → 313, T1=0, RT=1/1, GENERATED.md=sync
+- T4 info 121 (사전 char audit 100% 통과: decision 95, bullet max 96, caveat 96)
+
+
+
+**Impact**: §5.23, §5.20, §6.3
+
+
+**Carry forward**:
+- R51.142 — executor binding (pinion-rpc/pinion-shell tokio::spawn + Command queue drain pump)
+- R51.143 — Solid in-flight cancellation (JoinHandle / CancellationToken per executor)
+- R51.144 — scene/commands RPC method (10th typed method, §5.7 + §5.23 inspection)
+- Update(&mut Model, Intent) -> Vec<Command> reducer signature evolution carry
 
 
 

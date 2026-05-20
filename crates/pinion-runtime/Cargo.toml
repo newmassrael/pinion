@@ -37,6 +37,12 @@ vello = { workspace = true, optional = true }
 # the `core_shell` substrate test suite so the runtime + TUI crates
 # share one canonical WidgetCore binding instead of two copies.
 pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
+# R51.141 §5.23 — minimal executor-only futures crate so the §5.23
+# `HandlerRegistry` tests can drive the trait's `HandlerFuture` to
+# completion. Dev-only: pinion-runtime stays async-runtime-agnostic at
+# the public surface (executor binding belongs at pinion-rpc /
+# pinion-shell per §6.3).
+futures-executor = "0.3"
 
 [lints]
 workspace = true
