@@ -1033,19 +1033,28 @@ fn find_rect_by_tag_with_offset(
 
 /// R55.F §5.45 — `scene/scroll` programmatic scroll mutation.
 ///
-/// Params: `{path: "<scroll_tag>", to: {x, y}}` or
-/// `{path: "<scroll_tag>", by: {dx, dy}}` (mutually exclusive).
-/// Walks the scene for a `Scene::Scroll` with matching `tag` and
-/// calls `ScrollState::scroll_to` / `scroll_by` on the attached
-/// state. The reactive `Signal::set` inside those methods drives
-/// the next view re-run, so the AI client follows up with
+/// Params:
+///   * Target locator (exactly one): `path: "<scroll_tag>"` walks the
+///     paint scene for a `Scene::Scroll` whose tag matches; or
+///     `at: {x, y}` resolves the innermost Scroll whose clipped
+///     viewport contains the integer coordinate, reusing the same
+///     `Scene::scroll_state_at` substrate R55.C.2 wired for wheel /
+///     arrow dispatch (R55.G.15 §5.49 consistency with
+///     `scene/click` / `scene/wheel` / `scene/key`).
+///   * Action (exactly one): `to: {x, y}` sets the absolute offset, or
+///     `by: {dx, dy}` adds the delta. Both saturate against the
+///     content `[0, max_{x,y}]` bounds.
+///
+/// Calls `ScrollState::scroll_to` / `scroll_by` on the resolved
+/// state. The reactive `Signal::set` inside those methods drives the
+/// next view re-run, so the AI client follows up with
 /// `scene/snapshot` to observe the new offset.
 ///
-/// Bypasses the `InputRouter` wheel/key activation arc — useful
-/// for "jump to row N" patterns where simulating ten `PageDown`
-/// injections would be noisy. The bound clamping is identical to
-/// the input-route path (`scroll_to` / `scroll_by` both saturate
-/// against `[0, max_{x,y}]`).
+/// Bypasses the `InputRouter` wheel/key activation arc — useful for
+/// "jump to row N" patterns where simulating ten `PageDown`
+/// injections would be noisy. The bound clamping is identical to the
+/// input-route path (`scroll_to` / `scroll_by` both saturate against
+/// `[0, max_{x,y}]`).
 fn handle_scene_scroll<F>(
     paint_producer: Option<&mut F>,
     last_paint_layout: Option<&LayoutNode>,
@@ -1057,10 +1066,6 @@ where
     let Some(params) = params else {
         return Err(RpcError::invalid_params("missing params"));
     };
-    let path = params
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| RpcError::invalid_params("params.path missing or not a string"))?;
     let to = params.get("to");
     let by = params.get("by");
     let action = match (to, by) {
@@ -1077,26 +1082,105 @@ where
         (Some(to_value), None) => ScrollAction::To(parse_xy(to_value, "to")?),
         (None, Some(by_value)) => ScrollAction::By(parse_xy(by_value, "by")?),
     };
-    // R55.F §5.45 — the `Scene::Scroll` carrying the matching tag
-    // lives in the paint scene (V::view output), not the state
-    // scene (root External). Produce a fresh paint at the live
-    // window viewport and walk it.
+    let state = resolve_scroll_target_at_or_path(params, paint_producer, last_paint_layout)?;
+    match action {
+        ScrollAction::To((x, y)) => state.scroll_to(x, y),
+        ScrollAction::By((dx, dy)) => state.scroll_by(dx, dy),
+    }
+    Ok(Value::Null)
+}
+
+/// R55.G.15 §5.49 §5.45 — resolve the `scene/scroll` target via
+/// `path` (tag lookup) or `at` (coordinate lookup) against a fresh
+/// paint scene. Mirrors the click / wheel / key locator shape
+/// (`resolve_at_or_path` R51.202) but returns the attached
+/// `ScrollState` directly instead of a cursor coordinate, since
+/// `scene/scroll` mutates the state without going through the
+/// `InputRouter` arc.
+///
+/// Exactly one of `path` / `at` must be supplied; neither or both is
+/// `invalid_params`. The paint producer must be wired (the target
+/// `Scene::Scroll` lives in the `V::view` output, not the state
+/// scene) — `PaintProducerUnavailable` otherwise. The coord-based
+/// arm reuses `Scene::scroll_state_at(u32, u32)`, the same
+/// substrate `InputRouter` walks for wheel / arrow dispatch in
+/// R55.C.2, so `at`-based mutation and a real user wheel event
+/// converge on the same Scroll.
+fn resolve_scroll_target_at_or_path<F>(
+    params: &Value,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
+) -> Result<std::rc::Rc<pinion_core::widgets::scroll::ScrollState>, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    enum Target<'a> {
+        Path(&'a str),
+        At(&'a Value),
+    }
+    let path = params.get("path").and_then(Value::as_str);
+    let at = params.get("at");
+    let target = match (path, at) {
+        (Some(_), Some(_)) => {
+            return Err(RpcError::invalid_params(
+                "params.path and params.at are mutually exclusive — pick one",
+            ));
+        }
+        (None, None) => {
+            return Err(RpcError::invalid_params(
+                "params requires either `path: \"<tag>\"` or `at: {x, y}`",
+            ));
+        }
+        (Some(tag), None) => Target::Path(tag),
+        (None, Some(at_value)) => Target::At(at_value),
+    };
     let Some(producer) = paint_producer else {
         return Err(RpcError::invalid_params("PaintProducerUnavailable"));
     };
     let (vw, vh) = last_paint_layout
         .map_or((720, 480), |l| (l.rect.w.max(1), l.rect.h.max(1)));
     let painted = producer(vw, vh);
-    let Some(state) = find_scroll_state_by_tag(&painted, path) else {
-        return Err(RpcError::invalid_params(format!(
-            "scroll tag {path:?} not found or has no attached ScrollState"
-        )));
-    };
-    match action {
-        ScrollAction::To((x, y)) => state.scroll_to(x, y),
-        ScrollAction::By((dx, dy)) => state.scroll_by(dx, dy),
+    match target {
+        Target::Path(tag) => find_scroll_state_by_tag(&painted, tag).ok_or_else(|| {
+            RpcError::invalid_params(format!(
+                "scroll tag {tag:?} not found or has no attached ScrollState"
+            ))
+        }),
+        Target::At(at_value) => {
+            let (xu, yu) = parse_at_coords_u32(at_value)?;
+            painted.scroll_state_at(xu, yu).ok_or_else(|| {
+                RpcError::invalid_params(format!(
+                    "no Scroll with attached ScrollState at ({xu}, {yu})"
+                ))
+            })
+        }
     }
-    Ok(Value::Null)
+}
+
+/// R55.G.15 §5.49 — parse an `at: {x, y}` object into the `u32`
+/// shape `Scene::scroll_state_at` expects. Mirrors `parse_at_coords`
+/// (the click / wheel / key f64 variant) but rejects non-integer or
+/// negative coords up front so the coord-to-Scroll lookup never sees
+/// a wrapped value.
+fn parse_at_coords_u32(at_value: &Value) -> Result<(u32, u32), RpcError> {
+    let at = at_value
+        .as_object()
+        .ok_or_else(|| RpcError::invalid_params("params.at missing or not an object"))?;
+    let raw_x = at
+        .get("x")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| RpcError::invalid_params("params.at.x missing or not an integer"))?;
+    let raw_y = at
+        .get("y")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| RpcError::invalid_params("params.at.y missing or not an integer"))?;
+    let coord_x = u32::try_from(raw_x).map_err(|_| {
+        RpcError::invalid_params(format!("params.at.x out of u32 range: {raw_x}"))
+    })?;
+    let coord_y = u32::try_from(raw_y).map_err(|_| {
+        RpcError::invalid_params(format!("params.at.y out of u32 range: {raw_y}"))
+    })?;
+    Ok((coord_x, coord_y))
 }
 
 enum ScrollAction {
@@ -4170,7 +4254,15 @@ mod tests {
             let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content)
                 .with_tag(tag)
                 .with_state(Rc::clone(&state));
-            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+            // R55.G.15: `Scene::scroll_state_at` descends through
+            // Container children only when Container.rect contains the
+            // coord — production layout fills this in, so the fixture
+            // mirrors that by covering the Scroll's viewport rect.
+            // Path-based lookup is unaffected (it walks children
+            // without rect-checking the Container).
+            let mut root = ContainerNode::new(vec![Scene::Scroll(scroll)]);
+            root.rect = Rect::new(0, 0, 220, 164);
+            Scene::Container(root)
         }
     }
 
@@ -4267,6 +4359,91 @@ mod tests {
         assert_eq!(err.code, -32602);
         let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
         assert!(data.contains("PaintProducerUnavailable"), "data: {data:?}");
+    }
+
+    // ---- R55.G.15 §5.49 §5.45 — scene/scroll `at: {x, y}` variant ----
+    //
+    // Mirror of the click / wheel / key `at` shape so coord-based
+    // scroll mutation hits the same `Scene::scroll_state_at` substrate
+    // the InputRouter walks for wheel dispatch. The path-based tests
+    // above stay valid (R55.F default locator); these add the
+    // consistency-deviating coord locator R55.G.15 closes.
+
+    #[test]
+    fn scene_scroll_at_inside_viewport_resolves_to_attached_state() {
+        // Scroll viewport = (0, 0, 220, 164); `at: {x:50, y:50}` lies
+        // inside, so `Scene::scroll_state_at` returns the attached
+        // state and `to: {x:0, y:80}` applies to that state.
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state.clone());
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"at":{"x":50,"y":50},"to":{"x":0,"y":80}},"id":910}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(resp.result, Some(Value::Null));
+        assert_eq!(state.offset(), (0, 80));
+    }
+
+    #[test]
+    fn scene_scroll_at_outside_any_scroll_returns_invalid_params() {
+        // `at: {x:300, y:300}` falls outside the (0,0,220,164)
+        // viewport — `Scene::scroll_state_at` returns None and the
+        // wire surfaces a typed "no Scroll" error rather than a
+        // silent no-op.
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"at":{"x":300,"y":300},"to":{"x":0,"y":0}},"id":911}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("no Scroll"), "data: {data:?}");
+        assert!(data.contains("(300, 300)"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_scroll_at_and_path_together_is_invalid() {
+        // Locator XOR — same shape as `to`/`by` mutual exclusion so
+        // the AI client never has to guess which side wins.
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"path":"main_list_scroll","at":{"x":50,"y":50},"to":{"x":0,"y":0}},"id":912}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("mutually exclusive"), "data: {data:?}");
+        assert!(data.contains("path") && data.contains("at"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_scroll_neither_path_nor_at_returns_invalid_params() {
+        // No locator at all — wire fails with the "requires either"
+        // shape before any paint producer call.
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"to":{"x":0,"y":0}},"id":913}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("requires") && data.contains("path"), "data: {data:?}");
+        assert!(data.contains("at"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_scroll_at_negative_coord_rejected_with_typed_error() {
+        // Negative x → JSON i64 cannot try_from u32; the wire surfaces
+        // the out-of-range error instead of silently wrapping to a
+        // huge u32 that would never hit any Scroll.
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"at":{"x":-1,"y":0},"to":{"x":0,"y":0}},"id":914}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("out of u32 range"), "data: {data:?}");
+        assert!(data.contains("-1"), "data: {data:?}");
     }
 
     // ---- R51.200 §5.49 — nested-scroll absolute coord translation ----

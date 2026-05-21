@@ -15472,6 +15472,29 @@ if __name__ == "__main__":
 
 
 
+### Round 551 — R55.G.15 — §5.49 §5.45 scene/scroll at-based coord locator added (path XOR at) mirroring click/wheel/key shape via Scene::scroll_state_at substrate reuse
+
+**Changes**:
+- crates/pinion-rpc/src/dispatch.rs: handle_scene_scroll accepts path XOR at locator
+- crates/pinion-rpc/src/dispatch.rs: resolve_scroll_target_at_or_path helper extracted
+- crates/pinion-rpc/src/dispatch.rs: parse_at_coords_u32 helper rejects negative coords
+- crates/pinion-rpc/src/dispatch.rs: 5 new tests (at hit/miss + locator XOR + neither + negative)
+- crates/pinion-rpc/src/dispatch.rs: build_scroll_producer fixture sets Container.rect for at lookup
+- Scene::scroll_state_at substrate reused (R55.C.2) so wheel and scroll coord paths converge
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2175 pass / 0 fail / 11 ignored (+5)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 9 demos PASS (path-based legacy contract preserved regression clean)
+
+
+
+**Impact**: §5.49, §5.45
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
