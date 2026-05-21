@@ -25,7 +25,7 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
-use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, TextStyle};
+use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle};
 use crate::widgets::scroll::ScrollState;
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
@@ -1121,6 +1121,19 @@ pub struct ScrollNode {
     /// `viewport` / `offset_*` / `tag` fields. The state link is a
     /// substrate-internal detail.
     pub state: Option<Rc<ScrollState>>,
+    /// R55.G.4 §5.45 — layout sidecar mirroring the
+    /// `{Box,Text,Path,Image,Container,External}Node` shape. Drives
+    /// the §5.21 R23 taffy pass: how this scroll participates in
+    /// parent flex (size / `flex_grow` / margin / align) plus its
+    /// own children if the future R55.G.x slices add Scroll-as-flex-
+    /// parent semantics. [`Self::new`] seeds
+    /// `LayoutStyle::with_size(viewport.{w,h})` so the default
+    /// behaviour is "Scroll is a fixed-size leaf at the dimensions
+    /// the caller passed in" — backward-compatible with pre-R55.G.4
+    /// callers that never touched a layout sidecar. The R55.G.3
+    /// build-site override hack (force size from `viewport` regardless
+    /// of layout) is retired by routing through this field instead.
+    pub layout: LayoutStyle,
 }
 
 impl ScrollNode {
@@ -1136,6 +1149,11 @@ impl ScrollNode {
             offset_y: 0,
             tag: None,
             state: None,
+            // R55.G.4 §5.45 — default the layout size to the clip-window
+            // dimensions so taffy treats Scroll as a fixed-size leaf
+            // unless the caller chains `with_layout(...)` to opt into
+            // `flex_grow` / `margin` / etc.
+            layout: LayoutStyle::new().with_size(Size::px(viewport.w, viewport.h)),
         }
     }
 
@@ -1155,6 +1173,20 @@ impl ScrollNode {
     pub const fn with_offset(mut self, offset_x: i32, offset_y: i32) -> Self {
         self.offset_x = offset_x;
         self.offset_y = offset_y;
+        self
+    }
+
+    /// R55.G.4 §5.45 — replace the layout sidecar (size / flex /
+    /// align / margin). The pre-R55.G.4 default is
+    /// `LayoutStyle::with_size(viewport.{w,h})` so taffy treats
+    /// Scroll as a fixed-size leaf; overriding here is the supported
+    /// path for `flex_grow` / `margin` / parent-flex participation.
+    /// Callers that want the dimensions to stay tied to the clip
+    /// window must include `with_size(Size::px(viewport.w,
+    /// viewport.h))` in the supplied layout.
+    #[must_use]
+    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
         self
     }
 

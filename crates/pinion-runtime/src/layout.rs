@@ -236,21 +236,11 @@ struct LayoutShadow {
 }
 
 fn build(scene: &Scene, tree: &mut TaffyTree<NodeContext>) -> LayoutShadow {
-    let mut style = to_taffy_style(layout_style_of(scene));
-    // R55.G.3 §5.45 — `ScrollNode` has no `LayoutStyle` field yet
-    // (the clip window IS the primitive's outer geometry). Override
-    // the taffy size with `viewport.{w,h}` so Scroll participates
-    // in parent flex as a fixed-size leaf instead of an auto-size
-    // zero box.
-    if let Scene::Scroll(s) = scene {
-        #[allow(clippy::cast_precision_loss)]
-        {
-            style.size = TaffySize {
-                width: length(s.viewport.w as f32),
-                height: length(s.viewport.h as f32),
-            };
-        }
-    }
+    // R55.G.4 §5.45 — Scroll's `layout` field now carries its
+    // taffy style (seeded with `viewport.{w,h}` by
+    // `ScrollNode::new`); the pre-R55.G.4 build-site size override
+    // is retired in favour of the unified `layout_style_of` path.
+    let style = to_taffy_style(layout_style_of(scene));
     let children = match scene {
         Scene::Container(c) => c.children.iter().map(|s| build(s, tree)).collect(),
         _ => Vec::new(),
@@ -326,6 +316,12 @@ fn layout_style_of(scene: &Scene) -> &LayoutStyle {
         Scene::Image(n) => &n.layout,
         Scene::Container(n) => &n.layout,
         Scene::External(n) => &n.layout,
+        // R55.G.4 §5.45 — Scroll's `layout` is seeded with the clip
+        // window size by `ScrollNode::new`, so taffy treats it as a
+        // fixed-size leaf by default; callers that want `flex_grow`
+        // / `margin` / parent-flex participation chain
+        // `with_layout(...)`.
+        Scene::Scroll(n) => &n.layout,
         // Effect + future non-exhaustive variants default to identity
         // layout (block, auto sizing). They participate in the flex
         // tree as zero-size leaves until a follow-up slice opts them
@@ -338,13 +334,13 @@ fn layout_style_of(scene: &Scene) -> &LayoutStyle {
 /// for variants without a `rect` field (Effect today; future
 /// `non_exhaustive` additions) so the caller can skip them cleanly.
 ///
-/// R55.G.3 §5.45 — `Scene::Scroll` writes only the layout-derived
-/// position (`x`, `y`) into `viewport`. `viewport.{w, h}` stays as
-/// the application-supplied clip window dimensions; the `build`
-/// override forced taffy to size the Scroll node at exactly that
-/// `viewport.{w, h}`, so re-writing them here would be redundant
-/// at best and risks an off-by-one if the taffy round-trip ever
-/// snaps differently.
+/// R55.G.4 §5.45 — `Scene::Scroll` writes the full layout-derived
+/// rect into `viewport`. The pre-R55.G.4 partial write (x/y only)
+/// was a side effect of the build-site size override; now that
+/// `ScrollNode.layout` carries the size intent, taffy's output is
+/// the authoritative dimensions and writing the full rect keeps
+/// the substrate honest when the caller opts into `flex_grow` or
+/// any other layout-driven resize.
 fn assign_rect(scene: &mut Scene, rect: Rect) -> bool {
     match scene {
         Scene::Box(BoxNode { rect: r, .. })
@@ -357,8 +353,7 @@ fn assign_rect(scene: &mut Scene, rect: Rect) -> bool {
             true
         }
         Scene::Scroll(s) => {
-            s.viewport.x = rect.x;
-            s.viewport.y = rect.y;
+            s.viewport = rect;
             true
         }
         _ => false,
@@ -760,6 +755,32 @@ mod tests {
             assert_eq!(r0.rect, Rect::new(0, 0, 220, 28));
             assert_eq!(r1.rect, Rect::new(0, 34, 220, 28));
             assert_eq!(r2.rect, Rect::new(0, 68, 220, 28));
+        }
+
+        #[test]
+        fn r55_g4_scroll_with_flex_grow_stretches_in_parent_flex() {
+            // R55.G.4 §5.45 — `with_layout` overrides the default
+            // `Size::px(viewport.{w,h})` so the Scroll can opt into
+            // `flex_grow` and fill the remaining cross-axis space.
+            // Proves the layout sidecar plumbing reaches Scroll, not
+            // just the size override that the R55.G.3 hack baked in.
+            let content = Scene::Container(ContainerNode::new(vec![]));
+            let scroll = ScrollNode::new(Rect::new(0, 0, 100, 50), content)
+                .with_layout(LayoutStyle::new().with_flex_grow(1.0));
+            let outer_layout = LayoutStyle::new().flex(FlexDirection::Row);
+            let mut scene = Scene::Container(
+                ContainerNode::new(vec![Scene::Scroll(scroll)]).with_layout(outer_layout),
+            );
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            let Scene::Container(outer) = &scene else { panic!("outer") };
+            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
+            // Scroll grew to the full 360-wide row instead of staying
+            // at the 100-wide default `viewport` width — proves the
+            // taffy size came from `layout.flex_grow`, not the
+            // pre-R55.G.4 unconditional viewport override.
+            assert_eq!(s.viewport.w, 360, "flex_grow stretched viewport.w");
         }
 
         #[test]

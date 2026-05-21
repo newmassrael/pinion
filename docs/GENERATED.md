@@ -14985,6 +14985,37 @@ if __name__ == "__main__":
 
 
 
+### Round 534 — R55.G.4 §5.45 ScrollNode.layout: LayoutStyle 필드 — R55.G.3 build override hack 청산
+
+**Changes**:
+- ScrollNode 구조체에 pub layout: LayoutStyle 필드 추가 (다른 Node 와 일관)
+- ScrollNode::new 가 layout = LayoutStyle::with_size(viewport.{w,h}) 명시 세팅
+- ScrollNode::with_layout(LayoutStyle) builder 신규 — flex_grow / margin / align 지원
+- layout::layout_style_of 가 Scene::Scroll 을 정식 처리 (FALLBACK 아니라 &n.layout)
+- layout::build 의 build-site size override hack 청산 (R55.G.3 재부채 해소)
+- layout::assign_rect Scroll = 전체 rect write (x/y 만 쓰던 partial write 해소)
+- 1 새 test: r55_g4_scroll_with_flex_grow_stretches_in_parent_flex
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2126/0/11 (+1 R55.G.4 test)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 5 demos 회귀 PASS (~1.0-1.6s 각, behavior 변화 없음)
+- API 대칭성 복구 — 6 rect-bearing Node 모두 layout + with_layout pattern
+
+
+
+**Impact**: §5.45, §5.21
+
+
+**Carry forward**:
+- max_y 자동 계산 — layout 결과의 content.rect.h 사용 (chicken-and-egg 청산)
+- R51.200 absolute_rect_of(node, path) walker — nested scroll 절대좌표 변환
+- R55.D ScrollBar sub-widget / R55.F scene/scroll RPC method (11th typed)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
