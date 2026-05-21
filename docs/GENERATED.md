@@ -3597,6 +3597,9 @@ pub struct ScrollNode {
 **Implementations**:
 - crates/pinion-tui/src/paint.rs:to_buffer_inner
 - crates/pinion-tui/src/paint.rs:CellClip
+- crates/pinion-core/src/scene.rs:ScrollNode::from_state
+- crates/pinion-core/src/widgets/scroll.rs:ScrollState::with_tag
+- crates/pinion-core/src/widgets/scroll.rs:ScrollState::tag
 
 
 
@@ -7557,6 +7560,35 @@ pub struct ScrollNode {
 - R51.192 R55.F — scene/scroll RPC method (11th typed method)
 - R55.C.4 — horizontal Home/End + Ctrl-Home/End extreme jump (R51.187 vertical-only partial)
 - R55.C.5 — focus-based scroll routing (W3C UX, vs cursor-based R51.186/187)
+
+
+
+### R51.190 — R51.190 §5.45 ScrollNode::from_state ergonomic ctor collapses canonical 5-line scroll boilerplate to 1 call
+
+**Changes**:
+- crates/pinion-core/src/widgets/scroll.rs: ScrollState gains `tag: Option<&'static str>` field + with_tag(key) constructor + tag() accessor
+- crates/pinion-core/src/widgets/scroll.rs: use_scroll_state factory closure switches from ScrollState::new to `|| ScrollState::with_tag(key)` so cached state records its key
+- crates/pinion-core/src/scene.rs: ScrollNode::from_state(state, viewport, content) derives offset (state.offset()) + tag (state.tag()) + state attachment in one call
+- crates/pinion-core/src/scene.rs: ScrollNode::with_state doc-comment now points to from_state as the canonical entry point (with_state stays for explicit override use)
+- Closes substrate-incompleteness-signal carry from R51.184-188 cascade (5-line view-fn boilerplate eliminated; key string repeated only once at use_scroll_state call site)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2083 passed / 0 failed / 11 ignored (+8 new R51.190 tests: 3 ScrollState tag + 5 ScrollNode::from_state)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (clippy::pedantic deny baseline holds)
+- mnemosyne validate_workspace: entries 360 → 361 / sections 59 / T1=0 / T3=0 / RT=1/1 / orphan_refs=4+0 (no new violations)
+
+
+
+**Impact**: §5.45
+
+
+**Carry forward**:
+- R51.191 R55.G — ListBox composite first consumer (substrate + ergonomic wiring now both complete)
+- R55.D — ScrollBar sub-widget (SCXML statechart)
+- R55.F — scene/scroll RPC method (11th typed)
+- R55.C.4/C.5 — horizontal Home/End + focus-based routing carries from R51.187
 
 
 

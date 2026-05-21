@@ -63,6 +63,20 @@ pub struct ScrollState {
     /// Upper bound for `offset_y`; semantics symmetric with
     /// [`Self::max_x`].
     max_y: Cell<i32>,
+    /// (R51.190 §5.45) Canonical input-router / introspection tag
+    /// for this scroll container. Set by [`use_scroll_state`] from
+    /// the `Owner::cache` key so the matching [`ScrollNode`] can
+    /// derive its [`ScrollNode::tag`](crate::scene::ScrollNode::tag)
+    /// in one call (via
+    /// [`ScrollNode::from_state`](crate::scene::ScrollNode::from_state))
+    /// rather than the caller repeating the string literal across
+    /// `use_scroll_state(key)` + `ScrollNode::with_tag(key)`.
+    ///
+    /// `None` for states constructed via [`Self::new`] directly
+    /// (test fixtures, manual wiring) — the matching `ScrollNode`
+    /// then carries no tag unless the caller chains
+    /// [`ScrollNode::with_tag`] explicitly.
+    tag: Option<&'static str>,
 }
 
 impl ScrollState {
@@ -71,6 +85,12 @@ impl ScrollState {
     /// dispatching scroll intents — a zero bound clamps every set
     /// to zero, which is the safe default for "content not measured
     /// yet" rather than an error condition.
+    ///
+    /// (R51.190 §5.45) The tag is left `None`. Most application
+    /// code reaches `ScrollState` via [`use_scroll_state`] (which
+    /// calls [`Self::with_tag`] under the hood); direct callers
+    /// are typically tests + manual fixtures where the tag carries
+    /// no useful information.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -78,7 +98,33 @@ impl ScrollState {
             offset_y: Signal::new(0),
             max_x: Cell::new(0),
             max_y: Cell::new(0),
+            tag: None,
         }
+    }
+
+    /// (R51.190 §5.45) Construct a `ScrollState` tagged with `key`.
+    /// Used by [`use_scroll_state`] as the [`Owner::cache`] factory
+    /// so the [`ScrollNode::from_state`](crate::scene::ScrollNode::from_state)
+    /// convenience can derive the matching node's
+    /// [`ScrollNode::tag`](crate::scene::ScrollNode::tag) without
+    /// the caller repeating the string literal.
+    #[must_use]
+    pub fn with_tag(key: &'static str) -> Self {
+        Self {
+            tag: Some(key),
+            ..Self::new()
+        }
+    }
+
+    /// (R51.190 §5.45) Canonical tag for this scroll container.
+    /// Returns the `key` passed to [`use_scroll_state`] (or
+    /// [`Self::with_tag`]); `None` for states constructed via
+    /// [`Self::new`] directly. Read by
+    /// [`ScrollNode::from_state`](crate::scene::ScrollNode::from_state)
+    /// to wire `ScrollNode::tag` automatically.
+    #[must_use]
+    pub fn tag(&self) -> Option<&'static str> {
+        self.tag
     }
 
     /// Current horizontal offset. Triggers a Signal subscription
@@ -200,9 +246,18 @@ impl Default for ScrollState {
 /// underlying contract.
 #[must_use]
 pub fn use_scroll_state(key: &'static str) -> Rc<ScrollState> {
+    // (R51.190 §5.45) The factory closure captures `key` so the
+    // cached `ScrollState` records its own tag —
+    // [`ScrollNode::from_state`](crate::scene::ScrollNode::from_state)
+    // then derives the matching node's
+    // [`ScrollNode::tag`](crate::scene::ScrollNode::tag) without
+    // the caller repeating the string. Pre-R51.190 the factory was
+    // the no-arg [`ScrollState::new`]; the closure shape is the
+    // canonical way to bind extra arguments to an [`Owner::cache`]
+    // factory.
     Owner::current()
         .expect("use_scroll_state requires an active Owner scope")
-        .cache(key, ScrollState::new)
+        .cache(key, || ScrollState::with_tag(key))
 }
 
 #[cfg(test)]
@@ -352,5 +407,47 @@ mod tests {
         // discipline violation early instead of silently allocating
         // a per-call instance.
         let _ = use_scroll_state("no_owner_scope");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R51.190 §5.45 — ScrollState tag substrate. The tag field
+    // closes the boilerplate gap that the R51.180-188 substrate
+    // round left open: pre-R51.190 the canonical view-fn shape
+    // had to repeat the key literal across `use_scroll_state(key)`
+    // and `ScrollNode::with_tag(key)`. The new field lets
+    // `ScrollNode::from_state` derive the tag from the state's
+    // own record, eliminating the duplication.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r51_190_new_leaves_tag_none() {
+        // R51.190 — direct construction via `ScrollState::new` is
+        // the test-fixture / manual-wiring path. No tag context is
+        // available; the tag stays `None`.
+        let s = ScrollState::new();
+        assert_eq!(s.tag(), None);
+    }
+
+    #[test]
+    fn r51_190_with_tag_records_key() {
+        // R51.190 — explicit constructor stores the key for later
+        // retrieval. Direct callers that want the canonical
+        // behaviour without going through `use_scroll_state` use
+        // this entry point.
+        let s = ScrollState::with_tag("explicit_key");
+        assert_eq!(s.tag(), Some("explicit_key"));
+    }
+
+    #[test]
+    fn r51_190_use_scroll_state_populates_tag() {
+        // R51.190 — the canonical hook records its key in the
+        // returned state. This is the substrate guarantee
+        // `ScrollNode::from_state` relies on to derive the matching
+        // node's tag in one call.
+        let owner = Owner::new();
+        owner.run(|| {
+            let s = use_scroll_state("hooked_key");
+            assert_eq!(s.tag(), Some("hooked_key"));
+        });
     }
 }

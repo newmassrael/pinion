@@ -1159,21 +1159,12 @@ impl ScrollNode {
     }
 
     /// (R55.C.2 §5.45) Attach the reactive [`ScrollState`] that
-    /// owns the offset signals for this scroll container. The
-    /// canonical view-fn shape resolves the state via
-    /// [`use_scroll_state`](crate::widgets::scroll::use_scroll_state)
-    /// (which delegates to the [`Owner::cache`](crate::reactive::Owner::cache)
-    /// substrate so the same key resolves to the same `Rc<ScrollState>`
-    /// across view re-runs) then builds the matching `ScrollNode`:
-    ///
-    /// ```ignore
-    /// let state = use_scroll_state("main_scroll");
-    /// let (ox, oy) = state.offset();
-    /// ScrollNode::new(viewport, content)
-    ///     .with_tag("main_scroll")
-    ///     .with_offset(ox, oy)
-    ///     .with_state(state)
-    /// ```
+    /// owns the offset signals for this scroll container. Most
+    /// callers should reach for the higher-level
+    /// [`Self::from_state`] convenience (R51.190) instead — it
+    /// derives the offset and tag from the state in one call. Use
+    /// `with_state` directly only when the caller needs to override
+    /// the derived fields independently.
     ///
     /// The framework input router (R51.186 §5.45) follows the
     /// attached `Rc<ScrollState>` to dispatch wheel / arrow / page
@@ -1184,6 +1175,45 @@ impl ScrollNode {
     pub fn with_state(mut self, state: Rc<ScrollState>) -> Self {
         self.state = Some(state);
         self
+    }
+
+    /// (R51.190 §5.45) Build a `ScrollNode` whose offset, tag, and
+    /// input-router wiring are all derived from the given
+    /// [`ScrollState`]. Collapses the canonical view-fn shape from
+    /// five lines down to two:
+    ///
+    /// ```ignore
+    /// let state = use_scroll_state("main_scroll");
+    /// ScrollNode::from_state(state, viewport, content)
+    /// ```
+    ///
+    /// (Pre-R51.190 the same wiring required `let (ox, oy) =
+    /// state.offset()` + `ScrollNode::new(...).with_tag(key)
+    /// .with_offset(ox, oy).with_state(state)`, repeating both the
+    /// key string and the offset destructure at every call site.)
+    ///
+    /// The tag is set when [`ScrollState::tag`] is `Some` (states
+    /// constructed via [`use_scroll_state`] / [`ScrollState::with_tag`]
+    /// always carry one); states built via [`ScrollState::new`]
+    /// directly leave the node untagged, which matches the
+    /// pre-R51.190 untagged default. To override the derived tag
+    /// or offset, chain [`Self::with_tag`] / [`Self::with_offset`]
+    /// after `from_state`.
+    ///
+    /// The `state.offset()` read inside this constructor triggers a
+    /// `Signal` subscription on whichever
+    /// [`Owner`](crate::reactive::Owner) wraps the view-fn call —
+    /// scroll mutations re-run the view on the next frame, matching
+    /// the explicit `let (ox, oy) = state.offset();` precedent.
+    #[must_use]
+    pub fn from_state(state: Rc<ScrollState>, viewport: Rect, content: Scene) -> Self {
+        let (ox, oy) = state.offset();
+        let derived_tag = state.tag();
+        let mut node = Self::new(viewport, content).with_offset(ox, oy);
+        if let Some(t) = derived_tag {
+            node = node.with_tag(t);
+        }
+        node.with_state(state)
     }
 
     /// (R55.A.4 §5.45) Translate a root-local query rect into this
@@ -2332,5 +2362,102 @@ mod tests {
             .find(|h| h.segments == ["sb".to_string(), "leaf".to_string()])
             .expect("leaf must surface under [sb, leaf]");
         assert_eq!(leaf_hit.bbox, Rect::new(0, 0, 50, 50));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R51.190 §5.45 — ScrollNode::from_state ergonomic ctor.
+    // Closes the substrate-incompleteness-signal that the R51.180-
+    // 188 cascade left open: the canonical view-fn shape used to
+    // require five lines of boilerplate (offset destructure + tag
+    // repeat + 3-builder chain). from_state collapses that to one
+    // call by reading offset + tag off the state Rc.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r51_190_from_state_derives_offset() {
+        use crate::widgets::scroll::ScrollState;
+        // The factory consults state.offset() so a non-zero state
+        // produces a node with the matching offset. Mirrors the
+        // explicit `let (ox, oy) = state.offset()` + with_offset
+        // chain.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        state.scroll_to(40, 90);
+        let viewport = Rect::new(0, 0, 100, 100);
+        let content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 200, 200),
+            Color::default(),
+        ));
+        let node = ScrollNode::from_state(state, viewport, content);
+        assert_eq!(node.offset_x, 40);
+        assert_eq!(node.offset_y, 90);
+    }
+
+    #[test]
+    fn r51_190_from_state_derives_tag_when_state_has_tag() {
+        use crate::widgets::scroll::ScrollState;
+        // When the state carries a tag (typical when reached via
+        // use_scroll_state), the node inherits it automatically —
+        // no caller-side string repeat.
+        let state = Rc::new(ScrollState::with_tag("main_scroll"));
+        let viewport = Rect::new(0, 0, 100, 100);
+        let content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 200, 200),
+            Color::default(),
+        ));
+        let node = ScrollNode::from_state(state, viewport, content);
+        assert_eq!(node.tag.as_deref(), Some("main_scroll"));
+    }
+
+    #[test]
+    fn r51_190_from_state_leaves_tag_none_for_untagged_state() {
+        use crate::widgets::scroll::ScrollState;
+        // Test fixtures and manual wiring reach ScrollState::new
+        // directly — no tag context exists, so the matching node
+        // stays untagged. Matches pre-R51.190 behaviour when the
+        // caller skipped `.with_tag(...)`.
+        let state = Rc::new(ScrollState::new());
+        let viewport = Rect::new(0, 0, 100, 100);
+        let content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 200, 200),
+            Color::default(),
+        ));
+        let node = ScrollNode::from_state(state, viewport, content);
+        assert!(node.tag.is_none());
+    }
+
+    #[test]
+    fn r51_190_from_state_attaches_state_rc() {
+        use crate::widgets::scroll::ScrollState;
+        // The state Rc lands on `node.state`. Verifies the input
+        // router (which walks `scroll_state_at` to find the
+        // dispatch target) finds the same Rc the caller passed in.
+        let state = Rc::new(ScrollState::with_tag("router_target"));
+        let original = Rc::clone(&state);
+        let viewport = Rect::new(0, 0, 100, 100);
+        let content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 200, 200),
+            Color::default(),
+        ));
+        let node = ScrollNode::from_state(state, viewport, content);
+        let attached = node.state.as_ref().expect("state must attach");
+        assert!(Rc::ptr_eq(&original, attached));
+    }
+
+    #[test]
+    fn r51_190_from_state_explicit_with_tag_overrides_derived() {
+        use crate::widgets::scroll::ScrollState;
+        // The derived tag is a default — chaining with_tag after
+        // from_state overrides it. Matches the standard builder
+        // semantics (later call wins).
+        let state = Rc::new(ScrollState::with_tag("derived"));
+        let viewport = Rect::new(0, 0, 100, 100);
+        let content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 200, 200),
+            Color::default(),
+        ));
+        let node = ScrollNode::from_state(state, viewport, content)
+            .with_tag("override");
+        assert_eq!(node.tag.as_deref(), Some("override"));
     }
 }
