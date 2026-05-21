@@ -1417,11 +1417,13 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
         SnapshotNode::Box(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            obj.insert("style".to_string(), box_style_to_json(&snap.style));
         }
         SnapshotNode::Text(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
             obj.insert("content".to_string(), Value::String(snap.content));
+            obj.insert("style".to_string(), text_style_to_json(&snap.style));
         }
         SnapshotNode::Path(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
@@ -1457,6 +1459,7 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
         SnapshotNode::Container(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            obj.insert("style".to_string(), box_style_to_json(&snap.style));
             let children = snap
                 .children
                 .into_iter()
@@ -1550,6 +1553,116 @@ fn snapshot_rect_to_json(rect: pinion_core::scene::Rect) -> Value {
     obj.insert("y".to_string(), Value::Number(rect.y.into()));
     obj.insert("w".to_string(), Value::Number(rect.w.into()));
     obj.insert("h".to_string(), Value::Number(rect.h.into()));
+    Value::Object(obj)
+}
+
+/// R55.G.8 §5.49 — wire serialization for `pinion_core::Color`. Emits
+/// `{r, g, b, a}` 4-tuple with `u8` channel values. AI clients can
+/// compare against literal channel values or compute derived shapes
+/// (luminance / contrast) without parsing CSS hex syntax.
+fn color_to_json(color: pinion_core::Color) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("r".to_string(), Value::Number(color.r.into()));
+    obj.insert("g".to_string(), Value::Number(color.g.into()));
+    obj.insert("b".to_string(), Value::Number(color.b.into()));
+    obj.insert("a".to_string(), Value::Number(color.a.into()));
+    Value::Object(obj)
+}
+
+/// R55.G.8 §5.49 — wire serialization for `BorderPlacement`. The enum
+/// is `non_exhaustive`, so a wildcard arm collapses future variants to
+/// `"Unknown"` for forward-compat (mirrors the `PathCommand` shape).
+fn border_placement_to_json(p: pinion_core::style::BorderPlacement) -> Value {
+    use pinion_core::style::BorderPlacement;
+    let name = match p {
+        BorderPlacement::Inside => "Inside",
+        BorderPlacement::Center => "Center",
+        BorderPlacement::Outside => "Outside",
+        _ => "Unknown",
+    };
+    Value::String(name.to_string())
+}
+
+/// R55.G.8 §5.49 — wire serialization for `Border`. Surfaces colour /
+/// width / placement so AI clients can verify a widget's outline
+/// chrome without inspecting pixels.
+fn border_to_json(border: pinion_core::style::Border) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("color".to_string(), color_to_json(border.color));
+    obj.insert("width".to_string(), Value::Number(border.width.into()));
+    obj.insert(
+        "placement".to_string(),
+        border_placement_to_json(border.placement),
+    );
+    Value::Object(obj)
+}
+
+/// R55.G.8 §5.49 — wire serialization for `BoxStyle`. Surfaces fill,
+/// optional border (null when absent), and `corner_radius` so AI
+/// clients can introspect the rendered look of any `BoxNode` or
+/// `ContainerNode` without OCR (§2 #7 scene-as-data).
+fn box_style_to_json(style: &pinion_core::style::BoxStyle) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("fill".to_string(), color_to_json(style.fill));
+    obj.insert(
+        "border".to_string(),
+        style.border.map_or(Value::Null, border_to_json),
+    );
+    obj.insert(
+        "corner_radius".to_string(),
+        Value::Number(style.corner_radius.into()),
+    );
+    Value::Object(obj)
+}
+
+/// R55.G.8 §5.49 — wire serialization for `FontStyle`. The
+/// upright / italic variants serialize as their bare name; `Oblique`
+/// emits a `{kind, angle}` object so the optional CCW degrees survive
+/// the wire. Wildcard arm collapses future variants to `"Unknown"`.
+fn font_style_to_json(style: pinion_core::style::FontStyle) -> Value {
+    use pinion_core::style::FontStyle;
+    match style {
+        FontStyle::Normal => Value::String("Normal".to_string()),
+        FontStyle::Italic => Value::String("Italic".to_string()),
+        FontStyle::Oblique(angle) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("kind".to_string(), Value::String("Oblique".to_string()));
+            obj.insert(
+                "angle".to_string(),
+                angle.map_or(Value::Null, |deg| Value::Number(deg.into())),
+            );
+            Value::Object(obj)
+        }
+        _ => Value::String("Unknown".to_string()),
+    }
+}
+
+/// R55.G.8 §5.49 — wire serialization for `TextStyle`. Surfaces the
+/// visual axis (family / size / colour / weight / style) so AI clients
+/// can verify rendered typography on the same scene-as-data principle
+/// as `BoxStyle`. Layout-side fields (line-height, letter-spacing,
+/// text-align, decoration, overflow) are carried by `TextStyle` but
+/// remain out of this snapshot until a future slice opts them in
+/// — they describe how the line breaks, not what the glyphs look like.
+fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert(
+        "font_family".to_string(),
+        style
+            .font_family
+            .as_ref()
+            .map_or(Value::Null, |f| Value::String(f.as_ref().to_string())),
+    );
+    obj.insert(
+        "font_size_px".to_string(),
+        Value::Number(style.font_size_px.into()),
+    );
+    obj.insert("fg_color".to_string(), color_to_json(style.fg_color));
+    obj.insert(
+        "font_weight".to_string(),
+        Value::Number(style.font_weight.0.into()),
+    );
+    obj.insert("font_style".to_string(), font_style_to_json(style.font_style));
     Value::Object(obj)
 }
 
@@ -3505,6 +3618,98 @@ mod tests {
         assert!(resp.error.is_none(), "{:?}", resp.error);
         let result = resp.result.unwrap();
         assert_eq!(result.get("tag"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn r55_g8_scene_snapshot_box_wire_carries_style_object() {
+        // R55.G.8 §5.49 — BoxStyle (fill + border + corner_radius)
+        // round-trips through the wire as a `{fill, border, corner_radius}`
+        // JSON object. Border serializes nested with placement variant
+        // string. AI clients can verify the painted chrome without OCR.
+        use pinion_core::scene::{BoxNode, Rect};
+        use pinion_core::style::{Border, BorderPlacement, BoxStyle};
+        use pinion_core::Color;
+        let mut node = BoxNode::filled(Rect::new(0, 0, 50, 50), Color::default());
+        node.style = BoxStyle::filled(Color::rgba(0x11, 0x22, 0x33, 0xff))
+            .with_border(
+                Border::new(Color::rgba(0xaa, 0xbb, 0xcc, 0xff), 2)
+                    .with_placement(BorderPlacement::Outside),
+            )
+            .with_corner_radius(6);
+        let mut scene = Scene::Box(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").expect("style field present").as_object().unwrap();
+        let fill = style.get("fill").unwrap().as_object().unwrap();
+        assert_eq!(fill.get("r"), Some(&Value::Number(0x11.into())));
+        assert_eq!(fill.get("g"), Some(&Value::Number(0x22.into())));
+        assert_eq!(fill.get("b"), Some(&Value::Number(0x33.into())));
+        assert_eq!(fill.get("a"), Some(&Value::Number(0xff.into())));
+        assert_eq!(style.get("corner_radius"), Some(&Value::Number(6.into())));
+        let border = style.get("border").unwrap().as_object().unwrap();
+        assert_eq!(border.get("width"), Some(&Value::Number(2.into())));
+        assert_eq!(border.get("placement"), Some(&Value::String("Outside".into())));
+    }
+
+    #[test]
+    fn r55_g8_scene_snapshot_text_wire_carries_style_object() {
+        // R55.G.8 §5.49 — TextStyle visual axis (family / size / colour /
+        // weight / style) round-trips through the wire.
+        use pinion_core::scene::{Rect, TextNode};
+        use pinion_core::style::{FontStyle, FontWeight, TextStyle};
+        use pinion_core::Color;
+        let mut node = TextNode::new("hi", Rect::new(0, 0, 30, 16));
+        node.style = TextStyle::new()
+            .with_size_px(18)
+            .with_fg(Color::rgba(0x44, 0x55, 0x66, 0xff))
+            .with_weight(FontWeight::BOLD)
+            .with_style(FontStyle::Italic);
+        let mut scene = Scene::Text(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").expect("style field present").as_object().unwrap();
+        assert_eq!(style.get("font_size_px"), Some(&Value::Number(18.into())));
+        assert_eq!(style.get("font_weight"), Some(&Value::Number(700.into())));
+        assert_eq!(style.get("font_style"), Some(&Value::String("Italic".into())));
+        let fg = style.get("fg_color").unwrap().as_object().unwrap();
+        assert_eq!(fg.get("r"), Some(&Value::Number(0x44.into())));
+        assert_eq!(fg.get("a"), Some(&Value::Number(0xff.into())));
+    }
+
+    #[test]
+    fn r55_g8_scene_snapshot_text_oblique_wire_carries_angle() {
+        // R55.G.8 §5.49 — FontStyle::Oblique(angle) emits a `{kind,
+        // angle}` object so the optional CCW degrees survive the wire.
+        use pinion_core::scene::{Rect, TextNode};
+        use pinion_core::style::{FontStyle, TextStyle};
+        let mut node = TextNode::new("h", Rect::default());
+        node.style = TextStyle::new().with_style(FontStyle::Oblique(Some(12)));
+        let mut scene = Scene::Text(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").unwrap().as_object().unwrap();
+        let fs = style.get("font_style").unwrap().as_object().unwrap();
+        assert_eq!(fs.get("kind"), Some(&Value::String("Oblique".into())));
+        assert_eq!(fs.get("angle"), Some(&Value::Number(12.into())));
+    }
+
+    #[test]
+    fn r55_g8_scene_snapshot_box_wire_null_border_when_absent() {
+        // R55.G.8 §5.49 — `BoxStyle.border = None` serializes as JSON
+        // `null` so wire consumers can distinguish "no border" from a
+        // zero-width / transparent border.
+        use pinion_core::scene::{BoxNode, Rect};
+        use pinion_core::Color;
+        let node = BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default());
+        let mut scene = Scene::Box(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").unwrap().as_object().unwrap();
+        assert_eq!(style.get("border"), Some(&Value::Null));
     }
 
     #[test]

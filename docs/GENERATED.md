@@ -3643,6 +3643,7 @@ pub struct ScrollNode {
 - No wheel/key event injection RPC method yet; §5.45 R55 Scroll axis verify waits on R51.195.
 - Spawn needs X11/Wayland display; pure-headless mode is a §5.16 Vello backend carry.
 - R55.G.7: find_rect_by_tag clips to Scroll viewport stack; fully off-viewport tag returns None
+- R55.G.8: Box/Text/Container snapshot 가 BoxStyle/TextStyle 의 visual axis (fill/border/font) 노출
 
 
 
@@ -15280,6 +15281,34 @@ if __name__ == "__main__":
 
 **Carry forward**:
 - Container.style + TextStyle snapshot exposure for §2 #7 scene-as-data completeness
+- scene/scroll at-based variant for consistency with click/wheel/key (intentional deviation now)
+
+
+
+### Round 544 — R55.G.8 §5.49 — BoxSnapshot/TextSnapshot/ContainerSnapshot expose BoxStyle/TextStyle for scene-as-data
+
+**Changes**:
+- snapshot.rs: BoxSnapshot/TextSnapshot/ContainerSnapshot gain style field (pinion_core::style::*)
+- snapshot_root populates style from each node; non_exhaustive struct keeps it additive
+- dispatch.rs: color_to_json + border_to_json + box_style_to_json + text_style_to_json helpers
+- font_style_to_json: Normal/Italic as bare string; Oblique as {kind, angle?} object
+- wire shape: {fill:{r,g,b,a}, border:null|{color,width,placement}, corner_radius}
+- 7 new tests: 3 snapshot struct land + 4 dispatch wire shape (Box, Text, Oblique, null border)
+
+
+
+**Verification**:
+- cargo test (vello) = 2154 pass / 0 fail / 11 ignored (+7 R55.G.8 style tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 7 demos PASS regression
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- TextStyle layout-axis fields (line_height/letter_spacing/align/decoration/overflow) snapshot opt-in
 - scene/scroll at-based variant for consistency with click/wheel/key (intentional deviation now)
 
 

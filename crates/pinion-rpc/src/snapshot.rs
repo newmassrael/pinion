@@ -14,6 +14,13 @@
 //! coordinates per demo (see `tools/demos/hello_toggle_click.py` first
 //! consumer). Only `Effect` stays opaque per §3 capability boundary.
 //!
+//! R55.G.8 §5.49 — `Box`, `Text`, and `Container` additionally surface
+//! their `BoxStyle` / `TextStyle` sidecars (fill, border, corner radius,
+//! font size / colour / weight / style). The wire JSON converts each
+//! style to a structured object — `{r, g, b, a}` for colours, named
+//! variants for enums — so AI clients can introspect the rendered look
+//! of any widget without inspecting pixels (§2 #7 scene-as-data).
+//!
 //! Surface details:
 //!   * path: `/[window[id]/]` only — no scene-path tail, since v0 has
 //!     no addressable sub-tree shape (`scene/query` is the typed
@@ -37,6 +44,7 @@
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Rect;
+use pinion_core::style::{BoxStyle, TextStyle};
 use pinion_core::Scene;
 
 use crate::path::{self, PathError};
@@ -63,27 +71,35 @@ pub enum SnapshotNode {
     Unknown,
 }
 
-/// `Box` payload of [`SnapshotNode::Box`] (R51.198 §5.49).
+/// `Box` payload of [`SnapshotNode::Box`] (R51.198 §5.49,
+/// R55.G.8 added `style`).
 ///
-/// `rect` mirrors `BoxNode.rect`; `tag` mirrors `BoxNode.tag`.
+/// `rect` mirrors `BoxNode.rect`; `tag` mirrors `BoxNode.tag`;
+/// `style` mirrors `BoxNode.style` so AI clients can introspect the
+/// rendered fill, border, and corner radius without OCR (§2 #7).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoxSnapshot {
     pub rect: Rect,
     pub tag: Option<String>,
+    pub style: BoxStyle,
 }
 
-/// `Text` payload of [`SnapshotNode::Text`] (R51.198 §5.49).
+/// `Text` payload of [`SnapshotNode::Text`] (R51.198 §5.49,
+/// R55.G.8 added `style`).
 ///
 /// `content` mirrors `TextNode.content` — pinion exposes text as data
 /// per §2 invariant #7 (scene-as-data), so AI clients can read the
-/// rendered text without OCR'ing a screenshot.
+/// rendered text without OCR'ing a screenshot. `style` mirrors
+/// `TextNode.style` to surface the visual axis (font family / size /
+/// colour / weight / style) on the same scene-as-data principle.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextSnapshot {
     pub rect: Rect,
     pub tag: Option<String>,
     pub content: String,
+    pub style: TextStyle,
 }
 
 /// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49 + carry).
@@ -116,10 +132,13 @@ pub struct ImageSnapshot {
 }
 
 /// `Container` payload of [`SnapshotNode::Container`] (R51.194 §5.49,
-/// R51.198 added `rect`).
+/// R51.198 added `rect`, R55.G.8 added `style`).
 ///
 /// `tag` mirrors `ContainerNode.tag` (the §5.20 intent-routing handle).
 /// `rect` mirrors `ContainerNode.rect`.
+/// `style` mirrors `ContainerNode.style` — Container nodes paint their
+/// own fill / border / corner radius before recursing into children,
+/// so the same §2 #7 scene-as-data surface applies as for `BoxNode`.
 /// `children` is a depth-first traversal of `ContainerNode.children`;
 /// each entry is itself a `SnapshotNode`, including nested containers
 /// and scrolls, so a single root snapshot is the whole tree.
@@ -128,6 +147,7 @@ pub struct ImageSnapshot {
 pub struct ContainerSnapshot {
     pub rect: Rect,
     pub tag: Option<String>,
+    pub style: BoxStyle,
     pub children: Vec<SnapshotNode>,
 }
 
@@ -217,11 +237,13 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
         Scene::Box(node) => SnapshotNode::Box(BoxSnapshot {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
+            style: node.style,
         }),
         Scene::Text(node) => SnapshotNode::Text(TextSnapshot {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
             content: node.content.clone(),
+            style: node.style.clone(),
         }),
         Scene::Path(node) => SnapshotNode::Path(PathSnapshot {
             rect: node.rect,
@@ -236,6 +258,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
         Scene::Container(node) => SnapshotNode::Container(ContainerSnapshot {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
+            style: node.style,
             children: node.children.iter().map(snapshot_root).collect(),
         }),
         Scene::Effect(_) => SnapshotNode::Effect,
@@ -603,6 +626,79 @@ mod tests {
             let fields = snap.introspect.expect("CountedExternal opts into introspect");
             assert_eq!(fields[0].0, "count");
             assert_eq!(fields[0].1, IntrospectValue::Int(5));
+        }
+    }
+
+    mod r55_g8 {
+        //! R55.G.8 §5.49 — `BoxStyle` + `TextStyle` snapshot exposure.
+        //!
+        //! Box / Text / Container now surface their style sidecars
+        //! (fill, border, corner radius, font axis) so AI clients can
+        //! verify rendered chrome and typography without OCR.
+
+        use super::*;
+        use pinion_core::scene::{ContainerNode, TextNode};
+        use pinion_core::style::{
+            Border, BorderPlacement, BoxStyle, FontStyle, FontWeight, TextStyle,
+        };
+
+        #[test]
+        fn box_carries_full_style_with_border_and_corner_radius() {
+            let style = BoxStyle::filled(Color::rgba(0x11, 0x22, 0x33, 0xff))
+                .with_border(
+                    Border::new(Color::rgba(0xaa, 0xbb, 0xcc, 0xff), 3)
+                        .with_placement(BorderPlacement::Outside),
+                )
+                .with_corner_radius(8);
+            let node = BoxNode::filled(Rect::new(0, 0, 32, 32), Color::default());
+            // BoxNode::filled sets the fill via the constructor; rewrite
+            // the whole style sidecar to attach border + corner_radius
+            // without going through every with_* builder permutation.
+            let mut node = node;
+            node.style = style;
+            let scene = Scene::Box(node);
+            let SnapshotNode::Box(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Box");
+            };
+            assert_eq!(snap.style.fill, Color::rgba(0x11, 0x22, 0x33, 0xff));
+            let border = snap.style.border.expect("border preserved");
+            assert_eq!(border.color, Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
+            assert_eq!(border.width, 3);
+            assert_eq!(border.placement, BorderPlacement::Outside);
+            assert_eq!(snap.style.corner_radius, 8);
+        }
+
+        #[test]
+        fn text_carries_full_visual_style() {
+            let style = TextStyle::new()
+                .with_size_px(20)
+                .with_fg(Color::rgba(0x55, 0x66, 0x77, 0xff))
+                .with_weight(FontWeight::BOLD)
+                .with_style(FontStyle::Italic);
+            let mut node = TextNode::new("hi".to_string(), Rect::new(0, 0, 40, 20));
+            node.style = style;
+            let scene = Scene::Text(node);
+            let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Text");
+            };
+            assert_eq!(snap.style.font_size_px, 20);
+            assert_eq!(snap.style.fg_color, Color::rgba(0x55, 0x66, 0x77, 0xff));
+            assert_eq!(snap.style.font_weight, FontWeight::BOLD);
+            assert_eq!(snap.style.font_style, FontStyle::Italic);
+        }
+
+        #[test]
+        fn container_carries_style_alongside_children() {
+            let mut node = ContainerNode::new(vec![]).with_tag("frame");
+            node.style = BoxStyle::filled(Color::rgba(0x12, 0x34, 0x56, 0x78))
+                .with_corner_radius(4);
+            let scene = Scene::Container(node);
+            let SnapshotNode::Container(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Container");
+            };
+            assert_eq!(snap.style.fill, Color::rgba(0x12, 0x34, 0x56, 0x78));
+            assert_eq!(snap.style.corner_radius, 4);
+            assert!(snap.style.border.is_none());
         }
     }
 }
