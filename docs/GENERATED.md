@@ -7299,6 +7299,37 @@ pub struct ScrollNode {
 
 
 
+### R51.182 — R51.182 §5.45 R55.A.3 Scene::lookup_path family passthrough through ScrollNode
+
+**Changes**:
+- pinion-core::scene::Scene::lookup_path — Scroll arm forwards segments unchanged into content
+- pinion-core::scene::Scene::lookup_path_ref — Scroll arm forwards segments unchanged into content
+- pinion-core::scene::Scene::lookup_path_mut — Scroll arm via Box<Scene> DerefMut into content
+- pinion-core::scene::tests — 6 R55.A.3 passthrough tests (empty/index/tag/ref/mut/parent-chain)
+
+
+
+**Verification**:
+- cargo test (vello) = 2018 / 0 / 10 (+6 R55.A.3 passthrough tests; was 2012)
+- cargo clippy 0 warnings (head/tail bindings still used by Container arm below)
+- ratify: ScrollNode is path-transparent across the full lookup-path family (mirrors R51.181)
+
+
+
+**Impact**: §5.45, §5.32, §5.34
+
+
+**Carry forward**:
+- R51.183 R55.A.4 — collect_intersections / hit_test_region offset-translated descent
+- R51.184 R55.B — ScrollState scope-id keyed (Owner::cache + Animation<f32>)
+- R51.185 R55.C — wheel + arrow + PgUp/PgDn + Home/End input mapping (Event extension)
+- R51.186 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag statechart
+- R51.187 R55.E — paint clipping at Vello + TUI boundaries
+- R51.188 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)
+- R51.189 R55.G — ListBox + future composite integration through Scroll wrap
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

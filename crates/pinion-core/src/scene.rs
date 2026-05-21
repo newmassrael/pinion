@@ -203,6 +203,17 @@ impl Scene {
         let Some((head, tail)) = segments.split_first() else {
             return Some(self.rect());
         };
+        // R55.A.3 §5.45 — Scroll is path-transparent: the scroll
+        // container does not consume a path segment (mirrors R51.181
+        // hit-test). The empty-segment case above already returns
+        // the viewport rect via `Self::rect`, so a non-empty path
+        // forwards into `content` unchanged. ScrollNode's own
+        // `tag` is the §5.20 input router carrier, not a path
+        // identifier — a parent Container is what surfaces the
+        // scroll's tag/index in the `HitPath::segments` chain.
+        if let Scene::Scroll(s) = self {
+            return s.content.lookup_path(segments);
+        }
         let Scene::Container(c) = self else {
             return None;
         };
@@ -237,6 +248,13 @@ impl Scene {
         let Some((head, tail)) = segments.split_first() else {
             return Some(self);
         };
+        // R55.A.3 §5.45 — Scroll is path-transparent (see
+        // `Self::lookup_path` rationale). Forward unchanged so the
+        // `scene/query` / `scene/rewind` nested-External walker
+        // sees Scroll as a wrapper, not a path-bearing layer.
+        if let Scene::Scroll(s) = self {
+            return s.content.lookup_path_ref(segments);
+        }
         let Scene::Container(c) = self else {
             return None;
         };
@@ -269,6 +287,15 @@ impl Scene {
         let Some((head, tail)) = segments.split_first() else {
             return Some(self);
         };
+        // R55.A.3 §5.45 — Scroll is path-transparent (see
+        // `Self::lookup_path` rationale). `s.content` is a
+        // `Box<Scene>`; deref-coercion gives us `&mut Scene` on
+        // recurse, so `TypedProposal::SetStyle` / `ReplaceView`
+        // can mutate inside the scroll without breaking the
+        // borrow chain.
+        if let Scene::Scroll(s) = self {
+            return s.content.lookup_path_mut(segments);
+        }
         let Scene::Container(c) = self else {
             return None;
         };
@@ -1778,5 +1805,115 @@ mod tests {
         // The path's first segment is the Scroll's tag (tag wins
         // over index per Container's hit_test rule).
         assert_eq!(hit.segments.first().map(String::as_str), Some("scroll_box"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.A.3 §5.45 — Scroll is path-transparent across the full
+    // lookup-path family. `Self::rect` already aliases ScrollNode's
+    // viewport at the parent level; the descent rule below applies
+    // when the caller supplies a non-empty segment slice.
+    // Mirrors R51.181 hit-test transparency.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_a3_lookup_path_empty_segments_on_scroll_returns_viewport() {
+        // R55.A.3 — empty path returns the scroll viewport (same
+        // shape as `Self::rect`). Transparency only fires for
+        // non-empty paths; this guard is the boundary case.
+        let viewport = Rect::new(10, 20, 100, 200);
+        let scene =
+            Scene::Scroll(ScrollNode::new(viewport, box_at(0, 0, 500, 1000)));
+        assert_eq!(scene.lookup_path(&[]), Some(viewport));
+    }
+
+    #[test]
+    fn r55_a3_lookup_path_descends_into_scroll_content() {
+        // R55.A.3 — Scroll forwards the segment slice into
+        // `content` unchanged. A tagged Box inside the scroll
+        // resolves with the same path the consumer would use if
+        // Scroll were not in the chain.
+        let inner = tagged_box_at(0, 0, 200, 100, "inner_btn");
+        let content = container_at(0, 0, 400, 400, vec![inner]);
+        let scene =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), content));
+        assert_eq!(
+            scene.lookup_path(&["inner_btn".to_string()]),
+            Some(Rect::new(0, 0, 200, 100))
+        );
+    }
+
+    #[test]
+    fn r55_a3_lookup_path_unknown_segment_inside_scroll_returns_none() {
+        // R55.A.3 — transparency means an unknown segment inside
+        // the scrolled content fails the same way it would without
+        // the scroll wrap. The scroll itself never claims a
+        // segment to short-circuit the lookup.
+        let inner = tagged_box_at(0, 0, 50, 50, "inner");
+        let content = container_at(0, 0, 200, 200, vec![inner]);
+        let scene =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content));
+        assert_eq!(scene.lookup_path(&["nope".to_string()]), None);
+    }
+
+    #[test]
+    fn r55_a3_lookup_path_ref_descends_into_scroll() {
+        // R55.A.3 — `lookup_path_ref` carries the same transparency
+        // and returns `&Scene` at the resolved path. The
+        // `scene/query` nested-External walker relies on this
+        // shape to reach an `ExternalNode` inside a scroll.
+        let inner = tagged_box_at(0, 0, 80, 40, "inner_btn");
+        let content = container_at(0, 0, 300, 300, vec![inner]);
+        let scene =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 200), content));
+        let resolved = scene
+            .lookup_path_ref(&["inner_btn".to_string()])
+            .expect("inner_btn resolves through scroll");
+        assert!(matches!(resolved, Scene::Box(_)));
+        assert_eq!(resolved.rect(), Rect::new(0, 0, 80, 40));
+    }
+
+    #[test]
+    fn r55_a3_lookup_path_mut_mutates_scroll_content() {
+        // R55.A.3 — `lookup_path_mut` descends through the scroll
+        // and the caller mutates the resolved leaf. Confirms the
+        // borrow chain `&mut Scene → ScrollNode.content (Box) →
+        // child` resolves without aliasing — same shape
+        // `TypedProposal::SetStyle` / `ReplaceView` need.
+        let inner = tagged_box_at(0, 0, 50, 50, "inner");
+        let content = container_at(0, 0, 200, 200, vec![inner]);
+        let mut scene =
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), content));
+        let resolved = scene
+            .lookup_path_mut(&["inner".to_string()])
+            .expect("inner resolves through scroll");
+        match resolved {
+            Scene::Box(b) => {
+                b.rect = Rect::new(5, 5, 80, 80);
+            }
+            _ => panic!("expected Box leaf"),
+        }
+        // Re-resolve to confirm the mutation stuck.
+        let after =
+            scene.lookup_path(&["inner".to_string()]).expect("still resolves");
+        assert_eq!(after, Rect::new(5, 5, 80, 80));
+    }
+
+    #[test]
+    fn r55_a3_lookup_path_through_container_into_scroll() {
+        // R55.A.3 — Container > Scroll(tag="scroll_box") > Box.
+        // The Container consumes the "scroll_box" segment (Scroll
+        // surfaces its tag through `Self::tag`); the Scroll is
+        // path-transparent inside, so the remaining segments
+        // forward into the content. End-to-end mirror of the
+        // R51.181 hit_test_through_container_into_scroll path.
+        let inner = tagged_box_at(0, 0, 50, 50, "inner");
+        let content = container_at(0, 0, 200, 200, vec![inner]);
+        let scroll = ScrollNode::new(Rect::new(10, 10, 100, 100), content)
+            .with_tag("scroll_box");
+        let scene = container_at(0, 0, 200, 200, vec![Scene::Scroll(scroll)]);
+        assert_eq!(
+            scene.lookup_path(&["scroll_box".to_string(), "inner".to_string()]),
+            Some(Rect::new(0, 0, 50, 50))
+        );
     }
 }
