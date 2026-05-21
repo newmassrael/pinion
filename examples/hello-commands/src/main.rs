@@ -315,3 +315,28 @@ fn build_handler_registry() -> HandlerRegistry {
 fn main() {
     pinion_shell::run_with_handlers::<CommandsView>(build_handler_registry());
 }
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    #[test]
+    fn r55_g23_view_contains_composite_paint_root_tag() {
+        // R55.G.23 §5.49 — paint scene must carry the composite
+        // `CommandsView::tag()` so AI-side `{path: "main_btn"}` input
+        // routing and `rect_for_tag` AT bounds attach resolve.
+        // CommandsView reuses the ButtonExternal SCXML / view-fn
+        // shape from hello-button so the convention regression
+        // surface is identical — the difference between the two
+        // bindings is the §5.23 Command dispatch path, not the
+        // paint scene topology.
+        //
+        // R55.G.22 §5.49 — pinned via the framework helper which
+        // calls `V::view` under an `Owner::new()` scope and asserts
+        // `Scene::contains_tag(V::tag())`.
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<CommandsView>(
+            ButtonState::Idle,
+            &Frame::new(),
+        );
+    }
+}

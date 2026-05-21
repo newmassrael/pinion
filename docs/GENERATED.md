@@ -3645,6 +3645,7 @@ pub struct ScrollNode {
 - R55.G.7: find_rect_by_tag clips to Scroll viewport stack; fully off-viewport tag returns None
 - R55.G.8: Box/Text/Container snapshot 가 BoxStyle/TextStyle 의 visual axis (fill/border/font) 노출
 - R55.G.22: assert_widget_view_carries_tag 헬퍼가 9-widget inline assert 청산, Rule of Three 충족
+- R55.G.23: hello-commands a11y_tests 모듈 + helper 사용으로 convention test 부재 청산
 
 
 
@@ -9774,6 +9775,31 @@ if __name__ == "__main__":
 **Carry forward**:
 - F1 framework auto-tag conflict-aware 영구 carry (R55.G.17 F7 채택, hello-toggle inner-tag 충돌 회피)
 - hello-commands convention test (test module 부재) — Owner-wrap convention test closure 후보
+- R55.D ScrollBar visible drag / R56 TextField+IME / R57 Theming new axes 후보
+
+
+
+### R55.G.23 — R55.G.23 §5.49 — hello-commands convention test gap 청산: a11y_tests 모듈 + R55.G.22 helper 1-LOC entry로 카탈로그 10/10 widget 컨벤션 회귀 방어
+
+**Changes**:
+- examples/hello-commands/src/main.rs a11y_tests 모듈 + r55_g23 함수 랜드
+- Cargo.toml dev-dependencies pinion-core test-fixtures feature wiring
+- CommandsView ButtonExternal SCXML 재사용 이라 paint topology hello-button 과 동일
+
+
+
+**Verification**:
+- cargo test -p hello-commands r55_g23 = 1 passed / 0 failed
+- cargo clippy -p hello-commands --all-targets = 0 warnings
+- 10 widget catalog 100% convention coverage (R55.G.17/18/20/22 + R55.G.23 hello-commands)
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- F1 framework auto-tag conflict-aware 영구 carry (R55.G.17 F7 채택)
 - R55.D ScrollBar visible drag / R56 TextField+IME / R57 Theming new axes 후보
 
 
