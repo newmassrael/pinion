@@ -986,10 +986,15 @@ mod a11y_tests {
         // pins the convention so a regression that drops the wrapper
         // surfaces as a typed failure rather than a silent path
         // lookup error.
-        let scene = run_view(unselected_state());
-        assert!(
-            scene.contains_tag(PRIMARY_TAG),
-            "view must contain a node tagged PRIMARY_TAG ({PRIMARY_TAG:?})",
+        //
+        // R55.G.22 §5.49 — pinned via the framework helper
+        // `pinion_core::test_fixtures::assert_widget_view_carries_tag`
+        // which wraps `V::view` in an `Owner::new()` scope (matching
+        // the local `run_view` precedent) and calls
+        // `Scene::contains_tag(V::tag())`.
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<ListBoxView>(
+            unselected_state(),
+            &Frame::default(),
         );
     }
 }

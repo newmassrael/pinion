@@ -375,11 +375,13 @@ mod a11y_tests {
         // and `rect_for_tag` AT bounds attach resolve to the toggle.
         // hello-toggle places the tag on the inner track container;
         // this test pins the convention regardless of where it lives.
-        let scene = view(ToggleState::Idle, false, &Frame::default());
-        assert!(
-            scene.contains_tag(ToggleView::tag()),
-            "view must contain a node tagged {:?}",
-            ToggleView::tag(),
+        //
+        // R55.G.22 §5.49 — pinned via the framework helper which
+        // calls `V::view` under an `Owner::new()` scope and asserts
+        // `Scene::contains_tag(V::tag())`.
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<ToggleView>(
+            (ToggleState::Idle, false),
+            &Frame::default(),
         );
     }
 }

@@ -402,15 +402,17 @@ mod a11y_tests {
     fn r55_g20_view_contains_composite_paint_root_tag() {
         // R55.G.20 §5.49 — paint scene must carry the composite
         // `WidgetCore::tag()` so AI-side `{path: "main_btn"}` input
-        // routing and `rect_for_tag` AT bounds attach resolve. Wraps
-        // `view` in `Owner::new()` because the hover animation
-        // observes `Owner::current()` on first call (R51.147 §5.28).
-        let owner = pinion_core::Owner::new();
-        let scene = owner.run(|| view(ButtonState::Idle, &Frame::new()));
-        assert!(
-            scene.contains_tag(ButtonView::tag()),
-            "view must contain a node tagged {:?}",
-            ButtonView::tag(),
+        // routing and `rect_for_tag` AT bounds attach resolve. The
+        // hover animation observes `Owner::current()` on first call
+        // (R51.147 §5.28).
+        //
+        // R55.G.22 §5.49 — pinned via the framework helper which
+        // wraps `V::view` in an `Owner::new()` scope (subsumes the
+        // R51.147 hover-animation requirement) and asserts
+        // `Scene::contains_tag(V::tag())`.
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<ButtonView>(
+            ButtonState::Idle,
+            &Frame::new(),
         );
     }
 }

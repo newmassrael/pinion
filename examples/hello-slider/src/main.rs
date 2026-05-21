@@ -596,11 +596,13 @@ mod a11y_tests {
         // R55.G.20 §5.49 — paint scene must carry the composite
         // `WidgetCore::tag()` so AI-side `{path: "main_slider"}`
         // input routing and `rect_for_tag` AT bounds attach resolve.
-        let scene = view(SliderState::Idle, 0.5, &Frame::new());
-        assert!(
-            scene.contains_tag(SliderView::tag()),
-            "view must contain a node tagged {:?}",
-            SliderView::tag(),
+        //
+        // R55.G.22 §5.49 — pinned via the framework helper which
+        // calls `V::view` under an `Owner::new()` scope and asserts
+        // `Scene::contains_tag(V::tag())`.
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<SliderView>(
+            (SliderState::Idle, 0.5),
+            &Frame::new(),
         );
     }
 }

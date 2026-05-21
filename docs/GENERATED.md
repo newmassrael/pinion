@@ -3644,6 +3644,7 @@ pub struct ScrollNode {
 - Spawn needs X11/Wayland display; pure-headless mode is a §5.16 Vello backend carry.
 - R55.G.7: find_rect_by_tag clips to Scroll viewport stack; fully off-viewport tag returns None
 - R55.G.8: Box/Text/Container snapshot 가 BoxStyle/TextStyle 의 visual axis (fill/border/font) 노출
+- R55.G.22: assert_widget_view_carries_tag 헬퍼가 9-widget inline assert 청산, Rule of Three 충족
 
 
 
@@ -9745,6 +9746,35 @@ if __name__ == "__main__":
 
 **Carry forward**:
 - R51.107 type-ahead polish 후보 (buffer-no-reset + multi-window)
+
+
+
+### R55.G.22 — R55.G.22 §5.41 §5.49 — composite paint-root tag convention regression helper assert_widget_view_carries_tag 추출 + 9 widget inline assert 청산
+
+**Changes**:
+- pinion_core::test_fixtures::assert_widget_view_carries_tag<V>(state, frame) framework helper land
+- Owner::new() wrap inside helper 가 R51.147 Owner::current 의존 hello-button hover animation 흡수
+- 9 widget example (toggle/button/checkbox/radio/slider/slider-vertical/listbox/radio-group/listbox-multi) inline assert refactor
+- 9 example Cargo.toml dev-dependencies pinion-core test-fixtures feature wiring
+- test_fixtures r55_g22_tests 3-arm verify (pass / should_panic tag-mismatch / repeat-safe)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2191/0/12 (baseline 2188 → +3 r55_g22 + 1 ignored doctest)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace = T1=0 / RT=1/1 / divergence=16 / orphan_refs=4 (baseline 유지)
+- 10 demos PASS (hello_toggle_activate ~ hello_listbox_composite_path) 회귀 확인
+
+
+
+**Impact**: §5.41, §5.49
+
+
+**Carry forward**:
+- F1 framework auto-tag conflict-aware 영구 carry (R55.G.17 F7 채택, hello-toggle inner-tag 충돌 회피)
+- hello-commands convention test (test module 부재) — Owner-wrap convention test closure 후보
+- R55.D ScrollBar visible drag / R56 TextField+IME / R57 Theming new axes 후보
 
 
 

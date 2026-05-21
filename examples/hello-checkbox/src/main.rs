@@ -354,11 +354,13 @@ mod a11y_tests {
         // R55.G.20 §5.49 — paint scene must carry the composite
         // `WidgetCore::tag()` so AI-side `{path: "main_checkbox"}`
         // input routing and `rect_for_tag` AT bounds attach resolve.
-        let scene = view(CheckboxState::Idle, false, &Frame::new());
-        assert!(
-            scene.contains_tag(CheckboxView::tag()),
-            "view must contain a node tagged {:?}",
-            CheckboxView::tag(),
+        //
+        // R55.G.22 §5.49 — pinned via the framework helper which
+        // calls `V::view` under an `Owner::new()` scope and asserts
+        // `Scene::contains_tag(V::tag())`.
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<CheckboxView>(
+            (CheckboxState::Idle, false),
+            &Frame::new(),
         );
     }
 }

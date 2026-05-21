@@ -34,6 +34,11 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # Either dependency makes vello a direct dep.
 vello = { workspace = true }
 
+[dev-dependencies]
+# R55.G.22 §5.49 — `pinion_core::test_fixtures::assert_widget_view_carries_tag`
+# regression helper for the [[composite-paint-root-tag-convention]] (R55.G.17).
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
 [build-dependencies]
 # R46.5 §5.16: build-time codegen for the `HelloButtonRenderer` Vello
 # wrapper. `build.rs` calls `compile_file` on `app.pinion.xml`; the

@@ -10,17 +10,88 @@
 //! `pinion-core` crate keeps its `pinion-a11y` / `pinion-tui` dep
 //! direction empty (cycle invariant per [[r47-class-incident-
 //! prevention]]).
+//!
+//! R55.G.22 §5.49 — also hosts
+//! [`assert_widget_view_carries_tag`], the framework-level regression
+//! primitive for the [[composite-paint-root-tag-convention]] (R55.G.17
+//! §5.49). Nine widget example bindings carry an identical inline
+//! assertion shape since R55.G.17 / G.18 / G.20; the helper extracts
+//! that body into a single canonical entry point so a future widget
+//! author pins the convention with one trait-bound call site, and so
+//! the framework owns one place to evolve the assertion's error
+//! message / hook list as the AT bounds attach contract grows.
 
 use std::borrow::Cow;
 
 use crate::command::Command;
 use crate::external::{External, IntrospectValue};
 use crate::intent::Intent;
+use crate::reactive::Owner;
 use crate::scene::{ContainerNode, Rect, Scene, TextNode};
 use crate::widget_core::WidgetCore;
 use crate::widgets::aria;
 use crate::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use crate::Frame;
+
+/// R55.G.22 §5.49 — pin the composite paint-root tag convention.
+///
+/// Asserts that `V::view(state, frame)` returns a [`Scene`] which
+/// contains a node tagged [`V::tag()`](WidgetCore::tag) somewhere
+/// (depth-first walk via [`Scene::contains_tag`]). Pins the
+/// [[composite-paint-root-tag-convention]] (R55.G.17 §5.49) per
+/// widget binding — without the tag in the paint scene, AI-side
+/// `scene/click` / `scene/key` / `scene/wheel` `{path: V::tag()}`
+/// routing and `rect_for_tag` AT bounds attach both fail silently.
+///
+/// ## Why an `Owner::new()` wrap?
+///
+/// `WidgetCore::view` is sync and pure per §6.3 R51.27, but some
+/// bindings observe [`Owner::current()`](crate::Owner::current)
+/// inside the view fn — e.g. `examples/hello-button` registers a
+/// hover-progress animation via [[oncecell-weak-self-pointer]] on
+/// first paint. Calling the view without an active `Owner` would
+/// panic outside the framework wrap; the helper installs a
+/// throwaway `Owner::new().run(...)` scope so callers do not have to
+/// remember which widget's view fn observes the current owner.
+///
+/// ## Usage
+///
+/// ```rust,ignore
+/// use pinion_core::test_fixtures::assert_widget_view_carries_tag;
+/// use pinion_core::Frame;
+///
+/// #[test]
+/// fn r55_g20_view_contains_composite_paint_root_tag() {
+///     assert_widget_view_carries_tag::<MyWidget>(
+///         MyWidgetState::default(),
+///         &Frame::new(),
+///     );
+/// }
+/// ```
+///
+/// The `<V>` generic resolves both the view fn and the tag through
+/// one trait-bound call site — adding a new widget pins the
+/// convention with one line instead of replicating the 5-line
+/// inline `assert!(scene.contains_tag(V::tag()), …)` block across
+/// every example binding's test module.
+///
+/// # Panics
+///
+/// Panics if `V::view(state, frame)` returns a [`Scene`] that does
+/// not contain a node tagged [`V::tag()`](WidgetCore::tag) anywhere
+/// in its depth-first child / Scroll-content walk — that is exactly
+/// the regression the helper exists to surface, so the panic is the
+/// designed observable outcome.
+pub fn assert_widget_view_carries_tag<V: WidgetCore>(state: V::State, frame: &Frame) {
+    let owner = Owner::new();
+    let scene = owner.run(|| V::view(state, frame));
+    assert!(
+        scene.contains_tag(V::tag()),
+        "{} view must contain a node tagged {:?} (R55.G.17 §5.49 composite paint-root tag convention)",
+        core::any::type_name::<V>(),
+        V::tag(),
+    );
+}
 
 /// Minimal Button binding for substrate-level tests.
 ///
@@ -168,5 +239,107 @@ impl WidgetCore for EchoButtonFixture {
             IntrospectValue::Text(intent.tag_str().to_string()),
             42,
         )]
+    }
+}
+
+#[cfg(test)]
+mod r55_g22_tests {
+    //! R55.G.22 §5.49 — `assert_widget_view_carries_tag` helper
+    //! regression. Two arms:
+    //!
+    //! 1. Pass arm — [`ButtonFixture`] paints a Container tagged
+    //!    `"test_btn"` matching [`ButtonFixture::tag()`], so the
+    //!    helper must accept it without panicking.
+    //! 2. Fail arm — `UntaggedFixture` paints a Container with **no**
+    //!    tag (R55.G.19 §5.49 `contains_tag` returns `false`), so
+    //!    the helper must panic with the convention-violation
+    //!    message.
+    //!
+    //! The fail arm pins the helper's `assert!` arm against an
+    //! accidental tautology refactor (e.g. swapping the assertion
+    //! for an always-true predicate would let the fail-arm test
+    //! catch it).
+    use super::{ButtonFixture, assert_widget_view_carries_tag};
+    use crate::external::External;
+    use crate::scene::{ContainerNode, Rect, Scene, TextNode};
+    use crate::widget_core::WidgetCore;
+    use crate::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+    use crate::Frame;
+
+    #[test]
+    fn pass_arm_button_fixture_view_carries_tag() {
+        // R55.G.22 §5.49 — pass arm. ButtonFixture::view paints a
+        // Container with tag="test_btn" matching ButtonFixture::tag(),
+        // so the helper accepts it. Doubles as a usage smoke test
+        // showing the trait-bound call site.
+        assert_widget_view_carries_tag::<ButtonFixture>(ButtonState::Idle, &Frame::default());
+    }
+
+    /// Negative fixture for the R55.G.22 fail arm — paints a
+    /// Container with **no** tag, so [`Scene::contains_tag`] returns
+    /// `false` and the helper must panic.
+    struct UntaggedFixture;
+
+    impl WidgetCore for UntaggedFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn External> {
+            Box::new(ButtonExternal::new())
+        }
+
+        fn tag() -> &'static str {
+            "untagged_fixture"
+        }
+
+        fn read_state(_: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            // Deliberately tagless — exercises the helper's panic
+            // arm. Mirrors the R55.G.19 Scene::contains_tag "Effect
+            // leaf / Container without tag" negative regression
+            // arm.
+            Scene::Container(ContainerNode {
+                rect: Rect::new(0, 0, 32, 48),
+                tag: None,
+                children: vec![Scene::Text(TextNode::default())],
+                ..Default::default()
+            })
+        }
+
+        fn event_name(_: Self::Event) -> &'static str {
+            "__internal__"
+        }
+
+        fn title() -> &'static str {
+            "Untagged"
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "view must contain a node tagged \"untagged_fixture\"")]
+    fn fail_arm_untagged_fixture_panics() {
+        // R55.G.22 §5.49 — fail arm. UntaggedFixture's view paints
+        // a Container with `tag: None`, so contains_tag returns
+        // false and the helper panics with the convention-
+        // violation message. The `#[should_panic(expected = …)]`
+        // arm also pins the error message text so the convention
+        // reference (R55.G.17 §5.49) stays user-visible.
+        assert_widget_view_carries_tag::<UntaggedFixture>(ButtonState::Idle, &Frame::default());
+    }
+
+    #[test]
+    fn pass_arm_returns_without_observable_side_effects() {
+        // R55.G.22 §5.49 — the helper installs a throwaway
+        // `Owner::new()` scope per call so widgets whose view fn
+        // observes `Owner::current()` (hello-button hover
+        // animation per R51.147 §5.28) can be exercised without
+        // requiring callers to wrap manually. Repeated calls must
+        // remain independent — verify by exercising the pass arm
+        // twice in sequence.
+        assert_widget_view_carries_tag::<ButtonFixture>(ButtonState::Idle, &Frame::default());
+        assert_widget_view_carries_tag::<ButtonFixture>(ButtonState::Hover, &Frame::default());
     }
 }

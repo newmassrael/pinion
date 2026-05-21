@@ -19,6 +19,11 @@ pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 vello = { workspace = true }
 
+[dev-dependencies]
+# R55.G.22 §5.49 — `pinion_core::test_fixtures::assert_widget_view_carries_tag`
+# regression helper for the [[composite-paint-root-tag-convention]] (R55.G.17).
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
 

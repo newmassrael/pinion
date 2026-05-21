@@ -938,10 +938,13 @@ mod tests {
         // routing and `rect_for_tag` AT bounds attach resolve to
         // the composite. Pins the convention against accidental
         // regression (dropping the column-tag in a future refactor).
-        let paint = view(GroupState::idle(), &Frame::default());
-        assert!(
-            paint.contains_tag(PRIMARY_TAG),
-            "view must contain a node tagged PRIMARY_TAG ({PRIMARY_TAG:?})",
+        //
+        // R55.G.22 §5.49 — pinned via the framework helper which
+        // calls `V::view` under an `Owner::new()` scope and asserts
+        // `Scene::contains_tag(V::tag())`.
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<RadioGroupView>(
+            GroupState::idle(),
+            &Frame::default(),
         );
     }
 }
