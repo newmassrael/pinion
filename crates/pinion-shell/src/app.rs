@@ -616,19 +616,35 @@ fn winit_touch_to_pinion(touch: winit::event::Touch) -> pinion_runtime::Touch {
 /// winit reports wheel input in one of two unit modes —
 /// `LineDelta(f32, f32)` for legacy notched mouse wheels and
 /// `PixelDelta(PhysicalPosition<f64>)` for trackpad inertia /
-/// high-resolution scroll. Both map 1:1 onto pinion's
-/// unit-tagged variants. The `PhysicalPosition<f64>` narrows to
-/// `f32` here (winit's logical-pixel coordinates already use
-/// `f32` precision; the substrate's `wheel_delta_to_pixels`
-/// rounds to `i32`, so the wider `f64` carries no information
-/// past the boundary).
+/// high-resolution scroll. Both narrow into pinion's unit-tagged
+/// variants. The `PhysicalPosition<f64>` narrows to `f32` here
+/// (winit's logical-pixel coordinates already use `f32` precision;
+/// the substrate's `wheel_delta_to_pixels` rounds to `i32`, so the
+/// wider `f64` carries no information past the boundary).
+///
+/// (R51.192 §5.45 R55.C.2) Both axes flip sign at this boundary.
+/// winit's [`MouseScrollDelta`] convention is "positive = content
+/// being scrolled should move right and down (revealing more
+/// content left and up)" — i.e. winit `(dx, dy) > 0` means the
+/// scroll is toward the content origin, the user wants to *see*
+/// what is above/left of the current viewport. pinion's substrate
+/// (and the [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
+/// it forwards into) follows the W3C `WheelEvent.deltaY` /
+/// `deltaX` convention — positive scrolls *away* from the
+/// content origin, exposing what is below/right. The two
+/// conventions are opposite-signed, so the boundary flip lands
+/// here exactly once. The TUI sibling
+/// [`pinion_tui::shell::dispatch_mouse`] already emits W3C-signed
+/// `WheelDelta` values (`ScrollUp` → `dy = -1.0`,
+/// `ScrollDown` → `dy = +1.0`), so the substrate stays
+/// crossterm + W3C agreed and only winit needs the flip.
 #[allow(clippy::cast_possible_truncation)]
 fn winit_wheel_to_pinion(delta: MouseScrollDelta) -> WheelDelta {
     match delta {
-        MouseScrollDelta::LineDelta(dx, dy) => WheelDelta::Lines { dx, dy },
+        MouseScrollDelta::LineDelta(dx, dy) => WheelDelta::Lines { dx: -dx, dy: -dy },
         MouseScrollDelta::PixelDelta(pos) => WheelDelta::Pixels {
-            dx: pos.x as f32,
-            dy: pos.y as f32,
+            dx: -(pos.x as f32),
+            dy: -(pos.y as f32),
         },
     }
 }
@@ -719,5 +735,100 @@ pub fn run_with_handlers<V: WidgetView>(registry: HandlerRegistry) {
 
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("shell: event loop error: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winit::dpi::PhysicalPosition;
+
+    // ─────────────────────────────────────────────────────────────
+    // R51.192 §5.45 R55.C.2 — winit ↔ W3C wheel sign convention.
+    // winit's `MouseScrollDelta` positive = content moves toward
+    // origin (reveal above/left); W3C `WheelEvent.deltaY` positive
+    // = scroll toward content end (reveal below/right). Boundary
+    // flips both axes so the substrate's `ScrollState::scroll_by`
+    // receives W3C-signed deltas — matching the TUI sibling
+    // (`MouseEventKind::ScrollDown` already emits `dy = +1.0`).
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r51_192_line_delta_y_flips_sign() {
+        // User scrolls wheel forward (away from them) — winit
+        // reports y > 0. W3C / substrate convention: forward wheel
+        // moves toward content origin (deltaY < 0).
+        let pinion = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0));
+        match pinion {
+            WheelDelta::Lines { dx, dy } => {
+                assert!((dx - 0.0).abs() < f32::EPSILON);
+                assert!(
+                    (dy - (-1.0)).abs() < f32::EPSILON,
+                    "forward wheel must emit W3C deltaY < 0, got {dy}",
+                );
+            }
+            other => panic!("expected Lines, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r51_192_line_delta_x_flips_sign() {
+        // Horizontal tilt right — winit x > 0. W3C: deltaX < 0
+        // (reveals content to the left).
+        let pinion = winit_wheel_to_pinion(MouseScrollDelta::LineDelta(1.0, 0.0));
+        match pinion {
+            WheelDelta::Lines { dx, dy } => {
+                assert!(
+                    (dx - (-1.0)).abs() < f32::EPSILON,
+                    "tilt right must emit W3C deltaX < 0, got {dx}",
+                );
+                assert!((dy - 0.0).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Lines, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r51_192_pixel_delta_both_axes_flip() {
+        // Trackpad inertia — both axes flip. The conversion narrows
+        // f64 → f32 at the same boundary.
+        let pinion = winit_wheel_to_pinion(MouseScrollDelta::PixelDelta(PhysicalPosition {
+            x: 12.5,
+            y: 24.0,
+        }));
+        match pinion {
+            WheelDelta::Pixels { dx, dy } => {
+                assert!((dx - (-12.5)).abs() < f32::EPSILON);
+                assert!((dy - (-24.0)).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Pixels, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r51_192_winit_tui_sibling_direction_agreement() {
+        // Sanity guard against the conversion drifting back to a
+        // pass-through: winit's forward wheel (y = +1.0) must
+        // produce the same dy sign the TUI `ScrollUp` arm sends
+        // (`WheelDelta::Lines { dx: 0.0, dy: -1.0 }`). If this
+        // trips, the two backends disagree on direction and
+        // `ScrollState::scroll_by` will move the offset opposite
+        // ways per backend — §2 #6 GUI/TUI dual invariant break.
+        let from_winit_forward =
+            winit_wheel_to_pinion(MouseScrollDelta::LineDelta(0.0, 1.0));
+        let from_tui_scroll_up = WheelDelta::Lines { dx: 0.0, dy: -1.0 };
+        match (from_winit_forward, from_tui_scroll_up) {
+            (
+                WheelDelta::Lines { dy: w_dy, .. },
+                WheelDelta::Lines { dy: t_dy, .. },
+            ) => {
+                assert!(
+                    w_dy.signum() == t_dy.signum(),
+                    "winit forward must match TUI ScrollUp sign (both negative dy); \
+                     got winit={w_dy} vs tui={t_dy}",
+                );
+            }
+            _ => panic!("both branches must be Lines variants"),
+        }
     }
 }

@@ -7627,6 +7627,34 @@ pub struct ScrollNode {
 
 
 
+### R51.192 — R51.192 fix(shell) §5.45 R55.C.2 winit MouseScrollDelta flips sign to W3C convention (TUI sibling agreement restored)
+
+**Changes**:
+- crates/pinion-shell/src/app.rs: winit_wheel_to_pinion flips dx + dy sign at the boundary so substrate receives W3C-signed deltas (positive = scroll toward content end)
+- Pre-R51.192 winit's LineDelta(_, y>0) (forward wheel) reached scroll_by as dy>0 → offset_y increased → content shifted up → user saw reverse direction; matches user-reported regression on hello-listbox
+- TUI sibling (crossterm MouseEventKind::ScrollUp → WheelDelta::Lines { dy: -1.0 }) already W3C-signed since R51.186 — the substrate stayed consistent only for TUI
+- Restores §2 #6 GUI/TUI dual invariant for scroll direction: forward wheel on Vello and ScrollUp on TUI now both decrement offset_y identically
+
+
+
+**Verification**:
+- cargo test -p pinion-shell --lib r51_192 = 4/4 passed (line delta x + y flip + pixel delta both axes flip + winit↔TUI sibling sign agreement guard)
+- cargo test --workspace --features pinion-runtime/vello = 2090 passed / 0 failed / 11 ignored (+4 R51.192 regression tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace: entries 362 → 363 / sections 59 / T1=0 / T3=0 / RT=1/1 / orphan_refs=4+0
+
+
+
+**Impact**: §5.45, §5.13
+
+
+**Carry forward**:
+- R51.193+ — AI-first RPC introspection self-verification (spawn hello-* + scene/snapshot from this side; obviates user-reported visual confirmation for code-verifiable state)
+- R55.G.2 layout::compute_layout recurse into Scene::Scroll content (R51.191 carry)
+- R55.D ScrollBar / R55.F RPC scene/scroll / R55.C.4/C.5 keyboard extensions
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
