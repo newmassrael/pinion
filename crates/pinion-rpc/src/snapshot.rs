@@ -760,4 +760,84 @@ mod tests {
             assert!(snap.style.border.is_none());
         }
     }
+
+    mod r55_g10 {
+        //! R55.G.10 §5.49 — `TextStyle` layout-axis snapshot exposure
+        //! (`line_height` / `text_align` / `decoration` / `overflow` /
+        //! `letter_spacing`).
+        //!
+        //! R55.G.8 covered the visual axis (size / fg / weight / style)
+        //! with `text_carries_full_visual_style`. R55.G.10 wired the
+        //! layout axis through `text_style_to_json` for the dispatch
+        //! JSON wire. This module pins the snapshot land side so the
+        //! symmetry is observable at the snapshot-struct boundary —
+        //! `r55_g8` (visual) + `r55_g11` (Path/Image) + here (layout).
+
+        use super::*;
+        use pinion_core::scene::TextNode;
+        use pinion_core::style::{
+            LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
+        };
+
+        #[test]
+        fn text_layout_axis_survives_snapshot() {
+            // All five layout fields set to non-default values: the
+            // snapshot pipeline must carry each through without
+            // collapsing to the default.
+            let style = TextStyle::new()
+                .with_line_height(LineHeight::Px(24))
+                .with_align(TextAlign::Center)
+                .with_letter_spacing(-2)
+                .with_decoration(TextDecoration::both())
+                .with_overflow(TextOverflow::Ellipsis);
+            let mut node = TextNode::new("hi".to_string(), Rect::new(0, 0, 40, 20));
+            node.style = style;
+            let scene = Scene::Text(node);
+            let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Text");
+            };
+            assert_eq!(snap.style.line_height, LineHeight::Px(24));
+            assert_eq!(snap.style.text_align, TextAlign::Center);
+            assert_eq!(snap.style.letter_spacing, -2);
+            assert_eq!(snap.style.decoration, TextDecoration::both());
+            assert_eq!(snap.style.overflow, TextOverflow::Ellipsis);
+        }
+
+        #[test]
+        fn text_letter_spacing_accepts_signed_through_snapshot() {
+            // letter_spacing is `i32`; both signs survive the snapshot
+            // pass intact (no `u32` widening or clamping).
+            for px in [-8_i32, 0, 4] {
+                let mut node =
+                    TextNode::new("x".to_string(), Rect::new(0, 0, 8, 8));
+                node.style = TextStyle::new().with_letter_spacing(px);
+                let scene = Scene::Text(node);
+                let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {
+                    panic!("expected Text");
+                };
+                assert_eq!(snap.style.letter_spacing, px);
+            }
+        }
+
+        #[test]
+        fn text_line_height_variants_each_survive_snapshot() {
+            // Each LineHeight variant is its own SnapshotNode payload
+            // — the snapshot pipeline preserves variant discriminants
+            // and values (Px / MultiplierX100 inner data carried).
+            for lh in [
+                LineHeight::Normal,
+                LineHeight::Px(20),
+                LineHeight::MultiplierX100(150),
+            ] {
+                let mut node =
+                    TextNode::new("x".to_string(), Rect::new(0, 0, 8, 8));
+                node.style = TextStyle::new().with_line_height(lh);
+                let scene = Scene::Text(node);
+                let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {
+                    panic!("expected Text");
+                };
+                assert_eq!(snap.style.line_height, lh);
+            }
+        }
+    }
 }

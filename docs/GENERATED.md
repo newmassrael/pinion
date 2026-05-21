@@ -15450,6 +15450,28 @@ if __name__ == "__main__":
 
 
 
+### Round 550 — R55.G.14 — §5.49 TextStyle layout-axis snapshot.rs land tests added (r55_g10 module 3 tests) symmetric with r55_g8 visual axis and r55_g11 Path/Image
+
+**Changes**:
+- crates/pinion-rpc/src/snapshot.rs: new r55_g10 module under snapshot::tests with 3 tests
+- text_layout_axis_survives_snapshot: line_height/text_align/letter_spacing/decoration/overflow all
+- text_letter_spacing_accepts_signed_through_snapshot: i32 negative/zero/positive boundary
+- text_line_height_variants_each_survive_snapshot: Normal/Px/MultiplierX100 discriminants preserved
+- module mirrors r55_g8 (visual) + r55_g11 (Path/Image) at snapshot-struct boundary
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2170 pass / 0 fail / 11 ignored (+3 land)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 9 demos PASS (hello-toggle + hello-listbox regression clean)
+
+
+
+**Impact**: §5.49
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
