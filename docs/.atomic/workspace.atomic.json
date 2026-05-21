@@ -24827,6 +24827,48 @@
         "scene/scroll at-based variant for consistency with click/wheel/key (intentional deviation now)"
       ]
     },
+    "Round 545": {
+      "decision_summary": "R55.G.9 §5.49 first-consumer — hello_toggle_style.py demo asserts R55.G.8 style wire end-to-end",
+      "changes_bullets": [
+        "tools/demos/hello_toggle_style.py 8번째 demo (paint-mode snapshot)",
+        "main_toggle Container.style.corner_radius==16, fill={64,64,64,255} (TRACK_RADIUS)",
+        "knob Box.style.corner_radius==12, fill={255,255,255,255} (KNOB_RADIUS idle-off)",
+        "first Text.style.font_size_px==18, fg_color={224,224,224,255} (Dark mode label)",
+        "walk(node) helper iterates depth-first through Container.children + Scroll.content",
+        "[[ai-first-rpc-introspection-obligation]] satisfied: AI verifies painted chrome via RPC"
+      ],
+      "verification_bullets": [
+        "8 demos PASS regression (R55.G.9 included, ~1.0-4.4s each)",
+        "no Rust code changes — demo-only land, no clippy/test count delta"
+      ],
+      "impact_refs": [
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "TextStyle layout-axis fields (line_height/letter_spacing/align/decoration/overflow) snapshot opt-in",
+        "scene/scroll at-based variant for consistency with click/wheel/key (intentional deviation now)"
+      ],
+      "publishable_decision_summary": "R55.G.9 §5.49 first-consumer — hello_toggle_style.py demo asserts R55.G.8 style wire end-to-end",
+      "publishable_changes_bullets": [
+        "tools/demos/hello_toggle_style.py 8번째 demo (paint-mode snapshot)",
+        "main_toggle Container.style.corner_radius==16, fill={64,64,64,255} (TRACK_RADIUS)",
+        "knob Box.style.corner_radius==12, fill={255,255,255,255} (KNOB_RADIUS idle-off)",
+        "first Text.style.font_size_px==18, fg_color={224,224,224,255} (Dark mode label)",
+        "walk(node) helper iterates depth-first through Container.children + Scroll.content",
+        "[[ai-first-rpc-introspection-obligation]] satisfied: AI verifies painted chrome via RPC"
+      ],
+      "publishable_verification_bullets": [
+        "8 demos PASS regression (R55.G.9 included, ~1.0-4.4s each)",
+        "no Rust code changes — demo-only land, no clippy/test count delta"
+      ],
+      "publishable_impact_refs": [
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TextStyle layout-axis fields (line_height/letter_spacing/align/decoration/overflow) snapshot opt-in",
+        "scene/scroll at-based variant for consistency with click/wheel/key (intentional deviation now)"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [
