@@ -15367,6 +15367,35 @@ if __name__ == "__main__":
 
 
 
+### Round 547 — R55.G.11 §5.49 — PathStyle + ImageStyle snapshot exposure (Box/Text symmetric expansion)
+
+**Changes**:
+- snapshot.rs: PathSnapshot/ImageSnapshot gain style field (pinion_core::style::*)
+- snapshot_root populates style from each node; #[non_exhaustive] keeps additive
+- dispatch.rs: stroke_cap_to_json + stroke_to_json + path_style_to_json helpers
+- dispatch.rs: fit_to_json + image_style_to_json helpers (Fill/Contain/Cover/Tile)
+- PathStyle wire: {stroke:null|{color,width,cap}, fill:null|{r,g,b,a}}
+- ImageStyle wire: {fit:string, tint:null|{r,g,b,a}}
+- 6 new tests: 2 snapshot land + 4 dispatch wire (Path/Image with + without arms)
+
+
+
+**Verification**:
+- cargo test (vello) = 2163 pass / 0 fail / 11 ignored (+6 R55.G.11 Path/Image tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 8 demos PASS regression
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- scene/scroll at-based variant for consistency with click/wheel/key (intentional deviation now)
+- External (Toggle/Checkbox/Radio) widget-specific style introspect carry
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

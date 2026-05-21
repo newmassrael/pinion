@@ -46,7 +46,7 @@
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Rect;
-use pinion_core::style::{BoxStyle, TextStyle};
+use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
 use pinion_core::Scene;
 
 use crate::path::{self, PathError};
@@ -104,33 +104,41 @@ pub struct TextSnapshot {
     pub style: TextStyle,
 }
 
-/// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49 + carry).
+/// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49 + carry,
+/// R55.G.11 added `style`).
 ///
 /// `commands` mirrors `PathNode.commands` — the structured command
 /// stream the rasterizer consumes. Exposing the commands keeps
 /// `scene-as-data` (§2 #7) complete for vector geometry: an AI
 /// agent can introspect path shape without OCR'ing the painted
-/// result.
+/// result. `style` mirrors `PathNode.style` so the agent also sees
+/// the paint (stroke colour / width / cap, fill colour) — the
+/// commands describe the shape, the style describes the ink.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathSnapshot {
     pub rect: Rect,
     pub tag: Option<String>,
     pub commands: Vec<pinion_core::scene::PathCommand>,
+    pub style: PathStyle,
 }
 
-/// `Image` payload of [`SnapshotNode::Image`] (R51.198 §5.49 + carry).
+/// `Image` payload of [`SnapshotNode::Image`] (R51.198 §5.49 + carry,
+/// R55.G.11 added `style`).
 ///
 /// `source` mirrors `ImageNode.source` — typically the asset URI or
 /// path the application loaded. The string is opaque to the
 /// framework but lets an AI agent verify "this is the right icon"
-/// without inspecting pixels (§2 #7 scene-as-data).
+/// without inspecting pixels (§2 #7 scene-as-data). `style` mirrors
+/// `ImageNode.style` (fit policy + optional tint overlay) so the
+/// agent can verify the rendered size-fitting and recolouring.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageSnapshot {
     pub rect: Rect,
     pub tag: Option<String>,
     pub source: String,
+    pub style: ImageStyle,
 }
 
 /// `Container` payload of [`SnapshotNode::Container`] (R51.194 §5.49,
@@ -251,11 +259,13 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
             commands: node.commands.clone(),
+            style: node.style,
         }),
         Scene::Image(node) => SnapshotNode::Image(ImageSnapshot {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
             source: node.source.clone(),
+            style: node.style,
         }),
         Scene::Container(node) => SnapshotNode::Container(ContainerSnapshot {
             rect: node.rect,
@@ -687,6 +697,53 @@ mod tests {
             assert_eq!(snap.style.fg_color, Color::rgba(0x55, 0x66, 0x77, 0xff));
             assert_eq!(snap.style.font_weight, FontWeight::BOLD);
             assert_eq!(snap.style.font_style, FontStyle::Italic);
+        }
+
+        #[test]
+        fn path_carries_full_style_with_stroke_and_fill() {
+            use pinion_core::scene::{PathCommand, PathNode, PathPoint};
+            use pinion_core::style::{PathStyle, Stroke, StrokeCap};
+            let mut node = PathNode::new(
+                Rect::new(0, 0, 50, 50),
+                vec![
+                    PathCommand::MoveTo(PathPoint::new(0.0, 0.0)),
+                    PathCommand::LineTo(PathPoint::new(50.0, 50.0)),
+                ],
+                PathStyle::default(),
+            );
+            node.style = PathStyle::stroked(
+                Stroke::new(Color::rgba(0x11, 0x22, 0x33, 0xff), 4)
+                    .with_cap(StrokeCap::Round),
+            );
+            node.style.fill = Some(Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
+            let scene = Scene::Path(node);
+            let SnapshotNode::Path(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Path");
+            };
+            let stroke = snap.style.stroke.expect("stroke preserved");
+            assert_eq!(stroke.color, Color::rgba(0x11, 0x22, 0x33, 0xff));
+            assert_eq!(stroke.width, 4);
+            assert_eq!(stroke.cap, StrokeCap::Round);
+            assert_eq!(snap.style.fill, Some(Color::rgba(0xaa, 0xbb, 0xcc, 0xff)));
+        }
+
+        #[test]
+        fn image_carries_full_style_with_fit_and_tint() {
+            use pinion_core::scene::ImageNode;
+            use pinion_core::style::{Fit, ImageStyle};
+            let mut node = ImageNode::new(
+                "asset://icon.png".to_string(),
+                Rect::new(0, 0, 64, 64),
+            );
+            node.style = ImageStyle::default()
+                .with_fit(Fit::Cover)
+                .with_tint(Color::rgba(0x12, 0x34, 0x56, 0xff));
+            let scene = Scene::Image(node);
+            let SnapshotNode::Image(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Image");
+            };
+            assert_eq!(snap.style.fit, Fit::Cover);
+            assert_eq!(snap.style.tint, Some(Color::rgba(0x12, 0x34, 0x56, 0xff)));
         }
 
         #[test]

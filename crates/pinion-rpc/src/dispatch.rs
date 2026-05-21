@@ -1434,11 +1434,13 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
                 .map(path_command_to_json)
                 .collect();
             obj.insert("commands".to_string(), Value::Array(cmds));
+            obj.insert("style".to_string(), path_style_to_json(snap.style));
         }
         SnapshotNode::Image(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
             obj.insert("source".to_string(), Value::String(snap.source));
+            obj.insert("style".to_string(), image_style_to_json(snap.style));
         }
         SnapshotNode::External(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
@@ -1635,6 +1637,74 @@ fn font_style_to_json(style: pinion_core::style::FontStyle) -> Value {
         }
         _ => Value::String("Unknown".to_string()),
     }
+}
+
+/// R55.G.11 §5.49 — wire serialization for `StrokeCap`. Bare string
+/// per variant; wildcard arm collapses future variants to `"Unknown"`.
+fn stroke_cap_to_json(cap: pinion_core::style::StrokeCap) -> Value {
+    use pinion_core::style::StrokeCap;
+    let name = match cap {
+        StrokeCap::Butt => "Butt",
+        StrokeCap::Round => "Round",
+        StrokeCap::Square => "Square",
+        _ => "Unknown",
+    };
+    Value::String(name.to_string())
+}
+
+/// R55.G.11 §5.49 — wire serialization for `Stroke`. Surfaces colour,
+/// width, and cap policy so AI clients can verify a path's ink stroke
+/// without inspecting pixels.
+fn stroke_to_json(stroke: pinion_core::style::Stroke) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("color".to_string(), color_to_json(stroke.color));
+    obj.insert("width".to_string(), Value::Number(stroke.width.into()));
+    obj.insert("cap".to_string(), stroke_cap_to_json(stroke.cap));
+    Value::Object(obj)
+}
+
+/// R55.G.11 §5.49 — wire serialization for `PathStyle`. Both arms are
+/// optional (a Path may stroke without filling or vice versa), so the
+/// wire keeps them as `null`-able fields.
+fn path_style_to_json(style: pinion_core::style::PathStyle) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert(
+        "stroke".to_string(),
+        style.stroke.map_or(Value::Null, stroke_to_json),
+    );
+    obj.insert(
+        "fill".to_string(),
+        style.fill.map_or(Value::Null, color_to_json),
+    );
+    Value::Object(obj)
+}
+
+/// R55.G.11 §5.49 — wire serialization for `Fit`. Bare string per
+/// variant (CSS `object-fit` vocabulary); wildcard arm for future
+/// additions.
+fn fit_to_json(fit: pinion_core::style::Fit) -> Value {
+    use pinion_core::style::Fit;
+    let name = match fit {
+        Fit::Fill => "Fill",
+        Fit::Contain => "Contain",
+        Fit::Cover => "Cover",
+        Fit::Tile => "Tile",
+        _ => "Unknown",
+    };
+    Value::String(name.to_string())
+}
+
+/// R55.G.11 §5.49 — wire serialization for `ImageStyle`. `tint` is
+/// optional (a `None` tint paints the source as-is) so the wire emits
+/// `null` when absent.
+fn image_style_to_json(style: pinion_core::style::ImageStyle) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("fit".to_string(), fit_to_json(style.fit));
+    obj.insert(
+        "tint".to_string(),
+        style.tint.map_or(Value::Null, color_to_json),
+    );
+    Value::Object(obj)
 }
 
 /// R55.G.10 §5.49 — wire serialization for `LineHeight`. `Normal`
@@ -3768,6 +3838,94 @@ mod tests {
         let fs = style.get("font_style").unwrap().as_object().unwrap();
         assert_eq!(fs.get("kind"), Some(&Value::String("Oblique".into())));
         assert_eq!(fs.get("angle"), Some(&Value::Number(12.into())));
+    }
+
+    #[test]
+    fn r55_g11_scene_snapshot_path_wire_carries_style() {
+        // R55.G.11 §5.49 — PathStyle (stroke + fill) round-trips
+        // through the wire as `{stroke: {color, width, cap}, fill}`.
+        use pinion_core::scene::{PathCommand, PathNode, PathPoint, Rect};
+        use pinion_core::style::{PathStyle, Stroke, StrokeCap};
+        let mut node = PathNode::new(
+            Rect::new(0, 0, 50, 50),
+            vec![PathCommand::MoveTo(PathPoint::new(0.0, 0.0))],
+            PathStyle::default(),
+        );
+        node.style = PathStyle::stroked(
+            Stroke::new(Color::rgba(0x10, 0x20, 0x30, 0xff), 5)
+                .with_cap(StrokeCap::Square),
+        );
+        node.style.fill = Some(Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
+        let mut scene = Scene::Path(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").expect("style present").as_object().unwrap();
+        let stroke = style.get("stroke").unwrap().as_object().unwrap();
+        assert_eq!(stroke.get("width"), Some(&Value::Number(5.into())));
+        assert_eq!(stroke.get("cap"), Some(&Value::String("Square".into())));
+        let stroke_color = stroke.get("color").unwrap().as_object().unwrap();
+        assert_eq!(stroke_color.get("r"), Some(&Value::Number(0x10.into())));
+        let fill = style.get("fill").unwrap().as_object().unwrap();
+        assert_eq!(fill.get("g"), Some(&Value::Number(0xbb.into())));
+    }
+
+    #[test]
+    fn r55_g11_scene_snapshot_path_wire_null_arms_when_absent() {
+        // R55.G.11 §5.49 — `PathStyle::default()` carries `None`
+        // stroke and `None` fill; the wire emits `null` for both
+        // (no degenerate zero-channel colour or zero-width stroke).
+        use pinion_core::scene::{PathCommand, PathNode, PathPoint, Rect};
+        use pinion_core::style::PathStyle;
+        let node = PathNode::new(
+            Rect::new(0, 0, 1, 1),
+            vec![PathCommand::MoveTo(PathPoint::new(0.0, 0.0))],
+            PathStyle::default(),
+        );
+        let mut scene = Scene::Path(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").unwrap().as_object().unwrap();
+        assert_eq!(style.get("stroke"), Some(&Value::Null));
+        assert_eq!(style.get("fill"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn r55_g11_scene_snapshot_image_wire_carries_style() {
+        // R55.G.11 §5.49 — ImageStyle (fit + tint) round-trips through
+        // the wire. Optional tint is `null` when absent.
+        use pinion_core::scene::{ImageNode, Rect};
+        use pinion_core::style::{Fit, ImageStyle};
+        let mut node = ImageNode::new(
+            "asset://icon.png".to_string(),
+            Rect::new(0, 0, 64, 64),
+        );
+        node.style = ImageStyle::default()
+            .with_fit(Fit::Cover)
+            .with_tint(Color::rgba(0x44, 0x55, 0x66, 0xff));
+        let mut scene = Scene::Image(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").unwrap().as_object().unwrap();
+        assert_eq!(style.get("fit"), Some(&Value::String("Cover".into())));
+        let tint = style.get("tint").unwrap().as_object().unwrap();
+        assert_eq!(tint.get("r"), Some(&Value::Number(0x44.into())));
+    }
+
+    #[test]
+    fn r55_g11_scene_snapshot_image_wire_null_tint_when_absent() {
+        // R55.G.11 §5.49 — `ImageStyle.tint = None` -> wire `null`.
+        use pinion_core::scene::{ImageNode, Rect};
+        let node = ImageNode::new("asset://".to_string(), Rect::new(0, 0, 1, 1));
+        let mut scene = Scene::Image(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").unwrap().as_object().unwrap();
+        assert_eq!(style.get("tint"), Some(&Value::Null));
+        assert_eq!(style.get("fit"), Some(&Value::String("Fill".into())));
     }
 
     #[test]
