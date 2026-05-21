@@ -257,25 +257,41 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         result = resp.result
         return list(result) if isinstance(result, list) else []
 
-    def key(self, at: tuple[float, float], name: str) -> None:
-        """`scene/key` typed wrapper (R51.197 §5.49 §5.45).
+    def key(
+        self,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+        name: str = "",
+    ) -> None:
+        """`scene/key` typed wrapper (R51.197 / R51.202 §5.49 §5.45).
 
-        Inject a W3C `KeyboardEvent.key` string at logical cursor
-        `at = (x, y)`. The shell drains the deferred-input inbox
+        Mutually exclusive cursor target — supply exactly one of:
+          * `at = (x, y)` — explicit logical-pixel cursor coordinate.
+          * `path = "<tag>"` — R51.202 path-based form: the dispatcher
+            walks the paint scene for the first node carrying `tag`
+            and uses its rect centre as the key-event cursor target.
+            Eliminates the snapshot/lookup boilerplate.
+
+        Inject a W3C `KeyboardEvent.key` string at the resolved
+        cursor location. The shell drains the deferred-input inbox
         after this returns, applying `cursor_moved` then
         `handle_named_key`, so the substrate first offers the key
         to `V::apply_key` (focused widget shortcut) and falls
         through to the §5.45 R55.C.3 scroll arc for unhandled
-        arrow / page / Home / End over a `Scene::Scroll`. Follow
-        up with `snapshot` or `query` to observe the post-key
-        state.
+        arrow / page / Home / End over a `Scene::Scroll`.
         """
         if not name:
             raise ValueError("key name must not be empty")
-        self.request(
-            "scene/key",
-            {"at": {"x": float(at[0]), "y": float(at[1])}, "key": name},
-        )
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        params: dict[str, Any] = {"key": name}
+        if at is not None:
+            params["at"] = {"x": float(at[0]), "y": float(at[1])}
+        else:
+            assert path is not None
+            params["path"] = path
+        self.request("scene/key", params)
 
     def click(
         self,
@@ -311,21 +327,26 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
 
     def wheel(
         self,
-        at: tuple[float, float],
+        at: Optional[tuple[float, float]] = None,
         *,
+        path: Optional[str] = None,
         lines: Optional[tuple[float, float]] = None,
         pixels: Optional[tuple[float, float]] = None,
     ) -> None:
-        """`scene/wheel` typed wrapper (R51.195 §5.49 §5.45).
+        """`scene/wheel` typed wrapper (R51.195 / R51.202 §5.49 §5.45).
 
-        Inject a wheel event at logical cursor position `at = (x, y)`
-        with delta expressed as either lines or pixels (exactly one).
-        The shell drains the deferred-input inbox after this returns,
-        applies `cursor_moved` then `wheel`, and bumps the redraw
-        flag if the router dispatched against an attached
+        Mutually exclusive cursor target — supply exactly one of
+        `at = (x, y)` or `path = "<tag>"` (the latter resolves the
+        target via paint-scene lookup; see R51.202). Delta is also
+        mutually exclusive — supply exactly one of `lines` /
+        `pixels`. The shell drains the deferred-input inbox after
+        this returns, applies `cursor_moved` then `wheel`, and bumps
+        the redraw flag if the router dispatched against an attached
         `ScrollState`. Follow up with `snapshot(source="paint")` to
         observe the post-wheel offset.
         """
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
         if (lines is None) == (pixels is None):
             raise ValueError("exactly one of `lines` or `pixels` must be supplied")
         if lines is not None:
@@ -333,10 +354,13 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         else:
             assert pixels is not None
             delta = {"pixels": {"dx": float(pixels[0]), "dy": float(pixels[1])}}
-        self.request(
-            "scene/wheel",
-            {"at": {"x": float(at[0]), "y": float(at[1])}, "delta": delta},
-        )
+        params: dict[str, Any] = {"delta": delta}
+        if at is not None:
+            params["at"] = {"x": float(at[0]), "y": float(at[1])}
+        else:
+            assert path is not None
+            params["path"] = path
+        self.request("scene/wheel", params)
 
     def stderr_tail(self, n: int = 20) -> list[str]:
         return list(self._stderr_lines[-n:])

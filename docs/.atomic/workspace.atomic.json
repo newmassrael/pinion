@@ -24438,6 +24438,62 @@
         "R55.D ScrollBar / R55.F scene/scroll RPC method"
       ]
     },
+    "Round 537": {
+      "decision_summary": "R51.202 §5.49 path-based scene/wheel + scene/key — at/path 통합 패턴 cascade",
+      "changes_bullets": [
+        "resolve_at_or_path 공유 헬퍼 신규 — click/wheel/key 3 handler 동일 사용",
+        "resolve_path_to_click_center → resolve_path_to_center 리네이밍",
+        "scene/wheel: params 에 path 지원 (기존 at + delta 와 조합)",
+        "scene/key: params 에 path 지원 (기존 at + key 와 조합)",
+        "tools/rpc_verify.py wheel/key wrapper at/path mutually exclusive",
+        "hello_listbox_scroll: wheel(path='main_list_scroll', lines=...) 한 줄",
+        "hello_listbox_keyboard_scroll: key(path='main_list_scroll', name=...) 한 줄",
+        "2 새 dispatch tests: scene_wheel_path / scene_key_path"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2133/0/11 (+2 R51.202 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "5 demos 회귀 PASS — path-based input API 일관 적용",
+        "API 대칭성: 3 deferred-input method 모두 at/path 이수 패턴"
+      ],
+      "impact_refs": [
+        "5.49",
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "R51.200 absolute_rect_of — Scroll content 안 tag 의 절대좌표 변환",
+        "R51.198 carry: Path.commands + Image.source snapshot 노출",
+        "R55.D ScrollBar / R55.F scene/scroll RPC (offset query + scroll_to)"
+      ],
+      "publishable_decision_summary": "R51.202 §5.49 path-based scene/wheel + scene/key — at/path 통합 패턴 cascade",
+      "publishable_changes_bullets": [
+        "resolve_at_or_path 공유 헬퍼 신규 — click/wheel/key 3 handler 동일 사용",
+        "resolve_path_to_click_center → resolve_path_to_center 리네이밍",
+        "scene/wheel: params 에 path 지원 (기존 at + delta 와 조합)",
+        "scene/key: params 에 path 지원 (기존 at + key 와 조합)",
+        "tools/rpc_verify.py wheel/key wrapper at/path mutually exclusive",
+        "hello_listbox_scroll: wheel(path='main_list_scroll', lines=...) 한 줄",
+        "hello_listbox_keyboard_scroll: key(path='main_list_scroll', name=...) 한 줄",
+        "2 새 dispatch tests: scene_wheel_path / scene_key_path"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2133/0/11 (+2 R51.202 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "5 demos 회귀 PASS — path-based input API 일관 적용",
+        "API 대칭성: 3 deferred-input method 모두 at/path 이수 패턴"
+      ],
+      "publishable_impact_refs": [
+        "5.49",
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.200 absolute_rect_of — Scroll content 안 tag 의 절대좌표 변환",
+        "R51.198 carry: Path.commands + Image.source snapshot 노출",
+        "R55.D ScrollBar / R55.F scene/scroll RPC (offset query + scroll_to)"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

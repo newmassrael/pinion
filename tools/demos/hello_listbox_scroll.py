@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""hello-listbox scroll dogfood (§5.49 R59, R51.195 / R51.199).
+"""hello-listbox scroll dogfood (§5.49 R59, R51.195 / R51.202).
 
 The full closure of R51.192's original META violation: spawn
 hello-listbox, wheel-scroll over the viewport, and confirm `offset_y`
@@ -8,16 +8,15 @@ moved without asking a human to describe the screen.
 Sequence:
   1. spawn hello-listbox
   2. snapshot paint scene  → assert initial Scroll.offset = (0, 0)
-  3. scene/wheel at the viewport centre, lines delta dy=+3
+  3. scene/wheel `{path: "main_list_scroll", lines: (0, 3)}`
      (positive dy = content scrolls down, per the W3C convention
      R51.192 fixed at the winit boundary)
   4. snapshot paint scene  → assert Scroll.offset_y > 0
 
-R51.199 §5.49 — `(cx, cy)` is no longer hardcoded. The demo asks for
-a paint snapshot, walks the tree for the `main_list_scroll` tag,
-and wheel-injects at the Scroll's viewport centre. Layout tweaks
-that resize or recentre the viewport now relocate the input target
-with it instead of regressing this dogfood.
+R51.202 §5.49 — wheel target is the `main_list_scroll` tag, not a
+coordinate. Pre-R51.202 the demo computed the viewport centre by
+hand (`(WIN - VIEWPORT) / 2 + VIEWPORT / 2`); the path-based form
+collapses that into a single RPC call.
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ from rpc_verify import (
     RpcSubprocess,
     assert_eq,
     find_by_tag,
-    node_center,
     run_demo,
 )
 
@@ -49,9 +47,8 @@ def body() -> None:
             raise AssertionError("main_list_scroll tag not found in paint snapshot")
         assert_eq(scroll.get("offset_x"), 0, "initial offset_x")
         assert_eq(scroll.get("offset_y"), 0, "initial offset_y")
-        cx, cy = node_center(scroll)
 
-        listbox.wheel(at=(cx, cy), lines=(0.0, 3.0))
+        listbox.wheel(path="main_list_scroll", lines=(0.0, 3.0))
         # The deferred-input drain runs on the dispatcher's return
         # path, so a brief sleep lets winit's next user event tick
         # process the redraw bump before the next snapshot lands.

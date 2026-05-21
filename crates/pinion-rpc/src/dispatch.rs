@@ -610,7 +610,12 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
                 reason = "Vec is not DerefMut; manual reborrow required"
             )]
             let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            handle_scene_key(inbox, request.params.as_ref())
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            handle_scene_key(inbox, producer, last_paint_layout, request.params.as_ref())
         }
         "scene/wheel" => {
             // Same reborrow pattern as `scene/layout` — the inbox is
@@ -622,7 +627,12 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
                 reason = "Vec is not DerefMut; manual reborrow required"
             )]
             let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            handle_scene_wheel(inbox, request.params.as_ref())
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            handle_scene_wheel(inbox, producer, last_paint_layout, request.params.as_ref())
         }
         "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
         "scene/list_previews" => handle_scene_list_previews(previews),
@@ -772,27 +782,37 @@ where
     let Some(params) = params else {
         return Err(RpcError::invalid_params("missing params"));
     };
-
-    let at_param = params.get("at");
-    let path_param = params.get("path").and_then(Value::as_str);
-    let (x, y) = match (at_param, path_param) {
-        (Some(_), Some(_)) => {
-            return Err(RpcError::invalid_params(
-                "params.at and params.path are mutually exclusive — pick one",
-            ));
-        }
-        (None, None) => {
-            return Err(RpcError::invalid_params(
-                "params requires either `at: {x, y}` or `path: \"<tag>\"`",
-            ));
-        }
-        (Some(at_value), None) => parse_at_coords(at_value)?,
-        (None, Some(tag)) => {
-            resolve_path_to_click_center(tag, paint_producer, last_paint_layout)?
-        }
-    };
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
     inbox.push(DeferredInput::Click { x, y });
     Ok(Value::Null)
+}
+
+/// R51.201 / R51.202 §5.49 — shared `at` vs `path` resolution for
+/// every deferred-input dispatcher (`scene/click`, `scene/wheel`,
+/// `scene/key`). Returns the `(x, y)` cursor coordinate from either
+/// the literal `{at: {x, y}}` shape or the `{path: "<tag>"}` paint-
+/// scene lookup. Exactly one of `at` / `path` must be present —
+/// supplying neither or both is `invalid_params`.
+fn resolve_at_or_path<F>(
+    params: &Value,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
+) -> Result<(f64, f64), RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let at_param = params.get("at");
+    let path_param = params.get("path").and_then(Value::as_str);
+    match (at_param, path_param) {
+        (Some(_), Some(_)) => Err(RpcError::invalid_params(
+            "params.at and params.path are mutually exclusive — pick one",
+        )),
+        (None, None) => Err(RpcError::invalid_params(
+            "params requires either `at: {x, y}` or `path: \"<tag>\"`",
+        )),
+        (Some(at_value), None) => parse_at_coords(at_value),
+        (None, Some(tag)) => resolve_path_to_center(tag, paint_producer, last_paint_layout),
+    }
 }
 
 fn parse_at_coords(at_value: &Value) -> Result<(f64, f64), RpcError> {
@@ -814,7 +834,7 @@ fn parse_at_coords(at_value: &Value) -> Result<(f64, f64), RpcError> {
 /// (matching `scene/snapshot`'s default), walks the resulting scene
 /// for the first node tagged `target_tag`, and returns the rect
 /// centre as the click coordinate.
-fn resolve_path_to_click_center<F>(
+fn resolve_path_to_center<F>(
     target_tag: &str,
     paint_producer: Option<&mut F>,
     last_paint_layout: Option<&LayoutNode>,
@@ -987,28 +1007,21 @@ where
 /// `V::apply_key` (Slider arrows, Toggle Space, Button Enter, …),
 /// then falls through to the §5.45 R55.C.3 scroll arc for unhandled
 /// arrow / page / Home / End over a scroll container.
-fn handle_scene_key(
+fn handle_scene_key<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
     params: Option<&Value>,
-) -> Result<Value, RpcError> {
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     let Some(params) = params else {
         return Err(RpcError::invalid_params("missing params"));
     };
-    let at = params
-        .get("at")
-        .and_then(Value::as_object)
-        .ok_or_else(|| RpcError::invalid_params("params.at missing or not an object"))?;
-    let x = at
-        .get("x")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| RpcError::invalid_params("params.at.x missing or not a number"))?;
-    let y = at
-        .get("y")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| RpcError::invalid_params("params.at.y missing or not a number"))?;
     let key = params
         .get("key")
         .and_then(Value::as_str)
@@ -1016,6 +1029,10 @@ fn handle_scene_key(
     if key.is_empty() {
         return Err(RpcError::invalid_params("params.key must not be empty"));
     }
+    // R51.202 §5.49 — key location is either an explicit cursor
+    // coordinate or a tag lookup via the paint scene, mirroring
+    // `scene/click`'s shape.
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
     inbox.push(DeferredInput::Key {
         x,
         y,
@@ -1037,33 +1054,29 @@ fn handle_scene_key(
 /// `ShellCore::wheel` access from inside it. Returns `null` on
 /// success; the AI client follows up with `scene/snapshot` to observe
 /// the post-wheel offset change.
-fn handle_scene_wheel(
+fn handle_scene_wheel<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
     params: Option<&Value>,
-) -> Result<Value, RpcError> {
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     let Some(params) = params else {
         return Err(RpcError::invalid_params("missing params"));
     };
-    let at = params
-        .get("at")
-        .and_then(Value::as_object)
-        .ok_or_else(|| RpcError::invalid_params("params.at missing or not an object"))?;
-    let x = at
-        .get("x")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| RpcError::invalid_params("params.at.x missing or not a number"))?;
-    let y = at
-        .get("y")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| RpcError::invalid_params("params.at.y missing or not a number"))?;
     let delta_obj = params
         .get("delta")
         .and_then(Value::as_object)
         .ok_or_else(|| RpcError::invalid_params("params.delta missing or not an object"))?;
     let delta = parse_wheel_delta(delta_obj)?;
+    // R51.202 §5.49 — wheel target is either an explicit cursor
+    // coordinate or a tag lookup via the paint scene.
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
     inbox.push(DeferredInput::Wheel { x, y, delta });
     Ok(Value::Null)
 }
@@ -3276,6 +3289,67 @@ mod tests {
         // The introspect dump still rides alongside rect / tag.
         let intro = result.get("introspect").unwrap().as_object().unwrap();
         assert_eq!(intro.get("count"), Some(&Value::Number(7.into())));
+    }
+
+    // ---- R51.202 §5.49 — path-based scene/wheel + scene/key ----
+
+    #[test]
+    fn scene_wheel_path_resolves_to_tag_rect_center() {
+        use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), Scene::Container(
+                ContainerNode::new(vec![]),
+            ))
+            .with_tag("main_list_scroll");
+            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"path":"main_list_scroll","delta":{"lines":{"dx":0.0,"dy":3.0}}},"id":700}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(inbox.len(), 1);
+        let DeferredInput::Wheel { x, y, .. } = inbox[0] else {
+            panic!("expected Wheel variant");
+        };
+        // viewport (70, 78, 220, 164) → centre (180, 160).
+        assert!((x - 180.0).abs() < f64::EPSILON, "wheel x: {x}");
+        assert!((y - 160.0).abs() < f64::EPSILON, "wheel y: {y}");
+    }
+
+    #[test]
+    fn scene_key_path_resolves_to_tag_rect_center() {
+        use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), Scene::Container(
+                ContainerNode::new(vec![]),
+            ))
+            .with_tag("main_list_scroll");
+            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"path":"main_list_scroll","key":"PageDown"},"id":701}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(inbox.len(), 1);
+        let DeferredInput::Key { x, y, ref key } = inbox[0] else {
+            panic!("expected Key variant");
+        };
+        assert_eq!(key, "PageDown");
+        // viewport (0, 0, 220, 164) → centre (110, 82).
+        assert!((x - 110.0).abs() < f64::EPSILON, "key x: {x}");
+        assert!((y - 82.0).abs() < f64::EPSILON, "key y: {y}");
     }
 
     // ---- R51.201 §5.49 — path-based scene/click ----

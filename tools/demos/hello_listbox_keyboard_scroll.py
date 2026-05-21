@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""hello-listbox keyboard scroll dogfood (§5.49 R59, R51.197 / R51.199).
+"""hello-listbox keyboard scroll dogfood (§5.49 R59, R51.197 / R51.202).
 
 Mirror of `hello_listbox_scroll.py` but driven through `scene/key`
 instead of `scene/wheel`. Exercises the §5.45 R55.C.3 keyboard scroll
@@ -12,7 +12,7 @@ which walks the deepest `Scene::Scroll` under the cursor and applies
 Sequence:
   1. spawn hello-listbox
   2. snapshot (paint) → find `main_list_scroll`, assert offset = (0, 0)
-  3. scene/key "PageDown" at the Scroll viewport centre
+  3. scene/key `{path: "main_list_scroll", key: "PageDown"}`
   4. snapshot → assert offset_y > 0
 
 `PageDown` is one full viewport step which always lands a visible
@@ -20,9 +20,8 @@ delta regardless of the line-height multiplier, keeping the
 assertion robust against future tweaks. The horizontal axis stays
 untouched.
 
-R51.199 §5.49 — `(cx, cy)` is no longer hardcoded. The demo asks
-for a paint snapshot, walks the tree for the `main_list_scroll`
-tag, and key-injects at the Scroll's viewport centre.
+R51.202 §5.49 — key target is now the `main_list_scroll` tag, not
+a coordinate. Pre-R51.202 the demo hand-rolled the viewport centre.
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ from rpc_verify import (
     RpcSubprocess,
     assert_eq,
     find_by_tag,
-    node_center,
     run_demo,
 )
 
@@ -54,9 +52,8 @@ def body() -> None:
             raise AssertionError("main_list_scroll tag not found in paint snapshot")
         assert_eq(scroll.get("offset_x"), 0, "initial offset_x")
         assert_eq(scroll.get("offset_y"), 0, "initial offset_y")
-        cx, cy = node_center(scroll)
 
-        listbox.key(at=(cx, cy), name="PageDown")
+        listbox.key(path="main_list_scroll", name="PageDown")
         time.sleep(0.1)
 
         after = listbox.snapshot(source="paint", viewport=(WIN_W, WIN_H))
