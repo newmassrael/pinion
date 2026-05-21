@@ -24332,6 +24332,56 @@
         "R55.D ScrollBar sub-widget / R55.F scene/scroll RPC method (11th typed)"
       ]
     },
+    "Round 535": {
+      "decision_summary": "R55.G.5 §5.45 layout 가 ScrollState max bounds 자동 write — chicken-and-egg 청산",
+      "changes_bullets": [
+        "pinion-runtime: update_scroll_state_bounds(scene) walker 신규",
+        "compute_layout_inner 가 lay_out_scroll_contents 후 호출",
+        "attached ScrollState 마다 content.rect 기반 max_x/max_y 자동 set",
+        "hello-listbox view fn: content_h 계산 + manual set_max 청산",
+        "hello-listbox: r51_191_view_sets_scroll_max_from_content_overflow test 제거",
+        "1 새 layout test: r55_g5_layout_writes_scroll_max_from_content_height"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2126/0/11 (net 변화 없음)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "5 demos 회귀 PASS — hello-listbox 의 scroll bounds 동일 작동",
+        "Signal equality-skip 로 steady-state 동일 업데이트 = no repaint"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.21"
+      ],
+      "carry_forward_bullets": [
+        "R51.200 absolute_rect_of(node, path) walker — nested scroll 절대좌표 변환",
+        "R55.D ScrollBar sub-widget (SCXML statechart 새 axis)",
+        "R55.F scene/scroll RPC method (11th typed) — offset query + scroll_to action"
+      ],
+      "publishable_decision_summary": "R55.G.5 §5.45 layout 가 ScrollState max bounds 자동 write — chicken-and-egg 청산",
+      "publishable_changes_bullets": [
+        "pinion-runtime: update_scroll_state_bounds(scene) walker 신규",
+        "compute_layout_inner 가 lay_out_scroll_contents 후 호출",
+        "attached ScrollState 마다 content.rect 기반 max_x/max_y 자동 set",
+        "hello-listbox view fn: content_h 계산 + manual set_max 청산",
+        "hello-listbox: r51_191_view_sets_scroll_max_from_content_overflow test 제거",
+        "1 새 layout test: r55_g5_layout_writes_scroll_max_from_content_height"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2126/0/11 (net 변화 없음)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "5 demos 회귀 PASS — hello-listbox 의 scroll bounds 동일 작동",
+        "Signal equality-skip 로 steady-state 동일 업데이트 = no repaint"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.21"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.200 absolute_rect_of(node, path) walker — nested scroll 절대좌표 변환",
+        "R55.D ScrollBar sub-widget (SCXML statechart 새 axis)",
+        "R55.F scene/scroll RPC method (11th typed) — offset query + scroll_to action"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

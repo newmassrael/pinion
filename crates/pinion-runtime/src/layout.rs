@@ -205,6 +205,13 @@ fn compute_layout_inner(
     // tree now needs its content re-entered with its own taffy
     // pass. Content rects come out in scroll-local coordinates.
     lay_out_scroll_contents(scene, cache);
+    // R55.G.5 §5.45 — automatic max-bound write. The content's
+    // post-layout rect carries the true intrinsic size; pushing it
+    // into the attached `ScrollState` here retires the pre-R55.G.5
+    // chicken-and-egg workaround where every view fn had to
+    // duplicate the row-count × row-height arithmetic and call
+    // `set_max` manually before the layout pass had even run.
+    update_scroll_state_bounds(scene);
 }
 
 /// R55.G.2 §5.45 — walks the scene and lays out each `Scene::Scroll`
@@ -223,6 +230,43 @@ fn lay_out_scroll_contents(scene: &mut Scene, cache: &mut LayoutCache) {
             let vw = s.viewport.w;
             let vh = s.viewport.h;
             compute_layout_inner(s.content.as_mut(), cache, vw, vh, true);
+        }
+        _ => {}
+    }
+}
+
+/// R55.G.5 §5.45 — walks the scene and, for every `Scene::Scroll`
+/// with an attached `ScrollState`, writes the layout-derived max
+/// bounds (`content_size - viewport_size`, clamped to 0). Called
+/// after [`lay_out_scroll_contents`] so the content rect is
+/// authoritative.
+///
+/// The `Signal::set` calls inside `ScrollState::set_max` are
+/// equality-skipped (R51.149), so a steady-state frame with
+/// unchanged content geometry does not schedule a paint.
+#[allow(clippy::cast_possible_wrap)]
+fn update_scroll_state_bounds(scene: &Scene) {
+    match scene {
+        Scene::Container(c) => {
+            for child in &c.children {
+                update_scroll_state_bounds(child);
+            }
+        }
+        Scene::Scroll(s) => {
+            if let Some(state) = s.state.as_ref() {
+                let content_rect = s.content.rect();
+                // Content rect is scroll-local (origin at (0, 0)),
+                // so `rect.w/h` already encode the intrinsic content
+                // size — no `+ rect.x/y` accumulation needed.
+                let max_x = content_rect.w.saturating_sub(s.viewport.w);
+                let max_y = content_rect.h.saturating_sub(s.viewport.h);
+                state.set_max(
+                    i32::try_from(max_x).unwrap_or(i32::MAX),
+                    i32::try_from(max_y).unwrap_or(i32::MAX),
+                );
+            }
+            // Recurse into content so nested Scrolls also update.
+            update_scroll_state_bounds(s.content.as_ref());
         }
         _ => {}
     }
@@ -755,6 +799,42 @@ mod tests {
             assert_eq!(r0.rect, Rect::new(0, 0, 220, 28));
             assert_eq!(r1.rect, Rect::new(0, 34, 220, 28));
             assert_eq!(r2.rect, Rect::new(0, 68, 220, 28));
+        }
+
+        #[test]
+        fn r55_g5_layout_writes_scroll_max_from_content_height() {
+            // R55.G.5 §5.45 — after `compute_layout`, the attached
+            // `ScrollState`'s max_y reflects the actual laid-out
+            // content height minus the clip viewport. Pre-R55.G.5
+            // every view fn duplicated this arithmetic + called
+            // `set_max` manually; now the layout pass writes it.
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            // 12 rows × 28 + 11 × 6 gap = 402 intrinsic height; the
+            // viewport is 164 tall, so the expected max_y = 238.
+            let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(rows).with_layout(
+                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
+                ),
+            );
+            let state = Rc::new(ScrollState::new());
+            // Sanity: bound starts at the `ScrollState::new` default
+            // (0) so the test catches a real write, not a no-op.
+            assert_eq!(state.max(), (0, 0));
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content)
+                .with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            let (max_x, max_y) = state.max();
+            assert_eq!(max_x, 0, "content fits horizontally, no x overflow");
+            assert_eq!(
+                max_y, 238,
+                "max_y = content_h(402) - viewport_h(164)"
+            );
         }
 
         #[test]

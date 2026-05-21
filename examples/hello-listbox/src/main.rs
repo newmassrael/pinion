@@ -170,17 +170,11 @@ impl ListState {
 fn view(state: ListState, _frame: &Frame) -> Scene {
     let active = active_option_index(state);
     // (R51.190) `from_state` derives both offset and tag from the
-    // cached `ScrollState`. `set_max` updates the upper bound from
-    // the current content size — when N is constant the bound never
-    // changes, but the call is idempotent and survives future
-    // dynamic-N demos.
+    // cached `ScrollState`. The §5.45 R55.G.5 runtime layout pass
+    // now writes the state's max bounds from the laid-out content
+    // dimensions, so the view fn no longer has to duplicate the
+    // row-count × row-height arithmetic to seed the bound manually.
     let scroll_state = use_scroll_state(SCROLL_KEY);
-    let content_h = u32::try_from(N).unwrap_or(0) * ROW_HEIGHT
-        + u32::try_from(N.saturating_sub(1)).unwrap_or(0) * ROW_GAP;
-    scroll_state.set_max(
-        0,
-        i32::try_from(content_h.saturating_sub(VIEWPORT_H)).unwrap_or(0),
-    );
 
     let rows: Vec<Scene> = (0..N)
         .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, Some(i) == Some(active)))
@@ -910,26 +904,12 @@ mod a11y_tests {
         assert_eq!(scroll.tag.as_deref(), Some(SCROLL_KEY));
     }
 
-    #[test]
-    fn r51_191_view_sets_scroll_max_from_content_overflow() {
-        // Content height = N rows × (height + gap) - gap; the
-        // matching ScrollState bound = content - viewport. The view
-        // fn updates this each call so the bound tracks N.
-        let _scene = run_view(unselected_state());
-        // The state lives on the current Owner — re-resolve via the
-        // same key to inspect.
-        let owner = Owner::new();
-        owner.run(|| {
-            // First view call inside this owner populates the cache.
-            let _ = view(unselected_state(), &Frame::default());
-            let state = use_scroll_state(SCROLL_KEY);
-            let (_max_x, max_y) = state.max();
-            let content_h = u32::try_from(N).unwrap_or(0) * ROW_HEIGHT
-                + u32::try_from(N.saturating_sub(1)).unwrap_or(0) * ROW_GAP;
-            let expected = i32::try_from(content_h.saturating_sub(VIEWPORT_H)).unwrap_or(0);
-            assert_eq!(max_y, expected);
-        });
-    }
+    // R55.G.5 §5.45 — the pre-R51.191 view-fn `set_max` call is
+    // retired: the runtime layout pass now writes the scroll max
+    // bounds from the laid-out content rect. End-to-end coverage
+    // lives in `pinion-runtime`'s `r55_g5_layout_writes_scroll_max_from_content_height`
+    // test, which constructs an equivalent scroll-content shape and
+    // asserts the layout-derived max_y value.
 
     #[test]
     fn r55_g2_view_rows_carry_flex_layout_sidecar_not_manual_rects() {
