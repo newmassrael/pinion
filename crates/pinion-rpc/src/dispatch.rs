@@ -873,71 +873,149 @@ where
     Ok((cx, cy))
 }
 
-/// R51.201 / R51.200 §5.49 — depth-first walk of the scene tree for
-/// the first node with `tag == target_tag`. Descends through
+/// R51.201 / R51.200 / R55.G.7 §5.49 — depth-first walk of the scene
+/// tree for the first node with `tag == target_tag`. Descends through
 /// `Container.children` and `Scroll.content`; returns `None` when no
-/// node carries the tag.
+/// node carries the tag *or* when the matched node lies entirely
+/// outside the active Scroll viewport stack.
 ///
 /// **Coordinate translation** (R51.200): rects inside a
 /// `Scene::Scroll.content` are scroll-local, while everything else
 /// is window-absolute. This walker accumulates `(viewport.x -
 /// offset_x, viewport.y - offset_y)` on each Scroll boundary so the
-/// returned rect is *always* window-absolute. Tags scrolled off the
-/// viewport return their would-be absolute position (the input
-/// router's hit-test then misses naturally — matching what a real
-/// click at that screen coord would do).
+/// returned rect is *always* window-absolute.
+///
+/// **Viewport clipping** (R55.G.7 carry-of-R51.200): the walker also
+/// tracks the intersection of every enclosing Scroll's window-abs
+/// viewport. The matched rect gets clipped against this stack —
+/// content rows that overflow the viewport in width or height return
+/// only their visible portion, so the click target lands on the
+/// pixels the user actually sees. A row fully scrolled off returns
+/// `None` (explicit "tag not visible") instead of a degenerate (0,0)
+/// origin saturation; the upstream RPC handler then surfaces a
+/// proper `invalid_params` error rather than dispatching a phantom
+/// click at the window corner.
 fn find_rect_by_tag(scene: &Scene, target_tag: &str) -> Option<pinion_core::scene::Rect> {
-    find_rect_by_tag_with_offset(scene, target_tag, 0, 0)
+    find_rect_by_tag_with_offset(scene, target_tag, 0, 0, None)
 }
 
+/// R55.G.7 §5.49 carry-of-R51.200 — translate a current-frame rect
+/// into window-absolute coords via the accumulated `(x_off, y_off)`
+/// shift, intersect with `clip` (the Scroll viewport stack), and
+/// saturate back to `u32`. Returns `None` when the result is empty
+/// (rect lies fully outside the clip, e.g. scrolled off-viewport).
 #[allow(
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
     clippy::cast_possible_truncation,
     reason = "u32 ↔ i64 ↔ u32 round-trip on bounded scene coords; saturate at 0 below"
 )]
+fn translate_rect_into_clip(
+    rect: pinion_core::scene::Rect,
+    x_off: i64,
+    y_off: i64,
+    clip: Option<pinion_core::scene::Rect>,
+) -> Option<pinion_core::scene::Rect> {
+    use pinion_core::scene::Rect;
+    let rect_left = i64::from(rect.x) + x_off;
+    let rect_top = i64::from(rect.y) + y_off;
+    let rect_right = rect_left + i64::from(rect.w);
+    let rect_bottom = rect_top + i64::from(rect.h);
+    let (clip_left, clip_top, clip_right, clip_bottom) = match clip {
+        Some(c) => {
+            let cl = i64::from(c.x);
+            let ct = i64::from(c.y);
+            (cl, ct, cl + i64::from(c.w), ct + i64::from(c.h))
+        }
+        None => (i64::MIN, i64::MIN, i64::MAX, i64::MAX),
+    };
+    let visible_left = rect_left.max(clip_left);
+    let visible_top = rect_top.max(clip_top);
+    let visible_right = rect_right.min(clip_right);
+    let visible_bottom = rect_bottom.min(clip_bottom);
+    if visible_right <= visible_left || visible_bottom <= visible_top {
+        return None;
+    }
+    let out_x = visible_left.max(0) as u32;
+    let out_y = visible_top.max(0) as u32;
+    let out_w = (visible_right - i64::from(out_x)) as u32;
+    let out_h = (visible_bottom - i64::from(out_y)) as u32;
+    Some(Rect::new(out_x, out_y, out_w, out_h))
+}
+
 fn find_rect_by_tag_with_offset(
     scene: &Scene,
     target_tag: &str,
     x_off: i64,
     y_off: i64,
+    clip: Option<pinion_core::scene::Rect>,
 ) -> Option<pinion_core::scene::Rect> {
-    use pinion_core::scene::Rect;
     use std::borrow::Cow;
     let tag_matches = |t: &Option<Cow<'static, str>>| -> bool {
         t.as_deref() == Some(target_tag)
     };
-    let translate = |r: Rect| -> Rect {
-        // i64 promotion + saturating clamp to fit u32. Coords inside
-        // a scrolled-off content tile may produce a negative absolute
-        // position; that maps to (0, 0, w, h), and the downstream
-        // hit-test then misses naturally.
-        let abs_x = (i64::from(r.x) + x_off).max(0) as u32;
-        let abs_y = (i64::from(r.y) + y_off).max(0) as u32;
-        Rect::new(abs_x, abs_y, r.w, r.h)
-    };
     match scene {
-        Scene::Box(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
-        Scene::Text(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
-        Scene::Path(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
-        Scene::Image(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
-        Scene::Container(n) => {
+        Scene::Box(n) => {
             if tag_matches(&n.tag) {
-                Some(translate(n.rect))
+                translate_rect_into_clip(n.rect, x_off, y_off, clip)
             } else {
-                n.children
-                    .iter()
-                    .find_map(|c| find_rect_by_tag_with_offset(c, target_tag, x_off, y_off))
+                None
             }
         }
-        Scene::External(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
+        Scene::Text(n) => {
+            if tag_matches(&n.tag) {
+                translate_rect_into_clip(n.rect, x_off, y_off, clip)
+            } else {
+                None
+            }
+        }
+        Scene::Path(n) => {
+            if tag_matches(&n.tag) {
+                translate_rect_into_clip(n.rect, x_off, y_off, clip)
+            } else {
+                None
+            }
+        }
+        Scene::Image(n) => {
+            if tag_matches(&n.tag) {
+                translate_rect_into_clip(n.rect, x_off, y_off, clip)
+            } else {
+                None
+            }
+        }
+        Scene::Container(n) => {
+            if tag_matches(&n.tag) {
+                translate_rect_into_clip(n.rect, x_off, y_off, clip)
+            } else {
+                n.children.iter().find_map(|c| {
+                    find_rect_by_tag_with_offset(c, target_tag, x_off, y_off, clip)
+                })
+            }
+        }
+        Scene::External(n) => {
+            if tag_matches(&n.tag) {
+                translate_rect_into_clip(n.rect, x_off, y_off, clip)
+            } else {
+                None
+            }
+        }
         Scene::Scroll(n) => {
             if tag_matches(&n.tag) {
-                Some(translate(n.viewport))
+                translate_rect_into_clip(n.viewport, x_off, y_off, clip)
             } else {
-                // Content rects are scroll-local; accumulate the
-                // scroll's absolute origin and subtract the scroll
-                // offset to translate content-local → window-absolute.
+                // Compute this scroll's window-abs viewport intersected
+                // with the inherited clip — that becomes the tightened
+                // clip window for the content recursion. Nested Scroll
+                // stacks fold their viewports correctly via the chain.
+                // `translate_rect_into_clip` does exactly this work for
+                // the viewport rect itself, so reuse it to derive the
+                // new clip in one call.
+                let new_clip = translate_rect_into_clip(
+                    n.viewport,
+                    x_off,
+                    y_off,
+                    clip,
+                )?;
                 let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
                 let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
                 find_rect_by_tag_with_offset(
@@ -945,6 +1023,7 @@ fn find_rect_by_tag_with_offset(
                     target_tag,
                     x_off + dx,
                     y_off + dy,
+                    Some(new_clip),
                 )
             }
         }
@@ -3753,6 +3832,122 @@ mod tests {
         // Absolute y = 78 + (100 - 30) + 28/2 = 78 + 70 + 14 = 162.
         assert!((x - 180.0).abs() < f64::EPSILON, "click x: {x}");
         assert!((y - 162.0).abs() < f64::EPSILON, "click y: {y}");
+    }
+
+    #[test]
+    fn r55_g7_scene_click_path_overwide_row_clips_to_viewport() {
+        // R55.G.7 carry-of-R51.200 §5.49 — a content row whose intrinsic
+        // width exceeds the Scroll viewport (e.g. a horizontally
+        // scrollable table column header) used to return its full
+        // un-clipped width, yielding a click centre far outside the
+        // viewport. The new translate_and_clip step intersects the
+        // row's window-abs rect with the viewport stack so the click
+        // lands inside the visible 220-wide slice.
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+        use pinion_core::Color;
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            // Row is 800 wide (overflows viewport 220) at content-local
+            // (0, 0, 800, 28) — viewport at (70, 78, 220, 164).
+            let row = Scene::Box(
+                BoxNode::filled(Rect::new(0, 0, 800, 28), Color::default())
+                    .with_tag("wide_row"),
+            );
+            let content = Scene::Container(ContainerNode::new(vec![row]));
+            let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), content);
+            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"wide_row"},"id":810}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let DeferredInput::Click { x, y } = inbox[0] else {
+            panic!("expected Click variant");
+        };
+        // Visible portion = (70, 78, 220, 28). Centre = (70 + 110, 78 + 14) = (180, 92).
+        // Pre-R55.G.7 the centre would have been at x = 70 + 400 = 470,
+        // way outside the 220-wide viewport.
+        assert!((x - 180.0).abs() < f64::EPSILON, "click x: {x}");
+        assert!((y - 92.0).abs() < f64::EPSILON, "click y: {y}");
+    }
+
+    #[test]
+    fn r55_g7_scene_click_path_partially_scrolled_off_row_clips_to_visible() {
+        // R55.G.7 carry-of-R51.200 — row that bleeds past the
+        // viewport's bottom edge (height extends beyond clip): the
+        // returned rect now matches only the visible portion.
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+        use pinion_core::Color;
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            // 100-tall row at content-local (0, 0, 220, 100), viewport
+            // height = 50, offset = 0 → bottom half is clipped.
+            let row = Scene::Box(
+                BoxNode::filled(Rect::new(0, 0, 220, 100), Color::default())
+                    .with_tag("tall_row"),
+            );
+            let content = Scene::Container(ContainerNode::new(vec![row]));
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 50), content);
+            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"tall_row"},"id":811}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let DeferredInput::Click { x, y } = inbox[0] else {
+            panic!("expected Click variant");
+        };
+        // Visible (0, 0, 220, 50) → centre (110, 25). Pre-fix would be
+        // centre.y = 50 (row's geometric centre, outside viewport).
+        assert!((x - 110.0).abs() < f64::EPSILON, "click x: {x}");
+        assert!((y - 25.0).abs() < f64::EPSILON, "click y: {y}");
+    }
+
+    #[test]
+    fn r55_g7_scene_click_path_fully_scrolled_off_row_returns_not_found() {
+        // R55.G.7 carry-of-R51.200 — row completely past the viewport
+        // edge (scrolled off) no longer returns a degenerate (0,0)
+        // saturation; the upstream handler surfaces "tag not found".
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+        use pinion_core::Color;
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            // Row at content-local (0, 500, 220, 28) — far below
+            // viewport of (0, 0, 220, 100) with offset 0.
+            let row = Scene::Box(
+                BoxNode::filled(Rect::new(0, 500, 220, 28), Color::default())
+                    .with_tag("offscreen_row"),
+            );
+            let content = Scene::Container(ContainerNode::new(vec![row]));
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 100), content);
+            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"offscreen_row"},"id":812}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        // Pre-R55.G.7 this returned success with click coords saturated
+        // to (110, 0) — a phantom click at the window top. Now the
+        // handler explicitly fails: tag is not visible.
+        assert!(resp.error.is_some(), "expected error for fully-scrolled-off tag");
+        assert_eq!(inbox.len(), 0, "no phantom click enqueued");
     }
 
     // ---- R51.202 §5.49 — path-based scene/wheel + scene/key ----

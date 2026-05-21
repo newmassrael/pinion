@@ -3642,6 +3642,7 @@ pub struct ScrollNode {
 - scene/snapshot dumps scene root + root External only; Container/Scroll traversal carries R51.194.
 - No wheel/key event injection RPC method yet; §5.45 R55 Scroll axis verify waits on R51.195.
 - Spawn needs X11/Wayland display; pure-headless mode is a §5.16 Vello backend carry.
+- R55.G.7: find_rect_by_tag clips to Scroll viewport stack; fully off-viewport tag returns None
 
 
 
@@ -15253,6 +15254,33 @@ if __name__ == "__main__":
 **Carry forward**:
 - R51.200 carry — find_rect_by_tag width/height translate when content > viewport (sub-edge)
 - Container.style + TextStyle snapshot exposure for §2 #7 scene-as-data completeness
+
+
+
+### Round 543 — R55.G.7 §5.49 carry-of-R51.200 — find_rect_by_tag clips to Scroll viewport stack (width/height intersect)
+
+**Changes**:
+- dispatch.rs: translate_rect_into_clip helper takes (rect, x_off, y_off, clip) -> Option<Rect>
+- find_rect_by_tag_with_offset gains clip: Option<Rect> param, threads Scroll viewport stack
+- Scroll boundary derives new_clip via translate_rect_into_clip(viewport,...) reused
+- over-wide / partially-scrolled / fully-off cases: 3 new tests verify clip semantics
+- fully-scrolled-off rect returns None (was: (0,0) saturation) so RPC surfaces 'not found'
+
+
+
+**Verification**:
+- cargo test (vello) = 2147 pass / 0 fail / 11 ignored (+3 R55.G.7 carry tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 7 demos PASS regression
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- Container.style + TextStyle snapshot exposure for §2 #7 scene-as-data completeness
+- scene/scroll at-based variant for consistency with click/wheel/key (intentional deviation now)
 
 
 
