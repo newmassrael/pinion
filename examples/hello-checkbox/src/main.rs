@@ -348,4 +348,17 @@ mod a11y_tests {
             "role marker must keep the check-glyph TextNode out of the DFS chain",
         );
     }
+
+    #[test]
+    fn r55_g20_view_contains_composite_paint_root_tag() {
+        // R55.G.20 §5.49 — paint scene must carry the composite
+        // `WidgetCore::tag()` so AI-side `{path: "main_checkbox"}`
+        // input routing and `rect_for_tag` AT bounds attach resolve.
+        let scene = view(CheckboxState::Idle, false, &Frame::new());
+        assert!(
+            scene.contains_tag(CheckboxView::tag()),
+            "view must contain a node tagged {:?}",
+            CheckboxView::tag(),
+        );
+    }
 }

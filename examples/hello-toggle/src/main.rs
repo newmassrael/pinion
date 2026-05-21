@@ -366,4 +366,20 @@ mod a11y_tests {
         let nodes = enriched((ToggleState::Idle, true), None);
         assert_eq!(nodes[0].name.as_deref(), Some("Dark mode"));
     }
+
+    #[test]
+    fn r55_g20_view_contains_composite_paint_root_tag() {
+        // R55.G.20 §5.49 — paint scene must carry the composite
+        // `WidgetCore::tag()` so `scene/click` / `scene/key` /
+        // `scene/wheel` `{path: "main_toggle"}` AI-side input routing
+        // and `rect_for_tag` AT bounds attach resolve to the toggle.
+        // hello-toggle places the tag on the inner track container;
+        // this test pins the convention regardless of where it lives.
+        let scene = view(ToggleState::Idle, false, &Frame::default());
+        assert!(
+            scene.contains_tag(ToggleView::tag()),
+            "view must contain a node tagged {:?}",
+            ToggleView::tag(),
+        );
+    }
 }

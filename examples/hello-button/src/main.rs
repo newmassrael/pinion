@@ -397,4 +397,20 @@ mod a11y_tests {
             "name comes from enrich_names_from_scene, not from access_node"
         );
     }
+
+    #[test]
+    fn r55_g20_view_contains_composite_paint_root_tag() {
+        // R55.G.20 §5.49 — paint scene must carry the composite
+        // `WidgetCore::tag()` so AI-side `{path: "main_btn"}` input
+        // routing and `rect_for_tag` AT bounds attach resolve. Wraps
+        // `view` in `Owner::new()` because the hover animation
+        // observes `Owner::current()` on first call (R51.147 §5.28).
+        let owner = pinion_core::Owner::new();
+        let scene = owner.run(|| view(ButtonState::Idle, &Frame::new()));
+        assert!(
+            scene.contains_tag(ButtonView::tag()),
+            "view must contain a node tagged {:?}",
+            ButtonView::tag(),
+        );
+    }
 }

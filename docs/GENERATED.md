@@ -15605,6 +15605,34 @@ if __name__ == "__main__":
 
 
 
+### Round 556 — R55.G.20 — §5.49 convention test coverage extended to 6 remaining composites (toggle/button/checkbox/radio/slider/slider-vertical) via Scene::contains_tag
+
+**Changes**:
+- examples/hello-toggle: r55_g20_view_contains_composite_paint_root_tag test
+- examples/hello-button: r55_g20_view_contains_composite_paint_root_tag test (Owner-wrapped)
+- examples/hello-checkbox: r55_g20_view_contains_composite_paint_root_tag test
+- examples/hello-radio + hello-slider + hello-slider-vertical: same convention test added
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2188 pass / 0 fail / 11 ignored (+6)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 9 widgets covered total (R55.G.19 listbox/radio-group/listbox-multi + R55.G.20 atomics)
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- hello-commands convention test (no existing test module — defer until test layer needed)
+- F1 framework auto-tag deferred (regression risk against inner-tag widgets like hello-toggle)
+- R55.D — ScrollBar sub-widget (visible drag + SCXML statechart) ~400-600 LOC
+- R56 — TextField + IME (caret + selection + IME composition) ~1000+ LOC
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

@@ -479,4 +479,17 @@ mod a11y_tests {
         );
         assert!(nodes[0].state.focused);
     }
+
+    #[test]
+    fn r55_g20_view_contains_composite_paint_root_tag() {
+        // R55.G.20 §5.49 — paint scene must carry the composite
+        // `WidgetCore::tag()` so AI-side `{path: "main_slider"}`
+        // input routing and `rect_for_tag` AT bounds attach resolve.
+        let scene = view(SliderState::Idle, 0.5, &Frame::new());
+        assert!(
+            scene.contains_tag(SliderVerticalView::tag()),
+            "view must contain a node tagged {:?}",
+            SliderVerticalView::tag(),
+        );
+    }
 }

@@ -329,4 +329,17 @@ mod a11y_tests {
         let nodes = RadioView::access_node(&(RadioState::Idle, false), Some("main_radio"));
         assert!(nodes[0].state.focused);
     }
+
+    #[test]
+    fn r55_g20_view_contains_composite_paint_root_tag() {
+        // R55.G.20 §5.49 — paint scene must carry the composite
+        // `WidgetCore::tag()` so AI-side `{path: "main_radio"}`
+        // input routing and `rect_for_tag` AT bounds attach resolve.
+        let scene = view(RadioState::Idle, false, &Frame::new());
+        assert!(
+            scene.contains_tag(RadioView::tag()),
+            "view must contain a node tagged {:?}",
+            RadioView::tag(),
+        );
+    }
 }
