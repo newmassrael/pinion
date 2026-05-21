@@ -15110,6 +15110,36 @@ if __name__ == "__main__":
 
 
 
+### Round 538 — R51.200 §5.49 find_rect_by_tag 가 Scroll content 의 abs 좌표 누적 변환
+
+**Changes**:
+- find_rect_by_tag_with_offset(x_off, y_off) recursive walker 신규
+- Scroll content 진입 시 (viewport.x - offset_x, viewport.y - offset_y) 누적
+- i64 증분 후 saturating clamp — scroll-off 영역 = (0,0) 좌표
+- Container.rect / leaf rect / External.rect 모두 translate 적용
+- path-based click/wheel/key 가 높이 구조 안 태그 도 정확한 abs
+- 2 새 tests: scene_click_path_inside_scroll {translates / with offset subtracts}
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2135/0/11 (+2 R51.200 tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 5 demos 회귀 PASS — 기존 root-level path-based input 계속 작동
+- scrolled-off region click = (0, 0) abs → input router miss — 일관 하지만 safe
+
+
+
+**Impact**: §5.49, §5.7, §5.45
+
+
+**Carry forward**:
+- hello-listbox row click demo — path='main_list#N' 의 first-consumer evidence
+- R51.198 carry: Path.commands + Image.source snapshot 노출
+- R55.D ScrollBar sub-widget / R55.F scene/scroll RPC method
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

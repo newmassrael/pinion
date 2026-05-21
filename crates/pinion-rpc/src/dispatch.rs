@@ -865,41 +865,79 @@ where
     Ok((cx, cy))
 }
 
-/// R51.201 §5.49 — depth-first walk of the scene tree for the first
-/// node with `tag == target_tag`. Descends through `Container.children`
-/// and `Scroll.content`; returns `None` if no node carries the tag.
+/// R51.201 / R51.200 §5.49 — depth-first walk of the scene tree for
+/// the first node with `tag == target_tag`. Descends through
+/// `Container.children` and `Scroll.content`; returns `None` when no
+/// node carries the tag.
 ///
-/// Scroll content rects are scroll-local — clicking on a tag inside
-/// a Scroll therefore lands on the content-local coordinate, which
-/// only matches the absolute click target when the Scroll's
-/// `viewport.{x,y}` and `offset_{x,y}` are both zero. The R51.200
-/// carry plans an `absolute_rect_of` walker that lifts this
-/// constraint.
+/// **Coordinate translation** (R51.200): rects inside a
+/// `Scene::Scroll.content` are scroll-local, while everything else
+/// is window-absolute. This walker accumulates `(viewport.x -
+/// offset_x, viewport.y - offset_y)` on each Scroll boundary so the
+/// returned rect is *always* window-absolute. Tags scrolled off the
+/// viewport return their would-be absolute position (the input
+/// router's hit-test then misses naturally — matching what a real
+/// click at that screen coord would do).
 fn find_rect_by_tag(scene: &Scene, target_tag: &str) -> Option<pinion_core::scene::Rect> {
+    find_rect_by_tag_with_offset(scene, target_tag, 0, 0)
+}
+
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    reason = "u32 ↔ i64 ↔ u32 round-trip on bounded scene coords; saturate at 0 below"
+)]
+fn find_rect_by_tag_with_offset(
+    scene: &Scene,
+    target_tag: &str,
+    x_off: i64,
+    y_off: i64,
+) -> Option<pinion_core::scene::Rect> {
+    use pinion_core::scene::Rect;
     use std::borrow::Cow;
     let tag_matches = |t: &Option<Cow<'static, str>>| -> bool {
         t.as_deref() == Some(target_tag)
     };
+    let translate = |r: Rect| -> Rect {
+        // i64 promotion + saturating clamp to fit u32. Coords inside
+        // a scrolled-off content tile may produce a negative absolute
+        // position; that maps to (0, 0, w, h), and the downstream
+        // hit-test then misses naturally.
+        let abs_x = (i64::from(r.x) + x_off).max(0) as u32;
+        let abs_y = (i64::from(r.y) + y_off).max(0) as u32;
+        Rect::new(abs_x, abs_y, r.w, r.h)
+    };
     match scene {
-        Scene::Box(n) => tag_matches(&n.tag).then_some(n.rect),
-        Scene::Text(n) => tag_matches(&n.tag).then_some(n.rect),
-        Scene::Path(n) => tag_matches(&n.tag).then_some(n.rect),
-        Scene::Image(n) => tag_matches(&n.tag).then_some(n.rect),
+        Scene::Box(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
+        Scene::Text(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
+        Scene::Path(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
+        Scene::Image(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
         Scene::Container(n) => {
             if tag_matches(&n.tag) {
-                Some(n.rect)
+                Some(translate(n.rect))
             } else {
                 n.children
                     .iter()
-                    .find_map(|c| find_rect_by_tag(c, target_tag))
+                    .find_map(|c| find_rect_by_tag_with_offset(c, target_tag, x_off, y_off))
             }
         }
-        Scene::External(n) => tag_matches(&n.tag).then_some(n.rect),
+        Scene::External(n) => tag_matches(&n.tag).then(|| translate(n.rect)),
         Scene::Scroll(n) => {
             if tag_matches(&n.tag) {
-                Some(n.viewport)
+                Some(translate(n.viewport))
             } else {
-                find_rect_by_tag(n.content.as_ref(), target_tag)
+                // Content rects are scroll-local; accumulate the
+                // scroll's absolute origin and subtract the scroll
+                // offset to translate content-local → window-absolute.
+                let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
+                let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
+                find_rect_by_tag_with_offset(
+                    n.content.as_ref(),
+                    target_tag,
+                    x_off + dx,
+                    y_off + dy,
+                )
             }
         }
         _ => None,
@@ -3289,6 +3327,86 @@ mod tests {
         // The introspect dump still rides alongside rect / tag.
         let intro = result.get("introspect").unwrap().as_object().unwrap();
         assert_eq!(intro.get("count"), Some(&Value::Number(7.into())));
+    }
+
+    // ---- R51.200 §5.49 — nested-scroll absolute coord translation ----
+
+    #[test]
+    fn scene_click_path_inside_scroll_translates_to_absolute_coords() {
+        // A row tagged inside a `Scene::Scroll.content` has a
+        // scroll-local rect; the click target must be the window-
+        // absolute rect (`viewport.{x,y} + row.{x,y} - offset`) so
+        // the InputRouter hit-test lands on the right cell.
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+        use pinion_core::Color;
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            // Row at content-local (0, 34, 220, 28) inside a Scroll
+            // at viewport (70, 78, 220, 164) with offset_y = 0.
+            let row = Scene::Box(
+                BoxNode::filled(Rect::new(0, 34, 220, 28), Color::default())
+                    .with_tag("main_list#1"),
+            );
+            let content =
+                Scene::Container(ContainerNode::new(vec![row]).with_tag("rows"));
+            let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), content)
+                .with_tag("main_list_scroll");
+            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"main_list#1"},"id":800}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(inbox.len(), 1);
+        let DeferredInput::Click { x, y } = inbox[0] else {
+            panic!("expected Click variant");
+        };
+        // Absolute = (70 + 0 + 220/2, 78 + 34 + 28/2) = (180, 126).
+        assert!((x - 180.0).abs() < f64::EPSILON, "click x: {x}");
+        assert!((y - 126.0).abs() < f64::EPSILON, "click y: {y}");
+    }
+
+    #[test]
+    fn scene_click_path_inside_scroll_with_offset_subtracts_offset() {
+        // Same shape but the scroll has `offset_y = 30`, so the
+        // visible row position shifts up by 30 pixels.
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+        use pinion_core::Color;
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            let row = Scene::Box(
+                BoxNode::filled(Rect::new(0, 100, 220, 28), Color::default())
+                    .with_tag("main_list#3"),
+            );
+            let content =
+                Scene::Container(ContainerNode::new(vec![row]).with_tag("rows"));
+            let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), content)
+                .with_tag("main_list_scroll")
+                .with_offset(0, 30);
+            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"main_list#3"},"id":801}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let DeferredInput::Click { x, y } = inbox[0] else {
+            panic!("expected Click variant");
+        };
+        // Absolute y = 78 + (100 - 30) + 28/2 = 78 + 70 + 14 = 162.
+        assert!((x - 180.0).abs() < f64::EPSILON, "click x: {x}");
+        assert!((y - 162.0).abs() < f64::EPSILON, "click y: {y}");
     }
 
     // ---- R51.202 §5.49 — path-based scene/wheel + scene/key ----
