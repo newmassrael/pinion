@@ -193,8 +193,21 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
         content,
     );
 
+    // R55.G.17 §5.49 — wrap the `Scroll` in a transparent `Container`
+    // tagged `PRIMARY_TAG` so the composite root is paint-addressable
+    // via `{path: "main_list"}` for AI-side `scene/click` / `scene/key`
+    // / `scene/wheel` routing, and the AT bounds attached by
+    // `enrich_names_from_scene` + `rect_for_tag` land on the listbox's
+    // visible area (the scroll viewport) instead of the full window.
+    // The wrapper carries no style / layout, so flexbox auto-sizes it
+    // to the `Scroll`'s viewport — the outer centering then positions
+    // the wrapper exactly where the bare `Scroll` used to land.
+    let listbox_root = Scene::Container(
+        ContainerNode::new(vec![Scene::Scroll(scroll)]).with_tag(PRIMARY_TAG),
+    );
+
     Scene::Container(
-        ContainerNode::new(vec![Scene::Scroll(scroll)])
+        ContainerNode::new(vec![listbox_root])
             .with_style(BoxStyle::filled(BG_FILL))
             .with_layout(
                 LayoutStyle::new()

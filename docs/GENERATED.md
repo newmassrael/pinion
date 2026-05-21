@@ -15523,6 +15523,34 @@ if __name__ == "__main__":
 
 
 
+### Round 553 — R55.G.17 — §5.49 hello-listbox wraps Scroll in a transparent Container tagged main_list so scene/key {path: main_list} addresses the composite paint root (R55.G.12 carry close)
+
+**Changes**:
+- examples/hello-listbox/src/main.rs: view-fn wraps Scroll in Container::with_tag(PRIMARY_TAG)
+- tools/demos/hello_listbox_composite_path.py: 10th demo verifies ArrowDown via composite path
+- tools/demos/hello_listbox_snapshot.py: walkthrough updated for wrapper layer (children[0].tag)
+- AT bounds for main_list now match Scroll viewport (not full window) via rect_for_tag attach
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2175 pass / 0 fail / 11 ignored (unchanged)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 10 demos PASS (hello_listbox_composite_path 10th + 9 existing regression-free)
+- scene/key {path: main_list, ArrowDown} sequence: None->0 boundary + 0->1 step reach V::apply_key
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- F1 framework auto-tag deferred (regression risk against inner-tag widgets like hello-toggle)
+- R55.D — ScrollBar sub-widget (visible drag + SCXML statechart) ~400-600 LOC
+- R56 — TextField + IME (caret + selection + IME composition) ~1000+ LOC
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

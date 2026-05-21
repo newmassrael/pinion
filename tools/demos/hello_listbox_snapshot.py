@@ -10,16 +10,21 @@ is what the §5.45 R55 axis claims.
 
 Walkthrough (matches `examples/hello-listbox/src/main.rs`):
 
-  Container {
+  Container {                       # outer (BG_FILL + center flex)
     children: [
-      Scroll {
-        tag: "main_list_scroll",
-        viewport: { w: 220, h: 164 },
-        offset_x: 0,
-        offset_y: 0,
-        content: Container {
-          children: [<12 row Containers, each tagged "main_list#i">],
-        }
+      Container {                   # R55.G.17 wrapper (tagged "main_list")
+        tag: "main_list",
+        children: [
+          Scroll {
+            tag: "main_list_scroll",
+            viewport: { w: 220, h: 164 },
+            offset_x: 0,
+            offset_y: 0,
+            content: Container {
+              children: [<12 row Containers, each tagged "main_list#i">],
+            }
+          }
+        ]
       }
     ]
   }
@@ -61,7 +66,19 @@ def body() -> None:
         outer_children = snap.get("children") or []
         assert_eq(len(outer_children), 1, "outer Container children count")
 
-        scroll = outer_children[0]
+        # R55.G.17 §5.49 — Scroll is now wrapped in a Container tagged
+        # `main_list`. The wrapper makes the composite root paint-
+        # addressable via `{path: "main_list"}` and lets `rect_for_tag`
+        # attach the listbox's AT bounds to the visible viewport area
+        # rather than the full window.
+        listbox_root = outer_children[0]
+        assert_eq(listbox_root.get("type"), "Container", "listbox wrapper type")
+        assert_eq(listbox_root.get("tag"), "main_list", "listbox wrapper tag")
+
+        wrapper_children = listbox_root.get("children") or []
+        assert_eq(len(wrapper_children), 1, "listbox wrapper children count")
+
+        scroll = wrapper_children[0]
         assert_eq(scroll.get("type"), "Scroll", "scroll node type")
         assert_eq(scroll.get("tag"), "main_list_scroll", "scroll tag")
         assert_eq(scroll.get("offset_x"), 0, "initial offset_x")
