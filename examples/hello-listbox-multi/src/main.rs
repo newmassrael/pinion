@@ -87,13 +87,24 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
         .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, i == active))
         .collect();
     let column = Scene::Container(
-        ContainerNode::new(rows).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Column)
-                .with_align_items(AlignItems::Start)
-                .with_gap(ROW_GAP),
-        ),
+        ContainerNode::new(rows)
+            .with_tag(PRIMARY_TAG)
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Start)
+                    .with_gap(ROW_GAP),
+            ),
     );
+    // R55.G.18 §5.49 — the inner column carries `PRIMARY_TAG` so the
+    // composite root is paint-addressable via
+    // `{path: "main_list"}` (AI-side `scene/click` /
+    // `scene/key` / `scene/wheel` routing, and `rect_for_tag` AT
+    // bounds attach to the option column rather than the full
+    // window). Mirrors `hello-radio-group`'s sibling pattern — the
+    // column already has the layout sidecar that bounds the
+    // composite's visual surface, so the tag folds in without a
+    // separate wrapper layer.
     Scene::Container(
         ContainerNode::new(vec![column])
             .with_style(BoxStyle::filled(BG_FILL))

@@ -15551,6 +15551,33 @@ if __name__ == "__main__":
 
 
 
+### Round 554 — R55.G.18 — §5.49 hello-radio-group + hello-listbox-multi inner column carries PRIMARY_TAG so composite paint root is addressable (R55.G.17 convention parity)
+
+**Changes**:
+- examples/hello-radio-group/src/main.rs: column container with_tag(PRIMARY_TAG)
+- examples/hello-listbox-multi/src/main.rs: column container with_tag(PRIMARY_TAG)
+- no extra wrapper layer — column already bounds the composite visual surface
+- both follow R55.G.17 paint-addressable composite convention (sister widgets to hello-listbox)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2175 pass / 0 fail / 11 ignored (unchanged)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 10 demos PASS (no demos for hello-radio-group / hello-listbox-multi yet; sibling regressions clean)
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- F1 framework auto-tag deferred (regression risk against inner-tag widgets like hello-toggle)
+- R55.D — ScrollBar sub-widget (visible drag + SCXML statechart) ~400-600 LOC
+- R56 — TextField + IME (caret + selection + IME composition) ~1000+ LOC
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
