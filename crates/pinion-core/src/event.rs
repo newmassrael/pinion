@@ -47,6 +47,38 @@ pub enum PointerEvent {
     Down { coord: Coord },
     Up { coord: Coord },
     Move { coord: Coord },
+    /// (R55.C.1 §5.45) Mouse wheel input. `coord` is the pointer
+    /// location at the time of the wheel event (same convention as
+    /// [`Self::Move`]); the unit-tagged [`WheelDelta`] carries the
+    /// scroll magnitude on each axis. The runtime maps this into
+    /// scroll-container offset updates via the §5.41 input router.
+    Wheel { coord: Coord, delta: WheelDelta },
+}
+
+/// (R55.C.1 §5.45) Mouse wheel delta with explicit unit. Mirrors
+/// the W3C `WheelEvent.deltaMode` shape — wheel deltas arrive in
+/// different units depending on the input hardware and driver
+/// path, and the runtime must distinguish so it scales the scroll
+/// offset correctly (one notch on a legacy mouse wheel is not the
+/// same scroll magnitude as one pixel of trackpad inertia).
+///
+/// `#[non_exhaustive]` lets a future `Pages` variant (`PgUp` / `PgDn`
+/// driven coarse scroll) or a `World3D`-style unit ride in a minor
+/// bump without breaking downstream pattern matches.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WheelDelta {
+    /// Logical pixel delta on each axis. The default unit for
+    /// trackpads and high-resolution wheels that report
+    /// fine-grained movement. Sign convention follows the W3C: a
+    /// positive `dy` scrolls *downward* (content shifts up
+    /// visually) and a positive `dx` scrolls *rightward*.
+    Pixels { dx: f32, dy: f32 },
+    /// Discrete line delta on each axis. Standard for legacy
+    /// notched mouse wheels that report one click at a time. The
+    /// runtime multiplies by a configurable line-height to derive
+    /// pixel offsets. Sign convention matches [`Self::Pixels`].
+    Lines { dx: f32, dy: f32 },
 }
 
 /// Keyboard input. The `key` field is a placeholder until §5.13 settles
@@ -137,6 +169,85 @@ mod tests {
         let e = Event::Window(WindowEvent::Close);
         match e {
             Event::Window(_) | Event::Pointer(_) | Event::Key(_) | Event::External(_) => {}
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.C.1 §5.45 — Wheel input substrate. The variant carries a
+    // unit-tagged [`WheelDelta`] so the runtime / scroll dispatch
+    // layer can scale Pixels vs Lines correctly. Input-router
+    // wiring to ScrollState lives on a downstream sub-axis.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_c1_wheel_pixels_variant_constructs() {
+        // R55.C.1 — Pixels variant for trackpads / high-resolution
+        // wheels. Sign convention: positive dy scrolls downward.
+        let delta = WheelDelta::Pixels { dx: 0.0, dy: 12.5 };
+        match delta {
+            WheelDelta::Pixels { dx, dy } => {
+                assert!((dx - 0.0).abs() < f32::EPSILON);
+                assert!((dy - 12.5).abs() < f32::EPSILON);
+            }
+            WheelDelta::Lines { .. } => panic!("expected Pixels"),
+        }
+    }
+
+    #[test]
+    fn r55_c1_wheel_lines_variant_constructs() {
+        // R55.C.1 — Lines variant for legacy notched wheels. The
+        // runtime multiplies by a configurable line-height (carry,
+        // future round) to derive pixel offsets.
+        let delta = WheelDelta::Lines { dx: -1.0, dy: 3.0 };
+        match delta {
+            WheelDelta::Lines { dx, dy } => {
+                assert!((dx + 1.0).abs() < f32::EPSILON);
+                assert!((dy - 3.0).abs() < f32::EPSILON);
+            }
+            WheelDelta::Pixels { .. } => panic!("expected Lines"),
+        }
+    }
+
+    #[test]
+    fn r55_c1_wheel_event_round_trips_through_pointer() {
+        // R55.C.1 — PointerEvent::Wheel carries (coord, delta).
+        // The coord follows the same convention as Move / Down /
+        // Up — pointer location at the time of the wheel input.
+        let coord = Coord::logical(120.0, 240.0);
+        let delta = WheelDelta::Pixels { dx: 0.0, dy: 8.0 };
+        let event = Event::Pointer(PointerEvent::Wheel { coord, delta });
+        match event {
+            Event::Pointer(PointerEvent::Wheel { coord: c, delta: d }) => {
+                assert_eq!(c, coord);
+                assert_eq!(d, delta);
+            }
+            _ => panic!("expected Pointer(Wheel) variant"),
+        }
+    }
+
+    #[test]
+    fn r55_c1_pointer_event_match_exhaustive_within_crate() {
+        // R55.C.1 — in-crate exhaustive match guard forces a
+        // maintainer to touch this test when a new PointerEvent
+        // variant lands. Same shape as the top-level Event guard.
+        let pe = PointerEvent::Move {
+            coord: Coord::logical(0.0, 0.0),
+        };
+        match pe {
+            PointerEvent::Down { .. }
+            | PointerEvent::Up { .. }
+            | PointerEvent::Move { .. }
+            | PointerEvent::Wheel { .. } => {}
+        }
+    }
+
+    #[test]
+    fn r55_c1_wheel_delta_match_exhaustive_within_crate() {
+        // R55.C.1 — exhaustive match guard for the WheelDelta unit
+        // enum. A future Pages variant (PgUp / PgDn) trips this.
+        let d = WheelDelta::Pixels { dx: 0.0, dy: 0.0 };
+        match d {
+            WheelDelta::Pixels { .. } | WheelDelta::Lines { .. } => {}
         }
     }
 }

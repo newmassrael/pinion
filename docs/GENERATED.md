@@ -7388,6 +7388,36 @@ pub struct ScrollNode {
 
 
 
+### R51.185 — R51.185 §5.45 R55.C.1 PointerEvent::Wheel + WheelDelta substrate
+
+**Changes**:
+- pinion-core::event::PointerEvent::Wheel { coord, delta } — wheel input variant
+- pinion-core::event::WheelDelta — Pixels / Lines unit-tagged enum
+- pinion-core::event::tests — 5 R55.C.1 tests (Pixels/Lines/round-trip/exhaustive)
+
+
+
+**Verification**:
+- cargo test (vello) = 2038 / 0 / 10 (+5 R55.C.1 tests; was 2033)
+- cargo clippy 0 warnings (doc_markdown backtick polish on PgUp / PgDn)
+- ratify: Wheel variant + unit-tagged delta; W3C deltaMode shape
+
+
+
+**Impact**: §5.45, §5.13
+
+
+**Carry forward**:
+- R51.186 R55.C.2 — input router wires Wheel into ScrollState (offset deltas)
+- R51.187 R55.C.3 — KeyEvent extension for ArrowKey / PgUp / PgDn / Home / End
+- R51.188 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag statechart
+- R51.189 R55.E — paint clipping at Vello + TUI boundaries
+- R51.190 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)
+- R51.191 R55.G — ListBox + future composite integration through Scroll wrap
+- R55.B.2 — Animation<i32> smooth-scroll layer (additive on top of this substrate)
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:
