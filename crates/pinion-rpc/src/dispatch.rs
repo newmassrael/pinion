@@ -476,7 +476,17 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/query" => handle_scene_query(scene, request.params.as_ref()),
         "scene/click" => handle_scene_click(scene, request.params.as_ref()),
         "scene/rewind" => handle_scene_rewind(scene, request.params.as_ref()),
-        "scene/snapshot" => handle_scene_snapshot(scene, request.params.as_ref()),
+        "scene/snapshot" => {
+            // Same reborrow pattern as `scene/layout` — `dyn FnMut` is
+            // not `DerefMut`, so the manual `&mut **p` is required;
+            // clippy::option_as_ref_deref would mis-suggest `.as_deref_mut()`.
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            handle_scene_snapshot(scene, producer, request.params.as_ref())
+        }
         "scene/dry_run" => handle_scene_dry_run(scene, request.params.as_ref()),
         "scene/waitFor" => handle_scene_wait_for(scene, request.params.as_ref()),
         "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
@@ -688,18 +698,87 @@ fn rewind_error_to_rpc(err: RewindError) -> RpcError {
     RpcError::invalid_params(variant)
 }
 
-fn handle_scene_snapshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+/// R51.194 §5.49 §5.45 — `scene/snapshot` typed dispatcher.
+///
+/// Two scene sources are addressable through the `from` param:
+///   * `"state"` (default) — dump the application's state scene (root
+///     `External`), preserving the v0 wire shape every existing test
+///     and demo depends on.
+///   * `"paint"` — dump the paint scene produced by `V::view(state)` at
+///     the supplied (or default) viewport, so AI demos can walk the
+///     `Scene::Container` / `Scene::Scroll` hierarchy the shell
+///     actually renders. Requires the dispatcher's `paint_producer`
+///     wire (`DispatchContext::with_paint_producer`); fails with
+///     `PaintProducerUnavailable` when absent.
+///
+/// Paint-mode viewport resolution: `params.viewport = {w, h}` when
+/// present; otherwise defaults to 720×480 — a fixed fallback rather
+/// than the most-recent winit frame, because re-using the shell's
+/// frame size would create a hidden dependency between two RPC
+/// methods (`scene/resize` followed by `scene/snapshot from: paint`)
+/// that the v0 wire shape does not document. Demos pass an explicit
+/// viewport when they care.
+fn handle_scene_snapshot<F>(
+    scene: &Scene,
+    paint_producer: Option<&mut F>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
     let Some(params) = params else {
         return Err(RpcError::invalid_params("missing params"));
     };
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
+    let from = params
+        .get("from")
+        .and_then(Value::as_str)
+        .unwrap_or("state");
 
-    match snapshot(scene, path) {
-        Ok(node) => Ok(snapshot_node_to_json(node)),
-        Err(err) => Err(snapshot_error_to_rpc(err)),
-    }
+    let node = match from {
+        "state" => snapshot(scene, path).map_err(snapshot_error_to_rpc)?,
+        "paint" => {
+            let Some(producer) = paint_producer else {
+                return Err(RpcError::invalid_params("PaintProducerUnavailable"));
+            };
+            let (w, h) = parse_snapshot_viewport(params)?;
+            let paint_scene = (producer)(w, h);
+            snapshot(&paint_scene, path).map_err(snapshot_error_to_rpc)?
+        }
+        other => {
+            return Err(RpcError::invalid_params(format!(
+                "params.from must be \"state\" or \"paint\", got {other:?}",
+            )));
+        }
+    };
+
+    Ok(snapshot_node_to_json(node))
+}
+
+fn parse_snapshot_viewport(params: &Value) -> Result<(u32, u32), RpcError> {
+    let Some(vp) = params.get("viewport") else {
+        return Ok((720, 480));
+    };
+    let Some(obj) = vp.as_object() else {
+        return Err(RpcError::invalid_params(
+            "params.viewport must be an object {w, h}",
+        ));
+    };
+    let w = obj
+        .get("w")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| RpcError::invalid_params("params.viewport.w missing or not a u64"))?;
+    let h = obj
+        .get("h")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| RpcError::invalid_params("params.viewport.h missing or not a u64"))?;
+    let w = u32::try_from(w)
+        .map_err(|_| RpcError::invalid_params("params.viewport.w out of u32 range"))?;
+    let h = u32::try_from(h)
+        .map_err(|_| RpcError::invalid_params("params.viewport.h out of u32 range"))?;
+    Ok((w, h))
 }
 
 fn snapshot_error_to_rpc(err: SnapshotError) -> RpcError {
@@ -717,30 +796,75 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
         SnapshotNode::Text => "Text",
         SnapshotNode::Path => "Path",
         SnapshotNode::Image => "Image",
-        SnapshotNode::Container => "Container",
+        SnapshotNode::Container(_) => "Container",
         SnapshotNode::Effect => "Effect",
         SnapshotNode::External(_) => "External",
+        SnapshotNode::Scroll(_) => "Scroll",
         // `SnapshotNode::Unknown` and future non_exhaustive additions
         // collapse to "Unknown".
         _ => "Unknown",
     };
     obj.insert("type".to_string(), Value::String(type_tag.to_string()));
 
-    if let SnapshotNode::External(ExternalSnapshot { introspect }) = node {
-        match introspect {
-            Some(fields) => {
-                let mut intro = serde_json::Map::new();
-                for (name, value) in fields {
-                    intro.insert(name, introspect_value_to_json(value));
+    match node {
+        SnapshotNode::External(ExternalSnapshot { introspect }) => {
+            match introspect {
+                Some(fields) => {
+                    let mut intro = serde_json::Map::new();
+                    for (name, value) in fields {
+                        intro.insert(name, introspect_value_to_json(value));
+                    }
+                    obj.insert("introspect".to_string(), Value::Object(intro));
                 }
-                obj.insert("introspect".to_string(), Value::Object(intro));
-            }
-            None => {
-                obj.insert("introspect".to_string(), Value::Null);
+                None => {
+                    obj.insert("introspect".to_string(), Value::Null);
+                }
             }
         }
+        SnapshotNode::Container(snap) => {
+            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            let children = snap
+                .children
+                .into_iter()
+                .map(snapshot_node_to_json)
+                .collect();
+            obj.insert("children".to_string(), Value::Array(children));
+        }
+        SnapshotNode::Scroll(snap) => {
+            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            obj.insert("viewport".to_string(), snapshot_rect_to_json(snap.viewport));
+            obj.insert(
+                "offset_x".to_string(),
+                Value::Number(snap.offset_x.into()),
+            );
+            obj.insert(
+                "offset_y".to_string(),
+                Value::Number(snap.offset_y.into()),
+            );
+            obj.insert(
+                "content".to_string(),
+                snapshot_node_to_json(*snap.content),
+            );
+        }
+        _ => {}
     }
 
+    Value::Object(obj)
+}
+
+fn snapshot_tag_to_json(tag: Option<&str>) -> Value {
+    match tag {
+        Some(t) => Value::String(t.to_string()),
+        None => Value::Null,
+    }
+}
+
+fn snapshot_rect_to_json(rect: pinion_core::scene::Rect) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("x".to_string(), Value::Number(rect.x.into()));
+    obj.insert("y".to_string(), Value::Number(rect.y.into()));
+    obj.insert("w".to_string(), Value::Number(rect.w.into()));
+    obj.insert("h".to_string(), Value::Number(rect.h.into()));
     Value::Object(obj)
 }
 
@@ -2322,6 +2446,121 @@ mod tests {
         let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn scene_snapshot_container_wire_carries_tag_and_children_array() {
+        use pinion_core::scene::ContainerNode;
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![counted_scene(7)]).with_tag("root"),
+        );
+        let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":""},"id":140}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("Container".into())));
+        assert_eq!(result.get("tag"), Some(&Value::String("root".into())));
+        let children = result.get("children").unwrap().as_array().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(
+            children[0].get("type"),
+            Some(&Value::String("External".into())),
+        );
+        let intro = children[0].get("introspect").unwrap().as_object().unwrap();
+        assert_eq!(intro.get("count"), Some(&Value::Number(7.into())));
+    }
+
+    #[test]
+    fn scene_snapshot_paint_mode_uses_producer_scene() {
+        use pinion_core::scene::{ContainerNode, ScrollNode, Rect};
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Scroll(
+                    ScrollNode::new(
+                        Rect::new(0, 0, 220, 164),
+                        Scene::Container(ContainerNode::new(vec![]).with_tag("rows")),
+                    )
+                    .with_tag("main_list_scroll"),
+                )])
+                .with_tag("root"),
+            )
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"","from":"paint","viewport":{"w":360,"h":320}},"id":142}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("Container".into())));
+        assert_eq!(result.get("tag"), Some(&Value::String("root".into())));
+        let scroll = &result.get("children").unwrap().as_array().unwrap()[0];
+        assert_eq!(scroll.get("type"), Some(&Value::String("Scroll".into())));
+        assert_eq!(
+            scroll.get("tag"),
+            Some(&Value::String("main_list_scroll".into())),
+        );
+    }
+
+    #[test]
+    fn scene_snapshot_paint_mode_without_producer_is_unavailable() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"","from":"paint"},"id":143}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(
+            data.contains("PaintProducerUnavailable"),
+            "data: {data:?}",
+        );
+    }
+
+    #[test]
+    fn scene_snapshot_invalid_from_value_is_rejected() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":"","from":"bogus"},"id":144}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("from"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_snapshot_scroll_wire_carries_viewport_offset_tag_content() {
+        use pinion_core::scene::{ContainerNode, ScrollNode, Rect};
+        let inner = counted_scene(3);
+        let mut scene = Scene::Scroll(
+            ScrollNode::new(
+                Rect::new(0, 0, 50, 80),
+                Scene::Container(ContainerNode::new(vec![inner]).with_tag("rows")),
+            )
+            .with_tag("listbox_scroll")
+            .with_offset(0, 60),
+        );
+        let req = r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":""},"id":141}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("Scroll".into())));
+        assert_eq!(
+            result.get("tag"),
+            Some(&Value::String("listbox_scroll".into())),
+        );
+        let viewport = result.get("viewport").unwrap().as_object().unwrap();
+        assert_eq!(viewport.get("w"), Some(&Value::Number(50.into())));
+        assert_eq!(viewport.get("h"), Some(&Value::Number(80.into())));
+        assert_eq!(result.get("offset_x"), Some(&Value::Number(0.into())));
+        assert_eq!(result.get("offset_y"), Some(&Value::Number(60.into())));
+        let content = result.get("content").unwrap().as_object().unwrap();
+        assert_eq!(
+            content.get("type"),
+            Some(&Value::String("Container".into())),
+        );
+        assert_eq!(content.get("tag"), Some(&Value::String("rows".into())));
     }
 
     #[test]

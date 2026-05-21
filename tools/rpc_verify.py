@@ -230,8 +230,24 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None
         return resp.result
 
-    def snapshot(self, path: str = "") -> Any:
-        resp = self.request("scene/snapshot", {"path": path})
+    def snapshot(
+        self,
+        path: str = "",
+        *,
+        source: str = "state",
+        viewport: Optional[tuple[int, int]] = None,
+    ) -> Any:
+        """`scene/snapshot` typed wrapper.
+
+        `source="state"` (default) dumps the state scene root (root
+        `External`). `source="paint"` dumps the paint scene produced
+        by `V::view` at `viewport` (default 720x480) — see R51.194
+        §5.49 §5.45 for the wire shape.
+        """
+        params: dict[str, Any] = {"path": path, "from": source}
+        if viewport is not None:
+            params["viewport"] = {"w": viewport[0], "h": viewport[1]}
+        resp = self.request("scene/snapshot", params)
         assert resp is not None
         return resp.result
 

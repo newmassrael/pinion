@@ -14736,6 +14736,40 @@ if __name__ == "__main__":
 
 
 
+### Round 526 — R51.194 §5.12 §5.45 scene/snapshot Container/Scroll traversal + paint mode — hello-listbox dogfood lights up
+
+**Changes**:
+- pinion-rpc: SnapshotNode::Container(ContainerSnapshot) tuple variant — tag + recursive children
+- pinion-rpc: SnapshotNode::Scroll(ScrollSnapshot) new variant — tag + viewport + offset + content
+- snapshot_root recurses through Scene::Container.children and Scene::Scroll.content
+- dispatch: handle_scene_snapshot from=state|paint param + viewport={w,h}; paint_producer wire
+- JSON wire: Container/Scroll types carry children[] / viewport / offset_x / offset_y / content
+- tools/rpc_verify: RpcSubprocess.snapshot(source=paint, viewport=(w,h)) wrapper
+- tools/demos/hello_listbox_snapshot.py: 12 rows + Scroll tag/viewport/offset assertion
+
+
+
+**Verification**:
+- cargo test pinion-rpc r51_194 — 6 new snapshot module tests PASS
+- cargo test pinion-rpc scene_snapshot — 7 PASS (5 new: Container/Scroll/paint wire)
+- python3 tools/demos/hello_listbox_snapshot.py — [demo] PASS (0.87s)
+- python3 tools/demos/hello_toggle_activate.py — R51.193 regression PASS (0.87s)
+- cargo test --workspace vello — 2101/0/11 (was 2090, +11 new)
+- cargo clippy --workspace --all-targets vello — 0 warnings
+
+
+
+**Impact**: §5.12, §5.45, §5.49
+
+
+**Carry forward**:
+- R51.195 — wheel/key event injection RPC method for §5.45 Scroll axis demo coverage
+- R51.196 — scene/click v1: Container traversal + real PointerEvent through InputRouter
+- R51.197 — Rust integration test crate that pins harness demos against CI regressions
+- Leaf primitive (Box/Text/Path/Image) tag/content exposure carry until a demo needs it
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
