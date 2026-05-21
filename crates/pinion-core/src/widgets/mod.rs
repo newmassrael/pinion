@@ -6,6 +6,7 @@ pub mod listbox_item;
 pub mod radio;
 pub mod radio_group;
 pub mod scroll;
+pub mod scrollbar;
 pub mod slider;
 pub mod toggle;
 pub mod widget;

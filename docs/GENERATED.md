@@ -3538,6 +3538,7 @@ router.pointer_down(&mut state_scene);
 - R55.G: ListBox + future Grid/CardList composites wrap their content in ScrollNode.
 - R55.H: Forge codegen emits ScrollBar statechart from SCE schema (SCE upstream RFC carry).
 - R55.G.6: ScrollNode::map_layout(FnOnce) preserves seeded viewport size; with_layout drops it
+- R55.D.1: scrollbar_thumb_rect closed-form 헬퍼 land — 통계/SCXML/입력 라우팅은 R55.D.2/3 carry
 
 
 
@@ -9747,6 +9748,35 @@ if __name__ == "__main__":
 
 **Carry forward**:
 - R51.107 type-ahead polish 후보 (buffer-no-reset + multi-window)
+
+
+
+### R55.D.1 — R55.D.1 §5.45 — ScrollBar 가시화 axis 의 첫 sub-round: scrollbar_thumb_rect closed-form 헬퍼 + ScrollBarOrientation/Geometry 타입 land (paint 기하만, SCXML+routing carry)
+
+**Changes**:
+- crates/pinion-core/src/widgets/scrollbar.rs 새 모듈 land (~330 LOC 포함 13 unit test)
+- ScrollBarOrientation enum (Vertical/Horizontal) + ScrollBarGeometry struct (orientation/track/thumb)
+- scrollbar_thumb_rect closed-form helper (u64 widening + u32::try_from saturating fallback)
+- Material/UIKit min_thumb_size floor convention (24-32 px grabbable thumb) wired
+- degenerate guards: track_extent=0, content_extent=0, content<=viewport, offset>scroll_max
+
+
+
+**Verification**:
+- cargo test r55_d1 = 13 passed / 0 failed (vertical+horizontal mirror + 9 boundary cases)
+- cargo test --workspace --features pinion-runtime/vello = 2205/0/12 (baseline 2192 → +13 r55_d1)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace = T1=0 / RT=1/1 / GENERATED sync / orphan_refs=4 baseline 유지
+
+
+
+**Impact**: §5.38, §5.45
+
+
+**Carry forward**:
+- R55.D.2: ScrollBar SCXML statechart (Idle/Hover/Pressing/Dragging) + ScrollBarExternal 사이드카
+- R55.D.3: PointerEvent routing (thumb hit + drag delta → ScrollState offset 움직임)
+- R55.D.4: hello-listbox 에 visible scrollbar peer 편입 또는 hello-scrollbar 새 demo
 
 
 
