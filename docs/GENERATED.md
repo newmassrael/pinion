@@ -15140,6 +15140,32 @@ if __name__ == "__main__":
 
 
 
+### Round 539 — R51.200 first-consumer — hello_listbox_row_click demo proves nested-scroll path-based click
+
+**Changes**:
+- tools/demos/hello_listbox_row_click.py 신규 — 6번째 demo
+- click(path='main_list#3') 한 줄 이 다섯 조상 안 높이 구조 해제
+- /external/selected_index 이 None → 3 으로 전환 확인
+- R51.200 substrate-incompleteness-signal 청산 — substrate + consumer 함께 land
+
+
+
+**Verification**:
+- 6 demos 회귀 PASS (~1.2s 각) — row click 가 selected_index 0->3 transition 관찰
+- AI agent 이 높은 구조 widget tag 을 한 줄로 click 가능 증명
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- R51.198 carry: Path.commands + Image.source snapshot 노출
+- R55.D ScrollBar sub-widget (SCXML statechart 새 axis)
+- R55.F scene/scroll RPC method — offset query + scroll_to action
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
