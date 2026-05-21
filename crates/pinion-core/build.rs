@@ -11,6 +11,7 @@ fn main() {
         "widgets/radio.scxml",
         "widgets/listbox_item.scxml",
         "widgets/slider.scxml",
+        "widgets/scroll_bar.scxml",
         "app.scxml",
         "fixtures/multi_window.scxml",
     ];

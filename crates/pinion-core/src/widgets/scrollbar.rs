@@ -1,11 +1,25 @@
-//! R55.D.1 §5.45 — `ScrollBar` geometry primitive.
+//! R55.D §5.45 — `ScrollBar` widget catalogue entry.
 //!
-//! Closed-form thumb-rectangle derivation for a visible scrollbar
-//! peer of a [`ScrollNode`](crate::scene::ScrollNode). This sub-axis
-//! covers the **paint geometry only** — the §5.38 SCXML statechart
-//! (Idle / Hover / Pressing / Dragging) and the pointer-event
-//! routing that drives the [`ScrollState`](crate::widgets::scroll::ScrollState)
-//! offset stay on the R55.D.2 / R55.D.3 carry.
+//! Visible scrollbar peer of a [`ScrollNode`](crate::scene::ScrollNode).
+//! The axis composes in three textbook sub-rounds, each landed as
+//! its own independently-testable substrate.
+//!
+//! **R55.D.1** — paint geometry primitive: closed-form thumb-rect
+//! derivation ([`scrollbar_thumb_rect`] + [`ScrollBarOrientation`] +
+//! [`ScrollBarGeometry`]). Pure function of the scroll-axis scalars,
+//! no statechart and no [`ScrollState`] borrow.
+//!
+//! **R55.D.2** — §5.38 SCXML statechart + widget binding
+//! ([`ScrollBar`] / [`ScrollBarEvent`] / [`ScrollBarState`]):
+//! four-state machine (Idle / Hover / Dragging / Disabled), Slider
+//! mirror (R51.14 §5.38) for the drag-style vocabulary. The drag-
+//! end activate emits the `"scroll_committed"` intent on the §5.20
+//! channel.
+//!
+//! **R55.D.3** — pointer-event routing: translates `pointer_move`
+//! under capture lock into
+//! [`ScrollState::scroll_to`](crate::widgets::scroll::ScrollState::scroll_to)
+//! calls. R55.D.3 carry.
 //!
 //! ## Why a closed-form helper instead of a widget binding first?
 //!
@@ -18,10 +32,11 @@
 //!
 //! Splitting the axis into "geometry first / statechart second /
 //! routing third" lets the first sub-round land a textbook
-//! standalone primitive (consumable by `examples/hello-listbox`
-//! today via a manual paint composition) without the
+//! standalone primitive without the
 //! [[substrate-incompleteness-signal]] of forcing the first
 //! consumer to also wire up the not-yet-extracted pointer routing.
+//! R55.D.2 then layered the §5.38 SCXML statechart + binding on
+//! top — both pieces compose without re-engineering R55.D.1.
 //!
 //! ## Reference layout math
 //!
@@ -198,6 +213,385 @@ fn thumb_at(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// R55.D.2 §5.45 §5.38 — `ScrollBar` widget binding.
+//
+// Slider mirror (R51.14 §5.38): own self-contained statechart with
+// the `dragging` state vocabulary. The four-state machine
+// (Idle / Hover / Dragging / Disabled) is generated from
+// `widgets/scroll_bar.scxml` and surfaces through the §2 #2 RPC
+// introspection layer (RPC scene/query "state" returns one of
+// "Idle" / "Hover" / "Dragging" / "Disabled"). The `dragging →
+// hover` transition on pointer_up emits the §5.20
+// `"scroll_committed"` intent — pure drag-end marker (no payload),
+// because the authoritative offset already lives in `ScrollState`
+// (R55.B §5.45) and propagates to the application through that
+// signal stream. The R55.D.3 sub-axis (pointer-event routing)
+// will close the loop by translating pointer_move under capture
+// lock into `ScrollState::scroll_to` calls.
+// ─────────────────────────────────────────────────────────────────
+
+#[allow(
+    non_snake_case,
+    unused_imports,
+    dead_code,
+    unused_variables,
+    unused_mut,
+    unused_labels,
+    unreachable_patterns,
+    unreachable_code,
+    unused_assignments,
+    clippy::style,
+    clippy::complexity,
+    clippy::pedantic,
+    clippy::all,
+)]
+mod sm {
+    include!(concat!(env!("OUT_DIR"), "/scroll_bar_sm.rs"));
+}
+
+pub use sm::{ScrollBarEvent, ScrollBarState};
+use sm::ScrollBarPolicy;
+
+use crate::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
+    ThreadOwnership,
+};
+use crate::intent::Intent;
+use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+
+/// `ScrollBar` widget state machine + orientation sidecar.
+///
+/// Slider-mirror four-state interaction model
+/// (Idle / Hover / Dragging / Disabled). Unlike Slider's f32 value
+/// sidecar, the authoritative scroll value lives in
+/// [`ScrollState`](crate::widgets::scroll::ScrollState) (R55.B
+/// §5.45) — the orthogonal reactive container the framework owns.
+/// `ScrollBar` therefore carries no per-state numeric sidecar; the
+/// only construction-time sidecar is the
+/// [`ScrollBarOrientation`] (which drives R55.D.3 pointer-event
+/// routing along the correct axis and the ARIA-aligned introspect
+/// `"orientation"` field).
+///
+/// The orientation is fixed at construction time. ARIA and the
+/// R55.D.1 paint geometry both assume an immutable axis (the
+/// `"scroll_committed"` intent contract and the SCXML transitions
+/// stay unchanged across runtime axis flips, so no semantic value
+/// is lost — and the W3C `aria-orientation` attribute is itself
+/// authoring-time). Mirrors the [`SliderAxis`](crate::widgets::slider::SliderAxis)
+/// R51.39 §5.38 immutability decision.
+pub struct ScrollBar {
+    inner: Widget<ScrollBarPolicy>,
+    orientation: ScrollBarOrientation,
+}
+
+impl ScrollBar {
+    /// Construct a vertical `ScrollBar` in the `Idle` state. Vertical
+    /// is the W3C ARIA `aria-orientation` default for the
+    /// `scrollbar` role and the common case for list-like content
+    /// (`hello-listbox`, future R55.E table / timeline views).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: Widget::new(),
+            orientation: ScrollBarOrientation::Vertical,
+        }
+    }
+
+    /// Construct a `ScrollBar` with an explicit
+    /// [`ScrollBarOrientation`]. Use [`ScrollBarOrientation::Horizontal`]
+    /// for horizontally-scrolling content; the R55.D.3 pointer-
+    /// event routing will then read the X cursor delta.
+    #[must_use]
+    pub fn with_orientation(orientation: ScrollBarOrientation) -> Self {
+        Self {
+            inner: Widget::new(),
+            orientation,
+        }
+    }
+
+    /// Track orientation, fixed at construction. Drives the
+    /// R55.D.3 `pointer_move` axis dispatch and the introspect
+    /// `"orientation"` field surfaced to the AI side.
+    #[must_use]
+    pub fn orientation(&self) -> ScrollBarOrientation {
+        self.orientation
+    }
+
+    /// Drive a [`ScrollBarEvent`] through the SCXML. Pure state
+    /// transition — the authoritative scroll offset lives in
+    /// [`ScrollState`](crate::widgets::scroll::ScrollState) and is
+    /// mutated through that handle, not through this widget.
+    pub fn send(&mut self, event: ScrollBarEvent) {
+        self.inner.send(event);
+    }
+
+    /// Current interaction state.
+    #[must_use]
+    pub fn state(&self) -> ScrollBarState {
+        self.inner.state()
+    }
+}
+
+impl Default for ScrollBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// R55.D.2 §5.45 §5.38 — `ScrollBar` transition contract. The
+/// snapshot is just the SCXML state (no value sidecar — the offset
+/// lives in [`ScrollState`]). Detection emits a single
+/// `"scroll_committed"` intent on the `Dragging → Hover` activate
+/// transition (drag-end via [`ScrollBarEvent::PointerUp`]). The
+/// `Dragging → Idle` cancel paths
+/// ([`ScrollBarEvent::PointerLeave`] / [`ScrollBarEvent::PointerCancel`])
+/// stay silent — matches the R51.93 §5.35 Slider drag-cancel
+/// convention.
+impl WidgetTransition for ScrollBar {
+    type Event = ScrollBarEvent;
+    type Snapshot = ScrollBarState;
+
+    fn snapshot(&self) -> Self::Snapshot {
+        self.state()
+    }
+
+    fn drive(&mut self, event: Self::Event) {
+        self.send(event);
+    }
+
+    fn detect(
+        before: Self::Snapshot,
+        _event: Self::Event,
+        after: Self::Snapshot,
+    ) -> Vec<Intent> {
+        if matches!(before, ScrollBarState::Dragging)
+            && matches!(after, ScrollBarState::Hover)
+        {
+            vec![Intent::new_static(
+                "scroll_committed",
+                IntrospectValue::Null,
+            )]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// `External` adapter wrapping a [`ScrollBar`]. Emits a single
+/// intent kind:
+///
+/// * `"scroll_committed"` (no payload) on the `Dragging → Hover`
+///   activate transition — pure drag-end marker. Applications that
+///   want a live preview of the scroll offset subscribe to the
+///   [`ScrollState::offset_x`](crate::widgets::scroll::ScrollState::offset_x)
+///   / [`ScrollState::offset_y`](crate::widgets::scroll::ScrollState::offset_y)
+///   Signal stream directly (the R55.B reactive contract). The
+///   `"scroll_committed"` channel is for `onChangeEnd`-style hooks
+///   (persistence, analytics, …).
+pub struct ScrollBarExternal {
+    em: IntentEmitter<ScrollBar>,
+}
+
+impl ScrollBarExternal {
+    /// Construct a vertical `ScrollBar` external. ARIA / web
+    /// canonical default for the `scrollbar` role.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            em: IntentEmitter::default(),
+        }
+    }
+
+    /// Construct a `ScrollBar` external with an explicit
+    /// [`ScrollBarOrientation`]. Wraps a
+    /// [`ScrollBar::with_orientation`] under the intent emitter so
+    /// the future R55.D.3 `pointer_move` forward reads the correct
+    /// axis and the `"orientation"` introspect field reports the
+    /// matching ARIA string.
+    #[must_use]
+    pub fn with_orientation(orientation: ScrollBarOrientation) -> Self {
+        Self {
+            em: IntentEmitter::new(ScrollBar::with_orientation(orientation)),
+        }
+    }
+
+    /// Track orientation (delegates to [`ScrollBar::orientation`]).
+    /// Diagnostic / test surface; consumers usually read the
+    /// introspect `"orientation"` field instead.
+    #[must_use]
+    pub fn orientation(&self) -> ScrollBarOrientation {
+        self.em.inner.orientation()
+    }
+
+    /// Drive a [`ScrollBarEvent`] and queue a `"scroll_committed"`
+    /// intent on drag-end (`Dragging → Hover`). Pipeline lives on
+    /// [`IntentEmitter::dispatch`]; the detection rule lives on the
+    /// [`WidgetTransition`] impl for [`ScrollBar`].
+    pub fn send(&mut self, event: ScrollBarEvent) {
+        self.em.dispatch(event);
+    }
+
+    /// Current interaction state.
+    #[must_use]
+    pub fn state(&self) -> ScrollBarState {
+        self.em.inner.state()
+    }
+}
+
+impl Default for ScrollBarExternal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl core::fmt::Debug for ScrollBarExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ScrollBarExternal")
+            .field("state", &self.state())
+            .field("orientation", &self.orientation())
+            .finish()
+    }
+}
+
+impl External for ScrollBarExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    /// §5.15 + §5.35 (R51.35 mirror) — opt in to capture lock so
+    /// the framework's `InputRouter` keeps the cursor pinned to
+    /// this `ScrollBar` for the duration of the `pointer_down` →
+    /// `pointer_up` span, even when the cursor strays outside the
+    /// thumb rect. Required for the canonical scrollbar drag UX:
+    /// the user can drag past the track ends (or off the bar
+    /// entirely) without the press cancelling.
+    fn wants_pointer_capture(&self) -> bool {
+        true
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        self.em.drain(sink);
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.em.is_dirty()
+    }
+}
+
+impl ExternalIntrospect for ScrollBarExternal {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("state", "string"),
+            ("orientation", "string"),
+            ("send", "string"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "state" => Some(IntrospectValue::Text(
+                scroll_bar_state_name(self.state()).to_string(),
+            )),
+            "orientation" => Some(IntrospectValue::Text(
+                scroll_bar_orientation_name(self.orientation()).to_string(),
+            )),
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        match path {
+            // §5.38 — `state` is SCXML-owned (the framework drives
+            // it via `send`); `orientation` is construction-time
+            // fixed (mirrors the R51.39 Slider axis ReadOnly
+            // contract — the SCXML and ARIA semantics differ
+            // between axes, so a runtime flip would change the
+            // meaning of in-flight intent emissions and the
+            // introspect type contract).
+            "state" | "orientation" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "send" => match args {
+                IntrospectValue::Text(ref name) => {
+                    let ev =
+                        parse_scroll_bar_event(name).ok_or(InvokeError::Rejected)?;
+                    self.send(ev);
+                    Ok(IntrospectValue::Text(
+                        scroll_bar_state_name(self.state()).to_string(),
+                    ))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
+fn scroll_bar_state_name(state: ScrollBarState) -> &'static str {
+    match state {
+        ScrollBarState::Idle => "Idle",
+        ScrollBarState::Hover => "Hover",
+        ScrollBarState::Dragging => "Dragging",
+        ScrollBarState::Disabled => "Disabled",
+    }
+}
+
+/// [`ScrollBarOrientation`] → introspect-surfaced `"orientation"`
+/// string. Lowercased per the W3C `aria-orientation` attribute
+/// convention (`"horizontal"` / `"vertical"`) so AI clients
+/// observing the introspect schema can map the field straight to
+/// ARIA without re-casing. Mirrors the R51.39 Slider
+/// `slider_axis_name` helper.
+fn scroll_bar_orientation_name(orientation: ScrollBarOrientation) -> &'static str {
+    match orientation {
+        ScrollBarOrientation::Vertical => "vertical",
+        ScrollBarOrientation::Horizontal => "horizontal",
+    }
+}
+
+fn parse_scroll_bar_event(name: &str) -> Option<ScrollBarEvent> {
+    match name {
+        "PointerEnter" => Some(ScrollBarEvent::PointerEnter),
+        "PointerLeave" => Some(ScrollBarEvent::PointerLeave),
+        "PointerDown" => Some(ScrollBarEvent::PointerDown),
+        "PointerUp" => Some(ScrollBarEvent::PointerUp),
+        "PointerCancel" => Some(ScrollBarEvent::PointerCancel),
+        "Disable" => Some(ScrollBarEvent::Disable),
+        "Enable" => Some(ScrollBarEvent::Enable),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod r55_d1_tests {
     //! R55.D.1 §5.45 — `scrollbar_thumb_rect` closed-form regression
@@ -362,5 +756,398 @@ mod r55_d1_tests {
         // scroll_max = 1_000_000 - 100_000 = 900_000.
         // thumb_pos = 90_000 * 450_000 / 900_000 = 45_000.
         assert_eq!(g.thumb, Rect::new(0, 45_000, 8, 10_000));
+    }
+}
+
+#[cfg(test)]
+mod r55_d2_tests {
+    //! R55.D.2 §5.45 §5.38 — `ScrollBar` widget binding regression
+    //! battery. Mirror of the R51.7 / R51.14 Slider test layout —
+    //! initial state + four-state transition graph + drag-end
+    //! commit semantics + cancel-on-leave + introspect surface +
+    //! orientation immutability.
+
+    use super::{
+        parse_scroll_bar_event, scroll_bar_orientation_name, scroll_bar_state_name,
+        ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation,
+        ScrollBarState,
+    };
+    use crate::external::{
+        Backend, External, ExternalIntrospect, InterveneError, IntrospectValue,
+        InvokeError, RepaintOwner, ThreadOwnership,
+    };
+
+    #[test]
+    fn initial_state_is_idle() {
+        let s = ScrollBar::new();
+        assert_eq!(s.state(), ScrollBarState::Idle);
+    }
+
+    #[test]
+    fn default_orientation_is_vertical() {
+        // ARIA / web canonical default for the `scrollbar` role.
+        assert_eq!(ScrollBar::new().orientation(), ScrollBarOrientation::Vertical);
+        assert_eq!(
+            ScrollBarExternal::new().orientation(),
+            ScrollBarOrientation::Vertical,
+        );
+    }
+
+    #[test]
+    fn with_orientation_pins_axis_at_construction() {
+        // Horizontal axis pinned through both layers without
+        // mutability (the SCXML and ARIA semantics differ between
+        // axes — construction-time fixed, mirrors R51.39 Slider).
+        assert_eq!(
+            ScrollBar::with_orientation(ScrollBarOrientation::Horizontal)
+                .orientation(),
+            ScrollBarOrientation::Horizontal,
+        );
+        assert_eq!(
+            ScrollBarExternal::with_orientation(ScrollBarOrientation::Horizontal)
+                .orientation(),
+            ScrollBarOrientation::Horizontal,
+        );
+    }
+
+    #[test]
+    fn pointer_enter_transitions_idle_to_hover() {
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::PointerEnter);
+        assert_eq!(s.state(), ScrollBarState::Hover);
+    }
+
+    #[test]
+    fn pointer_leave_returns_hover_to_idle() {
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::PointerEnter);
+        s.send(ScrollBarEvent::PointerLeave);
+        assert_eq!(s.state(), ScrollBarState::Idle);
+    }
+
+    #[test]
+    fn pointer_down_from_hover_enters_dragging() {
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::PointerEnter);
+        s.send(ScrollBarEvent::PointerDown);
+        assert_eq!(s.state(), ScrollBarState::Dragging);
+    }
+
+    #[test]
+    fn pointer_up_from_dragging_returns_to_hover() {
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::PointerEnter);
+        s.send(ScrollBarEvent::PointerDown);
+        s.send(ScrollBarEvent::PointerUp);
+        assert_eq!(s.state(), ScrollBarState::Hover);
+    }
+
+    #[test]
+    fn pointer_leave_during_drag_returns_to_idle() {
+        // Drag-cancel-on-leave (W3C HTML5 drag convention); no
+        // commit signal fires — the external-level test below pins
+        // the intent-side semantic.
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::PointerEnter);
+        s.send(ScrollBarEvent::PointerDown);
+        s.send(ScrollBarEvent::PointerLeave);
+        assert_eq!(s.state(), ScrollBarState::Idle);
+    }
+
+    #[test]
+    fn pointer_cancel_during_drag_returns_to_idle() {
+        // R51.93 §5.35 §5.13 mirror — touch-cancel sibling of
+        // pointer_leave; drops `dragging → idle` without raising
+        // `scrollbar.activate`.
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::PointerEnter);
+        s.send(ScrollBarEvent::PointerDown);
+        s.send(ScrollBarEvent::PointerCancel);
+        assert_eq!(s.state(), ScrollBarState::Idle);
+    }
+
+    #[test]
+    fn disable_from_any_state_enters_disabled() {
+        // Disable transitions out of idle / hover / dragging — the
+        // SCXML lands the transition on every non-disabled state.
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::Disable);
+        assert_eq!(s.state(), ScrollBarState::Disabled);
+
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::PointerEnter);
+        s.send(ScrollBarEvent::Disable);
+        assert_eq!(s.state(), ScrollBarState::Disabled);
+
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::PointerEnter);
+        s.send(ScrollBarEvent::PointerDown);
+        s.send(ScrollBarEvent::Disable);
+        assert_eq!(s.state(), ScrollBarState::Disabled);
+    }
+
+    #[test]
+    fn enable_from_disabled_returns_to_idle() {
+        let mut s = ScrollBar::new();
+        s.send(ScrollBarEvent::Disable);
+        s.send(ScrollBarEvent::Enable);
+        assert_eq!(s.state(), ScrollBarState::Idle);
+    }
+
+    #[test]
+    fn full_drag_cycle_emits_scroll_committed_on_pointer_up() {
+        // End-to-end drag-end commit. Pre-drag PointerEnter +
+        // PointerDown, drag-end PointerUp → single
+        // `"scroll_committed"` intent with `Null` payload (no value
+        // payload — the offset lives in `ScrollState`).
+        let mut sx = ScrollBarExternal::new();
+        sx.send(ScrollBarEvent::PointerEnter);
+        sx.send(ScrollBarEvent::PointerDown);
+        sx.send(ScrollBarEvent::PointerUp);
+        let mut harvested = Vec::new();
+        sx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1, "exactly one commit per drag-end");
+        assert_eq!(harvested[0].tag_str(), "scroll_committed");
+        assert!(matches!(harvested[0].payload, IntrospectValue::Null));
+    }
+
+    #[test]
+    fn cancel_drag_via_pointer_leave_does_not_emit_commit() {
+        // R51.93 §5.35 mirror — `dragging → idle` via pointer_leave
+        // is the W3C drag-cancel-on-leave path; no commit fires.
+        let mut sx = ScrollBarExternal::new();
+        sx.send(ScrollBarEvent::PointerEnter);
+        sx.send(ScrollBarEvent::PointerDown);
+        sx.send(ScrollBarEvent::PointerLeave);
+        let mut harvested = Vec::new();
+        sx.drain_intents(&mut |i| harvested.push(i));
+        assert!(
+            harvested.is_empty(),
+            "drag-cancel-on-leave must not emit scroll_committed",
+        );
+    }
+
+    #[test]
+    fn pointer_cancel_during_drag_does_not_emit_commit() {
+        // Touch-cancel sibling: OS revoked the gesture, so no
+        // commit fires either. R51.93 §5.35 §5.13 contract.
+        let mut sx = ScrollBarExternal::new();
+        sx.send(ScrollBarEvent::PointerEnter);
+        sx.send(ScrollBarEvent::PointerDown);
+        sx.send(ScrollBarEvent::PointerCancel);
+        let mut harvested = Vec::new();
+        sx.drain_intents(&mut |i| harvested.push(i));
+        assert!(
+            harvested.is_empty(),
+            "touch-cancel during drag must not emit scroll_committed",
+        );
+    }
+
+    #[test]
+    fn external_query_state_and_orientation() {
+        let sx = ScrollBarExternal::new();
+        assert_eq!(
+            sx.query("state").unwrap(),
+            IntrospectValue::Text("Idle".to_string()),
+        );
+        assert_eq!(
+            sx.query("orientation").unwrap(),
+            IntrospectValue::Text("vertical".to_string()),
+        );
+        // Unknown path: None (introspect contract).
+        assert_eq!(sx.query("value"), None);
+    }
+
+    #[test]
+    fn external_intervene_state_and_orientation_read_only() {
+        let mut sx = ScrollBarExternal::new();
+        assert_eq!(
+            sx.intervene("state", IntrospectValue::Text("Dragging".to_string())),
+            Err(InterveneError::ReadOnly),
+        );
+        assert_eq!(
+            sx.intervene(
+                "orientation",
+                IntrospectValue::Text("horizontal".to_string()),
+            ),
+            Err(InterveneError::ReadOnly),
+        );
+        // Untouched.
+        assert_eq!(sx.state(), ScrollBarState::Idle);
+        assert_eq!(sx.orientation(), ScrollBarOrientation::Vertical);
+    }
+
+    #[test]
+    fn external_intervene_unknown_path_rejects() {
+        let mut sx = ScrollBarExternal::new();
+        assert_eq!(
+            sx.intervene("offset", IntrospectValue::Int(0)),
+            Err(InterveneError::UnknownPath),
+        );
+    }
+
+    #[test]
+    fn external_invoke_send_drives_transition() {
+        let mut sx = ScrollBarExternal::new();
+        let out = sx
+            .invoke("send", IntrospectValue::Text("PointerEnter".to_string()))
+            .unwrap();
+        assert_eq!(out, IntrospectValue::Text("Hover".to_string()));
+        assert_eq!(sx.state(), ScrollBarState::Hover);
+    }
+
+    #[test]
+    fn external_invoke_send_rejects_unknown_event() {
+        let mut sx = ScrollBarExternal::new();
+        let r = sx.invoke("send", IntrospectValue::Text("Click".to_string()));
+        assert_eq!(r, Err(InvokeError::Rejected));
+    }
+
+    #[test]
+    fn external_invoke_send_rejects_non_text_args() {
+        let mut sx = ScrollBarExternal::new();
+        let r = sx.invoke("send", IntrospectValue::Int(0));
+        assert_eq!(r, Err(InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn external_invoke_unknown_path_rejects() {
+        let mut sx = ScrollBarExternal::new();
+        let r = sx.invoke("set_offset", IntrospectValue::Int(0));
+        assert_eq!(r, Err(InvokeError::UnknownPath));
+    }
+
+    #[test]
+    fn external_schema_declares_three_slots() {
+        // R55.D.2 surface: state + orientation + send. The
+        // `"value"` slot Slider carries does NOT exist — the
+        // authoritative offset lives in `ScrollState` (R55.B), not
+        // a ScrollBar value sidecar.
+        let sx = ScrollBarExternal::new();
+        let schema = sx.schema();
+        assert_eq!(
+            schema.fields,
+            &[
+                ("state", "string"),
+                ("orientation", "string"),
+                ("send", "string"),
+            ],
+        );
+    }
+
+    #[test]
+    fn external_wants_pointer_capture() {
+        // §5.15 + §5.35 mirror — the framework's InputRouter pins
+        // the cursor across the drag, so the user can stray off
+        // the thumb / track without the press cancelling.
+        let sx = ScrollBarExternal::new();
+        assert!(sx.wants_pointer_capture());
+    }
+
+    #[test]
+    fn external_backends_gui_and_rpc() {
+        // §5.15 — `ScrollBar` is a §5.45 visible peer (GUI-driven)
+        // and an AI-introspect surface (RPC-driven). Skip is the
+        // safe fallback for backends not in the list (e.g. headless
+        // RPC-only loops still get the GUI variant via the typed
+        // schema, no panics).
+        let sx = ScrollBarExternal::new();
+        let support = sx.backends();
+        assert!(support.supported.contains(&Backend::Gui));
+        assert!(support.supported.contains(&Backend::Rpc));
+    }
+
+    #[test]
+    fn external_repaint_owner_is_framework() {
+        // ScrollBar carries no opaque off-thread paint surface; the
+        // framework owns repaints on each `ScrollState` Signal
+        // change (R55.B reactive contract).
+        let sx = ScrollBarExternal::new();
+        assert!(matches!(sx.repaint_ownership(), RepaintOwner::Framework));
+    }
+
+    #[test]
+    fn external_thread_ownership_is_ui_sync() {
+        // SCXML transitions are pure synchronous state mutations —
+        // safe to drive from the UI thread.
+        let sx = ScrollBarExternal::new();
+        assert!(matches!(sx.thread_ownership(), ThreadOwnership::UiThreadSync));
+    }
+
+    #[test]
+    fn orientation_query_returns_aria_string() {
+        // Both axes surface their W3C `aria-orientation`-aligned
+        // lowercase string. AI clients consume this straight
+        // through to their ARIA model.
+        let v = ScrollBarExternal::new();
+        let h = ScrollBarExternal::with_orientation(ScrollBarOrientation::Horizontal);
+        assert_eq!(
+            v.query("orientation"),
+            Some(IntrospectValue::Text("vertical".to_string())),
+        );
+        assert_eq!(
+            h.query("orientation"),
+            Some(IntrospectValue::Text("horizontal".to_string())),
+        );
+    }
+
+    #[test]
+    fn parse_event_name_table_covers_every_variant() {
+        // Every closed-core pointer/enable event the SCXML
+        // accepts must parse. A new variant landing in the SCXML
+        // without a parse-table entry would silently break the
+        // RPC `invoke("send", ...)` surface — this test pins the
+        // mapping bidirectionally.
+        let cases = [
+            ("PointerEnter", ScrollBarEvent::PointerEnter),
+            ("PointerLeave", ScrollBarEvent::PointerLeave),
+            ("PointerDown", ScrollBarEvent::PointerDown),
+            ("PointerUp", ScrollBarEvent::PointerUp),
+            ("PointerCancel", ScrollBarEvent::PointerCancel),
+            ("Disable", ScrollBarEvent::Disable),
+            ("Enable", ScrollBarEvent::Enable),
+        ];
+        for (name, expected) in cases {
+            let got = parse_scroll_bar_event(name);
+            assert_eq!(got, Some(expected), "parse_scroll_bar_event({name:?})");
+        }
+        // Unknown name returns None.
+        assert_eq!(parse_scroll_bar_event("PointerWheel"), None);
+    }
+
+    #[test]
+    fn state_name_table_covers_every_variant() {
+        // RPC scene/query "state" returns one of these four strings
+        // verbatim. The §2 #2 RPC introspection layer relies on the
+        // mapping being stable across SCXML codegen rebuilds.
+        assert_eq!(scroll_bar_state_name(ScrollBarState::Idle), "Idle");
+        assert_eq!(scroll_bar_state_name(ScrollBarState::Hover), "Hover");
+        assert_eq!(scroll_bar_state_name(ScrollBarState::Dragging), "Dragging");
+        assert_eq!(scroll_bar_state_name(ScrollBarState::Disabled), "Disabled");
+    }
+
+    #[test]
+    fn orientation_name_table_is_aria_lowercase() {
+        // W3C `aria-orientation` attribute convention.
+        assert_eq!(
+            scroll_bar_orientation_name(ScrollBarOrientation::Vertical),
+            "vertical",
+        );
+        assert_eq!(
+            scroll_bar_orientation_name(ScrollBarOrientation::Horizontal),
+            "horizontal",
+        );
+    }
+
+    #[test]
+    fn debug_impl_surfaces_state_and_orientation() {
+        // External adapters expose a Debug impl with the state +
+        // orientation so structured logging / diagnostic dumps can
+        // capture the widget without going through introspect.
+        let sx = ScrollBarExternal::new();
+        let dbg = format!("{sx:?}");
+        assert!(dbg.contains("ScrollBarExternal"), "{dbg}");
+        assert!(dbg.contains("Idle"), "{dbg}");
+        assert!(dbg.contains("Vertical"), "{dbg}");
     }
 }

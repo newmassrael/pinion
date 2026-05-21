@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.45 R55.D.2 — ScrollBar widget statechart.
+
+     Slider mirror (R51.14 §5.38): own self-contained statechart
+     with the `dragging` state vocabulary. State names map 1:1 to
+     the AI introspect surface (RPC scene/query "state" returns
+     `"Dragging"`); the Rust binding (scrollbar.rs) and the
+     downstream §2 #2 RPC introspection layer expose the same
+     four-name set.
+
+     States: idle / hover / dragging / disabled.
+
+     Event vocabulary matches §5.13 closed-core pointer/enable
+     events (pointer_enter / pointer_leave / pointer_down /
+     pointer_up / pointer_cancel / disable / enable). The
+     `dragging → hover` transition on pointer_up raises
+     `scrollbar.activate`; the Rust binding listens to that for
+     the `"scroll_committed"` intent at drag-end. `dragging → idle`
+     on pointer_leave / pointer_cancel is the cancel path — no
+     activate event, no commit intent — matching the W3C drag-
+     cancel-on-leave convention that R51.93 §5.35 documented for
+     Slider.
+
+     Unlike Slider's typed f32 sidecar (the value commit channel),
+     ScrollBar carries no per-state value: the authoritative scroll
+     offset lives in `ScrollState` (§5.45 R55.B), the orthogonal
+     reactive container owned by the framework. The R55.D.3 sub-
+     axis (pointer-event routing) will translate `pointer_move`
+     under capture lock into `ScrollState::scroll_to` calls; this
+     statechart owns the interaction state only.
+
+     The `scroll_committed` intent therefore carries no payload —
+     it is a pure drag-end marker, useful for applications that
+     want to fire onChangeEnd / persistence on drag-release without
+     subscribing to the offset Signal stream directly.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <state id="idle">
+    <transition event="pointer_enter" target="hover"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="hover">
+    <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_cancel" target="idle"/>
+    <transition event="pointer_down" target="dragging"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <!-- §5.35 §5.13 — pointer_cancel from `dragging` drops to `idle`
+       without raising `scrollbar.activate`, so the
+       `"scroll_committed"` intent does not fire on touch cancel
+       (OS-side gesture revoked the drag). Mirrors the R51.93
+       Slider convention. -->
+
+  <state id="dragging">
+    <transition event="pointer_up" target="hover">
+      <raise event="scrollbar.activate"/>
+    </transition>
+    <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_cancel" target="idle"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="disabled">
+    <transition event="enable" target="idle"/>
+  </state>
+
+</scxml>

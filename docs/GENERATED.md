@@ -2970,6 +2970,12 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/aria.rs
 - crates/pinion-core/src/widgets/aria.rs:apply_aria_activate
 - examples/hello-listbox/src/main.rs:listbox_row_at_y
+- crates/pinion-core/widgets/scroll_bar.scxml
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal
+- crates/pinion-core/src/widgets/scrollbar.rs:&lt;ScrollBar as WidgetTransition&gt;
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarEvent
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarState
 
 
 
@@ -3606,6 +3612,8 @@ pub struct ScrollNode {
 - examples/hello-listbox/src/main.rs:view
 - examples/hello-listbox/src/main.rs:listbox_row_at_y
 - crates/pinion-core/src/scene.rs:ScrollNode::map_layout
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal
 
 
 
@@ -9777,6 +9785,35 @@ if __name__ == "__main__":
 - R55.D.2: ScrollBar SCXML statechart (Idle/Hover/Pressing/Dragging) + ScrollBarExternal 사이드카
 - R55.D.3: PointerEvent routing (thumb hit + drag delta → ScrollState offset 움직임)
 - R55.D.4: hello-listbox 에 visible scrollbar peer 편입 또는 hello-scrollbar 새 demo
+
+
+
+### R55.D.2 — R55.D.2 §5.45 §5.38 — ScrollBar SCXML statechart + widget binding land (Slider mirror 4-state Idle/Hover/Dragging/Disabled, drag-end emits scroll_committed intent)
+
+**Changes**:
+- crates/pinion-core/widgets/scroll_bar.scxml 신규 (4-state SCXML, Slider mirror, scrollbar.activate raise)
+- crates/pinion-core/src/widgets/scrollbar.rs widget binding 확장: ScrollBar + ScrollBarExternal struct
+- ScrollBarEvent/ScrollBarState codegen 노출 + Default Vertical orientation (ARIA scrollbar role 정통)
+- WidgetTransition::detect Dragging→Hover만 scroll_committed (Null payload, cancel 분기 silent)
+- ExternalIntrospect 3-slot schema: state/orientation/send, state+orientation ReadOnly (R51.39 mirror)
+- wants_pointer_capture=true (R51.35 mirror — drag past track edge 안전) + 31 r55_d2 unit test land
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2236/0/12 (baseline 2205 → +31 r55_d2)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace = T1=0 / RT=1/1 / GENERATED sync / orphan_refs=4 baseline 유지
+- 10 demos 회귀 PASS (visible 변화 0, internal statechart + Rust binding axis cascade)
+
+
+
+**Impact**: §5.13, §5.20, §5.38, §5.45
+
+
+**Carry forward**:
+- R55.D.3: PointerEvent routing (thumb hit + drag delta → ScrollState scroll_to, capture lock)
+- R55.D.4: visible demo (hello-listbox 편입 또는 hello-scrollbar 신규 예제) — 첫 visible 가시화
 
 
 
