@@ -3537,6 +3537,7 @@ router.pointer_down(&mut state_scene);
 - R55.F: scene/scroll RPC = 11th typed method; offset_to(x,y) / scroll_by(dx,dy) variants.
 - R55.G: ListBox + future Grid/CardList composites wrap their content in ScrollNode.
 - R55.H: Forge codegen emits ScrollBar statechart from SCE schema (SCE upstream RFC carry).
+- R55.G.6: ScrollNode::map_layout(FnOnce) preserves seeded viewport size; with_layout drops it
 
 
 
@@ -3603,6 +3604,7 @@ pub struct ScrollNode {
 - crates/pinion-core/src/widgets/scroll.rs:ScrollState::tag
 - examples/hello-listbox/src/main.rs:view
 - examples/hello-listbox/src/main.rs:listbox_row_at_y
+- crates/pinion-core/src/scene.rs:ScrollNode::map_layout
 
 
 
@@ -15225,6 +15227,32 @@ if __name__ == "__main__":
 - R55.D ScrollBar sub-widget (SCXML statechart 새 axis)
 - R56 TextField + IME / R57 Theming / R58 composite 대형 axes
 - scene/scroll 의 path-based input 와 일관 — 태그 찾기 walker 통합 고려
+
+
+
+### Round 542 — R55.G.6 §5.45 — map_layout closure on 7 layout-bearing nodes cures ScrollNode with_layout default-size footgun
+
+**Changes**:
+- scene.rs: 7 layout nodes (Box/Text/Path/Image/Container/External/Scroll) gain map_layout
+- map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle> preserves seeded default unlike with_layout
+- ScrollNode::with_layout doc updated to point at map_layout for the footgun cure path
+- tests: r55_g6 scroll map_layout preserves Px(120,80); container symmetry test added
+
+
+
+**Verification**:
+- cargo test (vello) = 2144 pass / 0 fail / 11 ignored (+2 R55.G.6 scene tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 7 demos PASS regression (release build, ~1.0-1.6s each)
+
+
+
+**Impact**: §5.45
+
+
+**Carry forward**:
+- R51.200 carry — find_rect_by_tag width/height translate when content > viewport (sub-edge)
+- Container.style + TextStyle snapshot exposure for §2 #7 scene-as-data completeness
 
 
 

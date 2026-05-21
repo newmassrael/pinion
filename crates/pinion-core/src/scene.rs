@@ -611,6 +611,19 @@ impl BoxNode {
         self.layout = layout;
         self
     }
+
+    /// R55.G.6 §5.45 — apply a functional transform to the layout
+    /// sidecar in place. The closure receives the current layout (any
+    /// constructor-supplied seed) and returns the new layout; this
+    /// preserves whatever the caller does not override, in contrast
+    /// to [`Self::with_layout`] which performs a full replacement.
+    /// Use this when chaining a single modification on top of the
+    /// seeded default (e.g. `node.map_layout(|l| l.with_gap(8))`).
+    #[must_use]
+    pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
+        self.layout = f(self.layout);
+        self
+    }
 }
 
 /// Styled text primitive.
@@ -736,6 +749,16 @@ impl TextNode {
         self
     }
 
+    /// R55.G.6 §5.45 — apply a functional transform to the layout
+    /// sidecar in place; see [`BoxNode::map_layout`] for the
+    /// canonical rationale. Preserves any seeded default by handing
+    /// the current layout to the closure as input.
+    #[must_use]
+    pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
+        self.layout = f(self.layout);
+        self
+    }
+
     /// R51.81 §5.40 — attach a [`TextRole`] hint for the
     /// `enrich_names_from_scene` pass. Use `TextRole::Presentational`
     /// on decoration glyphs (checkbox `✓`, slider thumb caret) so
@@ -837,6 +860,16 @@ impl PathNode {
         self.layout = layout;
         self
     }
+
+    /// R55.G.6 §5.45 — apply a functional transform to the layout
+    /// sidecar in place; see [`BoxNode::map_layout`] for the
+    /// canonical rationale. Preserves any seeded default by handing
+    /// the current layout to the closure as input.
+    #[must_use]
+    pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
+        self.layout = f(self.layout);
+        self
+    }
 }
 
 /// Raster or vector image primitive.
@@ -890,6 +923,16 @@ impl ImageNode {
     #[must_use]
     pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
+        self
+    }
+
+    /// R55.G.6 §5.45 — apply a functional transform to the layout
+    /// sidecar in place; see [`BoxNode::map_layout`] for the
+    /// canonical rationale. Preserves any seeded default by handing
+    /// the current layout to the closure as input.
+    #[must_use]
+    pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
+        self.layout = f(self.layout);
         self
     }
 }
@@ -953,6 +996,16 @@ impl ContainerNode {
     #[must_use]
     pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
+        self
+    }
+
+    /// R55.G.6 §5.45 — apply a functional transform to the layout
+    /// sidecar in place; see [`BoxNode::map_layout`] for the
+    /// canonical rationale. Preserves any seeded default by handing
+    /// the current layout to the closure as input.
+    #[must_use]
+    pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
+        self.layout = f(self.layout);
         self
     }
 
@@ -1034,6 +1087,16 @@ impl ExternalNode {
     #[must_use]
     pub fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
+        self
+    }
+
+    /// R55.G.6 §5.45 — apply a functional transform to the layout
+    /// sidecar in place; see [`BoxNode::map_layout`] for the
+    /// canonical rationale. Preserves any seeded default by handing
+    /// the current layout to the closure as input.
+    #[must_use]
+    pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
+        self.layout = f(self.layout);
         self
     }
 }
@@ -1183,10 +1246,28 @@ impl ScrollNode {
     /// path for `flex_grow` / `margin` / parent-flex participation.
     /// Callers that want the dimensions to stay tied to the clip
     /// window must include `with_size(Size::px(viewport.w,
-    /// viewport.h))` in the supplied layout.
+    /// viewport.h))` in the supplied layout — or reach for
+    /// [`Self::map_layout`] (R55.G.6) which preserves the seeded
+    /// default and chains a single modification on top.
     #[must_use]
     pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
         self.layout = layout;
+        self
+    }
+
+    /// R55.G.6 §5.45 — apply a functional transform to the layout
+    /// sidecar in place. The closure receives the seeded layout
+    /// ([`Self::new`] supplies `LayoutStyle::with_size(viewport.{w,h})`)
+    /// and returns the new layout, preserving any field the caller
+    /// does not touch. Cures the [`Self::with_layout`] full-replace
+    /// footgun where `with_layout(LayoutStyle::new().with_gap(8))`
+    /// silently drops the seeded viewport size and collapses Scroll
+    /// to a 0×0 leaf. Canonical idiom is
+    /// `scroll.map_layout(|l| l.with_flex_grow(1.0))` —
+    /// `Size::px(viewport.{w,h})` survives the chain.
+    #[must_use]
+    pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
+        self.layout = f(self.layout);
         self
     }
 
@@ -2491,5 +2572,40 @@ mod tests {
         let node = ScrollNode::from_state(state, viewport, content)
             .with_tag("override");
         assert_eq!(node.tag.as_deref(), Some("override"));
+    }
+
+    #[test]
+    fn r55_g6_scroll_map_layout_preserves_seeded_viewport_size() {
+        // R55.G.6 §5.45 — `map_layout` hands the seeded layout to the
+        // closure so chaining a `flex_grow` / `gap` / `margin`
+        // modification does not collapse Scroll to a 0×0 leaf the way
+        // `with_layout(LayoutStyle::new().with_*)` would.
+        use crate::style::{Size, SizeValue};
+        let content = Scene::Container(ContainerNode::new(vec![]));
+        let scroll = ScrollNode::new(Rect::new(0, 0, 120, 80), content)
+            .map_layout(|l| l.with_flex_grow(1.0));
+        assert_eq!(scroll.layout.size, Size::px(120, 80));
+        assert!((scroll.layout.flex_grow - 1.0).abs() < f32::EPSILON);
+        // Negative control — `with_layout` full-replace WOULD drop the
+        // seed; same payload via that path lands `SizeValue::Auto`.
+        let content2 = Scene::Container(ContainerNode::new(vec![]));
+        let scroll_full = ScrollNode::new(Rect::new(0, 0, 120, 80), content2)
+            .with_layout(LayoutStyle::new().with_flex_grow(1.0));
+        assert_eq!(scroll_full.layout.size.width, SizeValue::Auto);
+        assert_eq!(scroll_full.layout.size.height, SizeValue::Auto);
+    }
+
+    #[test]
+    fn r55_g6_container_map_layout_round_trips() {
+        // R55.G.6 §5.45 — symmetry check: `map_layout` lands the
+        // same closure-application shape on Container as on Scroll,
+        // confirming the primitive surface is uniform across the
+        // seven layout-bearing nodes.
+        use crate::style::{Display, FlexDirection};
+        let c = ContainerNode::new(vec![])
+            .map_layout(|l| l.flex(FlexDirection::Column).with_gap(12));
+        assert_eq!(c.layout.display, Display::Flex);
+        assert_eq!(c.layout.flex_direction, FlexDirection::Column);
+        assert_eq!(c.layout.gap, 12);
     }
 }
