@@ -7330,6 +7330,35 @@ pub struct ScrollNode {
 
 
 
+### R51.183 — R51.183 §5.45 R55.A.4 hit_test_region descends through ScrollNode
+
+**Changes**:
+- pinion-core::scene::ScrollNode::translate_query_into_content — viewport-clip + offset shift helper
+- pinion-core::scene::Scene::collect_intersections — Scroll arm descends with translated query
+- pinion-core::scene::tests — 5 R55.A.4 tests (viewport / descent / offset / clip / chain)
+
+
+
+**Verification**:
+- cargo test (vello) = 2023 / 0 / 10 (+5 R55.A.4 descent tests; was 2018)
+- cargo clippy 0 warnings (i64 promotion + try_from guards same shape as R51.181)
+- ratify: hit_test_region viewport-clips query first, then offset-shifts content
+
+
+
+**Impact**: §5.45, §5.32
+
+
+**Carry forward**:
+- R51.184 R55.B — ScrollState scope-id keyed (Owner::cache + Animation<f32>)
+- R51.185 R55.C — wheel + arrow + PgUp/PgDn + Home/End input mapping (Event extension)
+- R51.186 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag statechart
+- R51.187 R55.E — paint clipping at Vello + TUI boundaries
+- R51.188 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)
+- R51.189 R55.G — ListBox + future composite integration through Scroll wrap
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

@@ -334,6 +334,19 @@ impl Scene {
                 path.pop();
             }
         }
+        // R55.A.4 §5.45 — Scroll descends into `content` with the
+        // query rect translated from root-local into content-
+        // intrinsic coords (mirrors R51.181 hit_test and R51.182
+        // lookup_path). The viewport-intersect gate above already
+        // pushed the scroll container if it overlaps the query.
+        // The descent uses the same `path` stack — Scroll consumes
+        // no segment, so a content hit's path is identical to what
+        // it would be without the scroll in the chain.
+        if let Scene::Scroll(s) = self
+            && let Some(translated) = s.translate_query_into_content(query)
+        {
+            s.content.collect_intersections(translated, path, out);
+        }
     }
 }
 
@@ -1032,6 +1045,52 @@ impl ScrollNode {
         self.offset_x = offset_x;
         self.offset_y = offset_y;
         self
+    }
+
+    /// (R55.A.4 §5.45) Translate a root-local query rect into this
+    /// scroll container's content-intrinsic coordinate frame.
+    /// Returns [`None`] when the query falls entirely outside the
+    /// viewport or when the translation underflows (offset moved
+    /// the visible window past the content origin so the query maps
+    /// to a negative content coordinate).
+    ///
+    /// The translation is rigid: width / height pass through
+    /// unchanged after the viewport-clip step. Mirrors the
+    /// offset-shift shape used by [`Scene::hit_test`] for a single
+    /// point — same `i64` promotion guard against `u32` wrap on
+    /// negative-offset edges (R51.181).
+    fn translate_query_into_content(&self, query: Rect) -> Option<Rect> {
+        let vp = self.viewport;
+        let vp_right = vp.x.saturating_add(vp.w);
+        let vp_bottom = vp.y.saturating_add(vp.h);
+        let q_right = query.x.saturating_add(query.w);
+        let q_bottom = query.y.saturating_add(query.h);
+        // Step 1: clip the query against the viewport in root-local
+        // coords. Zero-extent intersection means the query never
+        // reaches inside the scroll container.
+        let lx = query.x.max(vp.x);
+        let ty = query.y.max(vp.y);
+        let rx = q_right.min(vp_right);
+        let by = q_bottom.min(vp_bottom);
+        if lx >= rx || ty >= by {
+            return None;
+        }
+        // Step 2: shift root-local → viewport-local (origin at vp).
+        let v_lx = lx - vp.x;
+        let v_ty = ty - vp.y;
+        // Step 3: shift viewport-local → content-intrinsic by
+        // adding the scroll offset. `i64` promotion prevents wrap
+        // on negative-offset edges (mirrors R51.181 hit_test).
+        let c_lx = i64::from(v_lx).checked_add(i64::from(self.offset_x))?;
+        let c_ty = i64::from(v_ty).checked_add(i64::from(self.offset_y))?;
+        if c_lx < 0 || c_ty < 0 {
+            return None;
+        }
+        let c_lx_u = u32::try_from(c_lx).ok()?;
+        let c_ty_u = u32::try_from(c_ty).ok()?;
+        // Width / height stay rigid — the translation is a pure
+        // shift in both x and y.
+        Some(Rect::new(c_lx_u, c_ty_u, rx - lx, by - ty))
     }
 }
 
@@ -1915,5 +1974,107 @@ mod tests {
             scene.lookup_path(&["scroll_box".to_string(), "inner".to_string()]),
             Some(Rect::new(0, 0, 50, 50))
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.A.4 §5.45 — `hit_test_region` / `collect_intersections`
+    // descend through ScrollNode with the query rect translated
+    // from root-local into content-intrinsic coordinates. The
+    // viewport-intersect gate skips descent when the query falls
+    // outside the visible window; the descent reuses the existing
+    // segment stack (Scroll is path-transparent).
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_a4_hit_test_region_includes_scroll_viewport() {
+        // R55.A.4 — a region query that overlaps the scroll
+        // viewport pushes the scroll container as one hit. The
+        // descent into `content` runs in addition (covered by the
+        // next test). Mirrors the container-level behaviour from
+        // §5.32 R39.2 v0.
+        let content = box_at(0, 0, 200, 200);
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(10, 10, 50, 50), content),
+        );
+        let hits = scene.hit_test_region(0, 0, 100, 100);
+        assert_eq!(hits[0].bbox, Rect::new(10, 10, 50, 50));
+        assert!(hits[0].segments.is_empty());
+    }
+
+    #[test]
+    fn r55_a4_hit_test_region_descends_into_scrolled_content() {
+        // R55.A.4 — content collects with the existing path stack
+        // (Scroll consumes no segment). With zero offset and
+        // viewport (0,0,100,100), a root-local query of
+        // (10,10,50,50) translates to content-intrinsic
+        // (10,10,50,50) unchanged.
+        let inner = box_at(0, 0, 200, 200);
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 100, 100), inner),
+        );
+        let hits = scene.hit_test_region(10, 10, 50, 50);
+        // hits[0] = scroll viewport; hits[1] = scrolled content box.
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].bbox, Rect::new(0, 0, 100, 100));
+        assert!(hits[0].segments.is_empty());
+        assert_eq!(hits[1].bbox, Rect::new(0, 0, 200, 200));
+        assert!(hits[1].segments.is_empty());
+    }
+
+    #[test]
+    fn r55_a4_hit_test_region_offset_shifts_content_match() {
+        // R55.A.4 — offset (0, 100) shifts the content up by 100
+        // cells. A root-local query at (0, 0, 50, 50) translates
+        // to content-intrinsic (0, 100, 50, 50). A child box at
+        // intrinsic (0, 100, 30, 30) lies inside that translated
+        // query and surfaces through the Container's "shifted"
+        // segment.
+        let inner = tagged_box_at(0, 100, 30, 30, "shifted");
+        let content = container_at(0, 0, 200, 400, vec![inner]);
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 100, 100), content)
+                .with_offset(0, 100),
+        );
+        let hits = scene.hit_test_region(0, 0, 50, 50);
+        let found = hits
+            .iter()
+            .any(|h| h.segments == ["shifted".to_string()]);
+        assert!(found, "shifted box must surface at intrinsic-shifted path");
+    }
+
+    #[test]
+    fn r55_a4_hit_test_region_query_outside_viewport_skips_content() {
+        // R55.A.4 — the viewport-intersect gate at the top of
+        // `collect_intersections` keeps a query disjoint from the
+        // viewport from descending. Even content that would
+        // intrinsically overlap stays hidden by the clip.
+        let inner = tagged_box_at(0, 0, 500, 500, "huge");
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(50, 50, 30, 30), inner),
+        );
+        let hits = scene.hit_test_region(100, 100, 10, 10);
+        assert!(hits.is_empty(), "viewport-disjoint query yields no hits");
+    }
+
+    #[test]
+    fn r55_a4_hit_test_region_through_container_into_scroll_content() {
+        // R55.A.4 — Container > Scroll(tag="sb") > Container >
+        // Box(tag="leaf"). A root-spanning region query picks up
+        // all four: outer container, scroll viewport, inner
+        // container, leaf box. The leaf box's path is
+        // ["sb", "leaf"] — the outer Container consumes the
+        // scroll's tag, Scroll itself is path-transparent, and
+        // the inner Container surfaces the leaf's own tag.
+        let leaf = tagged_box_at(0, 0, 50, 50, "leaf");
+        let inner_container = container_at(0, 0, 200, 200, vec![leaf]);
+        let scroll = ScrollNode::new(Rect::new(10, 10, 100, 100), inner_container)
+            .with_tag("sb");
+        let scene = container_at(0, 0, 200, 200, vec![Scene::Scroll(scroll)]);
+        let hits = scene.hit_test_region(0, 0, 200, 200);
+        let leaf_hit = hits
+            .iter()
+            .find(|h| h.segments == ["sb".to_string(), "leaf".to_string()])
+            .expect("leaf must surface under [sb, leaf]");
+        assert_eq!(leaf_hit.bbox, Rect::new(0, 0, 50, 50));
     }
 }
