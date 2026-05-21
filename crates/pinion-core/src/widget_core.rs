@@ -94,6 +94,18 @@ pub trait WidgetCore: 'static {
     /// view fn attaches to the interactive surface. The input router
     /// forwards pointer / key events to any `Scene::External` in the
     /// state scene whose tag equals this hit-test target.
+    ///
+    /// R55.G.17 §5.49 — composite paint-root tag convention. For AI-
+    /// side `scene/click` / `scene/key` / `scene/wheel`
+    /// `{path: V::tag()}` routing and `rect_for_tag` AT bounds attach
+    /// to resolve, the paint scene returned by [`Self::view`] must
+    /// contain at least one node tagged `V::tag()` somewhere. Pin
+    /// the convention per widget with
+    /// `assert!(V::view(state, &frame).contains_tag(V::tag()))` —
+    /// see [`Scene::contains_tag`] for the depth-first walker
+    /// primitive and `examples/hello-listbox/src/main.rs`
+    /// `r55_g17_view_contains_composite_paint_root_tag` for the
+    /// reference regression test.
     fn tag() -> &'static str;
 
     /// Extract the cached projection from the live state scene via
@@ -108,6 +120,17 @@ pub trait WidgetCore: 'static {
     /// pass on the result before handing it to the backend paint
     /// adapter, so the view fn need not (and should not) resolve
     /// pixel rects.
+    ///
+    /// R55.G.17 §5.49 — composite paint-root tag convention. The
+    /// returned scene must contain a node tagged [`Self::tag`]
+    /// somewhere (typically the outermost interactive container or a
+    /// transparent wrapper around it). Without this, AI-side
+    /// `scene/click` / `scene/key` / `scene/wheel`
+    /// `{path: V::tag()}` routing and `rect_for_tag` AT bounds
+    /// attach both fail silently. See [`Scene::contains_tag`] for the
+    /// regression-test primitive and the `r55_g20_*` test family
+    /// across `examples/hello-*/src/main.rs` for the per-widget
+    /// pinning pattern.
     fn view(state: Self::State, frame: &Frame) -> Scene;
 
     /// Convert a typed widget event into the symbolic name the §5.15

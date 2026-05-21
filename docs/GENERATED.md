@@ -15633,6 +15633,32 @@ if __name__ == "__main__":
 
 
 
+### Round 557 — R55.G.21 — §5.49 WidgetCore::tag and ::view doc comments reference Scene::contains_tag regression-test primitive (R55.G.17 convention discoverable)
+
+**Changes**:
+- crates/pinion-core/widget_core.rs: WidgetCore::tag doc references Scene::contains_tag
+- crates/pinion-core/widget_core.rs: WidgetCore::view doc references R55.G.17 paint convention
+- R55.G.17 paint-root tag convention now discoverable from the trait it constrains
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2188 pass / 0 fail / 11 ignored (unchanged)
+- cargo clippy -p pinion-core --all-targets = 0 warnings (doc-only round, no code drift)
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- hello-commands convention test (no existing test module — defer until test layer needed)
+- F1 framework auto-tag deferred (regression risk against inner-tag widgets like hello-toggle)
+- R55.D — ScrollBar sub-widget (visible drag + SCXML statechart) ~400-600 LOC
+- R56 — TextField + IME (caret + selection + IME composition) ~1000+ LOC
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
