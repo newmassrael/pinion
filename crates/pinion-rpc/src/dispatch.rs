@@ -1637,13 +1637,76 @@ fn font_style_to_json(style: pinion_core::style::FontStyle) -> Value {
     }
 }
 
-/// R55.G.8 §5.49 — wire serialization for `TextStyle`. Surfaces the
-/// visual axis (family / size / colour / weight / style) so AI clients
-/// can verify rendered typography on the same scene-as-data principle
-/// as `BoxStyle`. Layout-side fields (line-height, letter-spacing,
-/// text-align, decoration, overflow) are carried by `TextStyle` but
-/// remain out of this snapshot until a future slice opts them in
-/// — they describe how the line breaks, not what the glyphs look like.
+/// R55.G.10 §5.49 — wire serialization for `LineHeight`. `Normal`
+/// serializes as a bare string; the data-bearing variants emit a
+/// `{kind, value}` object (matching the `FontStyle::Oblique` shape).
+/// Wildcard arm collapses future variants to `"Unknown"`.
+fn line_height_to_json(lh: pinion_core::style::LineHeight) -> Value {
+    use pinion_core::style::LineHeight;
+    match lh {
+        LineHeight::Normal => Value::String("Normal".to_string()),
+        LineHeight::Px(px) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("kind".to_string(), Value::String("Px".to_string()));
+            obj.insert("value".to_string(), Value::Number(px.into()));
+            Value::Object(obj)
+        }
+        LineHeight::MultiplierX100(m) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "kind".to_string(),
+                Value::String("MultiplierX100".to_string()),
+            );
+            obj.insert("value".to_string(), Value::Number(m.into()));
+            Value::Object(obj)
+        }
+        _ => Value::String("Unknown".to_string()),
+    }
+}
+
+/// R55.G.10 §5.49 — wire serialization for `TextAlign`. Bare string
+/// for each variant; wildcard catches future additions.
+fn text_align_to_json(a: pinion_core::style::TextAlign) -> Value {
+    use pinion_core::style::TextAlign;
+    let name = match a {
+        TextAlign::Start => "Start",
+        TextAlign::Center => "Center",
+        TextAlign::End => "End",
+        TextAlign::Justify => "Justify",
+        _ => "Unknown",
+    };
+    Value::String(name.to_string())
+}
+
+/// R55.G.10 §5.49 — wire serialization for `TextDecoration`. Both
+/// flags may be `true` simultaneously (Figma allows underline +
+/// strikethrough combo), so the wire keeps them as independent bools.
+fn text_decoration_to_json(d: pinion_core::style::TextDecoration) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("underline".to_string(), Value::Bool(d.underline));
+    obj.insert("strikethrough".to_string(), Value::Bool(d.strikethrough));
+    Value::Object(obj)
+}
+
+/// R55.G.10 §5.49 — wire serialization for `TextOverflow`. Bare
+/// string per variant; wildcard arm for future additions.
+fn text_overflow_to_json(o: pinion_core::style::TextOverflow) -> Value {
+    use pinion_core::style::TextOverflow;
+    let name = match o {
+        TextOverflow::Visible => "Visible",
+        TextOverflow::Clip => "Clip",
+        TextOverflow::Ellipsis => "Ellipsis",
+        _ => "Unknown",
+    };
+    Value::String(name.to_string())
+}
+
+/// R55.G.8 + R55.G.10 §5.49 — wire serialization for `TextStyle`.
+/// G.8 landed the visual axis (family / size / colour / weight /
+/// style); G.10 extended the wire to the layout axis (line-height,
+/// letter-spacing, text-align, decoration, overflow) so AI clients
+/// can introspect every rendered typography knob without OCR
+/// (§2 #7 scene-as-data completeness).
 fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert(
@@ -1663,6 +1726,17 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
         Value::Number(style.font_weight.0.into()),
     );
     obj.insert("font_style".to_string(), font_style_to_json(style.font_style));
+    obj.insert("line_height".to_string(), line_height_to_json(style.line_height));
+    obj.insert(
+        "letter_spacing".to_string(),
+        Value::Number(style.letter_spacing.into()),
+    );
+    obj.insert("text_align".to_string(), text_align_to_json(style.text_align));
+    obj.insert(
+        "decoration".to_string(),
+        text_decoration_to_json(style.decoration),
+    );
+    obj.insert("overflow".to_string(), text_overflow_to_json(style.overflow));
     Value::Object(obj)
 }
 
@@ -3694,6 +3768,84 @@ mod tests {
         let fs = style.get("font_style").unwrap().as_object().unwrap();
         assert_eq!(fs.get("kind"), Some(&Value::String("Oblique".into())));
         assert_eq!(fs.get("angle"), Some(&Value::Number(12.into())));
+    }
+
+    #[test]
+    fn r55_g10_scene_snapshot_text_wire_carries_layout_axis() {
+        // R55.G.10 §5.49 — line_height / letter_spacing / text_align /
+        // decoration / overflow round-trip through the wire alongside
+        // the visual-axis fields landed by R55.G.8.
+        use pinion_core::scene::{Rect, TextNode};
+        use pinion_core::style::{
+            LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
+        };
+        let mut node = TextNode::new("hi", Rect::default());
+        node.style = TextStyle::new()
+            .with_line_height(LineHeight::MultiplierX100(150))
+            .with_letter_spacing(2)
+            .with_align(TextAlign::Center)
+            .with_decoration(TextDecoration::underline())
+            .with_overflow(TextOverflow::Ellipsis);
+        let mut scene = Scene::Text(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").unwrap().as_object().unwrap();
+        // line_height with data variant emits {kind, value}.
+        let lh = style.get("line_height").unwrap().as_object().unwrap();
+        assert_eq!(
+            lh.get("kind"),
+            Some(&Value::String("MultiplierX100".into())),
+        );
+        assert_eq!(lh.get("value"), Some(&Value::Number(150.into())));
+        // letter_spacing is a bare signed integer.
+        assert_eq!(style.get("letter_spacing"), Some(&Value::Number(2.into())));
+        assert_eq!(
+            style.get("text_align"),
+            Some(&Value::String("Center".into())),
+        );
+        let dec = style.get("decoration").unwrap().as_object().unwrap();
+        assert_eq!(dec.get("underline"), Some(&Value::Bool(true)));
+        assert_eq!(dec.get("strikethrough"), Some(&Value::Bool(false)));
+        assert_eq!(
+            style.get("overflow"),
+            Some(&Value::String("Ellipsis".into())),
+        );
+    }
+
+    #[test]
+    fn r55_g10_scene_snapshot_text_wire_line_height_normal_bare_string() {
+        // R55.G.10 §5.49 — `LineHeight::Normal` serializes as a bare
+        // `"Normal"` string (no {kind,value} wrapper for unit variant).
+        use pinion_core::scene::{Rect, TextNode};
+        let node = TextNode::new("h", Rect::default());
+        let mut scene = Scene::Text(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").unwrap().as_object().unwrap();
+        assert_eq!(
+            style.get("line_height"),
+            Some(&Value::String("Normal".into())),
+        );
+    }
+
+    #[test]
+    fn r55_g10_scene_snapshot_text_wire_line_height_px_variant() {
+        // R55.G.10 §5.49 — `LineHeight::Px` data variant emits
+        // `{kind: "Px", value: 24}`.
+        use pinion_core::scene::{Rect, TextNode};
+        use pinion_core::style::{LineHeight, TextStyle};
+        let mut node = TextNode::new("h", Rect::default());
+        node.style = TextStyle::new().with_line_height(LineHeight::Px(24));
+        let mut scene = Scene::Text(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        let style = result.get("style").unwrap().as_object().unwrap();
+        let lh = style.get("line_height").unwrap().as_object().unwrap();
+        assert_eq!(lh.get("kind"), Some(&Value::String("Px".into())));
+        assert_eq!(lh.get("value"), Some(&Value::Number(24.into())));
     }
 
     #[test]

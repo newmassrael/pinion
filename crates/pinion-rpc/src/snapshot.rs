@@ -14,12 +14,14 @@
 //! coordinates per demo (see `tools/demos/hello_toggle_click.py` first
 //! consumer). Only `Effect` stays opaque per §3 capability boundary.
 //!
-//! R55.G.8 §5.49 — `Box`, `Text`, and `Container` additionally surface
-//! their `BoxStyle` / `TextStyle` sidecars (fill, border, corner radius,
-//! font size / colour / weight / style). The wire JSON converts each
-//! style to a structured object — `{r, g, b, a}` for colours, named
-//! variants for enums — so AI clients can introspect the rendered look
-//! of any widget without inspecting pixels (§2 #7 scene-as-data).
+//! R55.G.8 / R55.G.10 §5.49 — `Box`, `Text`, and `Container` surface
+//! their `BoxStyle` / `TextStyle` sidecars. G.8 landed the visual axis
+//! (fill, border, corner radius, font family / size / colour / weight /
+//! style); G.10 added the layout axis (line-height, letter-spacing,
+//! text-align, decoration, overflow). The wire JSON converts each style
+//! to a structured object — `{r, g, b, a}` for colours, named variants
+//! for enums — so AI clients can introspect every rendered typography
+//! and chrome knob without inspecting pixels (§2 #7 scene-as-data).
 //!
 //! Surface details:
 //!   * path: `/[window[id]/]` only — no scene-path tail, since v0 has

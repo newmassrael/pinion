@@ -15340,6 +15340,33 @@ if __name__ == "__main__":
 
 
 
+### Round 546 — R55.G.10 §5.49 — TextStyle layout-axis (line_height/letter_spacing/align/decoration/overflow) snapshot wire
+
+**Changes**:
+- dispatch.rs: line_height_to_json / text_align_to_json / text_decoration_to_json / text_overflow_to_json
+- LineHeight unit variant Normal -> bare string; data variants emit {kind, value}
+- text_style_to_json adds 5 fields: line_height, letter_spacing, text_align, decoration, overflow
+- snapshot.rs module doc cites R55.G.10 layout-axis completion
+- 3 wire tests (full layout-axis / Normal bare string / Px data variant)
+
+
+
+**Verification**:
+- cargo test (vello) = 2157 pass / 0 fail / 11 ignored (+3 R55.G.10 layout-axis tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 8 demos PASS regression
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- scene/scroll at-based variant for consistency with click/wheel/key (intentional deviation now)
+- BoxStyle / TextStyle expansion to Path/Image/External styles (PathStyle/ImageStyle snapshot)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
