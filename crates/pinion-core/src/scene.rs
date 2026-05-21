@@ -98,6 +98,36 @@ impl Scene {
         }
     }
 
+    /// (R55.G.19 §5.49) Returns `true` when this scene tree contains
+    /// at least one node tagged `target`. Walks depth-first matching
+    /// [`Self::tag`] before descending into `Container.children` and
+    /// `Scroll.content`. `Effect` is never tagged (per [`Self::tag`])
+    /// so its branch is a leaf.
+    ///
+    /// Codifies the R55.G.17 composite paint-root tag convention:
+    /// `V::view(state, frame).contains_tag(V::tag())` is the
+    /// regression-test primitive that asserts a composite's paint
+    /// scene exposes its `WidgetCore::tag()` somewhere — without
+    /// this, `scene/click` / `scene/key` / `scene/wheel`
+    /// `{path: V::tag()}` and `rect_for_tag` AT-bounds attach both
+    /// fail silently.
+    #[must_use]
+    pub fn contains_tag(&self, target: &str) -> bool {
+        if self.tag() == Some(target) {
+            return true;
+        }
+        match self {
+            Scene::Container(n) => n.children.iter().any(|c| c.contains_tag(target)),
+            Scene::Scroll(n) => n.content.contains_tag(target),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::External(_)
+            | Scene::Effect(_) => false,
+        }
+    }
+
     /// (§5.32 R39 v0) Find the deepest primitive whose rect contains
     /// `(x, y)`. Returns [`None`] when the point falls outside this
     /// scene's outermost rect — including the case where the rect has
@@ -2607,5 +2637,50 @@ mod tests {
         assert_eq!(c.layout.display, Display::Flex);
         assert_eq!(c.layout.flex_direction, FlexDirection::Column);
         assert_eq!(c.layout.gap, 12);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R55.G.19 §5.49 — `Scene::contains_tag` walker tests. Codifies
+    // the R55.G.17 composite paint-root convention as a primitive
+    // that downstream widget unit tests reuse.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_g19_contains_tag_finds_root_match() {
+        let scene = Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default()).with_tag("root"),
+        );
+        assert!(scene.contains_tag("root"));
+        assert!(!scene.contains_tag("absent"));
+    }
+
+    #[test]
+    fn r55_g19_contains_tag_finds_nested_container_child() {
+        let inner = Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default()).with_tag("inner"),
+        );
+        let scene = Scene::Container(ContainerNode::new(vec![inner]).with_tag("outer"));
+        assert!(scene.contains_tag("outer"));
+        assert!(scene.contains_tag("inner"));
+        assert!(!scene.contains_tag("nope"));
+    }
+
+    #[test]
+    fn r55_g19_contains_tag_descends_through_scroll_content() {
+        let inner = Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default()).with_tag("buried"),
+        );
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), inner).with_tag("scroll");
+        let scene = Scene::Scroll(scroll);
+        assert!(scene.contains_tag("scroll"));
+        assert!(scene.contains_tag("buried"));
+    }
+
+    #[test]
+    fn r55_g19_contains_tag_effect_leaf_is_false() {
+        // `Effect` carries no tag (per `Scene::tag`) so `contains_tag`
+        // on the bare leaf is unconditionally `false`.
+        let scene = Scene::Effect(EffectNode::new());
+        assert!(!scene.contains_tag("anything"));
     }
 }

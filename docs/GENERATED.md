@@ -15578,6 +15578,33 @@ if __name__ == "__main__":
 
 
 
+### Round 555 — R55.G.19 — §5.49 Scene::contains_tag primitive + per-composite convention tests pin R55.G.17 paint-root tag convention (3 widgets: listbox/radio-group/listbox-multi)
+
+**Changes**:
+- crates/pinion-core/src/scene.rs: Scene::contains_tag depth-first walker + 4 unit tests
+- examples/hello-listbox: r55_g17_view_contains_composite_paint_root_tag test
+- examples/hello-radio-group: r55_g18_view_contains_composite_paint_root_tag test
+- examples/hello-listbox-multi: r55_g18_view_contains_composite_paint_root_tag test
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2182 pass / 0 fail / 11 ignored (+7)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 10 demos PASS (regression-free)
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- F1 framework auto-tag deferred (regression risk against inner-tag widgets like hello-toggle)
+- R55.D — ScrollBar sub-widget (visible drag + SCXML statechart) ~400-600 LOC
+- R56 — TextField + IME (caret + selection + IME composition) ~1000+ LOC
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

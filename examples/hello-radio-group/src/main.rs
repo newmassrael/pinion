@@ -930,4 +930,18 @@ mod tests {
             AccessAction::Other,
         ));
     }
+
+    #[test]
+    fn r55_g18_view_contains_composite_paint_root_tag() {
+        // R55.G.18 §5.49 — paint scene must carry `PRIMARY_TAG` on
+        // the radio column so `{path: "main_group"}` AI-side input
+        // routing and `rect_for_tag` AT bounds attach resolve to
+        // the composite. Pins the convention against accidental
+        // regression (dropping the column-tag in a future refactor).
+        let paint = view(GroupState::idle(), &Frame::default());
+        assert!(
+            paint.contains_tag(PRIMARY_TAG),
+            "view must contain a node tagged PRIMARY_TAG ({PRIMARY_TAG:?})",
+        );
+    }
 }

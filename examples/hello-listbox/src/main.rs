@@ -975,4 +975,21 @@ mod a11y_tests {
             );
         }
     }
+
+    #[test]
+    fn r55_g17_view_contains_composite_paint_root_tag() {
+        // R55.G.17 §5.49 — paint scene must carry the composite
+        // `PRIMARY_TAG` somewhere so `scene/click` / `scene/key` /
+        // `scene/wheel` `{path: "main_list"}` resolves and AT bounds
+        // attach to the listbox's visible area. The wrapper
+        // Container introduced in `view` carries the tag; this test
+        // pins the convention so a regression that drops the wrapper
+        // surfaces as a typed failure rather than a silent path
+        // lookup error.
+        let scene = run_view(unselected_state());
+        assert!(
+            scene.contains_tag(PRIMARY_TAG),
+            "view must contain a node tagged PRIMARY_TAG ({PRIMARY_TAG:?})",
+        );
+    }
 }

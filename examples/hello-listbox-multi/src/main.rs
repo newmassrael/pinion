@@ -626,4 +626,19 @@ mod a11y_tests {
             "Apricot uniquely matches 'apr'"
         );
     }
+
+    #[test]
+    fn r55_g18_view_contains_composite_paint_root_tag() {
+        // R55.G.18 §5.49 — paint scene must carry `PRIMARY_TAG` on
+        // the option column so `{path: "main_list"}` AI-side input
+        // routing and `rect_for_tag` AT bounds attach resolve to
+        // the composite. Mirrors the hello-listbox R55.G.17 test —
+        // pins the convention against accidental regression
+        // (dropping the column-tag in a future refactor).
+        let scene = view(unselected(), &Frame::default());
+        assert!(
+            scene.contains_tag(PRIMARY_TAG),
+            "view must contain a node tagged PRIMARY_TAG ({PRIMARY_TAG:?})",
+        );
+    }
 }
