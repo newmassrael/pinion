@@ -24176,6 +24176,58 @@
         "absolute_rect_of(node, path) walker — nested 좌표 변환 (현재 root scroll 만 작동)"
       ]
     },
+    "Round 532": {
+      "decision_summary": "R55.G.2 §5.45 compute_layout descends into Scene::Scroll.content — R51.191 manual positioning 청산",
+      "changes_bullets": [
+        "compute_layout_inner(main_axis_unbounded) — MaxContent on height for scroll content flex",
+        "lay_out_scroll_contents 가 Scene::Scroll 마다 inner pass 호출 (nested scroll 재귀)",
+        "hello-listbox: listbox_row_at_y → listbox_row + flex Row + AlignItems::Center + padding",
+        "hello-listbox view: content Container = flex Column + gap=ROW_GAP, manual rect/y 청산",
+        "외부 viewport position + outer.rect 는 R55.G.3 carry (Scroll-as-flex-child)",
+        "r51_191_view_rows_positioned → r55_g2_view_rows_carry_flex_layout_sidecar test 갱신"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2124/0/11 (+4 R55.G.2 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "5 demos 회귀 PASS (~0.9s 각, hello-listbox layout 자동 derive)",
+        "layout::r55_g2 4건: flex_column_y / total_height_overflows / cross_axis_bound / nested_scroll"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.21",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "R55.G.3 ScrollNode-as-flex-child — viewport position + outer.rect manual 청산",
+        "ScrollNode 의 layout: LayoutStyle 필드 (R55.G.3 의 substrate)",
+        "max_y 자동 계산 — layout 결과의 content.rect.h 사용 (chicken-and-egg 청산)"
+      ],
+      "publishable_decision_summary": "R55.G.2 §5.45 compute_layout descends into Scene::Scroll.content — R51.191 manual positioning 청산",
+      "publishable_changes_bullets": [
+        "compute_layout_inner(main_axis_unbounded) — MaxContent on height for scroll content flex",
+        "lay_out_scroll_contents 가 Scene::Scroll 마다 inner pass 호출 (nested scroll 재귀)",
+        "hello-listbox: listbox_row_at_y → listbox_row + flex Row + AlignItems::Center + padding",
+        "hello-listbox view: content Container = flex Column + gap=ROW_GAP, manual rect/y 청산",
+        "외부 viewport position + outer.rect 는 R55.G.3 carry (Scroll-as-flex-child)",
+        "r51_191_view_rows_positioned → r55_g2_view_rows_carry_flex_layout_sidecar test 갱신"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2124/0/11 (+4 R55.G.2 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "5 demos 회귀 PASS (~0.9s 각, hello-listbox layout 자동 derive)",
+        "layout::r55_g2 4건: flex_column_y / total_height_overflows / cross_axis_bound / nested_scroll"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.21",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R55.G.3 ScrollNode-as-flex-child — viewport position + outer.rect manual 청산",
+        "ScrollNode 의 layout: LayoutStyle 필드 (R55.G.3 의 substrate)",
+        "max_y 자동 계산 — layout 결과의 content.rect.h 사용 (chicken-and-egg 청산)"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

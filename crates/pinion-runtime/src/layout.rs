@@ -19,6 +19,19 @@
 //! The §6.3 view-fn purity invariant is preserved because nothing in
 //! this module observes time or external state; the cache is content-
 //! addressable (text + style + `max_width`), not time-keyed.
+//!
+//! R55.G.2 §5.45 — `Scene::Scroll` participates by getting its
+//! content sub-tree laid out in a *separate* taffy pass: each Scroll
+//! is treated as a layout leaf in the outer tree (its rect stays
+//! app-set via `ScrollNode::viewport`), and the content beneath is
+//! re-entered with [`compute_layout`] using `viewport.w` as the
+//! cross-axis bound and `AvailableSpace::MaxContent` on the main
+//! axis so flex children can overflow naturally instead of being
+//! shrunk to fit the clip window. Content rects come out in
+//! *content-local* coordinates (origin at the Scroll's content
+//! origin, not absolute window space) — the hit-tester and paint
+//! adapter translate via `Scroll.viewport.{x,y}` and `offset_{x,y}`
+//! at read time, matching the §5.45 R55 substrate.
 
 use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, ImageNode, PathNode, Rect, TextNode};
 use pinion_core::style::{
@@ -69,6 +82,28 @@ pub fn compute_layout(
     viewport_w: u32,
     viewport_h: u32,
 ) {
+    compute_layout_inner(scene, cache, viewport_w, viewport_h, false);
+}
+
+/// R55.G.2 §5.45 — extension point for laying out a `Scene::Scroll`
+/// content sub-tree. `main_axis_unbounded` swaps the height
+/// constraint from `Definite(viewport_h)` to `MaxContent` so flex
+/// children can grow past the clip window (the scroll case) instead
+/// of being shrunk to fit (the outer-window case).
+///
+/// # Panics
+///
+/// Panics if taffy reports a tree-construction error; this can only
+/// happen on internal logic bugs (passing invalid `NodeId`s, etc.),
+/// not on any user-supplied scene shape.
+#[allow(clippy::cast_precision_loss)]
+fn compute_layout_inner(
+    scene: &mut Scene,
+    cache: &mut LayoutCache,
+    viewport_w: u32,
+    viewport_h: u32,
+    main_axis_unbounded: bool,
+) {
     let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
     let layout_tree = build(scene, &mut tree);
     // Force the root to fill the viewport. The user's declared size
@@ -78,15 +113,27 @@ pub fn compute_layout(
         .style(layout_tree.node)
         .expect("root style query failed")
         .clone();
+    // R55.G.2 §5.45 — scroll content lays out with auto height so the
+    // flex Column total can overflow the clip window instead of
+    // being clamped. The outer-window pass keeps the explicit
+    // `length(viewport_h)` cap so block defaults still fill.
     root_style.size = TaffySize {
         width: length(viewport_w as f32),
-        height: length(viewport_h as f32),
+        height: if main_axis_unbounded {
+            auto()
+        } else {
+            length(viewport_h as f32)
+        },
     };
     tree.set_style(layout_tree.node, root_style)
         .expect("set root style failed");
     let available = TaffySize {
         width: AvailableSpace::Definite(viewport_w as f32),
-        height: AvailableSpace::Definite(viewport_h as f32),
+        height: if main_axis_unbounded {
+            AvailableSpace::MaxContent
+        } else {
+            AvailableSpace::Definite(viewport_h as f32)
+        },
     };
     // R51.1 §5.12 — side-channel `NodeId → line_count` table populated
     // by the measure callback, drained by `apply` into `TextNode.
@@ -153,6 +200,32 @@ pub fn compute_layout(
     )
     .expect("taffy compute_layout failed");
     apply(scene, &layout_tree, &tree, &text_lines, 0.0, 0.0);
+    // R55.G.2 §5.45 — outer apply does not descend into `Scene::Scroll`
+    // content (build also stops at Scroll), so any Scroll in the
+    // tree now needs its content re-entered with its own taffy
+    // pass. Content rects come out in scroll-local coordinates.
+    lay_out_scroll_contents(scene, cache);
+}
+
+/// R55.G.2 §5.45 — walks the scene and lays out each `Scene::Scroll`
+/// content sub-tree as an independent taffy root sized by the
+/// scroll's `viewport`. Recursion is handled by the inner
+/// [`compute_layout_inner`] call's own tail invocation, so nested
+/// Scrolls naturally cascade.
+fn lay_out_scroll_contents(scene: &mut Scene, cache: &mut LayoutCache) {
+    match scene {
+        Scene::Container(c) => {
+            for child in &mut c.children {
+                lay_out_scroll_contents(child, cache);
+            }
+        }
+        Scene::Scroll(s) => {
+            let vw = s.viewport.w;
+            let vh = s.viewport.h;
+            compute_layout_inner(s.content.as_mut(), cache, vw, vh, true);
+        }
+        _ => {}
+    }
 }
 
 /// Recursive shadow tree mirroring the Scene; each entry holds the
@@ -601,6 +674,158 @@ mod tests {
             "60px-wide slot must force the sentence to wrap (got {})",
             t.line_count
         );
+    }
+
+    mod r55_g2 {
+        //! R55.G.2 §5.45 — `compute_layout` descends into
+        //! `Scene::Scroll.content`. Content rects come out in
+        //! scroll-local coordinates with `MaxContent` on the main
+        //! axis, so a flex Column overflows the clip window naturally
+        //! instead of being shrunk to fit.
+
+        use super::*;
+        use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
+        use pinion_core::style::{
+            Color, FlexDirection, JustifyContent, LayoutStyle, Size,
+        };
+
+        fn fixed_row(h: u32) -> Scene {
+            fixed_row_w(220, h)
+        }
+
+        fn fixed_row_w(w: u32, h: u32) -> Scene {
+            Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_layout(LayoutStyle::new().with_size(Size::px(w, h))),
+            )
+        }
+
+        #[test]
+        fn scroll_content_flex_column_lays_out_row_y_positions() {
+            // Content = flex Column with gap=6, 3 rows of fixed 220×28.
+            // Expected: row[0]@(0,0), row[1]@(0,34), row[2]@(0,68).
+            let content_layout = LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_gap(6);
+            let content = Scene::Container(
+                ContainerNode::new(vec![fixed_row(28), fixed_row(28), fixed_row(28)])
+                    .with_layout(content_layout),
+            );
+            let scroll = ScrollNode::new(Rect::new(70, 78, 220, 164), content);
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            let Scene::Container(outer) = &scene else { panic!("outer") };
+            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
+            // Scroll itself stays at the app-set viewport position.
+            assert_eq!(s.viewport, Rect::new(70, 78, 220, 164));
+            // Content rects are scroll-local (origin at (0, 0)).
+            let Scene::Container(c) = s.content.as_ref() else { panic!("content") };
+            let Scene::Container(r0) = &c.children[0] else { panic!("row0") };
+            let Scene::Container(r1) = &c.children[1] else { panic!("row1") };
+            let Scene::Container(r2) = &c.children[2] else { panic!("row2") };
+            assert_eq!(r0.rect, Rect::new(0, 0, 220, 28));
+            assert_eq!(r1.rect, Rect::new(0, 34, 220, 28));
+            assert_eq!(r2.rect, Rect::new(0, 68, 220, 28));
+        }
+
+        #[test]
+        fn scroll_content_total_height_can_exceed_viewport() {
+            // 12 rows × 28 + 11 × 6 gap = 402 > 164 viewport. With
+            // `MaxContent` on the main axis the flex column lays
+            // children at their natural heights instead of shrinking.
+            let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(rows).with_layout(
+                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
+                ),
+            );
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content);
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            let Scene::Container(outer) = &scene else { panic!("outer") };
+            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
+            let Scene::Container(c) = s.content.as_ref() else { panic!("content") };
+            // Last row's y = 11 × (28 + 6) = 374, well past the
+            // 164-tall viewport — proves flex did not compress.
+            let Scene::Container(last) = c.children.last().unwrap() else { panic!() };
+            assert_eq!(last.rect.y, 374);
+            assert_eq!(last.rect.h, 28);
+        }
+
+        #[test]
+        fn scroll_content_cross_axis_bounded_by_viewport_width() {
+            // Content child without explicit width inherits viewport.w
+            // (220) as the cross-axis bound under flex Column.
+            let stretchy = Scene::Container(
+                ContainerNode::new(vec![Scene::Box(
+                    BoxNode::filled(Rect::default(), Color::default())
+                        .with_layout(LayoutStyle::new().with_size(Size::px(40, 20))),
+                )])
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_justify(JustifyContent::Center),
+                ),
+            );
+            let content = Scene::Container(
+                ContainerNode::new(vec![stretchy]).with_layout(
+                    LayoutStyle::new().flex(FlexDirection::Column),
+                ),
+            );
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 80), content);
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            let Scene::Container(outer) = &scene else { panic!("outer") };
+            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
+            let Scene::Container(c) = s.content.as_ref() else { panic!("content") };
+            let Scene::Container(stretchy) = &c.children[0] else { panic!("stretchy") };
+            // Stretched to the viewport.w cross-axis bound.
+            assert_eq!(stretchy.rect.w, 220);
+            let Scene::Box(b) = &stretchy.children[0] else { panic!("box") };
+            // Centered inside the 220-wide stretchy row.
+            assert_eq!(b.rect.x, 90);
+            assert_eq!(b.rect.w, 40);
+        }
+
+        #[test]
+        fn nested_scroll_content_recurses_through_lay_out_scroll_contents() {
+            // Outer Scroll content contains another Scroll, whose
+            // own content must also be laid out by the recursive
+            // pass — proves the lay_out_scroll_contents tail call
+            // descends into nested scrolls.
+            let inner_content = Scene::Container(
+                ContainerNode::new(vec![fixed_row_w(200, 40)])
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            );
+            let inner_scroll =
+                Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 200, 60), inner_content));
+            let outer_content = Scene::Container(
+                ContainerNode::new(vec![inner_scroll])
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            );
+            let outer_scroll =
+                Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 220, 160), outer_content));
+            let mut scene =
+                Scene::Container(ContainerNode::new(vec![outer_scroll]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            let Scene::Container(root) = &scene else { panic!("root") };
+            let Scene::Scroll(outer) = &root.children[0] else { panic!("outer scroll") };
+            let Scene::Container(outer_c) = outer.content.as_ref() else { panic!("outer content") };
+            let Scene::Scroll(inner) = &outer_c.children[0] else { panic!("inner scroll") };
+            let Scene::Container(inner_c) = inner.content.as_ref() else { panic!("inner content") };
+            // Inner content's row was laid out by the nested-scroll
+            // recursive pass — rect is non-zero.
+            let Scene::Container(row) = &inner_c.children[0] else { panic!("inner row") };
+            assert_eq!(row.rect, Rect::new(0, 0, 200, 40));
+        }
     }
 
     #[test]

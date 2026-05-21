@@ -67,7 +67,9 @@ use std::time::Instant;
 use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
-use pinion_core::style::{Border, BoxStyle, TextStyle};
+use pinion_core::style::{
+    AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
+};
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::scroll::use_scroll_state;
@@ -147,14 +149,19 @@ impl ListState {
 /// `i` to `invoke("send", Text("<i>:<EventName>"))` against the
 /// single composite `ListBoxExternal`.
 ///
-/// R51.191 R55.G — substrate-incompleteness-signal closure: the
-/// view fn no longer uses taffy flex to position the rows because
-/// [`crate::layout::compute_layout`] (pinion-runtime) does not yet
-/// recurse into [`Scene::Scroll`] children. Manual positioning
-/// inside the scroll content keeps the demo runtime-stable. The
-/// taffy-into-Scroll integration is the R55.G.2 carry — when it
-/// lands, this view fn can revert to a flex layout inside the
-/// scroll content without changing the substrate API.
+/// R55.G.2 §5.45 — content uses flex Column with `gap = ROW_GAP`,
+/// so the inner [`compute_layout`](pinion-runtime) pass writes each
+/// row's content-local y. The pre-R55.G.2 manual `i * (h + gap)`
+/// math + `content_container.rect = ...` workaround is retired.
+/// `content_h` survives only to feed `ScrollState::set_max` —
+/// `set_max` runs before the layout pass so the bound cannot read
+/// from the post-layout `rect`. A future round (R55.G.3+) can
+/// route the bound through layout output instead.
+///
+/// The outer-window flex pass is still bypassed via the manual
+/// `outer.rect = Rect::new(0, 0, WIN_W, WIN_H)` + manual viewport
+/// position: those workarounds belong to R55.G.3
+/// (ScrollNode-as-flex-child layout participant) and stay for now.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ListState, _frame: &Frame) -> Scene {
     let active = active_option_index(state);
@@ -171,18 +178,21 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
         i32::try_from(content_h.saturating_sub(VIEWPORT_H)).unwrap_or(0),
     );
 
-    // Manual per-row positioning (content-intrinsic y starts at 0).
     let rows: Vec<Scene> = (0..N)
-        .map(|i| {
-            let y = u32::try_from(i).unwrap_or(0) * (ROW_HEIGHT + ROW_GAP);
-            listbox_row_at_y(i, y, state.rows[i].0, state.rows[i].1, Some(i) == Some(active))
-        })
+        .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, Some(i) == Some(active)))
         .collect();
-    let mut content_container = ContainerNode::new(rows);
-    content_container.rect = Rect::new(0, 0, ROW_WIDTH, content_h);
-    let content = Scene::Container(content_container);
+    let content = Scene::Container(
+        ContainerNode::new(rows).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_gap(ROW_GAP),
+        ),
+    );
 
-    // Center the scroll viewport inside the window.
+    // R55.G.3 carry — outer-window flex once `ScrollNode` participates
+    // as a layout child. Until then the viewport position is the
+    // window-centred manual offset and the outer Container's `rect`
+    // is hand-set.
     let vp_x = WIN_W.saturating_sub(VIEWPORT_W) / 2;
     let vp_y = WIN_H.saturating_sub(VIEWPORT_H) / 2;
     let scroll = ScrollNode::from_state(
@@ -217,15 +227,15 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
 /// `focused` and `selected` can diverge in this composite (unlike
 /// `RadioGroup` where Arrow activates immediately); the two
 /// distinct visual states make the divergence observable.
-/// (R51.191 §5.45 R55.G) Build one row at content-intrinsic
-/// position `(0, y)`. Replaces the pre-R51.191 `listbox_row` flex
-/// helper — scroll content is not currently taffy-laid-out (see
-/// [`view`]'s carry note), so the row and its label rect are set
-/// manually. The visual rules (fill / label / border priority) are
-/// identical to the pre-R51.191 helper.
-fn listbox_row_at_y(
+/// (R55.G.2 §5.45) Build one listbox row as a flex Row container
+/// sized `ROW_WIDTH × ROW_HEIGHT`. The content-flex Column wrapper
+/// in [`view`] supplies the vertical stacking; this helper only
+/// declares intrinsic size + visual style + the inline label.
+/// `align_items: Center` centres the label vertically, padding
+/// supplies the 12-px horizontal inset that the pre-R51.191 helper
+/// hand-rolled with `label_baseline_y`.
+fn listbox_row(
     index: usize,
-    y: u32,
     state: ListboxItemState,
     selected: bool,
     focused: bool,
@@ -267,14 +277,13 @@ fn listbox_row_at_y(
         };
         (fill, label_color, border)
     };
-    // Label rect inside the row — 12 px left/right padding (mirrors
-    // the pre-R51.191 `with_padding(Rect::new(12, 4, 12, 4))`),
-    // vertically centred for the 15-px font in the 28-px row.
-    // `w = 0` keeps parley single-line (no wrap).
-    let label_baseline_y = y + (ROW_HEIGHT - 15) / 2;
+    // Inline label — `rect` left default; the row's flex Row +
+    // `AlignItems::Center` + padding lays out width/height and the
+    // 12-px horizontal inset that the pre-R55.G.2 helper hand-rolled
+    // through `label_baseline_y` + explicit `rect.x = 12`.
     let label = Scene::Text(TextNode::styled(
         option_label(index),
-        Rect::new(12, label_baseline_y, 0, ROW_HEIGHT),
+        Rect::default(),
         TextStyle::new().with_size_px(15).with_fg(label_color),
     ));
     let row_tag = format!("{PRIMARY_TAG}#{index}");
@@ -282,11 +291,17 @@ fn listbox_row_at_y(
     if let Some(b) = border {
         row_style = row_style.with_border(b);
     }
-    let mut row_container = ContainerNode::new(vec![label])
-        .with_tag(row_tag)
-        .with_style(row_style);
-    row_container.rect = Rect::new(0, y, ROW_WIDTH, ROW_HEIGHT);
-    Scene::Container(row_container)
+    let row_layout = LayoutStyle::new()
+        .flex(FlexDirection::Row)
+        .with_align_items(AlignItems::Center)
+        .with_size(Size::px(ROW_WIDTH, ROW_HEIGHT))
+        .with_padding(Rect::new(12, 0, 12, 0));
+    Scene::Container(
+        ContainerNode::new(vec![label])
+            .with_tag(row_tag)
+            .with_style(row_style)
+            .with_layout(row_layout),
+    )
 }
 
 /// (R51.191 §5.45 R55.G) Twelve fruit labels — alphabetised so
@@ -913,23 +928,54 @@ mod a11y_tests {
     }
 
     #[test]
-    fn r51_191_view_rows_positioned_at_intrinsic_y() {
-        // Inside the scroll content, the N row containers stack at
-        // intrinsic y = i × (ROW_HEIGHT + ROW_GAP). The hit test +
-        // input router rely on this layout to map clicks to rows.
+    fn r55_g2_view_rows_carry_flex_layout_sidecar_not_manual_rects() {
+        // R55.G.2 §5.45 — the view fn no longer hand-rolls each row's
+        // `rect.y`. Instead it declares a flex Column on the content
+        // container + intrinsic size + padding on each row; the
+        // runtime layout pass derives the rects later. This test
+        // pins the *intent* the view fn carries (the source of truth
+        // for what the layout pass will compute), so a regression
+        // back to manual positioning surfaces as a clear failure.
         let scene = run_view(unselected_state());
         let scroll = find_scroll(&scene).expect("scroll exists");
         let Scene::Container(content) = scroll.content.as_ref() else {
             panic!("scroll content must be a Container of rows");
         };
         assert_eq!(content.children.len(), N);
+        // Content's flex Column + gap sidecar — what compute_layout
+        // consumes to stack rows.
+        assert_eq!(
+            content.layout.flex_direction,
+            FlexDirection::Column,
+            "content must declare flex Column"
+        );
+        assert_eq!(content.layout.gap, ROW_GAP, "content gap");
+        // Pre-layout rects are default zeros — proves view fn no
+        // longer sets `rect.y` by hand.
+        assert_eq!(
+            content.rect, Rect::default(),
+            "content rect must be layout-derived (was hand-set pre-R55.G.2)"
+        );
         for (i, child) in content.children.iter().enumerate() {
             let Scene::Container(row) = child else {
                 panic!("row {i} must be a Container");
             };
-            let expected_y = u32::try_from(i).unwrap_or(0) * (ROW_HEIGHT + ROW_GAP);
-            assert_eq!(row.rect.y, expected_y, "row {i} y position");
-            assert_eq!(row.rect.h, ROW_HEIGHT, "row {i} height");
+            assert_eq!(
+                row.rect, Rect::default(),
+                "row {i} rect must be layout-derived"
+            );
+            // Each row declares its intrinsic size + flex Row + 12-px
+            // horizontal padding — the layout pass converts this
+            // into `rect`.
+            assert_eq!(
+                row.layout.flex_direction, FlexDirection::Row,
+                "row {i} flex Row"
+            );
+            assert_eq!(
+                row.layout.size,
+                Size::px(ROW_WIDTH, ROW_HEIGHT),
+                "row {i} intrinsic size"
+            );
         }
     }
 }
