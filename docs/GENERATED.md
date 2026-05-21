@@ -3483,6 +3483,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/core_shell.rs:StateChange
 - crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
 - examples/hello-commands-tui/src/main.rs
+- crates/pinion-tui/src/paint.rs:CellClip
+- crates/pinion-tui/src/paint.rs:to_buffer_inner
+- crates/pinion-tui/src/paint.rs:paint_text_inner
+- crates/pinion-tui/src/paint.rs:pixels_to_cell_floor
+- crates/pinion-tui/src/paint.rs:cell_to_buf_xy
 
 
 
@@ -3587,6 +3592,11 @@ pub struct ScrollNode {
 }
 ```
 
+
+
+**Implementations**:
+- crates/pinion-tui/src/paint.rs:to_buffer_inner
+- crates/pinion-tui/src/paint.rs:CellClip
 
 
 
@@ -7517,6 +7527,36 @@ pub struct ScrollNode {
 - R51.191 R55.F scene/scroll RPC method (11th typed method) for AI introspection of attached ScrollState
 - R51.192 R55.G ListBox composite integration (first application consumer of R55.A/B/C/E; visual milestone)
 - Wheel + scroll_key + Vello clip share the cursor-lookup-paint-walk pattern; lift the 3-line guard into a shared helper (low priority polish)
+
+
+
+### R51.189 — R51.189 §5.45 R55.E.2 TUI paint adapter clips Scroll viewport (Vello R51.188 backend-symmetry)
+
+**Changes**:
+- crates/pinion-tui/src/paint.rs: CellClip struct (i32 half-open) + pixels_to_cell_floor + clamp_to_i32 + cell_to_buf_xy helpers
+- crates/pinion-tui/src/paint.rs: to_buffer wraps to_buffer_inner(scene, buf, CellClip::from_buf(area), (0, 0)) — public surface preserved (R51.188 pattern mirror)
+- crates/pinion-tui/src/paint.rs: to_buffer_inner Scene::Scroll arm — viewport clip intersect + child_offset = parent + viewport.xy - scroll.offset.xy (i64 arithmetic)
+- crates/pinion-tui/src/paint.rs: paint_container / paint_box / paint_box_style / paint_text_inner take clip + offset_px; every cell write clipped against CellClip + buf bounds
+- crates/pinion-tui/src/paint.rs: paint_text wraps paint_text_inner with full-clip + (0, 0) offset
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2075 passed / 0 failed / 11 ignored (+6 new R55.E.2 tests: paint-content / clip-overshoot / offset-shift / nested-clips / overshoot-no-panic / empty-viewport-skip)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (clippy::pedantic deny baseline holds)
+- mnemosyne validate_workspace = entries=360 / sections=59 / T1=0 / T3=0 / RT=1/1 / orphan_refs=4+0 (no new violations)
+
+
+
+**Impact**: §5.45, §5.41
+
+
+**Carry forward**:
+- R51.190 R55.G — ListBox composite first consumer (substrate now complete on both backends)
+- R51.191 R55.D — ScrollBar sub-widget (SCXML statechart axis per R55.D plan)
+- R51.192 R55.F — scene/scroll RPC method (11th typed method)
+- R55.C.4 — horizontal Home/End + Ctrl-Home/End extreme jump (R51.187 vertical-only partial)
+- R55.C.5 — focus-based scroll routing (W3C UX, vs cursor-based R51.186/187)
 
 
 
