@@ -11279,6 +11279,54 @@
         "R51.189 R55.G — ListBox + future composite integration through Scroll wrap"
       ]
     },
+    "R51.184": {
+      "decision_summary": "R51.184 §5.45 R55.B ScrollState substrate (Owner::cache scope-id keyed)",
+      "changes_bullets": [
+        "pinion-core::widgets::scroll — ScrollState + use_scroll_state hook (Owner::cache)",
+        "offset Signal<i32> + max Cell<i32>; clamp + equality-skip + saturating-add guards",
+        "pinion-core::widgets::scroll::tests — 10 R55.B tests (init/clamp/saturate/hook)"
+      ],
+      "verification_bullets": [
+        "cargo test (vello) = 2033 / 0 / 10 (+10 R55.B tests; was 2023)",
+        "cargo clippy 0 warnings (doc_markdown backtick polish on ListBox / SolidJS)",
+        "ratify: ScrollState = Signal offset + Cell bounds; use_scroll_state = Owner::cache hook"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R51.185 R55.C — wheel + arrow + PgUp/PgDn + Home/End input mapping (Event extension)",
+        "R51.186 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag statechart",
+        "R51.187 R55.E — paint clipping at Vello + TUI boundaries",
+        "R51.188 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)",
+        "R51.189 R55.G — ListBox + future composite integration through Scroll wrap",
+        "R55.B.2 — Animation<i32> smooth-scroll layer (additive on top of this substrate)"
+      ],
+      "publishable_decision_summary": "R51.184 §5.45 R55.B ScrollState substrate (Owner::cache scope-id keyed)",
+      "publishable_changes_bullets": [
+        "pinion-core::widgets::scroll — ScrollState + use_scroll_state hook (Owner::cache)",
+        "offset Signal<i32> + max Cell<i32>; clamp + equality-skip + saturating-add guards",
+        "pinion-core::widgets::scroll::tests — 10 R55.B tests (init/clamp/saturate/hook)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test (vello) = 2033 / 0 / 10 (+10 R55.B tests; was 2023)",
+        "cargo clippy 0 warnings (doc_markdown backtick polish on ListBox / SolidJS)",
+        "ratify: ScrollState = Signal offset + Cell bounds; use_scroll_state = Owner::cache hook"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.185 R55.C — wheel + arrow + PgUp/PgDn + Home/End input mapping (Event extension)",
+        "R51.186 R55.D — ScrollBar sub-widget (vertical + horizontal) hover/drag statechart",
+        "R51.187 R55.E — paint clipping at Vello + TUI boundaries",
+        "R51.188 R55.F — scene/scroll RPC method (offset_to / scroll_by variants)",
+        "R51.189 R55.G — ListBox + future composite integration through Scroll wrap",
+        "R55.B.2 — Animation<i32> smooth-scroll layer (additive on top of this substrate)"
+      ]
+    },
     "R51.33": {
       "decision_summary": "R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate",
       "changes_bullets": [
