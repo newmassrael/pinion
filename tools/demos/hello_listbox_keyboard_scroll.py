@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""hello-listbox keyboard scroll dogfood (§5.49 R59, R51.197).
+"""hello-listbox keyboard scroll dogfood (§5.49 R59, R51.197 / R51.199).
 
 Mirror of `hello_listbox_scroll.py` but driven through `scene/key`
 instead of `scene/wheel`. Exercises the §5.45 R55.C.3 keyboard scroll
@@ -11,14 +11,18 @@ which walks the deepest `Scene::Scroll` under the cursor and applies
 
 Sequence:
   1. spawn hello-listbox
-  2. snapshot (paint) → assert initial Scroll.offset = (0, 0)
-  3. scene/key "PageDown" at the viewport centre
+  2. snapshot (paint) → find `main_list_scroll`, assert offset = (0, 0)
+  3. scene/key "PageDown" at the Scroll viewport centre
   4. snapshot → assert offset_y > 0
 
 `PageDown` is one full viewport step which always lands a visible
 delta regardless of the line-height multiplier, keeping the
 assertion robust against future tweaks. The horizontal axis stays
 untouched.
+
+R51.199 §5.49 — `(cx, cy)` is no longer hardcoded. The demo asks
+for a paint snapshot, walks the tree for the `main_list_scroll`
+tag, and key-injects at the Scroll's viewport centre.
 """
 
 from __future__ import annotations
@@ -29,40 +33,36 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    find_by_tag,
+    node_center,
+    run_demo,
+)
 
 
 WIN_W = 360
 WIN_H = 320
-VIEWPORT_W = 220
-VIEWPORT_H = 5 * 28 + 4 * 6  # 5 rows + 4 gaps
-
-VIEWPORT_CX = (WIN_W - VIEWPORT_W) // 2 + VIEWPORT_W // 2
-VIEWPORT_CY = (WIN_H - VIEWPORT_H) // 2 + VIEWPORT_H // 2
-
-
-def scroll_node(snap: dict) -> dict:
-    children = snap.get("children") or []
-    if not children:
-        raise AssertionError("outer Container has no children")
-    scroll = children[0]
-    if scroll.get("type") != "Scroll":
-        raise AssertionError(f"expected Scroll child, got {scroll.get('type')!r}")
-    return scroll
 
 
 def body() -> None:
     with RpcSubprocess("hello-listbox") as listbox:
         before = listbox.snapshot(source="paint", viewport=(WIN_W, WIN_H))
-        before_scroll = scroll_node(before)
-        assert_eq(before_scroll.get("offset_x"), 0, "initial offset_x")
-        assert_eq(before_scroll.get("offset_y"), 0, "initial offset_y")
+        scroll = find_by_tag(before, "main_list_scroll")
+        if scroll is None:
+            raise AssertionError("main_list_scroll tag not found in paint snapshot")
+        assert_eq(scroll.get("offset_x"), 0, "initial offset_x")
+        assert_eq(scroll.get("offset_y"), 0, "initial offset_y")
+        cx, cy = node_center(scroll)
 
-        listbox.key(at=(VIEWPORT_CX, VIEWPORT_CY), name="PageDown")
+        listbox.key(at=(cx, cy), name="PageDown")
         time.sleep(0.1)
 
         after = listbox.snapshot(source="paint", viewport=(WIN_W, WIN_H))
-        after_scroll = scroll_node(after)
+        after_scroll = find_by_tag(after, "main_list_scroll")
+        if after_scroll is None:
+            raise AssertionError("main_list_scroll tag vanished after key")
         after_offset_y = after_scroll.get("offset_y")
         if not isinstance(after_offset_y, (int, float)) or after_offset_y <= 0:
             raise AssertionError(

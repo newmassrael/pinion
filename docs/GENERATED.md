@@ -14898,6 +14898,33 @@ if __name__ == "__main__":
 
 
 
+### Round 531 — R51.199 §5.49 listbox demos = snapshot-based viewport center — hardcoded VIEWPORT_CX/CY 청산
+
+**Changes**:
+- hello_listbox_scroll.py = find_by_tag('main_list_scroll') + node_center; VIEWPORT_W/H 청산
+- hello_listbox_keyboard_scroll.py = 동일 패턴, hardcoded VIEWPORT_CX/CY 청산
+- tools/rpc_verify.py rect_of(node) 헬퍼 신규 (Scroll viewport / 기타 rect 통합)
+- node_center 가 Scroll.viewport 도 처리 — 모든 primitive uniform
+
+
+
+**Verification**:
+- 5 demos 회귀 PASS (~0.9s 각, 변동 없음)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- Rust code 변경 없음, Python harness + 2 demos 만 변경
+
+
+
+**Impact**: §5.49, §5.7, §5.12
+
+
+**Carry forward**:
+- R51.200 Scroll content rect = viewport-local — nested scroll/coord 변환 substrate
+- R55.G.2 layout::compute_layout into Scroll content (R51.191 carry)
+- absolute_rect_of(node, path) walker — nested 좌표 변환 (현재 root scroll 만 작동)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

@@ -361,15 +361,32 @@ def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
     return None
 
 
-def node_center(node: dict) -> tuple[float, float]:
-    """Return the centre `(x, y)` of `node.rect` in logical pixels.
+def rect_of(node: dict) -> dict:
+    """Return the geometry rect of a snapshot node.
 
-    Raises `AssertionError` when the node has no `rect` (`Effect` /
-    `Unknown` markers, future variants). R51.198 §5.49.
+    `Scroll` reports its geometry under `viewport` (the clip window);
+    every other primitive uses `rect`. R51.198 §5.49 / R51.199 §5.49.
+    Raises `AssertionError` when the node carries neither field.
     """
-    rect = node.get("rect")
+    if node.get("type") == "Scroll":
+        rect = node.get("viewport")
+    else:
+        rect = node.get("rect")
     if not isinstance(rect, dict):
-        raise AssertionError(f"node has no rect: {node!r}")
+        raise AssertionError(f"node has no geometry rect: {node!r}")
+    return rect
+
+
+def node_center(node: dict) -> tuple[float, float]:
+    """Return the centre `(x, y)` of a node's geometry rect.
+
+    Uses `rect_of` so the helper works uniformly for leaf primitives
+    (`Box` / `Text` / `Path` / `Image`), `Container`, `External`, and
+    `Scroll` (whose geometry lives under `viewport`). Raises
+    `AssertionError` when the node has no rect (`Effect` / `Unknown`
+    markers, future variants). R51.198 §5.49.
+    """
+    rect = rect_of(node)
     cx = float(rect["x"]) + float(rect["w"]) / 2.0
     cy = float(rect["y"]) + float(rect["h"]) / 2.0
     return (cx, cy)

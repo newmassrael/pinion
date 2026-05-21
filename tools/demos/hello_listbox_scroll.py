@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""hello-listbox scroll dogfood (§5.49 R59, R51.195).
+"""hello-listbox scroll dogfood (§5.49 R59, R51.195 / R51.199).
 
 The full closure of R51.192's original META violation: spawn
 hello-listbox, wheel-scroll over the viewport, and confirm `offset_y`
@@ -13,11 +13,11 @@ Sequence:
      R51.192 fixed at the winit boundary)
   4. snapshot paint scene  → assert Scroll.offset_y > 0
 
-The exact post-wheel offset depends on `wheel_delta_to_pixels`'s
-line-height multiplier; the demo only asserts the inequality so a
-runtime tweak to that multiplier does not break the dogfood. R51.196
-(scene/click v1) will let a follow-up demo also verify the visible
-row tag set shifts after the scroll.
+R51.199 §5.49 — `(cx, cy)` is no longer hardcoded. The demo asks for
+a paint snapshot, walks the tree for the `main_list_scroll` tag,
+and wheel-injects at the Scroll's viewport centre. Layout tweaks
+that resize or recentre the viewport now relocate the input target
+with it instead of regressing this dogfood.
 """
 
 from __future__ import annotations
@@ -28,47 +28,39 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    find_by_tag,
+    node_center,
+    run_demo,
+)
 
 
 WIN_W = 360
 WIN_H = 320
-VIEWPORT_W = 220
-VIEWPORT_H = 5 * 28 + 4 * 6  # 5 rows + 4 gaps — see main.rs
-
-# Viewport is centred inside the window — these are the absolute
-# logical-pixel coordinates the shell exposes through the
-# `InputRouter` cursor tracker.
-VIEWPORT_CX = (WIN_W - VIEWPORT_W) // 2 + VIEWPORT_W // 2
-VIEWPORT_CY = (WIN_H - VIEWPORT_H) // 2 + VIEWPORT_H // 2
-
-
-def scroll_node(snap: dict) -> dict:
-    """Pull the `Scroll` node out of a hello-listbox paint snapshot."""
-    children = snap.get("children") or []
-    if not children:
-        raise AssertionError("outer Container has no children")
-    scroll = children[0]
-    if scroll.get("type") != "Scroll":
-        raise AssertionError(f"expected Scroll child, got {scroll.get('type')!r}")
-    return scroll
 
 
 def body() -> None:
     with RpcSubprocess("hello-listbox") as listbox:
         before = listbox.snapshot(source="paint", viewport=(WIN_W, WIN_H))
-        before_scroll = scroll_node(before)
-        assert_eq(before_scroll.get("offset_x"), 0, "initial offset_x")
-        assert_eq(before_scroll.get("offset_y"), 0, "initial offset_y")
+        scroll = find_by_tag(before, "main_list_scroll")
+        if scroll is None:
+            raise AssertionError("main_list_scroll tag not found in paint snapshot")
+        assert_eq(scroll.get("offset_x"), 0, "initial offset_x")
+        assert_eq(scroll.get("offset_y"), 0, "initial offset_y")
+        cx, cy = node_center(scroll)
 
-        listbox.wheel(at=(VIEWPORT_CX, VIEWPORT_CY), lines=(0.0, 3.0))
+        listbox.wheel(at=(cx, cy), lines=(0.0, 3.0))
         # The deferred-input drain runs on the dispatcher's return
         # path, so a brief sleep lets winit's next user event tick
         # process the redraw bump before the next snapshot lands.
         time.sleep(0.1)
 
         after = listbox.snapshot(source="paint", viewport=(WIN_W, WIN_H))
-        after_scroll = scroll_node(after)
+        after_scroll = find_by_tag(after, "main_list_scroll")
+        if after_scroll is None:
+            raise AssertionError("main_list_scroll tag vanished after wheel")
         after_offset_y = after_scroll.get("offset_y")
         if not isinstance(after_offset_y, (int, float)) or after_offset_y <= 0:
             raise AssertionError(
