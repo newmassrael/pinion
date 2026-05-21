@@ -14955,6 +14955,36 @@ if __name__ == "__main__":
 
 
 
+### Round 533 — R55.G.3 §5.45 ScrollNode-as-flex-child — viewport.{x,y} layout-derived, w/h app-set 보호
+
+**Changes**:
+- layout::build: Scene::Scroll 의 taffy size 를 viewport.{w,h} 로 override
+- layout::assign_rect: Scene::Scroll 이 rect.{x,y} 만 viewport 에 write (w,h 보호)
+- hello-listbox: outer Container = flex Column + JustifyContent::Center + AlignItems::Center
+- hello-listbox: vp_x / vp_y 수동 중앙 정렬 청산, outer.rect = ... 청산
+- ScrollNode::new(Rect::new(0, 0, VIEWPORT_W, VIEWPORT_H), ...) — 위치 layout 맡김
+- 1 새 r55_g3_scroll_centered_via_outer_flex_writes_viewport_position test
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2125/0/11 (+1 R55.G.3 test)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 5 demos 회귀 PASS (~0.9s 각, viewport 자동 중앙 정렬)
+- R51.191 manual positioning 완전 종료 (content + outer + viewport 위치 모두 layout)
+
+
+
+**Impact**: §5.45, §5.21, §5.49
+
+
+**Carry forward**:
+- ScrollNode 의 layout: LayoutStyle 필드 — flex_grow / align_items 지원 시 필요
+- max_y 자동 계산 — layout 결과의 content.rect.h 사용 (chicken-and-egg 청산)
+- R55.G.4 layout.padding / aria 등 ScrollNode 의 풍부한 LayoutStyle 활용
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

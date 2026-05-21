@@ -236,7 +236,21 @@ struct LayoutShadow {
 }
 
 fn build(scene: &Scene, tree: &mut TaffyTree<NodeContext>) -> LayoutShadow {
-    let style = to_taffy_style(layout_style_of(scene));
+    let mut style = to_taffy_style(layout_style_of(scene));
+    // R55.G.3 §5.45 — `ScrollNode` has no `LayoutStyle` field yet
+    // (the clip window IS the primitive's outer geometry). Override
+    // the taffy size with `viewport.{w,h}` so Scroll participates
+    // in parent flex as a fixed-size leaf instead of an auto-size
+    // zero box.
+    if let Scene::Scroll(s) = scene {
+        #[allow(clippy::cast_precision_loss)]
+        {
+            style.size = TaffySize {
+                width: length(s.viewport.w as f32),
+                height: length(s.viewport.h as f32),
+            };
+        }
+    }
     let children = match scene {
         Scene::Container(c) => c.children.iter().map(|s| build(s, tree)).collect(),
         _ => Vec::new(),
@@ -323,6 +337,14 @@ fn layout_style_of(scene: &Scene) -> &LayoutStyle {
 /// Apply a rect to whichever variant carries one. Returns `false`
 /// for variants without a `rect` field (Effect today; future
 /// `non_exhaustive` additions) so the caller can skip them cleanly.
+///
+/// R55.G.3 §5.45 — `Scene::Scroll` writes only the layout-derived
+/// position (`x`, `y`) into `viewport`. `viewport.{w, h}` stays as
+/// the application-supplied clip window dimensions; the `build`
+/// override forced taffy to size the Scroll node at exactly that
+/// `viewport.{w, h}`, so re-writing them here would be redundant
+/// at best and risks an off-by-one if the taffy round-trip ever
+/// snaps differently.
 fn assign_rect(scene: &mut Scene, rect: Rect) -> bool {
     match scene {
         Scene::Box(BoxNode { rect: r, .. })
@@ -332,6 +354,11 @@ fn assign_rect(scene: &mut Scene, rect: Rect) -> bool {
         | Scene::Container(ContainerNode { rect: r, .. })
         | Scene::External(ExternalNode { rect: r, .. }) => {
             *r = rect;
+            true
+        }
+        Scene::Scroll(s) => {
+            s.viewport.x = rect.x;
+            s.viewport.y = rect.y;
             true
         }
         _ => false,
@@ -718,8 +745,13 @@ mod tests {
 
             let Scene::Container(outer) = &scene else { panic!("outer") };
             let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
-            // Scroll itself stays at the app-set viewport position.
-            assert_eq!(s.viewport, Rect::new(70, 78, 220, 164));
+            // R55.G.3 §5.45 — viewport's w/h stay app-set (clip
+            // window intent); viewport's x/y are layout-derived.
+            // Block-display outer places Scroll at (0, 0).
+            assert_eq!(s.viewport.w, 220);
+            assert_eq!(s.viewport.h, 164);
+            assert_eq!(s.viewport.x, 0);
+            assert_eq!(s.viewport.y, 0);
             // Content rects are scroll-local (origin at (0, 0)).
             let Scene::Container(c) = s.content.as_ref() else { panic!("content") };
             let Scene::Container(r0) = &c.children[0] else { panic!("row0") };
@@ -728,6 +760,38 @@ mod tests {
             assert_eq!(r0.rect, Rect::new(0, 0, 220, 28));
             assert_eq!(r1.rect, Rect::new(0, 34, 220, 28));
             assert_eq!(r2.rect, Rect::new(0, 68, 220, 28));
+        }
+
+        #[test]
+        fn r55_g3_scroll_centered_via_outer_flex_writes_viewport_position() {
+            // Outer Container = flex Row + JustifyContent::Center +
+            // AlignItems::Center. Scroll inside is 220×164 inside a
+            // 360×320 viewport — expected centred at
+            // ((360-220)/2, (320-164)/2) = (70, 78). Proves R55.G.3
+            // routes Scroll through parent flex.
+            let content_layout = LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_gap(6);
+            let content = Scene::Container(
+                ContainerNode::new(vec![fixed_row(28)]).with_layout(content_layout),
+            );
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content);
+            let outer_layout = LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_justify(JustifyContent::Center)
+                .with_align_items(AlignItems::Center);
+            let mut scene = Scene::Container(
+                ContainerNode::new(vec![Scene::Scroll(scroll)]).with_layout(outer_layout),
+            );
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            let Scene::Container(outer) = &scene else { panic!("outer") };
+            let Scene::Scroll(s) = &outer.children[0] else { panic!("scroll") };
+            assert_eq!(s.viewport.x, 70, "viewport.x layout-derived");
+            assert_eq!(s.viewport.y, 78, "viewport.y layout-derived");
+            assert_eq!(s.viewport.w, 220, "viewport.w app-set");
+            assert_eq!(s.viewport.h, 164, "viewport.h app-set");
         }
 
         #[test]

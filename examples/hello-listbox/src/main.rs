@@ -68,7 +68,7 @@ use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, 
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
@@ -155,13 +155,17 @@ impl ListState {
 /// math + `content_container.rect = ...` workaround is retired.
 /// `content_h` survives only to feed `ScrollState::set_max` —
 /// `set_max` runs before the layout pass so the bound cannot read
-/// from the post-layout `rect`. A future round (R55.G.3+) can
-/// route the bound through layout output instead.
+/// from the post-layout `rect`. A future round can route the bound
+/// through layout output instead.
 ///
-/// The outer-window flex pass is still bypassed via the manual
-/// `outer.rect = Rect::new(0, 0, WIN_W, WIN_H)` + manual viewport
-/// position: those workarounds belong to R55.G.3
-/// (ScrollNode-as-flex-child layout participant) and stay for now.
+/// R55.G.3 §5.45 — the outer-window flex pass centres the Scroll
+/// inside the window via `JustifyContent::Center` +
+/// `AlignItems::Center` on the outer Container. The pre-R55.G.3
+/// `outer.rect = Rect::new(0, 0, WIN_W, WIN_H)` + manual
+/// `vp_x = (WIN_W - VIEWPORT_W) / 2` math are retired; the runtime
+/// layout pass writes the Scroll's `viewport.{x, y}` from the
+/// computed flex position (`viewport.{w, h}` stays as the
+/// app-supplied clip-window dimensions).
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ListState, _frame: &Frame) -> Scene {
     let active = active_option_index(state);
@@ -189,22 +193,22 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
         ),
     );
 
-    // R55.G.3 carry — outer-window flex once `ScrollNode` participates
-    // as a layout child. Until then the viewport position is the
-    // window-centred manual offset and the outer Container's `rect`
-    // is hand-set.
-    let vp_x = WIN_W.saturating_sub(VIEWPORT_W) / 2;
-    let vp_y = WIN_H.saturating_sub(VIEWPORT_H) / 2;
     let scroll = ScrollNode::from_state(
         scroll_state,
-        Rect::new(vp_x, vp_y, VIEWPORT_W, VIEWPORT_H),
+        Rect::new(0, 0, VIEWPORT_W, VIEWPORT_H),
         content,
     );
 
-    let mut outer =
-        ContainerNode::new(vec![Scene::Scroll(scroll)]).with_style(BoxStyle::filled(BG_FILL));
-    outer.rect = Rect::new(0, 0, WIN_W, WIN_H);
-    Scene::Container(outer)
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Scroll(scroll)])
+            .with_style(BoxStyle::filled(BG_FILL))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_justify(JustifyContent::Center)
+                    .with_align_items(AlignItems::Center),
+            ),
+    )
 }
 
 /// One row of the composite — filled box (focused / selected tint) +
