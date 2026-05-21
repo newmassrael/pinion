@@ -3606,6 +3606,79 @@ pub struct ScrollNode {
 
 
 
+### §5.49. AI-first RPC self-verification harness (R59)
+
+
+**Intent**: Claude-side RPC dogfood harness: every visual round ends with a typed scene/query|invoke|snapshot demo that proves observable state without humans narrating screenshots.
+
+
+**Rationale**:
+- §2 #2 demands the framework prove its own state via typed RPC, not via screenshot prose.
+- §2 #7 scene-as-data: observable widget state reaches the AI through typed RPC paths.
+- R51.192 caught Claude asking the user how many rows were visible — direct META violation.
+- Self-verifying demos catch RPC regressions the unit-test side misses (boot grace, framing).
+- Python harness reuses target/release/* across runs — no cargo resolution per run.
+
+
+
+**Inputs**:
+- Workspace-relative pinion-shell example name (e.g. hello-toggle) buildable via cargo run -p <name>.
+- target/release/<example> binary present, or cargo run fallback with --quiet.
+- DISPLAY (X11) or WAYLAND_DISPLAY available — winit needs a surface to bind.
+
+
+
+**Outputs**:
+- Exit code 0 on every assertion satisfied; non-zero with typed reason on stderr.
+- Wall-clock duration printed per demo so regressions in startup latency surface visibly.
+- Stderr tail (up to 20 lines) surfaced on transport failure for shell-side diagnosis.
+
+
+
+**Caveats**:
+- scene/click v0 is probe-only; demos drive state via scene/invoke until R51.196 lands click v1.
+- scene/snapshot dumps scene root + root External only; Container/Scroll traversal carries R51.194.
+- No wheel/key event injection RPC method yet; §5.45 R55 Scroll axis verify waits on R51.195.
+- Spawn needs X11/Wayland display; pure-headless mode is a §5.16 Vello backend carry.
+
+
+
+**Alternatives rejected**:
+- Rust integration test that spawns cargo — duplicates dependency resolution per run, slower iteration.
+- Screenshot-only verify — keeps the human in the loop and violates §2 #2 AI primary path.
+- Third-party Python dep (pytest / anyio) — runtime install for a single-file harness is overhead.
+- Bash + jq harness — JSON edge cases (escapes, nesting) push complexity onto fragile shell logic.
+
+
+
+**Impact scope**: §2, §5.7, §5.12, §5.15, §5.16, §5.18, §5.20, §5.45
+
+
+**Examples**:
+
+```python
+from rpc_verify import RpcSubprocess, assert_eq, run_demo
+
+def body() -> None:
+    with RpcSubprocess("hello-toggle") as toggle:
+        assert_eq(toggle.query("/external/value"), False, "initial")
+        for ev in ("PointerEnter", "PointerDown", "PointerUp"):
+            toggle.invoke("/external/send", ev)
+        assert_eq(toggle.query("/external/value"), True, "post-activate")
+
+if __name__ == "__main__":
+    import sys; sys.exit(run_demo("hello-toggle activate cycle", body))
+```
+
+
+
+**Implementations**:
+- tools/rpc_verify.py:RpcSubprocess
+- tools/demos/hello_toggle_activate.py:body
+- tools/README.md
+
+
+
 ### §5.5. MCU v1 backend scope (AP-only vs MCU-included)
 
 
@@ -14629,6 +14702,37 @@ pub struct ScrollNode {
 
 **Carry forward**:
 - R51.125 — dispatch_rpc trait extraction (ShellDispatch trait in pinion-runtime + impl in pinion-shell, pinion-rpc → pinion-runtime direction 유지)
+
+
+
+### Round 525 — R51.193 §5.49 R59 AI-first RPC self-verification harness — first Claude-side dogfood (hello-toggle activate)
+
+**Changes**:
+- tools/rpc_verify.py — RpcSubprocess (subprocess + JSON-RPC + query/invoke/snapshot + assert)
+- tools/demos/hello_toggle_activate.py — spawn + query(false) + invoke×3 + query(true) cycle
+- tools/README — harness usage + R51.194-196 carry list (snapshot/wheel/click v1)
+- atomic §5.49 add_section + intent + rationale + caveats + 3 implementations + Python example
+- impact_scope refs §5.7 §5.12 §5.15 §5.18 §5.20
+
+
+
+**Verification**:
+- python3 tools/demos/hello_toggle_activate.py — [demo] PASS (0.87s)
+- cargo test --workspace --features pinion-runtime/vello — 2090 pass / 0 fail / 11 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello — 0 warnings
+- mnemosyne validate_workspace — T1=0 T3=0 RT=1/1 (post-mutation re-run)
+
+
+
+**Impact**: §5.49, §5.7
+
+
+**Carry forward**:
+- R51.194 — scene/snapshot Container/Scroll traversal so harness can enumerate widget rows
+- R51.195 — wheel/key event injection RPC method (§5.45 R55 Scroll dogfood unblocker)
+- R51.196 — scene/click v1: Container traversal + real PointerEvent through InputRouter
+- R51.197 — Rust integration test pinning the harness so demo regressions appear in CI
+- hello-listbox scroll dogfood (R51.192 original META response) blocked on R51.194-195
 
 
 

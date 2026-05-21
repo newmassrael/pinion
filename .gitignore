@@ -30,3 +30,8 @@ claudedocs/
 
 # Activity logs (local working notes; outside mnemosyne workspace).
 notes/
+
+# Python bytecode cache emitted by the §5.49 R59 AI-first RPC
+# self-verification harness when demos under tools/demos/ run.
+**/__pycache__/
+*.pyc

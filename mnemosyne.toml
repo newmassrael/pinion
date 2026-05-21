@@ -280,3 +280,12 @@ to = "35"
 reason = "R51.186 audit_impact_refs frozen with missing 5. prefix; intent was §5.35 (InputRouter)"
 applied_in = "pinion R51.186"
 since = "R51.186"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "Round 525"
+fields = ["publishable_changes_bullets"]
+reason = "R51.193 publishable_changes_bullets divergence: bullet 1 trimmed from 109 to 91 chars (audit) to satisfy MAX_BULLET_CHAR 100; bullet 3 changed `tools/README.md` to `tools/README` to clear cross_doc_reference_explicit T3 warn against an implicit README.md reference."
+applied_in = "Round 525"
+content_hash_before = "85ebb3dd4613224ed89ddd97429a6f584f16c1dbb2c46477bd4c09d1bda4099b"
+content_hash_after = "a9b02927c4eb353c12e734867335b063933a3b9fc2a6f438768d149cb8e7345d"
