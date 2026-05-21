@@ -26,12 +26,13 @@ use std::sync::Arc;
 use std::thread;
 
 use pinion_a11y::AccessTreeBuilder;
+use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
 use pinion_runtime::{paint_adapter, CommandExecutor, HandlerRegistry, PointerId};
 use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -465,6 +466,18 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             } => {
                 self.core.mouse_released(PointerId::MOUSE);
             }
+            // (R51.186 §5.45 R55.C.2) winit `MouseWheel` events do
+            // not carry a position field — winit follows the same
+            // W3C / iOS / Android contract pinion's router reads:
+            // the wheel applies to the surface under the last
+            // cursor position. The substrate's `InputRouter`
+            // remembers that position, so this arm only needs to
+            // convert the unit-tagged `MouseScrollDelta` into the
+            // matching pinion-native [`WheelDelta`] and forward.
+            WindowEvent::MouseWheel { delta, .. } => {
+                let pinion_delta = winit_wheel_to_pinion(delta);
+                self.core.wheel(PointerId::MOUSE, pinion_delta);
+            }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
             // R51.108 §5.41 — convert at the winit boundary so the
@@ -593,6 +606,29 @@ fn winit_touch_to_pinion(touch: winit::event::Touch) -> pinion_runtime::Touch {
             winit::event::TouchPhase::Moved => pinion_runtime::TouchPhase::Moved,
             winit::event::TouchPhase::Ended => pinion_runtime::TouchPhase::Ended,
             winit::event::TouchPhase::Cancelled => pinion_runtime::TouchPhase::Cancelled,
+        },
+    }
+}
+
+/// (R51.186 §5.45 R55.C.2) Convert a winit `MouseScrollDelta` to
+/// the substrate-local [`WheelDelta`] at the winit boundary.
+///
+/// winit reports wheel input in one of two unit modes —
+/// `LineDelta(f32, f32)` for legacy notched mouse wheels and
+/// `PixelDelta(PhysicalPosition<f64>)` for trackpad inertia /
+/// high-resolution scroll. Both map 1:1 onto pinion's
+/// unit-tagged variants. The `PhysicalPosition<f64>` narrows to
+/// `f32` here (winit's logical-pixel coordinates already use
+/// `f32` precision; the substrate's `wheel_delta_to_pixels`
+/// rounds to `i32`, so the wider `f64` carries no information
+/// past the boundary).
+#[allow(clippy::cast_possible_truncation)]
+fn winit_wheel_to_pinion(delta: MouseScrollDelta) -> WheelDelta {
+    match delta {
+        MouseScrollDelta::LineDelta(dx, dy) => WheelDelta::Lines { dx, dy },
+        MouseScrollDelta::PixelDelta(pos) => WheelDelta::Pixels {
+            dx: pos.x as f32,
+            dy: pos.y as f32,
         },
     }
 }

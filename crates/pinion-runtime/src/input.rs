@@ -78,6 +78,7 @@
 
 use std::collections::HashMap;
 
+use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 
@@ -483,6 +484,66 @@ impl InputRouter {
         }
     }
 
+    /// (R51.186 §5.45 R55.C.2) Mouse wheel input dispatch.
+    ///
+    /// Forwards the wheel delta to the deepest
+    /// [`ScrollNode`](pinion_core::scene::ScrollNode) covering the
+    /// pointer's last-known cursor position whose
+    /// `state: Option<Rc<ScrollState>>` link is wired. `Pixels`
+    /// route through verbatim; `Lines` multiply by [`LINE_HEIGHT_PX`]
+    /// (16, the W3C / browser default) before `f32 → i32`
+    /// round-to-nearest. The translated `(dx, dy)` pair feeds
+    /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by),
+    /// which clamps against the declared bounds and fires the
+    /// reactive `Signal::set` — the next paint cycle re-runs the
+    /// view fn against the updated offset without any
+    /// application-level wiring.
+    ///
+    /// W3C sign convention: positive `dy` scrolls *downward*
+    /// (content shifts up visually); positive `dx` scrolls
+    /// *rightward*. The convention matches
+    /// [`WheelDelta`](pinion_core::event::WheelDelta) and the
+    /// `ScrollState` offset semantics directly — no per-axis
+    /// inversion at this boundary.
+    ///
+    /// No-op (returns `false`) when any of the following hold:
+    ///
+    /// - The pointer `id` has no stored cursor (cursor never
+    ///   entered the window for this pointer, or `cursor_left`
+    ///   already dropped it). winit / web / iOS all emit wheel
+    ///   events without their own position field — they reuse
+    ///   the surface's tracked cursor, so the router does the
+    ///   same.
+    /// - The retained paint scene is unset (wheel fired before
+    ///   the first frame).
+    /// - No `Scene::Scroll` covers the cursor point.
+    /// - The covering `ScrollNode` has no `state` attached (a
+    ///   declarative-only scroll node the application built
+    ///   without `with_state(...)` — the router silently drops
+    ///   the wheel rather than panicking).
+    ///
+    /// Returns `true` when the wheel was dispatched against an
+    /// attached `ScrollState`. Backends (Vello: `ShellCore::wheel`;
+    /// TUI: `ShellCoreTui::wheel`) use the return to decide
+    /// whether to request a repaint — silent drops never bump the
+    /// redraw flag.
+    pub fn wheel(&mut self, id: PointerId, delta: WheelDelta) -> bool {
+        let Some(&(x, y)) = self.cursors.get(&id) else {
+            return false;
+        };
+        let Some(paint) = self.last_paint_scene.as_ref() else {
+            return false;
+        };
+        let xu = floor_clamp_u32(x);
+        let yu = floor_clamp_u32(y);
+        let Some(state) = paint.scroll_state_at(xu, yu) else {
+            return false;
+        };
+        let (dx, dy) = wheel_delta_to_pixels(delta);
+        state.scroll_by(dx, dy);
+        true
+    }
+
     /// R51.93 §5.35 — pointer cancellation handler. The OS-side
     /// counterpart to [`pointer_up`](Self::pointer_up): the user did
     /// **not** release the pointer of their own accord, the system
@@ -807,6 +868,60 @@ fn widget_wants_capture_walk(scene: &Scene, target_tag: &str) -> Option<bool> {
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn floor_clamp_u32(v: f64) -> u32 {
     v.max(0.0) as u32
+}
+
+/// (R51.186 §5.45 R55.C.2) Default line-height in logical pixels
+/// used to convert
+/// [`WheelDelta::Lines`](pinion_core::event::WheelDelta::Lines)
+/// into the integer scroll offset
+/// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
+/// expects. The 16-pixel value matches the W3C `WheelEvent`
+/// default (`window.devicePixelRatio == 1.0`) and Chromium /
+/// Firefox / Safari `wheel` event handling on every desktop
+/// platform — callers and tests reading wheel-driven offset
+/// deltas can rely on the value as the framework constant. A
+/// per-widget override (custom line-height for monospace text
+/// containers, etc.) is a carry-forward sub-axis (R55.C.4) that
+/// lands on top of this constant without breaking the existing
+/// API surface.
+pub const LINE_HEIGHT_PX: f32 = 16.0;
+
+/// (R51.186 §5.45 R55.C.2) Convert a unit-tagged
+/// [`WheelDelta`](pinion_core::event::WheelDelta) into the
+/// `(dx, dy)` integer pixel pair `ScrollState::scroll_by`
+/// expects. `Pixels` route through verbatim; `Lines` multiply
+/// by [`LINE_HEIGHT_PX`]. Both axes round to the nearest pixel
+/// and saturate at `i32` boundaries; `NaN` clamps to zero so an
+/// adversarial input never produces a wrap.
+fn wheel_delta_to_pixels(delta: WheelDelta) -> (i32, i32) {
+    let (fx, fy) = match delta {
+        WheelDelta::Pixels { dx, dy } => (dx, dy),
+        WheelDelta::Lines { dx, dy } => (dx * LINE_HEIGHT_PX, dy * LINE_HEIGHT_PX),
+        // R55.C.2 — `WheelDelta` is `#[non_exhaustive]`; an
+        // unknown future variant (e.g. `Pages` for PgUp / PgDn
+        // coarse scroll) degrades to a zero delta rather than
+        // panicking. The substrate must stay robust against
+        // a `pinion-core` bump that introduces a variant the
+        // running `pinion-runtime` does not yet recognise. The
+        // R55.C.* sub-axis cascade adds the explicit arms as
+        // each variant gains a defined offset semantics.
+        _ => (0.0, 0.0),
+    };
+    (round_clamp_i32(fx), round_clamp_i32(fy))
+}
+
+/// (R51.186 §5.45 R55.C.2) Round-to-nearest `f32 → i32` with
+/// `NaN`-guard. Rust's `f32 as i32` saturates at the integer
+/// boundaries since 1.45 and converts `NaN` to `0`; the explicit
+/// `is_nan` check documents the policy at the call site rather
+/// than relying on the silent language-level fallback (matches
+/// the R51.145 `clamp_frame_dt` `NaN`-guard precedent).
+#[allow(clippy::cast_possible_truncation)]
+fn round_clamp_i32(v: f32) -> i32 {
+    if v.is_nan() {
+        return 0;
+    }
+    v.round() as i32
 }
 
 #[cfg(test)]
@@ -1898,6 +2013,321 @@ mod tests {
         // remainder is opaque to the router (a future schema may
         // give it meaning, e.g. nested sub-indexing).
         assert_eq!(split_subindex("a#b#c"), ("a", Some("b#c")));
+    }
+
+    // ─── R51.186 §5.45 R55.C.2 wheel dispatch fixtures + tests ────
+
+    use pinion_core::scene::{BoxNode, ScrollNode};
+    use pinion_core::widgets::scroll::ScrollState;
+    use std::rc::Rc;
+
+    /// Build a paint scene with a single `Scene::Scroll` wrapping a
+    /// `Scene::Box`. Optionally attach a `ScrollState` for wheel
+    /// routing — `None` exercises the "declarative-only scroll"
+    /// silent-drop path; `Some(rc)` exercises the dispatch path.
+    fn paint_with_scroll(
+        viewport_w: u32,
+        viewport_h: u32,
+        scroll_viewport: Rect,
+        content_w: u32,
+        content_h: u32,
+        state: Option<Rc<ScrollState>>,
+    ) -> Scene {
+        let content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, content_w, content_h),
+            Color::default(),
+        ));
+        let mut scroll = ScrollNode::new(scroll_viewport, content);
+        if let Some(s) = state {
+            scroll = scroll.with_state(s);
+        }
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![Scene::Scroll(scroll)])
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, viewport_w, viewport_h);
+        }
+        root
+    }
+
+    #[test]
+    fn r55_c2_wheel_no_op_without_cursor() {
+        // R55.C.2 — wheel before any `cursor_moved` for this
+        // pointer (cursor never entered the window) is a silent
+        // drop. winit / web / iOS reuse the last stored cursor,
+        // so an empty `cursors` map = no dispatch target.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            500,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        // No cursor_moved before wheel.
+        let dispatched =
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+        assert!(!dispatched);
+        assert_eq!(state.offset(), (0, 0));
+    }
+
+    #[test]
+    fn r55_c2_wheel_no_op_without_paint_scene() {
+        // R55.C.2 — wheel before the first paint commit is a
+        // silent drop. The router has no `last_paint_scene` to
+        // hit-test against.
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        let dispatched =
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+        assert!(!dispatched);
+    }
+
+    #[test]
+    fn r55_c2_wheel_no_op_off_scroll_container() {
+        // R55.C.2 — cursor on a non-scroll widget (the button
+        // fixture) is a silent drop. The button is not a
+        // wheel target.
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state_scene);
+        let dispatched =
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+        assert!(!dispatched);
+    }
+
+    #[test]
+    fn r55_c2_wheel_silent_drop_on_stateless_scroll() {
+        // R55.C.2 — the ScrollNode covers the cursor but has no
+        // `state` link (declarative-only). The router drops
+        // silently rather than panicking — the application can
+        // ship a Scroll primitive without wiring input routing.
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            500,
+            None,
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        let dispatched =
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+        assert!(!dispatched);
+    }
+
+    #[test]
+    fn r55_c2_wheel_pixels_scrolls_attached_state() {
+        // R55.C.2 — Pixels deltas route through verbatim into
+        // `ScrollState::scroll_by`. Positive `dy` scrolls
+        // downward (W3C sign convention).
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        let dispatched =
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+        assert!(dispatched);
+        assert_eq!(state.offset(), (0, 40));
+        // Second wheel — accumulates.
+        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 35.0 });
+        assert_eq!(state.offset(), (0, 75));
+        // Horizontal axis routes too.
+        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 12.0, dy: 0.0 });
+        assert_eq!(state.offset(), (12, 75));
+    }
+
+    #[test]
+    fn r55_c2_wheel_lines_multiplies_by_line_height_px() {
+        // R55.C.2 — Lines deltas scale by `LINE_HEIGHT_PX`
+        // (16, the W3C / browser default). One line = 16 px;
+        // three lines = 48 px.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        let dispatched =
+            router.wheel(PointerId::MOUSE, WheelDelta::Lines { dx: 0.0, dy: 3.0 });
+        assert!(dispatched);
+        assert_eq!(state.offset(), (0, 48));
+        // Negative line delta scrolls upward; clamped at zero.
+        router.wheel(PointerId::MOUSE, WheelDelta::Lines { dx: 0.0, dy: -10.0 });
+        assert_eq!(state.offset(), (0, 0));
+    }
+
+    #[test]
+    fn r55_c2_wheel_clamps_against_state_bounds() {
+        // R55.C.2 — overshooting the declared bound clamps at the
+        // bound rather than wrapping. ScrollState's own clamp
+        // logic carries the policy; the router just feeds the
+        // delta through.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(100, 100);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 9999.0 });
+        // Bound is 100 on the y axis.
+        assert_eq!(state.offset(), (0, 100));
+    }
+
+    #[test]
+    fn r55_c2_wheel_nan_delta_is_zero_offset() {
+        // R55.C.2 — adversarial NaN delta clamps to zero (NaN
+        // guard in `round_clamp_i32`); the dispatch still ran
+        // (the router resolved a state target), so the return
+        // is `true` — backends still consider this a
+        // "dispatched" wheel even though the offset did not
+        // move. Matches the R51.145 `clamp_frame_dt` NaN guard
+        // precedent.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        let dispatched = router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: f32::NAN, dy: f32::NAN },
+        );
+        assert!(dispatched, "NaN delta still counts as a dispatched wheel");
+        assert_eq!(state.offset(), (0, 0));
+    }
+
+    #[test]
+    fn r55_c2_wheel_routes_through_last_cursor_position() {
+        // R55.C.2 — the router uses the *current* cursor stored
+        // for the pointer, so moving the cursor away from the
+        // scroll viewport before wheeling silently drops the
+        // wheel. Mirrors winit's MouseWheel-without-position
+        // contract: the surface owns the cursor; the wheel
+        // applies to whatever is under it now.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        // Cursor enters scroll → wheel dispatches.
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        assert!(router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 30.0 },
+        ));
+        assert_eq!(state.offset(), (0, 30));
+        // Cursor leaves the scroll viewport → wheel silently
+        // drops. The stored cursor is still set (in fact the
+        // refresh fired PointerLeave on the button-like state
+        // scene's `main_btn` which is silent under
+        // CaptureExternal), but it does not cover any scroll
+        // viewport.
+        router.cursor_moved(PointerId::MOUSE, 150.0, 150.0, &mut state_scene);
+        assert!(!router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 30.0 },
+        ));
+        // Offset unchanged.
+        assert_eq!(state.offset(), (0, 30));
+    }
+
+    #[test]
+    fn r55_c2_two_pointers_each_route_through_their_own_cursor() {
+        // R55.C.2 — multi-pointer: two pointers each track their
+        // own cursor; a wheel for `PointerId::touch(0)` reads
+        // that pointer's cursor, not the mouse's. The shared
+        // `cursors` map keyed by `PointerId` keeps the lookups
+        // independent.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        let t = PointerId::touch(0);
+        // Mouse cursor over the scroll; touch cursor outside.
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        router.cursor_moved(t, 150.0, 150.0, &mut state_scene);
+        // Wheel via touch — touch cursor is outside the scroll
+        // viewport → silent drop.
+        assert!(!router.wheel(t, WheelDelta::Pixels { dx: 0.0, dy: 20.0 }));
+        assert_eq!(state.offset(), (0, 0));
+        // Wheel via mouse — dispatches.
+        assert!(router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 20.0 },
+        ));
+        assert_eq!(state.offset(), (0, 20));
+    }
+
+    #[test]
+    fn r55_c2_line_height_px_constant_is_w3c_default() {
+        // R55.C.2 — pin the constant value so a future override
+        // (R55.C.4 per-widget line-height) shows up as an
+        // explicit test edit, not a silent regression.
+        assert!((LINE_HEIGHT_PX - 16.0).abs() < f32::EPSILON);
     }
 
     #[test]

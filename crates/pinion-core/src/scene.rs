@@ -23,8 +23,10 @@
 //! evolution) are addable without a `SemVer` major bump.
 
 use std::borrow::Cow;
+use std::rc::Rc;
 
 use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, TextStyle};
+use crate::widgets::scroll::ScrollState;
 
 /// Closed scene primitive set (§5.2). Two opaque escape variants
 /// (`Effect`, `External`) per §3; the other five are introspectable.
@@ -307,6 +309,87 @@ impl Scene {
             (tag_match || index_match).then_some(idx)
         })?;
         c.children[target_idx].lookup_path_mut(tail)
+    }
+
+    /// (R55.C.2 §5.45) Find the deepest [`ScrollNode`] whose
+    /// `viewport` contains `(x, y)`. Returns the inner reference
+    /// directly so callers (the [`InputRouter`](crate::scene::Scene)
+    /// wheel / arrow / page dispatch) can read the attached
+    /// `state: Option<Rc<ScrollState>>` without re-walking.
+    ///
+    /// Traversal mirrors [`Self::hit_test`]: descend into
+    /// `Scene::Container` children in declaration order, into
+    /// `Scene::Scroll` content with the offset translation applied
+    /// (so nested scroll containers route wheel to the innermost
+    /// match — the W3C `overflow: scroll` ancestor walk). The
+    /// nested descent uses the same `i64` promotion guard against
+    /// negative-offset `u32` wrap that R51.181 introduced for
+    /// `hit_test` and R51.183 mirrored for the region descent;
+    /// when the translation lands outside the content rect the
+    /// scroll container itself is the deepest match (the wheel
+    /// dispatches against the outermost matching scroll, never
+    /// falls through to a non-scroll ancestor).
+    ///
+    /// `Scene::Effect` / `Scene::External` / `Scene::Box` /
+    /// `Scene::Text` / `Scene::Path` / `Scene::Image` cannot carry
+    /// a scroll viewport and are non-descendable leaves.
+    #[must_use]
+    pub fn scroll_target_at(&self, x: u32, y: u32) -> Option<&ScrollNode> {
+        match self {
+            Scene::Scroll(s) => {
+                if !rect_contains(s.viewport, x, y) {
+                    return None;
+                }
+                // Try to descend into nested content first so the
+                // innermost matching scroll container wins. Same
+                // viewport-local + offset translation as R51.181
+                // hit_test descent.
+                let vx = x.saturating_sub(s.viewport.x);
+                let vy = y.saturating_sub(s.viewport.y);
+                let cx = i64::from(vx).checked_add(i64::from(s.offset_x));
+                let cy = i64::from(vy).checked_add(i64::from(s.offset_y));
+                if let (Some(cx), Some(cy)) = (cx, cy)
+                    && cx >= 0
+                    && cy >= 0
+                    && let (Ok(cxu), Ok(cyu)) = (u32::try_from(cx), u32::try_from(cy))
+                    && let Some(deeper) = s.content.scroll_target_at(cxu, cyu)
+                {
+                    return Some(deeper);
+                }
+                Some(s)
+            }
+            Scene::Container(c) => {
+                if !rect_contains(c.rect, x, y) {
+                    return None;
+                }
+                for child in &c.children {
+                    if let Some(deeper) = child.scroll_target_at(x, y) {
+                        return Some(deeper);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// (R55.C.2 §5.45) Convenience wrapper over
+    /// [`Self::scroll_target_at`] that returns the attached
+    /// reactive [`ScrollState`] directly. `None` when no scroll
+    /// container covers `(x, y)` OR when the covering container
+    /// has no `state` attached (a declarative-only scroll node
+    /// the application built without a `with_state` link — the
+    /// router silently drops wheel input in that case).
+    ///
+    /// The `Rc` clone is cheap (one atomic-free refcount bump)
+    /// and the router uses the result immediately to call
+    /// `state.scroll_by(...)` then drops the clone — no shared
+    /// long-lived borrow into the paint tree, so the next
+    /// `update_paint_scene` can freely replace the tree.
+    #[must_use]
+    pub fn scroll_state_at(&self, x: u32, y: u32) -> Option<Rc<ScrollState>> {
+        self.scroll_target_at(x, y)
+            .and_then(|node| node.state.clone())
     }
 
     /// Recursive helper for [`Self::hit_test_region`]. Maintains a
@@ -1011,6 +1094,33 @@ pub struct ScrollNode {
     /// keystrokes inside this tag route to the §5.45 R55.C scroll
     /// input handler instead of bubbling to the parent.
     pub tag: Option<Cow<'static, str>>,
+    /// (R55.C.2 §5.45) Optional backreference to the reactive
+    /// [`ScrollState`] that owns the offset signals for this scroll
+    /// container. Set via [`Self::with_state`] (canonical) when the
+    /// application's view fn calls
+    /// [`use_scroll_state`](crate::widgets::scroll::use_scroll_state) and
+    /// builds the matching `ScrollNode` in the same paint cycle —
+    /// the widget-owns-state pattern Material / `SwiftUI` / GTK /
+    /// Qt all carry. Left `None` for the "declarative-only" use
+    /// (a pure offset snapshot with no input wiring, e.g. an
+    /// AI-driven scroll preview the agent measures without ever
+    /// dispatching wheel input).
+    ///
+    /// The [`InputRouter`](crate::scene::Scene) wheel / arrow / page
+    /// dispatch (R51.186 §5.45) walks the paint tree via
+    /// [`Scene::scroll_state_at`] and forwards the input delta into
+    /// `state.scroll_by(...)` — the reactive Signal write fires the
+    /// view re-run on the next paint with the updated offset.
+    /// `None` here means "no input dispatch target", which the
+    /// router silently honours (the wheel input drops without
+    /// dispatch rather than panicking).
+    ///
+    /// Scene-as-data introspection treats the field as an opaque
+    /// link: the `Rc` clone is not serialisable, so the AI-facing
+    /// `scene/query` family surfaces only the declarative
+    /// `viewport` / `offset_*` / `tag` fields. The state link is a
+    /// substrate-internal detail.
+    pub state: Option<Rc<ScrollState>>,
 }
 
 impl ScrollNode {
@@ -1025,6 +1135,7 @@ impl ScrollNode {
             offset_x: 0,
             offset_y: 0,
             tag: None,
+            state: None,
         }
     }
 
@@ -1044,6 +1155,34 @@ impl ScrollNode {
     pub const fn with_offset(mut self, offset_x: i32, offset_y: i32) -> Self {
         self.offset_x = offset_x;
         self.offset_y = offset_y;
+        self
+    }
+
+    /// (R55.C.2 §5.45) Attach the reactive [`ScrollState`] that
+    /// owns the offset signals for this scroll container. The
+    /// canonical view-fn shape resolves the state via
+    /// [`use_scroll_state`](crate::widgets::scroll::use_scroll_state)
+    /// (which delegates to the [`Owner::cache`](crate::reactive::Owner::cache)
+    /// substrate so the same key resolves to the same `Rc<ScrollState>`
+    /// across view re-runs) then builds the matching `ScrollNode`:
+    ///
+    /// ```ignore
+    /// let state = use_scroll_state("main_scroll");
+    /// let (ox, oy) = state.offset();
+    /// ScrollNode::new(viewport, content)
+    ///     .with_tag("main_scroll")
+    ///     .with_offset(ox, oy)
+    ///     .with_state(state)
+    /// ```
+    ///
+    /// The framework input router (R51.186 §5.45) follows the
+    /// attached `Rc<ScrollState>` to dispatch wheel / arrow / page
+    /// input into the reactive `scroll_by` / `scroll_to` writes —
+    /// the next view re-run paints the new offset without any
+    /// application-level wiring.
+    #[must_use]
+    pub fn with_state(mut self, state: Rc<ScrollState>) -> Self {
+        self.state = Some(state);
         self
     }
 
@@ -2054,6 +2193,123 @@ mod tests {
         );
         let hits = scene.hit_test_region(100, 100, 10, 10);
         assert!(hits.is_empty(), "viewport-disjoint query yields no hits");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.C.2 §5.45 — `Scene::scroll_target_at` + `scroll_state_at`
+    // input-router wheel dispatch helpers. The walk mirrors
+    // `hit_test`: descend into a Scroll's content (with the offset
+    // translation) when nested, otherwise return the Scroll itself
+    // as the deepest match.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_c2_scroll_target_at_finds_self_when_no_inner_scroll() {
+        // R55.C.2 — a single ScrollNode wrapping a non-scroll
+        // content returns itself as the wheel target for any
+        // (x, y) inside the viewport.
+        let content = box_at(0, 0, 200, 400);
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(10, 10, 100, 100), content),
+        );
+        let target = scene.scroll_target_at(50, 50).expect("inside viewport");
+        assert_eq!(target.viewport, Rect::new(10, 10, 100, 100));
+    }
+
+    #[test]
+    fn r55_c2_scroll_target_at_outside_viewport_returns_none() {
+        // R55.C.2 — (x, y) outside the viewport never matches.
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(50, 50, 30, 30), box_at(0, 0, 100, 100)),
+        );
+        assert!(scene.scroll_target_at(0, 0).is_none());
+        assert!(scene.scroll_target_at(100, 100).is_none());
+    }
+
+    #[test]
+    fn r55_c2_scroll_target_at_finds_inside_container() {
+        // R55.C.2 — Container > Scroll. The walk descends through
+        // the container and returns the Scroll's ref.
+        let scroll = ScrollNode::new(
+            Rect::new(20, 20, 100, 100),
+            box_at(0, 0, 200, 200),
+        );
+        let scene = container_at(0, 0, 200, 200, vec![Scene::Scroll(scroll)]);
+        let target = scene.scroll_target_at(50, 50).expect("hits inner scroll");
+        assert_eq!(target.viewport, Rect::new(20, 20, 100, 100));
+    }
+
+    #[test]
+    fn r55_c2_scroll_target_at_picks_deepest_nested_scroll() {
+        // R55.C.2 — nested scroll containers route the wheel to the
+        // innermost match (W3C overflow:scroll ancestor walk).
+        // Inner viewport (in content-intrinsic coords) is
+        // (10, 10, 50, 50); the outer scroll's offset is zero so
+        // root-local (20, 20) maps to content-intrinsic (20, 20) —
+        // inside the inner viewport.
+        let inner_content = box_at(0, 0, 100, 100);
+        let inner_scroll = Scene::Scroll(
+            ScrollNode::new(Rect::new(10, 10, 50, 50), inner_content),
+        );
+        let outer = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 200, 200), inner_scroll),
+        );
+        let target = outer.scroll_target_at(20, 20).expect("hits inner");
+        assert_eq!(target.viewport, Rect::new(10, 10, 50, 50));
+    }
+
+    #[test]
+    fn r55_c2_scroll_target_at_falls_back_to_outer_when_inner_misses() {
+        // R55.C.2 — inside outer viewport but outside inner viewport
+        // → the outer scroll is the deepest match. Mirrors the
+        // `hit_test` fallback shape.
+        let inner_content = box_at(0, 0, 50, 50);
+        let inner_scroll = Scene::Scroll(
+            ScrollNode::new(Rect::new(60, 60, 20, 20), inner_content),
+        );
+        let outer_content = container_at(0, 0, 200, 200, vec![inner_scroll]);
+        let outer = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 200, 200), outer_content),
+        );
+        // (10, 10) is inside outer (0..200) but outside inner (60..80).
+        let target = outer.scroll_target_at(10, 10).expect("outer");
+        assert_eq!(target.viewport, Rect::new(0, 0, 200, 200));
+    }
+
+    #[test]
+    fn r55_c2_scroll_state_at_returns_attached_state() {
+        // R55.C.2 — when the matched ScrollNode has a state link,
+        // `scroll_state_at` returns the cloned `Rc` so the router
+        // can call `scroll_by` without holding a long-lived borrow
+        // into the paint tree.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), box_at(0, 0, 200, 200))
+            .with_state(Rc::clone(&state));
+        let scene = Scene::Scroll(scroll);
+        let found = scene.scroll_state_at(50, 50).expect("state attached");
+        assert!(Rc::ptr_eq(&state, &found));
+        // Mutation through the returned handle reaches the original.
+        found.scroll_by(20, 30);
+        assert_eq!(state.offset(), (20, 30));
+    }
+
+    #[test]
+    fn r55_c2_scroll_state_at_returns_none_when_state_missing() {
+        // R55.C.2 — a declarative-only ScrollNode (no `with_state`
+        // call) silently returns `None` — the router drops the
+        // wheel input rather than panic.
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 100, 100), box_at(0, 0, 200, 200)),
+        );
+        assert!(scene.scroll_state_at(50, 50).is_none());
+    }
+
+    #[test]
+    fn r55_c2_scroll_state_at_returns_none_when_no_scroll_at_point() {
+        // R55.C.2 — outside every scroll viewport → None.
+        let scene = container_at(0, 0, 200, 200, vec![box_at(50, 50, 30, 30)]);
+        assert!(scene.scroll_state_at(60, 60).is_none());
     }
 
     #[test]

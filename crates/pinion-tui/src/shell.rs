@@ -87,6 +87,7 @@ use std::io::{self, Stdout, stdout};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
+use pinion_core::event::WheelDelta;
 use pinion_core::renderer::WidgetRenderer;
 use pinion_core::{Intent, Scene};
 use pinion_runtime::{CommandExecutor, HandlerRegistry};
@@ -413,9 +414,40 @@ fn dispatch_mouse<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdou
             cursor_change | down_change
         }
         MouseEventKind::Up(MouseButton::Left) => core.pointer_up(),
-        // Right / middle / wheel — no Tier-1 widget reacts. R51.118+
+        // (R51.186 §5.45 R55.C.2) crossterm wheel events. The cursor
+        // sync precedes the wheel dispatch so the substrate's
+        // `InputRouter` resolves the deepest `Scene::Scroll` under
+        // the just-reported `(x, y)` cell-coord (the wheel
+        // dispatches against the widget the cursor is currently
+        // *over*, which matches Vello / W3C semantics). Each
+        // crossterm scroll variant maps to one notched `Lines`
+        // delta on the matching axis; `LINE_HEIGHT_PX` in the
+        // substrate scales to a single content-pixel offset (cell-
+        // coord granularity makes Pixels-mode reporting impossible
+        // from a terminal anyway).
+        MouseEventKind::ScrollUp => {
+            let cursor_change = core.cursor_moved(x, y);
+            let wheel_change = core.wheel(WheelDelta::Lines { dx: 0.0, dy: -1.0 });
+            cursor_change | wheel_change
+        }
+        MouseEventKind::ScrollDown => {
+            let cursor_change = core.cursor_moved(x, y);
+            let wheel_change = core.wheel(WheelDelta::Lines { dx: 0.0, dy: 1.0 });
+            cursor_change | wheel_change
+        }
+        MouseEventKind::ScrollLeft => {
+            let cursor_change = core.cursor_moved(x, y);
+            let wheel_change = core.wheel(WheelDelta::Lines { dx: -1.0, dy: 0.0 });
+            cursor_change | wheel_change
+        }
+        MouseEventKind::ScrollRight => {
+            let cursor_change = core.cursor_moved(x, y);
+            let wheel_change = core.wheel(WheelDelta::Lines { dx: 1.0, dy: 0.0 });
+            cursor_change | wheel_change
+        }
+        // Right / middle — no Tier-1 widget reacts. R51.118+
         // surfaces a substrate-incompleteness-signal once a widget
-        // (context menu, scroll container) needs them.
+        // (context menu) needs them.
         _ => false,
     }
 }

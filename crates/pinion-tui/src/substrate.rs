@@ -53,6 +53,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 
+use pinion_core::event::WheelDelta;
 use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene};
 use pinion_runtime::{clamp_frame_dt, CommandExecutor, CoreShell, DispatchTail, PointerId};
@@ -327,6 +328,28 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     pub fn pointer_up(&mut self) -> bool {
         let tail = self.core.pointer_up(PointerId::MOUSE);
         self.handle_tail(&tail)
+    }
+
+    /// (R51.186 §5.45 R55.C.2) Mouse wheel dispatch — crossterm
+    /// `MouseEventKind::ScrollUp` / `ScrollDown` / `ScrollLeft` /
+    /// `ScrollRight`. Forwards through
+    /// [`CoreShell::wheel`](pinion_runtime::CoreShell::wheel) which
+    /// walks the deepest [`Scene::Scroll`](pinion_core::scene::Scene::Scroll)
+    /// under the cursor and calls `scroll_by` on the attached
+    /// [`ScrollState`](pinion_core::widgets::scroll::ScrollState).
+    ///
+    /// Returns `true` when the router dispatched against an
+    /// attached `ScrollState` OR when a tail intent flipped the
+    /// cached state — the surface repaints on `true` so the new
+    /// scroll offset (or any reducer-driven SCXML state change)
+    /// lands on screen. Silent drops (cursor outside any scroll
+    /// container, no `state` link) return `false` so an idle
+    /// terminal does not spuriously redraw on wheel input over a
+    /// non-scrollable region.
+    pub fn wheel(&mut self, delta: WheelDelta) -> bool {
+        let (tail, dispatched) = self.core.wheel(PointerId::MOUSE, delta);
+        let state_changed = self.handle_tail(&tail);
+        dispatched || state_changed
     }
 
     /// R51.124 §5.41 — TUI-side post-dispatch bookkeeping for a

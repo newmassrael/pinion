@@ -40,6 +40,7 @@ use pinion_a11y::{
     tag_to_node_id, translate_action, AccessAction, AccessFocus, AccessNode,
     PinionAccessAction, ROOT_NODE_ID,
 };
+use pinion_core::event::WheelDelta;
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
     build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
@@ -616,6 +617,32 @@ impl<V: WidgetView> ShellCore<V> {
     /// phase) then routes the dispatch tail.
     pub fn touch_event(&mut self, touch: Touch) {
         let tail = self.handle_touch(touch);
+        self.handle_tail(&tail);
+    }
+
+    /// (R51.186 §5.45 R55.C.2) Mouse wheel dispatch — winit
+    /// `WindowEvent::MouseWheel`. Forwards through
+    /// [`CoreShell::wheel`](pinion_runtime::CoreShell::wheel), which
+    /// walks the deepest [`Scene::Scroll`](pinion_core::scene::Scene::Scroll)
+    /// under the pointer's stored cursor and calls
+    /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
+    /// on the attached state. winit emits `MouseWheel` without its
+    /// own position field; the substrate's
+    /// [`InputRouter`](pinion_runtime::InputRouter) reuses the last
+    /// `CursorMoved` position for `pid` exactly the way W3C / iOS /
+    /// Android specify.
+    ///
+    /// Requests a repaint only when the router reports an actual
+    /// dispatch — silent drops (cursor outside the window, no
+    /// scroll container at the point, or the covering `ScrollNode`
+    /// carries no `state` link) do not bump the redraw flag, so a
+    /// wheel event over a non-scrollable region cannot regress the
+    /// idle-frame-skipping the R51.147 substrate guarantees.
+    pub fn wheel(&mut self, pid: PointerId, delta: WheelDelta) {
+        let (tail, dispatched) = self.core.wheel(pid, delta);
+        if dispatched {
+            self.request_redraw();
+        }
         self.handle_tail(&tail);
     }
 

@@ -7418,6 +7418,41 @@ pub struct ScrollNode {
 
 
 
+### R51.186 — §5.45 R55.C.2 input router wires PointerEvent::Wheel → attached ScrollState across all layers
+
+**Changes**:
+- ScrollNode { ..., state: Option<Rc<ScrollState>> } + with_state() backreference builder (widget-owns-state canonical: Material/SwiftUI/GTK/Qt mirror)
+- Scene::scroll_target_at(x, y) -> Option<&ScrollNode> + scroll_state_at(x, y) -> Option<Rc<ScrollState>> hit-test helpers; nested-scroll descent picks innermost (W3C overflow:scroll ancestor walk)
+- InputRouter::wheel(id, delta) → bool; cursors[id] lookup mirrors winit/web/iOS MouseWheel-without-position contract; silent drop on missing cursor / paint / scroll / state
+- LINE_HEIGHT_PX const = 16.0 (W3C/Chromium/Firefox/Safari default); wheel_delta_to_pixels Pixels verbatim + Lines × const; round_clamp_i32 NaN-guard mirrors R51.145 clamp_frame_dt
+- CoreShell::wheel(id, delta) -> (DispatchTail, dispatched: bool); ShellCore::wheel + ShellCoreTui::wheel wrappers; dispatched bool gates request_redraw / TUI repaint commit
+- winit MouseScrollDelta::{LineDelta, PixelDelta} → WheelDelta::{Lines, Pixels} at app.rs boundary via winit_wheel_to_pinion helper
+- crossterm MouseEventKind::{ScrollUp, ScrollDown, ScrollLeft, ScrollRight} → WheelDelta::Lines{±1, 0/0, ±1} with cursor sync (matches Down(Left) pattern)
+- Tests +21: 8 scene (scroll_target_at + scroll_state_at + nested), 11 input (Pixels/Lines/NaN/cursor-tracking/multi-pointer/no-state-drop/LINE_HEIGHT_PX pin), 2 core_shell (dispatched bool + no-scroll-false)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2059 pass / 0 fail / 11 ignored (+21 tests vs R51.185 baseline 2038/0/10)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (doc_markdown ScrollNode backtick pre-audit applied)
+- all 8 r55_c2_scroll_target_at_* + r55_c2_scroll_state_at_* scene tests pass; all 11 r55_c2_wheel_* router tests pass; both CoreShell::wheel tests pass
+- R55.C.1 substrate-incompleteness-signal (PointerEvent::Wheel variant standalone from R51.185) cleared — wheel now routes end-to-end from winit/crossterm → InputRouter → ScrollState.scroll_by
+
+
+
+**Impact**: §5.45, §5.13, §5.41, §5.35
+
+
+**Carry forward**:
+- R55.C.3 KeyEvent ArrowKey/PgUp/PgDn/Home/End routing through FocusManager → ScrollState (matches wheel arc shape)
+- R55.C.4 per-widget LINE_HEIGHT_PX override (monospace text containers, custom cell sizes); current 16px is framework-wide const
+- WheelDelta::Pages future variant (PgUp/PgDn coarse) + explicit arm in wheel_delta_to_pixels (currently #[non_exhaustive] wildcard zero-delta degrade)
+- ScrollState ↔ ScrollNode ergonomic helper (scroll_container builder closure) — caller boilerplate (use_scroll_state + offset() + ScrollNode::new + with_state) is 4-line; framework helper carry
+- R55.D ScrollBar sub-widget (SCXML statechart, drag-to-position); R55.E paint clipping at Vello + TUI boundaries; R55.F scene/scroll RPC method; R55.G ListBox composite (first application consumer, visual milestone)
+- hit_test bbox coordinate frame docs ambiguity (R51.181 carry) still open; use_scroll_state key uniqueness convention docs
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

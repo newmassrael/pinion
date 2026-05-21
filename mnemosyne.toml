@@ -228,3 +228,55 @@ fields = ["publishable_verification_bullets"]
 reason = "R51.140 publishable_verification[1] audit accuracy 정정 — 'T4 info 무변동' (예측) → 'T4 info 120 → 121 (+1 bullet_list_preference, decision_summary 109 char prose hint)' (실제). audit immutable T4 info 120→121 permanent carry"
 applied_in = "pinion R51.140"
 content_hash_after = "8a445d1a2c635fbdcdb2596e1a00731c8de275b12ecba364e2273af605654282"
+
+# R51.186 — audit half captured `impact_refs = ["45", "13", "41", "35"]`
+# (missing the `5.` section-id prefix). The publishable half was corrected to
+# `["5.45", "5.13", "5.41", "5.35"]` via set_changelog_publishable_impact_refs,
+# but the audit half is frozen by R296 schema design and now carries 4 dangling
+# section refs that the atomic-store cross-ref validator surfaces. Each orphan
+# is registered below with kind=atomic_entry_ref so the gate accepts the
+# permanent audit-half mistake; lesson recorded in the R51.186 changelog.
+
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "R51.186"
+fields = ["publishable_impact_refs"]
+reason = "R51.186 audit_impact_refs frozen with ['45','13','41','35'] (missing 5. prefix); set_changelog_publishable_impact_refs corrected publishable half to ['5.45','5.13','5.41','5.35']. Audit half immutable; orphan_ledger registers the 4 dangling audit refs below."
+applied_in = "pinion R51.186"
+content_hash_after = "5ebe789824ec31e0233289cf786a9e0f309b54dafa1498b8ab4ab03b87137a53"
+
+[[orphan_ledger]]
+kind = "atomic_entry_ref"
+doc = "docs/GENERATED.md"
+from = "R51.186"
+to = "45"
+reason = "R51.186 audit_impact_refs frozen with missing 5. prefix; intent was §5.45 (Scroll axis)"
+applied_in = "pinion R51.186"
+since = "R51.186"
+
+[[orphan_ledger]]
+kind = "atomic_entry_ref"
+doc = "docs/GENERATED.md"
+from = "R51.186"
+to = "13"
+reason = "R51.186 audit_impact_refs frozen with missing 5. prefix; intent was §5.13 (Event enum)"
+applied_in = "pinion R51.186"
+since = "R51.186"
+
+[[orphan_ledger]]
+kind = "atomic_entry_ref"
+doc = "docs/GENERATED.md"
+from = "R51.186"
+to = "41"
+reason = "R51.186 audit_impact_refs frozen with missing 5. prefix; intent was §5.41 (TUI substrate)"
+applied_in = "pinion R51.186"
+since = "R51.186"
+
+[[orphan_ledger]]
+kind = "atomic_entry_ref"
+doc = "docs/GENERATED.md"
+from = "R51.186"
+to = "35"
+reason = "R51.186 audit_impact_refs frozen with missing 5. prefix; intent was §5.35 (InputRouter)"
+applied_in = "pinion R51.186"
+since = "R51.186"

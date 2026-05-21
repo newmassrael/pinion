@@ -69,6 +69,7 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
+use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Effect, Signal};
@@ -826,6 +827,37 @@ impl<V: WidgetCore> CoreShell<V> {
             }
         }
         self.tail()
+    }
+
+    /// (R51.186 §5.45 R55.C.2) Mouse wheel dispatch.
+    ///
+    /// Forwards the wheel delta through
+    /// [`InputRouter::wheel`](crate::input::InputRouter::wheel) which
+    /// walks the retained paint scene's deepest
+    /// [`Scene::Scroll`](pinion_core::scene::Scene::Scroll) under the
+    /// pointer's stored cursor and calls
+    /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
+    /// on the attached state. Returns a `(DispatchTail, dispatched)`
+    /// pair: the tail mirrors every other dispatch entry point so
+    /// backends route any drained intents through the same handler,
+    /// and the `dispatched: bool` lifts the router's no-op /
+    /// hit-and-dispatched distinction so backends can decide whether
+    /// to request a repaint (silent drops never bump the redraw
+    /// flag).
+    ///
+    /// The `DispatchTail::state_change` is almost always `None`
+    /// here: the scroll offset lives on the reactive `ScrollState`
+    /// (a `Signal<i32>` write the next paint observes), not on the
+    /// cached `V::State` snapshot the substrate compares. The
+    /// backend's `wheel` wrapper instead reads the `dispatched`
+    /// boolean to decide when to repaint.
+    pub fn wheel(
+        &mut self,
+        pid: PointerId,
+        delta: WheelDelta,
+    ) -> (DispatchTail<V::State>, bool) {
+        let dispatched = self.router.wheel(pid, delta);
+        (self.tail(), dispatched)
     }
 }
 
@@ -1687,6 +1719,71 @@ mod tests {
                 Some(pinion_core::Owner::current().map_or(0, |o| o.id()));
             Vec::new()
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R51.186 §5.45 R55.C.2 — CoreShell::wheel forwards through the
+    // router and lifts the dispatched bool out of the tail. The
+    // tests below pin the load-bearing invariants:
+    //
+    // - wheel dispatches against the attached ScrollState
+    // - the dispatched bool is true only on actual scroll
+    // - no-scroll-at-cursor → (empty tail, false)
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_c2_wheel_dispatches_to_attached_scroll_state() {
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+        use pinion_core::style::{BoxStyle, Color};
+        use pinion_core::widgets::scroll::ScrollState;
+        use std::rc::Rc;
+
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let scroll_content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 200, 1000),
+            Color::default(),
+        ));
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), scroll_content)
+            .with_state(Rc::clone(&state));
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![Scene::Scroll(scroll)])
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 200, 200);
+        }
+        core.update_paint_scene(root);
+        let _ = core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+        let (tail, dispatched) = core.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 60.0 },
+        );
+        assert!(dispatched, "wheel must dispatch against attached state");
+        assert_eq!(state.offset(), (0, 60));
+        assert!(tail.intents.is_empty(), "wheel emits no SCXML intents");
+        assert!(
+            tail.state_change.is_none(),
+            "scroll offset lives off the cached projection — no cached_state delta",
+        );
+    }
+
+    #[test]
+    fn r55_c2_wheel_returns_false_when_no_scroll_under_cursor() {
+        // R55.C.2 — wheel over a button-like scene (no Scroll
+        // variant in the paint tree) returns (empty tail, false).
+        // Backends use the false to skip the per-event redraw.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let paint = <TestButton as WidgetCore>::view(*core.cached_state(), &Frame::new());
+        core.update_paint_scene(paint);
+        let _ = core.cursor_moved(PointerId::MOUSE, 8.0, 8.0);
+        let (_tail, dispatched) = core.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
+        );
+        assert!(!dispatched);
     }
 
     #[test]
