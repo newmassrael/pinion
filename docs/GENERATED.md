@@ -7453,6 +7453,40 @@ pub struct ScrollNode {
 
 
 
+### R51.187 — §5.45 R55.C.3 keyboard scroll input — Arrow / Page / Home / End route to ScrollState via apply_key fallback
+
+**Changes**:
+- InputRouter::scroll_key(id, key) -> bool: cursor-based hit-test → deepest Scene::Scroll → state.scroll_by / scroll_to per W3C key mapping
+- Key table: ArrowDown/Up/Left/Right step LINE_HEIGHT_PX (16); PageDown/Up step viewport.h; Home/End jump y to 0 / max_y (x preserved)
+- LINE_HEIGHT_PX_I32 = 16 const mirror (avoids f32->i32 cast on every arrow keypress; matches LINE_HEIGHT_PX float)
+- CoreShell::scroll_key(pid, key) -> (DispatchTail, bool) lifts dispatched bool for backend redraw gating; mirrors CoreShell::wheel shape
+- ShellCore::handle_named_key cascade: V::apply_key first (widget-bound: Slider arrows / Toggle Space / Button Enter); unhandled -> ShellCore::scroll_key fallback (widget never sees the key it consumed)
+- ShellCoreTui::dispatch_key gets same cascade: keybinding -> apply_key -> scroll_key fallback; scroll_key returns dispatched || state_changed for repaint trigger
+- Horizontal Home/End + Ctrl-modifier corner-jump variants deferred to R55.C.4 (page_x already computed but unused this round)
+- Tests +6: arrow ach-axis step / page step / Home+End y-extremes / unknown-key false / cursor-off-scroll silent-drop / arrow clamps bounds
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2065 pass / 0 fail / 11 ignored (+6 R55.C.3 tests vs R51.186 baseline 2059/0/11)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- all 6 r55_c3_* router tests pass; widget-fallback cascade verified by-construction (apply_key Some short-circuits before scroll_key)
+- W3C key string vocabulary (ArrowUp/ArrowDown/ArrowLeft/ArrowRight/PageUp/PageDown/Home/End) already in named_key_str (R51.92 + tui input::key_str_from_event), so no boundary mapping change needed
+
+
+
+**Impact**: §5.45, §5.41, §5.35
+
+
+**Carry forward**:
+- R55.C.4 horizontal Home/End + Ctrl-Home/Ctrl-End corner jumps + per-widget LINE_HEIGHT_PX override (page_x already computed substrate-side)
+- R55.C.5 focus-based scroll routing — currently cursor-based; W3C convention: scroll routes to focused element's ancestor scroll. Needs scene path-walk + FocusManager integration
+- R55.D ScrollBar sub-widget (SCXML statechart, drag-to-position) + R55.E paint clipping + R55.F scene/scroll RPC + R55.G ListBox composite (first consumer, visual milestone)
+- Wheel + scroll_key share guard structure: lift the cursor-lookup + paint-walk + state-lookup chain into a shared helper to remove the 3-line duplication in InputRouter (carry, low priority)
+- ScrollState ergonomic helper (scroll_container builder closure) still pending; 4-line view-fn boilerplate persists
+
+
+
 ### R51.33 — R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate
 
 **Changes**:

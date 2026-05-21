@@ -859,6 +859,34 @@ impl<V: WidgetCore> CoreShell<V> {
         let dispatched = self.router.wheel(pid, delta);
         (self.tail(), dispatched)
     }
+
+    /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch.
+    ///
+    /// Forwards a W3C `KeyboardEvent.key` string into
+    /// [`InputRouter::scroll_key`](crate::input::InputRouter::scroll_key)
+    /// which walks the deepest [`Scene::Scroll`](pinion_core::scene::Scene::Scroll)
+    /// under the pointer's stored cursor and translates the key
+    /// into a `scroll_by` / `scroll_to` call on the attached
+    /// [`ScrollState`](pinion_core::widgets::scroll::ScrollState).
+    /// Recognised keys: `ArrowUp` / `ArrowDown` / `ArrowLeft` /
+    /// `ArrowRight` (1-line step), `PageUp` / `PageDown` (1-page
+    /// step = viewport height), `Home` / `End` (y-axis extremes).
+    ///
+    /// Returns `(DispatchTail, dispatched: bool)` mirroring
+    /// [`Self::wheel`]. Backends use the `dispatched` boolean to
+    /// gate redraw and only fall back to scroll-routing for keys
+    /// the widget's own `apply_key` did not consume — the regular
+    /// dispatch arm stays primary so widget-bound keys (Slider's
+    /// `ArrowLeft` / `ArrowRight`, Toggle's `Space`, etc.) keep
+    /// their existing semantics.
+    pub fn scroll_key(
+        &mut self,
+        pid: PointerId,
+        key: &str,
+    ) -> (DispatchTail<V::State>, bool) {
+        let dispatched = self.router.scroll_key(pid, key);
+        (self.tail(), dispatched)
+    }
 }
 
 #[cfg(test)]

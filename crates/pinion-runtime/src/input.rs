@@ -544,6 +544,96 @@ impl InputRouter {
         true
     }
 
+    /// (R51.187 §5.45 R55.C.3) Keyboard scroll input dispatch.
+    ///
+    /// Routes a W3C `KeyboardEvent.key` string into the deepest
+    /// [`ScrollNode`](pinion_core::scene::ScrollNode) covering the
+    /// pointer's last cursor position whose `state` link is wired.
+    /// Eight key names are recognised; any other string is a no-op
+    /// (returns `false`) so the caller's regular `apply_key`
+    /// dispatch arm can stay the primary path for widget-bound keys
+    /// and the scroll router only acts on unhandled scrolling
+    /// shortcuts.
+    ///
+    /// | Key           | Effect                                       |
+    /// |---------------|----------------------------------------------|
+    /// | `ArrowDown`   | `scroll_by(0, +LINE_HEIGHT_PX)`              |
+    /// | `ArrowUp`     | `scroll_by(0, -LINE_HEIGHT_PX)`              |
+    /// | `ArrowRight`  | `scroll_by(+LINE_HEIGHT_PX, 0)`              |
+    /// | `ArrowLeft`   | `scroll_by(-LINE_HEIGHT_PX, 0)`              |
+    /// | `PageDown`    | `scroll_by(0, +viewport.h)` (1-page step)    |
+    /// | `PageUp`      | `scroll_by(0, -viewport.h)`                  |
+    /// | `Home`        | `scroll_to(offset_x, 0)` (y-axis to top)     |
+    /// | `End`         | `scroll_to(offset_x, max_y)` (y-axis bottom) |
+    ///
+    /// The arrow / page deltas honour the W3C `WheelEvent` sign
+    /// convention: positive `dy` scrolls downward (content shifts
+    /// up visually). `Home` / `End` preserve the horizontal offset
+    /// — they match the W3C "vertical extreme" semantics every
+    /// desktop scroll container uses; a future round adds
+    /// `Ctrl+Home` / `Ctrl+End` for the (0, 0) / (max, max)
+    /// corner cases (carry).
+    ///
+    /// No-op (returns `false`) when any of the same router-state
+    /// conditions [`Self::wheel`] checks hold: no stored cursor for
+    /// `id`, no retained paint scene, no `Scene::Scroll` covers the
+    /// cursor, or the covering node has no `state` link.
+    /// Application-level key routing reads the `false` and lets
+    /// the regular [`pinion_core::WidgetCore::apply_key`] dispatch
+    /// stay the primary path. Returns `true` when the key was
+    /// recognised AND a scroll dispatched.
+    pub fn scroll_key(&mut self, id: PointerId, key: &str) -> bool {
+        let Some(&(x, y)) = self.cursors.get(&id) else {
+            return false;
+        };
+        let Some(paint) = self.last_paint_scene.as_ref() else {
+            return false;
+        };
+        let xu = floor_clamp_u32(x);
+        let yu = floor_clamp_u32(y);
+        let Some(scroll_node) = paint.scroll_target_at(xu, yu) else {
+            return false;
+        };
+        let Some(state) = scroll_node.state.as_ref() else {
+            return false;
+        };
+        let line: i32 = LINE_HEIGHT_PX_I32;
+        // `viewport.h` / `viewport.w` are `u32` from `Rect`; clamp
+        // into `i32` for the page step. Real-world viewports never
+        // exceed `i32::MAX` (which would imply a 2-billion-pixel
+        // window); the `try_from` fallback keeps the math defined
+        // for the adversarial extreme.
+        let page_y: i32 = i32::try_from(scroll_node.viewport.h).unwrap_or(i32::MAX);
+        let page_x: i32 = i32::try_from(scroll_node.viewport.w).unwrap_or(i32::MAX);
+        match key {
+            "ArrowDown" => state.scroll_by(0, line),
+            "ArrowUp" => state.scroll_by(0, -line),
+            "ArrowRight" => state.scroll_by(line, 0),
+            "ArrowLeft" => state.scroll_by(-line, 0),
+            "PageDown" => state.scroll_by(0, page_y),
+            "PageUp" => state.scroll_by(0, -page_y),
+            "Home" => {
+                let (ox, _) = state.offset();
+                state.scroll_to(ox, 0);
+            }
+            "End" => {
+                let (ox, _) = state.offset();
+                let (_, my) = state.max();
+                state.scroll_to(ox, my);
+            }
+            // Horizontal Home/End / Ctrl-modifier extensions are
+            // future R55.C.4 carry. Silence other keys so the
+            // caller's regular `apply_key` arm stays primary.
+            _ => {
+                // Suppress page_x to avoid unused-binding warnings
+                // until a horizontal Page sub-axis lands.
+                let _ = page_x;
+                return false;
+            }
+        }
+        true
+    }
+
     /// R51.93 §5.35 — pointer cancellation handler. The OS-side
     /// counterpart to [`pointer_up`](Self::pointer_up): the user did
     /// **not** release the pointer of their own accord, the system
@@ -885,6 +975,14 @@ fn floor_clamp_u32(v: f64) -> u32 {
 /// lands on top of this constant without breaking the existing
 /// API surface.
 pub const LINE_HEIGHT_PX: f32 = 16.0;
+
+/// (R51.187 §5.45 R55.C.3) Integer mirror of [`LINE_HEIGHT_PX`]
+/// for the arrow-key step in
+/// [`InputRouter::scroll_key`](crate::input::InputRouter::scroll_key).
+/// Hard-coded so the cast happens at compile time rather than
+/// the (unsafe-at-saturation) `f32 as i32` path on every arrow
+/// keypress.
+const LINE_HEIGHT_PX_I32: i32 = 16;
 
 /// (R51.186 §5.45 R55.C.2) Convert a unit-tagged
 /// [`WheelDelta`](pinion_core::event::WheelDelta) into the
@@ -2320,6 +2418,175 @@ mod tests {
             WheelDelta::Pixels { dx: 0.0, dy: 20.0 },
         ));
         assert_eq!(state.offset(), (0, 20));
+    }
+
+    // ─── R51.187 §5.45 R55.C.3 keyboard scroll dispatch tests ─────
+
+    #[test]
+    fn r55_c3_arrow_keys_step_one_line_each_axis() {
+        // R55.C.3 — arrow keys translate to ±LINE_HEIGHT_PX (16)
+        // on the matching axis. Mirrors the W3C `WheelEvent`
+        // sign convention positive `dy` = scroll downward.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowDown"));
+        assert_eq!(state.offset(), (0, 16));
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowDown"));
+        assert_eq!(state.offset(), (0, 32));
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowUp"));
+        assert_eq!(state.offset(), (0, 16));
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowRight"));
+        assert_eq!(state.offset(), (16, 16));
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowLeft"));
+        assert_eq!(state.offset(), (0, 16));
+    }
+
+    #[test]
+    fn r55_c3_page_keys_step_one_viewport() {
+        // R55.C.3 — PageDown / PageUp step by the scroll
+        // container's viewport extent on the matching axis.
+        // Viewport height = 100 px → PageDown adds 100, PageUp
+        // subtracts 100.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(1000, 1000);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            2000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        assert!(router.scroll_key(PointerId::MOUSE, "PageDown"));
+        assert_eq!(state.offset(), (0, 100));
+        assert!(router.scroll_key(PointerId::MOUSE, "PageDown"));
+        assert_eq!(state.offset(), (0, 200));
+        assert!(router.scroll_key(PointerId::MOUSE, "PageUp"));
+        assert_eq!(state.offset(), (0, 100));
+    }
+
+    #[test]
+    fn r55_c3_home_end_jump_to_y_extremes() {
+        // R55.C.3 — Home resets y to 0; End jumps y to max_y.
+        // The horizontal offset is preserved (W3C "vertical
+        // extreme" semantics — Ctrl-Home / Ctrl-End for corner
+        // jumps is R55.C.4 carry).
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 800);
+        state.scroll_to(50, 400);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            1000,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        assert!(router.scroll_key(PointerId::MOUSE, "Home"));
+        assert_eq!(state.offset(), (50, 0), "Home preserves x, resets y");
+        assert!(router.scroll_key(PointerId::MOUSE, "End"));
+        assert_eq!(state.offset(), (50, 800), "End preserves x, jumps to max_y");
+    }
+
+    #[test]
+    fn r55_c3_unknown_key_returns_false() {
+        // R55.C.3 — keys not in the recognised set (Tab, Enter,
+        // Escape, Space, character keys) return false so the
+        // caller's regular `apply_key` arm stays the primary
+        // path for widget-bound shortcuts.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            1000,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        for key in ["Space", "Enter", "Tab", "Escape", "a", "F1"] {
+            assert!(
+                !router.scroll_key(PointerId::MOUSE, key),
+                "unrecognised key {key} must return false",
+            );
+        }
+        assert_eq!(state.offset(), (0, 0), "no key advanced the offset");
+    }
+
+    #[test]
+    fn r55_c3_no_op_when_cursor_off_scroll() {
+        // R55.C.3 — same router-state guard as `wheel`: cursor
+        // outside any scroll container is a silent drop. The
+        // application's regular `apply_key` arm still runs (the
+        // backend's `handle_named_key` fallback fires only after
+        // `apply_key` returns unhandled, and `scroll_key`'s false
+        // simply lets the key dispatch sequence end without an
+        // unintended scroll).
+        let state = Rc::new(ScrollState::new());
+        state.set_max(500, 500);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state_scene);
+        // No scroll node under cursor → silent drop on every key.
+        for key in ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"] {
+            assert!(!router.scroll_key(PointerId::MOUSE, key));
+        }
+        let _ = state; // unused but kept symmetric with other tests
+    }
+
+    #[test]
+    fn r55_c3_arrow_clamps_against_bounds() {
+        // R55.C.3 — ArrowUp from offset 0 clamps at 0 (lower
+        // bound); ArrowDown past max_y clamps at max_y. The
+        // ScrollState clamp logic carries the policy.
+        let state = Rc::new(ScrollState::new());
+        state.set_max(0, 40);
+        let mut router = InputRouter::new();
+        let (mut state_scene, _) = state_with_button();
+        let paint = paint_with_scroll(
+            200,
+            200,
+            Rect::new(0, 0, 100, 100),
+            200,
+            140,
+            Some(Rc::clone(&state)),
+        );
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
+        // ArrowUp at zero — clamp lower.
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowUp"));
+        assert_eq!(state.offset(), (0, 0));
+        // Three ArrowDowns at +16 each = 48; clamp at max_y = 40.
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowDown"));
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowDown"));
+        assert!(router.scroll_key(PointerId::MOUSE, "ArrowDown"));
+        assert_eq!(state.offset(), (0, 40));
     }
 
     #[test]

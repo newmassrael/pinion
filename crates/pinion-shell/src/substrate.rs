@@ -571,7 +571,40 @@ impl<V: WidgetView> ShellCore<V> {
     /// the window via `event_loop.exit`; `Tab` routes through
     /// [`Self::handle_focus_traverse`]).
     pub fn handle_named_key(&mut self, key_str: &str) {
-        self.apply_key(key_str);
+        // R51.187 §5.45 R55.C.3 — give `V::apply_key` the first
+        // chance on the key (widget-bound shortcut: Slider's
+        // arrows, Toggle's Space, Button's Enter, etc.). If the
+        // widget reports unhandled (`None` return from
+        // [`CoreShell::apply_key`]), fall through to the scroll-
+        // routing dispatch so an unbound arrow / page / Home / End
+        // over a scroll container still scrolls. The two arcs are
+        // mutually exclusive — a widget that consumes the key
+        // never lets the scroll arc fire.
+        let focused = self.focus.focused().map(str::to_owned);
+        if let Some(tail) = self.core.apply_key(focused.as_deref(), key_str) {
+            self.revision.bump();
+            self.handle_tail(&tail);
+            return;
+        }
+        self.scroll_key(PointerId::MOUSE, key_str);
+    }
+
+    /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch — the
+    /// fallback path [`Self::handle_named_key`] takes when
+    /// [`WidgetView::apply_key`] reports the key unhandled.
+    /// Forwards through [`CoreShell::scroll_key`](pinion_runtime::CoreShell::scroll_key)
+    /// which walks the deepest [`Scene::Scroll`](pinion_core::scene::Scene::Scroll)
+    /// under the pointer cursor and calls
+    /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
+    /// / [`scroll_to`](pinion_core::widgets::scroll::ScrollState::scroll_to)
+    /// depending on the key name. Requests a redraw on actual
+    /// dispatch so the new offset paints next frame.
+    pub fn scroll_key(&mut self, pid: PointerId, key: &str) {
+        let (tail, dispatched) = self.core.scroll_key(pid, key);
+        if dispatched {
+            self.request_redraw();
+        }
+        self.handle_tail(&tail);
     }
 
     /// R51.80 §5.35 — winit `CursorMoved` dispatch decoupled from

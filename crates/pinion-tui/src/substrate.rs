@@ -300,7 +300,25 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         if let Some(tail) = self.core.apply_key(Some(V::tag()), key_str) {
             return self.handle_tail(&tail);
         }
-        false
+        // R51.187 §5.45 R55.C.3 — widget reported the key
+        // unhandled; route through the scroll dispatch fallback
+        // so an arrow / page / Home / End over a scroll container
+        // still scrolls. Mirrors the Vello sibling's
+        // `handle_named_key` apply_key → scroll_key cascade.
+        self.scroll_key(key_str)
+    }
+
+    /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch — the
+    /// fallback path [`Self::dispatch_key`] takes when
+    /// [`WidgetCore::apply_key`](pinion_core::WidgetCore::apply_key)
+    /// reports the key unhandled. Forwards through
+    /// [`CoreShell::scroll_key`](pinion_runtime::CoreShell::scroll_key);
+    /// returns `true` on actual dispatch OR cached-state change
+    /// so the surface repaints.
+    pub fn scroll_key(&mut self, key: &str) -> bool {
+        let (tail, dispatched) = self.core.scroll_key(PointerId::MOUSE, key);
+        let state_changed = self.handle_tail(&tail);
+        dispatched || state_changed
     }
 
     /// R51.117 §5.41 — forward a cursor-move (pixel-space, already
