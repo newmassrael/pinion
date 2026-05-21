@@ -257,6 +257,23 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         result = resp.result
         return list(result) if isinstance(result, list) else []
 
+    def click(self, at: tuple[float, float]) -> None:
+        """`scene/click` v1 typed wrapper (R51.196 §5.49).
+
+        Synthesises a single press / release cycle at logical
+        coordinate `at = (x, y)`. The shell drains the deferred-input
+        inbox after this returns, applying `cursor_moved`,
+        `mouse_pressed`, then `mouse_released` so the `InputRouter`
+        fires the same activation arc winit's `WindowEvent::MouseInput`
+        triggers from a real mouse click. Follow up with
+        `query(...)` or `snapshot(...)` to observe the post-click
+        state transition.
+        """
+        self.request(
+            "scene/click",
+            {"at": {"x": float(at[0]), "y": float(at[1])}},
+        )
+
     def wheel(
         self,
         at: tuple[float, float],

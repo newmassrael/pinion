@@ -34,7 +34,6 @@ use pinion_core::{Owner, Scene, SceneRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::click::{click, ClickError, ClickOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::font::{self, FontError, FontRegistry};
@@ -309,6 +308,15 @@ pub enum DeferredInput {
     /// (mirrors the winit / web / iOS flow that re-uses the last
     /// pointer position).
     Wheel { x: f64, y: f64, delta: WheelDelta },
+    /// R51.196 §5.49 — `scene/click` v1 injection. Synthesises one
+    /// complete press / release cycle (down → up) at `(x, y)`. The
+    /// embedder applies `cursor_moved(MOUSE, x, y)`, then
+    /// `pointer_down(MOUSE)`, then `pointer_up(MOUSE)`, so the
+    /// `InputRouter` fires the same activation arc winit's
+    /// `WindowEvent::MouseInput` triggers from a real mouse click.
+    /// Replaces the R51.193-era probe-only path that only consulted
+    /// `External::handles_event` policy.
+    Click { x: f64, y: f64 },
 }
 
 impl<'a> DispatchContext<'a> {
@@ -529,7 +537,14 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
 
     let outcome = match request.method.as_str() {
         "scene/query" => handle_scene_query(scene, request.params.as_ref()),
-        "scene/click" => handle_scene_click(scene, request.params.as_ref()),
+        "scene/click" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            handle_scene_click(inbox, request.params.as_ref())
+        }
         "scene/rewind" => handle_scene_rewind(scene, request.params.as_ref()),
         "scene/snapshot" => {
             // Same reborrow pattern as `scene/layout` — `dyn FnMut` is
@@ -697,41 +712,40 @@ fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, Rp
     }
 }
 
-fn handle_scene_click(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+/// R51.196 §5.49 — `scene/click` v1 typed dispatcher.
+///
+/// Replaces the R51.193-era probe-only path (`{path, x, y}` →
+/// `{handled}` policy verdict) with a real-event injection:
+/// `{at: {x, y}}` enqueues a [`DeferredInput::Click`] that the
+/// embedder drains into `cursor_moved + pointer_down + pointer_up`,
+/// firing the `InputRouter` along the same activation arc winit's
+/// `WindowEvent::MouseInput` triggers. The dispatcher returns `null`
+/// on success; the AI client follows up with `scene/snapshot` (or
+/// `scene/query`) to observe the resulting state transition.
+fn handle_scene_click(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
     let Some(params) = params else {
         return Err(RpcError::invalid_params("missing params"));
     };
-    let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params("params.path missing or not a string"));
-    };
-    let Some(x) = params.get("x").and_then(Value::as_f64) else {
-        return Err(RpcError::invalid_params("params.x missing or not a number"));
-    };
-    let Some(y) = params.get("y").and_then(Value::as_f64) else {
-        return Err(RpcError::invalid_params("params.y missing or not a number"));
-    };
-
-    #[allow(clippy::cast_possible_truncation)]
-    let outcome = click(scene, path, x as f32, y as f32);
-    match outcome {
-        Ok(outcome) => Ok(click_outcome_to_json(outcome)),
-        Err(err) => Err(click_error_to_rpc(err)),
-    }
-}
-
-fn click_outcome_to_json(outcome: ClickOutcome) -> Value {
-    let mut map = serde_json::Map::new();
-    map.insert("handled".to_string(), Value::Bool(outcome.handled));
-    Value::Object(map)
-}
-
-fn click_error_to_rpc(err: ClickError) -> RpcError {
-    let variant = match err {
-        ClickError::Path(_) => "Path",
-        ClickError::UnsupportedPath => "UnsupportedPath",
-        ClickError::NoExternalAtPath => "NoExternalAtPath",
-    };
-    RpcError::invalid_params(variant)
+    let at = params
+        .get("at")
+        .and_then(Value::as_object)
+        .ok_or_else(|| RpcError::invalid_params("params.at missing or not an object"))?;
+    let x = at
+        .get("x")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.at.x missing or not a number"))?;
+    let y = at
+        .get("y")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.at.y missing or not a number"))?;
+    inbox.push(DeferredInput::Click { x, y });
+    Ok(Value::Null)
 }
 
 fn handle_scene_rewind(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -2532,25 +2546,68 @@ mod tests {
         assert_eq!(err.data, Some(Value::String("Path".to_string())));
     }
 
+    // ---- R51.196 §5.49 — scene/click v1 (DeferredInput::Click) ----
+
     #[test]
-    fn scene_click_success_returns_handled_false() {
-        // StubExternal's handles_event default returns false. The
-        // dispatch round-trips that into result.handled.
-        let mut scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
-        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"/external","x":1.0,"y":2.0},"id":9}"#;
-        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
-        assert!(resp.error.is_none());
-        let result = resp.result.unwrap();
-        assert_eq!(result.get("handled"), Some(&Value::Bool(false)));
+    fn scene_click_v1_enqueues_click_at_coordinate() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":120.0,"y":80.0}},"id":9}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(resp.result, Some(Value::Null));
+        assert_eq!(inbox.len(), 1);
+        let DeferredInput::Click { x, y } = inbox[0] else {
+            panic!("expected Click variant, got {:?}", inbox[0]);
+        };
+        assert!((x - 120.0).abs() < f64::EPSILON);
+        assert!((y - 80.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn scene_click_missing_x_param_is_invalid() {
+    fn scene_click_v1_without_inbox_is_unavailable() {
         let mut scene = counted_scene(0);
-        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"/external","y":2.0},"id":10}"#;
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":0.0,"y":0.0}},"id":10}"#;
         let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("InputInjectionUnavailable"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_click_v1_missing_at_is_invalid() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{},"id":11}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(inbox.is_empty());
+    }
+
+    #[test]
+    fn scene_click_v1_at_missing_y_is_invalid() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":1.0}},"id":12}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("at.y"), "data: {data:?}");
     }
 
     #[test]
@@ -2680,7 +2737,9 @@ mod tests {
         assert!(resp.error.is_none(), "{:?}", resp.error);
         assert_eq!(resp.result, Some(Value::Null));
         assert_eq!(inbox.len(), 1);
-        let DeferredInput::Wheel { x, y, delta } = inbox[0];
+        let DeferredInput::Wheel { x, y, delta } = inbox[0] else {
+            panic!("expected Wheel variant, got {:?}", inbox[0]);
+        };
         assert!((x - 180.0).abs() < f64::EPSILON);
         assert!((y - 160.0).abs() < f64::EPSILON);
         let WheelDelta::Lines { dx, dy } = delta else {
@@ -2702,7 +2761,9 @@ mod tests {
         let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
         assert!(resp.error.is_none());
         assert_eq!(inbox.len(), 1);
-        let DeferredInput::Wheel { delta, .. } = inbox[0];
+        let DeferredInput::Wheel { delta, .. } = inbox[0] else {
+            panic!("expected Wheel variant, got {:?}", inbox[0]);
+        };
         let WheelDelta::Pixels { dx, dy } = delta else {
             panic!("expected Pixels variant, got {delta:?}");
         };

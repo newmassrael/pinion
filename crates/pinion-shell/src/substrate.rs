@@ -687,14 +687,22 @@ impl<V: WidgetView> ShellCore<V> {
     /// per `dispatch_rpc` after the dispatcher's `&mut scene` borrow
     /// releases.
     fn drain_deferred_inputs(&mut self, inputs: &[DeferredInput]) {
-        // `DeferredInput` is `non_exhaustive`; the `if let` arm
-        // covers the current variant and future ones (key,
-        // cursor_only, etc.) silently no-op against this drain until
-        // a follow-up round extends the match.
+        // `DeferredInput` is `non_exhaustive`; the wildcard arm
+        // covers future variants (key, cursor_only, etc.) silently
+        // no-op against this drain until a follow-up round extends
+        // the match.
         for input in inputs {
-            if let DeferredInput::Wheel { x, y, delta } = *input {
-                self.cursor_moved(PointerId::MOUSE, x, y);
-                self.wheel(PointerId::MOUSE, delta);
+            match *input {
+                DeferredInput::Wheel { x, y, delta } => {
+                    self.cursor_moved(PointerId::MOUSE, x, y);
+                    self.wheel(PointerId::MOUSE, delta);
+                }
+                DeferredInput::Click { x, y } => {
+                    self.cursor_moved(PointerId::MOUSE, x, y);
+                    self.mouse_pressed(PointerId::MOUSE);
+                    self.mouse_released(PointerId::MOUSE);
+                }
+                _ => {}
             }
         }
     }

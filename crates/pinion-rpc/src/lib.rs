@@ -9,7 +9,6 @@
 //! module. The JSON-RPC 2.0 wire envelope and method routing entry
 //! point live in [`dispatch`].
 
-pub mod click;
 pub mod commands;
 pub mod dispatch;
 pub mod dry_run;
@@ -29,7 +28,6 @@ pub mod snapshot;
 pub mod text;
 pub mod wait_for;
 
-pub use click::{click, ClickError, ClickOutcome};
 pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
 };

@@ -23960,6 +23960,64 @@
         "Rust integration test crate that pins demo regressions in CI"
       ]
     },
+    "Round 528": {
+      "decision_summary": "R51.196 §5.7 scene/click v1 — DeferredInput::Click + real PointerEvent through InputRouter (probe-only retired)",
+      "changes_bullets": [
+        "pinion-rpc: DeferredInput::Click + handle_scene_click v1 (params {at:{x,y}})",
+        "pinion-rpc: removed click.rs (click() + ClickOutcome + ClickError) — v0 probe-only retired",
+        "pinion-shell drain: cursor_moved + mouse_pressed + mouse_released triple",
+        "InputRouter fires same activation arc as winit MouseInput (real state mutation)",
+        "4 new dispatch tests (enqueue + missing inbox + missing at + missing at.y)",
+        "tools/rpc_verify: click(at) wrapper",
+        "tools/demos/hello_toggle_click.py — real click → value:false→true"
+      ],
+      "verification_bullets": [
+        "cargo test pinion-rpc scene_click — 4 v1 tests PASS",
+        "python3 tools/demos/hello_toggle_click.py — [demo] PASS (0.93s)",
+        "regression: toggle_activate + listbox_snapshot + listbox_scroll PASS",
+        "cargo test --workspace vello — 2102/0/11 (was 2107, −5: click.rs tests gone, +4 v1)",
+        "cargo clippy --workspace --all-targets vello — 0 warnings"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "R51.197 — scene/key injection + key event dispatch path (DeferredInput::Key)",
+        "R51.198 — leaf primitive rect/tag in scene/snapshot (no more hardcoded coords)",
+        "R51.199 — pinion-tui RPC surface (raw stdin clash with newline JSON-RPC framing)",
+        "Rust integration test crate pinning demo regressions in CI"
+      ],
+      "publishable_decision_summary": "R51.196 §5.7 scene/click v1 — DeferredInput::Click + real PointerEvent through InputRouter (probe-only retired)",
+      "publishable_changes_bullets": [
+        "pinion-rpc: DeferredInput::Click + handle_scene_click v1 (params {at:{x,y}})",
+        "pinion-rpc: removed click.rs (click() + ClickOutcome + ClickError) — v0 probe-only retired",
+        "pinion-shell drain: cursor_moved + mouse_pressed + mouse_released triple",
+        "InputRouter fires same activation arc as winit MouseInput (real state mutation)",
+        "4 new dispatch tests (enqueue + missing inbox + missing at + missing at.y)",
+        "tools/rpc_verify: click(at) wrapper",
+        "tools/demos/hello_toggle_click.py — real click → value:false→true"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test pinion-rpc scene_click — 4 v1 tests PASS",
+        "python3 tools/demos/hello_toggle_click.py — [demo] PASS (0.93s)",
+        "regression: toggle_activate + listbox_snapshot + listbox_scroll PASS",
+        "cargo test --workspace vello — 2102/0/11 (was 2107, −5: click.rs tests gone, +4 v1)",
+        "cargo clippy --workspace --all-targets vello — 0 warnings"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.197 — scene/key injection + key event dispatch path (DeferredInput::Key)",
+        "R51.198 — leaf primitive rect/tag in scene/snapshot (no more hardcoded coords)",
+        "R51.199 — pinion-tui RPC surface (raw stdin clash with newline JSON-RPC framing)",
+        "Rust integration test crate pinning demo regressions in CI"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [
