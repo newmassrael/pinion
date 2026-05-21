@@ -11501,6 +11501,62 @@
         "ScrollState ergonomic helper (scroll_container builder closure) still pending; 4-line view-fn boilerplate persists"
       ]
     },
+    "R51.188": {
+      "decision_summary": "§5.45 R55.E.1 Vello paint adapter clips Scene::Scroll viewport + shifts content by offset",
+      "changes_bullets": [
+        "paint_adapter::to_vello forwards to new to_vello_inner(..., transform: Affine) carrying the cumulative parent transform through the recursion",
+        "fill_rect / stroke_rect / paint_text gain transform: Affine parameter; previously each used Affine::IDENTITY (bit-identical for non-scroll callers since IDENTITY * T = T)",
+        "Scene::Scroll arm: push_clip_layer(transform, viewport_kurbo) then recurse with child_transform = transform * Affine::translate((viewport.xy - offset.xy)); pop_layer on exit",
+        "paint_text composes parent_transform * Affine::translate((t.rect.x, t.rect.y)) for glyph + decoration paints; clip-rect passes parent_transform so scroll-embedded text clips in its parent frame",
+        "Public to_vello signature unchanged — all 6 existing call sites (app.rs render + 5 paint_adapter tests) keep working without edits",
+        "TUI-side scroll clipping deferred to R51.189 R55.E.2 (carry); cell-grid clipping requires different shape from Vello clip-layer push/pop",
+        "Tests +4: scroll_arm_walks_content_box_hook + scroll_layer_balances_on_panic_free_walk (empty + plain + nested) + scroll_text_inside_lays_out_through_cache + scroll_arm_survives_offset_overshoot (i32::MAX)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2069 pass / 0 fail / 11 ignored (+4 R55.E.1 tests vs R51.187 baseline 2065/0/11)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (clippy::too_many_arguments allowed at to_vello_inner only)",
+        "Vello layer push / pop balance verified by `pop_layer`'s encoder-underflow panic acting as a guard — empty + plain + nested scroll all exit cleanly",
+        "Text-inside-scroll smoke test exercises transform composition (parent_transform * text-local translate) without breaking the existing LayoutCache hit-rate"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R51.189 R55.E.2 TUI cell-grid clipping for Scene::Scroll — paint.rs::to_buffer + paint_container / paint_box / paint_text need explicit clip-rect + offset parameters (no native push_layer/pop_layer in ratatui Buffer)",
+        "R51.190 R55.D ScrollBar sub-widget visualisation (SCXML statechart, drag-to-position thumb)",
+        "R51.191 R55.F scene/scroll RPC method (11th typed method) for AI introspection of attached ScrollState",
+        "R51.192 R55.G ListBox composite integration (first application consumer of R55.A/B/C/E; visual milestone)",
+        "Wheel + scroll_key + Vello clip share the cursor-lookup-paint-walk pattern; lift the 3-line guard into a shared helper (low priority polish)"
+      ],
+      "publishable_decision_summary": "§5.45 R55.E.1 Vello paint adapter clips Scene::Scroll viewport + shifts content by offset",
+      "publishable_changes_bullets": [
+        "paint_adapter::to_vello forwards to new to_vello_inner(..., transform: Affine) carrying the cumulative parent transform through the recursion",
+        "fill_rect / stroke_rect / paint_text gain transform: Affine parameter; previously each used Affine::IDENTITY (bit-identical for non-scroll callers since IDENTITY * T = T)",
+        "Scene::Scroll arm: push_clip_layer(transform, viewport_kurbo) then recurse with child_transform = transform * Affine::translate((viewport.xy - offset.xy)); pop_layer on exit",
+        "paint_text composes parent_transform * Affine::translate((t.rect.x, t.rect.y)) for glyph + decoration paints; clip-rect passes parent_transform so scroll-embedded text clips in its parent frame",
+        "Public to_vello signature unchanged — all 6 existing call sites (app.rs render + 5 paint_adapter tests) keep working without edits",
+        "TUI-side scroll clipping deferred to R51.189 R55.E.2 (carry); cell-grid clipping requires different shape from Vello clip-layer push/pop",
+        "Tests +4: scroll_arm_walks_content_box_hook + scroll_layer_balances_on_panic_free_walk (empty + plain + nested) + scroll_text_inside_lays_out_through_cache + scroll_arm_survives_offset_overshoot (i32::MAX)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2069 pass / 0 fail / 11 ignored (+4 R55.E.1 tests vs R51.187 baseline 2065/0/11)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (clippy::too_many_arguments allowed at to_vello_inner only)",
+        "Vello layer push / pop balance verified by `pop_layer`'s encoder-underflow panic acting as a guard — empty + plain + nested scroll all exit cleanly",
+        "Text-inside-scroll smoke test exercises transform composition (parent_transform * text-local translate) without breaking the existing LayoutCache hit-rate"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R51.189 R55.E.2 TUI cell-grid clipping for Scene::Scroll — paint.rs::to_buffer + paint_container / paint_box / paint_text need explicit clip-rect + offset parameters (no native push_layer/pop_layer in ratatui Buffer)",
+        "R51.190 R55.D ScrollBar sub-widget visualisation (SCXML statechart, drag-to-position thumb)",
+        "R51.191 R55.F scene/scroll RPC method (11th typed method) for AI introspection of attached ScrollState",
+        "R51.192 R55.G ListBox composite integration (first application consumer of R55.A/B/C/E; visual milestone)",
+        "Wheel + scroll_key + Vello clip share the cursor-lookup-paint-walk pattern; lift the 3-line guard into a shared helper (low priority polish)"
+      ]
+    },
     "R51.33": {
       "decision_summary": "R51.33 §5.38 hello-radio paint-side N=4 amortization on the pinion-shell substrate",
       "changes_bullets": [

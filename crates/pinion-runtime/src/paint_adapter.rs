@@ -77,21 +77,74 @@ pub fn to_vello<F>(
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
+    to_vello_inner(scene, fill_hook, text_cache, out, Affine::IDENTITY);
+}
+
+/// (R51.188 §5.45 R55.E.1) Transform-carrying recursive walker.
+///
+/// The public [`to_vello`] forwards [`Affine::IDENTITY`]; the
+/// internal recursion threads the cumulative transform through so
+/// the [`Scene::Scroll`] arm can compose
+/// `parent_transform * Affine::translate((viewport.xy - offset.xy))`
+/// before recursing into the scroll content. Every leaf paint
+/// primitive ([`fill_rect`] / [`stroke_rect`] / [`paint_text`])
+/// applies the threaded transform at the Vello call site so the
+/// content paints offset into the viewport without mutating the
+/// scene tree.
+///
+/// `Scene::Scroll` pushes a Vello clip layer keyed to the viewport
+/// rect (in the parent transform's frame), then recurses with the
+/// shifted child transform. `pop_layer` balances on exit so the
+/// adapter stays compatible with Vello's stack contract.
+#[allow(clippy::too_many_arguments)]
+fn to_vello_inner<F>(
+    scene: &Scene,
+    fill_hook: &F,
+    text_cache: &mut LayoutCache,
+    out: &mut VelloScene,
+    transform: Affine,
+) where
+    F: Fn(&BoxNode) -> Option<Color>,
+{
     match scene {
         Scene::Container(c) => {
-            fill_rect(out, c.rect, c.style.fill);
+            fill_rect(out, c.rect, c.style.fill, transform);
             for child in &c.children {
-                to_vello(child, fill_hook, text_cache, out);
+                to_vello_inner(child, fill_hook, text_cache, out, transform);
             }
         }
         Scene::Box(b) => {
             let fill = fill_hook(b).unwrap_or(b.style.fill);
-            fill_rect(out, b.rect, fill);
+            fill_rect(out, b.rect, fill, transform);
             if let Some(border) = b.style.border {
-                stroke_rect(out, b.rect, border);
+                stroke_rect(out, b.rect, border, transform);
             }
         }
-        Scene::Text(t) => paint_text(out, t, text_cache),
+        Scene::Text(t) => paint_text(out, t, text_cache, transform),
+        Scene::Scroll(s) => {
+            // R55.E.1 — viewport clip in the parent's coordinate
+            // frame; Vello applies the supplied transform to the
+            // clip shape so the resulting screen-space clip lands
+            // at `transform * viewport`.
+            let viewport_clip = KurboRect::new(
+                f64::from(s.viewport.x),
+                f64::from(s.viewport.y),
+                f64::from(s.viewport.x.saturating_add(s.viewport.w)),
+                f64::from(s.viewport.y.saturating_add(s.viewport.h)),
+            );
+            out.push_clip_layer(transform, &viewport_clip);
+            // Content paints in content-intrinsic coordinates; the
+            // scroll container shifts so that content-intrinsic
+            // `(0, 0)` lands at viewport `(viewport.x - offset_x,
+            //  viewport.y - offset_y)` in the parent frame. Compose
+            // with the inherited transform so nested scrolls
+            // accumulate correctly.
+            let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
+            let dy = f64::from(s.viewport.y) - f64::from(s.offset_y);
+            let child_transform = transform * Affine::translate((dx, dy));
+            to_vello_inner(&s.content, fill_hook, text_cache, out, child_transform);
+            out.pop_layer();
+        }
         // External / Effect / Path / Image: no-op. Path + Image paint
         // primitives attach in follow-up rounds.
         _ => {}
@@ -205,7 +258,7 @@ pub fn to_peniko(c: Color) -> PenikoColor {
 /// Emit one Vello filled-rectangle path for a pinion (`Rect`, `Color`)
 /// pair. Transparent fills are skipped (matches the pre-R46.3.1
 /// `paint_filled_rect` early-exit).
-fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color) {
+fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color, transform: Affine) {
     if fill == Color::TRANSPARENT {
         return;
     }
@@ -215,14 +268,14 @@ fn fill_rect(out: &mut VelloScene, r: Rect, fill: Color) {
         f64::from(r.x.saturating_add(r.w)),
         f64::from(r.y.saturating_add(r.h)),
     );
-    out.fill(Fill::NonZero, Affine::IDENTITY, to_peniko(fill), None, &rect);
+    out.fill(Fill::NonZero, transform, to_peniko(fill), None, &rect);
 }
 
 /// Emit one Vello stroke for a pinion [`Border`]. Vello strokes are
 /// path-centered; the [`BorderPlacement`] determines whether we inset
 /// (Inside, legacy softbuffer), keep the stroke on the path (Center,
 /// Vello-native), or outset (Outside, CSS content-box).
-fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border) {
+fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border, transform: Affine) {
     if border.width == 0 {
         return;
     }
@@ -248,7 +301,7 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border) {
     );
     out.stroke(
         &Stroke::new(w),
-        Affine::IDENTITY,
+        transform,
         to_peniko(border.color),
         None,
         &rect,
@@ -273,7 +326,12 @@ fn stroke_rect(out: &mut VelloScene, r: Rect, border: Border) {
 /// API, so the visual result is the same as `Clip` until R47.x lands
 /// the custom truncation pass. [`TextOverflow::Visible`] (default)
 /// skips the clip wrap entirely.
-fn paint_text(out: &mut VelloScene, t: &TextNode, cache: &mut LayoutCache) {
+fn paint_text(
+    out: &mut VelloScene,
+    t: &TextNode,
+    cache: &mut LayoutCache,
+    parent_transform: Affine,
+) {
     if t.content.is_empty() {
         return;
     }
@@ -286,20 +344,32 @@ fn paint_text(out: &mut VelloScene, t: &TextNode, cache: &mut LayoutCache) {
     // on steady-state frames.
     let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
     let layout = cache.layout(&t.content, &t.style, max_width);
-    let transform = Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
+    // R51.188 §5.45 R55.E.1 — compose the inherited transform (e.g.
+    // a parent `Scene::Scroll`'s shifted child transform) with the
+    // text's own `(t.rect.x, t.rect.y)` translation. Pre-R51.188
+    // `paint_text` assumed `Affine::IDENTITY` from the caller; the
+    // composition keeps that path bit-identical (IDENTITY * T = T)
+    // and lets scroll-embedded text track the scroll offset.
+    let transform = parent_transform
+        * Affine::translate((f64::from(t.rect.x), f64::from(t.rect.y)));
     // R47.6 — Clip + Ellipsis (silent fallback to Clip until R47.x
     // ellipsis pass) wrap the emit in a Vello clip layer keyed to
     // `t.rect`. Visible skips the wrap entirely so a freshly-default
     // TextNode pays no per-frame layer cost.
     let needs_clip = matches!(t.style.overflow, TextOverflow::Clip | TextOverflow::Ellipsis);
     if needs_clip {
+        // R51.188 §5.45 R55.E.1 — clip-rect lives in the parent
+        // frame (not text-local) because the `transform` above
+        // already maps text-local glyph positions into the parent's
+        // coordinate space. Passing `parent_transform` lets a
+        // scroll-shifted text node clip in its scroll's frame.
         let clip_rect = KurboRect::new(
             f64::from(t.rect.x),
             f64::from(t.rect.y),
             f64::from(t.rect.x.saturating_add(t.rect.w)),
             f64::from(t.rect.y.saturating_add(t.rect.h)),
         );
-        out.push_clip_layer(Affine::IDENTITY, &clip_rect);
+        out.push_clip_layer(parent_transform, &clip_rect);
     }
     for line in layout.lines() {
         for item in line.items() {
@@ -698,5 +768,125 @@ mod tests {
         let scene = tagged_scene("main_btn", Rect::new(10, 20, 100, 30));
         let mut vello = VelloScene::new();
         paint_focus_ring(&scene, Some("main_btn"), &mut vello);
+    }
+
+    // ----- R51.188 §5.45 R55.E.1 Vello paint clipping tests -----
+
+    #[test]
+    fn r55_e1_scroll_arm_walks_content_box_hook() {
+        // R55.E.1 — the Scroll arm recurses into `content`. The hook
+        // visits every BoxNode inside the scroll's content tree;
+        // verifies the walker reaches past the scroll wrapper rather
+        // than treating it as a leaf.
+        use pinion_core::scene::ScrollNode;
+        let inner_box = Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 50, 50), Color::rgb(0, 0xff, 0))
+                .with_tag("scroll_leaf"),
+        );
+        let scroll = ScrollNode::new(Rect::new(10, 10, 100, 100), inner_box);
+        let scene = Scene::Scroll(scroll);
+        let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        let saw_leaf = Cell::new(false);
+        to_vello(
+            &scene,
+            &|b: &BoxNode| {
+                if b.tag.as_deref() == Some("scroll_leaf") {
+                    saw_leaf.set(true);
+                }
+                None
+            },
+            &mut cache,
+            &mut vello,
+        );
+        assert!(saw_leaf.get(), "scroll content must be visited");
+    }
+
+    #[test]
+    fn r55_e1_scroll_layer_balances_on_panic_free_walk() {
+        // R55.E.1 — Vello's `pop_layer` panics on encoder
+        // underflow; if the Scroll arm's `push_clip_layer` and
+        // `pop_layer` are not balanced this test trips. Empty
+        // content + non-empty content + nested scroll all exit
+        // cleanly.
+        use pinion_core::scene::ScrollNode;
+        let empty_content = Scene::Container(
+            ContainerNode::new(vec![]).with_style(BoxStyle::filled(Color::default())),
+        );
+        let empty_scroll = Scene::Scroll(ScrollNode::new(
+            Rect::new(0, 0, 100, 100),
+            empty_content,
+        ));
+
+        let inner_box = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 200, 200),
+            Color::rgb(0xff, 0, 0),
+        ));
+        let plain_scroll = Scene::Scroll(ScrollNode::new(
+            Rect::new(0, 0, 100, 100),
+            inner_box,
+        ));
+
+        let inner_inner = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 50, 50),
+            Color::rgb(0, 0, 0xff),
+        ));
+        let inner_scroll = Scene::Scroll(ScrollNode::new(
+            Rect::new(10, 10, 50, 50),
+            inner_inner,
+        ));
+        let outer_scroll = Scene::Scroll(ScrollNode::new(
+            Rect::new(0, 0, 200, 200),
+            inner_scroll,
+        ));
+
+        let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        to_vello(&empty_scroll, &|_| None, &mut cache, &mut vello);
+        to_vello(&plain_scroll, &|_| None, &mut cache, &mut vello);
+        to_vello(&outer_scroll, &|_| None, &mut cache, &mut vello);
+    }
+
+    #[test]
+    fn r55_e1_scroll_text_inside_lays_out_through_cache() {
+        // R55.E.1 — Text inside a scroll routes through the same
+        // `paint_text` path (now transform-aware). Cache populates
+        // once and short-circuits on the repeat walk — same
+        // steady-state cache-hit shape as the non-scroll text test.
+        use pinion_core::scene::ScrollNode;
+        let text = Scene::Text(TextNode::styled(
+            "Scrolled text",
+            Rect::new(0, 0, 200, 32),
+            TextStyle::new().with_size_px(16),
+        ));
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), text)
+            .with_offset(0, 20);
+        let scene = Scene::Scroll(scroll);
+        let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        to_vello(&scene, &|_| None, &mut cache, &mut vello);
+        assert_eq!(cache.len(), 1, "first paint populates cache");
+        to_vello(&scene, &|_| None, &mut cache, &mut vello);
+        assert_eq!(cache.len(), 1, "repeat paint hits cache, no growth");
+    }
+
+    #[test]
+    fn r55_e1_scroll_arm_survives_offset_overshoot() {
+        // R55.E.1 — adversarial offset (content shifted past the
+        // viewport entirely) still completes the walk without
+        // panic. The walker does not clamp the offset — that's
+        // ScrollState's job — so paint just renders the empty
+        // visible region.
+        use pinion_core::scene::ScrollNode;
+        let content = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 50, 50),
+            Color::rgb(0, 0xff, 0),
+        ));
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), content)
+            .with_offset(i32::MAX, i32::MAX);
+        let scene = Scene::Scroll(scroll);
+        let mut vello = VelloScene::new();
+        let mut cache = LayoutCache::new();
+        to_vello(&scene, &|_| None, &mut cache, &mut vello);
     }
 }
