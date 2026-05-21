@@ -15495,6 +15495,34 @@ if __name__ == "__main__":
 
 
 
+### Round 552 — R55.G.16 — §6 §6.2 pre-commit gate runs cargo clippy when staged includes *.rs and pre-push runs it unconditionally (workspace.lints clippy::pedantic deny auto-catch)
+
+**Changes**:
+- .githooks/pre-commit: cargo clippy --workspace --features pinion-runtime/vello when staged *.rs
+- .githooks/pre-push: cargo clippy unconditional (defense-in-depth for amend/rebase/no-verify)
+- CLAUDE.md: Pre-commit hook section documents both gates and workspace.lints baseline
+- workspace.lints baseline (forbid unsafe / deny warnings / clippy::pedantic deny) auto-enforced
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2175 pass / 0 fail / 11 ignored (baseline)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (baseline)
+- bash -n .githooks/pre-commit && bash -n .githooks/pre-push = syntax_ok
+- .githooks/pre-commit dry-run on staged hook + CLAUDE.md = mnemosyne pass, clippy correctly skips
+
+
+
+**Impact**: §6, §6.2
+
+
+**Carry forward**:
+- R55.G.17 carry — scene/key External tag routing (paint-mode + state-mode align) ~150-250 LOC
+- R55.D — ScrollBar sub-widget (visible drag + SCXML statechart) ~400-600 LOC
+- R56 — TextField + IME (caret + selection + IME composition) ~1000+ LOC
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

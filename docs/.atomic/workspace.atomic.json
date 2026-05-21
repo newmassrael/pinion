@@ -25113,6 +25113,52 @@
         "5.45"
       ]
     },
+    "Round 552": {
+      "decision_summary": "R55.G.16 — §6 §6.2 pre-commit gate runs cargo clippy when staged includes *.rs and pre-push runs it unconditionally (workspace.lints clippy::pedantic deny auto-catch)",
+      "changes_bullets": [
+        ".githooks/pre-commit: cargo clippy --workspace --features pinion-runtime/vello when staged *.rs",
+        ".githooks/pre-push: cargo clippy unconditional (defense-in-depth for amend/rebase/no-verify)",
+        "CLAUDE.md: Pre-commit hook section documents both gates and workspace.lints baseline",
+        "workspace.lints baseline (forbid unsafe / deny warnings / clippy::pedantic deny) auto-enforced"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2175 pass / 0 fail / 11 ignored (baseline)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (baseline)",
+        "bash -n .githooks/pre-commit && bash -n .githooks/pre-push = syntax_ok",
+        ".githooks/pre-commit dry-run on staged hook + CLAUDE.md = mnemosyne pass, clippy correctly skips"
+      ],
+      "impact_refs": [
+        "6",
+        "6.2"
+      ],
+      "carry_forward_bullets": [
+        "R55.G.17 carry — scene/key External tag routing (paint-mode + state-mode align) ~150-250 LOC",
+        "R55.D — ScrollBar sub-widget (visible drag + SCXML statechart) ~400-600 LOC",
+        "R56 — TextField + IME (caret + selection + IME composition) ~1000+ LOC"
+      ],
+      "publishable_decision_summary": "R55.G.16 — §6 §6.2 pre-commit gate runs cargo clippy when staged includes *.rs and pre-push runs it unconditionally (workspace.lints clippy::pedantic deny auto-catch)",
+      "publishable_changes_bullets": [
+        ".githooks/pre-commit: cargo clippy --workspace --features pinion-runtime/vello when staged *.rs",
+        ".githooks/pre-push: cargo clippy unconditional (defense-in-depth for amend/rebase/no-verify)",
+        "CLAUDE.md: Pre-commit hook section documents both gates and workspace.lints baseline",
+        "workspace.lints baseline (forbid unsafe / deny warnings / clippy::pedantic deny) auto-enforced"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2175 pass / 0 fail / 11 ignored (baseline)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (baseline)",
+        "bash -n .githooks/pre-commit && bash -n .githooks/pre-push = syntax_ok",
+        ".githooks/pre-commit dry-run on staged hook + CLAUDE.md = mnemosyne pass, clippy correctly skips"
+      ],
+      "publishable_impact_refs": [
+        "6",
+        "6.2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R55.G.17 carry — scene/key External tag routing (paint-mode + state-mode align) ~150-250 LOC",
+        "R55.D — ScrollBar sub-widget (visible drag + SCXML statechart) ~400-600 LOC",
+        "R56 — TextField + IME (caret + selection + IME composition) ~1000+ LOC"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

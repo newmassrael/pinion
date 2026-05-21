@@ -90,12 +90,14 @@ mnemosyne.toml          workspace config (docs scope, schema, locale)
 - RPC and IO are **async via tokio** (boundary at `pinion-rpc` server entry per §6.3)
 - Commit message style: include section refs (e.g. `impl §5.2 + §5.11 scene primitive enum`)
 
-## Pre-commit hook
+## Pre-commit / pre-push hooks
 
 `.githooks/pre-commit` runs:
 
-- `mnemosyne-cli verify-generated` — atomic store ↔ `GENERATED.md` byte sync
-- `mnemosyne-cli validate-workspace` — T1 cross-ref + T2 frozen ledger
+- `mnemosyne-cli validate-workspace` — T1 cross-ref + T2 frozen ledger + round-trip + GENERATED.md sync
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — only when staged files include `*.rs`; enforces the workspace.lints baseline (forbid unsafe / deny warnings / clippy::pedantic deny)
+
+`.githooks/pre-push` repeats both gates unconditionally, so amends / rebases / `--no-verify` bypasses cannot publish a state that fails either check.
 
 If a hook fails, **fix the underlying issue**. Never bypass with `--no-verify` unless the user explicitly requests it.
 
