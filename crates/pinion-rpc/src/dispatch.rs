@@ -1217,10 +1217,17 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
         SnapshotNode::Path(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            let cmds: Vec<Value> = snap
+                .commands
+                .iter()
+                .map(path_command_to_json)
+                .collect();
+            obj.insert("commands".to_string(), Value::Array(cmds));
         }
         SnapshotNode::Image(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            obj.insert("source".to_string(), Value::String(snap.source));
         }
         SnapshotNode::External(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
@@ -1275,6 +1282,57 @@ fn snapshot_tag_to_json(tag: Option<&str>) -> Value {
         Some(t) => Value::String(t.to_string()),
         None => Value::Null,
     }
+}
+
+/// R51.198 carry §5.49 — wire serialization for `PathCommand`. Each
+/// command becomes a JSON object with a `type` discriminator plus the
+/// variant's payload (`point` for `MoveTo`/`LineTo`; `c1`/`c2`/`end`
+/// for `CurveTo`; no payload for `Close`). The wildcard arm collapses
+/// future `non_exhaustive` additions to `"Unknown"` so the wire stays
+/// forward-compatible.
+fn path_command_to_json(cmd: &pinion_core::scene::PathCommand) -> Value {
+    use pinion_core::scene::PathCommand;
+    let point_to_json = |p: &pinion_core::scene::PathPoint| -> Value {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "x".to_string(),
+            serde_json::Number::from_f64(f64::from(p.x))
+                .map_or(Value::Null, Value::Number),
+        );
+        obj.insert(
+            "y".to_string(),
+            serde_json::Number::from_f64(f64::from(p.y))
+                .map_or(Value::Null, Value::Number),
+        );
+        Value::Object(obj)
+    };
+    let mut obj = serde_json::Map::new();
+    match cmd {
+        PathCommand::MoveTo(p) => {
+            obj.insert("type".to_string(), Value::String("MoveTo".to_string()));
+            obj.insert("point".to_string(), point_to_json(p));
+        }
+        PathCommand::LineTo(p) => {
+            obj.insert("type".to_string(), Value::String("LineTo".to_string()));
+            obj.insert("point".to_string(), point_to_json(p));
+        }
+        PathCommand::CurveTo { c1, c2, end } => {
+            obj.insert("type".to_string(), Value::String("CurveTo".to_string()));
+            obj.insert("c1".to_string(), point_to_json(c1));
+            obj.insert("c2".to_string(), point_to_json(c2));
+            obj.insert("end".to_string(), point_to_json(end));
+        }
+        PathCommand::Close => {
+            obj.insert("type".to_string(), Value::String("Close".to_string()));
+        }
+        // R51.198 carry §5.49 — `PathCommand` is `non_exhaustive`;
+        // surface future variants as `"Unknown"` markers so the wire
+        // stays forward-compatible.
+        _ => {
+            obj.insert("type".to_string(), Value::String("Unknown".to_string()));
+        }
+    }
+    Value::Object(obj)
 }
 
 fn snapshot_rect_to_json(rect: pinion_core::scene::Rect) -> Value {
@@ -3257,12 +3315,21 @@ mod tests {
     }
 
     #[test]
-    fn scene_snapshot_path_wire_carries_rect_and_tag() {
+    fn scene_snapshot_path_wire_carries_rect_tag_and_commands() {
         use pinion_core::scene::{PathCommand, PathNode, PathPoint, Rect};
         use pinion_core::style::PathStyle;
         let node = PathNode::new(
             Rect::new(0, 0, 100, 100),
-            vec![PathCommand::MoveTo(PathPoint::new(0.0, 0.0))],
+            vec![
+                PathCommand::MoveTo(PathPoint::new(0.0, 0.0)),
+                PathCommand::LineTo(PathPoint::new(50.0, 0.0)),
+                PathCommand::CurveTo {
+                    c1: PathPoint::new(60.0, 0.0),
+                    c2: PathPoint::new(70.0, 10.0),
+                    end: PathPoint::new(70.0, 20.0),
+                },
+                PathCommand::Close,
+            ],
             PathStyle::default(),
         )
         .with_tag("chevron");
@@ -3274,10 +3341,30 @@ mod tests {
         assert_eq!(result.get("tag"), Some(&Value::String("chevron".into())));
         let rect = snapshot_rect_obj(&result);
         assert_eq!(rect.get("w"), Some(&Value::Number(100.into())));
+        // R51.198 carry — `commands` is serialized as an array of
+        // tagged objects, one per `PathCommand` variant.
+        let cmds = result.get("commands").unwrap().as_array().unwrap();
+        assert_eq!(cmds.len(), 4);
+        assert_eq!(
+            cmds[0].get("type"),
+            Some(&Value::String("MoveTo".into())),
+        );
+        assert_eq!(
+            cmds[1].get("type"),
+            Some(&Value::String("LineTo".into())),
+        );
+        assert_eq!(
+            cmds[2].get("type"),
+            Some(&Value::String("CurveTo".into())),
+        );
+        assert!(cmds[2].get("c1").is_some());
+        assert!(cmds[2].get("c2").is_some());
+        assert!(cmds[2].get("end").is_some());
+        assert_eq!(cmds[3].get("type"), Some(&Value::String("Close".into())));
     }
 
     #[test]
-    fn scene_snapshot_image_wire_carries_rect_and_tag() {
+    fn scene_snapshot_image_wire_carries_rect_tag_and_source() {
         use pinion_core::scene::{ImageNode, Rect};
         let node = ImageNode::new("icon.png", Rect::new(8, 8, 16, 16)).with_tag("logo");
         let mut scene = Scene::Image(node);
@@ -3286,6 +3373,10 @@ mod tests {
         let result = resp.result.unwrap();
         assert_eq!(result.get("type"), Some(&Value::String("Image".into())));
         assert_eq!(result.get("tag"), Some(&Value::String("logo".into())));
+        assert_eq!(
+            result.get("source"),
+            Some(&Value::String("icon.png".into())),
+        );
         let rect = snapshot_rect_obj(&result);
         assert_eq!(rect.get("x"), Some(&Value::Number(8.into())));
         assert_eq!(rect.get("w"), Some(&Value::Number(16.into())));

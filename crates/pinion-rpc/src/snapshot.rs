@@ -86,28 +86,33 @@ pub struct TextSnapshot {
     pub content: String,
 }
 
-/// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49).
+/// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49 + carry).
 ///
-/// The path command list (lines / cubics / arcs) is geometry data;
-/// snapshot reports only the bounding `rect` + `tag` for v0. A future
-/// round can extend with `PathCommand` enumeration once a demo needs
-/// shape introspection.
+/// `commands` mirrors `PathNode.commands` — the structured command
+/// stream the rasterizer consumes. Exposing the commands keeps
+/// `scene-as-data` (§2 #7) complete for vector geometry: an AI
+/// agent can introspect path shape without OCR'ing the painted
+/// result.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathSnapshot {
     pub rect: Rect,
     pub tag: Option<String>,
+    pub commands: Vec<pinion_core::scene::PathCommand>,
 }
 
-/// `Image` payload of [`SnapshotNode::Image`] (R51.198 §5.49).
+/// `Image` payload of [`SnapshotNode::Image`] (R51.198 §5.49 + carry).
 ///
-/// The image source URI is omitted for v0 — `rect` + `tag` are
-/// sufficient for hit-test bbox extraction and intent routing.
+/// `source` mirrors `ImageNode.source` — typically the asset URI or
+/// path the application loaded. The string is opaque to the
+/// framework but lets an AI agent verify "this is the right icon"
+/// without inspecting pixels (§2 #7 scene-as-data).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageSnapshot {
     pub rect: Rect,
     pub tag: Option<String>,
+    pub source: String,
 }
 
 /// `Container` payload of [`SnapshotNode::Container`] (R51.194 §5.49,
@@ -221,10 +226,12 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
         Scene::Path(node) => SnapshotNode::Path(PathSnapshot {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
+            commands: node.commands.clone(),
         }),
         Scene::Image(node) => SnapshotNode::Image(ImageSnapshot {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
+            source: node.source.clone(),
         }),
         Scene::Container(node) => SnapshotNode::Container(ContainerSnapshot {
             rect: node.rect,
@@ -531,10 +538,15 @@ mod tests {
         }
 
         #[test]
-        fn path_carries_rect_and_tag() {
+        fn path_carries_rect_tag_and_commands() {
+            let commands = vec![
+                PathCommand::MoveTo(PathPoint::new(0.0, 0.0)),
+                PathCommand::LineTo(PathPoint::new(50.0, 0.0)),
+                PathCommand::Close,
+            ];
             let node = PathNode::new(
                 Rect::new(0, 0, 100, 100),
-                vec![PathCommand::MoveTo(PathPoint::new(0.0, 0.0))],
+                commands.clone(),
                 PathStyle::default(),
             )
             .with_tag("chevron");
@@ -544,10 +556,11 @@ mod tests {
             };
             assert_eq!(snap.rect, Rect::new(0, 0, 100, 100));
             assert_eq!(snap.tag.as_deref(), Some("chevron"));
+            assert_eq!(snap.commands, commands);
         }
 
         #[test]
-        fn image_carries_rect_and_tag() {
+        fn image_carries_rect_tag_and_source() {
             let node = ImageNode::new("icon.png", Rect::new(8, 8, 16, 16))
                 .with_tag("logo");
             let scene = Scene::Image(node);
@@ -556,6 +569,7 @@ mod tests {
             };
             assert_eq!(snap.rect, Rect::new(8, 8, 16, 16));
             assert_eq!(snap.tag.as_deref(), Some("logo"));
+            assert_eq!(snap.source, "icon.png");
         }
 
         #[test]

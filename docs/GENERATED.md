@@ -15166,6 +15166,37 @@ if __name__ == "__main__":
 
 
 
+### Round 540 — R51.198 carry §5.49 Path.commands + Image.source snapshot — leaf primitive 데이터 노출 완전화
+
+**Changes**:
+- PathSnapshot.commands: Vec<PathCommand> 신규 필드
+- ImageSnapshot.source: String 신규 필드
+- snapshot_root: PathNode.commands.clone() + ImageNode.source.clone() 추출
+- path_command_to_json helper 신규 — 4 variant + Unknown wildcard
+- Image wire: source string 일관 emit
+- dispatch tests 갱신: rect_tag_and_commands / rect_tag_and_source
+- snapshot tests 갱신: 4-variant PathCommand round-trip + Image.source
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2135/0/11 (기존 tests 갱신, 순추가 0)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 6 demos 회귀 PASS (~1.5-1.9s 각)
+- §2 #7 scene-as-data invariant 완전: AI 가 path shape / image URI 직접 introspect
+
+
+
+**Impact**: §5.49, §5.12, §5.3
+
+
+**Carry forward**:
+- R55.D ScrollBar sub-widget (SCXML statechart 새 axis)
+- R55.F scene/scroll RPC method — offset query + scroll_to action
+- R56 TextField + IME / R57 Theming / R58 composite 대형 axes
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
