@@ -15396,6 +15396,32 @@ if __name__ == "__main__":
 
 
 
+### Round 548 — R55.G.12 §5.49 second-consumer — hello_listbox_focus_border demo (R55.G.11 style wire under reactive mutation)
+
+**Changes**:
+- tools/demos/hello_listbox_focus_border.py — 9번째 demo
+- row 0 focus-border initial: width=2, color=(0x40,0x80,0xe0,255)
+- row 5 non-focused: border=null assert
+- scene/rewind focused_index=3 경우 row 0 border drop + row 3 border gain
+- second-consumer of R55.G.8 style wire — reactive mutation reflected
+
+
+
+**Verification**:
+- 9 demos PASS regression (R55.G.12 included, ~1.0-1.5s each)
+- demo-only land — no Rust code changes, test/clippy counts unchanged
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- scene/key External keybinding tag routing (paint-mode tag mismatch carry)
+- scene/scroll at-based variant for consistency with click/wheel/key
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
