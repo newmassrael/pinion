@@ -1,8 +1,10 @@
-//! `hello-listbox` — R51.97 §5.38 `ListBox` composite first-client.
+//! `hello-listbox` — R51.97 §5.38 `ListBox` composite first-client,
+//! R51.191 §5.45 R55.G first `ScrollNode` consumer.
 //!
-//! N=4 [`ListBox`](pinion_core::widgets::listbox::ListBox) rendered as
-//! a vertical column of selectable rows, each row tagged with the
-//! paint convention `"main_list#<index>"` from the R51.41 RFC. The
+//! N=12 [`ListBox`](pinion_core::widgets::listbox::ListBox) rendered
+//! inside a 5-row [`ScrollNode`](pinion_core::scene::ScrollNode)
+//! viewport, each row tagged with the paint convention
+//! `"main_list#<index>"` from the R51.41 RFC. The
 //! state scene carries one composite
 //! [`ListBoxExternal`](pinion_core::widgets::listbox::ListBoxExternal)
 //! tagged `"main_list"`; the
@@ -64,12 +66,11 @@ use std::time::Instant;
 
 use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
-};
+use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
+use pinion_core::style::{Border, BoxStyle, TextStyle};
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
+use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -80,8 +81,30 @@ vello_renderer_impl!(HelloListboxRenderer, HelloListboxRendererError);
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 320;
 const BG_FILL: Color = Color::rgb(0x18, 0x24, 0x30);
-const N: usize = 4;
+/// (R51.191 §5.45 R55.G) Bumped from 4 → 12 so the content overflows
+/// the scroll viewport and the wheel / Arrow keys actually drive a
+/// visible offset change. 12 items also exhausts the type-ahead
+/// initial-letter alphabet richer than the four-fruit set.
+const N: usize = 12;
 const PRIMARY_TAG: &str = "main_list";
+/// (R51.191 §5.45 R55.G) Cache key for the scroll container's
+/// reactive [`ScrollState`]. Resolves via
+/// [`use_scroll_state`] in `view` so the offset survives view
+/// re-runs. Distinct from [`PRIMARY_TAG`] — the listbox composite
+/// state machine and the scroll input-router live on independent
+/// tag namespaces (the input router walks `scroll_state_at` via the
+/// attached `Rc<ScrollState>`, not the tag string).
+const SCROLL_KEY: &str = "main_list_scroll";
+/// (R51.191 §5.45 R55.G) Scroll viewport width, sized to match the
+/// row width so the rows fit horizontally and the user sees no
+/// horizontal scrollbar (the substrate supports both axes; this
+/// demo only exercises vertical).
+const VIEWPORT_W: u32 = ROW_WIDTH;
+/// (R51.191 §5.45 R55.G) Scroll viewport height — exactly 5 rows
+/// plus the 4 inter-row gaps. Picked so the user always sees a
+/// half-window of content scrolling past the visible window edge,
+/// making the wheel / Arrow input visibly drive the offset.
+const VIEWPORT_H: u32 = 5 * ROW_HEIGHT + 4 * ROW_GAP;
 
 // Row visual constants — a horizontal Box (filled background tint
 // when focused/selected) holding a label. The visual emphasises the
@@ -117,34 +140,61 @@ impl ListState {
 }
 
 /// view-fn (§6.3): pure sync mapping `ListState -> Scene`. Builds a
-/// vertical column of N rows, each row tagged `"main_list#<i>"` so
-/// the `InputRouter`'s R51.42 sub-index split routes cursor hits on
-/// row `i` to `invoke("send", Text("<i>:<EventName>"))` against the
+/// column of N rows wrapped in a [`ScrollNode`] (R51.191 §5.45
+/// R55.G) so content larger than the viewport scrolls under
+/// wheel / Arrow input. Each row is tagged `"main_list#<i>"` so the
+/// `InputRouter`'s R51.42 sub-index split routes cursor hits on row
+/// `i` to `invoke("send", Text("<i>:<EventName>"))` against the
 /// single composite `ListBoxExternal`.
+///
+/// R51.191 R55.G — substrate-incompleteness-signal closure: the
+/// view fn no longer uses taffy flex to position the rows because
+/// [`crate::layout::compute_layout`] (pinion-runtime) does not yet
+/// recurse into [`Scene::Scroll`] children. Manual positioning
+/// inside the scroll content keeps the demo runtime-stable. The
+/// taffy-into-Scroll integration is the R55.G.2 carry — when it
+/// lands, this view fn can revert to a flex layout inside the
+/// scroll content without changing the substrate API.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ListState, _frame: &Frame) -> Scene {
     let active = active_option_index(state);
-    let rows: Vec<Scene> = (0..N)
-        .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, Some(i) == Some(active)))
-        .collect();
-    let column = Scene::Container(
-        ContainerNode::new(rows).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Column)
-                .with_align_items(AlignItems::Start)
-                .with_gap(ROW_GAP),
-        ),
+    // (R51.190) `from_state` derives both offset and tag from the
+    // cached `ScrollState`. `set_max` updates the upper bound from
+    // the current content size — when N is constant the bound never
+    // changes, but the call is idempotent and survives future
+    // dynamic-N demos.
+    let scroll_state = use_scroll_state(SCROLL_KEY);
+    let content_h = u32::try_from(N).unwrap_or(0) * ROW_HEIGHT
+        + u32::try_from(N.saturating_sub(1)).unwrap_or(0) * ROW_GAP;
+    scroll_state.set_max(
+        0,
+        i32::try_from(content_h.saturating_sub(VIEWPORT_H)).unwrap_or(0),
     );
-    Scene::Container(
-        ContainerNode::new(vec![column])
-            .with_style(BoxStyle::filled(BG_FILL))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center),
-            ),
-    )
+
+    // Manual per-row positioning (content-intrinsic y starts at 0).
+    let rows: Vec<Scene> = (0..N)
+        .map(|i| {
+            let y = u32::try_from(i).unwrap_or(0) * (ROW_HEIGHT + ROW_GAP);
+            listbox_row_at_y(i, y, state.rows[i].0, state.rows[i].1, Some(i) == Some(active))
+        })
+        .collect();
+    let mut content_container = ContainerNode::new(rows);
+    content_container.rect = Rect::new(0, 0, ROW_WIDTH, content_h);
+    let content = Scene::Container(content_container);
+
+    // Center the scroll viewport inside the window.
+    let vp_x = WIN_W.saturating_sub(VIEWPORT_W) / 2;
+    let vp_y = WIN_H.saturating_sub(VIEWPORT_H) / 2;
+    let scroll = ScrollNode::from_state(
+        scroll_state,
+        Rect::new(vp_x, vp_y, VIEWPORT_W, VIEWPORT_H),
+        content,
+    );
+
+    let mut outer =
+        ContainerNode::new(vec![Scene::Scroll(scroll)]).with_style(BoxStyle::filled(BG_FILL));
+    outer.rect = Rect::new(0, 0, WIN_W, WIN_H);
+    Scene::Container(outer)
 }
 
 /// One row of the composite — filled box (focused / selected tint) +
@@ -167,7 +217,19 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
 /// `focused` and `selected` can diverge in this composite (unlike
 /// `RadioGroup` where Arrow activates immediately); the two
 /// distinct visual states make the divergence observable.
-fn listbox_row(index: usize, state: ListboxItemState, selected: bool, focused: bool) -> Scene {
+/// (R51.191 §5.45 R55.G) Build one row at content-intrinsic
+/// position `(0, y)`. Replaces the pre-R51.191 `listbox_row` flex
+/// helper — scroll content is not currently taffy-laid-out (see
+/// [`view`]'s carry note), so the row and its label rect are set
+/// manually. The visual rules (fill / label / border priority) are
+/// identical to the pre-R51.191 helper.
+fn listbox_row_at_y(
+    index: usize,
+    y: u32,
+    state: ListboxItemState,
+    selected: bool,
+    focused: bool,
+) -> Scene {
     // Background fill priority: selected > pressed > hover > focused
     // > idle. The selected state always wins (committed truth);
     // focused is the secondary cursor hint that only shows when the
@@ -205,9 +267,14 @@ fn listbox_row(index: usize, state: ListboxItemState, selected: bool, focused: b
         };
         (fill, label_color, border)
     };
+    // Label rect inside the row — 12 px left/right padding (mirrors
+    // the pre-R51.191 `with_padding(Rect::new(12, 4, 12, 4))`),
+    // vertically centred for the 15-px font in the 28-px row.
+    // `w = 0` keeps parley single-line (no wrap).
+    let label_baseline_y = y + (ROW_HEIGHT - 15) / 2;
     let label = Scene::Text(TextNode::styled(
         option_label(index),
-        Rect::default(),
+        Rect::new(12, label_baseline_y, 0, ROW_HEIGHT),
         TextStyle::new().with_size_px(15).with_fg(label_color),
     ));
     let row_tag = format!("{PRIMARY_TAG}#{index}");
@@ -215,30 +282,31 @@ fn listbox_row(index: usize, state: ListboxItemState, selected: bool, focused: b
     if let Some(b) = border {
         row_style = row_style.with_border(b);
     }
-    Scene::Container(
-        ContainerNode::new(vec![label])
-            .with_tag(row_tag)
-            .with_style(row_style)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(ROW_WIDTH, ROW_HEIGHT))
-                    // R51.97 §5.38 — Rect insets via `Rect::new` (the
-                    // public constructor; `#[non_exhaustive]` blocks
-                    // the literal struct syntax). x=left, y=top,
-                    // w=right, h=bottom.
-                    .with_padding(Rect::new(12, 4, 12, 4)),
-            ),
-    )
+    let mut row_container = ContainerNode::new(vec![label])
+        .with_tag(row_tag)
+        .with_style(row_style);
+    row_container.rect = Rect::new(0, y, ROW_WIDTH, ROW_HEIGHT);
+    Scene::Container(row_container)
 }
 
+/// (R51.191 §5.45 R55.G) Twelve fruit labels — alphabetised so
+/// the WAI-ARIA type-ahead jump cycles through distinct initial
+/// letters. Out-of-range indices return `"?"` as a safe fallback
+/// (only reachable if `N` exceeds 12; today they agree).
 fn option_label(index: usize) -> &'static str {
     match index {
         0 => "Apple",
         1 => "Banana",
         2 => "Cherry",
         3 => "Date",
+        4 => "Elderberry",
+        5 => "Fig",
+        6 => "Grape",
+        7 => "Honeydew",
+        8 => "Kiwi",
+        9 => "Lemon",
+        10 => "Mango",
+        11 => "Nectarine",
         _ => "?",
     }
 }
@@ -784,4 +852,84 @@ mod a11y_tests {
     // substrate and only carries the thread-local cursor + the
     // `type_ahead_jump` wiring (covered indirectly by the integration
     // path — no application-side algorithm duplication).
+
+    // ─────────────────────────────────────────────────────────────
+    // R51.191 §5.45 R55.G — view-fn smoke tests confirming the
+    // ScrollNode + ScrollState wiring lands the expected scene
+    // shape. The view fn runs inside a fresh `Owner` because
+    // `use_scroll_state` requires an active scope (R51.146
+    // callback-root-owner-wrap discipline).
+    // ─────────────────────────────────────────────────────────────
+
+    fn run_view(state: ListState) -> Scene {
+        let owner = Owner::new();
+        owner.run(|| view(state, &Frame::default()))
+    }
+
+    fn find_scroll(scene: &Scene) -> Option<&pinion_core::scene::ScrollNode> {
+        match scene {
+            Scene::Scroll(s) => Some(s),
+            Scene::Container(c) => c.children.iter().find_map(find_scroll),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r51_191_view_wraps_rows_in_scroll_node() {
+        // The scene must contain a `Scene::Scroll` so wheel + key
+        // events reach the scroll input-router rather than dropping.
+        let scene = run_view(unselected_state());
+        let scroll = find_scroll(&scene).expect("view must contain Scene::Scroll");
+        // Viewport sized to 5 rows × (height + gap) - gap.
+        assert_eq!(scroll.viewport.w, VIEWPORT_W);
+        assert_eq!(scroll.viewport.h, VIEWPORT_H);
+        // State attached so `scroll_state_at` can resolve a target
+        // when the input router walks the scene.
+        assert!(scroll.state.is_some(), "ScrollNode must carry a state Rc");
+        // Tag derived from the cache key — closes the R51.190
+        // boilerplate gap (no string repeat at the view fn).
+        assert_eq!(scroll.tag.as_deref(), Some(SCROLL_KEY));
+    }
+
+    #[test]
+    fn r51_191_view_sets_scroll_max_from_content_overflow() {
+        // Content height = N rows × (height + gap) - gap; the
+        // matching ScrollState bound = content - viewport. The view
+        // fn updates this each call so the bound tracks N.
+        let _scene = run_view(unselected_state());
+        // The state lives on the current Owner — re-resolve via the
+        // same key to inspect.
+        let owner = Owner::new();
+        owner.run(|| {
+            // First view call inside this owner populates the cache.
+            let _ = view(unselected_state(), &Frame::default());
+            let state = use_scroll_state(SCROLL_KEY);
+            let (_max_x, max_y) = state.max();
+            let content_h = u32::try_from(N).unwrap_or(0) * ROW_HEIGHT
+                + u32::try_from(N.saturating_sub(1)).unwrap_or(0) * ROW_GAP;
+            let expected = i32::try_from(content_h.saturating_sub(VIEWPORT_H)).unwrap_or(0);
+            assert_eq!(max_y, expected);
+        });
+    }
+
+    #[test]
+    fn r51_191_view_rows_positioned_at_intrinsic_y() {
+        // Inside the scroll content, the N row containers stack at
+        // intrinsic y = i × (ROW_HEIGHT + ROW_GAP). The hit test +
+        // input router rely on this layout to map clicks to rows.
+        let scene = run_view(unselected_state());
+        let scroll = find_scroll(&scene).expect("scroll exists");
+        let Scene::Container(content) = scroll.content.as_ref() else {
+            panic!("scroll content must be a Container of rows");
+        };
+        assert_eq!(content.children.len(), N);
+        for (i, child) in content.children.iter().enumerate() {
+            let Scene::Container(row) = child else {
+                panic!("row {i} must be a Container");
+            };
+            let expected_y = u32::try_from(i).unwrap_or(0) * (ROW_HEIGHT + ROW_GAP);
+            assert_eq!(row.rect.y, expected_y, "row {i} y position");
+            assert_eq!(row.rect.h, ROW_HEIGHT, "row {i} height");
+        }
+    }
 }

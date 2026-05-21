@@ -2969,6 +2969,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-shell/src/typeahead.rs:TypeaheadCursor::step
 - crates/pinion-core/src/widgets/aria.rs
 - crates/pinion-core/src/widgets/aria.rs:apply_aria_activate
+- examples/hello-listbox/src/main.rs:listbox_row_at_y
 
 
 
@@ -3600,6 +3601,8 @@ pub struct ScrollNode {
 - crates/pinion-core/src/scene.rs:ScrollNode::from_state
 - crates/pinion-core/src/widgets/scroll.rs:ScrollState::with_tag
 - crates/pinion-core/src/widgets/scroll.rs:ScrollState::tag
+- examples/hello-listbox/src/main.rs:view
+- examples/hello-listbox/src/main.rs:listbox_row_at_y
 
 
 
@@ -7589,6 +7592,38 @@ pub struct ScrollNode {
 - R55.D — ScrollBar sub-widget (SCXML statechart)
 - R55.F — scene/scroll RPC method (11th typed)
 - R55.C.4/C.5 — horizontal Home/End + focus-based routing carries from R51.187
+
+
+
+### R51.191 — R51.191 §5.45 R55.G hello-listbox first ScrollNode consumer wraps 12-row column in 5-row viewport
+
+**Changes**:
+- examples/hello-listbox/src/main.rs: N bumped 4 → 12 so content overflows viewport + option_label extended to 12 alphabetised fruit labels
+- examples/hello-listbox/src/main.rs: SCROLL_KEY + VIEWPORT_W + VIEWPORT_H constants for the scroll wrap; viewport centred in the 360x320 window
+- examples/hello-listbox/src/main.rs: view fn replaces flex column with ScrollNode::from_state(use_scroll_state(...), viewport, content); set_max derives bound from N row geometry
+- examples/hello-listbox/src/main.rs: listbox_row_at_y helper replaces listbox_row — manual rect (0, y, ROW_WIDTH, ROW_HEIGHT) because layout::compute_layout does not yet recurse into Scene::Scroll content (R55.G.2 carry)
+- First consumer validates: ScrollNode::from_state 1-call ergonomics (R51.190), wheel + key input routing (R51.186/187), Vello + TUI paint clip (R51.188/189), hit_test offset translation (R51.181)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2086 passed / 0 failed / 11 ignored (+3 new R51.191 smoke tests: scroll wrap + scroll_max derivation + intrinsic y positioning)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings (clippy::pedantic deny baseline holds)
+- hello-listbox a11y_tests = 12/12 passed (9 pre-existing + 3 new); ListBoxView::access_node + access_focus_target + active_option_index all parametric on N, refactor transparent
+- mnemosyne validate_workspace: entries 361 → 362 / sections 59 / T1=0 / T3=0 / RT=1/1 / orphan_refs=4+0 (no new violations)
+
+
+
+**Impact**: §5.45, §5.38
+
+
+**Carry forward**:
+- R55.G.2 — layout::compute_layout recurse into Scene::Scroll content (taffy subtree), revert hello-listbox to flex layout
+- R55.G.3 — auto-scroll-active-into-view on focus change (Arrow/Home/End/typeahead should keep focused row visible)
+- R55.D — ScrollBar sub-widget (SCXML statechart)
+- R55.F — scene/scroll RPC (11th typed method)
+- R55.C.4/C.5 — horizontal Home/End + focus-based routing carries from R51.187
+- hello-listbox-multi same R55.G refactor (parallel sibling consumer)
 
 
 
