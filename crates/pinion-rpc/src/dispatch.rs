@@ -634,6 +634,14 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             handle_scene_wheel(inbox, producer, last_paint_layout, request.params.as_ref())
         }
+        "scene/scroll" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            handle_scene_scroll(producer, last_paint_layout, request.params.as_ref())
+        }
         "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
         "scene/list_previews" => handle_scene_list_previews(previews),
         "scene/propose_change" => {
@@ -938,6 +946,128 @@ fn find_rect_by_tag_with_offset(
                     x_off + dx,
                     y_off + dy,
                 )
+            }
+        }
+        _ => None,
+    }
+}
+
+/// R55.F §5.45 — `scene/scroll` programmatic scroll mutation.
+///
+/// Params: `{path: "<scroll_tag>", to: {x, y}}` or
+/// `{path: "<scroll_tag>", by: {dx, dy}}` (mutually exclusive).
+/// Walks the scene for a `Scene::Scroll` with matching `tag` and
+/// calls `ScrollState::scroll_to` / `scroll_by` on the attached
+/// state. The reactive `Signal::set` inside those methods drives
+/// the next view re-run, so the AI client follows up with
+/// `scene/snapshot` to observe the new offset.
+///
+/// Bypasses the `InputRouter` wheel/key activation arc — useful
+/// for "jump to row N" patterns where simulating ten `PageDown`
+/// injections would be noisy. The bound clamping is identical to
+/// the input-route path (`scroll_to` / `scroll_by` both saturate
+/// against `[0, max_{x,y}]`).
+fn handle_scene_scroll<F>(
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(params) = params else {
+        return Err(RpcError::invalid_params("missing params"));
+    };
+    let path = params
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.path missing or not a string"))?;
+    let to = params.get("to");
+    let by = params.get("by");
+    let action = match (to, by) {
+        (Some(_), Some(_)) => {
+            return Err(RpcError::invalid_params(
+                "params.to and params.by are mutually exclusive — pick one",
+            ));
+        }
+        (None, None) => {
+            return Err(RpcError::invalid_params(
+                "params requires either `to: {x, y}` or `by: {dx, dy}`",
+            ));
+        }
+        (Some(to_value), None) => ScrollAction::To(parse_xy(to_value, "to")?),
+        (None, Some(by_value)) => ScrollAction::By(parse_xy(by_value, "by")?),
+    };
+    // R55.F §5.45 — the `Scene::Scroll` carrying the matching tag
+    // lives in the paint scene (V::view output), not the state
+    // scene (root External). Produce a fresh paint at the live
+    // window viewport and walk it.
+    let Some(producer) = paint_producer else {
+        return Err(RpcError::invalid_params("PaintProducerUnavailable"));
+    };
+    let (vw, vh) = last_paint_layout
+        .map_or((720, 480), |l| (l.rect.w.max(1), l.rect.h.max(1)));
+    let painted = producer(vw, vh);
+    let Some(state) = find_scroll_state_by_tag(&painted, path) else {
+        return Err(RpcError::invalid_params(format!(
+            "scroll tag {path:?} not found or has no attached ScrollState"
+        )));
+    };
+    match action {
+        ScrollAction::To((x, y)) => state.scroll_to(x, y),
+        ScrollAction::By((dx, dy)) => state.scroll_by(dx, dy),
+    }
+    Ok(Value::Null)
+}
+
+enum ScrollAction {
+    To((i32, i32)),
+    By((i32, i32)),
+}
+
+fn parse_xy(value: &Value, label: &str) -> Result<(i32, i32), RpcError> {
+    let obj = value.as_object().ok_or_else(|| {
+        RpcError::invalid_params(format!("params.{label} missing or not an object"))
+    })?;
+    let x = obj
+        .get("x")
+        .or_else(|| obj.get("dx"))
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            RpcError::invalid_params(format!("params.{label}.x/dx missing or not a number"))
+        })?;
+    let y = obj
+        .get("y")
+        .or_else(|| obj.get("dy"))
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            RpcError::invalid_params(format!("params.{label}.y/dy missing or not a number"))
+        })?;
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "JSON i64 → ScrollState i32 wire boundary; out-of-range saturates at clamp"
+    )]
+    Ok((x as i32, y as i32))
+}
+
+/// R55.F §5.45 — depth-first walk of the scene for the first
+/// `Scene::Scroll` whose `tag` matches `target_tag` AND which has
+/// an attached `ScrollState`. Returns `None` if no such node
+/// exists.
+fn find_scroll_state_by_tag(
+    scene: &Scene,
+    target_tag: &str,
+) -> Option<std::rc::Rc<pinion_core::widgets::scroll::ScrollState>> {
+    match scene {
+        Scene::Container(c) => c
+            .children
+            .iter()
+            .find_map(|child| find_scroll_state_by_tag(child, target_tag)),
+        Scene::Scroll(s) => {
+            if s.tag.as_deref() == Some(target_tag) {
+                s.state.clone()
+            } else {
+                find_scroll_state_by_tag(s.content.as_ref(), target_tag)
             }
         }
         _ => None,
@@ -3418,6 +3548,131 @@ mod tests {
         // The introspect dump still rides alongside rect / tag.
         let intro = result.get("introspect").unwrap().as_object().unwrap();
         assert_eq!(intro.get("count"), Some(&Value::Number(7.into())));
+    }
+
+    // ---- R55.F §5.45 — scene/scroll programmatic mutation ----
+
+    // R55.F §5.45 — `scene/scroll` needs a paint producer to walk
+    // because `Scene::Scroll` lives in the paint scene (V::view
+    // output). The shared fixture builds an empty state scene and
+    // a producer that returns a Scroll wrapping a `ScrollState`
+    // the caller can inspect.
+    fn scroll_test_state() -> std::rc::Rc<pinion_core::widgets::scroll::ScrollState> {
+        use pinion_core::widgets::scroll::ScrollState;
+        use std::rc::Rc;
+        let state = Rc::new(ScrollState::new());
+        state.set_max(0, 500);
+        state
+    }
+
+    fn build_scroll_producer(
+        tag: &'static str,
+        state: std::rc::Rc<pinion_core::widgets::scroll::ScrollState>,
+    ) -> impl FnMut(u32, u32) -> Scene {
+        use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
+        use std::rc::Rc;
+        move |_w: u32, _h: u32| -> Scene {
+            let content = Scene::Container(ContainerNode::new(vec![]));
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content)
+                .with_tag(tag)
+                .with_state(Rc::clone(&state));
+            Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]))
+        }
+    }
+
+    fn dispatch_scene_scroll(
+        producer: &mut dyn FnMut(u32, u32) -> Scene,
+        req: &str,
+    ) -> Response {
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(producer);
+        parse_response(&dispatch(&mut ctx, req).unwrap())
+    }
+
+    #[test]
+    fn scene_scroll_to_updates_state_offset() {
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state.clone());
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"path":"main_list_scroll","to":{"x":0,"y":80}},"id":900}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(resp.result, Some(Value::Null));
+        assert_eq!(state.offset(), (0, 80));
+    }
+
+    #[test]
+    fn scene_scroll_by_adds_delta_to_state_offset() {
+        let state = scroll_test_state();
+        state.scroll_to(0, 100);
+        let mut produce = build_scroll_producer("main_list_scroll", state.clone());
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"path":"main_list_scroll","by":{"dx":0,"dy":25}},"id":901}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(state.offset(), (0, 125));
+    }
+
+    #[test]
+    fn scene_scroll_clamps_to_bounds() {
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state.clone());
+        // state.max_y = 500; request y = 9999 → clamped to 500.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"path":"main_list_scroll","to":{"x":0,"y":9999}},"id":902}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        assert!(resp.error.is_none());
+        assert_eq!(state.offset(), (0, 500));
+    }
+
+    #[test]
+    fn scene_scroll_missing_tag_returns_invalid_params() {
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"path":"nonexistent","to":{"x":0,"y":0}},"id":903}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("not found"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_scroll_to_and_by_together_is_invalid() {
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"path":"main_list_scroll","to":{"x":0,"y":0},"by":{"dx":0,"dy":0}},"id":904}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("mutually exclusive"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_scroll_neither_to_nor_by_is_invalid() {
+        let state = scroll_test_state();
+        let mut produce = build_scroll_producer("main_list_scroll", state);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"path":"main_list_scroll"},"id":905}"#;
+        let resp = dispatch_scene_scroll(&mut produce, req);
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("requires"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_scroll_without_paint_producer_is_unavailable() {
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll","params":{"path":"any","to":{"x":0,"y":0}},"id":906}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("PaintProducerUnavailable"), "data: {data:?}");
     }
 
     // ---- R51.200 §5.49 — nested-scroll absolute coord translation ----

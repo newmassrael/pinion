@@ -362,6 +362,36 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params["path"] = path
         self.request("scene/wheel", params)
 
+    def scroll(
+        self,
+        path: str,
+        *,
+        to: Optional[tuple[int, int]] = None,
+        by: Optional[tuple[int, int]] = None,
+    ) -> None:
+        """`scene/scroll` typed wrapper (R55.F §5.45).
+
+        Programmatic scroll mutation — bypasses the InputRouter
+        wheel/key activation arc and directly drives the attached
+        `ScrollState`. Mutually exclusive — supply exactly one of:
+          * `to = (x, y)` — absolute offset (clamped to `[0, max]`).
+          * `by = (dx, dy)` — relative delta (saturating-add then
+            clamped).
+
+        Use for "jump to row N" patterns where simulating ten
+        PageDown injections would be noisy. Follow up with
+        `snapshot(source="paint")` to observe the new offset.
+        """
+        if (to is None) == (by is None):
+            raise ValueError("exactly one of `to` or `by` must be supplied")
+        params: dict[str, Any] = {"path": path}
+        if to is not None:
+            params["to"] = {"x": int(to[0]), "y": int(to[1])}
+        else:
+            assert by is not None
+            params["by"] = {"dx": int(by[0]), "dy": int(by[1])}
+        self.request("scene/scroll", params)
+
     def stderr_tail(self, n: int = 20) -> list[str]:
         return list(self._stderr_lines[-n:])
 

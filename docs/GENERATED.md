@@ -15197,6 +15197,37 @@ if __name__ == "__main__":
 
 
 
+### Round 541 — R55.F §5.45 scene/scroll RPC — programmatic ScrollState 변경 (InputRouter 우회)
+
+**Changes**:
+- 새 method scene/scroll 워어 {path, to|by} params, 상호 배타
+- handle_scene_scroll: paint_producer 쓰며 Scroll tag 검색 + state.scroll_to/by
+- ScrollAction enum + parse_xy helper (x/y 또는 dx/dy)
+- find_scroll_state_by_tag walker (Container.children / Scroll.content 재귀)
+- tools/rpc_verify.py: scroll(path, to/by) wrapper
+- hello_listbox_scroll_to.py 7번째 demo (to + by + clamp boundary)
+- 7 dispatch tests (to / by / clamp / missing / together / neither / no producer)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2142/0/11 (+7 R55.F tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 7 demos 회귀 PASS — listbox 의 scroll_to/by 이 InputRouter 우회 자동 mutate
+- AI 용 'jump to row N' pattern 지원 — PageDown 10 회 시뮬레이션 대체
+
+
+
+**Impact**: §5.45, §5.7, §5.12
+
+
+**Carry forward**:
+- R55.D ScrollBar sub-widget (SCXML statechart 새 axis)
+- R56 TextField + IME / R57 Theming / R58 composite 대형 axes
+- scene/scroll 의 path-based input 와 일관 — 태그 찾기 walker 통합 고려
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
