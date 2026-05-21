@@ -14836,6 +14836,38 @@ if __name__ == "__main__":
 
 
 
+### Round 529 — R51.197 §5.7 §5.45 scene/key — DeferredInput::Key + R55.C.3 keyboard scroll dogfood
+
+**Changes**:
+- pinion-rpc: DeferredInput::Key + handle_scene_key (params {at, key} W3C string)
+- pinion-shell drain: cursor_moved + handle_named_key (apply_key + scroll_key fallback)
+- InputRouter::scroll_key arc fires for ArrowUp/Down/Left/Right/PageUp/Down/Home/End
+- 4 new dispatch tests (enqueue + no inbox + empty key + missing key)
+- tools/rpc_verify: key(at, name) wrapper
+- tools/demos/hello_listbox_keyboard_scroll.py: PageDown → offset_y > 0
+
+
+
+**Verification**:
+- cargo test pinion-rpc scene_key — 4 tests PASS
+- python3 tools/demos/hello_listbox_keyboard_scroll.py — [demo] PASS (0.94s)
+- regression: toggle_activate + listbox_snapshot + listbox_scroll + toggle_click PASS
+- cargo test --workspace vello — 2106/0/11 (was 2102, +4)
+- cargo clippy --workspace --all-targets vello — 0 warnings
+
+
+
+**Impact**: §5.7, §5.12, §5.45, §5.49
+
+
+**Carry forward**:
+- R51.198 — leaf primitive rect/tag in scene/snapshot (no more hardcoded coords)
+- R51.199 — pinion-tui RPC surface (raw stdin clash with newline JSON-RPC framing)
+- Ctrl+Home / Ctrl+End scroll keys (R51.187 carry — corner cases)
+- Rust integration test crate pinning demo regressions in CI
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

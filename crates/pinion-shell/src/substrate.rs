@@ -702,6 +702,10 @@ impl<V: WidgetView> ShellCore<V> {
                     self.mouse_pressed(PointerId::MOUSE);
                     self.mouse_released(PointerId::MOUSE);
                 }
+                DeferredInput::Key { x, y, ref key } => {
+                    self.cursor_moved(PointerId::MOUSE, x, y);
+                    self.handle_named_key(key);
+                }
                 _ => {}
             }
         }

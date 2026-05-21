@@ -317,6 +317,16 @@ pub enum DeferredInput {
     /// Replaces the R51.193-era probe-only path that only consulted
     /// `External::handles_event` policy.
     Click { x: f64, y: f64 },
+    /// R51.197 §5.49 §5.45 — `scene/key` injection. The embedder
+    /// applies `cursor_moved(MOUSE, x, y)` then `handle_named_key(key)`
+    /// so the substrate first hands the W3C `KeyboardEvent.key` string
+    /// to `V::apply_key` (focused widget shortcuts: Slider arrows,
+    /// Toggle Space, Button Enter, …); on `None` return the R51.187
+    /// scroll-key fallback fires for `ArrowUp/Down/Left/Right`,
+    /// `PageUp/Down`, `Home`, `End` against the `ScrollNode` under
+    /// the cursor. Mirrors the winit `WindowEvent::KeyboardInput` arc
+    /// (`Escape` / `Tab` stay shell-reserved and are not injectable).
+    Key { x: f64, y: f64, key: String },
 }
 
 impl<'a> DispatchContext<'a> {
@@ -589,6 +599,14 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             handle_scene_layout(producer, last_paint_layout, request.params.as_ref())
         }
+        "scene/key" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            handle_scene_key(inbox, request.params.as_ref())
+        }
         "scene/wheel" => {
             // Same reborrow pattern as `scene/layout` — the inbox is
             // a `&mut Vec<...>` and clippy::option_as_ref_deref would
@@ -836,6 +854,54 @@ where
     };
 
     Ok(snapshot_node_to_json(node))
+}
+
+/// R51.197 §5.49 §5.45 — `scene/key` typed dispatcher.
+///
+/// Params: `{at: {x: f64, y: f64}, key: <W3C KeyboardEvent.key string>}`.
+///
+/// Enqueues a single [`DeferredInput::Key`] entry on the dispatcher's
+/// inbox. The embedder drains the inbox after `dispatch` returns and
+/// applies `cursor_moved(x, y)` followed by `handle_named_key(key)`,
+/// so the substrate first offers the key to the focused widget's
+/// `V::apply_key` (Slider arrows, Toggle Space, Button Enter, …),
+/// then falls through to the §5.45 R55.C.3 scroll arc for unhandled
+/// arrow / page / Home / End over a scroll container.
+fn handle_scene_key(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let Some(params) = params else {
+        return Err(RpcError::invalid_params("missing params"));
+    };
+    let at = params
+        .get("at")
+        .and_then(Value::as_object)
+        .ok_or_else(|| RpcError::invalid_params("params.at missing or not an object"))?;
+    let x = at
+        .get("x")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.at.x missing or not a number"))?;
+    let y = at
+        .get("y")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.at.y missing or not a number"))?;
+    let key = params
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.key missing or not a string"))?;
+    if key.is_empty() {
+        return Err(RpcError::invalid_params("params.key must not be empty"));
+    }
+    inbox.push(DeferredInput::Key {
+        x,
+        y,
+        key: key.to_owned(),
+    });
+    Ok(Value::Null)
 }
 
 /// R51.195 §5.49 §5.45 — `scene/wheel` typed dispatcher.
@@ -2544,6 +2610,73 @@ mod tests {
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("Path".to_string())));
+    }
+
+    // ---- R51.197 §5.49 §5.45 — scene/key injection ----
+
+    #[test]
+    fn scene_key_enqueues_arrow_down_into_inbox() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":180.0,"y":160.0},"key":"ArrowDown"},"id":300}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(resp.result, Some(Value::Null));
+        assert_eq!(inbox.len(), 1);
+        let DeferredInput::Key { x, y, ref key } = inbox[0] else {
+            panic!("expected Key variant, got {:?}", inbox[0]);
+        };
+        assert!((x - 180.0).abs() < f64::EPSILON);
+        assert!((y - 160.0).abs() < f64::EPSILON);
+        assert_eq!(key, "ArrowDown");
+    }
+
+    #[test]
+    fn scene_key_without_inbox_is_unavailable() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0},"key":"ArrowDown"},"id":301}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("InputInjectionUnavailable"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_key_empty_string_is_invalid() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0},"key":""},"id":302}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("empty"), "data: {data:?}");
+        assert!(inbox.is_empty());
+    }
+
+    #[test]
+    fn scene_key_missing_key_is_invalid() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0}},"id":303}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("key"), "data: {data:?}");
     }
 
     // ---- R51.196 §5.49 — scene/click v1 (DeferredInput::Click) ----

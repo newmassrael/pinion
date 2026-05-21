@@ -257,6 +257,26 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         result = resp.result
         return list(result) if isinstance(result, list) else []
 
+    def key(self, at: tuple[float, float], name: str) -> None:
+        """`scene/key` typed wrapper (R51.197 §5.49 §5.45).
+
+        Inject a W3C `KeyboardEvent.key` string at logical cursor
+        `at = (x, y)`. The shell drains the deferred-input inbox
+        after this returns, applying `cursor_moved` then
+        `handle_named_key`, so the substrate first offers the key
+        to `V::apply_key` (focused widget shortcut) and falls
+        through to the §5.45 R55.C.3 scroll arc for unhandled
+        arrow / page / Home / End over a `Scene::Scroll`. Follow
+        up with `snapshot` or `query` to observe the post-key
+        state.
+        """
+        if not name:
+            raise ValueError("key name must not be empty")
+        self.request(
+            "scene/key",
+            {"at": {"x": float(at[0]), "y": float(at[1])}, "key": name},
+        )
+
     def click(self, at: tuple[float, float]) -> None:
         """`scene/click` v1 typed wrapper (R51.196 §5.49).
 
