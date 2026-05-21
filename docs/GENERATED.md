@@ -15422,6 +15422,34 @@ if __name__ == "__main__":
 
 
 
+### Round 549 — R55.G.13 — §5.3 with_* builder primitives added on Border/BoxStyle/Stroke/PathStyle sidecars retiring two field-mutation workaround sites
+
+**Changes**:
+- crates/pinion-core/src/style.rs: Border::with_color and Border::with_width const builders
+- crates/pinion-core/src/style.rs: BoxStyle::with_fill const builder composes default and filled entry
+- crates/pinion-core/src/style.rs: Stroke::with_color and Stroke::with_width const builders
+- crates/pinion-core/src/style.rs: PathStyle::with_stroke and PathStyle::with_fill const builders both arms
+- crates/pinion-core/src/style.rs: 4 chain tests (Border BoxStyle Stroke PathStyle composition)
+- crates/pinion-rpc/src/snapshot.rs:714 retires PathStyle.fill assignment via with_fill chain
+- crates/pinion-rpc/src/dispatch.rs:3854 retires PathStyle.fill assignment via with_fill chain
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2167 pass / 0 fail / 11 ignored (+4 builder tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 9 demos PASS 1.25-1.97s (hello-toggle hello-listbox regression clean)
+
+
+
+**Impact**: §5.3
+
+
+**Carry forward**:
+- PathStyle::without_stroke/without_fill negative builders deferred (no current consumer)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

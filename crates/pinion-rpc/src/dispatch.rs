@@ -3854,8 +3854,8 @@ mod tests {
         node.style = PathStyle::stroked(
             Stroke::new(Color::rgba(0x10, 0x20, 0x30, 0xff), 5)
                 .with_cap(StrokeCap::Square),
-        );
-        node.style.fill = Some(Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
+        )
+        .with_fill(Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
         let mut scene = Scene::Path(node);
         let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
         assert!(resp.error.is_none(), "{:?}", resp.error);

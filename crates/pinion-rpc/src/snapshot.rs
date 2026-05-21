@@ -714,8 +714,8 @@ mod tests {
             node.style = PathStyle::stroked(
                 Stroke::new(Color::rgba(0x11, 0x22, 0x33, 0xff), 4)
                     .with_cap(StrokeCap::Round),
-            );
-            node.style.fill = Some(Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
+            )
+            .with_fill(Color::rgba(0xaa, 0xbb, 0xcc, 0xff));
             let scene = Scene::Path(node);
             let SnapshotNode::Path(snap) = snapshot(&scene, "").unwrap() else {
                 panic!("expected Path");

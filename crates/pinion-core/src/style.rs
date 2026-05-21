@@ -529,6 +529,21 @@ impl Border {
         self.placement = placement;
         self
     }
+
+    /// Builder: override the border colour. Pairs with [`Self::new`] for
+    /// chain construction (`Border::new(c, w).with_color(c2)`).
+    #[must_use]
+    pub const fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// Builder: override the pixel width.
+    #[must_use]
+    pub const fn with_width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
 }
 
 /// Sidecar style for [`BoxNode`](crate::scene::BoxNode) per the §5.11
@@ -554,6 +569,14 @@ impl BoxStyle {
             border: None,
             corner_radius: 0,
         }
+    }
+
+    /// Builder: override the fill colour. Composes with [`Self::default`]
+    /// (fully-transparent start) or re-targets an existing instance.
+    #[must_use]
+    pub const fn with_fill(mut self, fill: Color) -> Self {
+        self.fill = fill;
+        self
     }
 
     /// Builder: attach a border.
@@ -935,6 +958,20 @@ impl Stroke {
         self.cap = cap;
         self
     }
+
+    /// Builder: override the stroke colour.
+    #[must_use]
+    pub const fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// Builder: override the pixel width.
+    #[must_use]
+    pub const fn with_width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
 }
 
 /// Sidecar style for [`PathNode`](crate::scene::PathNode) per §5.3 R20.
@@ -964,6 +1001,23 @@ impl PathStyle {
             stroke: None,
             fill: Some(fill),
         }
+    }
+
+    /// Builder: attach a stroke arm. Composes with [`Self::stroked`] /
+    /// [`Self::filled`] / [`Self::default`] so callers chain both arms
+    /// (`PathStyle::filled(c).with_stroke(s)`) from any constructor entry.
+    #[must_use]
+    pub const fn with_stroke(mut self, stroke: Stroke) -> Self {
+        self.stroke = Some(stroke);
+        self
+    }
+
+    /// Builder: attach a fill arm. Mirrors [`Self::with_stroke`] so the
+    /// two arms compose independently of the chosen entry constructor.
+    #[must_use]
+    pub const fn with_fill(mut self, fill: Color) -> Self {
+        self.fill = Some(fill);
+        self
     }
 }
 
@@ -1331,6 +1385,32 @@ mod tests {
     }
 
     #[test]
+    fn border_with_color_and_width_builders_chain() {
+        let b = Border::new(Color::rgb(0xff, 0, 0), 2)
+            .with_color(Color::rgb(0, 0xff, 0))
+            .with_width(5)
+            .with_placement(BorderPlacement::Outside);
+        assert_eq!(b.color, Color::rgb(0, 0xff, 0));
+        assert_eq!(b.width, 5);
+        assert_eq!(b.placement, BorderPlacement::Outside);
+    }
+
+    #[test]
+    fn box_style_with_fill_builder_overrides_default_and_filled() {
+        // Default starting point: with_fill swaps the transparent fill.
+        let s = BoxStyle::default().with_fill(Color::rgb(0x11, 0x22, 0x33));
+        assert_eq!(s.fill, Color::rgb(0x11, 0x22, 0x33));
+        assert!(s.border.is_none());
+        assert_eq!(s.corner_radius, 0);
+        // Re-target after filled() + with_corner_radius — last with_fill wins.
+        let s = BoxStyle::filled(Color::rgb(1, 2, 3))
+            .with_corner_radius(4)
+            .with_fill(Color::rgb(9, 9, 9));
+        assert_eq!(s.fill, Color::rgb(9, 9, 9));
+        assert_eq!(s.corner_radius, 4);
+    }
+
+    #[test]
     fn box_style_with_corner_radius_builder() {
         let s = BoxStyle::filled(Color::TRANSPARENT).with_corner_radius(8);
         assert_eq!(s.corner_radius, 8);
@@ -1496,6 +1576,17 @@ mod tests {
     }
 
     #[test]
+    fn stroke_with_color_and_width_builders_chain() {
+        let s = Stroke::new(Color::rgb(0, 0, 0), 1)
+            .with_color(Color::rgb(0xab, 0xcd, 0xef))
+            .with_width(7)
+            .with_cap(StrokeCap::Square);
+        assert_eq!(s.color, Color::rgb(0xab, 0xcd, 0xef));
+        assert_eq!(s.width, 7);
+        assert_eq!(s.cap, StrokeCap::Square);
+    }
+
+    #[test]
     fn path_style_stroked_helper() {
         let s = PathStyle::stroked(Stroke::new(Color::rgb(0xff, 0, 0), 3));
         assert!(s.stroke.is_some());
@@ -1514,6 +1605,25 @@ mod tests {
         let s = PathStyle::default();
         assert!(s.stroke.is_none());
         assert!(s.fill.is_none());
+    }
+
+    #[test]
+    fn path_style_with_stroke_and_fill_compose_symmetrically() {
+        let stroke = Stroke::new(Color::rgb(0xff, 0, 0), 3);
+        // stroked() entry + with_fill() — both arms set.
+        let s = PathStyle::stroked(stroke).with_fill(Color::rgb(0, 0xff, 0));
+        assert_eq!(s.stroke, Some(stroke));
+        assert_eq!(s.fill, Some(Color::rgb(0, 0xff, 0)));
+        // Reverse entry: filled() + with_stroke() — symmetric.
+        let s = PathStyle::filled(Color::rgb(0x10, 0x20, 0x30)).with_stroke(stroke);
+        assert_eq!(s.stroke, Some(stroke));
+        assert_eq!(s.fill, Some(Color::rgb(0x10, 0x20, 0x30)));
+        // Default entry + both builders — full chain from scratch.
+        let s = PathStyle::default()
+            .with_stroke(stroke)
+            .with_fill(Color::rgb(7, 7, 7));
+        assert_eq!(s.stroke, Some(stroke));
+        assert_eq!(s.fill, Some(Color::rgb(7, 7, 7)));
     }
 
     #[test]
