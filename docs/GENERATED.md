@@ -15046,6 +15046,38 @@ if __name__ == "__main__":
 
 
 
+### Round 536 — R51.201 §5.49 path-based scene/click — {path: tag} 으로 snapshot lookup 청산
+
+**Changes**:
+- scene/click params 에 path 필드 지원 (at 와 상호 배타)
+- resolve_path_to_click_center: paint_producer + last_paint_layout walker
+- find_rect_by_tag: depth-first Scene walker (Container/Scroll 재귀)
+- viewport = last_paint_layout.root.rect (live window dimensions 자동 결정)
+- handler signature generic <F: FnMut(u32,u32)->Scene+?Sized> (snapshot 와 일관)
+- tools/rpc_verify.py: click(path=...) 지원 (at 와 mutually exclusive)
+- hello_toggle_click: snapshot+find_by_tag+node_center 차례 청산 — click(path='main_toggle') 한 줄
+- 5 새 dispatch tests (path resolve / no producer / missing tag / both / neither)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2131/0/11 (+5 R51.201 tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 5 demos 회귀 PASS — hello_toggle_click 가 path-based 로 작동
+- AI ergonomics 향상 — 적절한 viewport 자동 결정 (하드코딩 자체 부재)
+
+
+
+**Impact**: §5.49, §5.7, §5.12
+
+
+**Carry forward**:
+- R51.200 absolute_rect_of — Scroll content 안 tag 의 절대좌표 변환
+- scene/wheel 와 scene/key 도 path-based 지원 (동일 패턴)
+- R55.D ScrollBar / R55.F scene/scroll RPC method
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

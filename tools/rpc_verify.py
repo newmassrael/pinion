@@ -277,22 +277,37 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             {"at": {"x": float(at[0]), "y": float(at[1])}, "key": name},
         )
 
-    def click(self, at: tuple[float, float]) -> None:
-        """`scene/click` v1 typed wrapper (R51.196 §5.49).
+    def click(
+        self,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+    ) -> None:
+        """`scene/click` typed wrapper (R51.196 / R51.201 §5.49).
 
-        Synthesises a single press / release cycle at logical
-        coordinate `at = (x, y)`. The shell drains the deferred-input
-        inbox after this returns, applying `cursor_moved`,
-        `mouse_pressed`, then `mouse_released` so the `InputRouter`
-        fires the same activation arc winit's `WindowEvent::MouseInput`
-        triggers from a real mouse click. Follow up with
-        `query(...)` or `snapshot(...)` to observe the post-click
-        state transition.
+        Mutually exclusive — supply exactly one:
+          * `at = (x, y)` — click at the given logical-pixel coordinate.
+          * `path = "<tag>"` — R51.201 path-based form: the dispatcher
+            walks the paint scene for the first node carrying `tag`
+            and clicks at its rect centre. Eliminates the
+            `snapshot → find_by_tag → node_center` boilerplate when
+            the caller only wants "click on widget X".
+
+        The shell drains the deferred-input inbox after the request
+        returns, applying `cursor_moved`, `mouse_pressed`, then
+        `mouse_released` so the `InputRouter` fires the same
+        activation arc winit's `WindowEvent::MouseInput` triggers
+        from a real mouse click. Follow up with `query(...)` or
+        `snapshot(...)` to observe the post-click state transition.
         """
-        self.request(
-            "scene/click",
-            {"at": {"x": float(at[0]), "y": float(at[1])}},
-        )
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        if at is not None:
+            params: dict[str, Any] = {"at": {"x": float(at[0]), "y": float(at[1])}}
+        else:
+            assert path is not None
+            params = {"path": path}
+        self.request("scene/click", params)
 
     def wheel(
         self,

@@ -553,7 +553,12 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
                 reason = "Vec is not DerefMut; manual reborrow required"
             )]
             let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
-            handle_scene_click(inbox, request.params.as_ref())
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            handle_scene_click(inbox, producer, last_paint_layout, request.params.as_ref())
         }
         "scene/rewind" => handle_scene_rewind(scene, request.params.as_ref()),
         "scene/snapshot" => {
@@ -730,29 +735,69 @@ fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, Rp
     }
 }
 
-/// R51.196 §5.49 — `scene/click` v1 typed dispatcher.
+/// R51.196 / R51.201 §5.49 — `scene/click` typed dispatcher.
 ///
-/// Replaces the R51.193-era probe-only path (`{path, x, y}` →
-/// `{handled}` policy verdict) with a real-event injection:
-/// `{at: {x, y}}` enqueues a [`DeferredInput::Click`] that the
-/// embedder drains into `cursor_moved + pointer_down + pointer_up`,
-/// firing the `InputRouter` along the same activation arc winit's
-/// `WindowEvent::MouseInput` triggers. The dispatcher returns `null`
-/// on success; the AI client follows up with `scene/snapshot` (or
-/// `scene/query`) to observe the resulting state transition.
-fn handle_scene_click(
+/// Two mutually-exclusive parameter shapes:
+///   * `{at: {x, y}}` — click at the given logical-pixel coordinate
+///     (R51.196 v1 form).
+///   * `{path: "<tag>"}` — R51.201 path-based form: the dispatcher
+///     walks the paint scene for the first node carrying `tag`, takes
+///     the rect centre as the click target, and enqueues the click.
+///     Needs a paint producer wired into the [`DispatchContext`];
+///     otherwise returns `PaintProducerUnavailable`. The tag walk
+///     descends through `Container.children` and `Scroll.content`
+///     but does NOT translate scroll-local coordinates back to
+///     window-absolute, so a tag *inside* a `Scene::Scroll` content
+///     resolves to a content-local rect — the R51.200 carry
+///     `absolute_rect_of` will lift that constraint.
+///
+/// On success enqueues a [`DeferredInput::Click`] that the embedder
+/// drains into `cursor_moved + pointer_down + pointer_up`, firing
+/// the `InputRouter` along the same activation arc winit's
+/// `WindowEvent::MouseInput` triggers. Returns `null` on success;
+/// the AI client follows up with `scene/snapshot` (or `scene/query`)
+/// to observe the resulting state transition.
+fn handle_scene_click<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
     params: Option<&Value>,
-) -> Result<Value, RpcError> {
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     let Some(params) = params else {
         return Err(RpcError::invalid_params("missing params"));
     };
-    let at = params
-        .get("at")
-        .and_then(Value::as_object)
+
+    let at_param = params.get("at");
+    let path_param = params.get("path").and_then(Value::as_str);
+    let (x, y) = match (at_param, path_param) {
+        (Some(_), Some(_)) => {
+            return Err(RpcError::invalid_params(
+                "params.at and params.path are mutually exclusive — pick one",
+            ));
+        }
+        (None, None) => {
+            return Err(RpcError::invalid_params(
+                "params requires either `at: {x, y}` or `path: \"<tag>\"`",
+            ));
+        }
+        (Some(at_value), None) => parse_at_coords(at_value)?,
+        (None, Some(tag)) => {
+            resolve_path_to_click_center(tag, paint_producer, last_paint_layout)?
+        }
+    };
+    inbox.push(DeferredInput::Click { x, y });
+    Ok(Value::Null)
+}
+
+fn parse_at_coords(at_value: &Value) -> Result<(f64, f64), RpcError> {
+    let at = at_value
+        .as_object()
         .ok_or_else(|| RpcError::invalid_params("params.at missing or not an object"))?;
     let x = at
         .get("x")
@@ -762,8 +807,83 @@ fn handle_scene_click(
         .get("y")
         .and_then(Value::as_f64)
         .ok_or_else(|| RpcError::invalid_params("params.at.y missing or not a number"))?;
-    inbox.push(DeferredInput::Click { x, y });
-    Ok(Value::Null)
+    Ok((x, y))
+}
+
+/// R51.201 §5.49 — runs the paint producer at a default viewport
+/// (matching `scene/snapshot`'s default), walks the resulting scene
+/// for the first node tagged `target_tag`, and returns the rect
+/// centre as the click coordinate.
+fn resolve_path_to_click_center<F>(
+    target_tag: &str,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
+) -> Result<(f64, f64), RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(producer) = paint_producer else {
+        return Err(RpcError::invalid_params("PaintProducerUnavailable"));
+    };
+    // The tag's rect only matches the live window's hit-test if the
+    // paint pass runs at the same viewport size as the window. Pull
+    // it from the last-paint snapshot the shell wired up (the root
+    // `LayoutNode.rect` IS the live window's geometry); fall back
+    // to a 720×480 default for headless / no-frame-yet callers.
+    let (vw, vh) = last_paint_layout
+        .map_or((720, 480), |l| (l.rect.w.max(1), l.rect.h.max(1)));
+    let scene = producer(vw, vh);
+    let Some(rect) = find_rect_by_tag(&scene, target_tag) else {
+        return Err(RpcError::invalid_params(format!(
+            "tag {target_tag:?} not found in paint scene"
+        )));
+    };
+    #[allow(clippy::cast_precision_loss)]
+    let cx = f64::from(rect.x) + f64::from(rect.w) / 2.0;
+    #[allow(clippy::cast_precision_loss)]
+    let cy = f64::from(rect.y) + f64::from(rect.h) / 2.0;
+    Ok((cx, cy))
+}
+
+/// R51.201 §5.49 — depth-first walk of the scene tree for the first
+/// node with `tag == target_tag`. Descends through `Container.children`
+/// and `Scroll.content`; returns `None` if no node carries the tag.
+///
+/// Scroll content rects are scroll-local — clicking on a tag inside
+/// a Scroll therefore lands on the content-local coordinate, which
+/// only matches the absolute click target when the Scroll's
+/// `viewport.{x,y}` and `offset_{x,y}` are both zero. The R51.200
+/// carry plans an `absolute_rect_of` walker that lifts this
+/// constraint.
+fn find_rect_by_tag(scene: &Scene, target_tag: &str) -> Option<pinion_core::scene::Rect> {
+    use std::borrow::Cow;
+    let tag_matches = |t: &Option<Cow<'static, str>>| -> bool {
+        t.as_deref() == Some(target_tag)
+    };
+    match scene {
+        Scene::Box(n) => tag_matches(&n.tag).then_some(n.rect),
+        Scene::Text(n) => tag_matches(&n.tag).then_some(n.rect),
+        Scene::Path(n) => tag_matches(&n.tag).then_some(n.rect),
+        Scene::Image(n) => tag_matches(&n.tag).then_some(n.rect),
+        Scene::Container(n) => {
+            if tag_matches(&n.tag) {
+                Some(n.rect)
+            } else {
+                n.children
+                    .iter()
+                    .find_map(|c| find_rect_by_tag(c, target_tag))
+            }
+        }
+        Scene::External(n) => tag_matches(&n.tag).then_some(n.rect),
+        Scene::Scroll(n) => {
+            if tag_matches(&n.tag) {
+                Some(n.viewport)
+            } else {
+                find_rect_by_tag(n.content.as_ref(), target_tag)
+            }
+        }
+        _ => None,
+    }
 }
 
 fn handle_scene_rewind(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -3156,6 +3276,121 @@ mod tests {
         // The introspect dump still rides alongside rect / tag.
         let intro = result.get("introspect").unwrap().as_object().unwrap();
         assert_eq!(intro.get("count"), Some(&Value::Number(7.into())));
+    }
+
+    // ---- R51.201 §5.49 — path-based scene/click ----
+
+    #[test]
+    fn scene_click_path_resolves_to_tag_rect_center() {
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        use pinion_core::Color;
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        // Paint scene contains a tagged Container at (100, 50, 64, 32).
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            let inner = Scene::Box(BoxNode::filled(
+                pinion_core::scene::Rect::new(100, 50, 64, 32),
+                Color::default(),
+            ).with_tag("main_toggle"));
+            let mut outer = ContainerNode::new(vec![inner]);
+            outer.rect = pinion_core::scene::Rect::new(0, 0, 360, 220);
+            Scene::Container(outer)
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"main_toggle"},"id":600}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(inbox.len(), 1);
+        let DeferredInput::Click { x, y } = inbox[0] else {
+            panic!("expected Click variant");
+        };
+        // (100 + 64/2, 50 + 32/2) = (132, 66).
+        assert!((x - 132.0).abs() < f64::EPSILON, "click x: {x}");
+        assert!((y - 66.0).abs() < f64::EPSILON, "click y: {y}");
+    }
+
+    #[test]
+    fn scene_click_path_without_paint_producer_is_unavailable() {
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        // No paint producer registered.
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"any_tag"},"id":601}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("PaintProducerUnavailable"), "data: {data:?}");
+        assert!(inbox.is_empty());
+    }
+
+    #[test]
+    fn scene_click_path_missing_tag_returns_invalid_params() {
+        use pinion_core::scene::ContainerNode;
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            Scene::Container(ContainerNode::new(vec![]).with_tag("root"))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req =
+            r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"nonexistent"},"id":602}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("not found"), "data: {data:?}");
+        assert!(inbox.is_empty());
+    }
+
+    #[test]
+    fn scene_click_at_and_path_together_is_invalid() {
+        use pinion_core::scene::ContainerNode;
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut produce = |_w: u32, _h: u32| -> Scene {
+            Scene::Container(ContainerNode::new(vec![]))
+        };
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_paint_producer(&mut produce)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":0.0,"y":0.0},"path":"x"},"id":603}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("mutually exclusive"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_click_neither_at_nor_path_is_invalid() {
+        let mut state = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut state, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{},"id":604}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("requires"), "data: {data:?}");
     }
 
     #[test]
