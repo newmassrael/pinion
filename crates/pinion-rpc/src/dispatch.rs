@@ -54,7 +54,7 @@ use crate::preview::{
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
-use crate::snapshot::{snapshot, ExternalSnapshot, SnapshotError, SnapshotNode};
+use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
 use crate::wait_for::{wait_for, WaitForError, WaitOutcome};
 
@@ -1019,10 +1019,10 @@ fn snapshot_error_to_rpc(err: SnapshotError) -> RpcError {
 fn snapshot_node_to_json(node: SnapshotNode) -> Value {
     let mut obj = serde_json::Map::new();
     let type_tag = match &node {
-        SnapshotNode::Box => "Box",
-        SnapshotNode::Text => "Text",
-        SnapshotNode::Path => "Path",
-        SnapshotNode::Image => "Image",
+        SnapshotNode::Box(_) => "Box",
+        SnapshotNode::Text(_) => "Text",
+        SnapshotNode::Path(_) => "Path",
+        SnapshotNode::Image(_) => "Image",
         SnapshotNode::Container(_) => "Container",
         SnapshotNode::Effect => "Effect",
         SnapshotNode::External(_) => "External",
@@ -1034,8 +1034,27 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
     obj.insert("type".to_string(), Value::String(type_tag.to_string()));
 
     match node {
-        SnapshotNode::External(ExternalSnapshot { introspect }) => {
-            match introspect {
+        SnapshotNode::Box(snap) => {
+            obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
+            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+        }
+        SnapshotNode::Text(snap) => {
+            obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
+            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            obj.insert("content".to_string(), Value::String(snap.content));
+        }
+        SnapshotNode::Path(snap) => {
+            obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
+            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+        }
+        SnapshotNode::Image(snap) => {
+            obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
+            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+        }
+        SnapshotNode::External(snap) => {
+            obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
+            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            match snap.introspect {
                 Some(fields) => {
                     let mut intro = serde_json::Map::new();
                     for (name, value) in fields {
@@ -1049,6 +1068,7 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
             }
         }
         SnapshotNode::Container(snap) => {
+            obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
             let children = snap
                 .children
@@ -3007,6 +3027,135 @@ mod tests {
             Some(&Value::String("Container".into())),
         );
         assert_eq!(content.get("tag"), Some(&Value::String("rows".into())));
+    }
+
+    // ---- R51.198 §5.49 — leaf primitive rect / tag wire format ----
+
+    fn snapshot_rect_obj(node: &Value) -> &serde_json::Map<String, Value> {
+        node.get("rect").unwrap().as_object().unwrap()
+    }
+
+    fn snapshot_request_root_state() -> &'static str {
+        r#"{"jsonrpc":"2.0","method":"scene/snapshot","params":{"path":""},"id":300}"#
+    }
+
+    #[test]
+    fn scene_snapshot_box_wire_carries_rect_and_tag() {
+        use pinion_core::scene::{BoxNode, Rect};
+        use pinion_core::Color;
+        let node = BoxNode::filled(Rect::new(10, 20, 30, 40), Color::default())
+            .with_tag("box_tag");
+        let mut scene = Scene::Box(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("Box".into())));
+        assert_eq!(result.get("tag"), Some(&Value::String("box_tag".into())));
+        let rect = snapshot_rect_obj(&result);
+        assert_eq!(rect.get("x"), Some(&Value::Number(10.into())));
+        assert_eq!(rect.get("y"), Some(&Value::Number(20.into())));
+        assert_eq!(rect.get("w"), Some(&Value::Number(30.into())));
+        assert_eq!(rect.get("h"), Some(&Value::Number(40.into())));
+    }
+
+    #[test]
+    fn scene_snapshot_untagged_box_wire_reports_null_tag() {
+        use pinion_core::scene::{BoxNode, Rect};
+        use pinion_core::Color;
+        let mut scene = Scene::Box(BoxNode::filled(Rect::new(0, 0, 1, 1), Color::default()));
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("tag"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn scene_snapshot_text_wire_carries_rect_tag_and_content() {
+        use pinion_core::scene::{Rect, TextNode};
+        let node = TextNode::new("Hello", Rect::new(5, 6, 50, 14)).with_tag("greeting");
+        let mut scene = Scene::Text(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("Text".into())));
+        assert_eq!(result.get("tag"), Some(&Value::String("greeting".into())));
+        assert_eq!(result.get("content"), Some(&Value::String("Hello".into())));
+        let rect = snapshot_rect_obj(&result);
+        assert_eq!(rect.get("w"), Some(&Value::Number(50.into())));
+        assert_eq!(rect.get("h"), Some(&Value::Number(14.into())));
+    }
+
+    #[test]
+    fn scene_snapshot_path_wire_carries_rect_and_tag() {
+        use pinion_core::scene::{PathCommand, PathNode, PathPoint, Rect};
+        use pinion_core::style::PathStyle;
+        let node = PathNode::new(
+            Rect::new(0, 0, 100, 100),
+            vec![PathCommand::MoveTo(PathPoint::new(0.0, 0.0))],
+            PathStyle::default(),
+        )
+        .with_tag("chevron");
+        let mut scene = Scene::Path(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("Path".into())));
+        assert_eq!(result.get("tag"), Some(&Value::String("chevron".into())));
+        let rect = snapshot_rect_obj(&result);
+        assert_eq!(rect.get("w"), Some(&Value::Number(100.into())));
+    }
+
+    #[test]
+    fn scene_snapshot_image_wire_carries_rect_and_tag() {
+        use pinion_core::scene::{ImageNode, Rect};
+        let node = ImageNode::new("icon.png", Rect::new(8, 8, 16, 16)).with_tag("logo");
+        let mut scene = Scene::Image(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("Image".into())));
+        assert_eq!(result.get("tag"), Some(&Value::String("logo".into())));
+        let rect = snapshot_rect_obj(&result);
+        assert_eq!(rect.get("x"), Some(&Value::Number(8.into())));
+        assert_eq!(rect.get("w"), Some(&Value::Number(16.into())));
+    }
+
+    #[test]
+    fn scene_snapshot_container_wire_now_carries_rect() {
+        use pinion_core::scene::{ContainerNode, Rect};
+        let mut container = ContainerNode::new(vec![]).with_tag("root");
+        container.rect = Rect::new(0, 0, 360, 220);
+        let mut scene = Scene::Container(container);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("Container".into())));
+        assert_eq!(result.get("tag"), Some(&Value::String("root".into())));
+        let rect = snapshot_rect_obj(&result);
+        assert_eq!(rect.get("w"), Some(&Value::Number(360.into())));
+        assert_eq!(rect.get("h"), Some(&Value::Number(220.into())));
+    }
+
+    #[test]
+    fn scene_snapshot_external_wire_now_carries_rect_and_tag() {
+        use pinion_core::external::CountedExternal;
+        use pinion_core::scene::{ExternalNode, Rect};
+        let mut node = ExternalNode::new(Box::new(CountedExternal::new(7))).with_tag("main_toggle");
+        node.rect = Rect::new(100, 50, 64, 32);
+        let mut scene = Scene::External(node);
+        let resp = parse_response(&dispatch_t(&mut scene, snapshot_request_root_state()).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result.get("type"), Some(&Value::String("External".into())));
+        assert_eq!(result.get("tag"), Some(&Value::String("main_toggle".into())));
+        let rect = snapshot_rect_obj(&result);
+        assert_eq!(rect.get("x"), Some(&Value::Number(100.into())));
+        assert_eq!(rect.get("y"), Some(&Value::Number(50.into())));
+        assert_eq!(rect.get("w"), Some(&Value::Number(64.into())));
+        assert_eq!(rect.get("h"), Some(&Value::Number(32.into())));
+        // The introspect dump still rides alongside rect / tag.
+        let intro = result.get("introspect").unwrap().as_object().unwrap();
+        assert_eq!(intro.get("count"), Some(&Value::Number(7.into())));
     }
 
     #[test]

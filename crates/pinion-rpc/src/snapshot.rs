@@ -4,25 +4,33 @@
 //! in to §5.15 item 8 introspection, dumps every `(path, value)` pair
 //! declared by `ExternalIntrospect::schema`.
 //!
-//! R51.194 §5.49 §5.45 — the dispatcher now recurses into
-//! `Scene::Container.children` and `Scene::Scroll.content`, exposing
-//! the container tag list and the scroll viewport / offset / tag so
-//! AI-side dogfood demos (see `tools/demos/`) can enumerate visible
-//! widgets without screenshot prose. Leaf primitives (`Box`, `Text`,
-//! `Path`, `Image`, `Effect`) stay marker-only — tag / content
-//! exposure for those is a R51.197+ carry once a demo needs them.
+//! R51.194 §5.49 §5.45 — the dispatcher recurses into
+//! `Scene::Container.children` and `Scene::Scroll.content`.
+//!
+//! R51.198 §5.49 — leaf primitives (`Box`, `Text`, `Path`, `Image`)
+//! and the `Container` / `External` parents now expose `rect` + `tag`
+//! (and `content` for `Text`). With this layer the AI-side harness can
+//! locate widgets by tag and derive bboxes without hardcoding pixel
+//! coordinates per demo (see `tools/demos/hello_toggle_click.py` first
+//! consumer). Only `Effect` stays opaque per §3 capability boundary.
 //!
 //! Surface details:
 //!   * path: `/[window[id]/]` only — no scene-path tail, since v0 has
 //!     no addressable sub-tree shape (`scene/query` is the typed
 //!     descend-by-path channel; snapshot is the whole-tree dump).
-//!   * leaf primitives (`Box`, `Text`, `Path`, `Image`, `Effect`)
-//!     report only their discriminator.
-//!   * `Container` exposes its `tag` and recurses through `children`.
+//!   * leaf primitives (`Box`, `Text`, `Path`, `Image`) report
+//!     `rect` and optional `tag`. `Text` additionally reports
+//!     `content` (§2 #7 scene-as-data invariant).
+//!   * `Container` exposes `rect`, `tag`, and recurses through
+//!     `children`.
 //!   * `Scroll` exposes `tag`, `viewport` rect, `(offset_x, offset_y)`,
 //!     and recurses through `content` — the §5.45 R55 substrate fields
 //!     a Scroll-aware demo needs to assert the visible row window.
-//!   * `External` dumps its `ExternalIntrospect::schema` fields.
+//!     `viewport` IS the scroll primitive's geometry (per
+//!     `ScrollNode::viewport` doc) so no separate `rect` field.
+//!   * `External` exposes `rect`, `tag`, and the
+//!     `ExternalIntrospect::schema` fields per §5.15 item 8.
+//!   * `Effect` is opaque per §3 — no exposure beyond the discriminator.
 //!   * fallback [`SnapshotNode::Unknown`] keeps the dispatcher
 //!     forward-compatible with `non_exhaustive` `Scene` additions in
 //!     pinion-core.
@@ -35,48 +43,85 @@ use crate::path::{self, PathError};
 
 /// One scene tree primitive's snapshot shape.
 ///
-/// R51.194 §5.49 §5.45 — `Container` and `Scroll` are tuple variants
-/// carrying their tag plus a recursive child snapshot, so a single
-/// `scene/snapshot` call dumps the whole tree the AI client needs to
-/// reason about. Leaf primitives stay unit-variant markers.
+/// R51.198 §5.49 — leaf primitives carry a payload struct exposing
+/// `rect` and optional `tag`. `Effect` stays unit-marker per §3
+/// opaque-primitive boundary, and `Unknown` is the forward-compatible
+/// catch-all.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum SnapshotNode {
-    Box,
-    Text,
-    Path,
-    Image,
+    Box(BoxSnapshot),
+    Text(TextSnapshot),
+    Path(PathSnapshot),
+    Image(ImageSnapshot),
     Container(ContainerSnapshot),
     Effect,
     External(ExternalSnapshot),
-    /// R51.194 §5.45 — `Scene::Scroll` snapshot carrying the §5.45 R55
-    /// substrate fields the harness uses to assert visible window /
-    /// scroll position from a demo.
     Scroll(ScrollSnapshot),
     /// Catch-all for `Scene` variants added in a later pinion-core
     /// version that this dispatcher predates.
     Unknown,
 }
 
-/// `External` payload of [`SnapshotNode::External`].
+/// `Box` payload of [`SnapshotNode::Box`] (R51.198 §5.49).
+///
+/// `rect` mirrors `BoxNode.rect`; `tag` mirrors `BoxNode.tag`.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExternalSnapshot {
-    /// `Some(fields)` when the `External` opted in to §5.15 item 8 and
-    /// reported a schema; `None` otherwise. Order matches the schema's
-    /// declared field order.
-    pub introspect: Option<Vec<(String, IntrospectValue)>>,
+pub struct BoxSnapshot {
+    pub rect: Rect,
+    pub tag: Option<String>,
 }
 
-/// `Container` payload of [`SnapshotNode::Container`] (R51.194 §5.49).
+/// `Text` payload of [`SnapshotNode::Text`] (R51.198 §5.49).
+///
+/// `content` mirrors `TextNode.content` — pinion exposes text as data
+/// per §2 invariant #7 (scene-as-data), so AI clients can read the
+/// rendered text without OCR'ing a screenshot.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextSnapshot {
+    pub rect: Rect,
+    pub tag: Option<String>,
+    pub content: String,
+}
+
+/// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49).
+///
+/// The path command list (lines / cubics / arcs) is geometry data;
+/// snapshot reports only the bounding `rect` + `tag` for v0. A future
+/// round can extend with `PathCommand` enumeration once a demo needs
+/// shape introspection.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathSnapshot {
+    pub rect: Rect,
+    pub tag: Option<String>,
+}
+
+/// `Image` payload of [`SnapshotNode::Image`] (R51.198 §5.49).
+///
+/// The image source URI is omitted for v0 — `rect` + `tag` are
+/// sufficient for hit-test bbox extraction and intent routing.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageSnapshot {
+    pub rect: Rect,
+    pub tag: Option<String>,
+}
+
+/// `Container` payload of [`SnapshotNode::Container`] (R51.194 §5.49,
+/// R51.198 added `rect`).
 ///
 /// `tag` mirrors `ContainerNode.tag` (the §5.20 intent-routing handle).
+/// `rect` mirrors `ContainerNode.rect`.
 /// `children` is a depth-first traversal of `ContainerNode.children`;
 /// each entry is itself a `SnapshotNode`, including nested containers
 /// and scrolls, so a single root snapshot is the whole tree.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContainerSnapshot {
+    pub rect: Rect,
     pub tag: Option<String>,
     pub children: Vec<SnapshotNode>,
 }
@@ -86,7 +131,8 @@ pub struct ContainerSnapshot {
 /// Exposes the §5.45 R55 substrate fields a Scroll demo needs:
 ///   * `tag` mirrors `ScrollNode.tag` (input-router handle, e.g.
 ///     `"main_listbox"`),
-///   * `viewport` is the clip rect in logical pixels / cells,
+///   * `viewport` is the clip rect in logical pixels / cells — also
+///     the scroll primitive's geometry (no separate `rect` field),
 ///   * `offset_x` / `offset_y` are the current scroll position,
 ///   * `content` is the (recursive) snapshot of the scene clipped by
 ///     this scroll — typically a `Container` of widget rows.
@@ -103,6 +149,22 @@ pub struct ScrollSnapshot {
     pub offset_x: i32,
     pub offset_y: i32,
     pub content: Box<SnapshotNode>,
+}
+
+/// `External` payload of [`SnapshotNode::External`] (R51.198 added
+/// `rect` + `tag`).
+///
+/// `rect` mirrors `ExternalNode.rect`; `tag` mirrors `ExternalNode.tag`
+/// (the §5.20 intent-routing handle used by widgets like
+/// `main_toggle`). `introspect` is `Some(fields)` when the `External`
+/// opted in to §5.15 item 8 and reported a schema; `None` otherwise.
+/// Order matches the schema's declared field order.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalSnapshot {
+    pub rect: Rect,
+    pub tag: Option<String>,
+    pub introspect: Option<Vec<(String, IntrospectValue)>>,
 }
 
 /// Reasons [`snapshot`] can fail.
@@ -141,14 +203,32 @@ pub fn snapshot(scene: &Scene, raw_path: &str) -> Result<SnapshotNode, SnapshotE
     Ok(snapshot_root(scene))
 }
 
+fn cow_to_owned(tag: Option<&std::borrow::Cow<'static, str>>) -> Option<String> {
+    tag.map(|t| t.as_ref().to_string())
+}
+
 fn snapshot_root(scene: &Scene) -> SnapshotNode {
     match scene {
-        Scene::Box(_) => SnapshotNode::Box,
-        Scene::Text(_) => SnapshotNode::Text,
-        Scene::Path(_) => SnapshotNode::Path,
-        Scene::Image(_) => SnapshotNode::Image,
+        Scene::Box(node) => SnapshotNode::Box(BoxSnapshot {
+            rect: node.rect,
+            tag: cow_to_owned(node.tag.as_ref()),
+        }),
+        Scene::Text(node) => SnapshotNode::Text(TextSnapshot {
+            rect: node.rect,
+            tag: cow_to_owned(node.tag.as_ref()),
+            content: node.content.clone(),
+        }),
+        Scene::Path(node) => SnapshotNode::Path(PathSnapshot {
+            rect: node.rect,
+            tag: cow_to_owned(node.tag.as_ref()),
+        }),
+        Scene::Image(node) => SnapshotNode::Image(ImageSnapshot {
+            rect: node.rect,
+            tag: cow_to_owned(node.tag.as_ref()),
+        }),
         Scene::Container(node) => SnapshotNode::Container(ContainerSnapshot {
-            tag: node.tag.as_ref().map(|t| t.as_ref().to_string()),
+            rect: node.rect,
+            tag: cow_to_owned(node.tag.as_ref()),
             children: node.children.iter().map(snapshot_root).collect(),
         }),
         Scene::Effect(_) => SnapshotNode::Effect,
@@ -161,10 +241,14 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                     .filter_map(|(name, _ty)| intro.query(name).map(|v| ((*name).to_string(), v)))
                     .collect()
             });
-            SnapshotNode::External(ExternalSnapshot { introspect })
+            SnapshotNode::External(ExternalSnapshot {
+                rect: node.rect,
+                tag: cow_to_owned(node.tag.as_ref()),
+                introspect,
+            })
         }
         Scene::Scroll(node) => SnapshotNode::Scroll(ScrollSnapshot {
-            tag: node.tag.as_ref().map(|t| t.as_ref().to_string()),
+            tag: cow_to_owned(node.tag.as_ref()),
             viewport: node.viewport,
             offset_x: node.offset_x,
             offset_y: node.offset_y,
@@ -190,7 +274,13 @@ mod tests {
     #[test]
     fn box_root_snapshots_as_box() {
         let scene = Scene::Box(BoxNode::filled(Rect::default(), Color::default()));
-        assert_eq!(snapshot(&scene, "").unwrap(), SnapshotNode::Box);
+        match snapshot(&scene, "").unwrap() {
+            SnapshotNode::Box(snap) => {
+                assert_eq!(snap.rect, Rect::default());
+                assert!(snap.tag.is_none());
+            }
+            other => panic!("expected Box, got {other:?}"),
+        }
     }
 
     #[test]
@@ -200,6 +290,7 @@ mod tests {
         match snap {
             SnapshotNode::External(ExternalSnapshot {
                 introspect: Some(fields),
+                ..
             }) => {
                 assert_eq!(fields.len(), 1);
                 assert_eq!(fields[0].0, "count");
@@ -212,11 +303,12 @@ mod tests {
     #[test]
     fn stub_external_introspect_is_none() {
         let scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
-        let snap = snapshot(&scene, "").unwrap();
-        assert_eq!(
-            snap,
-            SnapshotNode::External(ExternalSnapshot { introspect: None }),
-        );
+        match snapshot(&scene, "").unwrap() {
+            SnapshotNode::External(snap) => {
+                assert!(snap.introspect.is_none());
+            }
+            other => panic!("expected External, got {other:?}"),
+        }
     }
 
     #[test]
@@ -226,6 +318,7 @@ mod tests {
         match snap {
             SnapshotNode::External(ExternalSnapshot {
                 introspect: Some(fields),
+                ..
             }) => assert_eq!(fields[0].1, IntrospectValue::Int(0)),
             other => panic!("expected External, got {other:?}"),
         }
@@ -247,9 +340,7 @@ mod tests {
 
     mod r51_194 {
         use super::*;
-        use pinion_core::scene::{
-            ContainerNode, ScrollNode, TextNode,
-        };
+        use pinion_core::scene::{ContainerNode, ScrollNode, TextNode};
 
         fn leaf_box(tag: Option<&'static str>) -> Scene {
             let node = BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default());
@@ -270,8 +361,8 @@ mod tests {
                 SnapshotNode::Container(snap) => {
                     assert_eq!(snap.tag.as_deref(), Some("root"));
                     assert_eq!(snap.children.len(), 2);
-                    assert_eq!(snap.children[0], SnapshotNode::Box);
-                    assert_eq!(snap.children[1], SnapshotNode::Box);
+                    matches_box(&snap.children[0], None);
+                    matches_box(&snap.children[1], Some("inner"));
                 }
                 other => panic!("expected Container, got {other:?}"),
             }
@@ -301,7 +392,7 @@ mod tests {
                         SnapshotNode::Container(inner) => {
                             assert_eq!(inner.tag.as_deref(), Some("inner"));
                             assert_eq!(inner.children.len(), 1);
-                            assert_eq!(inner.children[0], SnapshotNode::Box);
+                            matches_box(&inner.children[0], None);
                         }
                         other => panic!("expected nested Container, got {other:?}"),
                     }
@@ -322,7 +413,7 @@ mod tests {
                     assert_eq!(snap.viewport, Rect::new(0, 0, 50, 80));
                     assert_eq!(snap.offset_x, 0);
                     assert_eq!(snap.offset_y, 120);
-                    assert_eq!(*snap.content, SnapshotNode::Text);
+                    matches_text(&snap.content, "row", Rect::new(0, 0, 50, 200));
                 }
                 other => panic!("expected Scroll, got {other:?}"),
             }
@@ -345,9 +436,10 @@ mod tests {
         #[test]
         fn scroll_inside_container_traverses_both_layers() {
             let row = leaf_box(Some("row"));
-            let scroll = ScrollNode::new(Rect::new(0, 0, 50, 80), Scene::Container(
-                ContainerNode::new(vec![row]).with_tag("rows"),
-            ))
+            let scroll = ScrollNode::new(
+                Rect::new(0, 0, 50, 80),
+                Scene::Container(ContainerNode::new(vec![row]).with_tag("rows")),
+            )
             .with_tag("scroll");
             let scene = Scene::Container(
                 ContainerNode::new(vec![Scene::Scroll(scroll)]).with_tag("root"),
@@ -365,7 +457,138 @@ mod tests {
             };
             assert_eq!(rows.tag.as_deref(), Some("rows"));
             assert_eq!(rows.children.len(), 1);
-            assert_eq!(rows.children[0], SnapshotNode::Box);
+            matches_box(&rows.children[0], Some("row"));
+        }
+
+        fn matches_box(node: &SnapshotNode, tag: Option<&str>) {
+            match node {
+                SnapshotNode::Box(snap) => {
+                    assert_eq!(snap.tag.as_deref(), tag);
+                }
+                other => panic!("expected Box, got {other:?}"),
+            }
+        }
+
+        fn matches_text(node: &SnapshotNode, content: &str, rect: Rect) {
+            match node {
+                SnapshotNode::Text(snap) => {
+                    assert_eq!(snap.content, content);
+                    assert_eq!(snap.rect, rect);
+                }
+                other => panic!("expected Text, got {other:?}"),
+            }
+        }
+    }
+
+    mod r51_198 {
+        //! Leaf primitive `rect` + `tag` exposure tests.
+        //!
+        //! Each Scene primitive surfaces its geometry and intent-routing
+        //! tag through the new `SnapshotNode` payload structs, so demos
+        //! can locate widgets by tag and derive click / scroll
+        //! coordinates from the snapshot instead of hardcoding pixels.
+
+        use super::*;
+        use pinion_core::scene::{
+            ContainerNode, ImageNode, PathCommand, PathNode, PathPoint, TextNode,
+        };
+        use pinion_core::style::PathStyle;
+
+        #[test]
+        fn box_carries_rect_and_tag() {
+            let node = BoxNode::filled(Rect::new(10, 20, 30, 40), Color::default())
+                .with_tag("box_tag");
+            let scene = Scene::Box(node);
+            let SnapshotNode::Box(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Box");
+            };
+            assert_eq!(snap.rect, Rect::new(10, 20, 30, 40));
+            assert_eq!(snap.tag.as_deref(), Some("box_tag"));
+        }
+
+        #[test]
+        fn text_carries_rect_tag_and_content() {
+            let node = TextNode::new("hello".to_string(), Rect::new(5, 6, 50, 14))
+                .with_tag("greeting");
+            let scene = Scene::Text(node);
+            let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Text");
+            };
+            assert_eq!(snap.rect, Rect::new(5, 6, 50, 14));
+            assert_eq!(snap.tag.as_deref(), Some("greeting"));
+            assert_eq!(snap.content, "hello");
+        }
+
+        #[test]
+        fn untagged_text_reports_none_tag() {
+            let node = TextNode::new(String::new(), Rect::default());
+            let scene = Scene::Text(node);
+            let SnapshotNode::Text(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Text");
+            };
+            assert!(snap.tag.is_none());
+            assert_eq!(snap.content, "");
+        }
+
+        #[test]
+        fn path_carries_rect_and_tag() {
+            let node = PathNode::new(
+                Rect::new(0, 0, 100, 100),
+                vec![PathCommand::MoveTo(PathPoint::new(0.0, 0.0))],
+                PathStyle::default(),
+            )
+            .with_tag("chevron");
+            let scene = Scene::Path(node);
+            let SnapshotNode::Path(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Path");
+            };
+            assert_eq!(snap.rect, Rect::new(0, 0, 100, 100));
+            assert_eq!(snap.tag.as_deref(), Some("chevron"));
+        }
+
+        #[test]
+        fn image_carries_rect_and_tag() {
+            let node = ImageNode::new("icon.png", Rect::new(8, 8, 16, 16))
+                .with_tag("logo");
+            let scene = Scene::Image(node);
+            let SnapshotNode::Image(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Image");
+            };
+            assert_eq!(snap.rect, Rect::new(8, 8, 16, 16));
+            assert_eq!(snap.tag.as_deref(), Some("logo"));
+        }
+
+        #[test]
+        fn container_carries_rect_alongside_tag_and_children() {
+            // `ContainerNode.rect` is layout-derived in production, so
+            // the test mutates the field directly after the builder
+            // chain — the snapshot pipeline reads whichever value the
+            // node currently carries.
+            let mut node = ContainerNode::new(vec![]).with_tag("hello_toggle_root");
+            node.rect = Rect::new(0, 0, 360, 220);
+            let scene = Scene::Container(node);
+            let SnapshotNode::Container(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected Container");
+            };
+            assert_eq!(snap.rect, Rect::new(0, 0, 360, 220));
+            assert_eq!(snap.tag.as_deref(), Some("hello_toggle_root"));
+            assert!(snap.children.is_empty());
+        }
+
+        #[test]
+        fn external_carries_rect_and_tag_alongside_introspect() {
+            let mut node =
+                ExternalNode::new(Box::new(CountedExternal::new(5))).with_tag("main_toggle");
+            node.rect = Rect::new(100, 50, 64, 32);
+            let scene = Scene::External(node);
+            let SnapshotNode::External(snap) = snapshot(&scene, "").unwrap() else {
+                panic!("expected External");
+            };
+            assert_eq!(snap.rect, Rect::new(100, 50, 64, 32));
+            assert_eq!(snap.tag.as_deref(), Some("main_toggle"));
+            let fields = snap.introspect.expect("CountedExternal opts into introspect");
+            assert_eq!(fields[0].0, "count");
+            assert_eq!(fields[0].1, IntrospectValue::Int(5));
         }
     }
 }

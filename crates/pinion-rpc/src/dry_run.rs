@@ -148,6 +148,7 @@ mod tests {
         match snap {
             SnapshotNode::External(ExternalSnapshot {
                 introspect: Some(fields),
+                ..
             }) => assert_eq!(fields[0].1, IntrospectValue::Int(999)),
             other => panic!("expected External snapshot with hypothetical value, got {other:?}"),
         }

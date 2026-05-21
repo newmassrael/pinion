@@ -334,6 +334,47 @@ def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
         )
 
 
+def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
+    """Depth-first walk of a snapshot tree for the first node with this `tag`.
+
+    Returns the node dict (with `type`, `rect`, `tag`, children/content
+    fields as the wire format defines) or `None` when the tag is absent.
+
+    Descends through `Container.children`, `Scroll.content`, and ignores
+    `Text.content` (which is a string, not a child). R51.198 §5.49.
+    """
+    if not isinstance(snap, dict):
+        return None
+    if snap.get("tag") == tag:
+        return snap
+    children = snap.get("children")
+    if isinstance(children, list):
+        for child in children:
+            found = find_by_tag(child, tag)
+            if found is not None:
+                return found
+    content = snap.get("content")
+    # `Text.content` is a string, not a child node — only descend when
+    # `content` is itself a node dict (carried by `Scroll`).
+    if isinstance(content, dict):
+        return find_by_tag(content, tag)
+    return None
+
+
+def node_center(node: dict) -> tuple[float, float]:
+    """Return the centre `(x, y)` of `node.rect` in logical pixels.
+
+    Raises `AssertionError` when the node has no `rect` (`Effect` /
+    `Unknown` markers, future variants). R51.198 §5.49.
+    """
+    rect = node.get("rect")
+    if not isinstance(rect, dict):
+        raise AssertionError(f"node has no rect: {node!r}")
+    cx = float(rect["x"]) + float(rect["w"]) / 2.0
+    cy = float(rect["y"]) + float(rect["h"]) / 2.0
+    return (cx, cy)
+
+
 def run_demo(name: str, body) -> int:
     print(f"[demo] {name}")
     started = time.monotonic()

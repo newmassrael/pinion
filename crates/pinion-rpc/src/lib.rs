@@ -71,6 +71,9 @@ pub use query::{query, QueryError};
 pub use resize::{resize, ResizeError, ResizeOutcome, ResizeParams};
 pub use rewind::{rewind, RewindError};
 pub use screenshot::{screenshot, Screenshot, ScreenshotError};
-pub use snapshot::{snapshot, ExternalSnapshot, SnapshotError, SnapshotNode};
+pub use snapshot::{
+    snapshot, BoxSnapshot, ContainerSnapshot, ExternalSnapshot, ImageSnapshot, PathSnapshot,
+    ScrollSnapshot, SnapshotError, SnapshotNode, TextSnapshot,
+};
 pub use text::{text_normalize, NormalizeForm, NormalizeOutcome};
 pub use wait_for::{wait_for, WaitForError, WaitOutcome};

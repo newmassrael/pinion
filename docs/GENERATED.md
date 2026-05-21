@@ -14868,6 +14868,36 @@ if __name__ == "__main__":
 
 
 
+### Round 530 — R51.198 §5.49 leaf primitive rect/tag in scene/snapshot — Box/Text/Path/Image/Container/External 일관 노출
+
+**Changes**:
+- SnapshotNode 의 Box/Text/Path/Image 가 tuple variant 로 승격 + 전용 Snapshot struct 신규
+- ContainerSnapshot rect 필드 추가, ExternalSnapshot rect + tag 필드 추가
+- TextSnapshot.content 노출 — §2 #7 scene-as-data invariant 일관
+- snapshot_node_to_json wire = {rect, tag, content?} 일관 emit (Effect 만 marker)
+- tools/rpc_verify.py find_by_tag(snap, tag) + node_center(node) 헬퍼 신규
+- hello_toggle_click.py hardcoded (180, 113) 청산 — snapshot 기반 bbox 자동 추출
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2120/0/11 (+14 R51.198 tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 5 demos 회귀 PASS (hello_toggle_click 0.97s = snapshot 기반 click target)
+- snapshot::r51_198 7개 + dispatch::scene_snapshot_*_wire 7개 신규 테스트
+
+
+
+**Impact**: §5.49, §5.7, §5.12, §5.15
+
+
+**Carry forward**:
+- R51.199 hello_listbox_scroll / keyboard_scroll 의 hardcoded VIEWPORT_CX/CY 청산
+- R51.200 Scroll content rect = viewport-local — 절대좌표 변환 substrate
+- R55.G.2 layout::compute_layout into Scroll content (R51.191 carry)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
