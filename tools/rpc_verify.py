@@ -257,6 +257,35 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         result = resp.result
         return list(result) if isinstance(result, list) else []
 
+    def wheel(
+        self,
+        at: tuple[float, float],
+        *,
+        lines: Optional[tuple[float, float]] = None,
+        pixels: Optional[tuple[float, float]] = None,
+    ) -> None:
+        """`scene/wheel` typed wrapper (R51.195 §5.49 §5.45).
+
+        Inject a wheel event at logical cursor position `at = (x, y)`
+        with delta expressed as either lines or pixels (exactly one).
+        The shell drains the deferred-input inbox after this returns,
+        applies `cursor_moved` then `wheel`, and bumps the redraw
+        flag if the router dispatched against an attached
+        `ScrollState`. Follow up with `snapshot(source="paint")` to
+        observe the post-wheel offset.
+        """
+        if (lines is None) == (pixels is None):
+            raise ValueError("exactly one of `lines` or `pixels` must be supplied")
+        if lines is not None:
+            delta = {"lines": {"dx": float(lines[0]), "dy": float(lines[1])}}
+        else:
+            assert pixels is not None
+            delta = {"pixels": {"dx": float(pixels[0]), "dy": float(pixels[1])}}
+        self.request(
+            "scene/wheel",
+            {"at": {"x": float(at[0]), "y": float(at[1])}, "delta": delta},
+        )
+
     def stderr_tail(self, n: int = 20) -> list[str]:
         return list(self._stderr_lines[-n:])
 

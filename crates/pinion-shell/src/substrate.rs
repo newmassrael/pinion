@@ -43,7 +43,7 @@ use pinion_a11y::{
 use pinion_core::event::WheelDelta;
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
-    build_layout_node, dispatch, DispatchContext, LayoutNode, PreviewLedger,
+    build_layout_node, dispatch, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
     clamp_frame_dt, compute_layout, rect_for_tag, CommandExecutor, CoreShell, DispatchTail,
@@ -679,6 +679,26 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
     }
 
+    /// R51.195 §5.49 §5.45 — drain the deferred-input inbox `dispatch`
+    /// populated. Each entry replays the input through the same
+    /// `cursor_moved` / `wheel` entry points the winit and TUI
+    /// surfaces use, so the [`InputRouter`](pinion_runtime::InputRouter)
+    /// fires under its normal post-frame redraw rules. Called once
+    /// per `dispatch_rpc` after the dispatcher's `&mut scene` borrow
+    /// releases.
+    fn drain_deferred_inputs(&mut self, inputs: &[DeferredInput]) {
+        // `DeferredInput` is `non_exhaustive`; the `if let` arm
+        // covers the current variant and future ones (key,
+        // cursor_only, etc.) silently no-op against this drain until
+        // a follow-up round extends the match.
+        for input in inputs {
+            if let DeferredInput::Wheel { x, y, delta } = *input {
+                self.cursor_moved(PointerId::MOUSE, x, y);
+                self.wheel(PointerId::MOUSE, delta);
+            }
+        }
+    }
+
     /// R51.80 §5.39 — modifier-key cache update. `KeyEvent` carries no
     /// modifier state in winit; the substrate remembers the
     /// most-recent `ModifiersChanged` so the
@@ -947,8 +967,21 @@ impl<V: WidgetView> ShellCore<V> {
             if let Some(exec_arc) = executor_for_rpc.as_ref() {
                 ctx = ctx.with_commands_executor(exec_arc.as_ref());
             }
-            dispatch(&mut ctx, request)
+            // R51.195 §5.49 §5.45 — wire the deferred-input inbox so
+            // `scene/wheel` can enqueue events. The inbox lives on
+            // the stack here; we drain it after `dispatch` returns
+            // (below) so each enqueued `cursor_moved` + `wheel` lands
+            // outside the dispatcher's `&mut scene` borrow.
+            let mut deferred_inputs: Vec<pinion_rpc::DeferredInput> = Vec::new();
+            ctx = ctx.with_deferred_inputs(&mut deferred_inputs);
+            let resp = dispatch(&mut ctx, request);
+            (resp, deferred_inputs)
         };
+        let (resp, deferred_inputs) = resp;
+        // R51.195 §5.49 §5.45 — drain the deferred-input inbox.
+        // `&mut scene` is released here, so calling back into
+        // `ShellCore` is legal again.
+        self.drain_deferred_inputs(&deferred_inputs);
         let tail = self.core.tail();
         self.handle_tail(&tail);
         // R51.73 §5.40 — `focus/set` from the AI client must trigger

@@ -26,6 +26,7 @@
 //! carrying the typed [`QueryError`] variant name so AI clients can
 //! pattern-match without parsing prose.
 
+use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::style::{Border, BoxStyle, Color};
@@ -271,6 +272,43 @@ pub struct DispatchContext<'a> {
     /// alongside [`Self::commands_owner`] for full pending +
     /// in-flight symmetry.
     pub commands_executor: Option<&'a pinion_runtime::CommandExecutor>,
+
+    /// R51.195 §5.49 §5.45 — deferred input inbox.
+    ///
+    /// `scene/wheel` (and future `scene/key` / `scene/cursor_move`)
+    /// cannot mutate the scene from inside [`dispatch`] because the
+    /// shell holds `&mut scene` for the whole call and the input
+    /// router lives on the surrounding [`ShellCore`]. The dispatcher
+    /// instead **enqueues** a [`DeferredInput`] entry on this inbox
+    /// per accepted request; the embedder drains the inbox after the
+    /// call returns and calls the matching `ShellCore::wheel` (etc.)
+    /// methods so the [`InputRouter`](pinion_runtime::InputRouter)
+    /// fires under its normal post-frame redraw rules.
+    ///
+    /// `None` causes every input-injection method to fail with
+    /// `InputInjectionUnavailable`. Backends inject `Some(&mut Vec)`
+    /// at the start of each dispatch and consume the queue after
+    /// `dispatch` returns.
+    pub deferred_inputs: Option<&'a mut Vec<DeferredInput>>,
+}
+
+/// R51.195 §5.49 §5.45 — single deferred-input entry. One per
+/// AI-injected event; the embedder drains the inbox once `dispatch`
+/// returns and feeds each entry into the matching shell substrate
+/// method.
+///
+/// `pinion-shell` and `pinion-tui` share this enum so RPC clients see
+/// the same wire shape regardless of which backend is hosting the
+/// dispatcher.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeferredInput {
+    /// `scene/wheel` injection. The embedder applies
+    /// `cursor_moved(MOUSE, x, y)` and then `wheel(MOUSE, delta)` so
+    /// the router has a fresh cursor before the wheel arm fires
+    /// (mirrors the winit / web / iOS flow that re-uses the last
+    /// pointer position).
+    Wheel { x: f64, y: f64, delta: WheelDelta },
 }
 
 impl<'a> DispatchContext<'a> {
@@ -295,6 +333,7 @@ impl<'a> DispatchContext<'a> {
             focus_manager: None,
             commands_owner: None,
             commands_executor: None,
+            deferred_inputs: None,
         }
     }
 
@@ -385,6 +424,17 @@ impl<'a> DispatchContext<'a> {
         self.commands_executor = Some(executor);
         self
     }
+
+    /// R51.195 §5.49 §5.45 — builder: attach the deferred-input
+    /// inbox so `scene/wheel` (and future input-injection methods)
+    /// can enqueue events for post-dispatch drain. `None` (the
+    /// default) makes those methods fail with
+    /// `InputInjectionUnavailable`.
+    #[must_use]
+    pub fn with_deferred_inputs(mut self, inbox: &'a mut Vec<DeferredInput>) -> Self {
+        self.deferred_inputs = Some(inbox);
+        self
+    }
 }
 
 /// Dispatch one JSON-RPC 2.0 frame against `ctx`.
@@ -442,6 +492,11 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     // copy the optional reference out for the dispatch lifetime so
     // the registry slot itself is not consumed.
     let font_registry = ctx.font_registry;
+    // R51.195 §5.49 §5.45 — deferred-input inbox, taken once per
+    // dispatch. `scene/wheel` enqueues into it; the surrounding
+    // shell drains after the call returns so the InputRouter fires
+    // outside the dispatcher's `&mut scene` borrow.
+    let mut deferred_inputs = ctx.deferred_inputs.take();
     let parsed: Result<Request, _> = serde_json::from_str(request_json);
     let request = match parsed {
         Ok(r) => r,
@@ -518,6 +573,18 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             handle_scene_layout(producer, last_paint_layout, request.params.as_ref())
+        }
+        "scene/wheel" => {
+            // Same reborrow pattern as `scene/layout` — the inbox is
+            // a `&mut Vec<...>` and clippy::option_as_ref_deref would
+            // suggest `.as_deref_mut()`, but `Vec<T>` does not
+            // implement `DerefMut`; the manual reborrow is required.
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            handle_scene_wheel(inbox, request.params.as_ref())
         }
         "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
         "scene/list_previews" => handle_scene_list_previews(previews),
@@ -755,6 +822,86 @@ where
     };
 
     Ok(snapshot_node_to_json(node))
+}
+
+/// R51.195 §5.49 §5.45 — `scene/wheel` typed dispatcher.
+///
+/// Params: `{at: {x: f64, y: f64}, delta: {lines: {dx, dy}} | {pixels: {dx, dy}}}`.
+///
+/// Enqueues a single [`DeferredInput::Wheel`] entry on the
+/// dispatcher's inbox. The embedder drains the inbox after `dispatch`
+/// returns and applies `cursor_moved(x, y)` followed by
+/// `wheel(delta)` so the [`InputRouter`](pinion_runtime::InputRouter)
+/// fires under its normal post-frame redraw rules — the dispatcher
+/// holds `&mut scene` for the whole call, which prevents direct
+/// `ShellCore::wheel` access from inside it. Returns `null` on
+/// success; the AI client follows up with `scene/snapshot` to observe
+/// the post-wheel offset change.
+fn handle_scene_wheel(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let Some(params) = params else {
+        return Err(RpcError::invalid_params("missing params"));
+    };
+    let at = params
+        .get("at")
+        .and_then(Value::as_object)
+        .ok_or_else(|| RpcError::invalid_params("params.at missing or not an object"))?;
+    let x = at
+        .get("x")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.at.x missing or not a number"))?;
+    let y = at
+        .get("y")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.at.y missing or not a number"))?;
+    let delta_obj = params
+        .get("delta")
+        .and_then(Value::as_object)
+        .ok_or_else(|| RpcError::invalid_params("params.delta missing or not an object"))?;
+    let delta = parse_wheel_delta(delta_obj)?;
+    inbox.push(DeferredInput::Wheel { x, y, delta });
+    Ok(Value::Null)
+}
+
+fn parse_wheel_delta(obj: &serde_json::Map<String, Value>) -> Result<WheelDelta, RpcError> {
+    let extract = |key: &str| -> Result<Option<(f32, f32)>, RpcError> {
+        let Some(inner) = obj.get(key).and_then(Value::as_object) else {
+            return Ok(None);
+        };
+        let dx = inner
+            .get("dx")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| RpcError::invalid_params(format!("params.delta.{key}.dx missing")))?;
+        let dy = inner
+            .get("dy")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| RpcError::invalid_params(format!("params.delta.{key}.dy missing")))?;
+        // JSON Number is f64 wire-side; WheelDelta stores f32. The
+        // downcast is the wire-format boundary — application-level
+        // wheel deltas never exceed f32 precision in practice
+        // (winit / web / iOS all originate the value as f32).
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "JSON f64 → WheelDelta f32 wire boundary; loss is intentional"
+        )]
+        let pair = (dx as f32, dy as f32);
+        Ok(Some(pair))
+    };
+    match (extract("lines")?, extract("pixels")?) {
+        (Some(_), Some(_)) => Err(RpcError::invalid_params(
+            "params.delta carries both \"lines\" and \"pixels\"; pick one",
+        )),
+        (Some((dx, dy)), None) => Ok(WheelDelta::Lines { dx, dy }),
+        (None, Some((dx, dy))) => Ok(WheelDelta::Pixels { dx, dy }),
+        (None, None) => Err(RpcError::invalid_params(
+            "params.delta requires either \"lines\" or \"pixels\"",
+        )),
+    }
 }
 
 fn parse_snapshot_viewport(params: &Value) -> Result<(u32, u32), RpcError> {
@@ -2516,6 +2663,111 @@ mod tests {
             data.contains("PaintProducerUnavailable"),
             "data: {data:?}",
         );
+    }
+
+    // ---- R51.195 §5.49 §5.45 — scene/wheel injection ----
+
+    #[test]
+    fn scene_wheel_enqueues_lines_delta_into_inbox() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":180.0,"y":160.0},"delta":{"lines":{"dx":0.0,"dy":3.0}}},"id":200}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+        assert_eq!(resp.result, Some(Value::Null));
+        assert_eq!(inbox.len(), 1);
+        let DeferredInput::Wheel { x, y, delta } = inbox[0];
+        assert!((x - 180.0).abs() < f64::EPSILON);
+        assert!((y - 160.0).abs() < f64::EPSILON);
+        let WheelDelta::Lines { dx, dy } = delta else {
+            panic!("expected Lines variant, got {delta:?}");
+        };
+        assert!(dx.abs() < f32::EPSILON);
+        assert!((dy - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn scene_wheel_enqueues_pixels_delta_into_inbox() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":50.0,"y":40.0},"delta":{"pixels":{"dx":0.0,"dy":60.0}}},"id":201}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none());
+        assert_eq!(inbox.len(), 1);
+        let DeferredInput::Wheel { delta, .. } = inbox[0];
+        let WheelDelta::Pixels { dx, dy } = delta else {
+            panic!("expected Pixels variant, got {delta:?}");
+        };
+        assert!(dx.abs() < f32::EPSILON);
+        assert!((dy - 60.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn scene_wheel_without_inbox_is_unavailable() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":0.0,"y":0.0},"delta":{"lines":{"dx":0.0,"dy":1.0}}},"id":202}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("InputInjectionUnavailable"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_wheel_missing_at_is_invalid() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"delta":{"lines":{"dx":0.0,"dy":1.0}}},"id":203}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("at"), "data: {data:?}");
+        assert!(inbox.is_empty());
+    }
+
+    #[test]
+    fn scene_wheel_delta_with_both_lines_and_pixels_is_invalid() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":0.0,"y":0.0},"delta":{"lines":{"dx":0.0,"dy":1.0},"pixels":{"dx":0.0,"dy":60.0}}},"id":204}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("pick one"), "data: {data:?}");
+    }
+
+    #[test]
+    fn scene_wheel_delta_missing_both_is_invalid() {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":0.0,"y":0.0},"delta":{}},"id":205}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("requires"), "data: {data:?}");
     }
 
     #[test]

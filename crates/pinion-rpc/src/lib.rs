@@ -33,7 +33,9 @@ pub use click::{click, ClickError, ClickOutcome};
 pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
 };
-pub use dispatch::{dispatch, DispatchContext, Request, RequestId, Response, RpcError};
+pub use dispatch::{
+    dispatch, DeferredInput, DispatchContext, Request, RequestId, Response, RpcError,
+};
 pub use dry_run::{dry_run, DryRunError};
 pub use focus::{
     focus_get, focus_next, focus_prev, focus_set, FocusError, FocusSetParams, FocusState,

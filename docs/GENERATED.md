@@ -14770,6 +14770,39 @@ if __name__ == "__main__":
 
 
 
+### Round 527 — R51.195 §5.7 §5.45 scene/wheel + deferred-input inbox — hello-listbox scroll dogfood closes R51.192 META
+
+**Changes**:
+- pinion-rpc: DeferredInput enum + DispatchContext::deferred_inputs + with_deferred_inputs builder
+- pinion-rpc: handle_scene_wheel + parse_wheel_delta (lines | pixels, mutually exclusive)
+- pinion-shell: ShellCore::dispatch_rpc builds inbox + post-dispatch drain_deferred_inputs
+- drain replays cursor_moved + wheel through normal substrate path, redraw bump intact
+- tools/rpc_verify: RpcSubprocess.wheel(at, lines|pixels) wrapper
+- tools/demos/hello_listbox_scroll.py: wheel inject → offset_y > 0 dogfood
+- TUI side N/A — pinion-tui has no RPC surface (stdin = raw key input)
+
+
+
+**Verification**:
+- cargo test pinion-rpc scene_wheel — 6 new tests PASS
+- python3 tools/demos/hello_listbox_scroll.py — [demo] PASS (0.97s)
+- regression: hello_toggle_activate + hello_listbox_snapshot demos PASS
+- cargo test --workspace vello — 2107/0/11 (was 2101, +6)
+- cargo clippy --workspace --all-targets vello — 0 warnings
+
+
+
+**Impact**: §5.7, §5.12, §5.45, §5.49
+
+
+**Carry forward**:
+- R51.196 — scene/click v1: Container traversal + real PointerEvent through InputRouter
+- R51.197 — scene/key injection extending DeferredInput (key down/up at cursor)
+- R51.198 — pinion-tui RPC surface (raw stdin clash with newline JSON-RPC framing)
+- Rust integration test crate that pins demo regressions in CI
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
