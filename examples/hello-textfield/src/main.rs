@@ -67,6 +67,7 @@ use pinion_core::style::{
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
+use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -92,39 +93,36 @@ const TF_TAG: &str = "main_textfield";
 const WIN_W: u32 = 480;
 const WIN_H: u32 = 200;
 
-// Window background — same dark navy hello-toggle uses, for visual
-// consistency across the example gallery.
-const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
+/// (R57.X.textfield §5.50) [`ThemeProvider`] cache key. Matches the
+/// `"app"` convention shared with `hello-toggle` / `hello-theme` /
+/// `hello-listbox` so the example gallery shares one provider when a
+/// host binds them together.
+const THEME_TAG: &str = "app";
 
 // Field surface — 360×40 with 8 px padding, 4 px corner radius. Fill
 // shifts on focus to give the user a clear "the input is live" cue
 // without an explicit border-colour change (CSS `:focus-visible`
 // convention scaled down to a flat-fill palette).
+//
+// (R57.X.textfield §5.50) Fill / text / caret / selection / preedit
+// colors are now theme-resolved per the M3 TextField role mapping
+// captured in [`build_text_style`] + the view body. Pre-cleanup these
+// lived as `Color::rgb(...)` consts; the migration replaces every
+// site with `theme.resolve(role)` so the same view-fn renders
+// correctly under both light and dark palettes.
 const FIELD_W: u32 = 360;
 const FIELD_H: u32 = 40;
 const FIELD_PAD: u32 = 8;
 const FIELD_CORNER: u32 = 4;
-const FIELD_FILL_IDLE: Color = Color::rgb(0x18, 0x20, 0x28);
-const FIELD_FILL_FOCUSED: Color = Color::rgb(0x14, 0x1c, 0x24);
-const FIELD_FILL_DISABLED: Color = Color::rgb(0x30, 0x30, 0x30);
-
-const TEXT_COLOR: Color = Color::rgb(0xff, 0xff, 0xff);
-const TEXT_COLOR_DISABLED: Color = Color::rgb(0x70, 0x70, 0x70);
-
-const CARET_COLOR: Color = Color::rgb(0xff, 0xff, 0xff);
-// R56.1.f.3 §5.22 — selection rect tint. Semi-transparent steel blue
-// (matches the macOS / Chrome "system selection" hue without
-// hard-coding the platform native colour); alpha 0xA0 keeps the
-// underlying text readable while the selection band paints behind.
-const SELECTION_COLOR: Color = Color::rgba(0x33, 0x99, 0xff, 0xa0);
-// R56.1.g.3 §5.22 — preedit underline + background tint. Lighter
-// warm-grey tint draws the eye to the "this is provisional" composition
-// segment without competing with the steel-blue selection band; the
-// 1 px underline below the preedit baseline mirrors the canonical IME
-// affordance Wayland text-input-v3 / macOS NSTextInputContext / Windows
-// TSF clients paint.
-const PREEDIT_BG_COLOR: Color = Color::rgba(0xff, 0xc0, 0x60, 0x60);
-const PREEDIT_UNDERLINE_COLOR: Color = Color::rgb(0xff, 0xc0, 0x60);
+/// (R57.X.textfield §5.50) Selection tint alpha — the rect paints at
+/// this opacity over the [`ColorRole::Accent`] color so the underlying
+/// glyphs stay readable while the band marks the selection range.
+/// 0xA0 matches the macOS / Chrome "system selection" overlay weight.
+const SELECTION_ALPHA: u8 = 0xa0;
+/// (R57.X.textfield §5.50) Preedit background tint alpha — fainter
+/// than selection so the IME composition segment reads as
+/// "provisional, not yet committed". 0x40 ≈ 25 % opacity.
+const PREEDIT_BG_ALPHA: u8 = 0x40;
 const PREEDIT_UNDERLINE_THICKNESS: u32 = 1;
 // 2 px caret reads cleanly on the integer-scaled 1.0× displays the
 // hello-* gallery is sized for; Hi-DPI displays where AA softens
@@ -158,6 +156,68 @@ fn use_layout_cache(key: &'static str) -> Rc<RefCell<LayoutCache>> {
     Owner::current()
         .expect("use_layout_cache requires an active Owner scope")
         .cache(key, || RefCell::new(LayoutCache::new()))
+}
+
+/// (R57.X.textfield §5.50) Material 3 `TextField` text foreground —
+/// `ColorRole::OnSurface` when enabled, `ColorRole::OnSurfaceMuted`
+/// when the field is in the disabled posture. Lifted out of the
+/// view-fn + `ime_caret_rect` so both paths produce the same
+/// `TextStyle.fg` and the shared [`LayoutCache`] key matches across
+/// the two calls — the pre-cleanup `(text, style, max_width)` tuple
+/// hit relied on a `TEXT_COLOR` literal, the role-resolved variant
+/// keeps that hit while picking up theme swaps.
+fn text_fg_for(theme: &Theme, interaction: TextFieldState) -> Color {
+    if matches!(interaction, TextFieldState::Disabled) {
+        theme.resolve(ColorRole::OnSurfaceMuted)
+    } else {
+        theme.resolve(ColorRole::OnSurface)
+    }
+}
+
+/// (R57.X.textfield §5.50) Material 3 `TextField` filled-variant
+/// container fill — `ColorRole::SurfaceContainerHighest` is the
+/// canonical M3 `TextField` "filled" surface. Focused state lifts
+/// one tier (R51 mirror) to `SurfaceContainerHigh` so the active
+/// field reads as elevated without a heavy border ring. Disabled
+/// fades toward `Surface` per the M3 38 % disabled overlay
+/// convention.
+fn field_fill_for(theme: &Theme, interaction: TextFieldState) -> Color {
+    match interaction {
+        TextFieldState::Idle => theme.resolve(ColorRole::SurfaceContainerHighest),
+        TextFieldState::Focused | TextFieldState::Editing => {
+            theme.resolve(ColorRole::SurfaceContainerHigh)
+        }
+        TextFieldState::Disabled => theme
+            .resolve(ColorRole::SurfaceContainerHighest)
+            .lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
+}
+
+/// (R57.X.textfield §5.50) Selection rect tint — semi-transparent
+/// `ColorRole::Accent` overlay. Building the color manually preserves
+/// the M3 caret-color = Accent identity (the selection inherits the
+/// active-control hue) while honouring [`SELECTION_ALPHA`] so the
+/// glyphs under the band stay readable.
+fn selection_fill(theme: &Theme) -> Color {
+    let a = theme.resolve(ColorRole::Accent);
+    Color::rgba(a.r, a.g, a.b, SELECTION_ALPHA)
+}
+
+/// (R57.X.textfield §5.50) Preedit background tint — fainter Accent
+/// overlay than [`selection_fill`] so the IME composition segment
+/// reads as provisional. Companion role for [`preedit_underline`].
+fn preedit_bg_fill(theme: &Theme) -> Color {
+    let a = theme.resolve(ColorRole::Accent);
+    Color::rgba(a.r, a.g, a.b, PREEDIT_BG_ALPHA)
+}
+
+/// (R57.X.textfield §5.50) Preedit underline color — opaque Accent.
+/// Mirrors the M3 / canonical IME convention where the underline
+/// matches the active control hue (caret + underline + selection all
+/// resolve through `ColorRole::Accent` so a palette swap re-stains
+/// the field's interactive affordances coherently).
+fn preedit_underline(theme: &Theme) -> Color {
+    theme.resolve(ColorRole::Accent)
 }
 
 /// R56.1.e §5.22 / R56.2.b §5.22 — `Owner::cache`-keyed clipboard
@@ -303,13 +363,14 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         text_state.splice_preedit(caret_byte as usize);
     let preedit = text_state.preedit();
 
+    // (R57.X.textfield §5.50) Active palette — `use_theme` auto-
+    // subscribes this view-fn so a `ThemeProvider::set_theme` from
+    // anywhere in the application re-runs the view + repaints the
+    // field + caret + selection band with the new tones.
+    let theme = use_theme(THEME_TAG).theme();
     let text_style = TextStyle::new()
         .with_size_px(FONT_SIZE_PX)
-        .with_fg(if matches!(interaction, TextFieldState::Disabled) {
-            TEXT_COLOR_DISABLED
-        } else {
-            TEXT_COLOR
-        });
+        .with_fg(text_fg_for(&theme, interaction));
 
     // Caret geometry — shape the current effective_text once via the
     // shared `LayoutCache`, then look up the cursor rect at the
@@ -389,11 +450,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     };
     let (caret_layout_x, caret_layout_y, caret_box_height) = caret_pixel_rect;
 
-    let field_fill = match interaction {
-        TextFieldState::Idle => FIELD_FILL_IDLE,
-        TextFieldState::Focused | TextFieldState::Editing => FIELD_FILL_FOCUSED,
-        TextFieldState::Disabled => FIELD_FILL_DISABLED,
-    };
+    let field_fill = field_fill_for(&theme, interaction);
 
     // Text node — natural-flow child of the field container. Empty
     // text is rendered as a zero-width run so the caret still appears
@@ -429,7 +486,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             let sel_left = FIELD_PAD.saturating_add(sel_x);
             let sel_top = FIELD_PAD.saturating_add(sel_y);
             let selection_box = Scene::Box(
-                BoxNode::new(Rect::default(), BoxStyle::filled(SELECTION_COLOR))
+                BoxNode::new(Rect::default(), BoxStyle::filled(selection_fill(&theme)))
                     .with_layout(
                         LayoutStyle::new()
                             .with_size(Size::px(sel_w, sel_h))
@@ -448,7 +505,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             let pre_left = FIELD_PAD.saturating_add(pre_x);
             let pre_top = FIELD_PAD.saturating_add(pre_y);
             let preedit_bg = Scene::Box(
-                BoxNode::new(Rect::default(), BoxStyle::filled(PREEDIT_BG_COLOR))
+                BoxNode::new(Rect::default(), BoxStyle::filled(preedit_bg_fill(&theme)))
                     .with_layout(
                         LayoutStyle::new()
                             .with_size(Size::px(pre_w, pre_h))
@@ -473,7 +530,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             let underline = Scene::Box(
                 BoxNode::new(
                     Rect::default(),
-                    BoxStyle::filled(PREEDIT_UNDERLINE_COLOR),
+                    BoxStyle::filled(preedit_underline(&theme)),
                 )
                 .with_layout(
                     LayoutStyle::new()
@@ -488,7 +545,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         let caret_left = FIELD_PAD.saturating_add(caret_layout_x);
         let caret_top = FIELD_PAD.saturating_add(caret_layout_y);
         let caret_box = Scene::Box(
-            BoxNode::new(Rect::default(), BoxStyle::filled(CARET_COLOR)).with_layout(
+            BoxNode::new(Rect::default(), BoxStyle::filled(theme.resolve(ColorRole::Accent))).with_layout(
                 LayoutStyle::new()
                     .with_size(Size::px(CARET_WIDTH, caret_box_height))
                     .with_absolute_position(caret_left, caret_top),
@@ -522,7 +579,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         Rect::default(),
         TextStyle::new()
             .with_size_px(18)
-            .with_fg(Color::rgb(0xe0, 0xe0, 0xe0)),
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
     // R56.1.g.3 §5.22 — status line carries the preedit state so the
@@ -545,12 +602,12 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         Rect::default(),
         TextStyle::new()
             .with_size_px(12)
-            .with_fg(Color::rgb(0x90, 0x90, 0x90)),
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
 
     Scene::Container(
         ContainerNode::new(vec![title, field, status])
-            .with_style(BoxStyle::filled(BG_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -914,14 +971,14 @@ impl WidgetView for TextFieldView {
             text_state.splice_preedit(caret_byte as usize);
         // Mirror the view fn's text style (incl. interaction-dependent
         // fg) so the `(text, style, max_width)` cache key matches and
-        // the `LayoutCache::layout` lookup is a hit.
+        // the `LayoutCache::layout` lookup is a hit. (R57.X.textfield
+        // §5.50) Both sites resolve through [`text_fg_for`] so a
+        // palette swap re-keys both LayoutCache reads in lock-step
+        // without drifting the cache identity.
+        let theme = use_theme(THEME_TAG).theme();
         let text_style = TextStyle::new()
             .with_size_px(FONT_SIZE_PX)
-            .with_fg(if matches!(interaction, TextFieldState::Disabled) {
-                TEXT_COLOR_DISABLED
-            } else {
-                TEXT_COLOR
-            });
+            .with_fg(text_fg_for(&theme, interaction));
         let field_rect = pinion_shell::rect_for_tag(scene, TF_TAG)?;
         let layout_cache = use_layout_cache("hello_textfield.layout_cache");
         let caret_local = {
@@ -996,14 +1053,16 @@ mod tests {
     //! drift surfaces here before reaching the visible demo path.
 
     use super::{
-        parse_text_field_state, text_field_state_name, view, TextFieldView, TF_TAG,
+        field_fill_for, parse_text_field_state, preedit_underline, selection_fill,
+        text_field_state_name, view, TextFieldView, THEME_TAG, TF_TAG,
     };
     use pinion_a11y::{AccessValue, AriaRole, WidgetA11y};
     use pinion_core::reactive::Owner;
+    use pinion_core::theme::{use_theme, Theme};
     use pinion_core::widgets::caret_blink::use_caret_blink;
     use pinion_core::widgets::text_edit::use_text_edit_state;
     use pinion_core::widgets::text_field::TextFieldState;
-    use pinion_core::{Frame, Scene};
+    use pinion_core::{Color, Frame, Scene};
 
     /// Run `f` inside a fresh `Owner` scope so reactive hooks
     /// resolve. Mirrors the framework's
@@ -1223,5 +1282,104 @@ mod tests {
             (TextFieldState::Idle, 0),
             &Frame::default(),
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R57.X.textfield §5.50 — theme retrofit regression. Pins the
+    // M3 TextField role mapping so a future palette swap surfaces
+    // visibly through the role channel rather than back through an
+    // RGB literal regression.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r57_x_textfield_idle_fill_uses_surface_container_highest() {
+        // Idle = M3 canonical filled TextField surface.
+        with_owner(|| {
+            let light = Theme::light();
+            assert_eq!(
+                field_fill_for(&light, TextFieldState::Idle),
+                light.surface_container_highest,
+            );
+            let dark = Theme::dark();
+            assert_eq!(
+                field_fill_for(&dark, TextFieldState::Idle),
+                dark.surface_container_highest,
+            );
+        });
+    }
+
+    #[test]
+    fn r57_x_textfield_focused_fill_lifts_one_surface_tier() {
+        // Focused / Editing = `SurfaceContainerHigh` (one tier above
+        // idle) so the active field reads as elevated without a
+        // heavy border ring.
+        with_owner(|| {
+            let light = Theme::light();
+            assert_eq!(
+                field_fill_for(&light, TextFieldState::Focused),
+                light.surface_container_high,
+            );
+            assert_eq!(
+                field_fill_for(&light, TextFieldState::Editing),
+                light.surface_container_high,
+            );
+        });
+    }
+
+    #[test]
+    fn r57_x_textfield_selection_and_preedit_use_accent_role() {
+        // Selection / preedit underline both anchor on
+        // `ColorRole::Accent` so a palette swap restains the
+        // interactive affordances coherently. Selection adds the
+        // `SELECTION_ALPHA` overlay; underline stays opaque.
+        with_owner(|| {
+            let light = Theme::light();
+            let sel = selection_fill(&light);
+            assert_eq!(sel.r, light.accent.r);
+            assert_eq!(sel.g, light.accent.g);
+            assert_eq!(sel.b, light.accent.b);
+            // SELECTION_ALPHA is intentionally opaque enough to
+            // read against the field, faint enough to keep glyph
+            // contrast — pin the exact value so regressions surface.
+            assert_eq!(sel.a, 0xa0);
+            assert_eq!(
+                preedit_underline(&light),
+                Color::rgba(light.accent.r, light.accent.g, light.accent.b, 0xff),
+            );
+        });
+    }
+
+    #[test]
+    fn r57_x_textfield_palette_swap_propagates_through_view() {
+        // End-to-end: changing the active theme between two
+        // `view` invocations must surface a different field fill
+        // somewhere in the rendered scene (the role-driven
+        // resolution kicks in via the auto-subscribed
+        // `use_theme().theme()` read at the top of `view`).
+        with_owner(|| {
+            use_theme(THEME_TAG).set_theme(Theme::light());
+            let light_scene = view((TextFieldState::Idle, 0), &Frame::default());
+            assert!(scene_contains_fill(
+                &light_scene,
+                Theme::light().surface_container_highest,
+            ));
+            use_theme(THEME_TAG).set_theme(Theme::dark());
+            let dark_scene = view((TextFieldState::Idle, 0), &Frame::default());
+            assert!(scene_contains_fill(
+                &dark_scene,
+                Theme::dark().surface_container_highest,
+            ));
+        });
+    }
+
+    fn scene_contains_fill(scene: &Scene, target: Color) -> bool {
+        match scene {
+            Scene::Container(n) => {
+                n.style.fill == target
+                    || n.children.iter().any(|c| scene_contains_fill(c, target))
+            }
+            Scene::Box(n) => n.style.fill == target,
+            _ => false,
+        }
     }
 }

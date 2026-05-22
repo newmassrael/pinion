@@ -3875,6 +3875,8 @@ if __name__ == "__main__":
 - ColorRole +3 variants: SurfaceContainerLow/Container/High complete M3 5-tier elevation.
 - hello-listbox retrofit: all 16 RGB literals replaced by 7 role resolves + M3 state-layer lerp.
 - M3 state-layer 0.08 (hover) / 0.12 (pressed) / 0.38 (disabled) via Color::lerp.
+- hello-textfield retrofit: 13 RGB literals replaced — field/caret/selection/preedit all role-driven.
+- TextField filled-variant: Idle=SurfaceContainerHighest, Focused=SurfaceContainerHigh.
 
 
 
@@ -3965,6 +3967,11 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerHigh
 - examples/hello-listbox/src/main.rs:listbox_row
 - examples/hello-listbox/src/main.rs:build_scrollbar_visual
+- examples/hello-textfield/src/main.rs:text_fg_for
+- examples/hello-textfield/src/main.rs:field_fill_for
+- examples/hello-textfield/src/main.rs:selection_fill
+- examples/hello-textfield/src/main.rs:preedit_bg_fill
+- examples/hello-textfield/src/main.rs:preedit_underline
 
 
 
@@ -17355,6 +17362,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - hello-textfield theme retrofit (다음 R57.X widget cascade target).
 - hello-button + hello-radio-group + hello-checkbox-radio retrofit cascade.
 - R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
+
+
+
+### Round 579 — R57.X.textfield §5.50 — hello-textfield retrofit: 13 RGB literal → 7 role resolve + 5 helper lift (text_fg / field_fill / selection / preedit_bg / preedit_underline) + 4 r57_x regression test.
+
+**Changes**:
+- hello-textfield: BG/FIELD/TEXT/CARET/SELECTION/PREEDIT const 제거 (13 RGB literal).
+- hello-textfield: 5 helper lift — text_fg / field_fill / selection / preedit_bg / preedit_underline.
+- hello-textfield: view + ime_caret_rect 양쪽 use_theme(THEME_TAG).theme() 경유 helper 라우팅.
+- hello-textfield: title=OnSurface, status=OnSurfaceMuted, caret/selection=Accent (a=0xa0).
+- hello-textfield: +4 r57_x regression test (idle / focused / selection-accent / palette swap).
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2773 pass / 0 fail / 14 ignored (+4 new).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.
+- cargo test -p hello-textfield = 16 pass (baseline 12 + 4 r57_x).
+
+
+
+**Impact**: §5.50, §5.22, §5.38
+
+
+**Carry forward**:
+- hello-button + hello-radio-group + hello-checkbox-radio cascade carry.
+- R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
+- R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry.
 
 
 

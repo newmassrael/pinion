@@ -5753,7 +5753,9 @@
         "R57.X.toggle: hover/pressed = Color::lerp toward OnSurface (M3 state layer 0.08/0.12).",
         "ColorRole +3 variants: SurfaceContainerLow/Container/High complete M3 5-tier elevation.",
         "hello-listbox retrofit: all 16 RGB literals replaced by 7 role resolves + M3 state-layer lerp.",
-        "M3 state-layer 0.08 (hover) / 0.12 (pressed) / 0.38 (disabled) via Color::lerp."
+        "M3 state-layer 0.08 (hover) / 0.12 (pressed) / 0.38 (disabled) via Color::lerp.",
+        "hello-textfield retrofit: 13 RGB literals replaced — field/caret/selection/preedit all role-driven.",
+        "TextField filled-variant: Idle=SurfaceContainerHighest, Focused=SurfaceContainerHigh."
       ],
       "alternatives_rejected": [
         {
@@ -5851,6 +5853,26 @@
         {
           "file": "examples/hello-listbox/src/main.rs",
           "symbol": "build_scrollbar_visual"
+        },
+        {
+          "file": "examples/hello-textfield/src/main.rs",
+          "symbol": "text_fg_for"
+        },
+        {
+          "file": "examples/hello-textfield/src/main.rs",
+          "symbol": "field_fill_for"
+        },
+        {
+          "file": "examples/hello-textfield/src/main.rs",
+          "symbol": "selection_fill"
+        },
+        {
+          "file": "examples/hello-textfield/src/main.rs",
+          "symbol": "preedit_bg_fill"
+        },
+        {
+          "file": "examples/hello-textfield/src/main.rs",
+          "symbol": "preedit_underline"
         }
       ],
       "decision_status": "active"
@@ -28079,6 +28101,54 @@
         "hello-textfield theme retrofit (다음 R57.X widget cascade target).",
         "hello-button + hello-radio-group + hello-checkbox-radio retrofit cascade.",
         "R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry."
+      ]
+    },
+    "Round 579": {
+      "decision_summary": "R57.X.textfield 5.50 hello-textfield retrofit 13 RGB literal to theme role plus 5 helper lift plus 4 r57_x test pin.",
+      "changes_bullets": [
+        "hello-textfield: BG_FILL FIELD_FILL_* TEXT_COLOR* CARET_COLOR SELECTION_COLOR PREEDIT_* const 제거.",
+        "hello-textfield: 5 helper lift text_fg_for field_fill_for selection_fill preedit_bg_fill preedit_underline.",
+        "hello-textfield: view + ime_caret_rect both read use_theme then route through helpers.",
+        "hello-textfield: title=OnSurface, status=OnSurfaceMuted, caret=Accent, selection alpha=0xa0.",
+        "hello-textfield: +4 r57_x regression tests pinning idle/focused/selection/swap roles."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2773 pass / 0 fail / 14 ignored (+4 new).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
+        "cargo test -p hello-textfield = 16 pass (baseline 12 + 4 r57_x)."
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.22",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "hello-button + hello-radio-group + hello-checkbox-radio cascade carry.",
+        "R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.",
+        "R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry."
+      ],
+      "publishable_decision_summary": "R57.X.textfield §5.50 — hello-textfield retrofit: 13 RGB literal → 7 role resolve + 5 helper lift (text_fg / field_fill / selection / preedit_bg / preedit_underline) + 4 r57_x regression test.",
+      "publishable_changes_bullets": [
+        "hello-textfield: BG/FIELD/TEXT/CARET/SELECTION/PREEDIT const 제거 (13 RGB literal).",
+        "hello-textfield: 5 helper lift — text_fg / field_fill / selection / preedit_bg / preedit_underline.",
+        "hello-textfield: view + ime_caret_rect 양쪽 use_theme(THEME_TAG).theme() 경유 helper 라우팅.",
+        "hello-textfield: title=OnSurface, status=OnSurfaceMuted, caret/selection=Accent (a=0xa0).",
+        "hello-textfield: +4 r57_x regression test (idle / focused / selection-accent / palette swap)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2773 pass / 0 fail / 14 ignored (+4 new).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
+        "cargo test -p hello-textfield = 16 pass (baseline 12 + 4 r57_x)."
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.22",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hello-button + hello-radio-group + hello-checkbox-radio cascade carry.",
+        "R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.",
+        "R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry."
       ]
     },
     "Round 6": {
