@@ -52,4 +52,7 @@ pub use style::{
     Stroke, StrokeCap, TextAlign, TextDecoration, TextOverflow, TextStyle,
     scale_normalized_to_px,
 };
-pub use theme::{ColorRole, Theme, ThemeProvider, use_theme};
+pub use theme::{
+    ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider, set_system_color_scheme,
+    system_color_scheme, use_theme,
+};

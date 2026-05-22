@@ -5758,7 +5758,12 @@
         "TextField filled-variant: Idle=SurfaceContainerHighest, Focused=SurfaceContainerHigh.",
         "hello-button retrofit: 6 RGB literals replaced — M3 filled-tonal Button role mapping.",
         "hello-radio/group retrofit: 23 RGB literals via shared radio_border_color (Outline/Accent + lerp).",
-        "hello-checkbox + hello-slider + hello-slider-vertical retrofit: 41 RGB literals across 3 binaries."
+        "hello-checkbox + hello-slider + hello-slider-vertical retrofit: 41 RGB literals across 3 binaries.",
+        "R57.1: ThemeMode (Light/Dark/System) + SystemColorScheme (W3C prefers-color-scheme mirror) enums.",
+        "R57.1: ThemeProvider holds light+dark palettes + mode; theme() dispatches via mode + system signal.",
+        "R57.1: thread_local SystemColorScheme Signal + system_color_scheme/set_system_color_scheme fns.",
+        "R57.1: pinion-shell winit ThemeChanged + Window::theme() in resumed wire OS to global signal.",
+        "R57.1: ThemeProvider::set_theme removed; set_mode + set_light_palette/set_dark_palette replace."
       ],
       "alternatives_rejected": [
         {
@@ -5904,6 +5909,26 @@
         {
           "file": "examples/hello-slider-vertical/src/main.rs",
           "symbol": "slider_accent_for"
+        },
+        {
+          "file": "crates/pinion-core/src/theme.rs",
+          "symbol": "SystemColorScheme"
+        },
+        {
+          "file": "crates/pinion-core/src/theme.rs",
+          "symbol": "ThemeMode"
+        },
+        {
+          "file": "crates/pinion-core/src/theme.rs",
+          "symbol": "system_color_scheme"
+        },
+        {
+          "file": "crates/pinion-core/src/theme.rs",
+          "symbol": "set_system_color_scheme"
+        },
+        {
+          "file": "crates/pinion-shell/src/app.rs",
+          "symbol": "winit_theme_to_pinion_scheme"
         }
       ],
       "decision_status": "active"
@@ -28318,6 +28343,65 @@
         "R57.1 ThemeMode + prefers-color-scheme OS bridge axis (다음 textbook target).",
         "R57.2 typography + spacing tokens cascade carry.",
         "R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry."
+      ]
+    },
+    "Round 583": {
+      "decision_summary": "R57.1 5.50 ThemeMode + prefers-color-scheme OS bridge: SystemColorScheme thread_local Signal + ThemeProvider mode dispatch + winit ThemeChanged wiring + binary migration to set_mode.",
+      "changes_bullets": [
+        "pinion_core::theme: SystemColorScheme enum (W3C prefers-color-scheme mirror, Light/Dark/NoPreference).",
+        "pinion_core::theme: ThemeMode enum (Light/Dark/System, default System per Material 3 follow-system).",
+        "pinion_core::theme: thread_local SYSTEM_COLOR_SCHEME signal + system_color_scheme + set_system_color_scheme.",
+        "pinion_core::theme: ThemeProvider restructured to mode + light_palette + dark_palette signals; theme() dispatches via mode.",
+        "pinion_core::theme: set_theme removed (v0 to v1 clean cut); set_mode + set_light_palette + set_dark_palette replace.",
+        "pinion-shell::app: WindowEvent::ThemeChanged arm + Window::theme() initial readout in resumed wire OS signal.",
+        "pinion-shell::app: winit_theme_to_pinion_scheme helper maps winit Light/Dark to SystemColorScheme.",
+        "examples: hello-toggle/hello-theme/hello-button/hello-listbox/hello-textfield migrated set_theme to set_mode.",
+        "tests: 9 new theme tests pin mode + system signal defaults and 5-way mode-driven resolution + provider mutators."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2791 pass / 0 fail / 14 ignored (+9 from 2782 baseline).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
+        "cargo test -p pinion-core --lib theme = 26 pass (was 18; +8 R57.1 mode + system signal tests).",
+        "All 14 demos in tools/demos still pass per existing regression battery."
+      ],
+      "impact_refs": [
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "R57.X.theme-fade animation (Color::lerp + Animation<Theme> during palette swap, M3 Motion canonical).",
+        "ColorRole::Error tier (M3 error/onError/errorContainer/onErrorContainer for true error visual semantics).",
+        "TUI shell terminal background OSC 11 readout to bridge SystemColorScheme on the TUI backend (carry).",
+        "substrate test helper widget_view_with_theme(state, theme) to lift 6 binary Owner::new().run wrap duplication.",
+        "R57.2 typography + spacing tokens (TextStyleRole + SpacingToken cascade)."
+      ],
+      "publishable_decision_summary": "R57.1 §5.50 — ThemeMode + W3C prefers-color-scheme OS 브리지 + ThemeProvider 양팔레트 구조 + 5 binary set_mode 마이그레이션 (R57 axis next textbook step).",
+      "publishable_changes_bullets": [
+        "pinion_core::theme: SystemColorScheme enum (W3C prefers-color-scheme 미러, NoPreference/Light/Dark).",
+        "pinion_core::theme: ThemeMode (Light/Dark/System, default=System per M3 follow-system canonical).",
+        "pinion_core::theme: thread_local SystemColorScheme Signal + system_color_scheme + set_ free fn.",
+        "pinion_core::theme: ThemeProvider 재구성 — mode + light_palette + dark_palette 3-signal 구조.",
+        "pinion_core::theme: theme() = match mode { Light/Dark/System } → palette signal dispatch + OS read.",
+        "v0→v1 clean cut — set_theme 제거; set_mode + set_light_palette + set_dark_palette 치환.",
+        "pinion-shell::app: WindowEvent::ThemeChanged arm + resumed의 Window::theme() 초기 readout 푸시.",
+        "pinion-shell::app: winit_theme_to_pinion_scheme helper (winit Light/Dark → SystemColorScheme).",
+        "5 binary 마이그 — hello-toggle/theme/button/listbox/textfield 모두 set_mode/set_palette 호출.",
+        "+9 r57_1 test — system/mode default + 5-way mode 해상도 + provider mutator 독립성 핀."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2791 pass / 0 fail / 14 ignored (+9).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
+        "cargo test -p pinion-core --lib theme = 26 pass (R57.0 18 → 26, +8 R57.1 mode + OS 신호 핀).",
+        "tools/demos 14 demos 회귀 PASS (이전 baseline 동일)."
+      ],
+      "publishable_impact_refs": [
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R57.X.theme-fade — Color::lerp + Signal<Theme> 보간 (M3 Motion canonical, ~150 LOC carry).",
+        "ColorRole::Error tier — M3 error/onError/errorContainer/onErrorContainer (hello-button red carry).",
+        "TUI shell terminal OSC 11 readout — SystemColorScheme의 TUI backend 브리지 (axis carry).",
+        "substrate widget_view_with_theme(state, theme) lift — 6 binary Owner::new().run wrap 중복.",
+        "R57.2 typography + spacing tokens cascade (TextStyleRole + SpacingToken, axis-level)."
       ]
     },
     "Round 6": {

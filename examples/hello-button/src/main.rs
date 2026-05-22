@@ -39,6 +39,8 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+#[cfg(test)]
+use pinion_core::theme::ThemeMode;
 use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -469,15 +471,15 @@ mod a11y_tests {
 
     #[test]
     fn r57_x_button_panel_uses_surface_role_light_dark() {
-        // End-to-end: changing the active theme between two `view`
+        // End-to-end: flipping the ThemeMode between two `view`
         // invocations surfaces the Surface role somewhere in the
         // rendered scene tree.
         let owner = pinion_core::Owner::new();
         owner.run(|| {
-            use_theme(THEME_TAG).set_theme(Theme::light());
+            use_theme(THEME_TAG).set_mode(ThemeMode::Light);
             let light_scene = view(ButtonState::Idle, &Frame::new());
             assert!(scene_contains_fill(&light_scene, Theme::light().surface));
-            use_theme(THEME_TAG).set_theme(Theme::dark());
+            use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
             let dark_scene = view(ButtonState::Idle, &Frame::new());
             assert!(scene_contains_fill(&dark_scene, Theme::dark().surface));
         });

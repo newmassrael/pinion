@@ -36,7 +36,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{
-    Command, ColorRole, Frame, Scene, Theme, WidgetCore, use_theme,
+    Command, ColorRole, Frame, Scene, Theme, ThemeMode, WidgetCore, use_theme,
 };
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -364,7 +364,7 @@ impl WidgetCore for HelloThemeView {
         if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {
             if let IntrospectValue::Bool(on) = intent.payload {
                 let provider = use_theme(THEME_TAG);
-                provider.set_theme(if on { Theme::dark() } else { Theme::light() });
+                provider.set_mode(if on { ThemeMode::Dark } else { ThemeMode::Light });
             }
         }
         Vec::new()
@@ -462,22 +462,24 @@ mod tests {
     }
 
     #[test]
-    fn r57_0_view_swaps_surface_color_when_on_flips_via_set_theme() {
-        // The substrate exit criterion: a `set_theme` call against
+    fn r57_0_view_swaps_surface_color_when_on_flips_via_set_mode() {
+        // The substrate exit criterion: a `set_mode` call against
         // the use_theme provider must result in a view scene whose
         // root container fills with the swapped palette's surface
         // color. The view-fn itself does no branching on `on` for
         // colors; the swap rides the reactive subscription.
         let owner = Owner::new();
         owner.run(|| {
-            // First paint installs the light theme via the
-            // use_theme factory's `Theme::light` default.
+            // Force Light mode first — protects against an earlier
+            // test on this thread leaving SystemColorScheme=Dark in
+            // the thread-local global (R57.1 isolation contract).
+            use_theme(THEME_TAG).set_mode(ThemeMode::Light);
             let scene_light = view(ToggleState::Idle, false, &Frame::new());
             assert!(scene_contains_surface(&scene_light, Theme::light().surface));
             // Simulate the `update` reducer's side-effect: the
-            // toggle just flipped to `on = true`, so palette swaps
-            // to Theme::dark.
-            use_theme(THEME_TAG).set_theme(Theme::dark());
+            // toggle just flipped to `on = true`, so mode swaps to
+            // Dark.
+            use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
             let scene_dark = view(ToggleState::Idle, true, &Frame::new());
             assert!(scene_contains_surface(&scene_dark, Theme::dark().surface));
         });
@@ -508,15 +510,15 @@ mod tests {
     fn r57_x_theme_cleanup_track_off_uses_surface_container_highest() {
         let owner = Owner::new();
         owner.run(|| {
-            // Light palette: track Off fill == light.surface_container_highest.
-            use_theme(THEME_TAG).set_theme(Theme::light());
+            // Light mode: track Off fill == light.surface_container_highest.
+            use_theme(THEME_TAG).set_mode(ThemeMode::Light);
             let scene_light = view(ToggleState::Idle, false, &Frame::new());
             assert!(scene_contains_surface(
                 &scene_light,
                 Theme::light().surface_container_highest,
             ));
-            // Dark palette: track Off fill swaps with palette.
-            use_theme(THEME_TAG).set_theme(Theme::dark());
+            // Dark mode: track Off fill swaps with palette.
+            use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
             let scene_dark = view(ToggleState::Idle, false, &Frame::new());
             assert!(scene_contains_surface(
                 &scene_dark,

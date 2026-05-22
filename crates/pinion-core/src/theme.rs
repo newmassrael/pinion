@@ -1,40 +1,54 @@
-//! R57.0 §5.50 — Theming substrate.
+//! R57.0 §5.50 — Theming substrate. R57.1 §5.50 — `ThemeMode` +
+//! `prefers-color-scheme` OS bridge.
 //!
 //! Provides a typed [`ColorRole`] enum (Material 3 / W3C CSS variable
-//! mirror), a [`Theme`] palette, and a reactive [`ThemeProvider`]
-//! resolved through the canonical [`use_theme`] hook. Application code
-//! and widgets emit semantic roles ([`ColorRole::Surface`],
-//! [`ColorRole::OnSurface`], ...) instead of embedding raw RGB
-//! literals; the same view-fn renders correctly under both light and
-//! dark palettes by swapping the active [`Theme`] through
-//! [`ThemeProvider::set_theme`].
+//! mirror), a [`Theme`] palette, a [`ThemeMode`] enum
+//! (`Light` / `Dark` / `System`), a global [`SystemColorScheme`]
+//! signal (W3C `matchMedia("(prefers-color-scheme: dark)")` mirror),
+//! and a reactive [`ThemeProvider`] resolved through the canonical
+//! [`use_theme`] hook. Application code and widgets emit semantic
+//! roles ([`ColorRole::Surface`], [`ColorRole::OnSurface`], ...)
+//! instead of embedding raw RGB literals; the same view-fn renders
+//! correctly under both light and dark palettes — the provider holds
+//! both palettes side-by-side and dispatches to one of them through
+//! the active [`ThemeMode`] (and, when the mode is
+//! [`ThemeMode::System`], the platform's
+//! [`SystemColorScheme`] signal).
 //!
 //! ## Convention mirror
 //!
 //! - W3C CSS Custom Properties (`:root { --color-surface }`) — semantic
 //!   role tokens, cascade-resolved.
+//! - W3C `prefers-color-scheme` media query — process-global OS hint
+//!   that [`ThemeMode::System`] tracks via [`system_color_scheme`].
+//! - W3C `color-scheme` CSS property — the page-level mode declaration
+//!   (`light`, `dark`, `light dark`); [`ThemeMode`] is the same shape.
 //! - `SwiftUI` `Color.primary` / `Color.background` — declarative role
 //!   shorthand resolved by the active `ColorScheme`.
+//! - `SwiftUI` `Environment(\.colorScheme)` + `preferredColorScheme` —
+//!   the same `Light` / `Dark` / `follow-system` triple [`ThemeMode`]
+//!   exposes.
 //! - Material 3 Color Roles — `primary` / `onPrimary` / `surface` /
 //!   `onSurface` / `outline` / `onSurfaceVariant`, paired so that
 //!   foreground-on-background contrast is guaranteed by construction.
+//! - Material 3 "Follow system" theme toggle — the recommended app
+//!   default ([`ThemeMode::System`]).
 //! - Slint `Palette` / `FluentUI` Tokens — same structural shape.
 //!
-//! ## First-slice scope (R57.0 + R57.X.toggle extension)
+//! ## First-slice scope (R57.0 + R57.X.toggle extension + R57.1)
 //!
 //! Tier 1 color roles: [`ColorRole::Surface`], [`ColorRole::OnSurface`],
 //! [`ColorRole::OnSurfaceMuted`], [`ColorRole::Accent`],
-//! [`ColorRole::OnAccent`], [`ColorRole::Outline`], plus
-//! [`ColorRole::SurfaceContainerHighest`] (Material 3 canonical
-//! "filled inactive container" surface — added when `hello-toggle`'s
-//! retrofit (R57.X.toggle) surfaced that an inactive filled chip
-//! needs its own role separate from [`ColorRole::Outline`], which is
-//! a stroke / divider color). The role enum's `#[non_exhaustive]`
-//! annotation keeps every future extension `SemVer`-safe.
+//! [`ColorRole::OnAccent`], [`ColorRole::Outline`], plus the four
+//! Material 3 surface-elevation tiers ([`ColorRole::SurfaceContainerLow`]
+//! ... [`ColorRole::SurfaceContainerHighest`]) the `hello-listbox`
+//! retrofit (R57.X.listbox) surfaced. The role enum's
+//! `#[non_exhaustive]` annotation keeps every future extension
+//! `SemVer`-safe.
 //!
-//! Subsequent slices (R57.1+) layer in additional Material 3 container
-//! / variant pairs (`primaryContainer` / `onPrimaryContainer` / the
-//! remaining surfaceContainer tonal levels), the typography token
+//! Subsequent slices (R57.2+) layer in the remaining Material 3
+//! container / variant pairs (`primaryContainer` /
+//! `onPrimaryContainer`, the error role family), the typography token
 //! surface (font-size / line-height roles), and the spacing token
 //! surface — every extension lands behind the same `#[non_exhaustive]`
 //! shape on [`ColorRole`].
@@ -48,19 +62,41 @@
 //!   used by other typed hooks ([`use_text_edit_state`], ...) resolves
 //!   to a distinct slot per the per-type-slot contract
 //!   ([[owner-cache-typed-key]]).
-//! - [`ThemeProvider::theme()`] auto-subscribes the current view-fn
-//!   to palette swaps — the next [`ThemeProvider::set_theme`] from
-//!   anywhere in the application schedules a re-paint.
+//! - [`ThemeProvider::theme`] auto-subscribes the current view-fn to
+//!   the active [`ThemeMode`] signal, the relevant
+//!   light/dark palette signal, and (when the mode is
+//!   [`ThemeMode::System`]) the global [`SystemColorScheme`] signal —
+//!   any of those changing schedules a re-paint.
 //! - [`Theme::resolve(role)`](Theme::resolve) maps a [`ColorRole`] to
 //!   the bound [`Color`]. Every role is a required field on
 //!   [`Theme`], so the resolution is total — no fallback path triggers
 //!   under the current shape.
 //!
+//! ## OS bridge (R57.1)
+//!
+//! The platform backend ([`pinion-shell`](../../pinion_shell/index.html)
+//! Vello binding) translates the OS `prefers-color-scheme` signal
+//! (winit `WindowEvent::ThemeChanged` on desktop;
+//! `window.theme()` at window-creation time) into a
+//! [`SystemColorScheme`] value and calls
+//! [`set_system_color_scheme`]. The setter writes the global
+//! thread-local [`Signal<SystemColorScheme>`](Signal) so every
+//! [`ThemeProvider`] in [`ThemeMode::System`] re-resolves
+//! transparently; widgets see exactly one re-paint per OS theme flip.
+//!
+//! The signal is **process-thread-local**: pinion's UI thread is the
+//! sole writer (the backend's `WindowEvent` arm runs there) and the
+//! sole reader (view-fn invocation runs there). Tests run in their
+//! own thread, so they start at the
+//! [`SystemColorScheme::NoPreference`] default and explicit
+//! [`set_system_color_scheme`] calls in test setup are isolated from
+//! every other test on every other thread.
+//!
 //! ## Linear-space invariant
 //!
 //! Theme palette entries are sRGB-encoded [`Color`]s; the
 //! [`Color::lerp`](crate::style::Color::lerp) (R51.151) path is the
-//! canonical inter-palette fade (R57.1 carry) and remains
+//! canonical inter-palette fade (R57.X.theme-fade carry) and remains
 //! linear-space, so theme-fade animations render perceptually correct
 //! without theme-specific special-casing.
 //!
@@ -70,6 +106,95 @@ use std::rc::Rc;
 
 use crate::reactive::{Owner, Signal};
 use crate::style::Color;
+
+// ────────────────────────────────────────────────────────────────────
+// SystemColorScheme — W3C `prefers-color-scheme` mirror
+// ────────────────────────────────────────────────────────────────────
+
+/// Process-thread-global OS color-scheme preference — the same shape
+/// W3C's `matchMedia("(prefers-color-scheme: dark)")` reports
+/// (`light` / `dark` / `no-preference`). [`ThemeMode::System`]
+/// resolves through this signal so applications that opt into the
+/// canonical Material 3 / `SwiftUI` "follow system" default swap
+/// palettes the moment the user toggles their OS dark-mode setting
+/// — no per-app polling, no per-widget plumbing.
+///
+/// Read via [`system_color_scheme`] (subscribe-aware inside a
+/// view-fn), written via [`set_system_color_scheme`] (called by the
+/// platform backend on `WindowEvent::ThemeChanged` and once at window
+/// creation). The default is [`Self::NoPreference`], which resolves
+/// the same as [`Self::Light`] per W3C — the page falls back to the
+/// light palette when the OS reports no preference.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[non_exhaustive]
+pub enum SystemColorScheme {
+    /// W3C `prefers-color-scheme: no-preference`. The user has not
+    /// expressed a preference; per the W3C spec, the page renders in
+    /// its light baseline. The default for fresh threads (tests, the
+    /// first frame before the platform backend has reported in).
+    #[default]
+    NoPreference,
+    /// W3C `prefers-color-scheme: light`. The user (or platform
+    /// default) has indicated a preference for light surfaces.
+    Light,
+    /// W3C `prefers-color-scheme: dark`. The user has indicated a
+    /// preference for dark surfaces — the canonical "OS dark mode"
+    /// signal on macOS / Linux / Windows.
+    Dark,
+}
+
+thread_local! {
+    /// R57.1 §5.50 — global OS color-scheme signal. One per UI
+    /// thread; written by the platform backend on
+    /// `WindowEvent::ThemeChanged`, read by every
+    /// [`ThemeProvider`] in [`ThemeMode::System`] from inside a
+    /// view-fn (and so subscribed to by every such view).
+    static SYSTEM_COLOR_SCHEME: Signal<SystemColorScheme> =
+        Signal::new(SystemColorScheme::NoPreference);
+}
+
+/// Read the global OS [`SystemColorScheme`]. Auto-subscribes the
+/// current view-fn (or other reactive scope) so the next
+/// [`set_system_color_scheme`] from the platform backend schedules a
+/// re-paint of every subscriber.
+///
+/// Returns [`SystemColorScheme::NoPreference`] on every fresh thread
+/// (the default the [`Signal`] starts at). The platform backend
+/// pushes the actual OS value into the signal at window creation
+/// time; before that point, view-fns see the default and consequently
+/// render their light palette (W3C fallback).
+#[must_use]
+pub fn system_color_scheme() -> SystemColorScheme {
+    SYSTEM_COLOR_SCHEME.with(Signal::get)
+}
+
+/// Write the global OS [`SystemColorScheme`]. The platform backend
+/// (pinion-shell on the Vello side) calls this once at window
+/// creation (translating winit's `Window::theme()` readout) and again
+/// on every `WindowEvent::ThemeChanged`. Equality-skips: a no-op
+/// write (the OS event-dispatch path can emit the same value twice
+/// after focus regain on some platforms) does not flag the signal
+/// dirty and does not re-run subscribers.
+///
+/// Application code should not call this directly — it is the
+/// platform's responsibility to translate the OS signal. The setter
+/// is exposed `pub` rather than `pub(crate)` only because the
+/// platform backend lives in a sibling crate (`pinion-shell`), which
+/// the closed-core dependency direction (§6.3) keeps outside
+/// `pinion-core`.
+pub fn set_system_color_scheme(scheme: SystemColorScheme) {
+    SYSTEM_COLOR_SCHEME.with(|s| s.set(scheme));
+}
 
 // ────────────────────────────────────────────────────────────────────
 // ColorRole — Material 3 / W3C CSS variable mirror
@@ -183,12 +308,13 @@ impl ColorRole {
 /// A complete color palette — maps every [`ColorRole`] to a concrete
 /// [`Color`]. Constructed via the [`Theme::light`] / [`Theme::dark`]
 /// preset factories or via the per-field literal constructor;
-/// applications swap palettes atomically by setting a new [`Theme`]
-/// onto a [`ThemeProvider`] rather than patching individual fields.
+/// applications hold both light and dark palettes on a
+/// [`ThemeProvider`] and swap which is active through
+/// [`ThemeProvider::set_mode`] rather than patching individual fields.
 ///
-/// `Theme` is `Copy` (six `Color` fields, each four `u8`s); the
-/// runtime swap path uses [`Signal<Theme>`](Signal) so a `set_theme`
-/// call collapses into one reactive notification — the textbook
+/// `Theme` is `Copy` (ten `Color` fields, each four `u8`s); the
+/// runtime swap path uses [`Signal<Theme>`](Signal) so a per-palette
+/// re-tone collapses into one reactive notification — the textbook
 /// atomic-update contract.
 ///
 /// Field-naming convention: `snake_case` mirror of the
@@ -333,12 +459,64 @@ impl Default for Theme {
 }
 
 // ────────────────────────────────────────────────────────────────────
+// ThemeMode — application choice of which palette is active
+// ────────────────────────────────────────────────────────────────────
+
+/// Application-level theme mode. Mirrors the W3C `color-scheme` CSS
+/// property values (`light` / `dark` / `light dark`) and the
+/// `SwiftUI` `preferredColorScheme` enum (`.light` / `.dark` /
+/// `nil = follow system`).
+///
+/// The default is [`Self::System`] — the canonical Material 3 / iOS /
+/// macOS app behavior of following the OS-level `prefers-color-scheme`
+/// signal so the application visually matches the rest of the user's
+/// desktop without any per-app setting.
+///
+/// `#[non_exhaustive]` lets future hint variants (`HighContrast`,
+/// `Sepia`, ...) land in a `SemVer` minor — both real Material 3 /
+/// `FluentUI` design systems already specify high-contrast accessibility
+/// modes that mirror the same enum-extension shape.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[non_exhaustive]
+pub enum ThemeMode {
+    /// Force the light palette regardless of the OS signal. The
+    /// application opts out of "follow system"; equivalent to the
+    /// `SwiftUI` `preferredColorScheme(.light)` page-level pin.
+    Light,
+    /// Force the dark palette regardless of the OS signal. Equivalent
+    /// to `SwiftUI` `preferredColorScheme(.dark)`.
+    Dark,
+    /// Follow the OS [`SystemColorScheme`] signal. The default — the
+    /// recommended Material 3 / iOS / macOS application behavior.
+    /// When the signal is [`SystemColorScheme::NoPreference`] the
+    /// provider resolves to the light palette per the W3C
+    /// `prefers-color-scheme` fallback convention.
+    #[default]
+    System,
+}
+
+// ────────────────────────────────────────────────────────────────────
 // ThemeProvider — reactive wrapper, Owner::cache-resolved
 // ────────────────────────────────────────────────────────────────────
 
-/// Reactive owner of the active [`Theme`]. Wraps a [`Signal<Theme>`]
-/// so [`Self::theme`] auto-subscribes the current view-fn and
-/// [`Self::set_theme`] triggers a re-paint on every subscriber.
+/// Reactive owner of the application's theming state. Carries both a
+/// light palette and a dark palette side-by-side (the W3C
+/// `<meta name="color-scheme" content="light dark">` shape) and an
+/// active [`ThemeMode`] choosing which is rendered. [`Self::theme`]
+/// auto-subscribes the current view-fn to every signal the resolution
+/// reads (mode + the active palette + the global
+/// [`SystemColorScheme`] when the mode is [`ThemeMode::System`]) so a
+/// swap on any of them schedules a re-paint.
 ///
 /// One [`ThemeProvider`] per logical theming scope — typically one
 /// per application, looked up by tag (e.g. `"app"`). The
@@ -350,10 +528,21 @@ impl Default for Theme {
 /// other `pinion-core` reactive primitive. UI-thread only.
 #[derive(Debug)]
 pub struct ThemeProvider {
-    /// Active palette — read via [`Self::theme`] (auto-subscribes the
-    /// caller), written via [`Self::set_theme`] (signal equality-skip
-    /// short-circuits no-op swaps).
-    palette: Signal<Theme>,
+    /// Active mode — read via [`Self::mode`] (auto-subscribes the
+    /// caller), written via [`Self::set_mode`]. Default
+    /// [`ThemeMode::System`].
+    mode: Signal<ThemeMode>,
+    /// Light-mode palette — applied when [`Self::mode`] is
+    /// [`ThemeMode::Light`], or [`ThemeMode::System`] resolves to
+    /// [`SystemColorScheme::NoPreference`] / [`SystemColorScheme::Light`].
+    /// Defaults to [`Theme::light`]; applications customize via
+    /// [`Self::set_light_palette`].
+    light_palette: Signal<Theme>,
+    /// Dark-mode palette — applied when [`Self::mode`] is
+    /// [`ThemeMode::Dark`], or [`ThemeMode::System`] resolves to
+    /// [`SystemColorScheme::Dark`]. Defaults to [`Theme::dark`];
+    /// applications customize via [`Self::set_dark_palette`].
+    dark_palette: Signal<Theme>,
     /// Symbolic identifier — the [`Owner::cache`] key that resolved
     /// this provider. Echoed back through [`Self::tag`] so consumers
     /// can re-derive the cache key without repeating the literal.
@@ -361,48 +550,107 @@ pub struct ThemeProvider {
 }
 
 impl ThemeProvider {
-    /// Construct a fresh provider with `initial` as the starting
-    /// palette and no recorded tag. Used by tests + manual wiring;
-    /// the canonical application path goes through [`use_theme`]
-    /// (which calls [`Self::with_tag`] under the hood).
+    /// Construct a fresh provider with no recorded tag and the
+    /// canonical defaults — mode [`ThemeMode::System`], light palette
+    /// [`Theme::light`], dark palette [`Theme::dark`]. Used by tests
+    /// and manual wiring; the canonical application path goes through
+    /// [`use_theme`] (which calls [`Self::with_tag`] under the hood).
     #[must_use]
-    pub fn new(initial: Theme) -> Self {
+    pub fn new() -> Self {
         Self {
-            palette: Signal::new(initial),
+            mode: Signal::new(ThemeMode::default()),
+            light_palette: Signal::new(Theme::light()),
+            dark_palette: Signal::new(Theme::dark()),
             tag: None,
         }
     }
 
-    /// Construct a provider with `initial` as the starting palette
-    /// and `tag` recorded as the symbolic identifier. Used as the
-    /// [`Owner::cache`] factory by [`use_theme`] so the provider
+    /// Construct a provider with `tag` recorded as the symbolic
+    /// identifier and the same defaults [`Self::new`] uses. Used as
+    /// the [`Owner::cache`] factory by [`use_theme`] so the provider
     /// remembers its own tag without the caller repeating the
     /// literal.
     #[must_use]
-    pub fn with_tag(tag: &'static str, initial: Theme) -> Self {
+    pub fn with_tag(tag: &'static str) -> Self {
         Self {
-            palette: Signal::new(initial),
+            mode: Signal::new(ThemeMode::default()),
+            light_palette: Signal::new(Theme::light()),
+            dark_palette: Signal::new(Theme::dark()),
             tag: Some(tag),
         }
     }
 
-    /// Current palette. Triggers a [`Signal`] subscription when called
+    /// Active mode. Triggers a [`Signal`] subscription when called
     /// inside a view-fn — the view re-runs on the next
-    /// [`Self::set_theme`] that changes the palette (equality-skip
-    /// shorts out no-op swaps).
+    /// [`Self::set_mode`] that changes the mode (equality-skip shorts
+    /// out no-op writes).
     #[must_use]
-    pub fn theme(&self) -> Theme {
-        self.palette.get()
+    pub fn mode(&self) -> ThemeMode {
+        self.mode.get()
     }
 
-    /// Replace the active palette atomically. Subscribers of
-    /// [`Self::theme`] re-run on the next reactive tick; the swap is
-    /// a single signal write so all six role resolutions appear to
-    /// flip in one beat (textbook atomic-update contract — same
-    /// shape [`ScrollState::set_max`](crate::widgets::scroll::ScrollState::set_max)
-    /// uses for its multi-axis writes).
-    pub fn set_theme(&self, theme: Theme) {
-        self.palette.set(theme);
+    /// Replace the active mode atomically. Subscribers of
+    /// [`Self::theme`] / [`Self::mode`] re-run on the next reactive
+    /// tick.
+    pub fn set_mode(&self, mode: ThemeMode) {
+        self.mode.set(mode);
+    }
+
+    /// Active light palette. Auto-subscribes the caller. The
+    /// application customizes the light palette by setting it once at
+    /// startup via [`Self::set_light_palette`] (brand override) — the
+    /// provider then keeps both palettes side-by-side and dispatches
+    /// through [`Self::mode`].
+    #[must_use]
+    pub fn light_palette(&self) -> Theme {
+        self.light_palette.get()
+    }
+
+    /// Replace the light palette atomically. Triggers a re-paint of
+    /// every subscriber when the mode is currently resolving to the
+    /// light side (mode [`ThemeMode::Light`], or
+    /// [`ThemeMode::System`] +
+    /// [`SystemColorScheme::Light`] / [`SystemColorScheme::NoPreference`]).
+    pub fn set_light_palette(&self, theme: Theme) {
+        self.light_palette.set(theme);
+    }
+
+    /// Active dark palette. Mirror of [`Self::light_palette`] for the
+    /// dark side.
+    #[must_use]
+    pub fn dark_palette(&self) -> Theme {
+        self.dark_palette.get()
+    }
+
+    /// Replace the dark palette atomically. Mirror of
+    /// [`Self::set_light_palette`] for the dark side.
+    pub fn set_dark_palette(&self, theme: Theme) {
+        self.dark_palette.set(theme);
+    }
+
+    /// Resolved active palette — dispatches through [`Self::mode`]:
+    /// [`ThemeMode::Light`] returns [`Self::light_palette`],
+    /// [`ThemeMode::Dark`] returns [`Self::dark_palette`], and
+    /// [`ThemeMode::System`] consults the global
+    /// [`system_color_scheme`] signal (so the caller auto-subscribes
+    /// to every OS theme flip in addition to the local provider
+    /// signals).
+    ///
+    /// The [`SystemColorScheme::NoPreference`] OS value resolves to
+    /// the light palette per the W3C `prefers-color-scheme` fallback
+    /// convention.
+    #[must_use]
+    pub fn theme(&self) -> Theme {
+        match self.mode.get() {
+            ThemeMode::Light => self.light_palette.get(),
+            ThemeMode::Dark => self.dark_palette.get(),
+            ThemeMode::System => match system_color_scheme() {
+                SystemColorScheme::Dark => self.dark_palette.get(),
+                SystemColorScheme::Light | SystemColorScheme::NoPreference => {
+                    self.light_palette.get()
+                }
+            },
+        }
     }
 
     /// Shorthand for [`Theme::resolve`] against the active palette.
@@ -422,9 +670,10 @@ impl ThemeProvider {
 }
 
 impl Default for ThemeProvider {
-    /// Defaults to [`ThemeProvider::new`] with [`Theme::light`].
+    /// Defaults to [`ThemeProvider::new`] — mode [`ThemeMode::System`]
+    /// + [`Theme::light`] light palette + [`Theme::dark`] dark palette.
     fn default() -> Self {
-        Self::new(Theme::light())
+        Self::new()
     }
 }
 
@@ -444,12 +693,12 @@ impl Default for ThemeProvider {
 /// `use_theme` and to a hypothetical `use_app_state` would not
 /// collide.
 ///
-/// First-call factory installs a [`ThemeProvider`] wrapping
-/// [`Theme::light`]; subsequent calls reuse the cached `Rc<_>`.
-/// Applications swap the active palette via
-/// [`ThemeProvider::set_theme`] — the runtime [`Owner::cache`] slot
-/// holds the same `Rc` for the lifetime of the owner; only the
-/// inner [`Signal<Theme>`] changes value.
+/// First-call factory installs a fresh [`ThemeProvider`] — mode
+/// [`ThemeMode::System`], light palette [`Theme::light`], dark palette
+/// [`Theme::dark`]; subsequent calls reuse the cached `Rc<_>`.
+/// Applications swap the active mode via [`ThemeProvider::set_mode`]
+/// — the runtime [`Owner::cache`] slot holds the same `Rc` for the
+/// lifetime of the owner; only the inner signals change.
 ///
 /// # Panics
 ///
@@ -469,7 +718,7 @@ impl Default for ThemeProvider {
 pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
     Owner::current()
         .expect("use_theme requires an active Owner scope")
-        .cache(tag, || ThemeProvider::with_tag(tag, Theme::light()))
+        .cache(tag, || ThemeProvider::with_tag(tag))
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -478,14 +727,22 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 #[cfg(test)]
 mod tests {
-    //! R57.0 §5.50 — Theme substrate regression battery.
+    //! R57.0 + R57.1 §5.50 — Theme substrate regression battery.
     //! Covers: [`ColorRole`] exhaustive resolve, light/dark palette
-    //! field-pinning, [`Default`] = light, [`ThemeProvider`] initial
-    //! state, [`ThemeProvider::set_theme`] swap, [`use_theme`] hook
-    //! caching (same tag → same [`Rc`], no double-init), [`use_theme`]
-    //! outside [`Owner`] panics.
+    //! field-pinning, [`Default`] = light, [`ThemeMode`] +
+    //! [`SystemColorScheme`] defaults, [`system_color_scheme`] /
+    //! [`set_system_color_scheme`] mutation, [`ThemeProvider`] new
+    //! defaults, [`ThemeProvider::set_mode`] +
+    //! [`ThemeProvider::set_light_palette`] +
+    //! [`ThemeProvider::set_dark_palette`] mutations,
+    //! [`ThemeProvider::theme`] mode-driven resolution incl. System +
+    //! global signal, [`use_theme`] hook caching (same tag → same
+    //! [`Rc`], no double-init), [`use_theme`] outside [`Owner`] panics.
 
-    use super::{use_theme, ColorRole, Theme, ThemeProvider};
+    use super::{
+        ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider, set_system_color_scheme,
+        system_color_scheme, use_theme,
+    };
     use crate::reactive::Owner;
     use crate::style::Color;
     use std::rc::Rc;
@@ -647,48 +904,169 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // ThemeProvider — initial state + tag + set_theme atomic swap
+    // R57.1 — SystemColorScheme + ThemeMode defaults
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn r57_0_provider_new_records_initial_palette_and_no_tag() {
-        let p = ThemeProvider::new(Theme::dark());
-        assert_eq!(p.theme(), Theme::dark());
+    fn r57_1_system_color_scheme_default_is_no_preference() {
+        // W3C `prefers-color-scheme: no-preference` is the spec
+        // default — pin it so a future enum reshuffle does not
+        // silently flip the application's first-frame appearance.
+        assert_eq!(SystemColorScheme::default(), SystemColorScheme::NoPreference);
+    }
+
+    #[test]
+    fn r57_1_theme_mode_default_is_system() {
+        // Material 3 / iOS / macOS canonical default — follow the OS
+        // signal. Pinning the Default impl protects against a future
+        // refactor that might quietly hardcode Light or Dark.
+        assert_eq!(ThemeMode::default(), ThemeMode::System);
+    }
+
+    #[test]
+    fn r57_1_set_system_color_scheme_round_trips() {
+        // The global setter must round-trip: write Dark, read Dark;
+        // write Light, read Light; write NoPreference, read
+        // NoPreference. Pinned to guard the thread-local Signal
+        // wiring at the bottom of [[r57-1-prefers-color-scheme-os-bridge]].
+        set_system_color_scheme(SystemColorScheme::Dark);
+        assert_eq!(system_color_scheme(), SystemColorScheme::Dark);
+        set_system_color_scheme(SystemColorScheme::Light);
+        assert_eq!(system_color_scheme(), SystemColorScheme::Light);
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        assert_eq!(system_color_scheme(), SystemColorScheme::NoPreference);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R57.1 — ThemeProvider new defaults + mode/palette mutators
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r57_1_provider_new_uses_default_mode_and_baseline_palettes() {
+        // Fresh provider starts at the textbook defaults — mode
+        // System, light = Theme::light(), dark = Theme::dark(). No
+        // tag recorded for the bare new() path.
+        let p = ThemeProvider::new();
+        assert_eq!(p.mode(), ThemeMode::System);
+        assert_eq!(p.light_palette(), Theme::light());
+        assert_eq!(p.dark_palette(), Theme::dark());
         assert_eq!(p.tag(), None);
     }
 
     #[test]
-    fn r57_0_provider_with_tag_records_tag_alongside_palette() {
-        let p = ThemeProvider::with_tag("app", Theme::light());
-        assert_eq!(p.theme(), Theme::light());
+    fn r57_1_provider_with_tag_records_tag_alongside_defaults() {
+        let p = ThemeProvider::with_tag("app");
+        assert_eq!(p.mode(), ThemeMode::System);
+        assert_eq!(p.light_palette(), Theme::light());
+        assert_eq!(p.dark_palette(), Theme::dark());
         assert_eq!(p.tag(), Some("app"));
     }
 
     #[test]
-    fn r57_0_provider_set_theme_swaps_palette() {
-        let p = ThemeProvider::new(Theme::light());
-        p.set_theme(Theme::dark());
+    fn r57_1_provider_set_mode_round_trips() {
+        let p = ThemeProvider::new();
+        p.set_mode(ThemeMode::Light);
+        assert_eq!(p.mode(), ThemeMode::Light);
+        p.set_mode(ThemeMode::Dark);
+        assert_eq!(p.mode(), ThemeMode::Dark);
+        p.set_mode(ThemeMode::System);
+        assert_eq!(p.mode(), ThemeMode::System);
+    }
+
+    #[test]
+    fn r57_1_provider_set_palettes_round_trip_independently() {
+        // Setting the light palette does not touch the dark palette,
+        // and vice-versa — pinned because both signals share the
+        // `Signal<Theme>` shape and a refactor that consolidated
+        // them could silently break this independence.
+        let p = ThemeProvider::new();
+        let custom_light = Theme {
+            accent: Color::rgb(0x00, 0xff, 0x00),
+            ..Theme::light()
+        };
+        p.set_light_palette(custom_light);
+        assert_eq!(p.light_palette(), custom_light);
+        assert_eq!(p.dark_palette(), Theme::dark());
+
+        let custom_dark = Theme {
+            accent: Color::rgb(0xff, 0x00, 0x00),
+            ..Theme::dark()
+        };
+        p.set_dark_palette(custom_dark);
+        assert_eq!(p.dark_palette(), custom_dark);
+        assert_eq!(p.light_palette(), custom_light);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R57.1 — ThemeProvider::theme mode-driven resolution
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r57_1_theme_mode_light_resolves_to_light_palette() {
+        // Force System=Dark first to prove `Light` overrides the OS
+        // signal — that is the spec contract for the
+        // `preferredColorScheme(.light)` override case.
+        set_system_color_scheme(SystemColorScheme::Dark);
+        let p = ThemeProvider::new();
+        p.set_mode(ThemeMode::Light);
+        assert_eq!(p.theme(), Theme::light());
+        // Restore baseline for the next test on this thread.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+    }
+
+    #[test]
+    fn r57_1_theme_mode_dark_resolves_to_dark_palette() {
+        set_system_color_scheme(SystemColorScheme::Light);
+        let p = ThemeProvider::new();
+        p.set_mode(ThemeMode::Dark);
         assert_eq!(p.theme(), Theme::dark());
-        // Back-and-forth — no caching of the previous value.
-        p.set_theme(Theme::light());
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+    }
+
+    #[test]
+    fn r57_1_theme_mode_system_light_resolves_to_light_palette() {
+        set_system_color_scheme(SystemColorScheme::Light);
+        let p = ThemeProvider::new();
+        // System mode is the default — no explicit set_mode needed.
+        assert_eq!(p.theme(), Theme::light());
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+    }
+
+    #[test]
+    fn r57_1_theme_mode_system_dark_resolves_to_dark_palette() {
+        set_system_color_scheme(SystemColorScheme::Dark);
+        let p = ThemeProvider::new();
+        assert_eq!(p.theme(), Theme::dark());
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+    }
+
+    #[test]
+    fn r57_1_theme_mode_system_no_preference_falls_back_to_light() {
+        // W3C `prefers-color-scheme: no-preference` falls back to the
+        // light palette — the spec contract pinned here.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let p = ThemeProvider::new();
         assert_eq!(p.theme(), Theme::light());
     }
 
     #[test]
-    fn r57_0_provider_resolve_dispatches_to_active_palette() {
-        let p = ThemeProvider::new(Theme::light());
-        assert_eq!(p.resolve(ColorRole::Surface), Theme::light().surface);
-        p.set_theme(Theme::dark());
-        assert_eq!(p.resolve(ColorRole::Surface), Theme::dark().surface);
-        // Accent shifts under dark — the resolve must follow the
-        // active palette, not the construction-time one.
+    fn r57_1_provider_resolve_routes_through_active_palette() {
+        // resolve() must dispatch to the active palette — under
+        // System+Dark, ColorRole::Accent resolves to Dark accent.
+        set_system_color_scheme(SystemColorScheme::Dark);
+        let p = ThemeProvider::new();
         assert_eq!(p.resolve(ColorRole::Accent), Theme::dark().accent);
+        p.set_mode(ThemeMode::Light);
+        assert_eq!(p.resolve(ColorRole::Accent), Theme::light().accent);
+        set_system_color_scheme(SystemColorScheme::NoPreference);
     }
 
     #[test]
-    fn r57_0_provider_default_uses_light_palette_no_tag() {
+    fn r57_1_provider_default_uses_system_mode_and_baseline_palettes() {
         let p = ThemeProvider::default();
-        assert_eq!(p.theme(), Theme::light());
+        assert_eq!(p.mode(), ThemeMode::System);
+        assert_eq!(p.light_palette(), Theme::light());
+        assert_eq!(p.dark_palette(), Theme::dark());
         assert_eq!(p.tag(), None);
     }
 
@@ -697,11 +1075,13 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn r57_0_use_theme_returns_provider_with_initial_light_palette() {
+    fn r57_0_use_theme_returns_provider_with_default_mode_and_palettes() {
         let owner = Owner::new();
         owner.run(|| {
             let p = use_theme("app");
-            assert_eq!(p.theme(), Theme::light());
+            assert_eq!(p.mode(), ThemeMode::System);
+            assert_eq!(p.light_palette(), Theme::light());
+            assert_eq!(p.dark_palette(), Theme::dark());
             assert_eq!(p.tag(), Some("app"));
         });
     }
@@ -722,33 +1102,34 @@ mod tests {
     #[test]
     fn r57_0_use_theme_distinct_tags_resolve_distinct_providers() {
         // Two separate logical scopes ("app", "modal") get
-        // independent providers — a swap on one MUST NOT propagate
-        // to the other. Mirrors React's `useContext` scoping.
+        // independent providers — a mode flip on one MUST NOT
+        // propagate to the other. Mirrors React's `useContext`
+        // scoping.
         let owner = Owner::new();
         owner.run(|| {
             let app = use_theme("app");
             let modal = use_theme("modal");
             assert!(!Rc::ptr_eq(&app, &modal));
-            app.set_theme(Theme::dark());
-            assert_eq!(app.theme(), Theme::dark());
-            assert_eq!(modal.theme(), Theme::light());
+            app.set_mode(ThemeMode::Dark);
+            assert_eq!(app.mode(), ThemeMode::Dark);
+            assert_eq!(modal.mode(), ThemeMode::System);
         });
     }
 
     #[test]
-    fn r57_0_use_theme_swap_persists_across_view_runs() {
-        // The provider lives in Owner::cache, so a swap inside one
-        // view-run must survive into the next view-run on the same
-        // owner. Mirrors the cross-paint persistence contract that
-        // ScrollState + CaretBlink rely on.
+    fn r57_0_use_theme_mode_persists_across_view_runs() {
+        // The provider lives in Owner::cache, so a mode flip inside
+        // one view-run must survive into the next view-run on the
+        // same owner. Mirrors the cross-paint persistence contract
+        // that ScrollState + CaretBlink rely on.
         let owner = Owner::new();
         owner.run(|| {
             let p = use_theme("app");
-            p.set_theme(Theme::dark());
+            p.set_mode(ThemeMode::Dark);
         });
         owner.run(|| {
             let p = use_theme("app");
-            assert_eq!(p.theme(), Theme::dark());
+            assert_eq!(p.mode(), ThemeMode::Dark);
         });
     }
 

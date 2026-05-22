@@ -78,6 +78,8 @@ use pinion_core::widgets::scrollbar::{
     scrollbar_thumb_rect, ScrollBarExternal, ScrollBarOrientation,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+#[cfg(test)]
+use pinion_core::theme::ThemeMode;
 use pinion_core::{Frame, Owner, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -1302,9 +1304,15 @@ mod a11y_tests {
     // ─────────────────────────────────────────────────────────────
 
     fn run_view_with_palette(state: ListState, theme: Theme) -> Scene {
+        // R57.1 substrate: install `theme` as the light palette and
+        // force Light mode so the provider resolves to exactly `theme`
+        // regardless of the global `SystemColorScheme` value an
+        // earlier test on the same thread might have written.
         let owner = Owner::new();
         owner.run(|| {
-            use_theme(THEME_TAG).set_theme(theme);
+            let provider = use_theme(THEME_TAG);
+            provider.set_light_palette(theme);
+            provider.set_mode(ThemeMode::Light);
             view(state, &Frame::default())
         })
     }

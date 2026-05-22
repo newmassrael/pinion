@@ -3880,6 +3880,11 @@ if __name__ == "__main__":
 - hello-button retrofit: 6 RGB literals replaced — M3 filled-tonal Button role mapping.
 - hello-radio/group retrofit: 23 RGB literals via shared radio_border_color (Outline/Accent + lerp).
 - hello-checkbox + hello-slider + hello-slider-vertical retrofit: 41 RGB literals across 3 binaries.
+- R57.1: ThemeMode (Light/Dark/System) + SystemColorScheme (W3C prefers-color-scheme mirror) enums.
+- R57.1: ThemeProvider holds light+dark palettes + mode; theme() dispatches via mode + system signal.
+- R57.1: thread_local SystemColorScheme Signal + system_color_scheme/set_system_color_scheme fns.
+- R57.1: pinion-shell winit ThemeChanged + Window::theme() in resumed wire OS to global signal.
+- R57.1: ThemeProvider::set_theme removed; set_mode + set_light_palette/set_dark_palette replace.
 
 
 
@@ -3982,6 +3987,11 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - examples/hello-checkbox/src/main.rs:checkbox_outline_for
 - examples/hello-slider/src/main.rs:slider_accent_for
 - examples/hello-slider-vertical/src/main.rs:slider_accent_for
+- crates/pinion-core/src/theme.rs:SystemColorScheme
+- crates/pinion-core/src/theme.rs:ThemeMode
+- crates/pinion-core/src/theme.rs:system_color_scheme
+- crates/pinion-core/src/theme.rs:set_system_color_scheme
+- crates/pinion-shell/src/app.rs:winit_theme_to_pinion_scheme
 
 
 
@@ -17484,6 +17494,42 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - R57.1 ThemeMode + prefers-color-scheme OS bridge axis (다음 textbook target).
 - R57.2 typography + spacing tokens cascade carry.
 - R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry.
+
+
+
+### Round 583 — R57.1 §5.50 — ThemeMode + W3C prefers-color-scheme OS 브리지 + ThemeProvider 양팔레트 구조 + 5 binary set_mode 마이그레이션 (R57 axis next textbook step).
+
+**Changes**:
+- pinion_core::theme: SystemColorScheme enum (W3C prefers-color-scheme 미러, NoPreference/Light/Dark).
+- pinion_core::theme: ThemeMode (Light/Dark/System, default=System per M3 follow-system canonical).
+- pinion_core::theme: thread_local SystemColorScheme Signal + system_color_scheme + set_ free fn.
+- pinion_core::theme: ThemeProvider 재구성 — mode + light_palette + dark_palette 3-signal 구조.
+- pinion_core::theme: theme() = match mode { Light/Dark/System } → palette signal dispatch + OS read.
+- v0→v1 clean cut — set_theme 제거; set_mode + set_light_palette + set_dark_palette 치환.
+- pinion-shell::app: WindowEvent::ThemeChanged arm + resumed의 Window::theme() 초기 readout 푸시.
+- pinion-shell::app: winit_theme_to_pinion_scheme helper (winit Light/Dark → SystemColorScheme).
+- 5 binary 마이그 — hello-toggle/theme/button/listbox/textfield 모두 set_mode/set_palette 호출.
+- +9 r57_1 test — system/mode default + 5-way mode 해상도 + provider mutator 독립성 핀.
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2791 pass / 0 fail / 14 ignored (+9).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.
+- cargo test -p pinion-core --lib theme = 26 pass (R57.0 18 → 26, +8 R57.1 mode + OS 신호 핀).
+- tools/demos 14 demos 회귀 PASS (이전 baseline 동일).
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- R57.X.theme-fade — Color::lerp + Signal<Theme> 보간 (M3 Motion canonical, ~150 LOC carry).
+- ColorRole::Error tier — M3 error/onError/errorContainer/onErrorContainer (hello-button red carry).
+- TUI shell terminal OSC 11 readout — SystemColorScheme의 TUI backend 브리지 (axis carry).
+- substrate widget_view_with_theme(state, theme) lift — 6 binary Owner::new().run wrap 중복.
+- R57.2 typography + spacing tokens cascade (TextStyleRole + SpacingToken, axis-level).
 
 
 

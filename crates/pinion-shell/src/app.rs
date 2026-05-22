@@ -461,6 +461,21 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // override, set_ime_allowed(false) when the widget doesn't
         // override).
         window.set_ime_allowed(true);
+        // R57.1 §5.50 — push the initial OS `prefers-color-scheme`
+        // reading into the global signal so the first paint already
+        // reflects the user's OS dark-mode setting. winit's
+        // `WindowEvent::ThemeChanged` fires only on *changes*, never
+        // at startup, so a missing initial readout would leave the
+        // signal at [`SystemColorScheme::NoPreference`] until the
+        // user toggles their OS theme. `Window::theme()` is
+        // `Option<_>` because not every platform / window setup
+        // surfaces the signal (Wayland without `org.freedesktop.appearance`,
+        // headless test runners) — leave the signal at the default
+        // when `None`, applications running on those configurations
+        // see the light palette per W3C fallback.
+        if let Some(theme) = window.theme() {
+            pinion_core::set_system_color_scheme(winit_theme_to_pinion_scheme(theme));
+        }
         let size = window.inner_size();
         let renderer = pollster::block_on(<V::Renderer as VelloRenderer>::new(
             Arc::clone(&window),
@@ -649,6 +664,17 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     renderer.resize(size.width.max(1), size.height.max(1));
                 }
             }
+            // R57.1 §5.50 — OS `prefers-color-scheme` change. winit
+            // fires this on every desktop platform pinion supports
+            // (macOS observes `NSApp.effectiveAppearance`, GNOME /
+            // KDE observe `gsettings color-scheme`, Windows observes
+            // `ImmersiveColorSet`). Forward to the global
+            // `pinion_core::SystemColorScheme` signal so every
+            // [`ThemeProvider`] in [`ThemeMode::System`] re-resolves
+            // its palette in the next frame.
+            WindowEvent::ThemeChanged(theme) => {
+                pinion_core::set_system_color_scheme(winit_theme_to_pinion_scheme(theme));
+            }
             WindowEvent::RedrawRequested => self.render(),
             _ => {}
         }
@@ -798,6 +824,26 @@ fn winit_modifiers_to_pinion(
         ctrl: modifiers.control_key(),
         alt: modifiers.alt_key(),
         meta: modifiers.super_key(),
+    }
+}
+
+/// R57.1 §5.50 — translate winit's two-state
+/// [`winit::window::Theme`](winit::window::Theme) (`Light` / `Dark`)
+/// into the W3C-aligned three-state
+/// [`pinion_core::SystemColorScheme`]. winit itself never surfaces a
+/// "no preference" reading on `Window::theme()` or
+/// `WindowEvent::ThemeChanged` (every desktop backend — macOS
+/// `NSApp.effectiveAppearance`, GNOME / KDE `gsettings color-scheme`,
+/// Windows `ImmersiveColorSet` — resolves the OS signal to one of
+/// the two), so this helper maps 1:1 onto `Light` / `Dark`. The
+/// `NoPreference` variant remains the fresh-thread default; the
+/// platform side never *clears* the signal back to it.
+fn winit_theme_to_pinion_scheme(
+    theme: winit::window::Theme,
+) -> pinion_core::SystemColorScheme {
+    match theme {
+        winit::window::Theme::Light => pinion_core::SystemColorScheme::Light,
+        winit::window::Theme::Dark => pinion_core::SystemColorScheme::Dark,
     }
 }
 

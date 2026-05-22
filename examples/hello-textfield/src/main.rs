@@ -1058,7 +1058,7 @@ mod tests {
     };
     use pinion_a11y::{AccessValue, AriaRole, WidgetA11y};
     use pinion_core::reactive::Owner;
-    use pinion_core::theme::{use_theme, Theme};
+    use pinion_core::theme::{use_theme, Theme, ThemeMode};
     use pinion_core::widgets::caret_blink::use_caret_blink;
     use pinion_core::widgets::text_edit::use_text_edit_state;
     use pinion_core::widgets::text_field::TextFieldState;
@@ -1357,13 +1357,13 @@ mod tests {
         // resolution kicks in via the auto-subscribed
         // `use_theme().theme()` read at the top of `view`).
         with_owner(|| {
-            use_theme(THEME_TAG).set_theme(Theme::light());
+            use_theme(THEME_TAG).set_mode(ThemeMode::Light);
             let light_scene = view((TextFieldState::Idle, 0), &Frame::default());
             assert!(scene_contains_fill(
                 &light_scene,
                 Theme::light().surface_container_highest,
             ));
-            use_theme(THEME_TAG).set_theme(Theme::dark());
+            use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
             let dark_scene = view((TextFieldState::Idle, 0), &Frame::default());
             assert!(scene_contains_fill(
                 &dark_scene,

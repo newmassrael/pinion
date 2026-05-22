@@ -47,7 +47,9 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{Color, ColorRole, Command, Frame, Scene, Theme, WidgetCore, use_theme};
+use pinion_core::{Color, ColorRole, Command, Frame, Scene, ThemeMode, WidgetCore, use_theme};
+#[cfg(test)]
+use pinion_core::Theme;
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -358,7 +360,7 @@ impl WidgetCore for ToggleView {
         if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {
             if let IntrospectValue::Bool(on) = intent.payload {
                 let provider = use_theme(THEME_TAG);
-                provider.set_theme(if on { Theme::dark() } else { Theme::light() });
+                provider.set_mode(if on { ThemeMode::Dark } else { ThemeMode::Light });
             }
         }
         Vec::new()
@@ -511,18 +513,24 @@ mod a11y_tests {
         // R57.X.toggle exit criterion — the track fill in the Off
         // posture must equal the active palette's
         // `surface_container_highest` color. Calling
-        // `set_theme(Theme::dark())` and re-rendering must produce a
+        // `set_mode(ThemeMode::Dark)` and re-rendering must produce a
         // scene whose track fill flipped to the dark palette's tone,
         // pinning the substrate cascade end-to-end (use_theme
-        // subscription -> view reactive read -> paint scene).
+        // subscription -> mode signal -> view reactive read -> paint
+        // scene).
         let owner = Owner::new();
         owner.run(|| {
+            // Force Light mode up front so the first scene resolves
+            // to the light palette regardless of whichever
+            // SystemColorScheme an earlier test on this thread left
+            // behind (R57.1 thread-local signal isolation contract).
+            use_theme(THEME_TAG).set_mode(ThemeMode::Light);
             let scene_light = view(ToggleState::Idle, false, &Frame::new());
             assert!(
                 scene_contains_fill(&scene_light, Theme::light().surface_container_highest),
                 "light Off track must fill with light surface_container_highest",
             );
-            use_theme(THEME_TAG).set_theme(Theme::dark());
+            use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
             let scene_dark = view(ToggleState::Idle, false, &Frame::new());
             assert!(
                 scene_contains_fill(&scene_dark, Theme::dark().surface_container_highest),

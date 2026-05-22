@@ -631,3 +631,12 @@ reason = "R57.X.checkbox-slider audit half authored minimal ASCII per [[mnemosyn
 applied_in = "Round 582"
 content_hash_before = "bdfa96364dc1992fefd1bb5c82024de8f1c6cc3a5269d197092913732fb5c786"
 content_hash_after = "9a9725a7be1aef5d03ee835eaa9f5a8fdcff4c2170e71f5c31dcc2b2029a9037"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 583"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R57.1 ThemeMode + prefers-color-scheme OS bridge audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs, em-dashes, arrows, and Korean prose."
+applied_in = "Round 583"
+content_hash_before = "abdcdb203f21323bc7a6b6c178924b5afa1a085a5f84bfe3ad26bf75330da600"
+content_hash_after = "c0b7a2aa3f7534b8a985658b8069d8435a628413db2e7677ed8e5e44995de24e"
