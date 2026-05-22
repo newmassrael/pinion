@@ -21,6 +21,16 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 # R51.113 §5.41 — TUI substrate (ratatui + crossterm).
 pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
+# R56.2.d §5.41 — UAX #11 East Asian Width for the byte-offset →
+# cell-column mapping in the visual caret + selection + preedit
+# bands. ASCII-only assumption (1 byte = 1 cell) skews the cursor
+# column on Korean (3 UTF-8 bytes per Hangul syllable = 2 cells),
+# Chinese hanzi, Japanese kana, and combining-accent glyphs. The
+# crate is the Unicode-Consortium-blessed Rust ecosystem standard
+# (consumed by ratatui, crossterm, console, comfy-table, etc.) so
+# this is the textbook bridge rather than a hand-rolled width
+# table.
+unicode-width = "0.2"
 
 [lints]
 workspace = true

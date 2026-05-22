@@ -27226,6 +27226,58 @@
         "R58 composite widget catalogue axis — DatePicker / Combobox / Menu"
       ]
     },
+    "Round 565": {
+      "decision_summary": "R56.2.d hello-textfield-tui grapheme cell mapping",
+      "changes_bullets": [
+        "hello-textfield-tui Cargo.toml add unicode-width 0.2 dep (UAX 11 East Asian Width)",
+        "cell_column_for_byte_offset helper maps byte offset to terminal cell column via UnicodeWidthChar",
+        "selection band uses cell_column delta replacing 1 byte 1 cell ASCII only assumption",
+        "preedit band uses cell_column delta so Korean Chinese Japanese provisional run paints right cells",
+        "cursor column uses cell_column so visual block cursor lands on correct cell for non ASCII input"
+      ],
+      "verification_bullets": [
+        "cargo test workspace vello feature 2700 pass 0 fail 14 ignored (+7 new from R56.2.d cell mapping)",
+        "cargo clippy workspace all-targets vello feature 0 warnings clippy pedantic deny baseline",
+        "14 demos release-build PASS hello_textfield_compose hello_textfield_clipboard regression intact",
+        "7 cell_column tests pin ASCII 1to1 Korean syllable 3byte 2cell mixed combining accent oversized empty"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "pinion-tui shared cell column helper if 2nd TUI text consumer joins (substrate-incompleteness)",
+        "grapheme cluster precision via unicode-segmentation for emoji flags and combining sequences",
+        "Wayland PRIMARY selection (arboard CLIPBOARD only) middle click paste carry",
+        "R57 Theming substrate axis runtime palette token system theme switch demo",
+        "R58 composite widget catalogue axis DatePicker Combobox Menu"
+      ],
+      "publishable_decision_summary": "R56.2.d §5.41 — hello-textfield-tui cell_column_for_byte_offset (unicode-width) closes ASCII-only assumption; Korean/CJK/combining-accent cursor lands correctly.",
+      "publishable_changes_bullets": [
+        "hello-textfield-tui Cargo.toml: add unicode-width 0.2 dep (UAX #11 East Asian Width LCD)",
+        "cell_column_for_byte_offset(text, byte_offset) helper sums UnicodeWidthChar::width over prefix chars",
+        "Selection band: byte→cell column delta via cell_column_for_byte_offset (preedit-active path drained)",
+        "Preedit band: byte→cell column delta on effective_text; IME provisional run paints right cells",
+        "Cursor column: cell_column_for_byte_offset(effective_text, visual_caret_byte) lands cursor correctly",
+        "Defensive clamp byte_offset > text.len() → text full width; control-char width None → 0 cells"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test workspace vello feature: 2700 pass / 0 fail / 14 ignored (+7 new from R56.2.d)",
+        "cargo clippy workspace all-targets vello feature: 0 warnings (clippy::pedantic deny baseline)",
+        "14 demos release-build PASS including hello_textfield_compose Korean syllable round-trip",
+        "cell_column tests pin: ASCII 1:1, Korean syllable 3B→2C, mixed prefix, combining accent 0C",
+        "Defensive tests pin: oversized offset clamp + empty text + full hangul word 6B→4C"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Lift cell_column helper into pinion-tui when 2nd TUI text consumer joins (substrate-incompleteness)",
+        "Grapheme cluster precision via unicode-segmentation for emoji flags + ZWJ sequences (carry)",
+        "Wayland PRIMARY selection (arboard CLIPBOARD only today) middle-click paste carry",
+        "R57 Theming substrate axis — runtime palette + token system + theme switch demo",
+        "R58 composite widget catalogue — DatePicker / Combobox / Menu"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

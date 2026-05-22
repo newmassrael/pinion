@@ -96,6 +96,131 @@ const TITLE_TOP_PX: u32 = 16; // row 1
 /// source go through `\u{XXXX}` escape).
 const CURSOR_GLYPH: &str = "\u{2588}";
 
+/// R56.2.d §5.41 — map a UTF-8 byte offset inside `text` to the
+/// terminal cell column that offset visually occupies. Replaces the
+/// pre-R56.2.d "1 byte = 1 cell" ASCII-only assumption that skewed
+/// the cursor / selection / preedit bands on Korean Hangul (3 UTF-8
+/// bytes per syllable = 2 cells), Chinese hanzi, Japanese kana,
+/// emoji, and combining accents.
+///
+/// Uses [`unicode_width::UnicodeWidthChar::width`] per char (the
+/// UAX #11 East Asian Width LCD every Rust TUI ecosystem crate
+/// consumes — ratatui, crossterm, console, comfy-table, indicatif).
+/// Width `None` (control chars) falls back to 0 cells so a stray
+/// `\t` or `\x07` does not break the column arithmetic; width 2
+/// (CJK fullwidth, emoji) and width 0 (combining accents,
+/// zero-width joiners) both flow through unchanged.
+///
+/// `byte_offset` is clamped to `text.len()` so an out-of-range
+/// offset lands at the end-of-text cell column. Non-char-boundary
+/// offsets (mid-multibyte-byte) round down to the nearest valid
+/// boundary via `str::char_indices` (the caller is responsible for
+/// providing char-boundary offsets per the
+/// [`pinion_core::widgets::text_edit::TextEditState`] clamp
+/// contract — the round-down is defensive against a future caller
+/// that forgets).
+///
+/// Grapheme-cluster precision (e.g. 🇰🇷 flag = 2 codepoints + 8
+/// UTF-8 bytes rendering as a single cluster width) is not handled
+/// here — `UnicodeWidthChar::width` is per-char. Upgrading to
+/// `UnicodeWidthStr` + `unicode-segmentation` is a future axis;
+/// the per-char path matches every TUI ecosystem default today
+/// (`unicode-segmentation` is opt-in even in ratatui).
+fn cell_column_for_byte_offset(text: &str, byte_offset: usize) -> u32 {
+    use unicode_width::UnicodeWidthChar;
+    let clamp = byte_offset.min(text.len());
+    let prefix = &text[..clamp];
+    prefix
+        .chars()
+        .map(|c| u32::try_from(c.width().unwrap_or(0)).unwrap_or(0))
+        .sum()
+}
+
+#[cfg(test)]
+mod r56_2_d_grapheme_cell_tests {
+    //! R56.2.d §5.41 — `cell_column_for_byte_offset` regression
+    //! battery. Pins the UAX #11 East Asian Width mapping across
+    //! ASCII / Hangul / hanzi / emoji / combining-accent cases and
+    //! the boundary-defensive `byte_offset > text.len()` clamp.
+
+    use super::cell_column_for_byte_offset;
+
+    #[test]
+    fn r56_2_d_ascii_one_byte_one_cell() {
+        // Pre-R56.2.d invariant preserved on the ASCII path.
+        assert_eq!(cell_column_for_byte_offset("hello", 0), 0);
+        assert_eq!(cell_column_for_byte_offset("hello", 3), 3);
+        assert_eq!(cell_column_for_byte_offset("hello", 5), 5);
+    }
+
+    #[test]
+    fn r56_2_d_korean_syllable_three_bytes_two_cells() {
+        // "한" = U+D55C = 3 UTF-8 bytes, East Asian Width = W (2 cells).
+        let s = "\u{D55C}";
+        assert_eq!(s.len(), 3, "Korean syllable is 3 UTF-8 bytes");
+        assert_eq!(cell_column_for_byte_offset(s, 0), 0);
+        assert_eq!(
+            cell_column_for_byte_offset(s, 3),
+            2,
+            "cursor after Korean syllable lands at column 2 (UAX #11 W)",
+        );
+    }
+
+    #[test]
+    fn r56_2_d_mixed_ascii_korean() {
+        // "hi한" = 2 + 3 = 5 UTF-8 bytes, 2 + 2 = 4 cells.
+        let s = "hi\u{D55C}";
+        assert_eq!(cell_column_for_byte_offset(s, 0), 0);
+        assert_eq!(cell_column_for_byte_offset(s, 1), 1);
+        assert_eq!(cell_column_for_byte_offset(s, 2), 2);
+        assert_eq!(
+            cell_column_for_byte_offset(s, 5),
+            4,
+            "ASCII 'hi' (2 cells) + Korean '한' (2 cells)",
+        );
+    }
+
+    #[test]
+    fn r56_2_d_combining_accent_zero_width() {
+        // "e\u{301}" = 'e' + COMBINING ACUTE ACCENT = 1 + 2 = 3 UTF-8
+        // bytes, but the accent has UAX #11 width 0 (combining mark)
+        // so total visual width = 1 cell.
+        let s = "e\u{301}";
+        assert_eq!(s.len(), 3);
+        assert_eq!(cell_column_for_byte_offset(s, 0), 0);
+        assert_eq!(cell_column_for_byte_offset(s, 1), 1);
+        assert_eq!(
+            cell_column_for_byte_offset(s, 3),
+            1,
+            "combining accent contributes 0 cells",
+        );
+    }
+
+    #[test]
+    fn r56_2_d_oversized_offset_clamps_to_text_len() {
+        // Defensive clamp: byte_offset > text.len() returns the
+        // text's full visual width (canonical "cursor at end" cell).
+        let s = "hi";
+        assert_eq!(cell_column_for_byte_offset(s, 100), 2);
+        assert_eq!(cell_column_for_byte_offset(s, usize::MAX), 2);
+    }
+
+    #[test]
+    fn r56_2_d_empty_text_is_column_zero() {
+        assert_eq!(cell_column_for_byte_offset("", 0), 0);
+        assert_eq!(cell_column_for_byte_offset("", 100), 0);
+    }
+
+    #[test]
+    fn r56_2_d_full_hangul_word() {
+        // "한국" = 6 UTF-8 bytes, 4 cells.
+        let s = "\u{D55C}\u{AD6D}";
+        assert_eq!(s.len(), 6);
+        assert_eq!(cell_column_for_byte_offset(s, 3), 2);
+        assert_eq!(cell_column_for_byte_offset(s, 6), 4);
+    }
+}
+
 struct HelloTextFieldTui;
 
 impl WidgetCore for HelloTextFieldTui {
@@ -232,23 +357,31 @@ impl WidgetCore for HelloTextFieldTui {
         field_container.style =
             BoxStyle::filled(field_fill).with_border(Border::new(border_color, 1));
 
-        // R56.1.f.3 §5.22 — selection band paints BEFORE the text
-        // node so the TUI cell-bg fill sits behind the glyphs. The
-        // pinion-tui paint walker composites children in vector
-        // order; ContainerNode's BoxStyle fill maps to the cell `bg`
-        // attribute (a steel-blue tint mirroring the Vello sibling's
+        // R56.1.f.3 §5.22 / R56.2.d §5.41 — selection band paints
+        // BEFORE the text node so the TUI cell-bg fill sits behind
+        // the glyphs. The pinion-tui paint walker composites
+        // children in vector order; ContainerNode's BoxStyle fill
+        // maps to the cell `bg` attribute (a steel-blue tint
+        // mirroring the Vello sibling's
         // selection rect). Empty selection (start == end) skips.
         if let Some((sel_start, sel_end)) = selection_range {
             if sel_end > sel_start {
-                let sel_byte_width = sel_end.saturating_sub(sel_start);
+                // R56.2.d §5.41 — UAX #11 cell-column derivation.
+                // Pre-R56.2.d code assumed `1 byte = 1 cell` which
+                // skewed selection bands on Korean / hanzi / kana /
+                // combining accents. Selection range is in committed-
+                // text byte coords; when preedit is active the
+                // R56.1.g.0 substrate drains the selection so the
+                // `sel_*` branch never fires concurrently with the
+                // preedit band — `effective_text` equals committed
+                // text on every reachable code path here.
+                let sel_start_col = cell_column_for_byte_offset(&effective_text, sel_start);
+                let sel_end_col = cell_column_for_byte_offset(&effective_text, sel_end);
+                let sel_cells = sel_end_col.saturating_sub(sel_start_col);
                 let sel_left_px = FIELD_LEFT_PX
                     .saturating_add(TEXT_INNER_PAD_PX)
-                    .saturating_add(
-                        u32::try_from(sel_start).unwrap_or(u32::MAX).saturating_mul(CELL_PX_X),
-                    );
-                let sel_width_px = u32::try_from(sel_byte_width)
-                    .unwrap_or(u32::MAX)
-                    .saturating_mul(CELL_PX_X);
+                    .saturating_add(sel_start_col.saturating_mul(CELL_PX_X));
+                let sel_width_px = sel_cells.saturating_mul(CELL_PX_X);
                 let mut sel_band = ContainerNode::default();
                 sel_band.rect = Rect::new(sel_left_px, FIELD_TOP_PX, sel_width_px, CELL_PX_Y);
                 sel_band.style = BoxStyle::filled(Color::rgb(0x20, 0x4a, 0x7a));
@@ -264,15 +397,20 @@ impl WidgetCore for HelloTextFieldTui {
         // (where the preedit was spliced in).
         if let Some((pre_start, pre_end)) = preedit_byte_range {
             if pre_end > pre_start {
-                let pre_byte_width = pre_end.saturating_sub(pre_start);
+                // R56.2.d §5.41 — UAX #11 cell-column derivation for
+                // the preedit band so Korean / Chinese / Japanese
+                // IME provisional runs paint over the right
+                // cells. `effective_text` contains the spliced
+                // preedit; `pre_start..pre_end` byte offsets are in
+                // its coordinate frame so the cell-column math is
+                // direct.
+                let pre_start_col = cell_column_for_byte_offset(&effective_text, pre_start);
+                let pre_end_col = cell_column_for_byte_offset(&effective_text, pre_end);
+                let pre_cells = pre_end_col.saturating_sub(pre_start_col);
                 let pre_left_px = FIELD_LEFT_PX
                     .saturating_add(TEXT_INNER_PAD_PX)
-                    .saturating_add(
-                        u32::try_from(pre_start).unwrap_or(u32::MAX).saturating_mul(CELL_PX_X),
-                    );
-                let pre_width_px = u32::try_from(pre_byte_width)
-                    .unwrap_or(u32::MAX)
-                    .saturating_mul(CELL_PX_X);
+                    .saturating_add(pre_start_col.saturating_mul(CELL_PX_X));
+                let pre_width_px = pre_cells.saturating_mul(CELL_PX_X);
                 let mut pre_band = ContainerNode::default();
                 pre_band.rect = Rect::new(pre_left_px, FIELD_TOP_PX, pre_width_px, CELL_PX_Y);
                 pre_band.style = BoxStyle::filled(Color::rgb(0x7a, 0x52, 0x20));
@@ -282,22 +420,26 @@ impl WidgetCore for HelloTextFieldTui {
 
         field_container.children.push(Scene::Text(text_node));
 
-        // Caret — paint a solid block-cursor glyph at the byte
-        // offset's cell column. Skipped while Disabled (no edit
-        // affordance for a disabled field). 1 ASCII byte = 1 cell in
-        // the TUI demo's input space; multi-byte UTF-8 would skew the
-        // column by the cluster-count gap (carry to a future TUI
-        // grapheme-cluster axis).
-        // R56.1.g.3 §5.22 — visual cursor follows the preedit end
-        // during composition (canonical W3C compositionupdate caret
-        // position) so the user sees their just-typed jamo at the
-        // cursor column.
+        // Caret — paint a solid block-cursor glyph at the cell
+        // column the byte offset visually occupies. Skipped while
+        // Disabled (no edit affordance for a disabled field).
+        // R56.2.d §5.41 — `cell_column_for_byte_offset` replaces the
+        // pre-R56.2.d `byte * CELL_PX_X` ASCII-only assumption so the
+        // cursor lands on the right column for Korean / hanzi / kana
+        // / combining-accent input. R56.1.g.3 §5.22 — visual cursor
+        // follows the preedit end during composition (canonical W3C
+        // compositionupdate caret position) so the user sees their
+        // just-typed jamo at the cursor column.
         if !matches!(interaction, TextFieldState::Disabled) {
             let mut cursor_node = TextNode::default();
             CURSOR_GLYPH.clone_into(&mut cursor_node.content);
+            let cursor_col = cell_column_for_byte_offset(
+                &effective_text,
+                visual_caret_byte as usize,
+            );
             let cursor_left_px = FIELD_LEFT_PX
                 .saturating_add(TEXT_INNER_PAD_PX)
-                .saturating_add(visual_caret_byte.saturating_mul(CELL_PX_X));
+                .saturating_add(cursor_col.saturating_mul(CELL_PX_X));
             cursor_node.rect = Rect::new(cursor_left_px, FIELD_TOP_PX, CELL_PX_X, CELL_PX_Y);
             cursor_node.style = style::TextStyle::default();
             field_container.children.push(Scene::Text(cursor_node));

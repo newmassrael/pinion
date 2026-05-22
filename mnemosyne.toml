@@ -478,3 +478,12 @@ reason = "R56.2.c audit half authored minimal ASCII per [[mnemosyne-multibyte-au
 applied_in = "Round 564"
 content_hash_before = "1f925545d9a8f2ddbc24f34073270f9cd006ebc0a3a1caa3a5965c2546d3a65a"
 content_hash_after = "880d5218e4934f7d0baea0abda7faabd48b7094a1290425cac017446a3f354e5"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 565"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R56.2.d audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs + UAX #11 detail + W3C wire-shape arrows."
+applied_in = "Round 565"
+content_hash_before = "925e2addb1cad5d484a93ddc63bb899fa8614411cccad06bd5ab093461a13cad"
+content_hash_after = "26ac9a3839dadad3993373cee3620d018225b8faa2eec1d0a6f870ae5f50dce5"
