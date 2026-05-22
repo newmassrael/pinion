@@ -13,6 +13,7 @@ members = [
     "crates/pinion-text-font",
     "crates/pinion-text-unicode",
     "crates/pinion-shell",
+    "crates/pinion-platform-clipboard",
     "crates/pinion-tui",
     "examples/hello-button",
     "examples/hello-button-tui",

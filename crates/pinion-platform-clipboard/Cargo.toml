@@ -1,0 +1,38 @@
+[package]
+name = "pinion-platform-clipboard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R56.2.b §5.22 — platform clipboard bridge for the R56.1.e Clipboard trait; wraps the `arboard` cross-platform crate (Wayland `wl_data_device` + X11 PRIMARY/CLIPBOARD selection + macOS `NSPasteboard` + Windows `OpenClipboard`/`SetClipboardData` + Linux fallback under one Rust ecosystem-canonical surface)"
+
+[dependencies]
+# §5.22 R56.1.e — `pinion_core::Clipboard` trait that this crate's
+# `ArboardClipboard` second-consumer impl satisfies. Pinion's
+# in-memory first impl (R56.1.e `InMemoryClipboard`) stays the
+# headless / CI default; this crate adds the platform-backed impl
+# for real desktop UX (Korean ibus-hangul Ctrl+C, system-wide
+# Ctrl+V across applications, etc.).
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# R56.2.b §5.22 — `arboard` is the canonical cross-platform
+# clipboard crate in the Rust ecosystem (egui, iced, Bevy, and the
+# `cli-clipboard` deprecation pointer all consume it). It funnels
+# Wayland `wl_data_device` + X11 PRIMARY/CLIPBOARD + macOS
+# `NSPasteboard` + Windows `OpenClipboard` under one surface, so
+# pinion's platform-side closure here is one wrapper (rather than
+# four hand-written OS bindings) — same textbook decision as
+# `winit::event::Ime` for the R56.2.a IME bridge (see
+# [[winit-ime-canonical-platform-bridge]] memory).
+#
+# `default-features = false` drops the `image-data` feature (and the
+# transitive `image` + `png` + `tiff` + `moxcms` + `objc2-core-graphics`
+# bloat) since pinion's R56.1.e Clipboard trait is text-only today.
+# `wayland-data-control` opts into the Wayland `wl-clipboard-rs`
+# backend so Linux Wayland sessions get proper clipboard support
+# (without the feature, arboard falls back to X11 via XWayland which
+# loses primary-selection support).
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
+
+[lints]
+workspace = true

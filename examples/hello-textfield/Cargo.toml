@@ -25,6 +25,14 @@ pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 # R51.30 paint-side AppShell. Pulls pinion-runtime (vello feature) +
 # pinion-rpc + pinion-text + winit + pollster transitively.
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R56.2.b §5.22 — platform clipboard bridge. `ArboardClipboard`
+# wraps the canonical Rust ecosystem `arboard` crate (Wayland
+# `wl_data_device` + X11 CLIPBOARD + macOS `NSPasteboard` +
+# Windows `OpenClipboard`) so Ctrl/Cmd+C/X/V crosses the process
+# boundary (other applications see the same clipboard). Falls back
+# to `InMemoryClipboard` when the platform clipboard daemon is
+# unreachable (headless CI / broken display).
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
 # R56.1.b.2 §5.36 — `caret_rect_for_byte_offset` + `LayoutCache` for
 # the view fn's caret geometry lookup (shape text once per paint,
 # read cursor rect from the cached parley `Layout`).

@@ -16721,6 +16721,39 @@ if __name__ == "__main__":
 
 
 
+### Round 563 — R56.2.b §5.22 — new pinion-platform-clipboard crate wraps `arboard` (canonical Rust ecosystem clipboard) as second Clipboard trait consumer; hello-textfield prefers it with InMemoryClipboard fallback.
+
+**Changes**:
+- new crate pinion-platform-clipboard registered in workspace between pinion-shell and pinion-tui
+- ArboardClipboard impl Clipboard trait wraps arboard 3.x via RefCell interior mutability
+- ArboardClipboard::try_new returns arboard::Error so callers fall back to InMemoryClipboard
+- hello-textfield use_clipboard prefers ArboardClipboard with stderr fallback log on init failure
+- hello-textfield AppClipboard wrapper boxes dyn Clipboard so Owner::cache<V> stores one Sized V
+- arboard default-features=false + wayland-data-control opt drops image-data bloat (image/png/tiff)
+
+
+
+**Verification**:
+- cargo test workspace vello feature: 2690 pass / 0 fail / 14 ignored (+1 new ArboardClipboard test)
+- cargo clippy workspace all-targets vello feature: 0 warnings (clippy::pedantic deny baseline)
+- 14 demos release-build PASS including hello_textfield_clipboard exercising Ctrl/Cmd C X V dispatch
+- ArboardClipboard Debug-renders-without-panic test pins fallback observability on headless CI
+- abstraction-needs-second-consumer satisfied: InMemoryClipboard + ArboardClipboard = 2 trait impls
+
+
+
+**Impact**: §5.22, §5.38
+
+
+**Carry forward**:
+- Wayland PRIMARY selection (middle-click paste) support — arboard exposes CLIPBOARD only today
+- Clipboard image-data round-trip — drop default-features=false opt-out when image widget lands
+- Clipboard history / multi-item shape (W3C ClipboardItem) — current API is text-only LCD
+- R56.2.c set_ime_cursor_area wire (caret rect publish from view to shell for IME popup positioning)
+- R57 Theming substrate axis — runtime palette + token system + theme switch demo
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

@@ -57,6 +57,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
+use pinion_platform_clipboard::ArboardClipboard;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
@@ -159,21 +160,65 @@ fn use_layout_cache(key: &'static str) -> Rc<RefCell<LayoutCache>> {
         .cache(key, || RefCell::new(LayoutCache::new()))
 }
 
-/// R56.1.e §5.22 — `Owner::cache`-keyed [`InMemoryClipboard`] hook.
-/// Mirrors the [`use_text_edit_state`] / [`use_caret_blink`] hooks;
-/// the cache key dedups so the External's `attach_clipboard` and any
-/// later (carry) view-fn read resolve to the same `Rc<dyn Clipboard>`
-/// instance.
+/// R56.1.e §5.22 / R56.2.b §5.22 — `Owner::cache`-keyed clipboard
+/// hook. Mirrors the [`use_text_edit_state`] / [`use_caret_blink`]
+/// hooks; the cache key dedups so the External's `attach_clipboard`
+/// and any later (carry) view-fn read resolve to the same
+/// `Rc<dyn Clipboard>` instance.
 ///
-/// The dyn-coercion via `Rc::clone` (Rc<InMemoryClipboard> →
-/// Rc<dyn Clipboard>) happens at the borrow site so the cache stores
-/// the concrete `InMemoryClipboard` and downstream consumers can
-/// pick either the concrete or trait-object shape.
+/// R56.2.b §5.22 — prefers the platform-backed
+/// [`ArboardClipboard`] (Wayland `wl_data_device` + X11 CLIPBOARD +
+/// macOS `NSPasteboard` + Windows `OpenClipboard` via the canonical
+/// Rust ecosystem `arboard` crate) and falls back to the in-memory
+/// impl on init failure (headless CI, sandboxed display-less
+/// container, broken Wayland socket). The fallback keeps the
+/// keyboard-shortcut UX functional (Ctrl/Cmd+C → Ctrl/Cmd+V
+/// round-trip within the running hello-textfield process) at the
+/// cost of cross-process clipboard sharing.
+///
+/// The dispatch is wrapped in [`AppClipboard`] so the
+/// `Owner::cache<V>` slot stores a single `Sized` type regardless of
+/// which inner impl wins; downstream consumers receive the
+/// `Rc<dyn Clipboard>` trait-object shape through the
+/// [`AppClipboard`] `Clipboard` impl's forwarding pair.
 fn use_clipboard(key: &'static str) -> Rc<dyn Clipboard> {
-    let cb: Rc<InMemoryClipboard> = Owner::current()
+    let cb: Rc<AppClipboard> = Owner::current()
         .expect("use_clipboard requires an active Owner scope")
-        .cache(key, InMemoryClipboard::new);
+        .cache(key, || {
+            AppClipboard(match ArboardClipboard::try_new() {
+                Ok(arboard) => Box::new(arboard) as Box<dyn Clipboard>,
+                Err(e) => {
+                    eprintln!(
+                        "hello-textfield: ArboardClipboard init failed \
+                         ({e}); falling back to InMemoryClipboard \
+                         (cross-process clipboard disabled)",
+                    );
+                    Box::new(InMemoryClipboard::new()) as Box<dyn Clipboard>
+                }
+            })
+        });
     cb
+}
+
+/// R56.2.b §5.22 — `Sized` wrapper around `Box<dyn Clipboard>` so
+/// the [`use_clipboard`] hook can park either an
+/// [`ArboardClipboard`] (platform-backed, the common case) or an
+/// [`InMemoryClipboard`] (fallback when the platform clipboard
+/// daemon is unreachable) inside the same `Owner::cache<V>` slot.
+/// The framework `Owner::cache<V>` API requires `V: 'static` and
+/// chooses a concrete `V` per slot; the typed-erased
+/// `Box<dyn Clipboard>` interior here is the single concrete `V`
+/// the hello-textfield binding stores while the dispatch chooses
+/// at runtime which impl backs it.
+struct AppClipboard(Box<dyn Clipboard>);
+
+impl Clipboard for AppClipboard {
+    fn copy(&self, text: String) {
+        self.0.copy(text);
+    }
+    fn paste(&self) -> Option<String> {
+        self.0.paste()
+    }
 }
 
 /// Saturating cast from layout-space f32 to paint-space u32. Negative
