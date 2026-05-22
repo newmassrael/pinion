@@ -16754,6 +16754,40 @@ if __name__ == "__main__":
 
 
 
+### Round 564 — R56.2.c §5.13 §5.38 — WidgetView::ime_caret_rect + AppShell set_ime_cursor_area dedup wire so IME candidate popup tracks the caret instead of defaulting to the screen corner.
+
+**Changes**:
+- pinion-shell WidgetView add ime_caret_rect default None (window-local logical px coord frame)
+- AppShell render hook: root_owner.run V::ime_caret_rect between paint and finalize_frame
+- AppShell last_ime_cursor_area f32 tuple dedups unchanged caret so winit boundary call skipped
+- pinion-shell re-exports pinion_runtime::rect_for_tag for application scene walking
+- pinion-text CaretRect adds public const new constructor (non_exhaustive struct downstream synth)
+- hello-textfield ime_caret_rect impl: use_layout_cache hit + visual caret byte mirror view fn
+- hello-textfield ime_caret_rect composes field_rect (rect_for_tag) + FIELD_PAD + caret_local
+
+
+
+**Verification**:
+- cargo test workspace vello feature: 2693 pass / 0 fail / 14 ignored (+3 new from R56.2.c)
+- cargo clippy workspace all-targets vello feature: 0 warnings (clippy::pedantic deny baseline)
+- 14 demos release-build PASS including hello_textfield_compose end-to-end regression
+- CaretRect::new tests pin f32 fields + const-eligibility for compile-time CaretRect literals
+- Default ime_caret_rect None test pins trait shape on TestView mock across (state, focused) matrix
+
+
+
+**Impact**: §5.13, §5.36, §5.38
+
+
+**Carry forward**:
+- Per-focus set_ime_allowed gate on second text-input widget (substrate-incompleteness signal)
+- Wayland PRIMARY selection (middle-click paste) — arboard surface is CLIPBOARD-only today
+- pinion-tui FocusManager + IME bridge (TUI multi-widget binary absent, axis-level carry)
+- R57 Theming substrate axis — runtime palette + token system + theme switch demo
+- R58 composite widget catalogue axis — DatePicker / Combobox / Menu
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

@@ -70,7 +70,7 @@ use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFi
 use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_text::{caret_rect_for_byte_offset, LayoutCache};
+use pinion_text::{caret_rect_for_byte_offset, CaretRect, LayoutCache};
 
 // pinion-forge codegen output. Defines `pub struct HelloTextFieldRenderer`
 // + async `new<W: Into<wgpu::SurfaceTarget<'static>>>` + sync
@@ -819,6 +819,123 @@ impl WidgetView for TextFieldView {
 
     fn initial_size() -> (u32, u32) {
         (WIN_W, WIN_H)
+    }
+
+    /// R56.2.c §5.13 §5.38 — publish the caret rect to the platform
+    /// IME so the candidate window (ibus-hangul, fcitx5-hangul,
+    /// macOS Hangul, Microsoft IME) positions next to the caret
+    /// rather than at the default screen corner.
+    ///
+    /// Coordinate composition:
+    ///
+    /// 1. **Field rect in window coords** — walked from `scene` via
+    ///    [`pinion_shell::rect_for_tag`]; the post-layout box of the
+    ///    `TF_TAG` container carries the field's window-coord origin
+    ///    (changes when the user resizes or the title text height
+    ///    grows). This avoids hard-coding the field position in a
+    ///    constant that would lie the first time the layout shifts.
+    /// 2. **Text origin within the field** — `FIELD_PAD` on both axes
+    ///    (matches the `with_padding(Rect::new(FIELD_PAD, …))` in
+    ///    [`Self::view`]).
+    /// 3. **Caret rect within the text layout** — same
+    ///    `caret_rect_for_byte_offset` call the view fn runs (cache
+    ///    hit on the `LayoutCache`, no re-shape) using the *visual*
+    ///    caret byte (preedit-end during composition, substrate
+    ///    caret otherwise — same splice the view fn produces so the
+    ///    IME popup tracks the rendered cursor, not the latent
+    ///    substrate cursor).
+    ///
+    /// Sum (1) + (2) + (3) → window-coord caret rect; the shell
+    /// hands it to [`Window::set_ime_cursor_area`].
+    ///
+    /// Width is the caret pixel width (`CARET_WIDTH = 2px`); some
+    /// IMEs use this as the popup anchor width. Height carries the
+    /// `FONT_SIZE_PX` floor so the candidate popup never collapses
+    /// to a sliver when the layout's reported `height` is short
+    /// (the same floor the view fn applies for the visible caret
+    /// box).
+    #[allow(
+        clippy::similar_names,
+        reason = "field_origin_x_f / field_origin_y_f mirror the field_rect.x / field_rect.y source; renaming further would obscure the source-mapping symmetry the caret arithmetic depends on"
+    )]
+    fn ime_caret_rect(
+        state: &(TextFieldState, u32),
+        scene: &Scene,
+        focused: Option<&str>,
+    ) -> Option<CaretRect> {
+        if focused != Some(TF_TAG) {
+            return None;
+        }
+        let (interaction, caret_byte) = *state;
+        let text_state = use_text_edit_state(TF_TAG);
+        let text = text_state.text();
+        let preedit = text_state.preedit();
+        // Mirror the view fn's `effective_text` + `visual_caret_byte`
+        // splice so the cache key + caret offset match exactly — the
+        // `LayoutCache::layout` call below is a cache hit, not a
+        // re-shape. The substrate caret moves through the unspliced
+        // text; the visual caret tracks the preedit end (W3C
+        // `compositionupdate` canonical caret position).
+        let (effective_text, visual_caret_byte) = match &preedit {
+            Some(p) if !p.is_empty() => {
+                let caret = caret_byte as usize;
+                let mut composed = String::with_capacity(text.len() + p.len());
+                composed.push_str(&text[..caret.min(text.len())]);
+                composed.push_str(p);
+                composed.push_str(&text[caret.min(text.len())..]);
+                let preedit_end = caret + p.len();
+                (composed, preedit_end)
+            }
+            _ => (text.clone(), caret_byte as usize),
+        };
+        // Mirror the view fn's text style (incl. interaction-dependent
+        // fg) so the `(text, style, max_width)` cache key matches and
+        // the `LayoutCache::layout` lookup is a hit.
+        let text_style = TextStyle::new()
+            .with_size_px(FONT_SIZE_PX)
+            .with_fg(if matches!(interaction, TextFieldState::Disabled) {
+                TEXT_COLOR_DISABLED
+            } else {
+                TEXT_COLOR
+            });
+        let field_rect = pinion_shell::rect_for_tag(scene, TF_TAG)?;
+        let layout_cache = use_layout_cache("hello_textfield.layout_cache");
+        let caret_local = {
+            let mut cache = layout_cache.borrow_mut();
+            let layout = cache.layout(effective_text.as_str(), &text_style, None);
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "CARET_WIDTH fits f32 losslessly (2 << 23 ceiling)"
+            )]
+            let cw = CARET_WIDTH as f32;
+            caret_rect_for_byte_offset(layout, visual_caret_byte, cw)
+        };
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "field_rect.{x,y} are u32 viewport coords; window sizes never approach 2^24 logical px"
+        )]
+        let field_origin_x_f = field_rect.x as f32;
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "field_rect.{x,y} are u32 viewport coords; window sizes never approach 2^24 logical px"
+        )]
+        let field_origin_y_f = field_rect.y as f32;
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "FIELD_PAD + FONT_SIZE_PX are small u32 constants"
+        )]
+        let pad_f = FIELD_PAD as f32;
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "FONT_SIZE_PX small u32 constant"
+        )]
+        let font_size_f = FONT_SIZE_PX as f32;
+        Some(CaretRect::new(
+            field_origin_x_f + pad_f + caret_local.x,
+            field_origin_y_f + pad_f + caret_local.y,
+            caret_local.width.max(1.0),
+            caret_local.height.max(font_size_f),
+        ))
     }
 }
 

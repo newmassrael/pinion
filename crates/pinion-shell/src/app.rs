@@ -31,7 +31,7 @@ use pinion_core::scene::BoxNode;
 use pinion_runtime::{paint_adapter, CommandExecutor, HandlerRegistry, PointerId};
 use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
@@ -108,6 +108,18 @@ pub struct AppShell<V: WidgetView> {
     /// before every `Commit` — see the [`winit_ime_to_composition`]
     /// helper's doc-comment for the full mapping table.
     ime_was_composing: bool,
+    /// R56.2.c §5.13 §5.38 — last `Window::set_ime_cursor_area` rect
+    /// the shell pushed to the platform IME. Stored as a tuple of
+    /// the four `pinion_text::CaretRect` fields (bit-equal `f32`
+    /// comparison) so the per-frame redraw skips the `winit` round-
+    /// trip when the caret has not moved. `None` until the first
+    /// `V::ime_caret_rect` returns `Some`; reset to `None` is
+    /// intentionally avoided — winit retains the previous IME
+    /// cursor area when the application stops reporting, which
+    /// matches the canonical platform behaviour (the candidate
+    /// popup stays where the user last typed even when focus
+    /// shifts to a non-text widget for a moment).
+    last_ime_cursor_area: Option<(f32, f32, f32, f32)>,
 }
 
 
@@ -133,6 +145,10 @@ impl<V: WidgetView> AppShell<V> {
             accesskit: None,
             // R56.2.a §5.13 §5.38 — empty composition session at boot.
             ime_was_composing: false,
+            // R56.2.c §5.13 §5.38 — no IME cursor area pushed yet;
+            // first `V::ime_caret_rect` Some triggers the first
+            // `Window::set_ime_cursor_area` call.
+            last_ime_cursor_area: None,
         }
     }
 
@@ -274,6 +290,41 @@ impl<V: WidgetView> AppShell<V> {
             // !should_emit so the next frame's plan diffs against
             // the post-emit baseline.
             self.core.commit_access_emit(nodes, at_focus.as_ref());
+        }
+        // R56.2.c §5.13 §5.38 — push IME candidate window position
+        // to the platform IME. Run after paint (so `LayoutCache` is
+        // populated for the application's `ime_caret_rect` impl to
+        // resolve via a cache hit) and before `finalize_frame`
+        // (which moves `paint_scene` into the substrate). The
+        // `root_owner.run` wrap mirrors the `apply_key` / `view` /
+        // `apply_composition` paths so application hooks
+        // (`use_text_edit_state(tag)` / `use_layout_cache(key)`)
+        // resolve through `Owner::current()` inside the trait call.
+        //
+        // Dedup against `self.last_ime_cursor_area` so an unchanged
+        // caret (which is most frames — caret moves only on key
+        // press or text mutation) skips the `winit` boundary call.
+        // The `f32` tuple comparison is bit-equal which is what
+        // pinion wants (sub-pixel jitter would force redundant IME
+        // updates and on some platforms the candidate popup
+        // flickers on every `set_ime_cursor_area` call).
+        let cached_state = *self.core.cached_state();
+        let focused_owned = self.core.focus().focused().map(str::to_owned);
+        let owner = self.core.root_owner().clone();
+        let ime_rect = owner.run(|| {
+            V::ime_caret_rect(&cached_state, &paint_scene, focused_owned.as_deref())
+        });
+        if let Some(rect) = ime_rect {
+            let rect_tuple = (rect.x, rect.y, rect.width, rect.height);
+            if self.last_ime_cursor_area != Some(rect_tuple) {
+                let pos = LogicalPosition::new(f64::from(rect.x), f64::from(rect.y));
+                let size = LogicalSize::new(
+                    f64::from(rect.width.max(1.0)),
+                    f64::from(rect.height.max(1.0)),
+                );
+                window.set_ime_cursor_area(pos, size);
+                self.last_ime_cursor_area = Some(rect_tuple);
+            }
         }
         // R51.80 §5.12 §5.35 — snapshot the rendered scene + hand it
         // to the input router + refresh state + drain intents in one

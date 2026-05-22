@@ -60,6 +60,30 @@ pub struct CaretRect {
     pub height: f32,
 }
 
+impl CaretRect {
+    /// R56.2.c §5.36 — public constructor for `#[non_exhaustive]`
+    /// [`CaretRect`]. The struct's `#[non_exhaustive]` attribute
+    /// prevents downstream crates from using the struct-literal
+    /// shape `CaretRect { x, y, width, height }`; this constructor
+    /// is the textbook accessor pattern for non-exhaustive types
+    /// (matches the `Modifiers::new` shape pinion-core uses).
+    ///
+    /// Use sites: application-side
+    /// [`WidgetView::ime_caret_rect`](https://docs.rs/pinion-shell/latest/pinion_shell/trait.WidgetView.html#method.ime_caret_rect)
+    /// impls (e.g. `examples/hello-textfield`) that synthesise a
+    /// caret rect in *window-local logical-pixel* coordinates
+    /// (the trait return frame) by summing the field's post-layout
+    /// window origin + padding + the
+    /// [`caret_rect_for_byte_offset`] result. The substrate's own
+    /// `caret_rect_for_byte_offset` returns text-local coordinates;
+    /// the application is the only caller that needs to construct
+    /// the window-coord variant by hand.
+    #[must_use]
+    pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self { x, y, width, height }
+    }
+}
+
 /// R56.1.b.2 §5.36 §5.38 — closed-form caret rectangle for the byte
 /// offset `byte_index` in `layout`. Wraps
 /// [`parley::Cursor::from_byte_index`] +
@@ -305,5 +329,31 @@ mod tests {
         let _ = caret_rect_for_byte_offset(layout, 0, 1.0);
         let _ = caret_rect_for_byte_offset(layout, 3, 1.0);
         let _ = caret_rect_for_byte_offset(layout, 6, 1.0);
+    }
+
+    #[test]
+    fn r56_2_c_caret_rect_new_constructs_with_four_fields() {
+        // R56.2.c — public constructor for the `#[non_exhaustive]`
+        // `CaretRect`. Downstream crates (application-side
+        // `WidgetView::ime_caret_rect` impls in particular) need to
+        // synthesise window-coord `CaretRect`s by hand; the
+        // non-exhaustive attribute would otherwise reject the
+        // struct-literal shape from outside the crate.
+        let r = CaretRect::new(12.5, 8.0, 2.0, 18.0);
+        assert!((r.x - 12.5).abs() < f32::EPSILON);
+        assert!((r.y - 8.0).abs() < f32::EPSILON);
+        assert!((r.width - 2.0).abs() < f32::EPSILON);
+        assert!((r.height - 18.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r56_2_c_caret_rect_new_is_const_eligible() {
+        // R56.2.c — constructor is `const fn` so callers can build
+        // compile-time-known CaretRects (e.g. test fixtures, default
+        // sentinel values). Verifies the const-eligibility by
+        // assigning to a `const` binding.
+        const RECT: CaretRect = CaretRect::new(0.0, 0.0, 1.0, 1.0);
+        assert!((RECT.x).abs() < f32::EPSILON);
+        assert!((RECT.width - 1.0).abs() < f32::EPSILON);
     }
 }

@@ -47,7 +47,7 @@
 
 use std::sync::Arc;
 
-use pinion_core::Intent;
+use pinion_core::{Intent, Scene, WidgetCore};
 use vello::peniko::Color as PenikoColor;
 use vello::Scene as VelloScene;
 use winit::window::Window;
@@ -153,6 +153,14 @@ impl Default for VelloContext {
 // preserves every existing `pinion_shell::WidgetRenderer` callsite
 // (app.rs render dispatch, `vello_renderer_impl!` macro path).
 pub use pinion_core::WidgetRenderer;
+// R56.2.c §5.13 §5.38 — re-export the scene-walker
+// `pinion_runtime::rect_for_tag` so application
+// [`WidgetView::ime_caret_rect`] impls can resolve the focused
+// widget's post-layout window-coord bounds without pulling
+// `pinion-runtime` as a direct dep. The substrate is unchanged
+// — pinion-runtime is the canonical home of the layout walker —
+// the re-export just shortens the consumer-side surface.
+pub use pinion_runtime::rect_for_tag;
 
 /// R51.109.1 §5.41 — Vello specialization of [`WidgetRenderer`].
 ///
@@ -274,6 +282,50 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// [`resumed`](AppShell::resumed); subsequent resizes go through
     /// `WindowEvent::Resized`.
     fn initial_size() -> (u32, u32);
+
+    /// R56.2.c §5.13 §5.38 — IME candidate window positioning hint.
+    /// Returns the caret rect in **window-local logical-pixel
+    /// coordinates** (origin at the top-left of the client area, the
+    /// same coord frame [`Window::set_ime_cursor_area`] consumes) so
+    /// the shell can position the platform IME candidate popup
+    /// directly underneath the caret. Without this hook
+    /// ibus-hangul / fcitx5 / macOS Hangul / Microsoft IME default
+    /// the popup to the screen corner — usable for typing but
+    /// disorienting for users scanning between text + candidates.
+    ///
+    /// The shell calls this once per redraw cycle after layout has
+    /// populated [`pinion_text::LayoutCache`] (so the application
+    /// impl's [`caret_rect_for_byte_offset`](pinion_text::caret_rect_for_byte_offset)
+    /// lookup is a cache hit, not a recomputation). The shell
+    /// wraps the call in [`Owner::run`](pinion_core::reactive::Owner)
+    /// so applications can reach the same
+    /// `use_text_edit_state(tag)` / `use_layout_cache(key)` hooks
+    /// the view fn and `apply_composition` already use — one
+    /// `Rc<TextEditState>` per tag across the binding lifetime.
+    ///
+    /// `focused != Some(<my tag>)` should short-circuit to `None`
+    /// (mirror of the `apply_key` / `apply_composition` roving-
+    /// tabindex pattern); the trait return shape `None` tells the
+    /// shell "no IME-relevant caret right now" and the shell skips
+    /// the `set_ime_cursor_area` call (winit keeps the previous
+    /// rect, which is the canonical winit contract).
+    ///
+    /// Width should be `>= 1.0` (a 0-width caret renders zero
+    /// candidate space and some IMEs reject the call); the shell
+    /// applies a `.max(1.0)` guard on both axes so this contract is
+    /// belt-and-braces.
+    ///
+    /// Default returns `None` — widgets without text-input
+    /// affordances need no override. Only text-input widgets
+    /// (`TextField`-class) override.
+    #[must_use]
+    fn ime_caret_rect(
+        _state: &<Self as WidgetCore>::State,
+        _scene: &Scene,
+        _focused: Option<&str>,
+    ) -> Option<pinion_text::CaretRect> {
+        None
+    }
 }
 
 /// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.6

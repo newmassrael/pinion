@@ -27166,6 +27166,66 @@
         "R57 Theming substrate axis — runtime palette + token system + theme switch demo"
       ]
     },
+    "Round 564": {
+      "decision_summary": "R56.2.c set_ime_cursor_area wire",
+      "changes_bullets": [
+        "pinion-shell WidgetView add ime_caret_rect trait method default None (window-local logical px)",
+        "AppShell render hook between paint and finalize_frame: root_owner.run V::ime_caret_rect then set_ime_cursor_area dedup",
+        "AppShell last_ime_cursor_area f32 tuple field dedups so unchanged caret skips winit boundary call",
+        "pinion-shell re-exports pinion_runtime rect_for_tag so consumers walk scene without direct dep",
+        "pinion-text CaretRect adds public const new constructor for non_exhaustive struct downstream synthesis",
+        "hello-textfield impl ime_caret_rect via use_text_edit_state + use_layout_cache + caret_rect_for_byte_offset",
+        "hello-textfield ime_caret_rect mirrors view fn effective_text and visual caret byte for cache hit"
+      ],
+      "verification_bullets": [
+        "cargo test workspace vello feature 2693 pass 0 fail 14 ignored (+3 new from R56.2.c)",
+        "cargo clippy workspace all-targets vello feature 0 warnings clippy pedantic deny baseline preserved",
+        "14 demos release-build PASS including hello_textfield_compose and hello_textfield_clipboard regression",
+        "CaretRect new constructor test pins f32 fields + const eligibility",
+        "default ime_caret_rect None test pins trait shape on TestView mock across states"
+      ],
+      "impact_refs": [
+        "5.13",
+        "5.36",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "R56.2.c per-focus set_ime_allowed gate on second text-input widget (substrate-incompleteness)",
+        "Wayland PRIMARY selection (middle-click) clipboard support arboard CLIPBOARD only",
+        "pinion-tui FocusManager + IME bridge (TUI multi-widget binary absent today)",
+        "R57 Theming substrate axis runtime palette + token system + theme switch demo",
+        "R58 composite widget catalogue axis DatePicker / Combobox / Menu"
+      ],
+      "publishable_decision_summary": "R56.2.c §5.13 §5.38 — WidgetView::ime_caret_rect + AppShell set_ime_cursor_area dedup wire so IME candidate popup tracks the caret instead of defaulting to the screen corner.",
+      "publishable_changes_bullets": [
+        "pinion-shell WidgetView add ime_caret_rect default None (window-local logical px coord frame)",
+        "AppShell render hook: root_owner.run V::ime_caret_rect between paint and finalize_frame",
+        "AppShell last_ime_cursor_area f32 tuple dedups unchanged caret so winit boundary call skipped",
+        "pinion-shell re-exports pinion_runtime::rect_for_tag for application scene walking",
+        "pinion-text CaretRect adds public const new constructor (non_exhaustive struct downstream synth)",
+        "hello-textfield ime_caret_rect impl: use_layout_cache hit + visual caret byte mirror view fn",
+        "hello-textfield ime_caret_rect composes field_rect (rect_for_tag) + FIELD_PAD + caret_local"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test workspace vello feature: 2693 pass / 0 fail / 14 ignored (+3 new from R56.2.c)",
+        "cargo clippy workspace all-targets vello feature: 0 warnings (clippy::pedantic deny baseline)",
+        "14 demos release-build PASS including hello_textfield_compose end-to-end regression",
+        "CaretRect::new tests pin f32 fields + const-eligibility for compile-time CaretRect literals",
+        "Default ime_caret_rect None test pins trait shape on TestView mock across (state, focused) matrix"
+      ],
+      "publishable_impact_refs": [
+        "5.13",
+        "5.36",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Per-focus set_ime_allowed gate on second text-input widget (substrate-incompleteness signal)",
+        "Wayland PRIMARY selection (middle-click paste) — arboard surface is CLIPBOARD-only today",
+        "pinion-tui FocusManager + IME bridge (TUI multi-widget binary absent, axis-level carry)",
+        "R57 Theming substrate axis — runtime palette + token system + theme switch demo",
+        "R58 composite widget catalogue axis — DatePicker / Combobox / Menu"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

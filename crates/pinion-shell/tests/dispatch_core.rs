@@ -2184,3 +2184,46 @@ mod r56_2_a_apply_composition_wire {
         );
     }
 }
+
+#[cfg(test)]
+mod r56_2_c_ime_caret_rect_default {
+    //! R56.2.c §5.13 §5.38 — `WidgetView::ime_caret_rect` default-impl
+    //! contract regression.
+    //!
+    //! `TestView` does not override `ime_caret_rect`; the trait
+    //! default returns `None`, which the shell's `render()` path
+    //! interprets as "no IME-relevant caret right now, skip
+    //! `Window::set_ime_cursor_area`". The shell-wire arc itself
+    //! (cursor-area dedup, `winit::Window::set_ime_cursor_area`
+    //! call) requires a live `winit::EventLoop` + `Window` and is
+    //! exercised on real platform IME input rather than under
+    //! `cargo test` — the trait default and the application
+    //! override path are pinned here so a future trait shape change
+    //! lands a compile-time + test-time regression.
+
+    use super::TestView;
+    use pinion_core::scene::{ContainerNode, Scene};
+    use pinion_shell::WidgetView;
+
+    #[test]
+    fn r56_2_c_default_ime_caret_rect_returns_none_for_any_state() {
+        // TestView::State == i32 (carrying no caret semantics).
+        // Default `WidgetView::ime_caret_rect` defers to the trait
+        // signature's `None`; no platform IME positioning happens.
+        let scene = Scene::Container(ContainerNode::new(vec![]).with_tag("test"));
+        for state in [0_i32, 1_i32, -7_i32] {
+            assert!(
+                TestView::ime_caret_rect(&state, &scene, Some("test")).is_none(),
+                "default ime_caret_rect must yield None on TestView state {state}",
+            );
+            assert!(
+                TestView::ime_caret_rect(&state, &scene, None).is_none(),
+                "default ime_caret_rect None whether or not anything is focused",
+            );
+            assert!(
+                TestView::ime_caret_rect(&state, &scene, Some("foreign_tag")).is_none(),
+                "default ime_caret_rect None on a wrong-focus dispatch",
+            );
+        }
+    }
+}
