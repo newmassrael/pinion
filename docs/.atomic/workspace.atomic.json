@@ -2995,6 +2995,10 @@
         {
           "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "AppShell::handle_touch"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/scrollbar.rs",
+          "symbol": "ScrollBarExternal::pointer_move"
         }
       ],
       "decision_status": "active"
@@ -5437,6 +5441,14 @@
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
           "symbol": "ScrollBarExternal"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/scrollbar.rs",
+          "symbol": "ScrollBar::attach_state"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/scrollbar.rs",
+          "symbol": "ScrollBarExternal::pointer_move"
         }
       ],
       "decision_status": "active"
@@ -15269,6 +15281,58 @@
       "publishable_carry_forward_bullets": [
         "R55.D.3: PointerEvent routing (thumb hit + drag delta → ScrollState scroll_to, capture lock)",
         "R55.D.4: visible demo (hello-listbox 편입 또는 hello-scrollbar 신규 예제) — 첫 visible 가시화"
+      ]
+    },
+    "R55.D.3": {
+      "decision_summary": "R55.D.3 §5.45 §5.15 §5.35 — ScrollBar PointerEvent routing land: with_state composition + drag-start snapshot + pointer_move가 ScrollState::scroll_to 직접 dispatch",
+      "changes_bullets": [
+        "ScrollBar struct에 state: Option<Rc<ScrollState>> + drag_start: Option<DragStart> 필드 추가",
+        "attach_state(mut self, state) -> Self builder + scroll_state() read-only accessor (양 layer)",
+        "DragStart 구조체: cursor_fraction + offset_at_press + scroll_max (press-time pinned)",
+        "ScrollBarExternal::pointer_move impl: axis fraction, first frame snapshot, subsequent delta×scroll_max",
+        "ScrollBar::send가 Dragging 종료 transition(up/leave/cancel/disable) 시 drag_start clear",
+        "f32→i32 delta cast = .round() (truncation 회피, 0.2*400=80 정확) + 18 r55_d3 unit test"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2254/0/12 (baseline 2236 → +18 r55_d3)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "mnemosyne validate_workspace = T1=0 / RT=1/1 / GENERATED sync / orphan_refs=4 baseline 유지",
+        "10 demos 회귀 PASS (visible 변화 0, internal pointer routing axis cascade)"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.35",
+        "5.38",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "R55.D.4: visible demo (hello-listbox 편입 또는 hello-scrollbar 신규) — 첫 visible scrollbar 가시화",
+        "F1 framework auto-tag conflict-aware 영구 carry (R55.G.17 F7 채택)"
+      ],
+      "publishable_decision_summary": "R55.D.3 §5.45 §5.15 §5.35 — ScrollBar PointerEvent routing land: with_state composition + drag-start snapshot + pointer_move가 ScrollState::scroll_to 직접 dispatch",
+      "publishable_changes_bullets": [
+        "ScrollBar struct에 state: Option<Rc<ScrollState>> + drag_start: Option<DragStart> 필드 추가",
+        "attach_state(mut self, state) -> Self builder + scroll_state() read-only accessor (양 layer)",
+        "DragStart 구조체: cursor_fraction + offset_at_press + scroll_max (press-time pinned)",
+        "ScrollBarExternal::pointer_move impl: axis fraction, first frame snapshot, subsequent delta×scroll_max",
+        "ScrollBar::send가 Dragging 종료 transition(up/leave/cancel/disable) 시 drag_start clear",
+        "f32→i32 delta cast = .round() (truncation 회피, 0.2*400=80 정확) + 18 r55_d3 unit test"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2254/0/12 (baseline 2236 → +18 r55_d3)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings",
+        "mnemosyne validate_workspace = T1=0 / RT=1/1 / GENERATED sync / orphan_refs=4 baseline 유지",
+        "10 demos 회귀 PASS (visible 변화 0, internal pointer routing axis cascade)"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.35",
+        "5.38",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R55.D.4: visible demo (hello-listbox 편입 또는 hello-scrollbar 신규) — 첫 visible scrollbar 가시화",
+        "F1 framework auto-tag conflict-aware 영구 carry (R55.G.17 F7 채택)"
       ]
     },
     "R55.G.22": {

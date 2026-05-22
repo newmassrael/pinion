@@ -2303,6 +2303,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-runtime/src/input.rs:split_subindex
 - examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key
 - crates/pinion-shell/src/lib.rs:AppShell::handle_touch
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal::pointer_move
 
 
 
@@ -3614,6 +3615,8 @@ pub struct ScrollNode {
 - crates/pinion-core/src/scene.rs:ScrollNode::map_layout
 - crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar
 - crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar::attach_state
+- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal::pointer_move
 
 
 
@@ -9814,6 +9817,35 @@ if __name__ == "__main__":
 **Carry forward**:
 - R55.D.3: PointerEvent routing (thumb hit + drag delta → ScrollState scroll_to, capture lock)
 - R55.D.4: visible demo (hello-listbox 편입 또는 hello-scrollbar 신규 예제) — 첫 visible 가시화
+
+
+
+### R55.D.3 — R55.D.3 §5.45 §5.15 §5.35 — ScrollBar PointerEvent routing land: with_state composition + drag-start snapshot + pointer_move가 ScrollState::scroll_to 직접 dispatch
+
+**Changes**:
+- ScrollBar struct에 state: Option<Rc<ScrollState>> + drag_start: Option<DragStart> 필드 추가
+- attach_state(mut self, state) -> Self builder + scroll_state() read-only accessor (양 layer)
+- DragStart 구조체: cursor_fraction + offset_at_press + scroll_max (press-time pinned)
+- ScrollBarExternal::pointer_move impl: axis fraction, first frame snapshot, subsequent delta×scroll_max
+- ScrollBar::send가 Dragging 종료 transition(up/leave/cancel/disable) 시 drag_start clear
+- f32→i32 delta cast = .round() (truncation 회피, 0.2*400=80 정확) + 18 r55_d3 unit test
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2254/0/12 (baseline 2236 → +18 r55_d3)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace = T1=0 / RT=1/1 / GENERATED sync / orphan_refs=4 baseline 유지
+- 10 demos 회귀 PASS (visible 변화 0, internal pointer routing axis cascade)
+
+
+
+**Impact**: §5.15, §5.35, §5.38, §5.45
+
+
+**Carry forward**:
+- R55.D.4: visible demo (hello-listbox 편입 또는 hello-scrollbar 신규) — 첫 visible scrollbar 가시화
+- F1 framework auto-tag conflict-aware 영구 carry (R55.G.17 F7 채택)
 
 
 

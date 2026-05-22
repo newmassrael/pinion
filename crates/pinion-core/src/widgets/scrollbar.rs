@@ -253,12 +253,15 @@ mod sm {
 pub use sm::{ScrollBarEvent, ScrollBarState};
 use sm::ScrollBarPolicy;
 
+use std::rc::Rc;
+
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
     ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::widgets::scroll::ScrollState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
 /// `ScrollBar` widget state machine + orientation sidecar.
@@ -284,6 +287,41 @@ use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 pub struct ScrollBar {
     inner: Widget<ScrollBarPolicy>,
     orientation: ScrollBarOrientation,
+    /// R55.D.3 §5.45 — composition handle to the authoritative
+    /// [`ScrollState`]. The `ScrollBar` is the visible peer; the
+    /// state is the reactive value. Attaching is optional — a bare
+    /// `ScrollBar::new()` carries no handle and `pointer_move`
+    /// no-ops, which lets the R55.D.4 visible demo land its paint
+    /// composition before the application wires up the reactive
+    /// state (substrate-vs-application boundary).
+    state: Option<Rc<ScrollState>>,
+    /// R55.D.3 §5.45 — press-time snapshot driving the drag math.
+    /// `None` outside the `Dragging` state. The framework's
+    /// [`InputRouter`](pinion_runtime::InputRouter) opens a capture
+    /// lock on `pointer_down` and forwards the press-time cursor as
+    /// the first `pointer_move`; that frame captures the snapshot,
+    /// every subsequent `pointer_move` applies the delta against it.
+    drag_start: Option<DragStart>,
+}
+
+/// R55.D.3 §5.45 — drag-start snapshot. Captured on the first
+/// `pointer_move` under capture lock so the delta-based drag math
+/// uses the press-time origin even when the cursor strays off the
+/// track rect. `scroll_max` is cached here (not re-read from
+/// [`ScrollState`] every frame) so a mid-drag content insert / size
+/// re-measurement does not warp the in-flight drag's mapping.
+#[derive(Debug, Clone, Copy)]
+struct DragStart {
+    /// Cursor fraction (`0.0..=1.0` widget-relative) at press time,
+    /// taken along the active [`ScrollBarOrientation`] axis.
+    cursor_fraction: f32,
+    /// Scroll offset at press time (along the active axis).
+    offset_at_press: i32,
+    /// [`ScrollState`] max bound at press time (along the active
+    /// axis). Pinning this here is the textbook drag-stability
+    /// guard — re-reading mid-drag would let a content insert warp
+    /// the cursor↔offset mapping under the user's finger.
+    scroll_max: i32,
 }
 
 impl ScrollBar {
@@ -291,11 +329,19 @@ impl ScrollBar {
     /// is the W3C ARIA `aria-orientation` default for the
     /// `scrollbar` role and the common case for list-like content
     /// (`hello-listbox`, future R55.E table / timeline views).
+    ///
+    /// No [`ScrollState`] is attached — call
+    /// [`Self::attach_state`] to wire the bar to a reactive offset
+    /// (R55.D.3). Bare bars are useful for paint-only previews and
+    /// snapshot regression tests that do not exercise the drag
+    /// routing.
     #[must_use]
     pub fn new() -> Self {
         Self {
             inner: Widget::new(),
             orientation: ScrollBarOrientation::Vertical,
+            state: None,
+            drag_start: None,
         }
     }
 
@@ -308,7 +354,28 @@ impl ScrollBar {
         Self {
             inner: Widget::new(),
             orientation,
+            state: None,
+            drag_start: None,
         }
+    }
+
+    /// R55.D.3 §5.45 — attach a [`ScrollState`] handle (composition).
+    /// The `ScrollBar` becomes the visible peer for the state's
+    /// reactive offset; subsequent `pointer_move` calls translate
+    /// the cursor delta into [`ScrollState::scroll_to`] calls along
+    /// the bar's orientation axis. Builder-style: chain after
+    /// [`Self::new`] / [`Self::with_orientation`] for the fluent
+    /// `ScrollBar::with_orientation(H).attach_state(rc)` shape.
+    ///
+    /// Detaching is not supported — drop the `ScrollBar` and build
+    /// a fresh one instead. The `ScrollState` handle outlives the
+    /// `ScrollBar` (refcounted by `Rc`), so detach/reattach mid-
+    /// life would only complicate the contract without unlocking a
+    /// real use case.
+    #[must_use]
+    pub fn attach_state(mut self, state: Rc<ScrollState>) -> Self {
+        self.state = Some(state);
+        self
     }
 
     /// Track orientation, fixed at construction. Drives the
@@ -319,12 +386,31 @@ impl ScrollBar {
         self.orientation
     }
 
+    /// R55.D.3 §5.45 — read-only access to the attached
+    /// [`ScrollState`] handle. `None` until [`Self::attach_state`]
+    /// fires. Diagnostic / test surface; production callers usually
+    /// reach the state through the same `Rc<ScrollState>` they
+    /// passed in (the R55.B [`use_scroll_state`](crate::widgets::scroll::use_scroll_state)
+    /// hook returns the canonical shared handle).
+    #[must_use]
+    pub fn scroll_state(&self) -> Option<&Rc<ScrollState>> {
+        self.state.as_ref()
+    }
+
     /// Drive a [`ScrollBarEvent`] through the SCXML. Pure state
     /// transition — the authoritative scroll offset lives in
     /// [`ScrollState`](crate::widgets::scroll::ScrollState) and is
     /// mutated through that handle, not through this widget.
+    ///
+    /// R55.D.3 §5.45 — any transition that exits `Dragging`
+    /// (`pointer_up`, `pointer_leave`, `pointer_cancel`, `disable`)
+    /// clears the press-time [`DragStart`] snapshot so the next
+    /// press starts clean.
     pub fn send(&mut self, event: ScrollBarEvent) {
         self.inner.send(event);
+        if !matches!(self.inner.state(), ScrollBarState::Dragging) {
+            self.drag_start = None;
+        }
     }
 
     /// Current interaction state.
@@ -407,14 +493,29 @@ impl ScrollBarExternal {
     /// Construct a `ScrollBar` external with an explicit
     /// [`ScrollBarOrientation`]. Wraps a
     /// [`ScrollBar::with_orientation`] under the intent emitter so
-    /// the future R55.D.3 `pointer_move` forward reads the correct
-    /// axis and the `"orientation"` introspect field reports the
-    /// matching ARIA string.
+    /// the R55.D.3 `pointer_move` forward reads the correct axis and
+    /// the `"orientation"` introspect field reports the matching
+    /// ARIA string.
     #[must_use]
     pub fn with_orientation(orientation: ScrollBarOrientation) -> Self {
         Self {
             em: IntentEmitter::new(ScrollBar::with_orientation(orientation)),
         }
+    }
+
+    /// R55.D.3 §5.45 — attach a [`ScrollState`] handle to the inner
+    /// [`ScrollBar`] (composition). Builder-style; chain after
+    /// [`Self::new`] / [`Self::with_orientation`] for the fluent
+    /// shape. See [`ScrollBar::attach_state`] for the contract.
+    #[must_use]
+    pub fn attach_state(mut self, state: Rc<ScrollState>) -> Self {
+        // `mem::take` keeps the builder shape (consume-and-return)
+        // through the wrapping `IntentEmitter`; `ScrollBar::default`
+        // is the cheap `Default::default()` round-trip (no
+        // observable state — drag_start / state both `None`, SCXML
+        // freshly initialized to `Idle`).
+        self.em.inner = std::mem::take(&mut self.em.inner).attach_state(state);
+        self
     }
 
     /// Track orientation (delegates to [`ScrollBar::orientation`]).
@@ -423,6 +524,14 @@ impl ScrollBarExternal {
     #[must_use]
     pub fn orientation(&self) -> ScrollBarOrientation {
         self.em.inner.orientation()
+    }
+
+    /// R55.D.3 §5.45 — attached [`ScrollState`] handle (delegates
+    /// to [`ScrollBar::scroll_state`]). `None` until
+    /// [`Self::attach_state`] fires.
+    #[must_use]
+    pub fn scroll_state(&self) -> Option<&Rc<ScrollState>> {
+        self.em.inner.scroll_state()
     }
 
     /// Drive a [`ScrollBarEvent`] and queue a `"scroll_committed"`
@@ -477,6 +586,101 @@ impl External for ScrollBarExternal {
     /// entirely) without the press cancelling.
     fn wants_pointer_capture(&self) -> bool {
         true
+    }
+
+    /// R55.D.3 §5.45 §5.15 §5.35 — translate the widget-relative
+    /// cursor under capture lock into a
+    /// [`ScrollState::scroll_to`](crate::widgets::scroll::ScrollState::scroll_to)
+    /// call along the bar's orientation axis.
+    ///
+    /// * **`Vertical`** orientation: `y_rel` drives the value;
+    ///   `x_rel` is ignored. Top edge (`y_rel = 0.0`) → smallest
+    ///   offset, bottom edge (`y_rel = 1.0`) → `scroll_max`. Mirrors
+    ///   the natural scrollbar UX where dragging the thumb down
+    ///   scrolls the content down. (Unlike [`Slider`](crate::widgets::slider::Slider)'s
+    ///   R51.39 inversion — Slider's vertical axis honors ARIA
+    ///   `aria-orientation="vertical"` where top = max; scrollbars
+    ///   follow the orthogonal "drag direction = scroll direction"
+    ///   convention that web / Material / `SwiftUI` all share.)
+    /// * **`Horizontal`** orientation: `x_rel` drives; `y_rel` is
+    ///   ignored. Left edge → smallest offset, right edge →
+    ///   `scroll_max`.
+    ///
+    /// The first `pointer_move` after `pointer_down` (the press-
+    /// time cursor frame the framework supplies under capture lock)
+    /// captures a [`DragStart`] snapshot — cursor fraction +
+    /// [`ScrollState`] offset + `scroll_max` — and does not move
+    /// the offset. Each subsequent frame applies
+    /// `delta_fraction × scroll_max` to the press-time offset and
+    /// dispatches `ScrollState::scroll_to`. The clamping in
+    /// `scroll_to` saturates strays past the track ends, mirroring
+    /// the R51.35 Slider clamp-on-overshoot contract.
+    ///
+    /// No-op without an attached [`ScrollState`] (the bar is in
+    /// "paint-only" mode — the R55.D.4 visible demo lands its
+    /// preview before the application wires up the reactive state)
+    /// or outside the `Dragging` state (capture chatter while the
+    /// framework is still resolving a release path stays silent).
+    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+        if !matches!(self.state(), ScrollBarState::Dragging) {
+            return;
+        }
+        let Some(state) = self.em.inner.state.as_ref() else {
+            return;
+        };
+
+        let orientation = self.em.inner.orientation;
+        let cursor_fraction = match orientation {
+            ScrollBarOrientation::Vertical => y_rel,
+            ScrollBarOrientation::Horizontal => x_rel,
+        };
+
+        if self.em.inner.drag_start.is_none() {
+            // First pointer_move under the capture lock = press-
+            // time cursor. Capture the snapshot, no offset change
+            // on this frame (the user has not dragged yet).
+            let (max_x, max_y) = state.max();
+            let (offset_x, offset_y) = state.offset();
+            let (scroll_max, offset_at_press) = match orientation {
+                ScrollBarOrientation::Vertical => (max_y, offset_y),
+                ScrollBarOrientation::Horizontal => (max_x, offset_x),
+            };
+            self.em.inner.drag_start = Some(DragStart {
+                cursor_fraction,
+                offset_at_press,
+                scroll_max,
+            });
+            return;
+        }
+
+        // Drag in progress. The unwrap is unreachable — we just
+        // checked `is_none()`. `round()` (not truncate) maps the
+        // f32 cursor delta to its nearest integer offset; without
+        // it, an f32-imprecise `delta_fraction × scroll_max` of
+        // 79.999995 truncates to 79 instead of the user-expected
+        // 80. `scroll_to` then clamps against `[0, scroll_max]`,
+        // so an over-/underflow on either side resolves to the
+        // track endpoint regardless of which sign the f32 round
+        // produced.
+        let drag_start = self.em.inner.drag_start.expect("drag_start just captured");
+        let delta_fraction = cursor_fraction - drag_start.cursor_fraction;
+        // `scroll_max as f32` loses precision past 2^24 — fine for
+        // realistic scroll bounds (10^7 px content at most;
+        // `f32::EPSILON × 2^24 ≈ 1 px`). The cast back to i32
+        // saturates on overflow (R51.x cast contract).
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+        let delta_offset =
+            (delta_fraction * drag_start.scroll_max as f32).round() as i32;
+        let new_along =
+            drag_start.offset_at_press.saturating_add(delta_offset);
+        match orientation {
+            ScrollBarOrientation::Vertical => {
+                state.scroll_to(state.offset_x(), new_along);
+            }
+            ScrollBarOrientation::Horizontal => {
+                state.scroll_to(new_along, state.offset_y());
+            }
+        }
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -1149,5 +1353,315 @@ mod r55_d2_tests {
         assert!(dbg.contains("ScrollBarExternal"), "{dbg}");
         assert!(dbg.contains("Idle"), "{dbg}");
         assert!(dbg.contains("Vertical"), "{dbg}");
+    }
+}
+
+#[cfg(test)]
+mod r55_d3_tests {
+    //! R55.D.3 §5.45 — `ScrollBar` pointer-event routing battery.
+    //! Pins the composition contract (`attach_state` stores a shared
+    //! `Rc<ScrollState>`), the drag math (press-time snapshot +
+    //! `delta_fraction × scroll_max`), the axis dispatch (vertical
+    //! reads `y_rel`, horizontal reads `x_rel`), and the drag-end
+    //! cleanup (every `Dragging` exit clears the snapshot).
+
+    use std::rc::Rc;
+
+    use super::{
+        ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation,
+        ScrollBarState,
+    };
+    use crate::external::External;
+    use crate::widgets::scroll::ScrollState;
+
+    fn fresh_state(max_x: i32, max_y: i32) -> Rc<ScrollState> {
+        let s = Rc::new(ScrollState::new());
+        s.set_max(max_x, max_y);
+        s
+    }
+
+    fn drag(bar: &mut ScrollBarExternal) {
+        bar.send(ScrollBarEvent::PointerEnter);
+        bar.send(ScrollBarEvent::PointerDown);
+    }
+
+    #[test]
+    fn bare_constructor_has_no_state_attached() {
+        let s = ScrollBar::new();
+        assert!(s.scroll_state().is_none());
+        let sx = ScrollBarExternal::new();
+        assert!(sx.scroll_state().is_none());
+    }
+
+    #[test]
+    fn attach_state_stores_handle_with_shared_rc() {
+        // The `Rc<ScrollState>` is shared between caller and the
+        // bar — modifications through the original handle surface
+        // on the bar's `scroll_state()` query and vice versa.
+        let state = fresh_state(0, 400);
+        let sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        let attached = sx.scroll_state().expect("state was attached");
+        assert!(Rc::ptr_eq(attached, &state));
+        // Mutate through the original handle.
+        state.scroll_to(0, 50);
+        // Visible through the bar's handle.
+        assert_eq!(attached.offset(), (0, 50));
+    }
+
+    #[test]
+    fn with_orientation_chains_attach_state() {
+        let state = fresh_state(300, 0);
+        let sx = ScrollBarExternal::with_orientation(ScrollBarOrientation::Horizontal)
+            .attach_state(Rc::clone(&state));
+        assert_eq!(sx.orientation(), ScrollBarOrientation::Horizontal);
+        assert!(Rc::ptr_eq(sx.scroll_state().unwrap(), &state));
+    }
+
+    #[test]
+    fn pointer_move_without_state_is_silent() {
+        // Bare bar — no state attached. pointer_move under capture
+        // lock is a no-op; nothing to assert other than "did not
+        // panic" plus the bar still surfaces no scroll_state.
+        let mut sx = ScrollBarExternal::new();
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.5);
+        sx.pointer_move(0.0, 0.8);
+        assert!(sx.scroll_state().is_none());
+    }
+
+    #[test]
+    fn pointer_move_outside_dragging_is_silent() {
+        // Capture chatter while idle / hover. The state's offset
+        // must not move just because pointer_move fired.
+        let state = fresh_state(0, 400);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        // Idle → pointer_move (e.g. hover preview from outside the bar
+        // for a sibling widget that lost focus). Capture lock would
+        // not even be open here in production but the routing must
+        // stay defensive.
+        sx.pointer_move(0.0, 0.5);
+        assert_eq!(state.offset(), (0, 0));
+        sx.send(ScrollBarEvent::PointerEnter);
+        sx.pointer_move(0.0, 0.5);
+        assert_eq!(state.offset(), (0, 0));
+    }
+
+    #[test]
+    fn first_pointer_move_captures_drag_start_without_offset_change() {
+        // The framework supplies the press-time cursor as the
+        // initial `pointer_move` after capture lock opens. That
+        // frame must capture the snapshot; the offset must not
+        // move yet (the user has not dragged anywhere).
+        let state = fresh_state(0, 400);
+        state.scroll_to(0, 80); // arbitrary press-time offset
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        // Press-time cursor fraction y_rel = 0.3.
+        sx.pointer_move(0.0, 0.3);
+        // No offset change on press frame.
+        assert_eq!(state.offset(), (0, 80));
+    }
+
+    #[test]
+    fn vertical_drag_applies_fraction_delta_times_scroll_max() {
+        // Vertical: y_rel drives. press at y=0.2, drag to y=0.5
+        // (delta=+0.3), scroll_max=400 → delta_offset = 120, new
+        // offset = 80 + 120 = 200.
+        let state = fresh_state(0, 400);
+        state.scroll_to(0, 80);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.2); // press
+        sx.pointer_move(0.0, 0.5); // drag
+        assert_eq!(state.offset(), (0, 200));
+    }
+
+    #[test]
+    fn horizontal_drag_reads_x_rel_and_ignores_y_rel() {
+        // Horizontal: x_rel drives, y_rel is ignored. press at
+        // x=0.1, drag to x=0.4 (delta=+0.3) on scroll_max=200 → +60.
+        let state = fresh_state(200, 0);
+        state.scroll_to(40, 0);
+        let mut sx = ScrollBarExternal::with_orientation(ScrollBarOrientation::Horizontal)
+            .attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.1, 0.7); // press; y ignored
+        sx.pointer_move(0.4, 0.9); // drag; y ignored
+        assert_eq!(state.offset(), (100, 0));
+    }
+
+    #[test]
+    fn vertical_drag_ignores_x_rel() {
+        // Symmetric to the horizontal case: Vertical reads y only.
+        let state = fresh_state(200, 400);
+        state.scroll_to(50, 80);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.1, 0.2); // press
+        sx.pointer_move(0.9, 0.2); // x changed, y same → no offset change
+        assert_eq!(state.offset(), (50, 80));
+    }
+
+    #[test]
+    fn backward_drag_decreases_offset() {
+        // Dragging up (smaller y_rel) decreases the offset.
+        let state = fresh_state(0, 400);
+        state.scroll_to(0, 200);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.6); // press
+        sx.pointer_move(0.0, 0.2); // drag back (delta = -0.4 × 400 = -160)
+        assert_eq!(state.offset(), (0, 40));
+    }
+
+    #[test]
+    fn drag_clamps_to_zero_on_underflow() {
+        // delta_offset would be negative enough to undershoot 0.
+        // `ScrollState::scroll_to` clamps saturating-down to 0.
+        let state = fresh_state(0, 400);
+        state.scroll_to(0, 50);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.5); // press
+        sx.pointer_move(0.0, 0.0); // drag to top (delta = -0.5 × 400 = -200)
+        // 50 + (-200) = -150 → clamps to 0.
+        assert_eq!(state.offset(), (0, 0));
+    }
+
+    #[test]
+    fn drag_clamps_to_scroll_max_on_overshoot() {
+        // delta past `scroll_max` saturates at the bottom.
+        let state = fresh_state(0, 400);
+        state.scroll_to(0, 200);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.0); // press at top
+        sx.pointer_move(0.0, 1.0); // drag to bottom (delta = +1.0 × 400 = +400)
+        // 200 + 400 = 600 → clamps to scroll_max=400.
+        assert_eq!(state.offset(), (0, 400));
+    }
+
+    #[test]
+    fn pointer_up_clears_drag_start_so_next_press_starts_fresh() {
+        // After drag-end, the next press should re-capture from
+        // the (post-drag) offset, not the previous drag's press.
+        let state = fresh_state(0, 400);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        // First drag: 0.0 → 0.25 = +100 offset.
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.0);
+        sx.pointer_move(0.0, 0.25);
+        sx.send(ScrollBarEvent::PointerUp);
+        assert_eq!(state.offset(), (0, 100));
+        // Second drag from the new offset 100: 0.5 → 0.75 = +100 offset.
+        sx.send(ScrollBarEvent::PointerDown);
+        sx.pointer_move(0.0, 0.5);
+        sx.pointer_move(0.0, 0.75);
+        assert_eq!(state.offset(), (0, 200), "second drag should add to new offset");
+    }
+
+    #[test]
+    fn pointer_leave_clears_drag_start() {
+        // Drag-cancel-on-leave: the SCXML drops `dragging → idle`,
+        // and the next press must start fresh. (No offset rollback —
+        // matches R51.93 Slider value sticky-on-cancel.)
+        let state = fresh_state(0, 400);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.0);
+        sx.pointer_move(0.0, 0.5);
+        assert_eq!(state.offset(), (0, 200));
+        sx.send(ScrollBarEvent::PointerLeave);
+        // Restart the drag — the bar must re-snapshot, not carry
+        // the prior `drag_start.cursor_fraction = 0.0` across a
+        // cancel.
+        sx.send(ScrollBarEvent::PointerEnter);
+        sx.send(ScrollBarEvent::PointerDown);
+        sx.pointer_move(0.0, 0.5); // press (post-cancel) at y=0.5
+        sx.pointer_move(0.0, 0.6); // drag (delta = +0.1 × 400 = +40)
+        assert_eq!(state.offset(), (0, 240));
+    }
+
+    #[test]
+    fn pointer_cancel_clears_drag_start() {
+        // Touch-cancel analog of pointer_leave (R51.93 §5.35 mirror).
+        let state = fresh_state(0, 400);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.0);
+        sx.pointer_move(0.0, 0.4); // +160 offset
+        sx.send(ScrollBarEvent::PointerCancel);
+        assert_eq!(sx.state(), ScrollBarState::Idle);
+        // Press again — fresh snapshot.
+        sx.send(ScrollBarEvent::PointerEnter);
+        sx.send(ScrollBarEvent::PointerDown);
+        sx.pointer_move(0.0, 0.5);
+        sx.pointer_move(0.0, 0.5); // no delta
+        assert_eq!(state.offset(), (0, 160), "no drift on stationary repress");
+    }
+
+    #[test]
+    fn disable_during_drag_clears_drag_start() {
+        // Disable mid-drag: SCXML jumps `Dragging → Disabled`,
+        // and the press-time snapshot is wiped. Subsequent
+        // pointer_move calls (capture lock may still be open until
+        // the framework's release path catches up) are silent.
+        let state = fresh_state(0, 400);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.1);
+        sx.pointer_move(0.0, 0.3); // +80 offset
+        sx.send(ScrollBarEvent::Disable);
+        assert_eq!(sx.state(), ScrollBarState::Disabled);
+        // Late pointer_move: silent (state != Dragging).
+        sx.pointer_move(0.0, 0.9);
+        assert_eq!(state.offset(), (0, 80), "disabled bar must not move offset");
+    }
+
+    #[test]
+    fn drag_pins_scroll_max_from_press_time() {
+        // Mid-drag layout re-measurement: caller shrinks
+        // `scroll_max`. The bar's drag math must keep using the
+        // press-time `scroll_max`, otherwise a content insert mid-
+        // drag would warp the cursor↔offset mapping under the
+        // user's finger.
+        let state = fresh_state(0, 400);
+        state.scroll_to(0, 100);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.0); // press; pinned scroll_max = 400
+        // Caller shrinks max mid-drag (e.g. content shrank). Note:
+        // `ScrollState::set_max` will clamp the existing offset to
+        // the new max if the offset exceeds it — but our offset
+        // here (100) is still inside the new max (200), so no
+        // mid-call clamp fires.
+        state.set_max(0, 200);
+        sx.pointer_move(0.0, 0.5);
+        // Press-time max=400 → delta = 0.5 × 400 = +200. press
+        // offset was 100 → new = 300. `ScrollState::scroll_to`
+        // then clamps against the *new* max=200 → final = 200.
+        assert_eq!(state.offset(), (0, 200));
+    }
+
+    #[test]
+    fn fresh_drag_snapshots_current_offset_not_zero() {
+        // First drag mutates the offset; second drag (after the
+        // explicit drag-end) must snapshot the post-first-drag
+        // offset, not the constructor's 0.
+        let state = fresh_state(0, 400);
+        let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
+        // First drag: offset 0 → 80.
+        drag(&mut sx);
+        sx.pointer_move(0.0, 0.5);
+        sx.pointer_move(0.0, 0.7); // +0.2 × 400 = +80
+        sx.send(ScrollBarEvent::PointerUp);
+        assert_eq!(state.offset(), (0, 80));
+        // Second drag: must use post-first-drag offset 80 as the
+        // press-time snapshot, NOT 0.
+        sx.send(ScrollBarEvent::PointerDown);
+        sx.pointer_move(0.0, 0.0); // press
+        sx.pointer_move(0.0, 0.1); // +0.1 × 400 = +40
+        // 80 + 40 = 120.
+        assert_eq!(state.offset(), (0, 120), "fresh drag must snapshot 80, not 0");
     }
 }
