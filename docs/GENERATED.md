@@ -2370,6 +2370,8 @@ router.pointer_down(&mut state_scene);
 - R50 진입 = §5.36 의 parley/swash/fontique = Phase 1 bridge; §5.37 self-hosted text engine 으로 supersede
 - R47.7.6 — parley layout width/height .ceil() pixel snap (sub-pixel jitter 차단)
 - R56.1.b.2 — pinion-text caret_rect_for_byte_offset + CaretRect f32 (parley Cursor wrap)
+- LayoutKey 가 TextStyle 을 fully hash 하므로 fg_color (parley Brush, shape-independent) 도 key 의 일부 (R587).
+- shape vs paint split 은 multi-line text editor 2nd consumer 등장 후 Rule of Three (R587).
 
 
 
@@ -3898,6 +3900,8 @@ if __name__ == "__main__":
 - R57.X.theme-fade: cascade migrates 10 binary view-fn theme() to theme_animated().
 - R57.X.theme-fade: textfield apply_key mirrors view migration (LayoutCache identity lock-step).
 - R57.X.theme-fade: cascade tests use 2-phase owner.run + settle + owner.run for clean retarget.
+- R586 ime_caret_rect lock-step 마이그는 same-frame cache hit 도출 — roll back 시 cache miss 증가 (R587 측정).
+- hello-textfield fade per-frame shape ~1-2ms × 12 = ~6-12% budget; visible threshold 아래 (R587).
 
 
 
@@ -17634,6 +17638,31 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - `Animatable<Color>` 일반화 carry — 2nd carrier 등장 후 macro 추출 검토.
 - Textfield apply_key 캐시 thrash carry — fade 200ms 중 텍스트 레이아웃 frame당 recompute.
 - hello_listbox_focus_border demo baseline 재의 carry — R577 이후 origin/main 결함.
+
+
+
+### Round 587 — R586 ime_caret_rect 마이그를 R587 측정 검증; lock-step 이 cache miss 더 적어서 유지 정통; LayoutCache paint-style split 은 multi-line consumer 등장 후 carry.
+
+**Changes**:
+- cache.rs: LayoutKey doc 에 fg_color in-key 측정 결과 + paint-style separation Rule of Three carry 명시
+- cache.rs: different_fg_color_creates_new_entry 회귀로 현재 behavior pin (split land 시 deliberate flip)
+- hello-textfield: ime_caret_rect 코멘트 정정 — lock-step 이 cache miss 최소화 rationale (R587 측정 인용)
+
+
+
+**Verification**:
+- cargo test -p pinion-text --lib cache::tests = 7 pass (different_fg_color_creates_new_entry +1)
+- cargo test --workspace --features pinion-runtime/vello = 2802 pass / 0 fail / 15 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings 유지
+
+
+
+**Impact**: §5.36, §5.50
+
+
+**Carry forward**:
+- LayoutCache paint-style split: 2nd consumer = multi-line text editor 등장 시 framework substrate fix
+- 자가-점검 #302 첫 정통화: 측정 결과 (c) 결정 (lock-step 유지 + carry 명시), measurement trail 정통
 
 
 

@@ -667,3 +667,12 @@ reason = "R586 R57.X.theme-fade widget retrofit cascade audit half authored mini
 applied_in = "Round 586"
 content_hash_before = "39161f69bb999bd34aa548a9a22cde861fc10a84bf2f1f4cce05cb1bfc0c6dfd"
 content_hash_after = "a0525fff05ce9026bb10b157303eb94f6a90b1220ecc15f513064020ccfb2ca3"
+
+[[publishable_override_ledger]]
+kind = "audit-minimal expansion"
+target_id = "Round 587"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R56.1.g audit-minimal pattern: append minimal ASCII, then expand publishable to Korean detailed shape. Ledger row required by R296 gate."
+applied_in = "Round 587"
+content_hash_before = "b2d8d78327a3d15453c651f68f47602f7dc3a645fbb27c3da4daa4c19128be0c"
+content_hash_after = "732932cf5e5d0cbb50308d43b3b413a886424d9c3a735f469713fb3e33f658b6"

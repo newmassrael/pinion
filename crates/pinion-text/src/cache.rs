@@ -23,10 +23,60 @@ use pinion_core::style::{Color, FontStyle, LineHeight, TextAlign, TextStyle};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
-/// Cache key. Captures the input that fully determines a parley
+/// Cache key. Captures the input the cache uses to identify a parley
 /// `Layout` output: text content, style, and optional max width (the
 /// line break point in pixels). `max_width = None` means no wrap
 /// (single line / unbounded).
+///
+/// # Conservative key (R587 §5.36)
+///
+/// The key includes `TextStyle` *in full*, which means `fg_color`
+/// participates via `Hash + Eq`. Strictly, `fg_color` lands in parley as
+/// `StyleProperty::Brush`, which is paint metadata: it carries through
+/// to glyph runs but does not influence shape (glyph cluster
+/// composition, advances, line breaks). So the current key is
+/// *over-specified* — two layouts that differ only in `fg_color` are
+/// shape-identical, yet the cache treats them as distinct entries.
+///
+/// Effect during the R57.X.theme-fade cross-fade: the active palette's
+/// `fg_color` is in-flight (linear-space spring lerp toward the target
+/// for ~200ms / ~12 frames @ 60fps), so each frame's view-fn emits a
+/// `TextStyle` with a fresh `fg_color` and the cache treats every frame
+/// as a miss — parley re-shapes per frame for the duration of the
+/// fade.
+///
+/// Round 587 measurement (`hello-textfield` single-line label) places
+/// the per-frame shape cost at ~1-2 ms, and a 12-frame fade therefore
+/// burns ~6-12% of the 60fps frame budget — below the visible jitter
+/// threshold for this widget. The same arithmetic with a long /
+/// multi-line buffer (a multiline editor consumer, R47.x carry) would
+/// push per-frame shape past 5-10 ms and into visible regression
+/// territory, so the over-specification is a *latent* perf hazard,
+/// not a current one.
+///
+/// # Why not split now
+///
+/// The textbook substrate fix is to separate *shape-determinants*
+/// (`font_family`, `font_size_px`, `font_weight`, `font_style`,
+/// `letter_spacing`, `line_height`, `text_align`) from
+/// *paint-metadata* (`fg_color`, decoration colors), key only on the
+/// former, and apply the latter as a post-cache brush override on the
+/// returned `Layout`. That mirrors the parley boundary
+/// (`StyleProperty::Brush` is the canonical paint-only property) and
+/// trades the current 1-call API for either a `TextStyle` type-split
+/// or a `layout_with_brush(...)` overload. It also widens the public
+/// surface — both `pinion-core::style::TextStyle` and every consumer
+/// that shapes via the cache.
+///
+/// Rule of Three discipline (cf. `abstraction-needs-second-consumer`):
+/// the only consumer that exercises in-flight `fg_color` today is
+/// the R57.X.theme-fade animated palette, and the measured impact is
+/// well below the visible threshold for `hello-textfield`. Defer the
+/// split until a second consumer (a multi-line text input / paragraph
+/// editor) crosses the visible threshold; carry tracked in
+/// `[[r57-x-theme-fade-substrate]]` Rule of Three list. See
+/// `different_fg_color_creates_new_entry` for the regression that
+/// pins the current behavior so the split lands deliberately.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct LayoutKey {
     text: String,
@@ -297,5 +347,26 @@ mod tests {
         let _ = cache.layout("b", &s, None);
         let _ = cache.layout("c", &s, None);
         assert_eq!(cache.len(), 2, "oldest entry evicted at capacity");
+    }
+
+    /// R587 §5.36 — pins the current `LayoutKey` shape: `fg_color`
+    /// participates in the cache key via `TextStyle`'s `Hash + Eq`.
+    /// A future shape-determinants / paint-metadata split (carried in
+    /// `LayoutKey`'s doc and `[[r57-x-theme-fade-substrate]]`) will
+    /// flip this assertion to `1`, at which point it should be
+    /// rewritten — not silently relaxed — so the split lands as a
+    /// deliberate behavior change rather than a quiet regression.
+    #[test]
+    fn different_fg_color_creates_new_entry() {
+        let mut cache = LayoutCache::new();
+        let red = TextStyle::new().with_size_px(16).with_fg(Color::rgb(255, 0, 0));
+        let blue = TextStyle::new().with_size_px(16).with_fg(Color::rgb(0, 0, 255));
+        let _ = cache.layout("text", &red, None);
+        let _ = cache.layout("text", &blue, None);
+        assert_eq!(
+            cache.len(),
+            2,
+            "fg_color is in LayoutKey today; paint-style split is Rule of Three carry",
+        );
     }
 }

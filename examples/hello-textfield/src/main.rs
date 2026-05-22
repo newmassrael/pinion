@@ -981,6 +981,19 @@ impl WidgetView for TextFieldView {
         // the view-fn migration — both sites read the same animated
         // palette so the cache identity stays in lock-step during the
         // R57.X.theme-fade cross-fade and snaps together at rest.
+        //
+        // (R587 §5.36) Why lock-step beats rolling this site back to
+        // `theme()` during the fade: `LayoutKey` includes `fg_color`,
+        // so each frame the view fn emits a fresh entry under the
+        // in-flight lerp color. With lock-step both sites query the
+        // *same* fresh entry (same-frame cache hit, zero extra shape
+        // pass). Reading `theme()` here instead would key a separate
+        // target-color entry per frame, doubling the cache footprint
+        // and adding one shape per first-frame-after-flip — strictly
+        // worse than the lock-step path. The over-specified key (paint
+        // metadata in a shape-only cache) is a latent perf hazard for
+        // long / multi-line consumers; carried as a Rule of Three split
+        // on `pinion_text::cache::LayoutKey`.
         let theme = use_theme(THEME_TAG).theme_animated();
         let text_style = TextStyle::new()
             .with_size_px(FONT_SIZE_PX)
