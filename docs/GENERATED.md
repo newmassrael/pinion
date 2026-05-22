@@ -2894,6 +2894,7 @@ router.pointer_down(&mut state_scene);
 - R56.1.a — TextField SCXML 4-state + binding + text_committed intent (R56 axis start)
 - R56.1.b — TextEditState + caret_rect helper + TextField::attach_state (R56.1.a sidecar grows)
 - R56.1.c — CaretBlink animation (530ms canonical) + use_caret_blink hook (Owner::cache + Tickable)
+- R56.1.d — TextField apply_key + invoke('key') RPC path (Backspace/Arrow/Home/End/Space/printable)
 
 
 
@@ -2906,6 +2907,30 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact scope**: §4, §5.4, §5.13, §5.15, §5.20, §5.24
+
+
+**Examples**:
+
+```rust
+// R56.1.d §5.38 §5.22 — application apply_key wire for a focused TextField.
+// Mirrors hello-listbox (§5.38 R51.99) — focus-tag gate then RPC-shaped
+// invoke("key", text). Returns Bool(true) on recognized keys.
+fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    if focused != Some(Self::tag()) {
+        return false;
+    }
+    let Some(node) = scene.find_external_with_tag_mut(Self::tag()) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    matches!(
+        intro.invoke("key", IntrospectValue::Text(key.to_string())),
+        Ok(IntrospectValue::Bool(true)),
+    )
+}
+```
 
 
 
@@ -2999,6 +3024,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/text_field.rs:TextFieldExternal::attach_state
 - crates/pinion-core/src/widgets/caret_blink.rs:CaretBlink
 - crates/pinion-core/src/widgets/caret_blink.rs:use_caret_blink
+- crates/pinion-core/src/widgets/text_field.rs:apply_key
 
 
 
@@ -10185,6 +10211,30 @@ if __name__ == "__main__":
 - R56.1.f — selection + grapheme cluster navigation
 - R56.1.g — IME composition (preedit + text-input-v3)
 - TextField statechart → CaretBlink.set_enabled wire (R56.1.b.1 first consumer)
+
+
+
+### R56.1.d — R56.1.d §5.38 §5.22 — TextField apply_key static W3C UI Events key helper + invoke('key', text) RPC path. Schema 4→5 slots.
+
+**Changes**:
+- apply_key(state, key) static helper — W3C UI Events keystroke → TextEditState ops
+- TextFieldExternal invoke('key', text) RPC path — Bool(true|false) recognition gate
+- Schema 4→5 slots — 'key' field stable across bare/wired TextFields
+- Recognized: Backspace/Delete/ArrowLeft/Right/Home/End/Space + single printable codepoint
+- Rejected: ArrowUp/Down (R56.1.h), Enter (R56.1.h), F-keys, multi-char (R56.1.g IME), control
+- Pure mapping — no statechart drive, no IME path; focus lifecycle pends R56.1.h
+
+
+
+**Verification**:
+- cargo test r56_1_d_tests: 39 pass / 0 fail
+- cargo test --workspace --features vello: 2426 pass / 0 fail (+39 vs R56.1.c 2387)
+- cargo clippy --workspace --all-targets --features vello: 0 warnings
+- R56.1.a/b/c invariants preserved; 4-slot schema test renamed to _five_slots
+
+
+
+**Impact**: §5.38, §5.22
 
 
 

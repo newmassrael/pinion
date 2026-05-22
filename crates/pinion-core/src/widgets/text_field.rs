@@ -4,10 +4,14 @@
 //! ([`TextField`] / [`TextFieldEvent`] / [`TextFieldState`] /
 //! [`TextFieldExternal`]). Subsequent sub-rounds layer on top:
 //! caret rendering (R56.1.b), blink animation (R56.1.c), key input
-//! (R56.1.d), clipboard (R56.1.e), selection (R56.1.f), and IME
-//! composition (R56.1.g). R55.D.1 → R55.D.2 cascade mirror — land the
-//! interaction substrate first so the following sub-rounds compose
-//! without re-engineering it.
+//! (R56.1.d — see [`apply_key`]), clipboard (R56.1.e), selection
+//! (R56.1.f), and IME composition (R56.1.g). The R56.1.h
+//! focus-lifecycle wire — shell focus mgr ↔ `External::on_focus_change`
+//! ↔ statechart focus/blur drive ↔ [`CaretBlink`](crate::widgets::caret_blink::CaretBlink)
+//! `set_enabled` — splits off so the keystroke surface lands without
+//! the cross-cutting shell substrate change. R55.D.1 → R55.D.2
+//! cascade mirror — land the interaction substrate first so the
+//! following sub-rounds compose without re-engineering it.
 //!
 //! ## State model
 //!
@@ -136,6 +140,162 @@ pub fn caret_rect(
         caret_width,
         line_height,
     )
+}
+
+/// R56.1.d §5.38 §5.22 — W3C UI Events key dispatch into a
+/// [`TextEditState`]. Maps the canonical key-string surface
+/// (the W3C `KeyboardEvent.key` values that every other pinion
+/// widget consumes through
+/// [`WidgetCore::apply_key`](crate::widget_core::WidgetCore::apply_key))
+/// to caret-relative edit operations on the attached state.
+///
+/// Pure function: no statechart drive, no [`Owner`](crate::reactive::Owner)
+/// access, no IME composition path. Focus/blur statechart drive +
+/// caret-blink lifecycle land with the R56.1.h follow-up; IME
+/// preedit handling lands with R56.1.g. Splitting the keystroke
+/// surface from the lifecycle wire mirrors the R55.D.1 →
+/// R55.D.3 `ScrollBar` cascade — the closed-form keystroke helper
+/// lands first so the next sub-round composes the lifecycle wire
+/// on top of a stable mapping.
+///
+/// ## Recognized keys
+///
+/// | Key string | Effect |
+/// |---|---|
+/// | `"Backspace"`  | [`TextEditState::backspace`] — delete char left of caret. |
+/// | `"Delete"`     | [`TextEditState::delete_forward`] — delete char at caret. |
+/// | `"ArrowLeft"`  | [`TextEditState::move_left`] — caret one char left. |
+/// | `"ArrowRight"` | [`TextEditState::move_right`] — caret one char right. |
+/// | `"Home"`       | [`TextEditState::move_home`] — caret to position 0. |
+/// | `"End"`        | [`TextEditState::move_end`] — caret to end of text. |
+/// | `"Space"`      | [`TextEditState::insert`]`(" ")` — single space. |
+/// | single non-control char (`"a"`, `"A"`, `"ㄱ"`, `"!"`) | [`TextEditState::insert`]`(key)` — verbatim insert. |
+///
+/// Returns `true` if the key was recognized (the caret-at-edge
+/// no-ops — `"Backspace"` at caret 0, `"Delete"` at caret end,
+/// `"ArrowLeft"` at caret 0, `"ArrowRight"` at end — still
+/// return `true` because the key was *consumed*; the W3C
+/// `KeyboardEvent` `defaultPrevented` semantics gate on
+/// recognition, not on visible mutation, and the application
+/// `apply_key` contract follows the same shape).
+///
+/// ## Unrecognized keys (returns `false`)
+///
+/// - Named keys not in the explicit recognized set (`"ArrowUp"`,
+///   `"ArrowDown"`, `"PageUp"`, `"PageDown"`, `"F1"`..`"F12"`,
+///   `"Enter"`, `"Escape"`, `"Tab"`). The latter three are
+///   shell-reserved upstream (`"Tab"` advances focus, `"Escape"`
+///   quits the window, `"Enter"` will arrive on R56.1.h with the
+///   submit-class statechart event) and never reach this hook in
+///   practice; `apply_key` rejects defensively so a misrouted
+///   delivery does not silently insert a literal letter.
+/// - Empty string.
+/// - Single-codepoint control chars (e.g. raw `"\t"` / `"\n"` —
+///   the framework converts these to named keys at the input
+///   boundary, so reaching `apply_key` with a raw control byte
+///   is a bug fixture path; rejection here is the defensive
+///   stance).
+///
+/// ## R56.1.h carry — vertical caret navigation
+///
+/// `"ArrowUp"` and `"ArrowDown"` are W3C-recognized text-input
+/// keys but require a shaped multi-line layout (`caret_x` ↔
+/// line-y mapping) to translate "move to same x on adjacent
+/// line". R56.1.b ships only a single-line [`caret_rect`]
+/// helper; R56.1.h is the natural slice to add multi-line
+/// shaping + vertical navigation. Returning `false` here on
+/// `"ArrowUp"` / `"ArrowDown"` lets the application's
+/// [`WidgetCore::apply_key`](crate::widget_core::WidgetCore::apply_key)
+/// fall through to the focus manager's Tab traversal — matches
+/// the W3C ARIA `textbox` single-line convention that vertical
+/// arrows do not consume.
+///
+/// ## R56.1.g carry — IME composition
+///
+/// `KeyboardEvent.key` may carry multi-char strings during IME
+/// composition (e.g. the Korean syllable `"안"` after three jamo
+/// combine). On R56.1.d the multi-char path returns `false` —
+/// IME preedit input flows through the R56.1.g preedit-buffer
+/// substrate, not this synchronous keystroke hook. Single-char
+/// CJK ideographs (already-composed) insert correctly via the
+/// printable-char branch.
+#[must_use]
+pub fn apply_key(state: &TextEditState, key: &str) -> bool {
+    match key {
+        "Backspace" => {
+            state.backspace();
+            true
+        }
+        "Delete" => {
+            state.delete_forward();
+            true
+        }
+        "ArrowLeft" => {
+            state.move_left();
+            true
+        }
+        "ArrowRight" => {
+            state.move_right();
+            true
+        }
+        "Home" => {
+            state.move_home();
+            true
+        }
+        "End" => {
+            state.move_end();
+            true
+        }
+        // U+0020 SPACE arrives through the W3C named-key channel
+        // (`NamedKey::Space → "Space"` on winit, `KeyCode::Char(' ')
+        // → "Space"` on crossterm — see R51.111 pinion-tui/input.rs
+        // bridge). Explicit handler avoids depending on the
+        // printable-char branch interpreting `" "` (which would
+        // require shell change to bypass the named-key conversion).
+        "Space" => {
+            state.insert(" ");
+            true
+        }
+        other => match is_printable_key(other) {
+            Some(c) => {
+                // 4-byte UTF-8 buffer covers every Unicode code
+                // point through U+10FFFF; `encode_utf8` returns the
+                // populated subslice that `TextEditState::insert`
+                // splices into the reactive text.
+                let mut buf = [0u8; 4];
+                state.insert(c.encode_utf8(&mut buf));
+                true
+            }
+            None => false,
+        },
+    }
+}
+
+/// R56.1.d §5.38 — W3C UI Events printable-key predicate.
+///
+/// Returns `Some(c)` when `key` is a single non-control codepoint
+/// suitable for verbatim text insert; `None` for named keys
+/// (multi-char strings), multi-char IME composition output (R56.1.g
+/// path), the empty string, and single-codepoint control chars.
+///
+/// Distinct from the listbox
+/// [`is_typeahead_char`](crate::widgets) predicate (R51.106) in
+/// that text input accepts *any* non-control printable codepoint —
+/// punctuation (`","`), symbols (`"$"`), math (`"≠"`), and CJK
+/// ideographs (`"漢"`) all flow through. The typeahead predicate
+/// gates on [`char::is_alphanumeric`] specifically because option
+/// labels are letter-prefixed; text input has no such precondition.
+#[must_use]
+fn is_printable_key(key: &str) -> Option<char> {
+    let mut chars = key.chars();
+    let first = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    if first.is_control() {
+        return None;
+    }
+    Some(first)
 }
 
 /// `TextField` widget state machine.
@@ -280,9 +440,15 @@ impl WidgetTransition for TextField {
 ///   `Editing → Focused` ([`TextFieldEvent::CommitEdit`]) or
 ///   `Editing → Idle` ([`TextFieldEvent::Blur`]).
 ///
+/// R56.1.d §5.38 §5.22 — `invoke("key", Text(k))` RPC path dispatches
+/// W3C UI Events keystrokes (`"Backspace"`, `"ArrowLeft"`, single
+/// printable chars, etc.) into the attached [`TextEditState`] via
+/// [`apply_key`]; returns `Bool(true)` on recognized keys,
+/// `Bool(false)` on unrecognized or bare-`TextField` paths.
 /// Future sub-rounds extend the surface — R56.1.g attaches the
-/// preedit-buffer payload, R56.1.d adds the key-dispatch surface,
-/// R56.1.f wires the ARIA `textbox` accessible name/value.
+/// preedit-buffer payload, R56.1.f wires the ARIA `textbox`
+/// accessible name/value, R56.1.h adds the focus-lifecycle wire
+/// (statechart focus/blur drive + caret-blink `set_enabled` sync).
 pub struct TextFieldExternal {
     em: IntentEmitter<TextField>,
 }
@@ -387,11 +553,19 @@ impl ExternalIntrospect for TextFieldExternal {
         // returns `None` / `ReadOnly` when no [`TextEditState`] is
         // attached so the AI client sees a stable schema shape across
         // bare and wired-up `TextField`s.
+        //
+        // R56.1.d §5.38 §5.22 — adds the `key` invoke slot for the
+        // W3C UI Events keystroke dispatch surface. The slot exists
+        // unconditionally (mirror of the `text` / `caret` policy);
+        // invoke returns `Bool(false)` when no [`TextEditState`] is
+        // attached so RPC clients distinguish "no state bound" from
+        // "key rejected".
         IntrospectSchema::new(&[
             ("state", "string"),
             ("text", "string"),
             ("caret", "number"),
             ("send", "string"),
+            ("key", "string"),
         ])
     }
 
@@ -476,6 +650,25 @@ impl ExternalIntrospect for TextFieldExternal {
                     Ok(IntrospectValue::Text(
                         text_field_state_name(self.state()).to_string(),
                     ))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R56.1.d §5.38 §5.22 — W3C UI Events keystroke dispatch.
+            // Returns `Bool(true)` if the key was recognized (the
+            // visible mutation may be a caret-edge no-op — see the
+            // [`apply_key`] doc). Returns `Bool(false)` for
+            // unrecognized keys and for the bare-`TextField`
+            // (no [`TextEditState`] attached) path, so the AI client
+            // distinguishes "key rejected" from "widget not bound to
+            // reactive state". `TypeMismatch` on non-Text args mirrors
+            // the `send` invoke discipline.
+            "key" => match args {
+                IntrospectValue::Text(ref key_str) => {
+                    let handled = match self.text_state() {
+                        Some(state) => apply_key(state.as_ref(), key_str),
+                        None => false,
+                    };
+                    Ok(IntrospectValue::Bool(handled))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -696,11 +889,14 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_four_slots() {
+    fn external_schema_declares_five_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
+        // R56.1.d grew the surface: + key (W3C UI Events keystroke
+        // dispatch).
         // The schema shape is stable across bare and wired-up
         // TextFields — text/caret queries return None / intervene
-        // returns ReadOnly when no TextEditState is attached.
+        // returns ReadOnly when no TextEditState is attached; the
+        // key invoke returns `Bool(false)` for bare TextFields.
         let tfx = TextFieldExternal::new();
         let schema = tfx.schema();
         assert_eq!(
@@ -710,6 +906,7 @@ mod tests {
                 ("text", "string"),
                 ("caret", "number"),
                 ("send", "string"),
+                ("key", "string"),
             ],
         );
     }
@@ -1147,5 +1344,442 @@ mod r56_1_b_tests {
             ),
             Err(InterveneError::ReadOnly),
         );
+    }
+}
+
+#[cfg(test)]
+mod r56_1_d_tests {
+    //! R56.1.d §5.38 §5.22 — [`apply_key`] W3C UI Events keystroke
+    //! dispatch helper + [`TextFieldExternal`] `invoke("key", ...)`
+    //! RPC path. Mirrors the R56.1.b test layout (closed-form helper
+    //! battery + External RPC battery).
+
+    use super::{apply_key, TextField, TextFieldExternal};
+    use crate::external::{External, ExternalIntrospect, IntrospectValue, InvokeError};
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    // ─────────────────────────────────────────────────────────────
+    // apply_key — recognized named keys (caret-relative edit ops)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_d_backspace_deletes_char_left_of_caret() {
+        let state = TextEditState::with_initial("abc".to_string());
+        state.set_caret(3);
+        assert!(apply_key(&state, "Backspace"));
+        assert_eq!(state.text(), "ab");
+        assert_eq!(state.caret(), 2);
+    }
+
+    #[test]
+    fn r56_1_d_backspace_at_caret_zero_no_ops_but_returns_handled() {
+        // W3C `defaultPrevented` semantics: the key was *recognized*
+        // (consumed) even when the visible mutation is a no-op.
+        let state = TextEditState::with_initial("abc".to_string());
+        state.set_caret(0);
+        assert!(apply_key(&state, "Backspace"));
+        assert_eq!(state.text(), "abc");
+        assert_eq!(state.caret(), 0);
+    }
+
+    #[test]
+    fn r56_1_d_delete_removes_char_at_caret() {
+        let state = TextEditState::with_initial("abc".to_string());
+        state.set_caret(0);
+        assert!(apply_key(&state, "Delete"));
+        assert_eq!(state.text(), "bc");
+        assert_eq!(state.caret(), 0);
+    }
+
+    #[test]
+    fn r56_1_d_delete_at_end_no_ops_but_returns_handled() {
+        let state = TextEditState::with_initial("abc".to_string());
+        state.set_caret(3);
+        assert!(apply_key(&state, "Delete"));
+        assert_eq!(state.text(), "abc");
+    }
+
+    #[test]
+    fn r56_1_d_arrow_left_moves_caret_back_one() {
+        let state = TextEditState::with_initial("abc".to_string());
+        state.set_caret(2);
+        assert!(apply_key(&state, "ArrowLeft"));
+        assert_eq!(state.caret(), 1);
+    }
+
+    #[test]
+    fn r56_1_d_arrow_left_at_zero_no_ops_but_returns_handled() {
+        let state = TextEditState::with_initial("abc".to_string());
+        state.set_caret(0);
+        assert!(apply_key(&state, "ArrowLeft"));
+        assert_eq!(state.caret(), 0);
+    }
+
+    #[test]
+    fn r56_1_d_arrow_right_moves_caret_forward_one() {
+        let state = TextEditState::with_initial("abc".to_string());
+        state.set_caret(1);
+        assert!(apply_key(&state, "ArrowRight"));
+        assert_eq!(state.caret(), 2);
+    }
+
+    #[test]
+    fn r56_1_d_arrow_right_at_end_no_ops_but_returns_handled() {
+        let state = TextEditState::with_initial("abc".to_string());
+        state.set_caret(3);
+        assert!(apply_key(&state, "ArrowRight"));
+        assert_eq!(state.caret(), 3);
+    }
+
+    #[test]
+    fn r56_1_d_home_moves_caret_to_zero() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_caret(4);
+        assert!(apply_key(&state, "Home"));
+        assert_eq!(state.caret(), 0);
+    }
+
+    #[test]
+    fn r56_1_d_end_moves_caret_to_text_len() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_caret(2);
+        assert!(apply_key(&state, "End"));
+        assert_eq!(state.caret(), 6);
+    }
+
+    #[test]
+    fn r56_1_d_space_inserts_single_space() {
+        let state = TextEditState::with_initial("ab".to_string());
+        state.set_caret(2);
+        assert!(apply_key(&state, "Space"));
+        assert_eq!(state.text(), "ab ");
+        assert_eq!(state.caret(), 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // apply_key — printable single-char insertion
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_d_lowercase_letter_inserts_at_caret() {
+        let state = TextEditState::new();
+        assert!(apply_key(&state, "a"));
+        assert_eq!(state.text(), "a");
+        assert_eq!(state.caret(), 1);
+    }
+
+    #[test]
+    fn r56_1_d_uppercase_letter_inserts_at_caret() {
+        let state = TextEditState::new();
+        assert!(apply_key(&state, "A"));
+        assert_eq!(state.text(), "A");
+    }
+
+    #[test]
+    fn r56_1_d_digit_inserts_at_caret() {
+        let state = TextEditState::new();
+        assert!(apply_key(&state, "7"));
+        assert_eq!(state.text(), "7");
+    }
+
+    #[test]
+    fn r56_1_d_punctuation_inserts_at_caret() {
+        // Listbox typeahead rejects non-alphanumeric; text input
+        // accepts every non-control codepoint.
+        let state = TextEditState::new();
+        assert!(apply_key(&state, "!"));
+        assert!(apply_key(&state, ","));
+        assert!(apply_key(&state, "$"));
+        assert_eq!(state.text(), "!,$");
+    }
+
+    #[test]
+    fn r56_1_d_cjk_ideograph_inserts_at_caret() {
+        // Pre-composed CJK glyph (already-resolved by IME) flows
+        // through the printable-char branch as a single codepoint.
+        // Multi-char IME composition results are R56.1.g territory.
+        let state = TextEditState::new();
+        assert!(apply_key(&state, "漢"));
+        assert_eq!(state.text(), "漢");
+        // Caret advances by `s.len()` bytes per R56.1.b
+        // TextEditState contract (caret is a UTF-8 byte offset, not
+        // a char index — `text[..caret]` stays slice-safe). "漢"
+        // (U+6F22) encodes to 3 UTF-8 bytes.
+        assert_eq!(state.caret(), 3);
+    }
+
+    #[test]
+    fn r56_1_d_korean_syllable_inserts_at_caret() {
+        // U+C548 ("안") is a single pre-composed Unicode codepoint —
+        // accepts through printable-char branch. Pre-decomposed jamo
+        // (multi-codepoint) is R56.1.g IME path. 3-byte UTF-8.
+        let state = TextEditState::new();
+        assert!(apply_key(&state, "안"));
+        assert_eq!(state.text(), "안");
+        assert_eq!(state.caret(), 3, "안 = 3 UTF-8 bytes (U+C548)");
+    }
+
+    #[test]
+    fn r56_1_d_insert_at_mid_position_splices() {
+        let state = TextEditState::with_initial("ac".to_string());
+        state.set_caret(1);
+        assert!(apply_key(&state, "b"));
+        assert_eq!(state.text(), "abc");
+        assert_eq!(state.caret(), 2);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // apply_key — unrecognized keys (return false, no mutation)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_d_arrow_up_returns_false_pending_multiline() {
+        // Vertical navigation pends R56.1.h multi-line shaping.
+        // Returning false lets the application apply_key chain fall
+        // through to the focus manager Tab traversal.
+        let state = TextEditState::with_initial("abc".to_string());
+        let before = (state.text(), state.caret());
+        assert!(!apply_key(&state, "ArrowUp"));
+        assert_eq!((state.text(), state.caret()), before);
+    }
+
+    #[test]
+    fn r56_1_d_arrow_down_returns_false_pending_multiline() {
+        let state = TextEditState::new();
+        assert!(!apply_key(&state, "ArrowDown"));
+    }
+
+    #[test]
+    fn r56_1_d_page_up_down_return_false() {
+        let state = TextEditState::new();
+        assert!(!apply_key(&state, "PageUp"));
+        assert!(!apply_key(&state, "PageDown"));
+    }
+
+    #[test]
+    fn r56_1_d_enter_returns_false_pending_submit_event() {
+        // R56.1.h plans the submit-class statechart event; on
+        // R56.1.d Enter falls through (Enter is shell-reserved
+        // upstream anyway — it never reaches apply_key in
+        // practice, but the rejection is defensive).
+        let state = TextEditState::with_initial("abc".to_string());
+        assert!(!apply_key(&state, "Enter"));
+        assert_eq!(state.text(), "abc");
+    }
+
+    #[test]
+    fn r56_1_d_function_keys_return_false() {
+        let state = TextEditState::new();
+        assert!(!apply_key(&state, "F1"));
+        assert!(!apply_key(&state, "F12"));
+        assert_eq!(state.text(), "");
+    }
+
+    #[test]
+    fn r56_1_d_empty_key_returns_false() {
+        let state = TextEditState::new();
+        assert!(!apply_key(&state, ""));
+        assert_eq!(state.text(), "");
+    }
+
+    #[test]
+    fn r56_1_d_multi_char_string_returns_false() {
+        // IME composition multi-char output (R56.1.g territory)
+        // flows through the preedit-buffer substrate, not this hook.
+        let state = TextEditState::new();
+        assert!(!apply_key(&state, "ab"));
+        assert!(!apply_key(&state, "hello"));
+        assert_eq!(state.text(), "");
+    }
+
+    #[test]
+    fn r56_1_d_control_char_returns_false() {
+        // Raw tab / newline / null are bug-fixture paths — the
+        // framework converts these to named keys at the input
+        // boundary. Defensive rejection.
+        let state = TextEditState::new();
+        assert!(!apply_key(&state, "\t"));
+        assert!(!apply_key(&state, "\n"));
+        assert!(!apply_key(&state, "\u{0000}"));
+        assert_eq!(state.text(), "");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ExternalIntrospect::invoke("key", ...) — RPC dispatch path
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_d_invoke_key_with_printable_inserts_via_attached_state() {
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        let result = tfx
+            .invoke("key", IntrospectValue::Text("h".to_string()))
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Bool(true));
+        assert_eq!(state.text(), "h");
+    }
+
+    #[test]
+    fn r56_1_d_invoke_key_with_backspace_deletes_via_attached_state() {
+        let state = Rc::new(TextEditState::with_initial("abc".to_string()));
+        state.set_caret(3);
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        let result = tfx
+            .invoke("key", IntrospectValue::Text("Backspace".to_string()))
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Bool(true));
+        assert_eq!(state.text(), "ab");
+    }
+
+    #[test]
+    fn r56_1_d_invoke_key_with_arrow_moves_caret_via_attached_state() {
+        let state = Rc::new(TextEditState::with_initial("abc".to_string()));
+        state.set_caret(0);
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.invoke("key", IntrospectValue::Text("ArrowRight".to_string()))
+            .unwrap();
+        assert_eq!(state.caret(), 1);
+    }
+
+    #[test]
+    fn r56_1_d_invoke_key_with_space_inserts_via_attached_state() {
+        let state = Rc::new(TextEditState::with_initial("a".to_string()));
+        state.set_caret(1);
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.invoke("key", IntrospectValue::Text("Space".to_string()))
+            .unwrap();
+        assert_eq!(state.text(), "a ");
+    }
+
+    #[test]
+    fn r56_1_d_invoke_key_on_bare_text_field_returns_bool_false() {
+        // No TextEditState attached → key is recognized at the
+        // path level but no edit occurs. `Bool(false)` distinguishes
+        // "unbound widget" from `Err(UnknownPath)`.
+        let mut tfx = TextFieldExternal::new();
+        let result = tfx
+            .invoke("key", IntrospectValue::Text("a".to_string()))
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Bool(false));
+    }
+
+    #[test]
+    fn r56_1_d_invoke_key_rejects_unrecognized_returns_bool_false() {
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        let result = tfx
+            .invoke("key", IntrospectValue::Text("F7".to_string()))
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Bool(false));
+    }
+
+    #[test]
+    fn r56_1_d_invoke_key_rejects_non_text_args_with_type_mismatch() {
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        assert!(matches!(
+            tfx.invoke("key", IntrospectValue::Int(65)),
+            Err(InvokeError::TypeMismatch),
+        ));
+        assert!(matches!(
+            tfx.invoke("key", IntrospectValue::Bool(true)),
+            Err(InvokeError::TypeMismatch),
+        ));
+    }
+
+    #[test]
+    fn r56_1_d_invoke_unknown_path_still_unknown() {
+        // R56.1.d only added the `key` path — `send` stays the only
+        // other invoke surface, and unrecognized paths must still
+        // surface as `UnknownPath` (not silently absorbed by the
+        // new `key` branch).
+        let mut tfx = TextFieldExternal::new();
+        assert!(matches!(
+            tfx.invoke("press", IntrospectValue::Text("a".to_string())),
+            Err(InvokeError::UnknownPath),
+        ));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Schema + send invoke regression
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_d_schema_contains_key_slot() {
+        let tfx = TextFieldExternal::new();
+        let schema = tfx.schema();
+        assert!(
+            schema.fields.iter().any(|(name, ty)| *name == "key" && *ty == "string"),
+            "key slot must be in schema",
+        );
+    }
+
+    #[test]
+    fn r56_1_d_invoke_send_still_works_after_key_path_added() {
+        // R56.1.d additive — the existing `send` invoke path (R56.1.a)
+        // must keep its contract after `key` is added.
+        let mut tfx = TextFieldExternal::new();
+        let result = tfx
+            .invoke("send", IntrospectValue::Text("Focus".to_string()))
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Text("Focused".to_string()));
+    }
+
+    #[test]
+    fn r56_1_d_apply_key_does_not_drive_statechart_transitions() {
+        // R56.1.d is the *keystroke* slice — focus/blur/begin_edit
+        // statechart drive is R56.1.h. Verify apply_key on a bare
+        // TextField does not surface text_committed (no statechart
+        // transitions fire on edit-class keys).
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        // Drive every recognized edit-class key.
+        for key in [
+            "a", "b", "c", "Space", "Backspace", "ArrowLeft", "ArrowRight",
+            "Home", "End", "Delete",
+        ] {
+            tfx.invoke("key", IntrospectValue::Text(key.to_string())).unwrap();
+        }
+        // The statechart did not transition; no intent was raised
+        // (text_committed only fires on Editing exit per the R56.1.a
+        // commit semantics).
+        let mut harvested = Vec::new();
+        tfx.drain_intents(&mut |i| harvested.push(i));
+        assert!(
+            harvested.is_empty(),
+            "R56.1.d keystrokes must not raise text_committed",
+        );
+    }
+
+    #[test]
+    fn r56_1_d_apply_key_works_on_bare_text_field_via_direct_helper() {
+        // Direct helper API parity — `apply_key(state, key)` works
+        // on any TextEditState handle, independent of whether the
+        // state is attached to a TextField/TextFieldExternal.
+        let state = TextEditState::new();
+        assert!(apply_key(&state, "h"));
+        assert!(apply_key(&state, "i"));
+        assert_eq!(state.text(), "hi");
+    }
+
+    #[test]
+    fn r56_1_d_text_field_without_text_state_ignores_key_invoke_no_panic() {
+        // Bare TextField (no attached TextEditState) — invoke("key")
+        // must not panic; returns Bool(false). Regression guard for
+        // the unattached state path.
+        let mut tfx = TextFieldExternal::new();
+        for key in ["a", "Space", "Backspace", "ArrowLeft", "Home", "Delete"] {
+            let r = tfx
+                .invoke("key", IntrospectValue::Text(key.to_string()))
+                .unwrap();
+            assert_eq!(r, IntrospectValue::Bool(false));
+        }
+        // Also: TextField itself remains in Idle (no statechart drive).
+        let state_query = tfx.query("state").unwrap();
+        assert_eq!(state_query, IntrospectValue::Text("Idle".to_string()));
+        // Construction-time fresh TextField equivalence.
+        let fresh = TextField::new();
+        assert_eq!(fresh.state(), tfx.state());
     }
 }

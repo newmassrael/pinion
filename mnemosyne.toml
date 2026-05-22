@@ -316,3 +316,12 @@ reason = "Audit half appended with empty impact_refs/bullets defaults; publishab
 applied_in = "R56.1.c"
 content_hash_before = "bbdedcc9a038b1ef4169a6959baffc1bc10cbec6fb7c6e8878df82f15c8e526f"
 content_hash_after = "68fc6aa8a8ba0fa160d24f0f154e49da2c7c3e2f1b39fa38fd6366ec57c80c1a"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "R56.1.d"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets"]
+reason = "R56.1.d initial append used a minimal audit shape after the deserialize-XML interaction stripped the detailed payload; publishable half rewritten with the canonical detailed decision/changes/verification bullets per Round 161 §41 100-byte budget while audit stays frozen."
+applied_in = "R56.1.d"
+content_hash_before = "14ab5785589384870fe123881c9aa7058a88c63508281ff9a03f7ba06ba19d84"
+content_hash_after = "2fc7ab26b6ef36a6647bd4cbe12e75afe1be0b800726be24e3aaaa92fbbeed2b"
