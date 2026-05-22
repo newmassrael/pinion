@@ -16936,6 +16936,36 @@ if __name__ == "__main__":
 
 
 
+### Round 570 — R56.2.f §5.38 §5.22 — `TextEditState::splice_preedit(caret)` substrate helper lifts the duplicate effective_text splice from 3 sites (DRY closure per [[substrate-incompleteness-signal]]).
+
+**Changes**:
+- `text_edit.rs`: `splice_preedit(caret) -> (effective_text, visual_caret, range)` substrate method.
+- `caret` taken as arg (not `self.caret()`) so view-fns thread the by-value state snapshot.
+- Empty preedit treated as no composition (W3C "no visible affordance" contract).
+- `caret` clamped to `text.len()` defensively for slice safety.
+- `hello-textfield::view` + `ime_caret_rect` collapse 11-line splice to single call.
+- `hello-textfield-tui::view` mirrors via same substrate (`visual_caret_byte: usize`).
+- +7 `r56_2_f` tests: collapsed / empty / caret-zero / caret-end / multi-byte / non-empty / clamp.
+
+
+
+**Verification**:
+- `cargo test -p pinion-core --lib r56_2_f` = 7 pass (new test module).
+- `cargo test --workspace --features pinion-runtime/vello` = 2738 / 0 / 14.
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings.
+
+
+
+**Impact**: §5.22, §5.38
+
+
+**Carry forward**:
+- R57 Theming substrate — first slice axis carry.
+- F1 framework auto-tag conflict-aware — regression risk carry.
+- AT-TUI integration — axis carry.
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

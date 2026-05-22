@@ -523,3 +523,12 @@ reason = "R56.2.e.3 audit half authored minimal ASCII per [[mnemosyne-multibyte-
 applied_in = "R56.2.e.3"
 content_hash_before = "6929e3fc273e7115cc63d738fd32ede6035ea22f5a10d0c57329e781101b3c49"
 content_hash_after = "d8fc36e50813e28755fca256d962d9b2ca7dcfd1216271094e2e35a2b7e33c68"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 570"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R56.2.f audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs + backtick code + em-dash separators."
+applied_in = "R56.2.f"
+content_hash_before = "127e255cca234404b65d4139e842423c5cbca3f8ac0cef3feb6b060caa108544"
+content_hash_after = "47517d105752fc20b2b1f72ed5660e69fd5a8773ccee2197020a9a95564169cd"

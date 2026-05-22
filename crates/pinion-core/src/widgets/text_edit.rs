@@ -679,6 +679,74 @@ impl TextEditState {
         self.preedit_buffer.get().is_some()
     }
 
+    /// R56.2.f §5.38 §5.22 — splice the active preedit string into the
+    /// committed text at `caret` to produce the "effective text" the
+    /// user actually sees. Returns a 3-tuple:
+    ///
+    /// - `effective_text`: committed text with the preedit spliced
+    ///   in at `caret` (or the committed text alone when no preedit
+    ///   is active).
+    /// - `visual_caret_byte`: the byte offset where the visual caret
+    ///   renders. During composition this is the *end* of the
+    ///   spliced preedit (W3C `compositionupdate` canonical caret
+    ///   position); otherwise it equals the `caret` argument.
+    /// - `preedit_byte_range`: `Some((start, end))` when composing
+    ///   with a non-empty preedit, marking the splice window inside
+    ///   `effective_text`. `None` otherwise. Drives the underline +
+    ///   tinted-background paint geometry that signals the preedit
+    ///   run to the user (W3C IME affordance — Wayland / macOS /
+    ///   Windows / GTK clients all paint a similar overlay).
+    ///
+    /// The `caret` argument is explicit (rather than read from
+    /// `self.caret()`) so view-fns can thread the state-arg's caret
+    /// byte through verbatim. Pinion's R51.173 by-value snapshot
+    /// contract makes the state arg's caret the authoritative
+    /// "paint at this position" signal — using `self.caret()`
+    /// internally would couple the helper to whichever reactive
+    /// value is current *now* rather than the snapshot the view-fn
+    /// was invoked with. Callers outside a view-fn pass
+    /// `self.caret()` explicitly when they want the current
+    /// substrate caret.
+    ///
+    /// Subscribes to `text` + `preedit` signals (`caret` is supplied
+    /// by the caller and contributes no extra subscription). A view-
+    /// fn calling this helper re-runs on every text or composition
+    /// mutation, plus any caret mutation that touches the state arg
+    /// (via R56.1.b's reactive `read_state` snapshot).
+    ///
+    /// Used by the view fn and `WidgetView::ime_caret_rect` paths in
+    /// `hello-textfield` (Vello GUI) and `hello-textfield-tui` (TUI
+    /// mirror) so the caret-area, glyph-run, selection-overlay, and
+    /// IME candidate-popup geometries all derive from the same
+    /// splice. The shared call ensures the
+    /// [`pinion_text::LayoutCache`] key (`(text, style, max_width)`)
+    /// is identical across the paths so the layout lookup is a
+    /// cache hit, not a re-shape.
+    ///
+    /// The collapse path (`preedit == None || preedit == ""`) is
+    /// O(1) — no allocation. The splice path allocates a fresh
+    /// `String` of capacity `text.len() + p.len()` so the
+    /// `push_str` runs do not re-grow. `caret` is clamped to
+    /// `text.len()` defensively so a stale arg cannot panic the
+    /// internal `&text[..caret]` slice.
+    #[must_use]
+    pub fn splice_preedit(&self, caret: usize) -> (String, usize, Option<(usize, usize)>) {
+        let text = self.text();
+        let preedit = self.preedit_buffer.get();
+        match preedit.as_ref() {
+            Some(p) if !p.is_empty() => {
+                let caret_clamped = caret.min(text.len());
+                let mut composed = String::with_capacity(text.len() + p.len());
+                composed.push_str(&text[..caret_clamped]);
+                composed.push_str(p);
+                composed.push_str(&text[caret_clamped..]);
+                let preedit_end = caret_clamped + p.len();
+                (composed, preedit_end, Some((caret_clamped, preedit_end)))
+            }
+            _ => (text, caret, None),
+        }
+    }
+
     /// R56.1.g §5.22 — begin a new IME composition. Sets the preedit
     /// buffer to `Some(String::new())` (composition active, no
     /// preedit text yet — mirror of the W3C `compositionstart` event
@@ -1938,5 +2006,97 @@ mod tests {
         assert_eq!(next_char_boundary(s, 1), 4, "skip mid-codepoint");
         assert_eq!(next_char_boundary(s, 4), 5);
         assert_eq!(next_char_boundary(s, 5), 5);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R56.2.f §5.38 §5.22 — splice_preedit substrate helper
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_2_f_splice_preedit_collapsed_no_composition() {
+        // No preedit → effective_text == committed text, visual caret
+        // == caret arg, range == None. O(1) path.
+        let s = TextEditState::with_initial("hello".to_owned());
+        let (eff, vc, range) = s.splice_preedit(2);
+        assert_eq!(eff, "hello");
+        assert_eq!(vc, 2);
+        assert_eq!(range, None);
+    }
+
+    #[test]
+    fn r56_2_f_splice_preedit_empty_string_treated_as_no_composition() {
+        // preedit_start sets Some("") — the helper treats the empty
+        // string the same as no composition (no visible splice, no
+        // range to paint). Matches the W3C contract: an empty
+        // preedit conveys "composition active but data is empty"
+        // which has no visible affordance to render.
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.preedit_start();
+        assert!(s.is_composing(), "preedit_start sets Some(\"\")");
+        let (eff, vc, range) = s.splice_preedit(2);
+        assert_eq!(eff, "hello");
+        assert_eq!(vc, 2);
+        assert_eq!(range, None);
+    }
+
+    #[test]
+    fn r56_2_f_splice_preedit_non_empty_composition_splices_at_caret() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.preedit_start();
+        s.preedit_update("XY");
+        let (eff, vc, range) = s.splice_preedit(2);
+        assert_eq!(eff, "heXYllo", "preedit spliced at caret arg = 2");
+        assert_eq!(vc, 4, "visual caret at preedit end (caret + preedit.len())");
+        assert_eq!(range, Some((2, 4)));
+    }
+
+    #[test]
+    fn r56_2_f_splice_preedit_at_caret_zero_prepends() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.preedit_start();
+        s.preedit_update("AB");
+        let (eff, vc, range) = s.splice_preedit(0);
+        assert_eq!(eff, "ABhello");
+        assert_eq!(vc, 2);
+        assert_eq!(range, Some((0, 2)));
+    }
+
+    #[test]
+    fn r56_2_f_splice_preedit_at_caret_end_appends() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.preedit_start();
+        s.preedit_update("AB");
+        let (eff, vc, range) = s.splice_preedit(5);
+        assert_eq!(eff, "helloAB");
+        assert_eq!(vc, 7);
+        assert_eq!(range, Some((5, 7)));
+    }
+
+    #[test]
+    fn r56_2_f_splice_preedit_multi_byte_preedit() {
+        // Korean syllable splice — preedit "한" (3 bytes UTF-8). The
+        // helper preserves byte offsets so the LayoutCache key
+        // (effective_text) matches the view fn's shaped run.
+        let s = TextEditState::with_initial("ab".to_owned());
+        s.preedit_start();
+        s.preedit_update("한"); // 3 bytes
+        let (eff, vc, range) = s.splice_preedit(1);
+        assert_eq!(eff, "a한b");
+        assert_eq!(vc, 4, "preedit_end = caret(1) + len(3) = 4");
+        assert_eq!(range, Some((1, 4)));
+    }
+
+    #[test]
+    fn r56_2_f_splice_preedit_clamps_caret_past_text_length() {
+        // Defensive: even if the caller-supplied caret arg drifted past
+        // `text.len()` (a future caret-state desync), the splice
+        // helper clamps so the slice does not panic.
+        let s = TextEditState::with_initial("ab".to_owned());
+        s.preedit_start();
+        s.preedit_update("X");
+        let (eff, vc, range) = s.splice_preedit(99);
+        assert_eq!(eff, "abX");
+        assert_eq!(vc, 3, "splice clamps to text.len(), preedit_end = 2 + 1 = 3");
+        assert_eq!(range, Some((2, 3)));
     }
 }

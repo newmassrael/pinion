@@ -281,27 +281,16 @@ impl WidgetCore for HelloTextFieldTui {
         let text = text_state.text();
         let preedit = text_state.preedit();
 
-        // R56.1.g.3 §5.22 — preedit splicing for the TUI mirror.
-        // When composing, the rendered text is the composed
-        // effective text (committed buffer + spliced preedit at the
-        // caret byte offset) and the visual cursor moves to the end
-        // of the preedit run. Same ASCII-only assumption as the
-        // R56.1.f.3 selection band — 1 ASCII byte = 1 cell column;
-        // multi-byte preedit skews the cell mapping until the TUI
-        // grapheme-cluster axis lands (carry).
-        let (effective_text, visual_caret_byte, preedit_byte_range) = match &preedit {
-            Some(p) if !p.is_empty() => {
-                let caret = caret_byte as usize;
-                let mut composed = String::with_capacity(text.len() + p.len());
-                composed.push_str(&text[..caret.min(text.len())]);
-                composed.push_str(p);
-                composed.push_str(&text[caret.min(text.len())..]);
-                let preedit_end = caret + p.len();
-                (composed, u32::try_from(preedit_end).unwrap_or(u32::MAX),
-                 Some((caret, preedit_end)))
-            }
-            _ => (text.clone(), caret_byte, None),
-        };
+        // R56.2.f §5.38 §5.22 — splice via the substrate helper so the
+        // TUI mirror's effective_text + visual_caret_byte +
+        // preedit_byte_range match the GUI sibling's geometry byte-
+        // for-byte. The R56.2.d UAX #11 cell_column mapping
+        // (`cell_column_for_byte_offset`) consumes the same
+        // `(effective_text, byte_offset)` pair so the cursor /
+        // selection / preedit bands all land on the same cell
+        // boundaries.
+        let (effective_text, visual_caret_byte, preedit_byte_range) =
+            text_state.splice_preedit(caret_byte as usize);
 
         // Field background — colour cue for state. Idle stays a dark
         // grey; Focused / Editing lifts to a slightly deeper navy;
@@ -435,7 +424,7 @@ impl WidgetCore for HelloTextFieldTui {
             CURSOR_GLYPH.clone_into(&mut cursor_node.content);
             let cursor_col = cell_column_for_byte_offset(
                 &effective_text,
-                visual_caret_byte as usize,
+                visual_caret_byte,
             );
             let cursor_left_px = FIELD_LEFT_PX
                 .saturating_add(TEXT_INNER_PAD_PX)

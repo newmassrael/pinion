@@ -27466,6 +27466,57 @@
         "F1 framework auto-tag conflict-aware — permanent carry."
       ]
     },
+    "Round 570": {
+      "decision_summary": "R56.2.f 5.38 5.22 TextEditState splice_preedit substrate helper lifts duplicate effective_text splice from 3 sites (DRY cleanup per substrate-incompleteness signal).",
+      "changes_bullets": [
+        "pinion-core text_edit.rs TextEditState splice_preedit method returns effective_text visual_caret_byte preedit_byte_range tuple",
+        "preedit empty string treated as no composition matches W3C empty preedit no visible affordance",
+        "caret clamped to text.len() defensively for splice substring panic safety",
+        "examples hello-textfield view fn replaces 11-line splice match with single splice_preedit call",
+        "examples hello-textfield ime_caret_rect mirrors view via same splice substrate (DRY closure)",
+        "examples hello-textfield-tui view fn replaces same 11-line splice with substrate call",
+        "visual_caret_byte type unified usize across GUI and TUI consumers cell_column adopts usize",
+        "7 new r56_2_f tests: collapsed / empty / caret-zero / caret-end / multi-byte / non-empty / clamp"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core --lib r56_2_f 7 pass new test module",
+        "cargo test workspace vello total pass=2738 fail=0 ignored=14 prior 2731 + 7 new",
+        "cargo clippy workspace all-targets vello 0 warnings"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "R57 Theming substrate first slice axis carry",
+        "F1 framework auto-tag conflict-aware regression risk carry",
+        "AT-TUI integration axis carry"
+      ],
+      "publishable_decision_summary": "R56.2.f §5.38 §5.22 — `TextEditState::splice_preedit(caret)` substrate helper lifts the duplicate effective_text splice from 3 sites (DRY closure per [[substrate-incompleteness-signal]]).",
+      "publishable_changes_bullets": [
+        "`text_edit.rs`: `splice_preedit(caret) -> (effective_text, visual_caret, range)` substrate method.",
+        "`caret` taken as arg (not `self.caret()`) so view-fns thread the by-value state snapshot.",
+        "Empty preedit treated as no composition (W3C \"no visible affordance\" contract).",
+        "`caret` clamped to `text.len()` defensively for slice safety.",
+        "`hello-textfield::view` + `ime_caret_rect` collapse 11-line splice to single call.",
+        "`hello-textfield-tui::view` mirrors via same substrate (`visual_caret_byte: usize`).",
+        "+7 `r56_2_f` tests: collapsed / empty / caret-zero / caret-end / multi-byte / non-empty / clamp."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-core --lib r56_2_f` = 7 pass (new test module).",
+        "`cargo test --workspace --features pinion-runtime/vello` = 2738 / 0 / 14.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R57 Theming substrate — first slice axis carry.",
+        "F1 framework auto-tag conflict-aware — regression risk carry.",
+        "AT-TUI integration — axis carry."
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

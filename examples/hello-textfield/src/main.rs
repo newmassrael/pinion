@@ -288,27 +288,20 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     let blink = use_caret_blink(TF_TAG);
     let text = text_state.text();
 
-    // R56.1.g.3 §5.22 — IME preedit visualisation. When the substrate
-    // is composing, splice the preedit string into the committed text
-    // at the caret byte offset so the shaped glyph run carries the
-    // provisional characters; the visual caret then moves to the end
-    // of the preedit run (W3C `compositionupdate` canonical caret
-    // position). The selection rect path stays mutually exclusive
-    // with the preedit path — `preedit_start` drains any active
-    // selection, so the two visuals never compete.
+    // R56.2.f §5.38 §5.22 — preedit splice via the substrate helper.
+    // Returns (effective_text, visual_caret_byte, preedit_byte_range):
+    // the composed view of "committed buffer + spliced preedit" the
+    // user sees during IME composition. When no composition is active
+    // (or the preedit string is empty), effective_text == committed
+    // text and the range is None. Mirrors W3C compositionupdate
+    // canonical caret-at-preedit-end semantics. The TUI binding
+    // (hello-textfield-tui) and the `ime_caret_rect` impl below use
+    // the same helper so all three paths share one splice — the
+    // LayoutCache key (effective_text + style) hits across the paths
+    // and no per-path duplication can drift.
+    let (effective_text, visual_caret_byte, preedit_byte_range) =
+        text_state.splice_preedit(caret_byte as usize);
     let preedit = text_state.preedit();
-    let (effective_text, visual_caret_byte, preedit_byte_range) = match &preedit {
-        Some(p) if !p.is_empty() => {
-            let caret = caret_byte as usize;
-            let mut composed = String::with_capacity(text.len() + p.len());
-            composed.push_str(&text[..caret.min(text.len())]);
-            composed.push_str(p);
-            composed.push_str(&text[caret.min(text.len())..]);
-            let preedit_end = caret + p.len();
-            (composed, preedit_end, Some((caret, preedit_end)))
-        }
-        _ => (text.clone(), caret_byte as usize, None),
-    };
 
     let text_style = TextStyle::new()
         .with_size_px(FONT_SIZE_PX)
@@ -911,26 +904,14 @@ impl WidgetView for TextFieldView {
         }
         let (interaction, caret_byte) = *state;
         let text_state = use_text_edit_state(TF_TAG);
-        let text = text_state.text();
-        let preedit = text_state.preedit();
-        // Mirror the view fn's `effective_text` + `visual_caret_byte`
-        // splice so the cache key + caret offset match exactly — the
-        // `LayoutCache::layout` call below is a cache hit, not a
-        // re-shape. The substrate caret moves through the unspliced
-        // text; the visual caret tracks the preedit end (W3C
-        // `compositionupdate` canonical caret position).
-        let (effective_text, visual_caret_byte) = match &preedit {
-            Some(p) if !p.is_empty() => {
-                let caret = caret_byte as usize;
-                let mut composed = String::with_capacity(text.len() + p.len());
-                composed.push_str(&text[..caret.min(text.len())]);
-                composed.push_str(p);
-                composed.push_str(&text[caret.min(text.len())..]);
-                let preedit_end = caret + p.len();
-                (composed, preedit_end)
-            }
-            _ => (text.clone(), caret_byte as usize),
-        };
+        // R56.2.f §5.38 §5.22 — splice via the substrate helper so the
+        // effective_text + visual_caret_byte match the view fn
+        // exactly. The LayoutCache key (effective_text + style)
+        // hits the same cached layout the view fn produced this
+        // frame — the candidate-popup geometry tracks the rendered
+        // cursor with zero extra shaping work.
+        let (effective_text, visual_caret_byte, _preedit_byte_range) =
+            text_state.splice_preedit(caret_byte as usize);
         // Mirror the view fn's text style (incl. interaction-dependent
         // fg) so the `(text, style, max_width)` cache key matches and
         // the `LayoutCache::layout` lookup is a hit.
