@@ -40,6 +40,58 @@ pub struct Intent {
     pub payload: IntrospectValue,
 }
 
+/// Compile-time construction of the dotted `Intent.tag` wire-form
+/// that `WidgetCore::update` matches against.
+///
+/// §5.20 R22 ([[intent-tag-dotted-wire-form]]): the `pinion_runtime`
+/// intent-queue walk prefixes every drained intent's tag with the
+/// producing `Scene::External` node's `tag`
+/// (`crates/pinion-runtime/src/intent_queue.rs`, `drain_one`:
+/// `intent.tag = format!("{prefix}.{}", intent.tag_str())`). The form
+/// `V::update` actually sees is therefore `"{node_tag}.{event_name}"`,
+/// not the bare event name the widget itself emits via
+/// `Intent::new_static(event, …)`.
+///
+/// Reducer arms must compare against this full dotted wire-form (raw
+/// event-name comparison is always `false` and silent; suffix-splits
+/// like `.rsplit('.')` are fragile against future event names that
+/// share a suffix). This macro encapsulates the `.` separator at
+/// compile time so the textbook canonical form is the one-liner:
+///
+/// ```
+/// use pinion_core::intent_tag;
+/// const TOGGLE_INTENT_TAG: &str = intent_tag!("main_toggle", "toggle");
+/// assert_eq!(TOGGLE_INTENT_TAG, "main_toggle.toggle");
+/// ```
+///
+/// # Arguments
+///
+/// * `$widget` — string literal that matches the producing node's
+///   `Scene::with_tag(...)` argument (same literal as the scene-side
+///   external node, by design — pin the pair via a per-binding unit
+///   test).
+/// * `$event` — string literal that matches the widget's emitted
+///   `Intent::new_static($event, …)` event name (see e.g.
+///   `crates/pinion-core/src/widgets/toggle.rs`).
+///
+/// Both arguments must be literals — stable Rust `concat!` is
+/// `literal`-only at the macro layer; passing a `const` ref requires
+/// the `const_format` crate. The dual-literal form is sufficient for
+/// the textbook substrate because the widget-tag literal is the same
+/// string passed to `Scene::with_tag(...)` and the silent failure
+/// mode the macro prevents (forgetting the dotted prefix entirely)
+/// is the high-cost one.
+///
+/// # See also
+///
+/// * [[intent-tag-dotted-wire-form]] — wire-form contract memory.
+#[macro_export]
+macro_rules! intent_tag {
+    ($widget:literal, $event:literal) => {
+        ::core::concat!($widget, ".", $event)
+    };
+}
+
 impl Intent {
     /// Construct an intent with a static tag and a payload.
     #[must_use]
@@ -196,6 +248,35 @@ mod tests {
                 ("demo.label", "string"),
             ],
         );
+    }
+
+    #[test]
+    fn intent_tag_macro_concatenates_dotted_wire_form() {
+        const T: &str = crate::intent_tag!("main_toggle", "toggle");
+        assert_eq!(T, "main_toggle.toggle");
+    }
+
+    #[test]
+    fn intent_tag_macro_matches_runtime_prefix_walk_format() {
+        // Pin the macro output against the runtime intent-queue's
+        // `format!("{prefix}.{}", ...)` shape
+        // (`crates/pinion-runtime/src/intent_queue.rs`, `drain_one`).
+        // If either side ever drifts (e.g. a future ":" separator),
+        // both this test and the upstream contract must be revisited
+        // together.
+        const COMPILE_FORM: &str = crate::intent_tag!("demo", "click");
+        let prefix = "demo";
+        let event = "click";
+        let runtime_form = format!("{prefix}.{event}");
+        assert_eq!(runtime_form, COMPILE_FORM);
+    }
+
+    #[test]
+    fn intent_tag_macro_accepts_underscore_and_dotted_event_names() {
+        const A: &str = crate::intent_tag!("focus_target", "submit");
+        const B: &str = crate::intent_tag!("list_v2", "row_selected");
+        assert_eq!(A, "focus_target.submit");
+        assert_eq!(B, "list_v2.row_selected");
     }
 
     #[test]

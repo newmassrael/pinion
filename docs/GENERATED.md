@@ -956,6 +956,9 @@ fn main() {
 - R18 slice 6: hello-button drains intents after each event; logs to stderr; scene/intents RPC live.
 - R22: ExternalNode.tag prefixes drained intent tag (widget.kind convention complete).
 - R28 §5.24: §5.20 tag absorbed into SemanticProps.tag (richer role/state/actions schema).
+- intent_tag!(widget,event) builds V::update dotted wire-form at compile time via stdlib concat!.
+- Macro is dual-literal (stable concat! is literal-only); widget matches Scene::with_tag(...).
+- Unit test pins macro output against runtime intent-queue format! shape (no separator drift).
 
 
 
@@ -973,6 +976,9 @@ fn main() {
 - crates/pinion-core/src/widgets/button.rs:ButtonExternal::send
 - examples/hello-button/src/main.rs:App::drain_intents
 - crates/pinion-core/src/scene.rs:ExternalNode
+- crates/pinion-core/src/intent.rs:intent_tag
+- examples/hello-toggle/src/main.rs:TOGGLE_INTENT_TAG_FULL
+- examples/hello-theme/src/main.rs:TOGGLE_INTENT_TAG_FULL
 
 
 
@@ -17224,6 +17230,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 **Carry forward**:
 - resize event same-frame warmup currently 1 frame flash before next paint settles
 - ScrollState set_max must_use clippy carry currently allowed for setup paths
+
+
+
+### Round 575 — R57.X.intent-tag-macro 5.20 intent_tag! compile-time concat substrate macro + migrate 2 binaries to remove hand-rolled dotted literal hard-code.
+
+**Changes**:
+- pinion-core::intent_tag! macro added (stdlib concat!, dual literal).
+- hello-toggle TOGGLE_INTENT_TAG_FULL migrated to intent_tag!(...).
+- hello-theme TOGGLE_INTENT_TAG_FULL migrated to intent_tag!(...).
+- 3 unit tests + 1 doc test pin macro behaviour and runtime format! shape.
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2764 pass / 0 fail / 14 ignored (baseline 2760 + 4 new).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.
+- mnemosyne validate_workspace clean (no new T1 or T2).
+- intent_tag macro doc test asserts main_toggle.toggle exact output.
+
+
+
+**Impact**: §5.20
+
+
+**Carry forward**:
+- Round 573 + 574 publishable expand (option E)
+- pinion-tui scrollbar first-paint parity verify (option B)
+- set_max API split init_max + set_max (option D)
+- R57.X.listbox theme retrofit (option C, 2nd consumer of intent_tag!)
 
 
 

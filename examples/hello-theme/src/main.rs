@@ -83,16 +83,11 @@ const THEME_TAG: &str = "app";
 const TOGGLE_TAG: &str = "theme_toggle";
 
 /// Fully-prefixed wire tag for the `Toggle` widget's `"toggle"`
-/// intent. The widget itself emits the raw name `"toggle"`
-/// (`crates/pinion-core/src/widgets/toggle.rs:170`,
-/// `Intent::new_static("toggle", ...)`); the `pinion_runtime`
-/// intent-queue walk then prefixes every drained intent with the
-/// producing `ExternalNode::tag` (`"theme_toggle"` here), so the
-/// form `V::update` actually sees is the dotted full path
-/// `"theme_toggle.toggle"` — that is the literal `V::update` compares
-/// against (no `format!` per dispatch, no suffix-split brittleness
-/// against future event names that share a suffix).
-const TOGGLE_INTENT_TAG_FULL: &str = "theme_toggle.toggle";
+/// intent, built via `pinion_core::intent_tag!`. See that macro's
+/// doc-comment for the §5.20 R22 wire-form contract — here we just
+/// bind the compile-time concatenation result for `V::update` to
+/// compare against.
+const TOGGLE_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("theme_toggle", "toggle");
 
 /// view-fn (§6.3): pure sync mapping `(ToggleState, bool, Frame) ->
 /// Scene`. Reads the active palette via [`use_theme`] so the same
