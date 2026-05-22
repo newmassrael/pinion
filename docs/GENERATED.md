@@ -16639,6 +16639,50 @@ if __name__ == "__main__":
 
 
 
+### Round 561 — R56.1.g.3 §5.38 §5.22 — `hello-textfield` preedit visual (underline + tinted background) + TUI cell-bg mirror + `hello_textfield_compose.py` RPC self-verify closes the R56 axis.
+
+**Changes**:
+- `examples/hello-textfield/src/main.rs`: preedit splicing into `effective_text`
+- Visual caret follows preedit end (W3C `compositionupdate` canonical position)
+- GUI: `PREEDIT_BG_COLOR` semi-transparent warm-amber tint paints behind preedit
+- GUI: `PREEDIT_UNDERLINE_COLOR` + 1 px underline below preedit baseline
+- Canonical IME affordance shared by Wayland / macOS / Windows / GTK clients
+- GUI: preedit pixel range from 2× `caret_rect_for_byte_offset` on effective shaped run
+- GUI: status line carries preedit segment for AI-side visual verification
+- `examples/hello-textfield-tui/src/main.rs`: same splicing pattern + cell-bg amber band
+- TUI: visual cursor follows preedit end (mirror of GUI compositionupdate semantic)
+- TUI: status line preedit segment mirrors GUI for AI-verifier parity
+- `tools/demos/hello_textfield_compose.py`: new end-to-end demo (∼150 LOC)
+- Demo covers `invoke("composition", ...)` start / update / end / cancel actions
+- Demo covers `query("preedit")` and `intervene("preedit", ...)` round-trip
+- Demo covers Korean multi-byte commit (`한` syllable, 3 UTF-8 bytes)
+- Demo covers commit-on-blur via `focus_set(None)` with non-empty preedit
+- 14 demos PASS (13 prior + `hello_textfield_compose`)
+- `hello-textfield` 12 existing view tests still pass (preedit `None` path unchanged)
+
+
+
+**Verification**:
+- `python3 tools/demos/hello_textfield_compose.py`: PASS in 2.1 s
+- All 14 demos PASS (toggle / listbox / textfield families + new compose)
+- `cargo test --workspace --features pinion-runtime/vello`: 2665 pass / 0 fail / 13 ignored
+- Delta 0 tests over R56.1.g.2 baseline (binding-level visual change, not test surface)
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello`: 0 warnings
+- Workspace.lints baseline: forbid `unsafe_code` + deny warnings + `clippy::pedantic` deny
+
+
+
+**Impact**: §5.38, §5.22
+
+
+**Carry forward**:
+- R56 axis closure: all sub-rounds a/b/b.1/b.1.tui/b.2/c/d/e/f.0-3/g.0-3/h/j completed
+- Platform IME bridge crate carry (Wayland text-input-v3 + macOS NSTextInputContext + Windows TSF)
+- TUI grapheme-cluster cell mapping carry (multi-byte preedit currently skews TUI column)
+- R57 Theming axis next major step (runtime palette + token system)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

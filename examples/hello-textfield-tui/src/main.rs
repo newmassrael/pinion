@@ -146,10 +146,37 @@ impl WidgetCore for HelloTextFieldTui {
         (interaction, caret)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "TUI view-fn shape mirrors GUI sibling — sequential paint composition"
+    )]
     fn view(state: Self::State, _frame: &Frame) -> Scene {
         let (interaction, caret_byte) = state;
         let text_state = use_text_edit_state(TF_TAG);
         let text = text_state.text();
+        let preedit = text_state.preedit();
+
+        // R56.1.g.3 §5.22 — preedit splicing for the TUI mirror.
+        // When composing, the rendered text is the composed
+        // effective text (committed buffer + spliced preedit at the
+        // caret byte offset) and the visual cursor moves to the end
+        // of the preedit run. Same ASCII-only assumption as the
+        // R56.1.f.3 selection band — 1 ASCII byte = 1 cell column;
+        // multi-byte preedit skews the cell mapping until the TUI
+        // grapheme-cluster axis lands (carry).
+        let (effective_text, visual_caret_byte, preedit_byte_range) = match &preedit {
+            Some(p) if !p.is_empty() => {
+                let caret = caret_byte as usize;
+                let mut composed = String::with_capacity(text.len() + p.len());
+                composed.push_str(&text[..caret.min(text.len())]);
+                composed.push_str(p);
+                composed.push_str(&text[caret.min(text.len())..]);
+                let preedit_end = caret + p.len();
+                (composed, u32::try_from(preedit_end).unwrap_or(u32::MAX),
+                 Some((caret, preedit_end)))
+            }
+            _ => (text.clone(), caret_byte, None),
+        };
 
         // Field background — colour cue for state. Idle stays a dark
         // grey; Focused / Editing lifts to a slightly deeper navy;
@@ -169,8 +196,11 @@ impl WidgetCore for HelloTextFieldTui {
 
         // Text node — natural-flow inside the field, padded one cell
         // from the left edge so the border does not clip the glyphs.
+        // R56.1.g.3 §5.22 — content is the composed `effective_text`
+        // (committed + spliced preedit) so the visible field carries
+        // the IME provisional run.
         let mut text_node = TextNode::default();
-        text.clone_into(&mut text_node.content);
+        effective_text.clone_into(&mut text_node.content);
         text_node.rect = Rect::new(
             FIELD_LEFT_PX + TEXT_INNER_PAD_PX,
             FIELD_TOP_PX,
@@ -226,6 +256,30 @@ impl WidgetCore for HelloTextFieldTui {
             }
         }
 
+        // R56.1.g.3 §5.22 — preedit band. Same cell-bg pattern as the
+        // selection band but tinted warm-amber so the IME provisional
+        // run reads distinctly from the selection. Paints BEFORE the
+        // text node (cell-bg behind glyphs); the `caret_byte`
+        // start point lands at the committed-buffer caret position
+        // (where the preedit was spliced in).
+        if let Some((pre_start, pre_end)) = preedit_byte_range {
+            if pre_end > pre_start {
+                let pre_byte_width = pre_end.saturating_sub(pre_start);
+                let pre_left_px = FIELD_LEFT_PX
+                    .saturating_add(TEXT_INNER_PAD_PX)
+                    .saturating_add(
+                        u32::try_from(pre_start).unwrap_or(u32::MAX).saturating_mul(CELL_PX_X),
+                    );
+                let pre_width_px = u32::try_from(pre_byte_width)
+                    .unwrap_or(u32::MAX)
+                    .saturating_mul(CELL_PX_X);
+                let mut pre_band = ContainerNode::default();
+                pre_band.rect = Rect::new(pre_left_px, FIELD_TOP_PX, pre_width_px, CELL_PX_Y);
+                pre_band.style = BoxStyle::filled(Color::rgb(0x7a, 0x52, 0x20));
+                field_container.children.push(Scene::Container(pre_band));
+            }
+        }
+
         field_container.children.push(Scene::Text(text_node));
 
         // Caret — paint a solid block-cursor glyph at the byte
@@ -234,12 +288,16 @@ impl WidgetCore for HelloTextFieldTui {
         // the TUI demo's input space; multi-byte UTF-8 would skew the
         // column by the cluster-count gap (carry to a future TUI
         // grapheme-cluster axis).
+        // R56.1.g.3 §5.22 — visual cursor follows the preedit end
+        // during composition (canonical W3C compositionupdate caret
+        // position) so the user sees their just-typed jamo at the
+        // cursor column.
         if !matches!(interaction, TextFieldState::Disabled) {
             let mut cursor_node = TextNode::default();
             CURSOR_GLYPH.clone_into(&mut cursor_node.content);
             let cursor_left_px = FIELD_LEFT_PX
                 .saturating_add(TEXT_INNER_PAD_PX)
-                .saturating_add(caret_byte.saturating_mul(CELL_PX_X));
+                .saturating_add(visual_caret_byte.saturating_mul(CELL_PX_X));
             cursor_node.rect = Rect::new(cursor_left_px, FIELD_TOP_PX, CELL_PX_X, CELL_PX_Y);
             cursor_node.style = style::TextStyle::default();
             field_container.children.push(Scene::Text(cursor_node));
@@ -255,16 +313,24 @@ impl WidgetCore for HelloTextFieldTui {
         // Status line — text-only mirror so the AI side can verify
         // by reading the scene tree even when the TTY snapshot is
         // unavailable.
+        // R56.1.g.3 §5.22 — preedit segment added so the AI-side
+        // verifier reads composition state from the visible status
+        // row in lockstep with the `scene/query` `preedit` slot.
         let mut status = TextNode::default();
         let selection_status = match selection_range {
             Some((s, e)) => format!(" | sel: [{s},{e}]"),
             None => String::new(),
         };
+        let preedit_status = match preedit.as_ref() {
+            Some(p) => format!(" | preedit: \"{p}\""),
+            None => String::new(),
+        };
         let status_str = format!(
-            "state: {} | caret: {}{} | text: \"{}\"",
+            "state: {} | caret: {}{}{} | text: \"{}\"",
             text_field_state_name(interaction),
             caret_byte,
             selection_status,
+            preedit_status,
             text,
         );
         status_str.clone_into(&mut status.content);

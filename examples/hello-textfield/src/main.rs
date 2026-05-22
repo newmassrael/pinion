@@ -116,6 +116,15 @@ const CARET_COLOR: Color = Color::rgb(0xff, 0xff, 0xff);
 // hard-coding the platform native colour); alpha 0xA0 keeps the
 // underlying text readable while the selection band paints behind.
 const SELECTION_COLOR: Color = Color::rgba(0x33, 0x99, 0xff, 0xa0);
+// R56.1.g.3 §5.22 — preedit underline + background tint. Lighter
+// warm-grey tint draws the eye to the "this is provisional" composition
+// segment without competing with the steel-blue selection band; the
+// 1 px underline below the preedit baseline mirrors the canonical IME
+// affordance Wayland text-input-v3 / macOS NSTextInputContext / Windows
+// TSF clients paint.
+const PREEDIT_BG_COLOR: Color = Color::rgba(0xff, 0xc0, 0x60, 0x60);
+const PREEDIT_UNDERLINE_COLOR: Color = Color::rgb(0xff, 0xc0, 0x60);
+const PREEDIT_UNDERLINE_THICKNESS: u32 = 1;
 // 2 px caret reads cleanly on the integer-scaled 1.0× displays the
 // hello-* gallery is sized for; Hi-DPI displays where AA softens
 // single-pixel lines could drop to 1 px (the substrate
@@ -234,6 +243,28 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     let blink = use_caret_blink(TF_TAG);
     let text = text_state.text();
 
+    // R56.1.g.3 §5.22 — IME preedit visualisation. When the substrate
+    // is composing, splice the preedit string into the committed text
+    // at the caret byte offset so the shaped glyph run carries the
+    // provisional characters; the visual caret then moves to the end
+    // of the preedit run (W3C `compositionupdate` canonical caret
+    // position). The selection rect path stays mutually exclusive
+    // with the preedit path — `preedit_start` drains any active
+    // selection, so the two visuals never compete.
+    let preedit = text_state.preedit();
+    let (effective_text, visual_caret_byte, preedit_byte_range) = match &preedit {
+        Some(p) if !p.is_empty() => {
+            let caret = caret_byte as usize;
+            let mut composed = String::with_capacity(text.len() + p.len());
+            composed.push_str(&text[..caret.min(text.len())]);
+            composed.push_str(p);
+            composed.push_str(&text[caret.min(text.len())..]);
+            let preedit_end = caret + p.len();
+            (composed, preedit_end, Some((caret, preedit_end)))
+        }
+        _ => (text.clone(), caret_byte as usize, None),
+    };
+
     let text_style = TextStyle::new()
         .with_size_px(FONT_SIZE_PX)
         .with_fg(if matches!(interaction, TextFieldState::Disabled) {
@@ -242,12 +273,12 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             TEXT_COLOR
         });
 
-    // Caret geometry — shape the current text once via the shared
-    // `LayoutCache`, then look up the cursor rect at `caret_byte`.
-    // The `LayoutCache::layout` LRU returns the same `Layout`
-    // reference for the same `(text, style, max_width)` tuple, so
-    // re-runs of the view fn inside the same paint cycle reuse the
-    // shaped run instead of re-shaping per call.
+    // Caret geometry — shape the current effective_text once via the
+    // shared `LayoutCache`, then look up the cursor rect at the
+    // visual caret offset. The `LayoutCache::layout` LRU returns the
+    // same `Layout` reference for the same `(text, style, max_width)`
+    // tuple, so re-runs of the view fn inside the same paint cycle
+    // reuse the shaped run instead of re-shaping per call.
     //
     // R56.1.f.3 §5.22 — selection range pixel geometry. When a
     // selection is active, two extra `caret_rect_for_byte_offset`
@@ -255,18 +286,23 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // can paint behind the text. The same shared `LayoutCache`
     // reuses the shaped run across all three queries — no repeated
     // shaping work.
+    //
+    // R56.1.g.3 §5.22 — preedit pixel range derives from two more
+    // `caret_rect_for_byte_offset` calls against the same shaped
+    // effective_text run; the underline + tinted background paint
+    // behind the glyphs in the preedit byte range.
     let layout_cache = use_layout_cache("hello_textfield.layout_cache");
     let selection_range = text_state.selection_range();
-    let (caret_pixel_rect, selection_pixel) = {
+    let (caret_pixel_rect, selection_pixel, preedit_pixel) = {
         let mut cache = layout_cache.borrow_mut();
-        let layout = cache.layout(text.as_str(), &text_style, None);
+        let layout = cache.layout(effective_text.as_str(), &text_style, None);
         #[allow(
             clippy::cast_precision_loss,
             reason = "CARET_WIDTH fits f32 losslessly (2 << 23 ceiling)"
         )]
         let rect = caret_rect_for_byte_offset(
             layout,
-            caret_byte as usize,
+            visual_caret_byte,
             CARET_WIDTH as f32,
         );
         let height_floor = saturating_f32_to_u32(rect.height).max(FONT_SIZE_PX);
@@ -293,7 +329,25 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             let sel_h = saturating_f32_to_u32(start_rect.height).max(FONT_SIZE_PX);
             (start_x, sel_y, end_x.saturating_sub(start_x), sel_h)
         });
-        (caret, selection)
+        let preedit_p = preedit_byte_range.map(|(start, end)| {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "CARET_WIDTH fits f32 losslessly"
+            )]
+            let start_rect =
+                caret_rect_for_byte_offset(layout, start, CARET_WIDTH as f32);
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "CARET_WIDTH fits f32 losslessly"
+            )]
+            let end_rect = caret_rect_for_byte_offset(layout, end, CARET_WIDTH as f32);
+            let start_x = saturating_f32_to_u32(start_rect.x);
+            let end_x = saturating_f32_to_u32(end_rect.x);
+            let pre_y = saturating_f32_to_u32(start_rect.y);
+            let pre_h = saturating_f32_to_u32(start_rect.height).max(FONT_SIZE_PX);
+            (start_x, pre_y, end_x.saturating_sub(start_x), pre_h)
+        });
+        (caret, selection, preedit_p)
     };
     let (caret_layout_x, caret_layout_y, caret_box_height) = caret_pixel_rect;
 
@@ -306,8 +360,12 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // Text node — natural-flow child of the field container. Empty
     // text is rendered as a zero-width run so the caret still appears
     // at x=0 inside the padded field.
+    //
+    // R56.1.g.3 §5.22 — during composition, the rendered text is the
+    // composed `effective_text` (committed buffer + spliced preedit
+    // at the caret position), not the raw `text_state.text()` buffer.
     let text_node = Scene::Text(TextNode::styled(
-        text.clone(),
+        effective_text.clone(),
         Rect::default(),
         text_style,
     ));
@@ -324,7 +382,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         TextFieldState::Focused | TextFieldState::Editing,
     ) && blink.visible();
 
-    let mut field_children: Vec<Scene> = Vec::with_capacity(3);
+    let mut field_children: Vec<Scene> = Vec::with_capacity(4);
     // R56.1.f.3 §5.22 — selection rect paints BEFORE text_node so
     // the glyphs render on top of the tinted band. Vello composites
     // children in vector order (later children paint atop earlier).
@@ -343,7 +401,51 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             field_children.push(selection_box);
         }
     }
+    // R56.1.g.3 §5.22 — preedit background tint paints BEFORE the
+    // text node (same layering rule as the selection band) so glyphs
+    // composite on top of the tint. The IME affordance reads as
+    // "this run is provisional".
+    if let Some((pre_x, pre_y, pre_w, pre_h)) = preedit_pixel {
+        if pre_w > 0 {
+            let pre_left = FIELD_PAD.saturating_add(pre_x);
+            let pre_top = FIELD_PAD.saturating_add(pre_y);
+            let preedit_bg = Scene::Box(
+                BoxNode::new(Rect::default(), BoxStyle::filled(PREEDIT_BG_COLOR))
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_size(Size::px(pre_w, pre_h))
+                            .with_absolute_position(pre_left, pre_top),
+                    ),
+            );
+            field_children.push(preedit_bg);
+        }
+    }
     field_children.push(text_node);
+    // R56.1.g.3 §5.22 — preedit underline paints AFTER the text node
+    // so the line sits over the descender region (visual "this is a
+    // preedit run" affordance). 1 px line below the text baseline +
+    // a sliver of descender room — the canonical IME underline shape.
+    if let Some((pre_x, pre_y, pre_w, pre_h)) = preedit_pixel {
+        if pre_w > 0 {
+            let pre_left = FIELD_PAD.saturating_add(pre_x);
+            let underline_top = FIELD_PAD
+                .saturating_add(pre_y)
+                .saturating_add(pre_h)
+                .saturating_sub(PREEDIT_UNDERLINE_THICKNESS);
+            let underline = Scene::Box(
+                BoxNode::new(
+                    Rect::default(),
+                    BoxStyle::filled(PREEDIT_UNDERLINE_COLOR),
+                )
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_size(Size::px(pre_w, PREEDIT_UNDERLINE_THICKNESS))
+                        .with_absolute_position(pre_left, underline_top),
+                ),
+            );
+            field_children.push(underline);
+        }
+    }
     if caret_painted {
         let caret_left = FIELD_PAD.saturating_add(caret_layout_x);
         let caret_top = FIELD_PAD.saturating_add(caret_layout_y);
@@ -385,11 +487,20 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             .with_fg(Color::rgb(0xe0, 0xe0, 0xe0)),
     ));
 
+    // R56.1.g.3 §5.22 — status line carries the preedit state so the
+    // AI side can verify composition lifecycle through the visible
+    // status row (mirror of the `scene/query` `preedit` slot —
+    // observable both visually and over RPC).
+    let preedit_status = match preedit.as_ref() {
+        Some(p) => format!(" | preedit=\"{p}\""),
+        None => String::new(),
+    };
     let status_str = format!(
-        "{} | caret={} | text=\"{}\"",
+        "{} | caret={} | text=\"{}\"{}",
         text_field_state_name(interaction),
         caret_byte,
         text,
+        preedit_status,
     );
     let status = Scene::Text(TextNode::styled(
         status_str,
