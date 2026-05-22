@@ -45,5 +45,5 @@ pub use focus::FocusManager;
 pub use frame_pacing::{clamp_frame_dt, MAX_FRAME_DT_SECS};
 pub use input::{rect_for_tag, InputRouter, Modifiers, PointerId, Touch, TouchPhase};
 pub use intent_queue::{walk_scene_and_drain, IntentQueue};
-pub use layout::compute_layout;
+pub use layout::{compute_layout, compute_layout_with_scroll_dirty};
 pub use window::WindowRouter;

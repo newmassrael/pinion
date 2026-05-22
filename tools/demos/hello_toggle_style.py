@@ -12,15 +12,23 @@ for R51.200's nested-scroll translation: the new substrate surfaces
 needs at least one running-shell demo to satisfy
 [[ai-first-rpc-introspection-obligation]] before the round closes.
 
+R57.X.toggle theme retrofit — every visible color now resolves
+through a `ColorRole` against the active `Theme` (R57.0 §5.50).
+The pinned RGB values reflect the Material 3 Switch role mapping in
+the canonical light palette (`Theme::light()`):
+
+  - Knob Off+Idle  -> `ColorRole::Outline`   = `#C0C0C0`
+  - "Dark mode"    -> `ColorRole::OnSurface` = `#1A1A1A`
+
 Asserts:
   1. "main_toggle" Container.style.corner_radius == 16 (TRACK_RADIUS)
   2. The Container's first child is the knob Box with
-     style.corner_radius == 12 (KNOB_RADIUS) and an opaque-white fill
-     (R, G, B = 0xff, 0xff, 0xff) — the idle-off knob colour pinned
-     by hello-toggle's view fn.
+     style.corner_radius == 12 (KNOB_RADIUS) and an opaque
+     `Outline`-role fill (R, G, B = 0xc0, 0xc0, 0xc0) — the M3 Switch
+     idle-off thumb mapping in the light palette.
   3. Walking the scene depth-first the first Text node carries
-     `font_size_px == 18` and a foreground colour matching the
-     `Color::rgb(0xe0, 0xe0, 0xe0)` literal in main.rs:154.
+     `font_size_px == 18` and a foreground colour matching
+     `Theme::light().on_surface` = `Color::rgb(0x1a, 0x1a, 0x1a)`.
 
 Exit 0 when every assertion holds, non-zero with a typed reason on
 failure (so the workflow loop can short-circuit on regression).
@@ -91,13 +99,18 @@ def body() -> None:
             "knob corner_radius",
         )
         knob_fill = knob_style.get("fill") or {}
-        assert_eq(knob_fill.get("r"), 0xFF, "knob fill.r (idle-off white)")
-        assert_eq(knob_fill.get("g"), 0xFF, "knob fill.g (idle-off white)")
-        assert_eq(knob_fill.get("b"), 0xFF, "knob fill.b (idle-off white)")
+        # R57.X.toggle — knob Off+Idle sources its fill from
+        # `ColorRole::Outline`, which `Theme::light()` binds to
+        # `#C0C0C0` (Material 3 Switch outlined-thumb mapping).
+        assert_eq(knob_fill.get("r"), 0xC0, "knob fill.r (idle-off Outline role)")
+        assert_eq(knob_fill.get("g"), 0xC0, "knob fill.g (idle-off Outline role)")
+        assert_eq(knob_fill.get("b"), 0xC0, "knob fill.b (idle-off Outline role)")
         assert_eq(knob_fill.get("a"), 0xFF, "knob fill.a (opaque)")
         # 3) First Text in the scene is the "Dark mode" label —
-        #    TextStyle.font_size_px == 18, fg_color matches the
-        #    Color::rgb(0xe0, 0xe0, 0xe0) literal.
+        #    TextStyle.font_size_px == 18, fg_color resolves through
+        #    `ColorRole::OnSurface` against `Theme::light()`, which
+        #    binds to `#1A1A1A` (Material 3 onSurface, 18.5:1 contrast
+        #    on the white surface).
         first_text = next(
             (n for n in walk(snap) if n.get("type") == "Text"),
             None,
@@ -111,9 +124,9 @@ def body() -> None:
             "label TextStyle.font_size_px",
         )
         fg = text_style.get("fg_color") or {}
-        assert_eq(fg.get("r"), 0xE0, "label fg_color.r")
-        assert_eq(fg.get("g"), 0xE0, "label fg_color.g")
-        assert_eq(fg.get("b"), 0xE0, "label fg_color.b")
+        assert_eq(fg.get("r"), 0x1A, "label fg_color.r (OnSurface role)")
+        assert_eq(fg.get("g"), 0x1A, "label fg_color.g (OnSurface role)")
+        assert_eq(fg.get("b"), 0x1A, "label fg_color.b (OnSurface role)")
 
 
 if __name__ == "__main__":

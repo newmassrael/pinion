@@ -83,7 +83,40 @@ pub fn compute_layout(
     viewport_w: u32,
     viewport_h: u32,
 ) {
-    compute_layout_inner(scene, cache, viewport_w, viewport_h, false);
+    let _ = compute_layout_with_scroll_dirty(scene, cache, viewport_w, viewport_h);
+}
+
+/// R57.X.scrollbar §5.45 — variant of [`compute_layout`] that returns
+/// whether any [`ScrollState::set_max`] write *actually* mutated a
+/// max-bound during this pass (post Signal equality-skip).
+///
+/// Used by the shell's [`compute_paint_scene`](crate::ShellCore)
+/// substrate to detect the first-paint chicken-and-egg case where
+/// `V::view` ran with the pre-layout `max = 0` snapshot and produced
+/// a scrollbar widget rendering its track full. The shell re-runs
+/// `V::view` + `compute_layout` once when this returns `true` so the
+/// scrollbar widget picks up the freshly-written max on the same
+/// paint cycle — the user-visible "scrollbar fills the track on
+/// startup" defect is what motivated the substrate exposure.
+///
+/// On steady-state paints the Signal equality-skip floors this at
+/// `false`, so the substrate's re-run guard short-circuits to a
+/// single pass — zero overhead on every frame after the content size
+/// has settled.
+///
+/// # Panics
+///
+/// Same conditions as [`compute_layout`] (taffy internal logic
+/// errors only, never on user-supplied scene shape).
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn compute_layout_with_scroll_dirty(
+    scene: &mut Scene,
+    cache: &mut LayoutCache,
+    viewport_w: u32,
+    viewport_h: u32,
+) -> bool {
+    compute_layout_inner(scene, cache, viewport_w, viewport_h, false)
 }
 
 /// R55.G.2 §5.45 — extension point for laying out a `Scene::Scroll`
@@ -104,7 +137,7 @@ fn compute_layout_inner(
     viewport_w: u32,
     viewport_h: u32,
     main_axis_unbounded: bool,
-) {
+) -> bool {
     let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
     let layout_tree = build(scene, &mut tree);
     // Force the root to fill the viewport. The user's declared size
@@ -212,7 +245,14 @@ fn compute_layout_inner(
     // chicken-and-egg workaround where every view fn had to
     // duplicate the row-count × row-height arithmetic and call
     // `set_max` manually before the layout pass had even run.
-    update_scroll_state_bounds(scene);
+    //
+    // R57.X.scrollbar §5.45 — bubble out whether any `set_max` write
+    // actually mutated a bound (post Signal equality-skip). The
+    // [`compute_layout_with_scroll_dirty`] caller (shell substrate)
+    // uses this to detect the first-paint chicken-and-egg case and
+    // schedule a same-frame re-pass so the scrollbar widget never
+    // paints a stale full-track thumb to the user.
+    update_scroll_state_bounds(scene)
 }
 
 /// R55.G.2 §5.45 — walks the scene and lays out each `Scene::Scroll`
@@ -230,7 +270,11 @@ fn lay_out_scroll_contents(scene: &mut Scene, cache: &mut LayoutCache) {
         Scene::Scroll(s) => {
             let vw = s.viewport.w;
             let vh = s.viewport.h;
-            compute_layout_inner(s.content.as_mut(), cache, vw, vh, true);
+            // Discard the inner pass's scroll-dirty bit: the outer
+            // pass's `update_scroll_state_bounds` walks the same
+            // ScrollState (parent-Scroll) after this returns, so the
+            // outer accumulator is the canonical source of truth.
+            let _ = compute_layout_inner(s.content.as_mut(), cache, vw, vh, true);
         }
         _ => {}
     }
@@ -246,14 +290,21 @@ fn lay_out_scroll_contents(scene: &mut Scene, cache: &mut LayoutCache) {
 /// equality-skipped (R51.149), so a steady-state frame with
 /// unchanged content geometry does not schedule a paint.
 #[allow(clippy::cast_possible_wrap)]
-fn update_scroll_state_bounds(scene: &Scene) {
+fn update_scroll_state_bounds(scene: &Scene) -> bool {
     match scene {
         Scene::Container(c) => {
+            let mut dirty = false;
             for child in &c.children {
-                update_scroll_state_bounds(child);
+                // `|=`-fold so the walk continues even after one
+                // descendant flips the bit — every nested ScrollState
+                // gets its set_max call this pass regardless of which
+                // one moved.
+                dirty |= update_scroll_state_bounds(child);
             }
+            dirty
         }
         Scene::Scroll(s) => {
+            let mut dirty = false;
             if let Some(state) = s.state.as_ref() {
                 let content_rect = s.content.rect();
                 // Content rect is scroll-local (origin at (0, 0)),
@@ -261,15 +312,25 @@ fn update_scroll_state_bounds(scene: &Scene) {
                 // size — no `+ rect.x/y` accumulation needed.
                 let max_x = content_rect.w.saturating_sub(s.viewport.w);
                 let max_y = content_rect.h.saturating_sub(s.viewport.h);
-                state.set_max(
+                // R57.X.scrollbar §5.45 — `set_max` returns whether
+                // either max bound actually mutated (post-Signal
+                // equality-skip). On the very first paint of an
+                // application's lifetime every ScrollState reads back
+                // with `max == 0` so the first non-zero content-size
+                // write flips this bit; the substrate uses the
+                // accumulated bit to re-run `V::view` + this layout
+                // pass on the same frame so the scrollbar widget
+                // paints with the freshly-written max instead of a
+                // full-track thumb.
+                dirty = state.set_max(
                     i32::try_from(max_x).unwrap_or(i32::MAX),
                     i32::try_from(max_y).unwrap_or(i32::MAX),
                 );
             }
             // Recurse into content so nested Scrolls also update.
-            update_scroll_state_bounds(s.content.as_ref());
+            dirty || update_scroll_state_bounds(s.content.as_ref())
         }
-        _ => {}
+        _ => false,
     }
 }
 
@@ -854,6 +915,102 @@ mod tests {
             assert_eq!(
                 max_y, 238,
                 "max_y = content_h(402) - viewport_h(164)"
+            );
+        }
+
+        #[test]
+        fn r57_x_scrollbar_first_layout_returns_scroll_dirty_true() {
+            // R57.X.scrollbar §5.45 — the very first
+            // `compute_layout_with_scroll_dirty` against a fresh
+            // ScrollState whose `max == (0, 0)` MUST return `true`
+            // because the layout-derived `max_y = 238` is not equal
+            // to the pre-write `0`. The shell substrate uses this
+            // bit to re-run `V::view` + `compute_layout` on the same
+            // paint cycle so the scrollbar widget never paints a
+            // stale full-track thumb to the user.
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(rows).with_layout(
+                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
+                ),
+            );
+            let state = Rc::new(ScrollState::new());
+            assert_eq!(state.max(), (0, 0), "pre-condition: fresh ScrollState");
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content)
+                .with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            assert!(
+                dirty,
+                "first-paint pass must report dirty (max moved 0 -> 238)",
+            );
+            assert_eq!(state.max(), (0, 238), "max bound written by the same pass");
+        }
+
+        #[test]
+        fn r57_x_scrollbar_second_layout_returns_scroll_dirty_false() {
+            // R57.X.scrollbar §5.45 — once the ScrollState's max has
+            // settled to the layout-derived value, a second
+            // `compute_layout_with_scroll_dirty` on the same scene
+            // MUST return `false`. The Signal equality-skip path in
+            // `ScrollState::set_max` floors the per-axis Signal
+            // revision so the dirty bit stays at `false`, and the
+            // substrate's re-run guard short-circuits — zero
+            // overhead on every steady-state frame.
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(rows).with_layout(
+                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
+                ),
+            );
+            let state = Rc::new(ScrollState::new());
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content)
+                .with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            // Prime: first pass writes max, returns dirty=true.
+            let dirty_first =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            assert!(dirty_first, "prime pass must report dirty");
+            // Steady state: second pass on the same scene at the
+            // same viewport sees an unchanged max bound, no Signal
+            // revision advance, dirty=false.
+            let dirty_second =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            assert!(
+                !dirty_second,
+                "second pass on a settled ScrollState must report dirty=false (Signal equality-skip)",
+            );
+        }
+
+        #[test]
+        fn r57_x_scrollbar_scroll_dirty_false_when_no_state_attached() {
+            // R57.X.scrollbar §5.45 — a Scroll with no ScrollState
+            // attached cannot mutate any max bound, so the dirty bit
+            // stays at `false`. Protects against a future
+            // refactor that accidentally returns `true` for the
+            // no-state branch (which would force every frame to
+            // re-run the view+layout pair pointlessly).
+            let rows: Vec<Scene> = (0..12).map(|_| fixed_row(28)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(rows).with_layout(
+                    LayoutStyle::new().flex(FlexDirection::Column).with_gap(6),
+                ),
+            );
+            let scroll = ScrollNode::new(Rect::new(0, 0, 220, 164), content);
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            let dirty = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            assert!(
+                !dirty,
+                "Scroll without state attached has no Signals to touch — dirty must be false",
             );
         }
 

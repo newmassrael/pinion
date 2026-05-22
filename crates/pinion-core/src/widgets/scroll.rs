@@ -192,9 +192,33 @@ impl ScrollState {
     /// touched (two to four times for one `set_max` call) — the
     /// textbook reactive contract for an atomic multi-axis write
     /// is "one observable change".
-    pub fn set_max(&self, max_x: i32, max_y: i32) {
+    ///
+    /// (R57.X.scrollbar §5.45) Returns `true` when either the `max_x`
+    /// or `max_y` Signal actually mutated — i.e. when at least one
+    /// of the per-axis [`Signal::set`] calls landed past its
+    /// equality-skip. The shell substrate's first-paint warmup uses
+    /// this bit (bubbled through
+    /// [`update_scroll_state_bounds`](crate::runtime::layout::update_scroll_state_bounds))
+    /// to detect the chicken-and-egg case where `V::view` ran with
+    /// the pre-layout `max = 0` snapshot. The offset-clamp Signal
+    /// writes (which fire only when the new bound shrinks the live
+    /// offset) are intentionally excluded from the dirty bit —
+    /// `set_max` callers care about "did the *bound* move", not
+    /// "did the clamp fire", and the clamp is already its own
+    /// observable Signal write.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "the returned bool is the post-Signal-equality-skip \
+                  dirty bit consumed by the shell substrate's first- \
+                  paint warmup; setup paths (tests, manual seeding \
+                  via use_scroll_state factories) deliberately ignore \
+                  it. Forcing every caller to `let _ = …` would punish \
+                  the common case for the substrate edge case."
+    )]
+    pub fn set_max(&self, max_x: i32, max_y: i32) -> bool {
         let mx = max_x.max(0);
         let my = max_y.max(0);
+        let revisions_before = (self.max_x.revision(), self.max_y.revision());
         batch(|| {
             self.max_x.set(mx);
             self.max_y.set(my);
@@ -209,6 +233,8 @@ impl ScrollState {
                 self.offset_y.set(my);
             }
         });
+        self.max_x.revision() != revisions_before.0
+            || self.max_y.revision() != revisions_before.1
     }
 
     /// Set the offset to `(x, y)` clamped against `[0, max]`. Use

@@ -3619,6 +3619,8 @@ fn create_external() -> Box<dyn External> {
 - R55.H: Forge codegen emits ScrollBar statechart from SCE schema (SCE upstream RFC carry).
 - R55.G.6: ScrollNode::map_layout(FnOnce) preserves seeded viewport size; with_layout drops it
 - R55.D.1: scrollbar_thumb_rect closed-form 헬퍼 land — 통계/SCXML/입력 라우팅은 R55.D.2/3 carry
+- R57.X.scrollbar: shell substrate re-runs V::view + compute_layout same-frame when scroll_dirty=true.
+- R57.X.scrollbar: set_max returns dirty bool (revision delta, post equality-skip).
 
 
 
@@ -3690,6 +3692,9 @@ pub struct ScrollNode {
 - crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal
 - crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar::attach_state
 - crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal::pointer_move
+- crates/pinion-runtime/src/layout.rs:compute_layout_with_scroll_dirty
+- crates/pinion-core/src/widgets/scroll.rs:ScrollState::set_max
+- crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
 
 
 
@@ -3856,6 +3861,9 @@ if __name__ == "__main__":
 - R57.0: typography / spacing tokens deferred to R57.2 (TextStyleRole + SpacingToken cascade)
 - R57.0: Color now derives serde Serialize/Deserialize -- Signal<Theme> trait bound; hot-reload prep
 - R57.0: hello-theme reactive wire -- view-fn use_theme().theme() + update set_theme on toggle
+- R57.X.toggle: V::update authority = intent.payload, not V::read_state (pre-flip lag).
+- R57.X.toggle: intent matching uses dotted wire form (e.g. "main_toggle.toggle"); runtime prefixes.
+- R57.X.toggle: hover/pressed = Color::lerp toward OnSurface (M3 state layer 0.08/0.12).
 
 
 
@@ -3938,6 +3946,9 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - crates/pinion-core/src/style.rs:Color
 - examples/hello-theme/src/main.rs:view
 - examples/hello-theme/src/main.rs:HelloThemeView::update
+- crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerHighest
+- examples/hello-toggle/src/main.rs:ToggleView::update
+- examples/hello-toggle/src/main.rs:view
 
 
 
@@ -17155,6 +17166,64 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - R57.X: retrofit existing widget catalogue to ColorRole resolution (Toggle/ListBox/TextField)
 - R57.X: theme fade animation via Color::lerp linear-space + Signal<Theme> interpolation
 - R57.X: Material 3 container/variant role pairs (primaryContainer/onPrimaryContainer/...)
+
+
+
+### Round 573 — R57.X.toggle 5.50 hello-toggle ColorRole resolve + V update intent payload authority fix
+
+**Changes**:
+- theme.rs add ColorRole SurfaceContainerHighest plus Theme field plus light dark default
+- hello-toggle main.rs view uses use_theme plus ColorRole resolve M3 Switch mapping
+- hello-toggle main.rs V update reads intent payload Bool authority and calls set_theme
+- hello-theme main.rs V update same intent payload fix plus dotted wire form match
+- tools demos hello_toggle_style.py color pin updated to Outline plus OnSurface roles
+
+
+
+**Verification**:
+- cargo test workspace vello 2759 pass 0 fail 14 ignored
+- cargo clippy workspace all-targets vello 0 warnings
+- 14 demos PASS regression
+- RPC verify hello-toggle and hello-theme surface light to dark cycle confirmed
+
+
+
+**Impact**: §5.50, §5.22, §5.38
+
+
+**Carry forward**:
+- R57.X widget retrofit cascade ListBox TextField Button Checkbox Radio Slider remain
+- R57.1 ThemeMode plus prefers-color-scheme bridge axis carry
+- R57.2 typography plus spacing tokens cascade carry
+- pinion-shell host keyboard isolation env var substrate carry
+
+
+
+### Round 574 — R57.X.scrollbar 5.45 compute_layout_with_scroll_dirty plus shell first-paint warmup substrate
+
+**Changes**:
+- scroll.rs ScrollState set_max returns bool via Signal revision delta
+- layout.rs compute_layout_with_scroll_dirty returns bool plus update_scroll_state_bounds folds dirty
+- lib.rs re-export compute_layout_with_scroll_dirty
+- shell substrate compute_paint_scene plus dispatch_rpc producer re-run V view plus layout when dirty
+- layout.rs 3 regression tests r57_x_scrollbar first dirty true second false no-state false
+
+
+
+**Verification**:
+- cargo test workspace vello 2760 pass 0 fail 14 ignored
+- cargo clippy workspace all-targets vello 0 warnings
+- 14 demos PASS regression
+- RPC verify hello-listbox first paint thumb h equals 66 not 164 across boot_grace 0.05 0.1 0.3
+
+
+
+**Impact**: §5.45, §5.49
+
+
+**Carry forward**:
+- resize event same-frame warmup currently 1 frame flash before next paint settles
+- ScrollState set_max must_use clippy carry currently allowed for setup paths
 
 
 

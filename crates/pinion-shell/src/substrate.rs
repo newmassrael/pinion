@@ -46,7 +46,8 @@ use pinion_rpc::{
     build_layout_node, dispatch, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
-    clamp_frame_dt, compute_layout, rect_for_tag, CommandExecutor, CoreShell, DispatchTail,
+    clamp_frame_dt, compute_layout, compute_layout_with_scroll_dirty, rect_for_tag,
+    CommandExecutor, CoreShell, DispatchTail,
     FocusManager, Modifiers, PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
@@ -874,7 +875,29 @@ impl<V: WidgetView> ShellCore<V> {
             .core
             .root_owner()
             .run(|| V::view(cached_state, &frame));
-        compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        let scroll_dirty =
+            compute_layout_with_scroll_dirty(&mut paint_scene, &mut self.text_cache, w, h);
+        // R57.X.scrollbar §5.45 — first-paint chicken-and-egg fix.
+        // The layout pass writes the post-layout
+        // [`ScrollState::set_max`] *after* `V::view` has already
+        // produced the scene. The scrollbar widget reads `max` inside
+        // `V::view` and renders thumb size as
+        // `f(viewport, viewport + max)` — on the very first paint of
+        // the application's lifetime `max == 0` resolves to "content
+        // fits viewport" and paints a full-track thumb the user sees
+        // as "scrollbar maxed out at startup". Re-running `V::view` +
+        // `compute_layout` once when the layout pass actually moved
+        // a bound lets the scrollbar widget pick up the freshly-
+        // written max on the same paint cycle. Idempotent on
+        // steady-state frames — Signal equality-skip floors
+        // `scroll_dirty` at `false` and the guard short-circuits.
+        if scroll_dirty {
+            paint_scene = self
+                .core
+                .root_owner()
+                .run(|| V::view(cached_state, &frame));
+            compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        }
         // R51.147 §5.28 — keep painting while any animation registered
         // on the binding is still moving. `request_redraw` is
         // idempotent inside winit; the redraw flag is drained once per
@@ -1086,7 +1109,19 @@ impl<V: WidgetView> ShellCore<V> {
             let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
                 let mut paint = root_owner.run(|| V::view(cached_state, &frame));
-                compute_layout(&mut paint, text_cache_ptr, w, h);
+                // R57.X.scrollbar §5.45 — same first-paint warmup as
+                // [`Self::compute_paint_scene`]. The RPC paint
+                // producer feeds `scene/snapshot from: paint` and the
+                // `scene/click {path}` hit-test resolution; an AI
+                // client that calls `scene/snapshot` immediately
+                // after launching the binary must see the same
+                // first-paint-correct scrollbar that the live shell
+                // surfaces. Idempotent on steady-state — Signal
+                // equality-skip floors the dirty bit at false.
+                if compute_layout_with_scroll_dirty(&mut paint, text_cache_ptr, w, h) {
+                    paint = root_owner.run(|| V::view(cached_state, &frame));
+                    compute_layout(&mut paint, text_cache_ptr, w, h);
+                }
                 paint
             };
             // R47.7.5 §5.12 — surface the most recent winit-rendered

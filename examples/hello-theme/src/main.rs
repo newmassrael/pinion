@@ -82,10 +82,17 @@ const THEME_TAG: &str = "app";
 /// `Scene::External` lookup.
 const TOGGLE_TAG: &str = "theme_toggle";
 
-/// `"toggle"` Intent tag emitted by the Toggle widget on
-/// `Pressed → Hover` activate. See `crates/pinion-core/src/widgets/
-/// toggle.rs:170` (`Intent::new_static("toggle", ...)`).
-const TOGGLE_INTENT_TAG: &str = "toggle";
+/// Fully-prefixed wire tag for the `Toggle` widget's `"toggle"`
+/// intent. The widget itself emits the raw name `"toggle"`
+/// (`crates/pinion-core/src/widgets/toggle.rs:170`,
+/// `Intent::new_static("toggle", ...)`); the `pinion_runtime`
+/// intent-queue walk then prefixes every drained intent with the
+/// producing `ExternalNode::tag` (`"theme_toggle"` here), so the
+/// form `V::update` actually sees is the dotted full path
+/// `"theme_toggle.toggle"` — that is the literal `V::update` compares
+/// against (no `format!` per dispatch, no suffix-split brittleness
+/// against future event names that share a suffix).
+const TOGGLE_INTENT_TAG_FULL: &str = "theme_toggle.toggle";
 
 /// view-fn (§6.3): pure sync mapping `(ToggleState, bool, Frame) ->
 /// Scene`. Reads the active palette via [`use_theme`] so the same
@@ -317,17 +324,28 @@ impl WidgetCore for HelloThemeView {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
-    /// R57.0 §5.50 — reducer side-effect: on the `Toggle`'s
+    /// R57.0 §5.50 — reducer side-effect: on the [`Toggle`]'s
     /// `"toggle"` intent, swap the active [`ThemeProvider`] palette
-    /// to mirror the post-flip `on` value. `update` runs inside the
-    /// shell's `root_owner.run` wrap ([[callback-root-owner-wrap]] +
+    /// to mirror the post-flip on/off value.
+    ///
+    /// **Authority source = `intent.payload`, not `state`.** The
+    /// `"toggle"` intent fires from inside the Toggle SCXML's
+    /// `Pressed -> Hover` transition; that transition is in flight
+    /// while [`Self::update`] runs, so [`Self::read_state`] still
+    /// observes the *pre*-flip Off value. The intent payload
+    /// (`IntrospectValue::Bool(new_value)`) carries the canonical
+    /// post-flip on/off bit, mirroring the W3C event-driven contract
+    /// (event detail is authoritative for the action that produced
+    /// the event). The original R57.0 land routed through `state.1`,
+    /// which gated `set_theme(Theme::dark())` on a value the scene
+    /// did not yet hold — the visible defect surfaced by RPC
+    /// snapshotting after a click; this rework is the substrate fix.
+    ///
+    /// `update` runs inside the shell's `root_owner.run` wrap
+    /// ([[callback-root-owner-wrap]] +
     /// [[callback-root-owner-wrap-create-access]]) so [`use_theme`]
     /// resolves the same `Rc<ThemeProvider>` the view-fn already
     /// resolved (typed cache slot keyed by [`THEME_TAG`]).
-    ///
-    /// `state` is the post-flip `(ToggleState, bool)` snapshot per
-    /// [[update-by-value-snapshot]]; `state.1` (the on/off sidecar)
-    /// is the authority for which palette to install.
     ///
     /// Signal equality-skip (`Signal::set` short-circuits when the
     /// new value equals the current) covers the
@@ -335,14 +353,12 @@ impl WidgetCore for HelloThemeView {
     /// dispatch and drain both hit this arm, and the second call
     /// against the now-active palette is a no-op rather than a
     /// double-paint.
-    fn update(state: (ToggleState, bool), intent: &Intent) -> Vec<Command> {
-        if intent.tag.as_ref() == TOGGLE_INTENT_TAG {
-            let provider = use_theme(THEME_TAG);
-            provider.set_theme(if state.1 {
-                Theme::dark()
-            } else {
-                Theme::light()
-            });
+    fn update(_state: (ToggleState, bool), intent: &Intent) -> Vec<Command> {
+        if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {
+            if let IntrospectValue::Bool(on) = intent.payload {
+                let provider = use_theme(THEME_TAG);
+                provider.set_theme(if on { Theme::dark() } else { Theme::light() });
+            }
         }
         Vec::new()
     }

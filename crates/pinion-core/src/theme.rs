@@ -20,20 +20,24 @@
 //!   foreground-on-background contrast is guaranteed by construction.
 //! - Slint `Palette` / `FluentUI` Tokens — same structural shape.
 //!
-//! ## First-slice scope (R57.0)
+//! ## First-slice scope (R57.0 + R57.X.toggle extension)
 //!
-//! Tier 1 color roles only: [`ColorRole::Surface`],
-//! [`ColorRole::OnSurface`], [`ColorRole::OnSurfaceMuted`],
-//! [`ColorRole::Accent`], [`ColorRole::OnAccent`],
-//! [`ColorRole::Outline`]. This is the minimum surface that lets the
-//! `hello-theme` reference application render the visible affordances
-//! of the existing widget catalog under both palettes. Subsequent
-//! slices (R57.1+) layer in the Material 3 container / variant pairs
-//! (`primaryContainer` / `onPrimaryContainer` / etc.), the typography
-//! token surface (font-size / line-height roles), and the spacing
-//! token surface — every extension lands behind the
-//! `#[non_exhaustive]` shape on [`ColorRole`] so no `SemVer` break is
-//! required.
+//! Tier 1 color roles: [`ColorRole::Surface`], [`ColorRole::OnSurface`],
+//! [`ColorRole::OnSurfaceMuted`], [`ColorRole::Accent`],
+//! [`ColorRole::OnAccent`], [`ColorRole::Outline`], plus
+//! [`ColorRole::SurfaceContainerHighest`] (Material 3 canonical
+//! "filled inactive container" surface — added when `hello-toggle`'s
+//! retrofit (R57.X.toggle) surfaced that an inactive filled chip
+//! needs its own role separate from [`ColorRole::Outline`], which is
+//! a stroke / divider color). The role enum's `#[non_exhaustive]`
+//! annotation keeps every future extension `SemVer`-safe.
+//!
+//! Subsequent slices (R57.1+) layer in additional Material 3 container
+//! / variant pairs (`primaryContainer` / `onPrimaryContainer` / the
+//! remaining surfaceContainer tonal levels), the typography token
+//! surface (font-size / line-height roles), and the spacing token
+//! surface — every extension lands behind the same `#[non_exhaustive]`
+//! shape on [`ColorRole`].
 //!
 //! ## Resolution path
 //!
@@ -105,6 +109,16 @@ pub enum ColorRole {
     OnAccent,
     /// Hairline / divider / input-border color. Material 3 `outline`.
     Outline,
+    /// Filled-but-inactive container surface — the chip / track / pill
+    /// background a widget shows in its **Off** posture, before any
+    /// activation. Distinct from [`Self::Outline`] (a stroke role) and
+    /// from [`Self::Surface`] (the panel background): a filled control
+    /// in its rest state sits visually *above* the surface and
+    /// *behind* its activated [`Self::Accent`] counterpart. Material 3
+    /// `surfaceContainerHighest` — the highest-elevation surface tone
+    /// in the M3 tonal-elevation scale, used by `Switch` (Off track),
+    /// `Chip` (unselected fill), `Slider` (inactive segment).
+    SurfaceContainerHighest,
 }
 
 impl ColorRole {
@@ -138,6 +152,7 @@ impl ColorRole {
             ColorRole::Accent => Color::rgb(0x19, 0x76, 0xd2),
             ColorRole::OnAccent => Color::rgb(0xff, 0xff, 0xff),
             ColorRole::Outline => Color::rgb(0xc0, 0xc0, 0xc0),
+            ColorRole::SurfaceContainerHighest => Color::rgb(0xe6, 0xe0, 0xe9),
         }
     }
 }
@@ -177,6 +192,8 @@ pub struct Theme {
     pub on_accent: Color,
     /// Resolves [`ColorRole::Outline`].
     pub outline: Color,
+    /// Resolves [`ColorRole::SurfaceContainerHighest`].
+    pub surface_container_highest: Color,
 }
 
 impl Theme {
@@ -192,6 +209,10 @@ impl Theme {
     /// - `accent` = Material Blue 700 (`#1976D2`), 4.6:1 on white.
     /// - `on_accent` = white (`#FFFFFF`), 4.6:1 on Material Blue 700.
     /// - `outline` = `#C0C0C0`, the canonical W3C 1px hairline.
+    /// - `surface_container_highest` = `#E6E0E9`, the Material 3 light
+    ///   `surfaceContainerHighest` tone — 1.1:1 against `surface`, the
+    ///   highest-elevation chip surface that stays visibly distinct
+    ///   from the panel background without competing with `accent`.
     #[must_use]
     pub const fn light() -> Self {
         Self {
@@ -201,6 +222,7 @@ impl Theme {
             accent: Color::rgb(0x19, 0x76, 0xd2),
             on_accent: Color::rgb(0xff, 0xff, 0xff),
             outline: Color::rgb(0xc0, 0xc0, 0xc0),
+            surface_container_highest: Color::rgb(0xe6, 0xe0, 0xe9),
         }
     }
 
@@ -219,6 +241,10 @@ impl Theme {
     /// - `on_accent` = `#0B1F3F`, 8.6:1 against Material Blue 400.
     /// - `outline` = `#404040`, the dark-mode hairline used by
     ///   Material 3 / `FluentUI`.
+    /// - `surface_container_highest` = `#36343B`, the Material 3 dark
+    ///   `surfaceContainerHighest` tone — the highest-elevation chip
+    ///   surface that stays visibly distinct from the `#121212` panel
+    ///   surface, matching the M3 dark tonal-elevation scale.
     #[must_use]
     pub const fn dark() -> Self {
         Self {
@@ -228,6 +254,7 @@ impl Theme {
             accent: Color::rgb(0x60, 0xa5, 0xfa),
             on_accent: Color::rgb(0x0b, 0x1f, 0x3f),
             outline: Color::rgb(0x40, 0x40, 0x40),
+            surface_container_highest: Color::rgb(0x36, 0x34, 0x3b),
         }
     }
 
@@ -245,6 +272,7 @@ impl Theme {
             ColorRole::Accent => self.accent,
             ColorRole::OnAccent => self.on_accent,
             ColorRole::Outline => self.outline,
+            ColorRole::SurfaceContainerHighest => self.surface_container_highest,
         }
     }
 }
@@ -434,6 +462,10 @@ mod tests {
         assert_eq!(ColorRole::Accent.default_for(), light.accent);
         assert_eq!(ColorRole::OnAccent.default_for(), light.on_accent);
         assert_eq!(ColorRole::Outline.default_for(), light.outline);
+        assert_eq!(
+            ColorRole::SurfaceContainerHighest.default_for(),
+            light.surface_container_highest,
+        );
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -452,6 +484,10 @@ mod tests {
         assert_eq!(t.accent, Color::rgb(0x19, 0x76, 0xd2));
         assert_eq!(t.on_accent, Color::rgb(0xff, 0xff, 0xff));
         assert_eq!(t.outline, Color::rgb(0xc0, 0xc0, 0xc0));
+        assert_eq!(
+            t.surface_container_highest,
+            Color::rgb(0xe6, 0xe0, 0xe9),
+        );
     }
 
     #[test]
@@ -465,6 +501,10 @@ mod tests {
         assert_eq!(t.accent, Color::rgb(0x60, 0xa5, 0xfa));
         assert_eq!(t.on_accent, Color::rgb(0x0b, 0x1f, 0x3f));
         assert_eq!(t.outline, Color::rgb(0x40, 0x40, 0x40));
+        assert_eq!(
+            t.surface_container_highest,
+            Color::rgb(0x36, 0x34, 0x3b),
+        );
     }
 
     #[test]
@@ -484,6 +524,10 @@ mod tests {
             assert_eq!(theme.resolve(ColorRole::Accent), theme.accent);
             assert_eq!(theme.resolve(ColorRole::OnAccent), theme.on_accent);
             assert_eq!(theme.resolve(ColorRole::Outline), theme.outline);
+            assert_eq!(
+                theme.resolve(ColorRole::SurfaceContainerHighest),
+                theme.surface_container_highest,
+            );
         }
     }
 

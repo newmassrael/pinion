@@ -1,5 +1,5 @@
 //! `hello-toggle` — §5.38 paint-side N=2 (R51.29) + R51.30 pinion-shell
-//! migration.
+//! migration, R57.X.toggle theme retrofit.
 //!
 //! Same architecture as hello-button (R17 bidirectional RPC live
 //! dogfood), differing only in:
@@ -9,8 +9,26 @@
 //! * the widget External is [`ToggleExternal`], introspect-exposing
 //!   both `state` (string) and `value` (bool);
 //! * the view fn draws a 64×32 rounded-pill track with the inner
-//!   24×24 white knob justified Start (Off) / End (On) — the
+//!   24×24 knob justified Start (Off) / End (On) — the
 //!   animation-free "snap" form (spring transitions are a §5.x carry).
+//!
+//! R57.X.toggle — first real consumer retrofit of the
+//! [`pinion_core::theme`] substrate (R57.0 §5.50). Every visible color
+//! now resolves through a [`ColorRole`] against the active
+//! [`use_theme("app")`](pinion_core::use_theme) palette; flipping the
+//! Off/On sidecar drives a [`ThemeProvider::set_theme`] swap so the
+//! demo's "Dark mode" label becomes semantically accurate — On really
+//! is dark mode. The Material 3 Switch role mapping is the canonical
+//! source:
+//!
+//! - Track Off — [`ColorRole::SurfaceContainerHighest`] (M3 chip surface).
+//! - Track On — [`ColorRole::Accent`] (M3 primary).
+//! - Thumb Off — [`ColorRole::Outline`] (M3 outline).
+//! - Thumb On — [`ColorRole::OnAccent`] (M3 onPrimary).
+//! - Hover / Pressed — [`Color::lerp`] toward
+//!   [`ColorRole::OnSurface`] at the M3 state-layer overlay weights
+//!   (0.08 hover, 0.12 pressed), in linear sRGB space per
+//!   [[color-lerp-linear-space]] (R51.151).
 //!
 //! Every other framework primitive (App lifecycle, `RenderState`,
 //! `dispatch_rpc`, stdin RPC reader, `InputRouter` wiring, intent
@@ -20,12 +38,16 @@
 //! N=2 evidence).
 
 use pinion_core::external::{External, IntrospectValue};
+// Borrowed in the V::update reducer to read the post-flip authority
+// out of the Toggle intent's payload — see the body comment for why
+// the intent payload (not V::read_state) is the canonical source.
+use pinion_core::intent::Intent;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, ColorRole, Command, Frame, Scene, Theme, WidgetCore, use_theme};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -45,9 +67,6 @@ vello_renderer_impl!(HelloToggleRenderer, HelloToggleRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 220;
-// Window background — same dark navy hello-button uses, for visual
-// consistency across the example gallery.
-const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
 // Track is a 64×32 rounded pill (radius 16 = half height = full
 // pill). Padding 4 around the inner area gives a 24-px-tall inner
 // strip that exactly matches the 24×24 knob, so the knob is
@@ -64,22 +83,68 @@ const KNOB_RADIUS: u32 = 12;
 // rhythm (~16 px between related controls).
 const ROW_GAP: u32 = 16;
 
+const LABEL_FONT_PX: u32 = 18;
+const STATUS_FONT_PX: u32 = 12;
+
+/// Material 3 state-layer overlay weights (linear-sRGB lerp toward
+/// [`ColorRole::OnSurface`]). M3 specifies 8 % for hover and 12 % for
+/// pressed; pinion's [`Color::lerp`] is the §5.27 linear-space path
+/// so the result matches the M3 perceptual intent without a separate
+/// alpha-compositing pass.
+const HOVER_OVERLAY_T: f32 = 0.08;
+const PRESSED_OVERLAY_T: f32 = 0.12;
+/// Disabled treatment — fade the role color toward [`ColorRole::Surface`]
+/// by half. M3 specifies a 12 % opacity disabled overlay; without an
+/// alpha pipeline yet, a midpoint lerp toward the surface produces a
+/// comparable "washed out" tone in both palettes.
+const DISABLED_OVERLAY_T: f32 = 0.50;
+
+/// Root-owner cache key for this binary's [`ThemeProvider`]. Shared
+/// between the [`view`] fn (reactive read) and
+/// [`ToggleView::update`] (palette swap on `"toggle"` intent) so both
+/// halves resolve the same typed [`use_theme`] slot without repeating
+/// the literal.
+const THEME_TAG: &str = "app";
+
+/// Fully-prefixed wire tag for the [`Toggle`] widget's `"toggle"`
+/// intent. The widget itself emits the raw name `"toggle"`
+/// (`crates/pinion-core/src/widgets/toggle.rs:170`,
+/// `Intent::new_static("toggle", ...)`); the `pinion_runtime`
+/// intent-queue walk then prefixes every drained intent with the
+/// producing [`ExternalNode::tag`] (`"main_toggle"` here), so the
+/// form `V::update` actually sees is the dotted full path
+/// `"main_toggle.toggle"` — that is the literal `V::update` compares
+/// against (no `format!` per dispatch, no suffix-split brittleness
+/// against future event names that share a suffix).
+const TOGGLE_INTENT_TAG_FULL: &str = "main_toggle.toggle";
+
 /// view-fn (§6.3): pure sync mapping `(ToggleState, bool) -> Scene`.
 /// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, ready for
 /// `dt` / `frame_index` without a `SemVer` major. Purity is the §2
-/// `dry_run` invariant: same `(state, value, frame)` always yields
-/// the same `Scene`. The shell calls `compute_layout` on the result
-/// before paint, so the view fn need not (and should not) resolve
-/// pixel rects.
+/// `dry_run` invariant: same `(state, value, frame, theme)` always
+/// yields the same `Scene`. The shell calls `compute_layout` on the
+/// result before paint, so the view fn need not (and should not)
+/// resolve pixel rects.
+///
+/// Reads the active palette via [`use_theme(THEME_TAG)`] so the
+/// reactive subscription captures palette swaps automatically — the
+/// next [`ThemeProvider::set_theme`] re-runs the view without any
+/// view-fn branch on the mode.
 ///
 /// Layout (top-to-bottom, centered):
-/// 1. "Dark mode" label (18 px white) — descriptive caption.
+/// 1. "Dark mode" label (18 px, [`ColorRole::OnSurface`]) —
+///    descriptive caption.
 /// 2. Toggle track (64×32 rounded pill, tag = `main_toggle`): fill
-///    encodes the joint `(state, value)` cross product; the inner
-///    24×24 knob justifies Start when Off / End when On.
-/// 3. Status line ("`<State>` | `<Value>`", 12 px grey) — text-only
-///    state mirror so the AI side can verify by reading the Scene
-///    tree even when the screenshot path is unavailable.
+///    encodes the joint `(state, value)` cross product through
+///    [`ColorRole::SurfaceContainerHighest`] (Off) /
+///    [`ColorRole::Accent`] (On), modulated by the M3 state-layer
+///    weight for Hover / Pressed; the inner 24×24 knob justifies
+///    Start when Off / End when On with
+///    [`ColorRole::Outline`] (Off) / [`ColorRole::OnAccent`] (On).
+/// 3. Status line ("`<State>` | `<Value>`", 12 px,
+///    [`ColorRole::OnSurfaceMuted`]) — text-only state mirror so
+///    the AI side can verify by reading the Scene tree even when the
+///    screenshot path is unavailable.
 ///
 /// R48 §5.35: the `main_toggle` tag on the track container is the
 /// shell's `InputRouter` hit-test handle — pointer events resolve to
@@ -87,28 +152,47 @@ const ROW_GAP: u32 = 16;
 /// in the state scene. The knob and the labels carry no tag.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
-    // Track fill — encodes the (state, value) cross product. The Off
-    // column stays in greyscale; the On column shifts to a green
-    // accent (system "active" affordance). Pressed darkens both
-    // columns for haptic feedback. Disabled is a distinct muted
-    // brown-grey so users can visually distinguish it from Hover-off
-    // (matches the macOS / iOS convention that disabled controls are
-    // chromatically muted, not just dimmer).
-    let track_fill: Color = match (state, on) {
-        (ToggleState::Idle, false) => Color::rgb(0x40, 0x40, 0x40),
-        (ToggleState::Hover, false) => Color::rgb(0x55, 0x55, 0x55),
-        (ToggleState::Pressed, false) => Color::rgb(0x30, 0x30, 0x30),
-        (ToggleState::Idle, true) => Color::rgb(0x30, 0xa0, 0x50),
-        (ToggleState::Hover, true) => Color::rgb(0x40, 0xb0, 0x60),
-        (ToggleState::Pressed, true) => Color::rgb(0x20, 0x70, 0x40),
-        (ToggleState::Disabled, _) => Color::rgb(0x4a, 0x42, 0x38),
+    // Reactive read — every paint subscribes the root owner to the
+    // ThemeProvider's `palette` signal. The next `set_theme` flips
+    // the surface for free.
+    let theme = use_theme(THEME_TAG).theme();
+    // Cache the OnSurface role once — it both renders the title /
+    // status-line foregrounds and serves as the M3 state-layer
+    // overlay direction for hover / pressed modulation.
+    let on_surface = theme.resolve(ColorRole::OnSurface);
+
+    // Track fill — encodes the (state, value) cross product through
+    // the M3 Switch role mapping. Off sits on the inactive container
+    // surface; On sits on the accent. Hover / Pressed lerp toward the
+    // on-surface overlay color at the M3 state-layer weights, in
+    // linear sRGB space per [[color-lerp-linear-space]] (R51.151).
+    // Disabled fades the base role half-way toward Surface so the
+    // chip reads as washed-out in both palettes.
+    let track_base = if on {
+        theme.resolve(ColorRole::Accent)
+    } else {
+        theme.resolve(ColorRole::SurfaceContainerHighest)
     };
-    // Knob stays pure white in interactive states (canonical iOS /
-    // Material affordance for the thumb), drops to a muted grey when
-    // the widget is Disabled so it visually reads as inactive.
-    let knob_fill: Color = match state {
-        ToggleState::Disabled => Color::rgb(0xa0, 0xa0, 0xa0),
-        _ => Color::rgb(0xff, 0xff, 0xff),
+    let track_fill: Color = match state {
+        ToggleState::Idle => track_base,
+        ToggleState::Hover => track_base.lerp(on_surface, HOVER_OVERLAY_T),
+        ToggleState::Pressed => track_base.lerp(on_surface, PRESSED_OVERLAY_T),
+        ToggleState::Disabled => {
+            track_base.lerp(theme.resolve(ColorRole::Surface), DISABLED_OVERLAY_T)
+        }
+    };
+    // Knob fill — M3 Switch thumb mapping: outline (Off) / on-accent
+    // (On); disabled fades the base toward the muted on-surface so
+    // the thumb reads as inactive without disappearing.
+    let knob_base = if on {
+        theme.resolve(ColorRole::OnAccent)
+    } else {
+        theme.resolve(ColorRole::Outline)
+    };
+    let knob_fill: Color = if matches!(state, ToggleState::Disabled) {
+        knob_base.lerp(theme.resolve(ColorRole::OnSurfaceMuted), DISABLED_OVERLAY_T)
+    } else {
+        knob_base
     };
     // The animation-free "snap" form: Off positions the knob via
     // JustifyContent::Start, On via JustifyContent::End. Tween /
@@ -150,8 +234,8 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
         "Dark mode",
         Rect::default(),
         TextStyle::new()
-            .with_size_px(18)
-            .with_fg(Color::rgb(0xe0, 0xe0, 0xe0)),
+            .with_size_px(LABEL_FONT_PX)
+            .with_fg(on_surface),
     ));
     let status_str = format!(
         "{} | {}",
@@ -162,12 +246,12 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
         status_str,
         Rect::default(),
         TextStyle::new()
-            .with_size_px(12)
-            .with_fg(Color::rgb(0x90, 0x90, 0x90)),
+            .with_size_px(STATUS_FONT_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     Scene::Container(
         ContainerNode::new(vec![label, track, status])
-            .with_style(BoxStyle::filled(BG_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -228,7 +312,7 @@ impl WidgetCore for ToggleView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-toggle (R51.30 §5.38 pinion-shell)"
+        "pinion hello-toggle (R57.X.toggle §5.50 theme retrofit)"
     }
 
     fn keybinding(key: &str) -> Option<ToggleEvent> {
@@ -247,6 +331,42 @@ impl WidgetCore for ToggleView {
     /// `hello-toggle` is a toggle button so both land here.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
+    }
+
+    /// R57.X.toggle — reducer side-effect: on the [`Toggle`]'s
+    /// `"toggle"` intent, swap the active [`ThemeProvider`] palette to
+    /// mirror the post-flip On/Off value so the demo's "Dark mode"
+    /// label tracks the actual palette.
+    ///
+    /// **Authority source = `intent.payload`, not `state`.** The
+    /// `"toggle"` intent fires from inside the Toggle SCXML's
+    /// `Pressed -> Hover` transition; that transition is in flight
+    /// while [`Self::update`] runs, so [`Self::read_state`] still
+    /// observes the *pre*-flip `Off` value. The intent payload
+    /// (`IntrospectValue::Bool(new_value)`) carries the canonical
+    /// post-flip on/off bit, mirroring the W3C event-driven contract
+    /// (event detail is authoritative for the action that produced
+    /// the event). Same fix lives in `hello-theme` for the parity
+    /// substrate demo.
+    ///
+    /// Owner-current discipline: the shell wraps this call in
+    /// `root_owner.run` ([[callback-root-owner-wrap]]) so
+    /// [`use_theme`] resolves the same [`ThemeProvider`] Rc the
+    /// view-fn subscribes to — the typed [`Owner::cache`] slot keyed
+    /// by [`THEME_TAG`] is shared across both halves.
+    ///
+    /// Signal equality-skip covers the
+    /// [[reducer-incoming-vs-drain-symmetry]] double-fire: a second
+    /// call against the now-active palette is a no-op rather than a
+    /// double-paint.
+    fn update(_state: (ToggleState, bool), intent: &Intent) -> Vec<Command> {
+        if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {
+            if let IntrospectValue::Bool(on) = intent.payload {
+                let provider = use_theme(THEME_TAG);
+                provider.set_theme(if on { Theme::dark() } else { Theme::light() });
+            }
+        }
+        Vec::new()
     }
 
     fn fmt_state_log(state: &(ToggleState, bool)) -> String {
@@ -320,13 +440,19 @@ fn main() {
 #[cfg(test)]
 mod a11y_tests {
     use super::*;
+    use pinion_core::Owner;
 
     /// R51.69 §5.40 — pipeline mirror (`view` + `access_node` +
     /// `enrich_names_from_scene`) so name assertions read what the
     /// AT client sees, not the pre-enrichment intermediate.
+    ///
+    /// R57.X.toggle — wraps the `view` call in a fresh [`Owner::run`]
+    /// scope so the inner [`use_theme`] resolves under the canonical
+    /// root-owner discipline ([[callback-root-owner-wrap]]).
     fn enriched(state: (ToggleState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (s, on) = state;
-        let scene = view(s, on, &Frame::new());
+        let owner = Owner::new();
+        let scene = owner.run(|| view(s, on, &Frame::new()));
         let mut nodes = ToggleView::access_node(&state, focused);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         nodes
@@ -383,5 +509,61 @@ mod a11y_tests {
             (ToggleState::Idle, false),
             &Frame::default(),
         );
+    }
+
+    #[test]
+    fn r57_x_toggle_track_fill_swaps_with_palette() {
+        // R57.X.toggle exit criterion — the track fill in the Off
+        // posture must equal the active palette's
+        // `surface_container_highest` color. Calling
+        // `set_theme(Theme::dark())` and re-rendering must produce a
+        // scene whose track fill flipped to the dark palette's tone,
+        // pinning the substrate cascade end-to-end (use_theme
+        // subscription -> view reactive read -> paint scene).
+        let owner = Owner::new();
+        owner.run(|| {
+            let scene_light = view(ToggleState::Idle, false, &Frame::new());
+            assert!(
+                scene_contains_fill(&scene_light, Theme::light().surface_container_highest),
+                "light Off track must fill with light surface_container_highest",
+            );
+            use_theme(THEME_TAG).set_theme(Theme::dark());
+            let scene_dark = view(ToggleState::Idle, false, &Frame::new());
+            assert!(
+                scene_contains_fill(&scene_dark, Theme::dark().surface_container_highest),
+                "dark Off track must fill with dark surface_container_highest",
+            );
+        });
+    }
+
+    #[test]
+    fn r57_x_toggle_on_state_fills_with_accent() {
+        // The On posture must source its track fill from the active
+        // palette's `accent` — pinning the (state, on) -> role
+        // mapping decision so a refactor cannot silently revert to
+        // an RGB literal.
+        let owner = Owner::new();
+        owner.run(|| {
+            let scene = view(ToggleState::Idle, true, &Frame::new());
+            assert!(
+                scene_contains_fill(&scene, Theme::light().accent),
+                "On track must fill with the active palette's accent",
+            );
+        });
+    }
+
+    /// Walks the scene tree looking for any node whose fill style
+    /// matches `target`. Used by the R57.X.toggle theme cascade
+    /// tests so they do not pin the exact tree shape — a future
+    /// layout refactor of `view` does not produce a flaky failure.
+    fn scene_contains_fill(scene: &Scene, target: Color) -> bool {
+        match scene {
+            Scene::Container(node) => {
+                node.style.fill == target
+                    || node.children.iter().any(|c| scene_contains_fill(c, target))
+            }
+            Scene::Box(node) => node.style.fill == target,
+            _ => false,
+        }
     }
 }
