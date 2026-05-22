@@ -9908,6 +9908,36 @@ if __name__ == "__main__":
 
 
 
+### R55.D.6 — R55.D.6 §5.45 §5.21 LayoutStyle absolute_position CSS-mirror primitive closes spacer-flex workaround
+
+**Changes**:
+- pinion-core/style.rs: LayoutStyle.absolute_position Option<(u32,u32)> field + with_absolute_position builder
+- pinion-runtime/layout.rs: to_taffy_style maps absolute_position -> Position::Absolute + Inset.{left,top}
+- pinion-runtime/layout.rs: 3 substrate tests pin offset / removal from flex flow / default-none backward-compat
+- examples/hello-listbox/main.rs: scrollbar thumb uses absolute_position, retires spacer-flex Column workaround
+- examples/hello-listbox: r55_d6 test replaces pre-R55.D.6 r55_d4 spacer-flex pinning
+- tools/demos/hello_listbox_snapshot.py: scrollbar children 2 -> 1 (absolute thumb only)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 2275 passed (+3 layout) / 0 failed / 12 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- 10 demos all PASS (hello_listbox_snapshot updated for new single-child scrollbar shape)
+- taffy Position::Absolute integration: child at (40,80) with size (20,30) lands at exact rect
+
+
+
+**Impact**: §5.45, §5.21
+
+
+**Carry forward**:
+- R56.1 TextField caret rendering + cursor blink animation (new largest axis)
+- non_exhaustive on ScrollBarOrientation/Geometry future-proof attribute (cosmetic ~5 LOC)
+- F1 framework auto-tag conflict-aware contains_tag walker (deferred - regression risk)
+
+
+
 ### R55.G.22 — R55.G.22 §5.41 §5.49 — composite paint-root tag convention regression helper assert_widget_view_carries_tag 추출 + 9 widget inline assert 청산
 
 **Changes**:

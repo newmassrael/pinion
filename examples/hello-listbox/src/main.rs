@@ -267,14 +267,25 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
 /// scroll container. Reads the current `(offset_y, max_y)` pair off
 /// the shared `Rc<ScrollState>` and derives the thumb rectangle
 /// through [`scrollbar_thumb_rect`] (R55.D.1 closed-form helper);
-/// composites the result as `[spacer_above, thumb]` inside an outer
-/// `Container` filled with [`TRACK_FILL`].
+/// composites the result as a single thumb `Container`
+/// absolute-positioned inside the outer track `Container` filled
+/// with [`TRACK_FILL`].
 ///
-/// Pure paint visualization for R55.D.4. The R55.D.5 sub-axis
-/// closes the loop by wiring [`ScrollBarExternal::pointer_move`] so
-/// the user can drag the thumb — until then the bar is a *scroll
-/// indicator* (wheel / Arrow keys still drive the scroll; the bar
-/// reflects the resulting offset).
+/// (R55.D.5 §5.45) Drag-able: the `ScrollBarExternal` registered
+/// through [`WidgetCore::create_extra_externals`] shares this
+/// scroll state, so a press on the visible thumb captures the
+/// pointer and `ScrollBarExternal::pointer_move` writes
+/// `ScrollState::scroll_to` directly. Wheel / Arrow keys still
+/// drive the scroll independently — the bar reflects the resulting
+/// offset in both cases.
+///
+/// (R55.D.6 §5.45 §5.21) Thumb positioning uses the new
+/// [`LayoutStyle::with_absolute_position`] substrate (CSS
+/// `position: absolute; top: <thumb_y_offset>`). The pre-R55.D.6
+/// spacer Container that hand-rolled the y-offset through a
+/// `flex Column` is retired — the spacer-flex workaround was the
+/// `[[spacer-flex-absolute-workaround]]` carry the substrate now
+/// closes.
 fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
     let (_, offset_y) = scroll_state.offset();
     let (_, max_y) = scroll_state.max();
@@ -286,6 +297,9 @@ fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
     // *after* the first view runs); the helper's `content_extent
     // <= viewport_extent` branch then fills the thumb to the full
     // track, which is the textbook "nothing to scroll" rendering.
+    // R55.G.24 §5.45 — `set_max` now Signal-batches, so the next
+    // paint re-runs the view fn with the freshly-written max and
+    // the thumb snaps to its correct size on frame 2.
     let max_y_nonneg = u32::try_from(max_y.max(0)).unwrap_or(0);
     let content_extent = VIEWPORT_H.saturating_add(max_y_nonneg);
     let scroll_offset = u32::try_from(offset_y.max(0)).unwrap_or(0);
@@ -298,48 +312,42 @@ fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
         MIN_THUMB,
     );
 
-    // `thumb.y - track.y` is the press-time offset of the thumb's
-    // top edge from the track origin. The flex Column below uses a
-    // matching `spacer_above` to position the thumb without an
-    // absolute-positioning layer, which the current pinion layout
-    // primitive set does not expose.
+    // `thumb.y - track.y` is the offset of the thumb's top edge
+    // from the track origin. (R55.D.6 §5.45) Fed directly into
+    // [`LayoutStyle::with_absolute_position`] so the thumb lands at
+    // `(0, thumb_y_offset)` inside the track without a flex helper.
     let thumb_y_offset = geom.thumb.y.saturating_sub(geom.track.y);
     let thumb_h = geom.thumb.h;
 
-    let spacer_above = Scene::Container(
-        ContainerNode::new(vec![]).with_layout(
-            LayoutStyle::new().with_size(Size::px(SCROLLBAR_W, thumb_y_offset)),
-        ),
-    );
     let thumb = Scene::Container(
         ContainerNode::new(vec![])
             .with_style(BoxStyle::filled(THUMB_FILL).with_corner_radius(2))
-            .with_layout(LayoutStyle::new().with_size(Size::px(SCROLLBAR_W, thumb_h))),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(SCROLLBAR_W, thumb_h))
+                    .with_absolute_position(0, thumb_y_offset),
+            ),
     );
 
     // Outer track Container — fills the gutter with `TRACK_FILL`,
-    // stacks the spacer + thumb top-to-bottom. The space below the
-    // thumb stays unfilled (the parent's `TRACK_FILL` shows
-    // through), so the thumb appears suspended on a dark rail.
+    // hosts the absolute-positioned thumb. The space outside the
+    // thumb shows the parent's `TRACK_FILL` so the thumb appears
+    // suspended on a dark rail.
     //
     // (R55.D.5 §5.45) Tagged with [`SCROLLBAR_TAG`] so the input
     // router's hit-test routes pointer events on the track / thumb
     // to the matching `ScrollBarExternal` registered through
     // [`WidgetCore::create_extra_externals`]. The router walks the
     // paint scene's hit segments deepest-first and falls back to the
-    // first tagged ancestor — the spacer + thumb children stay
-    // untagged so a click anywhere inside the bar resolves up to
-    // this outer Container's tag, exactly the rect the
-    // `ScrollBarExternal::pointer_move` mapping expects.
+    // first tagged ancestor — the thumb stays untagged so a click
+    // anywhere inside the bar resolves up to this outer Container's
+    // tag, exactly the rect the `ScrollBarExternal::pointer_move`
+    // mapping expects.
     Scene::Container(
-        ContainerNode::new(vec![spacer_above, thumb])
+        ContainerNode::new(vec![thumb])
             .with_tag(SCROLLBAR_TAG)
             .with_style(BoxStyle::filled(TRACK_FILL))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_size(Size::px(SCROLLBAR_W, VIEWPORT_H)),
-            ),
+            .with_layout(LayoutStyle::new().with_size(Size::px(SCROLLBAR_W, VIEWPORT_H))),
     )
 }
 
@@ -1191,39 +1199,45 @@ mod a11y_tests {
     }
 
     #[test]
-    fn r55_d4_scrollbar_visual_uses_spacer_thumb_flex_column() {
-        // R55.D.4 §5.45 — scrollbar's internal composition: outer
-        // track Container holds [spacer_above, thumb] in a flex
-        // Column. The pinion layout primitive set does not expose
-        // absolute positioning; the spacer pattern is the textbook
-        // (and tested) way to vertically position the thumb inside
-        // the track. A regression that drops the spacer or
-        // re-orders the children would warp the thumb to the top
-        // of the track at every scroll offset.
+    fn r55_d6_scrollbar_visual_uses_absolute_positioned_thumb() {
+        // R55.D.6 §5.45 §5.21 — scrollbar's internal composition
+        // post-absolute-position substrate: outer track Container
+        // holds exactly ONE child — the thumb Container — positioned
+        // via `LayoutStyle::with_absolute_position(0, thumb_y)`.
+        // The pre-R55.D.6 spacer + flex Column workaround is retired
+        // now that the substrate exposes CSS-mirror absolute
+        // positioning directly. A regression that re-introduces the
+        // spacer (or drops the `absolute_position` on the thumb)
+        // would warp the thumb back to the top of the track at every
+        // scroll offset.
         let scene = run_view(unselected_state());
         let listbox_root =
             find_container_with_tag(&scene, PRIMARY_TAG).expect("listbox_root container");
         let Scene::Container(scrollbar) = &listbox_root.children[1] else {
             panic!("scrollbar Container missing");
         };
+        assert_eq!(scrollbar.children.len(), 1, "thumb only, no spacer");
+        let Scene::Container(thumb) = &scrollbar.children[0] else {
+            panic!("thumb must be a Container");
+        };
         assert_eq!(
-            scrollbar.layout.flex_direction,
-            FlexDirection::Column,
-            "scrollbar must declare flex Column to stack spacer + thumb",
+            thumb.layout.size.width,
+            Size::px(SCROLLBAR_W, 0).width,
+            "thumb width matches SCROLLBAR_W",
         );
-        assert_eq!(scrollbar.children.len(), 2, "spacer_above + thumb");
-        // Both children must be Containers with sized layouts
-        // (spacer takes no style, thumb declares THUMB_FILL).
-        for (i, child) in scrollbar.children.iter().enumerate() {
-            let Scene::Container(child_c) = child else {
-                panic!("scrollbar child {i} must be a Container");
-            };
-            assert_eq!(
-                child_c.layout.size.width,
-                Size::px(SCROLLBAR_W, 0).width,
-                "scrollbar child {i} must match SCROLLBAR_W",
-            );
-        }
+        assert!(
+            thumb.layout.absolute_position.is_some(),
+            "thumb must declare absolute_position (R55.D.6 substrate)",
+        );
+        // First-frame scroll state has `max_y == 0`, so the helper
+        // produces a thumb covering the full track at the track
+        // origin — `absolute_position` is `(0, 0)`. Later frames
+        // shift the y as the user scrolls.
+        let Some((left, top)) = thumb.layout.absolute_position else {
+            panic!("absolute_position just asserted as Some");
+        };
+        assert_eq!(left, 0, "thumb hugs left edge of track");
+        assert_eq!(top, 0, "first-frame thumb sits at track origin");
     }
 
     #[test]

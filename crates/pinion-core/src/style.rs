@@ -1193,6 +1193,25 @@ pub struct LayoutStyle {
     pub flex_grow: f32,
     pub padding: crate::scene::Rect,
     pub margin: crate::scene::Rect,
+    /// (R55.D.6 §5.45 §5.21) Absolute positioning override. When
+    /// `Some((left, top))`, this node is removed from its parent's
+    /// flex / block flow and positioned at `(parent.x + left,
+    /// parent.y + top)` with its own [`Self::size`]. `None` (the
+    /// default) participates in normal flow.
+    ///
+    /// Mirrors CSS `position: absolute; left/top: <px>` and Slint's
+    /// `absolute-position` — the substrate-minimal addition that
+    /// closes the R55.D.4 spacer-flex workaround. The
+    /// `hello-listbox` scrollbar peer's thumb sits at a precise
+    /// `(0, thumb_y_offset)` inside its track container after
+    /// R55.D.6; the pre-R55.D.6 spacer Container is retired.
+    ///
+    /// Coordinates are parent-content-rect-relative (analogous to
+    /// CSS `position: absolute` against a `position: relative`
+    /// ancestor). The current substrate treats every parent as a
+    /// positioning context — a future round adds an opt-out flag if
+    /// nested absolute-positioning contexts become necessary.
+    pub absolute_position: Option<(u32, u32)>,
 }
 
 impl LayoutStyle {
@@ -1212,7 +1231,28 @@ impl LayoutStyle {
             flex_grow: 0.0,
             padding: crate::scene::Rect::new(0, 0, 0, 0),
             margin: crate::scene::Rect::new(0, 0, 0, 0),
+            // (R55.D.6 §5.45 §5.21) `None` = normal flow, default.
+            absolute_position: None,
         }
+    }
+
+    /// (R55.D.6 §5.45 §5.21) Builder: pin the node at parent-relative
+    /// `(left, top)` outside the parent's flex / block flow. The
+    /// node's [`Self::size`] declares the absolute box's dimensions
+    /// (use [`Self::with_size`] alongside this builder; `Auto` size
+    /// expands to the parent's content rect through taffy's default
+    /// resolution for absolute children).
+    ///
+    /// Mirrors CSS `position: absolute; left/top: <px>` plus
+    /// `width/height`. The substrate's first consumer is the
+    /// `hello-listbox` scrollbar peer (R55.D.6), where the thumb
+    /// container declares `absolute_position(0, thumb_y_offset)` +
+    /// `with_size(Size::px(SCROLLBAR_W, thumb_h))` to retire the
+    /// R55.D.4 spacer-flex workaround.
+    #[must_use]
+    pub const fn with_absolute_position(mut self, left: u32, top: u32) -> Self {
+        self.absolute_position = Some((left, top));
+        self
     }
 
     /// Builder: padding insets (x=left, y=top, w=right, h=bottom).

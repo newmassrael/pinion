@@ -25,7 +25,7 @@ Walkthrough (matches `examples/hello-listbox/src/main.rs`):
             }
           },
           Container {               # R55.D.4 scrollbar visual sibling
-            children: [spacer_above, thumb],   # flex Column track
+            children: [thumb],       # R55.D.6 absolute-positioned thumb
           }
         ]
       }
@@ -90,13 +90,17 @@ def body() -> None:
         assert_eq(scroll.get("tag"), "main_list_scroll", "scroll tag")
 
         # R55.D.4 §5.45 — scrollbar visual sibling. Outer Container
-        # = track (fills SCROLLBAR_W × VIEWPORT_H with TRACK_FILL);
-        # children = [spacer_above, thumb] flex Column stacking.
+        # = track (fills SCROLLBAR_W × VIEWPORT_H with TRACK_FILL).
+        # R55.D.6 §5.45 §5.21 — track holds one absolute-positioned
+        # thumb Container; the pre-R55.D.6 spacer + flex-Column
+        # workaround is retired now that `LayoutStyle::
+        # with_absolute_position` lands the thumb at exact
+        # `(0, thumb_y_offset)` without a sibling spacer.
         scrollbar = wrapper_children[1]
         assert_eq(scrollbar.get("type"), "Container", "scrollbar visual type")
         scrollbar_children = scrollbar.get("children") or []
         assert_eq(
-            len(scrollbar_children), 2, "scrollbar visual children (spacer + thumb)"
+            len(scrollbar_children), 1, "scrollbar visual children (absolute thumb)"
         )
         assert_eq(scroll.get("offset_x"), 0, "initial offset_x")
         assert_eq(scroll.get("offset_y"), 0, "initial offset_y")

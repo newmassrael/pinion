@@ -41,12 +41,13 @@ use pinion_core::Scene;
 use pinion_text::LayoutCache;
 use std::collections::HashMap;
 use taffy::prelude::{
-    auto, length, percent, AvailableSpace, FromLength, LengthPercentage, NodeId,
-    Rect as TaffyRect, Size as TaffySize, TaffyTree,
+    auto, length, percent, AvailableSpace, FromLength, LengthPercentage, LengthPercentageAuto,
+    NodeId, Rect as TaffyRect, Size as TaffySize, TaffyTree,
 };
 use taffy::style::{
     AlignItems as TaffyAlign, Dimension, Display as TaffyDisplay,
-    FlexDirection as TaffyFlexDir, JustifyContent as TaffyJustify, Style as TaffyStyle,
+    FlexDirection as TaffyFlexDir, JustifyContent as TaffyJustify, Position as TaffyPosition,
+    Style as TaffyStyle,
 };
 
 /// R47.4 §5.36 — taffy `NodeContext` for leaves that need an intrinsic
@@ -460,6 +461,25 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         top: length(layout.margin.y as f32),
         bottom: length(layout.margin.h as f32),
     };
+    // (R55.D.6 §5.45 §5.21) Absolute positioning override. When the
+    // application sets `absolute_position`, taffy lifts the child out
+    // of its parent's flex / block flow and resolves its position via
+    // the `inset.{left, top}` pair — mirroring CSS
+    // `position: absolute; left: <x>; top: <y>`. The unspecified
+    // `right` / `bottom` insets stay `Auto` so the declared `size`
+    // alone defines the box dimensions (CSS resolves `width`/`height`
+    // against `auto` insets in the same direction). Default `None`
+    // keeps `position: Relative` so the entire pre-R55.D.6 layout
+    // graph stays bit-identical.
+    if let Some((left, top)) = layout.absolute_position {
+        s.position = TaffyPosition::Absolute;
+        s.inset = TaffyRect {
+            left: LengthPercentageAuto::from_length(left as f32),
+            right: LengthPercentageAuto::Auto,
+            top: LengthPercentageAuto::from_length(top as f32),
+            bottom: LengthPercentageAuto::Auto,
+        };
+    }
     s
 }
 
@@ -1012,5 +1032,103 @@ mod tests {
         assert_eq!(c.len(), 0, "fresh cache is empty");
         compute_layout(&mut scene, &mut c, 320, 200);
         assert!(!c.is_empty(), "measure pass populates LayoutCache");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.D.6 §5.45 §5.21 — `LayoutStyle::absolute_position` substrate
+    // (closes R55.D.4 spacer-flex workaround). The CSS-mirror contract:
+    //
+    //   1. A child with `absolute_position(left, top)` lands at
+    //      `(parent.x + left, parent.y + top)` with its declared size.
+    //   2. The child is removed from its parent's flex / block flow —
+    //      siblings flow as if the absolute child were absent.
+    //   3. The substrate's `Position::Relative` default (= None on
+    //      `absolute_position`) leaves the existing layout graph
+    //      bit-identical for every pre-R55.D.6 caller.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_d6_absolute_position_lands_child_at_offset() {
+        // R55.D.6 — Container with one absolute-positioned child.
+        // The child's declared `size` becomes the box dimensions; the
+        // `absolute_position(40, 80)` builder lands it at (40, 80)
+        // within the parent's content rect, ignoring flex flow.
+        let abs_child = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default()).with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(20, 30))
+                    .with_absolute_position(40, 80),
+            ),
+        );
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![abs_child])
+                .with_layout(LayoutStyle::new().with_size(Size::px(200, 200))),
+        );
+        compute_layout(&mut scene, &mut cache(), 320, 200);
+        let Scene::Container(c) = &scene else { panic!("container") };
+        let Scene::Box(b) = &c.children[0] else { panic!("box child") };
+        assert_eq!(b.rect.x, 40, "absolute left");
+        assert_eq!(b.rect.y, 80, "absolute top");
+        assert_eq!(b.rect.w, 20, "declared width");
+        assert_eq!(b.rect.h, 30, "declared height");
+    }
+
+    #[test]
+    fn r55_d6_absolute_child_removed_from_flex_flow() {
+        // R55.D.6 — Flex Column with three children: two normal-flow
+        // boxes and one absolute. The two normal-flow boxes stack
+        // vertically as if the absolute child were absent (the third
+        // box lands at y = 50 + gap=0 = 50, not y = 60 it would land
+        // at if all three children were in flow).
+        let in_flow = |h: u32| {
+            Scene::Box(
+                BoxNode::filled(Rect::default(), Color::default())
+                    .with_layout(LayoutStyle::new().with_size(Size::px(100, h))),
+            )
+        };
+        let abs_child = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default()).with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(10, 10))
+                    .with_absolute_position(0, 0),
+            ),
+        );
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![in_flow(50), abs_child, in_flow(20)])
+                .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+        );
+        compute_layout(&mut scene, &mut cache(), 200, 200);
+        let Scene::Container(c) = &scene else { panic!("container") };
+        let Scene::Box(first) = &c.children[0] else { panic!("first") };
+        let Scene::Box(third) = &c.children[2] else { panic!("third") };
+        assert_eq!(first.rect.y, 0, "first in-flow stays at top");
+        assert_eq!(
+            third.rect.y, 50,
+            "third in-flow stacks below first as if absolute child were absent"
+        );
+    }
+
+    #[test]
+    fn r55_d6_absolute_default_none_keeps_legacy_layout() {
+        // R55.D.6 — the field defaults to None; a normal Flex Column
+        // lays out identically to the pre-R55.D.6 substrate. This
+        // pins backward compatibility so the entire example catalogue
+        // stays bit-identical to the pre-R55.D.6 layout output.
+        let leaf = |h: u32| {
+            Scene::Box(
+                BoxNode::filled(Rect::default(), Color::default())
+                    .with_layout(LayoutStyle::new().with_size(Size::px(100, h))),
+            )
+        };
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![leaf(40), leaf(60)])
+                .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(5)),
+        );
+        compute_layout(&mut scene, &mut cache(), 200, 200);
+        let Scene::Container(c) = &scene else { panic!("container") };
+        let Scene::Box(a) = &c.children[0] else { panic!("a") };
+        let Scene::Box(b) = &c.children[1] else { panic!("b") };
+        assert_eq!(a.rect.y, 0);
+        assert_eq!(b.rect.y, 45, "gap=5 honored, no absolute interference");
     }
 }
