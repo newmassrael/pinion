@@ -3878,6 +3878,7 @@ if __name__ == "__main__":
 - hello-textfield retrofit: 13 RGB literals replaced — field/caret/selection/preedit all role-driven.
 - TextField filled-variant: Idle=SurfaceContainerHighest, Focused=SurfaceContainerHigh.
 - hello-button retrofit: 6 RGB literals replaced — M3 filled-tonal Button role mapping.
+- hello-radio/group retrofit: 23 RGB literals via shared radio_border_color (Outline/Accent + lerp).
 
 
 
@@ -3974,6 +3975,8 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - examples/hello-textfield/src/main.rs:preedit_bg_fill
 - examples/hello-textfield/src/main.rs:preedit_underline
 - examples/hello-button/src/main.rs:button_fill_endpoints
+- examples/hello-radio/src/main.rs:radio_border_color
+- examples/hello-radio-group/src/main.rs:radio_border_color
 
 
 
@@ -17417,6 +17420,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 **Carry forward**:
 - hello-radio + hello-radio-group + hello-checkbox + hello-slider retrofit cascade carry.
+- R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
+- R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry.
+
+
+
+### Round 581 — R57.X.radio §5.50 — hello-radio + hello-radio-group retrofit: 23 RGB literal → 공유 radio_border_color helper (M3 Outline/Accent + state-layer lerp) + 3 r57_x test.
+
+**Changes**:
+- hello-radio: 11 RGB const 제거 + radio_border_color helper (Outline / Accent + state-layer).
+- hello-radio-group: 12 RGB const 제거 + sibling radio_border_color helper (rule-of-2 lift).
+- hello-radio-group: radio_row takes &Theme; view fn reads use_theme(THEME_TAG).theme().
+- hello-radio: +3 r57_x test (unselected=Outline / selected=Accent / hover=lerp 8 %).
+- hello-radio + hello-radio-group: 기존 test Owner::new().run() 으로 감싸 use_theme 요구 시계 완화.
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2779 pass / 0 fail / 14 ignored (+3 new).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.
+- cargo test -p hello-radio = 8 pass (baseline 5 + 3 r57_x); hello-radio-group = 28 pass.
+
+
+
+**Impact**: §5.50, §5.38
+
+
+**Carry forward**:
+- hello-checkbox + hello-slider retrofit cascade carry.
 - R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
 - R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry.
 

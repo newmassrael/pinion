@@ -32,6 +32,7 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioExternal, RadioState};
 use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
@@ -42,7 +43,12 @@ vello_renderer_impl!(HelloRadioRenderer, HelloRadioRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 180;
-const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
+/// (R57.X.radio §5.50) [`ThemeProvider`] cache key. Matches the
+/// `"app"` convention shared with `hello-toggle` / `hello-theme` /
+/// `hello-listbox` / `hello-textfield` / `hello-button` so the
+/// example gallery shares one provider when a host binds them
+/// together.
+const THEME_TAG: &str = "app";
 // Outer ring is a 24×24 Container with corner_radius = half-extent so
 // taffy's box clipping inscribes a perfect circle (same trick the
 // hello-toggle knob uses with KNOB_SIZE/2 = KNOB_RADIUS).
@@ -56,6 +62,24 @@ const DOT_SIZE: u32 = 12;
 const DOT_RADIUS: u32 = 6;
 const ROW_GAP: u32 = 10;
 
+/// (R57.X.radio §5.50) Material 3 Radio border colour. The selected
+/// axis (`Accent`) and unselected axis (`Outline`) get the canonical
+/// M3 state-layer treatment (hover = 8 %, pressed = 12 %, disabled
+/// = 38 % fade toward `Surface`).
+fn radio_border_color(theme: &Theme, state: RadioState, selected: bool) -> Color {
+    let base = if selected {
+        theme.resolve(ColorRole::Accent)
+    } else {
+        theme.resolve(ColorRole::Outline)
+    };
+    match state {
+        RadioState::Idle => base,
+        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        RadioState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
+}
+
 /// view-fn (§6.3): pure sync mapping `(RadioState, bool) -> Scene`.
 ///
 /// Layout: a horizontal row `[ring] [label]` centred in the window.
@@ -65,23 +89,15 @@ const ROW_GAP: u32 = 10;
 /// `\u{2713}` glyph. The container carries the dispatch tag
 /// `main_radio` so the shell's `InputRouter` routes pointer events
 /// to the matching `Scene::External("main_radio")`.
+///
+/// (R57.X.radio §5.50) Border + dot share the [`radio_border_color`]
+/// resolution so the M3 Radio role mapping stays canonical:
+/// unselected = `Outline`, selected = `Accent`, all states layer
+/// through `Color::lerp` for hover / pressed / disabled overlays.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: RadioState, selected: bool, _frame: &Frame) -> Scene {
-    // Border + dot colour share polarity: unselected = chromatic-neutral
-    // grey ramp (Idle / Hover / Pressed / Disabled), selected = blue
-    // accent ramp matching hello-checkbox's "checked" axis. Disabled
-    // muted-brown matches the cross-gallery convention so users can
-    // tell a disabled Radio from a hover-off one at a glance.
-    let border_color = match (state, selected) {
-        (RadioState::Idle, false) => Color::rgb(0xc0, 0xc0, 0xc0),
-        (RadioState::Hover, false) => Color::rgb(0xe0, 0xe0, 0xe0),
-        (RadioState::Pressed, false) => Color::rgb(0x90, 0x90, 0x90),
-        (RadioState::Disabled, false) => Color::rgb(0x70, 0x66, 0x58),
-        (RadioState::Idle, true) => Color::rgb(0x30, 0x70, 0xd0),
-        (RadioState::Hover, true) => Color::rgb(0x40, 0x80, 0xe0),
-        (RadioState::Pressed, true) => Color::rgb(0x20, 0x50, 0xa0),
-        (RadioState::Disabled, true) => Color::rgb(0x4a, 0x42, 0x38),
-    };
+    let theme = use_theme(THEME_TAG).theme();
+    let border_color = radio_border_color(&theme, state, selected);
     // Dot fill mirrors the active-side border colour (the Material
     // convention: selected dot uses the same accent as the ring) and
     // is only rendered when `selected` is true.
@@ -111,8 +127,8 @@ fn view(state: RadioState, selected: bool, _frame: &Frame) -> Scene {
             ),
     );
     let label_color = match state {
-        RadioState::Disabled => Color::rgb(0x90, 0x86, 0x78),
-        _ => Color::rgb(0xe0, 0xe0, 0xe0),
+        RadioState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
+        _ => theme.resolve(ColorRole::OnSurface),
     };
     let label = Scene::Text(TextNode::styled(
         "Premium tier",
@@ -131,7 +147,7 @@ fn view(state: RadioState, selected: bool, _frame: &Frame) -> Scene {
     );
     Scene::Container(
         ContainerNode::new(vec![row])
-            .with_style(BoxStyle::filled(BG_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -297,7 +313,12 @@ mod a11y_tests {
 
     fn enriched(state: (RadioState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (s, sel) = state;
-        let scene = view(s, sel, &Frame::new());
+        // (R57.X.radio §5.50) `view` now calls [`use_theme`] so the
+        // call must run inside an `Owner` scope mirroring the
+        // framework's `root_owner.run(...)` wrap (callback-root-owner-
+        // wrap discipline).
+        let owner = pinion_core::Owner::new();
+        let scene = owner.run(|| view(s, sel, &Frame::new()));
         let mut nodes = RadioView::access_node(&state, focused);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         nodes
@@ -342,6 +363,48 @@ mod a11y_tests {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<RadioView>(
             (RadioState::Idle, false),
             &Frame::new(),
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R57.X.radio §5.50 — theme retrofit regression. Pins the M3
+    // Radio role mapping: unselected = Outline, selected = Accent,
+    // with state-layer overlays for hover / pressed / disabled.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r57_x_radio_unselected_idle_uses_outline_role() {
+        let light = Theme::light();
+        assert_eq!(
+            radio_border_color(&light, RadioState::Idle, false),
+            light.outline,
+        );
+    }
+
+    #[test]
+    fn r57_x_radio_selected_idle_uses_accent_role() {
+        let light = Theme::light();
+        assert_eq!(
+            radio_border_color(&light, RadioState::Idle, true),
+            light.accent,
+        );
+        let dark = Theme::dark();
+        assert_eq!(
+            radio_border_color(&dark, RadioState::Idle, true),
+            dark.accent,
+        );
+    }
+
+    #[test]
+    fn r57_x_radio_hover_overlay_lerps_toward_on_surface() {
+        // M3 hover state-layer = 8 % `OnSurface` overlay on the role base.
+        let theme = Theme::light();
+        let expected = theme
+            .resolve(ColorRole::Outline)
+            .lerp(theme.resolve(ColorRole::OnSurface), 0.08);
+        assert_eq!(
+            radio_border_color(&theme, RadioState::Hover, false),
+            expected,
         );
     }
 }

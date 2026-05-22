@@ -613,3 +613,12 @@ reason = "R57.X.button audit half authored minimal ASCII per [[mnemosyne-multiby
 applied_in = "Round 580"
 content_hash_before = "97e47461ce5329c66260e97106cc9a3b82e17ce1fcfb7d35d8a7cb9377040968"
 content_hash_after = "eaf767dd4c0ffdfd7bbc4dc3b4f93ac5a6f94e0f6cb0237ff0679e454aeb0165"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 581"
+fields = ["publishable_decision_summary", "publishable_changes_bullets"]
+reason = "R57.X.radio audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs, em-dashes, arrows, and Korean prose."
+applied_in = "Round 581"
+content_hash_before = "78a67155a93f58b428e9c58c3dbe40ae19fb0cd1d3b4971f1ec2bf8a12d36ce5"
+content_hash_after = "bf40df01ac85c7c2b11f51875f9966ad61f42333134f1e13b3932bf01096b105"

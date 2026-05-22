@@ -5756,7 +5756,8 @@
         "M3 state-layer 0.08 (hover) / 0.12 (pressed) / 0.38 (disabled) via Color::lerp.",
         "hello-textfield retrofit: 13 RGB literals replaced — field/caret/selection/preedit all role-driven.",
         "TextField filled-variant: Idle=SurfaceContainerHighest, Focused=SurfaceContainerHigh.",
-        "hello-button retrofit: 6 RGB literals replaced — M3 filled-tonal Button role mapping."
+        "hello-button retrofit: 6 RGB literals replaced — M3 filled-tonal Button role mapping.",
+        "hello-radio/group retrofit: 23 RGB literals via shared radio_border_color (Outline/Accent + lerp)."
       ],
       "alternatives_rejected": [
         {
@@ -5878,6 +5879,14 @@
         {
           "file": "examples/hello-button/src/main.rs",
           "symbol": "button_fill_endpoints"
+        },
+        {
+          "file": "examples/hello-radio/src/main.rs",
+          "symbol": "radio_border_color"
+        },
+        {
+          "file": "examples/hello-radio-group/src/main.rs",
+          "symbol": "radio_border_color"
         }
       ],
       "decision_status": "active"
@@ -28196,6 +28205,52 @@
       ],
       "publishable_carry_forward_bullets": [
         "hello-radio + hello-radio-group + hello-checkbox + hello-slider retrofit cascade carry.",
+        "R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.",
+        "R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry."
+      ]
+    },
+    "Round 581": {
+      "decision_summary": "R57.X.radio 5.50 hello-radio and hello-radio-group retrofit 23 RGB literal to M3 Radio role plus shared radio_border_color helper plus 3 r57_x test.",
+      "changes_bullets": [
+        "hello-radio: 11 RGB literal const removed + radio_border_color helper (Outline + Accent + state-layer).",
+        "hello-radio-group: 12 RGB literal const removed + sibling radio_border_color helper.",
+        "hello-radio-group: radio_row signature takes Theme arg + view fn reads use_theme(THEME_TAG).theme().",
+        "hello-radio: +3 r57_x test (unselected Outline + selected Accent + hover state-layer 8 percent).",
+        "hello-radio + hello-radio-group: existing tests wrapped in Owner::new().run() per callback discipline."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2779 pass / 0 fail / 14 ignored (+3 new).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
+        "cargo test -p hello-radio = 8 pass (baseline 5 + 3 r57_x); hello-radio-group = 28 pass."
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "hello-checkbox + hello-slider retrofit cascade carry.",
+        "R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.",
+        "R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry."
+      ],
+      "publishable_decision_summary": "R57.X.radio §5.50 — hello-radio + hello-radio-group retrofit: 23 RGB literal → 공유 radio_border_color helper (M3 Outline/Accent + state-layer lerp) + 3 r57_x test.",
+      "publishable_changes_bullets": [
+        "hello-radio: 11 RGB const 제거 + radio_border_color helper (Outline / Accent + state-layer).",
+        "hello-radio-group: 12 RGB const 제거 + sibling radio_border_color helper (rule-of-2 lift).",
+        "hello-radio-group: radio_row takes &Theme; view fn reads use_theme(THEME_TAG).theme().",
+        "hello-radio: +3 r57_x test (unselected=Outline / selected=Accent / hover=lerp 8 %).",
+        "hello-radio + hello-radio-group: 기존 test Owner::new().run() 으로 감싸 use_theme 요구 시계 완화."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello = 2779 pass / 0 fail / 14 ignored (+3 new).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
+        "cargo test -p hello-radio = 8 pass (baseline 5 + 3 r57_x); hello-radio-group = 28 pass."
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hello-checkbox + hello-slider retrofit cascade carry.",
         "R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.",
         "R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry."
       ]

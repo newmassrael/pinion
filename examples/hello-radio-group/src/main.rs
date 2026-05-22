@@ -40,6 +40,7 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore};
@@ -53,7 +54,9 @@ vello_renderer_impl!(HelloRadioGroupRenderer, HelloRadioGroupRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 280;
-const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
+/// (R57.X.radio §5.50) [`ThemeProvider`] cache key — matches the
+/// `"app"` convention shared across the example gallery.
+const THEME_TAG: &str = "app";
 const N: usize = 3;
 const PRIMARY_TAG: &str = "main_group";
 // Outer ring + inner dot match the hello-radio single-radio fixture
@@ -99,8 +102,9 @@ impl GroupState {
 /// single composite `RadioGroupExternal`.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: GroupState, _frame: &Frame) -> Scene {
+    let theme = use_theme(THEME_TAG).theme();
     let rows: Vec<Scene> = (0..N)
-        .map(|i| radio_row(i, state.rows[i].0, state.rows[i].1))
+        .map(|i| radio_row(i, state.rows[i].0, state.rows[i].1, &theme))
         .collect();
     let column = Scene::Container(
         ContainerNode::new(rows)
@@ -122,7 +126,7 @@ fn view(state: GroupState, _frame: &Frame) -> Scene {
     // sidecar that bounds the composite's visual surface.
     Scene::Container(
         ContainerNode::new(vec![column])
-            .with_style(BoxStyle::filled(BG_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -138,17 +142,27 @@ fn view(state: GroupState, _frame: &Frame) -> Scene {
 /// composite `RadioGroupExternal` with the right radio index in the
 /// payload. Visual rendering mirrors `examples/hello-radio` — the
 /// composite is a structural / state extension, not a visual one.
-fn radio_row(index: usize, state: RadioState, selected: bool) -> Scene {
-    let border_color = match (state, selected) {
-        (RadioState::Idle, false) => Color::rgb(0xc0, 0xc0, 0xc0),
-        (RadioState::Hover, false) => Color::rgb(0xe0, 0xe0, 0xe0),
-        (RadioState::Pressed, false) => Color::rgb(0x90, 0x90, 0x90),
-        (RadioState::Disabled, false) => Color::rgb(0x70, 0x66, 0x58),
-        (RadioState::Idle, true) => Color::rgb(0x30, 0x70, 0xd0),
-        (RadioState::Hover, true) => Color::rgb(0x40, 0x80, 0xe0),
-        (RadioState::Pressed, true) => Color::rgb(0x20, 0x50, 0xa0),
-        (RadioState::Disabled, true) => Color::rgb(0x4a, 0x42, 0x38),
+/// (R57.X.radio §5.50) Material 3 Radio border colour — mirrors
+/// `hello-radio::radio_border_color` (the two binaries share the
+/// same visual axis per the existing doc comment). Selected =
+/// `Accent`, unselected = `Outline`, hover / pressed / disabled
+/// layered via `Color::lerp`.
+fn radio_border_color(theme: &Theme, state: RadioState, selected: bool) -> Color {
+    let base = if selected {
+        theme.resolve(ColorRole::Accent)
+    } else {
+        theme.resolve(ColorRole::Outline)
     };
+    match state {
+        RadioState::Idle => base,
+        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        RadioState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
+}
+
+fn radio_row(index: usize, state: RadioState, selected: bool, theme: &Theme) -> Scene {
+    let border_color = radio_border_color(theme, state, selected);
     let mut ring_children: Vec<Scene> = Vec::new();
     if selected {
         ring_children.push(Scene::Box(
@@ -175,8 +189,8 @@ fn radio_row(index: usize, state: RadioState, selected: bool) -> Scene {
             ),
     );
     let label_color = match state {
-        RadioState::Disabled => Color::rgb(0x90, 0x86, 0x78),
-        _ => Color::rgb(0xe0, 0xe0, 0xe0),
+        RadioState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
+        _ => theme.resolve(ColorRole::OnSurface),
     };
     let label = Scene::Text(TextNode::styled(
         tier_label(index),
@@ -616,7 +630,7 @@ mod a11y_tests {
     #[test]
     fn each_radio_has_tier_label() {
         let state = unselected_state();
-        let scene = view(state, &Frame::new());
+        let scene = pinion_core::Owner::new().run(|| view(state, &Frame::new()));
         let mut nodes = RadioGroupView::access_node(&state, None);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         assert_eq!(nodes[1].name.as_deref(), Some("Tier 0  (a)"));
@@ -627,7 +641,7 @@ mod a11y_tests {
     #[test]
     fn group_explicit_name_survives_enrichment() {
         let state = unselected_state();
-        let scene = view(state, &Frame::new());
+        let scene = pinion_core::Owner::new().run(|| view(state, &Frame::new()));
         let mut nodes = RadioGroupView::access_node(&state, None);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         assert_eq!(
