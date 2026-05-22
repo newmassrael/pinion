@@ -15523,6 +15523,44 @@
         "F1 framework auto-tag conflict-aware Scene::contains_tag walker (regression risk - permanent defer)"
       ]
     },
+    "R55.D.8": {
+      "decision_summary": "R55.D.8 §5.45 §5.7 RPC tag-addressable contract pin on multi-External wrap shape",
+      "changes_bullets": [
+        "pinion-rpc/src/query.rs: 3 tests pin /external/ + /<tag>/external/ + /<extra-tag>/external/ resolution on Container([External, External]) shape",
+        "R55.D.5 carry-forward bullet retired: scene/<tag>/external/<action> already works via §5.34 R42 lookup_path_ref tag walker + R55.D.5 primary_external descent"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello: 2278 passed (+3 new) / 0 failed / 12 ignored",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "10 demos all PASS (unchanged)"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "R56.1 TextField caret rendering + cursor blink animation (new largest framework axis)",
+        "F1 framework auto-tag conflict-aware Scene::contains_tag walker (regression risk - permanent defer)"
+      ],
+      "publishable_decision_summary": "R55.D.8 §5.45 §5.7 RPC tag-addressable contract pin on multi-External wrap shape",
+      "publishable_changes_bullets": [
+        "pinion-rpc/src/query.rs: 3 tests pin /external/ + /<tag>/external/ + /<extra-tag>/external/ resolution on Container([External, External]) shape",
+        "R55.D.5 carry-forward bullet retired: scene/<tag>/external/<action> already works via §5.34 R42 lookup_path_ref tag walker + R55.D.5 primary_external descent"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello: 2278 passed (+3 new) / 0 failed / 12 ignored",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "10 demos all PASS (unchanged)"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R56.1 TextField caret rendering + cursor blink animation (new largest framework axis)",
+        "F1 framework auto-tag conflict-aware Scene::contains_tag walker (regression risk - permanent defer)"
+      ]
+    },
     "R55.G.22": {
       "decision_summary": "R55.G.22 §5.41 §5.49 — composite paint-root tag convention regression helper assert_widget_view_carries_tag 추출 + 9 widget inline assert 청산",
       "changes_bullets": [

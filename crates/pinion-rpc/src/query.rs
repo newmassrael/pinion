@@ -229,6 +229,76 @@ mod tests {
         );
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // R55.D.8 §5.45 §5.7 — RPC tag-addressable path against the
+    // multi-External state-scene wrap that `CoreShell::new` composes
+    // when `WidgetCore::create_extra_externals` is non-empty. The
+    // R55.D.5 carry-forward bullet "scene/<tag>/external/<action>
+    // RPC path syntax for addressing extra Externals by name" was
+    // already covered by the §5.34 R42 nested-External walker
+    // (`Scene::lookup_path_ref` matches children by tag); these
+    // tests pin the contract on the canonical R55.D.5 wrap shape
+    // (`Scene::Container([External, External])`) so a future
+    // regression surfaces against that shape specifically.
+    // ─────────────────────────────────────────────────────────────────
+
+    fn multi_external_wrap(primary_tag: &'static str, extra_tag: &'static str) -> Scene {
+        // Mirror the substrate composition `CoreShell::new` produces:
+        // `Container([External(primary), External(extra)])`. Both
+        // children carry `CountedExternal` so we can query and tell
+        // them apart by initial count.
+        use pinion_core::scene::{ContainerNode, ExternalNode as ExtNode, Rect};
+        let primary =
+            Scene::External(ExtNode::new(Box::new(CountedExternal::new(11))).with_tag(primary_tag));
+        let extra =
+            Scene::External(ExtNode::new(Box::new(CountedExternal::new(22))).with_tag(extra_tag));
+        let mut c = ContainerNode::new(vec![primary, extra]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn r55_d8_external_root_resolves_primary_on_wrap() {
+        // R55.D.8 — `external/<action>` against the wrap descends to
+        // the first External (substrate's primary by convention).
+        let scene = multi_external_wrap("primary", "extra");
+        assert_eq!(
+            query(&scene, "/external/count").unwrap(),
+            IntrospectValue::Int(11),
+            "bare external/ resolves to primary (first in DFS pre-order)",
+        );
+    }
+
+    #[test]
+    fn r55_d8_tag_path_resolves_extra_external() {
+        // R55.D.8 — `<extra_tag>/external/<action>` walks the wrap
+        // Container by the named child's tag and reaches the matching
+        // External. The trailing `primary_external` descent on
+        // `Scene::External` returns self, so the tagged sibling is
+        // queryable by symbolic name (the AI-introspection contract
+        // §5.7 needs to surface sibling state).
+        let scene = multi_external_wrap("primary", "extra");
+        assert_eq!(
+            query(&scene, "/extra/external/count").unwrap(),
+            IntrospectValue::Int(22),
+            "extra/external/ resolves to the tagged sibling",
+        );
+    }
+
+    #[test]
+    fn r55_d8_tag_path_resolves_primary_by_name() {
+        // R55.D.8 — addressing the primary by its tag also works:
+        // `primary/external/<action>` reaches the same node the bare
+        // `external/<action>` short-circuit does, but via the typed
+        // path. AI clients can use the symbolic form uniformly.
+        let scene = multi_external_wrap("primary", "extra");
+        assert_eq!(
+            query(&scene, "/primary/external/count").unwrap(),
+            IntrospectValue::Int(11),
+            "primary/external/ resolves to the primary via tag walk",
+        );
+    }
+
     #[test]
     fn query_nested_non_external_target_is_no_external_at_path() {
         // Walk lands on a Box (not External) → reject.

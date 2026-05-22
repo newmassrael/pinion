@@ -2091,4 +2091,5 @@ mod tests {
         // Offset stays where the drag left it (drag commit semantics).
         assert_eq!(state.offset_y(), 50, "release does not snap back");
     }
+
 }

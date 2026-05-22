@@ -9963,6 +9963,30 @@ if __name__ == "__main__":
 
 
 
+### R55.D.8 — R55.D.8 §5.45 §5.7 RPC tag-addressable contract pin on multi-External wrap shape
+
+**Changes**:
+- pinion-rpc/src/query.rs: 3 tests pin /external/ + /<tag>/external/ + /<extra-tag>/external/ resolution on Container([External, External]) shape
+- R55.D.5 carry-forward bullet retired: scene/<tag>/external/<action> already works via §5.34 R42 lookup_path_ref tag walker + R55.D.5 primary_external descent
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 2278 passed (+3 new) / 0 failed / 12 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- 10 demos all PASS (unchanged)
+
+
+
+**Impact**: §5.45, §5.7
+
+
+**Carry forward**:
+- R56.1 TextField caret rendering + cursor blink animation (new largest framework axis)
+- F1 framework auto-tag conflict-aware Scene::contains_tag walker (regression risk - permanent defer)
+
+
+
 ### R55.G.22 — R55.G.22 §5.41 §5.49 — composite paint-root tag convention regression helper assert_widget_view_carries_tag 추출 + 9 widget inline assert 청산
 
 **Changes**:
