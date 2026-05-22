@@ -29,7 +29,7 @@ pub use animation::{
     Animatable, AnimRect, AnimVec2, AnimVec4, Animation, Easing, SpringConfig, SpringState,
     Tickable, Tween,
 };
-pub use clipboard::{Clipboard, InMemoryClipboard};
+pub use clipboard::{Clipboard, ClipboardSelection, InMemoryClipboard};
 pub use command::Command;
 pub use event::Event;
 pub use renderer::WidgetRenderer;

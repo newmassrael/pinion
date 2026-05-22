@@ -16821,6 +16821,35 @@ if __name__ == "__main__":
 
 
 
+### Round 566 — R56.2.e.0 §5.22 — `ClipboardSelection {Clipboard, Primary}` enum + `Clipboard::copy_to`/`paste_from` default methods + `InMemoryClipboard` dual-buffer substrate (R56.2.b cascade).
+
+**Changes**:
+- `clipboard.rs`: `ClipboardSelection {Clipboard, Primary}` `#[non_exhaustive]` `Default = Clipboard`.
+- `copy_to(sel, text)` / `paste_from(sel)` defaults route `Clipboard` to `copy`/`paste`.
+- Default `Primary` arm = no-op write / `None` read (macOS / Windows / browser).
+- `InMemoryClipboard` dual `RefCell<Option<String>>` buffers + full `copy_to`/`paste_from` override.
+- `lib.rs`: re-export `ClipboardSelection` next to `Clipboard` + `InMemoryClipboard`.
+- +7 `r56_2_e` tests: default / dual isolation / alias / fresh `None` / no-op / overwrite / Copy.
+
+
+
+**Verification**:
+- `cargo test -p pinion-core --lib clipboard::` = 13 pass (6 R56.1.e prior + 7 R56.2.e new).
+- `cargo test --workspace --features pinion-runtime/vello` = 2707 pass / 0 fail / 14 ignored.
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings.
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R56.2.e.1 — `ArboardClipboard` Linux PRIMARY override via `arboard::{GetExtLinux, SetExtLinux}` cfg.
+- R56.2.e.2 — `TextField` auto-publish PRIMARY on selection mutation + `paste_from_primary` API.
+- R56.2.e.3 — shell middle-click wire + `WidgetView::apply_middle_click` trait (default false).
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
