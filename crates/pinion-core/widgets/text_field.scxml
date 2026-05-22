@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.38 R56.1.a — TextField widget statechart.
+
+     First slice of the R56 TextField axis. Owns the **interaction
+     state** vocabulary only — caret rendering (R56.1.b), blink
+     animation (R56.1.c), key input (R56.1.d), clipboard (R56.1.e),
+     selection (R56.1.f), and IME composition (R56.1.g) layer on top
+     as separate sub-rounds. R55.D.1 → R55.D.2 cascade mirror — land
+     the SCXML + binding primitive first so subsequent sub-rounds
+     compose without re-engineering the substrate.
+
+     States: idle / focused / editing / disabled.
+
+     - **idle**: not focused. No caret visible, no key dispatch.
+       `focus` enters `focused`; `disable` enters `disabled`.
+
+     - **focused**: focused but not IME-composing. Caret visible
+       (R56.1.b), key dispatch active (R56.1.d). `blur` returns to
+       `idle`; `begin_edit` enters `editing` (IME composition start,
+       R56.1.g); `disable` enters `disabled`.
+
+     - **editing**: focused + IME composition in progress. The
+       preedit text overlay is visible (R56.1.g). Three exit paths:
+         * `commit_edit` → `focused` with `textfield.commit` raise
+           (the §5.20 `"text_committed"` intent fires);
+         * `cancel_edit` → `focused` silently (no commit);
+         * `blur` → `idle` with `textfield.commit` raise (IME
+           canonical: focus loss during composition commits the
+           preedit, matching Wayland text-input-v3, GTK IBus, macOS
+           NSTextInputContext, Windows TSF conventions).
+
+     - **disabled**: absorbing class until `enable` arrives.
+
+     The `text_committed` intent payload is `Null` on this first
+     slice — the committed-text payload arrives with R56.1.g (IME
+     composition), once the preedit buffer substrate is in place.
+     Same staging as R55.D.2 ScrollBar (`scroll_committed` payload-
+     less drag-end marker, value lives in `ScrollState`).
+
+     Vocabulary choice notes:
+
+     * `focus` / `blur` mirror the W3C DOM `FocusEvent` naming used
+       by §5.39 (R49+) focus dispatch. Future R56.1.d key dispatch
+       reuses the same `focus` event when the framework routes
+       keyboard events to the focused widget.
+     * `begin_edit` / `commit_edit` / `cancel_edit` mirror the IME
+       composition vocabulary (Wayland text-input-v3
+       commit_string/preedit_string/delete_surrounding_text;
+       GTK gtk_im_context_filter_keypress + commit signal). Naming
+       the events at the SCXML layer keeps the binding decoupled
+       from any specific IME backend (Wayland / X11 / macOS / Win32).
+     * `disable` / `enable` mirror the ScrollBar (R55.D.2) and
+       Slider (R51.14) vocabulary — closed-core §5.13 enable/disable
+       events shared across the widget catalog.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <state id="idle">
+    <transition event="focus" target="focused"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="focused">
+    <transition event="blur" target="idle"/>
+    <transition event="begin_edit" target="editing"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <!-- §5.13 §5.20 — `editing → focused` via commit_edit raises
+       `textfield.commit`; the Rust binding listens and emits the
+       `"text_committed"` intent on the §5.20 channel. `cancel_edit`
+       drops to `focused` without raising (matches the IME
+       cancel-preedit path: e.g. Escape during composition discards
+       the preedit without committing anything).
+
+       `blur` from `editing` raises `textfield.commit` as well: IME
+       canonical is "focus loss commits in-flight preedit" — mirror
+       of macOS NSTextInputContext / GTK IBus / Wayland
+       text-input-v3 behavior. Applications that need the cancel-on-
+       blur variant can intercept the `blur` event before forwarding. -->
+
+  <state id="editing">
+    <transition event="commit_edit" target="focused">
+      <raise event="textfield.commit"/>
+    </transition>
+    <transition event="cancel_edit" target="focused"/>
+    <transition event="blur" target="idle">
+      <raise event="textfield.commit"/>
+    </transition>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="disabled">
+    <transition event="enable" target="idle"/>
+  </state>
+
+</scxml>

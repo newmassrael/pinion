@@ -3892,7 +3892,8 @@
         "R51.104 — hello-listbox-multi 시각 demo (N=6, aria-multiselectable, 토글 시연)",
         "R51.105 — ListBox dispatch bench (N=4~20, 1-4 µs/이벤트 → Vec<bool> snapshot 채택, SmallVec 보류)",
         "R51.106 — type-ahead substrate lift → pinion_shell::typeahead (2 consumer 트리거, ~150 LOC 청산)",
-        "R51.114 — aria::apply_aria_activate helper extracted (4 binding apply_key DRY 청산)"
+        "R51.114 — aria::apply_aria_activate helper extracted (4 binding apply_key DRY 청산)",
+        "R56.1.a — TextField SCXML 4-state + binding + text_committed intent (R56 axis start)"
       ],
       "alternatives_rejected": [
         {
@@ -4208,6 +4209,33 @@
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
           "symbol": "ScrollBarState"
+        },
+        {
+          "file": "crates/pinion-core/widgets/text_field.scxml"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextField"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextFieldExternal"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextFieldEvent"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextFieldState"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "&lt;TextField as WidgetTransition&gt;"
+        },
+        {
+          "file": "crates/pinion-core/build.rs",
+          "symbol": "scxml_inputs::text_field"
         }
       ],
       "decision_status": "active"
@@ -15689,6 +15717,59 @@
         "R55.D.5 ScrollBarExternal drag wiring (multi-External path through hello-listbox)",
         "R55.D.6 absolute layer Scene primitive (closes R55.D.4 spacer-flex workaround)",
         "R56.1 TextField caret rendering + cursor blink animation (new largest axis)"
+      ]
+    },
+    "R56.1.a": {
+      "decision_summary": "R56.1.a §5.38 §5.13 §5.20 — TextField SCXML statechart (Idle/Focused/Editing/Disabled) + Rust binding land. Statechart-first slice; text content sidecar deferred to R56.1.b, IME preedit buffer to R56.1.g (R55.D.1→R55.D.2 cascade mirror).</decision_summary>\n<parameter name=\"impact_refs\">[\"5.38\", \"5.13\", \"5.20\"]",
+      "changes_bullets": [
+        "crates/pinion-core/widgets/text_field.scxml: 4-state SCXML + commit_edit/cancel_edit/blur raise rules",
+        "crates/pinion-core/src/widgets/text_field.rs: TextField + TextFieldExternal + WidgetTransition impl (~480 LOC)",
+        "crates/pinion-core/src/widgets/mod.rs: pub mod text_field registration",
+        "crates/pinion-core/build.rs: text_field.scxml added to scxml_inputs codegen list",
+        "introspect schema: state (read) + send (invoke) 2 slots, no value sidecar on R56.1.a",
+        "text_committed intent on Editing→Focused via CommitEdit or Editing→Idle via Blur (IME commit-on-blur canonical)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core --lib text_field: 30 pass / 0 fail",
+        "cargo test --workspace --features pinion-runtime/vello: 2308 pass / 0 fail / 12 ignored (+30 vs baseline)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "10 demos PASS (no regression — TextField additive, no existing widget touched)"
+      ],
+      "carry_forward_bullets": [
+        "R56.1.b — caret rendering primitive (String content + caret usize position + caret rect derivation)",
+        "R56.1.c — caret blink animation (Owner::cache + Tickable, 530ms canonical blink rate)",
+        "R56.1.d — key input dispatch (apply_key + key binding through §5.39 FocusManager)",
+        "R56.1.e — clipboard primitive (X11/Wayland/macOS/Win32 framework substrate)",
+        "R56.1.f — selection (mouse drag + shift-arrow + ARIA value contract)",
+        "R56.1.g — IME composition (preedit buffer + Wayland text-input-v3 wire)",
+        "hello-text-field example crate (first consumer, R56.1.b minimum visible)"
+      ],
+      "publishable_decision_summary": "R56.1.a §5.38 §5.13 §5.20 — TextField SCXML statechart + binding (Idle/Focused/Editing/Disabled). Statechart-first slice; text content + IME preedit deferred to R56.1.b/g.",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/widgets/text_field.scxml — 4-state SCXML + commit_edit/cancel_edit raise rules",
+        "crates/pinion-core/src/widgets/text_field.rs — TextField + TextFieldExternal + WidgetTransition",
+        "crates/pinion-core/build.rs — text_field.scxml added to scxml_inputs codegen list",
+        "introspect schema: state read + send invoke (2 slots, no value sidecar on R56.1.a)",
+        "text_committed intent on Editing→Focused via CommitEdit or →Idle via Blur"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core --lib text_field: 30 pass",
+        "cargo test --workspace --features pinion-runtime/vello: 2308 pass / 0 fail",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.13",
+        "5.20"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R56.1.b — caret rendering primitive (String + caret usize + caret rect)",
+        "R56.1.c — caret blink animation (Owner::cache + Tickable, 530ms canonical)",
+        "R56.1.d — key input dispatch (apply_key + §5.39 FocusManager)",
+        "R56.1.e — clipboard primitive (X11/Wayland/macOS/Win32 substrate)",
+        "R56.1.f — selection (mouse drag + shift-arrow)",
+        "R56.1.g — IME composition (preedit buffer + Wayland text-input-v3)",
+        "hello-text-field example crate (R56.1.b first visible consumer)"
       ]
     },
     "Round 1": {

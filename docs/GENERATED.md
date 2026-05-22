@@ -2886,6 +2886,7 @@ router.pointer_down(&mut state_scene);
 - R51.105 — ListBox dispatch bench (N=4~20, 1-4 µs/이벤트 → Vec<bool> snapshot 채택, SmallVec 보류)
 - R51.106 — type-ahead substrate lift → pinion_shell::typeahead (2 consumer 트리거, ~150 LOC 청산)
 - R51.114 — aria::apply_aria_activate helper extracted (4 binding apply_key DRY 청산)
+- R56.1.a — TextField SCXML 4-state + binding + text_committed intent (R56 axis start)
 
 
 
@@ -2977,6 +2978,13 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/scrollbar.rs:&lt;ScrollBar as WidgetTransition&gt;
 - crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarEvent
 - crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarState
+- crates/pinion-core/widgets/text_field.scxml
+- crates/pinion-core/src/widgets/text_field.rs:TextField
+- crates/pinion-core/src/widgets/text_field.rs:TextFieldExternal
+- crates/pinion-core/src/widgets/text_field.rs:TextFieldEvent
+- crates/pinion-core/src/widgets/text_field.rs:TextFieldState
+- crates/pinion-core/src/widgets/text_field.rs:&lt;TextField as WidgetTransition&gt;
+- crates/pinion-core/build.rs:scxml_inputs::text_field
 
 
 
@@ -10065,6 +10073,38 @@ if __name__ == "__main__":
 - R55.D.5 ScrollBarExternal drag wiring (multi-External path through hello-listbox)
 - R55.D.6 absolute layer Scene primitive (closes R55.D.4 spacer-flex workaround)
 - R56.1 TextField caret rendering + cursor blink animation (new largest axis)
+
+
+
+### R56.1.a — R56.1.a §5.38 §5.13 §5.20 — TextField SCXML statechart + binding (Idle/Focused/Editing/Disabled). Statechart-first slice; text content + IME preedit deferred to R56.1.b/g.
+
+**Changes**:
+- crates/pinion-core/widgets/text_field.scxml — 4-state SCXML + commit_edit/cancel_edit raise rules
+- crates/pinion-core/src/widgets/text_field.rs — TextField + TextFieldExternal + WidgetTransition
+- crates/pinion-core/build.rs — text_field.scxml added to scxml_inputs codegen list
+- introspect schema: state read + send invoke (2 slots, no value sidecar on R56.1.a)
+- text_committed intent on Editing→Focused via CommitEdit or →Idle via Blur
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib text_field: 30 pass
+- cargo test --workspace --features pinion-runtime/vello: 2308 pass / 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.38, §5.13, §5.20
+
+
+**Carry forward**:
+- R56.1.b — caret rendering primitive (String + caret usize + caret rect)
+- R56.1.c — caret blink animation (Owner::cache + Tickable, 530ms canonical)
+- R56.1.d — key input dispatch (apply_key + §5.39 FocusManager)
+- R56.1.e — clipboard primitive (X11/Wayland/macOS/Win32 substrate)
+- R56.1.f — selection (mouse drag + shift-arrow)
+- R56.1.g — IME composition (preedit buffer + Wayland text-input-v3)
+- hello-text-field example crate (R56.1.b first visible consumer)
 
 
 
