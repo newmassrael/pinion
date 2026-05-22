@@ -38,6 +38,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -58,10 +59,11 @@ vello_renderer_impl!(HelloButtonRenderer, HelloButtonRendererError);
 
 const WIN_W: u32 = 320;
 const WIN_H: u32 = 200;
-// R46.5 opaque RGB triples — `Color::from_argb(0x00...)` would decode
-// to alpha=0 (fully transparent) on the Vello path; explicit `rgb`
-// guarantees opacity.
-const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
+/// (R57.X.button §5.50) [`ThemeProvider`] cache key. Matches the
+/// `"app"` convention shared with `hello-toggle` / `hello-theme` /
+/// `hello-listbox` / `hello-textfield` so the example gallery shares
+/// one provider when a host binds them together.
+const THEME_TAG: &str = "app";
 const BTN_W: u32 = 160;
 const BTN_H: u32 = 80;
 
@@ -106,12 +108,22 @@ fn drive_hover_progress(state: ButtonState) -> f32 {
     anim.value()
 }
 
-/// R51.151 §5.28 — idle (white) and hover (gray) lightness endpoints
-/// for the Idle ↔ Hover spring fade. [`Color::lerp`] interpolates
-/// between them in linear-light space, matching the §5.28 spring
-/// solver's own colour-space convention (R51.134).
-const BTN_FILL_IDLE: Color = Color::rgb(0xff, 0xff, 0xff);
-const BTN_FILL_HOVER: Color = Color::rgb(0xd0, 0xd0, 0xd0);
+/// R51.151 §5.28 — Idle and Hover endpoints for the spring-driven
+/// fade. [`Color::lerp`] interpolates between them in linear-light
+/// space, matching the §5.28 spring solver's own colour-space
+/// convention (R51.134).
+///
+/// (R57.X.button §5.50) Both endpoints are theme-resolved through
+/// [`button_fill_endpoints`]: Idle = [`ColorRole::SurfaceContainerHighest`]
+/// (Material 3 filled-tonal button surface), Hover =
+/// `lerp(SurfaceContainerHighest, OnSurface, 0.08)` (M3 hover state
+/// layer). Pre-cleanup the endpoints were hard-coded white → gray
+/// `Color::rgb(...)` constants.
+fn button_fill_endpoints(theme: &Theme) -> (Color, Color) {
+    let idle = theme.resolve(ColorRole::SurfaceContainerHighest);
+    let hover = idle.lerp(theme.resolve(ColorRole::OnSurface), 0.08);
+    (idle, hover)
+}
 
 /// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
 /// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, ready for
@@ -134,30 +146,41 @@ const BTN_FILL_HOVER: Color = Color::rgb(0xd0, 0xd0, 0xd0);
 // Allow the lint at the view-fn boundary.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ButtonState, _frame: &Frame) -> Scene {
+    // (R57.X.button §5.50) Active palette — `use_theme` auto-
+    // subscribes this view-fn so a `ThemeProvider::set_theme` from
+    // anywhere in the application re-runs the view + repaints with
+    // the new tones.
+    let theme = use_theme(THEME_TAG).theme();
     // R51.147 §5.28 — animated hover progress (0.0 = Idle baseline,
     // 1.0 = full Hover). Drives the lightness lerp below.
     let hover_progress = drive_hover_progress(state);
+    let (idle_fill, hover_fill) = button_fill_endpoints(&theme);
     let btn_fill: Color = match state {
-        // Idle ↔ Hover lerp from white to gray in linear-light
-        // space via [`Color::lerp`] (R51.151). The spring smooths
-        // the transition over ~200ms at the default config — no
-        // discrete snap on cursor enter / leave.
-        ButtonState::Idle | ButtonState::Hover => {
-            BTN_FILL_IDLE.lerp(BTN_FILL_HOVER, hover_progress)
-        }
-        ButtonState::Pressed => Color::rgb(0x50, 0x50, 0x50),
-        ButtonState::Disabled => Color::rgb(0xb0, 0x20, 0x20),
+        // Idle ↔ Hover lerp in linear-light space via
+        // [`Color::lerp`] (R51.151). The spring smooths the
+        // transition over ~200ms at the default config — no discrete
+        // snap on cursor enter / leave.
+        ButtonState::Idle | ButtonState::Hover => idle_fill.lerp(hover_fill, hover_progress),
+        // (R57.X.button §5.50) Pressed = M3 pressed state layer
+        // (12 % `OnSurface` overlay on the idle surface tier).
+        ButtonState::Pressed => idle_fill.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        // (R57.X.button §5.50) Disabled = M3 disabled overlay
+        // (38 % fade toward `Surface`).
+        ButtonState::Disabled => idle_fill.lerp(theme.resolve(ColorRole::Surface), 0.38),
     };
     let label = match state {
         ButtonState::Disabled => "Disabled",
         _ => "Click me!",
     };
+    let label_fg = if matches!(state, ButtonState::Disabled) {
+        theme.resolve(ColorRole::OnSurfaceMuted)
+    } else {
+        theme.resolve(ColorRole::OnSurface)
+    };
     let label_text = Scene::Text(TextNode::styled(
         label,
         Rect::default(),
-        TextStyle::new()
-            .with_size_px(18)
-            .with_fg(Color::rgb(0, 0, 0)),
+        TextStyle::new().with_size_px(18).with_fg(label_fg),
     ));
     let button = Scene::Container(
         ContainerNode::new(vec![label_text])
@@ -178,7 +201,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     );
     Scene::Container(
         ContainerNode::new(vec![button])
-            .with_style(BoxStyle::filled(BG_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -414,5 +437,60 @@ mod a11y_tests {
             ButtonState::Idle,
             &Frame::new(),
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R57.X.button §5.50 — theme retrofit regression. Pins (1) idle
+    // endpoint resolves to `SurfaceContainerHighest`, (2) hover
+    // endpoint = M3 8 % state-layer overlay, (3) panel bg = `Surface`
+    // role and palette swap propagates through the auto-subscribed
+    // view-fn.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r57_x_button_idle_endpoint_uses_surface_container_highest() {
+        let light = Theme::light();
+        let (idle, _hover) = button_fill_endpoints(&light);
+        assert_eq!(idle, light.surface_container_highest);
+        let dark = Theme::dark();
+        let (idle_d, _hover_d) = button_fill_endpoints(&dark);
+        assert_eq!(idle_d, dark.surface_container_highest);
+    }
+
+    #[test]
+    fn r57_x_button_hover_endpoint_is_m3_state_layer() {
+        // Hover endpoint = `lerp(idle, OnSurface, 0.08)` — M3 hover
+        // state-layer canonical overlay weight.
+        let theme = Theme::light();
+        let (idle, hover) = button_fill_endpoints(&theme);
+        let expected = idle.lerp(theme.resolve(ColorRole::OnSurface), 0.08);
+        assert_eq!(hover, expected);
+    }
+
+    #[test]
+    fn r57_x_button_panel_uses_surface_role_light_dark() {
+        // End-to-end: changing the active theme between two `view`
+        // invocations surfaces the Surface role somewhere in the
+        // rendered scene tree.
+        let owner = pinion_core::Owner::new();
+        owner.run(|| {
+            use_theme(THEME_TAG).set_theme(Theme::light());
+            let light_scene = view(ButtonState::Idle, &Frame::new());
+            assert!(scene_contains_fill(&light_scene, Theme::light().surface));
+            use_theme(THEME_TAG).set_theme(Theme::dark());
+            let dark_scene = view(ButtonState::Idle, &Frame::new());
+            assert!(scene_contains_fill(&dark_scene, Theme::dark().surface));
+        });
+    }
+
+    fn scene_contains_fill(scene: &Scene, target: Color) -> bool {
+        match scene {
+            Scene::Container(n) => {
+                n.style.fill == target
+                    || n.children.iter().any(|c| scene_contains_fill(c, target))
+            }
+            Scene::Box(n) => n.style.fill == target,
+            _ => false,
+        }
     }
 }

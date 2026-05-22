@@ -3877,6 +3877,7 @@ if __name__ == "__main__":
 - M3 state-layer 0.08 (hover) / 0.12 (pressed) / 0.38 (disabled) via Color::lerp.
 - hello-textfield retrofit: 13 RGB literals replaced — field/caret/selection/preedit all role-driven.
 - TextField filled-variant: Idle=SurfaceContainerHighest, Focused=SurfaceContainerHigh.
+- hello-button retrofit: 6 RGB literals replaced — M3 filled-tonal Button role mapping.
 
 
 
@@ -3972,6 +3973,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - examples/hello-textfield/src/main.rs:selection_fill
 - examples/hello-textfield/src/main.rs:preedit_bg_fill
 - examples/hello-textfield/src/main.rs:preedit_underline
+- examples/hello-button/src/main.rs:button_fill_endpoints
 
 
 
@@ -17388,6 +17390,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 **Carry forward**:
 - hello-button + hello-radio-group + hello-checkbox-radio cascade carry.
+- R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
+- R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry.
+
+
+
+### Round 580 — R57.X.button §5.50 — hello-button retrofit: 6 RGB literal → M3 filled-tonal Button role mapping + Color::lerp state-layer (pressed 0.12 / disabled 0.38) + 3 r57_x regression test.
+
+**Changes**:
+- hello-button: BG_FILL + BTN_FILL_IDLE + BTN_FILL_HOVER + 3 inline RGB const 제거 (총 6 literal).
+- hello-button: button_fill_endpoints helper — Idle=SurfaceContainerHighest, Hover=lerp(8 %).
+- hello-button: Pressed=lerp(12 %) + Disabled=lerp(38 %) + label OnSurface / OnSurfaceMuted.
+- hello-button: +3 r57_x regression test (idle endpoint role + hover state-layer + panel swap).
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2776 pass / 0 fail / 14 ignored (+3 new).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.
+- cargo test -p hello-button = 12 pass (baseline 9 + 3 r57_x).
+
+
+
+**Impact**: §5.50, §5.28
+
+
+**Carry forward**:
+- hello-radio + hello-radio-group + hello-checkbox + hello-slider retrofit cascade carry.
 - R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
 - R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry.
 
