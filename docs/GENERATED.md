@@ -10413,6 +10413,38 @@ if __name__ == "__main__":
 
 
 
+### R56.1.f.1 — R56.1.f.1 §5.22 — TextEditState selection sidecar (selection_anchor Signal Option usize) + selection-aware mutators (W3C DOM Selection shape; replace-on-non-collapsed; Shift-Arrow select_* extension).
+
+**Changes**:
+- `selection_anchor: Signal<Option<usize>>` — pinned end of W3C selection; caret is focus.
+- `selection_range()` collapses anchor==caret to None; pure boolean `has_selection`.
+- `set_selection(anchor, focus)` + `clear_selection()`; char-boundary clamp on both ends.
+- `insert` / `backspace` / `delete_forward` drain selected range first (W3C `inputType`).
+- `move_left` / `move_right` collapse to leading/trailing edge; `move_home`/`end` clear.
+- `select_left` / `select_right` / `select_home` / `select_end` Shift-Arrow extension.
+- `set_text` / `set_caret` drop selection (W3C `selectionchange` canonical).
+- 3-axis writes (text + caret + anchor) wrapped in `batch` (R55.G.24 atomic-multi).
+- +30 regression tests: accessors, select_*, replace-on-selection, multi-byte UTF-8.
+
+
+
+**Verification**:
+- cargo test workspace vello: 2540 pass / 0 fail / 13 ignored (+30 vs R56.1.f.0 baseline).
+- cargo clippy workspace all-targets vello: 0 warnings under strict pedantic baseline.
+- mnemosyne validate-workspace: T1 0 / T3 0 / round-trip 1/1 / GENERATED.md sync.
+- 11/11 prior demos PASS (no visible regression — caret-only path is byte-equivalent).
+
+
+
+**Impact**: §5.22, §5.38
+
+
+**Carry forward**:
+- R56.1.f.2 apply_key Shift-prefix to select_X plus printable insert replaces selection.
+- R56.1.f.3 RPC selection introspect slot plus hello-textfield Vello and TUI selection overlay.
+
+
+
 ### R56.1.h — R56.1.h §5.38 §5.39 §5.28 — TextField focus lifecycle wire: shell focus mgr ↔ External::on_focus_change ↔ TextField Focus/Blur statechart drive ↔ CaretBlink sync.
 
 **Changes**:

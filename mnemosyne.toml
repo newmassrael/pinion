@@ -379,3 +379,12 @@ reason = "audit half is minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]
 applied_in = "post-R56.1.b.1.tui workspace HEAD"
 content_hash_before = "fad9d108bb2f5558686bff2f84aba81ef04eed7ae4fd7ce2b09e8e0e20e51868"
 content_hash_after = "7d86b6c18075048e3cf575dbc25c079882d01eee5ef256df44fdf31ccb0913af"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "R56.1.f.1"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets"]
+reason = "R56.1.f.1 audit landed via minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand carries detailed W3C DOM Selection refs + backtick-typed Rust paths."
+applied_in = "R56.1.f.1"
+content_hash_before = "ac4af056a93bfccf221394dea381d1ac36a33884a2ebdf1ea99d25b5757d220d"
+content_hash_after = "3fdeaa8baff5908c7cddca12ffb682423ec029f7a5ee2995d5fae8f14417b479"

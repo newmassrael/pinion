@@ -16233,6 +16233,55 @@
         "R56.1.f.3 RPC selection introspect slot + hello-textfield Vello and TUI selection overlay."
       ]
     },
+    "R56.1.f.1": {
+      "decision_summary": "R56.1.f.1 TextEditState selection sidecar + selection-aware mutators per W3C DOM Selection API shape.",
+      "changes_bullets": [
+        "TextEditState selection_anchor Signal Option usize sidecar with set_selection clear_selection accessors.",
+        "selection_range collapses anchor equals caret to None so has_selection is a pure boolean predicate.",
+        "insert backspace delete_forward drain selected range before applying edit; W3C type-to-replace canonical.",
+        "move_left move_right collapse selection to leading or trailing edge; move_home move_end clear anchor.",
+        "select_left select_right select_home select_end Shift-Arrow extension methods land char-boundary clamped."
+      ],
+      "verification_bullets": [
+        "cargo test workspace vello 2540 pass 0 fail 13 ignored plus 30 R56.1.f selection regression battery.",
+        "cargo clippy workspace all-targets vello 0 warnings under strict pedantic baseline.",
+        "mnemosyne validate workspace T1 0 T3 0 round-trip 1 of 1 GENERATED md sync after entry append."
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "R56.1.f.2 apply_key Shift-prefix to select_X plus printable insert replaces selection.",
+        "R56.1.f.3 RPC selection introspect slot plus hello-textfield Vello and TUI selection overlay."
+      ],
+      "publishable_decision_summary": "R56.1.f.1 §5.22 — TextEditState selection sidecar (selection_anchor Signal Option usize) + selection-aware mutators (W3C DOM Selection shape; replace-on-non-collapsed; Shift-Arrow select_* extension).",
+      "publishable_changes_bullets": [
+        "`selection_anchor: Signal<Option<usize>>` — pinned end of W3C selection; caret is focus.",
+        "`selection_range()` collapses anchor==caret to None; pure boolean `has_selection`.",
+        "`set_selection(anchor, focus)` + `clear_selection()`; char-boundary clamp on both ends.",
+        "`insert` / `backspace` / `delete_forward` drain selected range first (W3C `inputType`).",
+        "`move_left` / `move_right` collapse to leading/trailing edge; `move_home`/`end` clear.",
+        "`select_left` / `select_right` / `select_home` / `select_end` Shift-Arrow extension.",
+        "`set_text` / `set_caret` drop selection (W3C `selectionchange` canonical).",
+        "3-axis writes (text + caret + anchor) wrapped in `batch` (R55.G.24 atomic-multi).",
+        "+30 regression tests: accessors, select_*, replace-on-selection, multi-byte UTF-8."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test workspace vello: 2540 pass / 0 fail / 13 ignored (+30 vs R56.1.f.0 baseline).",
+        "cargo clippy workspace all-targets vello: 0 warnings under strict pedantic baseline.",
+        "mnemosyne validate-workspace: T1 0 / T3 0 / round-trip 1/1 / GENERATED.md sync.",
+        "11/11 prior demos PASS (no visible regression — caret-only path is byte-equivalent)."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R56.1.f.2 apply_key Shift-prefix to select_X plus printable insert replaces selection.",
+        "R56.1.f.3 RPC selection introspect slot plus hello-textfield Vello and TUI selection overlay."
+      ]
+    },
     "R56.1.h": {
       "decision_summary": "R56.1.h - TextField focus lifecycle wire (shell mgr to External::on_focus_change + statechart drive + CaretBlink sync)",
       "changes_bullets": [

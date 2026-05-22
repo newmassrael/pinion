@@ -33,7 +33,21 @@
 //!   geometry side); this primitive is the value side only.
 //! - Caret blink animation: R56.1.c (`Owner::cache` + `Tickable`).
 //! - Key input dispatch: R56.1.d (`apply_key` route).
-//! - Clipboard / selection / IME: R56.1.e / R56.1.f / R56.1.g.
+//! - Clipboard / IME: R56.1.e / R56.1.g.
+//!
+//! ## R56.1.f §5.22 — selection sidecar
+//!
+//! `selection_anchor: Signal<Option<usize>>` carries the byte offset
+//! where the user-driven selection extension started. The pair
+//! `(anchor, caret)` follows the W3C DOM Selection API shape: caret
+//! is the **focus** (the moving end), anchor is the **anchor** (the
+//! pinned end). `None` means "no active selection" (caret-only); the
+//! canonical W3C "collapsed" state is also surfaced here as `None`
+//! after a same-position write so `has_selection` is `false` whenever
+//! anchor and caret coincide. Every text mutator (`insert` /
+//! `backspace` / `delete_forward`) drains the selected range before
+//! applying its edit, then clears the anchor — the canonical macOS /
+//! GTK / Web replace-on-keystroke contract.
 //!
 //! ## Why a separate reactive primitive
 //!
@@ -91,6 +105,16 @@ pub struct TextEditState {
     /// type matches `String` indexing conventions; a future R56.x
     /// round may layer grapheme-cluster indexing on top.
     caret_pos: Signal<usize>,
+    /// R56.1.f §5.22 — byte offset of the **selection anchor** into
+    /// [`Self::text`]. The pair `(anchor, caret)` carries a W3C DOM
+    /// Selection: caret is the focus (the moving end), anchor is the
+    /// pinned end. `None` is "no selection" (caret-only). On any
+    /// `select_*` extension that lands the anchor at the current
+    /// caret position the field collapses back to `None` so
+    /// [`Self::has_selection`] is a pure boolean predicate (no
+    /// distinction between "no anchor" and "anchor coincides with
+    /// caret"). Same `char`-boundary invariant as `caret_pos`.
+    selection_anchor: Signal<Option<usize>>,
     /// Canonical input-router / introspection tag for this text
     /// container. Set by [`use_text_edit_state`] from the
     /// `Owner::cache` key so the matching [`TextField`] /
@@ -118,6 +142,7 @@ impl TextEditState {
         Self {
             text: Signal::new(String::new()),
             caret_pos: Signal::new(0),
+            selection_anchor: Signal::new(None),
             tag: None,
         }
     }
@@ -151,6 +176,7 @@ impl TextEditState {
         Self {
             text: Signal::new(initial_text),
             caret_pos: Signal::new(caret),
+            selection_anchor: Signal::new(None),
             tag: None,
         }
     }
@@ -188,14 +214,93 @@ impl TextEditState {
         (self.text(), self.caret())
     }
 
+    /// R56.1.f §5.22 — current selection anchor as a raw `Option`.
+    /// `Some(idx)` carries the byte offset where a user-driven
+    /// selection extension started (Shift+Arrow / Shift+Home /
+    /// Shift+End / mouse drag). `None` means "no active selection";
+    /// the caret stands alone. Subscription semantics symmetric with
+    /// [`Self::caret`].
+    #[must_use]
+    pub fn selection_anchor(&self) -> Option<usize> {
+        self.selection_anchor.get()
+    }
+
+    /// R56.1.f §5.22 — current selection range as `(start, end)`
+    /// byte offsets with `start <= end`. Returns `None` when the
+    /// selection is collapsed (no anchor, or anchor coincides with
+    /// the caret). Subscribes to both `caret` and `selection_anchor`
+    /// signals so a view-fn rendering the selection rect re-runs on
+    /// every selection-affecting mutation.
+    ///
+    /// Both offsets are guaranteed `char` boundaries — the mutators
+    /// snap any anchor input through [`clamp_to_char_boundary`].
+    #[must_use]
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        let anchor = self.selection_anchor.get()?;
+        let caret = self.caret_pos.get();
+        if anchor == caret {
+            return None;
+        }
+        Some((anchor.min(caret), anchor.max(caret)))
+    }
+
+    /// R56.1.f §5.22 — `true` when [`Self::selection_range`] would
+    /// return `Some(_)`. Convenience predicate so view-fn /
+    /// `apply_key` branches that gate on "selection present" do not
+    /// have to destructure the tuple.
+    #[must_use]
+    pub fn has_selection(&self) -> bool {
+        self.selection_range().is_some()
+    }
+
+    /// R56.1.f §5.22 — set both ends of the selection in one batched
+    /// write. `anchor` becomes the pinned end (the user's drag start
+    /// / Shift-modifier latch); `focus` becomes the caret. Both
+    /// offsets are clamped to `[0, text.len()]` and snapped to the
+    /// nearest preceding `char` boundary; the call collapses back to
+    /// the caret-only shape (`selection_anchor = None`) when the two
+    /// snapped offsets coincide.
+    ///
+    /// Wrapped in [`batch`] so subscribed effects re-run **once** per
+    /// `set_selection` call (the R55.G.24 atomic-multi-axis contract;
+    /// `selection_anchor` + `caret_pos` collapse into one cascade).
+    pub fn set_selection(&self, anchor: usize, focus: usize) {
+        let text = self.text.get();
+        let len = text.len();
+        let snapped_anchor = clamp_to_char_boundary(&text, anchor.min(len));
+        let snapped_focus = clamp_to_char_boundary(&text, focus.min(len));
+        batch(|| {
+            self.caret_pos.set(snapped_focus);
+            self.selection_anchor.set(if snapped_anchor == snapped_focus {
+                None
+            } else {
+                Some(snapped_anchor)
+            });
+        });
+    }
+
+    /// R56.1.f §5.22 — collapse any active selection to the caret-
+    /// only shape (`selection_anchor = None`). The caret stays put.
+    /// Called by every selection-clearing keystroke
+    /// (`ArrowLeft` / `ArrowRight` / `Home` / `End` without Shift —
+    /// see [`Self::move_left`] et al.) and by [`Self::set_text`] /
+    /// [`Self::set_caret`] (any explicit caret repositioning drops
+    /// the selection per the W3C `selectionchange` canonical
+    /// behaviour).
+    pub fn clear_selection(&self) {
+        self.selection_anchor.set(None);
+    }
+
     /// Replace the buffer with `new_text`. The caret is clamped
     /// to the nearest `char` boundary at-or-below the new text
     /// length (so a `set_text` shorter than the current text moves
     /// the caret in instead of leaving it past-end).
     ///
-    /// Wrapped in [`batch`] so the `text` + (optional) `caret_pos`
-    /// writes collapse into one notification cascade — the
-    /// R55.G.24 atomic-multi-axis contract.
+    /// R56.1.f §5.22 — also clears any active selection (an
+    /// explicit `set_text` invalidates the prior anchor since the
+    /// underlying byte string changed wholesale). The three writes
+    /// (`text`, `caret_pos`, `selection_anchor`) collapse into one
+    /// notification cascade via [`batch`].
     pub fn set_text(&self, new_text: String) {
         let new_len = new_text.len();
         let cur_caret = self.caret_pos.get();
@@ -203,6 +308,7 @@ impl TextEditState {
         batch(|| {
             self.text.set(new_text);
             self.caret_pos.set(clamped_caret);
+            self.selection_anchor.set(None);
         });
     }
 
@@ -211,10 +317,18 @@ impl TextEditState {
     /// would land mid-codepoint. Signal equality-skip suppresses
     /// the re-run when the clamped target matches the current
     /// caret.
+    ///
+    /// R56.1.f §5.22 — an explicit caret-set drops any active
+    /// selection (W3C `selectionchange` canonical: every
+    /// caret-affecting operation that is not a Shift-modified
+    /// extension collapses to caret-only).
     pub fn set_caret(&self, pos: usize) {
         let text = self.text.get();
         let clamped = clamp_to_char_boundary(&text, pos.min(text.len()));
-        self.caret_pos.set(clamped);
+        batch(|| {
+            self.caret_pos.set(clamped);
+            self.selection_anchor.set(None);
+        });
     }
 
     /// Insert `s` at the current caret position and advance the
@@ -226,13 +340,29 @@ impl TextEditState {
     /// returned position is always a `char` boundary because `s` is
     /// a valid UTF-8 `&str` (Rust invariant) and the insertion
     /// happens at a pre-existing boundary.
+    ///
+    /// R56.1.f §5.22 — when a selection is active, the selected
+    /// range is drained first and `s` is inserted at the range
+    /// start (macOS / iOS / GTK / Web canonical "type to replace"
+    /// behaviour). The selection collapses to `None` post-write.
     pub fn insert(&self, s: &str) {
         if s.is_empty() {
             return;
         }
         let mut buf = self.text.get();
-        let pos = self.caret_pos.get().min(buf.len());
-        let snapped = clamp_to_char_boundary(&buf, pos);
+        let caret = self.caret_pos.get().min(buf.len());
+        if let Some((start, end)) = self.selection_range_against(&buf, caret) {
+            buf.drain(start..end);
+            buf.insert_str(start, s);
+            let new_caret = start + s.len();
+            batch(|| {
+                self.text.set(buf);
+                self.caret_pos.set(new_caret);
+                self.selection_anchor.set(None);
+            });
+            return;
+        }
+        let snapped = clamp_to_char_boundary(&buf, caret);
         buf.insert_str(snapped, s);
         let new_caret = snapped + s.len();
         batch(|| {
@@ -245,9 +375,24 @@ impl TextEditState {
     /// the caret back by the deleted span (Backspace canonical).
     /// No-op when caret is at `0`. Handles multi-byte chars
     /// correctly via [`str::is_char_boundary`].
+    ///
+    /// R56.1.f §5.22 — when a selection is active, the selected
+    /// range is drained and the caret lands at the range start
+    /// (Backspace-as-selection-delete is the W3C canonical behaviour
+    /// for `inputType: "deleteContentBackward"` with non-collapsed
+    /// selection).
     pub fn backspace(&self) {
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
+        if let Some((start, end)) = self.selection_range_against(&buf, caret) {
+            buf.drain(start..end);
+            batch(|| {
+                self.text.set(buf);
+                self.caret_pos.set(start);
+                self.selection_anchor.set(None);
+            });
+            return;
+        }
         if caret == 0 {
             return;
         }
@@ -262,9 +407,24 @@ impl TextEditState {
     /// Delete the `char` immediately following the caret. The caret
     /// stays in place (Delete-key / `Ctrl-D` canonical). No-op when
     /// caret is at `text.len()`.
+    ///
+    /// R56.1.f §5.22 — when a selection is active, the selected
+    /// range is drained and the caret lands at the range start
+    /// (Delete-as-selection-delete is the W3C canonical behaviour
+    /// for `inputType: "deleteContentForward"` with non-collapsed
+    /// selection).
     pub fn delete_forward(&self) {
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
+        if let Some((start, end)) = self.selection_range_against(&buf, caret) {
+            buf.drain(start..end);
+            batch(|| {
+                self.text.set(buf);
+                self.caret_pos.set(start);
+                self.selection_anchor.set(None);
+            });
+            return;
+        }
         if caret >= buf.len() {
             return;
         }
@@ -278,9 +438,24 @@ impl TextEditState {
 
     /// Move the caret one `char` to the left (towards `0`).
     /// No-op when caret is at `0`.
+    ///
+    /// R56.1.f §5.22 — collapses any active selection: plain
+    /// `ArrowLeft` (no Shift) drops the anchor; if the selection was
+    /// active, the caret lands at the **selection start** (the W3C
+    /// canonical "collapse to leading edge" behaviour shared by
+    /// macOS / iOS / GTK / Chrome), not one char to the left of the
+    /// caret. See [`Self::select_left`] for the Shift+ArrowLeft
+    /// extension variant.
     pub fn move_left(&self) {
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
+        if let Some((start, _)) = self.selection_range_against(&text, caret) {
+            batch(|| {
+                self.caret_pos.set(start);
+                self.selection_anchor.set(None);
+            });
+            return;
+        }
         if caret == 0 {
             return;
         }
@@ -290,9 +465,20 @@ impl TextEditState {
 
     /// Move the caret one `char` to the right (towards `text.len()`).
     /// No-op when caret is at `text.len()`.
+    ///
+    /// R56.1.f §5.22 — collapses any active selection to the
+    /// **selection end** (W3C "collapse to trailing edge"). See
+    /// [`Self::select_right`] for the Shift+ArrowRight extension.
     pub fn move_right(&self) {
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
+        if let Some((_, end)) = self.selection_range_against(&text, caret) {
+            batch(|| {
+                self.caret_pos.set(end);
+                self.selection_anchor.set(None);
+            });
+            return;
+        }
         if caret >= text.len() {
             return;
         }
@@ -301,16 +487,132 @@ impl TextEditState {
     }
 
     /// Move the caret to the start of the buffer (Home / Ctrl-A
-    /// canonical on single-line fields).
+    /// canonical on single-line fields). Clears any active
+    /// selection (R56.1.f).
     pub fn move_home(&self) {
-        self.caret_pos.set(0);
+        batch(|| {
+            self.caret_pos.set(0);
+            self.selection_anchor.set(None);
+        });
     }
 
     /// Move the caret to the end of the buffer (End / Ctrl-E
-    /// canonical on single-line fields).
+    /// canonical on single-line fields). Clears any active
+    /// selection (R56.1.f).
     pub fn move_end(&self) {
         let len = self.text.get().len();
-        self.caret_pos.set(len);
+        batch(|| {
+            self.caret_pos.set(len);
+            self.selection_anchor.set(None);
+        });
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // R56.1.f §5.22 — selection-extending caret motion (Shift+Arrow)
+    // ───────────────────────────────────────────────────────────────
+
+    /// R56.1.f §5.22 — extend the selection one `char` to the left.
+    /// If no selection is active, the current caret position becomes
+    /// the anchor; the caret then moves one char left. If the
+    /// extension lands the caret on the anchor (collapsing the
+    /// selection back), the anchor clears to `None` so the
+    /// caret-only invariant holds.
+    ///
+    /// Shift+ArrowLeft / Shift+Backspace canonical on every desktop
+    /// platform. No-op when the caret is already at byte 0 and no
+    /// selection is active.
+    pub fn select_left(&self) {
+        let text = self.text.get();
+        let caret = self.caret_pos.get().min(text.len());
+        if caret == 0 {
+            // Caret already at the left edge — the only useful
+            // mutation here would be to set the anchor without
+            // moving the caret, but that contradicts the W3C
+            // "extend = move + remember-old-position" contract.
+            return;
+        }
+        let new_caret = prev_char_boundary(&text, caret);
+        let anchor = self.selection_anchor.get().unwrap_or(caret);
+        batch(|| {
+            self.caret_pos.set(new_caret);
+            self.selection_anchor.set(if anchor == new_caret {
+                None
+            } else {
+                Some(anchor)
+            });
+        });
+    }
+
+    /// R56.1.f §5.22 — extend the selection one `char` to the right
+    /// (mirror of [`Self::select_left`]). Shift+ArrowRight canonical.
+    pub fn select_right(&self) {
+        let text = self.text.get();
+        let caret = self.caret_pos.get().min(text.len());
+        if caret >= text.len() {
+            return;
+        }
+        let new_caret = next_char_boundary(&text, caret);
+        let anchor = self.selection_anchor.get().unwrap_or(caret);
+        batch(|| {
+            self.caret_pos.set(new_caret);
+            self.selection_anchor.set(if anchor == new_caret {
+                None
+            } else {
+                Some(anchor)
+            });
+        });
+    }
+
+    /// R56.1.f §5.22 — extend the selection to the start of the
+    /// buffer. Shift+Home canonical (single-line fields). If no
+    /// selection was active, the current caret position becomes the
+    /// anchor; the caret then jumps to byte 0.
+    pub fn select_home(&self) {
+        let caret = self.caret_pos.get();
+        let anchor = self.selection_anchor.get().unwrap_or(caret);
+        batch(|| {
+            self.caret_pos.set(0);
+            self.selection_anchor.set(if anchor == 0 {
+                None
+            } else {
+                Some(anchor)
+            });
+        });
+    }
+
+    /// R56.1.f §5.22 — extend the selection to the end of the
+    /// buffer. Shift+End canonical (single-line fields).
+    pub fn select_end(&self) {
+        let caret = self.caret_pos.get();
+        let len = self.text.get().len();
+        let anchor = self.selection_anchor.get().unwrap_or(caret);
+        batch(|| {
+            self.caret_pos.set(len);
+            self.selection_anchor.set(if anchor == len {
+                None
+            } else {
+                Some(anchor)
+            });
+        });
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Internal selection helpers
+    // ───────────────────────────────────────────────────────────────
+
+    /// R56.1.f §5.22 — `selection_range` against an already-fetched
+    /// text + caret. Used by mutators that have already pulled the
+    /// text buffer through `self.text.get()` (cloning the buffer is
+    /// non-trivial; reusing the fetched copy avoids a second clone
+    /// on the selection branch). The clamping logic stays consistent
+    /// with [`Self::selection_range`].
+    fn selection_range_against(&self, text: &str, caret: usize) -> Option<(usize, usize)> {
+        let anchor = self.selection_anchor.get()?;
+        let snapped_anchor = clamp_to_char_boundary(text, anchor.min(text.len()));
+        if snapped_anchor == caret {
+            return None;
+        }
+        Some((snapped_anchor.min(caret), snapped_anchor.max(caret)))
     }
 }
 
@@ -812,6 +1114,358 @@ mod tests {
         assert_eq!(clamp_to_char_boundary(s, 1), 0, "mid → 0");
         assert_eq!(clamp_to_char_boundary(s, 2), 0, "mid → 0");
         assert_eq!(clamp_to_char_boundary(s, 3), 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R56.1.f §5.22 — Selection sidecar
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_initial_selection_anchor_is_none() {
+        let s = TextEditState::new();
+        assert_eq!(s.selection_anchor(), None);
+        assert!(!s.has_selection());
+        assert_eq!(s.selection_range(), None);
+    }
+
+    #[test]
+    fn r56_1_f_set_selection_stores_anchor_and_focus() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(2, 5);
+        assert_eq!(s.selection_anchor(), Some(2));
+        assert_eq!(s.caret(), 5);
+        assert!(s.has_selection());
+        assert_eq!(s.selection_range(), Some((2, 5)));
+    }
+
+    #[test]
+    fn r56_1_f_set_selection_normalises_range_when_focus_before_anchor() {
+        // anchor=5, focus=2 → range (2, 5); selection_range always
+        // returns (min, max).
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(5, 2);
+        assert_eq!(s.selection_anchor(), Some(5));
+        assert_eq!(s.caret(), 2);
+        assert_eq!(s.selection_range(), Some((2, 5)));
+    }
+
+    #[test]
+    fn r56_1_f_set_selection_collapses_to_none_when_anchor_equals_focus() {
+        // The W3C canonical "collapsed selection" state surfaces as
+        // anchor = None here so has_selection is a pure predicate.
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(3, 3);
+        assert_eq!(s.selection_anchor(), None);
+        assert_eq!(s.caret(), 3);
+        assert!(!s.has_selection());
+    }
+
+    #[test]
+    fn r56_1_f_set_selection_clamps_to_text_len() {
+        let s = TextEditState::with_initial("abc".to_string());
+        s.set_selection(0, 99);
+        assert_eq!(s.selection_range(), Some((0, 3)));
+    }
+
+    #[test]
+    fn r56_1_f_clear_selection_drops_anchor_but_keeps_caret() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.clear_selection();
+        assert_eq!(s.selection_anchor(), None);
+        assert_eq!(s.caret(), 4, "clear_selection must not move caret");
+    }
+
+    #[test]
+    fn r56_1_f_set_caret_clears_active_selection() {
+        // Explicit caret-set is a "click-to-reposition" — drops the
+        // selection per W3C selectionchange canonical.
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.set_caret(2);
+        assert_eq!(s.caret(), 2);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_set_text_clears_active_selection() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(0, 3);
+        s.set_text("xy".to_string());
+        assert_eq!(s.text(), "xy");
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Selection-extending caret motion (Shift+Arrow / Shift+Home/End)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_select_left_seeds_anchor_from_caret_then_moves() {
+        // From caret=3, no selection: select_left puts anchor at 3,
+        // moves caret to 2; range = (2, 3).
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_caret(3);
+        s.select_left();
+        assert_eq!(s.caret(), 2);
+        assert_eq!(s.selection_anchor(), Some(3));
+        assert_eq!(s.selection_range(), Some((2, 3)));
+    }
+
+    #[test]
+    fn r56_1_f_select_right_seeds_anchor_from_caret_then_moves() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_caret(2);
+        s.select_right();
+        assert_eq!(s.caret(), 3);
+        assert_eq!(s.selection_anchor(), Some(2));
+        assert_eq!(s.selection_range(), Some((2, 3)));
+    }
+
+    #[test]
+    fn r56_1_f_select_left_preserves_existing_anchor() {
+        // Selection already (2, 5); extending left moves the *caret*
+        // (the focus) but leaves the anchor at 2.
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(2, 5);
+        s.select_left();
+        assert_eq!(s.caret(), 4);
+        assert_eq!(s.selection_anchor(), Some(2));
+    }
+
+    #[test]
+    fn r56_1_f_select_right_can_collapse_back_to_anchor() {
+        // Anchor=2, caret=3 → range (2,3). select_left brings caret
+        // to 2; caret == anchor so the selection collapses to None.
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(2, 3);
+        s.select_left();
+        assert_eq!(s.caret(), 2);
+        assert_eq!(s.selection_anchor(), None);
+        assert!(!s.has_selection());
+    }
+
+    #[test]
+    fn r56_1_f_select_home_extends_to_zero() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_caret(4);
+        s.select_home();
+        assert_eq!(s.caret(), 0);
+        assert_eq!(s.selection_anchor(), Some(4));
+        assert_eq!(s.selection_range(), Some((0, 4)));
+    }
+
+    #[test]
+    fn r56_1_f_select_end_extends_to_text_len() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_caret(2);
+        s.select_end();
+        assert_eq!(s.caret(), 6);
+        assert_eq!(s.selection_anchor(), Some(2));
+        assert_eq!(s.selection_range(), Some((2, 6)));
+    }
+
+    #[test]
+    fn r56_1_f_select_left_at_caret_zero_is_noop() {
+        let s = TextEditState::with_initial("abc".to_string());
+        s.set_caret(0);
+        s.select_left();
+        assert_eq!(s.caret(), 0);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_select_right_at_caret_end_is_noop() {
+        let s = TextEditState::with_initial("abc".to_string());
+        s.set_caret(3);
+        s.select_right();
+        assert_eq!(s.caret(), 3);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Plain caret motion collapses an active selection
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_move_left_collapses_selection_to_start() {
+        // W3C "ArrowLeft on a selection collapses to the leading
+        // edge" — not "one char to the left of the caret".
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.move_left();
+        assert_eq!(s.caret(), 1, "lands at selection start");
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_move_right_collapses_selection_to_end() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.move_right();
+        assert_eq!(s.caret(), 4, "lands at selection end");
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_move_home_clears_selection() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(2, 5);
+        s.move_home();
+        assert_eq!(s.caret(), 0);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_move_end_clears_selection() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(0, 3);
+        s.move_end();
+        assert_eq!(s.caret(), 6);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Selection-aware insert / backspace / delete_forward
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_insert_with_selection_replaces_range() {
+        // Type-to-replace canonical: selection (1, 4) replaced by
+        // "XY" → "aXYef", caret at end of inserted text (3 = 1+2).
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.insert("XY");
+        assert_eq!(s.text(), "aXYef");
+        assert_eq!(s.caret(), 3);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_insert_with_selection_empty_string_is_a_delete() {
+        // R56.1.b documented insert("") as a no-op; that still holds
+        // (the early-return short-circuits before the selection
+        // branch fires). Explicit deletion uses backspace / delete.
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.insert("");
+        assert_eq!(s.text(), "abcdef", "insert(\"\") stays a no-op");
+        assert_eq!(s.selection_anchor(), Some(1), "selection unchanged");
+    }
+
+    #[test]
+    fn r56_1_f_backspace_with_selection_drains_range() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.backspace();
+        assert_eq!(s.text(), "aef");
+        assert_eq!(s.caret(), 1);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_delete_forward_with_selection_drains_range() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.delete_forward();
+        assert_eq!(s.text(), "aef");
+        assert_eq!(s.caret(), 1);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_insert_at_selection_focus_before_anchor_still_replaces_range() {
+        // Selection range is normalised (min, max) so an
+        // anchor-after-focus selection (e.g. mouse-drag-back-to-left)
+        // still drains the same byte range.
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(4, 1); // anchor=4, focus=1, range=(1,4)
+        s.insert("Z");
+        assert_eq!(s.text(), "aZef");
+        assert_eq!(s.caret(), 2);
+        assert_eq!(s.selection_anchor(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Multi-byte UTF-8 selection
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_select_right_lands_on_char_boundary_korean() {
+        // "한글" — two 3-byte CJK syllables; valid boundaries {0,3,6}.
+        let s = TextEditState::with_initial("한글".to_string());
+        s.set_caret(0);
+        s.select_right();
+        assert_eq!(s.caret(), 3, "skip mid-codepoint bytes");
+        assert_eq!(s.selection_range(), Some((0, 3)));
+    }
+
+    #[test]
+    fn r56_1_f_select_left_lands_on_char_boundary_korean() {
+        let s = TextEditState::with_initial("한글".to_string());
+        s.set_caret(6);
+        s.select_left();
+        assert_eq!(s.caret(), 3);
+        assert_eq!(s.selection_range(), Some((3, 6)));
+    }
+
+    #[test]
+    fn r56_1_f_backspace_drains_korean_selection_wholesale() {
+        let s = TextEditState::with_initial("a한b".to_string());
+        s.set_selection(1, 4); // range covers the entire 한 syllable
+        s.backspace();
+        assert_eq!(s.text(), "ab");
+        assert_eq!(s.caret(), 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 3-axis atomic batched-multi-axis subscriber semantics
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_set_selection_fires_subscriber_exactly_once() {
+        let owner = Owner::new();
+        let s = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let count = Rc::new(Cell::new(0));
+        let s_ref = Rc::clone(&s);
+        let count_ref = Rc::clone(&count);
+        let _e = Effect::new(&owner, move || {
+            let _ = s_ref.selection_range();
+            count_ref.set(count_ref.get() + 1);
+        });
+        // Initial fire.
+        assert_eq!(count.get(), 1);
+        s.set_selection(1, 4);
+        assert_eq!(
+            count.get(),
+            2,
+            "set_selection must batch caret + anchor into one re-run",
+        );
+    }
+
+    #[test]
+    fn r56_1_f_insert_with_selection_fires_subscriber_exactly_once() {
+        // Three-axis batched write (text + caret + selection_anchor)
+        // collapses to a single Effect re-run.
+        let owner = Owner::new();
+        let s = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let count = Rc::new(Cell::new(0));
+        let s_ref = Rc::clone(&s);
+        let count_ref = Rc::clone(&count);
+        let _e = Effect::new(&owner, move || {
+            let _ = s_ref.snapshot();
+            let _ = s_ref.selection_range();
+            count_ref.set(count_ref.get() + 1);
+        });
+        assert_eq!(count.get(), 1);
+        s.set_selection(1, 4);
+        assert_eq!(count.get(), 2, "set_selection: one re-run");
+        s.insert("Z");
+        assert_eq!(
+            count.get(),
+            3,
+            "insert with selection batches text+caret+anchor into one re-run",
+        );
     }
 
     #[test]
