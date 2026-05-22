@@ -563,6 +563,26 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             } => {
                 self.core.mouse_released(PointerId::MOUSE);
             }
+            // R56.2.e §5.13 §5.22 — middle-mouse-button press routes
+            // to `WidgetView::apply_middle_click` (the canonical
+            // X11 / Wayland "paste PRIMARY at the focused text
+            // widget" UX path). winit fires this arm for every
+            // platform's middle-button press (winit normalises X11
+            // ButtonEvent / Wayland `wl_pointer` button / macOS
+            // `NSEvent` otherMouseDown / Windows `WM_MBUTTONDOWN`
+            // under one enum); the substrate's `ShellCore::middle_click`
+            // reads the focused tag from the focus manager and
+            // dispatches through `CoreShell::apply_middle_click`,
+            // which wraps the trait call in `root_owner.run`
+            // (R51.152) so application impls can reach the same
+            // reactive hooks the keyboard path uses.
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Middle,
+                ..
+            } => {
+                self.core.middle_click();
+            }
             // (R51.186 §5.45 R55.C.2) winit `MouseWheel` events do
             // not carry a position field — winit follows the same
             // W3C / iOS / Android contract pinion's router reads:

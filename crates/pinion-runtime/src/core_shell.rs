@@ -816,6 +816,46 @@ impl<V: WidgetCore> CoreShell<V> {
         }
     }
 
+    /// R56.2.e §5.13 §5.22 — route a middle-mouse-button press through
+    /// [`WidgetCore::apply_middle_click`]. Symmetric with
+    /// [`Self::apply_key`] / [`Self::apply_composition`]: wraps the
+    /// trait call in `root_owner.run` so
+    /// [`Owner::current`](pinion_core::reactive::Owner::current)
+    /// resolves to this binding's root scope from inside the widget's
+    /// paste handler (e.g. `TextField::apply_middle_click` uses the
+    /// same `use_text_edit_state(tag)` cache the view fn and
+    /// `apply_key` already share — R56.1.b.1 substrate).
+    ///
+    /// Returns `Some(DispatchTail)` on handled (`true` from
+    /// `apply_middle_click`), `None` on unhandled — the shell wrapper
+    /// checks the `Option` to decide whether to bump backend-specific
+    /// bookkeeping (Vello: revision + redraw; TUI: repaint trigger).
+    /// Mirrors the R51.122 `apply_key` return-shape contract so the
+    /// pinion-shell `WindowEvent::MouseInput { button: Middle, .. }`
+    /// arm can reuse the existing post-input path (`handle_tail` +
+    /// redraw request).
+    ///
+    /// `focused` carries the focus manager's currently-focused tag at
+    /// dispatch time. pinion-shell's `app.rs` sources it from
+    /// `self.focus.focused()` (same as `apply_key`); widget
+    /// implementations short-circuit to `false` when the carried tag
+    /// is not their own (roving-tabindex pattern), preventing
+    /// middle-click events from broadcasting to unfocused widgets.
+    pub fn apply_middle_click(
+        &mut self,
+        focused: Option<&str>,
+        modifiers: pinion_core::Modifiers,
+    ) -> Option<DispatchTail<V::State>> {
+        let owner = self.root_owner.clone();
+        let scene = &mut self.scene;
+        let handled = owner.run(|| V::apply_middle_click(scene, focused, modifiers));
+        if handled {
+            Some(self.tail())
+        } else {
+            None
+        }
+    }
+
     /// R51.122 §5.41 — pointer cursor-move dispatch (cell→pixel or
     /// `winit` → pixel conversion happens at the backend boundary).
     /// Forwards through the [`InputRouter`] then drains the dispatch

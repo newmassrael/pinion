@@ -775,6 +775,49 @@ impl WidgetCore for TextFieldView {
         intro.invoke("composition", args).is_ok()
     }
 
+    /// R56.2.e §5.13 §5.22 — middle-mouse-button paste from PRIMARY.
+    /// The pinion-shell `WindowEvent::MouseInput { Middle, Pressed }`
+    /// arm routes through `ShellCore::middle_click` →
+    /// `CoreShell::apply_middle_click` → here. This binding's impl
+    /// reformats the trait call into the `paste-primary` invoke slot
+    /// the R56.2.e.2 widget exposes — the substrate funnel keeps
+    /// the AI-client RPC path and the platform middle-click path on
+    /// the same code (mirror of `apply_composition` →
+    /// `composition` invoke).
+    ///
+    /// The `focused != Some(TF_TAG)` short-circuit follows
+    /// [`Self::apply_key`]'s roving-tabindex pattern so middle-click
+    /// only pastes into the focused text field. The `_modifiers`
+    /// arg is ignored — plain middle-click is the canonical X11 /
+    /// Wayland PRIMARY paste, and Ctrl / Shift / Alt / Meta +
+    /// middle-click is unspecified across desktops; this binding
+    /// stays on the conservative path.
+    ///
+    /// Returns `true` whenever the invoke channel reports a
+    /// non-empty PRIMARY payload was inserted (the R56.2.e.2 widget
+    /// guards `paste-primary` against missing state / missing
+    /// clipboard / empty PRIMARY internally, so any `Ok(Bool(true))`
+    /// means the paste landed in the reactive text store).
+    fn apply_middle_click(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        if focused != Some(TF_TAG) {
+            return false;
+        }
+        let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        match intro.invoke("paste-primary", IntrospectValue::Null) {
+            Ok(IntrospectValue::Bool(handled)) => handled,
+            _ => false,
+        }
+    }
+
     fn fmt_state_log(state: &(TextFieldState, u32)) -> String {
         format!(
             "{} / caret={}",

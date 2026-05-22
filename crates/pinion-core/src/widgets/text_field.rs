@@ -1041,6 +1041,12 @@ impl ExternalIntrospect for TextFieldExternal {
             ("send", "string"),
             ("key", "string"),
             ("composition", "string"),
+            // R56.2.e §5.22 — middle-mouse PRIMARY paste action.
+            // No payload (`Null`); returns `Bool(handled)`. Mirrors
+            // the X11 / Wayland "middle-click pastes the PRIMARY
+            // selection" convention so AI clients can drive the
+            // same code path the shell's middle-click handler hits.
+            ("paste-primary", "boolean"),
         ])
     }
 
@@ -1313,6 +1319,23 @@ impl ExternalIntrospect for TextFieldExternal {
                         }
                         None => Err(InvokeError::TypeMismatch),
                     }
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R56.2.e §5.22 — middle-click / RPC PRIMARY paste.
+            // `Null` triggers `paste_from_primary` (reads PRIMARY,
+            // inserts at caret, resets blink); returns `Bool(true)`
+            // when a non-empty payload was inserted, `Bool(false)`
+            // when PRIMARY is empty / unavailable / no state /
+            // no clipboard attached. Any non-Null arg returns
+            // `TypeMismatch` (defensive against a future-arg-shape
+            // wire-form drift). Mirrors the shell's middle-click
+            // path (R56.2.e.3): both call paths funnel through this
+            // invoke slot so the substrate has one source of truth
+            // for the PRIMARY paste action.
+            "paste-primary" => match args {
+                IntrospectValue::Null => {
+                    Ok(IntrospectValue::Bool(self.paste_from_primary()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1805,7 +1828,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_eight_slots() {
+    fn external_schema_declares_nine_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -1833,6 +1856,7 @@ mod tests {
                 ("send", "string"),
                 ("key", "string"),
                 ("composition", "string"),
+                ("paste-primary", "boolean"),
             ],
         );
     }
@@ -3177,7 +3201,7 @@ mod r56_1_e_tests {
 
     use super::{TextFieldExternal};
     use crate::clipboard::{Clipboard, InMemoryClipboard};
-    use crate::external::{ExternalIntrospect, IntrospectValue};
+    use crate::external::{ExternalIntrospect, IntrospectValue, InvokeError};
     use crate::input::Modifiers;
     use crate::widgets::text_edit::TextEditState;
     use std::rc::Rc;
@@ -3614,6 +3638,45 @@ mod r56_1_e_tests {
         let inserted = tfx.paste_from_primary();
         assert!(!inserted);
         assert_eq!(state.text(), "ab");
+    }
+
+    #[test]
+    fn r56_2_e_invoke_paste_primary_routes_through_substrate() {
+        // R56.2.e.3 §5.22 — the shell's middle-click handler funnels
+        // through `invoke("paste-primary", Null)`. Verify the wire
+        // round-trip: PRIMARY publish + invoke read-back lands the
+        // same payload `paste_from_primary` would.
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("ab");
+        state.set_caret(2);
+        cb.copy_to(ClipboardSelection::Primary, "XY".to_string());
+        let r = tfx.invoke("paste-primary", IntrospectValue::Null).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.text(), "abXY");
+        assert_eq!(state.caret(), 4);
+    }
+
+    #[test]
+    fn r56_2_e_invoke_paste_primary_empty_primary_returns_false() {
+        // The substrate's `paste_from_primary` returns false for
+        // empty / unavailable PRIMARY; the invoke wire propagates the
+        // bool verbatim.
+        let (mut tfx, state, _cb) = make_tfx_with_clipboard("ab");
+        let r = tfx.invoke("paste-primary", IntrospectValue::Null).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(false));
+        assert_eq!(state.text(), "ab");
+    }
+
+    #[test]
+    fn r56_2_e_invoke_paste_primary_rejects_non_null_arg() {
+        // R56.2.e.3 — defensive against wire-shape drift. The
+        // `paste-primary` slot takes `Null` only; any other variant
+        // returns `TypeMismatch` so AI clients sending a stray
+        // Text("paste") payload land an immediate error.
+        let (mut tfx, _state, _cb) = make_tfx_with_clipboard("ab");
+        let err = tfx
+            .invoke("paste-primary", IntrospectValue::Text("paste".to_string()))
+            .unwrap_err();
+        assert!(matches!(err, InvokeError::TypeMismatch));
     }
 
     #[test]

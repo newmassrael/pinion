@@ -27412,6 +27412,60 @@
         "R56.2.e.3 — shell middle-click wire + `WidgetView::apply_middle_click` trait + hello-textfield impl."
       ]
     },
+    "Round 569": {
+      "decision_summary": "R56.2.e.3 5.13 5.22 5.38 shell middle-click wire WindowEvent MouseInput Middle Pressed plus WidgetCore apply_middle_click trait plus hello-textfield impl.",
+      "changes_bullets": [
+        "pinion-core widget_core WidgetCore apply_middle_click trait method default false signature scene focused modifiers",
+        "pinion-runtime CoreShell apply_middle_click wraps V apply_middle_click in root_owner run symmetric with apply_key apply_composition",
+        "pinion-shell ShellCore middle_click reads focused tag plus modifiers calls CoreShell apply_middle_click bumps revision plus handle_tail on handled",
+        "pinion-shell app WindowEvent MouseInput Middle Pressed arm calls self core middle_click direct no winit event conversion",
+        "pinion-core TextFieldExternal invoke paste-primary slot Null arg returns Bool(handled) wire form for substrate funnel",
+        "pinion-core schema slots eight to nine with paste-primary boolean entry",
+        "hello-textfield apply_middle_click impl routes through TF_TAG short-circuit plus introspect invoke paste-primary mirror apply_composition pattern",
+        "9 new r56_2_e tests: 6 dispatch_core wire (forwards focused / None blurred / handled bump / unhandled skip / root_owner scope / default false) + 3 invoke (round-trip / empty primary / non-Null reject)"
+      ],
+      "verification_bullets": [
+        "cargo test workspace vello pass=2731 fail=0 ignored=14 prior 2722 + 9 new",
+        "cargo clippy workspace all-targets vello 0 warnings",
+        "cargo test -p pinion-core --lib r56_2_e 23 pass 7 substrate + 16 widget"
+      ],
+      "impact_refs": [
+        "5.13",
+        "5.22",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "R56 axis platform side fully closed - substrate + visible + RPC + platform IME + platform clipboard + IME cursor area + TUI grapheme + PRIMARY all green",
+        "pinion-tui middle-click PRIMARY paste (axis-level carry, crossterm raw mouse mode required, 2nd consumer wait)",
+        "F1 framework auto-tag conflict-aware permanent carry"
+      ],
+      "publishable_decision_summary": "R56.2.e.3 §5.13 §5.22 §5.38 — shell middle-click wire: `WindowEvent::MouseInput Middle Pressed` + `WidgetCore::apply_middle_click` trait + hello-textfield impl (R56 platform-side full closure).",
+      "publishable_changes_bullets": [
+        "`WidgetCore::apply_middle_click(scene, focused, modifiers) -> bool` trait default false.",
+        "`CoreShell::apply_middle_click` wraps the trait call in `root_owner.run` (R51.152 symmetric).",
+        "`ShellCore::middle_click` reads focused + modifiers, calls `CoreShell::apply_middle_click`.",
+        "`AppShell` `WindowEvent::MouseInput Middle Pressed` arm calls `self.core.middle_click()`.",
+        "`TextFieldExternal` invoke gains `paste-primary` slot (Null arg → `Bool(handled)`).",
+        "Schema slots count = 9 (`paste-primary` added with `boolean` type).",
+        "`hello-textfield::apply_middle_click` routes through invoke (mirrors `apply_composition` pattern).",
+        "+9 `r56_2_e` tests: 6 dispatch_core wire + 3 invoke (round-trip / empty / reject)."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test --workspace --features pinion-runtime/vello` = 2731 / 0 / 14.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings.",
+        "`cargo test -p pinion-core --lib r56_2_e` = 23 pass (7 substrate + 16 widget)."
+      ],
+      "publishable_impact_refs": [
+        "5.13",
+        "5.22",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R56 axis platform-side full closure (substrate + visible + RPC + IME + clipboard + PRIMARY).",
+        "pinion-tui middle-click PRIMARY paste — axis carry (crossterm raw-mouse + 2nd consumer wait).",
+        "F1 framework auto-tag conflict-aware — permanent carry."
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

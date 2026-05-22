@@ -338,6 +338,56 @@ pub trait WidgetCore: 'static {
         false
     }
 
+    /// R56.2.e §5.13 §5.22 — middle-mouse-button paste entry point.
+    /// The shell calls this when the platform mouse bridge dispatches
+    /// a middle-button press (winit `MouseButton::Middle`, crossterm
+    /// `MouseButton::Middle`, W3C `MouseEvent.button == 1`). On X11
+    /// and Wayland desktops the canonical convention is "middle-click
+    /// pastes the PRIMARY selection at the cursor" — `TextField` and
+    /// other text-input widgets override this to read the PRIMARY
+    /// clipboard via
+    /// [`Clipboard::paste_from`](crate::clipboard::Clipboard::paste_from)`(`[`ClipboardSelection::Primary`](crate::clipboard::ClipboardSelection)`)`
+    /// and insert at the caret. Non-text widgets accept the default
+    /// `false` (the keystroke / pointer-event broadcasts to nobody).
+    ///
+    /// Symmetric with [`Self::apply_key`] / [`Self::apply_composition`]:
+    /// takes the authoritative state scene `&mut`, the focus
+    /// manager's currently-focused tag at dispatch time, and the
+    /// W3C `MouseEvent` four-bit modifier surface. Position is *not*
+    /// passed because pinion follows the [`Self::apply_key`] roving-
+    /// tabindex pattern — widgets handle middle-click only when
+    /// their own tag is the focused one, and the shell's
+    /// [`InputRouter`](crate::scene::HitPath) cache holds the cursor
+    /// position for any hit-test the widget needs (the same channel
+    /// `mouse_pressed` consumes).
+    ///
+    /// `focused != Some(<my tag>)` should short-circuit to `false`
+    /// so middle-click does not broadcast to unfocused widgets. The
+    /// modifier gate stays widget-private: macOS / Linux convention
+    /// is "plain middle-click pastes PRIMARY; modifier-prefixed
+    /// middle-click is unspecified", so most widgets just check the
+    /// focused tag and ignore the modifier bits.
+    ///
+    /// Returns `true` if the middle-click was handled (the shell
+    /// bumps the §5.34 revision, re-reads state, drains intents, and
+    /// repaints on visible change). Returns `false` to defer.
+    ///
+    /// Default returns `false` for every widget — only text-input
+    /// widgets (`TextField`-class) override to wire the PRIMARY
+    /// paste path the X11 / Wayland desktop convention expects.
+    /// On macOS / Windows the [`Clipboard::paste_from`] default impl
+    /// returns `None` for `Primary` so the widget override harmlessly
+    /// produces a no-op (matching the OS-level absence of a parallel
+    /// selection clipboard).
+    #[must_use]
+    fn apply_middle_click(
+        _scene: &mut Scene,
+        _focused: Option<&str>,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
+        false
+    }
+
     /// Focusable tag enumeration in Tab order. Returned tags must
     /// match either [`Self::tag`] (the top-level widget) or a sub-tag
     /// the view fn paints inside the widget (composite widgets like

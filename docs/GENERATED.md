@@ -16905,6 +16905,37 @@ if __name__ == "__main__":
 
 
 
+### Round 569 — R56.2.e.3 §5.13 §5.22 §5.38 — shell middle-click wire: `WindowEvent::MouseInput Middle Pressed` + `WidgetCore::apply_middle_click` trait + hello-textfield impl (R56 platform-side full closure).
+
+**Changes**:
+- `WidgetCore::apply_middle_click(scene, focused, modifiers) -> bool` trait default false.
+- `CoreShell::apply_middle_click` wraps the trait call in `root_owner.run` (R51.152 symmetric).
+- `ShellCore::middle_click` reads focused + modifiers, calls `CoreShell::apply_middle_click`.
+- `AppShell` `WindowEvent::MouseInput Middle Pressed` arm calls `self.core.middle_click()`.
+- `TextFieldExternal` invoke gains `paste-primary` slot (Null arg → `Bool(handled)`).
+- Schema slots count = 9 (`paste-primary` added with `boolean` type).
+- `hello-textfield::apply_middle_click` routes through invoke (mirrors `apply_composition` pattern).
+- +9 `r56_2_e` tests: 6 dispatch_core wire + 3 invoke (round-trip / empty / reject).
+
+
+
+**Verification**:
+- `cargo test --workspace --features pinion-runtime/vello` = 2731 / 0 / 14.
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings.
+- `cargo test -p pinion-core --lib r56_2_e` = 23 pass (7 substrate + 16 widget).
+
+
+
+**Impact**: §5.13, §5.22, §5.38
+
+
+**Carry forward**:
+- R56 axis platform-side full closure (substrate + visible + RPC + IME + clipboard + PRIMARY).
+- pinion-tui middle-click PRIMARY paste — axis carry (crossterm raw-mouse + 2nd consumer wait).
+- F1 framework auto-tag conflict-aware — permanent carry.
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

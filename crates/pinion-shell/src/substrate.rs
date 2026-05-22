@@ -548,6 +548,46 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
+    /// R56.2.e §5.13 §5.22 — route a middle-mouse-button press
+    /// through [`WidgetView::apply_middle_click`] and, on handled
+    /// (`Some(DispatchTail)` from [`CoreShell::apply_middle_click`]),
+    /// run the same post-input bookkeeping as [`Self::apply_key`]:
+    /// bump the §5.34 revision, drain pending intents via
+    /// [`Self::handle_tail`] (which re-reads cached state and
+    /// requests a redraw on visible change).
+    ///
+    /// pinion-shell's `AppShell::window_event`
+    /// `WindowEvent::MouseInput { button: Middle, state: Pressed, .. }`
+    /// arm calls this method directly (no winit-event-to-pinion-event
+    /// conversion is needed — the middle-button press has no
+    /// payload beyond "happened" + the cached cursor position the
+    /// `InputRouter` already holds).
+    ///
+    /// On the X11 / Wayland Linux desktops the canonical UX is
+    /// "middle-click pastes the PRIMARY selection at the focused
+    /// text widget"; [`TextField::apply_middle_click`] reads PRIMARY
+    /// via the R56.2.e [`Clipboard::paste_from`] extension and
+    /// inserts at the caret. On macOS / Windows the
+    /// [`Clipboard::paste_from`] default impl returns `None` for
+    /// `Primary` so the widget impl harmlessly produces a no-op
+    /// (matching the OS-level absence of a parallel selection
+    /// clipboard).
+    ///
+    /// Unhandled middle-clicks (`None` return — every non-text-input
+    /// widget) are swallowed quietly; the shell does not fall
+    /// through to any other input arc because middle-click has no
+    /// meaningful fallback at the substrate level (a Vello `External`
+    /// widget that wants raw `MouseButton::Middle` events can wire
+    /// its own R56.2.a-style platform override, the same way IME
+    /// fans out from this surface).
+    pub fn middle_click(&mut self) {
+        let focused = self.focus.focused().map(str::to_owned);
+        if let Some(tail) = self.core.apply_middle_click(focused.as_deref(), self.modifiers) {
+            self.revision.bump();
+            self.handle_tail(&tail);
+        }
+    }
+
     /// R51.78 §5.39 — Tab / Shift+Tab dispatch decoupled from winit.
     ///
     /// `AppShell::handle_key_press` (winit-side) maps

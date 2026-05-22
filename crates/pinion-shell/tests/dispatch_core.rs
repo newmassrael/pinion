@@ -215,6 +215,25 @@ static APPLY_COMPOSITION_RETURNS: AtomicBool = AtomicBool::new(false);
 // (R51.152) symmetrically.
 static OBSERVED_OWNER_ID_APPLY_COMPOSITION: Mutex<Option<u64>> = Mutex::new(None);
 
+// R56.2.e §5.13 §5.22 — same shape as APPLY_KEY_LOG /
+// APPLY_COMPOSITION_LOG: each `TestView::apply_middle_click` call
+// pushes the focused tag so the shell-substrate middle-click-wire
+// tests assert the `ShellCore::middle_click` dispatch path forwards
+// the focused tag from `FocusManager::focused()`.
+static APPLY_MIDDLE_CLICK_LOG: Mutex<Vec<Option<String>>> = Mutex::new(Vec::new());
+
+// R56.2.e §5.13 §5.22 — controls whether `TestView::apply_middle_click`
+// reports the click as handled. Mirrors APPLY_KEY_RETURNS /
+// APPLY_COMPOSITION_RETURNS — `true` yields `Some(DispatchTail)` so
+// `ShellCore::middle_click` bumps the revision + drains the tail.
+static APPLY_MIDDLE_CLICK_RETURNS: AtomicBool = AtomicBool::new(false);
+
+// R56.2.e §5.13 §5.22 — `Owner::current()` snapshot inside
+// `TestView::apply_middle_click` so the R51.152-symmetric wrap test
+// can assert `CoreShell::apply_middle_click` runs under
+// `root_owner().run(...)`.
+static OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK: Mutex<Option<u64>> = Mutex::new(None);
+
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
@@ -231,6 +250,9 @@ fn reset_mocks() {
     APPLY_COMPOSITION_LOG.lock().unwrap().clear();
     APPLY_COMPOSITION_RETURNS.store(false, Ordering::SeqCst);
     *OBSERVED_OWNER_ID_APPLY_COMPOSITION.lock().unwrap() = None;
+    APPLY_MIDDLE_CLICK_LOG.lock().unwrap().clear();
+    APPLY_MIDDLE_CLICK_RETURNS.store(false, Ordering::SeqCst);
+    *OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK.lock().unwrap() = None;
 }
 
 struct TestView;
@@ -343,6 +365,24 @@ impl WidgetCore for TestView {
         *OBSERVED_OWNER_ID_APPLY_COMPOSITION.lock().unwrap() =
             pinion_core::Owner::current().map(|o| o.id());
         APPLY_COMPOSITION_RETURNS.load(Ordering::SeqCst)
+    }
+
+    fn apply_middle_click(
+        _scene: &mut Scene,
+        focused: Option<&str>,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        APPLY_MIDDLE_CLICK_LOG
+            .lock()
+            .unwrap()
+            .push(focused.map(ToOwned::to_owned));
+        // R56.2.e §5.13 §5.22 — record Owner::current() observation
+        // so the apply_middle_click-owner-wrap test asserts
+        // CoreShell wraps the call in `root_owner().run(...)`
+        // (R51.152 symmetric arc).
+        *OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK.lock().unwrap() =
+            pinion_core::Owner::current().map(|o| o.id());
+        APPLY_MIDDLE_CLICK_RETURNS.load(Ordering::SeqCst)
     }
 
     fn update(
@@ -2182,6 +2222,190 @@ mod r56_2_a_apply_composition_wire {
             pinion_core::Owner::current().is_none(),
             "wrap pops on exit",
         );
+    }
+}
+
+mod r56_2_e_apply_middle_click_wire {
+    //! R56.2.e §5.13 §5.22 — `ShellCore::middle_click` wiring
+    //! regression. Closes the `WindowEvent::MouseInput { Middle,
+    //! Pressed }` substrate path:
+    //!
+    //! - Forwards the focused tag (via `FocusManager::focused()`) and
+    //!   current modifier state to `CoreShell::apply_middle_click`.
+    //! - On handled (`true` from `V::apply_middle_click`): bumps the
+    //!   §5.34 revision and runs `handle_tail` (paint-state re-read
+    //!   + redraw + intent drain).
+    //! - On unhandled (`false`): swallows quietly — no redraw, no
+    //!   revision bump (middle-click has no fallback arc).
+    //! - Wraps the trait call in `root_owner.run` (R51.152 symmetric)
+    //!   so application-side `Owner::cache` calls inside the
+    //!   `apply_middle_click` handler resolve to the binding's root
+    //!   scope.
+    //!
+    //! The winit `MouseButton::Middle → ShellCore::middle_click()`
+    //! conversion lives in `pinion-shell::app::AppShell::window_event`
+    //! and has no observable substrate without a real winit
+    //! `EventLoop` — that arm is verified by inspection alongside the
+    //! R56.2.a `WindowEvent::Ime` arm.
+
+    use super::{
+        reset_mocks, APPLY_MIDDLE_CLICK_LOG, APPLY_MIDDLE_CLICK_RETURNS,
+        OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK, TEST_LOCK, TestView,
+    };
+    use pinion_a11y::{AccessAction, PinionAccessAction};
+    use pinion_shell::ShellCore;
+    use std::sync::atomic::Ordering;
+
+    fn snapshot_log() -> Vec<Option<String>> {
+        APPLY_MIDDLE_CLICK_LOG.lock().unwrap().clone()
+    }
+
+    fn shell_with_focused_test() -> ShellCore<TestView> {
+        let mut core = ShellCore::<TestView>::new();
+        core.dispatch_access_action(&PinionAccessAction {
+            tag: "test".to_owned(),
+            kind: AccessAction::Focus,
+        });
+        let _ = core.take_redraw_request();
+        core
+    }
+
+    #[test]
+    fn r56_2_e_middle_click_forwards_focused_tag() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_MIDDLE_CLICK_RETURNS.store(false, Ordering::SeqCst);
+
+        let mut core = shell_with_focused_test();
+        assert_eq!(core.focus().focused(), Some("test"));
+
+        core.middle_click();
+
+        let log = snapshot_log();
+        assert_eq!(log.len(), 1, "one middle_click dispatches one V::apply_middle_click");
+        assert_eq!(log[0], Some("test".to_owned()));
+    }
+
+    #[test]
+    fn r56_2_e_middle_click_carries_none_focus_when_blurred() {
+        // Without focus_set, FocusManager::focused() returns None.
+        // ShellCore forwards None as the focused-tag argument, and
+        // widget impls (mirroring `apply_key`) short-circuit on the
+        // roving-tabindex predicate. The mock records the None.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.middle_click();
+
+        let log = snapshot_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0], None, "blurred shell carries None as focused tag");
+    }
+
+    #[test]
+    fn r56_2_e_handled_arm_bumps_revision() {
+        // APPLY_MIDDLE_CLICK_RETURNS=true forces V::apply_middle_click
+        // to report handled, so CoreShell yields Some(DispatchTail).
+        // ShellCore bumps the §5.34 revision (mirrors apply_key /
+        // apply_composition behaviour).
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_MIDDLE_CLICK_RETURNS.store(true, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+        let before = core.revision();
+        core.middle_click();
+        assert_eq!(
+            core.revision(),
+            before + 1,
+            "handled middle_click bumps the §5.34 revision",
+        );
+    }
+
+    #[test]
+    fn r56_2_e_unhandled_arm_skips_revision_bump() {
+        // APPLY_MIDDLE_CLICK_RETURNS=false (default) reports unhandled
+        // so CoreShell yields None. ShellCore must NOT bump the
+        // revision or request a redraw — middle-click has no
+        // fallback arc, the substrate stays silent.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let before = core.revision();
+        core.middle_click();
+        assert_eq!(
+            core.revision(),
+            before,
+            "unhandled middle_click leaves the revision untouched",
+        );
+        assert!(
+            !core.take_redraw_request(),
+            "unhandled middle_click does not request a redraw",
+        );
+    }
+
+    #[test]
+    fn r56_2_e_middle_click_runs_under_root_owner_scope() {
+        // Symmetric with R51.152 apply_key wrap + R56.2.a
+        // apply_composition wrap: the trait call must run under
+        // `root_owner().run(...)`. The mock captures Owner::current()
+        // inside V::apply_middle_click; the wrap is in place iff the
+        // observation is `Some(_)`.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        assert!(pinion_core::Owner::current().is_none());
+        core.middle_click();
+        assert!(
+            OBSERVED_OWNER_ID_APPLY_MIDDLE_CLICK.lock().unwrap().is_some(),
+            "apply_middle_click must run inside root_owner.run(...)",
+        );
+        assert!(
+            pinion_core::Owner::current().is_none(),
+            "wrap pops on exit",
+        );
+    }
+
+    #[test]
+    fn r56_2_e_default_apply_middle_click_returns_false() {
+        // The trait default returns false. Verify by calling the trait
+        // method directly with a scratch scene + None focus + empty
+        // modifiers — no mock interception. Default false is the
+        // baseline for non-text widgets.
+        use pinion_core::scene::{ContainerNode, Scene};
+        use pinion_core::WidgetCore;
+        struct PlainView;
+        impl pinion_a11y::WidgetA11y for PlainView {}
+        impl WidgetCore for PlainView {
+            type State = ();
+            type Event = ();
+            fn create_external() -> Box<dyn pinion_core::External> {
+                unreachable!("default trait test never instantiates an external")
+            }
+            fn tag() -> &'static str {
+                "plain"
+            }
+            fn read_state(_scene: &pinion_core::scene::Scene) -> Self::State {}
+            fn view(_state: Self::State, _frame: &pinion_core::Frame) -> pinion_core::scene::Scene {
+                pinion_core::scene::Scene::Container(ContainerNode::new(vec![]).with_tag("plain"))
+            }
+            fn event_name(_event: Self::Event) -> &'static str {
+                ""
+            }
+            fn title() -> &'static str {
+                "PlainView"
+            }
+        }
+        let mut scene = Scene::Container(ContainerNode::new(vec![]).with_tag("plain"));
+        let handled = PlainView::apply_middle_click(
+            &mut scene,
+            Some("plain"),
+            pinion_core::Modifiers::empty(),
+        );
+        assert!(!handled, "default trait impl must return false");
     }
 }
 
