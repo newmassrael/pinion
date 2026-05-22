@@ -16599,6 +16599,46 @@ if __name__ == "__main__":
 
 
 
+### Round 560 — R56.1.g.2 §5.38 §5.22 — `TextFieldExternal` RPC `preedit` query/intervene slot + `composition` invoke surface mirror the W3C `CompositionEvent` lifecycle for the AI-first introspection contract.
+
+**Changes**:
+- `crates/pinion-core/src/widgets/text_field.rs`: schema slot count 6 → 8
+- Added `preedit` (W3C `CompositionEvent.data` mirror) + `composition` (action surface)
+- `query("preedit")` returns `Text(s)` while composing, `Null` when idle
+- Bare external (no attached state) returns `None` so AI client distinguishes "no binding"
+- `intervene("preedit", Text(s))` auto-starts composition + sets buffer
+- Substrate idempotence: `preedit_start` no-ops if already composing
+- `intervene("preedit", Null)` cancels composition (mirror of no-data `compositionend`)
+- `intervene("preedit", Json | Int | ...)` returns `TypeMismatch` (strict W3C wire shape)
+- `invoke("composition", Json{action, data?})` dispatches via `apply_composition_*` methods
+- Action vocabulary: `start` / `update` / `end` / `cancel` mirror W3C `CompositionEvent` types
+- Required `data` field for `update` and `end`; missing returns `TypeMismatch`
+- Unknown action string returns `TypeMismatch`; `Text` args also rejected (Json-only)
+- `parse_composition_invoke_json` helper + `CompositionAction` enum encapsulate parsing
+- Bare external `composition` invoke still drives SCXML so AI sees transitions
+- Existing `external_schema_declares_six_slots` test renamed `eight_slots` + updated
+- 23 `r56_1_g_2_tests` cover schema + query + intervene + invoke for all 4 actions
+
+
+
+**Verification**:
+- `cargo test -p pinion-core widgets::text_field::r56_1_g_2_tests`: 23 pass / 0 fail
+- `cargo test --workspace --features pinion-runtime/vello`: 2665 pass / 0 fail / 13 ignored
+- Delta +23 tests over the R56.1.g.1 baseline (2642)
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello`: 0 warnings
+- Workspace.lints baseline: forbid `unsafe_code` + deny warnings + `clippy::pedantic` deny
+
+
+
+**Impact**: §5.38, §5.22
+
+
+**Carry forward**:
+- R56.1.g.3 hello-textfield preedit visual + composition demo
+- Platform IME bridge crate carry (Wayland text-input-v3 + macOS NSTextInputContext + Windows TSF)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

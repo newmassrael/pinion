@@ -433,3 +433,12 @@ reason = "R56.1.g.1 audit minimal ASCII landed first to avoid mnemosyne MCP mult
 applied_in = "Round 559"
 content_hash_before = "dab123ab2c730c8afa8ff6f4c8eec4cf082a90ee460e160211abac288ca4bf90"
 content_hash_after = "486340738536be08111a1a078e29436f6a07c7cfc078367880475cf355359f27"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 560"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets"]
+reason = "R56.1.g.2 audit minimal ASCII landed first to avoid mnemosyne MCP multi-byte unicode deserialize bug; publishable expand provides em-dash + backticked detailed text (mnemosyne-multibyte-audit-fallback memory)."
+applied_in = "Round 560"
+content_hash_before = "05f021f269d365f729e8afd315c44717232b7bdc2374e67e3ad82761b41d54f6"
+content_hash_after = "1ebda1bc6a8aa24d2a21709dd34d203ae71a70f915131675aba6f8ab8d0bd955"

@@ -1024,13 +1024,23 @@ impl ExternalIntrospect for TextFieldExternal {
         // collapsed (no anchor). Symmetric intervene path accepts
         // the same Json shape (sets both ends atomically through
         // `TextEditState::set_selection`) or `Null` (clears).
+        // R56.1.g.2 §5.38 §5.22 — `preedit` query/intervene slot +
+        // `composition` invoke slot lift the IME composition surface
+        // into the AI-first RPC primary path. `preedit` returns
+        // `Text(s)` while composing or `Null` when idle; intervene
+        // accepts `Text(s)` (auto-starts + sets) or `Null` (cancels).
+        // `composition` invoke takes a Json action surface so the AI
+        // client driving an IME flows through one method per W3C
+        // lifecycle event.
         IntrospectSchema::new(&[
             ("state", "string"),
             ("text", "string"),
             ("caret", "number"),
             ("selection", "object"),
+            ("preedit", "string"),
             ("send", "string"),
             ("key", "string"),
+            ("composition", "string"),
         ])
     }
 
@@ -1065,6 +1075,17 @@ impl ExternalIntrospect for TextFieldExternal {
                     "start": start,
                     "end":   end,
                 })),
+                None => IntrospectValue::Null,
+            }),
+            // R56.1.g.2 §5.38 §5.22 — preedit (IME composition) read
+            // path. `Text(s)` when composing (mirror of W3C
+            // `CompositionEvent.data` observed during
+            // `compositionupdate`); `Null` when no composition is
+            // active. Bare `TextField` (no attached state) returns
+            // `None` so the AI client distinguishes "no state bound"
+            // from "not composing".
+            "preedit" => self.text_state().map(|s| match s.preedit() {
+                Some(content) => IntrospectValue::Text(content),
                 None => IntrospectValue::Null,
             }),
             _ => None,
@@ -1139,6 +1160,35 @@ impl ExternalIntrospect for TextFieldExternal {
                     _ => Err(InterveneError::TypeMismatch),
                 }
             }
+            // R56.1.g.2 §5.38 §5.22 — preedit (IME composition) write
+            // path. `Null` cancels the active composition (mirror of
+            // a no-data `compositionend`). `Text(s)` auto-starts the
+            // composition if not active then sets the preedit to `s`
+            // (the AI-client-as-platform-IME use case — driving the
+            // substrate directly without a paired `composition`
+            // invoke for lifecycle coordination). The SCXML state
+            // stays unchanged by intervene (no `BeginEdit` /
+            // `CancelEdit` drive); applications that need the SCXML
+            // transition use the `composition` invoke surface
+            // instead.
+            "preedit" => {
+                let Some(state) = self.text_state() else {
+                    return Err(InterveneError::ReadOnly);
+                };
+                match value {
+                    IntrospectValue::Null => {
+                        state.preedit_cancel();
+                        Ok(())
+                    }
+                    IntrospectValue::Text(s) => {
+                        // Idempotent — no-op if already composing.
+                        state.preedit_start();
+                        state.preedit_update(&s);
+                        Ok(())
+                    }
+                    _ => Err(InterveneError::TypeMismatch),
+                }
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -1205,6 +1255,55 @@ impl ExternalIntrospect for TextFieldExternal {
                     )),
                     None => Err(InvokeError::TypeMismatch),
                 },
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R56.1.g.2 §5.38 §5.22 — W3C `CompositionEvent` dispatch
+            // surface. The Json action vocabulary mirrors the W3C
+            // event types:
+            //
+            // ```json
+            // {"action": "start"}                              // compositionstart
+            // {"action": "update", "data": "preedit_string"}   // compositionupdate
+            // {"action": "end",    "data": "committed_string"} // compositionend
+            // {"action": "cancel"}                             // cancel
+            // ```
+            //
+            // The `data` field is required for `update` and `end`;
+            // missing or wrong-typed slots return
+            // [`InvokeError::TypeMismatch`]. Unrecognized actions
+            // return [`InvokeError::Rejected`]. Returns the
+            // post-dispatch SCXML state name (mirror of the
+            // `send` invoke return shape).
+            "composition" => match args {
+                IntrospectValue::Json(ref obj) => {
+                    match parse_composition_invoke_json(obj) {
+                        Some(CompositionAction::Start) => {
+                            self.apply_composition_start();
+                            Ok(IntrospectValue::Text(
+                                text_field_state_name(self.state()).to_string(),
+                            ))
+                        }
+                        Some(CompositionAction::Update(data)) => {
+                            self.apply_composition_update(&data);
+                            Ok(IntrospectValue::Text(
+                                text_field_state_name(self.state()).to_string(),
+                            ))
+                        }
+                        Some(CompositionAction::End(data)) => {
+                            self.apply_composition_commit(&data);
+                            Ok(IntrospectValue::Text(
+                                text_field_state_name(self.state()).to_string(),
+                            ))
+                        }
+                        Some(CompositionAction::Cancel) => {
+                            self.apply_composition_cancel();
+                            Ok(IntrospectValue::Text(
+                                text_field_state_name(self.state()).to_string(),
+                            ))
+                        }
+                        None => Err(InvokeError::TypeMismatch),
+                    }
+                }
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
@@ -1370,6 +1469,55 @@ fn parse_key_invoke_json(
         meta: modifier_bit("meta")?,
     };
     Some((key_str, modifiers))
+}
+
+/// R56.1.g.2 §5.38 §5.22 — parsed action surface for the
+/// `composition` invoke arm. Mirrors the W3C `CompositionEvent`
+/// vocabulary: `start` / `update` / `end` carry a corresponding
+/// platform IME event; `cancel` is the platform-driven discard
+/// (Escape during composition, Wayland IME cancel). The variant
+/// carries the `data` payload inline so the dispatch site reads it
+/// without a second JSON lookup.
+enum CompositionAction {
+    Start,
+    Update(String),
+    End(String),
+    Cancel,
+}
+
+/// R56.1.g.2 §5.38 §5.22 — extract the composition action surface
+/// from a JSON object argument to `invoke("composition", ...)`. The
+/// wire shape mirrors the W3C `CompositionEvent` vocabulary:
+///
+/// ```json
+/// {"action": "start"}                              // compositionstart
+/// {"action": "update", "data": "preedit_string"}   // compositionupdate
+/// {"action": "end",    "data": "committed_string"} // compositionend
+/// {"action": "cancel"}                             // cancel
+/// ```
+///
+/// Returns `None` if the JSON is not an object, if `action` is
+/// missing / not a string / not one of the four canonical values,
+/// or if `data` is required (`update` / `end`) but missing / not a
+/// string. The `data` field is silently ignored for `start` /
+/// `cancel` (defensive against AI clients that send a uniform
+/// envelope).
+fn parse_composition_invoke_json(value: &serde_json::Value) -> Option<CompositionAction> {
+    let obj = value.as_object()?;
+    let action = obj.get("action")?.as_str()?;
+    match action {
+        "start" => Some(CompositionAction::Start),
+        "update" => {
+            let data = obj.get("data")?.as_str()?.to_string();
+            Some(CompositionAction::Update(data))
+        }
+        "end" => {
+            let data = obj.get("data")?.as_str()?.to_string();
+            Some(CompositionAction::End(data))
+        }
+        "cancel" => Some(CompositionAction::Cancel),
+        _ => None,
+    }
 }
 
 /// External-introspect [`InvokeError::Rejected`] guard. Lowercase /
@@ -1575,17 +1723,21 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_six_slots() {
+    fn external_schema_declares_eight_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
         // R56.1.f.3 grew the surface: + selection (W3C
         // selectionStart/End Json mirror).
+        // R56.1.g.2 grew the surface: + preedit (W3C CompositionEvent
+        // .data mirror) + composition (W3C CompositionEvent action
+        // dispatch surface).
         // The schema shape is stable across bare and wired-up
-        // TextFields — text/caret/selection queries return None /
-        // intervene returns ReadOnly when no TextEditState is
+        // TextFields — text/caret/selection/preedit queries return
+        // None / intervene returns ReadOnly when no TextEditState is
         // attached; the key invoke returns `Bool(false)` for bare
-        // TextFields.
+        // TextFields; the composition invoke still drives SCXML for
+        // bare TextFields.
         let tfx = TextFieldExternal::new();
         let schema = tfx.schema();
         assert_eq!(
@@ -1595,8 +1747,10 @@ mod tests {
                 ("text", "string"),
                 ("caret", "number"),
                 ("selection", "object"),
+                ("preedit", "string"),
                 ("send", "string"),
                 ("key", "string"),
+                ("composition", "string"),
             ],
         );
     }
@@ -4094,6 +4248,319 @@ mod r56_1_g_tests {
         tf.send(TextFieldEvent::BeginEdit);
         tf.send(TextFieldEvent::CommitEdit);
         assert_eq!(tf.state(), TextFieldState::Focused);
+    }
+}
+
+#[cfg(test)]
+mod r56_1_g_2_tests {
+    //! R56.1.g.2 §5.38 §5.22 — RPC `preedit` query/intervene slot +
+    //! `composition` invoke slot. Pins the AI-first introspection
+    //! surface for the W3C `CompositionEvent` lifecycle ([[w3c-
+    //! composition-event-shape]]) and the
+    //! [[rpc-introspect-pair-complete]] contract that every state
+    //! axis has both read and write wires.
+
+    use super::{TextFieldEvent, TextFieldExternal, TextFieldState};
+    use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    fn focused_external_with_state() -> (TextFieldExternal, Rc<TextEditState>) {
+        let state = Rc::new(TextEditState::with_initial(String::new()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.send(TextFieldEvent::Focus);
+        (tfx, state)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Schema
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_2_schema_contains_preedit_and_composition_slots() {
+        let tfx = TextFieldExternal::new();
+        let schema = tfx.schema();
+        let names: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"preedit"));
+        assert!(names.contains(&"composition"));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // query("preedit")
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_2_query_preedit_returns_null_when_not_composing() {
+        let (tfx, _state) = focused_external_with_state();
+        assert_eq!(tfx.query("preedit").unwrap(), IntrospectValue::Null);
+    }
+
+    #[test]
+    fn r56_1_g_2_query_preedit_returns_text_while_composing() {
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("hello");
+        assert_eq!(
+            tfx.query("preedit").unwrap(),
+            IntrospectValue::Text("hello".to_string()),
+        );
+    }
+
+    #[test]
+    fn r56_1_g_2_query_preedit_returns_empty_text_after_start_before_update() {
+        // compositionstart-before-compositionupdate: preedit is
+        // Some(String::new()) — empty Text.
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        assert_eq!(
+            tfx.query("preedit").unwrap(),
+            IntrospectValue::Text(String::new()),
+        );
+    }
+
+    #[test]
+    fn r56_1_g_2_query_preedit_returns_none_on_bare_external() {
+        let tfx = TextFieldExternal::new();
+        assert_eq!(tfx.query("preedit"), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // intervene("preedit", ...)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_2_intervene_preedit_text_auto_starts_composition() {
+        // Substrate idempotence: preedit_start no-ops if already
+        // composing; preedit_update sets the buffer. Net effect:
+        // intervene with Text auto-starts then sets.
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.intervene("preedit", IntrospectValue::Text("hi".to_string()))
+            .unwrap();
+        assert_eq!(state.preedit(), Some("hi".to_string()));
+        assert!(state.is_composing());
+    }
+
+    #[test]
+    fn r56_1_g_2_intervene_preedit_text_updates_when_already_composing() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.intervene("preedit", IntrospectValue::Text("a".to_string()))
+            .unwrap();
+        tfx.intervene("preedit", IntrospectValue::Text("ab".to_string()))
+            .unwrap();
+        assert_eq!(state.preedit(), Some("ab".to_string()));
+    }
+
+    #[test]
+    fn r56_1_g_2_intervene_preedit_null_cancels_composition() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("xyz");
+        tfx.intervene("preedit", IntrospectValue::Null).unwrap();
+        assert_eq!(state.preedit(), None);
+        assert_eq!(state.text(), "", "no insertion on Null intervene");
+    }
+
+    #[test]
+    fn r56_1_g_2_intervene_preedit_keeps_scxml_state_stable() {
+        // intervene does NOT drive SCXML (no BeginEdit / CancelEdit
+        // — applications that need the transition use the
+        // `composition` invoke surface). State stays Focused after
+        // a Text intervene from Focused.
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.intervene("preedit", IntrospectValue::Text("hi".to_string()))
+            .unwrap();
+        assert_eq!(tfx.state(), TextFieldState::Focused);
+    }
+
+    #[test]
+    fn r56_1_g_2_intervene_preedit_json_returns_type_mismatch() {
+        let (mut tfx, _state) = focused_external_with_state();
+        let err = tfx
+            .intervene("preedit", IntrospectValue::Json(serde_json::json!({})))
+            .unwrap_err();
+        assert!(matches!(err, InterveneError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_g_2_intervene_preedit_int_returns_type_mismatch() {
+        let (mut tfx, _state) = focused_external_with_state();
+        let err = tfx
+            .intervene("preedit", IntrospectValue::Int(42))
+            .unwrap_err();
+        assert!(matches!(err, InterveneError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_g_2_intervene_preedit_on_bare_external_returns_read_only() {
+        let mut tfx = TextFieldExternal::new();
+        let err = tfx
+            .intervene("preedit", IntrospectValue::Text("hi".to_string()))
+            .unwrap_err();
+        assert!(matches!(err, InterveneError::ReadOnly));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // invoke("composition", ...)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_start_drives_begin_edit() {
+        let (mut tfx, state) = focused_external_with_state();
+        let result = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Json(serde_json::json!({"action": "start"})),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Text("Editing".to_string()));
+        assert!(state.is_composing());
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_update_sets_preedit() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.invoke(
+            "composition",
+            IntrospectValue::Json(serde_json::json!({"action": "start"})),
+        )
+        .unwrap();
+        tfx.invoke(
+            "composition",
+            IntrospectValue::Json(
+                serde_json::json!({"action": "update", "data": "hi"}),
+            ),
+        )
+        .unwrap();
+        assert_eq!(state.preedit(), Some("hi".to_string()));
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_end_commits_and_returns_focused() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("ㅎ");
+        let result = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Json(
+                    serde_json::json!({"action": "end", "data": "한"}),
+                ),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Text("Focused".to_string()));
+        assert_eq!(state.text(), "한");
+        assert_eq!(state.preedit(), None);
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_end_empty_data_clears_without_insert() {
+        // cancel-shape compositionend: data: "" clears preedit, no
+        // text inserted, SCXML transitions to Focused, no intent.
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("hi");
+        let result = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Json(
+                    serde_json::json!({"action": "end", "data": ""}),
+                ),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Text("Focused".to_string()));
+        assert_eq!(state.text(), "");
+        assert_eq!(state.preedit(), None);
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_cancel_clears_preedit() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("hi");
+        let result = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Json(serde_json::json!({"action": "cancel"})),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Text("Focused".to_string()));
+        assert_eq!(state.preedit(), None);
+        assert_eq!(state.text(), "", "no insertion on cancel");
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_bogus_action_returns_type_mismatch() {
+        let (mut tfx, _state) = focused_external_with_state();
+        let err = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Json(serde_json::json!({"action": "bogus"})),
+            )
+            .unwrap_err();
+        assert!(matches!(err, InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_update_missing_data_returns_type_mismatch() {
+        let (mut tfx, _state) = focused_external_with_state();
+        let err = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Json(serde_json::json!({"action": "update"})),
+            )
+            .unwrap_err();
+        assert!(matches!(err, InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_end_missing_data_returns_type_mismatch() {
+        let (mut tfx, _state) = focused_external_with_state();
+        let err = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Json(serde_json::json!({"action": "end"})),
+            )
+            .unwrap_err();
+        assert!(matches!(err, InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_text_args_returns_type_mismatch() {
+        // Action surface is Json-only; Text args rejected so the
+        // wire shape stays strict.
+        let (mut tfx, _state) = focused_external_with_state();
+        let err = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Text("start".to_string()),
+            )
+            .unwrap_err();
+        assert!(matches!(err, InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_composition_on_bare_external_drives_scxml() {
+        // No attached TextEditState: composition invoke still drives
+        // SCXML so AI client can observe state transitions.
+        let mut tfx = TextFieldExternal::new();
+        tfx.send(TextFieldEvent::Focus);
+        let result = tfx
+            .invoke(
+                "composition",
+                IntrospectValue::Json(serde_json::json!({"action": "start"})),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Text("Editing".to_string()));
+    }
+
+    #[test]
+    fn r56_1_g_2_invoke_unknown_path_returns_unknown_path() {
+        let (mut tfx, _state) = focused_external_with_state();
+        let err = tfx
+            .invoke("bogus_method", IntrospectValue::Null)
+            .unwrap_err();
+        assert!(matches!(err, InvokeError::UnknownPath));
     }
 }
 
