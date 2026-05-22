@@ -3627,6 +3627,8 @@ fn create_external() -> Box<dyn External> {
 - R55.D.1: scrollbar_thumb_rect closed-form 헬퍼 land — 통계/SCXML/입력 라우팅은 R55.D.2/3 carry
 - R57.X.scrollbar: shell substrate re-runs V::view + compute_layout same-frame when scroll_dirty=true.
 - R57.X.scrollbar: set_max returns dirty bool (revision delta, post equality-skip).
+- pinion-tui has no compute_layout in compute_paint_scene; future TUI scrollbar warmup is axis carry.
+- ScrollState::set_max single bool API: #[allow(must_use_candidate)] is the textbook trade-off.
 
 
 
@@ -17262,6 +17264,31 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - option D: ScrollState::set_max init_max + set_max API 분리.
 - option C: R57.X.listbox 첫 retrofit (intent_tag! 2nd consumer).
 - R57.X.* 6 widget retrofit cascade (textfield, button, checkbox, radio, slider 남음).
+
+
+
+### Round 576 — R57.X.scrollbar-tui-audit §5.45 — pinion-tui 의 compute_layout 부재 비대칭 + ScrollState::set_max 단일 bool API 의 textbook trade-off 명시 (split API 는 surface 증가).
+
+**Changes**:
+- §5.45 caveat: pinion-tui 는 compute_paint_scene 에서 compute_layout 호출 없음 (axis carry).
+- §5.45 caveat: ScrollState::set_max 단일 bool API + #[allow(must_use_candidate)] = textbook trade-off.
+- Option B audit: 4 TUI 바이너리 모두 scrollbar consumer 부재; parity fix 불필요.
+
+
+
+**Verification**:
+- grep pinion-tui src for compute_layout = 0 매치 (실제 호출 site).
+- grep examples for hello-*-tui scrollbar consumer = 0 매치.
+- mnemosyne validate clean post-mutation (entries=440 / sections=61).
+
+
+
+**Impact**: §5.45
+
+
+**Carry forward**:
+- Future TUI scrollbar 위젯 consumer 시 pinion-tui compute_layout 통합 필요.
+- R57.X.listbox theme retrofit (option C, 2nd intent_tag! consumer).
 
 
 

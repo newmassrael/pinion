@@ -568,3 +568,12 @@ reason = "R57.X.intent-tag-macro audit half authored minimal ASCII per [[mnemosy
 applied_in = "Round 575"
 content_hash_before = "b3ae2fa39611fd610e435a3bf48e3c5eee24cdc4046590451920527e0fd71a93"
 content_hash_after = "aff788218a79ee9ec9121abfdd7e6a6fa80dd4dd7e1a362b027f47442fcde384"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 576"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R57.X.scrollbar-tui-audit audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs and Korean prose."
+applied_in = "Round 576"
+content_hash_before = "69f8c688c6e7a9c1154923cf26140787aa116ede3051c546c467cddf98a83108"
+content_hash_after = "ae9c30ea521fe7553a46bdaf3826392b7e2332c9981cff64f3fe3b5ec21538f5"
