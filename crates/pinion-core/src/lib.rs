@@ -4,6 +4,7 @@ pub mod command;
 pub mod event;
 pub mod external;
 pub mod frame;
+pub mod input;
 pub mod intent;
 pub mod reactive;
 pub mod renderer;
@@ -33,6 +34,7 @@ pub use renderer::WidgetRenderer;
 pub use external::External;
 pub use widget_core::WidgetCore;
 pub use frame::Frame;
+pub use input::Modifiers;
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
     Computed, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner, Owner,

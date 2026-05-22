@@ -281,7 +281,7 @@ impl WidgetCore for HelloTextFieldTui {
     /// (the TUI shell passes `Some(V::tag())` unconditionally, so
     /// the gate is currently a no-op but stays in place for the
     /// future TUI [`FocusManager`] axis).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(TF_TAG) {
             return false;
         }

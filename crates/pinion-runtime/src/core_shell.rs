@@ -743,10 +743,20 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `focused` carries the focus manager's currently-focused tag —
     /// the Vello shell passes `self.focus.focused()`; the TUI shell
     /// (single-widget today) passes `Some(V::tag())`.
+    ///
+    /// `modifiers` carries the W3C `KeyboardEvent` four-bit modifier
+    /// surface (R56.1.f.0 §5.13). The Vello shell sources it from the
+    /// `ShellCore::modifiers` cache (refreshed on every winit
+    /// `ModifiersChanged`); the TUI shell converts from crossterm's
+    /// `KeyModifiers` at the input bridge; the RPC dispatch path
+    /// supplies a caller-specified value (defaulting to
+    /// [`Modifiers::empty`](pinion_core::input::Modifiers::empty)
+    /// when the legacy no-modifier shape is used).
     pub fn apply_key(
         &mut self,
         focused: Option<&str>,
         key: &str,
+        modifiers: pinion_core::Modifiers,
     ) -> Option<DispatchTail<V::State>> {
         // R51.152 §5.22 — wrap `V::apply_key` in
         // `root_owner.run(...)` so [`pinion_core::Owner::current`]
@@ -760,7 +770,7 @@ impl<V: WidgetCore> CoreShell<V> {
         // `self.scene` while the owner field stays untouched.
         let owner = self.root_owner.clone();
         let scene = &mut self.scene;
-        let handled = owner.run(|| V::apply_key(scene, focused, key));
+        let handled = owner.run(|| V::apply_key(scene, focused, key, modifiers));
         if handled {
             Some(self.tail())
         } else {
@@ -984,7 +994,7 @@ mod tests {
         // `WidgetCore::apply_key` reports `false`. ArrowLeft is not
         // a Button keybinding and `apply_aria_activate` rejects it.
         let mut core: CoreShell<TestButton> = CoreShell::new();
-        assert!(core.apply_key(Some("test_btn"), "ArrowLeft").is_none());
+        assert!(core.apply_key(Some("test_btn"), "ArrowLeft", pinion_core::Modifiers::empty()).is_none());
         assert_eq!(*core.cached_state(), ButtonState::Idle);
     }
 
@@ -995,7 +1005,7 @@ mod tests {
         // emitting a `click` intent. State stays Idle (KeyboardActivate
         // is an internal SCXML transition).
         let mut core: CoreShell<TestButton> = CoreShell::new();
-        let Some(tail) = core.apply_key(Some("test_btn"), "Space") else {
+        let Some(tail) = core.apply_key(Some("test_btn"), "Space", pinion_core::Modifiers::empty()) else {
             panic!("apply_key must return Some for handled Space");
         };
         assert_eq!(tail.intents.len(), 1);
@@ -1009,8 +1019,8 @@ mod tests {
         // dispatch. Substrate observes this as `None` and the
         // backend wrapper skips its post-handle bookkeeping.
         let mut core: CoreShell<TestButton> = CoreShell::new();
-        assert!(core.apply_key(Some("other_widget"), "Space").is_none());
-        assert!(core.apply_key(None, "Space").is_none());
+        assert!(core.apply_key(Some("other_widget"), "Space", pinion_core::Modifiers::empty()).is_none());
+        assert!(core.apply_key(None, "Space", pinion_core::Modifiers::empty()).is_none());
     }
 
     #[test]
@@ -1321,7 +1331,7 @@ mod tests {
         let mut core: CoreShell<TestButton> = CoreShell::new();
         // Pre-apply: no active wrap.
         assert!(pinion_core::Owner::current().is_none());
-        let _ = core.apply_key(Some("test_btn"), "Space");
+        let _ = core.apply_key(Some("test_btn"), "Space", pinion_core::Modifiers::empty());
         // Post-apply: wrap popped.
         assert!(
             pinion_core::Owner::current().is_none(),

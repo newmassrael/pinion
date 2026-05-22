@@ -292,12 +292,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// so the widget's focus-gated `apply_key` impl recognises
     /// itself as the activation target. The TUI `FocusManager`
     /// axis (carry) lifts this constant.
-    pub fn dispatch_key(&mut self, key_str: &str) -> bool {
+    pub fn dispatch_key(&mut self, key_str: &str, modifiers: pinion_core::Modifiers) -> bool {
         if let Some(event) = V::keybinding(key_str) {
             let tail = self.core.forward(event);
             return self.handle_tail(&tail);
         }
-        if let Some(tail) = self.core.apply_key(Some(V::tag()), key_str) {
+        if let Some(tail) = self.core.apply_key(Some(V::tag()), key_str, modifiers) {
             return self.handle_tail(&tail);
         }
         // R51.187 §5.45 R55.C.3 — widget reported the key
@@ -574,7 +574,7 @@ mod tests {
         // activate edge.
         let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
         let _ = buf(40, 10);
-        let visible_change = core.dispatch_key("Space");
+        let visible_change = core.dispatch_key("Space", pinion_core::Modifiers::empty());
         assert!(!visible_change, "Idle → Idle internal transition");
         assert_eq!(*core.cached_state(), ButtonState::Idle);
     }
@@ -607,9 +607,9 @@ mod tests {
         // to Disabled. `dispatch_key` returns `true` because the
         // visible state actually transitioned.
         let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-        assert!(core.dispatch_key("d"));
+        assert!(core.dispatch_key("d", pinion_core::Modifiers::empty()));
         assert_eq!(*core.cached_state(), ButtonState::Disabled);
-        assert!(core.dispatch_key("e"));
+        assert!(core.dispatch_key("e", pinion_core::Modifiers::empty()));
         assert_eq!(*core.cached_state(), ButtonState::Idle);
     }
 
@@ -618,7 +618,7 @@ mod tests {
         // R51.117 / R51.124 — unknown key returns false (caller
         // skips the repaint cycle). State unchanged.
         let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
-        assert!(!core.dispatch_key("ArrowLeft"));
+        assert!(!core.dispatch_key("ArrowLeft", pinion_core::Modifiers::empty()));
         assert_eq!(*core.cached_state(), ButtonState::Idle);
     }
 
@@ -721,7 +721,7 @@ mod tests {
         let buf = SharedBuffer(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
         let mut core: ShellCoreTui<TestButtonView> =
             ShellCoreTui::new().with_log_sink(Box::new(buf.clone()));
-        let visible_change = core.dispatch_key("Space");
+        let visible_change = core.dispatch_key("Space", pinion_core::Modifiers::empty());
         assert!(!visible_change);
         let captured = {
             let guard = buf.0.lock().unwrap();
@@ -912,7 +912,12 @@ mod tests {
             fn title() -> &'static str {
                 "owner-observing"
             }
-            fn apply_key(_scene: &mut Scene, _focused: Option<&str>, _key: &str) -> bool {
+            fn apply_key(
+                _scene: &mut Scene,
+                _focused: Option<&str>,
+                _key: &str,
+                _modifiers: pinion_core::Modifiers,
+            ) -> bool {
                 false
             }
         }
@@ -1073,7 +1078,7 @@ mod tests {
             // Trigger any dispatch arm — `d` keybinding fires the
             // Disable event on TestButton which routes through
             // forward → handle_tail → dispatch_pending_commands.
-            let _ = core.dispatch_key("d");
+            let _ = core.dispatch_key("d", pinion_core::Modifiers::empty());
 
             assert!(core.root_owner().pending_commands().is_empty());
             let drained = sink.drain();
@@ -1093,7 +1098,7 @@ mod tests {
                 IntrospectValue::Null,
                 scope_id,
             ));
-            let _ = core.dispatch_key("d");
+            let _ = core.dispatch_key("d", pinion_core::Modifiers::empty());
 
             assert!(core.root_owner().pending_commands().is_empty());
             assert!(sink.is_empty(), "unregistered → sink stays empty");
@@ -1129,7 +1134,7 @@ mod tests {
                 IntrospectValue::Null,
                 scope_id,
             ));
-            let _ = core.dispatch_key("d");
+            let _ = core.dispatch_key("d", pinion_core::Modifiers::empty());
             assert_eq!(
                 core.root_owner().pending_commands().len(),
                 1,

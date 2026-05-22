@@ -293,7 +293,7 @@ impl WidgetCore for SliderView {
     /// `intervene("value", Float)` — the same side door the RPC
     /// `scene/intervene` route uses, so the AI client observes
     /// keyboard mutations identically to drag-driven mutations.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(Self::tag()) {
             return false;
         }
@@ -415,56 +415,56 @@ mod tests {
     #[test]
     fn arrow_right_increments_by_small_step() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.55).abs() < 1e-5);
     }
 
     #[test]
     fn arrow_left_decrements_by_small_step() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowLeft"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowLeft", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.45).abs() < 1e-5);
     }
 
     #[test]
     fn arrow_up_aliases_arrow_right() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowUp"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowUp", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.55).abs() < 1e-5);
     }
 
     #[test]
     fn arrow_down_aliases_arrow_left() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowDown"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowDown", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.45).abs() < 1e-5);
     }
 
     #[test]
     fn home_jumps_to_minimum() {
         let mut scene = scene_at(0.7);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "Home"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "Home", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.0).abs() < 1e-5);
     }
 
     #[test]
     fn end_jumps_to_maximum() {
         let mut scene = scene_at(0.3);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "End"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "End", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 1.0).abs() < 1e-5);
     }
 
     #[test]
     fn page_up_increments_by_large_step() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "PageUp"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "PageUp", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.60).abs() < 1e-5);
     }
 
     #[test]
     fn page_down_decrements_by_large_step() {
         let mut scene = scene_at(0.5);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "PageDown"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "PageDown", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.40).abs() < 1e-5);
     }
 
@@ -474,14 +474,14 @@ mod tests {
         // ARIA: handled (consumed key) even when the result is the
         // same value — analogous to a browser's Slider keyboard
         // dispatcher returning a stateful event.
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowLeft"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowLeft", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.0).abs() < 1e-5);
     }
 
     #[test]
     fn arrow_right_clamps_at_maximum() {
         let mut scene = scene_at(1.0);
-        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight"));
+        assert!(SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 1.0).abs() < 1e-5);
     }
 
@@ -497,14 +497,14 @@ mod tests {
                 .expect("Disable invoke succeeds");
         }
         // ARIA: a disabled slider does not consume keyboard input.
-        assert!(!SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight"));
+        assert!(!SliderView::apply_key(&mut scene, Some("main_slider"), "ArrowRight", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 
     #[test]
     fn unknown_key_returns_false() {
         let mut scene = scene_at(0.5);
-        assert!(!SliderView::apply_key(&mut scene, Some("main_slider"), "F1"));
+        assert!(!SliderView::apply_key(&mut scene, Some("main_slider"), "F1", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 
@@ -515,7 +515,7 @@ mod tests {
         // `FocusManager::focused()` returns `None` between Tab
         // boundaries; the slider must stay silent.
         let mut scene = scene_at(0.5);
-        assert!(!SliderView::apply_key(&mut scene, None, "ArrowRight"));
+        assert!(!SliderView::apply_key(&mut scene, None, "ArrowRight", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 
@@ -528,7 +528,7 @@ mod tests {
             &mut scene,
             Some("save_btn"),
             "ArrowRight"
-        ));
+        , pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 }

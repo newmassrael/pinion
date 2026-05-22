@@ -194,7 +194,7 @@ impl WidgetCore for HelloToggleTui {
     /// `Enter` flip Off ↔ On (toggle buttons accept both; pure ARIA
     /// checkboxes accept only `Space` — Toggle is a toggle button
     /// per WAI-ARIA APG so both keys land here).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }

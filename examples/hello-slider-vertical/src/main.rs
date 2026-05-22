@@ -253,7 +253,7 @@ impl WidgetCore for SliderVerticalView {
     /// branch on `aria-orientation` to decide the activation
     /// direction. Disabled state ignores keyboard input per the
     /// same ARIA contract.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(Self::tag()) {
             return false;
         }
@@ -372,28 +372,28 @@ mod tests {
     #[test]
     fn vertical_arrow_up_increments() {
         let mut scene = scene_at(0.5);
-        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "ArrowUp"));
+        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "ArrowUp", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.55).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_arrow_down_decrements() {
         let mut scene = scene_at(0.5);
-        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "ArrowDown"));
+        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "ArrowDown", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.45).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_home_jumps_to_minimum() {
         let mut scene = scene_at(0.7);
-        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "Home"));
+        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "Home", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.0).abs() < 1e-5);
     }
 
     #[test]
     fn vertical_end_jumps_to_maximum() {
         let mut scene = scene_at(0.3);
-        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "End"));
+        assert!(SliderVerticalView::apply_key(&mut scene, Some("main_slider"), "End", pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 1.0).abs() < 1e-5);
     }
 
@@ -423,7 +423,7 @@ mod tests {
             &mut scene,
             None,
             "ArrowUp"
-        ));
+        , pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 
@@ -434,7 +434,7 @@ mod tests {
             &mut scene,
             Some("save_btn"),
             "ArrowUp"
-        ));
+        , pinion_core::Modifiers::empty()));
         assert!((current_value(&scene) - 0.5).abs() < 1e-5);
     }
 }

@@ -256,6 +256,17 @@ pub trait WidgetCore: 'static {
     /// (every keypress fires every widget's `apply_key`) caused
     /// aliasing with multiple focusable widgets on screen.
     ///
+    /// `modifiers` carries the W3C `KeyboardEvent` four-bit modifier
+    /// surface (`shiftKey` / `ctrlKey` / `altKey` / `metaKey`) at
+    /// dispatch time (R56.1.f.0 §5.13). Widgets with modifier-aware
+    /// keyboard affordances — `TextField` Shift+Arrow selection
+    /// extension, future Ctrl+A select-all, Ctrl+C / Ctrl+V clipboard
+    /// — branch on the bits; widgets without modifier semantics
+    /// ignore the parameter (`_modifiers` is the canonical no-op).
+    /// Shell-reserved modifier shortcuts (`Shift+Tab` reverse focus,
+    /// `Ctrl+Q` / platform-quit) are consumed upstream and do not
+    /// reach this hook.
+    ///
     /// Implementations receive the authoritative state scene `&mut`
     /// and may walk it to the matching `Scene::External` to call
     /// [`ExternalIntrospect::intervene`](crate::external::ExternalIntrospect::intervene)
@@ -269,7 +280,12 @@ pub trait WidgetCore: 'static {
     /// Default returns `false` for every key — widgets without
     /// keyboard affordances beyond `keybinding` need no override.
     #[must_use]
-    fn apply_key(_scene: &mut Scene, _focused: Option<&str>, _key: &str) -> bool {
+    fn apply_key(
+        _scene: &mut Scene,
+        _focused: Option<&str>,
+        _key: &str,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
         false
     }
 

@@ -256,7 +256,7 @@ impl WidgetCore for HelloButtonTui {
     /// SCXML event; `Button::detect` emits a `"click"` intent the
     /// shell logs to stderr. `Disabled` ignores activation per the
     /// ARIA spec (the SCXML transition is absent from that state).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }

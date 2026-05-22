@@ -10380,6 +10380,39 @@ if __name__ == "__main__":
 
 
 
+### R56.1.f.0 — R56.1.f.0 §5.13 — apply_key W3C 4-bit modifier surface (shift/ctrl/alt/meta) lifted into pinion-core so WidgetCore::apply_key carries it end-to-end. Substrate prep for R56.1.f text selection.
+
+**Changes**:
+- `pinion_core::input::Modifiers` — new module (W3C `shift`/`ctrl`/`alt`/`meta` + `is_empty`).
+- `pinion_runtime::input` drops local `Modifiers`; re-exports `pinion_core::Modifiers`.
+- `WidgetCore::apply_key` widened to `(scene, focused, key, modifiers)`; default impl no-op.
+- `CoreShell::apply_key` forwards the modifier into the `root_owner.run` V::apply_key wrap.
+- `ShellSubstrate::apply_key` sources `self.modifiers`; `apply_a11y_key` uses `empty()`.
+- `ShellCoreTui::dispatch_key` widened; crossterm bridge via `modifiers_from_crossterm`.
+- `widgets::text_field::apply_key` free fn widened; `invoke("key")` accepts Text + Json.
+- Json shape mirrors W3C `KeyboardEvent` (bool slots; missing key → TypeMismatch).
+- 17 V impls + 32 direct callers updated (examples, pinion-core + pinion-shell tests).
+
+
+
+**Verification**:
+- cargo test workspace vello: 2510 pass / 0 fail / 13 ignored (+11 vs R56.1.b.1.tui).
+- cargo clippy workspace all-targets vello: 0 warnings under strict pedantic baseline.
+- mnemosyne validate-workspace: T1 0 / T3 0 / round-trip 1/1 / GENERATED.md sync.
+- 11/11 prior demos PASS — Modifiers::empty forwarding preserves R56.1.d wire shape.
+
+
+
+**Impact**: §5.13, §5.41, §5.45, §5.38, §5.22
+
+
+**Carry forward**:
+- R56.1.f.1 TextEditState selection_anchor sidecar + selection-aware mutators.
+- R56.1.f.2 apply_key Shift-prefix to select_X plus printable insert replaces selection.
+- R56.1.f.3 RPC selection introspect slot + hello-textfield Vello and TUI selection overlay.
+
+
+
 ### R56.1.h — R56.1.h §5.38 §5.39 §5.28 — TextField focus lifecycle wire: shell focus mgr ↔ External::on_focus_change ↔ TextField Focus/Blur statechart drive ↔ CaretBlink sync.
 
 **Changes**:

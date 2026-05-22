@@ -150,6 +150,13 @@ pub fn caret_rect(
 /// [`WidgetCore::apply_key`](crate::widget_core::WidgetCore::apply_key))
 /// to caret-relative edit operations on the attached state.
 ///
+/// R56.1.f.0 §5.13 — `modifiers` carries the W3C `KeyboardEvent`
+/// four-bit modifier surface. On R56.1.d every recognized key
+/// branch ignores the parameter (the canonical no-modifier
+/// `Backspace` / `ArrowLeft` / printable-char dispatch); R56.1.f
+/// layers selection-extension semantics on top by branching on
+/// [`Modifiers::shift_key`] inside the arrow / Home / End arms.
+///
 /// Pure function: no statechart drive, no [`Owner`](crate::reactive::Owner)
 /// access, no IME composition path. Focus/blur statechart drive +
 /// caret-blink lifecycle land with the R56.1.h follow-up; IME
@@ -221,7 +228,11 @@ pub fn caret_rect(
 /// CJK ideographs (already-composed) insert correctly via the
 /// printable-char branch.
 #[must_use]
-pub fn apply_key(state: &TextEditState, key: &str) -> bool {
+pub fn apply_key(
+    state: &TextEditState,
+    key: &str,
+    _modifiers: crate::input::Modifiers,
+) -> bool {
     match key {
         "Backspace" => {
             state.backspace();
@@ -810,19 +821,32 @@ impl ExternalIntrospect for TextFieldExternal {
             // did not interact with the field). Bare `TextField`s
             // (no attached blink) silently no-op via
             // [`Option::map`].
+            //
+            // R56.1.f.0 §5.13 — two args shapes for backward + modifier-
+            // aware dispatch:
+            //
+            // - [`IntrospectValue::Text`]`(key)`: no-modifier dispatch
+            //   (W3C `KeyboardEvent.key` with empty modifier surface).
+            //   Backward-compat with the R56.1.d wire-shape.
+            // - [`IntrospectValue::Json`]`({"key": ..., "shift": ..., ...})`:
+            //   modifier-aware dispatch. Each `"shift"` / `"ctrl"` /
+            //   `"alt"` / `"meta"` field is an optional bool (`false`
+            //   by default). The W3C `KeyboardEvent` shape mirrored
+            //   verbatim so RPC clients structured as W3C event
+            //   serialisers route through one call site.
+            //
+            // Other variants → `TypeMismatch` per the consistent
+            // arg-shape rejection discipline.
             "key" => match args {
-                IntrospectValue::Text(ref key_str) => {
-                    let handled = match self.text_state() {
-                        Some(state) => apply_key(state.as_ref(), key_str),
-                        None => false,
-                    };
-                    if handled {
-                        if let Some(blink) = self.em.inner.blink() {
-                            blink.reset();
-                        }
-                    }
-                    Ok(IntrospectValue::Bool(handled))
-                }
+                IntrospectValue::Text(ref key_str) => Ok(IntrospectValue::Bool(
+                    self.dispatch_key(key_str, crate::input::Modifiers::empty()),
+                )),
+                IntrospectValue::Json(ref obj) => match parse_key_invoke_json(obj) {
+                    Some((key_str, modifiers)) => Ok(IntrospectValue::Bool(
+                        self.dispatch_key(&key_str, modifiers),
+                    )),
+                    None => Err(InvokeError::TypeMismatch),
+                },
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
@@ -837,6 +861,72 @@ fn text_field_state_name(state: TextFieldState) -> &'static str {
         TextFieldState::Editing => "Editing",
         TextFieldState::Disabled => "Disabled",
     }
+}
+
+impl TextFieldExternal {
+    /// R56.1.f.0 §5.13 — single dispatch site shared by the
+    /// `IntrospectValue::Text` (no-modifier) and `IntrospectValue::Json`
+    /// (modifier-aware) arms of `invoke("key", ...)`. Forwards into
+    /// the closed-form [`apply_key`] free fn, then resets the attached
+    /// [`CaretBlink`] (R56.1.j) on recognized keys so the caret stays
+    /// solid while the user is interacting.
+    ///
+    /// Returns the `apply_key` recognition result verbatim — the RPC
+    /// `Bool(true)` / `Bool(false)` payload AI clients gate
+    /// `defaultPrevented`-style branching on.
+    fn dispatch_key(&mut self, key_str: &str, modifiers: crate::input::Modifiers) -> bool {
+        let handled = match self.text_state() {
+            Some(state) => apply_key(state.as_ref(), key_str, modifiers),
+            None => false,
+        };
+        if handled {
+            if let Some(blink) = self.em.inner.blink() {
+                blink.reset();
+            }
+        }
+        handled
+    }
+}
+
+/// R56.1.f.0 §5.13 — extract the `(key, modifiers)` payload from a
+/// JSON object argument to `invoke("key", ...)`. The wire shape
+/// mirrors the W3C `KeyboardEvent` modifier surface so RPC clients
+/// constructed as direct W3C event serialisers route through one
+/// call site:
+///
+/// ```json
+/// {
+///   "key":   "ArrowLeft",   // required, W3C KeyboardEvent.key
+///   "shift": true,          // optional, defaults to false
+///   "ctrl":  false,         // optional, defaults to false
+///   "alt":   false,         // optional, defaults to false
+///   "meta":  false          // optional, defaults to false
+/// }
+/// ```
+///
+/// Returns `None` if the JSON is not an object, if `"key"` is missing
+/// or not a string, or if any modifier field is present but not a
+/// boolean (defensive against silently coercing `0`/`1`/`"true"` —
+/// the W3C shape is strictly boolean and the RPC discipline mirrors
+/// that strictly to surface client-side encoder bugs early).
+fn parse_key_invoke_json(
+    value: &serde_json::Value,
+) -> Option<(String, crate::input::Modifiers)> {
+    let obj = value.as_object()?;
+    let key_str = obj.get("key")?.as_str()?.to_string();
+    let modifier_bit = |name: &str| -> Option<bool> {
+        match obj.get(name) {
+            None => Some(false),
+            Some(v) => v.as_bool(),
+        }
+    };
+    let modifiers = crate::input::Modifiers {
+        shift: modifier_bit("shift")?,
+        ctrl: modifier_bit("ctrl")?,
+        alt: modifier_bit("alt")?,
+        meta: modifier_bit("meta")?,
+    };
+    Some((key_str, modifiers))
 }
 
 /// External-introspect [`InvokeError::Rejected`] guard. Lowercase /
@@ -1520,7 +1610,7 @@ mod r56_1_d_tests {
     fn r56_1_d_backspace_deletes_char_left_of_caret() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(3);
-        assert!(apply_key(&state, "Backspace"));
+        assert!(apply_key(&state, "Backspace", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "ab");
         assert_eq!(state.caret(), 2);
     }
@@ -1531,7 +1621,7 @@ mod r56_1_d_tests {
         // (consumed) even when the visible mutation is a no-op.
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(0);
-        assert!(apply_key(&state, "Backspace"));
+        assert!(apply_key(&state, "Backspace", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "abc");
         assert_eq!(state.caret(), 0);
     }
@@ -1540,7 +1630,7 @@ mod r56_1_d_tests {
     fn r56_1_d_delete_removes_char_at_caret() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(0);
-        assert!(apply_key(&state, "Delete"));
+        assert!(apply_key(&state, "Delete", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "bc");
         assert_eq!(state.caret(), 0);
     }
@@ -1549,7 +1639,7 @@ mod r56_1_d_tests {
     fn r56_1_d_delete_at_end_no_ops_but_returns_handled() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(3);
-        assert!(apply_key(&state, "Delete"));
+        assert!(apply_key(&state, "Delete", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "abc");
     }
 
@@ -1557,7 +1647,7 @@ mod r56_1_d_tests {
     fn r56_1_d_arrow_left_moves_caret_back_one() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(2);
-        assert!(apply_key(&state, "ArrowLeft"));
+        assert!(apply_key(&state, "ArrowLeft", crate::input::Modifiers::empty()));
         assert_eq!(state.caret(), 1);
     }
 
@@ -1565,7 +1655,7 @@ mod r56_1_d_tests {
     fn r56_1_d_arrow_left_at_zero_no_ops_but_returns_handled() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(0);
-        assert!(apply_key(&state, "ArrowLeft"));
+        assert!(apply_key(&state, "ArrowLeft", crate::input::Modifiers::empty()));
         assert_eq!(state.caret(), 0);
     }
 
@@ -1573,7 +1663,7 @@ mod r56_1_d_tests {
     fn r56_1_d_arrow_right_moves_caret_forward_one() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(1);
-        assert!(apply_key(&state, "ArrowRight"));
+        assert!(apply_key(&state, "ArrowRight", crate::input::Modifiers::empty()));
         assert_eq!(state.caret(), 2);
     }
 
@@ -1581,7 +1671,7 @@ mod r56_1_d_tests {
     fn r56_1_d_arrow_right_at_end_no_ops_but_returns_handled() {
         let state = TextEditState::with_initial("abc".to_string());
         state.set_caret(3);
-        assert!(apply_key(&state, "ArrowRight"));
+        assert!(apply_key(&state, "ArrowRight", crate::input::Modifiers::empty()));
         assert_eq!(state.caret(), 3);
     }
 
@@ -1589,7 +1679,7 @@ mod r56_1_d_tests {
     fn r56_1_d_home_moves_caret_to_zero() {
         let state = TextEditState::with_initial("abcdef".to_string());
         state.set_caret(4);
-        assert!(apply_key(&state, "Home"));
+        assert!(apply_key(&state, "Home", crate::input::Modifiers::empty()));
         assert_eq!(state.caret(), 0);
     }
 
@@ -1597,7 +1687,7 @@ mod r56_1_d_tests {
     fn r56_1_d_end_moves_caret_to_text_len() {
         let state = TextEditState::with_initial("abcdef".to_string());
         state.set_caret(2);
-        assert!(apply_key(&state, "End"));
+        assert!(apply_key(&state, "End", crate::input::Modifiers::empty()));
         assert_eq!(state.caret(), 6);
     }
 
@@ -1605,7 +1695,7 @@ mod r56_1_d_tests {
     fn r56_1_d_space_inserts_single_space() {
         let state = TextEditState::with_initial("ab".to_string());
         state.set_caret(2);
-        assert!(apply_key(&state, "Space"));
+        assert!(apply_key(&state, "Space", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "ab ");
         assert_eq!(state.caret(), 3);
     }
@@ -1617,7 +1707,7 @@ mod r56_1_d_tests {
     #[test]
     fn r56_1_d_lowercase_letter_inserts_at_caret() {
         let state = TextEditState::new();
-        assert!(apply_key(&state, "a"));
+        assert!(apply_key(&state, "a", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "a");
         assert_eq!(state.caret(), 1);
     }
@@ -1625,14 +1715,14 @@ mod r56_1_d_tests {
     #[test]
     fn r56_1_d_uppercase_letter_inserts_at_caret() {
         let state = TextEditState::new();
-        assert!(apply_key(&state, "A"));
+        assert!(apply_key(&state, "A", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "A");
     }
 
     #[test]
     fn r56_1_d_digit_inserts_at_caret() {
         let state = TextEditState::new();
-        assert!(apply_key(&state, "7"));
+        assert!(apply_key(&state, "7", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "7");
     }
 
@@ -1641,9 +1731,9 @@ mod r56_1_d_tests {
         // Listbox typeahead rejects non-alphanumeric; text input
         // accepts every non-control codepoint.
         let state = TextEditState::new();
-        assert!(apply_key(&state, "!"));
-        assert!(apply_key(&state, ","));
-        assert!(apply_key(&state, "$"));
+        assert!(apply_key(&state, "!", crate::input::Modifiers::empty()));
+        assert!(apply_key(&state, ",", crate::input::Modifiers::empty()));
+        assert!(apply_key(&state, "$", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "!,$");
     }
 
@@ -1653,7 +1743,7 @@ mod r56_1_d_tests {
         // through the printable-char branch as a single codepoint.
         // Multi-char IME composition results are R56.1.g territory.
         let state = TextEditState::new();
-        assert!(apply_key(&state, "漢"));
+        assert!(apply_key(&state, "漢", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "漢");
         // Caret advances by `s.len()` bytes per R56.1.b
         // TextEditState contract (caret is a UTF-8 byte offset, not
@@ -1668,7 +1758,7 @@ mod r56_1_d_tests {
         // accepts through printable-char branch. Pre-decomposed jamo
         // (multi-codepoint) is R56.1.g IME path. 3-byte UTF-8.
         let state = TextEditState::new();
-        assert!(apply_key(&state, "안"));
+        assert!(apply_key(&state, "안", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "안");
         assert_eq!(state.caret(), 3, "안 = 3 UTF-8 bytes (U+C548)");
     }
@@ -1677,7 +1767,7 @@ mod r56_1_d_tests {
     fn r56_1_d_insert_at_mid_position_splices() {
         let state = TextEditState::with_initial("ac".to_string());
         state.set_caret(1);
-        assert!(apply_key(&state, "b"));
+        assert!(apply_key(&state, "b", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "abc");
         assert_eq!(state.caret(), 2);
     }
@@ -1693,21 +1783,21 @@ mod r56_1_d_tests {
         // through to the focus manager Tab traversal.
         let state = TextEditState::with_initial("abc".to_string());
         let before = (state.text(), state.caret());
-        assert!(!apply_key(&state, "ArrowUp"));
+        assert!(!apply_key(&state, "ArrowUp", crate::input::Modifiers::empty()));
         assert_eq!((state.text(), state.caret()), before);
     }
 
     #[test]
     fn r56_1_d_arrow_down_returns_false_pending_multiline() {
         let state = TextEditState::new();
-        assert!(!apply_key(&state, "ArrowDown"));
+        assert!(!apply_key(&state, "ArrowDown", crate::input::Modifiers::empty()));
     }
 
     #[test]
     fn r56_1_d_page_up_down_return_false() {
         let state = TextEditState::new();
-        assert!(!apply_key(&state, "PageUp"));
-        assert!(!apply_key(&state, "PageDown"));
+        assert!(!apply_key(&state, "PageUp", crate::input::Modifiers::empty()));
+        assert!(!apply_key(&state, "PageDown", crate::input::Modifiers::empty()));
     }
 
     #[test]
@@ -1717,22 +1807,22 @@ mod r56_1_d_tests {
         // upstream anyway — it never reaches apply_key in
         // practice, but the rejection is defensive).
         let state = TextEditState::with_initial("abc".to_string());
-        assert!(!apply_key(&state, "Enter"));
+        assert!(!apply_key(&state, "Enter", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "abc");
     }
 
     #[test]
     fn r56_1_d_function_keys_return_false() {
         let state = TextEditState::new();
-        assert!(!apply_key(&state, "F1"));
-        assert!(!apply_key(&state, "F12"));
+        assert!(!apply_key(&state, "F1", crate::input::Modifiers::empty()));
+        assert!(!apply_key(&state, "F12", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "");
     }
 
     #[test]
     fn r56_1_d_empty_key_returns_false() {
         let state = TextEditState::new();
-        assert!(!apply_key(&state, ""));
+        assert!(!apply_key(&state, "", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "");
     }
 
@@ -1741,8 +1831,8 @@ mod r56_1_d_tests {
         // IME composition multi-char output (R56.1.g territory)
         // flows through the preedit-buffer substrate, not this hook.
         let state = TextEditState::new();
-        assert!(!apply_key(&state, "ab"));
-        assert!(!apply_key(&state, "hello"));
+        assert!(!apply_key(&state, "ab", crate::input::Modifiers::empty()));
+        assert!(!apply_key(&state, "hello", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "");
     }
 
@@ -1752,9 +1842,9 @@ mod r56_1_d_tests {
         // framework converts these to named keys at the input
         // boundary. Defensive rejection.
         let state = TextEditState::new();
-        assert!(!apply_key(&state, "\t"));
-        assert!(!apply_key(&state, "\n"));
-        assert!(!apply_key(&state, "\u{0000}"));
+        assert!(!apply_key(&state, "\t", crate::input::Modifiers::empty()));
+        assert!(!apply_key(&state, "\n", crate::input::Modifiers::empty()));
+        assert!(!apply_key(&state, "\u{0000}", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "");
     }
 
@@ -1905,14 +1995,139 @@ mod r56_1_d_tests {
         );
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // R56.1.f.0 §5.13 — RPC invoke("key", Json {...}) modifier path
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_0_invoke_key_json_no_modifier_handles_recognized_key() {
+        // The JSON shape with default-false modifiers is observably
+        // equivalent to the IntrospectValue::Text(key) shape — both
+        // forward Modifiers::empty() to apply_key. Confirms the Json
+        // arg shape parses correctly when no modifier bit is set.
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state.clone());
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({ "key": "a" })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.text(), "a");
+    }
+
+    #[test]
+    fn r56_1_f_0_invoke_key_json_carries_shift_modifier_through_dispatch() {
+        // R56.1.f.0 substrate verification — the parsed `shift: true`
+        // bit reaches apply_key. R56.1.d's apply_key still ignores
+        // the modifier (no selection semantics yet), so the recognised
+        // result matches the no-modifier path; the visible mutation
+        // also matches (Shift+a is still a single 'a' insert because
+        // the W3C `KeyboardEvent.key` value for shifted-A on US is
+        // "A", not "a" — the RPC client passes the already-shifted
+        // character verbatim). What this test asserts is that the
+        // dispatch round-trip *accepts* the modifier-carrying shape
+        // without parse rejection.
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state.clone());
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key": "ArrowLeft",
+                    "shift": true,
+                })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+    }
+
+    #[test]
+    fn r56_1_f_0_invoke_key_json_carries_all_four_modifier_bits() {
+        // Every W3C `KeyboardEvent` modifier (shift / ctrl / alt /
+        // meta) parses through the Json shape. The dispatch result
+        // gates on key recognition (not modifier presence), so a
+        // recognized key like ArrowLeft round-trips Bool(true).
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key":   "ArrowLeft",
+                    "shift": true,
+                    "ctrl":  true,
+                    "alt":   true,
+                    "meta":  true,
+                })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+    }
+
+    #[test]
+    fn r56_1_f_0_invoke_key_json_missing_key_field_returns_type_mismatch() {
+        // The JSON object MUST carry a "key" string. Defensive
+        // rejection so a buggy RPC client (e.g. one that mis-spells
+        // "key" as "Key") fails loudly rather than silently treating
+        // every keystroke as unrecognized.
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        let r = tfx.invoke(
+            "key",
+            IntrospectValue::Json(serde_json::json!({ "shift": true })),
+        );
+        assert_eq!(r, Err(InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_f_0_invoke_key_json_non_bool_modifier_returns_type_mismatch() {
+        // Modifier fields are strictly boolean — a number, string,
+        // or null in the modifier slot triggers TypeMismatch. The
+        // W3C `KeyboardEvent` modifier surface is strictly boolean,
+        // and the RPC discipline mirrors that strictly (no silent
+        // 0/1/"true" coercion).
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        let r = tfx.invoke(
+            "key",
+            IntrospectValue::Json(serde_json::json!({
+                "key":   "ArrowLeft",
+                "shift": 1,
+            })),
+        );
+        assert_eq!(r, Err(InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_f_0_invoke_key_rejects_non_text_non_json_args() {
+        // The two accepted arg shapes are Text(key) and Json({...}).
+        // Other variants (Int / Bool / Null) trigger TypeMismatch.
+        let mut tfx = TextFieldExternal::new();
+        assert_eq!(
+            tfx.invoke("key", IntrospectValue::Int(0)),
+            Err(InvokeError::TypeMismatch),
+        );
+        assert_eq!(
+            tfx.invoke("key", IntrospectValue::Bool(true)),
+            Err(InvokeError::TypeMismatch),
+        );
+        assert_eq!(
+            tfx.invoke("key", IntrospectValue::Null),
+            Err(InvokeError::TypeMismatch),
+        );
+    }
+
     #[test]
     fn r56_1_d_apply_key_works_on_bare_text_field_via_direct_helper() {
-        // Direct helper API parity — `apply_key(state, key)` works
-        // on any TextEditState handle, independent of whether the
-        // state is attached to a TextField/TextFieldExternal.
+        // Direct helper API parity — `apply_key(state, key, modifiers)`
+        // works on any TextEditState handle, independent of whether
+        // the state is attached to a TextField/TextFieldExternal.
         let state = TextEditState::new();
-        assert!(apply_key(&state, "h"));
-        assert!(apply_key(&state, "i"));
+        let mods = crate::input::Modifiers::empty();
+        assert!(apply_key(&state, "h", mods));
+        assert!(apply_key(&state, "i", mods));
         assert_eq!(state.text(), "hi");
     }
 

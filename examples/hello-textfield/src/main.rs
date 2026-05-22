@@ -458,7 +458,7 @@ impl WidgetCore for TextFieldView {
     /// `hello-listbox`: keys only flow when this widget owns focus,
     /// avoiding the broadcast-to-every-widget aliasing that
     /// pre-R51.x `apply_key` suffered.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(TF_TAG) {
             return false;
         }

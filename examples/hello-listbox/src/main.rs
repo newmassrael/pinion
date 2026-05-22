@@ -590,7 +590,7 @@ impl WidgetCore for ListBoxView {
     ///
     /// Unrecognised keys return `false` so the shell's swallow path
     /// matches the unrecognised-keybinding contract.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         // ARIA Listbox roving tabindex: the composite is a single
         // tab stop. Keys only route when the listbox itself is
         // focused (no sibling-widget aliasing).

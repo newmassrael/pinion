@@ -326,13 +326,21 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
                 let Some(key_str) = crate::input::key_str_from_event(&key) else {
                     continue;
                 };
+                // R56.1.f.0 §5.13 — forward the W3C modifier surface
+                // (`shiftKey` / `ctrlKey` / `altKey` / `metaKey`)
+                // alongside the key string so widgets such as
+                // `TextField` (R56.1.f) can branch on Shift+Arrow
+                // selection extension. The conversion drops crossterm
+                // platform-specific bits (`HYPER`) onto Meta per the
+                // R51.108 §5.41 winit-mirror surface.
+                let modifiers = crate::input::modifiers_from_crossterm(key.modifiers);
                 // R51.124 §5.41 — `dispatch_key` returns `true`
                 // when the cached state changed (auto-tail
                 // collapsed the pre-R51.124 explicit
                 // `refresh_state` call); the surface repaints on
                 // `true` so the new SCXML projection lands on
                 // screen.
-                if core.dispatch_key(&key_str) {
+                if core.dispatch_key(&key_str, modifiers) {
                     let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
                     core.update_paint_scene(paint_scene);
                 }

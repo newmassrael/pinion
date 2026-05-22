@@ -206,7 +206,7 @@ impl WidgetCore for CheckboxView {
     /// parity with a pointer click. Pure ARIA checkboxes accept
     /// only Space (Enter is reserved for form submit in the broader
     /// ARIA model) — Enter does not reach this hook.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(Self::tag()) {
             return false;
         }

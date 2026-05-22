@@ -206,7 +206,7 @@ impl WidgetCore for RadioView {
     /// silent (idempotent). The group-context arrow navigation that
     /// also activates the new radio lives in `hello-radio-group`
     /// (composite widget, R51.57 roving tabindex).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(Self::tag()) {
             return false;
         }

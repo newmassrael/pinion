@@ -512,7 +512,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`WidgetView::keybinding`]).
     pub fn apply_key(&mut self, key: &str) {
         let focused = self.focus.focused().map(str::to_owned);
-        if let Some(tail) = self.core.apply_key(focused.as_deref(), key) {
+        if let Some(tail) = self.core.apply_key(focused.as_deref(), key, self.modifiers) {
             self.revision.bump();
             self.handle_tail(&tail);
         }
@@ -588,7 +588,7 @@ impl<V: WidgetView> ShellCore<V> {
         // mutually exclusive — a widget that consumes the key
         // never lets the scroll arc fire.
         let focused = self.focus.focused().map(str::to_owned);
-        if let Some(tail) = self.core.apply_key(focused.as_deref(), key_str) {
+        if let Some(tail) = self.core.apply_key(focused.as_deref(), key_str, self.modifiers) {
             self.revision.bump();
             self.handle_tail(&tail);
             return;
@@ -1439,7 +1439,16 @@ impl<V: WidgetView> ShellCore<V> {
         let focus_before = self.focus.focused().map(str::to_owned);
         self.focus.focus_set(tag);
         self.notify_focus_change(focus_before.as_deref());
-        if let Some(tail) = self.core.apply_key(Some(tag), key) {
+        // R56.1.f.0 §5.13 — AT-driven activation (Click / Increment /
+        // Decrement) maps to a *plain* keystroke; the AT side does not
+        // surface modifier state, and no AT activation idiom (Click ↔
+        // Enter, Increment ↔ ArrowRight, Decrement ↔ ArrowLeft)
+        // implies any modifier. Empty Modifiers matches the W3C ARIA
+        // canonical activation shape (W3C `AccessibilityFeatures` does
+        // not carry a modifier slot for `Click` / `Increment` /
+        // `Decrement` actions).
+        let modifiers = pinion_core::Modifiers::empty();
+        if let Some(tail) = self.core.apply_key(Some(tag), key, modifiers) {
             self.revision.bump();
             self.handle_tail(&tail);
         }

@@ -286,7 +286,7 @@ impl WidgetCore for RadioGroupView {
         None
     }
 
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         // R51.57 §5.39 — ARIA radio-group roving tabindex. The group
         // is a single tab stop (`focusable_tags()` default returns
         // just `Self::tag()` per the §5.39 caveat on composite focus),
@@ -796,7 +796,7 @@ mod tests {
             &mut s,
             Some("main_group"),
             "ArrowDown"
-        ));
+        , pinion_core::Modifiers::empty()));
         assert_eq!(selected_index(&s), Some(0));
     }
 
@@ -804,7 +804,7 @@ mod tests {
     fn no_focus_swallows_arrow_silently() {
         // Pre-Tab idle state — group must not steal Arrow keys.
         let mut s = scene();
-        assert!(!RadioGroupView::apply_key(&mut s, None, "ArrowDown"));
+        assert!(!RadioGroupView::apply_key(&mut s, None, "ArrowDown", pinion_core::Modifiers::empty()));
         assert_eq!(selected_index(&s), None);
     }
 
@@ -817,7 +817,7 @@ mod tests {
             &mut s,
             Some("volume_slider"),
             "ArrowDown"
-        ));
+        , pinion_core::Modifiers::empty()));
         assert_eq!(selected_index(&s), None);
     }
 
@@ -825,7 +825,7 @@ mod tests {
     fn focused_main_group_routes_home_to_first() {
         let mut s = scene();
         // Step to last first so Home has somewhere to go from.
-        let _ = RadioGroupView::apply_key(&mut s, Some("main_group"), "End");
+        let _ = RadioGroupView::apply_key(&mut s, Some("main_group"), "End", pinion_core::Modifiers::empty());
         assert_eq!(
             selected_index(&s),
             Some(i64::try_from(N - 1).expect("N fits in i64"))
@@ -834,7 +834,7 @@ mod tests {
             &mut s,
             Some("main_group"),
             "Home"
-        ));
+        , pinion_core::Modifiers::empty()));
         assert_eq!(selected_index(&s), Some(0));
     }
 

@@ -269,7 +269,12 @@ impl WidgetCore for TestView {
         "test"
     }
 
-    fn apply_key(_scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(
+        _scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         APPLY_KEY_LOG
             .lock()
             .unwrap()

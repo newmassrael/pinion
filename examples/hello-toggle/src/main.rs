@@ -245,7 +245,7 @@ impl WidgetCore for ToggleView {
     /// intent in parity with a pointer click. ARIA toggle buttons
     /// accept both keys; pure ARIA checkboxes accept only Space —
     /// `hello-toggle` is a toggle button so both land here.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 

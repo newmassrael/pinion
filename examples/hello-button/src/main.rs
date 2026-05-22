@@ -256,7 +256,7 @@ impl WidgetCore for ButtonView {
     /// emits a `"click"` intent (parity with the `Pressed → Hover`
     /// pointer path). `Disabled` ignores activation; the SCXML
     /// transition is absent from that state per the ARIA spec.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }

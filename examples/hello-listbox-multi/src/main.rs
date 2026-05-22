@@ -249,7 +249,7 @@ impl WidgetCore for ListBoxMultiView {
     /// Identical to the single-select sibling for `Arrow*` / `Home` /
     /// `End` / type-ahead; `Space` / `Enter` now toggles the focused
     /// row in place (multi-mode `send` is toggle, not replace).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(Self::tag()) {
             return false;
         }

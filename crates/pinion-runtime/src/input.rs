@@ -175,76 +175,16 @@ pub struct Touch {
     pub phase: TouchPhase,
 }
 
-/// R51.108 §5.41 — abstract modifier-key state, mirroring
-/// `winit::keyboard::ModifiersState` and W3C DOM Level 3
-/// `getModifierState` without the winit dependency. Four modifier
-/// bits cover the desktop-portable baseline (Shift / Control / Alt /
-/// Meta). Closed-form: future modifiers (`CapsLock` / `NumLock` /
-/// Hyper) are rare enough that a `SemVer` minor bump is the
-/// textbook extension path (rather than the §5.13-style
-/// `#[non_exhaustive]` hedge which only applies cleanly to enum
-/// variants where a wildcard arm has a meaningful default).
-///
-/// `clippy::struct_excessive_bools` lint is intentionally suppressed:
-/// the four-bool shape mirrors the W3C `KeyboardEvent` modifier
-/// surface (`shiftKey` / `ctrlKey` / `altKey` / `metaKey`), which
-/// every browser and every desktop windowing toolkit (winit, GTK,
-/// Qt, Cocoa) exposes as independent booleans — refactoring to a
-/// bitflag or state-machine here would diverge from the industry
-/// vocabulary substrate callers expect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct Modifiers {
-    /// Shift key (left or right) currently held.
-    pub shift: bool,
-    /// Control key (left or right) currently held.
-    pub ctrl: bool,
-    /// Alt / Option key (left or right) currently held.
-    pub alt: bool,
-    /// Meta / Cmd / Super / Windows key currently held.
-    pub meta: bool,
-}
-
-impl Modifiers {
-    /// Zero-modifier state, matching `winit::keyboard::ModifiersState::empty`.
-    /// Used by the substrate's `ShellCore::new` to initialise the
-    /// modifier cache before the first `ModifiersChanged` event.
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            shift: false,
-            ctrl: false,
-            alt: false,
-            meta: false,
-        }
-    }
-
-    /// Shift-bit accessor matching the winit `ModifiersState::shift_key`
-    /// method shape. Substrate callers read this for Tab-reverse focus
-    /// traversal (R51.83 §5.40) and future Shift-Click selection.
-    #[must_use]
-    pub const fn shift_key(self) -> bool {
-        self.shift
-    }
-
-    /// Control-bit accessor mirroring `winit::keyboard::ModifiersState::control_key`.
-    #[must_use]
-    pub const fn control_key(self) -> bool {
-        self.ctrl
-    }
-
-    /// Alt-bit accessor mirroring `winit::keyboard::ModifiersState::alt_key`.
-    #[must_use]
-    pub const fn alt_key(self) -> bool {
-        self.alt
-    }
-
-    /// Meta-bit accessor mirroring `winit::keyboard::ModifiersState::super_key`.
-    #[must_use]
-    pub const fn meta_key(self) -> bool {
-        self.meta
-    }
-}
+/// R51.108 §5.41 — abstract modifier-key state. Defined in
+/// `pinion-core` since R56.1.f.0 so the widget catalog's
+/// `WidgetCore::apply_key` signature can carry the four-bit modifier
+/// state without inverting the crate graph; re-exported here for
+/// downstream call-sites (`pinion-shell` / `pinion-tui`) that have
+/// already aged on `pinion_runtime::Modifiers`. See
+/// [`pinion_core::input::Modifiers`] for the canonical definition,
+/// W3C `KeyboardEvent` surface mirror, and the four accessor methods
+/// (`shift_key` / `control_key` / `alt_key` / `meta_key`).
+pub use pinion_core::input::Modifiers;
 
 /// Framework-side input dispatch primitive. Owns retained paint scene,
 /// cursor state, and hover target; dispatches winit-side input events

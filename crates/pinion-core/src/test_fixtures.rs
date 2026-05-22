@@ -166,7 +166,12 @@ impl WidgetCore for ButtonFixture {
         }
     }
 
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
         aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 }

@@ -370,3 +370,12 @@ reason = "R56.1.b.1.tui audit landed via minimal ASCII shape per [[mnemosyne-mul
 applied_in = "R56.1.b.1.tui"
 content_hash_before = "b17cef85b687182d76da2be822cd41a200517d95aa97ec48d01dc4bffa054594"
 content_hash_after = "c2fca77c08358721f084a54540771b5a58d99031e6efe343f817072108f0e1fd"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "R56.1.f.0"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_impact_refs"]
+reason = "audit half is minimal ASCII per [[mnemosyne-multibyte-audit-fallback]] (append_changelog_entry_v2 fails on multi-byte glyph + long strings); publishable half expanded with detailed §-prefixed bullets + W3C wire-shape detail for AI-consumer reading the spec."
+applied_in = "post-R56.1.b.1.tui workspace HEAD"
+content_hash_before = "fad9d108bb2f5558686bff2f84aba81ef04eed7ae4fd7ce2b09e8e0e20e51868"
+content_hash_after = "7d86b6c18075048e3cf575dbc25c079882d01eee5ef256df44fdf31ccb0913af"
