@@ -40,6 +40,25 @@
 //! Mirror of the R56.2.a [[winit-ime-canonical-platform-bridge]]
 //! decision (winit over raw `zwp_text_input_v3` for IME).
 //!
+//! ## R56.2.e §5.22 — Linux PRIMARY selection cascade
+//!
+//! On Linux (X11 / Wayland) the `Clipboard` trait's selection-aware
+//! [`copy_to`](pinion_core::Clipboard::copy_to) /
+//! [`paste_from`](pinion_core::Clipboard::paste_from) methods are
+//! overridden to thread `Primary` through `arboard`'s
+//! [`SetExtLinux::clipboard`] / [`GetExtLinux::clipboard`] trait
+//! extensions, addressing the X11 PRIMARY selection atom / Wayland
+//! `zwlr_data_control_v1` PRIMARY channel. The `TextField` widget
+//! publishes selections to PRIMARY automatically (R56.2.e.2) and the
+//! shell's middle-click handler reads from PRIMARY into the focused
+//! field (R56.2.e.3), so cross-process X11/Wayland middle-click
+//! paste interop comes online without further opt-in.
+//!
+//! On macOS / Windows / browser targets the cfg-gated override is
+//! absent and the trait default takes over (`Primary` becomes a
+//! no-op write / `None` read), matching the OS convention where
+//! no parallel selection clipboard exists.
+//!
 //! ## Usage
 //!
 //! ```ignore
@@ -61,7 +80,7 @@
 
 use std::cell::RefCell;
 
-use pinion_core::Clipboard;
+use pinion_core::{Clipboard, ClipboardSelection};
 
 /// R56.2.b §5.22 — platform-backed [`Clipboard`] impl wrapping
 /// `arboard::Clipboard`. Construct via [`Self::try_new`] (returns an
@@ -161,6 +180,93 @@ impl Clipboard for ArboardClipboard {
         let mut clipboard = self.inner.try_borrow_mut().ok()?;
         clipboard.get_text().ok()
     }
+
+    /// R56.2.e §5.22 — selection-aware write. On Linux (X11 / Wayland)
+    /// the `Primary` arm routes through `arboard`'s
+    /// [`SetExtLinux::clipboard`] trait extension to address the X11
+    /// PRIMARY selection / Wayland `zwlr_data_control_v1` PRIMARY
+    /// channel. On other platforms the override is absent (cfg
+    /// disabled) so the trait default takes over — `Primary` becomes
+    /// a no-op write, matching the macOS / Windows / browser
+    /// convention where no parallel "selection clipboard" exists.
+    ///
+    /// The Linux override does *not* set a wait window
+    /// (`WaitConfig::default() == None`); X clients that read PRIMARY
+    /// while pinion is still the selection owner observe the latest
+    /// write immediately. If pinion exits before another app reads
+    /// the selection the X clipboard manager (`clipmanager`, etc.)
+    /// is expected to take ownership for CLIPBOARD; PRIMARY is
+    /// session-scoped by X11 convention and is allowed to be lost.
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "android",
+            target_os = "ios",
+            target_os = "emscripten",
+        )),
+    ))]
+    fn copy_to(&self, selection: ClipboardSelection, text: String) {
+        use arboard::{LinuxClipboardKind, SetExtLinux};
+        let Ok(mut clipboard) = self.inner.try_borrow_mut() else {
+            return;
+        };
+        match selection {
+            ClipboardSelection::Clipboard => {
+                let _ = clipboard.set_text(text);
+            }
+            ClipboardSelection::Primary => {
+                let _ = clipboard
+                    .set()
+                    .clipboard(LinuxClipboardKind::Primary)
+                    .text(text);
+            }
+            // R56.2.e §5.22 — `ClipboardSelection` is `#[non_exhaustive]`
+            // for forward-compat with future variants (X11 SECONDARY,
+            // GTK find-buffer, etc.). A wildcard arm is required by
+            // the compiler from this crate's perspective; we map
+            // unknown variants to no-op so a future-variant payload
+            // does not silently corrupt the CLIPBOARD selection.
+            _ => {}
+        }
+    }
+
+    /// R56.2.e §5.22 — selection-aware read. On Linux the `Primary`
+    /// arm routes through `arboard`'s [`GetExtLinux::clipboard`]
+    /// trait extension to read the X11 PRIMARY selection / Wayland
+    /// PRIMARY channel. On other platforms the override is absent
+    /// (cfg disabled) so the trait default returns `None` for
+    /// `Primary` (macOS / Windows / browser have no equivalent
+    /// surface).
+    ///
+    /// Returns `None` when the selection is empty, holds non-text
+    /// content, or the OS clipboard daemon errors — the substrate's
+    /// `paste`-style total trait contract is preserved per-selection.
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "android",
+            target_os = "ios",
+            target_os = "emscripten",
+        )),
+    ))]
+    fn paste_from(&self, selection: ClipboardSelection) -> Option<String> {
+        use arboard::{GetExtLinux, LinuxClipboardKind};
+        let mut clipboard = self.inner.try_borrow_mut().ok()?;
+        match selection {
+            ClipboardSelection::Clipboard => clipboard.get_text().ok(),
+            ClipboardSelection::Primary => clipboard
+                .get()
+                .clipboard(LinuxClipboardKind::Primary)
+                .text()
+                .ok(),
+            // R56.2.e §5.22 — see [`Self::copy_to`] for the
+            // `non_exhaustive` rationale; unknown future variants
+            // return `None` to keep the contract total.
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -186,6 +292,16 @@ mod tests {
     //! not duplicate at the pinion layer).
 
     use super::ArboardClipboard;
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "android",
+            target_os = "ios",
+            target_os = "emscripten",
+        )),
+    ))]
+    use pinion_core::{Clipboard, ClipboardSelection};
 
     #[test]
     fn r56_2_b_debug_renders_without_panic() {
@@ -211,6 +327,88 @@ mod tests {
                     "arboard::Error Display must produce a non-empty reason",
                 );
             }
+        }
+    }
+
+    /// R56.2.e §5.22 — Linux PRIMARY round-trip smoke. Skipped on
+    /// platforms where the cfg-gated override is absent (the trait
+    /// default returns `None` for `Primary`, which is the correct
+    /// macOS / Windows behaviour — not a regression). Also skipped
+    /// when `arboard::Clipboard::new()` fails (headless CI, broken
+    /// socket). When the display is reachable we write a unique
+    /// token to PRIMARY and verify the read returns it; this
+    /// confirms the `GetExtLinux` / `SetExtLinux` extension wires
+    /// reach the same selection.
+    ///
+    /// `Primary` is X11/Wayland session-scoped — other X clients may
+    /// race with this test, but the unique token avoids false
+    /// positives (a foreign selection would not match the token).
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "android",
+            target_os = "ios",
+            target_os = "emscripten",
+        )),
+    ))]
+    #[test]
+    fn r56_2_e_linux_primary_round_trip_when_display_present() {
+        let Ok(cb) = ArboardClipboard::try_new() else {
+            // Headless CI / broken display — the default impl path
+            // is exercised by `pinion-core::clipboard::tests`. This
+            // test is opportunistic: pass through on inaccessible
+            // display.
+            return;
+        };
+        // Unique token so a concurrent X client write does not
+        // confuse the read-back check.
+        let token = format!("pinion-r56_2_e-{}", std::process::id());
+        cb.copy_to(ClipboardSelection::Primary, token.clone());
+        let observed = cb.paste_from(ClipboardSelection::Primary);
+        // Allow None when the compositor rejects PRIMARY (Wayland
+        // protocol v1, sandbox restrictions); only assert mismatch
+        // when a value came back.
+        if let Some(text) = observed {
+            assert_eq!(
+                text, token,
+                "PRIMARY round-trip returned a different payload",
+            );
+        }
+    }
+
+    /// R56.2.e §5.22 — verify the CLIPBOARD selection-aware path
+    /// matches the legacy `copy` / `paste` path so callers can
+    /// mix-and-match the two APIs against the same OS state without
+    /// observing drift.
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "android",
+            target_os = "ios",
+            target_os = "emscripten",
+        )),
+    ))]
+    #[test]
+    fn r56_2_e_linux_clipboard_selection_matches_legacy_when_display_present() {
+        let Ok(cb) = ArboardClipboard::try_new() else {
+            return;
+        };
+        let token = format!("pinion-r56_2_e-cb-{}", std::process::id());
+        cb.copy_to(ClipboardSelection::Clipboard, token.clone());
+        // The legacy `paste()` and the selection-aware
+        // `paste_from(Clipboard)` must observe the same payload —
+        // both route through `arboard::Clipboard::get_text` on
+        // CLIPBOARD.
+        let via_legacy = cb.paste();
+        let via_selection = cb.paste_from(ClipboardSelection::Clipboard);
+        match (via_legacy, via_selection) {
+            (Some(a), Some(b)) => assert_eq!(a, b),
+            (None, None) => {}
+            (a, b) => panic!(
+                "legacy vs selection paste shape mismatch: legacy={a:?} selection={b:?}",
+            ),
         }
     }
 }

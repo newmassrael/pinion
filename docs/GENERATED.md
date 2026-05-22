@@ -16850,6 +16850,33 @@ if __name__ == "__main__":
 
 
 
+### Round 567 — R56.2.e.1 §5.22 — `ArboardClipboard` cfg-Linux `copy_to`/`paste_from` override threads `Primary` via `arboard::{SetExtLinux, GetExtLinux, LinuxClipboardKind}` (X11 PRIMARY / Wayland).
+
+**Changes**:
+- ArboardClipboard copy_to/paste_from override gated cfg(unix && !(macos|android|ios|emscripten)).
+- `Clipboard` arm reuses `set_text`/`get_text`; Primary arm chains `set().clipboard(Primary).text()`.
+- Wildcard arm = no-op write / `None` read so future `ClipboardSelection` variants stay safe.
+- Module doc adds R56.2.e Linux PRIMARY cascade section (widget + shell composition).
+- +2 `r56_2_e` cfg-Linux smoke tests: PRIMARY round-trip / CLIPBOARD legacy alias.
+
+
+
+**Verification**:
+- `cargo test -p pinion-platform-clipboard` = 3 pass (1 R56.2.b + 2 R56.2.e new) + 1 ignored.
+- `cargo test --workspace --features pinion-runtime/vello` = 2709 / 0 / 14.
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings.
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R56.2.e.2 — `TextField` auto-publish PRIMARY on selection mutation + `paste_from_primary` API.
+- R56.2.e.3 — shell middle-click wire + `WidgetView::apply_middle_click` trait (default false).
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

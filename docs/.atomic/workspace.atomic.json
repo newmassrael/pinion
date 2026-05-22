@@ -27323,6 +27323,48 @@
         "R56.2.e.3 — shell middle-click wire + `WidgetView::apply_middle_click` trait (default false)."
       ]
     },
+    "Round 567": {
+      "decision_summary": "R56.2.e.1 5.22 ArboardClipboard cfg-Linux copy_to paste_from override threads Primary through arboard SetExtLinux GetExtLinux LinuxClipboardKind.",
+      "changes_bullets": [
+        "pinion-platform-clipboard ArboardClipboard copy_to paste_from override cfg unix and not macos android ios emscripten matching arboard own gate",
+        "Clipboard arm get_text set_text legacy path Primary arm clipboard SetExtLinux GetExtLinux LinuxClipboardKind Primary chain",
+        "wildcard arm no-op None to keep ClipboardSelection non_exhaustive forward-compat without silent CLIPBOARD corruption",
+        "module doc R56.2.e Linux PRIMARY cascade section describing widget shell wiring composition with R56.2.e.2 R56.2.e.3",
+        "2 new r56_2_e Linux smoke tests round-trip Primary token CLIPBOARD legacy vs selection alias skip-or-execute when no display"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-platform-clipboard 3 pass 1 doc-ignored prior 1 + 2 new r56_2_e tests",
+        "cargo test workspace vello 2709 pass 0 fail 14 ignored prior 2707 + 2 new",
+        "cargo clippy workspace all-targets vello 0 warnings after doc_markdown TextField backtick fix"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R56.2.e.2 TextField auto-publish PRIMARY on selection mutation plus paste_from_primary API",
+        "R56.2.e.3 shell WindowEvent MouseInput Middle wire plus V apply_middle_click trait default false"
+      ],
+      "publishable_decision_summary": "R56.2.e.1 §5.22 — `ArboardClipboard` cfg-Linux `copy_to`/`paste_from` override threads `Primary` via `arboard::{SetExtLinux, GetExtLinux, LinuxClipboardKind}` (X11 PRIMARY / Wayland).",
+      "publishable_changes_bullets": [
+        "ArboardClipboard copy_to/paste_from override gated cfg(unix && !(macos|android|ios|emscripten)).",
+        "`Clipboard` arm reuses `set_text`/`get_text`; Primary arm chains `set().clipboard(Primary).text()`.",
+        "Wildcard arm = no-op write / `None` read so future `ClipboardSelection` variants stay safe.",
+        "Module doc adds R56.2.e Linux PRIMARY cascade section (widget + shell composition).",
+        "+2 `r56_2_e` cfg-Linux smoke tests: PRIMARY round-trip / CLIPBOARD legacy alias."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-platform-clipboard` = 3 pass (1 R56.2.b + 2 R56.2.e new) + 1 ignored.",
+        "`cargo test --workspace --features pinion-runtime/vello` = 2709 / 0 / 14.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings."
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R56.2.e.2 — `TextField` auto-publish PRIMARY on selection mutation + `paste_from_primary` API.",
+        "R56.2.e.3 — shell middle-click wire + `WidgetView::apply_middle_click` trait (default false)."
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [
