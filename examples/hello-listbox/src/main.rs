@@ -77,7 +77,8 @@ use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
 use pinion_core::widgets::scrollbar::{
     scrollbar_thumb_rect, ScrollBarExternal, ScrollBarOrientation,
 };
-use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
+use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::{Frame, Owner, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -86,7 +87,11 @@ vello_renderer_impl!(HelloListboxRenderer, HelloListboxRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 320;
-const BG_FILL: Color = Color::rgb(0x18, 0x24, 0x30);
+/// (R57.X.listbox §5.50) [`ThemeProvider`] cache key. Matches the
+/// `"app"` convention shared with `hello-toggle` + `hello-theme` so
+/// future cross-widget retrofits resolve the same provider; widgets
+/// embedded inside a host application would receive the host's tag.
+const THEME_TAG: &str = "app";
 /// (R51.191 §5.45 R55.G) Bumped from 4 → 12 so the content overflows
 /// the scroll viewport and the wheel / Arrow keys actually drive a
 /// visible offset change. 12 items also exhausts the type-ahead
@@ -142,12 +147,6 @@ const SCROLLBAR_W: u32 = 8;
 /// grabbable-target floor — even on very long content the thumb
 /// stays large enough to read at a glance.
 const MIN_THUMB: u32 = 24;
-/// (R55.D.4 §5.45) Dark scrollbar track fill — visually distinct
-/// from the row column without competing for attention.
-const TRACK_FILL: Color = Color::rgb(0x12, 0x1c, 0x26);
-/// (R55.D.4 §5.45) Thumb fill — light enough on the dark track to
-/// be readable, muted enough to defer to the row column.
-const THUMB_FILL: Color = Color::rgb(0x50, 0x60, 0x70);
 
 /// Cached projection of the list. One `(ListboxItemState, selected)`
 /// pair per option plus the R51.87 §5.40 AT-side active-descendant
@@ -208,8 +207,17 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
     // row-count × row-height arithmetic to seed the bound manually.
     let scroll_state = use_scroll_state(SCROLL_KEY);
 
+    // (R57.X.listbox §5.50) Resolve the active palette via
+    // [`use_theme`] so the view auto-subscribes to palette swaps —
+    // a [`ThemeProvider::set_theme`] anywhere in the application
+    // re-runs `view` and the rows / scrollbar repaint with the new
+    // tones. The same provider is shared with `hello-toggle` /
+    // `hello-theme` (matching `THEME_TAG`) so a future cross-widget
+    // toggle binary swaps every retrofitted listbox in lock-step.
+    let theme = use_theme(THEME_TAG).theme();
+
     let rows: Vec<Scene> = (0..N)
-        .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, Some(i) == Some(active)))
+        .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, Some(i) == Some(active), &theme))
         .collect();
     let content = Scene::Container(
         ContainerNode::new(rows).with_layout(
@@ -225,7 +233,7 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
     // the `ScrollNode::from_state` consumes below. The peer is a
     // pure paint visualization; drag input wiring (multi-External
     // path through `ScrollBarExternal`) lands on the R55.D.5 carry.
-    let scrollbar_visual = build_scrollbar_visual(&scroll_state);
+    let scrollbar_visual = build_scrollbar_visual(&scroll_state, &theme);
 
     let scroll = ScrollNode::from_state(
         scroll_state,
@@ -253,7 +261,7 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
 
     Scene::Container(
         ContainerNode::new(vec![listbox_root])
-            .with_style(BoxStyle::filled(BG_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -286,7 +294,7 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
 /// `flex Column` is retired — the spacer-flex workaround was the
 /// `[[spacer-flex-absolute-workaround]]` carry the substrate now
 /// closes.
-fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
+fn build_scrollbar_visual(scroll_state: &ScrollState, theme: &Theme) -> Scene {
     let (_, offset_y) = scroll_state.offset();
     let (_, max_y) = scroll_state.max();
     let track_rect = Rect::new(0, 0, SCROLLBAR_W, VIEWPORT_H);
@@ -319,9 +327,12 @@ fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
     let thumb_y_offset = geom.thumb.y.saturating_sub(geom.track.y);
     let thumb_h = geom.thumb.h;
 
+    // (R57.X.listbox §5.50) Thumb role = `Outline` — M3 canonical for
+    // scrollbar thumb / divider / hairline strokes that need visible
+    // weight against the track without competing with `Accent`.
     let thumb = Scene::Container(
         ContainerNode::new(vec![])
-            .with_style(BoxStyle::filled(THUMB_FILL).with_corner_radius(2))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Outline)).with_corner_radius(2))
             .with_layout(
                 LayoutStyle::new()
                     .with_size(Size::px(SCROLLBAR_W, thumb_h))
@@ -329,10 +340,10 @@ fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
             ),
     );
 
-    // Outer track Container — fills the gutter with `TRACK_FILL`,
-    // hosts the absolute-positioned thumb. The space outside the
-    // thumb shows the parent's `TRACK_FILL` so the thumb appears
-    // suspended on a dark rail.
+    // Outer track Container — fills the gutter with the M3
+    // `SurfaceContainerHighest` tone, hosts the absolute-positioned
+    // thumb. The space outside the thumb shows the track tier so the
+    // thumb appears suspended on the inactive-container rail.
     //
     // (R55.D.5 §5.45) Tagged with [`SCROLLBAR_TAG`] so the input
     // router's hit-test routes pointer events on the track / thumb
@@ -346,7 +357,7 @@ fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![thumb])
             .with_tag(SCROLLBAR_TAG)
-            .with_style(BoxStyle::filled(TRACK_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
             .with_layout(LayoutStyle::new().with_size(Size::px(SCROLLBAR_W, VIEWPORT_H))),
     )
 }
@@ -383,39 +394,55 @@ fn listbox_row(
     state: ListboxItemState,
     selected: bool,
     focused: bool,
+    theme: &Theme,
 ) -> Scene {
-    // Background fill priority: selected > pressed > hover > focused
+    // (R57.X.listbox §5.50) Material 3 ListItem role mapping. Each
+    // visible state resolves to either a palette role directly (e.g.
+    // `Accent` for the committed selection) or a state-layer
+    // composition (`Color::lerp(base, OnSurface, alpha)`) per the M3
+    // state-layer system — `hover = 0.08`, `pressed = 0.12`,
+    // `disabled = 0.38` opacity overlays computed against the row's
+    // resting `SurfaceContainerLow` base. Mirrors the R57.X.toggle
+    // (Round 573) Switch role mapping cascade.
+    //
+    // Priority: selected > pressed > hover > disabled > focused-idle
     // > idle. The selected state always wins (committed truth);
-    // focused is the secondary cursor hint that only shows when the
-    // row is not yet selected.
+    // focused is the secondary cursor hint only when not selected.
+    let surface = theme.resolve(ColorRole::Surface);
+    let on_surface = theme.resolve(ColorRole::OnSurface);
+    let row_base = theme.resolve(ColorRole::SurfaceContainerLow);
     let (fill, label_color, border) = if selected {
         (
-            Color::rgb(0x30, 0x70, 0xd0),
-            Color::rgb(0xff, 0xff, 0xff),
+            theme.resolve(ColorRole::Accent),
+            theme.resolve(ColorRole::OnAccent),
             None,
         )
     } else {
         let fill = match state {
-            ListboxItemState::Pressed => Color::rgb(0x2a, 0x38, 0x48),
-            ListboxItemState::Hover => Color::rgb(0x2c, 0x3e, 0x52),
-            ListboxItemState::Disabled => Color::rgb(0x20, 0x28, 0x30),
+            ListboxItemState::Pressed => row_base.lerp(on_surface, 0.12),
+            ListboxItemState::Hover => row_base.lerp(on_surface, 0.08),
+            ListboxItemState::Disabled => row_base.lerp(surface, 0.38),
             ListboxItemState::Idle => {
                 if focused {
-                    Color::rgb(0x24, 0x36, 0x4a)
+                    // Focused (non-selected) idle row sits one M3
+                    // surface tier above the unfocused row — the
+                    // textbook tonal-elevation hint for the WAI-ARIA
+                    // active descendant.
+                    theme.resolve(ColorRole::SurfaceContainer)
                 } else {
-                    Color::rgb(0x1f, 0x2c, 0x3a)
+                    row_base
                 }
             }
         };
         let label_color = match state {
-            ListboxItemState::Disabled => Color::rgb(0x70, 0x76, 0x80),
-            _ => Color::rgb(0xe0, 0xe6, 0xee),
+            ListboxItemState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
+            _ => on_surface,
         };
         let border = if focused {
             // R51.87 §5.40 — focused-row visual cue. The 2-px left
             // accent doubles as the WAI-ARIA "active descendant"
             // hint without consuming the row's selection slot.
-            Some(Border::new(Color::rgb(0x40, 0x80, 0xe0), 2))
+            Some(Border::new(theme.resolve(ColorRole::Accent), 2))
         } else {
             None
         };
@@ -926,6 +953,7 @@ fn main() {
 #[cfg(test)]
 mod a11y_tests {
     use super::*;
+    use pinion_core::Color;
 
     fn unselected_state() -> ListState {
         ListState::idle()
@@ -1260,5 +1288,71 @@ mod a11y_tests {
             unselected_state(),
             &Frame::default(),
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R57.X.listbox §5.50 — theme retrofit regression. Pins three
+    // key invariants of the role mapping: (1) outer panel uses
+    // `ColorRole::Surface`; (2) palette swap propagates through the
+    // view-fn auto-subscribe; (3) scrollbar thumb uses
+    // `ColorRole::Outline`. Asserting role-driven (not literal-RGB)
+    // colors keeps the M3 mapping the source of truth — a future
+    // palette tweak that adjusts the `Surface` tone will not require
+    // updating this test.
+    // ─────────────────────────────────────────────────────────────
+
+    fn run_view_with_palette(state: ListState, theme: Theme) -> Scene {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_theme(THEME_TAG).set_theme(theme);
+            view(state, &Frame::default())
+        })
+    }
+
+    fn outer_panel_fill(scene: &Scene) -> Color {
+        // The outermost Container is the panel; its BoxStyle fill is
+        // `theme.resolve(Surface)`.
+        if let Scene::Container(c) = scene {
+            c.style.fill
+        } else {
+            panic!("view's root must be a Container");
+        }
+    }
+
+    fn scrollbar_thumb_fill(scene: &Scene) -> Color {
+        // Walk: root container → listbox_root container (carries
+        // PRIMARY_TAG) → second child = scrollbar visual container
+        // (carries SCROLLBAR_TAG) → first (and only) child = thumb.
+        let bar = find_container_with_tag(scene, SCROLLBAR_TAG)
+            .expect("scene must carry the SCROLLBAR_TAG container");
+        let Scene::Container(thumb) = bar
+            .children
+            .first()
+            .expect("scrollbar must have a thumb child")
+        else {
+            panic!("thumb must be a Container");
+        };
+        thumb.style.fill
+    }
+
+    #[test]
+    fn r57_x_listbox_outer_panel_uses_surface_role() {
+        // Panel fill must equal the active theme's Surface role —
+        // not a hard-coded RGB literal. Pin both palettes to confirm
+        // the swap actually propagates.
+        let light_scene = run_view_with_palette(unselected_state(), Theme::light());
+        assert_eq!(outer_panel_fill(&light_scene), Theme::light().surface);
+        let dark_scene = run_view_with_palette(unselected_state(), Theme::dark());
+        assert_eq!(outer_panel_fill(&dark_scene), Theme::dark().surface);
+    }
+
+    #[test]
+    fn r57_x_listbox_scrollbar_thumb_uses_outline_role() {
+        // Thumb fill = `ColorRole::Outline` so the visible weight
+        // tracks the active theme's hairline / divider color.
+        let light_scene = run_view_with_palette(unselected_state(), Theme::light());
+        assert_eq!(scrollbar_thumb_fill(&light_scene), Theme::light().outline);
+        let dark_scene = run_view_with_palette(unselected_state(), Theme::dark());
+        assert_eq!(scrollbar_thumb_fill(&dark_scene), Theme::dark().outline);
     }
 }

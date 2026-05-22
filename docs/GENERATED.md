@@ -3872,6 +3872,9 @@ if __name__ == "__main__":
 - R57.X.toggle: V::update authority = intent.payload, not V::read_state (pre-flip lag).
 - R57.X.toggle: intent matching uses dotted wire form (e.g. "main_toggle.toggle"); runtime prefixes.
 - R57.X.toggle: hover/pressed = Color::lerp toward OnSurface (M3 state layer 0.08/0.12).
+- ColorRole +3 variants: SurfaceContainerLow/Container/High complete M3 5-tier elevation.
+- hello-listbox retrofit: all 16 RGB literals replaced by 7 role resolves + M3 state-layer lerp.
+- M3 state-layer 0.08 (hover) / 0.12 (pressed) / 0.38 (disabled) via Color::lerp.
 
 
 
@@ -3957,6 +3960,11 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerHighest
 - examples/hello-toggle/src/main.rs:ToggleView::update
 - examples/hello-toggle/src/main.rs:view
+- crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerLow
+- crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainer
+- crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerHigh
+- examples/hello-listbox/src/main.rs:listbox_row
+- examples/hello-listbox/src/main.rs:build_scrollbar_visual
 
 
 
@@ -17289,6 +17297,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 **Carry forward**:
 - Future TUI scrollbar 위젯 consumer 시 pinion-tui compute_layout 통합 필요.
 - R57.X.listbox theme retrofit (option C, 2nd intent_tag! consumer).
+
+
+
+### Round 577 — R57.X.listbox §5.50 — ColorRole +3 M3 surface tier 추가 (SurfaceContainerLow/Container/High) + hello-listbox 16 RGB literal → 7 role resolve + Color::lerp state-layer 마이그레이션.
+
+**Changes**:
+- theme.rs: ColorRole +3 variants — SurfaceContainerLow / SurfaceContainer / SurfaceContainerHigh.
+- theme.rs: Theme palette +3 fields + Material 3 light/dark canonical 톤 defaults.
+- theme.rs: +2 tier-progression tests (light 감소 / dark 증가 by lightness).
+- hello-listbox: BG_FILL/TRACK_FILL/THUMB_FILL const 제거; view fn → use_theme('app') cascade.
+- hello-listbox: listbox_row + build_scrollbar_visual take &Theme; selection=Accent / focus=Container.
+- hello-listbox: +2 r57_x test pin (panel=Surface, thumb=Outline) light↔dark.
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2768 pass / 0 fail / 14 ignored (+4 new).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.
+- cargo test -p pinion-core --lib theme = 17 pass (baseline 15 + 2 tier progression).
+- cargo test -p hello-listbox r57_x = 2 pass (panel Surface 역할 + thumb Outline 역할 pin).
+
+
+
+**Impact**: §5.50, §5.45, §5.38
+
+
+**Carry forward**:
+- hello-textfield theme retrofit (다음 R57.X widget cascade target).
+- hello-button + hello-checkbox-radio + hello-radio-group cascade carry.
+- R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
+- R57.X.theme-cleanup: hello-theme Outline-fill misuse 잔여 carry.
+- Future TUI scrollbar consumer: pinion-tui compute_layout 통합 carry.
 
 
 

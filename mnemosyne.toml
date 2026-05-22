@@ -577,3 +577,12 @@ reason = "R57.X.scrollbar-tui-audit audit half authored minimal ASCII per [[mnem
 applied_in = "Round 576"
 content_hash_before = "69f8c688c6e7a9c1154923cf26140787aa116ede3051c546c467cddf98a83108"
 content_hash_after = "ae9c30ea521fe7553a46bdaf3826392b7e2332c9981cff64f3fe3b5ec21538f5"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 577"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R57.X.listbox audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs, em-dashes, arrows, and Korean prose."
+applied_in = "Round 577"
+content_hash_before = "266a84981070edad3e161ca9d50f34830066c9f545725f5befba4043083be373"
+content_hash_after = "4894a4e4f1e26a377f1b2c978fd47ef819ad21c0037a383b2c30de2f77b16662"

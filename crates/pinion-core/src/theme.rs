@@ -119,6 +119,22 @@ pub enum ColorRole {
     /// in the M3 tonal-elevation scale, used by `Switch` (Off track),
     /// `Chip` (unselected fill), `Slider` (inactive segment).
     SurfaceContainerHighest,
+    /// Lowest-elevation filled container above [`Self::Surface`].
+    /// Material 3 `surfaceContainerLow` — the default tone for list-row
+    /// backgrounds, card surfaces resting near the panel, and any
+    /// "sits slightly above the surface" affordance. Visually closer
+    /// to [`Self::Surface`] than [`Self::SurfaceContainerHighest`].
+    SurfaceContainerLow,
+    /// Mid-elevation filled container — between
+    /// [`Self::SurfaceContainerLow`] and [`Self::SurfaceContainerHigh`].
+    /// Material 3 `surfaceContainer` — used for focused list rows,
+    /// raised cards inside a list, dialog content surfaces.
+    SurfaceContainer,
+    /// High-elevation filled container — between
+    /// [`Self::SurfaceContainer`] and [`Self::SurfaceContainerHighest`].
+    /// Material 3 `surfaceContainerHigh` — used for hovered list rows,
+    /// drawer panels, sheet headers.
+    SurfaceContainerHigh,
 }
 
 impl ColorRole {
@@ -153,6 +169,9 @@ impl ColorRole {
             ColorRole::OnAccent => Color::rgb(0xff, 0xff, 0xff),
             ColorRole::Outline => Color::rgb(0xc0, 0xc0, 0xc0),
             ColorRole::SurfaceContainerHighest => Color::rgb(0xe6, 0xe0, 0xe9),
+            ColorRole::SurfaceContainerLow => Color::rgb(0xf7, 0xf2, 0xfa),
+            ColorRole::SurfaceContainer => Color::rgb(0xf3, 0xed, 0xf7),
+            ColorRole::SurfaceContainerHigh => Color::rgb(0xec, 0xe6, 0xf0),
         }
     }
 }
@@ -194,6 +213,12 @@ pub struct Theme {
     pub outline: Color,
     /// Resolves [`ColorRole::SurfaceContainerHighest`].
     pub surface_container_highest: Color,
+    /// Resolves [`ColorRole::SurfaceContainerLow`].
+    pub surface_container_low: Color,
+    /// Resolves [`ColorRole::SurfaceContainer`].
+    pub surface_container: Color,
+    /// Resolves [`ColorRole::SurfaceContainerHigh`].
+    pub surface_container_high: Color,
 }
 
 impl Theme {
@@ -213,6 +238,13 @@ impl Theme {
     ///   `surfaceContainerHighest` tone — 1.1:1 against `surface`, the
     ///   highest-elevation chip surface that stays visibly distinct
     ///   from the panel background without competing with `accent`.
+    /// - `surface_container_low` = `#F7F2FA`, the Material 3 light
+    ///   `surfaceContainerLow` tone — the default raised-row surface,
+    ///   sits just above `surface` on the M3 tonal-elevation scale.
+    /// - `surface_container` = `#F3EDF7`, the Material 3 light
+    ///   `surfaceContainer` tone — focused-row / mid-elevation tier.
+    /// - `surface_container_high` = `#ECE6F0`, the Material 3 light
+    ///   `surfaceContainerHigh` tone — hovered-row / drawer-panel tier.
     #[must_use]
     pub const fn light() -> Self {
         Self {
@@ -223,6 +255,9 @@ impl Theme {
             on_accent: Color::rgb(0xff, 0xff, 0xff),
             outline: Color::rgb(0xc0, 0xc0, 0xc0),
             surface_container_highest: Color::rgb(0xe6, 0xe0, 0xe9),
+            surface_container_low: Color::rgb(0xf7, 0xf2, 0xfa),
+            surface_container: Color::rgb(0xf3, 0xed, 0xf7),
+            surface_container_high: Color::rgb(0xec, 0xe6, 0xf0),
         }
     }
 
@@ -245,6 +280,12 @@ impl Theme {
     ///   `surfaceContainerHighest` tone — the highest-elevation chip
     ///   surface that stays visibly distinct from the `#121212` panel
     ///   surface, matching the M3 dark tonal-elevation scale.
+    /// - `surface_container_low` = `#1D1B20`, the Material 3 dark
+    ///   `surfaceContainerLow` tone — list-row default in dark mode.
+    /// - `surface_container` = `#211F26`, the Material 3 dark
+    ///   `surfaceContainer` tone — focused-row / mid-elevation tier.
+    /// - `surface_container_high` = `#2B2930`, the Material 3 dark
+    ///   `surfaceContainerHigh` tone — hovered-row / drawer-panel tier.
     #[must_use]
     pub const fn dark() -> Self {
         Self {
@@ -255,6 +296,9 @@ impl Theme {
             on_accent: Color::rgb(0x0b, 0x1f, 0x3f),
             outline: Color::rgb(0x40, 0x40, 0x40),
             surface_container_highest: Color::rgb(0x36, 0x34, 0x3b),
+            surface_container_low: Color::rgb(0x1d, 0x1b, 0x20),
+            surface_container: Color::rgb(0x21, 0x1f, 0x26),
+            surface_container_high: Color::rgb(0x2b, 0x29, 0x30),
         }
     }
 
@@ -273,6 +317,9 @@ impl Theme {
             ColorRole::OnAccent => self.on_accent,
             ColorRole::Outline => self.outline,
             ColorRole::SurfaceContainerHighest => self.surface_container_highest,
+            ColorRole::SurfaceContainerLow => self.surface_container_low,
+            ColorRole::SurfaceContainer => self.surface_container,
+            ColorRole::SurfaceContainerHigh => self.surface_container_high,
         }
     }
 }
@@ -466,6 +513,18 @@ mod tests {
             ColorRole::SurfaceContainerHighest.default_for(),
             light.surface_container_highest,
         );
+        assert_eq!(
+            ColorRole::SurfaceContainerLow.default_for(),
+            light.surface_container_low,
+        );
+        assert_eq!(
+            ColorRole::SurfaceContainer.default_for(),
+            light.surface_container,
+        );
+        assert_eq!(
+            ColorRole::SurfaceContainerHigh.default_for(),
+            light.surface_container_high,
+        );
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -488,6 +547,9 @@ mod tests {
             t.surface_container_highest,
             Color::rgb(0xe6, 0xe0, 0xe9),
         );
+        assert_eq!(t.surface_container_low, Color::rgb(0xf7, 0xf2, 0xfa));
+        assert_eq!(t.surface_container, Color::rgb(0xf3, 0xed, 0xf7));
+        assert_eq!(t.surface_container_high, Color::rgb(0xec, 0xe6, 0xf0));
     }
 
     #[test]
@@ -505,6 +567,9 @@ mod tests {
             t.surface_container_highest,
             Color::rgb(0x36, 0x34, 0x3b),
         );
+        assert_eq!(t.surface_container_low, Color::rgb(0x1d, 0x1b, 0x20));
+        assert_eq!(t.surface_container, Color::rgb(0x21, 0x1f, 0x26));
+        assert_eq!(t.surface_container_high, Color::rgb(0x2b, 0x29, 0x30));
     }
 
     #[test]
@@ -528,7 +593,49 @@ mod tests {
                 theme.resolve(ColorRole::SurfaceContainerHighest),
                 theme.surface_container_highest,
             );
+            assert_eq!(
+                theme.resolve(ColorRole::SurfaceContainerLow),
+                theme.surface_container_low,
+            );
+            assert_eq!(
+                theme.resolve(ColorRole::SurfaceContainer),
+                theme.surface_container,
+            );
+            assert_eq!(
+                theme.resolve(ColorRole::SurfaceContainerHigh),
+                theme.surface_container_high,
+            );
         }
+    }
+
+    /// (R57.X.listbox §5.50) Material 3 light surface tier progression:
+    /// `surface` is the lightest tone (panel background) and the four
+    /// containers darken progressively toward
+    /// `surface_container_highest`. Pinning this ordering protects
+    /// against a palette tweak that would silently invert the
+    /// elevation visual.
+    #[test]
+    fn r57_x_surface_tiers_light_lightness_progression() {
+        let t = Theme::light();
+        let lum = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+        assert!(lum(t.surface) >= lum(t.surface_container_low));
+        assert!(lum(t.surface_container_low) >= lum(t.surface_container));
+        assert!(lum(t.surface_container) >= lum(t.surface_container_high));
+        assert!(lum(t.surface_container_high) >= lum(t.surface_container_highest));
+    }
+
+    /// (R57.X.listbox §5.50) Material 3 dark surface tier progression:
+    /// `surface` is the darkest tone (panel background) and the four
+    /// containers lighten progressively toward
+    /// `surface_container_highest` (inverse of light).
+    #[test]
+    fn r57_x_surface_tiers_dark_lightness_progression() {
+        let t = Theme::dark();
+        let lum = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+        assert!(lum(t.surface) <= lum(t.surface_container_low));
+        assert!(lum(t.surface_container_low) <= lum(t.surface_container));
+        assert!(lum(t.surface_container) <= lum(t.surface_container_high));
+        assert!(lum(t.surface_container_high) <= lum(t.surface_container_highest));
     }
 
     #[test]
