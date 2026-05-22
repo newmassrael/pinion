@@ -339,8 +339,17 @@ impl<V: WidgetCore> CoreShell<V> {
         // `Owner::cache` hooks, sharing reactive state with what the
         // view fn will resolve later (same cache key → same
         // `Rc<ScrollState>`).
+        //
+        // (R56.1.b.1 §5.41) `create_external` runs inside the same
+        // `root_owner.run(...)` wrap so the primary External factory
+        // can call [`use_text_edit_state`] / [`use_caret_blink`] /
+        // [`use_scroll_state`] hooks too — required by widgets like
+        // `TextField` whose External composes shared reactive state
+        // with the view fn. Bindings without reactive-state needs
+        // (every pre-R56.1.b.1 example) are unaffected: their
+        // factories ignore the Owner context.
         let primary = Scene::External(
-            ExternalNode::new(V::create_external()).with_tag(V::tag()),
+            ExternalNode::new(root_owner.run(V::create_external)).with_tag(V::tag()),
         );
         let extras = root_owner.run(V::create_extra_externals);
         let scene = if extras.is_empty() {

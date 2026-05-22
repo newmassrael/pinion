@@ -842,14 +842,26 @@ impl<V: WidgetView> ShellCore<V> {
     ) -> (Vec<AccessNode>, Option<AccessFocus>) {
         let focused = self.focus.focused().map(str::to_owned);
         let cached = self.core.cached_state();
-        let mut nodes = V::access_node(cached, focused.as_deref());
+        // (R56.1.b.1 §5.40 §5.22) `V::access_node` runs inside
+        // `root_owner.run(...)` for parity with `V::view` /
+        // `V::apply_key` / `V::update` (the
+        // [[callback-root-owner-wrap]] family). Bindings whose a11y
+        // contribution reads through reactive hooks
+        // ([`use_text_edit_state`] / [`use_caret_blink`] / etc.) need
+        // an active `Owner` scope to resolve the cache key; without
+        // the wrap, `Owner::current()` would return `None` and the
+        // hook would panic. Bindings without reactive hooks (every
+        // pre-R56.1.b.1 example) are unaffected: their access_node
+        // impls ignore the Owner context.
+        let owner = self.core.root_owner();
+        let mut nodes = owner.run(|| V::access_node(cached, focused.as_deref()));
         pinion_a11y::enrich_names_from_scene(&mut nodes, paint_scene);
         for node in &mut nodes {
             if let Some(rect) = rect_for_tag(paint_scene, &node.tag) {
                 node.bounds = Some(rect);
             }
         }
-        let at_focus = V::access_focus_target(cached, focused.as_deref());
+        let at_focus = owner.run(|| V::access_focus_target(cached, focused.as_deref()));
         (nodes, at_focus)
     }
 

@@ -48,6 +48,16 @@ pub enum AriaRole {
     /// ([`pinion_core::widgets::listbox_item`]) shares the
     /// button-like statechart with `Radio` / `Toggle` / `Checkbox`.
     ListBoxOption,
+    /// R56.1.b.1 §5.40 — WAI-ARIA 1.2 §4.3 `textbox` role
+    /// (single-line input). Pairs with the §5.38 `TextField` widget
+    /// primitive ([`pinion_core::widgets::text_field`]). The role
+    /// name lowers to `accesskit::Role::TextInput` — AccessKit splits
+    /// the WAI-ARIA `textbox` role across two enum members
+    /// (`TextInput` for single-line, `MultilineTextInput` for the
+    /// `aria-multiline=true` variant); pinion's single-line first
+    /// slice maps to `TextInput`. A future multiline `TextArea` axis
+    /// adds the second variant additively.
+    TextInput,
     Generic,
 }
 
@@ -68,6 +78,7 @@ impl AriaRole {
             Self::RadioGroup => Role::RadioGroup,
             Self::Listbox => Role::ListBox,
             Self::ListBoxOption => Role::ListBoxOption,
+            Self::TextInput => Role::TextInput,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -86,6 +97,10 @@ impl AriaRole {
             Self::RadioGroup => "radiogroup",
             Self::Listbox => "listbox",
             Self::ListBoxOption => "option",
+            // WAI-ARIA 1.2 spec literal — the single-line text input
+            // role is `textbox` regardless of AccessKit's internal
+            // single/multiline split.
+            Self::TextInput => "textbox",
             Self::Generic => "generic",
         }
     }
@@ -130,6 +145,7 @@ mod tests {
         assert_eq!(AriaRole::RadioGroup.aria_name(), "radiogroup");
         assert_eq!(AriaRole::Listbox.aria_name(), "listbox");
         assert_eq!(AriaRole::ListBoxOption.aria_name(), "option");
+        assert_eq!(AriaRole::TextInput.aria_name(), "textbox");
         assert_eq!(AriaRole::Generic.aria_name(), "generic");
     }
 
@@ -146,5 +162,12 @@ mod tests {
             AriaRole::ListBoxOption.to_accesskit(),
             Role::ListBoxOption
         );
+    }
+
+    // R56.1.b.1 §5.40 — TextInput role lowering.
+
+    #[test]
+    fn text_input_lowers_to_accesskit_text_input() {
+        assert_eq!(AriaRole::TextInput.to_accesskit(), Role::TextInput);
     }
 }

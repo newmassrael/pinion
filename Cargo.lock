@@ -1621,6 +1621,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-textfield"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-text",
+ "vello",
+]
+
+[[package]]
 name = "hello-toggle"
 version = "0.0.1"
 dependencies = [

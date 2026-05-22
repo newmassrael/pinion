@@ -324,9 +324,13 @@ impl Default for TextEditState {
 /// [`TextEditState`] for the current view scope.
 ///
 /// Delegates to [`Owner::cache`](crate::reactive::Owner::cache); the
-/// `key` MUST be a `&'static str` and SHOULD be unique within the
-/// enclosing owner's cache (the canonical pattern is to pass the
-/// matching [`TextField`]'s tag verbatim). Mirrors
+/// `key` MUST be a `&'static str`. The canonical pattern is to pass
+/// the matching [`TextField`]'s tag verbatim — (R56.1.b.1 §5.22) the
+/// underlying `Owner::cache` is keyed by `(TypeId, &'static str)`, so
+/// the same widget tag composes cleanly across typed hooks:
+/// `use_text_edit_state(tag)` and
+/// [`use_caret_blink`](crate::widgets::caret_blink::use_caret_blink)`(tag)`
+/// resolve to distinct slots without collision. Mirrors
 /// [`use_scroll_state`](crate::widgets::scroll::use_scroll_state).
 ///
 /// # Panics

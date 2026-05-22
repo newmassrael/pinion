@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R56.1.b.1 §5.38 — pinion-forge renderer manifest for hello-textfield.
+  Emits `HelloTextFieldRenderer` (Vello-backed RenderContext +
+  RenderSurface + Renderer wrapper). Identical manifest shape to
+  hello-toggle's `HelloToggleRenderer` — single-source-of-truth emit
+  template, only the struct name diverges. `aa` attribute omitted ->
+  defaults to Area per R46.2.1 (UI-canonical mode).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloTextFieldRenderer"
+        backend="vello"/>

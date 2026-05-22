@@ -343,3 +343,12 @@ reason = "R56.1.b.2 initial append used minimal audit shape (XML deserialize mul
 applied_in = "R56.1.b.2"
 content_hash_before = "5bcaa2ec548d32e8c7a450baa85308c79264ed41710b1c83aa40eb2aad90ee50"
 content_hash_after = "fc3dc08092598b647943f080ec81dd0dc7801e20f31d379a1422416993b111c9"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "R56.1.b.1"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets"]
+reason = "R56.1.b.1 audit landed via minimal ASCII shape per [[mnemosyne-multibyte-audit-fallback]]; publishable expand carries richer detail across all four bare setter fields (decision_summary + changes + impact_refs + verification)."
+applied_in = "R56.1.b.1"
+content_hash_before = "3ade5374d28bf13c270c53d1adea13610bd5c8a6268414d3d33e2c62d1381e66"
+content_hash_after = "06967cd4f079954e694e74c2e3d35593e40fc5efbf04c0ceb809f4b8168f7d6b"

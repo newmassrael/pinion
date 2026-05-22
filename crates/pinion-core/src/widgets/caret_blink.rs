@@ -201,6 +201,11 @@ impl Tickable for CaretBlink {
 /// `key` MUST be a `&'static str`; the canonical pattern is to pass
 /// the matching [`TextField`]'s tag verbatim so the blink driver and
 /// the text-edit state share the same symbolic identifier.
+/// (R56.1.b.1 §5.22) The underlying `Owner::cache` is keyed by
+/// `(TypeId, &'static str)`, so the same widget tag composes cleanly
+/// across typed hooks: `use_caret_blink(tag)` and
+/// [`use_text_edit_state`](crate::widgets::text_edit::use_text_edit_state)`(tag)`
+/// resolve to distinct slots without collision.
 ///
 /// # Panics
 ///
@@ -226,7 +231,11 @@ pub fn use_caret_blink(key: &'static str) -> Rc<CaretBlink> {
     // dedup primitive — the next R56.x sub-round could promote this
     // into a `register_animation_once` helper if a second Tickable
     // user hook lands.
-    let first_time = !owner.cache_contains(key);
+    // (R56.1.b.1 §5.22) `cache_contains` is now type-aware — the
+    // first-time-init gate fires once per `(CaretBlink, key)` pair,
+    // independent of other typed hooks (`use_text_edit_state`,
+    // `use_scroll_state`, etc.) using the same widget tag.
+    let first_time = !owner.cache_contains::<CaretBlink>(key);
     let blink = owner.cache(key, CaretBlink::new);
     if first_time {
         let as_tickable: Rc<dyn Tickable> = Rc::clone(&blink) as Rc<dyn Tickable>;

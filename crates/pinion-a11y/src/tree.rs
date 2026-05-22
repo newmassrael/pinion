@@ -407,6 +407,16 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         AriaRole::RadioGroup | AriaRole::Listbox | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }
+        // R56.1.b.1 §5.40 — `TextInput` (single-line textbox) accepts
+        // `Focus` (Tab into the field) and `Click` (place caret on
+        // press). Edit actions (insert / delete / set-value) are
+        // dispatched as `AccessAction::SetValue` events on R56.1.f+
+        // accessibility carry — the action set here matches WAI-ARIA
+        // 1.2 §4.3 textbox baseline.
+        AriaRole::TextInput => {
+            node.add_action(Action::Focus);
+            node.add_action(Action::Click);
+        }
     }
 }
 

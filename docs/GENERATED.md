@@ -10206,6 +10206,59 @@ if __name__ == "__main__":
 
 
 
+### R56.1.b.1 — R56.1.b.1 lands hello-textfield, the first visible consumer for the R56 TextField axis, together with the four substrate cascade fixes its boilerplate audit revealed.
+
+**Changes**:
+- pinion-a11y::AriaRole adds TextInput variant
+- AriaRole::TextInput lowers to accesskit::Role::TextInput
+- aria_name() returns WAI-ARIA 1.2 literal 'textbox'
+- tree::add_actions_for_role registers Focus + Click for TextInput
+- core_shell::CoreShell::new wraps V::create_external in root_owner.run
+- create_external can now call use_text_edit_state / use_caret_blink / use_scroll_state
+- substrate.rs collect_access_emit_inputs wraps V::access_node in root_owner.run
+- V::access_focus_target receives the same root_owner.run wrap for parity
+- Owner::cache key shape becomes (TypeId, &'static str) for per-type slot
+- use_text_edit_state(tag) + use_caret_blink(tag) compose without collision
+- cache_contains becomes generic cache_contains::<V>(key)
+- use_caret_blink updated to cache_contains::<CaretBlink>(key)
+- same_key_mismatched_type_panics test replaced by typed-key contract pair
+- examples/hello-textfield new crate with TextFieldView impl + paint + apply_key
+- TextFieldExternal::new().attach_state(...).attach_blink(...) inside create_external
+- view fn shapes text via Owner::cache<RefCell<LayoutCache>> per paint
+- caret_rect_for_byte_offset + LayoutStyle::with_absolute_position drive caret overlay
+- Caret overlay only paints when Focused|Editing AND CaretBlink::visible() is true
+- apply_key delegates to TextFieldExternal::invoke('key', Text(key))
+- access_node emits AriaRole::TextInput + AccessValue::Text(text_state.text())
+- 12 binary tests pin the substrate composition
+- tools/demos/hello_textfield_type.py drives the live window via JSON-RPC
+- Demo exercises focus/set + 6 keystroke variants + F1 rejection + blur
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 2483 passed / 0 failed / 13 ignored
+- Baseline 2469 + 14 new tests = 2483 (delta net +14)
+- Delta: -1 deleted panic test + 2 typed-cache tests + 1 role lowering + 12 hello-textfield
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- Lint baseline: forbid unsafe_code + deny warnings + clippy::pedantic deny
+- tools/demos/hello_textfield_type.py end-to-end RPC self-verify PASS in 1.87s
+- Demo covers: focus drive + 6 keystrokes + F1 rejection + blur survives text
+- Regression sweep: all 11 hello-* demos PASS (7 listbox + 3 toggle + 1 textfield)
+- AccessKit AriaRole::TextInput -> Role::TextInput lowering test pinned
+
+
+
+**Impact**: §5.22, §5.38, §5.40, §5.41
+
+
+**Carry forward**:
+- R56.1.j caret blink reset on edit (R56.1.c carry)
+- pinion-tui FocusManager substrate (TUI parity for TextField)
+- R56.1.e clipboard / R56.1.f selection / R56.1.g IME composition (R56 axis remainder)
+- R57 Theming runtime palette (cross-cutting axis)
+
+
+
 ### R56.1.b.2 — R56.1.b.2 §5.36 §5.38 — pinion-text caret_rect_for_byte_offset closed-form helper wrapping parley::Cursor + CaretRect f32 struct.
 
 **Changes**:

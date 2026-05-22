@@ -46,7 +46,7 @@
 //! a checklist item for any future reactive primitive that owns cleanup
 //! closures.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -280,8 +280,25 @@ pub(crate) struct OwnerInner {
     /// the first paint and reuses on subsequent paints. Cleared on
     /// owner drop so cached values evaporate with the binding —
     /// matches the Solid.js `createMemo` / React `useRef` lifecycle.
-    pub(crate) cache: RefCell<HashMap<&'static str, Rc<dyn Any>>>,
+    ///
+    /// (R56.1.b.1 §5.22) Key shape is [`CacheKey`] (`(TypeId,
+    /// &'static str)`) so the same user-facing string can address
+    /// distinct slots per concrete value type —
+    /// `use_text_edit_state(tag)` and `use_caret_blink(tag)` both
+    /// resolve against the same widget tag without colliding because
+    /// their value types differ. The per-hook convention "pass the
+    /// matching widget tag verbatim" (documented on
+    /// [`use_text_edit_state`](crate::widgets::text_edit::use_text_edit_state)
+    /// / [`use_caret_blink`](crate::widgets::caret_blink::use_caret_blink))
+    /// is now load-bearing rather than aspirational.
+    pub(crate) cache: RefCell<HashMap<CacheKey, Rc<dyn Any>>>,
 }
+
+/// (R56.1.b.1 §5.22) Internal cache key for [`OwnerInner::cache`] —
+/// the type id of the cached value plus the user-supplied static
+/// string. Extracted as a type alias to keep the field declaration
+/// under `clippy::type_complexity`.
+type CacheKey = (TypeId, &'static str);
 
 impl ReactiveNode for OwnerInner {
     fn node_id(&self) -> u64 {
@@ -735,30 +752,35 @@ impl Owner {
     /// — value attached to the reactive owner, dropped with it,
     /// independent across instances.
     ///
-    /// ## Key collision and type safety
+    /// ## Key shape
     ///
     /// `key` is a `&'static str` for ergonomics (`"hover_anim"` literal
-    /// in the view fn). The same key from the same call site naturally
-    /// reuses the cached entry — that is the intended semantics. The
-    /// same key with a *different* `V` is a programming error: the
-    /// `Rc::downcast` fails and this method panics with a diagnostic
-    /// message naming the key and the conflicting types. Use distinct
-    /// string keys for distinct values inside the same scope; for
-    /// generic-typed caches use the type name as part of the key
-    /// (`"hover_anim_f32"`).
+    /// in the view fn). (R56.1.b.1 §5.22) The cache is keyed
+    /// internally by `(TypeId, key)`, so the same `key` string with a
+    /// *different* concrete `V` resolves to a distinct slot —
+    /// `use_text_edit_state(tag)` and `use_caret_blink(tag)` both
+    /// accept the same widget tag without colliding because their
+    /// value types differ. This mirrors React's per-hook slot model:
+    /// each typed hook has its own per-key slot independent of other
+    /// hooks. Same `key` + same `V` reuses the cached entry across
+    /// view-fn re-runs, which is the intended caching semantics.
     ///
-    /// ## Panics
+    /// # Panics
     ///
-    /// Panics if a previous call with the same `key` stored a value of
-    /// a different concrete type. This is a load-bearing assertion:
-    /// silently re-running the factory under a type mismatch would
-    /// hand back a fresh instance every paint, defeating the cache's
-    /// own contract.
+    /// The typed-key lookup is infallible by construction (the cache
+    /// entry was inserted under `(TypeId::of::<V>(), key)`, so the
+    /// `Rc::downcast::<V>` always succeeds). The fallback panic on
+    /// the downcast failure is a defensive guard against a future
+    /// refactor breaking the typed-key invariant and is never
+    /// triggered under the current implementation.
     pub fn cache<V, F>(&self, key: &'static str, factory: F) -> Rc<V>
     where
         V: 'static,
         F: FnOnce() -> V,
     {
+        // (R56.1.b.1 §5.22) Typed cache key — `(TypeId::of::<V>(), key)`
+        // so the same string addresses a distinct slot per type.
+        let typed_key = (TypeId::of::<V>(), key);
         // First-call vs reuse decision under a single borrow. The
         // `or_insert_with` arm fires `factory()` exactly once on miss;
         // the returned `Rc<dyn Any>` is shared across every call site.
@@ -766,33 +788,48 @@ impl Owner {
             let mut cache = self.inner.cache.borrow_mut();
             Rc::clone(
                 cache
-                    .entry(key)
+                    .entry(typed_key)
                     .or_insert_with(|| Rc::new(factory()) as Rc<dyn Any>),
             )
         };
         // Borrow released before the `downcast` — the downcast call
         // itself is `Rc::clone`-equivalent (it bumps the strong count
         // and rewraps as `Rc<V>`), no borrow re-entry.
+        //
+        // The downcast is now infallible by construction (we just
+        // looked up by `(TypeId::of::<V>(), key)`), so the
+        // `unwrap_or_else` panic is a defensive guard against a future
+        // refactor introducing a typed-key inconsistency — never
+        // triggered under the current invariant.
         Rc::downcast::<V>(any_rc).unwrap_or_else(|_| {
             panic!(
-                "Owner::cache key {key:?} already holds a value of a different type; \
-                 use distinct keys for distinct types within the same owner scope",
+                "Owner::cache typed-key invariant violated for {key:?}; \
+                 the typed-key lookup must hand back an Rc<V> matching its TypeId",
             );
         })
     }
 
-    /// R51.150 §5.22 — `true` when `key` has been populated by a
-    /// previous [`Owner::cache`] call on this owner.
+    /// R51.150 §5.22 — `true` when (`V`, `key`) has been populated by
+    /// a previous [`Owner::cache::<V>`](Self::cache) call on this
+    /// owner.
+    ///
+    /// (R56.1.b.1 §5.22) The lookup is type-aware: the same `key`
+    /// under different types resolves to distinct slots, matching the
+    /// [`Self::cache`] keying contract. `use_caret_blink`'s first-
+    /// time-registration gate
+    /// (`!cache_contains::<CaretBlink>(key)`) therefore fires once
+    /// per `(CaretBlink, key)` pair, independent of any other type
+    /// using the same widget tag.
     ///
     /// Returns `false` for un-touched keys and for keys whose cached
     /// values have been dropped by an owner reset (not currently
     /// implemented; the cache lives for the owner's lifetime today).
     /// Primarily for diagnostics and tests; application code should
-    /// just call [`Owner::cache`] — the lazy-init contract handles
+    /// just call [`Self::cache`] — the lazy-init contract handles
     /// the missing-key case transparently.
     #[must_use]
-    pub fn cache_contains(&self, key: &'static str) -> bool {
-        self.inner.cache.borrow().contains_key(key)
+    pub fn cache_contains<V: 'static>(&self, key: &'static str) -> bool {
+        self.inner.cache.borrow().contains_key(&(TypeId::of::<V>(), key))
     }
 
     #[cfg(test)]
@@ -1363,7 +1400,8 @@ mod tests {
     // - Same key returned Rc aliases (same heap allocation).
     // - Different keys are independent.
     // - Distinct types under distinct keys coexist.
-    // - Same key with mismatched type panics (load-bearing contract).
+    // - (R56.1.b.1 §5.22) Distinct types under the *same* key resolve
+    //   to independent slots (typed-key contract).
     // - Owner drop releases cached value (verified via Rc strong count).
     // - Sibling owners have isolated caches.
     // ────────────────────────────────────────────────────────────────
@@ -1377,7 +1415,7 @@ mod tests {
         fn fresh_owner_cache_is_empty() {
             let owner = Owner::new();
             assert_eq!(owner.cache_size(), 0);
-            assert!(!owner.cache_contains("foo"));
+            assert!(!owner.cache_contains::<u32>("foo"));
         }
 
         #[test]
@@ -1392,7 +1430,10 @@ mod tests {
             assert_eq!(*v, 42);
             assert_eq!(factory_calls.get(), 1);
             assert_eq!(owner.cache_size(), 1);
-            assert!(owner.cache_contains("key"));
+            assert!(owner.cache_contains::<u32>("key"));
+            // (R56.1.b.1 §5.22) Typed cache_contains — the same key
+            // under a different type reads as un-populated.
+            assert!(!owner.cache_contains::<String>("key"));
         }
 
         #[test]
@@ -1456,12 +1497,37 @@ mod tests {
         }
 
         #[test]
-        #[should_panic(expected = "Owner::cache key")]
-        fn same_key_mismatched_type_panics() {
+        fn same_key_distinct_types_resolve_independent_slots() {
+            // (R56.1.b.1 §5.22) The typed-key cache routes
+            // `(TypeId::of::<V>(), key)` so the same string `key` with
+            // a *different* concrete `V` resolves to a distinct slot.
+            // React's per-hook slot model: `use_state(tag)` and
+            // `use_ref(tag)` both accept the same widget tag — pinion's
+            // `use_text_edit_state(tag)` + `use_caret_blink(tag)`
+            // pattern is now load-bearing rather than aspirational.
             let owner = Owner::new();
-            let _u: Rc<u32> = owner.cache("k", || 1_u32);
-            // Same key, different concrete type — must panic.
-            let _s: Rc<String> = owner.cache("k", || String::from("type-mismatch"));
+            let u: Rc<u32> = owner.cache("k", || 1_u32);
+            let s: Rc<String> = owner.cache("k", || String::from("ok"));
+            assert_eq!(*u, 1);
+            assert_eq!(*s, "ok");
+            // Both slots present, distinct cache entries.
+            assert_eq!(owner.cache_size(), 2);
+            assert!(owner.cache_contains::<u32>("k"));
+            assert!(owner.cache_contains::<String>("k"));
+            assert!(!owner.cache_contains::<f64>("k"));
+        }
+
+        #[test]
+        fn same_key_same_type_aliases_after_typed_split() {
+            // (R56.1.b.1 §5.22) Same `(TypeId, key)` still aliases the
+            // same Rc — the typed-key change preserves the per-(type,
+            // key) caching semantics required for Solid.js `createMemo`
+            // / React `useRef` reuse.
+            let owner = Owner::new();
+            let a: Rc<u32> = owner.cache("k", || 7_u32);
+            let b: Rc<u32> = owner.cache("k", || 999_u32);
+            assert!(Rc::ptr_eq(&a, &b));
+            assert_eq!(*b, 7);
         }
 
         #[test]
