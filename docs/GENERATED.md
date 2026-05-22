@@ -2895,6 +2895,7 @@ router.pointer_down(&mut state_scene);
 - R56.1.b — TextEditState + caret_rect helper + TextField::attach_state (R56.1.a sidecar grows)
 - R56.1.c — CaretBlink animation (530ms canonical) + use_caret_blink hook (Owner::cache + Tickable)
 - R56.1.d — TextField apply_key + invoke('key') RPC path (Backspace/Arrow/Home/End/Space/printable)
+- R56.1.h — TextField focus lifecycle wire (shell mgr ↔ on_focus_change ↔ Focus/Blur ↔ blink)
 
 
 
@@ -2928,6 +2929,23 @@ fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
     matches!(
         intro.invoke("key", IntrospectValue::Text(key.to_string())),
         Ok(IntrospectValue::Bool(true)),
+    )
+}
+```
+
+```rust
+// R56.1.h §5.38 §5.39 §5.28 — focus-aware TextField with caret blink.
+// The shell substrate calls External::on_focus_change automatically
+// after every focus mutation (Tab traversal / click / AT action / RPC
+// focus/set), so the binding only needs to construct the External and
+// attach state + blink:
+fn create_external() -> Box<dyn External> {
+    let text = Rc::new(TextEditState::new());
+    let blink = Rc::new(CaretBlink::new());
+    Box::new(
+        TextFieldExternal::new()
+            .attach_state(text)
+            .attach_blink(blink),
     )
 }
 ```
@@ -3025,6 +3043,10 @@ fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
 - crates/pinion-core/src/widgets/caret_blink.rs:CaretBlink
 - crates/pinion-core/src/widgets/caret_blink.rs:use_caret_blink
 - crates/pinion-core/src/widgets/text_field.rs:apply_key
+- crates/pinion-core/src/widgets/text_field.rs:TextField::attach_blink
+- crates/pinion-core/src/widgets/text_field.rs:TextField::sync_blink
+- crates/pinion-core/src/widgets/text_field.rs:&lt;TextFieldExternal as External&gt;::on_focus_change
+- crates/pinion-shell/src/substrate.rs:ShellCore::notify_focus_change
 
 
 
@@ -10235,6 +10257,30 @@ if __name__ == "__main__":
 
 
 **Impact**: §5.38, §5.22
+
+
+
+### R56.1.h — R56.1.h §5.38 §5.39 §5.28 — TextField focus lifecycle wire: shell focus mgr ↔ External::on_focus_change ↔ TextField Focus/Blur statechart drive ↔ CaretBlink sync.
+
+**Changes**:
+- ShellCore::notify_focus_change helper walks scene + fires External::on_focus_change(old/new)
+- 6 focus mutation sites refactored (click/Tab/AT Focus/AT Click/a11y key/RPC) to notify on diff
+- TextFieldExternal::on_focus_change override drives TextFieldEvent::Focus / Blur via SCXML
+- TextField::attach_blink + sync_blink; Focused/Editing → blink on, Idle/Disabled → off
+- Editing→Idle via Blur emits text_committed (IME canonical commit-on-blur preserved)
+- 25 pinion-core + 8 pinion-shell substrate tests; FOCUS_CHANGE_LOG fixture in dispatch_core
+
+
+
+**Verification**:
+- cargo test pinion-core widgets::text_field::r56_1_h_tests: 25 pass / 0 fail
+- cargo test pinion-shell --test dispatch_core r56_1_h: 8 pass / 0 fail
+- cargo test --workspace --features vello: 2459 pass / 0 fail (+33 vs R56.1.d 2426)
+- cargo clippy --workspace --all-targets --features vello: 0 warnings
+
+
+
+**Impact**: §5.38, §5.39, §5.28
 
 
 

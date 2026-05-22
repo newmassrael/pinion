@@ -91,6 +91,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::scene::Rect;
+use crate::widgets::caret_blink::CaretBlink;
 use crate::widgets::text_edit::TextEditState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
@@ -318,6 +319,15 @@ pub struct TextField {
     /// paint-only convention until the application explicitly
     /// attaches reactive state.
     text_state: Option<Rc<TextEditState>>,
+    /// R56.1.h §5.38 §5.28 — optional caret blink animation handle.
+    /// `None` means the binding hasn't attached a blink (the paint
+    /// backend renders the caret as solid). When attached, every
+    /// statechart transition ([`Self::send`]) syncs the blink's
+    /// enabled gate: `Focused` / `Editing` → enabled (caret blinks),
+    /// `Idle` / `Disabled` → disabled (the [`CaretBlink::tick`] no-op
+    /// holds the off frame so the caret is hidden whenever the
+    /// widget is unfocused).
+    blink: Option<Rc<CaretBlink>>,
 }
 
 impl TextField {
@@ -330,6 +340,7 @@ impl TextField {
         Self {
             inner: Widget::new(),
             text_state: None,
+            blink: None,
         }
     }
 
@@ -364,18 +375,87 @@ impl TextField {
         self.text_state.as_ref()
     }
 
+    /// R56.1.h §5.38 §5.28 — attach a [`CaretBlink`] animation handle.
+    /// After attachment, every statechart transition
+    /// ([`Self::send`]) syncs the blink's enabled gate via
+    /// [`Self::sync_blink`]: `Focused` / `Editing` → enabled,
+    /// `Idle` / `Disabled` → disabled. Builder-style; chain after
+    /// [`Self::new`] for the fluent
+    /// `TextField::new().attach_state(text).attach_blink(blink)`
+    /// shape.
+    ///
+    /// The handle is shared (`Rc`) — the same `CaretBlink` instance
+    /// is queried by the paint backend (`visible()`) and ticked by
+    /// the binding's animation loop (Tickable per R56.1.c). Drop the
+    /// `TextField` to detach; mid-life detach/reattach is not
+    /// supported (mirror of [`Self::attach_state`] contract).
+    ///
+    /// Initial sync runs immediately so attaching after a `Focus`
+    /// event still propagates the enabled gate (e.g. attaching a
+    /// blink to a `TextField` that the application has already
+    /// driven into `Focused` via an external `send(Focus)` will
+    /// enable the blink right away).
+    #[must_use]
+    pub fn attach_blink(mut self, blink: Rc<CaretBlink>) -> Self {
+        self.blink = Some(blink);
+        self.sync_blink();
+        self
+    }
+
+    /// Read-only access to the attached [`CaretBlink`] handle.
+    /// `None` until [`Self::attach_blink`] fires. Diagnostic / test
+    /// surface; production callers reach the blink through the same
+    /// `Rc<CaretBlink>` they passed in.
+    #[must_use]
+    pub fn blink(&self) -> Option<&Rc<CaretBlink>> {
+        self.blink.as_ref()
+    }
+
     /// Drive a [`TextFieldEvent`] through the SCXML. Pure state
     /// transition — text-content mutation flows through
     /// [`TextEditState`] (R56.1.b composition handle), not through
     /// this widget.
+    ///
+    /// R56.1.h §5.38 §5.28 — every send syncs the attached
+    /// [`CaretBlink`] enabled gate to the post-transition state, so
+    /// the lifecycle ordering matches the W3C `FocusEvent` contract:
+    /// state transition fires first, then the blink animation gate
+    /// settles into the new state's posture (Focused/Editing
+    /// enabled, Idle/Disabled disabled). No-op on bare `TextField`s
+    /// without an attached blink.
     pub fn send(&mut self, event: TextFieldEvent) {
         self.inner.send(event);
+        self.sync_blink();
     }
 
     /// Current interaction state.
     #[must_use]
     pub fn state(&self) -> TextFieldState {
         self.inner.state()
+    }
+
+    /// R56.1.h §5.38 §5.28 — sync the attached [`CaretBlink`] enabled
+    /// gate to the current statechart state. Called automatically
+    /// from [`Self::send`] (and from [`Self::attach_blink`] for the
+    /// initial post-attach sync); production callers do not need to
+    /// invoke this directly. No-op on bare `TextField`s without an
+    /// attached blink.
+    ///
+    /// Enabled gate policy: `Focused` / `Editing` → enabled,
+    /// `Idle` / `Disabled` → disabled. The `Editing` state inherits
+    /// the enabled gate from `Focused` because IME composition still
+    /// shows a caret (the blinking insertion point sits at the end
+    /// of the preedit run in most platforms' IME UI — Wayland text-
+    /// input-v3, `GTK` `IBus`, macOS `NSTextInputContext` all paint
+    /// the same caret during composition).
+    fn sync_blink(&self) {
+        if let Some(blink) = &self.blink {
+            let enabled = matches!(
+                self.state(),
+                TextFieldState::Focused | TextFieldState::Editing,
+            );
+            blink.set_enabled(enabled);
+        }
     }
 }
 
@@ -486,6 +566,30 @@ impl TextFieldExternal {
         self.em.inner.text_state()
     }
 
+    /// R56.1.h §5.38 §5.28 — attach a [`CaretBlink`] handle to the
+    /// inner [`TextField`] (composition; delegates to
+    /// [`TextField::attach_blink`]). Builder-style; chain after
+    /// [`Self::new`] for the fluent shape. Statechart transitions
+    /// driven through [`Self::send`] / [`Self::on_focus_change`]
+    /// sync the blink's enabled gate automatically.
+    #[must_use]
+    pub fn attach_blink(mut self, blink: Rc<CaretBlink>) -> Self {
+        // `mem::take` keeps the builder shape (consume-and-return)
+        // through the wrapping `IntentEmitter`; `TextField::default`
+        // is the cheap round-trip (no observable state — blink None,
+        // SCXML freshly initialized to Idle).
+        self.em.inner = std::mem::take(&mut self.em.inner).attach_blink(blink);
+        self
+    }
+
+    /// R56.1.h §5.38 §5.28 — attached [`CaretBlink`] handle
+    /// (delegates to [`TextField::blink`]). `None` until
+    /// [`Self::attach_blink`] fires.
+    #[must_use]
+    pub fn blink(&self) -> Option<&Rc<CaretBlink>> {
+        self.em.inner.blink()
+    }
+
     /// Drive a [`TextFieldEvent`] and queue a `"text_committed"`
     /// intent on the two commit-raise transitions. Pipeline lives on
     /// [`IntentEmitter::dispatch`]; the detection rule lives on the
@@ -542,6 +646,40 @@ impl External for TextFieldExternal {
 
     fn is_dirty(&self) -> bool {
         self.em.is_dirty()
+    }
+
+    /// R56.1.h §5.38 §5.39 — shell focus change ↔ SCXML statechart
+    /// drive. The shell's
+    /// [`notify_focus_change`](`pinion_shell::ShellSubstrate::notify_focus_change`)
+    /// calls this hook on the outgoing widget (`focused=false`)
+    /// before the incoming widget (`focused=true`) — mirrors the
+    /// W3C DOM `FocusEvent` dispatch order (`blur` then `focus`).
+    ///
+    /// `focused=true` drives [`TextFieldEvent::Focus`]; `focused=false`
+    /// drives [`TextFieldEvent::Blur`]. The SCXML transition graph
+    /// (R56.1.a `widgets/text_field.scxml`) handles every reachable
+    /// state pair:
+    ///
+    /// - `Idle → Focused` (focus): caret appears, blink enables.
+    /// - `Focused → Idle` (blur): caret hides, blink disables.
+    /// - `Editing → Idle` (blur): IME canonical commit-on-blur —
+    ///   raises `textfield.commit`, emits the `"text_committed"`
+    ///   intent (matches Wayland text-input-v3 / `GTK` `IBus` / macOS
+    ///   `NSTextInputContext` / Windows TSF). The application's drain
+    ///   loop picks up the intent on the next dispatch tail.
+    /// - `Disabled + focus|blur`: no transition (SCXML rejects), the
+    ///   focus mgr still tracks the tag but the widget stays inert.
+    ///
+    /// The blink lifecycle syncs automatically through
+    /// [`TextField::sync_blink`] (called from [`TextField::send`]),
+    /// so attaching a [`CaretBlink`] makes the gate flip in lockstep
+    /// with the statechart transition.
+    fn on_focus_change(&mut self, focused: bool) {
+        self.send(if focused {
+            TextFieldEvent::Focus
+        } else {
+            TextFieldEvent::Blur
+        });
     }
 }
 
@@ -1781,5 +1919,345 @@ mod r56_1_d_tests {
         // Construction-time fresh TextField equivalence.
         let fresh = TextField::new();
         assert_eq!(fresh.state(), tfx.state());
+    }
+}
+
+#[cfg(test)]
+mod r56_1_h_tests {
+    //! R56.1.h §5.38 §5.39 §5.28 — focus/blur lifecycle wire:
+    //! [`TextField::attach_blink`] composition + `sync_blink` statechart
+    //! sync + [`TextFieldExternal::on_focus_change`] external focus
+    //! drive. The shell-substrate side (focus mgr ↔
+    //! [`External::on_focus_change`] wire) is tested in
+    //! `pinion-shell/tests/focus_lifecycle_wire.rs`.
+
+    use super::{TextField, TextFieldEvent, TextFieldExternal, TextFieldState};
+    use crate::external::{External, IntrospectValue};
+    use crate::widgets::caret_blink::CaretBlink;
+    use std::rc::Rc;
+
+    // ─────────────────────────────────────────────────────────────
+    // TextField::attach_blink composition
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_h_bare_text_field_has_no_blink() {
+        let tf = TextField::new();
+        assert!(tf.blink().is_none());
+    }
+
+    #[test]
+    fn r56_1_h_attach_blink_records_handle() {
+        let blink = Rc::new(CaretBlink::new());
+        let tf = TextField::new().attach_blink(Rc::clone(&blink));
+        assert!(tf.blink().is_some());
+        assert!(Rc::ptr_eq(tf.blink().unwrap(), &blink));
+    }
+
+    #[test]
+    fn r56_1_h_external_bare_has_no_blink() {
+        let tfx = TextFieldExternal::new();
+        assert!(tfx.blink().is_none());
+    }
+
+    #[test]
+    fn r56_1_h_external_attach_blink_records_handle() {
+        let blink = Rc::new(CaretBlink::new());
+        let tfx = TextFieldExternal::new().attach_blink(Rc::clone(&blink));
+        assert!(tfx.blink().is_some());
+        assert!(Rc::ptr_eq(tfx.blink().unwrap(), &blink));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // sync_blink — statechart state ↔ blink enabled gate
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_h_attach_blink_on_idle_disables_initial_sync() {
+        let blink = Rc::new(CaretBlink::new());
+        // Caret blink defaults to disabled (R56.1.c contract); the
+        // attach-time sync should preserve that (Idle → disabled).
+        assert!(!blink.enabled(), "default disabled");
+        let _tf = TextField::new().attach_blink(Rc::clone(&blink));
+        assert!(!blink.enabled(), "Idle attach keeps blink disabled");
+    }
+
+    #[test]
+    fn r56_1_h_attach_blink_on_focused_enables_initial_sync() {
+        // Pre-driven Focused state — attach must reconcile to enabled.
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new();
+        tf.send(TextFieldEvent::Focus);
+        assert_eq!(tf.state(), TextFieldState::Focused);
+        let _tf = tf.attach_blink(Rc::clone(&blink));
+        assert!(blink.enabled(), "Focused attach enables blink at once");
+    }
+
+    #[test]
+    fn r56_1_h_focus_event_enables_blink() {
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new().attach_blink(Rc::clone(&blink));
+        assert!(!blink.enabled());
+        tf.send(TextFieldEvent::Focus);
+        assert!(blink.enabled(), "Idle→Focused enables blink");
+    }
+
+    #[test]
+    fn r56_1_h_blur_event_disables_blink() {
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new().attach_blink(Rc::clone(&blink));
+        tf.send(TextFieldEvent::Focus);
+        assert!(blink.enabled());
+        tf.send(TextFieldEvent::Blur);
+        assert!(!blink.enabled(), "Focused→Idle disables blink");
+    }
+
+    #[test]
+    fn r56_1_h_begin_edit_keeps_blink_enabled() {
+        // Editing inherits the enabled gate — IME composition still
+        // shows the caret (Wayland text-input-v3 / GTK IBus / macOS).
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new().attach_blink(Rc::clone(&blink));
+        tf.send(TextFieldEvent::Focus);
+        tf.send(TextFieldEvent::BeginEdit);
+        assert_eq!(tf.state(), TextFieldState::Editing);
+        assert!(blink.enabled(), "Editing keeps caret blinking");
+    }
+
+    #[test]
+    fn r56_1_h_commit_edit_keeps_blink_enabled() {
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new().attach_blink(Rc::clone(&blink));
+        tf.send(TextFieldEvent::Focus);
+        tf.send(TextFieldEvent::BeginEdit);
+        tf.send(TextFieldEvent::CommitEdit);
+        assert_eq!(tf.state(), TextFieldState::Focused);
+        assert!(blink.enabled(), "Editing→Focused keeps blink enabled");
+    }
+
+    #[test]
+    fn r56_1_h_cancel_edit_keeps_blink_enabled() {
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new().attach_blink(Rc::clone(&blink));
+        tf.send(TextFieldEvent::Focus);
+        tf.send(TextFieldEvent::BeginEdit);
+        tf.send(TextFieldEvent::CancelEdit);
+        assert_eq!(tf.state(), TextFieldState::Focused);
+        assert!(blink.enabled(), "Editing→Focused (cancel) keeps blink");
+    }
+
+    #[test]
+    fn r56_1_h_blur_from_editing_disables_blink() {
+        // Editing→Idle via Blur — caret disappears (focus loss commits
+        // preedit then hides the widget per R56.1.a contract).
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new().attach_blink(Rc::clone(&blink));
+        tf.send(TextFieldEvent::Focus);
+        tf.send(TextFieldEvent::BeginEdit);
+        tf.send(TextFieldEvent::Blur);
+        assert_eq!(tf.state(), TextFieldState::Idle);
+        assert!(!blink.enabled(), "Editing→Idle (blur) disables blink");
+    }
+
+    #[test]
+    fn r56_1_h_disable_from_focused_disables_blink() {
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new().attach_blink(Rc::clone(&blink));
+        tf.send(TextFieldEvent::Focus);
+        assert!(blink.enabled());
+        tf.send(TextFieldEvent::Disable);
+        assert_eq!(tf.state(), TextFieldState::Disabled);
+        assert!(!blink.enabled(), "Focused→Disabled disables blink");
+    }
+
+    #[test]
+    fn r56_1_h_enable_from_disabled_keeps_blink_disabled() {
+        // Disabled→Idle (via Enable) returns to Idle, not Focused —
+        // the blink stays disabled. Application must re-focus to
+        // re-enable.
+        let blink = Rc::new(CaretBlink::new());
+        let mut tf = TextField::new().attach_blink(Rc::clone(&blink));
+        tf.send(TextFieldEvent::Disable);
+        tf.send(TextFieldEvent::Enable);
+        assert_eq!(tf.state(), TextFieldState::Idle);
+        assert!(!blink.enabled(), "Disabled→Idle (enable) keeps blink off");
+    }
+
+    #[test]
+    fn r56_1_h_bare_text_field_send_does_not_panic_without_blink() {
+        // No-op sync_blink on bare TextField — regression guard.
+        let mut tf = TextField::new();
+        for ev in [
+            TextFieldEvent::Focus,
+            TextFieldEvent::BeginEdit,
+            TextFieldEvent::CommitEdit,
+            TextFieldEvent::Blur,
+            TextFieldEvent::Disable,
+            TextFieldEvent::Enable,
+        ] {
+            tf.send(ev);
+        }
+        // Final state is Idle (Disable→Enable round trip ends in Idle).
+        assert_eq!(tf.state(), TextFieldState::Idle);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // TextFieldExternal::on_focus_change — External trait override
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_h_on_focus_change_true_drives_focus_event() {
+        let mut tfx = TextFieldExternal::new();
+        assert_eq!(tfx.state(), TextFieldState::Idle);
+        tfx.on_focus_change(true);
+        assert_eq!(tfx.state(), TextFieldState::Focused);
+    }
+
+    #[test]
+    fn r56_1_h_on_focus_change_false_drives_blur_event() {
+        let mut tfx = TextFieldExternal::new();
+        tfx.send(TextFieldEvent::Focus);
+        assert_eq!(tfx.state(), TextFieldState::Focused);
+        tfx.on_focus_change(false);
+        assert_eq!(tfx.state(), TextFieldState::Idle);
+    }
+
+    #[test]
+    fn r56_1_h_on_focus_change_false_during_editing_commits() {
+        // IME canonical: focus loss during composition commits the
+        // preedit (raises textfield.commit → text_committed intent).
+        let mut tfx = TextFieldExternal::new();
+        tfx.send(TextFieldEvent::Focus);
+        tfx.send(TextFieldEvent::BeginEdit);
+        assert_eq!(tfx.state(), TextFieldState::Editing);
+        // Clear any prior queued intents.
+        let mut prior = Vec::new();
+        tfx.drain_intents(&mut |i| prior.push(i));
+        // Now drive blur via on_focus_change — should both transition
+        // and emit text_committed.
+        tfx.on_focus_change(false);
+        assert_eq!(tfx.state(), TextFieldState::Idle);
+        let mut harvested = Vec::new();
+        tfx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(harvested[0].tag_str(), "text_committed");
+    }
+
+    #[test]
+    fn r56_1_h_on_focus_change_on_disabled_is_no_op() {
+        // SCXML rejects focus / blur from Disabled (no transition
+        // declared). The dispatch consumes the event but the state
+        // stays put.
+        let mut tfx = TextFieldExternal::new();
+        tfx.send(TextFieldEvent::Disable);
+        assert_eq!(tfx.state(), TextFieldState::Disabled);
+        tfx.on_focus_change(true);
+        assert_eq!(
+            tfx.state(),
+            TextFieldState::Disabled,
+            "Disabled absorbs focus",
+        );
+        tfx.on_focus_change(false);
+        assert_eq!(
+            tfx.state(),
+            TextFieldState::Disabled,
+            "Disabled absorbs blur",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_on_focus_change_syncs_blink_through_external() {
+        // End-to-end: External::on_focus_change → IntentEmitter::dispatch
+        // → TextField::send → sync_blink → CaretBlink::set_enabled.
+        let blink = Rc::new(CaretBlink::new());
+        let mut tfx = TextFieldExternal::new().attach_blink(Rc::clone(&blink));
+        assert!(!blink.enabled(), "Idle bare blink stays disabled");
+        tfx.on_focus_change(true);
+        assert!(blink.enabled(), "focus=true enables blink");
+        tfx.on_focus_change(false);
+        assert!(!blink.enabled(), "focus=false disables blink");
+    }
+
+    #[test]
+    fn r56_1_h_on_focus_change_true_emits_no_intent() {
+        // Idle→Focused is silent (no text_committed) — sanity guard
+        // that the focus-drive doesn't spuriously raise commits.
+        let mut tfx = TextFieldExternal::new();
+        tfx.on_focus_change(true);
+        let mut harvested = Vec::new();
+        tfx.drain_intents(&mut |i| harvested.push(i));
+        assert!(
+            harvested.is_empty(),
+            "Idle→Focused must not raise text_committed",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_on_focus_change_blur_from_focused_emits_no_intent() {
+        // Focused→Idle (without Editing) is silent.
+        let mut tfx = TextFieldExternal::new();
+        tfx.on_focus_change(true);
+        // drain Idle→Focused (no intents).
+        let mut prior = Vec::new();
+        tfx.drain_intents(&mut |i| prior.push(i));
+        tfx.on_focus_change(false);
+        let mut harvested = Vec::new();
+        tfx.drain_intents(&mut |i| harvested.push(i));
+        assert!(
+            harvested.is_empty(),
+            "Focused→Idle without Editing must not raise text_committed",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Composition — attach_state + attach_blink interplay
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_h_attach_blink_after_attach_state_preserves_text_state() {
+        use crate::widgets::text_edit::TextEditState;
+        let text = Rc::new(TextEditState::with_initial("abc".to_string()));
+        let blink = Rc::new(CaretBlink::new());
+        let tf = TextField::new()
+            .attach_state(Rc::clone(&text))
+            .attach_blink(Rc::clone(&blink));
+        // Both handles present; state and blink independent.
+        assert!(tf.text_state().is_some());
+        assert!(tf.blink().is_some());
+        assert!(Rc::ptr_eq(tf.text_state().unwrap(), &text));
+        assert!(Rc::ptr_eq(tf.blink().unwrap(), &blink));
+    }
+
+    #[test]
+    fn r56_1_h_external_focus_drive_does_not_disturb_text_state() {
+        // R56.1.h focus drive must not perturb attached text content
+        // (R56.1.b orthogonal sidecar contract).
+        use crate::widgets::text_edit::TextEditState;
+        let text = Rc::new(TextEditState::with_initial("hello".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&text));
+        let initial = text.text();
+        tfx.on_focus_change(true);
+        tfx.on_focus_change(false);
+        tfx.on_focus_change(true);
+        assert_eq!(text.text(), initial, "focus drive leaves text alone");
+    }
+
+    #[test]
+    fn r56_1_h_introspect_state_reflects_external_focus_drive() {
+        // Sanity: the introspect `state` query reflects the post-
+        // on_focus_change state, exactly as it would for a manual
+        // `invoke("send", Text("Focus"))`.
+        use crate::external::ExternalIntrospect;
+        let mut tfx = TextFieldExternal::new();
+        tfx.on_focus_change(true);
+        assert_eq!(
+            tfx.query("state").unwrap(),
+            IntrospectValue::Text("Focused".to_string()),
+        );
+        tfx.on_focus_change(false);
+        assert_eq!(
+            tfx.query("state").unwrap(),
+            IntrospectValue::Text("Idle".to_string()),
+        );
     }
 }

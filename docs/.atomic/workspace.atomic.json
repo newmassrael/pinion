@@ -3910,7 +3910,8 @@
         "R56.1.a — TextField SCXML 4-state + binding + text_committed intent (R56 axis start)",
         "R56.1.b — TextEditState + caret_rect helper + TextField::attach_state (R56.1.a sidecar grows)",
         "R56.1.c — CaretBlink animation (530ms canonical) + use_caret_blink hook (Owner::cache + Tickable)",
-        "R56.1.d — TextField apply_key + invoke('key') RPC path (Backspace/Arrow/Home/End/Space/printable)"
+        "R56.1.d — TextField apply_key + invoke('key') RPC path (Backspace/Arrow/Home/End/Space/printable)",
+        "R56.1.h — TextField focus lifecycle wire (shell mgr ↔ on_focus_change ↔ Focus/Blur ↔ blink)"
       ],
       "alternatives_rejected": [
         {
@@ -3942,6 +3943,10 @@
         {
           "language": "rust",
           "code": "// R56.1.d §5.38 §5.22 — application apply_key wire for a focused TextField.\n// Mirrors hello-listbox (§5.38 R51.99) — focus-tag gate then RPC-shaped\n// invoke(\"key\", text). Returns Bool(true) on recognized keys.\nfn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {\n    if focused != Some(Self::tag()) {\n        return false;\n    }\n    let Some(node) = scene.find_external_with_tag_mut(Self::tag()) else {\n        return false;\n    };\n    let Some(intro) = node.handle.introspect_mut() else {\n        return false;\n    };\n    matches!(\n        intro.invoke(\"key\", IntrospectValue::Text(key.to_string())),\n        Ok(IntrospectValue::Bool(true)),\n    )\n}"
+        },
+        {
+          "language": "rust",
+          "code": "// R56.1.h §5.38 §5.39 §5.28 — focus-aware TextField with caret blink.\n// The shell substrate calls External::on_focus_change automatically\n// after every focus mutation (Tab traversal / click / AT action / RPC\n// focus/set), so the binding only needs to construct the External and\n// attach state + blink:\nfn create_external() -> Box<dyn External> {\n    let text = Rc::new(TextEditState::new());\n    let blink = Rc::new(CaretBlink::new());\n    Box::new(\n        TextFieldExternal::new()\n            .attach_state(text)\n            .attach_blink(blink),\n    )\n}"
         }
       ],
       "implementations": [
@@ -4291,6 +4296,22 @@
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
           "symbol": "apply_key"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextField::attach_blink"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextField::sync_blink"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "&lt;TextFieldExternal as External&gt;::on_focus_change"
+        },
+        {
+          "file": "crates/pinion-shell/src/substrate.rs",
+          "symbol": "ShellCore::notify_focus_change"
         }
       ],
       "decision_status": "active"
@@ -15968,6 +15989,45 @@
       "publishable_impact_refs": [
         "5.38",
         "5.22"
+      ]
+    },
+    "R56.1.h": {
+      "decision_summary": "R56.1.h - TextField focus lifecycle wire (shell mgr to External::on_focus_change + statechart drive + CaretBlink sync)",
+      "changes_bullets": [
+        "ShellCore::notify_focus_change helper",
+        "TextFieldExternal::on_focus_change drives Focus/Blur",
+        "TextField::attach_blink + sync_blink"
+      ],
+      "verification_bullets": [
+        "pinion-core 25 R56.1.h tests pass",
+        "pinion-shell 8 R56.1.h tests pass",
+        "workspace 2459 pass / 0 fail",
+        "0 clippy warnings"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.39",
+        "5.28"
+      ],
+      "publishable_decision_summary": "R56.1.h §5.38 §5.39 §5.28 — TextField focus lifecycle wire: shell focus mgr ↔ External::on_focus_change ↔ TextField Focus/Blur statechart drive ↔ CaretBlink sync.",
+      "publishable_changes_bullets": [
+        "ShellCore::notify_focus_change helper walks scene + fires External::on_focus_change(old/new)",
+        "6 focus mutation sites refactored (click/Tab/AT Focus/AT Click/a11y key/RPC) to notify on diff",
+        "TextFieldExternal::on_focus_change override drives TextFieldEvent::Focus / Blur via SCXML",
+        "TextField::attach_blink + sync_blink; Focused/Editing → blink on, Idle/Disabled → off",
+        "Editing→Idle via Blur emits text_committed (IME canonical commit-on-blur preserved)",
+        "25 pinion-core + 8 pinion-shell substrate tests; FOCUS_CHANGE_LOG fixture in dispatch_core"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test pinion-core widgets::text_field::r56_1_h_tests: 25 pass / 0 fail",
+        "cargo test pinion-shell --test dispatch_core r56_1_h: 8 pass / 0 fail",
+        "cargo test --workspace --features vello: 2459 pass / 0 fail (+33 vs R56.1.d 2426)",
+        "cargo clippy --workspace --all-targets --features vello: 0 warnings"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.39",
+        "5.28"
       ]
     },
     "Round 1": {

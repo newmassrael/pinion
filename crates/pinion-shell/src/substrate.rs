@@ -531,12 +531,19 @@ impl<V: WidgetView> ShellCore<V> {
     /// Returns the underlying `FocusManager` change flag for
     /// callers / tests that want to assert on the cycle behaviour.
     pub fn handle_focus_traverse(&mut self, shift: bool) -> bool {
+        let focus_before = self.focus.focused().map(str::to_owned);
         let changed = if shift {
             self.focus.focus_prev()
         } else {
             self.focus.focus_next()
         };
         if changed {
+            // R56.1.h §5.38 §5.39 — Tab / Shift+Tab traversal notifies
+            // the outgoing + incoming externals of the focus change
+            // before requesting the redraw so the `TextField` statechart
+            // (R56.1.a) drives its Focus / Blur events in the same
+            // frame that paints the new focus ring.
+            self.notify_focus_change(focus_before.as_deref());
             self.request_redraw();
         }
         changed
@@ -871,7 +878,15 @@ impl<V: WidgetView> ShellCore<V> {
     /// `focusable_tags()` members) leave focus unchanged — the
     /// [`FocusManager::focus_set`] guard rejects unknown tags so
     /// the no-op falls out naturally.
+    ///
+    /// R56.1.h §5.38 §5.39 — focus mutation now flows through
+    /// [`Self::notify_focus_change`] so any [`External`] whose
+    /// focused state crossed the boundary receives
+    /// [`External::on_focus_change`]. The `TextField` statechart
+    /// (R56.1.a) consumes this hook to drive its Focus / Blur SCXML
+    /// events and sync the [`CaretBlink`] enabled gate (R56.1.c).
     fn click_to_focus(&mut self, pid: PointerId) {
+        let focus_before = self.focus.focused().map(str::to_owned);
         if let Some(target) = self.core.hover_target(pid).map(str::to_owned) {
             if !self.focus.focus_set(&target) {
                 // Tagged but non-focusable (decoration) — leave focus
@@ -880,6 +895,43 @@ impl<V: WidgetView> ShellCore<V> {
             }
         } else {
             self.focus.focus_clear();
+        }
+        self.notify_focus_change(focus_before.as_deref());
+    }
+
+    /// R56.1.h §5.38 §5.39 — focus-change observer. Compares the
+    /// pre-mutation `focus_before` snapshot to the current
+    /// [`FocusManager::focused`] tag and fires
+    /// [`External::on_focus_change`] on the old and new externals
+    /// (if either is bound to a tagged widget in the scene tree).
+    ///
+    /// The two-call shape (`old.on_focus_change(false)` then
+    /// `new.on_focus_change(true)`) mirrors the W3C DOM `FocusEvent`
+    /// dispatch order: `blur` fires on the losing focus owner
+    /// before `focus` fires on the gaining owner. Widgets that hold
+    /// state across the boundary (e.g. `TextField`'s IME composition
+    /// commit-on-blur path, R56.1.a) rely on this ordering so the
+    /// statechart raises `text_committed` on the outgoing widget
+    /// before the new widget settles into its Focused state.
+    ///
+    /// No-op when the focused tag did not change (the `before ==
+    /// after` early return preserves the pre-R56.1.h zero-cost
+    /// stance for non-focus-mutating dispatches).
+    fn notify_focus_change(&mut self, focus_before: Option<&str>) {
+        let focus_after_owned = self.focus.focused().map(str::to_owned);
+        if focus_before == focus_after_owned.as_deref() {
+            return;
+        }
+        let scene = self.core.scene_mut();
+        if let Some(tag) = focus_before {
+            if let Some(node) = scene.find_external_with_tag_mut(tag) {
+                node.handle.on_focus_change(false);
+            }
+        }
+        if let Some(tag) = focus_after_owned.as_deref() {
+            if let Some(node) = scene.find_external_with_tag_mut(tag) {
+                node.handle.on_focus_change(true);
+            }
         }
     }
 
@@ -1000,7 +1052,14 @@ impl<V: WidgetView> ShellCore<V> {
         // a redraw so the focus ring repaints on the new target. The
         // before/after comparison catches every focus-mutating
         // method without enumerating method names.
+        //
+        // R56.1.h §5.38 §5.39 — same boundary fires the
+        // [`External::on_focus_change`] notification on the old +
+        // new tags so RPC-driven `focus/set` reaches the TextField
+        // statechart Focus / Blur drive on a single dispatch tick
+        // (mirrors the click_to_focus and Tab paths).
         if self.focus.focused().map(str::to_owned) != focus_before {
+            self.notify_focus_change(focus_before.as_deref());
             self.request_redraw();
         }
         resp
@@ -1298,7 +1357,9 @@ impl<V: WidgetView> ShellCore<V> {
         };
         match action.kind {
             AccessAction::Focus => {
+                let focus_before = self.focus.focused().map(str::to_owned);
                 self.focus.focus_set(parent_tag);
+                self.notify_focus_change(focus_before.as_deref());
                 if let Some(sub) = sub_tag {
                     // R51.82 §5.40 — composite Focus routes through
                     // the same `access_child_invoke` hook the Click
@@ -1322,7 +1383,9 @@ impl<V: WidgetView> ShellCore<V> {
                 self.request_redraw();
             }
             AccessAction::Click | AccessAction::Default => {
+                let focus_before = self.focus.focused().map(str::to_owned);
                 self.focus.focus_set(parent_tag);
+                self.notify_focus_change(focus_before.as_deref());
                 if let Some(sub) = sub_tag {
                     // R51.70 §5.40 — composite child dispatch hook.
                     // The composite invokes its wire format and
@@ -1361,7 +1424,9 @@ impl<V: WidgetView> ShellCore<V> {
     /// `core.apply_key` sees the just-focused tag in the
     /// `Some(tag)` argument.
     fn apply_a11y_key(&mut self, tag: &str, key: &str) {
+        let focus_before = self.focus.focused().map(str::to_owned);
         self.focus.focus_set(tag);
+        self.notify_focus_change(focus_before.as_deref());
         if let Some(tail) = self.core.apply_key(Some(tag), key) {
             self.revision.bump();
             self.handle_tail(&tail);

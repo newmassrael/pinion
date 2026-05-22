@@ -94,6 +94,14 @@ impl External for TestExternal {
             sink(intent);
         }
     }
+    fn on_focus_change(&mut self, focused: bool) {
+        // R56.1.h §5.38 §5.39 — record the focus-change wire
+        // observation so the focus-lifecycle tests assert the
+        // shell substrate's `notify_focus_change` dispatch order
+        // (blur on the outgoing widget then focus on the incoming
+        // widget) and tag-match gating.
+        FOCUS_CHANGE_LOG.lock().unwrap().push(focused);
+    }
 }
 
 impl ExternalIntrospect for TestExternal {
@@ -172,6 +180,16 @@ static UPDATE_INTENT_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 // intents on transition.
 static EXTERNAL_DRAIN_INTENT: Mutex<Option<pinion_core::Intent>> = Mutex::new(None);
 
+// R56.1.h §5.38 §5.39 — focus-change observation log. Each
+// `TestExternal::on_focus_change(focused)` call pushes the boolean
+// into this vec so the shell-substrate focus-wire tests assert the
+// `notify_focus_change` dispatch order (`blur` then `focus`) and
+// the exact tag-matching gates. The single tag in TestView's scene
+// ("test") means we only need the focused bool sequence — multi-tag
+// scenarios live in pinion-core unit tests where multiple
+// TextFieldExternals can coexist.
+static FOCUS_CHANGE_LOG: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
@@ -184,6 +202,7 @@ fn reset_mocks() {
     UPDATE_EMITS_ECHO_COMMAND.store(false, Ordering::SeqCst);
     UPDATE_INTENT_LOG.lock().unwrap().clear();
     *EXTERNAL_DRAIN_INTENT.lock().unwrap() = None;
+    FOCUS_CHANGE_LOG.lock().unwrap().clear();
 }
 
 struct TestView;
@@ -1739,6 +1758,199 @@ mod r51_175_shared_fixture_wiring {
                 .iter()
                 .any(|c| c.payload == IntrospectValue::Text("echo_btn.click".to_string())),
             "drain reducer must observe `echo_btn.click`",
+        );
+    }
+}
+
+// =====================================================================
+// R56.1.h §5.38 §5.39 focus lifecycle wire — end-to-end tests asserting
+// that the shell substrate's `notify_focus_change` walks the scene tree
+// and fires `External::on_focus_change` on the outgoing + incoming
+// widgets across every focus-mutating dispatch path (Tab traversal,
+// click-to-focus, AT actions, RPC focus/set).
+// =====================================================================
+
+mod r56_1_h_focus_lifecycle_wire {
+    use super::{
+        reset_mocks, FOCUS_CHANGE_LOG, TEST_LOCK, TestView,
+    };
+    use pinion_a11y::{AccessAction, PinionAccessAction};
+    use pinion_shell::ShellCore;
+
+    /// Snapshot the focus-change log without holding the guard
+    /// across an assert. Mutex poisoning from a failing assert would
+    /// otherwise cascade into every subsequent test that locks the
+    /// log (poisoned `Mutex::lock()` returns `Err(PoisonError)`).
+    fn snapshot_focus_log() -> Vec<bool> {
+        FOCUS_CHANGE_LOG
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Reset the focus log mid-test (e.g. between two dispatch
+    /// calls when only the second is being asserted). Recovers a
+    /// poisoned mutex via `into_inner` so a prior test failure does
+    /// not cascade.
+    fn reset_focus_log() {
+        FOCUS_CHANGE_LOG
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+
+    #[test]
+    fn r56_1_h_focus_traverse_first_tab_fires_focus_true() {
+        // Tab from None → "test" must fire on_focus_change(true) on
+        // the "test" external (single-tag focusable list).
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        assert!(core.handle_focus_traverse(false));
+        assert_eq!(core.focus().focused(), Some("test"));
+        assert_eq!(
+            snapshot_focus_log(),
+            vec![true],
+            "first Tab fires on_focus_change(true) on incoming widget",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_focus_traverse_no_change_does_not_fire() {
+        // Tab on a one-tag list after the first Tab is a no-op.
+        // notify_focus_change's early-return on `before == after`
+        // must keep the log empty for the second Tab.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        // First Tab: None → "test" (records true).
+        let _ = core.handle_focus_traverse(false);
+        reset_focus_log();
+        // Second Tab: "test" → "test" (no change, no fire).
+        let changed = core.handle_focus_traverse(false);
+        assert!(!changed, "single-tag list Tab is a no-op after first land");
+        assert!(
+            snapshot_focus_log().is_empty(),
+            "no on_focus_change fire when focus tag did not change",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_dispatch_access_focus_action_fires_focus_true() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.dispatch_access_action(&PinionAccessAction {
+            tag: "test".to_string(),
+            kind: AccessAction::Focus,
+        });
+        assert_eq!(core.focus().focused(), Some("test"));
+        assert_eq!(
+            snapshot_focus_log(),
+            vec![true],
+            "AT Focus action fires on_focus_change(true)",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_dispatch_access_click_action_fires_focus_true() {
+        // AccessAction::Click does focus_set + apply_a11y_key. The
+        // first focus_set path notifies (true); apply_a11y_key's
+        // redundant focus_set is observed as no-change.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.dispatch_access_action(&PinionAccessAction {
+            tag: "test".to_string(),
+            kind: AccessAction::Click,
+        });
+        assert_eq!(
+            snapshot_focus_log(),
+            vec![true],
+            "AT Click action fires on_focus_change(true) exactly once",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_rpc_focus_set_path_fires_focus_true() {
+        // RPC `focus/set` lands through dispatch_rpc, which samples
+        // focus_before, dispatches the JSON request (which mutates
+        // focus inside the dispatcher), and notifies on diff.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let req = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"test"},"id":1}"#;
+        let mut no_resize = |_: u32, _: u32| {};
+        let _resp = core.dispatch_rpc(req, &mut no_resize);
+        assert_eq!(core.focus().focused(), Some("test"));
+        assert_eq!(
+            snapshot_focus_log(),
+            vec![true],
+            "RPC focus/set fires on_focus_change(true) on incoming",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_rpc_focus_set_unchanged_does_not_fire() {
+        // RPC `focus/set` against the already-focused tag must not
+        // fire (focus_before == focus_after).
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let req = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"test"},"id":1}"#;
+        let mut no_resize = |_: u32, _: u32| {};
+        let _ = core.dispatch_rpc(req, &mut no_resize);
+        reset_focus_log();
+        let _ = core.dispatch_rpc(req, &mut no_resize);
+        assert!(
+            snapshot_focus_log().is_empty(),
+            "no-op focus/set must not fire on_focus_change",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_rpc_focus_set_null_after_set_fires_focus_false() {
+        // Focus "test" then focus/set with tag=null clears focus.
+        // The cleared path fires on_focus_change(false) on the
+        // outgoing widget.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let set = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":"test"},"id":1}"#;
+        let mut no_resize = |_: u32, _: u32| {};
+        let _ = core.dispatch_rpc(set, &mut no_resize);
+        reset_focus_log();
+        let clear = r#"{"jsonrpc":"2.0","method":"focus/set","params":{"tag":null},"id":2}"#;
+        let _ = core.dispatch_rpc(clear, &mut no_resize);
+        assert_eq!(core.focus().focused(), None);
+        assert_eq!(
+            snapshot_focus_log(),
+            vec![false],
+            "focus/set null fires on_focus_change(false) on outgoing",
+        );
+    }
+
+    #[test]
+    fn r56_1_h_shift_tab_first_press_fires_focus_true() {
+        // Shift+Tab on empty focus uses focus_prev which wraps to
+        // the last tag — single-tag list lands on "test" too.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let _ = core.handle_focus_traverse(true);
+        assert_eq!(core.focus().focused(), Some("test"));
+        assert_eq!(
+            snapshot_focus_log(),
+            vec![true],
+            "Shift+Tab from None also fires on_focus_change(true)",
         );
     }
 }
