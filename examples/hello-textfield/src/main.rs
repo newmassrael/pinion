@@ -56,6 +56,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
@@ -147,6 +148,23 @@ fn use_layout_cache(key: &'static str) -> Rc<RefCell<LayoutCache>> {
     Owner::current()
         .expect("use_layout_cache requires an active Owner scope")
         .cache(key, || RefCell::new(LayoutCache::new()))
+}
+
+/// R56.1.e §5.22 — `Owner::cache`-keyed [`InMemoryClipboard`] hook.
+/// Mirrors the [`use_text_edit_state`] / [`use_caret_blink`] hooks;
+/// the cache key dedups so the External's `attach_clipboard` and any
+/// later (carry) view-fn read resolve to the same `Rc<dyn Clipboard>`
+/// instance.
+///
+/// The dyn-coercion via `Rc::clone` (Rc<InMemoryClipboard> →
+/// Rc<dyn Clipboard>) happens at the borrow site so the cache stores
+/// the concrete `InMemoryClipboard` and downstream consumers can
+/// pick either the concrete or trait-object shape.
+fn use_clipboard(key: &'static str) -> Rc<dyn Clipboard> {
+    let cb: Rc<InMemoryClipboard> = Owner::current()
+        .expect("use_clipboard requires an active Owner scope")
+        .cache(key, InMemoryClipboard::new);
+    cb
 }
 
 /// Saturating cast from layout-space f32 to paint-space u32. Negative
@@ -419,10 +437,19 @@ impl WidgetCore for TextFieldView {
     fn create_external() -> Box<dyn External> {
         let text_state = use_text_edit_state(TF_TAG);
         let blink = use_caret_blink(TF_TAG);
+        // R56.1.e §5.22 — in-memory clipboard backing the demo's
+        // Ctrl+C / Ctrl+X / Ctrl+V keystrokes. Shared via
+        // `Owner::cache` so the dispatch path always resolves to
+        // the same `Rc<dyn Clipboard>` across paint cycles
+        // (mirror of the `use_caret_blink` hook shape; the
+        // application surface gets a tag-keyed singleton without
+        // touching `thread_local!`).
+        let clipboard = use_clipboard(TF_TAG);
         Box::new(
             TextFieldExternal::new()
                 .attach_state(text_state)
-                .attach_blink(blink),
+                .attach_blink(blink)
+                .attach_clipboard(clipboard),
         )
     }
 

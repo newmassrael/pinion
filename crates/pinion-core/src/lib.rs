@@ -1,5 +1,6 @@
 pub mod animation;
 pub mod app;
+pub mod clipboard;
 pub mod command;
 pub mod event;
 pub mod external;
@@ -28,6 +29,7 @@ pub use animation::{
     Animatable, AnimRect, AnimVec2, AnimVec4, Animation, Easing, SpringConfig, SpringState,
     Tickable, Tween,
 };
+pub use clipboard::{Clipboard, InMemoryClipboard};
 pub use command::Command;
 pub use event::Event;
 pub use renderer::WidgetRenderer;

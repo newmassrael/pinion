@@ -16179,6 +16179,60 @@
         "5.22"
       ]
     },
+    "R56.1.e": {
+      "decision_summary": "R56.1.e pinion-core clipboard primitive plus Ctrl Cmd C X V dispatch through TextField invoke key channel.",
+      "changes_bullets": [
+        "pinion-core clipboard module new; Clipboard trait plus InMemoryClipboard impl with RefCell Option String.",
+        "TextEditState selection_text returns Option String for active selection ready for clipboard copy.",
+        "TextField TextFieldExternal attach_clipboard builder accepts Rc dyn Clipboard handle.",
+        "TextFieldExternal dispatch_key intercepts Ctrl OR Meta plus letter c x v when clipboard plus state attached.",
+        "apply_key printable arm rejects Ctrl OR Meta modified letters so Ctrl C does not insert literal c.",
+        "hello-textfield use_clipboard hook attaches Owner cache backed InMemoryClipboard to External."
+      ],
+      "verification_bullets": [
+        "cargo test workspace vello 2596 pass 0 fail 13 ignored plus 24 R56.1.e regression tests.",
+        "cargo clippy workspace all-targets vello 0 warnings under strict pedantic baseline.",
+        "mnemosyne validate workspace T1 0 T3 0 round-trip 1 of 1 GENERATED md sync.",
+        "13 of 13 demos PASS including new hello_textfield_clipboard py end to end about 2 sec."
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.38",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "Platform clipboard bridge crate pinion-platform-clipboard X11 PRIMARY Wayland data device macOS NSPasteboard Win32.",
+        "Multi MIME clipboard items text html image png file references; clipboard history; X11 PRIMARY vs CLIPBOARD distinction.",
+        "R56.1.g IME composition preedit buffer is the next R56 axis follow up."
+      ],
+      "publishable_decision_summary": "R56.1.e §5.22 §5.38 — `pinion_core::clipboard` substrate (`Clipboard` trait + `InMemoryClipboard`) + Ctrl/Cmd+C/X/V dispatch via `TextFieldExternal::invoke(\"key\", ...)`; platform bridge crate carry.",
+      "publishable_changes_bullets": [
+        "`pinion_core::clipboard`: `Clipboard` trait + `InMemoryClipboard` (`RefCell<Option<String>>`).",
+        "`TextEditState::selection_text() -> Option<String>` ready for `Clipboard::copy(text)`.",
+        "`TextField` / `TextFieldExternal` add `attach_clipboard(Rc<dyn Clipboard>)` builder.",
+        "`dispatch_key` intercepts Ctrl/Meta + `c`/`x`/`v` when clipboard + state attached.",
+        "`apply_key` printable arm rejects Ctrl/Meta-modified letters (no literal `c` on Ctrl+C).",
+        "hello-textfield `use_clipboard` Owner-cache hook attaches `InMemoryClipboard`.",
+        "AltGr-style Ctrl+Alt chords gated by Ctrl||Meta refusal (AltGr safety).",
+        "+24 tests: 6 clipboard + 5 selection_text + 13 dispatch (C/X/V/Meta/bare/Alt)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test workspace vello: 2596 pass / 0 fail / 13 ignored (+24 vs R56.1.f.3).",
+        "cargo clippy workspace all-targets vello: 0 warnings under strict pedantic baseline.",
+        "mnemosyne validate-workspace: T1 0 / T3 0 / round-trip 1/1 / GENERATED.md sync.",
+        "13/13 demos PASS (12 prior + new hello_textfield_clipboard.py end-to-end ~2s)."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.38",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Platform clipboard bridge crate pinion-platform-clipboard X11 PRIMARY Wayland data device macOS NSPasteboard Win32.",
+        "Multi MIME clipboard items text html image png file references; clipboard history; X11 PRIMARY vs CLIPBOARD distinction.",
+        "R56.1.g IME composition preedit buffer is the next R56 axis follow up."
+      ]
+    },
     "R56.1.f.0": {
       "decision_summary": "R56.1.f.0 apply_key modifier surface lift to pinion-core for R56.1.f selection cascade.",
       "changes_bullets": [

@@ -84,6 +84,7 @@ use sm::TextFieldPolicy;
 
 use std::rc::Rc;
 
+use crate::clipboard::Clipboard;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
@@ -314,6 +315,29 @@ pub fn apply_key(
                 state.set_selection(0, len);
                 return true;
             }
+            // R56.1.e §5.22 — Ctrl-OR-Meta-modified printable chars
+            // are clipboard / shortcut chords (Ctrl+C / Ctrl+V /
+            // Ctrl+Z / etc.). The text-input layer must NOT treat
+            // them as literal inserts — Ctrl+C inserting a 'c' is
+            // the wrong-UX trap every text-input layer guards
+            // against. Returning `false` lets the higher-level
+            // dispatcher (`TextFieldExternal::dispatch_key` for the
+            // clipboard arm, or the application's own shortcut
+            // handler) consume the chord; if nobody consumes it the
+            // key drops with `defaultPrevented = false` per the W3C
+            // KeyboardEvent contract.
+            //
+            // Alt-without-Ctrl is treated as a printable variant
+            // (macOS Option+letter ↔ special character; the OS-
+            // side keyboard layout already encoded the variation
+            // into `KeyboardEvent.key`). AltGr (Ctrl+Alt on Windows
+            // / Linux) collapses into the Ctrl branch and rejects;
+            // applications relying on raw AltGr printable variants
+            // route them via a shell shortcut instead of through
+            // text-input apply_key.
+            if modifiers.control_key() || modifiers.meta_key() {
+                return false;
+            }
             match is_printable_key(other) {
                 Some(c) => {
                     // 4-byte UTF-8 buffer covers every Unicode code
@@ -390,6 +414,16 @@ pub struct TextField {
     /// holds the off frame so the caret is hidden whenever the
     /// widget is unfocused).
     blink: Option<Rc<CaretBlink>>,
+    /// R56.1.e §5.22 — optional clipboard handle for Ctrl+C / Ctrl+X
+    /// / Ctrl+V dispatch through the `invoke("key", ...)` channel.
+    /// `None` means the binding has not attached a clipboard; the
+    /// `key` invoke surface returns `Bool(false)` for the three
+    /// clipboard keystrokes (mirror of the
+    /// `text_state.is_none()` no-op shape). The handle is shared
+    /// (`Rc<dyn Clipboard>`) so the same instance can back multiple
+    /// `TextField`s in a future multi-widget binding without each
+    /// one owning its own paste buffer.
+    clipboard: Option<Rc<dyn Clipboard>>,
 }
 
 impl TextField {
@@ -403,6 +437,7 @@ impl TextField {
             inner: Widget::new(),
             text_state: None,
             blink: None,
+            clipboard: None,
         }
     }
 
@@ -471,6 +506,37 @@ impl TextField {
     #[must_use]
     pub fn blink(&self) -> Option<&Rc<CaretBlink>> {
         self.blink.as_ref()
+    }
+
+    /// R56.1.e §5.22 — attach a [`Clipboard`] handle. After
+    /// attachment, the `invoke("key", ...)` channel routes
+    /// Ctrl+C / Ctrl+X / Ctrl+V keystrokes through this handle
+    /// (Ctrl/Meta gate mirrors the R56.1.f.2 Ctrl/Cmd+A select-all
+    /// binding so the same modifier set fires on every desktop).
+    /// Builder-style; chain after [`Self::new`] for the fluent
+    /// `TextField::new().attach_state(text).attach_clipboard(cb)`
+    /// shape.
+    ///
+    /// The handle is shared (`Rc<dyn Clipboard>`) — the same
+    /// implementation backs every attached field, so an
+    /// [`InMemoryClipboard`](crate::clipboard::InMemoryClipboard)
+    /// shared across multiple `TextField`s gives them a common paste
+    /// buffer (the canonical "system clipboard" UX). Drop the
+    /// `TextField` to detach; mid-life detach/reattach is not
+    /// supported (mirror of [`Self::attach_state`] /
+    /// [`Self::attach_blink`] contracts).
+    #[must_use]
+    pub fn attach_clipboard(mut self, clipboard: Rc<dyn Clipboard>) -> Self {
+        self.clipboard = Some(clipboard);
+        self
+    }
+
+    /// Read-only access to the attached [`Clipboard`] handle. `None`
+    /// until [`Self::attach_clipboard`] fires. Diagnostic / test
+    /// surface.
+    #[must_use]
+    pub fn clipboard(&self) -> Option<&Rc<dyn Clipboard>> {
+        self.clipboard.as_ref()
     }
 
     /// Drive a [`TextFieldEvent`] through the SCXML. Pure state
@@ -650,6 +716,24 @@ impl TextFieldExternal {
     #[must_use]
     pub fn blink(&self) -> Option<&Rc<CaretBlink>> {
         self.em.inner.blink()
+    }
+
+    /// R56.1.e §5.22 — attach a [`Clipboard`] handle to the inner
+    /// [`TextField`] (composition; delegates to
+    /// [`TextField::attach_clipboard`]). Builder-style; chain after
+    /// [`Self::new`] for the fluent shape.
+    #[must_use]
+    pub fn attach_clipboard(mut self, clipboard: Rc<dyn Clipboard>) -> Self {
+        self.em.inner = std::mem::take(&mut self.em.inner).attach_clipboard(clipboard);
+        self
+    }
+
+    /// R56.1.e §5.22 — attached [`Clipboard`] handle (delegates to
+    /// [`TextField::clipboard`]). `None` until
+    /// [`Self::attach_clipboard`] fires.
+    #[must_use]
+    pub fn clipboard(&self) -> Option<&Rc<dyn Clipboard>> {
+        self.em.inner.clipboard()
     }
 
     /// Drive a [`TextFieldEvent`] and queue a `"text_committed"`
@@ -972,10 +1056,68 @@ impl TextFieldExternal {
     /// [`CaretBlink`] (R56.1.j) on recognized keys so the caret stays
     /// solid while the user is interacting.
     ///
+    /// R56.1.e §5.22 — also intercepts Ctrl+C / Ctrl+X / Ctrl+V
+    /// when a [`Clipboard`] is attached (mirror of the R56.1.f.2
+    /// Ctrl/Cmd+A select-all binding's modifier gate: Ctrl OR Meta,
+    /// not Alt). Without an attached clipboard the keystrokes fall
+    /// through to the printable-char branch in `apply_key` and are
+    /// recognised as plain `c` / `x` / `v` inserts when no modifier
+    /// is held; the modifier gate routes only the Ctrl/Cmd-prefixed
+    /// chord to the clipboard path so plain typing stays unchanged.
+    ///
     /// Returns the `apply_key` recognition result verbatim — the RPC
     /// `Bool(true)` / `Bool(false)` payload AI clients gate
     /// `defaultPrevented`-style branching on.
     fn dispatch_key(&mut self, key_str: &str, modifiers: crate::input::Modifiers) -> bool {
+        // R56.1.e §5.22 — clipboard keystroke pre-empt. The Ctrl/Meta
+        // gate (without Alt — same AltGr safety as R56.1.f.2
+        // select-all) fires only when a clipboard is attached AND a
+        // state sidecar exists (no state ⇒ no text to copy / paste
+        // into). Returns Bool(true) on consumed clipboard chord, even
+        // when the visible mutation is a no-op (Ctrl+C with no
+        // selection produces an empty copy — the key was *handled*,
+        // matching the W3C `defaultPrevented` discipline).
+        if (modifiers.control_key() || modifiers.meta_key())
+            && !modifiers.alt_key()
+        {
+            if let (Some(state), Some(cb)) =
+                (self.em.inner.text_state(), self.em.inner.clipboard())
+            {
+                match key_str {
+                    "c" => {
+                        if let Some(text) = state.selection_text() {
+                            cb.copy(text);
+                        }
+                        if let Some(blink) = self.em.inner.blink() {
+                            blink.reset();
+                        }
+                        return true;
+                    }
+                    "x" => {
+                        if let Some(text) = state.selection_text() {
+                            cb.copy(text);
+                            state.backspace();
+                        }
+                        if let Some(blink) = self.em.inner.blink() {
+                            blink.reset();
+                        }
+                        return true;
+                    }
+                    "v" => {
+                        if let Some(paste) = cb.paste() {
+                            if !paste.is_empty() {
+                                state.insert(&paste);
+                            }
+                        }
+                        if let Some(blink) = self.em.inner.blink() {
+                            blink.reset();
+                        }
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+        }
         let handled = match self.text_state() {
             Some(state) => apply_key(state.as_ref(), key_str, modifiers),
             None => false,
@@ -2615,6 +2757,240 @@ mod r56_1_f_tests {
             IntrospectValue::Json(serde_json::json!({ "start": 0, "end": 0 })),
         );
         assert_eq!(r, Err(InterveneError::ReadOnly));
+    }
+}
+
+#[cfg(test)]
+mod r56_1_e_tests {
+    //! R56.1.e §5.22 §5.38 — Clipboard substrate + Ctrl/Cmd+C/X/V
+    //! keystroke dispatch through the `TextField` `invoke("key", ...)`
+    //! channel.
+
+    use super::{TextFieldExternal};
+    use crate::clipboard::{Clipboard, InMemoryClipboard};
+    use crate::external::{ExternalIntrospect, IntrospectValue};
+    use crate::input::Modifiers;
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    fn make_tfx_with_clipboard(text: &str) -> (TextFieldExternal, Rc<TextEditState>, Rc<dyn Clipboard>) {
+        let state = Rc::new(TextEditState::with_initial(text.to_string()));
+        let cb: Rc<dyn Clipboard> = Rc::new(InMemoryClipboard::new());
+        let tfx = TextFieldExternal::new()
+            .attach_state(state.clone())
+            .attach_clipboard(cb.clone());
+        (tfx, state, cb)
+    }
+
+    fn json_key(key: &str, ctrl: bool) -> IntrospectValue {
+        IntrospectValue::Json(serde_json::json!({
+            "key": key,
+            "ctrl": ctrl,
+        }))
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Ctrl+C — copy selection to clipboard
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_e_ctrl_c_copies_selection_to_clipboard() {
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello world");
+        state.set_selection(0, 5);
+        let r = tfx.invoke("key", json_key("c", true)).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(cb.paste(), Some("hello".to_string()));
+        // Selection survives copy (the canonical UX — copy does not
+        // collapse the selection).
+        assert_eq!(state.selection_text(), Some("hello".to_string()));
+        // Text unchanged.
+        assert_eq!(state.text(), "hello world");
+    }
+
+    #[test]
+    fn r56_1_e_ctrl_c_with_no_selection_is_handled_but_no_copy() {
+        let (mut tfx, _state, cb) = make_tfx_with_clipboard("hello");
+        // No selection — Ctrl+C still consumes the key but the
+        // clipboard payload stays at None.
+        let r = tfx.invoke("key", json_key("c", true)).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(cb.paste(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Ctrl+X — cut (copy + delete selection)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_e_ctrl_x_cuts_selection_into_clipboard() {
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello world");
+        state.set_selection(6, 11);
+        let r = tfx.invoke("key", json_key("x", true)).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(cb.paste(), Some("world".to_string()));
+        // Selection drained from text.
+        assert_eq!(state.text(), "hello ");
+        assert_eq!(state.caret(), 6);
+        assert_eq!(state.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_e_ctrl_x_with_no_selection_is_handled_but_no_change() {
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello");
+        let r = tfx.invoke("key", json_key("x", true)).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(cb.paste(), None);
+        assert_eq!(state.text(), "hello");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Ctrl+V — paste (insert clipboard at caret, replace selection)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_e_ctrl_v_inserts_clipboard_payload_at_caret() {
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("abc");
+        state.set_caret(3);
+        cb.copy("XY".to_string());
+        let r = tfx.invoke("key", json_key("v", true)).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.text(), "abcXY");
+        assert_eq!(state.caret(), 5);
+    }
+
+    #[test]
+    fn r56_1_e_ctrl_v_with_active_selection_replaces_range() {
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello world");
+        state.set_selection(0, 5);
+        cb.copy("HI".to_string());
+        let r = tfx.invoke("key", json_key("v", true)).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        // Selection drained + clipboard payload inserted.
+        assert_eq!(state.text(), "HI world");
+        assert_eq!(state.caret(), 2);
+        assert_eq!(state.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_e_ctrl_v_with_empty_clipboard_is_handled_but_no_change() {
+        let (mut tfx, state, _cb) = make_tfx_with_clipboard("abc");
+        // Clipboard never written — paste is a no-op (recognised).
+        let r = tfx.invoke("key", json_key("v", true)).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.text(), "abc");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Meta+C/X/V — macOS Cmd+C canonical
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_e_meta_c_copies_on_macos() {
+        // Cmd+C on macOS is the same binding as Ctrl+C elsewhere; the
+        // same Ctrl-OR-Meta gate fires for both.
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello");
+        state.set_selection(0, 5);
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key": "c",
+                    "meta": true,
+                })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(cb.paste(), Some("hello".to_string()));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // No clipboard attached — plain 'c' / 'x' / 'v' insert literally
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_e_bare_textfield_clipboard_keys_fall_through_to_plain_insert() {
+        // No clipboard attached but a state is — Ctrl+C is rejected
+        // by the clipboard branch (no Rc) so the dispatcher falls
+        // through to the printable-char `apply_key` path. apply_key
+        // does NOT consume Ctrl-modified keys (no select-all gate
+        // for "c"), so the result is Bool(false).
+        let state = Rc::new(TextEditState::with_initial("abc".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(state.clone());
+        let r = tfx.invoke("key", json_key("c", true)).unwrap();
+        assert_eq!(
+            r,
+            IntrospectValue::Bool(false),
+            "no clipboard attached ⇒ Ctrl+C unhandled",
+        );
+        assert_eq!(state.text(), "abc", "no mutation");
+    }
+
+    #[test]
+    fn r56_1_e_plain_c_x_v_without_modifier_inserts_literal() {
+        // No modifier — plain printable insert path (R56.1.d) fires.
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("");
+        for ch in ['c', 'x', 'v'] {
+            let r = tfx.invoke("key", IntrospectValue::Text(ch.to_string())).unwrap();
+            assert_eq!(r, IntrospectValue::Bool(true));
+        }
+        assert_eq!(state.text(), "cxv");
+        // Clipboard untouched.
+        assert_eq!(cb.paste(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Ctrl+Alt+c — refused (AltGr safety)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_e_ctrl_alt_c_does_not_trigger_copy() {
+        // Ctrl+Alt is a separate AltGr-style chord on European
+        // layouts; refusing the clipboard binding keeps non-US
+        // typing safe (mirror of R56.1.f.2 select-all gate).
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello");
+        state.set_selection(0, 5);
+        let mods_ctrl_alt = Modifiers { ctrl: true, alt: true, ..Modifiers::empty() };
+        let _ = mods_ctrl_alt; // documented gate; the modifier shape
+                                // routes through the Json arg path.
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key":  "c",
+                    "ctrl": true,
+                    "alt":  true,
+                })),
+            )
+            .unwrap();
+        // The plain-printable arm rejects (Ctrl+Alt+c is not a
+        // recognised select-all / clipboard binding) and the
+        // clipboard branch's modifier gate refuses (alt set).
+        assert_eq!(r, IntrospectValue::Bool(false));
+        assert_eq!(cb.paste(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Builder round-trip
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_e_attach_clipboard_is_readable_back() {
+        let state = Rc::new(TextEditState::with_initial(String::new()));
+        let cb: Rc<dyn Clipboard> = Rc::new(InMemoryClipboard::new());
+        let tfx = TextFieldExternal::new()
+            .attach_state(state)
+            .attach_clipboard(cb.clone());
+        assert!(tfx.clipboard().is_some());
+        // Round-trip the Rc pointer to confirm the handle is the
+        // exact instance the builder accepted (not a clone-of-Rc).
+        let attached = tfx.clipboard().unwrap();
+        assert!(Rc::ptr_eq(attached, &cb));
+    }
+
+    #[test]
+    fn r56_1_e_fresh_textfield_has_no_clipboard() {
+        let tfx = TextFieldExternal::new();
+        assert!(tfx.clipboard().is_none());
     }
 }
 

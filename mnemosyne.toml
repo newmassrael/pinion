@@ -406,3 +406,12 @@ reason = "R56.1.f.3 audit landed via minimal ASCII per [[mnemosyne-multibyte-aud
 applied_in = "R56.1.f.3"
 content_hash_before = "366de7f858007bf68e4a550294f81a017f752b20965056d1d9ad9ef3bb7f6553"
 content_hash_after = "cd6657b0b53b8116644fba644a930243da70639f4735c569a2ad9f3519aeb4ce"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "R56.1.e"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets"]
+reason = "R56.1.e audit landed via minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand carries detailed §-prefixed Rust paths + AltGr modifier gate rationale."
+applied_in = "R56.1.e"
+content_hash_before = "b8e0defa2b44cc8a9acb8890191e5f5201be39c4776ad70db22538b57623e472"
+content_hash_after = "b1ce84d167b95eeb0b56d56918003520ae74f1f32d82ae43ed1be68e339cbf1b"

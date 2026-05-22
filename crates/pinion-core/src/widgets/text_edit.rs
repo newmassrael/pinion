@@ -244,6 +244,20 @@ impl TextEditState {
         Some((anchor.min(caret), anchor.max(caret)))
     }
 
+    /// R56.1.e §5.22 — substring of the active selection, ready for
+    /// the [`Clipboard`](crate::clipboard::Clipboard) `copy(text)`
+    /// path. Returns `None` when the selection is collapsed
+    /// (caret-only). Subscribes to both `text` and `caret_pos` /
+    /// `selection_anchor` so the canonical clipboard-keystroke
+    /// branch (Ctrl+C / Ctrl+X) inside a reactive scope picks up
+    /// every selection-affecting mutation.
+    #[must_use]
+    pub fn selection_text(&self) -> Option<String> {
+        let (start, end) = self.selection_range()?;
+        let text = self.text.get();
+        Some(text[start..end].to_string())
+    }
+
     /// R56.1.f §5.22 — `true` when [`Self::selection_range`] would
     /// return `Some(_)`. Convenience predicate so view-fn /
     /// `apply_key` branches that gate on "selection present" do not
@@ -1416,6 +1430,47 @@ mod tests {
         s.backspace();
         assert_eq!(s.text(), "ab");
         assert_eq!(s.caret(), 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R56.1.e §5.22 — selection_text accessor (Clipboard hook)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_e_selection_text_returns_none_for_collapsed_caret() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        assert_eq!(s.selection_text(), None);
+    }
+
+    #[test]
+    fn r56_1_e_selection_text_returns_substring_for_active_selection() {
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        assert_eq!(s.selection_text(), Some("bcd".to_string()));
+    }
+
+    #[test]
+    fn r56_1_e_selection_text_normalises_reverse_selection() {
+        // anchor=4, focus=1 → range (1,4) → same substring.
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(4, 1);
+        assert_eq!(s.selection_text(), Some("bcd".to_string()));
+    }
+
+    #[test]
+    fn r56_1_e_selection_text_korean_multi_byte() {
+        // "한글" — 6 bytes; full selection round-trips both syllables.
+        let s = TextEditState::with_initial("한글".to_string());
+        s.set_selection(0, 6);
+        assert_eq!(s.selection_text(), Some("한글".to_string()));
+    }
+
+    #[test]
+    fn r56_1_e_selection_text_korean_partial() {
+        let s = TextEditState::with_initial("a한b".to_string());
+        // selection covers just the 한 syllable (bytes 1..4).
+        s.set_selection(1, 4);
+        assert_eq!(s.selection_text(), Some("한".to_string()));
     }
 
     // ─────────────────────────────────────────────────────────────
