@@ -38,6 +38,7 @@ use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::font::{self, FontError, FontRegistry};
 use crate::intents::{drain_intents, IntentsError};
+use crate::intervene::{intervene, InterveneError};
 use crate::invoke::{invoke, InvokeError};
 use crate::layout_query::{
     layout_query, LayoutNode, LayoutQueryError, LayoutQueryParams,
@@ -576,6 +577,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/waitFor" => handle_scene_wait_for(scene, request.params.as_ref()),
         "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
         "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
+        "scene/intervene" => handle_scene_intervene(scene, request.params.as_ref()),
         "scene/intents" => handle_scene_intents(scene),
         "scene/commands" => handle_scene_commands(commands_owner, commands_executor),
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
@@ -2890,6 +2892,51 @@ fn invoke_error_to_rpc(err: &InvokeError) -> RpcError {
         InvokeError::UnknownInvokePath => "UnknownInvokePath",
         InvokeError::InvokeTypeMismatch => "InvokeTypeMismatch",
         InvokeError::InvokeRejected => "InvokeRejected",
+    };
+    RpcError::invalid_params(variant)
+}
+
+/// R56.1.f.3 §5.22 — `scene/intervene` typed handler. Parses
+/// `params = {"path": str, "value": Json}` and routes through
+/// [`intervene`] for the §5.15 item 7 write-side door. Mirror of
+/// [`handle_scene_invoke`] (the read+execute peer); the trait-level
+/// distinction is `intervene = set state slot` vs
+/// `invoke = call action`.
+fn handle_scene_intervene(
+    scene: &mut Scene,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(params) = params else {
+        return Err(RpcError::invalid_params("missing params"));
+    };
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(RpcError::invalid_params("params.path missing or not a string"));
+    };
+    let Some(value_json) = params.get("value") else {
+        return Err(RpcError::invalid_params("params.value missing"));
+    };
+    let Some(value) = json_to_introspect_value(value_json) else {
+        return Err(RpcError::invalid_params(
+            "params.value is not a representable IntrospectValue",
+        ));
+    };
+
+    match intervene(scene, path, value) {
+        Ok(()) => Ok(Value::Null),
+        Err(err) => Err(intervene_error_to_rpc(&err)),
+    }
+}
+
+fn intervene_error_to_rpc(err: &InterveneError) -> RpcError {
+    let variant = match err {
+        InterveneError::Path(_) => "Path",
+        InterveneError::UnsupportedPath => "UnsupportedPath",
+        InterveneError::NoExternalAtPath => "NoExternalAtPath",
+        InterveneError::IntrospectionOptedOut => "IntrospectionOptedOut",
+        InterveneError::UnknownIntervenePath => "UnknownIntervenePath",
+        InterveneError::InterveneTypeMismatch => "InterveneTypeMismatch",
+        InterveneError::ReadOnly => "ReadOnly",
+        InterveneError::OutOfRange => "OutOfRange",
     };
     RpcError::invalid_params(variant)
 }

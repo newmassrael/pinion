@@ -179,6 +179,15 @@ impl WidgetCore for HelloTextFieldTui {
         );
         text_node.style = style::TextStyle::default();
 
+        // R56.1.f.3 §5.22 — selection band. Reads selection_range
+        // from the same TextEditState the substrate's
+        // R56.1.f.1 sidecar drives. ASCII-only assumption matches
+        // the TUI grapheme-cluster carry — 1 byte = 1 cell column,
+        // so `start..end` byte offsets map directly to cells.
+        // Multi-byte selections will surface a column gap until the
+        // grapheme-cluster axis lands.
+        let selection_range = text_state.selection_range();
+
         // Field container — bordered cell box that the paint walker
         // maps to a single-row box with `+`/`-`/`|` ASCII border per
         // its conventions.
@@ -192,6 +201,31 @@ impl WidgetCore for HelloTextFieldTui {
         field_container.tag = Some(Cow::Borrowed(TF_TAG));
         field_container.style =
             BoxStyle::filled(field_fill).with_border(Border::new(border_color, 1));
+
+        // R56.1.f.3 §5.22 — selection band paints BEFORE the text
+        // node so the TUI cell-bg fill sits behind the glyphs. The
+        // pinion-tui paint walker composites children in vector
+        // order; ContainerNode's BoxStyle fill maps to the cell `bg`
+        // attribute (a steel-blue tint mirroring the Vello sibling's
+        // selection rect). Empty selection (start == end) skips.
+        if let Some((sel_start, sel_end)) = selection_range {
+            if sel_end > sel_start {
+                let sel_byte_width = sel_end.saturating_sub(sel_start);
+                let sel_left_px = FIELD_LEFT_PX
+                    .saturating_add(TEXT_INNER_PAD_PX)
+                    .saturating_add(
+                        u32::try_from(sel_start).unwrap_or(u32::MAX).saturating_mul(CELL_PX_X),
+                    );
+                let sel_width_px = u32::try_from(sel_byte_width)
+                    .unwrap_or(u32::MAX)
+                    .saturating_mul(CELL_PX_X);
+                let mut sel_band = ContainerNode::default();
+                sel_band.rect = Rect::new(sel_left_px, FIELD_TOP_PX, sel_width_px, CELL_PX_Y);
+                sel_band.style = BoxStyle::filled(Color::rgb(0x20, 0x4a, 0x7a));
+                field_container.children.push(Scene::Container(sel_band));
+            }
+        }
+
         field_container.children.push(Scene::Text(text_node));
 
         // Caret — paint a solid block-cursor glyph at the byte
@@ -222,10 +256,15 @@ impl WidgetCore for HelloTextFieldTui {
         // by reading the scene tree even when the TTY snapshot is
         // unavailable.
         let mut status = TextNode::default();
+        let selection_status = match selection_range {
+            Some((s, e)) => format!(" | sel: [{s},{e}]"),
+            None => String::new(),
+        };
         let status_str = format!(
-            "state: {} | caret: {} | text: \"{}\"",
+            "state: {} | caret: {}{} | text: \"{}\"",
             text_field_state_name(interaction),
             caret_byte,
+            selection_status,
             text,
         );
         status_str.clone_into(&mut status.content);

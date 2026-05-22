@@ -15,6 +15,7 @@ pub mod dry_run;
 pub mod focus;
 pub mod font;
 pub mod intents;
+pub mod intervene;
 pub mod invoke;
 pub mod layout_query;
 pub mod locate;

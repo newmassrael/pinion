@@ -10472,6 +10472,39 @@ if __name__ == "__main__":
 
 
 
+### R56.1.f.3 — R56.1.f.3 §5.22 §5.38 §5.49 — TextFieldExternal `selection` query/intervene + new `scene/intervene` RPC method + hello-textfield Vello/TUI selection overlay + RPC self-verify demo.
+
+**Changes**:
+- `TextFieldExternal::schema` adds `selection` object slot; 6 slots total.
+- `query("selection")` returns `Json {start,end}` or `Null` (collapsed).
+- `intervene("selection", Null|Json)` clears or sets via `set_selection` batch.
+- `pinion-rpc::intervene` new module + `scene/intervene` RPC method (§5.12 #9).
+- `InterveneError` mirrors trait (UnknownPath / ReadOnly / TypeMismatch / OutOfRange).
+- hello-textfield Vello: `SELECTION_COLOR` rgba tint behind text via absolute pos.
+- hello-textfield-tui: cell-bg band + status line `sel: [s,e]` for AI verify.
+- `tools/demos/hello_textfield_select.py` Shift+Arrow / Ctrl+A / replace end-to-end.
+- `rpc_verify.py` adds `intervene` wrapper; +22 tests (16 introspect, 6 module).
+
+
+
+**Verification**:
+- cargo test workspace vello: 2572 pass / 0 fail / 13 ignored (+22 vs R56.1.f.2).
+- cargo clippy workspace all-targets vello: 0 warnings under strict pedantic baseline.
+- mnemosyne validate-workspace: T1 0 / T3 0 / round-trip 1/1 / GENERATED.md sync.
+- 12/12 demos PASS (11 prior + new hello_textfield_select.py end-to-end ~2s).
+
+
+
+**Impact**: §5.22, §5.38, §5.49, §5.7, §5.12, §5.15
+
+
+**Carry forward**:
+- R56.1.e clipboard primitive plus platform X11 Wayland macOS Win32 bridge.
+- R56.1.g IME composition preedit buffer plus Wayland text-input-v3 macOS NSTextInputContext Windows TSF.
+- TUI grapheme-cluster cell mapping needed once multi-byte selection lands.
+
+
+
 ### R56.1.h — R56.1.h §5.38 §5.39 §5.28 — TextField focus lifecycle wire: shell focus mgr ↔ External::on_focus_change ↔ TextField Focus/Blur statechart drive ↔ CaretBlink sync.
 
 **Changes**:

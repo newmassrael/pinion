@@ -230,6 +230,18 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None
         return resp.result
 
+    def intervene(self, path: str, value: Any) -> None:
+        """`scene/intervene` typed wrapper (R56.1.f.3 §5.22).
+
+        Mirrors `invoke` shape — `{"path": str, "value": Any}` —
+        but routes through the §5.15 item 7 state-write channel
+        instead of the §5.15 item 8 action channel. `value=None`
+        sends a JSON `null`, which `TextFieldExternal::intervene`
+        treats as "clear selection" on the `selection` slot.
+        """
+        resp = self.request("scene/intervene", {"path": path, "value": value})
+        assert resp is not None
+
     def snapshot(
         self,
         path: str = "",

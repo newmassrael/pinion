@@ -760,10 +760,18 @@ impl ExternalIntrospect for TextFieldExternal {
         // invoke returns `Bool(false)` when no [`TextEditState`] is
         // attached so RPC clients distinguish "no state bound" from
         // "key rejected".
+        // R56.1.f.3 §5.38 §5.22 — `selection` slot exposes the
+        // active selection range as Json `{"start": int, "end": int}`
+        // (mirror of the W3C `HTMLInputElement.selectionStart` /
+        // `selectionEnd` pair). `Null` when the selection is
+        // collapsed (no anchor). Symmetric intervene path accepts
+        // the same Json shape (sets both ends atomically through
+        // `TextEditState::set_selection`) or `Null` (clears).
         IntrospectSchema::new(&[
             ("state", "string"),
             ("text", "string"),
             ("caret", "number"),
+            ("selection", "object"),
             ("send", "string"),
             ("key", "string"),
         ])
@@ -787,6 +795,20 @@ impl ExternalIntrospect for TextFieldExternal {
                 // the cast is lossless. The `try_from` defends
                 // against the unreachable 2^63-byte text case.
                 IntrospectValue::Int(i64::try_from(s.caret()).unwrap_or(i64::MAX))
+            }),
+            // R56.1.f.3 §5.38 §5.22 — selection range as Json
+            // `{"start": int, "end": int}` mirror of W3C
+            // `HTMLInputElement.selectionStart` / `selectionEnd`.
+            // `Null` when no selection is active (collapsed caret).
+            // Bare `TextField` (no attached state) returns `None`
+            // (the path is unknown to that instance) so RPC clients
+            // distinguish "no state bound" from "no selection".
+            "selection" => self.text_state().map(|s| match s.selection_range() {
+                Some((start, end)) => IntrospectValue::Json(serde_json::json!({
+                    "start": start,
+                    "end":   end,
+                })),
+                None => IntrospectValue::Null,
             }),
             _ => None,
         }
@@ -831,6 +853,34 @@ impl ExternalIntrospect for TextFieldExternal {
                 let pos = usize::try_from(n).unwrap_or(usize::MAX);
                 state.set_caret(pos);
                 Ok(())
+            }
+            // R56.1.f.3 §5.38 §5.22 — selection write path.
+            // `Null` clears any active selection (mirror of W3C
+            // `HTMLInputElement.setSelectionRange(null)`). `Json`
+            // with `{"start": int, "end": int}` calls
+            // `set_selection(start, end)` atomically (3-axis batched
+            // write per R56.1.f.1). The two ends may arrive in
+            // either order — `set_selection` normalises internally
+            // through `min` / `max`; the `end` slot still names the
+            // caret-side (W3C focus) for the canonical client read.
+            "selection" => {
+                let Some(state) = self.text_state() else {
+                    return Err(InterveneError::ReadOnly);
+                };
+                match value {
+                    IntrospectValue::Null => {
+                        state.clear_selection();
+                        Ok(())
+                    }
+                    IntrospectValue::Json(obj) => {
+                        let Some((start, end)) = parse_selection_intervene_json(&obj) else {
+                            return Err(InterveneError::TypeMismatch);
+                        };
+                        state.set_selection(start, end);
+                        Ok(())
+                    }
+                    _ => Err(InterveneError::TypeMismatch),
+                }
             }
             _ => Err(InterveneError::UnknownPath),
         }
@@ -960,6 +1010,33 @@ impl TextFieldExternal {
 /// boolean (defensive against silently coercing `0`/`1`/`"true"` —
 /// the W3C shape is strictly boolean and the RPC discipline mirrors
 /// that strictly to surface client-side encoder bugs early).
+/// R56.1.f.3 §5.38 §5.22 — extract the `(start, end)` payload from
+/// the Json argument to `intervene("selection", ...)`. The wire
+/// shape mirrors the W3C `HTMLInputElement.selectionStart` /
+/// `selectionEnd` pair:
+///
+/// ```json
+/// {
+///   "start": 0,    // required, non-negative integer
+///   "end":   5     // required, non-negative integer
+/// }
+/// ```
+///
+/// Returns `None` if the JSON is not an object, if either slot is
+/// missing / non-integer / negative, or if the integer falls outside
+/// `usize` range (the unreachable 2^64-overflow guard).
+fn parse_selection_intervene_json(value: &serde_json::Value) -> Option<(usize, usize)> {
+    let obj = value.as_object()?;
+    let start_i64 = obj.get("start")?.as_i64()?;
+    let end_i64 = obj.get("end")?.as_i64()?;
+    if start_i64 < 0 || end_i64 < 0 {
+        return None;
+    }
+    let start = usize::try_from(start_i64).ok()?;
+    let end = usize::try_from(end_i64).ok()?;
+    Some((start, end))
+}
+
 fn parse_key_invoke_json(
     value: &serde_json::Value,
 ) -> Option<(String, crate::input::Modifiers)> {
@@ -1183,14 +1260,17 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_five_slots() {
+    fn external_schema_declares_six_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
+        // R56.1.f.3 grew the surface: + selection (W3C
+        // selectionStart/End Json mirror).
         // The schema shape is stable across bare and wired-up
-        // TextFields — text/caret queries return None / intervene
-        // returns ReadOnly when no TextEditState is attached; the
-        // key invoke returns `Bool(false)` for bare TextFields.
+        // TextFields — text/caret/selection queries return None /
+        // intervene returns ReadOnly when no TextEditState is
+        // attached; the key invoke returns `Bool(false)` for bare
+        // TextFields.
         let tfx = TextFieldExternal::new();
         let schema = tfx.schema();
         assert_eq!(
@@ -1199,6 +1279,7 @@ mod tests {
                 ("state", "string"),
                 ("text", "string"),
                 ("caret", "number"),
+                ("selection", "object"),
                 ("send", "string"),
                 ("key", "string"),
             ],
@@ -1245,9 +1326,14 @@ mod tests {
 
     #[test]
     fn external_intervene_unknown_path_rejects() {
+        // R56.1.f.3 §5.38 §5.22 — `selection` is a known path since
+        // R56.1.f.3 land; a truly unknown path (e.g. `placeholder`,
+        // which would be a future R56.x slot for the watermark
+        // text) still returns `UnknownPath` so the wildcard arm
+        // stays observable.
         let mut tfx = TextFieldExternal::new();
         assert_eq!(
-            tfx.intervene("selection", IntrospectValue::Text(String::new())),
+            tfx.intervene("placeholder", IntrospectValue::Text(String::new())),
             Err(InterveneError::UnknownPath),
         );
     }
@@ -2414,6 +2500,121 @@ mod r56_1_f_tests {
             .unwrap();
         assert_eq!(r, IntrospectValue::Bool(true));
         assert_eq!(state.selection_range(), Some((0, 11)));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R56.1.f.3 §5.38 §5.22 — RPC selection introspect path
+    // ─────────────────────────────────────────────────────────────
+
+    use crate::external::InterveneError;
+
+    #[test]
+    fn r56_1_f_3_query_selection_returns_null_for_collapsed_caret() {
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let tfx = TextFieldExternal::new().attach_state(state);
+        assert_eq!(tfx.query("selection").unwrap(), IntrospectValue::Null);
+    }
+
+    #[test]
+    fn r56_1_f_3_query_selection_returns_json_for_active_selection() {
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        state.set_selection(1, 4);
+        let tfx = TextFieldExternal::new().attach_state(state);
+        let v = tfx.query("selection").unwrap();
+        let IntrospectValue::Json(obj) = v else {
+            panic!("expected Json selection payload, got {v:?}");
+        };
+        assert_eq!(obj["start"], 1);
+        assert_eq!(obj["end"], 4);
+    }
+
+    #[test]
+    fn r56_1_f_3_query_selection_normalises_when_focus_before_anchor() {
+        // anchor=4, focus=1 (mouse drag right-to-left); selection
+        // surfaces as {start: 1, end: 4} regardless.
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        state.set_selection(4, 1);
+        let tfx = TextFieldExternal::new().attach_state(state);
+        let IntrospectValue::Json(obj) = tfx.query("selection").unwrap() else {
+            panic!("expected Json payload");
+        };
+        assert_eq!(obj["start"], 1);
+        assert_eq!(obj["end"], 4);
+    }
+
+    #[test]
+    fn r56_1_f_3_query_selection_returns_none_for_bare_text_field() {
+        // Bare TextField (no attached TextEditState) returns None
+        // (path "selection" is unbound), distinguishing "no state"
+        // from "no selection" for the RPC client.
+        let tfx = TextFieldExternal::new();
+        assert_eq!(tfx.query("selection"), None);
+    }
+
+    #[test]
+    fn r56_1_f_3_intervene_selection_null_clears_anchor() {
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        state.set_selection(1, 4);
+        let mut tfx = TextFieldExternal::new().attach_state(state.clone());
+        tfx.intervene("selection", IntrospectValue::Null).unwrap();
+        assert_eq!(state.selection_anchor(), None);
+        assert_eq!(state.caret(), 4, "Null clears anchor, keeps caret");
+    }
+
+    #[test]
+    fn r56_1_f_3_intervene_selection_json_sets_anchor_and_focus() {
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(state.clone());
+        tfx.intervene(
+            "selection",
+            IntrospectValue::Json(serde_json::json!({ "start": 1, "end": 4 })),
+        )
+        .unwrap();
+        assert_eq!(state.selection_range(), Some((1, 4)));
+        assert_eq!(state.caret(), 4);
+    }
+
+    #[test]
+    fn r56_1_f_3_intervene_selection_rejects_missing_start_field() {
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        let r = tfx.intervene(
+            "selection",
+            IntrospectValue::Json(serde_json::json!({ "end": 4 })),
+        );
+        assert_eq!(r, Err(InterveneError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_f_3_intervene_selection_rejects_negative_offset() {
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        let r = tfx.intervene(
+            "selection",
+            IntrospectValue::Json(serde_json::json!({ "start": -1, "end": 4 })),
+        );
+        assert_eq!(r, Err(InterveneError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_f_3_intervene_selection_text_args_rejects_with_type_mismatch() {
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        let r = tfx.intervene(
+            "selection",
+            IntrospectValue::Text("1,4".to_string()),
+        );
+        assert_eq!(r, Err(InterveneError::TypeMismatch));
+    }
+
+    #[test]
+    fn r56_1_f_3_intervene_selection_read_only_on_bare_text_field() {
+        let mut tfx = TextFieldExternal::new();
+        let r = tfx.intervene(
+            "selection",
+            IntrospectValue::Json(serde_json::json!({ "start": 0, "end": 0 })),
+        );
+        assert_eq!(r, Err(InterveneError::ReadOnly));
     }
 }
 

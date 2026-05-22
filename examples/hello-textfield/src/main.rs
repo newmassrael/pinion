@@ -110,6 +110,11 @@ const TEXT_COLOR: Color = Color::rgb(0xff, 0xff, 0xff);
 const TEXT_COLOR_DISABLED: Color = Color::rgb(0x70, 0x70, 0x70);
 
 const CARET_COLOR: Color = Color::rgb(0xff, 0xff, 0xff);
+// R56.1.f.3 §5.22 — selection rect tint. Semi-transparent steel blue
+// (matches the macOS / Chrome "system selection" hue without
+// hard-coding the platform native colour); alpha 0xA0 keeps the
+// underlying text readable while the selection band paints behind.
+const SELECTION_COLOR: Color = Color::rgba(0x33, 0x99, 0xff, 0xa0);
 // 2 px caret reads cleanly on the integer-scaled 1.0× displays the
 // hello-* gallery is sized for; Hi-DPI displays where AA softens
 // single-pixel lines could drop to 1 px (the substrate
@@ -225,8 +230,16 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // reference for the same `(text, style, max_width)` tuple, so
     // re-runs of the view fn inside the same paint cycle reuse the
     // shaped run instead of re-shaping per call.
+    //
+    // R56.1.f.3 §5.22 — selection range pixel geometry. When a
+    // selection is active, two extra `caret_rect_for_byte_offset`
+    // lookups derive the start + end x offsets so the selection box
+    // can paint behind the text. The same shared `LayoutCache`
+    // reuses the shaped run across all three queries — no repeated
+    // shaping work.
     let layout_cache = use_layout_cache("hello_textfield.layout_cache");
-    let caret_pixel_rect = {
+    let selection_range = text_state.selection_range();
+    let (caret_pixel_rect, selection_pixel) = {
         let mut cache = layout_cache.borrow_mut();
         let layout = cache.layout(text.as_str(), &text_style, None);
         #[allow(
@@ -238,15 +251,31 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             caret_byte as usize,
             CARET_WIDTH as f32,
         );
-        // Floor the caret height at the font size so an empty layout
-        // (parley reports the font-derived line box, which tracks the
-        // font size) never paints a 0-height caret.
         let height_floor = saturating_f32_to_u32(rect.height).max(FONT_SIZE_PX);
-        (
+        let caret = (
             saturating_f32_to_u32(rect.x),
             saturating_f32_to_u32(rect.y),
             height_floor,
-        )
+        );
+        let selection = selection_range.map(|(start, end)| {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "CARET_WIDTH fits f32 losslessly"
+            )]
+            let start_rect =
+                caret_rect_for_byte_offset(layout, start, CARET_WIDTH as f32);
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "CARET_WIDTH fits f32 losslessly"
+            )]
+            let end_rect = caret_rect_for_byte_offset(layout, end, CARET_WIDTH as f32);
+            let start_x = saturating_f32_to_u32(start_rect.x);
+            let end_x = saturating_f32_to_u32(end_rect.x);
+            let sel_y = saturating_f32_to_u32(start_rect.y);
+            let sel_h = saturating_f32_to_u32(start_rect.height).max(FONT_SIZE_PX);
+            (start_x, sel_y, end_x.saturating_sub(start_x), sel_h)
+        });
+        (caret, selection)
     };
     let (caret_layout_x, caret_layout_y, caret_box_height) = caret_pixel_rect;
 
@@ -277,7 +306,25 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         TextFieldState::Focused | TextFieldState::Editing,
     ) && blink.visible();
 
-    let mut field_children: Vec<Scene> = Vec::with_capacity(2);
+    let mut field_children: Vec<Scene> = Vec::with_capacity(3);
+    // R56.1.f.3 §5.22 — selection rect paints BEFORE text_node so
+    // the glyphs render on top of the tinted band. Vello composites
+    // children in vector order (later children paint atop earlier).
+    if let Some((sel_x, sel_y, sel_w, sel_h)) = selection_pixel {
+        if sel_w > 0 {
+            let sel_left = FIELD_PAD.saturating_add(sel_x);
+            let sel_top = FIELD_PAD.saturating_add(sel_y);
+            let selection_box = Scene::Box(
+                BoxNode::new(Rect::default(), BoxStyle::filled(SELECTION_COLOR))
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_size(Size::px(sel_w, sel_h))
+                            .with_absolute_position(sel_left, sel_top),
+                    ),
+            );
+            field_children.push(selection_box);
+        }
+    }
     field_children.push(text_node);
     if caret_painted {
         let caret_left = FIELD_PAD.saturating_add(caret_layout_x);
