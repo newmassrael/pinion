@@ -800,12 +800,27 @@ impl ExternalIntrospect for TextFieldExternal {
             // distinguishes "key rejected" from "widget not bound to
             // reactive state". `TypeMismatch` on non-Text args mirrors
             // the `send` invoke discipline.
+            //
+            // R56.1.j §5.38 §5.28 — recognized keys reset the attached
+            // [`CaretBlink`] (snap the caret to fully-visible + restart
+            // the period timer). Matches the macOS / iOS / GTK / Web
+            // canonical UX — the caret stays solid while the user is
+            // typing or navigating, then resumes blinking once the
+            // user pauses. Unrecognized keys do not reset (the user
+            // did not interact with the field). Bare `TextField`s
+            // (no attached blink) silently no-op via
+            // [`Option::map`].
             "key" => match args {
                 IntrospectValue::Text(ref key_str) => {
                     let handled = match self.text_state() {
                         Some(state) => apply_key(state.as_ref(), key_str),
                         None => false,
                     };
+                    if handled {
+                        if let Some(blink) = self.em.inner.blink() {
+                            blink.reset();
+                        }
+                    }
                     Ok(IntrospectValue::Bool(handled))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -2261,3 +2276,166 @@ mod r56_1_h_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod r56_1_j_tests {
+    //! R56.1.j §5.38 §5.28 — caret blink reset on recognized keystroke.
+    //!
+    //! Pins the macOS / iOS / GTK / Web canonical UX contract: the
+    //! caret stays solid while the user is typing or navigating, then
+    //! resumes blinking once they pause. Implementation lives in
+    //! [`TextFieldExternal::invoke`]'s `"key"` arm — handled keys call
+    //! [`CaretBlink::reset`] on the attached blink (no-op when no
+    //! blink is attached or when the key was unrecognized).
+    //!
+    //! The substrate-level reset contract (timer back to 0.0, visible
+    //! snaps to true while the blink is enabled, no-op while disabled)
+    //! is owned by [`CaretBlink::reset`] tests in
+    //! `widgets/caret_blink.rs`; this module verifies only the
+    //! wiring from the keystroke surface into that contract.
+
+    use super::{TextFieldExternal, TextFieldEvent};
+    use crate::animation::Tickable;
+    use crate::external::{ExternalIntrospect, IntrospectValue};
+    use crate::widgets::caret_blink::CaretBlink;
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    /// Build a focused `TextFieldExternal` with both reactive sidecars
+    /// attached and the blink driven into the hidden phase, so a
+    /// successful `reset()` is observable as a visibility flip back to
+    /// `true`.
+    fn focused_external_with_hidden_blink() -> (TextFieldExternal, Rc<CaretBlink>) {
+        let text = Rc::new(TextEditState::new());
+        let blink = Rc::new(CaretBlink::new());
+        let mut tfx = TextFieldExternal::new()
+            .attach_state(Rc::clone(&text))
+            .attach_blink(Rc::clone(&blink));
+        tfx.send(TextFieldEvent::Focus);
+        // Drive the blink past one full period — `tick(0.6)` exceeds
+        // the 0.530 s `PERIOD_SECS`, so the visible phase flips from
+        // the post-Focus `true` to `false`. `reset()` must then snap
+        // it back to `true`.
+        blink.tick(0.6);
+        assert!(!blink.visible(), "fixture: blink driven into hidden phase");
+        (tfx, blink)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Recognized key resets the blink
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_j_printable_key_resets_blink_to_visible() {
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        let r = tfx
+            .invoke("key", IntrospectValue::Text("h".to_string()))
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true), "printable key recognized");
+        assert!(blink.visible(), "recognized key snaps blink back to visible");
+    }
+
+    #[test]
+    fn r56_1_j_backspace_resets_blink() {
+        // Backspace at caret 0 is a recognized no-op (returns true) —
+        // still resets the blink because the user interacted with the
+        // field. Mirrors the W3C `defaultPrevented` semantic.
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        let r = tfx
+            .invoke("key", IntrospectValue::Text("Backspace".to_string()))
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert!(blink.visible(), "Backspace resets even when it's a caret-0 no-op");
+    }
+
+    #[test]
+    fn r56_1_j_arrow_left_resets_blink() {
+        // Navigation keys reset too — the user is "moving the cursor",
+        // a visible interaction with the field. macOS Cocoa /
+        // `NSTextView` / GTK `GtkEntry` all reset on arrow-key navigation.
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        let r = tfx
+            .invoke("key", IntrospectValue::Text("ArrowLeft".to_string()))
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert!(blink.visible(), "ArrowLeft resets the blink phase");
+    }
+
+    #[test]
+    fn r56_1_j_home_resets_blink() {
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        let r = tfx
+            .invoke("key", IntrospectValue::Text("Home".to_string()))
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert!(blink.visible());
+    }
+
+    #[test]
+    fn r56_1_j_space_resets_blink() {
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        let r = tfx
+            .invoke("key", IntrospectValue::Text("Space".to_string()))
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert!(blink.visible());
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Unrecognized key does NOT reset
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_j_unrecognized_key_does_not_reset_blink() {
+        // F1 / ArrowUp / Enter — apply_key returns false (R56.1.d
+        // rejection list). The user did not interact with the field's
+        // content, so the blink phase stays where it was (hidden, in
+        // this fixture).
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        for unrecognized in ["F1", "ArrowUp", "Enter", "Escape", "Tab"] {
+            // Reset the blink to known hidden state between iterations
+            // by ticking past the period again (Focus's initial reset
+            // happens only once; subsequent ticks keep cycling).
+            assert_eq!(
+                tfx.invoke("key", IntrospectValue::Text(unrecognized.to_string()))
+                    .unwrap(),
+                IntrospectValue::Bool(false),
+                "{unrecognized:?} must be unrecognized",
+            );
+            assert!(
+                !blink.visible(),
+                "unrecognized key {unrecognized:?} must not reset the blink",
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Bare TextField (no blink attached) safely no-ops
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_j_bare_text_field_no_panic_on_recognized_key() {
+        // No attached blink — the reset chain `blink().map(...)` must
+        // not panic. Returns the same Bool(false) the R56.1.d bare
+        // path returned (the bare TextField has no TextEditState
+        // either, so apply_key fails).
+        let mut tfx = TextFieldExternal::new();
+        let r = tfx
+            .invoke("key", IntrospectValue::Text("h".to_string()))
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(false));
+    }
+
+    #[test]
+    fn r56_1_j_text_state_attached_blink_unattached_no_panic() {
+        // TextEditState attached but no blink — recognized key handled
+        // normally, reset chain silently no-ops because blink() is None.
+        let text = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(text);
+        let r = tfx
+            .invoke("key", IntrospectValue::Text("h".to_string()))
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+    }
+}
+

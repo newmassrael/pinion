@@ -16151,6 +16151,63 @@
         "5.28"
       ]
     },
+    "R56.1.j": {
+      "decision_summary": "R56.1.j land caret blink reset on edit — recognized key resets attached blink (R56.1.c carry).",
+      "changes_bullets": [
+        "TextFieldExternal::invoke('key') recognized arm calls blink.reset()",
+        "Bare TextField (no attached blink) silently no-ops via Option::map",
+        "Unrecognized keys (F1 / ArrowUp / Enter / Escape / Tab) do not reset",
+        "8 r56_1_j_tests pin printable / Backspace / ArrowLeft / Home / Space + rejection + bare paths"
+      ],
+      "verification_bullets": [
+        "cargo test pinion-core widgets::text_field::r56_1_j: 8 passed 0 failed",
+        "cargo test workspace vello: 2491 passed 0 failed 13 ignored (was 2483 baseline)",
+        "cargo clippy workspace vello: 0 warnings",
+        "tools/demos/hello_textfield_type.py still PASS no regression"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.28",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "R56.1.e clipboard primitive (X11/Wayland/macOS/Win32 selection bridge)",
+        "R56.1.f selection (mouse drag + shift-arrow + grapheme cluster nav)",
+        "R56.1.g IME composition (Wayland text-input-v3 preedit buffer)",
+        "pinion-tui FocusManager substrate (TextField TUI parity)"
+      ],
+      "publishable_decision_summary": "R56.1.j closes the R56.1.c caret-blink carry — recognized keystrokes reset the attached CaretBlink (caret stays solid while typing, resumes blinking on pause; macOS/iOS/GTK/Web canonical UX).",
+      "publishable_changes_bullets": [
+        "TextFieldExternal::invoke('key') recognized arm calls blink.reset()",
+        "Snap visible to true + timer back to 0.0 while blink is enabled",
+        "Bare TextField (no attached blink) silently no-ops via Option::map chain",
+        "Unrecognized keys do not reset the blink (no field interaction)",
+        "Rejection list pinned: F1 / ArrowUp / Enter / Escape / Tab",
+        "Backspace-at-caret-0 still resets (recognized no-op counts as user input)",
+        "ArrowLeft / Home / End / Space all reset (navigation = interaction)",
+        "8 r56_1_j_tests pin recognized + rejected + bare-no-blink + text-only-attached"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test pinion-core widgets::text_field::r56_1_j: 8 passed 0 failed",
+        "cargo test --workspace --features pinion-runtime/vello: 2491 passed / 0 failed / 13 ignored",
+        "Delta: +8 R56.1.j substrate tests over the R56.1.b.1 baseline of 2483",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "Lint baseline holds: forbid unsafe + deny warnings + clippy::pedantic deny",
+        "tools/demos/hello_textfield_type.py: PASS (1.85s) — no regression",
+        "All 11 hello-* demos sweep: still PASS (R56.1.b.1 + R56.1.j stack)"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.28",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R56.1.e clipboard primitive (X11/Wayland/macOS/Win32 selection bridge)",
+        "R56.1.f selection (mouse drag + shift-arrow + grapheme cluster nav)",
+        "R56.1.g IME composition (Wayland text-input-v3 preedit buffer)",
+        "pinion-tui FocusManager substrate (TextField TUI parity)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
