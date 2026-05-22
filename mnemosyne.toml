@@ -640,3 +640,12 @@ reason = "R57.1 ThemeMode + prefers-color-scheme OS bridge audit half authored m
 applied_in = "Round 583"
 content_hash_before = "abdcdb203f21323bc7a6b6c178924b5afa1a085a5f84bfe3ad26bf75330da600"
 content_hash_after = "c0b7a2aa3f7534b8a985658b8069d8435a628413db2e7677ed8e5e44995de24e"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 584"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "Round 584 audit-minimal ASCII append + publishable Korean expand pattern (R56.1.g lesson, cumulative entry 36)"
+applied_in = "Round 584"
+content_hash_before = "ae7b27148c70d25fa7e2c40531feeb69b9751403f3cc7993ecd39aacc5aa4984"
+content_hash_after = "73454d3ce814db1a64c7d1c46ae3545f03760226a2e50c6b2836451ca0d059ce"

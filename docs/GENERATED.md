@@ -3885,6 +3885,11 @@ if __name__ == "__main__":
 - R57.1: thread_local SystemColorScheme Signal + system_color_scheme/set_system_color_scheme fns.
 - R57.1: pinion-shell winit ThemeChanged + Window::theme() in resumed wire OS to global signal.
 - R57.1: ThemeProvider::set_theme removed; set_mode + set_light_palette/set_dark_palette replace.
+- R57.X.theme-fade: theme_animated() opt-in spring fades palette ~200ms via THEME_FADE_SPRING.
+- R57.X.theme-fade: widget retrofit cascade carry; theme_animated() opt-in keeps theme() instant.
+- R57.X.theme-fade: THEME_FADE_SPRING 400/40/1 = critically damped, omega_n=20rad/s, ~200ms settle.
+- R57.X.theme-fade: Owner::current() None falls back to instant theme(); diagnostic / RPC safe.
+- R57.X.theme-fade: ThemeLinear (10 AnimVec4) bridges sRGB Theme to spring solver linear space.
 
 
 
@@ -3992,6 +3997,10 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - crates/pinion-core/src/theme.rs:system_color_scheme
 - crates/pinion-core/src/theme.rs:set_system_color_scheme
 - crates/pinion-shell/src/app.rs:winit_theme_to_pinion_scheme
+- crates/pinion-core/src/theme.rs:THEME_FADE_SPRING
+- crates/pinion-core/src/theme.rs:ThemeLinear
+- crates/pinion-core/src/theme.rs:ThemeFadeState
+- crates/pinion-core/src/theme.rs:ThemeProvider::theme_animated
 
 
 
@@ -17530,6 +17539,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - TUI shell terminal OSC 11 readout — SystemColorScheme의 TUI backend 브리지 (axis carry).
 - substrate widget_view_with_theme(state, theme) lift — 6 binary Owner::new().run wrap 중복.
 - R57.2 typography + spacing tokens cascade (TextStyleRole + SpacingToken, axis-level).
+
+
+
+### Round 584 — R57.X.theme-fade §5.50 — ThemeProvider::theme_animated() opt-in 페이드 substrate: M3 short4 ~200ms 임계감쇠 spring (THEME_FADE_SPRING) + ThemeLinear linear-light carrier + Owner None fallback + 9 회귀 테스트.
+
+**Changes**:
+- theme.rs: ThemeProvider.fade RefCell + pub fn theme_animated() (Owner lazy init, instant fallback)
+- theme.rs: THEME_FADE_SPRING pub const 400/40/1 (ζ=1.0, ω_n=20rad/s, ~200ms settle, M3 short4)
+- theme.rs: ThemeLinear (10 AnimVec4) private carrier + Animatable impl + from_theme/to_theme
+- theme.rs: ThemeFadeState private (Animation<ThemeLinear> + Cell<Theme> last_target sRGB cache)
+- lib.rs: THEME_FADE_SPRING pub re-export 추가 (application 동일 M3 spring 재사용)
+- theme.rs: +9 회귀 테스트 (spring 임계감쇠 / settle / 중단 연속성 / Owner None fallback / OS scheme)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2800/0/14 (baseline 2791 + 9 신규)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- cargo test -p pinion-core --lib theme = 35 PASS (R57.0 18 + R57.1 8 + R57.X.theme-fade 9)
+- 14 demos: 13 PASS (focus_border 실패는 R57.X.listbox carry, baseline 동일 — 내 변경 무관)
+
+
+
+**Impact**: §5.50, §5.28
+
+
+**Carry forward**:
+- R57.X.theme-fade widget retrofit cascade (10 binary call sites + test settle 패턴 필요)
+- hello_listbox_focus_border.py demo 갱신 (R57.X.listbox carry, FOCUS_BORDER_RGB → ColorRole::Accent)
+- Animatable<Color> 일반화는 2nd consumer 등장 후 (Rule of Three 영구 carry)
+- TweenAnimation<T> Signal-backed primitive 도입은 2nd consumer 후 (Rule of Three 영구 carry)
 
 
 

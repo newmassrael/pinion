@@ -1,5 +1,6 @@
 //! R57.0 §5.50 — Theming substrate. R57.1 §5.50 — `ThemeMode` +
-//! `prefers-color-scheme` OS bridge.
+//! `prefers-color-scheme` OS bridge. R57.X.theme-fade §5.50 — palette
+//! cross-fade via spring-driven linear-space interpolation.
 //!
 //! Provides a typed [`ColorRole`] enum (Material 3 / W3C CSS variable
 //! mirror), a [`Theme`] palette, a [`ThemeMode`] enum
@@ -96,14 +97,42 @@
 //!
 //! Theme palette entries are sRGB-encoded [`Color`]s; the
 //! [`Color::lerp`](crate::style::Color::lerp) (R51.151) path is the
-//! canonical inter-palette fade (R57.X.theme-fade carry) and remains
-//! linear-space, so theme-fade animations render perceptually correct
-//! without theme-specific special-casing.
+//! canonical inter-palette fade and remains linear-space, so
+//! theme-fade animations render perceptually correct without
+//! theme-specific special-casing.
+//!
+//! ## Fade animation (R57.X.theme-fade)
+//!
+//! [`ThemeProvider::theme_animated`] is the opt-in animated mirror of
+//! [`ThemeProvider::theme`]. It returns the **currently displayed**
+//! palette, interpolated from the previous resolved palette toward
+//! the active one via a critically-damped spring tuned to the
+//! Material 3 "Standard" easing duration (~200 ms settle —
+//! [`THEME_FADE_SPRING`]). The interpolation runs in linear-light
+//! [`AnimVec4`] space via the private [`ThemeLinear`] carrier so the
+//! perceptual quality matches [`Color::lerp`](crate::style::Color::lerp)
+//! (R51.151) — no muddy-grey artifact on a light↔dark swap.
+//!
+//! The accessor uses the spring's velocity-preserving
+//! [`Animation::set_target`](crate::animation::Animation::set_target)
+//! interrupt semantic (`SwiftUI` / `Compose` canonical), so a mid-fade
+//! mode flip transitions visually continuous from the in-flight value
+//! to the new target — no discontinuity, no double-snap.
+//!
+//! Callers retain the instant [`ThemeProvider::theme`] accessor for
+//! tests and snapshot reads. Opt-in keeps the substrate layered
+//! ([[abstraction-needs-second-consumer]]); widget retrofit to
+//! [`Self::theme_animated`] is a follow-up cascade with explicit
+//! visible-affordance scope.
 //!
 //! [`use_text_edit_state`]: crate::widgets::text_edit::use_text_edit_state
+//! [`AnimVec4`]: crate::animation::AnimVec4
+//! [`Animation::set_target`]: crate::animation::Animation::set_target
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::animation::{AnimVec4, Animatable, Animation, SpringConfig};
 use crate::reactive::{Owner, Signal};
 use crate::style::Color;
 
@@ -459,6 +488,230 @@ impl Default for Theme {
 }
 
 // ────────────────────────────────────────────────────────────────────
+// ThemeLinear — linear-light AnimVec4 carrier for the fade animation
+// ────────────────────────────────────────────────────────────────────
+
+/// Module-private linear-light mirror of [`Theme`]. Each field carries
+/// the corresponding role's [`Color`] decoded through
+/// [`Color::to_linear`](crate::style::Color::to_linear) into an
+/// [`AnimVec4`]. The spring solver operates here so the integration
+/// stays in colorimetrically-linear space; the result re-encodes back
+/// to sRGB on every read via [`Self::to_theme`].
+///
+/// Mirrors the §5.28 substrate decision (`Color`/`Rect` Animatable
+/// impls deferred per the animation module docstring) by carrying the
+/// linear-space conversion as a Theme-specific bridge rather than
+/// implementing [`Animatable`] for [`Color`] directly. The deferred
+/// carry stays deferred — a future 2nd consumer evidences the
+/// per-color generalization ([[abstraction-needs-second-consumer]]).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize,
+)]
+struct ThemeLinear {
+    surface: AnimVec4,
+    on_surface: AnimVec4,
+    on_surface_muted: AnimVec4,
+    accent: AnimVec4,
+    on_accent: AnimVec4,
+    outline: AnimVec4,
+    surface_container_highest: AnimVec4,
+    surface_container_low: AnimVec4,
+    surface_container: AnimVec4,
+    surface_container_high: AnimVec4,
+}
+
+impl ThemeLinear {
+    /// Lift an sRGB-encoded [`Theme`] into linear-light space per the
+    /// IEC 61966-2-1 EOTF ([`Color::to_linear`](crate::style::Color::to_linear)).
+    /// Pure function — `to_theme(from_theme(t))` is the canonical
+    /// sRGB round-trip and reproduces every Theme field within
+    /// 8-bit rounding.
+    fn from_theme(t: Theme) -> Self {
+        Self {
+            surface: t.surface.to_linear(),
+            on_surface: t.on_surface.to_linear(),
+            on_surface_muted: t.on_surface_muted.to_linear(),
+            accent: t.accent.to_linear(),
+            on_accent: t.on_accent.to_linear(),
+            outline: t.outline.to_linear(),
+            surface_container_highest: t.surface_container_highest.to_linear(),
+            surface_container_low: t.surface_container_low.to_linear(),
+            surface_container: t.surface_container.to_linear(),
+            surface_container_high: t.surface_container_high.to_linear(),
+        }
+    }
+
+    /// Encode the linear-light state back to sRGB [`Theme`]. Each
+    /// field clamps out-of-range linear components per
+    /// [`Color::from_linear`](crate::style::Color::from_linear); the
+    /// spring solver may transiently produce values slightly outside
+    /// `[0.0, 1.0]` during overshoot, and the saturating encode
+    /// keeps the rendered output valid sRGB without wrapping
+    /// channels.
+    fn to_theme(self) -> Theme {
+        Theme {
+            surface: Color::from_linear(self.surface),
+            on_surface: Color::from_linear(self.on_surface),
+            on_surface_muted: Color::from_linear(self.on_surface_muted),
+            accent: Color::from_linear(self.accent),
+            on_accent: Color::from_linear(self.on_accent),
+            outline: Color::from_linear(self.outline),
+            surface_container_highest: Color::from_linear(self.surface_container_highest),
+            surface_container_low: Color::from_linear(self.surface_container_low),
+            surface_container: Color::from_linear(self.surface_container),
+            surface_container_high: Color::from_linear(self.surface_container_high),
+        }
+    }
+}
+
+impl Animatable for ThemeLinear {
+    fn zero() -> Self {
+        Self {
+            surface: AnimVec4::zero(),
+            on_surface: AnimVec4::zero(),
+            on_surface_muted: AnimVec4::zero(),
+            accent: AnimVec4::zero(),
+            on_accent: AnimVec4::zero(),
+            outline: AnimVec4::zero(),
+            surface_container_highest: AnimVec4::zero(),
+            surface_container_low: AnimVec4::zero(),
+            surface_container: AnimVec4::zero(),
+            surface_container_high: AnimVec4::zero(),
+        }
+    }
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            surface: self.surface.add(other.surface),
+            on_surface: self.on_surface.add(other.on_surface),
+            on_surface_muted: self.on_surface_muted.add(other.on_surface_muted),
+            accent: self.accent.add(other.accent),
+            on_accent: self.on_accent.add(other.on_accent),
+            outline: self.outline.add(other.outline),
+            surface_container_highest: self
+                .surface_container_highest
+                .add(other.surface_container_highest),
+            surface_container_low: self
+                .surface_container_low
+                .add(other.surface_container_low),
+            surface_container: self.surface_container.add(other.surface_container),
+            surface_container_high: self
+                .surface_container_high
+                .add(other.surface_container_high),
+        }
+    }
+
+    fn sub(self, other: Self) -> Self {
+        Self {
+            surface: self.surface.sub(other.surface),
+            on_surface: self.on_surface.sub(other.on_surface),
+            on_surface_muted: self.on_surface_muted.sub(other.on_surface_muted),
+            accent: self.accent.sub(other.accent),
+            on_accent: self.on_accent.sub(other.on_accent),
+            outline: self.outline.sub(other.outline),
+            surface_container_highest: self
+                .surface_container_highest
+                .sub(other.surface_container_highest),
+            surface_container_low: self
+                .surface_container_low
+                .sub(other.surface_container_low),
+            surface_container: self.surface_container.sub(other.surface_container),
+            surface_container_high: self
+                .surface_container_high
+                .sub(other.surface_container_high),
+        }
+    }
+
+    fn scale(self, factor: f32) -> Self {
+        Self {
+            surface: self.surface.scale(factor),
+            on_surface: self.on_surface.scale(factor),
+            on_surface_muted: self.on_surface_muted.scale(factor),
+            accent: self.accent.scale(factor),
+            on_accent: self.on_accent.scale(factor),
+            outline: self.outline.scale(factor),
+            surface_container_highest: self.surface_container_highest.scale(factor),
+            surface_container_low: self.surface_container_low.scale(factor),
+            surface_container: self.surface_container.scale(factor),
+            surface_container_high: self.surface_container_high.scale(factor),
+        }
+    }
+
+    fn approx_zero(self, epsilon: f32) -> bool {
+        self.surface.approx_zero(epsilon)
+            && self.on_surface.approx_zero(epsilon)
+            && self.on_surface_muted.approx_zero(epsilon)
+            && self.accent.approx_zero(epsilon)
+            && self.on_accent.approx_zero(epsilon)
+            && self.outline.approx_zero(epsilon)
+            && self.surface_container_highest.approx_zero(epsilon)
+            && self.surface_container_low.approx_zero(epsilon)
+            && self.surface_container.approx_zero(epsilon)
+            && self.surface_container_high.approx_zero(epsilon)
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// THEME_FADE_SPRING — M3 "Standard" easing approximation
+// ────────────────────────────────────────────────────────────────────
+
+/// Spring tuning for [`ThemeProvider::theme_animated`] — a
+/// critically-damped spring approximating Material 3's "Standard"
+/// easing token at the M3 short4 duration token (~200 ms).
+///
+/// ## Derivation
+///
+/// - `stiffness = 400`, `damping = 40`, `mass = 1` →
+///   `ω_n = √(k/m) = 20 rad/s`, `ζ = c/(2·√(k·m)) = 1.0`
+///   (critically damped — fastest settle without overshoot).
+/// - Settling time (within 1 % of target) ≈ `4 / (ζ·ω_n) ≈ 200 ms`,
+///   matching the Material 3 short4 motion-duration token used for
+///   color-token transitions.
+/// - Curve shape closely approximates the M3 "Standard" easing
+///   `cubic-bezier(0.2, 0.0, 0, 1.0)` — both have a slow start and a
+///   soft asymptotic approach (the standard / pinion-canon spring↔tween
+///   substitution per the animation module docstring).
+///
+/// Exposed `pub` so downstream applications can tune their own
+/// animations against the same M3-compliant preset — the [`Animation`]
+/// substrate accepts any [`SpringConfig`], so the tuning is reusable
+/// outside theme fade.
+pub const THEME_FADE_SPRING: SpringConfig = SpringConfig::new(400.0, 40.0, 1.0);
+
+// ────────────────────────────────────────────────────────────────────
+// ThemeFadeState — lazy-initialised fade animation + target cache
+// ────────────────────────────────────────────────────────────────────
+
+/// Module-private fade state held inside [`ThemeProvider`]. Created on
+/// the first [`ThemeProvider::theme_animated`] call that happens
+/// inside an active [`Owner`] scope; the [`Animation`] field registers
+/// for tick dispatch with that owner so the existing paint-loop
+/// `tick_animations` driver (R51.142) drives the fade with no
+/// theme-specific plumbing.
+struct ThemeFadeState {
+    /// Spring-driven linear-light palette. Re-targeted on every
+    /// detected target swap; velocity carries through interrupts per
+    /// the [`Animation::set_target`] contract so a mid-fade mode flip
+    /// stays visually continuous.
+    animation: Animation<ThemeLinear>,
+    /// Most recent sRGB target observed by
+    /// [`ThemeProvider::theme_animated`]. Compared against the next
+    /// resolved target to detect a swap — comparing in sRGB
+    /// (lossless `PartialEq` + `Eq` on [`Theme`]) avoids false-positives
+    /// from the lossy linear round-trip.
+    last_target: Cell<Theme>,
+}
+
+impl std::fmt::Debug for ThemeFadeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ThemeFadeState")
+            .field("animation_at_rest", &self.animation.is_at_rest())
+            .field("last_target", &self.last_target.get())
+            .finish()
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
 // ThemeMode — application choice of which palette is active
 // ────────────────────────────────────────────────────────────────────
 
@@ -547,6 +800,15 @@ pub struct ThemeProvider {
     /// this provider. Echoed back through [`Self::tag`] so consumers
     /// can re-derive the cache key without repeating the literal.
     tag: Option<&'static str>,
+    /// R57.X.theme-fade — lazily-initialised palette cross-fade
+    /// animation. [`None`] until the first [`Self::theme_animated`]
+    /// call inside an active [`Owner`] scope; thereafter holds the
+    /// [`ThemeFadeState`] for the lifetime of the provider. Wrapped in
+    /// [`RefCell`] for interior mutation — every access happens on the
+    /// UI thread (the runtime is not `Send` / `Sync`), so a borrow
+    /// conflict would already imply a re-entrant view-fn invocation
+    /// which the substrate forbids elsewhere.
+    fade: RefCell<Option<ThemeFadeState>>,
 }
 
 impl ThemeProvider {
@@ -562,6 +824,7 @@ impl ThemeProvider {
             light_palette: Signal::new(Theme::light()),
             dark_palette: Signal::new(Theme::dark()),
             tag: None,
+            fade: RefCell::new(None),
         }
     }
 
@@ -577,6 +840,7 @@ impl ThemeProvider {
             light_palette: Signal::new(Theme::light()),
             dark_palette: Signal::new(Theme::dark()),
             tag: Some(tag),
+            fade: RefCell::new(None),
         }
     }
 
@@ -651,6 +915,65 @@ impl ThemeProvider {
                 }
             },
         }
+    }
+
+    /// R57.X.theme-fade §5.50 — animated counterpart of [`Self::theme`].
+    /// Returns the **currently displayed** palette: a critically-damped
+    /// spring ([`THEME_FADE_SPRING`]) interpolates from the previous
+    /// resolved palette toward the active one in linear-light space,
+    /// settling within ~200 ms (Material 3 short4 motion-duration token,
+    /// "Standard" easing approximation).
+    ///
+    /// ## Reactive subscriptions
+    ///
+    /// Auto-subscribes the calling view-fn to every signal
+    /// [`Self::theme`] subscribes to (mode + active palette + the
+    /// global [`SystemColorScheme`] when mode is [`ThemeMode::System`])
+    /// **plus** the spring's [`Animation::signal`] — so frame ticks
+    /// during the fade re-run the view, and the view stops re-running
+    /// the moment the spring settles (per the [`Signal::set`]
+    /// equality-skip + `Animation` rest-epsilon contract).
+    ///
+    /// ## Interrupt semantics
+    ///
+    /// Mid-fade mode / palette / OS-scheme flips re-target the spring
+    /// via [`Animation::set_target`](crate::animation::Animation::set_target);
+    /// the existing velocity carries through so the displayed palette
+    /// stays visually continuous across the interruption — the canonical
+    /// `SwiftUI` `.animation(_)` / `Compose` `animateColorAsState`
+    /// continuity contract.
+    ///
+    /// ## Lazy initialisation + Owner-less fallback
+    ///
+    /// The fade animation registers with the active [`Owner`] (via
+    /// [`Owner::current`]) on the first call inside an
+    /// [`Owner::run`](crate::reactive::Owner::run) scope. When called
+    /// outside any active owner — typically diagnostic / snapshot reads
+    /// from a test bench or RPC introspection path — the method falls
+    /// back to the instant [`Self::theme`] value, no animation, no
+    /// reactive subscription. This keeps the accessor safe to call
+    /// anywhere without the `Owner::current().expect(...)` panic the
+    /// callback-root-owner-wrap discipline guards against in
+    /// [`use_theme`].
+    #[must_use]
+    pub fn theme_animated(&self) -> Theme {
+        let target = self.theme();
+        let Some(owner) = Owner::current() else {
+            // Outside any owner scope — return instant target so the
+            // accessor remains safe to call from diagnostic paths.
+            return target;
+        };
+        let target_linear = ThemeLinear::from_theme(target);
+        let mut fade_borrow = self.fade.borrow_mut();
+        let fade = fade_borrow.get_or_insert_with(|| ThemeFadeState {
+            animation: Animation::new(&owner, target_linear, THEME_FADE_SPRING),
+            last_target: Cell::new(target),
+        });
+        if fade.last_target.get() != target {
+            fade.animation.set_target(target_linear);
+            fade.last_target.set(target);
+        }
+        fade.animation.value().to_theme()
     }
 
     /// Shorthand for [`Theme::resolve`] against the active palette.
@@ -1144,4 +1467,269 @@ mod tests {
         let _ = use_theme("app");
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // R57.X.theme-fade — Animation<ThemeLinear> spring substrate
+    // ─────────────────────────────────────────────────────────────
+
+    use super::{THEME_FADE_SPRING, ThemeLinear};
+
+    /// Per-channel tolerance for the sRGB <-> linear round-trip plus
+    /// the spring rest-epsilon expressed in 8-bit channel space.
+    /// `Animation`'s default `DEFAULT_REST_EPSILON` is 0.01 in
+    /// linear-light; the inverse-EOTF maps that to roughly one 8-bit
+    /// channel step at the brightest tones.
+    const ROUND_TRIP_TOLERANCE: i32 = 1;
+
+    /// Component-wise close-equality on [`Color`] within
+    /// [`ROUND_TRIP_TOLERANCE`]. Used by the fade tests so a sRGB
+    /// round-trip through [`ThemeLinear`] does not flake the
+    /// assertion at 8-bit precision.
+    #[track_caller]
+    fn assert_color_close(actual: Color, expected: Color) {
+        let diff = |x: u8, y: u8| (i32::from(x) - i32::from(y)).abs();
+        assert!(
+            diff(actual.r, expected.r) <= ROUND_TRIP_TOLERANCE
+                && diff(actual.g, expected.g) <= ROUND_TRIP_TOLERANCE
+                && diff(actual.b, expected.b) <= ROUND_TRIP_TOLERANCE
+                && diff(actual.a, expected.a) <= ROUND_TRIP_TOLERANCE,
+            "expected {expected:?} +/- {ROUND_TRIP_TOLERANCE}, got {actual:?}"
+        );
+    }
+
+    /// Component-wise close-equality on [`Theme`] across every field.
+    #[track_caller]
+    fn assert_theme_close(actual: Theme, expected: Theme) {
+        assert_color_close(actual.surface, expected.surface);
+        assert_color_close(actual.on_surface, expected.on_surface);
+        assert_color_close(actual.on_surface_muted, expected.on_surface_muted);
+        assert_color_close(actual.accent, expected.accent);
+        assert_color_close(actual.on_accent, expected.on_accent);
+        assert_color_close(actual.outline, expected.outline);
+        assert_color_close(
+            actual.surface_container_highest,
+            expected.surface_container_highest,
+        );
+        assert_color_close(
+            actual.surface_container_low,
+            expected.surface_container_low,
+        );
+        assert_color_close(actual.surface_container, expected.surface_container);
+        assert_color_close(
+            actual.surface_container_high,
+            expected.surface_container_high,
+        );
+    }
+
+    #[test]
+    fn r57_x_theme_fade_spring_is_critically_damped() {
+        // ζ = damping / (2 * sqrt(stiffness * mass)). For 400 / 40 / 1:
+        // 40 / (2 * sqrt(400)) = 40 / 40 = 1.0 exactly. Pin the
+        // critical-damping property so a future tuning that drifts
+        // the damping ratio (re-introducing overshoot) is caught at
+        // test time. Also pin the M3 short4 ≈ 200 ms settling time
+        // via the natural frequency.
+        let c = THEME_FADE_SPRING;
+        let zeta = c.damping / (2.0 * (c.stiffness * c.mass).sqrt());
+        assert!(
+            (zeta - 1.0).abs() < 1e-6,
+            "expected critically damped, got zeta = {zeta}"
+        );
+        // omega_n = sqrt(k/m) = sqrt(400) = 20 rad/s. Settling time
+        // (1 %) ≈ 4 / (zeta * omega_n) = 200 ms.
+        let omega_n = (c.stiffness / c.mass).sqrt();
+        assert!(
+            (omega_n - 20.0).abs() < 1e-6,
+            "expected omega_n = 20 rad/s, got {omega_n}"
+        );
+    }
+
+    #[test]
+    fn r57_x_theme_linear_round_trip_is_within_8bit_tolerance() {
+        // ThemeLinear::from_theme followed by ::to_theme must
+        // reproduce the original Theme within 8-bit rounding for
+        // every field on both canonical presets — the round-trip is
+        // the carrier between the spring solver's linear-space state
+        // and the sRGB Theme surface widgets render.
+        for theme in [Theme::light(), Theme::dark()] {
+            let round_tripped = ThemeLinear::from_theme(theme).to_theme();
+            assert_theme_close(round_tripped, theme);
+        }
+    }
+
+    #[test]
+    fn r57_x_theme_animated_outside_owner_returns_instant_target() {
+        // Diagnostic / snapshot call outside any Owner::run scope
+        // must fall back to the instant target with no animation and
+        // no panic — the contract enables `theme_animated` to be
+        // safely called from test benches and RPC introspection
+        // paths that do not establish a root owner.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let p = ThemeProvider::new();
+        p.set_mode(ThemeMode::Dark);
+        // No Owner::current() → returns Theme::dark() exactly (no
+        // round-trip), so an exact-equality assertion is valid here.
+        assert_eq!(p.theme_animated(), Theme::dark());
+        p.set_mode(ThemeMode::Light);
+        assert_eq!(p.theme_animated(), Theme::light());
+    }
+
+    #[test]
+    fn r57_x_theme_animated_first_call_returns_current_target() {
+        // First call inside an owner scope lazy-inits the fade with
+        // current = target — value() returns the same palette
+        // instant theme() returns (within the round-trip tolerance).
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let owner = Owner::new();
+        let p = ThemeProvider::new();
+        p.set_mode(ThemeMode::Dark);
+        owner.run(|| {
+            assert_theme_close(p.theme_animated(), Theme::dark());
+        });
+    }
+
+    #[test]
+    fn r57_x_theme_animated_mode_flip_settles_to_new_target() {
+        // After a mode flip, ticking the animation past the M3 short4
+        // settling time (~200 ms) brings the displayed palette
+        // back within the round-trip tolerance of the new target.
+        // We tick generously (1 s @ 60 Hz) so a future spring re-tune
+        // that widens the settle window slightly does not flake.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let owner = Owner::new();
+        let p = ThemeProvider::new();
+        // Anchor at Light first.
+        p.set_mode(ThemeMode::Light);
+        owner.run(|| {
+            let _ = p.theme_animated();
+        });
+        // Re-target to Dark.
+        p.set_mode(ThemeMode::Dark);
+        owner.run(|| {
+            let _ = p.theme_animated();
+        });
+        // Tick well past the 200 ms settle.
+        for _ in 0..60 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+        owner.run(|| {
+            assert_theme_close(p.theme_animated(), Theme::dark());
+        });
+    }
+
+    #[test]
+    fn r57_x_theme_animated_first_post_flip_frame_is_near_previous_palette() {
+        // Right after a re-target — before any tick has advanced the
+        // spring — the displayed palette must read close to the
+        // previous target (the in-flight anchor), not the new
+        // target. Pins the velocity-preserving interrupt semantic
+        // at the boundary: the very first frame after the flip
+        // should not snap to the destination.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let owner = Owner::new();
+        let p = ThemeProvider::new();
+        p.set_mode(ThemeMode::Light);
+        owner.run(|| {
+            let _ = p.theme_animated();
+        });
+        // Settle so the previous anchor is exactly Light.
+        for _ in 0..60 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+        p.set_mode(ThemeMode::Dark);
+        owner.run(|| {
+            // First call after flip — re-target happens, but the
+            // spring has not stepped yet, so the displayed value is
+            // still the Light anchor.
+            assert_theme_close(p.theme_animated(), Theme::light());
+        });
+    }
+
+    #[test]
+    fn r57_x_theme_animated_palette_swap_triggers_fade() {
+        // Application brand override via set_light_palette must be
+        // a swap source the fade reacts to — pinned because the
+        // application path (custom brand colors) is just as
+        // important as the mode flip path.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let owner = Owner::new();
+        let p = ThemeProvider::new();
+        p.set_mode(ThemeMode::Light);
+        let custom_light = Theme {
+            accent: Color::rgb(0xff, 0x00, 0x00),
+            ..Theme::light()
+        };
+        owner.run(|| {
+            let _ = p.theme_animated();
+        });
+        p.set_light_palette(custom_light);
+        owner.run(|| {
+            let _ = p.theme_animated();
+        });
+        for _ in 0..60 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+        owner.run(|| {
+            assert_theme_close(p.theme_animated(), custom_light);
+        });
+    }
+
+    #[test]
+    fn r57_x_theme_animated_system_scheme_flip_triggers_fade() {
+        // OS dark mode signal flips while mode is System — the fade
+        // must react. Pins the R57.1 OS bridge cascade end-to-end
+        // through the new accessor.
+        set_system_color_scheme(SystemColorScheme::Light);
+        let owner = Owner::new();
+        let p = ThemeProvider::new();
+        // ThemeMode::System is the default; do not call set_mode.
+        owner.run(|| {
+            let _ = p.theme_animated();
+        });
+        // Settle on light.
+        for _ in 0..60 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+        set_system_color_scheme(SystemColorScheme::Dark);
+        owner.run(|| {
+            let _ = p.theme_animated();
+        });
+        for _ in 0..60 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+        owner.run(|| {
+            assert_theme_close(p.theme_animated(), Theme::dark());
+        });
+        // Restore baseline for the next test on this thread.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+    }
+
+    #[test]
+    fn r57_x_theme_animated_no_flip_stays_at_rest() {
+        // After settling, repeated theme_animated() calls without a
+        // target change must return the same value — the spring is
+        // at rest and the spring-step is a no-op (Signal equality
+        // skip + tickable rest-predicate). Guards against an
+        // accidental "always retarget" wiring that would re-fire
+        // the spring every paint.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let owner = Owner::new();
+        let p = ThemeProvider::new();
+        p.set_mode(ThemeMode::Dark);
+        owner.run(|| {
+            let _ = p.theme_animated();
+        });
+        for _ in 0..60 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+        owner.run(|| {
+            let a = p.theme_animated();
+            for _ in 0..30 {
+                owner.tick_animations(1.0 / 60.0);
+            }
+            let b = p.theme_animated();
+            // Within the at-rest epsilon — any drift here would be
+            // a substrate regression, not 8-bit rounding noise.
+            assert_eq!(a, b);
+        });
+    }
 }

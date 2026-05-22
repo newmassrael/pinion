@@ -53,6 +53,6 @@ pub use style::{
     scale_normalized_to_px,
 };
 pub use theme::{
-    ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider, set_system_color_scheme,
-    system_color_scheme, use_theme,
+    ColorRole, SystemColorScheme, THEME_FADE_SPRING, Theme, ThemeMode, ThemeProvider,
+    set_system_color_scheme, system_color_scheme, use_theme,
 };
