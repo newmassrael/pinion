@@ -70,6 +70,15 @@ use crate::scene::Rect;
 /// `aria-orientation` enumeration and the §5.38 Slider axis (R51.39)
 /// so a future widget binding can reuse the same primitive without
 /// translating between two orientation enums.
+///
+/// (R55.D.7 §5.45) `#[non_exhaustive]` matches the rest of the
+/// pinion enum surface ([`Scene`](crate::scene::Scene),
+/// [`Display`](crate::style::Display), [`FlexDirection`](crate::style::FlexDirection),
+/// etc.). The two axes are W3C-stable today, so the attribute is
+/// pure forward-compat hedge — `Diagonal` / per-axis snap modes are
+/// hypothetical extensions a future round can land without a
+/// `SemVer` major bump.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollBarOrientation {
     /// Track grows along the y axis; thumb slides up / down. Used
@@ -86,6 +95,13 @@ pub enum ScrollBarOrientation {
 /// in (so the caller can fan it out into a single paint helper
 /// without re-threading the input) plus the derived thumb rect.
 /// Both rects share the same coordinate frame as the input `track`.
+///
+/// (R55.D.7 §5.45) `#[non_exhaustive]` matches the pinion type
+/// surface convention. The current three fields cover the canonical
+/// scrollbar geometry but a future round may add e.g. a `hover_zone`
+/// rect (the wider hit-test area around a thin visible thumb) — the
+/// attribute guards downstream callers from a `SemVer` break.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScrollBarGeometry {
     /// Orientation echoed back so a paint helper can branch on the

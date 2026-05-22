@@ -9938,6 +9938,31 @@ if __name__ == "__main__":
 
 
 
+### R55.D.7 — R55.D.7 §5.45 non_exhaustive on ScrollBarOrientation + ScrollBarGeometry forward-compat hedge
+
+**Changes**:
+- pinion-core/widgets/scrollbar.rs: ScrollBarOrientation gains #[non_exhaustive]
+- pinion-core/widgets/scrollbar.rs: ScrollBarGeometry gains #[non_exhaustive]
+- Convention parity with Scene / Display / FlexDirection / AlignItems already non_exhaustive
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 2275 passed / 0 failed / 12 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- in-crate match sites compile unchanged; only out-of-crate construct site (hello-listbox) found, no pattern
+
+
+
+**Impact**: §5.45
+
+
+**Carry forward**:
+- R56.1 TextField caret rendering + cursor blink animation (new largest framework axis)
+- F1 framework auto-tag conflict-aware Scene::contains_tag walker (regression risk - permanent defer)
+
+
+
 ### R55.G.22 — R55.G.22 §5.41 §5.49 — composite paint-root tag convention regression helper assert_widget_view_carries_tag 추출 + 9 widget inline assert 청산
 
 **Changes**:
