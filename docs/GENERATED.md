@@ -2363,6 +2363,7 @@ router.pointer_down(&mut state_scene);
 - R47.6 §5.36 round close = parley wire + decoration + Clip. Ellipsis = Clip fallback (R47.x carry)
 - R50 진입 = §5.36 의 parley/swash/fontique = Phase 1 bridge; §5.37 self-hosted text engine 으로 supersede
 - R47.7.6 — parley layout width/height .ceil() pixel snap (sub-pixel jitter 차단)
+- R56.1.b.2 — pinion-text caret_rect_for_byte_offset + CaretRect f32 (parley Cursor wrap)
 
 
 
@@ -2381,6 +2382,8 @@ router.pointer_down(&mut state_scene);
 **Implementations**:
 - crates/pinion-runtime/src/layout.rs:compute_layout::ceil
 - crates/pinion-runtime/src/paint_adapter.rs:paint_text
+- crates/pinion-text/src/caret.rs:caret_rect_for_byte_offset
+- crates/pinion-text/src/caret.rs:CaretRect
 
 
 
@@ -10200,6 +10203,29 @@ if __name__ == "__main__":
 - R56.1.e — clipboard substrate (X11/Wayland/macOS/Win32)
 - R56.1.f — selection + grapheme-cluster navigation (unicode-segmentation)
 - R56.1.g — IME composition (preedit buffer + text-input-v3)
+
+
+
+### R56.1.b.2 — R56.1.b.2 §5.36 §5.38 — pinion-text caret_rect_for_byte_offset closed-form helper wrapping parley::Cursor + CaretRect f32 struct.
+
+**Changes**:
+- crates/pinion-text/src/caret.rs: caret_rect_for_byte_offset(layout, byte, width)
+- CaretRect struct (x/y/width/height f32) with #[non_exhaustive] forward-compat
+- parley::Cursor::from_byte_index(Affinity::Downstream) + ::geometry wrap
+- f64 BoundingBox → f32 CaretRect bridge for pinion paint pipeline
+- lib.rs re-exports caret_rect_for_byte_offset + CaretRect public surface
+- 10 substrate tests: byte-zero / end / monotonic / multibyte / oversized clamp
+
+
+
+**Verification**:
+- cargo test -p pinion-text --lib caret: 10 pass / 0 fail
+- cargo test --workspace --features vello: 2469 pass / 0 fail (+10 vs R56.1.h 2459)
+- cargo clippy --workspace --all-targets --features vello: 0 warnings
+
+
+
+**Impact**: §5.36, §5.38
 
 
 

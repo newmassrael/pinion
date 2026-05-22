@@ -334,3 +334,12 @@ reason = "R56.1.h initial append used minimal audit shape (XML deserialize multi
 applied_in = "R56.1.h"
 content_hash_before = "fcabea199a9cb62113bbd5bae5686849a9bf90d82aa09963b32878898743f0ea"
 content_hash_after = "ab311371c7c47efd758b56e74de2dfdda848262cb1ee863d213822ea8630fb2d"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "R56.1.b.2"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets"]
+reason = "R56.1.b.2 initial append used minimal audit shape (XML deserialize multi-byte safety per R56.1.d lesson); publishable half rewritten with canonical detailed decision/changes/verification bullets per Round 161 §41 100-byte budget while audit stays frozen."
+applied_in = "R56.1.b.2"
+content_hash_before = "5bcaa2ec548d32e8c7a450baa85308c79264ed41710b1c83aa40eb2aad90ee50"
+content_hash_after = "fc3dc08092598b647943f080ec81dd0dc7801e20f31d379a1422416993b111c9"

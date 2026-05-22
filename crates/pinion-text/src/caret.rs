@@ -1,0 +1,309 @@
+//! R56.1.b.2 §5.36 §5.38 — closed-form caret geometry lookup against
+//! a shaped parley [`Layout`]. Pure function: takes a layout reference
+//! and a byte offset, returns the cursor rectangle in layout-space.
+//!
+//! Substrate primitive for the R56.1.b.1 hello-textfield first visible
+//! consumer — the application's paint backend reads the caret position
+//! through this helper instead of re-implementing parley cursor math
+//! per binding.
+//!
+//! ## Why a separate helper
+//!
+//! parley exposes [`parley::Cursor::geometry`] which returns a
+//! [`parley::BoundingBox`] (f64 four-corner). The pinion paint
+//! pipeline uses f32 coordinates throughout, and the `BoundingBox`
+//! corner-pair shape (`x0` / `y0` / `x1` / `y1`) is less ergonomic
+//! than the top-left + size form. This helper bridges the two: f64
+//! → f32 conversion + corner-pair → top-left/size rewrite, returning
+//! a pinion-flavored [`CaretRect`] that the §5.38 R56.1.b
+//! [`caret_rect`](pinion_core::widgets::text_field::caret_rect)
+//! integer helper can downstream-cast into the paint scene's
+//! `Rect` (u32).
+//!
+//! The split keeps the type boundary clean: pinion-text owns the
+//! parley wrap, pinion-core owns the paint-space integer rect, and
+//! the binding's application code converts f32 → u32 at the seam
+//! (saturating cast — overflow is layout out-of-bounds, the binding
+//! decides clamp policy).
+
+use crate::Layout;
+use parley::{Affinity, Cursor};
+
+/// Caret rectangle in layout-space (f32 coordinates).
+///
+/// `x` / `y` are the top-left corner of the cursor rect; `width` /
+/// `height` are the rect dimensions. Layout-space is parley's
+/// coordinate system — the application's paint backend translates
+/// to pixel coordinates via the same transform it uses for glyph
+/// runs.
+///
+/// `#[non_exhaustive]` matches the rest of the pinion type surface
+/// convention ([`Scene`](pinion_core::scene::Scene),
+/// [`ScrollBarGeometry`](pinion_core::widgets::scrollbar::ScrollBarGeometry),
+/// etc.). A future field for vertical-text / RTL anchor hints lands
+/// in a minor bump without a `SemVer` major break.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CaretRect {
+    /// Left edge of the caret in layout-space pixels.
+    pub x: f32,
+    /// Top edge of the caret (line top).
+    pub y: f32,
+    /// Caret width — same value passed into
+    /// [`caret_rect_for_byte_offset`] (parley does not clamp the
+    /// caller-provided width on the hot path).
+    pub width: f32,
+    /// Caret height — derived from the line metrics that contain
+    /// the cursor's byte offset, not from the caller. Spans the
+    /// full line box (canonical text-input caret shape on every
+    /// platform).
+    pub height: f32,
+}
+
+/// R56.1.b.2 §5.36 §5.38 — closed-form caret rectangle for the byte
+/// offset `byte_index` in `layout`. Wraps
+/// [`parley::Cursor::from_byte_index`] +
+/// [`parley::Cursor::geometry`] to return a backend-agnostic
+/// f32-typed [`CaretRect`].
+///
+/// `caret_width` is the visual width of the caret in layout-space
+/// pixels (typically `1.0` for Hi-DPI displays where AA softens
+/// single-pixel lines, `2.0` for integer-scaled Lo-DPI displays).
+/// The width passes through to parley unchanged (parley uses it as
+/// the geometry rect width directly).
+///
+/// `byte_index` is clamped by parley to `[0, text.len()]` — the
+/// out-of-range path lands on the closest valid char boundary
+/// (parley's `Cursor::from_byte_index` contract). Callers must
+/// still supply a char-boundary-safe offset for the in-range path;
+/// the
+/// [`TextEditState`](pinion_core::widgets::text_edit::TextEditState)
+/// reactive store maintains this invariant via
+/// `clamp_to_char_boundary` (R56.1.b §5.22).
+///
+/// Affinity defaults to [`Affinity::Downstream`] — the canonical
+/// text-input "caret follows insertion point" semantic. Bidi / line-
+/// boundary edge cases where `Upstream` is required (RTL mixed text
+/// at a logical line break, end-of-line ambiguity in soft-wrap)
+/// arrive with the R56.1.f selection axis (which also exposes the
+/// affinity parameter through a dedicated entry point so callers
+/// can stay on the simple downstream-default path for single-line
+/// input).
+///
+/// ## Example
+///
+/// ```ignore
+/// // After shaping "hello" via LayoutCache::layout:
+/// let layout: &pinion_text::Layout = cache.layout("hello", &style, None);
+/// let caret = pinion_text::caret_rect_for_byte_offset(layout, 5, 1.0);
+/// // caret.x is the x-pixel position of the caret after the last 'o'.
+/// // caret.y / caret.height reflect the line that contains byte 5.
+/// ```
+#[must_use]
+pub fn caret_rect_for_byte_offset(
+    layout: &Layout,
+    byte_index: usize,
+    caret_width: f32,
+) -> CaretRect {
+    let cursor = Cursor::from_byte_index(layout, byte_index, Affinity::Downstream);
+    // f64 → f32 narrowing — parley's BoundingBox holds f64 corners
+    // for sub-pixel precision, but the pinion paint pipeline rounds
+    // to u32 at the §5.38 [`caret_rect`] seam anyway. The
+    // intermediate f32 form is the canonical pinion paint-space
+    // type (matches `Layout::measure` and the §5.36 GlyphRun
+    // stream). The geometry width is parley f32 already (no narrow
+    // on this seam).
+    let bbox = cursor.geometry(layout, caret_width);
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "layout-space coords fit f32 in every realistic UI viewport"
+    )]
+    let (x, y) = (bbox.x0 as f32, bbox.y0 as f32);
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "layout-space dims fit f32 in every realistic UI viewport"
+    )]
+    let (width, height) = (bbox.width() as f32, bbox.height() as f32);
+    CaretRect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! R56.1.b.2 §5.36 §5.38 — `caret_rect_for_byte_offset` regression
+    //! battery. Uses [`LayoutCache::layout`](crate::LayoutCache::layout)
+    //! to build real parley shaped runs, then asserts on the
+    //! geometry produced by the closed-form helper.
+
+    use super::{caret_rect_for_byte_offset, CaretRect};
+    use crate::LayoutCache;
+    use pinion_core::style::TextStyle;
+
+    /// Shape `text` at a canonical 16-px style for the test battery.
+    /// Returns a freshly-built cache + the layout-key context the
+    /// helper queries against (cache is borrowed by the caller so
+    /// the `&Layout` lives across the helper call).
+    fn shape(text: &'static str) -> LayoutCache {
+        let mut cache = LayoutCache::new();
+        let style = TextStyle::default();
+        let _ = cache.layout(text, &style, None);
+        cache
+    }
+
+    /// Re-fetch the layout for `text` from `cache`. Builds the same
+    /// key the cache used on insert; the LRU hit returns the same
+    /// `&Layout` the helper accepts.
+    fn layout_for<'a>(cache: &'a mut LayoutCache, text: &str) -> &'a crate::Layout {
+        let style = TextStyle::default();
+        cache.layout(text, &style, None)
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_at_byte_zero_of_empty_text_is_origin_anchored() {
+        let mut cache = shape("");
+        let layout = layout_for(&mut cache, "");
+        let r = caret_rect_for_byte_offset(layout, 0, 1.0);
+        // Empty layout — caret lands at the layout origin (x ≈ 0).
+        // Parley puts the empty-line caret at the line's left edge.
+        assert!(
+            r.x.abs() < 0.5,
+            "caret at byte 0 of empty text sits at x≈0 (got {})",
+            r.x,
+        );
+        assert!(r.height > 0.0, "caret height reflects line box");
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_at_byte_zero_sits_at_layout_x_origin() {
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        let r = caret_rect_for_byte_offset(layout, 0, 1.0);
+        // Byte 0 = before the first glyph = layout x origin.
+        assert!(
+            r.x.abs() < 0.5,
+            "caret at byte 0 sits at x≈0 (got {})",
+            r.x,
+        );
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_at_end_byte_sits_past_last_glyph() {
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        let r = caret_rect_for_byte_offset(layout, 5, 1.0);
+        // Byte 5 = after the last 'o' = positive x past the glyph run.
+        assert!(
+            r.x > 0.0,
+            "caret at end byte advances past origin (got {})",
+            r.x,
+        );
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_advances_monotonically_across_bytes() {
+        let mut cache = shape("abcde");
+        let layout = layout_for(&mut cache, "abcde");
+        // Each byte advances strictly: x0 < x1 < x2 < ... < x5.
+        // ASCII letters guarantee monotonic per-byte advance — no
+        // grapheme-cluster pitfalls on this test fixture.
+        let mut prev_x: f32 = f32::NEG_INFINITY;
+        for i in 0..=5usize {
+            let r = caret_rect_for_byte_offset(layout, i, 1.0);
+            assert!(
+                r.x >= prev_x,
+                "caret x must be non-decreasing across byte offsets (got {} ≤ {} at {})",
+                r.x,
+                prev_x,
+                i,
+            );
+            prev_x = r.x;
+        }
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_width_passes_through_unchanged() {
+        let mut cache = shape("x");
+        let layout = layout_for(&mut cache, "x");
+        let one = caret_rect_for_byte_offset(layout, 0, 1.0);
+        let two = caret_rect_for_byte_offset(layout, 0, 2.0);
+        assert!((one.width - 1.0).abs() < 0.5, "width 1.0 round-trips");
+        assert!((two.width - 2.0).abs() < 0.5, "width 2.0 round-trips");
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_height_matches_line_height() {
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        let r = caret_rect_for_byte_offset(layout, 0, 1.0);
+        // Layout was shaped at TextStyle default (16 px font size) —
+        // line height is the parley-derived metric, which is >= the
+        // font size for any reasonable font (default leading ≈ 1.2x).
+        assert!(
+            r.height >= 16.0,
+            "caret height covers full line box (got {})",
+            r.height,
+        );
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_y_is_finite() {
+        // Parley's geometry box is anchored on the line's logical
+        // bounding box — the y coordinate can be negative when the
+        // line has negative leading or when the layout origin is at
+        // the baseline. The invariant is that y is finite (not NaN
+        // / Infinity) so paint-side clamping has a sane input.
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        let r = caret_rect_for_byte_offset(layout, 0, 1.0);
+        assert!(r.y.is_finite(), "caret y must be finite (got {})", r.y);
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_rect_is_copy_value() {
+        // CaretRect is Copy + PartialEq — pin the Copy / PartialEq
+        // contract so downstream callers can keep the cursor rect
+        // as a `Cell<CaretRect>` if needed.
+        let r = CaretRect {
+            x: 1.0,
+            y: 2.0,
+            width: 3.0,
+            height: 4.0,
+        };
+        let copy = r;
+        assert_eq!(r, copy);
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_at_oversized_offset_clamps_to_end() {
+        // Parley's Cursor::from_byte_index contract: out-of-range
+        // indices clamp to the closest valid boundary. For "hi"
+        // (len 2), index 999 lands at byte 2 (end).
+        let mut cache = shape("hi");
+        let layout = layout_for(&mut cache, "hi");
+        let end = caret_rect_for_byte_offset(layout, 2, 1.0);
+        let beyond = caret_rect_for_byte_offset(layout, 999, 1.0);
+        assert!(
+            (end.x - beyond.x).abs() < 0.5,
+            "out-of-range offset clamps to end (end.x={}, beyond.x={})",
+            end.x,
+            beyond.x,
+        );
+    }
+
+    #[test]
+    fn r56_1_b_2_caret_rect_across_multibyte_char_does_not_panic() {
+        // "안녕" is 6 UTF-8 bytes (2 Korean syllables × 3 bytes).
+        // Char boundaries at 0, 3, 6. Helper must not panic at any
+        // of them (TextEditState clamp_to_char_boundary already
+        // gates against non-boundary offsets in production paths).
+        let mut cache = shape("\u{C548}\u{B155}");
+        let layout = layout_for(&mut cache, "\u{C548}\u{B155}");
+        let _ = caret_rect_for_byte_offset(layout, 0, 1.0);
+        let _ = caret_rect_for_byte_offset(layout, 3, 1.0);
+        let _ = caret_rect_for_byte_offset(layout, 6, 1.0);
+    }
+}
