@@ -78,36 +78,136 @@ mod sm {
 pub use sm::{TextFieldEvent, TextFieldState};
 use sm::TextFieldPolicy;
 
+use std::rc::Rc;
+
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
     ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::scene::Rect;
+use crate::widgets::text_edit::TextEditState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+
+/// R56.1.b §5.38 §5.21 — closed-form caret rectangle derivation.
+///
+/// Pure function of pre-shaped inputs — no font shaping, no
+/// [`TextEditState`] borrow. The caller computes `caret_x_offset`
+/// (the horizontal distance from the line origin to the caret
+/// position in painted-pixel units, derived from a §5.36 shaped
+/// glyph run) and supplies the line geometry; this helper assembles
+/// the [`Rect`] in the paint coordinate frame.
+///
+/// Mirrors the R55.D.1
+/// [`scrollbar_thumb_rect`](crate::widgets::scrollbar::scrollbar_thumb_rect)
+/// closed-form split — caret geometry lives separately from the
+/// SCXML statechart (R56.1.a) and the reactive [`TextEditState`]
+/// (R56.1.b above), so a paint backend can call into it without
+/// touching either. Shaped-run integration (parley + caret-x lookup
+/// against the text shaping cache) is a R56.1.b follow-up
+/// (`carret_x_for_position(&shaped_run, caret_pos) -> u32`); landing
+/// the geometry primitive standalone keeps that integration a pure
+/// caller-side translation.
+///
+/// `line_origin` is the **top-left** of the text line in the paint
+/// frame (so `line_origin.1` is the y of the line top, not the
+/// baseline — matches the [`Rect`] convention used by every other
+/// paint helper in pinion). `line_height` is the full line box
+/// extent; the caret rect spans the entire line so that the user
+/// sees a full-height blink, the canonical text-input caret shape
+/// shared by every platform.
+///
+/// `caret_width` is typically `1` or `2` paint pixels (1 px on Hi-DPI
+/// displays where AA softens single-pixel lines, 2 px on
+/// integer-scaled Lo-DPI displays). The blink animation (R56.1.c)
+/// toggles paint opacity, not extent, so the width stays constant
+/// across the visible / hidden frames.
+#[must_use]
+pub fn caret_rect(
+    line_origin: (u32, u32),
+    caret_x_offset: u32,
+    caret_width: u32,
+    line_height: u32,
+) -> Rect {
+    Rect::new(
+        line_origin.0.saturating_add(caret_x_offset),
+        line_origin.1,
+        caret_width,
+        line_height,
+    )
+}
 
 /// `TextField` widget state machine.
 ///
 /// Four-state interaction model (Idle / Focused / Editing / Disabled)
-/// generated from `widgets/text_field.scxml`. Carries no value
-/// sidecar on R56.1.a — the text content and IME preedit buffer
-/// arrive with later sub-rounds. Mirrors the R55.D.2 `ScrollBar`
-/// staging where the visible peer's statechart lands before the
-/// reactive content container.
+/// generated from `widgets/text_field.scxml`. R56.1.b composes an
+/// optional [`TextEditState`] handle for the text-content sidecar —
+/// the SCXML statechart owns interaction state (focus, IME compose
+/// gate), the [`TextEditState`] owns text content + caret. Mirrors
+/// the R55.D.3 [`ScrollBar`](crate::widgets::scrollbar::ScrollBar)
+/// composition (visible peer's statechart + orthogonal reactive
+/// state).
 pub struct TextField {
     inner: Widget<TextFieldPolicy>,
+    /// R56.1.b §5.38 — composition handle to the authoritative
+    /// [`TextEditState`]. Optional — a bare `TextField::new()`
+    /// carries no handle and the introspect `text` / `caret` query
+    /// slots return `None`, matching the
+    /// [`ScrollBar`](crate::widgets::scrollbar::ScrollBar)
+    /// paint-only convention until the application explicitly
+    /// attaches reactive state.
+    text_state: Option<Rc<TextEditState>>,
 }
 
 impl TextField {
     /// Construct a `TextField` in the [`TextFieldState::Idle`] state.
-    /// W3C ARIA `textbox` role canonical (un-focused) default.
+    /// W3C ARIA `textbox` role canonical (un-focused) default. No
+    /// [`TextEditState`] attached — call [`Self::attach_state`] to
+    /// wire reactive text content.
     #[must_use]
     pub fn new() -> Self {
-        Self { inner: Widget::new() }
+        Self {
+            inner: Widget::new(),
+            text_state: None,
+        }
+    }
+
+    /// R56.1.b §5.38 — attach a [`TextEditState`] handle
+    /// (composition). The `TextField` becomes the interaction-state
+    /// peer for the reactive text container; subsequent introspect
+    /// `text` / `caret` queries read through this handle. Builder-
+    /// style: chain after [`Self::new`] for the fluent
+    /// `TextField::new().attach_state(rc)` shape.
+    ///
+    /// Detaching is not supported — drop the `TextField` and build
+    /// a fresh one. The `TextEditState` handle outlives the
+    /// `TextField` (refcounted by `Rc`), so detach/reattach mid-life
+    /// would complicate the contract without unlocking a real use
+    /// case. Mirrors the R55.D.3
+    /// [`ScrollBar::attach_state`](crate::widgets::scrollbar::ScrollBar::attach_state)
+    /// contract.
+    #[must_use]
+    pub fn attach_state(mut self, state: Rc<TextEditState>) -> Self {
+        self.text_state = Some(state);
+        self
+    }
+
+    /// Read-only access to the attached [`TextEditState`] handle.
+    /// `None` until [`Self::attach_state`] fires. Diagnostic / test
+    /// surface; production callers reach the state through the same
+    /// `Rc<TextEditState>` they passed in (the R56.1.b
+    /// [`use_text_edit_state`](crate::widgets::text_edit::use_text_edit_state)
+    /// hook returns the canonical shared handle).
+    #[must_use]
+    pub fn text_state(&self) -> Option<&Rc<TextEditState>> {
+        self.text_state.as_ref()
     }
 
     /// Drive a [`TextFieldEvent`] through the SCXML. Pure state
-    /// transition — no value sidecar mutation on R56.1.a.
+    /// transition — text-content mutation flows through
+    /// [`TextEditState`] (R56.1.b composition handle), not through
+    /// this widget.
     pub fn send(&mut self, event: TextFieldEvent) {
         self.inner.send(event);
     }
@@ -195,6 +295,31 @@ impl TextFieldExternal {
         Self { em: IntentEmitter::default() }
     }
 
+    /// R56.1.b §5.38 — attach a [`TextEditState`] handle to the
+    /// inner [`TextField`] (composition). Builder-style; chain after
+    /// [`Self::new`] for the fluent shape. See
+    /// [`TextField::attach_state`] for the contract. Mirror of the
+    /// R55.D.3
+    /// [`ScrollBarExternal::attach_state`](crate::widgets::scrollbar::ScrollBarExternal::attach_state)
+    /// pattern.
+    #[must_use]
+    pub fn attach_state(mut self, state: Rc<TextEditState>) -> Self {
+        // `mem::take` keeps the builder shape (consume-and-return)
+        // through the wrapping `IntentEmitter`; `TextField::default`
+        // is the cheap round-trip (no observable state — text_state
+        // None, SCXML freshly initialized to Idle).
+        self.em.inner = std::mem::take(&mut self.em.inner).attach_state(state);
+        self
+    }
+
+    /// R56.1.b §5.38 — attached [`TextEditState`] handle (delegates
+    /// to [`TextField::text_state`]). `None` until
+    /// [`Self::attach_state`] fires.
+    #[must_use]
+    pub fn text_state(&self) -> Option<&Rc<TextEditState>> {
+        self.em.inner.text_state()
+    }
+
     /// Drive a [`TextFieldEvent`] and queue a `"text_committed"`
     /// intent on the two commit-raise transitions. Pipeline lives on
     /// [`IntentEmitter::dispatch`]; the detection rule lives on the
@@ -256,7 +381,18 @@ impl External for TextFieldExternal {
 
 impl ExternalIntrospect for TextFieldExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("state", "string"), ("send", "string")])
+        // R56.1.b §5.38 — schema grows from 2 slots to 4 when the
+        // text content sidecar arrives. `text` + `caret` are exposed
+        // unconditionally; the introspect query / intervene path
+        // returns `None` / `ReadOnly` when no [`TextEditState`] is
+        // attached so the AI client sees a stable schema shape across
+        // bare and wired-up `TextField`s.
+        IntrospectSchema::new(&[
+            ("state", "string"),
+            ("text", "string"),
+            ("caret", "number"),
+            ("send", "string"),
+        ])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -264,6 +400,20 @@ impl ExternalIntrospect for TextFieldExternal {
             "state" => Some(IntrospectValue::Text(
                 text_field_state_name(self.state()).to_string(),
             )),
+            // R56.1.b §5.38 — text + caret read through the attached
+            // [`TextEditState`]. `None` when no handle is attached;
+            // the AI client treats that as "widget not bound to
+            // reactive state" and gates intervene/invoke accordingly.
+            "text" => self
+                .text_state()
+                .map(|s| IntrospectValue::Text(s.text())),
+            "caret" => self.text_state().map(|s| {
+                // usize → i64 — caret is bounded by `text.len() <=
+                // isize::MAX` on every platform pinion targets, so
+                // the cast is lossless. The `try_from` defends
+                // against the unreachable 2^63-byte text case.
+                IntrospectValue::Int(i64::try_from(s.caret()).unwrap_or(i64::MAX))
+            }),
             _ => None,
         }
     }
@@ -271,11 +421,43 @@ impl ExternalIntrospect for TextFieldExternal {
     fn intervene(
         &mut self,
         path: &str,
-        _value: IntrospectValue,
+        value: IntrospectValue,
     ) -> Result<(), InterveneError> {
         match path {
             // §5.38 — `state` is SCXML-owned (driven via `send`).
             "state" => Err(InterveneError::ReadOnly),
+            // R56.1.b — `text` + `caret` write through the attached
+            // [`TextEditState`]. No attached handle → ReadOnly
+            // (the slot exists in the schema but cannot be written
+            // without a backing reactive store).
+            "text" => {
+                let Some(state) = self.text_state() else {
+                    return Err(InterveneError::ReadOnly);
+                };
+                let IntrospectValue::Text(s) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                state.set_text(s);
+                Ok(())
+            }
+            "caret" => {
+                let Some(state) = self.text_state() else {
+                    return Err(InterveneError::ReadOnly);
+                };
+                let IntrospectValue::Int(n) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                if n < 0 {
+                    return Err(InterveneError::OutOfRange);
+                }
+                // Lossless cast — TextEditState::set_caret clamps to
+                // text.len() internally, so any in-range i64 is
+                // accepted; the `try_from` only fails on the
+                // unreachable 2^64-overflow path.
+                let pos = usize::try_from(n).unwrap_or(usize::MAX);
+                state.set_caret(pos);
+                Ok(())
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -514,14 +696,21 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_two_slots() {
-        // R56.1.a surface: state + send. No `value` slot yet — text
-        // content sidecar arrives with R56.1.b.
+    fn external_schema_declares_four_slots() {
+        // R56.1.b grew the surface: state + text + caret + send.
+        // The schema shape is stable across bare and wired-up
+        // TextFields — text/caret queries return None / intervene
+        // returns ReadOnly when no TextEditState is attached.
         let tfx = TextFieldExternal::new();
         let schema = tfx.schema();
         assert_eq!(
             schema.fields,
-            &[("state", "string"), ("send", "string")],
+            &[
+                ("state", "string"),
+                ("text", "string"),
+                ("caret", "number"),
+                ("send", "string"),
+            ],
         );
     }
 
@@ -567,7 +756,7 @@ mod tests {
     fn external_intervene_unknown_path_rejects() {
         let mut tfx = TextFieldExternal::new();
         assert_eq!(
-            tfx.intervene("value", IntrospectValue::Text(String::new())),
+            tfx.intervene("selection", IntrospectValue::Text(String::new())),
             Err(InterveneError::UnknownPath),
         );
     }
@@ -721,5 +910,242 @@ mod tests {
         ));
         assert_eq!(parse_text_field_event("textfield_commit"), None);
         assert_eq!(parse_text_field_event(""), None);
+    }
+}
+
+#[cfg(test)]
+mod r56_1_b_tests {
+    //! R56.1.b §5.38 §5.21 — `caret_rect` closed-form helper +
+    //! [`TextField`] composition with [`TextEditState`] +
+    //! introspect text/caret slots.
+
+    use super::{caret_rect, TextField, TextFieldEvent, TextFieldExternal};
+    use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue};
+    use crate::scene::Rect;
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    // ─────────────────────────────────────────────────────────────
+    // caret_rect closed-form
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_b_caret_rect_at_line_origin() {
+        // Caret at x offset 0 → rect anchored at line origin.
+        let r = caret_rect((10, 20), 0, 1, 16);
+        assert_eq!(r, Rect::new(10, 20, 1, 16));
+    }
+
+    #[test]
+    fn r56_1_b_caret_rect_offset_along_text() {
+        // Caret 50 px into the line → rect anchored at origin.x +
+        // 50, same y, same width / line height.
+        let r = caret_rect((10, 20), 50, 1, 16);
+        assert_eq!(r, Rect::new(60, 20, 1, 16));
+    }
+
+    #[test]
+    fn r56_1_b_caret_rect_width_2_is_lo_dpi_canonical() {
+        // 2 px caret for Lo-DPI integer-scaled displays — paint
+        // helper passes the width verbatim.
+        let r = caret_rect((0, 0), 0, 2, 16);
+        assert_eq!(r, Rect::new(0, 0, 2, 16));
+    }
+
+    #[test]
+    fn r56_1_b_caret_rect_line_height_drives_full_box_extent() {
+        // Caret spans the full line box height (textbook full-height
+        // blink), independent of the actual glyph ascent.
+        let r = caret_rect((0, 0), 0, 1, 24);
+        assert_eq!(r.h, 24);
+    }
+
+    #[test]
+    fn r56_1_b_caret_rect_saturates_on_u32_overflow() {
+        // u32::MAX + 1 saturates instead of wrapping — the bounded
+        // arithmetic contract from R55.D.1.
+        let r = caret_rect((u32::MAX, 0), 1, 1, 16);
+        assert_eq!(r.x, u32::MAX, "x saturates at u32::MAX");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // TextField composition with TextEditState
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_b_bare_text_field_has_no_text_state() {
+        let tf = TextField::new();
+        assert!(tf.text_state().is_none());
+    }
+
+    #[test]
+    fn r56_1_b_attach_state_records_handle() {
+        let state = Rc::new(TextEditState::with_initial("hello".to_string()));
+        let tf = TextField::new().attach_state(Rc::clone(&state));
+        assert!(tf.text_state().is_some());
+        // Same Rc — composition, not copy.
+        assert!(Rc::ptr_eq(tf.text_state().unwrap(), &state));
+    }
+
+    #[test]
+    fn r56_1_b_external_bare_has_no_text_state() {
+        let tfx = TextFieldExternal::new();
+        assert!(tfx.text_state().is_none());
+    }
+
+    #[test]
+    fn r56_1_b_external_attach_state_records_handle() {
+        let state = Rc::new(TextEditState::with_initial("hi".to_string()));
+        let tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        assert!(Rc::ptr_eq(tfx.text_state().unwrap(), &state));
+    }
+
+    #[test]
+    fn r56_1_b_external_send_after_attach_preserves_state() {
+        // Driving an SCXML event after attaching a state must not
+        // detach the handle (the builder pattern moves once at
+        // construction, transitions stay through the same instance).
+        let state = Rc::new(TextEditState::with_initial("hi".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.send(TextFieldEvent::Focus);
+        assert!(tfx.text_state().is_some());
+        assert!(Rc::ptr_eq(tfx.text_state().unwrap(), &state));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Introspect — text / caret query
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_b_query_text_returns_none_without_attached_state() {
+        let tfx = TextFieldExternal::new();
+        assert!(tfx.query("text").is_none());
+        assert!(tfx.query("caret").is_none());
+    }
+
+    #[test]
+    fn r56_1_b_query_text_returns_attached_buffer() {
+        let state = Rc::new(TextEditState::with_initial("hello".to_string()));
+        let tfx = TextFieldExternal::new().attach_state(state);
+        assert_eq!(
+            tfx.query("text").unwrap(),
+            IntrospectValue::Text("hello".to_string()),
+        );
+    }
+
+    #[test]
+    fn r56_1_b_query_caret_returns_attached_offset() {
+        let state = Rc::new(TextEditState::with_initial("hi".to_string()));
+        let tfx = TextFieldExternal::new().attach_state(state);
+        assert_eq!(tfx.query("caret").unwrap(), IntrospectValue::Int(2));
+    }
+
+    #[test]
+    fn r56_1_b_query_text_reflects_mutations() {
+        // The attached Rc is shared with the application code that
+        // mutates the state directly — the introspect query reads
+        // through the same handle on every call.
+        let state = Rc::new(TextEditState::new());
+        let tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        state.insert("abc");
+        assert_eq!(
+            tfx.query("text").unwrap(),
+            IntrospectValue::Text("abc".to_string()),
+        );
+        assert_eq!(tfx.query("caret").unwrap(), IntrospectValue::Int(3));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Introspect — text / caret intervene
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_b_intervene_text_without_attached_state_is_read_only() {
+        // The slot exists in the schema, but the widget has no
+        // backing reactive store → ReadOnly (not UnknownPath; the
+        // slot is *visible* but uneditable).
+        let mut tfx = TextFieldExternal::new();
+        assert_eq!(
+            tfx.intervene("text", IntrospectValue::Text("x".to_string())),
+            Err(InterveneError::ReadOnly),
+        );
+        assert_eq!(
+            tfx.intervene("caret", IntrospectValue::Int(0)),
+            Err(InterveneError::ReadOnly),
+        );
+    }
+
+    #[test]
+    fn r56_1_b_intervene_text_writes_attached_buffer() {
+        let state = Rc::new(TextEditState::with_initial("old".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.intervene("text", IntrospectValue::Text("new".to_string()))
+            .unwrap();
+        assert_eq!(state.text(), "new");
+    }
+
+    #[test]
+    fn r56_1_b_intervene_text_rejects_wrong_type() {
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        assert_eq!(
+            tfx.intervene("text", IntrospectValue::Int(0)),
+            Err(InterveneError::TypeMismatch),
+        );
+    }
+
+    #[test]
+    fn r56_1_b_intervene_caret_writes_attached_offset() {
+        let state = Rc::new(TextEditState::with_initial("abc".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.intervene("caret", IntrospectValue::Int(1)).unwrap();
+        assert_eq!(state.caret(), 1);
+    }
+
+    #[test]
+    fn r56_1_b_intervene_caret_rejects_negative_as_out_of_range() {
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        assert_eq!(
+            tfx.intervene("caret", IntrospectValue::Int(-1)),
+            Err(InterveneError::OutOfRange),
+        );
+    }
+
+    #[test]
+    fn r56_1_b_intervene_caret_rejects_wrong_type() {
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        assert_eq!(
+            tfx.intervene("caret", IntrospectValue::Text("0".to_string())),
+            Err(InterveneError::TypeMismatch),
+        );
+    }
+
+    #[test]
+    fn r56_1_b_intervene_caret_clamps_past_end() {
+        // TextEditState::set_caret clamps to text.len() — the
+        // intervene path inherits that contract (no error for
+        // past-end positive offsets, just clamping).
+        let state = Rc::new(TextEditState::with_initial("ab".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.intervene("caret", IntrospectValue::Int(999)).unwrap();
+        assert_eq!(state.caret(), 2, "past-end clamps to text.len()");
+    }
+
+    #[test]
+    fn r56_1_b_state_slot_still_read_only_after_attach() {
+        // R56.1.b additions must not regress the R56.1.a invariants —
+        // the SCXML state stays read-only-from-RPC regardless of
+        // whether TextEditState is attached.
+        let state = Rc::new(TextEditState::new());
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        assert_eq!(
+            tfx.intervene(
+                "state",
+                IntrospectValue::Text("Focused".to_string()),
+            ),
+            Err(InterveneError::ReadOnly),
+        );
     }
 }

@@ -1112,6 +1112,7 @@ fn main() {
 - R38.2e: first dogfood examples/forge-counter — <use>+<signal>+<computed> end-to-end
 - R38.2e: codegen emits #[must_use] on constructor matching Signal/Computed/Resource convention
 - R38.2e: build.rs pattern = compile_file → $OUT_DIR + include! at main.rs module scope
+- R56.1.b — TextEditState (Signal<String> text + Signal<usize> caret) + use_text_edit_state hook
 
 
 
@@ -1166,6 +1167,8 @@ fn main() {
 - crates/pinion-core/src/reactive/owner.rs:Owner::cache
 - crates/pinion-core/src/reactive/owner.rs:Owner::cache_contains
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::apply_key
+- crates/pinion-core/src/widgets/text_edit.rs:TextEditState
+- crates/pinion-core/src/widgets/text_edit.rs:use_text_edit_state
 
 
 
@@ -2887,6 +2890,7 @@ router.pointer_down(&mut state_scene);
 - R51.106 — type-ahead substrate lift → pinion_shell::typeahead (2 consumer 트리거, ~150 LOC 청산)
 - R51.114 — aria::apply_aria_activate helper extracted (4 binding apply_key DRY 청산)
 - R56.1.a — TextField SCXML 4-state + binding + text_committed intent (R56 axis start)
+- R56.1.b — TextEditState + caret_rect helper + TextField::attach_state (R56.1.a sidecar grows)
 
 
 
@@ -2985,6 +2989,11 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/text_field.rs:TextFieldState
 - crates/pinion-core/src/widgets/text_field.rs:&lt;TextField as WidgetTransition&gt;
 - crates/pinion-core/build.rs:scxml_inputs::text_field
+- crates/pinion-core/src/widgets/text_edit.rs:TextEditState
+- crates/pinion-core/src/widgets/text_edit.rs:use_text_edit_state
+- crates/pinion-core/src/widgets/text_field.rs:caret_rect
+- crates/pinion-core/src/widgets/text_field.rs:TextField::attach_state
+- crates/pinion-core/src/widgets/text_field.rs:TextFieldExternal::attach_state
 
 
 
@@ -10105,6 +10114,39 @@ if __name__ == "__main__":
 - R56.1.f — selection (mouse drag + shift-arrow)
 - R56.1.g — IME composition (preedit buffer + Wayland text-input-v3)
 - hello-text-field example crate (R56.1.b first visible consumer)
+
+
+
+### R56.1.b — R56.1.b §5.38 §5.22 §5.21 — TextEditState reactive primitive + caret_rect helper + TextField::attach_state composition + introspect text/caret slots. Substrate slice; first consumer in R56.1.b.1.
+
+**Changes**:
+- crates/pinion-core/src/widgets/text_edit.rs — TextEditState (text+caret signals) + hook
+- crates/pinion-core/src/widgets/text_field.rs — caret_rect helper (R55.D.1 mirror)
+- crates/pinion-core/src/widgets/text_field.rs — TextField::attach_state composition
+- introspect schema 2→4 slots: state/text/caret/send (query+intervene)
+- atomic-multi-axis batch wrap on set_text/insert/backspace (R55.G.24 mirror)
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib text_edit: 37 pass / 0 fail
+- cargo test -p pinion-core --lib text_field: 52 pass / 0 fail (30 R56.1.a + 22 R56.1.b)
+- cargo test --workspace --features pinion-runtime/vello: 2367 pass / 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.38, §5.22, §5.21
+
+
+**Carry forward**:
+- R56.1.b.1 — hello-text-field example crate (first visible consumer)
+- R56.1.b.2 — caret_x_for_position parley shaped-run integration
+- R56.1.c — caret blink animation (Owner::cache + Tickable, 530ms)
+- R56.1.d — key input dispatch (apply_key + §5.39)
+- R56.1.e — clipboard substrate (X11/Wayland/macOS/Win32)
+- R56.1.f — selection + grapheme-cluster navigation (unicode-segmentation)
+- R56.1.g — IME composition (preedit buffer + text-input-v3)
 
 
 

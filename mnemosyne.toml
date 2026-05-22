@@ -298,3 +298,12 @@ reason = "Publishable trim for 100-char/200-char bullet/summary limits. Audit ha
 applied_in = "R56.1.a"
 content_hash_before = "b19a4f1b1f9d4aa7c252ee267c5aaf1fe501023ae8614f6a1e4d8e560c99af01"
 content_hash_after = "f25f919d6761c8fad9db6efbc63ca3140af802daacd1e689b5dfebba8eefa8f2"
+
+[[publishable_override_ledger]]
+kind = "trim"
+target_id = "R56.1.b"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_impact_refs", "publishable_carry_forward_bullets"]
+reason = "Publishable trim for 100-char/200-char bullet/summary limits. Audit half retains full LOC counts + test breakdown; publishable side mirrors content with shorter sentence form."
+applied_in = "R56.1.b"
+content_hash_before = "f22a0c954b7372a9ea0d5b3b62af8f6ded9184adfa0b70718ff473d2d91d141e"
+content_hash_after = "e830dd5275986c929d1a49bd39331507c52888f5298eb06d97a825cf2ef5ed3d"
