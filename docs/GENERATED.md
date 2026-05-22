@@ -10445,6 +10445,33 @@ if __name__ == "__main__":
 
 
 
+### R56.1.f.2 — R56.1.f.2 §5.22 §5.38 — `apply_key` Shift-prefix selection extension (Shift+Arrow/Home/End → select_*) + Ctrl/Cmd+A select-all + type-to-replace path through R56.1.f.1 selection-aware mutators.
+
+**Changes**:
+- `ArrowLeft` / `ArrowRight` / `Home` / `End` branch on `shift_key()` → `select_*` vs `move_*`.
+- Printable `a` + `ctrl||meta` + `!alt` calls `set_selection(0, len)` (Ctrl/Cmd+A).
+- `Ctrl+Alt+a` chord refused (AltGr safety on European layouts; alt gates select-all).
+- Plain printable/Space/Backspace/Delete flow through R56.1.f.1 selection-aware paths.
+- +16 tests: Shift+Arrow extension, Ctrl/Cmd+A, plain-key replace, RPC Json shift bit.
+
+
+
+**Verification**:
+- cargo test workspace vello: 2556 pass / 0 fail / 13 ignored (+16 vs R56.1.f.1).
+- cargo clippy workspace all-targets vello: 0 warnings under strict pedantic baseline.
+- mnemosyne validate-workspace: T1 0 / T3 0 / round-trip 1/1 / GENERATED.md sync.
+- 11/11 prior demos PASS — no-modifier path is byte-equivalent to R56.1.d.
+
+
+
+**Impact**: §5.22, §5.38
+
+
+**Carry forward**:
+- R56.1.f.3 RPC selection introspect slot plus hello-textfield Vello and TUI selection overlay.
+
+
+
 ### R56.1.h — R56.1.h §5.38 §5.39 §5.28 — TextField focus lifecycle wire: shell focus mgr ↔ External::on_focus_change ↔ TextField Focus/Blur statechart drive ↔ CaretBlink sync.
 
 **Changes**:

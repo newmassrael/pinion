@@ -231,10 +231,14 @@ pub fn caret_rect(
 pub fn apply_key(
     state: &TextEditState,
     key: &str,
-    _modifiers: crate::input::Modifiers,
+    modifiers: crate::input::Modifiers,
 ) -> bool {
     match key {
         "Backspace" => {
+            // R56.1.f.1 — `backspace` is already selection-aware:
+            // an active selection is drained wholesale; collapsed
+            // (no-selection) caret falls back to the original
+            // R56.1.d single-char prev-boundary delete.
             state.backspace();
             true
         }
@@ -242,20 +246,43 @@ pub fn apply_key(
             state.delete_forward();
             true
         }
+        // R56.1.f.2 §5.22 — caret-motion arrows branch on Shift:
+        //  - plain `ArrowLeft` collapses any active selection to the
+        //    leading edge (or moves caret one char left when there
+        //    is no selection).
+        //  - Shift+ArrowLeft extends the selection one char left
+        //    (latches an anchor at the current caret if none exists).
+        // Mirrors macOS / iOS / GTK / Web canonical text-input.
         "ArrowLeft" => {
-            state.move_left();
+            if modifiers.shift_key() {
+                state.select_left();
+            } else {
+                state.move_left();
+            }
             true
         }
         "ArrowRight" => {
-            state.move_right();
+            if modifiers.shift_key() {
+                state.select_right();
+            } else {
+                state.move_right();
+            }
             true
         }
         "Home" => {
-            state.move_home();
+            if modifiers.shift_key() {
+                state.select_home();
+            } else {
+                state.move_home();
+            }
             true
         }
         "End" => {
-            state.move_end();
+            if modifiers.shift_key() {
+                state.select_end();
+            } else {
+                state.move_end();
+            }
             true
         }
         // U+0020 SPACE arrives through the W3C named-key channel
@@ -265,21 +292,45 @@ pub fn apply_key(
         // printable-char branch interpreting `" "` (which would
         // require shell change to bypass the named-key conversion).
         "Space" => {
+            // R56.1.f.1 — `insert` is selection-aware: an active
+            // selection is replaced wholesale before the literal
+            // space lands.
             state.insert(" ");
             true
         }
-        other => match is_printable_key(other) {
-            Some(c) => {
-                // 4-byte UTF-8 buffer covers every Unicode code
-                // point through U+10FFFF; `encode_utf8` returns the
-                // populated subslice that `TextEditState::insert`
-                // splices into the reactive text.
-                let mut buf = [0u8; 4];
-                state.insert(c.encode_utf8(&mut buf));
-                true
+        other => {
+            // R56.1.f.2 §5.22 — Ctrl+A / Cmd+A select-all. The W3C
+            // `KeyboardEvent.key` value for the lowercase letter
+            // arrives verbatim from every platform (winit converts
+            // `Key::Character` to the printable string; crossterm
+            // emits `KeyCode::Char('a')` which the R51.111 bridge
+            // maps to `"a"`). Both Ctrl (Linux/Win) and Meta (macOS)
+            // count so the same binding fires on every desktop.
+            if (modifiers.control_key() || modifiers.meta_key())
+                && !modifiers.alt_key()
+                && other == "a"
+            {
+                let len = state.text().len();
+                state.set_selection(0, len);
+                return true;
             }
-            None => false,
-        },
+            match is_printable_key(other) {
+                Some(c) => {
+                    // 4-byte UTF-8 buffer covers every Unicode code
+                    // point through U+10FFFF; `encode_utf8` returns
+                    // the populated subslice that
+                    // `TextEditState::insert` splices into the
+                    // reactive text. `insert` is selection-aware so
+                    // a printable keystroke with an active selection
+                    // replaces the selected range (W3C
+                    // type-to-replace canonical).
+                    let mut buf = [0u8; 4];
+                    state.insert(c.encode_utf8(&mut buf));
+                    true
+                }
+                None => false,
+            }
+        }
     }
 }
 
@@ -2149,6 +2200,220 @@ mod r56_1_d_tests {
         // Construction-time fresh TextField equivalence.
         let fresh = TextField::new();
         assert_eq!(fresh.state(), tfx.state());
+    }
+}
+
+#[cfg(test)]
+mod r56_1_f_tests {
+    //! R56.1.f.2 §5.22 §5.38 — `apply_key` Shift-prefix selection
+    //! extension + Ctrl+A select-all + selection-replace dispatch
+    //! through the `TextField` keystroke surface.
+
+    use super::{apply_key, TextFieldExternal};
+    use crate::external::{ExternalIntrospect, IntrospectValue};
+    use crate::input::Modifiers;
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    // ─────────────────────────────────────────────────────────────
+    // Shift-prefix → select_* extension (W3C ARIA single-line text)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_shift_arrow_left_extends_selection() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_caret(3);
+        let shift = Modifiers { shift: true, ..Modifiers::empty() };
+        assert!(apply_key(&state, "ArrowLeft", shift));
+        assert_eq!(state.caret(), 2);
+        assert_eq!(state.selection_anchor(), Some(3));
+        assert_eq!(state.selection_range(), Some((2, 3)));
+    }
+
+    #[test]
+    fn r56_1_f_shift_arrow_right_extends_selection() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_caret(2);
+        let shift = Modifiers { shift: true, ..Modifiers::empty() };
+        assert!(apply_key(&state, "ArrowRight", shift));
+        assert_eq!(state.caret(), 3);
+        assert_eq!(state.selection_anchor(), Some(2));
+    }
+
+    #[test]
+    fn r56_1_f_shift_home_extends_selection_to_zero() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_caret(4);
+        let shift = Modifiers { shift: true, ..Modifiers::empty() };
+        assert!(apply_key(&state, "Home", shift));
+        assert_eq!(state.caret(), 0);
+        assert_eq!(state.selection_range(), Some((0, 4)));
+    }
+
+    #[test]
+    fn r56_1_f_shift_end_extends_selection_to_text_len() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_caret(2);
+        let shift = Modifiers { shift: true, ..Modifiers::empty() };
+        assert!(apply_key(&state, "End", shift));
+        assert_eq!(state.caret(), 6);
+        assert_eq!(state.selection_range(), Some((2, 6)));
+    }
+
+    #[test]
+    fn r56_1_f_plain_arrow_left_with_selection_collapses_to_start() {
+        // R56.1.f.1 / R56.1.f.2 — ArrowLeft (no Shift) with active
+        // selection lands at selection-start (W3C "ArrowLeft on a
+        // selection collapses to leading edge").
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_selection(1, 4);
+        assert!(apply_key(&state, "ArrowLeft", Modifiers::empty()));
+        assert_eq!(state.caret(), 1);
+        assert_eq!(state.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_plain_arrow_right_with_selection_collapses_to_end() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_selection(1, 4);
+        assert!(apply_key(&state, "ArrowRight", Modifiers::empty()));
+        assert_eq!(state.caret(), 4);
+        assert_eq!(state.selection_anchor(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Ctrl+A / Cmd+A select-all
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_ctrl_a_selects_entire_text() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_caret(2);
+        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        assert!(apply_key(&state, "a", ctrl));
+        assert_eq!(state.selection_range(), Some((0, 6)));
+        assert_eq!(state.caret(), 6);
+    }
+
+    #[test]
+    fn r56_1_f_cmd_a_selects_entire_text_on_mac() {
+        // macOS canonical: Cmd (= meta) instead of Ctrl. The same
+        // binding fires on both modifier bits so apps do not need
+        // platform-specific keymaps.
+        let state = TextEditState::with_initial("abcdef".to_string());
+        let meta = Modifiers { meta: true, ..Modifiers::empty() };
+        assert!(apply_key(&state, "a", meta));
+        assert_eq!(state.selection_range(), Some((0, 6)));
+    }
+
+    #[test]
+    fn r56_1_f_plain_a_inserts_literal_does_not_select_all() {
+        // Without a modifier, "a" is a plain insertion (R56.1.d
+        // printable-char branch). The Ctrl/Meta gate is essential —
+        // a missing gate would make typing "a" select-all.
+        let state = TextEditState::with_initial("xy".to_string());
+        state.set_caret(1);
+        assert!(apply_key(&state, "a", Modifiers::empty()));
+        assert_eq!(state.text(), "xay");
+        assert_eq!(state.caret(), 2);
+        assert_eq!(state.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_ctrl_alt_a_is_not_select_all() {
+        // Ctrl+Alt is a separate chord (AltGr on European layouts);
+        // refusing the select-all binding here keeps non-US keymap
+        // typing safe.
+        let state = TextEditState::with_initial("xy".to_string());
+        state.set_caret(0);
+        let ctrl_alt = Modifiers { ctrl: true, alt: true, ..Modifiers::empty() };
+        // The key still recognises (printable-char branch fires);
+        // selection-all branch passes through because alt is set.
+        let _ = apply_key(&state, "a", ctrl_alt);
+        // No selection set by the apply_key path.
+        assert_eq!(state.selection_anchor(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Type-to-replace (printable / Space / Backspace / Delete on
+    // active selection)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_printable_with_selection_replaces_range() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_selection(1, 4);
+        assert!(apply_key(&state, "X", Modifiers::empty()));
+        assert_eq!(state.text(), "aXef");
+        assert_eq!(state.caret(), 2);
+        assert_eq!(state.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_1_f_space_with_selection_replaces_range() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_selection(1, 4);
+        assert!(apply_key(&state, "Space", Modifiers::empty()));
+        assert_eq!(state.text(), "a ef");
+        assert_eq!(state.caret(), 2);
+    }
+
+    #[test]
+    fn r56_1_f_backspace_with_selection_drains_range() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_selection(1, 4);
+        assert!(apply_key(&state, "Backspace", Modifiers::empty()));
+        assert_eq!(state.text(), "aef");
+        assert_eq!(state.caret(), 1);
+    }
+
+    #[test]
+    fn r56_1_f_delete_with_selection_drains_range() {
+        let state = TextEditState::with_initial("abcdef".to_string());
+        state.set_selection(1, 4);
+        assert!(apply_key(&state, "Delete", Modifiers::empty()));
+        assert_eq!(state.text(), "aef");
+        assert_eq!(state.caret(), 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // RPC invoke(key, Json) carries the Shift bit end-to-end
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_f_invoke_key_json_shift_arrow_right_extends_selection_via_rpc() {
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        state.set_caret(2);
+        let mut tfx = TextFieldExternal::new().attach_state(state.clone());
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key":   "ArrowRight",
+                    "shift": true,
+                })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.caret(), 3);
+        assert_eq!(state.selection_anchor(), Some(2));
+    }
+
+    #[test]
+    fn r56_1_f_invoke_key_json_ctrl_a_selects_entire_text_via_rpc() {
+        let state = Rc::new(TextEditState::with_initial("hello world".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(state.clone());
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key":  "a",
+                    "ctrl": true,
+                })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.selection_range(), Some((0, 11)));
     }
 }
 
