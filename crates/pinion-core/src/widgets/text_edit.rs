@@ -49,6 +49,25 @@
 //! applying its edit, then clears the anchor — the canonical macOS /
 //! GTK / Web replace-on-keystroke contract.
 //!
+//! ## R56.1.g §5.22 — IME preedit buffer
+//!
+//! `preedit_buffer: Signal<Option<String>>` mirrors the W3C
+//! `CompositionEvent` `data` payload across the composition lifecycle.
+//! `None` is "not composing"; `Some(s)` is "active composition with
+//! `s` as the current preedit string" (`s` may be empty during the
+//! transient compositionstart → compositionupdate window). The buffer
+//! lives orthogonal to [`text`](Self::text): the canonical platform
+//! IME contract (Wayland text-input-v3, macOS `NSTextInputContext`,
+//! Windows TSF, GTK `IBus`) keeps preedit display in a separate
+//! channel from the committed text so the application paint code
+//! stitches the two together (`text[..caret] + preedit + text[caret..]`).
+//! Four mutators drive the lifecycle: [`preedit_start`](Self::preedit_start),
+//! [`preedit_update`](Self::preedit_update),
+//! [`preedit_commit`](Self::preedit_commit),
+//! [`preedit_cancel`](Self::preedit_cancel). The mutators batch the
+//! 2- or 3-axis writes (`text` + `caret` + `preedit_buffer`) under
+//! the R55.G.24 atomic-multi-axis reactive contract.
+//!
 //! ## Why a separate reactive primitive
 //!
 //! Same R55.B rationale: the SCXML interaction state and the value
@@ -115,6 +134,21 @@ pub struct TextEditState {
     /// distinction between "no anchor" and "anchor coincides with
     /// caret"). Same `char`-boundary invariant as `caret_pos`.
     selection_anchor: Signal<Option<usize>>,
+    /// R56.1.g §5.22 — IME preedit buffer. `None` is "not composing"
+    /// (post-`preedit_cancel` / post-`preedit_commit` / default).
+    /// `Some(s)` is "composition active with `s` as the current
+    /// preedit string"; `s` may be empty during the transient window
+    /// between `compositionstart` and the first `compositionupdate`.
+    /// Stays orthogonal to [`Self::text`]: the canonical platform IME
+    /// contract (Wayland text-input-v3, macOS `NSTextInputContext`,
+    /// Windows TSF, GTK `IBus`) keeps preedit display in a separate
+    /// channel from the committed buffer so the application paint code
+    /// stitches the two together for visual rendering. See the
+    /// [`Self::preedit`] / [`Self::is_composing`] accessors and the
+    /// four canonical mutators ([`Self::preedit_start`],
+    /// [`Self::preedit_update`], [`Self::preedit_commit`],
+    /// [`Self::preedit_cancel`]).
+    preedit_buffer: Signal<Option<String>>,
     /// Canonical input-router / introspection tag for this text
     /// container. Set by [`use_text_edit_state`] from the
     /// `Owner::cache` key so the matching [`TextField`] /
@@ -143,6 +177,7 @@ impl TextEditState {
             text: Signal::new(String::new()),
             caret_pos: Signal::new(0),
             selection_anchor: Signal::new(None),
+            preedit_buffer: Signal::new(None),
             tag: None,
         }
     }
@@ -177,6 +212,7 @@ impl TextEditState {
             text: Signal::new(initial_text),
             caret_pos: Signal::new(caret),
             selection_anchor: Signal::new(None),
+            preedit_buffer: Signal::new(None),
             tag: None,
         }
     }
@@ -312,8 +348,14 @@ impl TextEditState {
     ///
     /// R56.1.f §5.22 — also clears any active selection (an
     /// explicit `set_text` invalidates the prior anchor since the
-    /// underlying byte string changed wholesale). The three writes
-    /// (`text`, `caret_pos`, `selection_anchor`) collapse into one
+    /// underlying byte string changed wholesale).
+    ///
+    /// R56.1.g §5.22 — also clears any active preedit (an explicit
+    /// `set_text` invalidates the composition the same way it
+    /// invalidates the selection — the underlying text changed
+    /// wholesale, the preedit byte offset references no longer make
+    /// sense). The four writes (`text`, `caret_pos`,
+    /// `selection_anchor`, `preedit_buffer`) collapse into one
     /// notification cascade via [`batch`].
     pub fn set_text(&self, new_text: String) {
         let new_len = new_text.len();
@@ -323,6 +365,7 @@ impl TextEditState {
             self.text.set(new_text);
             self.caret_pos.set(clamped_caret);
             self.selection_anchor.set(None);
+            self.preedit_buffer.set(None);
         });
     }
 
@@ -608,6 +651,134 @@ impl TextEditState {
                 Some(anchor)
             });
         });
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // R56.1.g §5.22 — IME preedit buffer
+    // ───────────────────────────────────────────────────────────────
+
+    /// R56.1.g §5.22 — current preedit string. `None` when no
+    /// composition is active; `Some(s)` when a composition is in
+    /// flight with `s` as the current preedit text. Mirror of the
+    /// W3C `CompositionEvent.data` payload observed during
+    /// `compositionupdate`. Subscribes to the `preedit_buffer`
+    /// signal so a view-fn rendering the preedit underline re-runs
+    /// on every composition-affecting mutation.
+    #[must_use]
+    pub fn preedit(&self) -> Option<String> {
+        self.preedit_buffer.get()
+    }
+
+    /// R56.1.g §5.22 — `true` when a composition is active (preedit
+    /// buffer is `Some(_)`, even if the preedit string itself is
+    /// empty during the transient compositionstart-before-update
+    /// window). Mirror of the W3C `KeyboardEvent.isComposing`
+    /// predicate that gates IME-aware key handling.
+    #[must_use]
+    pub fn is_composing(&self) -> bool {
+        self.preedit_buffer.get().is_some()
+    }
+
+    /// R56.1.g §5.22 — begin a new IME composition. Sets the preedit
+    /// buffer to `Some(String::new())` (composition active, no
+    /// preedit text yet — mirror of the W3C `compositionstart` event
+    /// where `data` is empty until the first `compositionupdate`).
+    ///
+    /// If a selection is active at composition start, the selected
+    /// range is drained first and the caret lands at the range start
+    /// (canonical macOS / iOS / GTK / Web "compose-over-selection
+    /// replaces the selection"). The 4-axis write
+    /// (`text` + `caret` + `selection_anchor` + `preedit_buffer`)
+    /// collapses into one notification cascade via [`batch`].
+    ///
+    /// No-op when a composition is already active (defensive: the
+    /// platform IME contract is `compositionstart` exactly once per
+    /// composition; the framework wire layer enforces the protocol,
+    /// the substrate just stays idempotent).
+    pub fn preedit_start(&self) {
+        if self.preedit_buffer.get().is_some() {
+            return;
+        }
+        let buf = self.text.get();
+        let caret = self.caret_pos.get().min(buf.len());
+        if let Some((start, end)) = self.selection_range_against(&buf, caret) {
+            let mut drained = buf;
+            drained.drain(start..end);
+            batch(|| {
+                self.text.set(drained);
+                self.caret_pos.set(start);
+                self.selection_anchor.set(None);
+                self.preedit_buffer.set(Some(String::new()));
+            });
+        } else {
+            self.preedit_buffer.set(Some(String::new()));
+        }
+    }
+
+    /// R56.1.g §5.22 — update the active preedit string. Mirror of
+    /// W3C `compositionupdate` where `data` carries the current
+    /// preedit text. No-op when no composition is active (defensive:
+    /// the framework wire layer enforces the protocol order
+    /// compositionstart → compositionupdate*, but the substrate
+    /// stays idempotent against out-of-order delivery — the AI
+    /// client / RPC path could otherwise drive an `update` before
+    /// `start`).
+    pub fn preedit_update(&self, preedit: &str) {
+        if self.preedit_buffer.get().is_none() {
+            return;
+        }
+        self.preedit_buffer.set(Some(preedit.to_string()));
+    }
+
+    /// R56.1.g §5.22 — commit the active composition. Inserts
+    /// `committed` at the caret position (advancing the caret by
+    /// `committed.len()` bytes), then clears the preedit buffer.
+    /// Mirror of W3C `compositionend` where `data` carries the final
+    /// committed string. The three writes
+    /// (`text` + `caret` + `preedit_buffer`) collapse into one
+    /// notification cascade via [`batch`].
+    ///
+    /// Empty `committed` is the cancel-shaped commit (composition
+    /// ended with no text — e.g. Escape during composition discards
+    /// the preedit without inserting anything); the preedit buffer
+    /// clears but the text + caret stay untouched.
+    ///
+    /// No-op when no composition is active (defensive against
+    /// out-of-order delivery). The caret advances by **bytes**, not
+    /// chars / graphemes — the post-commit caret offset is always a
+    /// `char` boundary because `committed` is a valid UTF-8 `&str`
+    /// (Rust invariant) and the insertion happens at a pre-existing
+    /// boundary.
+    pub fn preedit_commit(&self, committed: &str) {
+        if self.preedit_buffer.get().is_none() {
+            return;
+        }
+        if committed.is_empty() {
+            self.preedit_buffer.set(None);
+            return;
+        }
+        let mut buf = self.text.get();
+        let caret = self.caret_pos.get().min(buf.len());
+        let snapped = clamp_to_char_boundary(&buf, caret);
+        buf.insert_str(snapped, committed);
+        let new_caret = snapped + committed.len();
+        batch(|| {
+            self.text.set(buf);
+            self.caret_pos.set(new_caret);
+            self.preedit_buffer.set(None);
+        });
+    }
+
+    /// R56.1.g §5.22 — cancel the active composition. Clears the
+    /// preedit buffer without inserting anything. Mirror of the IME
+    /// cancel path (Escape during composition, or the platform
+    /// `compositionend` with empty `data` after a cancel).
+    /// No-op when no composition is active.
+    pub fn preedit_cancel(&self) {
+        if self.preedit_buffer.get().is_none() {
+            return;
+        }
+        self.preedit_buffer.set(None);
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -1520,6 +1691,238 @@ mod tests {
             count.get(),
             3,
             "insert with selection batches text+caret+anchor into one re-run",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R56.1.g §5.22 — IME preedit buffer
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_initial_preedit_is_none_not_composing() {
+        let s = TextEditState::new();
+        assert_eq!(s.preedit(), None);
+        assert!(!s.is_composing());
+    }
+
+    #[test]
+    fn r56_1_g_preedit_start_sets_buffer_to_empty_some() {
+        // W3C compositionstart canonical: data is empty until the
+        // first compositionupdate. Substrate mirrors that exactly.
+        let s = TextEditState::with_initial("ab".to_string());
+        s.preedit_start();
+        assert_eq!(s.preedit(), Some(String::new()));
+        assert!(s.is_composing());
+    }
+
+    #[test]
+    fn r56_1_g_preedit_start_is_idempotent_when_already_composing() {
+        // Substrate stays defensive against duplicate compositionstart
+        // (the platform contract is once-per-composition, but the AI
+        // client / RPC path could drive it twice — the second call
+        // must not stomp an already-buffered preedit string).
+        let s = TextEditState::with_initial("ab".to_string());
+        s.preedit_start();
+        s.preedit_update("hi");
+        s.preedit_start();
+        assert_eq!(
+            s.preedit(),
+            Some("hi".to_string()),
+            "second preedit_start must not wipe the buffer",
+        );
+    }
+
+    #[test]
+    fn r56_1_g_preedit_start_with_active_selection_drains_range() {
+        // Compose-over-selection: the selected text is removed first,
+        // composition begins at the selection start. Canonical macOS /
+        // iOS / GTK / Web "compose replaces selection" behaviour.
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.set_selection(1, 4);
+        s.preedit_start();
+        assert_eq!(s.text(), "aef", "selection drained on compose-start");
+        assert_eq!(s.caret(), 1, "caret at drained-selection start");
+        assert_eq!(s.selection_anchor(), None, "selection cleared");
+        assert_eq!(s.preedit(), Some(String::new()), "composition began");
+    }
+
+    #[test]
+    fn r56_1_g_preedit_update_sets_buffer_to_provided_text() {
+        let s = TextEditState::with_initial("ab".to_string());
+        s.preedit_start();
+        s.preedit_update("hello");
+        assert_eq!(s.preedit(), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn r56_1_g_preedit_update_no_op_when_not_composing() {
+        // Defensive against out-of-order delivery: an update without
+        // a prior start is a no-op.
+        let s = TextEditState::with_initial("ab".to_string());
+        s.preedit_update("hello");
+        assert_eq!(s.preedit(), None, "update without start stays None");
+    }
+
+    #[test]
+    fn r56_1_g_preedit_update_can_replace_existing_preedit_string() {
+        // Successive compositionupdates send the *current full* preedit
+        // (not deltas) — the buffer replaces, not appends.
+        let s = TextEditState::with_initial("ab".to_string());
+        s.preedit_start();
+        s.preedit_update("h");
+        s.preedit_update("hi");
+        s.preedit_update("hi!");
+        assert_eq!(s.preedit(), Some("hi!".to_string()));
+    }
+
+    #[test]
+    fn r56_1_g_preedit_commit_inserts_at_caret_and_clears_buffer() {
+        let s = TextEditState::with_initial("ab".to_string());
+        s.set_caret(1);
+        s.preedit_start();
+        s.preedit_update("xyz");
+        s.preedit_commit("XYZ");
+        assert_eq!(s.text(), "aXYZb");
+        assert_eq!(s.caret(), 1 + 3, "caret advanced by committed bytes");
+        assert_eq!(s.preedit(), None, "preedit cleared on commit");
+        assert!(!s.is_composing());
+    }
+
+    #[test]
+    fn r56_1_g_preedit_commit_with_empty_string_clears_without_insert() {
+        // compositionend with empty `data` (cancel-shape) clears the
+        // preedit but leaves the text untouched.
+        let s = TextEditState::with_initial("ab".to_string());
+        s.set_caret(1);
+        s.preedit_start();
+        s.preedit_update("xyz");
+        s.preedit_commit("");
+        assert_eq!(s.text(), "ab", "text unchanged on empty commit");
+        assert_eq!(s.caret(), 1, "caret unchanged on empty commit");
+        assert_eq!(s.preedit(), None, "preedit cleared");
+    }
+
+    #[test]
+    fn r56_1_g_preedit_commit_no_op_when_not_composing() {
+        // Defensive against out-of-order: a commit without prior
+        // start is a no-op (text untouched).
+        let s = TextEditState::with_initial("ab".to_string());
+        s.preedit_commit("hi");
+        assert_eq!(s.text(), "ab", "no-composition commit is silent");
+    }
+
+    #[test]
+    fn r56_1_g_preedit_cancel_clears_buffer_without_insert() {
+        let s = TextEditState::with_initial("ab".to_string());
+        s.preedit_start();
+        s.preedit_update("xyz");
+        s.preedit_cancel();
+        assert_eq!(s.text(), "ab", "text untouched on cancel");
+        assert_eq!(s.preedit(), None, "preedit cleared");
+        assert!(!s.is_composing());
+    }
+
+    #[test]
+    fn r56_1_g_preedit_cancel_no_op_when_not_composing() {
+        let s = TextEditState::with_initial("ab".to_string());
+        s.preedit_cancel();
+        assert_eq!(s.preedit(), None);
+        assert!(!s.is_composing());
+    }
+
+    #[test]
+    fn r56_1_g_set_text_clears_active_preedit() {
+        // An explicit set_text invalidates the composition (same way
+        // it invalidates the selection — the underlying text changed
+        // wholesale, the preedit byte offset references no longer
+        // make sense).
+        let s = TextEditState::with_initial("abcdef".to_string());
+        s.preedit_start();
+        s.preedit_update("xyz");
+        s.set_text("hello".to_string());
+        assert_eq!(s.preedit(), None, "preedit cleared by set_text");
+        assert_eq!(s.text(), "hello");
+    }
+
+    #[test]
+    fn r56_1_g_preedit_commit_korean_multi_byte() {
+        // Korean composition canonical: 'ㅎ' + 'ㅏ' + 'ㄴ' jamo →
+        // syllable "한" (3 bytes UTF-8). The substrate doesn't know
+        // about jamo composition — it just inserts the final
+        // committed string verbatim.
+        let s = TextEditState::with_initial(String::new());
+        s.preedit_start();
+        s.preedit_update("ㅎ");
+        s.preedit_update("하");
+        s.preedit_commit("한");
+        assert_eq!(s.text(), "한");
+        assert_eq!(s.caret(), 3, "caret advanced by 3 bytes");
+        let _: &str = s.text().as_str();
+    }
+
+    #[test]
+    fn r56_1_g_preedit_commit_into_middle_of_text() {
+        // Compose at caret position inside existing text.
+        let s = TextEditState::with_initial("ad".to_string());
+        s.set_caret(1);
+        s.preedit_start();
+        s.preedit_update("bc");
+        s.preedit_commit("bc");
+        assert_eq!(s.text(), "abcd");
+        assert_eq!(s.caret(), 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R56.1.g §5.22 — atomic batched-multi-axis subscriber semantics
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_preedit_start_with_selection_fires_subscriber_exactly_once() {
+        // 4-axis batched write (text + caret + selection_anchor +
+        // preedit_buffer) collapses to a single Effect re-run.
+        let owner = Owner::new();
+        let s = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let count = Rc::new(Cell::new(0));
+        let s_ref = Rc::clone(&s);
+        let count_ref = Rc::clone(&count);
+        let _e = Effect::new(&owner, move || {
+            let _ = s_ref.snapshot();
+            let _ = s_ref.selection_range();
+            let _ = s_ref.preedit();
+            count_ref.set(count_ref.get() + 1);
+        });
+        assert_eq!(count.get(), 1);
+        s.set_selection(1, 4);
+        assert_eq!(count.get(), 2);
+        s.preedit_start();
+        assert_eq!(
+            count.get(),
+            3,
+            "preedit_start with selection batches 4 axes into one re-run",
+        );
+    }
+
+    #[test]
+    fn r56_1_g_preedit_commit_fires_subscriber_exactly_once() {
+        // 3-axis batched write (text + caret + preedit_buffer).
+        let owner = Owner::new();
+        let s = Rc::new(TextEditState::with_initial("ab".to_string()));
+        let count = Rc::new(Cell::new(0));
+        let s_ref = Rc::clone(&s);
+        let count_ref = Rc::clone(&count);
+        let _e = Effect::new(&owner, move || {
+            let _ = s_ref.snapshot();
+            let _ = s_ref.preedit();
+            count_ref.set(count_ref.get() + 1);
+        });
+        assert_eq!(count.get(), 1);
+        s.preedit_start();
+        assert_eq!(count.get(), 2);
+        s.preedit_commit("xyz");
+        assert_eq!(
+            count.get(),
+            3,
+            "preedit_commit batches text+caret+preedit_buffer into one re-run",
         );
     }
 

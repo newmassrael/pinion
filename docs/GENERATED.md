@@ -16508,6 +16508,51 @@ if __name__ == "__main__":
 
 
 
+### Round 558 — R56.1.g.0 §5.38 §5.22 — `TextEditState` IME preedit substrate: `preedit_buffer: Signal<Option<String>>` sidecar + 4-mutator lifecycle + 2 accessors mirror W3C `CompositionEvent`.
+
+**Changes**:
+- `crates/pinion-core/src/widgets/text_edit.rs`: add `preedit_buffer: Signal<Option<String>>` field
+- Orthogonal to `text` / `caret` / `selection_anchor`; mirrors the W3C platform IME contract
+- Four-mutator lifecycle: `preedit_start` / `preedit_update` / `preedit_commit` / `preedit_cancel`
+- Mirrors W3C `compositionstart` / `compositionupdate` / `compositionend(data)` / cancel-shape
+- `preedit()` returns `Option<String>` (mirror of W3C `CompositionEvent.data`)
+- `is_composing()` predicate mirrors W3C `KeyboardEvent.isComposing`
+- `preedit_start` with active selection drains range first then starts composition
+- Drain + start is a 4-axis batched write (`text` + `caret` + `selection_anchor` + `preedit_buffer`)
+- Canonical macOS / iOS / GTK / Web compose-over-selection contract
+- `preedit_commit` inserts committed text at caret + clears preedit (3-axis batched write)
+- Caret advances by `committed.len()` bytes on a `char` boundary (Rust `&str` UTF-8 invariant)
+- `preedit_commit` with empty string clears buffer without inserting (cancel-shape `compositionend`)
+- `preedit_update` / `preedit_commit` / `preedit_cancel` are defensive no-op when not composing
+- Out-of-order delivery from AI client / RPC path stays idempotent
+- `set_text` now also clears active preedit (whole-buffer replace invalidates composition)
+- `new` / `with_initial` / `with_tag` / `Default` initialise `preedit_buffer` to `None`
+- 17 `r56_1_g` regression tests cover the start/update/commit/cancel lifecycle
+- Multi-byte UTF-8 commit (Korean 한 syllable) + defensive idempotence cases
+- 2 batched-multi-axis subscriber tests verify single `Effect` re-run per logical edit
+
+
+
+**Verification**:
+- `cargo test -p pinion-core widgets::text_edit::tests::r56_1_g`: 17 pass / 0 fail
+- `cargo test --workspace --features pinion-runtime/vello`: 2613 pass / 0 fail / 13 ignored
+- Delta +17 tests over the session 50 baseline (2596)
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello`: 0 warnings
+- Workspace.lints baseline: forbid `unsafe_code` + deny warnings + `clippy::pedantic` deny
+
+
+
+**Impact**: §5.38, §5.22
+
+
+**Carry forward**:
+- R56.1.g.1 TextField apply_composition_* dispatch path
+- R56.1.g.2 RPC preedit slot + composition invoke wire
+- R56.1.g.3 hello-textfield preedit visual + composition demo
+- Platform IME bridge crate carry (Wayland text-input-v3 + macOS NSTextInputContext + Windows TSF)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
