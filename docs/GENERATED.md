@@ -17332,6 +17332,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 578 — R57.X.theme-cleanup §5.50 — hello-theme track Off 역할을 Outline(stroke) → SurfaceContainerHighest(M3 chip surface) 로 정정; hello-toggle Switch pairing 과 동일화.
+
+**Changes**:
+- hello-theme view fn: track_fill Off → SurfaceContainerHighest (pre-cleanup: Outline misuse).
+- hello-theme view fn: knob_fill Off → Outline (hello-toggle M3 Switch pairing 일치).
+- hello-theme tests: +1 r57_x_theme_cleanup_track_off_uses_surface_container_highest light↔dark pin.
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2769 pass / 0 fail / 14 ignored (+1 new).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.
+- cargo test -p hello-theme = 3 pass (baseline 2 + 1 cleanup).
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- hello-textfield theme retrofit (다음 R57.X widget cascade target).
+- hello-button + hello-radio-group + hello-checkbox-radio retrofit cascade.
+- R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

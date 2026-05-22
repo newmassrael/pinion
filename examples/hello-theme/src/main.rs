@@ -115,6 +115,17 @@ const TOGGLE_INTENT_TAG_FULL: &str = pinion_core::intent_tag!("theme_toggle", "t
 ///
 /// The outer container fills with [`ColorRole::Surface`] so the
 /// window background re-themes too.
+///
+/// (R57.X.theme-cleanup §5.50) Track Off uses
+/// [`ColorRole::SurfaceContainerHighest`] (M3 canonical "filled
+/// inactive container" surface) — the same role R57.X.toggle
+/// introduced. Pre-cleanup the Off branch resolved to
+/// [`ColorRole::Outline`], which is a stroke / hairline role; using
+/// it as a fill made the Off track read as a thick border instead of
+/// the M3 chip surface. Knob fills mirror the
+/// [`hello-toggle`](../hello_toggle/index.html) Switch mapping
+/// ([`ColorRole::Outline`] Off / [`ColorRole::OnAccent`] On) so the
+/// two demo bindings share the same M3 Switch role pairing.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     // Reactive read — every paint subscribes the root owner to the
@@ -133,14 +144,15 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 
     let knob_fill = match state {
         ToggleState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
-        _ => theme.resolve(ColorRole::OnAccent),
+        _ if on => theme.resolve(ColorRole::OnAccent),
+        _ => theme.resolve(ColorRole::Outline),
     };
     let track_fill = match (state, on) {
         (ToggleState::Idle | ToggleState::Hover | ToggleState::Pressed, false) => {
-            theme.resolve(ColorRole::Outline)
+            theme.resolve(ColorRole::SurfaceContainerHighest)
         }
         (_, true) => theme.resolve(ColorRole::Accent),
-        (ToggleState::Disabled, false) => theme.resolve(ColorRole::OnSurfaceMuted),
+        (ToggleState::Disabled, false) => theme.resolve(ColorRole::SurfaceContainerHighest),
     };
     let knob_justify = if on {
         JustifyContent::End
@@ -484,5 +496,32 @@ mod tests {
             Scene::Box(node) => node.style.fill == target,
             _ => false,
         }
+    }
+
+    /// (R57.X.theme-cleanup §5.50) Track Off must resolve to
+    /// `ColorRole::SurfaceContainerHighest` — the M3 "filled inactive
+    /// container" role — not `ColorRole::Outline` (a stroke role).
+    /// Pin both light and dark palettes so a regression that swaps
+    /// the role back is caught at test time rather than visible
+    /// inspection.
+    #[test]
+    fn r57_x_theme_cleanup_track_off_uses_surface_container_highest() {
+        let owner = Owner::new();
+        owner.run(|| {
+            // Light palette: track Off fill == light.surface_container_highest.
+            use_theme(THEME_TAG).set_theme(Theme::light());
+            let scene_light = view(ToggleState::Idle, false, &Frame::new());
+            assert!(scene_contains_surface(
+                &scene_light,
+                Theme::light().surface_container_highest,
+            ));
+            // Dark palette: track Off fill swaps with palette.
+            use_theme(THEME_TAG).set_theme(Theme::dark());
+            let scene_dark = view(ToggleState::Idle, false, &Frame::new());
+            assert!(scene_contains_surface(
+                &scene_dark,
+                Theme::dark().surface_container_highest,
+            ));
+        });
     }
 }

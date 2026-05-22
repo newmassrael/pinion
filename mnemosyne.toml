@@ -586,3 +586,12 @@ reason = "R57.X.listbox audit half authored minimal ASCII per [[mnemosyne-multib
 applied_in = "Round 577"
 content_hash_before = "266a84981070edad3e161ca9d50f34830066c9f545725f5befba4043083be373"
 content_hash_after = "4894a4e4f1e26a377f1b2c978fd47ef819ad21c0037a383b2c30de2f77b16662"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 578"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_carry_forward_bullets"]
+reason = "R57.X.theme-cleanup audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs, em-dashes, arrows, and Korean prose."
+applied_in = "Round 578"
+content_hash_before = "2beb22943af34284080b12d146cc8d794244c2bc5673df7c3316f862ca9cb0b5"
+content_hash_after = "383b9d1dd5c4ff2831cfb0508844eac7a33a9f25876e0a9ee793feb6b61e638c"
