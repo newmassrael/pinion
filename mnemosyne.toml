@@ -649,3 +649,12 @@ reason = "Round 584 audit-minimal ASCII append + publishable Korean expand patte
 applied_in = "Round 584"
 content_hash_before = "ae7b27148c70d25fa7e2c40531feeb69b9751403f3cc7993ecd39aacc5aa4984"
 content_hash_after = "73454d3ce814db1a64c7d1c46ae3545f03760226a2e50c6b2836451ca0d059ce"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 585"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R585 R57.X.theme-fade at-rest snap audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs, em-dashes, arrows, and Korean prose."
+applied_in = "Round 585"
+content_hash_before = "c41307aae0ec560e6bf8a18edc08e1d906c39555d63b6e91e482dd727d8d8a58"
+content_hash_after = "1eeae55f23b65ed3cb09b7bebabad4e674f83b15a3968ad37758a1cd1db6a748"

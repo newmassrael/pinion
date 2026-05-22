@@ -3890,6 +3890,10 @@ if __name__ == "__main__":
 - R57.X.theme-fade: THEME_FADE_SPRING 400/40/1 = critically damped, omega_n=20rad/s, ~200ms settle.
 - R57.X.theme-fade: Owner::current() None falls back to instant theme(); diagnostic / RPC safe.
 - R57.X.theme-fade: ThemeLinear (10 AnimVec4) bridges sRGB Theme to spring solver linear space.
+- R57.X.theme-fade: at-rest snap returns exact sRGB target, bypasses linear round-trip.
+- R57.X.theme-fade: in-flight value uses linear-light spring; ~1 channel round-trip only mid-fade.
+- R57.X.theme-fade: SwiftUI / Compose canon -- at-rest animation value equals target exactly.
+- R57.X.theme-fade: snap enables widget cascade to assert == against palette fields (exact contract).
 
 
 
@@ -17570,6 +17574,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - hello_listbox_focus_border.py demo 갱신 (R57.X.listbox carry, FOCUS_BORDER_RGB → ColorRole::Accent)
 - Animatable<Color> 일반화는 2nd consumer 등장 후 (Rule of Three 영구 carry)
 - TweenAnimation<T> Signal-backed primitive 도입은 2nd consumer 후 (Rule of Three 영구 carry)
+
+
+
+### Round 585 — R585 §5.50 R57.X.theme-fade — `theme_animated()` at-rest 시 캐시된 sRGB target 즉시 반환 (SwiftUI / Compose canon 미러), `ThemeLinear` linear-light round-trip lossy ±1 channel 회피.
+
+**Changes**:
+- §5.50 `theme_animated()` `is_at_rest()` 시 cached sRGB target 즉시 반환 (round-trip 우회).
+- §5.50 회귀 4개 tighten: `assert_theme_close` → `assert_eq!` (settle paths 정확 매칭).
+- §5.50 신규 회귀: midrange exact-equality (`#121212`, `#E6E0E9`) — cascade `==` contract 핀.
+
+
+
+**Verification**:
+- `cargo test --workspace --features pinion-runtime/vello` = 2801 / 0 / 14 (+1 신규).
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings.
+- `cargo test -p pinion-core --lib theme` = 36 pass (baseline 35 + at-rest exact pin).
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- R586 widget cascade — 10 binary `theme()` → `theme_animated()` + settle helper lift.
+- `Animation::reset(value)` carry — 2nd consumer 후 ([[abstraction-needs-second-consumer]]).
+- `Animatable<Color>` 일반화 carry — 2nd carrier 등장 후 macro 추출 (Rule of Three).
+- `TweenAnimation<T>` Signal-backed wrapper carry — 2nd 진짜 tween 시나리오 후.
 
 
 

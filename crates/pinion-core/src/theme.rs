@@ -117,7 +117,11 @@
 //! [`Animation::set_target`](crate::animation::Animation::set_target)
 //! interrupt semantic (`SwiftUI` / `Compose` canonical), so a mid-fade
 //! mode flip transitions visually continuous from the in-flight value
-//! to the new target — no discontinuity, no double-snap.
+//! to the new target — no discontinuity, no double-snap. At rest the
+//! accessor short-circuits to the cached sRGB target so widget cascade
+//! tests asserting against palette fields keep an exact-equality
+//! contract: the linear-light round-trip is only on the wire during
+//! the fade.
 //!
 //! Callers retain the instant [`ThemeProvider::theme`] accessor for
 //! tests and snapshot reads. Opt-in keeps the substrate layered
@@ -955,6 +959,27 @@ impl ThemeProvider {
     /// anywhere without the `Owner::current().expect(...)` panic the
     /// callback-root-owner-wrap discipline guards against in
     /// [`use_theme`].
+    ///
+    /// ## At-rest exact snap
+    ///
+    /// Whenever the spring is settled
+    /// ([`Animation::is_at_rest`](crate::animation::Animation::is_at_rest)),
+    /// the accessor returns the cached sRGB [`Self::theme`] target
+    /// directly rather than re-encoding the spring's linear-light
+    /// state through [`ThemeLinear::to_theme`]. The
+    /// [`Color::to_linear`](crate::style::Color::to_linear) /
+    /// [`Color::from_linear`](crate::style::Color::from_linear)
+    /// round-trip can drift midrange-channel values by ±1 8-bit unit
+    /// (verified by `crate::style::tests::srgb_round_trip_midrange_close`),
+    /// which would silently break widget cascade tests asserting
+    /// exact equality against palette field values
+    /// (e.g. [`Theme::dark`]`.surface = #121212`). Snapping at rest
+    /// mirrors the canonical `SwiftUI` `.animation(_)` / `Compose`
+    /// `animateColorAsState` contract: while the animation is running
+    /// the returned value is the interpolated state; once settled
+    /// the value equals the target exactly. The intermediate
+    /// in-flight frames still go through the linear-light path so
+    /// the perceptual interpolation quality is preserved.
     #[must_use]
     pub fn theme_animated(&self) -> Theme {
         let target = self.theme();
@@ -973,7 +998,19 @@ impl ThemeProvider {
             fade.animation.set_target(target_linear);
             fade.last_target.set(target);
         }
-        fade.animation.value().to_theme()
+        if fade.animation.is_at_rest() {
+            // At rest — snap to the cached sRGB target rather than
+            // round-trip the spring's linear-light state, which would
+            // drift midrange-channel values by ±1 8-bit unit.
+            target
+        } else {
+            // Mid-fade — re-encode the spring's interpolated linear
+            // state to sRGB so the animation renders perceptually
+            // correct. The animation signal subscription this read
+            // establishes drives the per-frame view-fn re-run that
+            // animates the fade.
+            fade.animation.value().to_theme()
+        }
     }
 
     /// Shorthand for [`Theme::resolve`] against the active palette.
@@ -1576,24 +1613,28 @@ mod tests {
     #[test]
     fn r57_x_theme_animated_first_call_returns_current_target() {
         // First call inside an owner scope lazy-inits the fade with
-        // current = target — value() returns the same palette
-        // instant theme() returns (within the round-trip tolerance).
+        // current = target, which leaves the spring at rest
+        // immediately. The at-rest snap path engages and returns the
+        // exact `theme()` target rather than the lossy linear-space
+        // round-trip — so an exact-equality assertion is valid here.
         set_system_color_scheme(SystemColorScheme::NoPreference);
         let owner = Owner::new();
         let p = ThemeProvider::new();
         p.set_mode(ThemeMode::Dark);
         owner.run(|| {
-            assert_theme_close(p.theme_animated(), Theme::dark());
+            assert_eq!(p.theme_animated(), Theme::dark());
         });
     }
 
     #[test]
     fn r57_x_theme_animated_mode_flip_settles_to_new_target() {
         // After a mode flip, ticking the animation past the M3 short4
-        // settling time (~200 ms) brings the displayed palette
-        // back within the round-trip tolerance of the new target.
-        // We tick generously (1 s @ 60 Hz) so a future spring re-tune
-        // that widens the settle window slightly does not flake.
+        // settling time (~200 ms) brings the spring to rest. With the
+        // at-rest snap path engaged, the displayed palette equals the
+        // new target exactly (not just within the round-trip
+        // tolerance). We tick generously (1 s @ 60 Hz) so a future
+        // spring re-tune that widens the settle window slightly does
+        // not flake.
         set_system_color_scheme(SystemColorScheme::NoPreference);
         let owner = Owner::new();
         let p = ThemeProvider::new();
@@ -1612,7 +1653,7 @@ mod tests {
             owner.tick_animations(1.0 / 60.0);
         }
         owner.run(|| {
-            assert_theme_close(p.theme_animated(), Theme::dark());
+            assert_eq!(p.theme_animated(), Theme::dark());
         });
     }
 
@@ -1669,7 +1710,9 @@ mod tests {
             owner.tick_animations(1.0 / 60.0);
         }
         owner.run(|| {
-            assert_theme_close(p.theme_animated(), custom_light);
+            // Settled — at-rest snap returns the exact custom palette,
+            // not the lossy linear-space round-trip.
+            assert_eq!(p.theme_animated(), custom_light);
         });
     }
 
@@ -1697,10 +1740,52 @@ mod tests {
             owner.tick_animations(1.0 / 60.0);
         }
         owner.run(|| {
-            assert_theme_close(p.theme_animated(), Theme::dark());
+            // Settled — at-rest snap returns the exact dark palette.
+            assert_eq!(p.theme_animated(), Theme::dark());
         });
         // Restore baseline for the next test on this thread.
         set_system_color_scheme(SystemColorScheme::NoPreference);
+    }
+
+    #[test]
+    fn r57_x_theme_animated_at_rest_returns_exact_target_for_midrange_channels() {
+        // Pin the at-rest exact-equality contract for midrange-channel
+        // palette colors (`#121212`, `#E6E0E9`, `#36343B`, ...). The
+        // ThemeLinear sRGB-to-linear-to-sRGB round-trip can drift ±1
+        // 8-bit unit per channel for midrange values (verified by
+        // `crate::style::tests::srgb_round_trip_midrange_close`). The
+        // theme_animated() at-rest snap path returns the cached
+        // target directly, bypassing the round-trip, so widget cascade
+        // tests can assert exact equality against the active palette
+        // (`==` rather than tolerance-based `assert_color_close`).
+        //
+        // Without the snap, R57.X.theme-fade cascade widget tests on
+        // dark surface (`#121212`), light surface_container_highest
+        // (`#E6E0E9`), light outline (`#C0C0C0`), and dark outline
+        // (`#404040`) would fail intermittently — the lossy round-trip
+        // would land at `#111111` / `#E7E1EA` / ... on some platforms.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let owner = Owner::new();
+        let p = ThemeProvider::new();
+        for (mode, expected) in [
+            (ThemeMode::Light, Theme::light()),
+            (ThemeMode::Dark, Theme::dark()),
+        ] {
+            p.set_mode(mode);
+            owner.run(|| {
+                let _ = p.theme_animated();
+            });
+            for _ in 0..60 {
+                owner.tick_animations(1.0 / 60.0);
+            }
+            owner.run(|| {
+                assert_eq!(
+                    p.theme_animated(),
+                    expected,
+                    "at-rest snap must return exact palette for {mode:?}",
+                );
+            });
+        }
     }
 
     #[test]
