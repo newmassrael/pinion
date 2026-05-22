@@ -9931,6 +9931,33 @@ if __name__ == "__main__":
 
 
 
+### R55.G.24 — R55.G.5.fix §5.45 ScrollState max/offset signal-batched so layout-driven set_max re-runs view once
+
+**Changes**:
+- crates/pinion-core/src/widgets/scroll.rs: ScrollState.max_x / max_y promoted Cell<i32> -> Signal<i32>
+- crates/pinion-core/src/widgets/scroll.rs: set_max / scroll_to / scroll_by wrapped in reactive::batch atomic-update collapse
+- crates/pinion-core/src/widgets/scroll.rs: max() docs updated, subscribes both axes when called inside view-fn
+- crates/pinion-core/src/widgets/scroll.rs: 3 reactive tests pin atomic-batch single-fire contract on set_max / scroll_to / scroll_by
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello: 2259 passed (+3 new) / 0 failed / 12 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- hello-listbox R55.D.4 visible scrollbar peer now re-paints after first layout writes the bound
+
+
+
+**Impact**: §5.45, §5.22
+
+
+**Carry forward**:
+- R55.D.5 ScrollBarExternal drag wiring (multi-External path through hello-listbox)
+- R55.D.6 absolute layer Scene primitive (closes R55.D.4 spacer-flex workaround)
+- R56.1 TextField caret rendering + cursor blink animation (new largest axis)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

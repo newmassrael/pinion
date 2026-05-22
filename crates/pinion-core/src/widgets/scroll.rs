@@ -16,10 +16,9 @@
 //! animation is the R55.B.2 sub-axis carry — `Animation<i32>`
 //! layers on top without breaking the surface here.
 
-use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::reactive::{Owner, Signal};
+use crate::reactive::{Owner, Signal, batch};
 
 /// R55.B §5.45 — Reactive state for one [`ScrollNode`].
 ///
@@ -58,11 +57,25 @@ pub struct ScrollState {
     offset_y: Signal<i32>,
     /// Upper bound for `offset_x`. The application updates this
     /// through [`Self::set_max`] when the content size changes
-    /// (or via the future R55.G `ListBox` / Grid composite wiring).
-    max_x: Cell<i32>,
+    /// (or via the runtime `compute_layout` pass for the
+    /// layout-driven path landed in R55.G.5).
+    ///
+    /// (R55.G.5.fix §5.45 — R55.G.5 follow-up) The bound lives on a
+    /// `Signal`, not a `Cell`. The R55.G.5 round wrote the bound
+    /// from the runtime layout pass but the reader (a sibling
+    /// scrollbar peer in the view-fn — see
+    /// [`hello-listbox`](https://docs.rs/hello-listbox) R55.D.4)
+    /// still saw a `Cell`, so the first paint after the layout
+    /// pass produced a thumb sized against the still-zero bound.
+    /// Promoting the bound to a `Signal` makes
+    /// [`Self::max`] subscribe its caller, so the application's
+    /// next view re-runs with the freshly-laid bound. Signal's
+    /// equality-skip ensures a no-op `set_max` does not re-trigger
+    /// the view.
+    max_x: Signal<i32>,
     /// Upper bound for `offset_y`; semantics symmetric with
     /// [`Self::max_x`].
-    max_y: Cell<i32>,
+    max_y: Signal<i32>,
     /// (R51.190 §5.45) Canonical input-router / introspection tag
     /// for this scroll container. Set by [`use_scroll_state`] from
     /// the `Owner::cache` key so the matching [`ScrollNode`] can
@@ -96,8 +109,8 @@ impl ScrollState {
         Self {
             offset_x: Signal::new(0),
             offset_y: Signal::new(0),
-            max_x: Cell::new(0),
-            max_y: Cell::new(0),
+            max_x: Signal::new(0),
+            max_y: Signal::new(0),
             tag: None,
         }
     }
@@ -149,11 +162,18 @@ impl ScrollState {
         (self.offset_x(), self.offset_y())
     }
 
-    /// Current `(max_x, max_y)` bound pair. Read by value — bounds
-    /// live on `Cell`, not `Signal`, so this access does not
-    /// subscribe the caller. Bound changes do not by themselves
-    /// re-run the view; the subsequent offset set (after a
-    /// possible clamp) is what triggers the re-render.
+    /// Current `(max_x, max_y)` bound pair. Subscribes both axes
+    /// when called inside a view-fn — the view re-runs when
+    /// [`Self::set_max`] mutates either bound (Signal equality-skip
+    /// short-circuits when the new bound equals the current one).
+    ///
+    /// (R55.G.5.fix §5.45) Pre-R55.G.5.fix this read did not
+    /// subscribe — the bound lived on a `Cell`. The follow-up
+    /// promoted both bounds to `Signal<i32>` so that the layout
+    /// pass writing the post-measure bound during the first paint
+    /// drives a clean view re-run on the next frame; the textbook
+    /// reactive shape for any value that is read from a view-fn
+    /// and written from outside.
     #[must_use]
     pub fn max(&self) -> (i32, i32) {
         (self.max_x.get(), self.max_y.get())
@@ -164,21 +184,31 @@ impl ScrollState {
     /// scrollable range). If the current offset exceeds the new
     /// bound, the offset is clamped down so the view never paints
     /// past the new bound.
+    ///
+    /// (R55.G.5.fix §5.45) Wrapped in [`batch`] so the per-axis
+    /// signal writes (`max_x`, `max_y`, and the optional offset
+    /// clamps) collapse into one notification cascade. Without the
+    /// batch a subscribed `Effect` / `Owner` re-ran once per signal
+    /// touched (two to four times for one `set_max` call) — the
+    /// textbook reactive contract for an atomic multi-axis write
+    /// is "one observable change".
     pub fn set_max(&self, max_x: i32, max_y: i32) {
         let mx = max_x.max(0);
         let my = max_y.max(0);
-        self.max_x.set(mx);
-        self.max_y.set(my);
-        // Clamp the current offset if it exceeds the new bound.
-        // Signal equality-skip short-circuits when no clamp fires.
-        let cur_x = self.offset_x.get();
-        if cur_x > mx {
-            self.offset_x.set(mx);
-        }
-        let cur_y = self.offset_y.get();
-        if cur_y > my {
-            self.offset_y.set(my);
-        }
+        batch(|| {
+            self.max_x.set(mx);
+            self.max_y.set(my);
+            // Clamp the current offset if it exceeds the new bound.
+            // Signal equality-skip short-circuits when no clamp fires.
+            let cur_x = self.offset_x.get();
+            if cur_x > mx {
+                self.offset_x.set(mx);
+            }
+            let cur_y = self.offset_y.get();
+            if cur_y > my {
+                self.offset_y.set(my);
+            }
+        });
     }
 
     /// Set the offset to `(x, y)` clamped against `[0, max]`. Use
@@ -186,17 +216,28 @@ impl ScrollState {
     /// "scroll to selected item"). Equality-skip applies — if the
     /// clamped target equals the current offset, no re-paint is
     /// scheduled.
+    ///
+    /// (R55.G.5.fix §5.45) Wrapped in [`batch`] so the `offset_x`
+    /// and `offset_y` writes collapse into one notification
+    /// cascade — same atomic-update reactive contract that
+    /// [`Self::set_max`] established. Subscribers see "one scroll
+    /// landed" instead of two interleaved single-axis writes.
     pub fn scroll_to(&self, x: i32, y: i32) {
         let clamped_x = x.clamp(0, self.max_x.get());
         let clamped_y = y.clamp(0, self.max_y.get());
-        self.offset_x.set(clamped_x);
-        self.offset_y.set(clamped_y);
+        batch(|| {
+            self.offset_x.set(clamped_x);
+            self.offset_y.set(clamped_y);
+        });
     }
 
     /// Adjust the offset by `(dx, dy)` clamped against `[0, max]`.
     /// Use this for relative scroll input (wheel deltas, arrow-key
     /// steps). Saturating-add prevents overflow at the `i32`
     /// ceiling on either side.
+    ///
+    /// (R55.G.5.fix §5.45) Wrapped in [`batch`] for the same atomic
+    /// reactive contract as [`Self::set_max`] / [`Self::scroll_to`].
     pub fn scroll_by(&self, dx: i32, dy: i32) {
         let new_x = self
             .offset_x
@@ -208,8 +249,10 @@ impl ScrollState {
             .get()
             .saturating_add(dy)
             .clamp(0, self.max_y.get());
-        self.offset_x.set(new_x);
-        self.offset_y.set(new_y);
+        batch(|| {
+            self.offset_x.set(new_x);
+            self.offset_y.set(new_y);
+        });
     }
 }
 
@@ -407,6 +450,109 @@ mod tests {
         // discipline violation early instead of silently allocating
         // a per-call instance.
         let _ = use_scroll_state("no_owner_scope");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.G.5.fix §5.45 — `max` bounds live on `Signal`, not `Cell`.
+    // The reactive contract `[[textbook-long-term-correct]]` requires
+    // that any value read from a view-fn and written from outside
+    // (here: the runtime `compute_layout` pass, R55.G.5) re-runs the
+    // view on change. Pre-fix the bound lived on a `Cell`, so the
+    // first paint after layout produced a thumb sized against the
+    // stale zero bound — the [[hello-listbox]] R55.D.4 scrollbar
+    // visual was the surfacing consumer. The reactive test pins the
+    // new contract: `set_max` re-runs an `Effect` that read the
+    // bound, exactly like `scroll_to` already does for the offset.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_g5_fix_set_max_triggers_subscribed_effect() {
+        use crate::reactive::Effect;
+        use std::cell::Cell;
+
+        // R55.G.5.fix — set_max with a *changed* bound re-runs an
+        // effect that subscribed via `max()`. Cell-counter pattern
+        // mirrors the [[effect-driven-driver-monotonic-counter]] use.
+        let s = ScrollState::new();
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_eff = Rc::clone(&runs);
+        let s_eff = Rc::new(s);
+        let s_inside = Rc::clone(&s_eff);
+        let _eff = Effect::new(&owner, move || {
+            let _ = s_inside.max();
+            runs_eff.set(runs_eff.get() + 1);
+        });
+        // Effect fires once on creation (the eager subscribe sweep).
+        assert_eq!(runs.get(), 1, "effect runs once on create");
+        // Layout pass writes a non-zero bound → effect re-runs ONCE
+        // (atomic batch collapses the per-axis cascade).
+        s_eff.set_max(100, 200);
+        assert_eq!(runs.get(), 2, "set_max atomic re-runs effect once");
+        // Same bound — Signal equality-skip; effect must NOT re-run.
+        s_eff.set_max(100, 200);
+        assert_eq!(runs.get(), 2, "equal set_max equality-skips");
+        // Change just one axis — effect re-runs once (the changed
+        // signal notifies; equal-axis short-circuits).
+        s_eff.set_max(100, 300);
+        assert_eq!(runs.get(), 3, "one-axis change re-runs effect once");
+    }
+
+    #[test]
+    fn r55_g5_fix_scroll_to_atomic_re_runs_effect_once() {
+        use crate::reactive::Effect;
+        use std::cell::Cell;
+
+        // R55.G.5.fix — `scroll_to` is an atomic two-axis write.
+        // Subscribers that read both axes (`offset()`) must see one
+        // notification, not two interleaved single-axis writes.
+        let s = ScrollState::new();
+        s.set_max(100, 200);
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_eff = Rc::clone(&runs);
+        let s_eff = Rc::new(s);
+        let s_inside = Rc::clone(&s_eff);
+        let _eff = Effect::new(&owner, move || {
+            let _ = s_inside.offset();
+            runs_eff.set(runs_eff.get() + 1);
+        });
+        assert_eq!(runs.get(), 1, "effect runs once on create");
+        // Both axes change — collapses to a single re-run.
+        s_eff.scroll_to(20, 40);
+        assert_eq!(runs.get(), 2, "atomic scroll_to re-runs once");
+        // Same target — equality-skip; no re-run.
+        s_eff.scroll_to(20, 40);
+        assert_eq!(runs.get(), 2, "no-op scroll_to skips");
+        // One-axis change — still a single re-run.
+        s_eff.scroll_to(20, 60);
+        assert_eq!(runs.get(), 3, "one-axis scroll_to re-runs once");
+    }
+
+    #[test]
+    fn r55_g5_fix_scroll_by_atomic_re_runs_effect_once() {
+        use crate::reactive::Effect;
+        use std::cell::Cell;
+
+        // R55.G.5.fix — `scroll_by` is symmetric to `scroll_to` for
+        // the atomic-batch contract.
+        let s = ScrollState::new();
+        s.set_max(100, 200);
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_eff = Rc::clone(&runs);
+        let s_eff = Rc::new(s);
+        let s_inside = Rc::clone(&s_eff);
+        let _eff = Effect::new(&owner, move || {
+            let _ = s_inside.offset();
+            runs_eff.set(runs_eff.get() + 1);
+        });
+        assert_eq!(runs.get(), 1, "effect runs once on create");
+        s_eff.scroll_by(10, 20);
+        assert_eq!(runs.get(), 2, "atomic scroll_by re-runs once");
+        // (0, 0) delta — both axes equality-skip → no re-run.
+        s_eff.scroll_by(0, 0);
+        assert_eq!(runs.get(), 2, "no-op scroll_by skips");
     }
 
     // ─────────────────────────────────────────────────────────────────
