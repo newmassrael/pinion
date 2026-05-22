@@ -2008,7 +2008,8 @@
         "R51.142 — CoreShell<V>::root_owner + tick_animations land (§5.28 paint-loop driver surface)",
         "R51.143 — ShellCore (Vello) paint cycle dt wiring + root_owner forward (#1/2; TUI R51.144)",
         "R51.144 — ShellCoreTui (TUI) paint cycle dt wiring 평행 (#2/2; Cell interior mutability)",
-        "R51.145 — clamp_frame_dt helper + MAX_FRAME_DT_SECS (1/30s) cap; 양 backend apply"
+        "R51.145 — clamp_frame_dt helper + MAX_FRAME_DT_SECS (1/30s) cap; 양 backend apply",
+        "R56.1.c — CaretBlink Tickable impl (530ms canonical; Owner::cache + register_animation)"
       ],
       "alternatives_rejected": [
         {
@@ -2163,6 +2164,10 @@
         {
           "file": "crates/pinion-core/src/style.rs",
           "symbol": "Color::lerp"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/caret_blink.rs",
+          "symbol": "CaretBlink"
         }
       ],
       "decision_status": "active"
@@ -3903,7 +3908,8 @@
         "R51.106 — type-ahead substrate lift → pinion_shell::typeahead (2 consumer 트리거, ~150 LOC 청산)",
         "R51.114 — aria::apply_aria_activate helper extracted (4 binding apply_key DRY 청산)",
         "R56.1.a — TextField SCXML 4-state + binding + text_committed intent (R56 axis start)",
-        "R56.1.b — TextEditState + caret_rect helper + TextField::attach_state (R56.1.a sidecar grows)"
+        "R56.1.b — TextEditState + caret_rect helper + TextField::attach_state (R56.1.a sidecar grows)",
+        "R56.1.c — CaretBlink animation (530ms canonical) + use_caret_blink hook (Owner::cache + Tickable)"
       ],
       "alternatives_rejected": [
         {
@@ -4266,6 +4272,14 @@
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
           "symbol": "TextFieldExternal::attach_state"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/caret_blink.rs",
+          "symbol": "CaretBlink"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/caret_blink.rs",
+          "symbol": "use_caret_blink"
         }
       ],
       "decision_status": "active"
@@ -15856,6 +15870,59 @@
         "R56.1.e — clipboard substrate (X11/Wayland/macOS/Win32)",
         "R56.1.f — selection + grapheme-cluster navigation (unicode-segmentation)",
         "R56.1.g — IME composition (preedit buffer + text-input-v3)"
+      ]
+    },
+    "R56.1.c": {
+      "decision_summary": "R56.1.c §5.38 §5.28 — CaretBlink animation primitive (530ms canonical half-period) + use_caret_blink hook (Owner::cache + register_animation once). Tickable trait impl, enabled/disabled gate, reset-on-edit semantics.",
+      "changes_bullets": [
+        "crates/pinion-core/src/widgets/caret_blink.rs: CaretBlink struct (Signal<bool> visible + Cell<f32> elapsed + Cell<bool> enabled) + Tickable impl (~410 LOC, 20 tests)",
+        "use_caret_blink hook: Owner::cache + register_animation once via cache_contains dedup",
+        "PERIOD_SECS = 0.530 — cross-platform canonical (Chromium/Firefox/Safari/Windows default)",
+        "reset() = caret stays solid on text edit / caret move (macOS/iOS/Web canonical UX)",
+        "is_at_rest = !enabled — backend animation-active gate releases when unfocused",
+        "crates/pinion-core/src/widgets/mod.rs: pub mod caret_blink registration"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core --lib caret_blink: 20 pass / 0 fail",
+        "cargo test --workspace --features pinion-runtime/vello: 2387 pass / 0 fail / 12 ignored (+20 vs R56.1.b baseline 2367)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "integration test pins owner.tick_animations(PERIOD_SECS) drives blink phase flip end-to-end"
+      ],
+      "carry_forward_bullets": [
+        "R56.1.b.1 — hello-text-field example crate (first visible consumer: TextEditState + CaretBlink + view-fn paint)",
+        "R56.1.b.2 — caret_x_for_position(&shaped_run, caret_pos) parley integration (text shaping side)",
+        "R56.1.d — key input dispatch (apply_key + §5.39 FocusManager) + CaretBlink.reset() wire on edit",
+        "R56.1.e — clipboard primitive (X11/Wayland/macOS/Win32)",
+        "R56.1.f — selection (mouse drag + shift-arrow) + extended grapheme cluster navigation",
+        "R56.1.g — IME composition (preedit buffer + Wayland text-input-v3)",
+        "TextField statechart → CaretBlink.set_enabled wire (Focused/Editing→true, Idle/Disabled→false) lands with R56.1.b.1 first consumer"
+      ],
+      "publishable_decision_summary": "R56.1.c §5.38 §5.28 — CaretBlink animation (530ms canonical) + use_caret_blink hook (Owner::cache + register_animation dedup). Tickable + enabled gate + reset-on-edit.",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widgets/caret_blink.rs — CaretBlink struct + Tickable impl",
+        "use_caret_blink hook — Owner::cache + register_animation once (cache_contains dedup)",
+        "PERIOD_SECS = 0.530 — Chromium/Firefox/Safari/Windows canonical half-period",
+        "reset() on text edit / caret move — macOS/iOS/Web canonical UX",
+        "is_at_rest = !enabled — backend redraw-loop gate releases when unfocused"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core --lib caret_blink: 20 pass / 0 fail",
+        "cargo test --workspace --features pinion-runtime/vello: 2387 pass / 0 fail",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "integration test pins owner.tick_animations drives blink phase flip end-to-end"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R56.1.b.1 — hello-text-field example crate (first visible consumer)",
+        "R56.1.b.2 — caret_x_for_position parley shaped-run integration",
+        "R56.1.d — key input dispatch + CaretBlink.reset() wire on edit",
+        "R56.1.e — clipboard substrate (X11/Wayland/macOS/Win32)",
+        "R56.1.f — selection + grapheme cluster navigation",
+        "R56.1.g — IME composition (preedit + text-input-v3)",
+        "TextField statechart → CaretBlink.set_enabled wire (R56.1.b.1 first consumer)"
       ]
     },
     "Round 1": {

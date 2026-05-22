@@ -1,5 +1,6 @@
 pub mod aria;
 pub mod button;
+pub mod caret_blink;
 pub mod checkbox;
 pub mod listbox;
 pub mod listbox_item;

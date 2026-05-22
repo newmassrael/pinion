@@ -307,3 +307,12 @@ reason = "Publishable trim for 100-char/200-char bullet/summary limits. Audit ha
 applied_in = "R56.1.b"
 content_hash_before = "f22a0c954b7372a9ea0d5b3b62af8f6ded9184adfa0b70718ff473d2d91d141e"
 content_hash_after = "e830dd5275986c929d1a49bd39331507c52888f5298eb06d97a825cf2ef5ed3d"
+
+[[publishable_override_ledger]]
+kind = "trim"
+target_id = "R56.1.c"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_impact_refs", "publishable_carry_forward_bullets"]
+reason = "Audit half appended with empty impact_refs/bullets defaults; publishable half subsequently populated with the canonical content. Trim covers char-limit shortening on the same factual decision."
+applied_in = "R56.1.c"
+content_hash_before = "bbdedcc9a038b1ef4169a6959baffc1bc10cbec6fb7c6e8878df82f15c8e526f"
+content_hash_after = "68fc6aa8a8ba0fa160d24f0f154e49da2c7c3e2f1b39fa38fd6366ec57c80c1a"

@@ -1626,6 +1626,7 @@ fn main() {
 - R51.143 — ShellCore (Vello) paint cycle dt wiring + root_owner forward (#1/2; TUI R51.144)
 - R51.144 — ShellCoreTui (TUI) paint cycle dt wiring 평행 (#2/2; Cell interior mutability)
 - R51.145 — clamp_frame_dt helper + MAX_FRAME_DT_SECS (1/30s) cap; 양 backend apply
+- R56.1.c — CaretBlink Tickable impl (530ms canonical; Owner::cache + register_animation)
 
 
 
@@ -1675,6 +1676,7 @@ fn main() {
 - examples/hello-button-tui/src/main.rs:drive_hover_progress
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::frame_signal
 - crates/pinion-core/src/style.rs:Color::lerp
+- crates/pinion-core/src/widgets/caret_blink.rs:CaretBlink
 
 
 
@@ -2891,6 +2893,7 @@ router.pointer_down(&mut state_scene);
 - R51.114 — aria::apply_aria_activate helper extracted (4 binding apply_key DRY 청산)
 - R56.1.a — TextField SCXML 4-state + binding + text_committed intent (R56 axis start)
 - R56.1.b — TextEditState + caret_rect helper + TextField::attach_state (R56.1.a sidecar grows)
+- R56.1.c — CaretBlink animation (530ms canonical) + use_caret_blink hook (Owner::cache + Tickable)
 
 
 
@@ -2994,6 +2997,8 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-core/src/widgets/text_field.rs:caret_rect
 - crates/pinion-core/src/widgets/text_field.rs:TextField::attach_state
 - crates/pinion-core/src/widgets/text_field.rs:TextFieldExternal::attach_state
+- crates/pinion-core/src/widgets/caret_blink.rs:CaretBlink
+- crates/pinion-core/src/widgets/caret_blink.rs:use_caret_blink
 
 
 
@@ -10147,6 +10152,39 @@ if __name__ == "__main__":
 - R56.1.e — clipboard substrate (X11/Wayland/macOS/Win32)
 - R56.1.f — selection + grapheme-cluster navigation (unicode-segmentation)
 - R56.1.g — IME composition (preedit buffer + text-input-v3)
+
+
+
+### R56.1.c — R56.1.c §5.38 §5.28 — CaretBlink animation (530ms canonical) + use_caret_blink hook (Owner::cache + register_animation dedup). Tickable + enabled gate + reset-on-edit.
+
+**Changes**:
+- crates/pinion-core/src/widgets/caret_blink.rs — CaretBlink struct + Tickable impl
+- use_caret_blink hook — Owner::cache + register_animation once (cache_contains dedup)
+- PERIOD_SECS = 0.530 — Chromium/Firefox/Safari/Windows canonical half-period
+- reset() on text edit / caret move — macOS/iOS/Web canonical UX
+- is_at_rest = !enabled — backend redraw-loop gate releases when unfocused
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib caret_blink: 20 pass / 0 fail
+- cargo test --workspace --features pinion-runtime/vello: 2387 pass / 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- integration test pins owner.tick_animations drives blink phase flip end-to-end
+
+
+
+**Impact**: §5.38, §5.28
+
+
+**Carry forward**:
+- R56.1.b.1 — hello-text-field example crate (first visible consumer)
+- R56.1.b.2 — caret_x_for_position parley shaped-run integration
+- R56.1.d — key input dispatch + CaretBlink.reset() wire on edit
+- R56.1.e — clipboard substrate (X11/Wayland/macOS/Win32)
+- R56.1.f — selection + grapheme cluster navigation
+- R56.1.g — IME composition (preedit + text-input-v3)
+- TextField statechart → CaretBlink.set_enabled wire (R56.1.b.1 first consumer)
 
 
 
