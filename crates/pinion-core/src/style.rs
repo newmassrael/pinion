@@ -22,7 +22,9 @@
 /// Future color-space extensions (HSL / LAB / sRGB-linear) lay on
 /// top via `#[non_exhaustive]`-shape methods, not by changing this
 /// in-memory representation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Color {
     pub r: u8,
     pub g: u8,

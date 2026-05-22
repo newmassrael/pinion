@@ -12,6 +12,7 @@ pub mod renderer;
 pub mod revision;
 pub mod scene;
 pub mod style;
+pub mod theme;
 pub mod topology;
 pub mod widget_core;
 pub mod widgets;
@@ -51,3 +52,4 @@ pub use style::{
     Stroke, StrokeCap, TextAlign, TextDecoration, TextOverflow, TextStyle,
     scale_normalized_to_px,
 };
+pub use theme::{ColorRole, Theme, ThemeProvider, use_theme};

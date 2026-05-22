@@ -3814,6 +3814,133 @@ if __name__ == "__main__":
 
 
 
+### §5.50. Theming substrate (R57)
+
+
+**Intent**: Establish theming substrate: ColorRole enum (Material 3 / W3C mirror) + Theme palette + ThemeProvider reactive wrapper + use_theme hook so widgets resolve semantic roles instead of RGB literals.
+
+
+**Rationale**:
+- Hard-coded RGB literals in every widget bind one palette at build time - no light/dark swap
+- W3C CSS variable / Material 3 / SwiftUI ColorScheme conventions all use semantic role tokens
+- Theme = canonical framework primitive for app-wide visual coherence + accessibility tuning
+- AI introspection: theme.resolve() role surface queryable via scene/query (pinion-unique)
+- Future palette mode transitions modelable as a statechart axis (R57.X carry)
+- R58 composite catalogue (DatePicker/Menu/Combobox) blocked without role-driven palette
+
+
+
+**Inputs**:
+- hello-toggle / hello-listbox / hello-textfield embed RGB literals (audit reveals 18+ literals)
+- Material 3 Color Roles (primary/onPrimary/surface/onSurface/outline) - industry baseline
+- W3C CSS Custom Properties (--color-surface) - cascade-resolved semantic tokens
+- SwiftUI Color.primary / Color.background - declarative role shorthand resolved by ColorScheme
+- prefers-color-scheme media query - OS-level light/dark hint to apply at runtime (R57.1 carry)
+
+
+
+**Outputs**:
+- pinion-core::ColorRole enum (Material 3 mirror, non_exhaustive for SemVer-safe extension)
+- pinion-core::Theme palette struct (6 Color fields, Copy, light/dark preset factories)
+- pinion-core::ThemeProvider reactive wrapper (Signal<Theme>, atomic set_theme swap)
+- pinion-core::use_theme(tag) hook (Owner::cache typed-key slot, callback-root-owner-wrap)
+- examples/hello-theme binary (visible light/dark toggle via Toggle + set_theme reactive cycle)
+- Color now derives serde Serialize/Deserialize (Signal<Theme> requirement; hot-reload prep)
+
+
+
+**Caveats**:
+- R57.0: Tier 1 substrate -- ColorRole + Theme + ThemeProvider + use_theme. 6 roles only.
+- R57.0: existing widget catalogue NOT retrofitted yet -- primitive paint colors remain literal
+- R57.0: ThemeMode enum + system prefers-color-scheme bridge deferred to R57.1
+- R57.0: typography / spacing tokens deferred to R57.2 (TextStyleRole + SpacingToken cascade)
+- R57.0: Color now derives serde Serialize/Deserialize -- Signal<Theme> trait bound; hot-reload prep
+- R57.0: hello-theme reactive wire -- view-fn use_theme().theme() + update set_theme on toggle
+
+
+
+**Alternatives rejected**:
+- Inline RGB literals per widget — no app-wide swap, retrofit cost grows with catalogue
+- Per-widget theme parameter passed through view-fn args — view-fn signature pollution
+- Global static Theme — race conditions on swap, no reactive subscription, no per-scope override
+- ColorScheme media query auto-resolve only — needed but R57.1; substrate must work without OS
+
+
+
+**Impact scope**: §5.2, §5.3, §5.22, §5.28, §5.38, §5.41
+
+
+**Examples**:
+
+```rust
+// R57.0 view-fn consumer (hello-theme): use_theme + reactive subscribe + role resolve.
+fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
+    let provider = use_theme("app");
+    let theme = provider.theme();  // auto-subscribes the current Owner
+    Scene::Container(
+        ContainerNode::new(vec![
+            Scene::Text(TextNode::styled(
+                "Theme demo",
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(18)
+                    .with_fg(theme.resolve(ColorRole::OnSurface)),
+            )),
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
+    )
+}
+
+// R57.0 reducer side-effect (hello-theme): swap palette on toggle intent.
+fn update(state: (ToggleState, bool), intent: &Intent) -> Vec<Command> {
+    if intent.tag.as_ref() == "toggle" {
+        let provider = use_theme("app");
+        provider.set_theme(if state.1 { Theme::dark() } else { Theme::light() });
+    }
+    Vec::new()
+}
+```
+
+```rust
+// R57.0 substrate API surface (pinion-core::theme).
+#[non_exhaustive]
+pub enum ColorRole { Surface, OnSurface, OnSurfaceMuted, Accent, OnAccent, Outline }
+
+pub struct Theme {
+    pub surface: Color, pub on_surface: Color, pub on_surface_muted: Color,
+    pub accent: Color, pub on_accent: Color, pub outline: Color,
+}
+impl Theme {
+    pub const fn light() -> Self { /* Material 3 light baseline, WCAG AA */ }
+    pub const fn dark()  -> Self { /* Material 3 dark baseline, WCAG AA  */ }
+    pub const fn resolve(&self, role: ColorRole) -> Color { /* per-role field dispatch */ }
+}
+
+pub struct ThemeProvider { /* Signal<Theme> + tag */ }
+impl ThemeProvider {
+    pub fn theme(&self) -> Theme { /* Signal::get -> auto-subscribe */ }
+    pub fn set_theme(&self, t: Theme) { /* Signal::set -> notify subscribers */ }
+}
+
+pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
+    Owner::current().expect("use_theme requires an active Owner scope")
+        .cache(tag, || ThemeProvider::with_tag(tag, Theme::light()))
+}
+```
+
+
+
+**Implementations**:
+- crates/pinion-core/src/theme.rs:ColorRole
+- crates/pinion-core/src/theme.rs:Theme
+- crates/pinion-core/src/theme.rs:ThemeProvider
+- crates/pinion-core/src/theme.rs:use_theme
+- crates/pinion-core/src/style.rs:Color
+- examples/hello-theme/src/main.rs:view
+- examples/hello-theme/src/main.rs:HelloThemeView::update
+
+
+
 ### §5.6. Reuse path (early cascade-emit vs Rust-native then port)
 
 
@@ -16991,6 +17118,43 @@ if __name__ == "__main__":
 **Carry forward**:
 - R57 Theming substrate — first slice axis carry.
 - F1 framework auto-tag conflict-aware — regression risk carry.
+
+
+
+### Round 572 — R57.0 5.50 theming substrate -- ColorRole + Theme + ThemeProvider + use_theme + hello-theme demo
+
+**Changes**:
+- pinion-core::theme module added (ColorRole + Theme + ThemeProvider + use_theme hook)
+- pinion-core::style Color now derives serde Serialize/Deserialize (Signal<Theme> requirement)
+- Theme::light + Theme::dark preset factories (Material 3 baseline, WCAG AA contrast)
+- ThemeProvider wraps Signal<Theme>; theme/set_theme atomic reactive swap (signal eq-skip)
+- use_theme(tag) Owner::cache typed-key hook -- same shape as use_text_edit_state/use_scroll_state
+- ColorRole::default_for fallback for partially-bound palette (W3C CSS variable cascade)
+- examples/hello-theme demo binary -- Toggle drives set_theme; view reads theme reactively
+- hello-theme view-fn uses 5 of 6 ColorRole tokens (surface/on_surface/on_surface_muted/accent/on_accent/outline)
+- workspace Cargo.toml registers hello-theme example
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2755 pass / 0 fail / 14 ignored (+17 vs 2738 baseline)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- 15 theme.rs unit tests (ColorRole resolve / Theme light+dark pins / Provider swap / use_theme cache)
+- 2 hello-theme tests (r55_g20 paint-root tag convention + r57_0 set_theme surface swap)
+- 14 regression demos PASS (hello_toggle_activate ... hello_textfield_compose)
+- mnemosyne validate-workspace clean (T1=0, RT=1/1, T3=0/0, T4=145, atomic orphan_refs=4+0)
+
+
+
+**Impact**: §5.50, §5.22, §5.28, §5.38
+
+
+**Carry forward**:
+- R57.1: ThemeMode enum + prefers-color-scheme OS bridge
+- R57.2: typography + spacing tokens (TextStyleRole + SpacingToken)
+- R57.X: retrofit existing widget catalogue to ColorRole resolution (Toggle/ListBox/TextField)
+- R57.X: theme fade animation via Color::lerp linear-space + Signal<Theme> interpolation
+- R57.X: Material 3 container/variant role pairs (primaryContainer/onPrimaryContainer/...)
 
 
 

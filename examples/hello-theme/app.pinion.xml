@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R57.0 §5.50 pinion-forge renderer manifest for hello-theme. Emits
+  `HelloThemeRenderer` (Vello-backed RenderContext + RenderSurface +
+  Renderer wrapper). Identical manifest shape to every other
+  hello-*-renderer; only the struct name differs.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloThemeRenderer"
+        backend="vello"/>
