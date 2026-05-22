@@ -10259,6 +10259,47 @@ if __name__ == "__main__":
 
 
 
+### R56.1.b.1.tui — R56.1.b.1.tui lands the TUI sibling of hello-textfield, validating §2 #6 GUI/TUI dual rendering for the R56 TextField axis. Same pinion-core widget substrate; only the shell differs.
+
+**Changes**:
+- New crate examples/hello-textfield-tui (Cargo.toml + src/main.rs)
+- WidgetCore impl mirrors Vello sibling — same State shape + read_state
+- create_external attaches use_text_edit_state(TF_TAG) to TextFieldExternal
+- apply_key delegates to TextFieldExternal::invoke('key', Text(key)) (R56.1.d)
+- view renders cell-based ContainerNode + TextNode + Border via pinion-tui
+- Cursor glyph U+2588 paints at byte-offset cell when not Disabled
+- Disabled state omits the cursor (no edit affordance)
+- AriaRole::TextInput access_node with AccessValue::Text(live text)
+- No attach_blink — TUI defers caret animation to terminal native cursor
+- Status line mirrors live state: state | caret position | text content
+- Hint line documents keyboard cheatsheet (Type/Backspace/Arrow/Home/End/d/e/Esc)
+- 8 binary tests: state round-trip + 3 ARIA + 4 render snapshot via render_one_frame
+- render_one_frame snapshot tests assert cursor glyph + text + status row content
+- First R56-axis consumer to validate §2 #6 GUI/TUI dual invariant
+
+
+
+**Verification**:
+- cargo test -p hello-textfield-tui: 8 passed / 0 failed
+- cargo test --workspace --features pinion-runtime/vello: 2499 passed / 0 failed / 13 ignored
+- Delta: +8 TUI snapshot/ARIA/round-trip tests over R56.1.j baseline of 2491
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- Lint baseline preserved: forbid unsafe + deny warnings + clippy::pedantic deny
+- Visible run path: cargo run -p hello-textfield-tui drops into alternate-screen TUI
+- Substrate sharing verified: pinion-core TextField widget reused unchanged
+
+
+
+**Impact**: §5.22, §5.38, §5.40, §5.41
+
+
+**Carry forward**:
+- pinion-tui FocusManager substrate (deferred per [[substrate-incompleteness-signal]] until 2nd focusable TUI binding)
+- TUI grapheme-cluster cell mapping (current cursor col = byte offset, ASCII-only correct)
+- TUI caret animation infrastructure if terminal native cursor proves insufficient
+
+
+
 ### R56.1.b.2 — R56.1.b.2 §5.36 §5.38 — pinion-text caret_rect_for_byte_offset closed-form helper wrapping parley::Cursor + CaretRect f32 struct.
 
 **Changes**:

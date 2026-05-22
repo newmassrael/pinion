@@ -19,6 +19,7 @@ members = [
     "examples/hello-commands",
     "examples/hello-commands-tui",
     "examples/hello-textfield",
+    "examples/hello-textfield-tui",
     "examples/hello-toggle",
     "examples/hello-toggle-tui",
     "examples/hello-checkbox",

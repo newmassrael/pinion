@@ -1,0 +1,26 @@
+[package]
+name = "hello-textfield-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R56.1.b.1.tui §5.41 §5.38 TUI parity for the R56 TextField widget — Vello hello-textfield's cell-based sibling; demonstrates §2 #6 GUI/TUI dual invariant on the R56 axis (type characters, Backspace/Delete/Arrow/Home/End navigate, d/e disable/enable, Esc quits)"
+publish = false
+
+[[bin]]
+name = "hello-textfield-tui"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Tier-1 TextField widget; same `External` + reactive sidecar
+# composition the Vello `hello-textfield` uses, swapped in for the
+# TUI WidgetCore shape.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.118 §5.40 — AT semantic surface (AriaRole::TextInput).
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R51.113 §5.41 — TUI substrate (ratatui + crossterm).
+pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }
+
+[lints]
+workspace = true

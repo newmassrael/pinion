@@ -361,3 +361,12 @@ reason = "R56.1.j audit landed via minimal ASCII shape per [[mnemosyne-multibyte
 applied_in = "R56.1.j"
 content_hash_before = "607aca5c64a9878b84d243cf162f634ec98d2371273056fca8ec39354cd6dc15"
 content_hash_after = "bb2367061145bc1b871b5ddfa4e0ed10ca60e968e6c64f5be5afefa9bc3ab6c3"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "R56.1.b.1.tui"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets"]
+reason = "R56.1.b.1.tui audit landed via minimal ASCII shape per [[mnemosyne-multibyte-audit-fallback]]; publishable expand carries richer detail across decision_summary + changes + verification."
+applied_in = "R56.1.b.1.tui"
+content_hash_before = "b17cef85b687182d76da2be822cd41a200517d95aa97ec48d01dc4bffa054594"
+content_hash_after = "c2fca77c08358721f084a54540771b5a58d99031e6efe343f817072108f0e1fd"

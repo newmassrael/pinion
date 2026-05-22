@@ -1633,6 +1633,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-textfield-tui"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-tui",
+]
+
+[[package]]
 name = "hello-toggle"
 version = "0.0.1"
 dependencies = [
