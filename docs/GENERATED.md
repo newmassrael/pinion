@@ -16966,6 +16966,34 @@ if __name__ == "__main__":
 
 
 
+### Round 571 — §5.32 — `HitPath::bbox` coordinate-frame docs clarification (R51.181 carry closure): explicit per-case rules for outside-Scroll / inside-Scroll-content / Scroll-itself-deepest.
+
+**Changes**:
+- `scene.rs` `HitPath::bbox` doc rewritten: matched primitive's declared rect verbatim, no transform.
+- 3 cases pinned: outside any `Scroll` (viewport frame) / inside `Scroll` content (content-intrinsic).
+- Third case: `Scroll`-itself-deepest — viewport rect in the parent (`(x,y)`) frame.
+- AI clients translate via `Scroll` introspect surface (`viewport` + `offset_{x,y}`).
+- Tagline: bbox = matched primitive's declared rect; walk `segments` to recover enclosing `Scroll`.
+- Test surface unchanged — R55.A.2 `hit_test` tests already pin all 3 frame cases.
+- Pure docs change — closes R51.181 carry.
+
+
+
+**Verification**:
+- `cargo test --workspace --features pinion-runtime/vello` = 2738 / 0 / 14 (unchanged — docs only).
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings.
+
+
+
+**Impact**: §5.32
+
+
+**Carry forward**:
+- R57 Theming substrate — first slice axis carry.
+- F1 framework auto-tag conflict-aware — regression risk carry.
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

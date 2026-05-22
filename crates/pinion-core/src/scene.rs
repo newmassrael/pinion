@@ -589,9 +589,38 @@ pub struct HitPath {
     /// child's §5.20 tag when present (`"save_btn"`). Empty when the
     /// root primitive itself is the deepest hit.
     pub segments: Vec<String>,
-    /// Bounding rect of the deepest matched primitive. Same coordinate
-    /// frame as the queried `(x, y)` (viewport-relative for the v0
-    /// RPC method, see §5.32).
+    /// Bounding rect of the deepest matched primitive — *the matched
+    /// primitive's own `rect` field, verbatim*. The coordinate frame
+    /// is the frame the primitive's rect is stated in, which depends
+    /// on the enclosing container chain:
+    ///
+    /// - **Outside any `Scroll`** (root scene, anywhere inside
+    ///   `Container` / `Box` descents): the bbox is in the *same
+    ///   frame as the queried `(x, y)`* — viewport-relative for the
+    ///   §5.32 v0 RPC call site. `Container` is path-transparent and
+    ///   applies no coordinate transform, so a hit on a deep child
+    ///   inside several nested Containers still reports the child's
+    ///   rect in viewport coords.
+    /// - **Inside a `Scroll` content subtree**: the bbox is in
+    ///   *content-intrinsic coordinates* (the frame the content's
+    ///   `rect` was declared in), **not** viewport-relative. The
+    ///   `Scroll` node introduces a coordinate transform via its
+    ///   `viewport.{x,y}` + `offset_{x,y}` fields; primitives deeper
+    ///   than the `Scroll` carry rects in the content frame so the
+    ///   layout / paint adapter can apply the scroll offset
+    ///   correctly. AI clients that need viewport-relative bboxes
+    ///   inside a `Scroll` must apply the inverse transform
+    ///   themselves (the §5.45 `Scroll` introspect surface exposes
+    ///   `viewport` + `offset` for this).
+    /// - **The `Scroll` container itself is the deepest hit** (e.g.
+    ///   viewport contains the point but the translation falls
+    ///   outside the content): the bbox is the `Scroll`'s viewport
+    ///   rect, stated in *the same frame as `(x, y)`* (mirror of the
+    ///   "outside any Scroll" case).
+    ///
+    /// Tagline: bbox = matched primitive's declared rect, no extra
+    /// transform. Walk the parent chain in the returned `segments`
+    /// to recover the enclosing `Scroll` (if any) and translate.
     pub bbox: Rect,
 }
 

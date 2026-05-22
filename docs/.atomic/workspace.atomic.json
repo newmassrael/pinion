@@ -27517,6 +27517,49 @@
         "AT-TUI integration — axis carry."
       ]
     },
+    "Round 571": {
+      "decision_summary": "HitPath bbox coordinate frame docs clarification: explicit per-case rules for Container Scroll outside-Scroll Scroll-itself-deepest closure of R51.181 carry.",
+      "changes_bullets": [
+        "scene.rs HitPath bbox doc rewritten: matched primitive declared rect verbatim no extra transform",
+        "3 per-case explanations: outside any Scroll (viewport-frame) / inside Scroll content (content-intrinsic) / Scroll-itself-deepest (viewport-frame)",
+        "AI client guidance to apply scroll inverse transform via Scroll introspect surface (viewport plus offset)",
+        "Tagline summary: bbox = matched declared rect plus walk segments to recover enclosing Scroll",
+        "Test surface unchanged R55.A.2 hit_test tests already pin all 3 frame cases",
+        "Pure docs no behavior change closes R51.181 carry"
+      ],
+      "verification_bullets": [
+        "cargo test workspace vello pass=2738 unchanged no behavior touched",
+        "cargo clippy workspace all-targets vello 0 warnings doc lint clean"
+      ],
+      "impact_refs": [
+        "5.32"
+      ],
+      "carry_forward_bullets": [
+        "R57 Theming substrate first slice axis carry",
+        "F1 framework auto-tag conflict-aware regression risk carry"
+      ],
+      "publishable_decision_summary": "§5.32 — `HitPath::bbox` coordinate-frame docs clarification (R51.181 carry closure): explicit per-case rules for outside-Scroll / inside-Scroll-content / Scroll-itself-deepest.",
+      "publishable_changes_bullets": [
+        "`scene.rs` `HitPath::bbox` doc rewritten: matched primitive's declared rect verbatim, no transform.",
+        "3 cases pinned: outside any `Scroll` (viewport frame) / inside `Scroll` content (content-intrinsic).",
+        "Third case: `Scroll`-itself-deepest — viewport rect in the parent (`(x,y)`) frame.",
+        "AI clients translate via `Scroll` introspect surface (`viewport` + `offset_{x,y}`).",
+        "Tagline: bbox = matched primitive's declared rect; walk `segments` to recover enclosing `Scroll`.",
+        "Test surface unchanged — R55.A.2 `hit_test` tests already pin all 3 frame cases.",
+        "Pure docs change — closes R51.181 carry."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test --workspace --features pinion-runtime/vello` = 2738 / 0 / 14 (unchanged — docs only).",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings."
+      ],
+      "publishable_impact_refs": [
+        "5.32"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R57 Theming substrate — first slice axis carry.",
+        "F1 framework auto-tag conflict-aware — regression risk carry."
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [
