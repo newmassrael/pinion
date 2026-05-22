@@ -16553,6 +16553,52 @@ if __name__ == "__main__":
 
 
 
+### Round 559 — R56.1.g.1 §5.38 §5.22 — `TextFieldExternal` IME composition dispatch: `apply_composition_start/update/commit/cancel` + commit-on-blur upgrades `text_committed` payload to `Text(committed)`.
+
+**Changes**:
+- `crates/pinion-core/src/widgets/text_field.rs`: four new `TextFieldExternal` composition methods
+- `apply_composition_start` wires `preedit_start` + drives `BeginEdit` + blink reset
+- `apply_composition_update` wires `preedit_update`; SCXML stays in `Editing`
+- `apply_composition_commit` wires `preedit_commit` + bypasses `IntentEmitter::dispatch`
+- Bypass via `em.inner.send(CommitEdit)` so `detect` does NOT push the legacy `Intent(Null)`
+- Manual `em.push(Intent(text_committed, Text(committed)))` upgrades the payload shape
+- Mirrors the W3C `CompositionEvent.data` shape the AI client expects
+- `apply_composition_cancel` wires `preedit_cancel` + drives `CancelEdit` (silent in detect)
+- IME canonical cancel-discards-preedit (Escape during composition, Wayland cancel)
+- Intent emission gated on `was_composing AND !committed.is_empty()` (semantic correctness)
+- `was_composing` sampled before `preedit_commit` clears the buffer (post-clear read fails)
+- `on_focus_change(false)` commits non-empty preedit via `apply_composition_commit`
+- Then drives `Blur` (W3C IME canonical commit-on-blur, Wayland / macOS / GTK / TSF)
+- Empty preedit at blur cancels composition instead of committing
+- No-data `compositionend` is a cancel — matches the platform W3C convention
+- Plain `send(CommitEdit)` / `send(Blur from Editing)` still emit `Intent(Null)`
+- Backward compat held for the legacy plain-send path
+- Blink resets on start / update / commit / cancel (user-interaction-marker UX)
+- 29 `r56_1_g_tests` cover 4-method lifecycle + commit-on-blur + blink reset
+- Korean multi-byte `한` composition end-to-end test
+- Backward-compat plain-send and edge-case idempotence tests
+
+
+
+**Verification**:
+- `cargo test -p pinion-core widgets::text_field::r56_1_g_tests`: 29 pass / 0 fail
+- `cargo test --workspace --features pinion-runtime/vello`: 2642 pass / 0 fail / 13 ignored
+- Delta +29 tests over the R56.1.g.0 baseline (2613)
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello`: 0 warnings
+- Workspace.lints baseline: forbid `unsafe_code` + deny warnings + `clippy::pedantic` deny
+
+
+
+**Impact**: §5.38, §5.22
+
+
+**Carry forward**:
+- R56.1.g.2 RPC preedit slot + composition invoke wire
+- R56.1.g.3 hello-textfield preedit visual + composition demo
+- Platform IME bridge crate carry (Wayland text-input-v3 + macOS NSTextInputContext + Windows TSF)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

@@ -749,6 +749,146 @@ impl TextFieldExternal {
     pub fn state(&self) -> TextFieldState {
         self.em.inner.state()
     }
+
+    /// R56.1.g §5.38 §5.22 — begin an IME composition. Seeds the
+    /// attached [`TextEditState`] preedit buffer (via
+    /// [`TextEditState::preedit_start`]) AND drives
+    /// [`TextFieldEvent::BeginEdit`] through the SCXML.
+    ///
+    /// The two layers stay loosely coupled: `preedit_start` mutates
+    /// the reactive sidecar (4-axis batched write when a selection
+    /// was active, simple 1-axis write otherwise); the SCXML
+    /// transition advances `Focused` → `Editing` so the caret-blink
+    /// gate + the introspect `state` slot reflect "composition in
+    /// flight". The blink resets to fully-visible on
+    /// composition-start to mirror the canonical macOS / iOS / GTK /
+    /// Web "user interacted, snap the caret solid" UX
+    /// ([`r56_1_j` carry close](#r56_1_j)).
+    ///
+    /// No-op on bare `TextFieldExternal`s without an attached
+    /// [`TextEditState`] — the preedit buffer side silently skips,
+    /// the SCXML transition still fires so the AI client can
+    /// observe the state.
+    pub fn apply_composition_start(&mut self) {
+        if let Some(state) = self.em.inner.text_state() {
+            state.preedit_start();
+        }
+        self.send(TextFieldEvent::BeginEdit);
+        if let Some(blink) = self.em.inner.blink() {
+            blink.reset();
+        }
+    }
+
+    /// R56.1.g §5.38 §5.22 — update the active IME preedit string
+    /// (the W3C `compositionupdate` mirror, where `data` carries the
+    /// current preedit text). Forwards into
+    /// [`TextEditState::preedit_update`]; the SCXML stays in
+    /// `Editing` (no transition fires) because the canonical IME
+    /// contract is one start + many updates + one commit-or-cancel.
+    ///
+    /// The blink resets on every update so the caret stays solid
+    /// while the user is composing (matches the platform IME UX:
+    /// macOS `NSTextInputContext` blinks the caret only when the
+    /// preedit pauses).
+    ///
+    /// No-op on bare `TextFieldExternal`s and on defensive
+    /// out-of-order delivery (`preedit_update` without a prior
+    /// `preedit_start`). The substrate idempotence is documented on
+    /// [`TextEditState::preedit_update`].
+    pub fn apply_composition_update(&mut self, preedit: &str) {
+        if let Some(state) = self.em.inner.text_state() {
+            state.preedit_update(preedit);
+        }
+        if let Some(blink) = self.em.inner.blink() {
+            blink.reset();
+        }
+    }
+
+    /// R56.1.g §5.38 §5.22 — commit the active IME composition.
+    /// Inserts `committed` into the attached [`TextEditState`] at
+    /// the current caret (via [`TextEditState::preedit_commit`]),
+    /// drives [`TextFieldEvent::CommitEdit`] through the SCXML, and
+    /// queues a `"text_committed"` intent with the
+    /// [`IntrospectValue::Text`] payload carrying the committed
+    /// string.
+    ///
+    /// The intent payload **upgrades** from the R56.1.a
+    /// [`IntrospectValue::Null`] (legacy plain
+    /// `send(TextFieldEvent::CommitEdit)`) to
+    /// [`IntrospectValue::Text`] on this composition path — the
+    /// W3C `CompositionEvent.data` shape the AI client expects when
+    /// observing IME commits. Plain `send(TextFieldEvent::CommitEdit)`
+    /// (no composition layer) continues to emit
+    /// [`IntrospectValue::Null`] for backward compatibility — the
+    /// detect rule on the [`WidgetTransition`] impl handles that
+    /// path unchanged.
+    ///
+    /// The SCXML drive bypasses [`IntentEmitter::dispatch`] (no
+    /// `detect` invocation) so the `Editing → Focused` transition
+    /// does **not** also push the legacy `Null`-payload intent on
+    /// top of the upgraded `Text` payload — one composition commit
+    /// emits exactly one intent.
+    ///
+    /// Empty `committed` is the cancel-shaped commit (the W3C
+    /// `compositionend` with empty `data` after a cancel): the
+    /// preedit buffer clears, the SCXML transitions, but **no**
+    /// intent is queued (an empty commit semantically committed no
+    /// text). Applications that want a marker intent on empty
+    /// commit use [`Self::apply_composition_cancel`] instead.
+    ///
+    /// No-op on bare `TextFieldExternal`s without an attached
+    /// [`TextEditState`] — both the buffer mutation and the intent
+    /// push are skipped, but the SCXML transition still fires so
+    /// the AI client can observe the state-pair flip.
+    pub fn apply_composition_commit(&mut self, committed: &str) {
+        // Sample the composition-active predicate before
+        // `preedit_commit` clears the buffer — the post-clear read
+        // would always return `false` and gate the intent off.
+        let was_composing = self
+            .em
+            .inner
+            .text_state()
+            .is_some_and(|s| s.is_composing());
+        if let Some(state) = self.em.inner.text_state() {
+            state.preedit_commit(committed);
+        }
+        self.em.inner.send(TextFieldEvent::CommitEdit);
+        if was_composing && !committed.is_empty() {
+            self.em.push(Intent::new_static(
+                "text_committed",
+                IntrospectValue::Text(committed.to_string()),
+            ));
+        }
+        if let Some(blink) = self.em.inner.blink() {
+            blink.reset();
+        }
+    }
+
+    /// R56.1.g §5.38 §5.22 — cancel the active IME composition.
+    /// Clears the attached [`TextEditState`] preedit buffer (via
+    /// [`TextEditState::preedit_cancel`]) AND drives
+    /// [`TextFieldEvent::CancelEdit`] through the SCXML. The SCXML
+    /// cancel transition is silent (the detect rule does not emit a
+    /// `text_committed` intent on `CancelEdit` — matches the IME
+    /// canonical "cancel-discards-preedit" path: Escape during
+    /// composition, or Wayland text-input-v3 cancel).
+    ///
+    /// The blink resets so the caret stays solid for the
+    /// post-cancel keystroke the user is presumably about to type
+    /// (matches the macOS `NSTextInputContext` UX).
+    ///
+    /// No-op on bare `TextFieldExternal`s without an attached
+    /// [`TextEditState`] (buffer mutation skipped; SCXML transition
+    /// still fires).
+    pub fn apply_composition_cancel(&mut self) {
+        if let Some(state) = self.em.inner.text_state() {
+            state.preedit_cancel();
+        }
+        self.send(TextFieldEvent::CancelEdit);
+        if let Some(blink) = self.em.inner.blink() {
+            blink.reset();
+        }
+    }
 }
 
 impl Default for TextFieldExternal {
@@ -816,16 +956,49 @@ impl External for TextFieldExternal {
     /// - `Disabled + focus|blur`: no transition (SCXML rejects), the
     ///   focus mgr still tracks the tag but the widget stays inert.
     ///
+    /// R56.1.g §5.38 §5.22 — when the focus loss arrives while a
+    /// composition is in flight (preedit buffer `Some(s)` with
+    /// non-empty `s`), the substrate forwards through
+    /// [`Self::apply_composition_commit`] before driving the
+    /// `Blur` event so the committed text + the upgraded
+    /// `Intent(Text(s))` payload fire in the canonical order. Empty
+    /// preedit (composition active but no preedit text yet — the
+    /// `compositionstart`-before-`compositionupdate` window) cancels
+    /// instead of committing, matching the platform "no-data
+    /// compositionend is a cancel" convention. The legacy
+    /// `Intent(Null)` payload from the `Editing → Idle` detect rule
+    /// stays in place for the plain `send(Blur)` path (no
+    /// composition layer); the commit-on-blur path here pushes the
+    /// upgraded `Text` intent through `apply_composition_commit`.
+    ///
     /// The blink lifecycle syncs automatically through
     /// [`TextField::sync_blink`] (called from [`TextField::send`]),
     /// so attaching a [`CaretBlink`] makes the gate flip in lockstep
     /// with the statechart transition.
     fn on_focus_change(&mut self, focused: bool) {
-        self.send(if focused {
-            TextFieldEvent::Focus
-        } else {
-            TextFieldEvent::Blur
-        });
+        if focused {
+            self.send(TextFieldEvent::Focus);
+            return;
+        }
+        // R56.1.g §5.38 §5.22 — commit-on-blur for in-flight
+        // composition. Empty preedit (start without any update yet)
+        // cancels instead of committing — matches the W3C
+        // "no-data compositionend is a cancel" convention.
+        let pending_preedit = self
+            .em
+            .inner
+            .text_state()
+            .and_then(|s| s.preedit());
+        match pending_preedit {
+            Some(text) if !text.is_empty() => {
+                self.apply_composition_commit(&text);
+            }
+            Some(_) => {
+                self.apply_composition_cancel();
+            }
+            None => {}
+        }
+        self.send(TextFieldEvent::Blur);
     }
 }
 
@@ -3493,6 +3666,434 @@ mod r56_1_j_tests {
             .invoke("key", IntrospectValue::Text("h".to_string()))
             .unwrap();
         assert_eq!(r, IntrospectValue::Bool(true));
+    }
+}
+
+#[cfg(test)]
+mod r56_1_g_tests {
+    //! R56.1.g §5.38 §5.22 — `TextField` IME composition dispatch path.
+    //!
+    //! Covers the `apply_composition_start` / `_update` / `_commit` /
+    //! `_cancel` lifecycle on `TextFieldExternal`, the SCXML transitions
+    //! they drive, the `Intent("text_committed", Text(_))` payload
+    //! upgrade contract, the commit-on-blur extension to
+    //! `External::on_focus_change`, and the blink-reset side effects.
+    //! Plain `send(CommitEdit | Blur)` paths (no composition layer) are
+    //! covered in the legacy `tests` module and continue to emit the
+    //! `IntrospectValue::Null` payload for backward compat.
+
+    use super::{TextField, TextFieldEvent, TextFieldExternal, TextFieldState};
+    use crate::animation::Tickable;
+    use crate::external::{External, IntrospectValue};
+    use crate::intent::Intent;
+    use crate::widgets::caret_blink::CaretBlink;
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    fn focused_external_with_state() -> (TextFieldExternal, Rc<TextEditState>) {
+        let state = Rc::new(TextEditState::with_initial(String::new()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.send(TextFieldEvent::Focus);
+        (tfx, state)
+    }
+
+    fn drain(tfx: &mut TextFieldExternal) -> Vec<Intent> {
+        let mut out = Vec::new();
+        tfx.drain_intents(&mut |i| out.push(i));
+        out
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // apply_composition_start
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_apply_composition_start_drives_begin_edit() {
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        assert_eq!(tfx.state(), TextFieldState::Editing);
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_start_seeds_preedit_empty_some() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        assert_eq!(state.preedit(), Some(String::new()));
+        assert!(state.is_composing());
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_start_on_bare_external_still_drives_scxml() {
+        // No attached TextEditState — SCXML transition still fires so the
+        // AI client can observe state via the introspect `state` slot.
+        let mut tfx = TextFieldExternal::new();
+        tfx.send(TextFieldEvent::Focus);
+        tfx.apply_composition_start();
+        assert_eq!(tfx.state(), TextFieldState::Editing);
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_start_drains_active_selection() {
+        // Compose-over-selection: selection (1,4) drained, then compose
+        // begins. Identical to TextEditState::preedit_start contract.
+        let state = Rc::new(TextEditState::with_initial("abcdef".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.send(TextFieldEvent::Focus);
+        state.set_selection(1, 4);
+        tfx.apply_composition_start();
+        assert_eq!(state.text(), "aef");
+        assert_eq!(state.caret(), 1);
+        assert_eq!(state.selection_anchor(), None);
+        assert_eq!(state.preedit(), Some(String::new()));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // apply_composition_update
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_apply_composition_update_sets_preedit_content() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("hello");
+        assert_eq!(state.preedit(), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_update_keeps_scxml_in_editing() {
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("hi");
+        tfx.apply_composition_update("hi!");
+        assert_eq!(tfx.state(), TextFieldState::Editing);
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_update_no_op_when_not_composing() {
+        // Defensive against out-of-order: update without start stays None.
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_update("hi");
+        assert_eq!(state.preedit(), None);
+        assert_eq!(state.text(), "");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // apply_composition_commit
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_inserts_text_at_caret() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("xyz");
+        tfx.apply_composition_commit("XYZ");
+        assert_eq!(state.text(), "XYZ");
+        assert_eq!(state.caret(), 3);
+        assert_eq!(state.preedit(), None);
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_drives_commit_edit() {
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_commit("hi");
+        assert_eq!(tfx.state(), TextFieldState::Focused);
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_emits_text_intent_with_payload() {
+        // The payload upgrade contract: plain CommitEdit emits Null,
+        // apply_composition_commit emits Text(committed).
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        let _ = drain(&mut tfx); // discard any prior intents
+        tfx.apply_composition_commit("hello");
+        let intents = drain(&mut tfx);
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].tag_str(), "text_committed");
+        assert!(matches!(
+            intents[0].payload,
+            IntrospectValue::Text(ref s) if s == "hello"
+        ));
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_emits_exactly_one_intent() {
+        // The em.inner.send bypass must NOT additionally fire detect's
+        // Null intent on top of the manual Text intent.
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        let _ = drain(&mut tfx);
+        tfx.apply_composition_commit("hi");
+        let intents = drain(&mut tfx);
+        assert_eq!(
+            intents.len(),
+            1,
+            "exactly one intent per commit (no detect duplicate)",
+        );
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_empty_clears_without_intent() {
+        // Empty commit is the cancel-shape compositionend: clears the
+        // preedit, drives SCXML, but emits NO intent (no text committed).
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("h");
+        let _ = drain(&mut tfx);
+        tfx.apply_composition_commit("");
+        assert_eq!(state.preedit(), None);
+        assert_eq!(state.text(), "");
+        assert_eq!(tfx.state(), TextFieldState::Focused);
+        assert!(drain(&mut tfx).is_empty(), "empty commit emits no intent");
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_no_intent_on_bare_external() {
+        // No attached state means no composition could have been active,
+        // so no commit intent fires (the AI client gates on `was_composing`).
+        let mut tfx = TextFieldExternal::new();
+        tfx.send(TextFieldEvent::Focus);
+        tfx.apply_composition_start();
+        tfx.apply_composition_commit("hi");
+        assert!(
+            drain(&mut tfx).is_empty(),
+            "bare external commit emits no intent (no was_composing)",
+        );
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_no_intent_when_not_composing() {
+        // Defensive: commit without start is not a valid lifecycle —
+        // no intent fires (the substrate preedit_commit also no-ops).
+        let (mut tfx, _state) = focused_external_with_state();
+        let _ = drain(&mut tfx);
+        tfx.apply_composition_commit("hi");
+        assert!(
+            drain(&mut tfx).is_empty(),
+            "commit without start emits no intent",
+        );
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_into_middle_of_text() {
+        let state = Rc::new(TextEditState::with_initial("ad".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.send(TextFieldEvent::Focus);
+        state.set_caret(1);
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("bc");
+        tfx.apply_composition_commit("bc");
+        assert_eq!(state.text(), "abcd");
+        assert_eq!(state.caret(), 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // apply_composition_cancel
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_apply_composition_cancel_clears_preedit_without_insert() {
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("xyz");
+        tfx.apply_composition_cancel();
+        assert_eq!(state.preedit(), None);
+        assert_eq!(state.text(), "");
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_cancel_drives_cancel_edit() {
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_cancel();
+        assert_eq!(tfx.state(), TextFieldState::Focused);
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_cancel_emits_no_intent() {
+        // CancelEdit is silent in detect — the IME canonical
+        // cancel-discards-preedit contract.
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        let _ = drain(&mut tfx);
+        tfx.apply_composition_cancel();
+        assert!(drain(&mut tfx).is_empty(), "cancel must be silent");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Backward compat — plain send paths still emit Null payload
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_plain_commit_edit_still_emits_null_intent() {
+        // Plain ext.send(CommitEdit) without going through the
+        // composition layer continues to emit Intent(Null) per the
+        // R56.1.a legacy contract.
+        let mut tfx = TextFieldExternal::new();
+        tfx.send(TextFieldEvent::Focus);
+        tfx.send(TextFieldEvent::BeginEdit);
+        tfx.send(TextFieldEvent::CommitEdit);
+        let intents = drain(&mut tfx);
+        assert_eq!(intents.len(), 1);
+        assert!(matches!(intents[0].payload, IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r56_1_g_plain_blur_during_editing_still_emits_null_intent() {
+        // Plain ext.send(Blur) bypasses on_focus_change, so the legacy
+        // commit-on-blur fires Intent(Null) via the detect rule.
+        let mut tfx = TextFieldExternal::new();
+        tfx.send(TextFieldEvent::Focus);
+        tfx.send(TextFieldEvent::BeginEdit);
+        tfx.send(TextFieldEvent::Blur);
+        let intents = drain(&mut tfx);
+        assert_eq!(intents.len(), 1);
+        assert!(matches!(intents[0].payload, IntrospectValue::Null));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // on_focus_change — commit-on-blur with preedit
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_blur_during_composition_with_preedit_emits_text_intent() {
+        // The W3C IME canonical commit-on-blur: focus loss with an
+        // active preedit commits the preedit as if compositionend(data)
+        // fired with the preedit string as data.
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("hi");
+        let _ = drain(&mut tfx);
+        tfx.on_focus_change(false);
+        let intents = drain(&mut tfx);
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].tag_str(), "text_committed");
+        assert!(matches!(
+            intents[0].payload,
+            IntrospectValue::Text(ref s) if s == "hi"
+        ));
+        assert_eq!(state.text(), "hi", "preedit committed into buffer");
+        assert_eq!(tfx.state(), TextFieldState::Idle, "blur reached Idle");
+    }
+
+    #[test]
+    fn r56_1_g_blur_during_composition_with_empty_preedit_cancels() {
+        // compositionstart-without-update-then-blur: substrate cancels
+        // instead of committing (no-data compositionend is a cancel).
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        let _ = drain(&mut tfx);
+        tfx.on_focus_change(false);
+        assert_eq!(state.preedit(), None, "cancel cleared preedit");
+        assert_eq!(state.text(), "", "no insertion on cancel");
+        assert!(
+            drain(&mut tfx).is_empty(),
+            "empty-preedit blur emits no intent",
+        );
+        assert_eq!(tfx.state(), TextFieldState::Idle);
+    }
+
+    #[test]
+    fn r56_1_g_blur_from_focused_without_compose_is_silent() {
+        // Plain Focused → Idle blur (no composition active) emits no
+        // intent. Same shape as the legacy backward-compat test, here
+        // verified through on_focus_change to cover the routing path.
+        let (mut tfx, _state) = focused_external_with_state();
+        tfx.on_focus_change(false);
+        assert!(drain(&mut tfx).is_empty());
+        assert_eq!(tfx.state(), TextFieldState::Idle);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Blink reset on composition lifecycle methods
+    // ─────────────────────────────────────────────────────────────
+
+    fn focused_external_with_hidden_blink() -> (TextFieldExternal, Rc<CaretBlink>) {
+        let state = Rc::new(TextEditState::with_initial(String::new()));
+        let blink = Rc::new(CaretBlink::new());
+        let mut tfx = TextFieldExternal::new()
+            .attach_state(state)
+            .attach_blink(Rc::clone(&blink));
+        tfx.send(TextFieldEvent::Focus);
+        // Tick into the hidden half of the 530ms period so a `reset()`
+        // flips visibility back to `true` observably.
+        blink.tick(0.6);
+        assert!(!blink.visible(), "fixture: blink starts the test hidden");
+        (tfx, blink)
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_start_resets_blink() {
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        tfx.apply_composition_start();
+        assert!(blink.visible(), "compose-start resets blink to visible");
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_update_resets_blink() {
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        tfx.apply_composition_start();
+        blink.tick(0.6);
+        assert!(!blink.visible());
+        tfx.apply_composition_update("h");
+        assert!(blink.visible(), "compose-update resets blink to visible");
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_commit_resets_blink() {
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        tfx.apply_composition_start();
+        blink.tick(0.6);
+        assert!(!blink.visible());
+        tfx.apply_composition_commit("h");
+        assert!(blink.visible(), "compose-commit resets blink to visible");
+    }
+
+    #[test]
+    fn r56_1_g_apply_composition_cancel_resets_blink() {
+        let (mut tfx, blink) = focused_external_with_hidden_blink();
+        tfx.apply_composition_start();
+        blink.tick(0.6);
+        assert!(!blink.visible());
+        tfx.apply_composition_cancel();
+        assert!(blink.visible(), "compose-cancel resets blink to visible");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Multi-byte UTF-8 (Korean composition end-to-end)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_korean_composition_commits_three_byte_syllable() {
+        // Canonical Korean IME flow: 'ㅎ' + 'ㅏ' + 'ㄴ' jamo → "한"
+        // (3-byte UTF-8). The substrate doesn't know jamo composition —
+        // the platform IME composes; substrate just inserts the
+        // committed string verbatim at the caret.
+        let (mut tfx, state) = focused_external_with_state();
+        tfx.apply_composition_start();
+        tfx.apply_composition_update("ㅎ");
+        tfx.apply_composition_update("하");
+        tfx.apply_composition_commit("한");
+        assert_eq!(state.text(), "한");
+        assert_eq!(state.caret(), 3, "caret advanced 3 bytes");
+        // Buffer is still valid UTF-8.
+        let _: &str = state.text().as_str();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // TextField as bare widget (sanity check the SCXML path)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_1_g_text_field_send_unchanged() {
+        // Sanity: TextField (not Ext) still drives SCXML normally
+        // through plain send. R56.1.g doesn't touch the inner widget.
+        let mut tf = TextField::new();
+        tf.send(TextFieldEvent::Focus);
+        tf.send(TextFieldEvent::BeginEdit);
+        tf.send(TextFieldEvent::CommitEdit);
+        assert_eq!(tf.state(), TextFieldState::Focused);
     }
 }
 
