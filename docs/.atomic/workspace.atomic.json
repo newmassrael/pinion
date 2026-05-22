@@ -27801,30 +27801,32 @@
         "R57.2 typography plus spacing tokens cascade carry",
         "pinion-shell host keyboard isolation env var substrate carry"
       ],
-      "publishable_decision_summary": "R57.X.toggle 5.50 hello-toggle ColorRole resolve + V update intent payload authority fix",
+      "publishable_decision_summary": "R57.X.toggle §5.50 — hello-toggle Material 3 Switch role retrofit + V::update intent.payload Bool 권위 fix (post-flip payload authority, V::read_state SCXML in-flight lag 회피).",
       "publishable_changes_bullets": [
-        "theme.rs add ColorRole SurfaceContainerHighest plus Theme field plus light dark default",
-        "hello-toggle main.rs view uses use_theme plus ColorRole resolve M3 Switch mapping",
-        "hello-toggle main.rs V update reads intent payload Bool authority and calls set_theme",
-        "hello-theme main.rs V update same intent payload fix plus dotted wire form match",
-        "tools demos hello_toggle_style.py color pin updated to Outline plus OnSurface roles"
+        "theme.rs: ColorRole::SurfaceContainerHighest variant + Theme field (M3 light/dark sur5 tier).",
+        "hello-toggle/main.rs view: use_theme().theme().resolve() cascade + M3 Switch 4-axis role mapping.",
+        "hello-toggle/main.rs update: intent.payload Bool 권위로 set_theme swap (post-flip authority).",
+        "hello-theme/main.rs update: 동일 intent.payload fix + dotted wire form 매칭.",
+        "tools/demos/hello_toggle_style.py: Outline + OnSurface role 색상 pin 갱신."
       ],
       "publishable_verification_bullets": [
-        "cargo test workspace vello 2759 pass 0 fail 14 ignored",
-        "cargo clippy workspace all-targets vello 0 warnings",
-        "14 demos PASS regression",
-        "RPC verify hello-toggle and hello-theme surface light to dark cycle confirmed"
+        "cargo test --workspace --features pinion-runtime/vello = 2759 pass / 0 fail / 14 ignored (+2 new).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
+        "14 demos PASS 회귀 (hello_toggle_style demo color pin theme-aware로 갱신됨).",
+        "RPC verify: hello-toggle + hello-theme light↔dark cycle 자동 검증 통과."
       ],
       "publishable_impact_refs": [
         "5.50",
         "5.22",
-        "5.38"
+        "5.38",
+        "5.20"
       ],
       "publishable_carry_forward_bullets": [
-        "R57.X widget retrofit cascade ListBox TextField Button Checkbox Radio Slider remain",
-        "R57.1 ThemeMode plus prefers-color-scheme bridge axis carry",
-        "R57.2 typography plus spacing tokens cascade carry",
-        "pinion-shell host keyboard isolation env var substrate carry"
+        "R57.X.intent-tag-macro: substrate macro (intent_tag!) before 6 widget retrofit cascade.",
+        "R57.X widget retrofit cascade: ListBox / TextField / Button / Checkbox / Radio / Slider 6개.",
+        "R57.1 ThemeMode + prefers-color-scheme OS bridge axis.",
+        "R57.2 typography + spacing tokens cascade.",
+        "pinion-tui scrollbar first-paint parity verify (cross-backend GUI/TUI 정합)."
       ]
     },
     "Round 574": {
@@ -27850,27 +27852,28 @@
         "resize event same-frame warmup currently 1 frame flash before next paint settles",
         "ScrollState set_max must_use clippy carry currently allowed for setup paths"
       ],
-      "publishable_decision_summary": "R57.X.scrollbar 5.45 compute_layout_with_scroll_dirty plus shell first-paint warmup substrate",
+      "publishable_decision_summary": "R57.X.scrollbar §5.45 — first-paint chicken-and-egg substrate fix: ScrollState::set_max bool 반환 + compute_layout_with_scroll_dirty 변형 + shell same-frame 2-pass (compute-then-render-twice 정통).",
       "publishable_changes_bullets": [
-        "scroll.rs ScrollState set_max returns bool via Signal revision delta",
-        "layout.rs compute_layout_with_scroll_dirty returns bool plus update_scroll_state_bounds folds dirty",
-        "lib.rs re-export compute_layout_with_scroll_dirty",
-        "shell substrate compute_paint_scene plus dispatch_rpc producer re-run V view plus layout when dirty",
-        "layout.rs 3 regression tests r57_x_scrollbar first dirty true second false no-state false"
+        "ScrollState::set_max -> bool (Signal::revision pre/post delta)로 dirty 산출.",
+        "compute_layout_with_scroll_dirty(...) -> bool 신규 API (기존 compute_layout void wrapper).",
+        "update_scroll_state_bounds 재귀 walk |= fold bool 반환.",
+        "compute_paint_scene + dispatch_rpc::produce 양쪽 same-frame 2-pass (Signal eq-skip).",
+        "+3 r57_x_scrollbar regression test (first-true / second-false eq-skip / no-state-false)."
       ],
       "publishable_verification_bullets": [
-        "cargo test workspace vello 2760 pass 0 fail 14 ignored",
-        "cargo clippy workspace all-targets vello 0 warnings",
-        "14 demos PASS regression",
-        "RPC verify hello-listbox first paint thumb h equals 66 not 164 across boot_grace 0.05 0.1 0.3"
+        "cargo test --workspace --features pinion-runtime/vello = 2760 pass / 0 fail / 14 ignored (+3 new).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
+        "14 demos PASS 회귀; hello-listbox scrollbar 첫 paint thumb 비례 (~40%) 표시 확인.",
+        "RPC verify: scene/path 가 scrollbar widget 의 max + offset 변화 추적."
       ],
       "publishable_impact_refs": [
         "5.45",
         "5.49"
       ],
       "publishable_carry_forward_bullets": [
-        "resize event same-frame warmup currently 1 frame flash before next paint settles",
-        "ScrollState set_max must_use clippy carry currently allowed for setup paths"
+        "resize event same-frame warmup: 현재 1 frame flash 후 안정 (Resize 이벤트 한정).",
+        "ScrollState::set_max must_use_candidate clippy wart: setup-path init_max(...) void 분리 후보.",
+        "pinion-tui scrollbar first-paint parity verify: 이번 fix는 pinion-shell 한정, TUI 시이트 미검증."
       ]
     },
     "Round 575": {
@@ -27896,27 +27899,28 @@
         "set_max API split init_max + set_max (option D)",
         "R57.X.listbox theme retrofit (option C, 2nd consumer of intent_tag!)"
       ],
-      "publishable_decision_summary": "R57.X.intent-tag-macro 5.20 intent_tag! compile-time concat substrate macro + migrate 2 binaries to remove hand-rolled dotted literal hard-code.",
+      "publishable_decision_summary": "R57.X.intent-tag-macro §5.20 — pinion_core::intent_tag! compile-time concat substrate macro (stdlib concat!, dual literal, 0 dep) + hello-toggle/hello-theme reducer binding migration.",
       "publishable_changes_bullets": [
-        "pinion-core::intent_tag! macro added (stdlib concat!, dual literal).",
-        "hello-toggle TOGGLE_INTENT_TAG_FULL migrated to intent_tag!(...).",
-        "hello-theme TOGGLE_INTENT_TAG_FULL migrated to intent_tag!(...).",
-        "3 unit tests + 1 doc test pin macro behaviour and runtime format! shape."
+        "pinion-core::intent_tag! macro 추가 (stdlib concat!, dual literal, 0 dep).",
+        "hello-toggle/main.rs TOGGLE_INTENT_TAG_FULL → intent_tag!('main_toggle', 'toggle') 마이그레이션.",
+        "hello-theme/main.rs TOGGLE_INTENT_TAG_FULL → intent_tag!('theme_toggle', 'toggle') 마이그레이션.",
+        "3 unit tests + 1 doc test 가 macro output 을 runtime format! shape 와 pin.",
+        "MEMORY.md +1 entry [[intent-tag-macro-substrate]] + [[intent-tag-dotted-wire-form]] cross-link."
       ],
       "publishable_verification_bullets": [
-        "cargo test --workspace --features pinion-runtime/vello = 2764 pass / 0 fail / 14 ignored (baseline 2760 + 4 new).",
+        "cargo test --workspace --features pinion-runtime/vello = 2764 pass / 0 fail / 14 ignored (+4 new).",
         "cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.",
-        "mnemosyne validate_workspace clean (no new T1 or T2).",
-        "intent_tag macro doc test asserts main_toggle.toggle exact output."
+        "doc test: intent_tag!('main_toggle', 'toggle') == 'main_toggle.toggle' 어설션.",
+        "runtime format! shape pin test: format!('{prefix}.{event}') 와 macro output 일치."
       ],
       "publishable_impact_refs": [
         "5.20"
       ],
       "publishable_carry_forward_bullets": [
-        "Round 573 + 574 publishable expand (option E)",
-        "pinion-tui scrollbar first-paint parity verify (option B)",
-        "set_max API split init_max + set_max (option D)",
-        "R57.X.listbox theme retrofit (option C, 2nd consumer of intent_tag!)"
+        "option B: pinion-tui scrollbar first-paint parity 검증 + fix.",
+        "option D: ScrollState::set_max init_max + set_max API 분리.",
+        "option C: R57.X.listbox 첫 retrofit (intent_tag! 2nd consumer).",
+        "R57.X.* 6 widget retrofit cascade (textfield, button, checkbox, radio, slider 남음)."
       ]
     },
     "Round 6": {

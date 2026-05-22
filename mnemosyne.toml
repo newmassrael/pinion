@@ -541,3 +541,30 @@ reason = "Round 571 audit half authored minimal ASCII per [[mnemosyne-multibyte-
 applied_in = "Round 571"
 content_hash_before = "dc4b4ce732ccca330e57ca439d774b97669025b5ce01cad4aa5ebf5870b94d4b"
 content_hash_after = "127c7867ffdf72932574e18992eee3cf64668c0757b386acf51aa94540632cd8"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 573"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_impact_refs", "publishable_carry_forward_bullets"]
+reason = "R57.X.toggle audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs + em-dash separators + Korean prose."
+applied_in = "Round 575"
+content_hash_before = "ed9214d803b743136bdb0562b5ee4d281cddcd8f1916101f1e8d75d1a5e3092b"
+content_hash_after = "53a4801fb9a65a64ef62d38a4ea7761c74ae7801f9731deb0b6dc76ff2093464"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 574"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R57.X.scrollbar audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs + em-dash separators + Korean prose."
+applied_in = "Round 575"
+content_hash_before = "cb189af608d9b9b39e251b27873fc7764105b905e3e22030c2994eeeb925bf58"
+content_hash_after = "ed9dbf0a281bbd3976bab883f0b1146e850845ba26ffd24342879f0996623e92"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 575"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R57.X.intent-tag-macro audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs + arrow notation + Korean prose."
+applied_in = "Round 575"
+content_hash_before = "b3ae2fa39611fd610e435a3bf48e3c5eee24cdc4046590451920527e0fd71a93"
+content_hash_after = "aff788218a79ee9ec9121abfdd7e6a6fa80dd4dd7e1a362b027f47442fcde384"
