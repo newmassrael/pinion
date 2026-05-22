@@ -84,7 +84,7 @@ use sm::TextFieldPolicy;
 
 use std::rc::Rc;
 
-use crate::clipboard::Clipboard;
+use crate::clipboard::{Clipboard, ClipboardSelection};
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
@@ -1148,6 +1148,10 @@ impl ExternalIntrospect for TextFieldExternal {
                 match value {
                     IntrospectValue::Null => {
                         state.clear_selection();
+                        // R56.2.e §5.22 — `Null` collapses the
+                        // selection; PRIMARY is intentionally NOT
+                        // cleared (X11 convention retains the prior
+                        // selection until a new one is published).
                         Ok(())
                     }
                     IntrospectValue::Json(obj) => {
@@ -1155,6 +1159,12 @@ impl ExternalIntrospect for TextFieldExternal {
                             return Err(InterveneError::TypeMismatch);
                         };
                         state.set_selection(start, end);
+                        // R56.2.e §5.22 — auto-publish the new
+                        // selection to PRIMARY so AI-client-driven
+                        // selection writes match the canonical Linux
+                        // desktop "select + middle-click paste" UX
+                        // observable from out-of-process apps.
+                        self.publish_primary_selection_if_any();
                         Ok(())
                     }
                     _ => Err(InterveneError::TypeMismatch),
@@ -1398,8 +1408,80 @@ impl TextFieldExternal {
             if let Some(blink) = self.em.inner.blink() {
                 blink.reset();
             }
+            // R56.2.e §5.22 — auto-publish the active selection to the
+            // PRIMARY clipboard after any handled key. X11 / Wayland
+            // desktop convention: the *act of selection* implicitly
+            // writes to PRIMARY (independent of any Ctrl+C). This
+            // hook fires on Ctrl+A select-all, Shift+Arrow extend,
+            // and the print-char "drain selection" path — only the
+            // first two land non-empty selection_text so the hook is
+            // a no-op for plain typing. On non-Linux platforms the
+            // `Clipboard::copy_to(Primary, ...)` default impl is a
+            // no-op, so this stays free for macOS / Windows
+            // applications.
+            self.publish_primary_selection_if_any();
         }
         handled
+    }
+
+    /// R56.2.e §5.22 — publish the active selection text to the
+    /// PRIMARY clipboard if both a [`TextEditState`] and a
+    /// [`Clipboard`] are attached AND the selection is non-empty.
+    /// No-op otherwise (collapsed caret keeps PRIMARY untouched, per
+    /// X11 convention — PRIMARY retains the previous selection until
+    /// a new one is published).
+    ///
+    /// Used by [`Self::dispatch_key`] after any handled key and by
+    /// the RPC `intervene("selection", ...)` arm so AI-client-driven
+    /// selection writes also reach PRIMARY (the canonical Linux
+    /// desktop "select text + middle-click in another app" UX path
+    /// remains observable from out-of-process introspection).
+    fn publish_primary_selection_if_any(&self) {
+        if let (Some(state), Some(cb)) =
+            (self.em.inner.text_state(), self.em.inner.clipboard())
+        {
+            if let Some(text) = state.selection_text() {
+                // Empty-string selection_text is impossible (anchor ==
+                // focus collapses to `None`), but guard defensively
+                // so a future TextEditState change cannot regress
+                // into spurious PRIMARY writes.
+                if !text.is_empty() {
+                    cb.copy_to(ClipboardSelection::Primary, text);
+                }
+            }
+        }
+    }
+
+    /// R56.2.e §5.22 — paste the current PRIMARY clipboard payload
+    /// at the caret, draining any active selection (matches the
+    /// W3C / X11 / GTK middle-click paste UX). Returns `true` when
+    /// a non-empty payload was inserted, `false` when no
+    /// [`Clipboard`] is attached, no [`TextEditState`] is attached,
+    /// PRIMARY is empty / unavailable (default macOS / Windows
+    /// behaviour), or the read returned an empty string.
+    ///
+    /// Called from the shell's middle-mouse-click handler (R56.2.e.3)
+    /// after focus routing — the caller is responsible for ensuring
+    /// this widget is the focused one. The blink reset matches the
+    /// Ctrl+V handler's recognised-keystroke discipline so the
+    /// caret stays solid through the paste.
+    pub fn paste_from_primary(&mut self) -> bool {
+        let (Some(state), Some(cb)) =
+            (self.em.inner.text_state(), self.em.inner.clipboard())
+        else {
+            return false;
+        };
+        let Some(text) = cb.paste_from(ClipboardSelection::Primary) else {
+            return false;
+        };
+        if text.is_empty() {
+            return false;
+        }
+        state.insert(&text);
+        if let Some(blink) = self.em.inner.blink() {
+            blink.reset();
+        }
+        true
     }
 }
 
@@ -3318,6 +3400,243 @@ mod r56_1_e_tests {
     fn r56_1_e_fresh_textfield_has_no_clipboard() {
         let tfx = TextFieldExternal::new();
         assert!(tfx.clipboard().is_none());
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R56.2.e §5.22 — auto-publish active selection to PRIMARY
+    // ─────────────────────────────────────────────────────────────
+
+    use crate::clipboard::ClipboardSelection;
+
+    #[test]
+    fn r56_2_e_ctrl_a_select_all_publishes_primary() {
+        // Ctrl+A select-all is the canonical "selection mutation"
+        // that the auto-publish hook covers; the entire text lands
+        // on PRIMARY so an out-of-process middle-click in another
+        // app pastes the whole field.
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello world");
+        // PRIMARY starts empty.
+        assert_eq!(cb.paste_from(ClipboardSelection::Primary), None);
+        let r = tfx.invoke("key", json_key("a", true)).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(
+            state.selection_text(),
+            Some("hello world".to_string()),
+        );
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("hello world".to_string()),
+        );
+        // CLIPBOARD untouched — auto-publish targets PRIMARY only.
+        assert_eq!(cb.paste(), None);
+    }
+
+    #[test]
+    fn r56_2_e_shift_arrow_right_publishes_primary() {
+        // Shift+ArrowRight extends the selection one char; the
+        // auto-publish hook updates PRIMARY on every extension so
+        // a Linux desktop user observes the latest selection in
+        // PRIMARY without an explicit Ctrl+C.
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello");
+        state.set_caret(0);
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key": "ArrowRight",
+                    "shift": true,
+                })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.selection_text(), Some("h".to_string()));
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("h".to_string()),
+        );
+    }
+
+    #[test]
+    fn r56_2_e_plain_typing_does_not_publish_primary() {
+        // Plain 'x' insertion does not create a selection — the
+        // hook fires but finds selection_text == None and skips
+        // the write. PRIMARY stays whatever it was (None when
+        // never published).
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("");
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key": "x",
+                })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.text(), "x");
+        assert_eq!(cb.paste_from(ClipboardSelection::Primary), None);
+    }
+
+    #[test]
+    fn r56_2_e_plain_arrow_collapse_preserves_prior_primary() {
+        // X11 convention: PRIMARY retains the last selection until a
+        // new selection is published. Plain ArrowRight collapses any
+        // active selection but must NOT clear PRIMARY.
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello");
+        state.set_selection(0, 5);
+        // Seed PRIMARY through Ctrl+A first (canonical publish).
+        let _ = tfx.invoke("key", json_key("a", true)).unwrap();
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("hello".to_string()),
+        );
+        // Plain ArrowRight collapses to the trailing edge.
+        let r = tfx
+            .invoke(
+                "key",
+                IntrospectValue::Json(serde_json::json!({
+                    "key": "ArrowRight",
+                })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(state.selection_text(), None);
+        // PRIMARY still holds the prior selection.
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("hello".to_string()),
+        );
+    }
+
+    #[test]
+    fn r56_2_e_rpc_intervene_selection_publishes_primary() {
+        // AI client driving selection via the RPC intervene path
+        // gets the same PRIMARY auto-publish behaviour the
+        // keyboard-driven user sees.
+        let (mut tfx, _state, cb) = make_tfx_with_clipboard("hello world");
+        tfx.intervene(
+            "selection",
+            IntrospectValue::Json(serde_json::json!({
+                "start": 6,
+                "end": 11,
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("world".to_string()),
+        );
+    }
+
+    #[test]
+    fn r56_2_e_rpc_intervene_null_does_not_clear_primary() {
+        // intervene("selection", Null) collapses the selection but
+        // PRIMARY stays at the previous value (X11 convention).
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello");
+        state.set_selection(0, 5);
+        let _ = tfx.invoke("key", json_key("a", true)).unwrap();
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("hello".to_string()),
+        );
+        tfx.intervene("selection", IntrospectValue::Null).unwrap();
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("hello".to_string()),
+        );
+    }
+
+    #[test]
+    fn r56_2_e_paste_from_primary_inserts_at_caret() {
+        // The shell's middle-click handler calls paste_from_primary;
+        // this test pins the substrate behaviour end-to-end without
+        // a shell.
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("ab");
+        state.set_caret(2);
+        cb.copy_to(ClipboardSelection::Primary, "XY".to_string());
+        let inserted = tfx.paste_from_primary();
+        assert!(inserted, "non-empty PRIMARY must produce true");
+        assert_eq!(state.text(), "abXY");
+        assert_eq!(state.caret(), 4);
+    }
+
+    #[test]
+    fn r56_2_e_paste_from_primary_with_empty_primary_is_noop() {
+        // PRIMARY never published → returns false, text unchanged.
+        let (mut tfx, state, _cb) = make_tfx_with_clipboard("ab");
+        let inserted = tfx.paste_from_primary();
+        assert!(!inserted);
+        assert_eq!(state.text(), "ab");
+    }
+
+    #[test]
+    fn r56_2_e_paste_from_primary_with_no_clipboard_returns_false() {
+        // No clipboard attached — paste_from_primary must short-
+        // circuit to false even when a state is present.
+        let state = Rc::new(TextEditState::with_initial("hello".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(state.clone());
+        assert!(!tfx.paste_from_primary());
+        assert_eq!(state.text(), "hello");
+    }
+
+    #[test]
+    fn r56_2_e_paste_from_primary_with_no_state_returns_false() {
+        // No state attached — paste_from_primary short-circuits to
+        // false even with a populated clipboard.
+        let cb: Rc<dyn Clipboard> = Rc::new(InMemoryClipboard::new());
+        cb.copy_to(ClipboardSelection::Primary, "noop".to_string());
+        let mut tfx = TextFieldExternal::new().attach_clipboard(cb);
+        assert!(!tfx.paste_from_primary());
+    }
+
+    #[test]
+    fn r56_2_e_paste_from_primary_replaces_active_selection() {
+        // X11 / GTK middle-click paste replaces the active selection
+        // before inserting (TextEditState::insert is selection-aware).
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("hello world");
+        state.set_selection(0, 5);
+        cb.copy_to(ClipboardSelection::Primary, "HI".to_string());
+        let inserted = tfx.paste_from_primary();
+        assert!(inserted);
+        assert_eq!(state.text(), "HI world");
+        assert_eq!(state.caret(), 2);
+        assert_eq!(state.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r56_2_e_paste_from_primary_independent_of_clipboard() {
+        // PRIMARY and CLIPBOARD are independent. paste_from_primary
+        // reads PRIMARY only; a populated CLIPBOARD with empty
+        // PRIMARY must produce a no-op.
+        let (mut tfx, state, cb) = make_tfx_with_clipboard("ab");
+        state.set_caret(2);
+        cb.copy("from-clipboard".to_string());
+        // PRIMARY untouched.
+        let inserted = tfx.paste_from_primary();
+        assert!(!inserted);
+        assert_eq!(state.text(), "ab");
+    }
+
+    #[test]
+    fn r56_2_e_primary_publish_is_independent_of_ctrl_c() {
+        // Ctrl+A publishes the new selection to PRIMARY immediately,
+        // before any Ctrl+C — this is the "select to publish" Linux
+        // convention. A follow-on Ctrl+C copies to CLIPBOARD without
+        // disturbing PRIMARY.
+        let (mut tfx, _state, cb) = make_tfx_with_clipboard("hello");
+        let _ = tfx.invoke("key", json_key("a", true)).unwrap();
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("hello".to_string()),
+        );
+        assert_eq!(cb.paste(), None);
+
+        let _ = tfx.invoke("key", json_key("c", true)).unwrap();
+        // CLIPBOARD now matches PRIMARY (same payload).
+        assert_eq!(cb.paste(), Some("hello".to_string()));
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("hello".to_string()),
+        );
     }
 }
 

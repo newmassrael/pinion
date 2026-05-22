@@ -27365,6 +27365,53 @@
         "R56.2.e.3 — shell middle-click wire + `WidgetView::apply_middle_click` trait (default false)."
       ]
     },
+    "Round 568": {
+      "decision_summary": "R56.2.e.2 5.38 5.22 TextField auto-publish active selection to PRIMARY after dispatch_key and RPC intervene selection + paste_from_primary public API.",
+      "changes_bullets": [
+        "text_field.rs dispatch_key after handled branch calls publish_primary_selection_if_any helper before return",
+        "publish_primary_selection_if_any helper guards both state and clipboard attached plus selection_text non-empty",
+        "RPC intervene selection Json arm also calls publish_primary_selection_if_any after set_selection write",
+        "RPC intervene selection Null arm preserves prior PRIMARY value per X11 retain-until-new convention with explicit doc",
+        "paste_from_primary public method reads Primary inserts at caret resets blink returns bool inserted",
+        "Ctrl/Cmd C X V branches unchanged Primary publish only fires on selection mutation not clipboard copy",
+        "import ClipboardSelection from crate clipboard alongside Clipboard trait",
+        "13 new r56_2_e widget tests covering Ctrl+A Shift+Arrow intervene Null retain paste_from_primary scenarios"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core --lib r56_2_e 20 pass 7 substrate + 13 widget",
+        "cargo test workspace vello pass=2722 fail=0 ignored=14 prior 2709 + 13 new",
+        "cargo clippy workspace all-targets vello 0 warnings"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "R56.2.e.3 shell WindowEvent MouseInput Middle Pressed wire plus V apply_middle_click trait default false plus hello-textfield impl plus dispatch_core mock"
+      ],
+      "publishable_decision_summary": "R56.2.e.2 §5.38 §5.22 — `TextField` auto-publishes the active selection to PRIMARY after `dispatch_key` + RPC `intervene(\"selection\")`; `paste_from_primary` API for shell middle-click.",
+      "publishable_changes_bullets": [
+        "`dispatch_key` after any `handled` key calls `publish_primary_selection_if_any` helper.",
+        "Helper guards attached state+clipboard + non-empty selection then `copy_to(Primary, _)`.",
+        "RPC `intervene(\"selection\", Json)` arm calls helper after `set_selection`; `Null` retains PRIMARY.",
+        "Doc comments cite X11 retain-until-new convention so semantics stay explicit at the source.",
+        "`paste_from_primary()` API: reads PRIMARY, inserts at caret, resets blink, returns `bool`.",
+        "Ctrl/Cmd C/X/V untouched — PRIMARY publish fires only on selection mutation.",
+        "+13 `r56_2_e` widget tests: Ctrl+A / Shift+Arrow / intervene / paste_from_primary."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-core --lib r56_2_e` = 20 pass (7 substrate + 13 widget).",
+        "`cargo test --workspace --features pinion-runtime/vello` = 2722 / 0 / 14.",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R56.2.e.3 — shell middle-click wire + `WidgetView::apply_middle_click` trait + hello-textfield impl."
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [
