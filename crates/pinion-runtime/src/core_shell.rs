@@ -73,7 +73,7 @@ use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Effect, Signal};
-use pinion_core::scene::ExternalNode;
+use pinion_core::scene::{ContainerNode, ExternalNode};
 use pinion_core::{Command, Owner, Scene, WidgetCore};
 
 use crate::command::CommandExecutor;
@@ -323,11 +323,39 @@ impl<V: WidgetCore> CoreShell<V> {
     /// the hit-test snapshot before the first pointer event arrives.
     #[must_use]
     pub fn new() -> Self {
-        let scene = Scene::External(
+        let root_owner = Owner::new();
+        // (R55.D.5 §5.45) Compose the state-scene root.
+        //
+        // Default (single-External binding, the entire example
+        // catalogue except `hello-listbox`): the scene stays
+        // `Scene::External(primary)` — bit-for-bit identical to the
+        // pre-R55.D.5 shape, every existing `read_state` keeps
+        // working.
+        //
+        // Override (`V::create_extra_externals` non-empty): the scene
+        // becomes `Scene::Container([primary, ...extras])`. The
+        // extras list is resolved inside `root_owner.run` so the
+        // factory can call [`use_scroll_state`] and other
+        // `Owner::cache` hooks, sharing reactive state with what the
+        // view fn will resolve later (same cache key → same
+        // `Rc<ScrollState>`).
+        let primary = Scene::External(
             ExternalNode::new(V::create_external()).with_tag(V::tag()),
         );
+        let extras = root_owner.run(V::create_extra_externals);
+        let scene = if extras.is_empty() {
+            primary
+        } else {
+            let mut children: Vec<Scene> = Vec::with_capacity(1 + extras.len());
+            children.push(primary);
+            for extra in extras {
+                children.push(Scene::External(
+                    ExternalNode::new(extra.handle).with_tag(extra.tag),
+                ));
+            }
+            Scene::Container(ContainerNode::new(children))
+        };
         let cached_state = V::read_state(&scene);
-        let root_owner = Owner::new();
         let frame_signal = Signal::new(0_u64);
         let last_dt: std::rc::Rc<Cell<f32>> = std::rc::Rc::new(Cell::new(0.0_f32));
 
@@ -1845,5 +1873,222 @@ mod tests {
             captured, expected,
             "Owner::current() inside V::update must equal root_owner.id()",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.D.5 §5.45 — multi-External substrate composition + drag
+    // wiring. The fixture pairs the existing `ButtonFixture` with a
+    // sibling `ScrollBarExternal` attached to a shared `ScrollState`
+    // (the same `Owner::cache` key the view-fn would resolve via
+    // `use_scroll_state`). The tests cover three contract layers:
+    //
+    //   1. State scene shape — `Scene::Container([primary, scrollbar])`
+    //      when extras non-empty, bit-identical `Scene::External(primary)`
+    //      when default.
+    //   2. Lookup — both externals findable via
+    //      `Scene::find_external_with_tag`; the primary is reachable
+    //      via `Scene::primary_external` (DFS first).
+    //   3. Drag dispatch — a `pointer_down` → `pointer_move` cycle
+    //      against the scrollbar tag routes through the framework's
+    //      capture-lock path into `ScrollBarExternal::pointer_move`
+    //      and writes the shared `ScrollState` (closes the carry
+    //      `hello-listbox` exercises in production).
+    // ─────────────────────────────────────────────────────────────────
+
+    use pinion_core::scene::{BoxNode, Rect};
+    use pinion_core::widget_core::ExtraExternal;
+    use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+    use pinion_core::widgets::scrollbar::ScrollBarExternal;
+    use pinion_core::Color;
+    use std::rc::Rc as TestRc;
+
+    /// (R55.D.5 §5.45) Test fixture: `ButtonFixture` semantics plus a
+    /// sibling [`ScrollBarExternal`] tagged `"sb"` whose
+    /// `Rc<ScrollState>` shares the cache key `"sb_state"` with what
+    /// the view fn would resolve. The state's `max_y` is seeded to
+    /// 100 inside the same factory closure so the substrate-side
+    /// composition test sees a non-zero scrollable range.
+    struct ScrollbarMultiFixture;
+
+    /// (R55.D.5 §5.45) Resolve the same `Rc<ScrollState>` the fixture's
+    /// `create_extra_externals` seeded. Lives outside the `WidgetCore`
+    /// impl block so tests can read the offset after dispatch without
+    /// reaching through the substrate's private state.
+    const SB_KEY: &str = "sb_state";
+
+    impl WidgetCore for ScrollbarMultiFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            <TestButton as WidgetCore>::create_external()
+        }
+
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            let state = use_scroll_state(SB_KEY);
+            state.set_max(0, 100);
+            let bar = ScrollBarExternal::new().attach_state(state);
+            vec![ExtraExternal::new("sb", Box::new(bar))]
+        }
+
+        fn tag() -> &'static str {
+            "test_btn"
+        }
+
+        fn read_state(scene: &Scene) -> Self::State {
+            // R55.D.5 — multi-External composition wraps the primary
+            // External in a Container; walk to it by tag.
+            scene
+                .find_external_with_tag(<Self as WidgetCore>::tag())
+                .and_then(|n| n.handle.introspect())
+                .and_then(|i| i.query("state"))
+                .map_or(ButtonState::Idle, |v| match v {
+                    IntrospectValue::Text(s) if s == "Hover" => ButtonState::Hover,
+                    IntrospectValue::Text(s) if s == "Pressed" => ButtonState::Pressed,
+                    IntrospectValue::Text(s) if s == "Disabled" => ButtonState::Disabled,
+                    _ => ButtonState::Idle,
+                })
+        }
+
+        fn view(state: Self::State, frame: &Frame) -> Scene {
+            <TestButton as WidgetCore>::view(state, frame)
+        }
+
+        fn event_name(event: Self::Event) -> &'static str {
+            <TestButton as WidgetCore>::event_name(event)
+        }
+
+        fn title() -> &'static str {
+            "MultiExternal"
+        }
+    }
+
+    #[test]
+    fn r55_d5_default_extras_keeps_state_scene_external() {
+        // R55.D.5 — single-widget bindings (no `create_extra_externals`
+        // override) keep the state scene as bare `Scene::External`,
+        // bit-identical to the pre-R55.D.5 shape.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        assert!(matches!(core.scene(), Scene::External(_)));
+    }
+
+    #[test]
+    fn r55_d5_extras_wraps_state_scene_in_container() {
+        // R55.D.5 — override returning one extra → state scene
+        // becomes `Container([primary, scrollbar])`.
+        let core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
+        let Scene::Container(c) = core.scene() else {
+            panic!("multi-External shape must wrap in Container");
+        };
+        assert_eq!(c.children.len(), 2, "primary + 1 extra");
+        let Scene::External(primary) = &c.children[0] else {
+            panic!("first child must be the primary External");
+        };
+        assert_eq!(primary.tag.as_deref(), Some("test_btn"));
+        let Scene::External(extra) = &c.children[1] else {
+            panic!("second child must be the extra External");
+        };
+        assert_eq!(extra.tag.as_deref(), Some("sb"));
+    }
+
+    #[test]
+    fn r55_d5_find_external_with_tag_resolves_both_externals() {
+        // R55.D.5 — both externals discoverable by tag.
+        let core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
+        assert!(core.scene().find_external_with_tag("test_btn").is_some());
+        assert!(core.scene().find_external_with_tag("sb").is_some());
+        assert!(core.scene().find_external_with_tag("nope").is_none());
+    }
+
+    #[test]
+    fn r55_d5_primary_external_picks_button_not_scrollbar() {
+        // R55.D.5 — DFS pre-order: the primary External is the first
+        // child of the Container, matching the substrate's
+        // composition convention.
+        let core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
+        let node = core.scene().primary_external().expect("must resolve");
+        assert_eq!(node.tag.as_deref(), Some("test_btn"));
+    }
+
+    #[test]
+    fn r55_d5_cached_state_reads_through_container_wrap() {
+        // R55.D.5 — `read_state` walks the wrapper Container to find
+        // the primary External and resolves the cached state from it.
+        let core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
+        assert_eq!(*core.cached_state(), ButtonState::Idle);
+    }
+
+    /// (R55.D.5 §5.45) Resolve the shared scroll state outside the
+    /// shell so a test can compare offset before/after a drag
+    /// dispatch. Reaches for the same `Owner::cache` key the fixture
+    /// seeded; the returned `Rc<ScrollState>` is therefore identical
+    /// to the one [`ScrollBarExternal::attach_state`] received.
+    fn resolve_shared_scroll_state(core: &CoreShell<ScrollbarMultiFixture>) -> TestRc<ScrollState> {
+        core.root_owner().run(|| use_scroll_state(SB_KEY))
+    }
+
+    /// (R55.D.5 §5.45) Build the paint scene the shell needs for
+    /// hit-test routing: a Container with the scrollbar tag covering
+    /// a 20×200 rect. Mirrors what hello-listbox's view fn produces
+    /// (the scrollbar visual Container with `SCROLLBAR_TAG`). The
+    /// runtime layout pass would normally write `rect`; the test
+    /// hand-seeds it on the public `rect` field directly so the
+    /// router's hit-test resolves without standing up a full layout
+    /// pipeline.
+    fn build_paint_scene_with_sb_rect() -> Scene {
+        let sb_rect = Rect::new(0, 0, 20, 200);
+        let inner = Scene::Box(BoxNode::filled(sb_rect, Color::default()));
+        let mut sb_container = ContainerNode::new(vec![inner]).with_tag("sb");
+        sb_container.rect = sb_rect;
+        Scene::Container(sb_container)
+    }
+
+    #[test]
+    fn r55_d5_pointer_drag_on_scrollbar_writes_shared_scroll_state() {
+        // R55.D.5 — end-to-end drag: a `pointer_down` then
+        // `pointer_move` on the scrollbar tag's paint rect drives the
+        // capture-lock path into `ScrollBarExternal::pointer_move`,
+        // which writes the shared `ScrollState`. The visible
+        // contract: a drag from the top of the bar (y=0) to halfway
+        // down (y=100, bar height 200) lands the offset near 50 (the
+        // `delta_fraction × scroll_max` = 0.5 × 100 = 50 closed-form
+        // for a Vertical orientation, R55.D.3).
+        let mut core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
+        let state = resolve_shared_scroll_state(&core);
+        assert_eq!(state.offset(), (0, 0), "starts at origin");
+        assert_eq!(state.max(), (0, 100), "fixture seeds 100 max_y");
+
+        // Seed the router's last paint scene so hit-test routes.
+        core.update_paint_scene(build_paint_scene_with_sb_rect());
+        let pid = PointerId::MOUSE;
+
+        // Cursor lands at top of scrollbar (y=0). PointerEnter fires
+        // on the "sb" tag → Idle → Hover.
+        let _ = core.cursor_moved(pid, 10.0, 0.0);
+
+        // PointerDown → Hover → Dragging; ScrollBar requests capture
+        // and the router calls pointer_move with the press-time
+        // cursor as the first frame.
+        let _ = core.pointer_down(pid);
+        // First pointer_move = press-time snapshot (no offset change).
+        assert_eq!(
+            state.offset(),
+            (0, 0),
+            "press-time pointer_move captures snapshot without moving offset",
+        );
+
+        // Drag down to the middle of the track (y=100, height=200).
+        // delta_fraction = 0.5, scroll_max = 100, expected offset_y = 50.
+        let _ = core.cursor_moved(pid, 10.0, 100.0);
+        assert_eq!(
+            state.offset_y(),
+            50,
+            "halfway drag writes scroll_max / 2 = 50 into shared ScrollState",
+        );
+
+        // Release — Dragging → Hover, capture clears.
+        let _ = core.pointer_up(pid);
+        // Offset stays where the drag left it (drag commit semantics).
+        assert_eq!(state.offset_y(), 50, "release does not snap back");
     }
 }

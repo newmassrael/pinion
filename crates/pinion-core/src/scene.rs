@@ -128,6 +128,122 @@ impl Scene {
         }
     }
 
+    /// (R55.D.5 §5.45) Depth-first walk for the first [`ExternalNode`]
+    /// whose tag equals `target`. Mirrors the
+    /// `find_external_by_tag` private helper inside
+    /// `pinion_runtime::input` (R51.41 dispatch path); promoted to a
+    /// public `Scene` method so [`WidgetCore::read_state`] in
+    /// applications that opt into [`WidgetCore::create_extra_externals`]
+    /// can resolve the primary [`ExternalNode`] regardless of whether
+    /// the substrate wrapped the state scene in a [`Scene::Container`]
+    /// (multi-External) or left it as a bare [`Scene::External`]
+    /// (single-External, the default shape).
+    ///
+    /// Walks the same branches as [`Self::contains_tag`] /
+    /// [`Self::hit_test`]: `Container.children` in declaration order,
+    /// `Scroll.content`. The other leaf variants
+    /// (`Box`/`Text`/`Path`/`Image`/`Effect`) cannot carry an
+    /// `External` handle and are skipped.
+    ///
+    /// Returns the first match in DFS pre-order. The substrate
+    /// guarantees the primary External (declared via
+    /// [`WidgetCore::create_external`]) is the first child of the
+    /// composed Container, so the canonical
+    /// `scene.find_external_with_tag(V::tag())` call resolves O(1)
+    /// for the common case.
+    #[must_use]
+    pub fn find_external_with_tag(&self, target: &str) -> Option<&ExternalNode> {
+        match self {
+            Scene::External(n) => {
+                if n.tag.as_deref() == Some(target) {
+                    Some(n)
+                } else {
+                    None
+                }
+            }
+            Scene::Container(c) => {
+                c.children.iter().find_map(|s| s.find_external_with_tag(target))
+            }
+            Scene::Scroll(s) => s.content.find_external_with_tag(target),
+            Scene::Box(_) | Scene::Text(_) | Scene::Path(_) | Scene::Image(_) | Scene::Effect(_) => {
+                None
+            }
+        }
+    }
+
+    /// (R55.D.5 §5.45) Resolve to the substrate's *primary* External
+    /// — the first [`ExternalNode`] reached by a depth-first
+    /// pre-order walk. Returns `Some(self)` directly for the
+    /// single-External shape (`Scene::External(...)`) and descends
+    /// into `Container.children` / `Scroll.content` to find the
+    /// first child External for the multi-External shape the
+    /// substrate composes when [`WidgetCore::create_extra_externals`]
+    /// is non-empty.
+    ///
+    /// Used by the RPC introspect / invoke / dry-run / rewind
+    /// primitives so an `external/...` path against a multi-External
+    /// state scene transparently lands on the primary widget without
+    /// requiring per-call disambiguation. A future round can add a
+    /// `find_external_with_tag(tag)/external/...` path syntax to
+    /// address the sibling externals explicitly; the substrate
+    /// convention "primary is first in declaration order" makes this
+    /// helper unambiguous in the meantime.
+    #[must_use]
+    pub fn primary_external(&self) -> Option<&ExternalNode> {
+        match self {
+            Scene::External(n) => Some(n),
+            Scene::Container(c) => c.children.iter().find_map(Self::primary_external),
+            Scene::Scroll(s) => s.content.primary_external(),
+            Scene::Box(_) | Scene::Text(_) | Scene::Path(_) | Scene::Image(_) | Scene::Effect(_) => {
+                None
+            }
+        }
+    }
+
+    /// (R55.D.5 §5.45) Mutable counterpart to
+    /// [`Self::primary_external`]. Used by the RPC invoke / dry-run /
+    /// rewind primitives which need to advance the `External`'s state
+    /// via [`ExternalIntrospect::invoke`](crate::external::ExternalIntrospect::invoke).
+    pub fn primary_external_mut(&mut self) -> Option<&mut ExternalNode> {
+        match self {
+            Scene::External(n) => Some(n),
+            Scene::Container(c) => c.children.iter_mut().find_map(Self::primary_external_mut),
+            Scene::Scroll(s) => s.content.primary_external_mut(),
+            Scene::Box(_) | Scene::Text(_) | Scene::Path(_) | Scene::Image(_) | Scene::Effect(_) => {
+                None
+            }
+        }
+    }
+
+    /// (R55.D.5 §5.45) Mutable counterpart to
+    /// [`Self::find_external_with_tag`]. Test fixtures and apply-key
+    /// dispatch paths that need to call
+    /// [`ExternalIntrospect::intervene`](crate::external::ExternalIntrospect::intervene)
+    /// or [`ExternalIntrospect::invoke`](crate::external::ExternalIntrospect::invoke)
+    /// on the primary widget reach for the mutable borrow.
+    pub fn find_external_with_tag_mut(
+        &mut self,
+        target: &str,
+    ) -> Option<&mut ExternalNode> {
+        match self {
+            Scene::External(n) => {
+                if n.tag.as_deref() == Some(target) {
+                    Some(n)
+                } else {
+                    None
+                }
+            }
+            Scene::Container(c) => c
+                .children
+                .iter_mut()
+                .find_map(|s| s.find_external_with_tag_mut(target)),
+            Scene::Scroll(s) => s.content.find_external_with_tag_mut(target),
+            Scene::Box(_) | Scene::Text(_) | Scene::Path(_) | Scene::Image(_) | Scene::Effect(_) => {
+                None
+            }
+        }
+    }
+
     /// (§5.32 R39 v0) Find the deepest primitive whose rect contains
     /// `(x, y)`. Returns [`None`] when the point falls outside this
     /// scene's outermost rect — including the case where the rect has
@@ -2682,5 +2798,111 @@ mod tests {
         // on the bare leaf is unconditionally `false`.
         let scene = Scene::Effect(EffectNode::new());
         assert!(!scene.contains_tag("anything"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R55.D.5 §5.45 — `find_external_with_tag` + `primary_external`
+    // substrate for multi-External state scene composition. Pinned
+    // on a `StubExternal` fixture (`pinion-core` already exports one
+    // via `external::StubExternal`) so the tests live in this crate
+    // without pulling pinion-runtime.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r55_d5_find_external_with_tag_on_bare_external() {
+        // R55.D.5 — single-External state scene shape: the bare
+        // `Scene::External` resolves its own tag.
+        use crate::external::StubExternal;
+        let scene = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"),
+        );
+        assert!(scene.find_external_with_tag("primary").is_some());
+        assert!(scene.find_external_with_tag("absent").is_none());
+    }
+
+    #[test]
+    fn r55_d5_find_external_with_tag_on_container_of_externals() {
+        // R55.D.5 — multi-External shape composed by the substrate.
+        // Both externals resolve by their tags.
+        use crate::external::StubExternal;
+        let primary = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"),
+        );
+        let extra = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("extra"),
+        );
+        let scene = Scene::Container(ContainerNode::new(vec![primary, extra]));
+        assert!(scene.find_external_with_tag("primary").is_some());
+        assert!(scene.find_external_with_tag("extra").is_some());
+        assert!(scene.find_external_with_tag("nope").is_none());
+    }
+
+    #[test]
+    fn r55_d5_find_external_with_tag_descends_through_scroll() {
+        // R55.D.5 — the walker mirrors `contains_tag` / `hit_test`:
+        // it descends through `Scroll.content`.
+        use crate::external::StubExternal;
+        let buried = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("buried"),
+        );
+        let scroll = ScrollNode::new(Rect::new(0, 0, 100, 100), buried);
+        let scene = Scene::Scroll(scroll);
+        assert!(scene.find_external_with_tag("buried").is_some());
+    }
+
+    #[test]
+    fn r55_d5_primary_external_returns_self_on_bare_external() {
+        // R55.D.5 — `Scene::External(primary)` resolves to itself.
+        use crate::external::StubExternal;
+        let scene = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("only"),
+        );
+        let node = scene.primary_external().expect("must resolve");
+        assert_eq!(node.tag.as_deref(), Some("only"));
+    }
+
+    #[test]
+    fn r55_d5_primary_external_picks_first_external_in_container() {
+        // R55.D.5 — DFS pre-order: the first child External wins,
+        // matching the substrate's "primary is first in declaration
+        // order" composition convention.
+        use crate::external::StubExternal;
+        let first = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("first"),
+        );
+        let second = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("second"),
+        );
+        let scene = Scene::Container(ContainerNode::new(vec![first, second]));
+        let node = scene.primary_external().expect("must resolve");
+        assert_eq!(node.tag.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn r55_d5_primary_external_returns_none_when_no_external() {
+        // R55.D.5 — a Container of Boxes resolves to None; the RPC
+        // primitives surface this as `NoExternalAtPath`.
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::Box(
+            BoxNode::filled(Rect::new(0, 0, 10, 10), Color::default()),
+        )]));
+        assert!(scene.primary_external().is_none());
+    }
+
+    #[test]
+    fn r55_d5_primary_external_mut_allows_introspect_mut() {
+        // R55.D.5 — the mutable counterpart returns the same External
+        // the shared accessor would, but yields `&mut`, enabling
+        // `intro.invoke` / `intro.intervene` on the primary widget.
+        use crate::external::StubExternal;
+        let mut scene = Scene::Container(ContainerNode::new(vec![
+            Scene::External(
+                ExternalNode::new(Box::new(StubExternal::new())).with_tag("primary"),
+            ),
+        ]));
+        let node = scene.primary_external_mut().expect("must resolve");
+        assert_eq!(node.tag.as_deref(), Some("primary"));
+        // Mutable borrow lets us reach `introspect_mut` (StubExternal
+        // opts out — the call returns `None` but the borrow is valid).
+        let _ = node.handle.introspect_mut();
     }
 }

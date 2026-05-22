@@ -77,9 +77,16 @@ pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryErro
         .lookup_path_ref(&scene_segments)
         .ok_or(QueryError::NoExternalAtPath)?;
 
-    let Scene::External(node) = target else {
-        return Err(QueryError::NoExternalAtPath);
-    };
+    // (R55.D.5 §5.45) `target` is the substrate's state-scene root —
+    // either `Scene::External(primary)` (single-widget shape) or
+    // `Scene::Container([primary, ...extras])` when the binding
+    // overrides `create_extra_externals`. `primary_external` descends
+    // to the first `ExternalNode` in DFS pre-order so an
+    // `external/<action>` path against either shape resolves to the
+    // primary widget without per-binding disambiguation.
+    let node = target
+        .primary_external()
+        .ok_or(QueryError::NoExternalAtPath)?;
 
     let intro: &dyn ExternalIntrospect = node
         .handle

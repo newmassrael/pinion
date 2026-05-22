@@ -55,6 +55,55 @@ use crate::external::External;
 use crate::intent::Intent;
 use crate::{Frame, Scene};
 
+/// (R55.D.5 §5.45) Sibling [`External`] slot registered alongside the
+/// primary widget by [`WidgetCore::create_extra_externals`].
+///
+/// The substrate composes the state scene as
+/// `Scene::Container([primary, ...extras])` when the extras list is
+/// non-empty (`Scene::External(primary)` stays the shape when empty,
+/// preserving every existing single-widget binding bit-for-bit). The
+/// input router's existing depth-first walk over the state scene
+/// already handles a `Container` of `External` children — so the
+/// substrate change is one composition step in
+/// [`CoreShell::new`](../../pinion_runtime/struct.CoreShell.html#method.new),
+/// not a router rewrite.
+///
+/// First consumer: `examples/hello-listbox` registers a
+/// [`ScrollBarExternal`](crate::widgets::scrollbar::ScrollBarExternal)
+/// tagged `"main_list_scrollbar"` with the same `Rc<ScrollState>` the
+/// main scroll node uses, so a drag on the visible thumb (R55.D.4
+/// paint peer) routes through the existing pointer-capture + capture-
+/// lock `External::pointer_move` path without per-widget substrate
+/// gymnastics.
+pub struct ExtraExternal {
+    /// Symbolic identifier — must match the `Container::tag` the view
+    /// fn attaches to this widget's paint surface so the input
+    /// router's hit-test routes to the same node.
+    pub tag: &'static str,
+    /// The widget handle. Boxed for the closed-form `External` trait
+    /// object slot the substrate stores on `ExternalNode`.
+    pub handle: Box<dyn External>,
+}
+
+impl ExtraExternal {
+    /// Constructor that takes ownership of `handle` and pairs it with
+    /// `tag`. Equivalent to the struct-literal form; matches the
+    /// `Intent::new_static` / `Command::new_static` convention so the
+    /// per-widget binding site reads idiomatically.
+    #[must_use]
+    pub fn new(tag: &'static str, handle: Box<dyn External>) -> Self {
+        Self { tag, handle }
+    }
+}
+
+impl core::fmt::Debug for ExtraExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ExtraExternal")
+            .field("tag", &self.tag)
+            .finish_non_exhaustive()
+    }
+}
+
 /// R51.121 §5.41 — backend-free widget binding contract.
 ///
 /// Every application-side widget binding (`HelloButton`,
@@ -89,6 +138,37 @@ pub trait WidgetCore: 'static {
     /// .with_tag(Self::tag()))` so the input router's hit-test on the
     /// paint-side tag routes to this node.
     fn create_external() -> Box<dyn External>;
+
+    /// (R55.D.5 §5.45) Sibling [`External`]s registered alongside the
+    /// widget produced by [`Self::create_external`].
+    ///
+    /// Default empty — every single-External binding (the entire
+    /// example catalogue except hello-listbox, which lands the R55.D.5
+    /// first-consumer slot) needs no override. When non-empty, the
+    /// substrate wraps the state scene root in a [`Scene::Container`]
+    /// holding `[primary, ...extras]` in declaration order; the
+    /// existing input-router depth-first walk over the state scene
+    /// dispatches by tag without further changes.
+    ///
+    /// Implementations that wire shared reactive state (e.g. attach
+    /// the same `Rc<ScrollState>` to both the main scroll node and a
+    /// sibling [`ScrollBarExternal`](crate::widgets::scrollbar::ScrollBarExternal))
+    /// rely on the substrate calling this inside
+    /// [`Owner::run`](crate::reactive::Owner::run) for the root owner
+    /// — so [`use_scroll_state`](crate::widgets::scroll::use_scroll_state)
+    /// and other [`Owner::cache`](crate::reactive::Owner::cache)
+    /// helpers resolve to the same instance the view fn will later
+    /// resolve from the same cache key.
+    ///
+    /// Applications that override this method MUST update
+    /// [`Self::read_state`] to call
+    /// [`Scene::find_external_with_tag`] instead of pattern-matching
+    /// `Scene::External` directly, since the state scene shape is now
+    /// `Scene::Container` rather than `Scene::External`.
+    #[must_use]
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        Vec::new()
+    }
 
     /// Stable identifier matching the paint-side `Container::tag` the
     /// view fn attaches to the interactive surface. The input router

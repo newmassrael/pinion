@@ -83,9 +83,13 @@ pub fn dry_run(
     // Constrained to a scope so the &mut borrow on `scene` ends before
     // the snapshot phase needs a shared borrow.
     let saved = {
-        let Scene::External(node) = &mut *scene else {
-            return Err(DryRunError::NoExternalAtPath);
-        };
+        // (R55.D.5 §5.45) Descend to the substrate's primary External
+        // — single-widget binding returns `self` immediately, multi-
+        // widget binding (`create_extra_externals` non-empty) descends
+        // through the wrapper `Container` to the first child External.
+        let node = scene
+            .primary_external_mut()
+            .ok_or(DryRunError::NoExternalAtPath)?;
         let intro = node
             .handle
             .introspect_mut()
@@ -107,11 +111,12 @@ pub fn dry_run(
     // Phase 3: roll back to the saved value regardless of snapshot
     // outcome, so the caller's scene is never left mutated.
     let rollback_result = {
-        let Scene::External(node) = &mut *scene else {
-            // Unreachable: phase 1 already matched External and we did
-            // not swap the scene out from under us.
-            return Err(DryRunError::NoExternalAtPath);
-        };
+        // (R55.D.5 §5.45) Same primary-External descent as phase 1.
+        // Unreachable error: phase 1 already located the External and
+        // we did not swap the scene out from under us.
+        let node = scene
+            .primary_external_mut()
+            .ok_or(DryRunError::NoExternalAtPath)?;
         let intro = node
             .handle
             .introspect_mut()

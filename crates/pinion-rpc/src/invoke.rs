@@ -90,9 +90,15 @@ pub fn invoke(
         .strip_prefix("/external/")
         .ok_or(InvokeError::UnsupportedPath)?;
 
-    let Scene::External(node) = scene else {
-        return Err(InvokeError::NoExternalAtPath);
-    };
+    // (R55.D.5 §5.45) Descend to the substrate's primary External so
+    // both the single-widget shape (`Scene::External`) and the
+    // multi-widget shape (`Scene::Container([primary, ...extras])`)
+    // route `external/<action>` here without per-binding
+    // disambiguation. See `Scene::primary_external_mut` for the DFS
+    // convention.
+    let node = scene
+        .primary_external_mut()
+        .ok_or(InvokeError::NoExternalAtPath)?;
 
     let intro: &mut dyn ExternalIntrospect = node
         .handle

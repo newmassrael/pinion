@@ -70,10 +70,13 @@ use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
-use pinion_core::widgets::scrollbar::{scrollbar_thumb_rect, ScrollBarOrientation};
+use pinion_core::widgets::scrollbar::{
+    scrollbar_thumb_rect, ScrollBarExternal, ScrollBarOrientation,
+};
 use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -98,6 +101,16 @@ const PRIMARY_TAG: &str = "main_list";
 /// tag namespaces (the input router walks `scroll_state_at` via the
 /// attached `Rc<ScrollState>`, not the tag string).
 const SCROLL_KEY: &str = "main_list_scroll";
+/// (R55.D.5 §5.45) Paint-side tag for the visible scrollbar peer +
+/// state-scene tag for the matching [`ScrollBarExternal`]. The
+/// substrate registers the external under this tag through
+/// [`WidgetCore::create_extra_externals`]; the view fn attaches the
+/// same tag to the scrollbar visual `Container` so the input router's
+/// hit-test routes pointer events to the matching external. Sibling
+/// to [`PRIMARY_TAG`] inside the wrapper composite — the
+/// `ListBoxExternal` and the `ScrollBarExternal` are independent
+/// state slots on a shared `Rc<ScrollState>`.
+const SCROLLBAR_TAG: &str = "main_list_scrollbar";
 /// (R51.191 §5.45 R55.G) Scroll viewport width, sized to match the
 /// row width so the rows fit horizontally and the user sees no
 /// horizontal scrollbar (the substrate supports both axes; this
@@ -308,8 +321,19 @@ fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
     // stacks the spacer + thumb top-to-bottom. The space below the
     // thumb stays unfilled (the parent's `TRACK_FILL` shows
     // through), so the thumb appears suspended on a dark rail.
+    //
+    // (R55.D.5 §5.45) Tagged with [`SCROLLBAR_TAG`] so the input
+    // router's hit-test routes pointer events on the track / thumb
+    // to the matching `ScrollBarExternal` registered through
+    // [`WidgetCore::create_extra_externals`]. The router walks the
+    // paint scene's hit segments deepest-first and falls back to the
+    // first tagged ancestor — the spacer + thumb children stay
+    // untagged so a click anywhere inside the bar resolves up to
+    // this outer Container's tag, exactly the rect the
+    // `ScrollBarExternal::pointer_move` mapping expects.
     Scene::Container(
         ContainerNode::new(vec![spacer_above, thumb])
+            .with_tag(SCROLLBAR_TAG)
             .with_style(BoxStyle::filled(TRACK_FILL))
             .with_layout(
                 LayoutStyle::new()
@@ -453,13 +477,40 @@ impl WidgetCore for ListBoxView {
         Box::new(ListBoxExternal::new(N))
     }
 
+    /// (R55.D.5 §5.45) Sibling [`ScrollBarExternal`] for the
+    /// `main_list` scroll container — registered alongside the primary
+    /// `ListBoxExternal` so the substrate composes the state scene as
+    /// `Container([primary, scrollbar])`. The scrollbar shares the
+    /// same `Rc<ScrollState>` the view fn resolves via
+    /// [`use_scroll_state`] (Owner-cache key parity — both factories
+    /// run inside `root_owner.run`, so the cache returns the same
+    /// instance).
+    ///
+    /// First multi-External binding in the example catalogue. Drag
+    /// the visible R55.D.4 scrollbar peer on the right of the listbox
+    /// → the cursor stays captured under the framework's
+    /// [`InputRouter`] R51.34 capture lock → `pointer_move` flows
+    /// through the framework into `ScrollBarExternal::pointer_move`
+    /// → `ScrollState::scroll_to` clamps and writes; the next paint
+    /// re-runs the view fn against the new offset.
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        let scroll_state = use_scroll_state(SCROLL_KEY);
+        let scrollbar = ScrollBarExternal::new().attach_state(scroll_state);
+        vec![ExtraExternal::new(SCROLLBAR_TAG, Box::new(scrollbar))]
+    }
+
     fn tag() -> &'static str {
         PRIMARY_TAG
     }
 
     fn read_state(scene: &Scene) -> ListState {
         let mut out = ListState::idle();
-        let Scene::External(node) = scene else {
+        // (R55.D.5 §5.45) The substrate now wraps the state scene in
+        // a `Container([listbox, scrollbar])`. Walk by tag to recover
+        // the primary `ListBoxExternal`; the previous
+        // `Scene::External(node)` match arm would silently fall
+        // through and return the empty idle state on every paint.
+        let Some(node) = scene.find_external_with_tag(PRIMARY_TAG) else {
             return out;
         };
         let Some(intro) = node.handle.introspect() else {
@@ -538,7 +589,14 @@ impl WidgetCore for ListBoxView {
         if focused != Some(Self::tag()) {
             return false;
         }
-        let Scene::External(node) = scene else {
+        // (R55.D.5 §5.45) State scene is wrapped in
+        // `Container([listbox, scrollbar])` once the binding overrides
+        // `create_extra_externals`. Walk to the primary `ListBox` by
+        // tag instead of pattern-matching `Scene::External` directly;
+        // the previous match arm fell through silently and `apply_key`
+        // returned `false` for every key after R55.D.5 substrate
+        // landed.
+        let Some(node) = scene.find_external_with_tag_mut(Self::tag()) else {
             return false;
         };
         match key {
@@ -649,7 +707,10 @@ impl WidgetA11y for ListBoxView {
         if idx >= N {
             return false;
         }
-        let Scene::External(node) = scene else {
+        // (R55.D.5 §5.45) Multi-External state-scene shape — walk to
+        // the primary `ListBox` external rather than pattern-matching
+        // `Scene::External` directly.
+        let Some(node) = scene.find_external_with_tag_mut(<Self as WidgetCore>::tag()) else {
             return false;
         };
         let Some(intro) = node.handle.introspect_mut() else {

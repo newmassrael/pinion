@@ -69,9 +69,12 @@ pub fn rewind(
         .lookup_path_mut(&scene_segments)
         .ok_or(RewindError::NoExternalAtPath)?;
 
-    let Scene::External(node) = target else {
-        return Err(RewindError::NoExternalAtPath);
-    };
+    // (R55.D.5 §5.45) Descend to the substrate's primary External so
+    // both the single-widget and multi-widget state-scene shapes
+    // route here. See `Scene::primary_external_mut`.
+    let node = target
+        .primary_external_mut()
+        .ok_or(RewindError::NoExternalAtPath)?;
 
     let intro = node
         .handle

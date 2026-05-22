@@ -15379,6 +15379,62 @@
         "F1 framework auto-tag conflict-aware 영구 carry (R55.G.17 F7 채택)"
       ]
     },
+    "R55.D.5": {
+      "decision_summary": "R55.D.5 §5.45 multi-External substrate + ScrollBarExternal drag wiring in hello-listbox",
+      "changes_bullets": [
+        "pinion-core/widget_core.rs: ExtraExternal struct + WidgetCore::create_extra_externals default empty",
+        "pinion-core/scene.rs: Scene::find_external_with_tag/_mut + Scene::primary_external/_mut helpers",
+        "pinion-runtime/core_shell.rs: CoreShell::new composes Scene::Container([primary, ...extras]) when extras present",
+        "pinion-rpc query/invoke/dry_run/rewind: descend to primary_external so external/<action> resolves through wrapper",
+        "hello-listbox/main.rs: create_extra_externals registers ScrollBarExternal sharing Owner::cache ScrollState",
+        "hello-listbox/main.rs: read_state + apply_key + access_child_invoke use find_external_with_tag",
+        "13 substrate tests (7 scene + 6 core_shell incl. end-to-end pointer drag scenario)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello: 2272 passed (+13 new) / 0 failed / 12 ignored",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "10 demos all PASS (hello-listbox row_click/focus_border/composite_path re-validated after multi-External wrap)",
+        "drag scenario test: pointer_down at (10,0) then move to (10,100) on bar with max_y=100 lands offset_y=50"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.41",
+        "5.15",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "R55.D.6 absolute layer Scene primitive (closes R55.D.4 spacer-flex workaround)",
+        "scene/<tag>/external/<action> RPC path syntax for addressing extra Externals by name",
+        "ScrollBarExternal::pointer_enter from refresh_hover - currently Idle→Hover only fires on first enter"
+      ],
+      "publishable_decision_summary": "R55.D.5 §5.45 multi-External substrate + ScrollBarExternal drag wiring in hello-listbox",
+      "publishable_changes_bullets": [
+        "pinion-core/widget_core.rs: ExtraExternal struct + WidgetCore::create_extra_externals default empty",
+        "pinion-core/scene.rs: Scene::find_external_with_tag/_mut + Scene::primary_external/_mut helpers",
+        "pinion-runtime/core_shell.rs: CoreShell::new composes Scene::Container([primary, ...extras]) when extras present",
+        "pinion-rpc query/invoke/dry_run/rewind: descend to primary_external so external/<action> resolves through wrapper",
+        "hello-listbox/main.rs: create_extra_externals registers ScrollBarExternal sharing Owner::cache ScrollState",
+        "hello-listbox/main.rs: read_state + apply_key + access_child_invoke use find_external_with_tag",
+        "13 substrate tests (7 scene + 6 core_shell incl. end-to-end pointer drag scenario)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace --features pinion-runtime/vello: 2272 passed (+13 new) / 0 failed / 12 ignored",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "10 demos all PASS (hello-listbox row_click/focus_border/composite_path re-validated after multi-External wrap)",
+        "drag scenario test: pointer_down at (10,0) then move to (10,100) on bar with max_y=100 lands offset_y=50"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.41",
+        "5.15",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R55.D.6 absolute layer Scene primitive (closes R55.D.4 spacer-flex workaround)",
+        "scene/<tag>/external/<action> RPC path syntax for addressing extra Externals by name",
+        "ScrollBarExternal::pointer_enter from refresh_hover - currently Idle→Hover only fires on first enter"
+      ]
+    },
     "R55.G.22": {
       "decision_summary": "R55.G.22 §5.41 §5.49 — composite paint-root tag convention regression helper assert_widget_view_carries_tag 추출 + 9 widget inline assert 청산",
       "changes_bullets": [
