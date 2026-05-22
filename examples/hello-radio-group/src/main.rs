@@ -102,7 +102,7 @@ impl GroupState {
 /// single composite `RadioGroupExternal`.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: GroupState, _frame: &Frame) -> Scene {
-    let theme = use_theme(THEME_TAG).theme();
+    let theme = use_theme(THEME_TAG).theme_animated();
     let rows: Vec<Scene> = (0..N)
         .map(|i| radio_row(i, state.rows[i].0, state.rows[i].1, &theme))
         .collect();

@@ -96,7 +96,7 @@ fn radio_border_color(theme: &Theme, state: RadioState, selected: bool) -> Color
 /// through `Color::lerp` for hover / pressed / disabled overlays.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: RadioState, selected: bool, _frame: &Frame) -> Scene {
-    let theme = use_theme(THEME_TAG).theme();
+    let theme = use_theme(THEME_TAG).theme_animated();
     let border_color = radio_border_color(&theme, state, selected);
     // Dot fill mirrors the active-side border colour (the Material
     // convention: selected dot uses the same accent as the ring) and

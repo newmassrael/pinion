@@ -152,7 +152,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     // subscribes this view-fn so a `ThemeProvider::set_theme` from
     // anywhere in the application re-runs the view + repaints with
     // the new tones.
-    let theme = use_theme(THEME_TAG).theme();
+    let theme = use_theme(THEME_TAG).theme_animated();
     // R51.147 §5.28 — animated hover progress (0.0 = Idle baseline,
     // 1.0 = full Hover). Drives the lightness lerp below.
     let hover_progress = drive_hover_progress(state);
@@ -473,13 +473,23 @@ mod a11y_tests {
     fn r57_x_button_panel_uses_surface_role_light_dark() {
         // End-to-end: flipping the ThemeMode between two `view`
         // invocations surfaces the Surface role somewhere in the
-        // rendered scene tree.
+        // rendered scene tree. The view-fn reads through
+        // `theme_animated` (R586 §5.50), so the dark assertion needs
+        // the R57.X.theme-fade spring to settle past the M3 short4
+        // window after the mode flip — `settle_owner_animations` then
+        // the at-rest snap returns the exact dark palette.
         let owner = pinion_core::Owner::new();
         owner.run(|| {
             use_theme(THEME_TAG).set_mode(ThemeMode::Light);
             let light_scene = view(ButtonState::Idle, &Frame::new());
             assert!(scene_contains_fill(&light_scene, Theme::light().surface));
             use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
+            // Trigger the spring re-target; the value here is the
+            // in-flight light anchor and is intentionally discarded.
+            let _ = view(ButtonState::Idle, &Frame::new());
+        });
+        pinion_core::test_fixtures::settle_owner_animations(&owner);
+        owner.run(|| {
             let dark_scene = view(ButtonState::Idle, &Frame::new());
             assert!(scene_contains_fill(&dark_scene, Theme::dark().surface));
         });

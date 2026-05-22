@@ -132,7 +132,11 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     // ThemeProvider's `palette` signal. The next `set_theme` flips
     // the surface for free, no view-fn branch on `on` required.
     let provider = use_theme(THEME_TAG);
-    let theme = provider.theme();
+    // (R586 §5.50) Animated palette — opts in to R57.X.theme-fade
+    // cross-fade so the OS dark-mode toggle visually transitions over
+    // ~200 ms instead of snapping; at-rest snap returns the exact
+    // palette so widget-cascade tests stay exact-equality friendly.
+    let theme = provider.theme_animated();
 
     let title = Scene::Text(TextNode::styled(
         "Theme demo",
@@ -467,7 +471,11 @@ mod tests {
         // the use_theme provider must result in a view scene whose
         // root container fills with the swapped palette's surface
         // color. The view-fn itself does no branching on `on` for
-        // colors; the swap rides the reactive subscription.
+        // colors; the swap rides the reactive subscription. R586
+        // §5.50: the view-fn reads through `theme_animated`, so the
+        // dark scene assertion is gated on the R57.X.theme-fade
+        // spring settling past the M3 short4 window via
+        // `settle_owner_animations`.
         let owner = Owner::new();
         owner.run(|| {
             // Force Light mode first — protects against an earlier
@@ -480,6 +488,12 @@ mod tests {
             // toggle just flipped to `on = true`, so mode swaps to
             // Dark.
             use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
+            // Trigger the spring re-target; the in-flight value is
+            // intentionally discarded.
+            let _ = view(ToggleState::Idle, true, &Frame::new());
+        });
+        pinion_core::test_fixtures::settle_owner_animations(&owner);
+        owner.run(|| {
             let scene_dark = view(ToggleState::Idle, true, &Frame::new());
             assert!(scene_contains_surface(&scene_dark, Theme::dark().surface));
         });
@@ -508,6 +522,10 @@ mod tests {
     /// inspection.
     #[test]
     fn r57_x_theme_cleanup_track_off_uses_surface_container_highest() {
+        // R586 §5.50: same settle structure as the surface-swap test
+        // above — the view-fn reads through `theme_animated` so the
+        // dark assertion needs the R57.X.theme-fade spring to settle
+        // before the at-rest snap returns the new palette exactly.
         let owner = Owner::new();
         owner.run(|| {
             // Light mode: track Off fill == light.surface_container_highest.
@@ -517,8 +535,12 @@ mod tests {
                 &scene_light,
                 Theme::light().surface_container_highest,
             ));
-            // Dark mode: track Off fill swaps with palette.
+            // Flip to Dark + trigger the spring re-target.
             use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
+            let _ = view(ToggleState::Idle, false, &Frame::new());
+        });
+        pinion_core::test_fixtures::settle_owner_animations(&owner);
+        owner.run(|| {
             let scene_dark = view(ToggleState::Idle, false, &Frame::new());
             assert!(scene_contains_surface(
                 &scene_dark,

@@ -216,7 +216,7 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
     // tones. The same provider is shared with `hello-toggle` /
     // `hello-theme` (matching `THEME_TAG`) so a future cross-widget
     // toggle binary swaps every retrofitted listbox in lock-step.
-    let theme = use_theme(THEME_TAG).theme();
+    let theme = use_theme(THEME_TAG).theme_animated();
 
     let rows: Vec<Scene> = (0..N)
         .map(|i| listbox_row(i, state.rows[i].0, state.rows[i].1, Some(i) == Some(active), &theme))

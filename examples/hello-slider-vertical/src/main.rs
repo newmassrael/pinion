@@ -96,7 +96,7 @@ const ROW_GAP: u32 = 16;
     clippy::cast_precision_loss
 )]
 fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
-    let theme = use_theme(THEME_TAG).theme();
+    let theme = use_theme(THEME_TAG).theme_animated();
     let filled_color: Color = slider_accent_for(&theme, state);
     let unfilled_color: Color = match state {
         SliderState::Disabled => theme

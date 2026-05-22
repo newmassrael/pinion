@@ -93,6 +93,56 @@ pub fn assert_widget_view_carries_tag<V: WidgetCore>(state: V::State, frame: &Fr
     );
 }
 
+/// R57.X.theme-fade §5.50 — advance `owner`'s registered animations by
+/// one second of simulated wall-clock time (60 ticks of 1 / 60 s each)
+/// so any in-flight spring settles to rest.
+///
+/// One second comfortably exceeds the `THEME_FADE_SPRING` Material 3
+/// short4 (~200 ms) settle window the R57.X.theme-fade fade uses, and
+/// also covers other paint-loop-driven [`Animation`]s
+/// (`hello-button` hover progress, `caret_blink`, ...) at their
+/// canonical settle horizons. After the call, the next
+/// [`ThemeProvider::theme_animated`](crate::theme::ThemeProvider::theme_animated)
+/// read returns the new target exactly via the at-rest snap path
+/// (R585 §5.50), so widget cascade tests can assert exact equality
+/// against palette field values without tolerance.
+///
+/// ## Usage pattern (R57.X.theme-fade widget cascade)
+///
+/// ```rust,ignore
+/// use pinion_core::reactive::Owner;
+/// use pinion_core::test_fixtures::settle_owner_animations;
+/// use pinion_core::theme::{use_theme, Theme, ThemeMode};
+///
+/// let owner = Owner::new();
+/// owner.run(|| {
+///     use_theme(TAG).set_mode(ThemeMode::Light);
+///     let scene = view(state, &Frame::default());
+///     assert_eq!(panel_fill(&scene), Theme::light().surface);
+///     // Flip mode + trigger the spring re-target by reading the
+///     // animated accessor once.
+///     use_theme(TAG).set_mode(ThemeMode::Dark);
+///     let _ = view(state, &Frame::default());
+/// });
+/// settle_owner_animations(&owner);
+/// owner.run(|| {
+///     // Snap engaged — exact equality against the new palette.
+///     let scene = view(state, &Frame::default());
+///     assert_eq!(panel_fill(&scene), Theme::dark().surface);
+/// });
+/// ```
+///
+/// The helper exists at the substrate level rather than as a
+/// per-example boilerplate because the same five-line settle pattern
+/// appears verbatim in every R57.X widget-binding test that swaps the
+/// theme mid-test ([[substrate-incompleteness-signal]] — 9 sites
+/// across `pinion-core::theme` substrate tests + 5 example bindings).
+pub fn settle_owner_animations(owner: &Owner) {
+    for _ in 0..60 {
+        owner.tick_animations(1.0 / 60.0);
+    }
+}
+
 /// Minimal Button binding for substrate-level tests.
 ///
 /// Carries a [`ButtonExternal`] so the SCXML statechart stays

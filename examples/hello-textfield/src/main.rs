@@ -367,7 +367,10 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // subscribes this view-fn so a `ThemeProvider::set_theme` from
     // anywhere in the application re-runs the view + repaints the
     // field + caret + selection band with the new tones.
-    let theme = use_theme(THEME_TAG).theme();
+    // (R586 §5.50) `theme_animated` opts in to the R57.X.theme-fade
+    // cross-fade; the at-rest snap path keeps the instant contract
+    // identical to `theme()` once the spring has settled.
+    let theme = use_theme(THEME_TAG).theme_animated();
     let text_style = TextStyle::new()
         .with_size_px(FONT_SIZE_PX)
         .with_fg(text_fg_for(&theme, interaction));
@@ -974,8 +977,11 @@ impl WidgetView for TextFieldView {
         // the `LayoutCache::layout` lookup is a hit. (R57.X.textfield
         // §5.50) Both sites resolve through [`text_fg_for`] so a
         // palette swap re-keys both LayoutCache reads in lock-step
-        // without drifting the cache identity.
-        let theme = use_theme(THEME_TAG).theme();
+        // without drifting the cache identity. (R586 §5.50) Mirror
+        // the view-fn migration — both sites read the same animated
+        // palette so the cache identity stays in lock-step during the
+        // R57.X.theme-fade cross-fade and snaps together at rest.
+        let theme = use_theme(THEME_TAG).theme_animated();
         let text_style = TextStyle::new()
             .with_size_px(FONT_SIZE_PX)
             .with_fg(text_fg_for(&theme, interaction));
@@ -1355,8 +1361,14 @@ mod tests {
         // `view` invocations must surface a different field fill
         // somewhere in the rendered scene (the role-driven
         // resolution kicks in via the auto-subscribed
-        // `use_theme().theme()` read at the top of `view`).
-        with_owner(|| {
+        // `use_theme().theme_animated()` read at the top of `view`).
+        // R586 §5.50: the view-fn opts into R57.X.theme-fade, so the
+        // dark assertion needs the spring to settle past the M3
+        // short4 window — `settle_owner_animations` runs outside
+        // `owner.run` because `tick_animations` advances the paint
+        // clock independent of the active reactive scope.
+        let owner = Owner::new();
+        owner.run(|| {
             use_theme(THEME_TAG).set_mode(ThemeMode::Light);
             let light_scene = view((TextFieldState::Idle, 0), &Frame::default());
             assert!(scene_contains_fill(
@@ -1364,6 +1376,11 @@ mod tests {
                 Theme::light().surface_container_highest,
             ));
             use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
+            // Trigger the spring re-target; in-flight value discarded.
+            let _ = view((TextFieldState::Idle, 0), &Frame::default());
+        });
+        pinion_core::test_fixtures::settle_owner_animations(&owner);
+        owner.run(|| {
             let dark_scene = view((TextFieldState::Idle, 0), &Frame::default());
             assert!(scene_contains_fill(
                 &dark_scene,

@@ -152,7 +152,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     // Reactive read — every paint subscribes the root owner to the
     // ThemeProvider's `palette` signal. The next `set_theme` flips
     // the surface for free.
-    let theme = use_theme(THEME_TAG).theme();
+    let theme = use_theme(THEME_TAG).theme_animated();
     // Cache the OnSurface role once — it both renders the title /
     // status-line foregrounds and serves as the M3 state-layer
     // overlay direction for hover / pressed modulation.
@@ -517,7 +517,10 @@ mod a11y_tests {
         // scene whose track fill flipped to the dark palette's tone,
         // pinning the substrate cascade end-to-end (use_theme
         // subscription -> mode signal -> view reactive read -> paint
-        // scene).
+        // scene). R586 §5.50: the view reads through `theme_animated`
+        // so the dark assertion needs the R57.X.theme-fade spring to
+        // settle (`settle_owner_animations`) before the at-rest snap
+        // returns the new palette exactly.
         let owner = Owner::new();
         owner.run(|| {
             // Force Light mode up front so the first scene resolves
@@ -531,6 +534,11 @@ mod a11y_tests {
                 "light Off track must fill with light surface_container_highest",
             );
             use_theme(THEME_TAG).set_mode(ThemeMode::Dark);
+            // Trigger the spring re-target; in-flight value discarded.
+            let _ = view(ToggleState::Idle, false, &Frame::new());
+        });
+        pinion_core::test_fixtures::settle_owner_animations(&owner);
+        owner.run(|| {
             let scene_dark = view(ToggleState::Idle, false, &Frame::new());
             assert!(
                 scene_contains_fill(&scene_dark, Theme::dark().surface_container_highest),

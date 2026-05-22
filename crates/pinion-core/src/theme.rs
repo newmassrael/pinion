@@ -1105,6 +1105,7 @@ mod tests {
     };
     use crate::reactive::Owner;
     use crate::style::Color;
+    use crate::test_fixtures::settle_owner_animations;
     use std::rc::Rc;
 
     // ─────────────────────────────────────────────────────────────
@@ -1649,9 +1650,7 @@ mod tests {
             let _ = p.theme_animated();
         });
         // Tick well past the 200 ms settle.
-        for _ in 0..60 {
-            owner.tick_animations(1.0 / 60.0);
-        }
+        settle_owner_animations(&owner);
         owner.run(|| {
             assert_eq!(p.theme_animated(), Theme::dark());
         });
@@ -1673,9 +1672,7 @@ mod tests {
             let _ = p.theme_animated();
         });
         // Settle so the previous anchor is exactly Light.
-        for _ in 0..60 {
-            owner.tick_animations(1.0 / 60.0);
-        }
+        settle_owner_animations(&owner);
         p.set_mode(ThemeMode::Dark);
         owner.run(|| {
             // First call after flip — re-target happens, but the
@@ -1706,9 +1703,7 @@ mod tests {
         owner.run(|| {
             let _ = p.theme_animated();
         });
-        for _ in 0..60 {
-            owner.tick_animations(1.0 / 60.0);
-        }
+        settle_owner_animations(&owner);
         owner.run(|| {
             // Settled — at-rest snap returns the exact custom palette,
             // not the lossy linear-space round-trip.
@@ -1729,16 +1724,12 @@ mod tests {
             let _ = p.theme_animated();
         });
         // Settle on light.
-        for _ in 0..60 {
-            owner.tick_animations(1.0 / 60.0);
-        }
+        settle_owner_animations(&owner);
         set_system_color_scheme(SystemColorScheme::Dark);
         owner.run(|| {
             let _ = p.theme_animated();
         });
-        for _ in 0..60 {
-            owner.tick_animations(1.0 / 60.0);
-        }
+        settle_owner_animations(&owner);
         owner.run(|| {
             // Settled — at-rest snap returns the exact dark palette.
             assert_eq!(p.theme_animated(), Theme::dark());
@@ -1803,9 +1794,7 @@ mod tests {
         owner.run(|| {
             let _ = p.theme_animated();
         });
-        for _ in 0..60 {
-            owner.tick_animations(1.0 / 60.0);
-        }
+        settle_owner_animations(&owner);
         owner.run(|| {
             let a = p.theme_animated();
             for _ in 0..30 {

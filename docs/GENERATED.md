@@ -3894,6 +3894,10 @@ if __name__ == "__main__":
 - R57.X.theme-fade: in-flight value uses linear-light spring; ~1 channel round-trip only mid-fade.
 - R57.X.theme-fade: SwiftUI / Compose canon -- at-rest animation value equals target exactly.
 - R57.X.theme-fade: snap enables widget cascade to assert == against palette fields (exact contract).
+- R57.X.theme-fade: settle_owner_animations lifts 60-tick spring settle pattern to test_fixtures.
+- R57.X.theme-fade: cascade migrates 10 binary view-fn theme() to theme_animated().
+- R57.X.theme-fade: textfield apply_key mirrors view migration (LayoutCache identity lock-step).
+- R57.X.theme-fade: cascade tests use 2-phase owner.run + settle + owner.run for clean retarget.
 
 
 
@@ -4005,6 +4009,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - crates/pinion-core/src/theme.rs:ThemeLinear
 - crates/pinion-core/src/theme.rs:ThemeFadeState
 - crates/pinion-core/src/theme.rs:ThemeProvider::theme_animated
+- crates/pinion-core/src/test_fixtures.rs:settle_owner_animations
 
 
 
@@ -17601,6 +17606,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - `Animation::reset(value)` carry — 2nd consumer 후 ([[abstraction-needs-second-consumer]]).
 - `Animatable<Color>` 일반화 carry — 2nd carrier 등장 후 macro 추출 (Rule of Three).
 - `TweenAnimation<T>` Signal-backed wrapper carry — 2nd 진짜 tween 시나리오 후.
+
+
+
+### Round 586 — R586 §5.50 R57.X.theme-fade widget retrofit cascade — 10 binary view-fn `theme()` → `theme_animated()` + `settle_owner_animations` 헬퍼 lift (test_fixtures 60-tick 스프링 settle).
+
+**Changes**:
+- §5.50 10 binary view-fn `theme()` → `theme_animated()` (textfield apply_key 결제 lock-step 미러).
+- §5.50 `pinion_core::test_fixtures::settle_owner_animations` 헬퍼 (60-tick 스프링 settle, 1s @ 60Hz).
+- §5.50 5 widget cascade 테스트 — 2-phase `owner.run` + settle + `owner.run` 패턴.
+- §5.50 theme.rs 내부 테스트 7 사이트 헬퍼 사용으로 refactor.
+
+
+
+**Verification**:
+- `cargo test --workspace --features pinion-runtime/vello` = 2801 / 0 / 15 (+1 doc test).
+- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` = 0 warnings.
+- 14 demos: 13 PASS / 1 baseline FAIL carry (`hello_listbox_focus_border` Round 577 임, 무관).
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- `Animation::reset(value)` primitive 영구 carry — 2nd consumer 후 (Rule of Three).
+- `Animatable<Color>` 일반화 carry — 2nd carrier 등장 후 macro 추출 검토.
+- Textfield apply_key 캐시 thrash carry — fade 200ms 중 텍스트 레이아웃 frame당 recompute.
+- hello_listbox_focus_border demo baseline 재의 carry — R577 이후 origin/main 결함.
 
 
 

@@ -129,7 +129,7 @@ const ROW_GAP: u32 = 16;
 fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
     // (R57.X.slider §5.50) Active palette — auto-subscribes the
     // view-fn for theme swaps.
-    let theme = use_theme(THEME_TAG).theme();
+    let theme = use_theme(THEME_TAG).theme_animated();
     // Filled-portion canonical M3 active colour = `Accent` with the
     // state-layer overlays applied via [`slider_accent_for`].
     let filled_color: Color = slider_accent_for(&theme, state);

@@ -76,7 +76,7 @@ fn checkbox_outline_for(theme: &Theme, state: CheckboxState) -> Color {
 /// events to the matching `Scene::External("main_checkbox")`.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
-    let theme = use_theme(THEME_TAG).theme();
+    let theme = use_theme(THEME_TAG).theme_animated();
     let box_fill = if checked {
         checkbox_accent_for(&theme, state)
     } else {
