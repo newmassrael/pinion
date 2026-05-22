@@ -36,7 +36,7 @@ pub use renderer::WidgetRenderer;
 pub use external::External;
 pub use widget_core::WidgetCore;
 pub use frame::Frame;
-pub use input::Modifiers;
+pub use input::{CompositionEvent, Modifiers};
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
     Computed, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner, Owner,

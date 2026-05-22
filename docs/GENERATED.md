@@ -16683,6 +16683,44 @@ if __name__ == "__main__":
 
 
 
+### Round 562 — R56.2.a §5.13 §5.38 — shell WindowEvent::Ime arm + WidgetCore::apply_composition trait wire platform IME into R56.1.g substrate.
+
+**Changes**:
+- pinion-core: add CompositionEvent enum (Start/Update/Commit/Cancel) re-export with Modifiers
+- pinion-core widget_core: add WidgetCore::apply_composition (default false) mirror apply_key
+- pinion-runtime core_shell: add CoreShell::apply_composition with root_owner.run wrap (R51.152)
+- pinion-shell substrate: add ShellCore::apply_composition forwards focus + bumps revision
+- pinion-shell app: window.set_ime_allowed(true) on resumed + ime_was_composing state field
+- pinion-shell app: WindowEvent::Ime arm calls winit_ime_to_composition helper + mapping doc
+- winit_ime_to_composition: empty preedit -> Update; Commit while idle injects synthetic Start
+- examples/hello-textfield: apply_composition via intro.invoke composition Json action/data
+- examples/hello-textfield Cargo.toml: add serde_json workspace dep for json! macro
+
+
+
+**Verification**:
+- cargo test workspace vello feature: 2689 pass / 0 fail / 13 ignored (+24 new from R56.2.a)
+- cargo clippy workspace all-targets vello feature: 0 warnings (clippy::pedantic deny baseline)
+- 14-demo release-build regression PASS: hello_toggle_* / hello_listbox_* / hello_textfield_*
+- winit_ime_to_composition mapping table tests pin canonical pinyin commit + Escape cancel sequences
+- ShellCore::apply_composition wire tests pin focused-tag forwarding + revision bump on handled arm
+- CoreShell::apply_composition tests pin default false return + root_owner.run pop on exit symmetric
+- CompositionEvent enum tests pin four W3C-mirrored variants + clone round trip + non-exhaustive shape
+
+
+
+**Impact**: §5.13, §5.22, §5.35, §5.38
+
+
+**Carry forward**:
+- R56.2.b set_ime_cursor_area wire (caret rect -> Window::set_ime_cursor_area) for candidate popup
+- R56.2.c per-focus set_ime_allowed toggle when 2nd text-input widget joins (substrate-incompleteness)
+- Platform clipboard bridge crate (R56.1.e cascade): X11 / Wayland / macOS / Win32 impls
+- R57 Theming substrate axis: runtime palette + token system + theme switch demo
+- R58 composite widget catalogue axis: DatePicker / Combobox / Menu
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

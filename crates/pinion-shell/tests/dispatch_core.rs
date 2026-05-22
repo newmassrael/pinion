@@ -190,6 +190,31 @@ static EXTERNAL_DRAIN_INTENT: Mutex<Option<pinion_core::Intent>> = Mutex::new(No
 // TextFieldExternals can coexist.
 static FOCUS_CHANGE_LOG: Mutex<Vec<bool>> = Mutex::new(Vec::new());
 
+// R56.2.a §5.13 §5.38 — composition observation log. Each
+// `TestView::apply_composition` call pushes a tuple
+// `(focused, label)` where `label` is the variant tag (`"start"` /
+// `"update(<text>)"` / `"commit(<text>)"` / `"cancel"`) so the
+// shell-substrate Ime-wire tests assert the
+// `ShellCore::apply_composition` dispatch path: focused-tag carried
+// through, event borrow shape, post-handle redraw + revision bump
+// on the handled arm.
+static APPLY_COMPOSITION_LOG: Mutex<Vec<(Option<String>, String)>> = Mutex::new(Vec::new());
+
+// R56.2.a §5.13 §5.38 — controls whether `TestView::apply_composition`
+// reports the event as handled. `true` returns `Some(DispatchTail)`
+// from `CoreShell::apply_composition` so `ShellCore` bumps the
+// revision + drains the tail; `false` reports unhandled so the
+// shell substrate skips the post-handle path. Default `false`
+// (mirrors the trait default).
+static APPLY_COMPOSITION_RETURNS: AtomicBool = AtomicBool::new(false);
+
+// R56.2.a §5.13 §5.38 — captures the `Owner::current()` observation
+// each time `TestView::apply_composition` runs so the R56.2.a wrap
+// test can assert the substrate wraps `V::apply_composition` in
+// `root_owner().run(...)`. Mirrors `OBSERVED_OWNER_ID_APPLY_KEY`
+// (R51.152) symmetrically.
+static OBSERVED_OWNER_ID_APPLY_COMPOSITION: Mutex<Option<u64>> = Mutex::new(None);
+
 fn reset_mocks() {
     APPLY_KEY_LOG.lock().unwrap().clear();
     APPLY_KEY_RETURNS.store(false, Ordering::SeqCst);
@@ -203,6 +228,9 @@ fn reset_mocks() {
     UPDATE_INTENT_LOG.lock().unwrap().clear();
     *EXTERNAL_DRAIN_INTENT.lock().unwrap() = None;
     FOCUS_CHANGE_LOG.lock().unwrap().clear();
+    APPLY_COMPOSITION_LOG.lock().unwrap().clear();
+    APPLY_COMPOSITION_RETURNS.store(false, Ordering::SeqCst);
+    *OBSERVED_OWNER_ID_APPLY_COMPOSITION.lock().unwrap() = None;
 }
 
 struct TestView;
@@ -286,6 +314,35 @@ impl WidgetCore for TestView {
         *OBSERVED_OWNER_ID_APPLY_KEY.lock().unwrap() =
             pinion_core::Owner::current().map(|o| o.id());
         APPLY_KEY_RETURNS.load(Ordering::SeqCst)
+    }
+
+    fn apply_composition(
+        _scene: &mut Scene,
+        focused: Option<&str>,
+        event: &pinion_core::CompositionEvent,
+    ) -> bool {
+        // `CompositionEvent` is `#[non_exhaustive]` at the crate
+        // boundary; the wildcard arm is forward-compat for future
+        // variants (e.g. delete_surrounding). Mock records all four
+        // current variants by tag.
+        let label = match event {
+            pinion_core::CompositionEvent::Start => "start".to_owned(),
+            pinion_core::CompositionEvent::Update(t) => format!("update({t})"),
+            pinion_core::CompositionEvent::Commit(t) => format!("commit({t})"),
+            pinion_core::CompositionEvent::Cancel => "cancel".to_owned(),
+            _ => "future".to_owned(),
+        };
+        APPLY_COMPOSITION_LOG
+            .lock()
+            .unwrap()
+            .push((focused.map(ToOwned::to_owned), label));
+        // R56.2.a §5.13 §5.38 — record Owner::current() observation
+        // so the apply_composition-owner-wrap test asserts
+        // CoreShell wraps the call in `root_owner().run(...)`
+        // symmetric with R51.152 apply_key.
+        *OBSERVED_OWNER_ID_APPLY_COMPOSITION.lock().unwrap() =
+            pinion_core::Owner::current().map(|o| o.id());
+        APPLY_COMPOSITION_RETURNS.load(Ordering::SeqCst)
     }
 
     fn update(
@@ -1956,6 +2013,174 @@ mod r56_1_h_focus_lifecycle_wire {
             snapshot_focus_log(),
             vec![true],
             "Shift+Tab from None also fires on_focus_change(true)",
+        );
+    }
+}
+
+#[cfg(test)]
+mod r56_2_a_apply_composition_wire {
+    //! R56.2.a §5.13 §5.38 — `ShellCore::apply_composition` wiring
+    //! regression. Closes the `WindowEvent::Ime` substrate path:
+    //!
+    //! - Forwards the focused tag (via `FocusManager::focused()`) and
+    //!   borrowed `CompositionEvent` to `CoreShell::apply_composition`.
+    //! - On handled (`true` from `V::apply_composition`): bumps the
+    //!   §5.34 revision and runs `handle_tail` (paint-state re-read +
+    //!   redraw + intent drain).
+    //! - On unhandled (`false`): swallows quietly — no redraw, no
+    //!   revision bump (composition events have no fallback arc
+    //!   unlike `apply_key`'s scroll fallback).
+    //! - Wraps the trait call in `root_owner.run` (the R51.152
+    //!   `apply_key` wrap symmetric arc) so application-side
+    //!   `Owner::cache` calls inside the composition handler resolve
+    //!   to the binding's root scope.
+    //!
+    //! The full winit↔CompositionEvent mapping (Enabled / Preedit /
+    //! Commit / Disabled with the `was_composing` state machine)
+    //! lives in `pinion-shell::app::AppShell::window_event` — those
+    //! arms have no observable substrate without a real winit
+    //! `EventLoop`, so the per-mapping coverage lives in the unit
+    //! tests on `pinion-shell::app::winit_ime_to_composition` (added
+    //! alongside the arm in this same round).
+    use super::{
+        reset_mocks, APPLY_COMPOSITION_LOG, APPLY_COMPOSITION_RETURNS,
+        OBSERVED_OWNER_ID_APPLY_COMPOSITION, TEST_LOCK, TestView,
+    };
+    use pinion_a11y::{AccessAction, PinionAccessAction};
+    use pinion_shell::ShellCore;
+    use std::sync::atomic::Ordering;
+
+    fn snapshot_log() -> Vec<(Option<String>, String)> {
+        APPLY_COMPOSITION_LOG.lock().unwrap().clone()
+    }
+
+    // Focus "test" via the AccessAction::Focus side door (the same
+    // path the other R56.1.h tests use). Returns the ShellCore ready
+    // for composition dispatch with `focus().focused() == Some("test")`.
+    fn shell_with_focused_test() -> ShellCore<TestView> {
+        let mut core = ShellCore::<TestView>::new();
+        core.dispatch_access_action(&PinionAccessAction {
+            tag: "test".to_owned(),
+            kind: AccessAction::Focus,
+        });
+        // Drain side-effects of the focus arc (redraw request,
+        // notify_focus_change(true) recorded on FOCUS_CHANGE_LOG —
+        // reset_mocks clears it on the next test).
+        let _ = core.take_redraw_request();
+        core
+    }
+
+    #[test]
+    fn r56_2_a_apply_composition_forwards_focused_tag_and_event_label() {
+        // Focused == Some("test") after dispatch_access_action(Focus);
+        // ShellCore reads the focus manager and forwards through
+        // CoreShell which wraps and calls TestView::apply_composition.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_COMPOSITION_RETURNS.store(false, Ordering::SeqCst);
+
+        let mut core = shell_with_focused_test();
+        assert_eq!(core.focus().focused(), Some("test"));
+
+        core.apply_composition(&pinion_core::CompositionEvent::Start);
+        core.apply_composition(&pinion_core::CompositionEvent::Update("ha".to_owned()));
+        core.apply_composition(&pinion_core::CompositionEvent::Commit("\u{D55C}".to_owned()));
+        core.apply_composition(&pinion_core::CompositionEvent::Cancel);
+
+        let log = snapshot_log();
+        assert_eq!(log.len(), 4, "four dispatches → four V::apply_composition calls");
+        assert_eq!(log[0], (Some("test".to_owned()), "start".to_owned()));
+        assert_eq!(log[1], (Some("test".to_owned()), "update(ha)".to_owned()));
+        assert_eq!(log[2], (Some("test".to_owned()), "commit(\u{D55C})".to_owned()));
+        assert_eq!(log[3], (Some("test".to_owned()), "cancel".to_owned()));
+    }
+
+    #[test]
+    fn r56_2_a_apply_composition_carries_none_focus_when_blurred() {
+        // Without focus_set, FocusManager::focused() returns None.
+        // ShellCore forwards None as the focused-tag argument, and
+        // widget impls (mirroring `apply_key`) short-circuit on the
+        // roving-tabindex predicate. The mock records the None.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.apply_composition(&pinion_core::CompositionEvent::Start);
+
+        let log = snapshot_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].0, None, "blurred shell carries None as focused tag");
+    }
+
+    #[test]
+    fn r56_2_a_handled_arm_bumps_revision() {
+        // APPLY_COMPOSITION_RETURNS=true forces V::apply_composition
+        // to report handled, so CoreShell yields Some(DispatchTail).
+        // ShellCore bumps the §5.34 revision (mirrors apply_key's
+        // behaviour). handle_tail's redraw + read-state arc only
+        // fires on visible state changes; TestView's state stays at
+        // 0 so this test only pins the revision bump.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        APPLY_COMPOSITION_RETURNS.store(true, Ordering::SeqCst);
+
+        let mut core = ShellCore::<TestView>::new();
+        let before = core.revision();
+        core.apply_composition(&pinion_core::CompositionEvent::Start);
+        assert_eq!(
+            core.revision(),
+            before + 1,
+            "handled apply_composition bumps the §5.34 revision",
+        );
+    }
+
+    #[test]
+    fn r56_2_a_unhandled_arm_skips_revision_bump() {
+        // APPLY_COMPOSITION_RETURNS=false (default) reports unhandled
+        // so CoreShell yields None. ShellCore must NOT bump the
+        // revision or request a redraw — composition events have no
+        // fallback arc, the substrate stays silent.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let before = core.revision();
+        core.apply_composition(&pinion_core::CompositionEvent::Cancel);
+        assert_eq!(
+            core.revision(),
+            before,
+            "unhandled apply_composition leaves the revision untouched",
+        );
+        assert!(
+            !core.take_redraw_request(),
+            "unhandled apply_composition does not request a redraw",
+        );
+    }
+
+    #[test]
+    fn r56_2_a_apply_composition_runs_under_root_owner_scope() {
+        // Symmetric with R51.152 apply_key wrap: the trait call must
+        // run under `root_owner().run(...)`. Verify by capturing
+        // Owner::current() inside V::apply_composition and asserting
+        // it matches the binding's root owner id (via the existing
+        // OBSERVED_OWNER_ID_APPLY_KEY arc — same wrap shape, same id).
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        // Pre-dispatch: no active wrap.
+        assert!(pinion_core::Owner::current().is_none());
+        core.apply_composition(&pinion_core::CompositionEvent::Start);
+        // The mock recorded Owner::current().map(|o| o.id()); the
+        // wrap is in place iff this is Some(_).
+        assert!(
+            OBSERVED_OWNER_ID_APPLY_COMPOSITION.lock().unwrap().is_some(),
+            "apply_composition must run inside root_owner.run(...)",
+        );
+        // Post-dispatch: wrap popped.
+        assert!(
+            pinion_core::Owner::current().is_none(),
+            "wrap pops on exit",
         );
     }
 }

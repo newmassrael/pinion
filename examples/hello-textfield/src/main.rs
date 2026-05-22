@@ -664,6 +664,72 @@ impl WidgetCore for TextFieldView {
         }
     }
 
+    /// R56.2.a §5.13 §5.38 — delegate platform IME composition events
+    /// to [`TextFieldExternal::invoke`]`("composition", Json{action,
+    /// data?})`. The pinion-shell `WindowEvent::Ime` arm converts
+    /// winit's cross-platform [`Ime`](winit::event::Ime) enum into
+    /// pinion-native [`pinion_core::CompositionEvent`] (R56.2.a
+    /// substrate) and routes here through `ShellCore::apply_composition`
+    /// → `CoreShell::apply_composition` → `V::apply_composition`.
+    /// This binding's impl reformats the typed enum back to the
+    /// R56.1.g.2 wire-form so the substrate funnel (AI client RPC
+    /// path + platform IME path) lands on the same code.
+    ///
+    /// Mapping table:
+    ///
+    /// | `CompositionEvent` variant | invoke args                                |
+    /// |-----------------------------|--------------------------------------------|
+    /// | `Start`                     | `{"action": "start"}`                      |
+    /// | `Update(text)`              | `{"action": "update", "data": "<text>"}`   |
+    /// | `Commit(text)`              | `{"action": "end",    "data": "<text>"}`   |
+    /// | `Cancel`                    | `{"action": "cancel"}`                     |
+    ///
+    /// The `focused != Some(TF_TAG)` short-circuit mirrors
+    /// [`Self::apply_key`]'s roving-tabindex pattern: composition
+    /// events only flow when this widget owns focus, so an IME event
+    /// arriving while focus rests on a non-text widget is dropped
+    /// without disturbing the `TextField`'s substrate (defensive against
+    /// a future per-focus `set_ime_allowed` regression that briefly
+    /// leaks IME events past the focus boundary).
+    ///
+    /// Returns `true` whenever the invoke channel reports success
+    /// (the R56.1.g.2 path always returns `Ok(Text(<state name>))`
+    /// on a valid Json arg, so any `Ok` is treated as handled).
+    fn apply_composition(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        event: &pinion_core::CompositionEvent,
+    ) -> bool {
+        if focused != Some(TF_TAG) {
+            return false;
+        }
+        let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        let args = match event {
+            pinion_core::CompositionEvent::Start => {
+                IntrospectValue::Json(serde_json::json!({ "action": "start" }))
+            }
+            pinion_core::CompositionEvent::Update(text) => IntrospectValue::Json(
+                serde_json::json!({ "action": "update", "data": text }),
+            ),
+            pinion_core::CompositionEvent::Commit(text) => IntrospectValue::Json(
+                serde_json::json!({ "action": "end", "data": text }),
+            ),
+            pinion_core::CompositionEvent::Cancel => {
+                IntrospectValue::Json(serde_json::json!({ "action": "cancel" }))
+            }
+            // `CompositionEvent` is `#[non_exhaustive]`; defer
+            // any future variant (delete_surrounding etc.) to the
+            // shell's fallback by reporting unhandled here.
+            _ => return false,
+        };
+        intro.invoke("composition", args).is_ok()
+    }
+
     fn fmt_state_log(state: &(TextFieldState, u32)) -> String {
         format!(
             "{} / caret={}",

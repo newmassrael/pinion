@@ -21,6 +21,21 @@
 //! [`Modifiers`] from their respective platform vocabularies and
 //! forward through the [`WidgetCore::apply_key`](crate::widget_core::WidgetCore::apply_key)
 //! dispatch path — the substrate stays platform-agnostic.
+//!
+//! R56.2.a §5.13 §5.38 — extends the surface with [`CompositionEvent`],
+//! the W3C `CompositionEvent` mirror that platform IME bridges feed
+//! into [`WidgetCore::apply_composition`](crate::widget_core::WidgetCore::apply_composition).
+//! The four phases (`Start` / `Update` / `Commit` / `Cancel`) map 1:1
+//! to the [`TextFieldExternal::apply_composition_*`](crate::widgets::text_field::TextFieldExternal)
+//! substrate landed in R56.1.g. winit 0.30's
+//! [`WindowEvent::Ime`](https://docs.rs/winit/0.30/winit/event/enum.WindowEvent.html#variant.Ime)
+//! cross-platform abstraction is the canonical desktop bridge (Wayland
+//! `text-input-v3` + X11 XIM + macOS `NSTextInputContext` + Windows
+//! TSF all funnel through winit's four-variant `Ime` enum); the
+//! pinion-shell `app.rs` Ime arm performs the
+//! `winit::Ime → CompositionEvent` mapping with `was_composing` state
+//! tracking so empty `Preedit` triggers `Cancel` and `Disabled`
+//! cancels an in-flight session.
 
 /// R56.1.f.0 §5.13 — abstract modifier-key state, mirroring
 /// `winit::keyboard::ModifiersState` and W3C DOM Level 3
@@ -105,6 +120,59 @@ impl Modifiers {
     }
 }
 
+/// R56.2.a §5.13 §5.38 — abstract IME composition phase event,
+/// mirroring W3C UI Events `CompositionEvent` without a winit
+/// dependency. Carries one of four phases that map 1:1 to the
+/// [`TextFieldExternal::apply_composition_*`](crate::widgets::text_field::TextFieldExternal)
+/// substrate landed in R56.1.g:
+///
+/// - [`CompositionEvent::Start`]: begin composition. Mirrors the W3C
+///   `compositionstart` event (data is empty / not yet known). Callers
+///   should fire this once per composition session before any
+///   `Update`; the substrate is defensive against missing-start
+///   (`Update` without a prior `Start` is a no-op at the
+///   [`TextEditState`](crate::widgets::text_edit::TextEditState)
+///   layer), but the SCXML transition that gates the caret-blink
+///   posture only fires through `Start`.
+/// - [`CompositionEvent::Update`]: replace the active preedit with
+///   `text`. Mirrors W3C `compositionupdate` (the `data` field carries
+///   the new preedit). Empty `text` is canonically just an empty
+///   preedit (the user has deleted all in-flight characters but
+///   composition stays open); use [`CompositionEvent::Commit`] or
+///   [`CompositionEvent::Cancel`] to end the session.
+/// - [`CompositionEvent::Commit`]: end composition by inserting `text`
+///   at the caret. Mirrors W3C `compositionend` with non-empty `data`.
+///   Empty `text` is the canonical "no-data compositionend" shape and
+///   the substrate routes it through `preedit_cancel` (matches the
+///   Wayland `text-input-v3` cancel-via-empty-commit behaviour).
+/// - [`CompositionEvent::Cancel`]: end composition without inserting
+///   any text. Mirrors IME cancel (Escape during preedit, blur with
+///   discarded composition, `WindowEvent::Ime::Disabled` mid-flight).
+///
+/// `#[non_exhaustive]` reserves room for future Wayland-style
+/// `delete_surrounding` (text replacement) and explicit
+/// `set_surrounding` (context-aware IME) variants without a `SemVer`
+/// break — winit 0.30's `Ime` enum stays at the four-variant shape
+/// the cross-platform LCD supports today, so the substrate matches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CompositionEvent {
+    /// Begin a composition session. Substrate seeds the
+    /// preedit buffer via [`TextEditState::preedit_start`](crate::widgets::text_edit::TextEditState::preedit_start)
+    /// AND drives [`TextFieldEvent::BeginEdit`](crate::widgets::text_field::TextFieldEvent::BeginEdit)
+    /// through the SCXML.
+    Start,
+    /// Replace the active preedit with the carried `String`. Updates
+    /// the reactive preedit sidecar; the SCXML stays in `Editing`.
+    Update(String),
+    /// End the composition by inserting the carried `String` at the
+    /// caret position. Empty string is the no-data compositionend
+    /// shape and routes through cancel.
+    Commit(String),
+    /// End the composition without inserting any text.
+    Cancel,
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.f.0 §5.13 — `Modifiers` regression battery. Covers the
@@ -168,5 +236,95 @@ mod tests {
         assert_eq!(m, n);
         let o = m;
         assert_eq!(m, o);
+    }
+}
+
+#[cfg(test)]
+mod r56_2_a_composition_event_tests {
+    //! R56.2.a §5.13 §5.38 — [`CompositionEvent`] enum surface tests.
+    //! Pins the four W3C-mirrored variants + `Debug` + `PartialEq` +
+    //! `Clone` derives so downstream pattern-matching call sites
+    //! (`WidgetCore::apply_composition` dispatch in widget bindings,
+    //! pinion-shell `WindowEvent::Ime` arm) stay stable.
+
+    use super::CompositionEvent;
+
+    #[test]
+    fn r56_2_a_four_variants_construct_and_compare() {
+        assert_eq!(CompositionEvent::Start, CompositionEvent::Start);
+        assert_eq!(
+            CompositionEvent::Update("ha".to_owned()),
+            CompositionEvent::Update("ha".to_owned()),
+        );
+        assert_eq!(
+            CompositionEvent::Commit("han".to_owned()),
+            CompositionEvent::Commit("han".to_owned()),
+        );
+        assert_eq!(CompositionEvent::Cancel, CompositionEvent::Cancel);
+    }
+
+    #[test]
+    fn r56_2_a_variants_are_distinct() {
+        assert_ne!(CompositionEvent::Start, CompositionEvent::Cancel);
+        assert_ne!(
+            CompositionEvent::Update("ha".to_owned()),
+            CompositionEvent::Commit("ha".to_owned()),
+        );
+        assert_ne!(
+            CompositionEvent::Update("ha".to_owned()),
+            CompositionEvent::Update("han".to_owned()),
+        );
+    }
+
+    #[test]
+    fn r56_2_a_clone_round_trip_preserves_data() {
+        let original = CompositionEvent::Commit("\u{D55C}".to_owned()); // Korean syllable "한"
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        if let CompositionEvent::Commit(text) = cloned {
+            assert_eq!(text.len(), 3, "Korean syllable is 3 UTF-8 bytes");
+        } else {
+            panic!("Clone must preserve variant tag");
+        }
+    }
+
+    #[test]
+    fn r56_2_a_empty_update_is_distinct_from_cancel() {
+        // Empty Update is a "preedit cleared but composition still open"
+        // signal — distinct from explicit Cancel which ends the session.
+        // The substrate routes them through different `apply_composition_*`
+        // methods on the External (Update("") → preedit_update("") vs
+        // Cancel → preedit_cancel + SCXML CancelEdit).
+        assert_ne!(
+            CompositionEvent::Update(String::new()),
+            CompositionEvent::Cancel,
+        );
+    }
+
+    #[test]
+    fn r56_2_a_four_known_variants_pattern_match() {
+        // The `#[non_exhaustive]` attribute matters at the crate
+        // boundary (external crates must include a wildcard arm);
+        // inside `pinion-core` the four-variant match stays exhaustive.
+        // This test pins the in-crate matchable surface so a future
+        // variant addition is caught here at compile time and the
+        // author updates the per-arm dispatch (and adds the
+        // downstream wildcard-arm regression in the relevant
+        // consumer crate).
+        let events = [
+            CompositionEvent::Start,
+            CompositionEvent::Update("x".to_owned()),
+            CompositionEvent::Commit("x".to_owned()),
+            CompositionEvent::Cancel,
+        ];
+        for e in &events {
+            let label = match e {
+                CompositionEvent::Start => "start",
+                CompositionEvent::Update(_) => "update",
+                CompositionEvent::Commit(_) => "commit",
+                CompositionEvent::Cancel => "cancel",
+            };
+            assert!(!label.is_empty());
+        }
     }
 }

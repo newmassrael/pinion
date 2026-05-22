@@ -518,6 +518,36 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
+    /// R56.2.a §5.13 §5.38 — route an IME [`CompositionEvent`] through
+    /// [`WidgetView::apply_composition`] and, on handled
+    /// (`Some(DispatchTail)` from [`CoreShell::apply_composition`]),
+    /// run the same post-input bookkeeping as [`Self::apply_key`]:
+    /// bump the §5.34 revision, drain pending intents via
+    /// [`Self::handle_tail`] (which re-reads cached state and
+    /// requests a redraw on visible change).
+    ///
+    /// pinion-shell's `AppShell::window_event` `WindowEvent::Ime`
+    /// arm converts winit 0.30's cross-platform
+    /// [`Ime`](https://docs.rs/winit/0.30/winit/event/enum.Ime.html)
+    /// enum (`Enabled` / `Preedit(text, range)` / `Commit(text)` /
+    /// `Disabled`) into [`CompositionEvent`] with a `was_composing`
+    /// state machine, then forwards through this method — see the
+    /// `AppShell` doc comment on the arm for the mapping table.
+    ///
+    /// Unhandled composition events (`None` return — every widget
+    /// except `TextField` and friends) are swallowed quietly; the
+    /// shell does not fall through to any scroll/typeahead/other arc
+    /// because composition events have no meaningful fallback (the
+    /// W3C contract is "widget consumes preedit or nothing else
+    /// applies").
+    pub fn apply_composition(&mut self, event: &pinion_core::CompositionEvent) {
+        let focused = self.focus.focused().map(str::to_owned);
+        if let Some(tail) = self.core.apply_composition(focused.as_deref(), event) {
+            self.revision.bump();
+            self.handle_tail(&tail);
+        }
+    }
+
     /// R51.78 §5.39 — Tab / Shift+Tab dispatch decoupled from winit.
     ///
     /// `AppShell::handle_key_press` (winit-side) maps

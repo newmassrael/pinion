@@ -778,6 +778,44 @@ impl<V: WidgetCore> CoreShell<V> {
         }
     }
 
+    /// R56.2.a §5.13 §5.38 — route an IME [`CompositionEvent`] through
+    /// [`WidgetCore::apply_composition`]. Symmetric with
+    /// [`Self::apply_key`]: wraps the trait call in `root_owner.run`
+    /// so [`Owner::current`](pinion_core::reactive::Owner::current)
+    /// resolves to this binding's root scope from inside the widget's
+    /// composition handler (e.g. `TextField::apply_composition` uses
+    /// the same `use_text_edit_state(TF_TAG)` cache the view fn and
+    /// `create_external` already share — R56.1.b.1 substrate).
+    ///
+    /// Returns `Some(DispatchTail)` on handled (`true` from
+    /// `apply_composition`), `None` on unhandled — the shell wrapper
+    /// checks the `Option` to decide whether to bump backend-specific
+    /// bookkeeping (Vello: revision + redraw; TUI: repaint trigger).
+    /// Mirrors the R51.122 `apply_key` return-shape contract so the
+    /// pinion-shell `WindowEvent::Ime` arm can reuse the existing
+    /// post-handle path (`handle_tail` + redraw request).
+    ///
+    /// `focused` carries the focus manager's currently-focused tag at
+    /// dispatch time. pinion-shell's `app.rs` sources it from
+    /// `self.focus.focused()` (same as `apply_key`); widget
+    /// implementations short-circuit to `false` when the carried tag
+    /// is not their own (roving-tabindex pattern), preventing
+    /// composition events from broadcasting to unfocused widgets.
+    pub fn apply_composition(
+        &mut self,
+        focused: Option<&str>,
+        event: &pinion_core::CompositionEvent,
+    ) -> Option<DispatchTail<V::State>> {
+        let owner = self.root_owner.clone();
+        let scene = &mut self.scene;
+        let handled = owner.run(|| V::apply_composition(scene, focused, event));
+        if handled {
+            Some(self.tail())
+        } else {
+            None
+        }
+    }
+
     /// R51.122 §5.41 — pointer cursor-move dispatch (cell→pixel or
     /// `winit` → pixel conversion happens at the backend boundary).
     /// Forwards through the [`InputRouter`] then drains the dispatch
@@ -1340,6 +1378,88 @@ mod tests {
         // The wrap is symmetric: V::view runs under the same owner.
         // We've already verified through R51.146 that V::view sees
         // root_owner; the apply_key wrap mirrors the same shape.
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R56.2.a §5.13 §5.38 — CoreShell::apply_composition wraps
+    // V::apply_composition in root_owner.run(...) and returns
+    // Some(DispatchTail) on handled / None on unhandled. The
+    // TestButton fixture leaves WidgetCore::apply_composition at its
+    // default (`false`) so every dispatch path here lands on the
+    // None arm; the handled arm is exercised at the consumer side
+    // (hello-textfield's TextFieldView impl exercises the route
+    // end-to-end through `find_external_with_tag_mut + invoke`).
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r56_2_a_apply_composition_returns_none_for_default_impl() {
+        // R56.2.a — `WidgetCore::apply_composition` defaults to
+        // `false`; CoreShell wraps and yields `None`. The cached
+        // state stays in `Idle` because no dispatch tail was drained.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        for event in [
+            pinion_core::CompositionEvent::Start,
+            pinion_core::CompositionEvent::Update("ha".to_owned()),
+            pinion_core::CompositionEvent::Commit("han".to_owned()),
+            pinion_core::CompositionEvent::Cancel,
+        ] {
+            assert!(
+                core.apply_composition(Some("test_btn"), &event).is_none(),
+                "default apply_composition must yield None on {event:?}",
+            );
+        }
+        assert_eq!(*core.cached_state(), ButtonState::Idle);
+    }
+
+    #[test]
+    fn r56_2_a_apply_composition_pops_root_owner_on_exit() {
+        // R56.2.a — wrap symmetric with apply_key (R51.152): the
+        // `root_owner.run(...)` bracket must pop on exit so
+        // `Owner::current()` outside the dispatch path stays None.
+        // We exercise both the focused arm and the wrong-focus arm
+        // to confirm the wrap pops regardless of the trait return.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        assert!(pinion_core::Owner::current().is_none());
+        let _ = core.apply_composition(
+            Some("test_btn"),
+            &pinion_core::CompositionEvent::Start,
+        );
+        assert!(
+            pinion_core::Owner::current().is_none(),
+            "apply_composition's root_owner.run wrap must pop on exit",
+        );
+        let _ = core.apply_composition(
+            Some("foreign_tag"),
+            &pinion_core::CompositionEvent::Commit("x".to_owned()),
+        );
+        assert!(
+            pinion_core::Owner::current().is_none(),
+            "wrap pops even when V::apply_composition returns false",
+        );
+        let _ = core.apply_composition(
+            None,
+            &pinion_core::CompositionEvent::Cancel,
+        );
+        assert!(
+            pinion_core::Owner::current().is_none(),
+            "wrap pops on unfocused dispatch (None focus)",
+        );
+    }
+
+    #[test]
+    fn r56_2_a_apply_composition_borrows_event_without_consuming() {
+        // R56.2.a — the trait method takes `&CompositionEvent`, so
+        // callers can re-use the event after dispatch (e.g. log it,
+        // forward to RPC observability). Verify the borrow contract
+        // by re-reading the event after the call.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let event = pinion_core::CompositionEvent::Update("ha".to_owned());
+        let _ = core.apply_composition(Some("test_btn"), &event);
+        // event is still owned and inspectable after the call.
+        match &event {
+            pinion_core::CompositionEvent::Update(text) => assert_eq!(text, "ha"),
+            _ => panic!("event must survive borrow"),
+        }
     }
 
     #[test]

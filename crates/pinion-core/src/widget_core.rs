@@ -289,6 +289,55 @@ pub trait WidgetCore: 'static {
         false
     }
 
+    /// R56.2.a §5.13 §5.38 — IME composition entry point. The shell
+    /// calls this when the platform IME bridge dispatches a
+    /// [`CompositionEvent`](crate::input::CompositionEvent), mirroring
+    /// the W3C UI Events `CompositionEvent` (`compositionstart` /
+    /// `compositionupdate` / `compositionend`) plus an explicit
+    /// `Cancel` phase for IME cancel (Escape during preedit, blur
+    /// with discarded composition, `WindowEvent::Ime::Disabled`
+    /// mid-flight on winit 0.30).
+    ///
+    /// Symmetric with [`Self::apply_key`]: takes the authoritative
+    /// state scene `&mut`, the focus manager's currently-focused tag
+    /// at dispatch time, and the typed event. Widgets that own a
+    /// focusable text-input surface walk the scene to the matching
+    /// `Scene::External` (via [`Scene::find_external_with_tag_mut`])
+    /// and call
+    /// [`ExternalIntrospect::invoke`](crate::external::ExternalIntrospect::invoke)`("composition", Json{...})`
+    /// — the same side door the R56.1.g.2 `scene/invoke` RPC path
+    /// uses, so the AI client and the platform IME bridge funnel
+    /// through one substrate contract.
+    ///
+    /// `focused != Some(<my tag>)` should short-circuit to `false`
+    /// (mirroring the `apply_key` roving-tabindex pattern) so
+    /// composition events do not broadcast to unfocused widgets.
+    ///
+    /// Returns `true` if the composition event was handled (the
+    /// shell bumps the §5.34 revision, re-reads state, drains
+    /// intents, and repaints on visible change). Returns `false` to
+    /// defer (most widgets — only text-input widgets like
+    /// `TextField` override this).
+    ///
+    /// Default returns `false` for every event — widgets without
+    /// text-input affordances need no override. winit 0.30's
+    /// [`WindowEvent::Ime`](https://docs.rs/winit/0.30/winit/event/enum.WindowEvent.html#variant.Ime)
+    /// is the canonical cross-platform IME bridge (Wayland
+    /// `text-input-v3` + X11 XIM + macOS `NSTextInputContext` +
+    /// Windows TSF + GTK `IBus` all funnel through the four-variant
+    /// `Ime` enum); pinion-shell's `app.rs` performs the
+    /// `winit::Ime → CompositionEvent` mapping with `was_composing`
+    /// state tracking so empty preedit triggers `Cancel` and
+    /// `Disabled` cancels an in-flight session.
+    #[must_use]
+    fn apply_composition(
+        _scene: &mut Scene,
+        _focused: Option<&str>,
+        _event: &crate::input::CompositionEvent,
+    ) -> bool {
+        false
+    }
+
     /// Focusable tag enumeration in Tab order. Returned tags must
     /// match either [`Self::tag`] (the top-level widget) or a sub-tag
     /// the view fn paints inside the widget (composite widgets like

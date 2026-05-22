@@ -1629,6 +1629,7 @@ dependencies = [
  "pinion-forge",
  "pinion-shell",
  "pinion-text",
+ "serde_json",
  "vello",
 ]
 

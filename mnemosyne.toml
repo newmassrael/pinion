@@ -451,3 +451,12 @@ reason = "R56.1.g.3 audit minimal ASCII landed first to avoid mnemosyne MCP mult
 applied_in = "Round 561"
 content_hash_before = "38be03f7c1008f33610639389185c8aa55a7b39698d90fae8b8005a38242455b"
 content_hash_after = "f2ad092aaa2a33e7c29575868d07348f0521d624942a9732f35250ea758fb4c8"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 562"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_impact_refs", "publishable_carry_forward_bullets"]
+reason = "R56.2.a audit half was authored as minimal ASCII per [[mnemosyne-multibyte-audit-fallback]] (multi-byte unicode rejection on long bullets); publishable half expands the four atomic fields with detailed wire-shape + verification context, impact_refs include §5.35 (InputRouter receives the new dispatch arm)."
+applied_in = "Round 562"
+content_hash_before = "d70c3f59a8c819ac0f6701b67eae8d98faff311abdc17e6388e3c9242325342b"
+content_hash_after = "ed7060762577570f6a15b8bbfa5d3a676ca67b772aa4830de68d57f3fb575e51"

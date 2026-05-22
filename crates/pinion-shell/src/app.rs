@@ -32,7 +32,7 @@ use pinion_runtime::{paint_adapter, CommandExecutor, HandlerRegistry, PointerId}
 use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -85,6 +85,29 @@ pub struct AppShell<V: WidgetView> {
     /// `ActionRequested`, `AccessibilityDeactivated`) through
     /// [`AppEvent::AccessKit`].
     accesskit: Option<accesskit_winit::Adapter>,
+    /// R56.2.a §5.13 §5.38 — IME composition state machine. winit
+    /// 0.30's [`WindowEvent::Ime`] surface carries four variants
+    /// (`Enabled` / `Preedit` / `Commit` / `Disabled`) but the
+    /// W3C-aligned [`CompositionEvent`](pinion_core::CompositionEvent)
+    /// the substrate consumes has explicit phase boundaries
+    /// (`Start` / `Update` / `Commit` / `Cancel`). Bridging the two
+    /// requires the shell to track whether the current sequence is
+    /// "in a session" so:
+    ///
+    /// - the first non-empty `Ime::Preedit` triggers
+    ///   `CompositionEvent::Start` (in addition to `Update`);
+    /// - a stand-alone `Ime::Commit` (no prior `Preedit`, as macOS
+    ///   dead-key sequences emit) gets a synthetic `Start` so the
+    ///   `TextFieldExternal::apply_composition_commit` path lands
+    ///   the text at the caret with the `was_composing` gate satisfied;
+    /// - `Ime::Disabled` mid-session dispatches `Cancel`.
+    ///
+    /// The `was_composing` boolean lives at the shell layer (rather
+    /// than the widget layer) because the mapping has to survive a
+    /// `Preedit("", None)` "synthetic clear" event winit injects
+    /// before every `Commit` — see the [`winit_ime_to_composition`]
+    /// helper's doc-comment for the full mapping table.
+    ime_was_composing: bool,
 }
 
 
@@ -108,6 +131,8 @@ impl<V: WidgetView> AppShell<V> {
             vello_scene: VelloScene::new(),
             proxy,
             accesskit: None,
+            // R56.2.a §5.13 §5.38 — empty composition session at boot.
+            ime_was_composing: false,
         }
     }
 
@@ -364,6 +389,27 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 }
             }
         };
+        // R56.2.a §5.13 §5.38 — opt into the winit IME bridge so
+        // `WindowEvent::Ime` events flow into the [`Self::window_event`]
+        // arm and through `ShellCore::apply_composition` →
+        // `WidgetCore::apply_composition`. Default winit state is
+        // `set_ime_allowed(false)` (no IME events emitted, no
+        // candidate window even when a Korean / Chinese / Japanese
+        // keyboard layout is active); enabling it unblocks the
+        // R56.1.g composition substrate for real platform IME input.
+        //
+        // This is a shell-wide toggle (not per-widget) for the first
+        // slice — pinion's catalogue today carries one focusable
+        // text-input widget (TextField), and non-text widgets simply
+        // do not invoke the IME (the user never switches their input
+        // method state into IME mode while focused on a Button or
+        // Slider). A future sub-round can wire per-focus toggling
+        // through `notify_focus_change` if a non-text widget ever
+        // needs IME suppressed (the canonical place: gate on the
+        // focused widget's `WidgetCore::apply_composition` default
+        // override, set_ime_allowed(false) when the widget doesn't
+        // override).
+        window.set_ime_allowed(true);
         let size = window.inner_size();
         let renderer = pollster::block_on(<V::Renderer as VelloRenderer>::new(
             Arc::clone(&window),
@@ -505,6 +551,26 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     self.handle_key_press(event_loop, &event.logical_key);
+                }
+            }
+            // R56.2.a §5.13 §5.38 — IME composition events from the
+            // platform input method (Wayland `text-input-v3`, X11
+            // XIM, macOS `NSTextInputContext`, Windows TSF, GTK
+            // IBus — winit 0.30 abstracts all four under one `Ime`
+            // enum). Map to the pinion-native
+            // [`pinion_core::CompositionEvent`] surface via the
+            // `was_composing` state machine and dispatch through
+            // `ShellCore::apply_composition` (R56.2.a substrate).
+            // Multiple `CompositionEvent`s can fan out of a single
+            // `Ime` event (e.g. first non-empty `Preedit` produces
+            // `Start + Update`); see [`winit_ime_to_composition`]
+            // for the mapping table.
+            WindowEvent::Ime(ime) => {
+                let (events, next_state) =
+                    winit_ime_to_composition(&ime, self.ime_was_composing);
+                self.ime_was_composing = next_state;
+                for event in events {
+                    self.core.apply_composition(&event);
                 }
             }
             WindowEvent::Resized(size) => {
@@ -661,6 +727,288 @@ fn winit_modifiers_to_pinion(
         ctrl: modifiers.control_key(),
         alt: modifiers.alt_key(),
         meta: modifiers.super_key(),
+    }
+}
+
+/// R56.2.a §5.13 §5.38 — map a `winit::event::Ime` (cross-platform IME
+/// abstraction covering Wayland `text-input-v3` + X11 XIM + macOS
+/// `NSTextInputContext` + Windows TSF + GTK `IBus`) onto the pinion-
+/// native [`pinion_core::CompositionEvent`] sequence the substrate
+/// consumes (`Start` / `Update` / `Commit` / `Cancel`).
+///
+/// The mapping is deterministic given the current `was_composing`
+/// boolean (the shell-side state machine):
+///
+/// | winit event                        | `was_composing` in  | Dispatched `CompositionEvent`s          | `was_composing` out |
+/// |------------------------------------|---------------------|-----------------------------------------|---------------------|
+/// | `Ime::Enabled`                     | any                 | (none — just a notification)            | unchanged           |
+/// | `Ime::Preedit(text, _)` non-empty  | `false`             | `Start`, `Update(text)`                 | `true`              |
+/// | `Ime::Preedit(text, _)` non-empty  | `true`              | `Update(text)`                          | `true`              |
+/// | `Ime::Preedit("", _)` empty        | `false`             | (none — idempotent)                     | `false`             |
+/// | `Ime::Preedit("", _)` empty        | `true`              | `Update("")` (visual clear, stay open)  | `true`              |
+/// | `Ime::Commit(text)`                | `false`             | `Start`, `Commit(text)`                 | `false`             |
+/// | `Ime::Commit(text)`                | `true`              | `Commit(text)`                          | `false`             |
+/// | `Ime::Disabled`                    | `false`             | (none — idempotent)                     | `false`             |
+/// | `Ime::Disabled`                    | `true`              | `Cancel`                                | `false`             |
+///
+/// Key invariants behind the table:
+///
+/// 1. **Empty `Preedit` is `Update("")`, not `Cancel`** — winit
+///    documents "Right before [`Commit`] event winit will send empty
+///    `Self::Preedit` event" as a synthetic clear. Treating empty
+///    preedit as cancel would fire a spurious `Cancel + Commit` pair
+///    on every pinyin / Hangul commit. Instead the visual clears and
+///    the substrate stays composing; on the immediately-following
+///    `Commit` the substrate (still in `Editing`) commits at the
+///    caret with the `was_composing && !text.is_empty()` gate
+///    intact. (R56.1.g.1 substrate.)
+///
+/// 2. **`Commit` from `was_composing=false` injects a synthetic
+///    `Start`** — macOS dead-key sequences and trivial-IME paths
+///    can emit `Commit` without a prior `Preedit`. Seeding `Start`
+///    drives the SCXML through `Focused → Editing` so the substrate
+///    is consistent (`preedit_buffer` switches `None → Some("")`)
+///    before the immediate `Commit` lands the text. Without the
+///    synthetic `Start` the text would still insert at caret (the
+///    `preedit_commit` path runs unconditionally) but the SCXML
+///    would never reach `Editing` and the `text_committed` intent
+///    would not fire (`was_composing` gate evaluates to `false`).
+///
+/// 3. **`Disabled` mid-session dispatches `Cancel`, not just
+///    state reset** — the substrate observes the cancel through
+///    SCXML `CancelEdit` drive + `preedit_cancel`; without the
+///    explicit `Cancel` the caret blink would stay paused (R56.1.j)
+///    and the `Editing` SCXML state would linger.
+///
+/// 4. **`Enabled` is informational** — winit emits `Enabled` after
+///    `set_ime_allowed(true)` succeeds, but the substrate's IME
+///    state is driven entirely by the `Preedit` / `Commit` /
+///    `Disabled` triplet. `Enabled` is a hook a future sub-round
+///    could use for `set_ime_cursor_area` rebroadcast on session
+///    start.
+///
+/// Returns the dispatched events as a `Vec` (caller iterates in
+/// order) plus the next `was_composing` state for the caller to
+/// store on the shell. Free function (not a method) so unit tests
+/// can drive the mapping table without a winit `EventLoop`.
+fn winit_ime_to_composition(
+    ime: &Ime,
+    was_composing: bool,
+) -> (Vec<pinion_core::CompositionEvent>, bool) {
+    use pinion_core::CompositionEvent;
+    match ime {
+        Ime::Enabled => (Vec::new(), was_composing),
+        Ime::Preedit(text, _cursor) => {
+            if text.is_empty() {
+                if was_composing {
+                    (vec![CompositionEvent::Update(String::new())], true)
+                } else {
+                    (Vec::new(), false)
+                }
+            } else if was_composing {
+                (vec![CompositionEvent::Update(text.clone())], true)
+            } else {
+                (
+                    vec![
+                        CompositionEvent::Start,
+                        CompositionEvent::Update(text.clone()),
+                    ],
+                    true,
+                )
+            }
+        }
+        Ime::Commit(text) => {
+            if was_composing {
+                (vec![CompositionEvent::Commit(text.clone())], false)
+            } else {
+                (
+                    vec![
+                        CompositionEvent::Start,
+                        CompositionEvent::Commit(text.clone()),
+                    ],
+                    false,
+                )
+            }
+        }
+        Ime::Disabled => {
+            if was_composing {
+                (vec![CompositionEvent::Cancel], false)
+            } else {
+                (Vec::new(), false)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod r56_2_a_winit_ime_mapping_tests {
+    //! R56.2.a §5.13 §5.38 — `winit_ime_to_composition` mapping
+    //! regression. Drives the function table (winit `Ime` × shell
+    //! `was_composing` → dispatched `CompositionEvent` sequence +
+    //! next state) so the bridge between winit's four-variant IME
+    //! abstraction and the W3C-aligned pinion-native enum is pinned
+    //! end-to-end without needing a real winit `EventLoop`.
+
+    use super::winit_ime_to_composition;
+    use pinion_core::CompositionEvent;
+    use winit::event::Ime;
+
+    #[test]
+    fn r56_2_a_enabled_is_no_op() {
+        let (events, next) = winit_ime_to_composition(&Ime::Enabled, false);
+        assert!(events.is_empty(), "Enabled is informational, no dispatch");
+        assert!(!next, "Enabled leaves was_composing unchanged");
+
+        let (events, next) = winit_ime_to_composition(&Ime::Enabled, true);
+        assert!(events.is_empty());
+        assert!(next, "Enabled mid-session does not reset was_composing");
+    }
+
+    #[test]
+    fn r56_2_a_first_nonempty_preedit_dispatches_start_then_update() {
+        let (events, next) =
+            winit_ime_to_composition(&Ime::Preedit("ha".to_owned(), Some((2, 2))), false);
+        assert_eq!(
+            events,
+            vec![CompositionEvent::Start, CompositionEvent::Update("ha".to_owned())],
+        );
+        assert!(next, "first non-empty preedit opens a composition session");
+    }
+
+    #[test]
+    fn r56_2_a_subsequent_nonempty_preedit_dispatches_update_only() {
+        let (events, next) =
+            winit_ime_to_composition(&Ime::Preedit("han".to_owned(), Some((3, 3))), true);
+        assert_eq!(events, vec![CompositionEvent::Update("han".to_owned())]);
+        assert!(next, "subsequent preedit keeps the session open");
+    }
+
+    #[test]
+    fn r56_2_a_empty_preedit_while_composing_is_update_empty_not_cancel() {
+        // The synthetic-clear winit injects right before every
+        // Commit. Treating it as Cancel would fire a spurious
+        // Cancel+Commit pair on every pinyin / Hangul commit; the
+        // substrate stays composing via `Update("")` so the
+        // immediately-following Commit lands at the caret with
+        // `was_composing` still true.
+        let (events, next) =
+            winit_ime_to_composition(&Ime::Preedit(String::new(), None), true);
+        assert_eq!(events, vec![CompositionEvent::Update(String::new())]);
+        assert!(next, "empty preedit during session keeps was_composing");
+    }
+
+    #[test]
+    fn r56_2_a_empty_preedit_while_idle_is_idempotent_no_op() {
+        let (events, next) =
+            winit_ime_to_composition(&Ime::Preedit(String::new(), None), false);
+        assert!(events.is_empty());
+        assert!(!next);
+    }
+
+    #[test]
+    fn r56_2_a_commit_during_session_dispatches_commit_and_closes_session() {
+        // Pinyin / Hangul canonical sequence: …Preedit("han") →
+        // Preedit("", None) [synthetic clear, dispatched as
+        // Update("")] → Commit("\u{D55C}") lands here with
+        // was_composing=true.
+        let (events, next) =
+            winit_ime_to_composition(&Ime::Commit("\u{D55C}".to_owned()), true);
+        assert_eq!(events, vec![CompositionEvent::Commit("\u{D55C}".to_owned())]);
+        assert!(!next, "Commit closes the session");
+    }
+
+    #[test]
+    fn r56_2_a_commit_without_session_injects_synthetic_start() {
+        // macOS dead-key sequences emit Commit without a prior
+        // Preedit. Inject a synthetic Start so the substrate drives
+        // through Focused → Editing and the `was_composing` gate
+        // inside `apply_composition_commit` fires the
+        // `text_committed` intent.
+        let (events, next) =
+            winit_ime_to_composition(&Ime::Commit("e\u{301}".to_owned()), false);
+        assert_eq!(
+            events,
+            vec![
+                CompositionEvent::Start,
+                CompositionEvent::Commit("e\u{301}".to_owned()),
+            ],
+        );
+        assert!(!next, "Commit always closes the session");
+    }
+
+    #[test]
+    fn r56_2_a_disabled_mid_session_dispatches_cancel() {
+        let (events, next) = winit_ime_to_composition(&Ime::Disabled, true);
+        assert_eq!(events, vec![CompositionEvent::Cancel]);
+        assert!(!next, "Disabled closes the session");
+    }
+
+    #[test]
+    fn r56_2_a_disabled_while_idle_is_idempotent_no_op() {
+        let (events, next) = winit_ime_to_composition(&Ime::Disabled, false);
+        assert!(events.is_empty());
+        assert!(!next);
+    }
+
+    #[test]
+    fn r56_2_a_full_pinyin_sequence_round_trips() {
+        // Canonical pinyin "啊不" commit sequence (winit docs example).
+        let mut state = false;
+        let mut collected = Vec::new();
+        for ime in [
+            Ime::Preedit("a".to_owned(), Some((1, 1))),
+            Ime::Preedit("a b".to_owned(), Some((3, 3))),
+            Ime::Preedit("a b".to_owned(), Some((1, 1))),
+            Ime::Preedit("\u{554A}b".to_owned(), Some((3, 3))),
+            Ime::Preedit(String::new(), None),
+            Ime::Commit("\u{554A}\u{4E0D}".to_owned()),
+        ] {
+            let (events, next) = winit_ime_to_composition(&ime, state);
+            collected.extend(events);
+            state = next;
+        }
+        assert_eq!(
+            collected,
+            vec![
+                CompositionEvent::Start,
+                CompositionEvent::Update("a".to_owned()),
+                CompositionEvent::Update("a b".to_owned()),
+                CompositionEvent::Update("a b".to_owned()),
+                CompositionEvent::Update("\u{554A}b".to_owned()),
+                CompositionEvent::Update(String::new()),
+                CompositionEvent::Commit("\u{554A}\u{4E0D}".to_owned()),
+            ],
+        );
+        assert!(!state, "session closed after Commit");
+    }
+
+    #[test]
+    fn r56_2_a_full_cancel_sequence_round_trips() {
+        // User escapes mid-composition: IME sends Preedit("",None)
+        // then Disabled (or just Preedit("",None) if the IME stays
+        // active for the next character). The Update("") clears the
+        // visual; the explicit Disabled then Cancel cleans up.
+        let mut state = false;
+        let mut collected = Vec::new();
+        for ime in [
+            Ime::Preedit("\u{1112}\u{1161}".to_owned(), Some((6, 6))),
+            Ime::Preedit(String::new(), None),
+            Ime::Disabled,
+        ] {
+            let (events, next) = winit_ime_to_composition(&ime, state);
+            collected.extend(events);
+            state = next;
+        }
+        assert_eq!(
+            collected,
+            vec![
+                CompositionEvent::Start,
+                CompositionEvent::Update("\u{1112}\u{1161}".to_owned()),
+                CompositionEvent::Update(String::new()),
+                CompositionEvent::Cancel,
+            ],
+        );
+        assert!(!state);
     }
 }
 
