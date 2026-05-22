@@ -3879,6 +3879,7 @@ if __name__ == "__main__":
 - TextField filled-variant: Idle=SurfaceContainerHighest, Focused=SurfaceContainerHigh.
 - hello-button retrofit: 6 RGB literals replaced — M3 filled-tonal Button role mapping.
 - hello-radio/group retrofit: 23 RGB literals via shared radio_border_color (Outline/Accent + lerp).
+- hello-checkbox + hello-slider + hello-slider-vertical retrofit: 41 RGB literals across 3 binaries.
 
 
 
@@ -3977,6 +3978,10 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - examples/hello-button/src/main.rs:button_fill_endpoints
 - examples/hello-radio/src/main.rs:radio_border_color
 - examples/hello-radio-group/src/main.rs:radio_border_color
+- examples/hello-checkbox/src/main.rs:checkbox_accent_for
+- examples/hello-checkbox/src/main.rs:checkbox_outline_for
+- examples/hello-slider/src/main.rs:slider_accent_for
+- examples/hello-slider-vertical/src/main.rs:slider_accent_for
 
 
 
@@ -17449,6 +17454,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 **Carry forward**:
 - hello-checkbox + hello-slider retrofit cascade carry.
 - R57.1 ThemeMode + prefers-color-scheme OS bridge axis carry.
+- R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry.
+
+
+
+### Round 582 — R57.X.checkbox-slider §5.50 cascade closure — hello-checkbox + hello-slider + hello-slider-vertical retrofit (41 RGB literal → M3 role + Color::lerp state-layer, 3 binaries).
+
+**Changes**:
+- hello-checkbox: checkbox_accent_for + checkbox_outline_for helper (Accent + Outline + state-layer).
+- hello-slider: slider_accent_for helper + thumb=OnAccent + track=SurfaceContainerHighest.
+- hello-slider-vertical: sibling slider_accent_for (axis-specific behaviour stays in External).
+- 3 binaries: existing test 의 view 호출을 Owner::new().run() 으로 감싸 use_theme 요구 충족.
+- hello-checkbox: +3 r57_x test — checked=Accent / unchecked=Outline / hover=lerp(8 %).
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2782 pass / 0 fail / 14 ignored (+3 new).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings.
+- cargo test -p hello-checkbox = 9 pass; hello-slider = 21 pass; hello-slider-vertical = 11 pass.
+
+
+
+**Impact**: §5.50, §5.38
+
+
+**Carry forward**:
+- R57.X retrofit cascade complete (7 binaries: toggle/listbox/textfield/button/radio/checkbox/slider).
+- R57.1 ThemeMode + prefers-color-scheme OS bridge axis (다음 textbook target).
+- R57.2 typography + spacing tokens cascade carry.
 - R57.X.theme-fade animation (Color::lerp + Signal<Theme> 보간) carry.
 
 

@@ -622,3 +622,12 @@ reason = "R57.X.radio audit half authored minimal ASCII per [[mnemosyne-multibyt
 applied_in = "Round 581"
 content_hash_before = "78a67155a93f58b428e9c58c3dbe40ae19fb0cd1d3b4971f1ec2bf8a12d36ce5"
 content_hash_after = "bf40df01ac85c7c2b11f51875f9966ad61f42333134f1e13b3932bf01096b105"
+
+[[publishable_override_ledger]]
+kind = "expand"
+target_id = "Round 582"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_carry_forward_bullets"]
+reason = "R57.X.checkbox-slider audit half authored minimal ASCII per [[mnemosyne-multibyte-audit-fallback]]; publishable expand provides §-prefixed section refs, em-dashes, arrows, and Korean prose."
+applied_in = "Round 582"
+content_hash_before = "bdfa96364dc1992fefd1bb5c82024de8f1c6cc3a5269d197092913732fb5c786"
+content_hash_after = "9a9725a7be1aef5d03ee835eaa9f5a8fdcff4c2170e71f5c31dcc2b2029a9037"

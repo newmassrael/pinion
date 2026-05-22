@@ -21,6 +21,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::checkbox::{CheckboxEvent, CheckboxExternal, CheckboxState};
 use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
@@ -31,10 +32,39 @@ vello_renderer_impl!(HelloCheckboxRenderer, HelloCheckboxRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 180;
-const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
+/// (R57.X.checkbox §5.50) [`ThemeProvider`] cache key — matches the
+/// `"app"` convention shared across the example gallery.
+const THEME_TAG: &str = "app";
 const BOX_SIZE: u32 = 24;
 const BOX_RADIUS: u32 = 4;
 const ROW_GAP: u32 = 10;
+
+/// (R57.X.checkbox §5.50) Material 3 Checkbox accent ramp — when
+/// checked, the box fill resolves to `ColorRole::Accent` (idle) and
+/// layers M3 state-layer overlays (hover = 8 %, pressed = 12 %,
+/// disabled = 38 % fade toward `Surface`).
+fn checkbox_accent_for(theme: &Theme, state: CheckboxState) -> Color {
+    let base = theme.resolve(ColorRole::Accent);
+    match state {
+        CheckboxState::Idle => base,
+        CheckboxState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        CheckboxState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        CheckboxState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
+}
+
+/// (R57.X.checkbox §5.50) Border color — anchors on
+/// `ColorRole::Outline` with the same state-layer treatment as the
+/// accent ramp so checked + unchecked share the M3 overlay weights.
+fn checkbox_outline_for(theme: &Theme, state: CheckboxState) -> Color {
+    let base = theme.resolve(ColorRole::Outline);
+    match state {
+        CheckboxState::Idle => base,
+        CheckboxState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        CheckboxState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        CheckboxState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
+}
 
 /// view-fn (§6.3): pure sync mapping `(CheckboxState, bool) -> Scene`.
 ///
@@ -46,35 +76,20 @@ const ROW_GAP: u32 = 10;
 /// events to the matching `Scene::External("main_checkbox")`.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
-    let box_fill = match (state, checked) {
-        // Unchecked column: transparent fill (the border + the bg
-        // showing through marks the empty state). Vello's transparent
-        // colour is `Color::rgba(0, 0, 0, 0)`.
-        (_, false) => Color::rgba(0, 0, 0, 0),
-        // Checked column: blue accent for Idle/Hover, darker for
-        // Pressed, muted brown-grey for Disabled (same chromatic-mute
-        // convention hello-toggle uses).
-        (CheckboxState::Idle, true) => Color::rgb(0x30, 0x70, 0xd0),
-        (CheckboxState::Hover, true) => Color::rgb(0x40, 0x80, 0xe0),
-        (CheckboxState::Pressed, true) => Color::rgb(0x20, 0x50, 0xa0),
-        (CheckboxState::Disabled, true) => Color::rgb(0x4a, 0x42, 0x38),
+    let theme = use_theme(THEME_TAG).theme();
+    let box_fill = if checked {
+        checkbox_accent_for(&theme, state)
+    } else {
+        // (R57.X.checkbox §5.50) Unchecked column: transparent fill
+        // so the border + parent surface mark the empty state.
+        Color::TRANSPARENT
     };
-    // Border colour mirrors the fill polarity: when checked the
-    // border matches the fill (no visible outline against the same
-    // colour); when unchecked a white outline marks the click target.
-    // Hover slightly brightens the outline; Pressed darkens; Disabled
-    // mutes.
-    let border_color = match state {
-        CheckboxState::Idle => Color::rgb(0xc0, 0xc0, 0xc0),
-        CheckboxState::Hover => Color::rgb(0xe0, 0xe0, 0xe0),
-        CheckboxState::Pressed => Color::rgb(0x90, 0x90, 0x90),
-        CheckboxState::Disabled => Color::rgb(0x70, 0x66, 0x58),
-    };
+    let border_color = checkbox_outline_for(&theme, state);
     let mut children: Vec<Scene> = Vec::new();
     if checked {
         let glyph_color = match state {
-            CheckboxState::Disabled => Color::rgb(0xc0, 0xb0, 0x98),
-            _ => Color::rgb(0xff, 0xff, 0xff),
+            CheckboxState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
+            _ => theme.resolve(ColorRole::OnAccent),
         };
         children.push(Scene::Text(
             // R51.81 §5.40 — the check-glyph is pure decoration
@@ -107,8 +122,8 @@ fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
             ),
     );
     let label_color = match state {
-        CheckboxState::Disabled => Color::rgb(0x90, 0x86, 0x78),
-        _ => Color::rgb(0xe0, 0xe0, 0xe0),
+        CheckboxState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
+        _ => theme.resolve(ColorRole::OnSurface),
     };
     let label = Scene::Text(TextNode::styled(
         "Receive newsletter",
@@ -133,7 +148,7 @@ fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
     );
     Scene::Container(
         ContainerNode::new(vec![row])
-            .with_style(BoxStyle::filled(BG_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -296,7 +311,10 @@ mod a11y_tests {
 
     fn enriched(state: (CheckboxState, bool), focused: Option<&str>) -> Vec<AccessNode> {
         let (s, c) = state;
-        let scene = view(s, c, &Frame::new());
+        // (R57.X.checkbox §5.50) `view` calls [`use_theme`] so the
+        // call must run inside an Owner scope (callback-root-owner-
+        // wrap discipline).
+        let scene = pinion_core::Owner::new().run(|| view(s, c, &Frame::new()));
         let mut nodes = CheckboxView::access_node(&state, focused);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         nodes
@@ -361,6 +379,42 @@ mod a11y_tests {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<CheckboxView>(
             (CheckboxState::Idle, false),
             &Frame::new(),
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R57.X.checkbox §5.50 — theme retrofit regression. Pins the
+    // M3 Checkbox role mapping: checked=Accent ramp, border=Outline
+    // ramp, both with state-layer overlays.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r57_x_checkbox_checked_idle_uses_accent_role() {
+        let light = Theme::light();
+        assert_eq!(
+            checkbox_accent_for(&light, CheckboxState::Idle),
+            light.accent,
+        );
+    }
+
+    #[test]
+    fn r57_x_checkbox_unchecked_outline_uses_outline_role() {
+        let light = Theme::light();
+        assert_eq!(
+            checkbox_outline_for(&light, CheckboxState::Idle),
+            light.outline,
+        );
+    }
+
+    #[test]
+    fn r57_x_checkbox_hover_overlay_lerps_toward_on_surface() {
+        let theme = Theme::light();
+        let expected = theme
+            .resolve(ColorRole::Accent)
+            .lerp(theme.resolve(ColorRole::OnSurface), 0.08);
+        assert_eq!(
+            checkbox_accent_for(&theme, CheckboxState::Hover),
+            expected,
         );
     }
 }

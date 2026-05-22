@@ -55,6 +55,7 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
@@ -65,7 +66,23 @@ vello_renderer_impl!(HelloSliderRenderer, HelloSliderRendererError);
 
 const WIN_W: u32 = 360;
 const WIN_H: u32 = 220;
-const BG_FILL: Color = Color::rgb(0x20, 0x30, 0x40);
+/// (R57.X.slider §5.50) [`ThemeProvider`] cache key — matches the
+/// `"app"` convention shared across the example gallery.
+const THEME_TAG: &str = "app";
+
+/// (R57.X.slider §5.50) Material 3 slider filled-track + thumb base
+/// = `ColorRole::Accent`. Hover / Dragging layer the M3 state-layer
+/// overlay (8 % / 12 % toward `OnSurface`); Disabled fades 38 %
+/// toward `Surface` for the canonical washed look.
+fn slider_accent_for(theme: &Theme, state: SliderState) -> Color {
+    let base = theme.resolve(ColorRole::Accent);
+    match state {
+        SliderState::Idle => base,
+        SliderState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        SliderState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
+}
 // Track is 200×8 — the thin Material rail. The track's pill radius
 // is 4 (= TRACK_H / 2) so its ends round flush with the thumb.
 const TRACK_W: u32 = 200;
@@ -110,30 +127,29 @@ const ROW_GAP: u32 = 16;
     clippy::cast_precision_loss
 )]
 fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
-    // Filled-portion blue accent: the canonical Material "active"
-    // colour ramp through the state axis, plus the muted-brown
-    // Disabled cell shared with hello-toggle / hello-checkbox /
-    // hello-radio so users can read disabled state at a glance.
-    let filled_color: Color = match state {
-        SliderState::Idle => Color::rgb(0x30, 0x70, 0xd0),
-        SliderState::Hover => Color::rgb(0x40, 0x80, 0xe0),
-        SliderState::Dragging => Color::rgb(0x20, 0x50, 0xa0),
-        SliderState::Disabled => Color::rgb(0x70, 0x66, 0x58),
-    };
-    // Unfilled portion: chromatic-neutral track rail. Disabled cell
-    // muted-brown again.
+    // (R57.X.slider §5.50) Active palette — auto-subscribes the
+    // view-fn for theme swaps.
+    let theme = use_theme(THEME_TAG).theme();
+    // Filled-portion canonical M3 active colour = `Accent` with the
+    // state-layer overlays applied via [`slider_accent_for`].
+    let filled_color: Color = slider_accent_for(&theme, state);
+    // Unfilled portion = M3 `surfaceContainerHighest` (the inactive-
+    // track tier). Disabled fades toward `Surface`.
     let unfilled_color: Color = match state {
-        SliderState::Disabled => Color::rgb(0x4a, 0x42, 0x38),
-        _ => Color::rgb(0x40, 0x40, 0x40),
+        SliderState::Disabled => theme
+            .resolve(ColorRole::SurfaceContainerHighest)
+            .lerp(theme.resolve(ColorRole::Surface), 0.38),
+        _ => theme.resolve(ColorRole::SurfaceContainerHighest),
     };
-    // Thumb fill: bright white in active states, light violet when
-    // dragging (Material's pressed-thumb affordance — visual feedback
-    // that capture is in flight), muted grey when disabled.
+    // Thumb = `OnAccent` (canonical M3 paired-contrast role for
+    // controls on accent fills). Dragging tints slightly toward the
+    // filled track so the moment of capture is visible; Disabled
+    // washes toward `Surface`.
+    let on_accent = theme.resolve(ColorRole::OnAccent);
     let thumb_fill: Color = match state {
-        SliderState::Idle => Color::rgb(0xf0, 0xf0, 0xf0),
-        SliderState::Hover => Color::rgb(0xff, 0xff, 0xff),
-        SliderState::Dragging => Color::rgb(0xe0, 0xe0, 0xff),
-        SliderState::Disabled => Color::rgb(0xa0, 0xa0, 0xa0),
+        SliderState::Idle | SliderState::Hover => on_accent,
+        SliderState::Dragging => on_accent.lerp(theme.resolve(ColorRole::Accent), 0.2),
+        SliderState::Disabled => on_accent.lerp(theme.resolve(ColorRole::Surface), 0.38),
     };
     // R51.154 §5.3 — value * RANGE → leading-pixel width of the
     // filled portion. [`scale_normalized_to_px`] handles the clamp +
@@ -193,7 +209,7 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
         Rect::default(),
         TextStyle::new()
             .with_size_px(18)
-            .with_fg(Color::rgb(0xe0, 0xe0, 0xe0)),
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     let status_str = format!(
         "{} | {value_clamped:.2}",
@@ -204,11 +220,11 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
         Rect::default(),
         TextStyle::new()
             .with_size_px(12)
-            .with_fg(Color::rgb(0x90, 0x90, 0x90)),
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
     Scene::Container(
         ContainerNode::new(vec![label, track_row, status])
-            .with_style(BoxStyle::filled(BG_FILL))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -539,7 +555,10 @@ mod a11y_tests {
 
     fn enriched(state: (SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
         let (s, v) = state;
-        let scene = view(s, v, &Frame::new());
+        // (R57.X.slider §5.50) `view` calls [`use_theme`] so the
+        // call must run inside an Owner scope (callback-root-owner-
+        // wrap discipline).
+        let scene = pinion_core::Owner::new().run(|| view(s, v, &Frame::new()));
         let mut nodes = SliderView::access_node(&state, focused);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         nodes
