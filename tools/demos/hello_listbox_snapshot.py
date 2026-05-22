@@ -15,7 +15,7 @@ Walkthrough (matches `examples/hello-listbox/src/main.rs`):
       Container {                   # R55.G.17 wrapper (tagged "main_list")
         tag: "main_list",
         children: [
-          Scroll {
+          Scroll {                  # rows column
             tag: "main_list_scroll",
             viewport: { w: 220, h: 164 },
             offset_x: 0,
@@ -23,6 +23,9 @@ Walkthrough (matches `examples/hello-listbox/src/main.rs`):
             content: Container {
               children: [<12 row Containers, each tagged "main_list#i">],
             }
+          },
+          Container {               # R55.D.4 scrollbar visual sibling
+            children: [spacer_above, thumb],   # flex Column track
           }
         ]
       }
@@ -75,12 +78,26 @@ def body() -> None:
         assert_eq(listbox_root.get("type"), "Container", "listbox wrapper type")
         assert_eq(listbox_root.get("tag"), "main_list", "listbox wrapper tag")
 
+        # R55.D.4 §5.45 — the listbox wrapper now holds two
+        # children: the Scroll (rows) + the visible scrollbar peer
+        # (track + thumb). The peer is paint-only for R55.D.4;
+        # R55.D.5 will wire drag input through `ScrollBarExternal`.
         wrapper_children = listbox_root.get("children") or []
-        assert_eq(len(wrapper_children), 1, "listbox wrapper children count")
+        assert_eq(len(wrapper_children), 2, "listbox wrapper children count")
 
         scroll = wrapper_children[0]
         assert_eq(scroll.get("type"), "Scroll", "scroll node type")
         assert_eq(scroll.get("tag"), "main_list_scroll", "scroll tag")
+
+        # R55.D.4 §5.45 — scrollbar visual sibling. Outer Container
+        # = track (fills SCROLLBAR_W × VIEWPORT_H with TRACK_FILL);
+        # children = [spacer_above, thumb] flex Column stacking.
+        scrollbar = wrapper_children[1]
+        assert_eq(scrollbar.get("type"), "Container", "scrollbar visual type")
+        scrollbar_children = scrollbar.get("children") or []
+        assert_eq(
+            len(scrollbar_children), 2, "scrollbar visual children (spacer + thumb)"
+        )
         assert_eq(scroll.get("offset_x"), 0, "initial offset_x")
         assert_eq(scroll.get("offset_y"), 0, "initial offset_y")
 

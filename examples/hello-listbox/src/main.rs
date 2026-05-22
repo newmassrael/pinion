@@ -72,7 +72,8 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::widgets::scroll::use_scroll_state;
+use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scrollbar::{scrollbar_thumb_rect, ScrollBarOrientation};
 use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -116,6 +117,24 @@ const VIEWPORT_H: u32 = 5 * ROW_HEIGHT + 4 * ROW_GAP;
 const ROW_HEIGHT: u32 = 28;
 const ROW_WIDTH: u32 = 220;
 const ROW_GAP: u32 = 6;
+
+/// (R55.D.4 §5.45) Vertical scrollbar reserved width — sits to the
+/// right of the row column, inside the same `PRIMARY_TAG` paint root
+/// so the AT bounds for the listbox cover the visible widget area
+/// (list + scrollbar) the user actually sees. 8 px matches the
+/// Material / web canonical scrollbar gutter for desktop-class UIs.
+const SCROLLBAR_W: u32 = 8;
+/// (R55.D.4 §5.45) Minimum thumb extent enforced by
+/// [`scrollbar_thumb_rect`]. 24 px is the Material / `UIKit`
+/// grabbable-target floor — even on very long content the thumb
+/// stays large enough to read at a glance.
+const MIN_THUMB: u32 = 24;
+/// (R55.D.4 §5.45) Dark scrollbar track fill — visually distinct
+/// from the row column without competing for attention.
+const TRACK_FILL: Color = Color::rgb(0x12, 0x1c, 0x26);
+/// (R55.D.4 §5.45) Thumb fill — light enough on the dark track to
+/// be readable, muted enough to defer to the row column.
+const THUMB_FILL: Color = Color::rgb(0x50, 0x60, 0x70);
 
 /// Cached projection of the list. One `(ListboxItemState, selected)`
 /// pair per option plus the R51.87 §5.40 AT-side active-descendant
@@ -187,23 +206,36 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
         ),
     );
 
+    // R55.D.4 §5.45 — visible scrollbar peer. Built before the
+    // `ScrollNode` so we can snapshot the press-time
+    // (offset, max) pair through the same `Rc<ScrollState>` clone
+    // the `ScrollNode::from_state` consumes below. The peer is a
+    // pure paint visualization; drag input wiring (multi-External
+    // path through `ScrollBarExternal`) lands on the R55.D.5 carry.
+    let scrollbar_visual = build_scrollbar_visual(&scroll_state);
+
     let scroll = ScrollNode::from_state(
         scroll_state,
         Rect::new(0, 0, VIEWPORT_W, VIEWPORT_H),
         content,
     );
 
-    // R55.G.17 §5.49 — wrap the `Scroll` in a transparent `Container`
-    // tagged `PRIMARY_TAG` so the composite root is paint-addressable
-    // via `{path: "main_list"}` for AI-side `scene/click` / `scene/key`
-    // / `scene/wheel` routing, and the AT bounds attached by
-    // `enrich_names_from_scene` + `rect_for_tag` land on the listbox's
-    // visible area (the scroll viewport) instead of the full window.
-    // The wrapper carries no style / layout, so flexbox auto-sizes it
-    // to the `Scroll`'s viewport — the outer centering then positions
-    // the wrapper exactly where the bare `Scroll` used to land.
+    // R55.G.17 §5.49 — wrap the `Scroll` (now paired with the
+    // R55.D.4 §5.45 visible scrollbar peer) in a transparent
+    // `Container` tagged `PRIMARY_TAG` so the composite root is
+    // paint-addressable via `{path: "main_list"}` for AI-side
+    // `scene/click` / `scene/key` / `scene/wheel` routing, and the
+    // AT bounds attached by `enrich_names_from_scene` + `rect_for_tag`
+    // land on the listbox's visible area (the scroll viewport plus
+    // the scrollbar gutter the user actually sees). The wrapper
+    // declares a flex Row layout so the row column and the
+    // scrollbar peer sit side-by-side; flexbox auto-sizes the
+    // wrapper to the union of the two children and the outer
+    // centering then positions it correctly inside the window.
     let listbox_root = Scene::Container(
-        ContainerNode::new(vec![Scene::Scroll(scroll)]).with_tag(PRIMARY_TAG),
+        ContainerNode::new(vec![Scene::Scroll(scroll), scrollbar_visual])
+            .with_tag(PRIMARY_TAG)
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     );
 
     Scene::Container(
@@ -214,6 +246,75 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
                     .flex(FlexDirection::Column)
                     .with_justify(JustifyContent::Center)
                     .with_align_items(AlignItems::Center),
+            ),
+    )
+}
+
+/// R55.D.4 §5.45 — visible scrollbar peer for the `main_list`
+/// scroll container. Reads the current `(offset_y, max_y)` pair off
+/// the shared `Rc<ScrollState>` and derives the thumb rectangle
+/// through [`scrollbar_thumb_rect`] (R55.D.1 closed-form helper);
+/// composites the result as `[spacer_above, thumb]` inside an outer
+/// `Container` filled with [`TRACK_FILL`].
+///
+/// Pure paint visualization for R55.D.4. The R55.D.5 sub-axis
+/// closes the loop by wiring [`ScrollBarExternal::pointer_move`] so
+/// the user can drag the thumb — until then the bar is a *scroll
+/// indicator* (wheel / Arrow keys still drive the scroll; the bar
+/// reflects the resulting offset).
+fn build_scrollbar_visual(scroll_state: &ScrollState) -> Scene {
+    let (_, offset_y) = scroll_state.offset();
+    let (_, max_y) = scroll_state.max();
+    let track_rect = Rect::new(0, 0, SCROLLBAR_W, VIEWPORT_H);
+    // [`ScrollState::max`] returns `content_extent − viewport_extent`,
+    // so `content_extent = viewport_extent + max`. The first
+    // `view` invocation of the application's lifetime sees
+    // `max_y == 0` (the runtime layout pass writes the real max
+    // *after* the first view runs); the helper's `content_extent
+    // <= viewport_extent` branch then fills the thumb to the full
+    // track, which is the textbook "nothing to scroll" rendering.
+    let max_y_nonneg = u32::try_from(max_y.max(0)).unwrap_or(0);
+    let content_extent = VIEWPORT_H.saturating_add(max_y_nonneg);
+    let scroll_offset = u32::try_from(offset_y.max(0)).unwrap_or(0);
+    let geom = scrollbar_thumb_rect(
+        ScrollBarOrientation::Vertical,
+        track_rect,
+        VIEWPORT_H,
+        content_extent,
+        scroll_offset,
+        MIN_THUMB,
+    );
+
+    // `thumb.y - track.y` is the press-time offset of the thumb's
+    // top edge from the track origin. The flex Column below uses a
+    // matching `spacer_above` to position the thumb without an
+    // absolute-positioning layer, which the current pinion layout
+    // primitive set does not expose.
+    let thumb_y_offset = geom.thumb.y.saturating_sub(geom.track.y);
+    let thumb_h = geom.thumb.h;
+
+    let spacer_above = Scene::Container(
+        ContainerNode::new(vec![]).with_layout(
+            LayoutStyle::new().with_size(Size::px(SCROLLBAR_W, thumb_y_offset)),
+        ),
+    );
+    let thumb = Scene::Container(
+        ContainerNode::new(vec![])
+            .with_style(BoxStyle::filled(THUMB_FILL).with_corner_radius(2))
+            .with_layout(LayoutStyle::new().with_size(Size::px(SCROLLBAR_W, thumb_h))),
+    );
+
+    // Outer track Container — fills the gutter with `TRACK_FILL`,
+    // stacks the spacer + thumb top-to-bottom. The space below the
+    // thumb stays unfilled (the parent's `TRACK_FILL` shows
+    // through), so the thumb appears suspended on a dark rail.
+    Scene::Container(
+        ContainerNode::new(vec![spacer_above, thumb])
+            .with_style(BoxStyle::filled(TRACK_FILL))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_size(Size::px(SCROLLBAR_W, VIEWPORT_H)),
             ),
     )
 }
@@ -972,6 +1073,94 @@ mod a11y_tests {
                 row.layout.size,
                 Size::px(ROW_WIDTH, ROW_HEIGHT),
                 "row {i} intrinsic size"
+            );
+        }
+    }
+
+    /// (R55.D.4 §5.45) Walk `scene` recursively until a `Container`
+    /// carrying `tag` shows up. Returns a reference to the matching
+    /// node so callers can inspect its layout / children. Used by
+    /// the R55.D.4 paint-shape assertions below.
+    fn find_container_with_tag<'a>(
+        scene: &'a Scene,
+        tag: &str,
+    ) -> Option<&'a pinion_core::scene::ContainerNode> {
+        match scene {
+            Scene::Container(c) if c.tag.as_deref() == Some(tag) => Some(c),
+            Scene::Container(c) => c.children.iter().find_map(|s| find_container_with_tag(s, tag)),
+            Scene::Scroll(s) => find_container_with_tag(s.content.as_ref(), tag),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r55_d4_view_adds_scrollbar_visual_as_listbox_root_sibling() {
+        // R55.D.4 §5.45 — the `PRIMARY_TAG` paint root now holds
+        // two children: the `Scroll` (rows) + the scrollbar visual
+        // (track + thumb). Tests the listbox_root composite
+        // structure stayed flex Row so the two siblings land
+        // side-by-side rather than stacked.
+        let scene = run_view(unselected_state());
+        let listbox_root =
+            find_container_with_tag(&scene, PRIMARY_TAG).expect("listbox_root container");
+        assert_eq!(
+            listbox_root.children.len(),
+            2,
+            "listbox_root must hold Scroll + scrollbar visual",
+        );
+        assert!(
+            matches!(&listbox_root.children[0], Scene::Scroll(_)),
+            "first child must be the Scroll (rows)",
+        );
+        let Scene::Container(scrollbar) = &listbox_root.children[1] else {
+            panic!("second child must be the scrollbar visual Container");
+        };
+        assert_eq!(
+            scrollbar.layout.size,
+            Size::px(SCROLLBAR_W, VIEWPORT_H),
+            "scrollbar track size = gutter × viewport height",
+        );
+        // Listbox root must declare flex Row so the row column and
+        // the scrollbar peer sit side-by-side.
+        assert_eq!(
+            listbox_root.layout.flex_direction,
+            FlexDirection::Row,
+            "listbox_root must declare flex Row to position scrollbar at right",
+        );
+    }
+
+    #[test]
+    fn r55_d4_scrollbar_visual_uses_spacer_thumb_flex_column() {
+        // R55.D.4 §5.45 — scrollbar's internal composition: outer
+        // track Container holds [spacer_above, thumb] in a flex
+        // Column. The pinion layout primitive set does not expose
+        // absolute positioning; the spacer pattern is the textbook
+        // (and tested) way to vertically position the thumb inside
+        // the track. A regression that drops the spacer or
+        // re-orders the children would warp the thumb to the top
+        // of the track at every scroll offset.
+        let scene = run_view(unselected_state());
+        let listbox_root =
+            find_container_with_tag(&scene, PRIMARY_TAG).expect("listbox_root container");
+        let Scene::Container(scrollbar) = &listbox_root.children[1] else {
+            panic!("scrollbar Container missing");
+        };
+        assert_eq!(
+            scrollbar.layout.flex_direction,
+            FlexDirection::Column,
+            "scrollbar must declare flex Column to stack spacer + thumb",
+        );
+        assert_eq!(scrollbar.children.len(), 2, "spacer_above + thumb");
+        // Both children must be Containers with sized layouts
+        // (spacer takes no style, thumb declares THUMB_FILL).
+        for (i, child) in scrollbar.children.iter().enumerate() {
+            let Scene::Container(child_c) = child else {
+                panic!("scrollbar child {i} must be a Container");
+            };
+            assert_eq!(
+                child_c.layout.size.width,
+                Size::px(SCROLLBAR_W, 0).width,
+                "scrollbar child {i} must match SCROLLBAR_W",
             );
         }
     }

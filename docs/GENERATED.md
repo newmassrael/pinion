@@ -9849,6 +9849,34 @@ if __name__ == "__main__":
 
 
 
+### R55.D.4 — R55.D.4 §5.45 — hello-listbox에 visible scrollbar peer 편입 (paint-only): scrollbar_thumb_rect 동적 thumb position + flex Row sibling-of-Scroll 구조, 첫 visible scrollbar 가시화
+
+**Changes**:
+- examples/hello-listbox: SCROLLBAR_W/MIN_THUMB/TRACK_FILL/THUMB_FILL const + scrollbar import
+- build_scrollbar_visual 헬퍼 (scroll_state offset/max → scrollbar_thumb_rect → spacer+thumb Scene)
+- listbox_root 변경: flex Row 안에 [Scroll, scrollbar_visual] sibling, PRIMARY_TAG 그대로 더 paint root
+- tools/demos/hello_listbox_snapshot.py: wrapper children expected 1→2 + tree doc update
+- a11y_tests r55_d4 2 신규 (root sibling 구조 + spacer-thumb flex Column 패턴)
+
+
+
+**Verification**:
+- cargo test --workspace --features pinion-runtime/vello = 2256/0/12 (baseline 2254 → +2 r55_d4)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello = 0 warnings
+- mnemosyne validate_workspace = T1=0 / RT=1/1 / GENERATED sync / orphan_refs=4 baseline 유지
+- 10 demos PASS (snapshot demo expected children 1→2 업데이트 동반)
+
+
+
+**Impact**: §5.45
+
+
+**Carry forward**:
+- R55.D.5: ScrollBarExternal drag wiring (multi-External path) — thumb drag-able로 완성
+- F1 framework auto-tag conflict-aware 영구 carry (R55.G.17 F7 채택)
+
+
+
 ### R55.G.22 — R55.G.22 §5.41 §5.49 — composite paint-root tag convention regression helper assert_widget_view_carries_tag 추출 + 9 widget inline assert 청산
 
 **Changes**:
