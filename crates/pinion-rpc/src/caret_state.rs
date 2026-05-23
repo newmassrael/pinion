@@ -62,7 +62,7 @@
 //! propagates through the wire automatically.
 
 use pinion_core::reactive::Owner;
-use pinion_core::widgets::caret_blink::{use_caret_blink, CaretBlink};
+use pinion_core::widgets::caret_blink::CaretBlink;
 use serde::Serialize;
 
 /// Typed errors the [`caret_state`] dispatcher can return. Every
@@ -83,10 +83,11 @@ pub enum CaretStateError {
 
 /// Snapshot of the bound [`CaretBlink`]'s observable surface plus
 /// the canonical blink period for client-side phase-flip ETA math.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaretStateOutcome {
-    /// Echoes the request's `params.tag`.
-    pub tag: &'static str,
+    /// Echoes the request's `params.tag`. Owned `String` (post-R605
+    /// `Box::leak` elimination).
+    pub tag: String,
     /// Whether the caret is currently in the "drawn" phase. Flips
     /// every [`Self::period_secs`] when [`Self::enabled`] is `true`.
     pub visible: bool,
@@ -101,9 +102,9 @@ pub struct CaretStateOutcome {
 }
 
 impl CaretStateOutcome {
-    fn from_state(tag: &'static str, state: &CaretBlink) -> Self {
+    fn from_state(tag: &str, state: &CaretBlink) -> Self {
         Self {
-            tag,
+            tag: tag.to_owned(),
             visible: state.visible(),
             enabled: state.enabled(),
             period_secs: CaretBlink::PERIOD_SECS,
@@ -130,23 +131,23 @@ impl CaretStateOutcome {
 /// path would silently grow the workload.
 pub fn caret_state(
     runtime_owner: Option<&Owner>,
-    tag: &'static str,
+    tag: &str,
 ) -> Result<CaretStateOutcome, CaretStateError> {
     let Some(owner) = runtime_owner else {
         return Err(CaretStateError::RuntimeOwnerUnavailable);
     };
-    if !owner.cache_contains::<CaretBlink>(tag) {
-        return Err(CaretStateError::NotBound {
+    let state: std::rc::Rc<CaretBlink> = owner
+        .cache_get_by_str::<CaretBlink>(tag)
+        .ok_or_else(|| CaretStateError::NotBound {
             tag: tag.to_owned(),
-        });
-    }
-    let state: std::rc::Rc<CaretBlink> = owner.run(|| use_caret_blink(tag));
+        })?;
     Ok(CaretStateOutcome::from_state(tag, &state))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::widgets::caret_blink::use_caret_blink;
 
     fn bind_state(owner: &Owner, tag: &'static str) -> std::rc::Rc<CaretBlink> {
         owner.run(|| use_caret_blink(tag))

@@ -832,6 +832,64 @@ impl Owner {
         self.inner.cache.borrow().contains_key(&(TypeId::of::<V>(), key))
     }
 
+    /// R605 §5.22 — non-mutating typed lookup against the cache,
+    /// keyed by an arbitrarily-scoped `&str` (no `&'static`
+    /// requirement). Returns the cached [`Rc<V>`] when the slot has
+    /// been populated under `(V, key)`, or `None` when no such slot
+    /// exists.
+    ///
+    /// ## Why this exists
+    ///
+    /// [`Self::cache`] / [`Self::cache_contains`] both require
+    /// `&'static str` because the typed cache key is
+    /// `(TypeId, &'static str)`. Application code passes string
+    /// literals so the `'static` requirement is free, but
+    /// introspection consumers (the JSON-RPC dispatch surface
+    /// reading per-widget tags from `params.tag` at runtime) only
+    /// have a borrowed-from-JSON `&str`. Pre-R605 those handlers
+    /// reached `&'static str` via [`Box::leak`], which grew an
+    /// unbounded process leak proportional to the number of unique
+    /// tags observed over the program's lifetime — fine for a
+    /// short-lived demo, a real liability for a long-running
+    /// embedded RPC server.
+    ///
+    /// This lookup walks the cache linearly (`O(N)` in the number
+    /// of populated slots, typically `< 100` per owner) and
+    /// compares each stored `&'static str` to `key` byte-for-byte.
+    /// The linear walk is bounded by the cache size — every entry
+    /// was inserted by an application [`Self::cache`] call, and
+    /// applications register one slot per `use_X` hook per widget —
+    /// so the walk is fast enough for the RPC dispatch rate (1
+    /// request per JSON-RPC frame, well below the paint cadence).
+    /// The `Rc::clone` on the matching entry is the only allocation.
+    ///
+    /// ## Side effects
+    ///
+    /// None. The call only borrows the cache for the duration of
+    /// the walk; no factory runs, no slot is created on miss, no
+    /// signal is read.
+    ///
+    /// Pinned by `r605_cache_get_by_str_returns_cached_value`,
+    /// `r605_cache_get_by_str_returns_none_when_absent`, and
+    /// `r605_cache_get_by_str_is_type_aware`.
+    #[must_use]
+    pub fn cache_get_by_str<V: 'static>(&self, key: &str) -> Option<Rc<V>> {
+        let type_id = TypeId::of::<V>();
+        let any_rc: Rc<dyn Any> = {
+            let cache = self.inner.cache.borrow();
+            cache
+                .iter()
+                .find(|((tid, k), _)| *tid == type_id && *k == key)
+                .map(|(_, rc)| Rc::clone(rc))?
+        };
+        // Downcast is infallible by construction — the slot was
+        // inserted by a `Self::cache::<V>` call so the TypeId
+        // matches. Mirrors the `unwrap_or_else` panic in
+        // [`Self::cache`] as a defensive guard against a future
+        // refactor breaking the typed-key invariant.
+        Rc::downcast::<V>(any_rc).ok()
+    }
+
     #[cfg(test)]
     pub(crate) fn cache_size(&self) -> usize {
         self.inner.cache.borrow().len()
@@ -1030,6 +1088,87 @@ pub(crate) fn current_owner_handle_stack_len() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─────────────────────────────────────────────────────────────────
+    // R605 §5.22 — Owner::cache_get_by_str substrate primitive
+    // ─────────────────────────────────────────────────────────────────
+
+    #[derive(Debug, PartialEq)]
+    struct CacheProbe(u32);
+
+    #[derive(Debug, PartialEq)]
+    struct OtherProbe(&'static str);
+
+    #[test]
+    fn r605_cache_get_by_str_returns_cached_value() {
+        let owner = Owner::new();
+        let inserted = owner.cache::<CacheProbe, _>("widget", || CacheProbe(42));
+        let looked_up: Rc<CacheProbe> = owner
+            .cache_get_by_str("widget")
+            .expect("slot must resolve");
+        assert!(Rc::ptr_eq(&inserted, &looked_up), "same Rc back");
+        assert_eq!(looked_up.0, 42);
+    }
+
+    #[test]
+    fn r605_cache_get_by_str_returns_none_when_absent() {
+        let owner = Owner::new();
+        owner.cache::<CacheProbe, _>("widget", || CacheProbe(1));
+        // Non-existent key returns None — no leak, no slot creation.
+        let miss: Option<Rc<CacheProbe>> = owner.cache_get_by_str("ghost");
+        assert!(miss.is_none());
+        // The unfound lookup must not have populated a phantom slot.
+        assert!(!owner.cache_contains::<CacheProbe>("ghost"));
+    }
+
+    #[test]
+    fn r605_cache_get_by_str_is_type_aware() {
+        // Same key, two distinct types — lookup by string returns
+        // the type-matching entry only.
+        let owner = Owner::new();
+        let _probe = owner.cache::<CacheProbe, _>("shared", || CacheProbe(7));
+        let _other = owner.cache::<OtherProbe, _>("shared", || OtherProbe("hi"));
+        let probe: Rc<CacheProbe> = owner
+            .cache_get_by_str("shared")
+            .expect("CacheProbe slot must resolve");
+        let other: Rc<OtherProbe> = owner
+            .cache_get_by_str("shared")
+            .expect("OtherProbe slot must resolve");
+        assert_eq!(probe.0, 7);
+        assert_eq!(other.0, "hi");
+    }
+
+    #[test]
+    fn r605_cache_get_by_str_accepts_non_static_str_view() {
+        // The crux of R605: the lookup MUST work when `key` is a
+        // dynamically-built `String` (the canonical JSON-RPC `tag`
+        // path) without resorting to `Box::leak`. The cache stored a
+        // `&'static str`; the lookup compares against the borrowed
+        // `&str` view byte-for-byte.
+        let owner = Owner::new();
+        owner.cache::<CacheProbe, _>("widget", || CacheProbe(99));
+        let dynamic_tag: String = String::from("widget");
+        let looked_up: Rc<CacheProbe> = owner
+            .cache_get_by_str(dynamic_tag.as_str())
+            .expect("dynamic-string lookup must hit the static slot");
+        assert_eq!(looked_up.0, 99);
+    }
+
+    #[test]
+    fn r605_cache_get_by_str_walks_all_slots_until_match() {
+        // Insert several slots so the linear walk has to iterate
+        // past prefixes to land on the match. Guards against a
+        // future refactor that accidentally short-circuits.
+        let owner = Owner::new();
+        owner.cache::<CacheProbe, _>("a", || CacheProbe(1));
+        owner.cache::<CacheProbe, _>("ab", || CacheProbe(2));
+        owner.cache::<CacheProbe, _>("abc", || CacheProbe(3));
+        owner.cache::<CacheProbe, _>("abcd", || CacheProbe(4));
+        let hit: Rc<CacheProbe> = owner
+            .cache_get_by_str("abc")
+            .expect("middle-of-walk slot must resolve");
+        assert_eq!(hit.0, 3);
+    }
 
     #[test]
     fn fresh_owner_is_not_dirty() {

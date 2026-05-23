@@ -18165,6 +18165,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 605 — Box::leak debt across 5 RPC handler sites lifted to substrate Owner::cache_get_by_str(&str) primitive — non-mutating typed lookup over the cache HashMap that accepts an arbitrarily-scoped &str without requiring &'static. Eliminates the unbounded process leak proportional to unique JSON-RPC tags observed in long-running embedded RPC servers.
+
+**Changes**:
+- pinion-core/reactive/owner.rs: pub fn cache_get_by_str<V: 'static>(&self, key: &str) -> Option<Rc<V>> — linear walk over the cache HashMap with TypeId+byte-for-byte match; O(N) but N is small + RPC is infrequent (per-request, well below paint cadence); Rc::clone is the only allocation per call
+- owner.rs: 5 R605 substrate tests — cached value round-trip, returns-None-when-absent (no phantom slot insertion), type-aware lookup (same key + different V resolves to distinct slots), non-static String view succeeds, multi-slot linear walk lands on the correct match
+- pinion-rpc/theme.rs: theme_tokens + set_theme_mode rewritten to consume cache_get_by_str directly — use_theme hook + Owner::run + cache_contains gate path retired from the introspection arc
+- pinion-rpc/scroll_state.rs: scroll_state(&str) signature; ScrollStateOutcome.tag: &'static str → String
+- pinion-rpc/text_state.rs: text_state(&str) signature; TextStateOutcome.tag: &'static str → String
+- pinion-rpc/caret_state.rs: caret_state(&str) signature; CaretStateOutcome.tag: &'static str → String
+- pinion-rpc/dispatch.rs: 5 Box::leak call sites deleted (handle_scene_theme_tokens / set_theme_mode in theme.rs; handle_scene_scroll_state / text_state / caret_state in dispatch.rs); param-tag &str now flows directly into the substrate primitive
+- All R602/R603/R604 outcome ScrollStateOutcome/TextStateOutcome/CaretStateOutcome dropped Copy where String fields prevent it; Clone retained
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib r605: 5 pass / 0 fail (substrate primitive)
+- cargo test --workspace --features pinion-runtime/vello: 2921 pass / 0 fail / 13 ignored (R604 baseline 2916 + 5 R605)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- grep -n 'Box::leak' crates/pinion-rpc/src/*.rs: doc references only (no executable Box::leak remains in pinion-rpc)
+- AI-first observability matrix integrity preserved — all 5 introspection methods still pass R598/R600/R602/R603/R604 wire tests after the refactor
+
+
+
+**Impact**: §5.7, §5.22
+
+
+**Carry forward**:
+- Internal duplication across 5 substrate-introspection modules (theme/animation_state/scroll_state/text_state/caret_state) — nearly identical {check runtime_owner → cache_get_by_str gate → project state} skeleton; [[three-site-internal-duplication-substrate-lift]] textbook says lift to a generic `substrate_introspect<S, V, F>` helper; defer until the 3rd internal-form variant cements the abstraction shape
+- wildcard `_ => "light"` / `_ => "unknown"` fallback arms in theme.rs active_palette_key / mode_name / system_scheme_name — silent mis-categorization of future non_exhaustive variants; textbook fix is typed sentinel (return Option / Result, never silent default) but defer until a 2nd variant actually lands and forces the audit
+- Mutation pair backlog still open: scene/set_text + scene/set_caret + scene/set_selection + scene/set_scroll_offset — readers complete in R598..R604; writers wait for a 2nd consumer beyond V::apply_key + platform IME bridge
+
+
+
 ### Round 7 — Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification
 
 **Changes**:

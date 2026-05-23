@@ -2338,10 +2338,9 @@ fn animation_state_error_to_rpc(err: &AnimationStateError) -> RpcError {
 /// projection — see [`crate::scroll_state`] for the wire shape.
 ///
 /// `params.tag` is required (no canonical default for scroll
-/// states); the handler leaks the supplied tag through
-/// [`Box::leak`] for the [`Owner::cache`] key bridge — bounded
-/// leak, canonical AI client uses repeating string literals so most
-/// requests reuse the same `'static` slot.
+/// states). Post-R605 the handler reaches the cache via
+/// [`Owner::cache_get_by_str`](pinion_core::reactive::Owner::cache_get_by_str)
+/// directly — no `Box::leak` bridge, no unbounded growth.
 fn handle_scene_scroll_state(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
@@ -2354,14 +2353,15 @@ fn handle_scene_scroll_state(
             RpcError::invalid_params("params.tag missing or not a string")
                 .with_data_string("TagRequired")
         })?;
-    let static_tag: &'static str = Box::leak(tag.to_owned().into_boxed_str());
-    match scroll_state(runtime_owner, static_tag) {
-        Ok(outcome) => scroll_state_outcome_to_json(outcome),
+    // R605 §5.22 — `Owner::cache_get_by_str` accepts a borrowed
+    // `&str`, no `Box::leak` bridge needed.
+    match scroll_state(runtime_owner, tag) {
+        Ok(outcome) => scroll_state_outcome_to_json(&outcome),
         Err(err) => Err(scroll_state_error_to_rpc(&err)),
     }
 }
 
-fn scroll_state_outcome_to_json(out: ScrollStateOutcome) -> Result<Value, RpcError> {
+fn scroll_state_outcome_to_json(out: &ScrollStateOutcome) -> Result<Value, RpcError> {
     serde_json::to_value(out).map_err(|e| {
         RpcError::internal_error(format!(
             "scene/scroll_state: failed to serialize outcome: {e}",
@@ -2391,8 +2391,8 @@ fn scroll_state_error_to_rpc(err: &ScrollStateError) -> RpcError {
 /// projection — see [`crate::text_state`] for the wire shape.
 ///
 /// `params.tag` is required (per-field tagged; no canonical
-/// default). Same `Box::leak` &'static bridge as
-/// [`handle_scene_scroll_state`].
+/// default). Reaches the cache via [`Owner::cache_get_by_str`](pinion_core::reactive::Owner::cache_get_by_str)
+/// — R605 §5.22 lift, no `&'static str` bridge needed.
 fn handle_scene_text_state(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
@@ -2405,8 +2405,8 @@ fn handle_scene_text_state(
             RpcError::invalid_params("params.tag missing or not a string")
                 .with_data_string("TagRequired")
         })?;
-    let static_tag: &'static str = Box::leak(tag.to_owned().into_boxed_str());
-    match text_state(runtime_owner, static_tag) {
+    // R605 §5.22 — see scroll_state handler for rationale.
+    match text_state(runtime_owner, tag) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
         Err(err) => Err(text_state_error_to_rpc(&err)),
     }
@@ -2453,14 +2453,14 @@ fn handle_scene_caret_state(
             RpcError::invalid_params("params.tag missing or not a string")
                 .with_data_string("TagRequired")
         })?;
-    let static_tag: &'static str = Box::leak(tag.to_owned().into_boxed_str());
-    match caret_state(runtime_owner, static_tag) {
-        Ok(outcome) => caret_state_outcome_to_json(outcome),
+    // R605 §5.22 — see scroll_state handler for rationale.
+    match caret_state(runtime_owner, tag) {
+        Ok(outcome) => caret_state_outcome_to_json(&outcome),
         Err(err) => Err(caret_state_error_to_rpc(&err)),
     }
 }
 
-fn caret_state_outcome_to_json(out: CaretStateOutcome) -> Result<Value, RpcError> {
+fn caret_state_outcome_to_json(out: &CaretStateOutcome) -> Result<Value, RpcError> {
     serde_json::to_value(out).map_err(|e| {
         RpcError::internal_error(format!(
             "scene/caret_state: failed to serialize outcome: {e}",

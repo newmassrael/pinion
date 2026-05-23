@@ -89,7 +89,7 @@
 use pinion_core::reactive::Owner;
 use pinion_core::style::Color;
 use pinion_core::theme::{
-    system_color_scheme, use_theme, ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider,
+    system_color_scheme, ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider,
 };
 use serde::Serialize;
 
@@ -213,19 +213,16 @@ pub fn theme_tokens(
         return Err(ThemeTokensError::RuntimeOwnerUnavailable);
     };
     let resolved_tag = tag.unwrap_or(DEFAULT_THEME_TAG);
-    // Look up by leaking the `&str` to a `&'static str` only for
-    // typed-key probing — `Owner::cache_contains` and `Owner::cache`
-    // both want `&'static str`. The leak is bounded (one per unique
-    // tag observed during the process's lifetime) and the canonical
-    // call site uses a string literal so most requests reuse the
-    // same `'static` slot without growing the leaked set.
-    let static_tag: &'static str = Box::leak(resolved_tag.to_string().into_boxed_str());
-    if !owner.cache_contains::<ThemeProvider>(static_tag) {
-        return Err(ThemeTokensError::NotBound {
+    // R605 §5.22 — non-leaking lookup. `Owner::cache_get_by_str`
+    // accepts an arbitrarily-scoped `&str` and walks the cache for
+    // a `(TypeId, key)` match without requiring `&'static str`
+    // (which would force `Box::leak` and grow an unbounded process
+    // leak proportional to unique JSON-RPC tags).
+    let provider: std::rc::Rc<ThemeProvider> = owner
+        .cache_get_by_str::<ThemeProvider>(resolved_tag)
+        .ok_or_else(|| ThemeTokensError::NotBound {
             tag: resolved_tag.to_string(),
-        });
-    }
-    let provider: std::rc::Rc<ThemeProvider> = owner.run(|| use_theme(static_tag));
+        })?;
     let mode = provider.mode();
     let system_scheme = system_color_scheme();
     let active = active_palette_key(mode, system_scheme);
@@ -415,15 +412,13 @@ pub fn set_theme_mode(
         return Err(SetThemeModeError::RuntimeOwnerUnavailable);
     };
     let resolved_tag: &str = params.tag.as_deref().unwrap_or(DEFAULT_THEME_TAG);
-    // Same `Box::leak` rationale as `theme_tokens` — bounded leak,
-    // canonical call site passes a string literal.
-    let static_tag: &'static str = Box::leak(resolved_tag.to_string().into_boxed_str());
-    if !owner.cache_contains::<ThemeProvider>(static_tag) {
-        return Err(SetThemeModeError::NotBound {
+    // R605 §5.22 — non-leaking lookup; see `theme_tokens` for the
+    // rationale.
+    let provider: std::rc::Rc<ThemeProvider> = owner
+        .cache_get_by_str::<ThemeProvider>(resolved_tag)
+        .ok_or_else(|| SetThemeModeError::NotBound {
             tag: resolved_tag.to_string(),
-        });
-    }
-    let provider: std::rc::Rc<ThemeProvider> = owner.run(|| use_theme(static_tag));
+        })?;
     provider.set_mode(params.mode);
     let system_scheme = system_color_scheme();
     let active = active_palette_key(params.mode, system_scheme);
@@ -450,7 +445,7 @@ pub fn parse_theme_mode(wire: &str) -> Option<ThemeMode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::theme::{set_system_color_scheme, Theme, ThemeMode};
+    use pinion_core::theme::{set_system_color_scheme, use_theme, Theme, ThemeMode};
 
     /// Snapshot the global `system_color_scheme` for the duration of a
     /// test. Drop-time restore so an early panic leaves the global

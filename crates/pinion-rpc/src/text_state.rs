@@ -78,7 +78,7 @@
 //! for further shift-arrow extension read `anchor` to disambiguate.
 
 use pinion_core::reactive::Owner;
-use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
+use pinion_core::widgets::text_edit::TextEditState;
 use serde::Serialize;
 
 /// Typed errors the [`text_state`] dispatcher can return. Every
@@ -118,8 +118,9 @@ pub struct TextSelectionView {
 /// `CompositionEvent` reading contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TextStateOutcome {
-    /// Echoes the request's `params.tag`.
-    pub tag: &'static str,
+    /// Echoes the request's `params.tag`. Owned `String` (post-R605
+    /// `Box::leak` elimination).
+    pub tag: String,
     /// Committed text (no IME preedit spliced in — see
     /// [`Self::preedit`]).
     pub text: String,
@@ -146,7 +147,7 @@ pub struct TextStateOutcome {
 }
 
 impl TextStateOutcome {
-    fn from_state(tag: &'static str, state: &TextEditState) -> Self {
+    fn from_state(tag: &str, state: &TextEditState) -> Self {
         let text = state.text();
         let caret = state.caret();
         let (selection, has_selection) = match state.selection_range() {
@@ -166,7 +167,7 @@ impl TextStateOutcome {
         let is_composing = state.is_composing();
         let preedit = state.preedit();
         Self {
-            tag,
+            tag: tag.to_owned(),
             text,
             caret,
             has_selection,
@@ -194,23 +195,23 @@ impl TextStateOutcome {
 /// hook; no reactive computation is established.
 pub fn text_state(
     runtime_owner: Option<&Owner>,
-    tag: &'static str,
+    tag: &str,
 ) -> Result<TextStateOutcome, TextStateError> {
     let Some(owner) = runtime_owner else {
         return Err(TextStateError::RuntimeOwnerUnavailable);
     };
-    if !owner.cache_contains::<TextEditState>(tag) {
-        return Err(TextStateError::NotBound {
+    let state: std::rc::Rc<TextEditState> = owner
+        .cache_get_by_str::<TextEditState>(tag)
+        .ok_or_else(|| TextStateError::NotBound {
             tag: tag.to_owned(),
-        });
-    }
-    let state: std::rc::Rc<TextEditState> = owner.run(|| use_text_edit_state(tag));
+        })?;
     Ok(TextStateOutcome::from_state(tag, &state))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::widgets::text_edit::use_text_edit_state;
 
     fn bind_state(owner: &Owner, tag: &'static str) -> std::rc::Rc<TextEditState> {
         owner.run(|| use_text_edit_state(tag))

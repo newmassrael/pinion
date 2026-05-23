@@ -59,7 +59,7 @@
 //! ends. The `max.x == 0` case is symmetric.
 
 use pinion_core::reactive::Owner;
-use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scroll::ScrollState;
 use serde::Serialize;
 
 /// Typed errors the [`scroll_state`] dispatcher can return. Every
@@ -123,10 +123,13 @@ pub struct ScrollEdges {
 /// Snapshot of the bound [`ScrollState`]'s observable surface plus
 /// the four server-side-derived edge predicates (grouped under
 /// [`Self::edges`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ScrollStateOutcome {
-    /// Echoes the request's `params.tag` so the response self-identifies.
-    pub tag: &'static str,
+    /// Echoes the request's `params.tag` so the response
+    /// self-identifies. Owned `String` (post-R605 `Box::leak`
+    /// elimination) so the outcome holds the request's tag without
+    /// requiring a `&'static` storage path.
+    pub tag: String,
     /// Current `(offset_x, offset_y)`.
     pub offset: ScrollAxisPair,
     /// Current `(max_x, max_y)` bound — the upper clamp on `offset`.
@@ -136,11 +139,11 @@ pub struct ScrollStateOutcome {
 }
 
 impl ScrollStateOutcome {
-    fn from_state(tag: &'static str, state: &ScrollState) -> Self {
+    fn from_state(tag: &str, state: &ScrollState) -> Self {
         let (ox, oy) = state.offset();
         let (mx, my) = state.max();
         Self {
-            tag,
+            tag: tag.to_owned(),
             offset: ScrollAxisPair { x: ox, y: oy },
             max: ScrollAxisPair { x: mx, y: my },
             edges: ScrollEdges {
@@ -155,11 +158,9 @@ impl ScrollStateOutcome {
 
 /// Snapshot the [`ScrollState`] cached at `tag` on `runtime_owner`.
 ///
-/// `tag` must be supplied — there is no canonical default. The
-/// `&'static str` requirement matches
-/// [`use_scroll_state`](pinion_core::widgets::scroll::use_scroll_state)'s
-/// [`Owner::cache`] key; callers leak the tag through
-/// [`Box::leak`] when bridging from a JSON-RPC `String`.
+/// `tag` accepts any `&str` lifetime — R605 §5.22 lifted the
+/// substrate to expose `Owner::cache_get_by_str` so the JSON-RPC
+/// path no longer leaks the tag into `&'static str` storage.
 ///
 /// # Errors
 ///
@@ -170,30 +171,28 @@ impl ScrollStateOutcome {
 ///
 /// # Side effects
 ///
-/// None. The [`Owner::cache_contains`] gate routes the no-slot case
-/// to [`ScrollStateError::NotBound`] so the call never creates an
-/// uninitialised state on a typo'd tag. The `Owner::run` wrap only
-/// activates [`Owner::current`] for the [`use_scroll_state`] hook;
-/// no reactive computation is established.
+/// None. The [`Owner::cache_get_by_str`] walk never creates a slot
+/// on miss — failed lookups surface as
+/// [`ScrollStateError::NotBound`] without polluting the cache.
 pub fn scroll_state(
     runtime_owner: Option<&Owner>,
-    tag: &'static str,
+    tag: &str,
 ) -> Result<ScrollStateOutcome, ScrollStateError> {
     let Some(owner) = runtime_owner else {
         return Err(ScrollStateError::RuntimeOwnerUnavailable);
     };
-    if !owner.cache_contains::<ScrollState>(tag) {
-        return Err(ScrollStateError::NotBound {
+    let state: std::rc::Rc<ScrollState> = owner
+        .cache_get_by_str::<ScrollState>(tag)
+        .ok_or_else(|| ScrollStateError::NotBound {
             tag: tag.to_owned(),
-        });
-    }
-    let state: std::rc::Rc<ScrollState> = owner.run(|| use_scroll_state(tag));
+        })?;
     Ok(ScrollStateOutcome::from_state(tag, &state))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::widgets::scroll::use_scroll_state;
 
     fn bind_state(owner: &Owner, tag: &'static str) -> std::rc::Rc<ScrollState> {
         owner.run(|| use_scroll_state(tag))
