@@ -1,8 +1,11 @@
-//! `scene/scroll_state` RPC method dispatch — R602 §5.45 + §5.7.
+//! `scene/scroll_state` + `scene/set_scroll_offset` RPC method dispatch — R602 / R609 §5.45 + §5.7.
 //!
 //! Projects the [`ScrollState`] cached on the substrate's root
 //! [`Owner`] under the supplied `tag` so AI agents can verify scroll
 //! position without resorting to [`scene/snapshot`] pixel diffs.
+//! R609 §5.45 adds the mutation pair `scene/set_scroll_offset` whose
+//! response is the same [`ScrollStateOutcome`] shape — wire symmetry
+//! for the read/modify/write loop.
 //!
 //! Third reactive-substrate introspection method, after
 //! [`crate::theme`] (R598/R599) and
@@ -175,6 +178,84 @@ pub fn scroll_state(
     lookup::<ScrollState, _, _>(runtime_owner, tag, ScrollStateOutcome::from_state)
 }
 
+// ────────────────────────────────────────────────────────────────────
+// scene/set_scroll_offset — mutate-side (R609)
+// ────────────────────────────────────────────────────────────────────
+
+/// Typed request payload for [`set_scroll_offset`]. Carries the
+/// requested `(x, y)` offset and the cache tag the mutation applies
+/// to.
+///
+/// Unlike [`scene/theme_tokens`](crate::theme::theme_tokens) the tag
+/// is **required** — every scrollable widget owns its own
+/// [`ScrollState`] under a distinct key, so there is no canonical
+/// default (no equivalent of [`crate::theme::DEFAULT_THEME_TAG`]).
+///
+/// The substrate's [`ScrollState::scroll_to`] clamps the requested
+/// `(x, y)` against `[0, max]` so an out-of-range request lands on
+/// the nearest valid offset rather than rejecting; AI agents read
+/// the post-clamp value back through the returned
+/// [`ScrollStateOutcome`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetScrollOffsetParams<'a> {
+    /// Cache tag the [`use_scroll_state`](pinion_core::widgets::scroll::use_scroll_state)
+    /// lookup resolves against. Required (no default).
+    pub tag: &'a str,
+    /// Target horizontal offset, clamped to `[0, max_x]` by
+    /// [`ScrollState::scroll_to`].
+    pub x: i32,
+    /// Target vertical offset, clamped to `[0, max_y]` by
+    /// [`ScrollState::scroll_to`].
+    pub y: i32,
+}
+
+/// Mutate the bound [`ScrollState`]'s `(offset_x, offset_y)` under
+/// `params.tag` and return the post-mutation
+/// [`ScrollStateOutcome`] (same shape [`scroll_state`] read returns).
+///
+/// # Side effects
+///
+/// Calls [`ScrollState::scroll_to`] which writes both offset
+/// [`Signal`](pinion_core::reactive::Signal)s inside a single
+/// [`batch`](pinion_core::reactive::batch). Subscribers re-run at
+/// most once per call even when both axes shift. The dispatcher
+/// bumps [`SceneRevision`](pinion_core::SceneRevision) after this
+/// call returns `Ok` so any in-flight preview's `base_revision`
+/// detects the concurrent mutation at apply time.
+///
+/// # Why the outcome is the full read-side shape
+///
+/// The substrate clamps the request against `[0, max]`, so the
+/// post-state offset may differ from `params`. Echoing back the full
+/// [`ScrollStateOutcome`] (offset / max / edges) is the textbook
+/// canonical AI-first shape: the agent sees the clamped offset, the
+/// derived edge predicates, and the max bound in one round-trip
+/// instead of needing a follow-up [`scroll_state`] call.
+///
+/// # Errors
+///
+/// - [`ScrollStateError::RuntimeOwnerUnavailable`] — no substrate
+///   owner attached on the dispatch context.
+/// - [`ScrollStateError::NotBound`] — owner has no scroll state
+///   cached under `params.tag`.
+pub fn set_scroll_offset(
+    runtime_owner: Option<&Owner>,
+    params: &SetScrollOffsetParams<'_>,
+) -> Result<ScrollStateOutcome, ScrollStateError> {
+    // R609 reuses the R607 `lookup` helper because the substrate
+    // gate shape (`RuntimeOwnerUnavailable` + `NotBound`) is the
+    // same as the read path's. `ScrollState`'s mutators take `&self`
+    // (interior mutability via `Signal`), so the closure can write
+    // through the borrowed reference without violating the helper's
+    // signature. A dedicated `mutate_substrate` helper is deferred
+    // per [[abstraction-needs-second-consumer]] until R610-R612
+    // surface 2-3 more write-side write-then-read sites.
+    lookup::<ScrollState, _, _>(runtime_owner, params.tag, |tag, state| {
+        state.scroll_to(params.x, params.y);
+        ScrollStateOutcome::from_state(tag, state)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,5 +403,154 @@ mod tests {
         assert_eq!(json["edges"]["at_bottom"], false);
         assert_eq!(json["edges"]["at_left"], true);
         assert_eq!(json["edges"]["at_right"], true);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R609 §5.45 — set_scroll_offset setter
+    // ─────────────────────────────────────────────────────────────────
+
+    fn params_at(tag: &str, x: i32, y: i32) -> SetScrollOffsetParams<'_> {
+        SetScrollOffsetParams { tag, x, y }
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_missing_runtime_owner_errors() {
+        let err = set_scroll_offset(None, &params_at("list", 0, 100)).unwrap_err();
+        assert_eq!(err, ScrollStateError::RuntimeOwnerUnavailable);
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_unbound_tag_errors_with_tag_echoed() {
+        let owner = Owner::new();
+        let err = set_scroll_offset(Some(&owner), &params_at("ghost", 0, 100)).unwrap_err();
+        assert_eq!(
+            err,
+            ScrollStateError::NotBound {
+                tag: "ghost".into(),
+            },
+        );
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_writes_offset_and_returns_post_state() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "list");
+        state.set_max(0, 480);
+        let outcome = set_scroll_offset(Some(&owner), &params_at("list", 0, 240)).unwrap();
+        assert_eq!(outcome.tag, "list");
+        assert_eq!(outcome.offset, ScrollAxisPair { x: 0, y: 240 });
+        assert_eq!(outcome.max, ScrollAxisPair { x: 0, y: 480 });
+        assert!(!outcome.edges.at_top);
+        assert!(!outcome.edges.at_bottom);
+        // The provider's own state reflects the mutation immediately.
+        assert_eq!(state.offset(), (0, 240));
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_clamps_overshoot_to_max() {
+        // Request y=999 against max=480 → ScrollState clamps to 480
+        // and the outcome echoes the post-clamp value (480), not the
+        // request. Pinned so AI agents can rely on the outcome being
+        // the real post-state.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "list");
+        state.set_max(0, 480);
+        let outcome = set_scroll_offset(Some(&owner), &params_at("list", 0, 999)).unwrap();
+        assert_eq!(outcome.offset, ScrollAxisPair { x: 0, y: 480 });
+        assert!(outcome.edges.at_bottom);
+        assert_eq!(state.offset(), (0, 480));
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_clamps_negative_to_zero() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "list");
+        state.set_max(0, 480);
+        state.scroll_to(0, 240);
+        let outcome = set_scroll_offset(Some(&owner), &params_at("list", 0, -100)).unwrap();
+        assert_eq!(outcome.offset, ScrollAxisPair { x: 0, y: 0 });
+        assert!(outcome.edges.at_top);
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_supports_both_axes() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "list");
+        state.set_max(600, 480);
+        let outcome = set_scroll_offset(Some(&owner), &params_at("list", 300, 240)).unwrap();
+        assert_eq!(outcome.offset, ScrollAxisPair { x: 300, y: 240 });
+        assert!(!outcome.edges.at_left);
+        assert!(!outcome.edges.at_right);
+        assert!(!outcome.edges.at_top);
+        assert!(!outcome.edges.at_bottom);
+        assert_eq!(state.offset(), (300, 240));
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_does_not_insert_a_new_cache_slot() {
+        let owner = Owner::new();
+        let _ = set_scroll_offset(Some(&owner), &params_at("phantom", 0, 50)).unwrap_err();
+        assert!(!owner.cache_contains::<ScrollState>("phantom"));
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_is_idempotent_when_same_target() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "list");
+        state.set_max(0, 480);
+        let a = set_scroll_offset(Some(&owner), &params_at("list", 0, 240)).unwrap();
+        let b = set_scroll_offset(Some(&owner), &params_at("list", 0, 240)).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(state.offset(), (0, 240));
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_outcome_serializes_to_full_scroll_state_shape() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "list");
+        state.set_max(0, 480);
+        let outcome = set_scroll_offset(Some(&owner), &params_at("list", 0, 480)).unwrap();
+        let json = serde_json::to_value(outcome).unwrap();
+        // Wire shape = ScrollStateOutcome — same as read side.
+        assert_eq!(json["tag"], "list");
+        assert_eq!(json["offset"]["y"], 480);
+        assert_eq!(json["max"]["y"], 480);
+        assert_eq!(json["edges"]["at_bottom"], true);
+    }
+
+    #[test]
+    fn r609_set_scroll_offset_subscribers_re_run_once_per_two_axis_write() {
+        // ScrollState::scroll_to wraps both signal writes in
+        // `reactive::batch` — a subscriber that reads both axes
+        // re-runs at most once per call. R55.G.5.fix substrate
+        // contract carried through the RPC write path.
+        use pinion_core::reactive::Effect;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_clone = runs.clone();
+        owner.run(|| {
+            let _state = pinion_core::widgets::scroll::use_scroll_state("list");
+            let _effect = Effect::new(&owner, move || {
+                let s = pinion_core::widgets::scroll::use_scroll_state("list");
+                let _ = s.offset();
+                runs_clone.set(runs_clone.get() + 1);
+            });
+            let baseline = runs.get();
+            // Pre-set max so the two-axis write is non-trivial.
+            let state = pinion_core::widgets::scroll::use_scroll_state("list");
+            state.set_max(600, 480);
+            let pre_swap = runs.get();
+            let _ = set_scroll_offset(Some(&owner), &params_at("list", 300, 240)).unwrap();
+            assert_eq!(
+                runs.get(),
+                pre_swap + 1,
+                "scroll_to coalesces both axis writes into one Effect re-run",
+            );
+            // baseline + 2 = baseline run + set_max run + set_scroll_offset
+            // run. The set_scroll_offset is verified as +1 above.
+            assert!(runs.get() > baseline);
+        });
     }
 }

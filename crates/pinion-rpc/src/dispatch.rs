@@ -2,7 +2,7 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R608 — 23 typed):
+//! response envelope. Registered methods (R609 — 24 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
@@ -11,7 +11,8 @@
 //! `scene/apply_preview`, `scene/theme_tokens`,
 //! `scene/set_theme_mode`, `scene/set_theme_palettes`,
 //! `scene/animation_state`, `scene/scroll_state`,
-//! `scene/text_state`, `scene/caret_state`. The preview-lifecycle methods take the
+//! `scene/set_scroll_offset`, `scene/text_state`,
+//! `scene/caret_state`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -60,7 +61,9 @@ use crate::preview::{
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
-use crate::scroll_state::{scroll_state, ScrollStateOutcome};
+use crate::scroll_state::{
+    scroll_state, set_scroll_offset, ScrollStateOutcome, SetScrollOffsetParams,
+};
 use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
@@ -622,6 +625,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/scroll_state" => {
             handle_scene_scroll_state(runtime_owner, request.params.as_ref())
         }
+        "scene/set_scroll_offset" => {
+            handle_scene_set_scroll_offset(runtime_owner, request.params.as_ref())
+        }
         "scene/text_state" => {
             handle_scene_text_state(runtime_owner, request.params.as_ref())
         }
@@ -800,7 +806,13 @@ fn mutates_scene_on_success(method: &str) -> bool {
             // view-fns re-run once on the next reactive tick, and a
             // re-paint is required. OCC token must bump so any
             // in-flight preview's base revision detects the swap.
-            | "scene/set_theme_palettes",
+            | "scene/set_theme_palettes"
+            // R609 §5.45 — set_scroll_offset writes both axis
+            // Signals (offset_x + offset_y) inside `scroll_to`'s
+            // `reactive::batch`. Subscribers re-run, the visible
+            // scroll position changes, a re-paint is required, and
+            // the OCC token must bump.
+            | "scene/set_scroll_offset",
     )
 }
 
@@ -2505,6 +2517,61 @@ fn scroll_state_outcome_to_json(out: &ScrollStateOutcome) -> Result<Value, RpcEr
 
 fn scroll_state_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
     introspect_error_to_rpc("scroll state", err)
+}
+
+/// R609 §5.45 — `scene/set_scroll_offset` typed handler. 24th
+/// `scene/*` method, mutation pair to `scene/scroll_state`. The
+/// dispatcher's [`mutates_scene_on_success`] gate bumps the
+/// [`SceneRevision`] after this call returns `Ok`.
+///
+/// `params.tag` is required, `params.x` / `params.y` are required
+/// integers (the [`ScrollState::scroll_to`](pinion_core::widgets::scroll::ScrollState::scroll_to)
+/// substrate clamps the values against `[0, max]` automatically).
+/// Wire shape — request:
+/// `{"tag": "<scroll_tag>", "x": <i32>, "y": <i32>}`. Response is
+/// the same [`ScrollStateOutcome`] shape `scene/scroll_state` returns.
+fn handle_scene_set_scroll_offset(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let tag = params_value
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tag missing or not a string")
+                .with_data_string("TagRequired")
+        })?;
+    let x = read_i32_field(params_value, "x")?;
+    let y = read_i32_field(params_value, "y")?;
+    let typed_params = SetScrollOffsetParams { tag, x, y };
+    match set_scroll_offset(runtime_owner, &typed_params) {
+        Ok(outcome) => scroll_state_outcome_to_json(&outcome),
+        Err(err) => Err(scroll_state_error_to_rpc(&err)),
+    }
+}
+
+/// Parse `params.<field>` as an `i32`. Rejects floats with a
+/// fractional part, missing fields, and out-of-range integers. JSON
+/// `Number` is `f64`-or-`i64` at the `serde_json` layer; the cast guards
+/// the `i32` range via `i64::try_into`.
+fn read_i32_field(params: &Value, field: &str) -> Result<i32, RpcError> {
+    let value = params.get(field).ok_or_else(|| {
+        RpcError::invalid_params(format!("params.{field} missing"))
+            .with_data_string("InvalidAxisValue")
+    })?;
+    if let Some(int_v) = value.as_i64() {
+        return i32::try_from(int_v).map_err(|_| {
+            RpcError::invalid_params(format!(
+                "params.{field} {int_v} out of i32 range",
+            ))
+            .with_data_string("InvalidAxisValue")
+        });
+    }
+    Err(
+        RpcError::invalid_params(format!("params.{field} must be an integer"))
+            .with_data_string("InvalidAxisValue"),
+    )
 }
 
 /// R603 §5.22 — `scene/text_state` typed handler. 21st `scene/*`
@@ -8729,6 +8796,136 @@ mod tests {
         assert_eq!(result["max"]["y"], 480);
         assert_eq!(result["edges"]["at_bottom"], false);
         assert_eq!(result["edges"]["at_top"], false);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R609 §5.45 — scene/set_scroll_offset wire integration
+    //
+    // Mutation pair to scene/scroll_state. The fine-grained handler
+    // logic is covered by the test battery in
+    // `crate::scroll_state::tests::r609_*`. The cases below exercise
+    // the dispatcher's wire round-trip — required tag, integer field
+    // parsing, error → RpcError mapping, and the
+    // mutates_scene_on_success OCC bump.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r609_scene_set_scroll_offset_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"list","x":0,"y":240},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r609_scene_set_scroll_offset_missing_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"x":0,"y":240},"id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("TagRequired".into())));
+    }
+
+    #[test]
+    fn r609_scene_set_scroll_offset_missing_x_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::scroll::use_scroll_state("list"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"list","y":240},"id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing x must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidAxisValue".into())));
+    }
+
+    #[test]
+    fn r609_scene_set_scroll_offset_missing_y_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::scroll::use_scroll_state("list"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"list","x":0},"id":4}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing y must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidAxisValue".into())));
+    }
+
+    #[test]
+    fn r609_scene_set_scroll_offset_rejects_non_integer_axis() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::scroll::use_scroll_state("list"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"list","x":"0","y":240},"id":5}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("non-integer x must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidAxisValue".into())));
+    }
+
+    #[test]
+    fn r609_scene_set_scroll_offset_unbound_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"ghost","x":0,"y":240},"id":6}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("unbound tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    #[test]
+    fn r609_scene_set_scroll_offset_happy_path_returns_clamped_post_state() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let state = owner.run(|| pinion_core::widgets::scroll::use_scroll_state("list"));
+        state.set_max(0, 480);
+        // Request y=999 → substrate clamps to 480 and the wire response
+        // echoes the clamped post-state.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"list","x":0,"y":999},"id":7}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none(), "happy path must not error");
+        let result = resp.result.expect("result present");
+        assert_eq!(result["tag"], "list");
+        assert_eq!(result["offset"]["y"], 480);
+        assert_eq!(result["max"]["y"], 480);
+        assert_eq!(result["edges"]["at_bottom"], true);
+    }
+
+    #[test]
+    fn r609_scene_set_scroll_offset_bumps_revision_on_success() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::scroll::use_scroll_state("list"));
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"list","x":0,"y":120},"id":8}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        let after = revision.current();
+        assert!(
+            after > before,
+            "set_scroll_offset must bump the OCC token (before={before}, after={after})",
+        );
+    }
+
+    #[test]
+    fn r609_scene_set_scroll_offset_does_not_bump_revision_on_failure() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        // No scroll state bound → handler errors. The dispatcher's
+        // `mutates_scene_on_success` gate must not bump.
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"ghost","x":0,"y":120},"id":9}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        assert_eq!(
+            revision.current(),
+            before,
+            "a failed set_scroll_offset must not bump the OCC token",
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────

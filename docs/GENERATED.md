@@ -10836,6 +10836,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R609 — scene/set_scroll_offset RPC method — paired mutation to scene/scroll_state for AI-first scroll positioning; OCC bump + post-clamp echo
+
+**Changes**:
+- pinion-rpc::scroll_state::set_scroll_offset + SetScrollOffsetParams (R609 §5.7 §5.45) — 24th typed scene/* method, mutation pair to scroll_state read
+- pinion-rpc::dispatch::handle_scene_set_scroll_offset + read_i32_field helper — typed i32 axis parsing with InvalidAxisValue / TagRequired / NotBound / RuntimeOwnerUnavailable variants
+- pinion-rpc::dispatch::mutates_scene_on_success extends — OCC bump on success (R55.G.5.fix batch carry through RPC layer)
+- Wire response = ScrollStateOutcome (full shape; substrate clamp surfaces in post-state echo so AI agent verifies clamped offset in one round-trip)
+
+
+
+**Verification**:
+- cargo test --workspace: 2989 pass / 0 fail (R608: 2970 → +19 R609 unit + wire tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- r609_set_scroll_offset_clamps_overshoot_to_max + _negative_to_zero — substrate clamp surfaces through wire echo
+- r609_set_scroll_offset_subscribers_re_run_once_per_two_axis_write — R55.G.5.fix atomic-batch contract carry
+- r609_scene_set_scroll_offset_bumps_revision_on_success + _does_not_bump_revision_on_failure — OCC gate pinned both directions
+- r609_scene_set_scroll_offset_rejects_non_integer_axis — typed InvalidAxisValue data string
+
+
+
+**Impact**: §5.7, §5.45
+
+
+**Carry forward**:
+- R610: scene/set_text (TextEditState::set_text wire; tag required; OCC bump)
+- R611: scene/set_selection (anchor + focus pair; OCC bump)
+- R612: scene/set_caret (caret-byte-offset wire; OCC bump)
+- AI-first write matrix: theme/mode + theme/palettes + scroll/offset covered (3/5). text / selection / caret pending
+- lookup helper reused for write-side at R609 — if R610-R612 add 2 more write call sites consider mutate_substrate lift (currently 1 write consumer; deferred per [[abstraction-needs-second-consumer]])
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
