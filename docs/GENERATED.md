@@ -11181,6 +11181,31 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R621 — require_params dispatch helper — 21 byte-identical params-unwrap sites collapse to one-liner; paired with R613 read_required_tag + R617 read_optional_tag dispatch-helper family
+
+**Changes**:
+- pinion-rpc::dispatch::require_params (R621 §5.7) — lifts Option<&Value> → Result<&Value, RpcError> with -32602 missing-params error
+- 21 dispatch sites collapse to single-line call — was a mix of `let Some(...) = params else { return Err(...) }` (12 sites) + `params.ok_or_else(...)?` (9 sites)
+- Rule of Three crossed at R602; deferred lift cleared with R621 — part of the seven-debt cascade per user directive
+
+
+
+**Verification**:
+- cargo test --workspace: 3064 pass / 0 fail (R620: 3062 → +2 R621 helper unit tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- r621_require_params_returns_value_when_present + _errors_when_absent — happy path + missing path pinned
+- Existing wire-integration suites (R598+ / R602+ / R609+ et al) still pin the byte-identical wire shape — prose 'missing params' preserved
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- 5 remaining debts: test fixture lift / Animation control / Color CSS L4 / error prose / dispatch test split
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

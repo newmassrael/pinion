@@ -934,9 +934,7 @@ enum HandlerKind {
 }
 
 fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -981,9 +979,7 @@ where
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
     inbox.push(DeferredInput::Click { x, y });
     Ok(Value::Null)
@@ -1257,9 +1253,7 @@ fn handle_scene_scroll<F>(
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
 {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let to = params.get("to");
     let by = params.get("by");
     let action = match (to, by) {
@@ -1432,9 +1426,7 @@ fn find_scroll_state_by_tag(
 }
 
 fn handle_scene_rewind(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -1490,9 +1482,7 @@ fn handle_scene_snapshot<F>(
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
 {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -1544,9 +1534,7 @@ where
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let key = params
         .get("key")
         .and_then(Value::as_str)
@@ -1591,9 +1579,7 @@ where
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let delta_obj = params
         .get("delta")
         .and_then(Value::as_object)
@@ -2089,9 +2075,7 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
 }
 
 fn handle_scene_dry_run(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -2125,9 +2109,7 @@ fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
 }
 
 fn handle_scene_wait_for(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -2172,9 +2154,7 @@ fn wait_for_error_to_rpc(err: WaitForError) -> RpcError {
 }
 
 fn handle_scene_screenshot(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -2210,9 +2190,7 @@ fn screenshot_error_to_rpc(err: ScreenshotError) -> RpcError {
 }
 
 fn handle_scene_invoke(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -2359,9 +2337,7 @@ fn handle_scene_set_theme_mode(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let Some(params_value) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params_value = require_params(params)?;
     let mode_str = params_value
         .get("mode")
         .and_then(Value::as_str)
@@ -2419,9 +2395,7 @@ fn handle_scene_set_theme_palettes(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let Some(params_value) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params_value = require_params(params)?;
     let light_value = params_value
         .get("light")
         .ok_or_else(|| RpcError::invalid_params("params.light missing"))?;
@@ -2583,7 +2557,7 @@ fn handle_scene_scroll_state(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let params_value = require_params(params)?;
     let tag = read_required_tag(params_value)?;
     // R605 §5.22 — `Owner::cache_get_by_str` accepts a borrowed
     // `&str`, no `Box::leak` bridge needed.
@@ -2616,7 +2590,7 @@ fn handle_scene_set_scroll_offset(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let params_value = require_params(params)?;
     let tag = read_required_tag(params_value)?;
     let x = read_i32_field(params_value, "x")?;
     let y = read_i32_field(params_value, "y")?;
@@ -2625,6 +2599,37 @@ fn handle_scene_set_scroll_offset(
         Ok(outcome) => scroll_state_outcome_to_json(&outcome),
         Err(err) => Err(introspect_error_to_rpc("scroll state", &err)),
     }
+}
+
+/// R621 §5.7 — `params: Option<&Value>` is the canonical JSON-RPC
+/// envelope shape (the spec lets clients omit the `params` field
+/// entirely), but the majority of typed handlers REQUIRE params and
+/// must reject the absent case with a uniform error message.
+///
+/// Pre-R621 every such handler open-coded the unwrap:
+///
+/// ```text
+/// let Some(params_value) = params else {
+///     return Err(RpcError::invalid_params("missing params"));
+/// };
+/// // ... or, post-R613 ...
+/// let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+/// ```
+///
+/// 21 byte-identical sites accumulated by R620 (~17 query / mutate /
+/// preview / introspect handlers, plus a handful of font + text
+/// helpers). R621 lifts the pattern to a single helper. Per
+/// [[three-site-internal-duplication-substrate-lift]] this crossed
+/// the rule of three at R602; the deferred lift cleared with R621.
+///
+/// # Errors
+///
+/// Returns `-32602 Invalid params` with the prose `"missing params"`
+/// (no typed `error.data` — the prose is the wire identifier this
+/// pattern has used since R16's first dispatch handlers and the
+/// existing test suite pins it verbatim).
+fn require_params(params: Option<&Value>) -> Result<&Value, RpcError> {
+    params.ok_or_else(|| RpcError::invalid_params("missing params"))
 }
 
 /// R617 §5.7 — extract the optional `params.tag` field as a
@@ -2749,7 +2754,7 @@ fn handle_scene_text_state(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let params_value = require_params(params)?;
     let tag = read_required_tag(params_value)?;
     // R605 §5.22 — see scroll_state handler for rationale.
     match text_state(runtime_owner, tag) {
@@ -2780,7 +2785,7 @@ fn handle_scene_set_text(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let params_value = require_params(params)?;
     let tag = read_required_tag(params_value)?;
     let text = params_value
         .get("text")
@@ -2813,7 +2818,7 @@ fn handle_scene_set_selection(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let params_value = require_params(params)?;
     let tag = read_required_tag(params_value)?;
     let anchor = read_usize_field(params_value, "anchor")?;
     let focus = read_usize_field(params_value, "focus")?;
@@ -2844,7 +2849,7 @@ fn handle_scene_set_caret(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let params_value = require_params(params)?;
     let tag = read_required_tag(params_value)?;
     let pos = read_usize_field(params_value, "pos")?;
     let typed_params = SetCaretParams { tag, pos };
@@ -2888,7 +2893,7 @@ fn handle_scene_caret_state(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let params_value = require_params(params)?;
     let tag = read_required_tag(params_value)?;
     // R605 §5.22 — see scroll_state handler for rationale.
     match caret_state(runtime_owner, tag) {
@@ -2941,9 +2946,7 @@ fn introspect_error_to_rpc(domain: &str, err: &SubstrateIntrospectError) -> RpcE
 }
 
 fn handle_scene_locate(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(x) = params.get("x").and_then(Value::as_u64) else {
         return Err(RpcError::invalid_params("params.x missing or not a non-negative integer"));
     };
@@ -2980,9 +2983,7 @@ fn bbox_to_json(r: &pinion_core::scene::Rect) -> Value {
 }
 
 fn handle_scene_locate_region(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let read_u32 = |k: &str| -> Result<u32, RpcError> {
         let raw = params
             .get(k)
@@ -3017,9 +3018,7 @@ fn locate_error_to_rpc(err: LocateError) -> RpcError {
 }
 
 fn handle_scene_bbox(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -3058,9 +3057,7 @@ fn handle_scene_layout<F>(
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
 {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let typed: LayoutQueryParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
     match layout_query(&typed, paint_producer, last_paint_layout) {
@@ -3090,9 +3087,7 @@ fn handle_scene_resize<F>(
 where
     F: FnMut(u32, u32) + ?Sized,
 {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let typed: ResizeParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
     match resize(typed, resize_request) {
@@ -3114,9 +3109,7 @@ fn handle_scene_cancel_preview(
     previews: &PreviewLedger,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(raw_id) = params.get("preview_id").and_then(Value::as_u64) else {
         return Err(RpcError::invalid_params(
             "params.preview_id missing or not a positive integer",
@@ -3136,9 +3129,7 @@ fn handle_scene_propose_change(
     revision: &SceneRevision,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let proposal = parse_typed_proposal(params)?;
     let ttl_hint = match params.get("ttl_ms") {
         None | Some(Value::Null) => None,
@@ -3592,9 +3583,7 @@ fn handle_scene_apply_preview(
     previews: &PreviewLedger,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(raw_id) = params.get("preview_id").and_then(Value::as_u64) else {
         return Err(RpcError::invalid_params(
             "params.preview_id missing or not a positive integer",
@@ -3728,9 +3717,7 @@ fn handle_scene_intervene(
     scene: &mut Scene,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
     };
@@ -3768,9 +3755,7 @@ fn handle_font_parse(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let registry = registry.ok_or_else(font_registry_unavailable)?;
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(bytes_arr) = params.get("bytes").and_then(Value::as_array) else {
         return Err(RpcError::invalid_params("params.bytes missing or not an array"));
     };
@@ -3824,10 +3809,9 @@ fn handle_font_glyph_id_for(
 ) -> Result<Value, RpcError> {
     let registry = registry.ok_or_else(font_registry_unavailable)?;
     let font_id = font_id_from_params(params)?;
-    let Some(params) = params else {
-        // unreachable: font_id_from_params already rejected None.
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    // font_id_from_params already rejected the None case; this second
+    // require_params is for type-system unwrap, not a new gate.
+    let params = require_params(params)?;
     let Some(codepoint) = params.get("codepoint").and_then(Value::as_u64) else {
         return Err(RpcError::invalid_params(
             "params.codepoint missing or not an unsigned integer",
@@ -3851,9 +3835,7 @@ fn handle_font_glyph_id_for(
 }
 
 fn font_id_from_params(params: Option<&Value>) -> Result<u32, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(font_id) = params.get("font_id").and_then(Value::as_u64) else {
         return Err(RpcError::invalid_params(
             "params.font_id missing or not an unsigned integer",
@@ -3890,9 +3872,7 @@ fn handle_font_glyph_outline(
 ) -> Result<Value, RpcError> {
     let registry = registry.ok_or_else(font_registry_unavailable)?;
     let font_id = font_id_from_params(params)?;
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(glyph_id) = params.get("glyph_id").and_then(Value::as_u64) else {
         return Err(RpcError::invalid_params(
             "params.glyph_id missing or not an unsigned integer",
@@ -3987,9 +3967,7 @@ fn handle_font_list(registry: Option<&FontRegistry>) -> Result<Value, RpcError> 
 }
 
 fn handle_text_normalize(params: Option<&Value>) -> Result<Value, RpcError> {
-    let Some(params) = params else {
-        return Err(RpcError::invalid_params("missing params"));
-    };
+    let params = require_params(params)?;
     let Some(text) = params.get("text").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params(
             "params.text missing or not a string",
@@ -4146,6 +4124,19 @@ mod tests {
                 "non-string tag must surface TagRequired",
             );
         }
+    }
+
+    // R621 §5.7 — require_params helper unit tests.
+    #[test]
+    fn r621_require_params_returns_value_when_present() {
+        let v = serde_json::json!({"any": "shape"});
+        assert!(require_params(Some(&v)).is_ok());
+    }
+
+    #[test]
+    fn r621_require_params_errors_when_absent() {
+        let err = require_params(None).unwrap_err();
+        assert_eq!(err.code, -32602);
     }
 
     // R617 §5.7 — read_optional_tag helper unit tests.
