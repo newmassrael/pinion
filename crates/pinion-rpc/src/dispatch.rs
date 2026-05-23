@@ -2,14 +2,14 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R599 — 18 typed):
+//! response envelope. Registered methods (R600 — 19 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
 //! `scene/locate_region`, `scene/bbox`, `scene/cancel_preview`,
 //! `scene/list_previews`, `scene/propose_change`,
 //! `scene/apply_preview`, `scene/theme_tokens`,
-//! `scene/set_theme_mode`. The preview-lifecycle methods take the
+//! `scene/set_theme_mode`, `scene/animation_state`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -35,6 +35,7 @@ use pinion_core::{Owner, Scene, SceneRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::font::{self, FontError, FontRegistry};
@@ -501,7 +502,7 @@ impl<'a> DispatchContext<'a> {
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 18 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 19 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
 )]
 pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
@@ -604,6 +605,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/theme_tokens" => handle_scene_theme_tokens(runtime_owner, request.params.as_ref()),
         "scene/set_theme_mode" => {
             handle_scene_set_theme_mode(runtime_owner, request.params.as_ref())
+        }
+        "scene/animation_state" => {
+            handle_scene_animation_state(runtime_owner, request.params.as_ref())
         }
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
@@ -2252,6 +2256,65 @@ fn set_theme_mode_error_to_rpc(err: SetThemeModeError) -> RpcError {
         SetThemeModeError::NotBound { tag } => {
             RpcError::invalid_params(format!("theme provider not bound under tag {tag:?}"))
                 .with_data_string("NotBound")
+        }
+    }
+}
+
+/// R600 §5.28 — `scene/animation_state` typed handler. 19th
+/// `scene/*` method, read-only. Returns
+/// `{ active: bool, epsilon: f32 }` — see [`crate::animation_state`]
+/// for the wire shape.
+///
+/// `params.epsilon` is optional; when omitted the handler defers to
+/// [`crate::animation_state::animation_state`] which falls back to
+/// [`Animation::DEFAULT_REST_EPSILON`](pinion_core::animation::Animation::DEFAULT_REST_EPSILON).
+fn handle_scene_animation_state(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let epsilon = params
+        .and_then(|p| p.get("epsilon"))
+        .map(|v| {
+            v.as_f64()
+                .ok_or_else(|| RpcError::invalid_params("params.epsilon must be a number when present"))
+        })
+        .transpose()?
+        .map(|v| {
+            // f64 → f32: the spring solver works in f32, so the
+            // truncation is intentional; rejection of non-finite +
+            // negative happens inside animation_state().
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "spring solver evaluates in f32; out-of-range / NaN \
+                          is rejected by animation_state() as InvalidEpsilon"
+            )]
+            { v as f32 }
+        });
+    match animation_state(runtime_owner, epsilon) {
+        Ok(outcome) => animation_state_outcome_to_json(outcome),
+        Err(err) => Err(animation_state_error_to_rpc(&err)),
+    }
+}
+
+fn animation_state_outcome_to_json(out: AnimationStateOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/animation_state: failed to serialize outcome: {e}",
+        ))
+    })
+}
+
+fn animation_state_error_to_rpc(err: &AnimationStateError) -> RpcError {
+    match err {
+        AnimationStateError::RuntimeOwnerUnavailable => {
+            RpcError::invalid_params("animation state unavailable")
+                .with_data_string("RuntimeOwnerUnavailable")
+        }
+        AnimationStateError::InvalidEpsilon { value } => {
+            RpcError::invalid_params(format!(
+                "params.epsilon {value} must be finite and >= 0",
+            ))
+            .with_data_string("InvalidEpsilon")
         }
     }
 }
@@ -7992,5 +8055,68 @@ mod tests {
             before,
             "a failed set_theme_mode must not bump the OCC token",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R600 §5.28 — scene/animation_state wire integration
+    //
+    // The fine-grained handler logic is covered by the test battery in
+    // `crate::animation_state::tests::r600_*`. The cases below exercise
+    // the dispatcher's wire round-trip — params parsing, epsilon
+    // normalization, and error → RpcError mapping.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r600_scene_animation_state_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/animation_state","id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r600_scene_animation_state_empty_owner_reports_inactive() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/animation_state","id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none(), "empty owner must not error");
+        let result = resp.result.expect("result present");
+        assert_eq!(result.get("active"), Some(&Value::Bool(false)));
+        assert!(result.get("epsilon").and_then(Value::as_f64).is_some());
+    }
+
+    #[test]
+    fn r600_scene_animation_state_custom_epsilon_echoed() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":0.05},"id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none());
+        let echoed = resp.result.unwrap()["epsilon"].as_f64().unwrap();
+        assert!((echoed - 0.05).abs() < 1e-5);
+    }
+
+    #[test]
+    fn r600_scene_animation_state_rejects_negative_epsilon_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":-0.1},"id":4}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("negative epsilon must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidEpsilon".into())));
+    }
+
+    #[test]
+    fn r600_scene_animation_state_rejects_non_numeric_epsilon() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/animation_state","params":{"epsilon":"fast"},"id":5}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("non-numeric epsilon must error");
+        assert_eq!(err.code, -32602);
     }
 }

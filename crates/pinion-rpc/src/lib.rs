@@ -9,6 +9,7 @@
 //! module. The JSON-RPC 2.0 wire envelope and method routing entry
 //! point live in [`dispatch`].
 
+pub mod animation_state;
 pub mod commands;
 pub mod dispatch;
 pub mod dry_run;
@@ -30,6 +31,7 @@ pub mod text;
 pub mod theme;
 pub mod wait_for;
 
+pub use animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
 pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
 };

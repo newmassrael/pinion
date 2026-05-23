@@ -29133,6 +29133,68 @@
         "CLAUDE.md still outstanding"
       ]
     },
+    "Round 600": {
+      "decision_summary": "scene/animation_state JSON-RPC method lands as 19th scene/* — read-only introspection over Owner::any_animation_active(epsilon) so AI agents can observe spring-solver settlement without polling scene/snapshot for visual stability. Sister of scene/waitFor on the animation axis.",
+      "changes_bullets": [
+        "pinion-rpc: new animation_state module — pub fn animation_state(runtime_owner, epsilon) -> Result<AnimationStateOutcome, AnimationStateError>",
+        "animation_state.rs: AnimationStateOutcome {active: bool, epsilon: f32} wire shape — active mirrors any_animation_active, epsilon echoes the threshold the framework evaluated",
+        "animation_state.rs: AnimationStateError two-variant non_exhaustive enum — RuntimeOwnerUnavailable / InvalidEpsilon {value: f64} with typed name in error.data",
+        "animation_state.rs: DEFAULT_REST_EPSILON const (0.01) mirrors Animation::DEFAULT_REST_EPSILON — generic-associated const cannot be named without specifying carrier T; carry note added for non-generic substrate lift",
+        "animation_state.rs: epsilon validation gates NaN / negative / infinite via is_finite + >= 0.0 check (recursive walk safe by construction)",
+        "dispatch.rs: scene/animation_state routing arm + handle_scene_animation_state + animation_state_outcome_to_json + animation_state_error_to_rpc helpers",
+        "dispatch.rs: f64 -> f32 truncation explicit clippy::cast_possible_truncation reason gate — spring solver works in f32 and out-of-range rejected by core fn",
+        "dispatch.rs: module + clippy::too_many_lines doc updated to reflect 19 scene/* method count",
+        "dispatch.rs: 5 R600 wire integration tests — missing owner, empty owner inactive, custom epsilon echoed, negative epsilon typed error, non-numeric epsilon rejection",
+        "animation_state module: 10 R600 direct tests — failure modes (NaN/neg/inf/missing owner), empty owner inactive, active spring detection, child-scope recursion, epsilon echo, default epsilon, JSON shape pin"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-rpc --lib r600: 15 pass / 0 fail (10 animation_state + 5 dispatch wire)",
+        "cargo test --workspace --features pinion-runtime/vello: 2872 pass / 0 fail / 13 ignored (R599 baseline 2857 + 15 R600)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "Owner::any_animation_active (R51.147 §5.28) ratifies as 2nd-consumer-ready substrate now that RPC also reads it (prior consumer: backend repaint loop)",
+        "AI-first §2#2 + §2#7 invariant strengthened — animation settlement now observable through JSON-RPC, eliminating the \"snapshot diff to detect stability\" wire pattern"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "pinion-core: lift Animation::DEFAULT_REST_EPSILON to a non-generic substrate const (e.g., crate::animation::DEFAULT_REST_EPSILON) so the RPC surface can name the canonical value without the per-carrier T workaround",
+        "scene/list_animations — per-animation projection (tag / target / displacement / velocity) once the Tickable trait grows an introspection method; v0 only surfaces the aggregate active bool",
+        "scene/scroll_state — next reactive-substrate introspection round (use_scroll_state surface; same Owner::cache_contains gate pattern as theme_tokens)",
+        "scene/text_state + scene/caret_state — remaining reactive-substrate introspection methods completing the AI-first observability matrix"
+      ],
+      "publishable_decision_summary": "scene/animation_state JSON-RPC method lands as 19th scene/* — read-only introspection over Owner::any_animation_active(epsilon) so AI agents can observe spring-solver settlement without polling scene/snapshot for visual stability. Sister of scene/waitFor on the animation axis.",
+      "publishable_changes_bullets": [
+        "pinion-rpc: new animation_state module — pub fn animation_state(runtime_owner, epsilon) -> Result<AnimationStateOutcome, AnimationStateError>",
+        "animation_state.rs: AnimationStateOutcome {active: bool, epsilon: f32} wire shape — active mirrors any_animation_active, epsilon echoes the threshold the framework evaluated",
+        "animation_state.rs: AnimationStateError two-variant non_exhaustive enum — RuntimeOwnerUnavailable / InvalidEpsilon {value: f64} with typed name in error.data",
+        "animation_state.rs: DEFAULT_REST_EPSILON const (0.01) mirrors Animation::DEFAULT_REST_EPSILON — generic-associated const cannot be named without specifying carrier T; carry note added for non-generic substrate lift",
+        "animation_state.rs: epsilon validation gates NaN / negative / infinite via is_finite + >= 0.0 check (recursive walk safe by construction)",
+        "dispatch.rs: scene/animation_state routing arm + handle_scene_animation_state + animation_state_outcome_to_json + animation_state_error_to_rpc helpers",
+        "dispatch.rs: f64 -> f32 truncation explicit clippy::cast_possible_truncation reason gate — spring solver works in f32 and out-of-range rejected by core fn",
+        "dispatch.rs: module + clippy::too_many_lines doc updated to reflect 19 scene/* method count",
+        "dispatch.rs: 5 R600 wire integration tests — missing owner, empty owner inactive, custom epsilon echoed, negative epsilon typed error, non-numeric epsilon rejection",
+        "animation_state module: 10 R600 direct tests — failure modes (NaN/neg/inf/missing owner), empty owner inactive, active spring detection, child-scope recursion, epsilon echo, default epsilon, JSON shape pin"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-rpc --lib r600: 15 pass / 0 fail (10 animation_state + 5 dispatch wire)",
+        "cargo test --workspace --features pinion-runtime/vello: 2872 pass / 0 fail / 13 ignored (R599 baseline 2857 + 15 R600)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "Owner::any_animation_active (R51.147 §5.28) ratifies as 2nd-consumer-ready substrate now that RPC also reads it (prior consumer: backend repaint loop)",
+        "AI-first §2#2 + §2#7 invariant strengthened — animation settlement now observable through JSON-RPC, eliminating the \"snapshot diff to detect stability\" wire pattern"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pinion-core: lift Animation::DEFAULT_REST_EPSILON to a non-generic substrate const (e.g., crate::animation::DEFAULT_REST_EPSILON) so the RPC surface can name the canonical value without the per-carrier T workaround",
+        "scene/list_animations — per-animation projection (tag / target / displacement / velocity) once the Tickable trait grows an introspection method; v0 only surfaces the aggregate active bool",
+        "scene/scroll_state — next reactive-substrate introspection round (use_scroll_state surface; same Owner::cache_contains gate pattern as theme_tokens)",
+        "scene/text_state + scene/caret_state — remaining reactive-substrate introspection methods completing the AI-first observability matrix"
+      ]
+    },
     "Round 7": {
       "decision_summary": "Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification",
       "changes_bullets": [
