@@ -18109,6 +18109,58 @@
         "R634 → R635 hand-off requires the user to (a) duplicate a production Material 3 Settings design from Figma Community into their account, (b) issue a `FIGMA_TOKEN` with File content read scope, (c) supply the `FILE_KEY` from the duplicated file's URL; pre-R635 R634 already validates the auth + fetch + JSON parse path without needing the user to commit a token to the repo"
       ]
     },
+    "R635": {
+      "decision_summary": "feat(examples): R635 §5.7 figma-button-m3 first Figma → pinion design-parity binding",
+      "changes_bullets": [
+        "examples/figma-button-m3/Cargo.toml: new workspace example crate — deps mirror hello-button (pinion-core + pinion-a11y + pinion-shell + vello as direct dep, pinion-forge as build dep); `[[bin]] name = \"figma-button-m3\"`",
+        "examples/figma-button-m3/build.rs: pinion-forge codegen entrypoint identical in shape to hello-button / ai-introspect-demo; compiles `app.pinion.xml` → `$OUT_DIR/app.rs` so main.rs picks up the `FigmaButtonM3Renderer` Vello-backed struct via `include!`",
+        "examples/figma-button-m3/app.pinion.xml: pinion-forge renderer manifest (`kind=\"renderer\"`, `backend=\"vello\"`, `name=\"FigmaButtonM3Renderer\"`, default `aa=Area`)",
+        "examples/figma-button-m3/src/main.rs: static paint binding that re-creates the Material 3 Filled / Enabled Button from the Material 3 Design Kit Community Figma file (node `51553:5180`); exact transcription of the spec extracted via `pinion figma-verify qluPDRsuDuPM3deySb0ejR` (R634): `109×40` button rect, fill `#675AA4` (M3 Primary), `cornerRadius: 100` (fully rounded), HORIZONTAL auto-layout with `padding L=16, R=16, T=10, B=10`, label `\"Button\"` `Roboto Medium 14px white`; leading/trailing 18×18 icon slots elided to placeholders (Figma `INSTANCE` glyph substrate gap — tracked in R636+ axis queue) and the state-layer overlay (white, opacity=0 at rest) elided (irrelevant for the Enabled first-frame snapshot)",
+        "Cargo.toml: append `examples/figma-button-m3` to `[workspace.members]`",
+        "R635a scope discipline: the binding is intentionally static — `WidgetCore::read_state` always returns `ButtonState::Idle`, `apply_key` is a no-op, no SCXML hover / pressed / disabled wiring. The first design-parity loop is about pixel reproduction, not interactivity; the four other Button states each land their own COMPONENT-mapped binding once Filled / Enabled verifies end-to-end (R636+)"
+      ],
+      "verification_bullets": [
+        "cargo check -p figma-button-m3 → clean (pinion-forge codegen + Scene + LayoutStyle + BoxStyle + TextStyle + WidgetCore + WidgetA11y + WidgetView all type-check)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced one `clippy::trivially_copy_pass_by_ref` on the local `view` fn taking `_frame: &Frame`; resolved by switching the free fn signature to `frame: Frame` by value and dereferencing once at the `WidgetCore::view` trait shim site — `Frame` is `Copy` per `crates/pinion-core/src/frame.rs`)",
+        "cargo test --workspace → 3156 / 0 (unchanged from R634 baseline; the binding has no unit tests yet — R636 will add a `cargo run --release -p figma-button-m3` + `scene/screenshot` RPC end-to-end smoke alongside the Figma image API diff)",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry"
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "R636 §5.7 — visual smoke + image diff: `cargo run --release -p figma-button-m3` + `scene/screenshot` RPC PNG (pinion side) + Figma `GET /v1/images/qluPDRsuDuPM3deySb0ejR?ids=51553:5180&format=png&scale=1` (Figma side) + per-pixel diff with a similarity score; the diff PNG + score land in a `tools/figma-spec/` directory so future bindings inherit the comparison workflow",
+        "R636+ §5.7 §5.2 substrate gap: Figma `INSTANCE` icon nodes — the Leading / Trailing icon slots in the Button COMPONENT reference an external Material Symbols glyph set. Resolving them needs (a) `pinion figma-verify` to follow the `componentId` reference, (b) a glyph / SVG substrate inside `pinion-text` or a new `pinion-icons` crate. Deferred per [[abstraction-needs-second-consumer]] until a second binding evidences the need",
+        "R636+ §5.2 substrate gap: state-layer overlay — M3 hover / pressed states ramp the white overlay opacity to 0.08 / 0.12 / 0.16. pinion has `Color.a` byte channel but no per-node opacity wrapper; either (a) extend `BoxStyle` with a separate `opacity: f32` or (b) lean on the existing `Color.a` and pre-multiply at theme resolve time. Deferred until the hover variant binding lands",
+        "R636+ §5.2 substrate gap: per-corner radius (Figma `rectangleCornerRadii: [tl, tr, br, bl]`) — the Filled / Enabled spec uses uniform `cornerRadius: 100` so the current single-value `BoxStyle.with_corner_radius(u32)` matches, but Cards / Chips / Dialogs in the same Figma file use per-corner asymmetric values that pinion cannot currently express",
+        "R635b — first-frame visual verification on a real machine with a display: `cargo run --release -p figma-button-m3` should show a 109×40 purple pill on a 320×160 dark canvas with `\"Button\"` centered in white. Validates the static spec transcription before R636 wires the image-diff loop"
+      ],
+      "publishable_decision_summary": "feat(examples): R635 §5.7 figma-button-m3 first Figma → pinion design-parity binding",
+      "publishable_changes_bullets": [
+        "examples/figma-button-m3/Cargo.toml: new workspace example crate — deps mirror hello-button (pinion-core + pinion-a11y + pinion-shell + vello as direct dep, pinion-forge as build dep); `[[bin]] name = \"figma-button-m3\"`",
+        "examples/figma-button-m3/build.rs: pinion-forge codegen entrypoint identical in shape to hello-button / ai-introspect-demo; compiles `app.pinion.xml` → `$OUT_DIR/app.rs` so main.rs picks up the `FigmaButtonM3Renderer` Vello-backed struct via `include!`",
+        "examples/figma-button-m3/app.pinion.xml: pinion-forge renderer manifest (`kind=\"renderer\"`, `backend=\"vello\"`, `name=\"FigmaButtonM3Renderer\"`, default `aa=Area`)",
+        "examples/figma-button-m3/src/main.rs: static paint binding that re-creates the Material 3 Filled / Enabled Button from the Material 3 Design Kit Community Figma file (node `51553:5180`); exact transcription of the spec extracted via `pinion figma-verify qluPDRsuDuPM3deySb0ejR` (R634): `109×40` button rect, fill `#675AA4` (M3 Primary), `cornerRadius: 100` (fully rounded), HORIZONTAL auto-layout with `padding L=16, R=16, T=10, B=10`, label `\"Button\"` `Roboto Medium 14px white`; leading/trailing 18×18 icon slots elided to placeholders (Figma `INSTANCE` glyph substrate gap — tracked in R636+ axis queue) and the state-layer overlay (white, opacity=0 at rest) elided (irrelevant for the Enabled first-frame snapshot)",
+        "Cargo.toml: append `examples/figma-button-m3` to `[workspace.members]`",
+        "R635a scope discipline: the binding is intentionally static — `WidgetCore::read_state` always returns `ButtonState::Idle`, `apply_key` is a no-op, no SCXML hover / pressed / disabled wiring. The first design-parity loop is about pixel reproduction, not interactivity; the four other Button states each land their own COMPONENT-mapped binding once Filled / Enabled verifies end-to-end (R636+)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check -p figma-button-m3 → clean (pinion-forge codegen + Scene + LayoutStyle + BoxStyle + TextStyle + WidgetCore + WidgetA11y + WidgetView all type-check)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced one `clippy::trivially_copy_pass_by_ref` on the local `view` fn taking `_frame: &Frame`; resolved by switching the free fn signature to `frame: Frame` by value and dereferencing once at the `WidgetCore::view` trait shim site — `Frame` is `Copy` per `crates/pinion-core/src/frame.rs`)",
+        "cargo test --workspace → 3156 / 0 (unchanged from R634 baseline; the binding has no unit tests yet — R636 will add a `cargo run --release -p figma-button-m3` + `scene/screenshot` RPC end-to-end smoke alongside the Figma image API diff)",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry"
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R636 §5.7 — visual smoke + image diff: `cargo run --release -p figma-button-m3` + `scene/screenshot` RPC PNG (pinion side) + Figma `GET /v1/images/qluPDRsuDuPM3deySb0ejR?ids=51553:5180&format=png&scale=1` (Figma side) + per-pixel diff with a similarity score; the diff PNG + score land in a `tools/figma-spec/` directory so future bindings inherit the comparison workflow",
+        "R636+ §5.7 §5.2 substrate gap: Figma `INSTANCE` icon nodes — the Leading / Trailing icon slots in the Button COMPONENT reference an external Material Symbols glyph set. Resolving them needs (a) `pinion figma-verify` to follow the `componentId` reference, (b) a glyph / SVG substrate inside `pinion-text` or a new `pinion-icons` crate. Deferred per [[abstraction-needs-second-consumer]] until a second binding evidences the need",
+        "R636+ §5.2 substrate gap: state-layer overlay — M3 hover / pressed states ramp the white overlay opacity to 0.08 / 0.12 / 0.16. pinion has `Color.a` byte channel but no per-node opacity wrapper; either (a) extend `BoxStyle` with a separate `opacity: f32` or (b) lean on the existing `Color.a` and pre-multiply at theme resolve time. Deferred until the hover variant binding lands",
+        "R636+ §5.2 substrate gap: per-corner radius (Figma `rectangleCornerRadii: [tl, tr, br, bl]`) — the Filled / Enabled spec uses uniform `cornerRadius: 100` so the current single-value `BoxStyle.with_corner_radius(u32)` matches, but Cards / Chips / Dialogs in the same Figma file use per-corner asymmetric values that pinion cannot currently express",
+        "R635b — first-frame visual verification on a real machine with a display: `cargo run --release -p figma-button-m3` should show a 109×40 purple pill on a 320×160 dark canvas with `\"Button\"` centered in white. Validates the static spec transcription before R636 wires the image-diff loop"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
