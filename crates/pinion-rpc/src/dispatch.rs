@@ -660,6 +660,14 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             handle_scene_animation_state(runtime_owner, request.params.as_ref()),
             HandlerKind::Read,
         ),
+        "scene/animate_settle" => (
+            handle_scene_animate_settle(runtime_owner),
+            HandlerKind::Mutate,
+        ),
+        "scene/animate_cancel" => (
+            handle_scene_animate_cancel(runtime_owner),
+            HandlerKind::Mutate,
+        ),
         "scene/scroll_state" => (
             handle_scene_scroll_state(runtime_owner, request.params.as_ref()),
             HandlerKind::Read,
@@ -2537,6 +2545,59 @@ fn animation_state_error_to_rpc(err: &AnimationStateError) -> RpcError {
                 "params.epsilon {value} must be finite and >= 0",
             ))
             .with_data_string("InvalidEpsilon")
+        }
+    }
+}
+
+/// R629 §5.28 — `scene/animate_settle` typed handler. 28th `scene/*`
+/// method. Bulk-walks every animation registered on `runtime_owner`
+/// (and descendant scopes) and lands each at its internal target
+/// with zero velocity. The dispatcher's
+/// [`HandlerKind::Mutate`] match-arm tag bumps the
+/// [`SceneRevision`] after this call returns `Ok`.
+///
+/// Wire shape — request: no params (or `{}`); response:
+/// `{ "visited": <usize> }`. See [`crate::animate_control`] for the
+/// design rationale (bulk-only, no per-tag dispatch, deferred
+/// `scene/animate_reset`).
+fn handle_scene_animate_settle(runtime_owner: Option<&Owner>) -> Result<Value, RpcError> {
+    match crate::animate_control::animate_settle(runtime_owner) {
+        Ok(outcome) => animate_control_outcome_to_json(outcome, "scene/animate_settle"),
+        Err(err) => Err(animate_control_error_to_rpc(&err)),
+    }
+}
+
+/// R629 §5.28 — `scene/animate_cancel` typed handler. 29th `scene/*`
+/// method. Bulk-walks every animation registered on `runtime_owner`
+/// (and descendant scopes) and freezes each at its current value
+/// with zero velocity. The dispatcher's
+/// [`HandlerKind::Mutate`] match-arm tag bumps the
+/// [`SceneRevision`] after this call returns `Ok`.
+///
+/// Wire shape — request: no params (or `{}`); response:
+/// `{ "visited": <usize> }`. See [`crate::animate_control`] for the
+/// design rationale.
+fn handle_scene_animate_cancel(runtime_owner: Option<&Owner>) -> Result<Value, RpcError> {
+    match crate::animate_control::animate_cancel(runtime_owner) {
+        Ok(outcome) => animate_control_outcome_to_json(outcome, "scene/animate_cancel"),
+        Err(err) => Err(animate_control_error_to_rpc(&err)),
+    }
+}
+
+fn animate_control_outcome_to_json(
+    out: crate::animate_control::AnimateControlOutcome,
+    method: &str,
+) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!("{method}: failed to serialize outcome: {e}"))
+    })
+}
+
+fn animate_control_error_to_rpc(err: &crate::animate_control::AnimateControlError) -> RpcError {
+    match err {
+        crate::animate_control::AnimateControlError::RuntimeOwnerUnavailable => {
+            RpcError::invalid_params("animation control unavailable")
+                .with_data_string("RuntimeOwnerUnavailable")
         }
     }
 }

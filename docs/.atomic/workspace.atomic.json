@@ -17799,6 +17799,66 @@
         "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it"
       ]
     },
+    "R629": {
+      "decision_summary": "feat(rpc): R629 §5.7 §5.28 scene/animate_settle + scene/animate_cancel wire",
+      "changes_bullets": [
+        "crates/pinion-core/src/animation.rs: extend `Tickable` trait with object-safe `fn settle(&self)` and `fn cancel(&self)` defaulting to no-op so non-spring `Tickable` impls (e.g. fixtures) do not break; `AnimationInner<T>` overrides both with the R623 spring-mutation logic (read internal target/current → write `SpringState::at_rest(_)` → `signal.set(_)`); the outer `Animation<T>::settle` and `Animation<T>::cancel` (R623 wrappers) now delegate to the trait-method form so the same code path drives both per-handle calls and registry-walk calls",
+        "crates/pinion-core/src/reactive/owner.rs: add `Owner::settle_animations(&self) -> usize` and `Owner::cancel_animations(&self) -> usize` recursive walks; depth-first across children + this scope's direct registrations, mirroring `tick_animations` / `any_animation_active` borrow discipline (`Rc::clone` snapshot before releasing the `RefCell`, `batch()`-wraps the mutation so subscribers see one transactional update); each returns the count of `Tickable` registrations visited",
+        "crates/pinion-rpc/src/animate_control.rs: new module — `animate_settle(runtime_owner)` / `animate_cancel(runtime_owner)` substrate-wrappers returning `AnimateControlOutcome { visited: usize }` or `AnimateControlError::RuntimeOwnerUnavailable`; module-level docs explain the bulk-only shape (no per-tag dispatch — animations are application-private substate without a framework-level tag registry) and the explicit deferral of `scene/animate_reset` (typed on caller-supplied `T`; no clean wire-form without a typed-dispatch substrate)",
+        "crates/pinion-rpc/src/dispatch.rs: append `\"scene/animate_settle\"` + `\"scene/animate_cancel\"` arms (`HandlerKind::Mutate` — each bumps `SceneRevision` post-success); two thin handlers `handle_scene_animate_*` delegate to `animate_control::animate_*` and route the `AnimateControlError::RuntimeOwnerUnavailable` variant to the `error.data = \"RuntimeOwnerUnavailable\"` shape mirroring the other R608-R612 setter handlers; shared outcome serializer + error mapper",
+        "crates/pinion-rpc/src/lib.rs: re-export `animate_settle` / `animate_cancel` / `AnimateControlError` / `AnimateControlOutcome` alongside the R600 animation_state surface",
+        "crates/pinion-core/src/animation.rs: append 3 `r629_owner_*` tests against real `Animation<f32>` (mid-flight settle lands at target / mid-flight cancel freezes at current / parent walk lands descendant scope animations) so the substrate is pinned against a *non*-default no-op `Tickable::settle`/`cancel` impl",
+        "crates/pinion-core/src/reactive/owner.rs: append 4 `r629_*` tests against the `ProgrammableRest` fixture (default-no-op settle/cancel + count semantics) covering empty owner / single registration / mixed registrations / descendant-scope walk",
+        "crates/pinion-rpc/src/animate_control.rs: append 6 `r629_*` unit tests covering missing-runtime-owner error / empty-owner zero-visited / real-animation settle + cancel for both the f32 and AnimVec4 carriers (via Animation<f32>)",
+        "crates/pinion-rpc/src/dispatch_tests.rs: append 8 `r629_scene_animate_*` wire-integration tests (settle + cancel × 4 axes: missing-owner error / empty-owner zero-visited / real-animation walk / OCC bump-on-success)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace → 3116 / 0 (3095 → 3116, +21 R629 tests: 7 substrate + 6 module + 8 wire)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced 2 `clippy::doc_lazy_continuation` violations on the new `Owner::cancel_animations` doc bullet — fixed by indenting the wrap line per pinion clippy::pedantic deny baseline)",
+        "mnemosyne-cli validate-workspace → T1 orphan total=0 / round-trip mandatory=1/1 / atomic entry orphan_refs ledger=4 new=+0 / GENERATED.md=sync; the change does not touch atomic store outside this changelog entry",
+        "AI-first write-matrix coverage expands from 5/5 widget axes (theme palettes / scroll / text / selection / caret per R608-R612) to 5/5 + animation control (settle + cancel); the third R623 method `Animation::reset(value: T)` is documented as deferred at [[abstraction-needs-second-consumer]]"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "R634+ §5.7 §5.28 — `scene/animate_reset` requires a per-animation tag registry + typed dispatch substrate so the wire can carry generic `T` over JSON; defer until a real consumer (a second AI use case beyond bulk settle/cancel) lands per [[abstraction-needs-second-consumer]]",
+        "R630 §5.50 — extend `Color::from_css_string` with modern CSS Color 4 syntax (`rgb(R G B)` space-syntax + `rgb(R G B / A)` alpha-slash + `hsl(H S% L%)`) so the entry point earns its `from_css_string` name",
+        "R631 §5.7 — pin `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound` typed-data prose with unit tests against silent regression (R625 reworded these three identifiers and there is no compile-time guard against a future tweak); the new R629 `RuntimeOwnerUnavailable` prose `\"animation control unavailable\"` joins the per-axis prose list to pin",
+        "R632 §5.7 — split the 5,643-LOC (now ~5,750+ post-R629) `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]`",
+        "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it"
+      ],
+      "publishable_decision_summary": "feat(rpc): R629 §5.7 §5.28 scene/animate_settle + scene/animate_cancel wire",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/animation.rs: extend `Tickable` trait with object-safe `fn settle(&self)` and `fn cancel(&self)` defaulting to no-op so non-spring `Tickable` impls (e.g. fixtures) do not break; `AnimationInner<T>` overrides both with the R623 spring-mutation logic (read internal target/current → write `SpringState::at_rest(_)` → `signal.set(_)`); the outer `Animation<T>::settle` and `Animation<T>::cancel` (R623 wrappers) now delegate to the trait-method form so the same code path drives both per-handle calls and registry-walk calls",
+        "crates/pinion-core/src/reactive/owner.rs: add `Owner::settle_animations(&self) -> usize` and `Owner::cancel_animations(&self) -> usize` recursive walks; depth-first across children + this scope's direct registrations, mirroring `tick_animations` / `any_animation_active` borrow discipline (`Rc::clone` snapshot before releasing the `RefCell`, `batch()`-wraps the mutation so subscribers see one transactional update); each returns the count of `Tickable` registrations visited",
+        "crates/pinion-rpc/src/animate_control.rs: new module — `animate_settle(runtime_owner)` / `animate_cancel(runtime_owner)` substrate-wrappers returning `AnimateControlOutcome { visited: usize }` or `AnimateControlError::RuntimeOwnerUnavailable`; module-level docs explain the bulk-only shape (no per-tag dispatch — animations are application-private substate without a framework-level tag registry) and the explicit deferral of `scene/animate_reset` (typed on caller-supplied `T`; no clean wire-form without a typed-dispatch substrate)",
+        "crates/pinion-rpc/src/dispatch.rs: append `\"scene/animate_settle\"` + `\"scene/animate_cancel\"` arms (`HandlerKind::Mutate` — each bumps `SceneRevision` post-success); two thin handlers `handle_scene_animate_*` delegate to `animate_control::animate_*` and route the `AnimateControlError::RuntimeOwnerUnavailable` variant to the `error.data = \"RuntimeOwnerUnavailable\"` shape mirroring the other R608-R612 setter handlers; shared outcome serializer + error mapper",
+        "crates/pinion-rpc/src/lib.rs: re-export `animate_settle` / `animate_cancel` / `AnimateControlError` / `AnimateControlOutcome` alongside the R600 animation_state surface",
+        "crates/pinion-core/src/animation.rs: append 3 `r629_owner_*` tests against real `Animation<f32>` (mid-flight settle lands at target / mid-flight cancel freezes at current / parent walk lands descendant scope animations) so the substrate is pinned against a *non*-default no-op `Tickable::settle`/`cancel` impl",
+        "crates/pinion-core/src/reactive/owner.rs: append 4 `r629_*` tests against the `ProgrammableRest` fixture (default-no-op settle/cancel + count semantics) covering empty owner / single registration / mixed registrations / descendant-scope walk",
+        "crates/pinion-rpc/src/animate_control.rs: append 6 `r629_*` unit tests covering missing-runtime-owner error / empty-owner zero-visited / real-animation settle + cancel for both the f32 and AnimVec4 carriers (via Animation<f32>)",
+        "crates/pinion-rpc/src/dispatch_tests.rs: append 8 `r629_scene_animate_*` wire-integration tests (settle + cancel × 4 axes: missing-owner error / empty-owner zero-visited / real-animation walk / OCC bump-on-success)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace → 3116 / 0 (3095 → 3116, +21 R629 tests: 7 substrate + 6 module + 8 wire)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced 2 `clippy::doc_lazy_continuation` violations on the new `Owner::cancel_animations` doc bullet — fixed by indenting the wrap line per pinion clippy::pedantic deny baseline)",
+        "mnemosyne-cli validate-workspace → T1 orphan total=0 / round-trip mandatory=1/1 / atomic entry orphan_refs ledger=4 new=+0 / GENERATED.md=sync; the change does not touch atomic store outside this changelog entry",
+        "AI-first write-matrix coverage expands from 5/5 widget axes (theme palettes / scroll / text / selection / caret per R608-R612) to 5/5 + animation control (settle + cancel); the third R623 method `Animation::reset(value: T)` is documented as deferred at [[abstraction-needs-second-consumer]]"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R634+ §5.7 §5.28 — `scene/animate_reset` requires a per-animation tag registry + typed dispatch substrate so the wire can carry generic `T` over JSON; defer until a real consumer (a second AI use case beyond bulk settle/cancel) lands per [[abstraction-needs-second-consumer]]",
+        "R630 §5.50 — extend `Color::from_css_string` with modern CSS Color 4 syntax (`rgb(R G B)` space-syntax + `rgb(R G B / A)` alpha-slash + `hsl(H S% L%)`) so the entry point earns its `from_css_string` name",
+        "R631 §5.7 — pin `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound` typed-data prose with unit tests against silent regression (R625 reworded these three identifiers and there is no compile-time guard against a future tweak); the new R629 `RuntimeOwnerUnavailable` prose `\"animation control unavailable\"` joins the per-axis prose list to pin",
+        "R632 §5.7 — split the 5,643-LOC (now ~5,750+ post-R629) `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]`",
+        "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

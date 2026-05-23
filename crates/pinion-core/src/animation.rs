@@ -606,6 +606,30 @@ pub trait Tickable {
     /// animations and avoid re-firing every subscribed effect once per
     /// frame for the rest of the program's lifetime.
     fn is_at_rest(&self, epsilon: f32) -> bool;
+
+    /// R629 §5.28 — object-safe form of [`Animation::settle`]: jump to
+    /// the current internal target with zero velocity. After the call
+    /// [`Tickable::is_at_rest`] returns `true` for any non-NaN
+    /// `epsilon`. No-op if the implementation has no settable target
+    /// (default: no-op).
+    ///
+    /// Caller does not need to know the underlying `T`; the
+    /// implementation reads its own target and writes back. Enables
+    /// bulk wire control (`scene/animate_settle`) over an
+    /// owner's full registry without per-type dispatch.
+    fn settle(&self) {}
+
+    /// R629 §5.28 — object-safe form of [`Animation::cancel`]: freeze
+    /// at the current internal value with zero velocity. After the
+    /// call [`Tickable::is_at_rest`] returns `true` for any non-NaN
+    /// `epsilon`. No-op if the implementation has no cancellable
+    /// motion (default: no-op).
+    ///
+    /// Caller does not need to know the underlying `T`; the
+    /// implementation reads its own current value and writes back.
+    /// Enables bulk wire control (`scene/animate_cancel`) over an
+    /// owner's full registry without per-type dispatch.
+    fn cancel(&self) {}
 }
 
 /// Spring-animated value bound to a [`Signal<T>`](crate::reactive::Signal).
@@ -670,6 +694,18 @@ where
 
     fn is_at_rest(&self, epsilon: f32) -> bool {
         self.state.borrow().is_done(epsilon)
+    }
+
+    fn settle(&self) {
+        let target = self.state.borrow().target;
+        *self.state.borrow_mut() = SpringState::at_rest(target);
+        self.signal.set(target);
+    }
+
+    fn cancel(&self) {
+        let current = self.state.borrow().current;
+        *self.state.borrow_mut() = SpringState::at_rest(current);
+        self.signal.set(current);
     }
 }
 
@@ -813,8 +849,7 @@ where
     /// Industry analogues: Framer Motion's `.stop({immediate: true})`,
     /// CSS `animation-play-state: paused` + jump-to-end pseudo.
     pub fn settle(&self) {
-        let target = self.inner.state.borrow().target;
-        self.reset(target);
+        <AnimationInner<T> as Tickable>::settle(&self.inner);
     }
 
     /// R623 §5.28 — cancel: settle at the current `value` (not the
@@ -842,8 +877,7 @@ where
     /// to the start; pinion's matches the "stop where you are" form
     /// from React Spring `.pause()`).
     pub fn cancel(&self) {
-        let current = self.inner.state.borrow().current;
-        self.reset(current);
+        <AnimationInner<T> as Tickable>::cancel(&self.inner);
     }
 }
 
@@ -993,6 +1027,62 @@ mod tests {
         owner.tick_animations(0.016);
         // At-rest spring + tick = no value change.
         assert!((a.value() - 5.0).abs() < f32::EPSILON);
+    }
+
+    // R629 §5.28 — Owner::settle_animations / cancel_animations
+    // bulk walks land animation control over real Animation<T>
+    // springs (object-safe Tickable extension). The ProgrammableRest
+    // fixture in `reactive::owner::tests::animation_active` covers
+    // the default no-op + count contract; the cases below pin that
+    // the substrate actually flips spring state on real Animation<T>
+    // registrations (no-op default would silently break theme fades
+    // + every R612 axis-adjacent animation).
+    #[test]
+    fn r629_owner_settle_animations_lands_animation_at_target() {
+        let owner = Owner::new();
+        let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+        a.set_target(7.0);
+        owner.tick_animations(0.016);
+        assert!(a.value() < 7.0, "mid-flight precondition");
+        let visited = owner.settle_animations();
+        assert_eq!(visited, 1);
+        assert!((a.value() - 7.0).abs() < f32::EPSILON);
+        assert!(a.is_at_rest());
+    }
+
+    #[test]
+    fn r629_owner_cancel_animations_freezes_animation_at_current() {
+        let owner = Owner::new();
+        let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+        a.set_target(100.0);
+        for _ in 0..5 {
+            owner.tick_animations(0.016);
+        }
+        let mid = a.value();
+        assert!(mid > 0.0 && mid < 100.0, "mid-flight precondition");
+        let visited = owner.cancel_animations();
+        assert_eq!(visited, 1);
+        assert!((a.value() - mid).abs() < f32::EPSILON);
+        assert!((a.target() - mid).abs() < f32::EPSILON);
+        assert!(a.is_at_rest());
+    }
+
+    #[test]
+    fn r629_owner_settle_walk_lands_descendant_animations() {
+        let parent = Owner::new();
+        let child = Owner::new_child(&parent);
+        let a = Animation::new(&parent, 0.0_f32, SpringConfig::DEFAULT);
+        let b = Animation::new(&child, 0.0_f32, SpringConfig::DEFAULT);
+        a.set_target(5.0);
+        b.set_target(10.0);
+        parent.tick_animations(0.016);
+        // Walk from parent must land both registrations.
+        let visited = parent.settle_animations();
+        assert_eq!(visited, 2);
+        assert!(a.is_at_rest());
+        assert!(b.is_at_rest());
+        assert!((a.value() - 5.0).abs() < f32::EPSILON);
+        assert!((b.value() - 10.0).abs() < f32::EPSILON);
     }
 
     #[test]

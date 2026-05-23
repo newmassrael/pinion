@@ -638,6 +638,77 @@ impl Owner {
         false
     }
 
+    /// R629 §5.28 — bulk-call
+    /// [`Tickable::settle`](crate::animation::Tickable::settle) on every
+    /// animation registered on this owner and its descendant scopes.
+    /// Returns the count of registrations visited (whether or not they
+    /// were already at rest).
+    ///
+    /// Each visited animation jumps to its internal target with zero
+    /// velocity; after the walk
+    /// [`Self::any_animation_active`](Self::any_animation_active)
+    /// returns `false` (modulo a non-NaN epsilon).
+    ///
+    /// Mirrors [`Self::tick_animations`]'s borrow discipline: children
+    /// + animations snapshot via `Rc::clone` before releasing the
+    ///   `RefCell`, then [`crate::reactive::batch`]-wraps the mutation
+    ///   so subscribers see one transactional update.
+    pub fn settle_animations(&self) -> usize {
+        let children: Vec<Owner> = self.inner.children.borrow().iter().cloned().collect();
+        let anims: Vec<Rc<dyn crate::animation::Tickable>> = self
+            .inner
+            .owned_animations
+            .borrow()
+            .iter()
+            .map(Rc::clone)
+            .collect();
+        let mut visited = 0usize;
+        batch(|| {
+            for child in &children {
+                visited += child.settle_animations();
+            }
+            for anim in &anims {
+                anim.settle();
+                visited += 1;
+            }
+        });
+        visited
+    }
+
+    /// R629 §5.28 — bulk-call
+    /// [`Tickable::cancel`](crate::animation::Tickable::cancel) on
+    /// every animation registered on this owner and its descendant
+    /// scopes. Returns the count of registrations visited.
+    ///
+    /// Each visited animation freezes at its internal current value
+    /// with zero velocity; after the walk
+    /// [`Self::any_animation_active`](Self::any_animation_active)
+    /// returns `false` (modulo a non-NaN epsilon).
+    ///
+    /// Borrow + batch discipline identical to
+    /// [`Self::settle_animations`].
+    pub fn cancel_animations(&self) -> usize {
+        let children: Vec<Owner> = self.inner.children.borrow().iter().cloned().collect();
+        let anims: Vec<Rc<dyn crate::animation::Tickable>> = self
+            .inner
+            .owned_animations
+            .borrow()
+            .iter()
+            .map(Rc::clone)
+            .collect();
+        let mut visited = 0usize;
+        batch(|| {
+            for child in &children {
+                visited += child.cancel_animations();
+            }
+            for anim in &anims {
+                anim.cancel();
+                visited += 1;
+            }
+        });
+        visited
+    }
+
     /// Queue a declarative [`Command`](crate::command::Command) on this
     /// scope. The framework / registered handler drains the queue via
     /// [`Owner::take_pending_commands`]; until then it is visible to
@@ -1817,6 +1888,45 @@ mod tests {
             assert!(owner.any_animation_active(0.01));
             anim.at_rest.set(true);
             assert!(!owner.any_animation_active(0.01));
+        }
+
+        // R629 §5.28 — settle_animations / cancel_animations bulk walk
+        // unit tests. The Tickable extension landed default no-op
+        // implementations so the `ProgrammableRest` fixture above does
+        // not need to override settle / cancel; the cases below pin
+        // the count contract (children + self, depth-first) and the
+        // default no-op behaviour through the test fixture.
+        #[test]
+        fn r629_settle_animations_counts_every_visited_registration() {
+            let owner = Owner::new();
+            owner.register_animation(ProgrammableRest::active());
+            owner.register_animation(ProgrammableRest::at_rest());
+            assert_eq!(owner.settle_animations(), 2);
+        }
+
+        #[test]
+        fn r629_cancel_animations_counts_every_visited_registration() {
+            let owner = Owner::new();
+            owner.register_animation(ProgrammableRest::active());
+            assert_eq!(owner.cancel_animations(), 1);
+        }
+
+        #[test]
+        fn r629_settle_animations_walks_descendant_scopes() {
+            let parent = Owner::new();
+            let child = Owner::new_child(&parent);
+            let grandchild = Owner::new_child(&child);
+            parent.register_animation(ProgrammableRest::active());
+            child.register_animation(ProgrammableRest::active());
+            grandchild.register_animation(ProgrammableRest::active());
+            assert_eq!(parent.settle_animations(), 3);
+        }
+
+        #[test]
+        fn r629_settle_animations_on_empty_owner_returns_zero() {
+            let owner = Owner::new();
+            assert_eq!(owner.settle_animations(), 0);
+            assert_eq!(owner.cancel_animations(), 0);
         }
     }
 

@@ -9,6 +9,7 @@
 //! module. The JSON-RPC 2.0 wire envelope and method routing entry
 //! point live in [`dispatch`].
 
+pub mod animate_control;
 pub mod animation_state;
 pub mod caret_state;
 pub mod commands;
@@ -38,6 +39,9 @@ pub mod wait_for;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 
+pub use animate_control::{
+    animate_cancel, animate_settle, AnimateControlError, AnimateControlOutcome,
+};
 pub use animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
 pub use caret_state::{caret_state, CaretStateError, CaretStateOutcome};
 pub use commands::{
