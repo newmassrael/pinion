@@ -300,13 +300,23 @@ fn color_to_hex(color: Color) -> String {
 /// [`ThemeMode`] (wire `mode = "light" | "dark" | "system"`) plus the
 /// cache tag the mutation applies to (defaults to
 /// [`DEFAULT_THEME_TAG`] when [`None`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetThemeModeParams {
+///
+/// R618 §5.50 — `tag` borrows from the request's JSON payload via
+/// the `'a` lifetime, mirroring [`SetThemePalettesParams`] and the
+/// widget-axis setters ([`SetTextParams`](crate::text_state::SetTextParams)
+/// et al). Pre-R618 the field was `Option<String>`, forcing a
+/// `.to_owned()` allocation at the dispatch boundary for every
+/// `scene/set_theme_mode` call even when the request omitted
+/// `params.tag` entirely — pure allocation cost with no semantic
+/// gain. Aligning the lifetime here unifies the typed-params
+/// surface across every R608+ setter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetThemeModeParams<'a> {
     /// Target [`ThemeMode`] resolved from the wire `mode` string.
     pub mode: ThemeMode,
     /// Cache tag the [`use_theme`] lookup resolves against. [`None`]
     /// → [`DEFAULT_THEME_TAG`] (`"app"`).
-    pub tag: Option<String>,
+    pub tag: Option<&'a str>,
 }
 
 /// Snapshot returned to the caller after [`set_theme_mode`] commits
@@ -369,12 +379,12 @@ pub enum SetThemeModeError {
 ///   application's `use_theme(_)` call has not run for it).
 pub fn set_theme_mode(
     runtime_owner: Option<&Owner>,
-    params: &SetThemeModeParams,
+    params: &SetThemeModeParams<'_>,
 ) -> Result<SetThemeModeOutcome, SetThemeModeError> {
     let Some(owner) = runtime_owner else {
         return Err(SetThemeModeError::RuntimeOwnerUnavailable);
     };
-    let resolved_tag: &str = params.tag.as_deref().unwrap_or(DEFAULT_THEME_TAG);
+    let resolved_tag: &str = params.tag.unwrap_or(DEFAULT_THEME_TAG);
     // R605 §5.22 — non-leaking lookup; see `theme_tokens` for the
     // rationale.
     let provider: std::rc::Rc<ThemeProvider> = owner
@@ -974,7 +984,7 @@ mod tests {
     // R599 §5.50 — set_theme_mode setter
     // ─────────────────────────────────────────────────────────────────
 
-    fn params_with_mode(mode: ThemeMode) -> SetThemeModeParams {
+    fn params_with_mode<'a>(mode: ThemeMode) -> SetThemeModeParams<'a> {
         SetThemeModeParams { mode, tag: None }
     }
 
@@ -990,7 +1000,7 @@ mod tests {
         let owner = Owner::new();
         let params = SetThemeModeParams {
             mode: ThemeMode::Dark,
-            tag: Some("ghost".into()),
+            tag: Some("ghost"),
         };
         let err = set_theme_mode(Some(&owner), &params).unwrap_err();
         assert_eq!(
@@ -1048,7 +1058,7 @@ mod tests {
             Some(&owner),
             &SetThemeModeParams {
                 mode: ThemeMode::Light,
-                tag: Some("studio".into()),
+                tag: Some("studio"),
             },
         )
         .unwrap();

@@ -11099,6 +11099,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R618 — SetTextParams.text + SetThemeModeParams.tag converge to borrowed &str — 2-alloc-per-call to 1-alloc symmetric typed-params surface across every R608+ setter
+
+**Changes**:
+- pinion-rpc::theme::SetThemeModeParams gains <'a> lifetime; tag: Option<String> → Option<&'a str>
+- pinion-rpc::text_state::SetTextParams.text: String → &'a str
+- Dispatch handlers drop the .to_owned() / .map(str::to_owned) at the wire boundary; pure fn does the single substrate-required .to_owned() inside the lookup closure
+- Typed-params surface unified: every R608+ setter (theme_mode / theme_palettes / scroll_offset / text / selection / caret) now uses Option<&'a str> for optional tag and &'a str for required tag, matching widget-axis convention
+- Cuts 1 allocation per `scene/set_text` call (was 2: dispatch boundary + closure clone; now 1: substrate handoff)
+
+
+
+**Verification**:
+- cargo test --workspace: 3062 pass / 0 fail (R617 baseline preserved — lifetime refactor only)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- Existing R610 set_text + R599 set_theme_mode wire-integration suites still pass byte-for-byte
+
+
+
+**Impact**: §5.7, §5.22, §5.50
+
+
+**Carry forward**:
+- AI-first write matrix typed-params surface fully borrowed/symmetric. Next refactor candidate (R619+): the dispatch.rs reach 9400+ LOC with 30 #[test] fns per axis — split into per-axis test modules?
+- Documentation surface (sphinx / rustdoc / examples on docs.rs) still entirely undeveloped per the project-completion gap audit
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

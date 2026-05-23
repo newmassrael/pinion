@@ -2280,7 +2280,7 @@ fn handle_scene_set_theme_mode(
             "params.mode {mode_str:?} not one of \"light\" / \"dark\" / \"system\""
         ))
     })?;
-    let tag = read_optional_tag(Some(params_value))?.map(str::to_owned);
+    let tag = read_optional_tag(Some(params_value))?;
     let typed_params = SetThemeModeParams { mode, tag };
     match set_theme_mode(runtime_owner, &typed_params) {
         Ok(outcome) => set_theme_mode_outcome_to_json(&outcome),
@@ -2702,10 +2702,7 @@ fn handle_scene_set_text(
             RpcError::invalid_params("params.text missing or not a string")
                 .with_data_string("TextRequired")
         })?;
-    let typed_params = SetTextParams {
-        tag,
-        text: text.to_owned(),
-    };
+    let typed_params = SetTextParams { tag, text };
     match set_text(runtime_owner, &typed_params) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
         Err(err) => Err(introspect_error_to_rpc("text state", &err)),

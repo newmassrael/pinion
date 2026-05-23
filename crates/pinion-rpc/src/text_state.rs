@@ -215,15 +215,28 @@ pub fn text_state(
 /// snaps it to the nearest preceding `char` boundary if it would
 /// land mid-codepoint. AI agents observe all three side effects
 /// through the returned [`TextStateOutcome`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// R618 §5.22 — `text` borrows from the request's JSON payload via
+/// the `'a` lifetime, matching the borrowed-tag shape every other
+/// R608+ setter uses. Pre-R618 the field was an owned `String`,
+/// forcing the dispatcher to `.to_owned()` the wire `&str` and the
+/// pure fn to `.clone()` the String again before handing it to the
+/// substrate's `set_text(String)` — two allocations per RPC call.
+/// Post-R618 the dispatcher passes the borrow directly and the
+/// pure fn does the single allocation the substrate API requires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetTextParams<'a> {
     /// Cache tag the
     /// [`use_text_edit_state`](pinion_core::widgets::text_edit::use_text_edit_state)
     /// lookup resolves against. Required (no default).
     pub tag: &'a str,
     /// New committed text. Replaces the bound state's `text` field
-    /// wholesale.
-    pub text: String,
+    /// wholesale. The substrate's
+    /// [`TextEditState::set_text`](pinion_core::widgets::text_edit::TextEditState::set_text)
+    /// takes an owned `String`; the conversion happens inside the
+    /// pure [`set_text`] fn's lookup closure so the wire-layer
+    /// borrow is preserved at the dispatch boundary.
+    pub text: &'a str,
 }
 
 /// Mutate the bound [`TextEditState`]'s `text` under `params.tag`
@@ -253,7 +266,12 @@ pub fn set_text(
     // [`crate::scroll_state::set_scroll_offset`] for the deferred
     // `mutate_substrate` lift discussion.
     lookup::<TextEditState, _, _>(runtime_owner, params.tag, |tag, state| {
-        state.set_text(params.text.clone());
+        // The substrate's set_text takes an owned String; the
+        // single `to_owned` happens inside this closure (1 alloc
+        // per call). Pre-R618 the wire layer did the to_owned at
+        // the dispatch boundary and the pure fn did another clone
+        // here (2 alloc per call); R618 consolidates.
+        state.set_text(params.text.to_owned());
         TextStateOutcome::from_state(tag, state)
     })
 }
@@ -560,11 +578,8 @@ mod tests {
     // R610 §5.22 — set_text setter
     // ─────────────────────────────────────────────────────────────────
 
-    fn set_text_params<'a>(tag: &'a str, text: &str) -> SetTextParams<'a> {
-        SetTextParams {
-            tag,
-            text: text.to_owned(),
-        }
+    fn set_text_params<'a>(tag: &'a str, text: &'a str) -> SetTextParams<'a> {
+        SetTextParams { tag, text }
     }
 
     #[test]
