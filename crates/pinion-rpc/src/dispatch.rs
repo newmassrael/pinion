@@ -2338,10 +2338,7 @@ fn handle_scene_set_theme_mode(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let params_value = require_params(params)?;
-    let mode_str = params_value
-        .get("mode")
-        .and_then(Value::as_str)
-        .ok_or_else(|| RpcError::invalid_params("params.mode missing or not a string"))?;
+    let mode_str = read_required_str(params_value, "mode", "ModeRequired")?;
     let mode = crate::theme::parse_theme_mode(mode_str).ok_or_else(|| {
         RpcError::invalid_params(format!(
             "params.mode {mode_str:?} not one of \"light\" / \"dark\" / \"system\""
@@ -2702,6 +2699,12 @@ fn read_optional_tag(params: Option<&Value>) -> Result<Option<&str>, RpcError> {
 /// in a single place — future scrub of the wire-message prose touches
 /// one function instead of seven.
 ///
+/// R627 §5.7 lifts the by-now generic shape of this helper into
+/// [`read_required_str`]; this entry point keeps the canonical
+/// `"tag"` / `"TagRequired"` defaults so the seven call sites stay
+/// one-line and the test suite that pins the `TagRequired` wire-data
+/// identifier (R613) anchors on a stable named function.
+///
 /// # Errors
 ///
 /// Returns a `-32602 Invalid params` with `error.data = "TagRequired"`
@@ -2710,12 +2713,37 @@ fn read_optional_tag(params: Option<&Value>) -> Result<Option<&str>, RpcError> {
 /// [`SubstrateIntrospectError::TagRequired`] variant the read-side
 /// `lookup` helper documents.
 fn read_required_tag(params: &Value) -> Result<&str, RpcError> {
+    read_required_str(params, "tag", "TagRequired")
+}
+
+/// R627 §5.7 — extract a required string-typed `params.<field>` and
+/// surface a typed `error.data` tag on failure. Generalises the R613
+/// [`read_required_tag`] pattern after a third inline copy surfaced
+/// at the `handle_scene_set_text` `"text"` field and a fourth at the
+/// `handle_scene_set_theme_mode` `"mode"` field.
+///
+/// Per [[three-site-internal-duplication-substrate-lift]] three
+/// byte-identical projections of the same wire shape (tag / text /
+/// mode) lift to one helper; the data-tag argument keeps each call
+/// site's typed `error.data` identifier intact so AI clients still
+/// pattern-match on per-axis variant tags (`TagRequired`,
+/// `TextRequired`, `ModeRequired`, …) at the `error.data` level.
+///
+/// # Errors
+///
+/// Returns a `-32602 Invalid params` with `error.data = data_tag`
+/// when `params.<field>` is missing or is a non-string value.
+fn read_required_str<'a>(
+    params: &'a Value,
+    field: &str,
+    data_tag: &'static str,
+) -> Result<&'a str, RpcError> {
     params
-        .get("tag")
+        .get(field)
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            RpcError::invalid_params("params.tag missing or not a string")
-                .with_data_string("TagRequired")
+            RpcError::invalid_params(format!("params.{field} missing or not a string"))
+                .with_data_string(data_tag)
         })
 }
 
@@ -2787,13 +2815,7 @@ fn handle_scene_set_text(
 ) -> Result<Value, RpcError> {
     let params_value = require_params(params)?;
     let tag = read_required_tag(params_value)?;
-    let text = params_value
-        .get("text")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.text missing or not a string")
-                .with_data_string("TextRequired")
-        })?;
+    let text = read_required_str(params_value, "text", "TextRequired")?;
     let typed_params = SetTextParams { tag, text };
     match set_text(runtime_owner, &typed_params) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),

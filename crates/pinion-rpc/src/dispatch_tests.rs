@@ -97,6 +97,74 @@ fn r617_read_optional_tag_rejects_non_string_value() {
     }
 }
 
+// R627 §5.7 — read_required_str helper unit tests. The R613
+// read_required_tag suite (above) anchors the "tag" / "TagRequired"
+// canonical defaults; the cases below pin the generic helper's
+// behaviour at non-tag axes (text / mode) so a future field-name
+// or data-tag tweak surfaces here before downstream consumers
+// regress. Mirrors the R613 suite shape — present / missing /
+// non-string — but parametrises on (field, data_tag).
+#[test]
+fn r627_read_required_str_returns_string_when_present() {
+    let v = serde_json::json!({ "text": "hello" });
+    let out = read_required_str(&v, "text", "TextRequired").unwrap();
+    assert_eq!(out, "hello");
+}
+
+#[test]
+fn r627_read_required_str_missing_errors_with_typed_data() {
+    let v = serde_json::json!({});
+    let err = read_required_str(&v, "text", "TextRequired").unwrap_err();
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.data.as_ref().and_then(Value::as_str), Some("TextRequired"));
+}
+
+#[test]
+fn r627_read_required_str_non_string_errors_with_typed_data() {
+    for invalid in [
+        serde_json::json!({"mode": 42}),
+        serde_json::json!({"mode": true}),
+        serde_json::json!({"mode": null}),
+        serde_json::json!({"mode": []}),
+        serde_json::json!({"mode": {}}),
+    ] {
+        let err = read_required_str(&invalid, "mode", "ModeRequired").unwrap_err();
+        assert_eq!(err.code, -32602);
+        assert_eq!(
+            err.data.as_ref().and_then(Value::as_str),
+            Some("ModeRequired"),
+            "ModeRequired must surface at error.data even for non-string value: {invalid:?}",
+        );
+    }
+}
+
+#[test]
+fn r627_read_required_str_field_axes_have_distinct_data_tags() {
+    // The lifted helper takes both the field name and the typed
+    // `error.data` identifier so each axis (tag / text / mode / …)
+    // keeps its own variant tag clients pattern-match on. Pin the
+    // distinct-data property here so a future caller cannot collapse
+    // two axes to the same identifier by accident.
+    let v = serde_json::json!({});
+    let tag_err = read_required_str(&v, "tag", "TagRequired").unwrap_err();
+    let text_err = read_required_str(&v, "text", "TextRequired").unwrap_err();
+    let mode_err = read_required_str(&v, "mode", "ModeRequired").unwrap_err();
+    assert_ne!(tag_err.data, text_err.data);
+    assert_ne!(text_err.data, mode_err.data);
+    assert_ne!(tag_err.data, mode_err.data);
+}
+
+#[test]
+fn r627_read_required_tag_delegates_to_read_required_str() {
+    // R613 entry point now delegates to R627 [`read_required_str`]
+    // with `("tag", "TagRequired")`. The existing R613 suite above
+    // (`r613_read_required_tag_*`) already pins the canonical
+    // shape; this case confirms the delegate path returns the
+    // same `Ok(&str)` for a happy-path lookup.
+    let v = serde_json::json!({ "tag": "list" });
+    assert_eq!(read_required_tag(&v).unwrap(), "list");
+}
+
 /// Test helper — calls [`dispatch`] with a freshly-allocated
 /// [`PreviewLedger`] and [`SceneRevision`]. Used by tests that do
 /// not exercise the preview lifecycle methods or revision bumping.

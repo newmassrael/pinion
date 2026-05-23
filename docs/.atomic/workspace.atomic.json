@@ -17701,6 +17701,56 @@
         "7-debt cascade complete — every R613-R626 round repaid one identified debt without introducing new fragility"
       ]
     },
+    "R627": {
+      "decision_summary": "refactor(rpc): R627 §5.7 read_required_str family lift",
+      "changes_bullets": [
+        "crates/pinion-rpc/src/dispatch.rs: lift `read_required_str(params, field, data_tag)` generic helper after a third inline byte-identical projection of `params.get(field).and_then(Value::as_str).ok_or_else(|| invalid_params(...).with_data_string(data_tag))` surfaced at `handle_scene_set_text` (`text` / `TextRequired`) and a fourth at `handle_scene_set_theme_mode` (`mode` / `ModeRequired`); the R613 `read_required_tag` entry point now delegates to the generic helper with `(\"tag\", \"TagRequired\")` so the seven existing call sites stay one-line",
+        "crates/pinion-rpc/src/dispatch.rs: `handle_scene_set_text` collapses the 5-line inline `text` extract to `let text = read_required_str(params_value, \"text\", \"TextRequired\")?;`",
+        "crates/pinion-rpc/src/dispatch.rs: `handle_scene_set_theme_mode` collapses the 4-line inline `mode` extract AND adds a typed `error.data = \"ModeRequired\"` tag where previously the missing-mode failure carried prose-only `-32602` — additive AI-introspection enhancement (no behavioural regression, the test suite at `r599_scene_set_theme_mode_missing_mode_param_errors` only pinned `err.code == -32602`)",
+        "crates/pinion-rpc/src/dispatch_tests.rs: append 5 unit tests `r627_read_required_str_*` covering happy path / missing field / non-string value (5 invalid JSON shapes) / per-axis distinct-data invariant / `read_required_tag` delegate path; the prose-pinning sibling test was discarded after discovering that `RpcError::invalid_params(detail).with_data_string(tag)` overwrites the prose at the `data` slot — only the typed `data_tag` is wire-visible, which is consistent with the R613 contract"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace → 3091 pass / 0 fail (3086 → 3091, +5 R627 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (no new warnings, workspace.lints `forbid(unsafe)` + `deny(warnings)` + `clippy::pedantic` deny baseline holds)",
+        "mnemosyne-cli validate-workspace → T1 orphan total=0 / round-trip mandatory=1/1 / atomic entry orphan_refs ledger=4 new=+0 / GENERATED.md=sync",
+        "the three pre-R627 call sites (`tag` / `text` / `mode`) cross [[three-site-internal-duplication-substrate-lift]]'s rule-of-three threshold; R613 was the seed lift, R627 generalises the axis-distinct portion (field + data_tag) into one entry point"
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "R628 §5.50 — replace `R624` `from_rgb_function` `cast_possible_truncation` / `cast_sign_loss` allow with `(n * 2.55).round().clamp(0.0, 255.0)` then `try_from`/`try_into` so the conversion stays in safe-Rust canonical (no `as` cast on a numeric path); [[clippy-pre-audit-recovery]] family carry",
+        "R629 §5.7 §5.28 — wire `scene/animate_reset` / `scene/animate_settle` / `scene/animate_cancel` RPC methods over the R623 `Animation<T>` control surface so the AI-first write matrix extends to the animation axis (6/6); without the wire the R612 5/5 write matrix has an Animation-axis hole",
+        "R630 §5.50 — extend `Color::from_css_string` with modern CSS Color 4 syntax (`rgb(R G B)` space-syntax + `rgb(R G B / A)` alpha-slash + `hsl(H S% L%)`) so the entry point earns its `from_css_string` name; current implementation only honours `#hex` + legacy `rgb(R, G, B)` comma-syntax",
+        "R631 §5.7 — pin `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound` typed-data prose with unit tests against silent regression; R625 reworded these three identifiers and there is no compile-time guard against a future tweak",
+        "R632 §5.7 — split the 5,643 LOC `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]`: `dispatch_tests_core.rs` (envelope / helper) / `dispatch_tests_theme.rs` / `dispatch_tests_axes.rs` (scroll / text / caret / selection) / `dispatch_tests_layout.rs` / `dispatch_tests_preview.rs` / `dispatch_tests_other.rs` (focus / font / wait / locate / introspect)",
+        "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines `BindableCacheSlot` and each widget type self-impls; `pinion-rpc` consumes the trait downstream rather than defining it and impl'ing for `pinion-core` types under the orphan-rule passport"
+      ],
+      "publishable_decision_summary": "refactor(rpc): R627 §5.7 read_required_str family lift",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc/src/dispatch.rs: lift `read_required_str(params, field, data_tag)` generic helper after a third inline byte-identical projection of `params.get(field).and_then(Value::as_str).ok_or_else(|| invalid_params(...).with_data_string(data_tag))` surfaced at `handle_scene_set_text` (`text` / `TextRequired`) and a fourth at `handle_scene_set_theme_mode` (`mode` / `ModeRequired`); the R613 `read_required_tag` entry point now delegates to the generic helper with `(\"tag\", \"TagRequired\")` so the seven existing call sites stay one-line",
+        "crates/pinion-rpc/src/dispatch.rs: `handle_scene_set_text` collapses the 5-line inline `text` extract to `let text = read_required_str(params_value, \"text\", \"TextRequired\")?;`",
+        "crates/pinion-rpc/src/dispatch.rs: `handle_scene_set_theme_mode` collapses the 4-line inline `mode` extract AND adds a typed `error.data = \"ModeRequired\"` tag where previously the missing-mode failure carried prose-only `-32602` — additive AI-introspection enhancement (no behavioural regression, the test suite at `r599_scene_set_theme_mode_missing_mode_param_errors` only pinned `err.code == -32602`)",
+        "crates/pinion-rpc/src/dispatch_tests.rs: append 5 unit tests `r627_read_required_str_*` covering happy path / missing field / non-string value (5 invalid JSON shapes) / per-axis distinct-data invariant / `read_required_tag` delegate path; the prose-pinning sibling test was discarded after discovering that `RpcError::invalid_params(detail).with_data_string(tag)` overwrites the prose at the `data` slot — only the typed `data_tag` is wire-visible, which is consistent with the R613 contract"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace → 3091 pass / 0 fail (3086 → 3091, +5 R627 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (no new warnings, workspace.lints `forbid(unsafe)` + `deny(warnings)` + `clippy::pedantic` deny baseline holds)",
+        "mnemosyne-cli validate-workspace → T1 orphan total=0 / round-trip mandatory=1/1 / atomic entry orphan_refs ledger=4 new=+0 / GENERATED.md=sync",
+        "the three pre-R627 call sites (`tag` / `text` / `mode`) cross [[three-site-internal-duplication-substrate-lift]]'s rule-of-three threshold; R613 was the seed lift, R627 generalises the axis-distinct portion (field + data_tag) into one entry point"
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R628 §5.50 — replace `R624` `from_rgb_function` `cast_possible_truncation` / `cast_sign_loss` allow with `(n * 2.55).round().clamp(0.0, 255.0)` then `try_from`/`try_into` so the conversion stays in safe-Rust canonical (no `as` cast on a numeric path); [[clippy-pre-audit-recovery]] family carry",
+        "R629 §5.7 §5.28 — wire `scene/animate_reset` / `scene/animate_settle` / `scene/animate_cancel` RPC methods over the R623 `Animation<T>` control surface so the AI-first write matrix extends to the animation axis (6/6); without the wire the R612 5/5 write matrix has an Animation-axis hole",
+        "R630 §5.50 — extend `Color::from_css_string` with modern CSS Color 4 syntax (`rgb(R G B)` space-syntax + `rgb(R G B / A)` alpha-slash + `hsl(H S% L%)`) so the entry point earns its `from_css_string` name; current implementation only honours `#hex` + legacy `rgb(R, G, B)` comma-syntax",
+        "R631 §5.7 — pin `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound` typed-data prose with unit tests against silent regression; R625 reworded these three identifiers and there is no compile-time guard against a future tweak",
+        "R632 §5.7 — split the 5,643 LOC `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]`: `dispatch_tests_core.rs` (envelope / helper) / `dispatch_tests_theme.rs` / `dispatch_tests_axes.rs` (scroll / text / caret / selection) / `dispatch_tests_layout.rs` / `dispatch_tests_preview.rs` / `dispatch_tests_other.rs` (focus / font / wait / locate / introspect)",
+        "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines `BindableCacheSlot` and each widget type self-impls; `pinion-rpc` consumes the trait downstream rather than defining it and impl'ing for `pinion-core` types under the orphan-rule passport"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
