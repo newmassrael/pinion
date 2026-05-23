@@ -2,15 +2,16 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R604 — 22 typed):
+//! response envelope. Registered methods (R608 — 23 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
 //! `scene/locate_region`, `scene/bbox`, `scene/cancel_preview`,
 //! `scene/list_previews`, `scene/propose_change`,
 //! `scene/apply_preview`, `scene/theme_tokens`,
-//! `scene/set_theme_mode`, `scene/animation_state`,
-//! `scene/scroll_state`, `scene/text_state`, `scene/caret_state`. The preview-lifecycle methods take the
+//! `scene/set_theme_mode`, `scene/set_theme_palettes`,
+//! `scene/animation_state`, `scene/scroll_state`,
+//! `scene/text_state`, `scene/caret_state`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -65,8 +66,9 @@ use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
 use crate::text_state::{text_state, TextStateOutcome};
 use crate::theme::{
-    set_theme_mode, theme_tokens, SetThemeModeError, SetThemeModeOutcome, SetThemeModeParams,
-    ThemeTokensError, ThemeTokensOutcome,
+    parse_palette_value, set_theme_mode, set_theme_palettes, theme_tokens, PaletteParseError,
+    SetThemeModeError, SetThemeModeOutcome, SetThemeModeParams, SetThemePalettesError,
+    SetThemePalettesOutcome, SetThemePalettesParams, ThemeTokensError, ThemeTokensOutcome,
 };
 use crate::wait_for::{wait_for, WaitForError, WaitOutcome};
 
@@ -611,6 +613,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/set_theme_mode" => {
             handle_scene_set_theme_mode(runtime_owner, request.params.as_ref())
         }
+        "scene/set_theme_palettes" => {
+            handle_scene_set_theme_palettes(runtime_owner, request.params.as_ref())
+        }
         "scene/animation_state" => {
             handle_scene_animation_state(runtime_owner, request.params.as_ref())
         }
@@ -789,7 +794,13 @@ fn mutates_scene_on_success(method: &str) -> bool {
             // R599 §5.50 — set_theme_mode writes a Signal that every
             // view-fn subscribing through `use_theme` re-runs on, so a
             // re-paint is required and the OCC token must bump.
-            | "scene/set_theme_mode",
+            | "scene/set_theme_mode"
+            // R608 §5.50 — set_theme_palettes writes both palette
+            // Signals inside a single `reactive::batch`; downstream
+            // view-fns re-run once on the next reactive tick, and a
+            // re-paint is required. OCC token must bump so any
+            // in-flight preview's base revision detects the swap.
+            | "scene/set_theme_palettes",
     )
 }
 
@@ -2271,6 +2282,128 @@ fn set_theme_mode_error_to_rpc(err: SetThemeModeError) -> RpcError {
             RpcError::invalid_params(format!("theme provider not bound under tag {tag:?}"))
                 .with_data_string("NotBound")
         }
+    }
+}
+
+/// R608 §5.50 — `scene/set_theme_palettes` typed handler. 23rd
+/// `scene/*` method. Replaces both palettes on the bound
+/// [`ThemeProvider`] in a single
+/// [`reactive::batch`](pinion_core::reactive::batch); the dispatcher's
+/// [`mutates_scene_on_success`] gate bumps the
+/// [`SceneRevision`](pinion_core::SceneRevision) after this call
+/// returns `Ok`.
+///
+/// Wire shape mirrors [`scene/theme_tokens`](handle_scene_theme_tokens)
+/// one-to-one: every `params.{light,dark}[*]` entry is
+/// `{"role": "<name>", "color": "<hex>"}`, so an AI agent can call
+/// `theme_tokens` → mutate per-role entries locally → `set_theme_palettes`
+/// without rewriting the JSON. Per-palette parsing is delegated to
+/// [`parse_palette_value`] so the typed parse-error variants surface
+/// at the `error.data` level.
+fn handle_scene_set_theme_palettes(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(params_value) = params else {
+        return Err(RpcError::invalid_params("missing params"));
+    };
+    let light_value = params_value
+        .get("light")
+        .ok_or_else(|| RpcError::invalid_params("params.light missing"))?;
+    let dark_value = params_value
+        .get("dark")
+        .ok_or_else(|| RpcError::invalid_params("params.dark missing"))?;
+    let light = parse_palette_value(light_value, "light").map_err(palette_parse_error_to_rpc)?;
+    let dark = parse_palette_value(dark_value, "dark").map_err(palette_parse_error_to_rpc)?;
+    let tag = params_value
+        .get("tag")
+        .map(|v| {
+            v.as_str().ok_or_else(|| {
+                RpcError::invalid_params("params.tag must be a string when present")
+            })
+        })
+        .transpose()?;
+    let typed_params = SetThemePalettesParams {
+        light,
+        dark,
+        tag,
+    };
+    match set_theme_palettes(runtime_owner, &typed_params) {
+        Ok(outcome) => set_theme_palettes_outcome_to_json(&outcome),
+        Err(err) => Err(set_theme_palettes_error_to_rpc(err)),
+    }
+}
+
+fn set_theme_palettes_outcome_to_json(out: &SetThemePalettesOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/set_theme_palettes: failed to serialize outcome: {e}",
+        ))
+    })
+}
+
+fn set_theme_palettes_error_to_rpc(err: SetThemePalettesError) -> RpcError {
+    match err {
+        SetThemePalettesError::RuntimeOwnerUnavailable => {
+            RpcError::invalid_params("theme view unavailable")
+                .with_data_string("RuntimeOwnerUnavailable")
+        }
+        SetThemePalettesError::NotBound { tag } => {
+            RpcError::invalid_params(format!("theme provider not bound under tag {tag:?}"))
+                .with_data_string("NotBound")
+        }
+    }
+}
+
+/// Map a [`PaletteParseError`] into a JSON-RPC `-32602 Invalid params`
+/// envelope with the variant tag in `error.data` so AI clients can
+/// pattern-match on the typed failure. The substrate-side variant is
+/// `#[non_exhaustive]`, but the match below covers every current
+/// constructor explicitly — a future variant addition that lands
+/// without updating this arm fails compilation, which is the desired
+/// developer experience for an API surface clients rely on.
+fn palette_parse_error_to_rpc(err: PaletteParseError) -> RpcError {
+    match err {
+        PaletteParseError::NotArray { which } => RpcError::invalid_params(format!(
+            "params.{which} must be a JSON array of role/color entries"
+        ))
+        .with_data_string("NotArray"),
+        PaletteParseError::EntryNotObject { which, index } => RpcError::invalid_params(format!(
+            "params.{which}[{index}] must be a JSON object"
+        ))
+        .with_data_string("EntryNotObject"),
+        PaletteParseError::EntryMissingRole { which, index } => RpcError::invalid_params(format!(
+            "params.{which}[{index}].role missing or not a string"
+        ))
+        .with_data_string("EntryMissingRole"),
+        PaletteParseError::EntryMissingColor { which, index } => RpcError::invalid_params(format!(
+            "params.{which}[{index}].color missing or not a string"
+        ))
+        .with_data_string("EntryMissingColor"),
+        PaletteParseError::UnknownRole {
+            which,
+            index,
+            role,
+        } => RpcError::invalid_params(format!(
+            "params.{which}[{index}].role {role:?} is not a canonical ColorRole name"
+        ))
+        .with_data_string("UnknownRole"),
+        PaletteParseError::DuplicateRole { which, role } => RpcError::invalid_params(format!(
+            "params.{which} binds role {role:?} more than once"
+        ))
+        .with_data_string("DuplicateRole"),
+        PaletteParseError::InvalidColor {
+            which,
+            role,
+            value,
+        } => RpcError::invalid_params(format!(
+            "params.{which}[role={role:?}].color {value:?} is not a #rrggbb / #rrggbbaa hex literal"
+        ))
+        .with_data_string("InvalidColor"),
+        PaletteParseError::MissingRoles { which, missing } => RpcError::invalid_params(format!(
+            "params.{which} is incomplete; missing role(s): {missing:?}"
+        ))
+        .with_data_string("MissingRoles"),
     }
 }
 
@@ -8207,6 +8340,272 @@ mod tests {
             revision.current(),
             before,
             "a failed set_theme_mode must not bump the OCC token",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R608 §5.50 — scene/set_theme_palettes wire integration
+    //
+    // Mutation pair to scene/theme_tokens for the palette pair (the
+    // mode pair lives at scene/set_theme_mode). The fine-grained
+    // handler logic + parse-error battery is covered in
+    // `crate::theme::tests::r608_*`. The cases below exercise the
+    // dispatcher's wire round-trip — required `light`/`dark` params,
+    // typed parse-error data, runtime_owner injection, and the
+    // mutates_scene_on_success OCC bump.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Build a full role/color array of the canonical
+    /// [`pinion_core::theme::Theme::light`] palette, for use as the
+    /// `params.light` value inside a wire-shape JSON request.
+    fn light_palette_json_array() -> serde_json::Value {
+        use pinion_core::theme::{ColorRole, Theme};
+        let theme = Theme::light();
+        let entries: Vec<serde_json::Value> = ColorRole::all()
+            .iter()
+            .map(|role| {
+                let c = theme.resolve(*role);
+                let color = if c.a == 0xff {
+                    format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+                } else {
+                    format!("#{:02x}{:02x}{:02x}{:02x}", c.r, c.g, c.b, c.a)
+                };
+                serde_json::json!({ "role": role.name(), "color": color })
+            })
+            .collect();
+        serde_json::Value::Array(entries)
+    }
+
+    fn dark_palette_json_array() -> serde_json::Value {
+        use pinion_core::theme::{ColorRole, Theme};
+        let theme = Theme::dark();
+        let entries: Vec<serde_json::Value> = ColorRole::all()
+            .iter()
+            .map(|role| {
+                let c = theme.resolve(*role);
+                let color = if c.a == 0xff {
+                    format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+                } else {
+                    format!("#{:02x}{:02x}{:02x}{:02x}", c.r, c.g, c.b, c.a)
+                };
+                serde_json::json!({ "role": role.name(), "color": color })
+            })
+            .collect();
+        serde_json::Value::Array(entries)
+    }
+
+    /// Build a full `{light: [...], dark: [...]}` params payload.
+    fn full_palettes_params() -> serde_json::Value {
+        serde_json::json!({
+            "light": light_palette_json_array(),
+            "dark": dark_palette_json_array(),
+        })
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": full_palettes_params(),
+            "id": 1,
+        })
+        .to_string();
+        let resp = parse_response(&dispatch_t(&mut scene, &req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_missing_params_errors() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_palettes","id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing params must error");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_missing_light_errors() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": {"dark": dark_palette_json_array()},
+            "id": 3,
+        })
+        .to_string();
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, &req).unwrap());
+        let err = resp.error.expect("missing light must error");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_missing_dark_errors() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": {"light": light_palette_json_array()},
+            "id": 4,
+        })
+        .to_string();
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, &req).unwrap());
+        let err = resp.error.expect("missing dark must error");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_missing_role_surfaces_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        // Light side bound to a 1-entry array → MissingRoles.
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": {
+                "light": [{"role": "surface", "color": "#ffffff"}],
+                "dark": dark_palette_json_array(),
+            },
+            "id": 5,
+        })
+        .to_string();
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, &req).unwrap());
+        let err = resp.error.expect("missing roles must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("MissingRoles".into())));
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_unknown_role_surfaces_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        // Replace the first light entry with a typo'd role name.
+        let mut light = light_palette_json_array();
+        light[0] = serde_json::json!({"role": "Surface", "color": "#ffffff"});
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": {"light": light, "dark": dark_palette_json_array()},
+            "id": 6,
+        })
+        .to_string();
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, &req).unwrap());
+        let err = resp.error.expect("unknown role must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("UnknownRole".into())));
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_invalid_color_surfaces_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        let mut light = light_palette_json_array();
+        light[0] = serde_json::json!({"role": "surface", "color": "not-a-hex"});
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": {"light": light, "dark": dark_palette_json_array()},
+            "id": 7,
+        })
+        .to_string();
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, &req).unwrap());
+        let err = resp.error.expect("invalid color must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidColor".into())));
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_unbound_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": full_palettes_params(),
+            "id": 8,
+        })
+        .to_string();
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, &req).unwrap());
+        let err = resp.error.expect("unbound tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_happy_path_returns_post_state() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        // Pre-flip to Dark so we can observe `active` resolves to dark
+        // after the palette swap (which preserves mode).
+        provider.set_mode(pinion_core::theme::ThemeMode::Dark);
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": full_palettes_params(),
+            "id": 9,
+        })
+        .to_string();
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, &req).unwrap());
+        assert!(resp.error.is_none(), "happy path must not error");
+        let result = resp.result.expect("result present");
+        assert_eq!(result.get("mode").and_then(Value::as_str), Some("dark"));
+        assert_eq!(result.get("active").and_then(Value::as_str), Some("dark"));
+        assert_eq!(result.get("tag").and_then(Value::as_str), Some("app"));
+        assert!(result.get("system_scheme").and_then(Value::as_str).is_some());
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_bumps_revision_on_success() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": full_palettes_params(),
+            "id": 10,
+        })
+        .to_string();
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, &req);
+        let after = revision.current();
+        assert!(
+            after > before,
+            "set_theme_palettes must bump the OCC token (before={before}, after={after})",
+        );
+    }
+
+    #[test]
+    fn r608_scene_set_theme_palettes_does_not_bump_revision_on_failure() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        // No theme bound → handler errors. The dispatcher's
+        // `mutates_scene_on_success` gate must not bump.
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "scene/set_theme_palettes",
+            "params": full_palettes_params(),
+            "id": 11,
+        })
+        .to_string();
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, &req);
+        assert_eq!(
+            revision.current(),
+            before,
+            "a failed set_theme_palettes must not bump the OCC token",
         );
     }
 

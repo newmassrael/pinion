@@ -10802,6 +10802,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R608 — scene/set_theme_palettes RPC method — paired mutation to scene/theme_tokens for AI-first palette swap; OCC bump + typed parse-error battery
+
+**Changes**:
+- pinion-core::theme::ColorRole::from_name (R608 §5.50) — paired inverse of `name()`; walks `ColorRole::all` so a future variant lands automatically
+- pinion-rpc::theme::set_theme_palettes + parse_palette_value + parse_color_hex + theme_from_role_map (R608 §5.7 §5.50) — full palette-pair setter; #rrggbb / #rrggbbaa hex parser symmetric with color_to_hex
+- pinion-rpc::theme::SetThemePalettesParams/Outcome/Error + PaletteParseError (8 typed variants: NotArray / EntryNotObject / EntryMissingRole / EntryMissingColor / UnknownRole / DuplicateRole / InvalidColor / MissingRoles)
+- pinion-rpc::dispatch — wire `scene/set_theme_palettes` arm (23rd typed method); extend `mutates_scene_on_success` so OCC token bumps on success; map every PaletteParseError variant to -32602 with typed data string
+
+
+
+**Verification**:
+- cargo test --workspace: 2970 pass / 0 fail (R607: 2930 → +40 R608 unit + wire tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- r608_from_name_round_trips_with_name_for_every_variant — name() ↔ from_name() bijection on ColorRole::all
+- r608_parse_color_hex_round_trips_with_color_to_hex_opaque + _translucent — symmetric read↔write hex form
+- r608_set_theme_palettes_subscribers_re_run_once_per_swap — R593 atomic-batch contract carry through RPC layer
+- r608_scene_set_theme_palettes_bumps_revision_on_success + _does_not_bump_revision_on_failure — OCC gate pinned both directions
+- mnemosyne-cli validate-workspace: T1 orphan=0/new=0 / round-trip mandatory=1/1 / T3 reject=0 / T4 info=147 unchanged baseline
+
+
+
+**Impact**: §5.7, §5.22, §5.50
+
+
+**Carry forward**:
+- R609: scene/set_scroll_offset (ScrollState::scroll_to wire; tag required; OCC bump)
+- R610: scene/set_text (TextEditState::set_text wire; tag required; OCC bump)
+- R611: scene/set_selection (anchor + focus pair; OCC bump)
+- R612: scene/set_caret (caret-byte-offset wire; OCC bump)
+- AI-first write matrix: theme/mode + theme/palettes covered (2/5). scroll / text / selection / caret pending
+- Hex parser lift to pinion-core::style::Color::from_hex deferred per [[abstraction-needs-second-consumer]] — single consumer (RPC write path) so far
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

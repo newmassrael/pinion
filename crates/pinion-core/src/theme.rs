@@ -437,6 +437,36 @@ impl ColorRole {
         }
     }
 
+    /// Parse a canonical `snake_case` wire identifier back into a
+    /// [`ColorRole`]. Inverse of [`Self::name`]: `name(from_name(s)) == s`
+    /// for every variant in [`Self::all`], and `from_name(name(v)) == v`
+    /// for every variant. Returns [`None`] for any string that does not
+    /// match a registered variant's `name()` — including misspellings,
+    /// case-folded forms (`"Surface"`), and dropped underscores
+    /// (`"onsurface"`). Match is `&str`-equality, not heuristic.
+    ///
+    /// The implementation walks [`Self::all`] and tests `name() == s`
+    /// rather than a hand-written reverse `match`, so a future variant
+    /// addition that lands at the end of `all()` lights up
+    /// automatically. The cost is linear in the variant count, which is
+    /// acceptable since the slice is small and the call sits behind
+    /// JSON-RPC parsing (already JSON-deserialization-bound).
+    ///
+    /// Introduced in R608 §5.50 as the parsing pair to [`Self::name`]:
+    /// the AI-first write path (`scene/set_theme_palettes`) deserializes
+    /// per-role entries `{"role": "<name>", "color": "<hex>"}` and
+    /// needs the canonical name → variant inverse to validate the
+    /// palette before handing it to
+    /// [`ThemeProvider::set_palettes`](crate::theme::ThemeProvider::set_palettes).
+    /// Stays paired with `name()` so adding a `ColorRole` variant
+    /// requires only extending `all()` + the field/factory pairing on
+    /// [`Theme`] — every consumer that goes through the
+    /// `name()` ↔ `from_name()` surface keeps working.
+    #[must_use]
+    pub fn from_name(s: &str) -> Option<Self> {
+        Self::all().iter().copied().find(|role| role.name() == s)
+    }
+
     /// Deterministic fallback when a role is consulted on a palette
     /// that has not been bound yet. Returns the light-palette default
     /// — applications using a dark palette should bind every role
@@ -1687,6 +1717,40 @@ mod tests {
         assert_eq!(ColorRole::OnError.name(), "on_error");
         assert_eq!(ColorRole::ErrorContainer.name(), "error_container");
         assert_eq!(ColorRole::OnErrorContainer.name(), "on_error_container");
+    }
+
+    /// (R608 §5.50) `ColorRole::from_name()` is the inverse of
+    /// [`ColorRole::name`] — every variant in [`ColorRole::all`]
+    /// round-trips through `name() → from_name()`. Pinned so a future
+    /// rename of either side without the other breaks compilation
+    /// (via the exhaustive `match` on `name()`) instead of silently
+    /// dropping the wire identifier the RPC write path
+    /// (`scene/set_theme_palettes`) depends on.
+    #[test]
+    fn r608_from_name_round_trips_with_name_for_every_variant() {
+        for &role in ColorRole::all() {
+            assert_eq!(
+                ColorRole::from_name(role.name()),
+                Some(role),
+                "round-trip failed for {role:?}",
+            );
+        }
+    }
+
+    /// (R608 §5.50) `from_name()` rejects strings that are not a
+    /// canonical `snake_case` wire identifier — case-folded variant
+    /// names, missing underscores, prefix/suffix typos, and the empty
+    /// string all surface as `None`. Pinned so the AI-first write path
+    /// produces a typed parse error instead of accepting a near-miss
+    /// silently.
+    #[test]
+    fn r608_from_name_rejects_non_canonical_inputs() {
+        assert_eq!(ColorRole::from_name(""), None);
+        assert_eq!(ColorRole::from_name("Surface"), None, "case-sensitive");
+        assert_eq!(ColorRole::from_name("onsurface"), None, "missing underscore");
+        assert_eq!(ColorRole::from_name("on-surface"), None, "kebab-case");
+        assert_eq!(ColorRole::from_name("surface_typo"), None);
+        assert_eq!(ColorRole::from_name(" surface "), None, "whitespace");
     }
 
     // ─────────────────────────────────────────────────────────────
