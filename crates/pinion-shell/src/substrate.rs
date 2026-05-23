@@ -1136,10 +1136,12 @@ impl<V: WidgetView> ShellCore<V> {
                 ctx = ctx.with_last_paint_layout(snapshot);
             }
             // R51.161 §5.23 — surface the root [`Owner`] handle so
-            // `scene/commands` can peek the pending Command queue
-            // without draining (Owner is reachable via the cloned
+            // RPC methods that read reactive substrate state can do
+            // so without draining (Owner is reachable via the cloned
             // handle above; lifetime ties through the borrow split).
-            ctx = ctx.with_commands_owner(&root_owner);
+            // First consumer was `scene/commands`; R598 §5.50 added
+            // `scene/theme_tokens` reading the cached ThemeProvider.
+            ctx = ctx.with_runtime_owner(&root_owner);
             // R51.162 §5.23 — also surface the CommandExecutor for
             // in-flight introspection. The `executor_for_rpc` Arc
             // clone was taken above (before the `scene_mut` reborrow);

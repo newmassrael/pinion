@@ -251,25 +251,34 @@ pub struct DispatchContext<'a> {
     /// fixtures that have no `FocusManager`.
     pub focus_manager: Option<&'a mut pinion_runtime::FocusManager>,
 
-    /// R51.161 §5.23 — substrate's root [`Owner`] handle the §5.23
-    /// `scene/commands` RPC method peeks for pending
-    /// [`Command`](pinion_core::Command) introspection.
+    /// Substrate's root [`Owner`] handle — the reactive scope that
+    /// holds every [`Owner::cache`](pinion_core::reactive::Owner::cache)
+    /// slot the application has bound during paint (theme provider,
+    /// scroll state, caret blink, …) and the pending
+    /// [`Command`](pinion_core::Command) queue. Read-only borrow:
+    /// every consumer takes a non-draining snapshot so the framework
+    /// pump's drain on the next dispatch cycle stays correct.
     ///
-    /// `None` causes `scene/commands` to fail with
-    /// `commands view unavailable`; non-command methods ignore the
-    /// field. Read-only (`&Owner`): the method takes a non-draining
-    /// snapshot so the framework pump's drain on the next dispatch
-    /// cycle stays correct.
-    pub commands_owner: Option<&'a Owner>,
+    /// First wired in R51.161 §5.23 for the `scene/commands` pending
+    /// queue introspection; R597 §5.50 renamed the slot from
+    /// `commands_owner` to `runtime_owner` ahead of the second
+    /// consumer (`scene/theme_tokens` reading the
+    /// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cached
+    /// under this owner) so the name reflects the broader semantics.
+    ///
+    /// `None` causes every consumer to surface its own
+    /// `*Unavailable` variant; consumer methods that do not read
+    /// reactive substrate state simply ignore the field.
+    pub runtime_owner: Option<&'a Owner>,
 
     /// R51.162 §5.23 — substrate's [`CommandExecutor`](pinion_runtime::CommandExecutor)
     /// handle the §5.23 `scene/commands` RPC method peeks for
     /// in-flight [`Command`](pinion_core::Command) introspection.
     ///
     /// Optional: when `None`, `scene/commands` still works against
-    /// the pending-side [`Self::commands_owner`] but the
+    /// the pending-side [`Self::runtime_owner`] but the
     /// `result.in_flight` array is empty. Backends inject this
-    /// alongside [`Self::commands_owner`] for full pending +
+    /// alongside [`Self::runtime_owner`] for full pending +
     /// in-flight symmetry.
     pub commands_executor: Option<&'a pinion_runtime::CommandExecutor>,
 
@@ -350,7 +359,7 @@ impl<'a> DispatchContext<'a> {
             last_paint_layout: None,
             font_registry: None,
             focus_manager: None,
-            commands_owner: None,
+            runtime_owner: None,
             commands_executor: None,
             deferred_inputs: None,
         }
@@ -418,14 +427,18 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
-    /// R51.161 §5.23 — builder: attach the substrate's root
-    /// [`Owner`] handle so `scene/commands` can peek the pending
-    /// [`Command`](pinion_core::Command) queue. Read-only borrow —
-    /// the RPC method snapshots without draining so the framework
-    /// pump on the next dispatch cycle still observes the queue.
+    /// Builder: attach the substrate's root [`Owner`] handle so RPC
+    /// methods that need reactive-substrate state can read it.
+    /// First wired in R51.161 §5.23 for `scene/commands` (pending
+    /// [`Command`](pinion_core::Command) queue introspection); also
+    /// consumed by `scene/theme_tokens` (R598 §5.50) reading the
+    /// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cached
+    /// under this owner. Read-only borrow — every consumer
+    /// snapshots without draining so the framework pump on the next
+    /// dispatch cycle still observes the original state.
     #[must_use]
-    pub fn with_commands_owner(mut self, owner: &'a Owner) -> Self {
-        self.commands_owner = Some(owner);
+    pub fn with_runtime_owner(mut self, owner: &'a Owner) -> Self {
+        self.runtime_owner = Some(owner);
         self
     }
 
@@ -433,7 +446,7 @@ impl<'a> DispatchContext<'a> {
     /// [`CommandExecutor`](pinion_runtime::CommandExecutor) handle so
     /// `scene/commands` can include the `result.in_flight` array
     /// (non-draining snapshot of every executor-tracked task). Pair
-    /// with [`Self::with_commands_owner`] for full pending +
+    /// with [`Self::with_runtime_owner`] for full pending +
     /// in-flight symmetry.
     #[must_use]
     pub fn with_commands_executor(
@@ -503,8 +516,11 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     // R47.7.5 — snapshot read-only; safe to copy the &LayoutNode out
     // of the context for the dispatch lifetime.
     let last_paint_layout = ctx.last_paint_layout;
-    // R51.161 §5.23 — read-only borrow snapshot for scene/commands.
-    let commands_owner = ctx.commands_owner;
+    // R51.161 §5.23 — substrate's root Owner. Read-only borrow:
+    // `scene/commands` snapshots the pending queue;
+    // `scene/theme_tokens` (R598 §5.50) reads the cached
+    // ThemeProvider.
+    let runtime_owner = ctx.runtime_owner;
     // R51.162 §5.23 — executor borrow for in-flight projection.
     let commands_executor = ctx.commands_executor;
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
@@ -579,7 +595,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
         "scene/intervene" => handle_scene_intervene(scene, request.params.as_ref()),
         "scene/intents" => handle_scene_intents(scene),
-        "scene/commands" => handle_scene_commands(commands_owner, commands_executor),
+        "scene/commands" => handle_scene_commands(runtime_owner, commands_executor),
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
@@ -2079,13 +2095,13 @@ fn intents_error_to_rpc(err: IntentsError) -> RpcError {
 ///   `in_flight` map (R51.158 cancellation tracker), in `scope_id`
 ///   ascending order via the underlying [`BTreeMap`].
 ///
-/// `commands_owner` is required (pending source); `commands_executor`
+/// `runtime_owner` is required (pending source); `commands_executor`
 /// is optional — when absent, `result.in_flight` is an empty array.
 fn handle_scene_commands(
-    commands_owner: Option<&Owner>,
+    runtime_owner: Option<&Owner>,
     commands_executor: Option<&pinion_runtime::CommandExecutor>,
 ) -> Result<Value, RpcError> {
-    let Some(owner) = commands_owner else {
+    let Some(owner) = runtime_owner else {
         return Err(RpcError::invalid_params("commands view unavailable"));
     };
     let pending = list_pending_commands(owner).map_err(commands_error_to_rpc)?;

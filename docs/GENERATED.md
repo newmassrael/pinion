@@ -17859,6 +17859,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 597 — DispatchContext.commands_owner → runtime_owner rename: substrate's root Owner is broader than scene/commands — 2nd consumer (scene/theme_tokens) reads the cached ThemeProvider through the same slot, so the field name now matches the semantics.
+
+**Changes**:
+- dispatch.rs: DispatchContext field commands_owner: Option<&Owner> renamed to runtime_owner
+- dispatch.rs: builder with_commands_owner → with_runtime_owner; doc now lists scene/commands + scene/theme_tokens as consumers
+- dispatch.rs: internal binding `let commands_owner = ctx.commands_owner` → `let runtime_owner = ctx.runtime_owner` (single source of truth for substrate root Owner inside dispatch())
+- dispatch.rs: handle_scene_commands parameter commands_owner → runtime_owner; preserves the local-meaning rename uniformly
+- dispatch.rs: cross-reference in commands_executor field doc updated (Self::commands_owner → Self::runtime_owner)
+- pinion-shell/substrate.rs: builder call updated `ctx.with_commands_owner(&root_owner)` → `ctx.with_runtime_owner(&root_owner)` with broader-purpose comment
+
+
+
+**Verification**:
+- grep -rn 'commands_owner\|with_commands_owner' --include='*.rs': only the historical doc-note line referencing the rename remains; every binding renamed
+- cargo check --workspace --features pinion-runtime/vello: 0 warnings, 0 errors
+- cargo test --workspace --features pinion-runtime/vello: 2819 pass / 0 fail / 13 ignored (R596 baseline preserved)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.7, §5.23, §5.50
+
+
+**Carry forward**:
+- R598 §5.50: scene/theme_tokens method 1st use of runtime_owner outside scene/commands — ratifies the rename's broader semantics
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
