@@ -11046,6 +11046,31 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R616 — scroll/text/caret_state_error_to_rpc 3-shim trio inlined — 7 call sites now use introspect_error_to_rpc directly with explicit domain label
+
+**Changes**:
+- pinion-rpc::dispatch::scroll_state_error_to_rpc / text_state_error_to_rpc / caret_state_error_to_rpc deleted (3 single-line wrappers)
+- 7 handler Err arms inline introspect_error_to_rpc("<domain>", &err) directly — domain label visible at call site, one fewer indirection per error mapping
+- pinion-rpc::dispatch::introspect_error_to_rpc docstring extends with R616 rationale + caret-state coverage
+
+
+
+**Verification**:
+- cargo test --workspace: 3058 pass / 0 fail (R615 baseline preserved — refactor only)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- Existing R602+/R609+/R610+/R611+/R612+ wire-integration suites still pass — byte-identical wire shape preserved (only call form changed)
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- R617: theme tag optional shape dispatch helper lift (3 sites still duplicated)
+- R618: SetTextParams String ownership review
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

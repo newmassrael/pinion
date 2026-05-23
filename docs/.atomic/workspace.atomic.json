@@ -17230,6 +17230,44 @@
         "R618: SetTextParams String ownership review"
       ]
     },
+    "R616": {
+      "decision_summary": "scroll/text/caret_state_error_to_rpc 3-shim trio inlined — 7 call sites now use introspect_error_to_rpc directly with explicit domain label",
+      "changes_bullets": [
+        "pinion-rpc::dispatch::scroll_state_error_to_rpc / text_state_error_to_rpc / caret_state_error_to_rpc deleted (3 single-line wrappers)",
+        "7 handler Err arms inline introspect_error_to_rpc(\"<domain>\", &err) directly — domain label visible at call site, one fewer indirection per error mapping",
+        "pinion-rpc::dispatch::introspect_error_to_rpc docstring extends with R616 rationale + caret-state coverage"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 3058 pass / 0 fail (R615 baseline preserved — refactor only)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)",
+        "Existing R602+/R609+/R610+/R611+/R612+ wire-integration suites still pass — byte-identical wire shape preserved (only call form changed)"
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "R617: theme tag optional shape dispatch helper lift (3 sites still duplicated)",
+        "R618: SetTextParams String ownership review"
+      ],
+      "publishable_decision_summary": "scroll/text/caret_state_error_to_rpc 3-shim trio inlined — 7 call sites now use introspect_error_to_rpc directly with explicit domain label",
+      "publishable_changes_bullets": [
+        "pinion-rpc::dispatch::scroll_state_error_to_rpc / text_state_error_to_rpc / caret_state_error_to_rpc deleted (3 single-line wrappers)",
+        "7 handler Err arms inline introspect_error_to_rpc(\"<domain>\", &err) directly — domain label visible at call site, one fewer indirection per error mapping",
+        "pinion-rpc::dispatch::introspect_error_to_rpc docstring extends with R616 rationale + caret-state coverage"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 3058 pass / 0 fail (R615 baseline preserved — refactor only)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)",
+        "Existing R602+/R609+/R610+/R611+/R612+ wire-integration suites still pass — byte-identical wire shape preserved (only call form changed)"
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R617: theme tag optional shape dispatch helper lift (3 sites still duplicated)",
+        "R618: SetTextParams String ownership review"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
