@@ -10989,6 +10989,31 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R614 — substrate_introspect::lookup docstring ratifies R608+ write-side reuse — closes the helper's side-effect-contract ambiguity that 4 setter consumers created
+
+**Changes**:
+- pinion-rpc::substrate_introspect module docstring extends with 'R608+ write-side reuse' section explaining the interior-mutability write-through-borrow pattern
+- pinion-rpc::substrate_introspect::lookup fn docstring rewrites '# Side effects' — helper is side-effect-free in two specific senses (no slot on miss, no auto-subscribe); project closure mutations are orthogonal
+- Documents the deferred `mutate_substrate` alias decision per [[abstraction-needs-second-consumer]] — byte-identical signature would not improve call-site clarity
+
+
+
+**Verification**:
+- cargo test --workspace: 3044 pass / 0 fail (R613 baseline, doc-only round)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- Existing R607 lookup unit-test battery (r607_lookup_*) still pins the helper's actual behaviour; this round only updates the prose contract
+
+
+
+**Impact**: §5.7, §5.22
+
+
+**Carry forward**:
+- scroll_state_error_to_rpc / text_state_error_to_rpc / caret_state_error_to_rpc 1-line shims — inline or keep? 7 call sites between them; each adds zero semantic value beyond a hard-coded domain label. Defer unless a 4th axis needs a shim
+- Theme tag extraction (R598/R599/R608) optional-tag shape still standalone — 'must be a string when present' prose. 3 sites. Lift candidate only if a 4th theme-axis surface adds a similar optional-tag handler
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

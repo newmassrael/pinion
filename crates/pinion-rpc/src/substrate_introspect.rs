@@ -28,6 +28,27 @@
 //! `text_state` growing an `InvalidUtf8Boundary` arm) the alias
 //! gets replaced with a dedicated enum and the lifted scaffold
 //! continues to serve the others.
+//!
+//! ## R608+ write-side reuse
+//!
+//! The R608-R612 setter cascade (`set_theme_palettes` /
+//! `set_scroll_offset` / `set_text` / `set_selection` / `set_caret`)
+//! reuses [`lookup`] for the mutation pair — the closure receives a
+//! `&S` reference and writes through interior mutability
+//! ([`Signal`](pinion_core::reactive::Signal) `set`), then projects
+//! the post-mutation state into the outcome. The helper's signature
+//! does not need to change: Rust's borrow-checker permits the
+//! interior-mutability write, and the `Owner::cache_get_by_str`
+//! lookup + `NotBound { tag }` gate apply identically to read and
+//! write paths.
+//!
+//! Four write-side consumers ratify the pattern as a textbook
+//! canonical use of the helper. A dedicated `mutate_substrate`
+//! alias was considered but deferred per
+//! [[abstraction-needs-second-consumer]]: the signature would be
+//! byte-identical and the cosmetic separation would not improve
+//! call-site clarity — the action verb already lives in the closure
+//! body (`state.scroll_to`, `state.set_text`, etc.).
 
 use pinion_core::reactive::Owner;
 use std::rc::Rc;
@@ -90,10 +111,23 @@ pub fn introspect_error_to_data(err: &SubstrateIntrospectError) -> &'static str 
 ///
 /// # Side effects
 ///
-/// None. [`Owner::cache_get_by_str`] never creates a slot on miss;
-/// `project` only sees a borrowed reference and cannot register a
-/// new reactive subscription (no `Owner::current` is activated by
-/// this helper).
+/// The helper itself is side-effect-free in two specific senses:
+/// [`Owner::cache_get_by_str`] never creates a slot on miss, and
+/// no new reactive subscription is registered (`Owner::current` is
+/// not activated by this helper, so a `Signal::get` inside
+/// `project` reads the value without auto-subscribing the calling
+/// scope).
+///
+/// `project` itself MAY write through interior mutability — the
+/// R608+ write-side cascade calls `state.scroll_to(...)` /
+/// `state.set_text(...)` / etc. inside the closure body, which
+/// mutates the underlying [`Signal`](pinion_core::reactive::Signal)s
+/// and schedules subscriber re-runs. The closure's mutations are
+/// orthogonal to the helper's own no-side-effect contract — the
+/// helper just borrows `&S` and hands it off; what `project` does
+/// with that borrow is the caller's choice. See the module-level
+/// "R608+ write-side reuse" section for the textbook canonical
+/// pattern.
 pub fn lookup<S, V, F>(
     runtime_owner: Option<&Owner>,
     tag: &str,
