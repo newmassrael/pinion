@@ -11500,6 +11500,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R632 — refactor(rpc): R632 §5.7 dispatch_tests per-axis sibling files
+
+**Changes**:
+- crates/pinion-rpc/src/dispatch_tests.rs: lift the R598-R612 + R629 AI-first read/write matrix wire-integration test bodies (~1310 LOC of the 6,009 LOC monolith) into three per-axis sibling files via `#[path = "..."]` sub-modules — `dispatch_tests_theme.rs` (R598 / R599 / R608), `dispatch_tests_animation.rs` (R600 / R629), `dispatch_tests_axes.rs` (R602 / R609 / R603 / R610 / R611 / R612 / R604); the parent file now declares three `mod r632_theme` / `mod r632_animation` / `mod r632_axes` stubs with `#[path]` attributes, each sibling re-imports `super::*` so the parent `tests` module's helpers stay in scope
+- crates/pinion-rpc/src/dispatch_tests.rs: lift the two test helpers `dispatch_with_runtime_owner` + `dispatch_with_runtime_owner_and_revision` from the R598 theme-axis section into the parent file head so all three sibling axes (theme / animation / widget) can call them without per-file duplication; pre-R632 they were inline at line 4710 of the monolith, accessible only to the theme tests by accident of definition order
+- crates/pinion-rpc/src/dispatch_tests_theme.rs: new file (449 LOC) carrying the R598 `scene/theme_tokens` / R599 `scene/set_theme_mode` / R608 `scene/set_theme_palettes` wire integration suite
+- crates/pinion-rpc/src/dispatch_tests_animation.rs: new file (196 LOC) carrying the R600 `scene/animation_state` + R629 `scene/animate_settle` / `scene/animate_cancel` wire integration suite
+- crates/pinion-rpc/src/dispatch_tests_axes.rs: new file (646 LOC) carrying the R602 `scene/scroll_state` / R609 `scene/set_scroll_offset` / R603 `scene/text_state` / R610 `scene/set_text` / R611 `scene/set_selection` / R612 `scene/set_caret` / R604 `scene/caret_state` widget-axis wire integration suite
+- crates/pinion-rpc/src/dispatch_tests.rs: drops from 6,009 LOC → 4,749 LOC; the three new siblings sum to 1,291 LOC of which 6 LOC are `use super::*;` + per-file header comments; net file count grows from 1 to 4 (the dispatcher's tests are now navigable per axis without the multi-thousand-line scroll)
+
+
+
+**Verification**:
+- cargo test --workspace → 3156 / 0 (unchanged from R631 baseline — zero test deletion, only file reorganization)
+- cargo test -p pinion-rpc → 714 / 0 in `dispatch::tests::*` (covers the parent suite + the three R632 sub-module suites; the sub-module path appears in the test name like `dispatch::tests::r632_theme::r598_scene_theme_tokens_*`)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean
+- mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it (last item in the original R627-R633 debt queue)
+- R634+ §5.7 — the pre-R598 4,749 LOC tail of `dispatch_tests.rs` (R51.X-R596 legacy wire tests for query / click / rewind / snapshot / wait_for / screenshot / invoke / intents / commands / focus / font / preview / layout / locate / resize) could be carved into further axis siblings (`dispatch_tests_query.rs` / `dispatch_tests_focus.rs` / `dispatch_tests_font.rs` / `dispatch_tests_preview.rs` / `dispatch_tests_layout.rs` / `dispatch_tests_lifecycle.rs`); R632 carves the modern AI-first matrix only; legacy split deferred per [[abstraction-needs-second-consumer]] until the file size again becomes painful to navigate
+- R634+ §5.7 — the parent `dispatch_tests.rs` file could be renamed to `dispatch_tests/mod.rs` with each sibling moved into the new `dispatch_tests/` directory — modern Rust mod-as-directory idiom that avoids the `#[path]` attribute; deferred because the current single-directory layout works and the rename would create churn across multiple commits
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
