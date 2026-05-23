@@ -142,7 +142,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::animation::{AnimVec4, Animatable, Animation, SpringConfig};
-use crate::reactive::{Owner, Signal};
+use crate::reactive::{Owner, Signal, batch};
 use crate::style::Color;
 
 // ────────────────────────────────────────────────────────────────────
@@ -999,6 +999,43 @@ impl ThemeProvider {
         self.dark_palette.set(theme);
     }
 
+    /// Replace both palettes in a single reactive batch. Equivalent
+    /// to calling [`Self::set_light_palette`] then
+    /// [`Self::set_dark_palette`] inside a [`batch`](crate::reactive::batch),
+    /// but folds the two signal writes into one coalesced flush — every
+    /// subscriber re-runs at most once even though two distinct
+    /// signals were mutated.
+    ///
+    /// Use this when the application wants the light + dark palettes
+    /// kept in lock-step (Material 3 dynamic-color: both tonal
+    /// palettes derive from the same seed; an in-app `Settings` screen
+    /// that lets the user pick a brand color produces both at once;
+    /// a `prefers-color-scheme` flip is already deterministic via
+    /// [`Self::set_mode`] and should not use this primitive).
+    ///
+    /// # Why a dedicated method instead of caller-side `batch`
+    ///
+    /// Two reasons. (a) Discoverability — a caller browsing the
+    /// `ThemeProvider` surface should not have to know about the
+    /// `crate::reactive::batch` helper to update palettes atomically;
+    /// the substrate exposes the canonical action directly, mirroring
+    /// the way `set_mode` + `set_X_palette` already do for individual
+    /// writes. (b) Intent encoding — the call site reads as "swap the
+    /// palette pair", not as "two independent writes that happen to
+    /// be coalesced", which matches the Material 3 tonal-palette
+    /// shape (light + dark derive together).
+    ///
+    /// `R593` regression `r593_set_palettes_atomic_batches_subscribers`
+    /// pins the one-re-run contract; without it a refactor that
+    /// dropped the `batch` wrap would silently double the work
+    /// downstream view-fns do during a palette swap.
+    pub fn set_palettes(&self, light: Theme, dark: Theme) {
+        batch(|| {
+            self.light_palette.set(light);
+            self.dark_palette.set(dark);
+        });
+    }
+
     /// Resolved active palette — dispatches through [`Self::mode`]:
     /// [`ThemeMode::Light`] returns [`Self::light_palette`],
     /// [`ThemeMode::Dark`] returns [`Self::dark_palette`], and
@@ -1511,6 +1548,64 @@ mod tests {
             tweaked.accent = Color::rgb(0xff, 0x00, 0x00);
             provider.set_dark_palette(tweaked);
             assert_eq!(runs.get(), 2, "set_dark_palette re-runs Effect");
+        });
+    }
+
+    /// (R593 §5.50) `ThemeProvider::set_palettes(light, dark)` must
+    /// fold the two palette signal writes into a single reactive
+    /// batch — subscribers re-run at most once per call even though
+    /// two distinct signals mutate. Pins the atomic-batch contract a
+    /// future refactor could silently drop, doubling the per-swap
+    /// work for every downstream view-fn.
+    #[test]
+    fn r593_set_palettes_atomic_batches_subscribers() {
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_inner = Rc::clone(&runs);
+        owner.run(|| {
+            let provider = use_theme("r593_atomic");
+            // Light mode so theme() reads the light palette signal;
+            // the dark palette write inside the batch still mutates a
+            // distinct signal, so the batch coalescing is what keeps
+            // the re-run count at 1.
+            provider.set_mode(ThemeMode::Light);
+            let _effect = Effect::new(&owner, move || {
+                let p = use_theme("r593_atomic");
+                let _ = p.light_palette();
+                let _ = p.dark_palette();
+                runs_inner.set(runs_inner.get() + 1);
+            });
+            assert_eq!(runs.get(), 1, "eager initial run");
+            let mut new_light = Theme::light();
+            new_light.accent = Color::rgb(0x00, 0x80, 0x00);
+            let mut new_dark = Theme::dark();
+            new_dark.accent = Color::rgb(0x80, 0xff, 0x80);
+            provider.set_palettes(new_light, new_dark);
+            assert_eq!(
+                runs.get(),
+                2,
+                "set_palettes coalesces both signal writes into one re-run",
+            );
+        });
+    }
+
+    /// (R593 §5.50) `set_palettes` is a pure replacement — the new
+    /// light + dark palettes round-trip through
+    /// [`ThemeProvider::light_palette`] / [`ThemeProvider::dark_palette`]
+    /// reads. Pinned so a future implementation that, say, only wrote
+    /// the light side cannot regress silently.
+    #[test]
+    fn r593_set_palettes_round_trips_both_signals() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let provider = use_theme("r593_round_trip");
+            let mut light = Theme::light();
+            light.surface = Color::rgb(0xee, 0xee, 0xee);
+            let mut dark = Theme::dark();
+            dark.surface = Color::rgb(0x11, 0x11, 0x11);
+            provider.set_palettes(light, dark);
+            assert_eq!(provider.light_palette(), light);
+            assert_eq!(provider.dark_palette(), dark);
         });
     }
 

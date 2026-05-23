@@ -17763,6 +17763,30 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 593 — ThemeProvider::set_palettes(light, dark) atomic batch primitive; 두 Signal write 를 1 reactive flush 로 coalesce — subscriber 가 1번만 re-run.
+
+**Changes**:
+- theme.rs: ThemeProvider::set_palettes 가 light + dark Signal::set 을 reactive::batch 으로 wrap
+- theme.rs: +2 회귀 (atomic batch coalesce + light/dark round-trip)
+- theme.rs: batch import from crate::reactive 추가
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib theme: 46 pass 0 fail (R592 44 + 2 R593)
+- cargo test --workspace --features pinion-runtime/vello: 2814 pass / 0 fail / 13 ignored (+2)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- M3 dynamic-color tonal palette pair (seed 색 기반) consumer 가 set_palettes 소비
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
