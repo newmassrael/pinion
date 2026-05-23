@@ -20,6 +20,15 @@ clap = { workspace = true }
 ureq = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# R638 §5.7 — `figma-diff` PNG decode + Lanczos3 resize for dim
+# alignment between pinion render output (R637) and Figma reference
+# (R636). PNG-only feature set keeps the CLI binary lean.
+image = { workspace = true }
+# R638 §5.7 — diff PNG encode shares the same `png` crate the
+# `pinion-shell::headless_screenshot` substrate uses (R637); single
+# workspace pin so encoder behavior matches across producer (shell
+# headless renderer) + consumer (CLI diff visualization).
+png = { workspace = true }
 
 [[bin]]
 name = "pinion"

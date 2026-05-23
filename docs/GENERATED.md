@@ -11690,6 +11690,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R638 — R638 §5.7 pinion figma-diff CLI: PNG decode + Lanczos3 resize + per-channel MAE/max/exact-match + diff visualization
+
+**Changes**:
+- crates/pinion-cli/src/figma_diff.rs new: FigmaDiffArgs + ResizeMode (AtoB / BtoA) clap derive + run() entry. Decodes both PNGs via image::ImageReader → RgbaImage, optionally Lanczos3-resamples one side to match the other, computes DiffMetrics{mean_abs[4], max_abs[4], exact_match_pct, pixel_count, exact_match_count}, optionally writes white→red gradient diff PNG (per-pixel |dr|+|dg|+|db| / 765 → R channel intensity, png crate encoder shared with R637 HeadlessScreenshot)
+- crates/pinion-cli/src/main.rs: figma_diff module + Command::FigmaDiff variant wired into the clap subcommand router; explicit allow(clippy::enum_variant_names) with rationale that clap derives sub-command names verbatim and renaming breaks the externally-visible `pinion figma-*` CLI surface
+- Cargo.toml workspace deps: image 0.25 added with default-features=false features=["png"] (PNG-only decoder to keep CLI binary lean; imageproc / SSIM deferred per YAGNI — MAE plus exact-match surfaces design-parity divergence in every observed case so far)
+- crates/pinion-cli/Cargo.toml: image + png workspace deps wired (png crate shared with R637 pinion-shell::headless_screenshot encoder so producer + consumer behavior matches across the round)
+- End-to-end verification: ./target/release/pinion figma-diff /tmp/pinion-btn.png /tmp/figma-btn-ref.png --resize b-to-a -o /tmp/btn-diff.png surfaced 2.2% exact match / mean R=69.7 G=51.4 B=118.3 A=20.1 — captures the alignment + background gap that R639+ (figma-card-m3 second binding) will refine via scene/bbox crop or padded comparison
+
+
+
+**Verification**:
+- cargo test --workspace: 3162 pass / 0 fail / 14 ignored (3157→3162 delta = 5 new figma_diff unit tests: identical-images / single-channel-delta / diff-vis-identical-white / diff-vis-max-red / resize-mode-parse)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (3 targeted allows added with rationale: cast_precision_loss via u64_to_f64 helper, cast_possible_truncation on bounded intensity u8 cast, enum_variant_names on Command::Figma* CLI surface)
+- Self-diff sanity: pinion figma-diff /tmp/pinion-btn.png /tmp/pinion-btn.png reports 100% exact match + all-zero per-channel deltas (51200 / 51200 pixels)
+- Dim mismatch error path: omitting --resize surfaces typed exit code 1 with `dimension mismatch: a=320x160 b=218x80; pass --resize a-to-b or --resize b-to-a` message — no silent buggy comparison
+- mnemosyne-cli validate-workspace: T1 orphan=0+0 / round-trip mandatory=1/1 / T3 reject=0 (baseline preserved)
+
+
+
+**Impact**: §5.7, §5.12
+
+
+**Carry forward**:
+- Diff metric semantics gap: current 2.2% match between pinion 320x160 canvas + Figma 218x80 button-only ref captures the framing mismatch correctly but offers limited design-parity signal. R639+ refines either via (a) scene/bbox RPC crop pinion to button extents before diff, or (b) padded reference (Figma export with surrounding canvas) before diff. Hand-decision once R639 figma-card-m3 second binding lands as the substrate-evidence trigger
+- SSIM / imageproc deferral: MAE + exact-match-percent surfaced every divergence in the R635/R637/R638 cycle. Add imageproc workspace dep + ssim() integration only when MAE proves insufficient for a real R639+ case (likely never — Material spec colors are bit-exact; SSIM signal kicks in for perceptual judgement which is not the design-parity loop's focus)
+- Alpha channel comparison: diff visualization summed |dr|+|dg|+|db| only — alpha mismatch surfaces in metrics ([3] slot) but not in the visualization. Likely fine since pinion always writes alpha=255 + Figma exports vary; revisit if R639+ Card binding exposes transparent overlays where alpha differences carry design intent
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

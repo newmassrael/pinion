@@ -16,6 +16,7 @@
 //! server — it consumes external services (Figma REST API)
 //! one-shot.
 
+mod figma_diff;
 mod figma_image;
 mod figma_verify;
 
@@ -32,6 +33,19 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// R634 → R638 sub-commands all live under the Figma → pinion design-
+// parity workflow (Verify spec / FetchImage reference / Diff pixels),
+// so every variant naturally shares the `Figma` prefix. The lint
+// recommends de-duplication via glob import, but `clap::Subcommand`
+// derives the CLI sub-command name from the variant identifier verbatim
+// — stripping the prefix would rename every sub-command (e.g. `pinion
+// verify` instead of `pinion figma-verify`), an externally-visible
+// CLI surface break for a stylistic gain. Allow with the rationale
+// pinned to the variant set.
+#[allow(
+    clippy::enum_variant_names,
+    reason = "clap derives the sub-command CLI name from the variant id; renaming would break the externally-visible `pinion figma-*` surface"
+)]
 enum Command {
     /// R634 §5.7 — fetch a Figma file's node tree via the REST API
     /// and dump the JSON to stdout (or `--output` path). The
@@ -46,6 +60,13 @@ enum Command {
     /// pixel-diffed against the Figma original. Two-leg fetch:
     /// image-list endpoint → per-node S3 URL → PNG bytes.
     FigmaFetchImage(figma_image::FigmaImageArgs),
+
+    /// R638 §5.7 — pixel-diff two PNGs (typically pinion-rendered
+    /// vs Figma reference, R637 + R636 output) with per-channel MAE
+    /// / max-delta / exact-match metrics + optional diff
+    /// visualization PNG. Closes the Figma → pinion design-parity
+    /// verification loop.
+    FigmaDiff(figma_diff::FigmaDiffArgs),
 }
 
 fn main() {
@@ -53,6 +74,7 @@ fn main() {
     let result = match &cli.command {
         Command::FigmaVerify(args) => figma_verify::run(args),
         Command::FigmaFetchImage(args) => figma_image::run(args),
+        Command::FigmaDiff(args) => figma_diff::run(args),
     };
     if let Err(err) = result {
         eprintln!("error: {err}");

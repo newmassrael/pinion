@@ -146,6 +146,17 @@ ratatui = "0.29"
 # avoids breakage when ratatui upgrades its crossterm pin.
 crossterm = "0.28"
 
+# R638 §5.7 — `pinion figma-diff` CLI image decode + resize. Pulled
+# via `image` (not via `imageproc` which would force a full nalgebra
+# transitive); decode is the only operation the diff substrate needs
+# (encode of the diff PNG goes through the already-pinned `png`
+# workspace dep below to stay symmetric with R637 `HeadlessScreenshot`).
+# `default-features = false` drops every codec but PNG to keep the
+# CLI binary lean. SSIM gradient via `imageproc` deferred to a
+# follow-up round only if MAE / max-delta prove insufficient for the
+# Figma → pinion design-parity feedback loop (YAGNI per CLAUDE.md).
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # R637 §5.16 §5.7 — PNG encoder for the headless screenshot substrate.
 # `png` is the de-facto Rust PNG crate (image-rs maintainer continuity);
 # pulled directly (not transitively via `image`) so the only added
