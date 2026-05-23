@@ -29375,6 +29375,62 @@
         "RPC method-name registry refactor — 21 scene/* + 11 font/* + 1 text/* + 4 focus/* string literals scattered across dispatch.rs warrant single source-of-truth ledger (R598 / R599 carry; defer until 3rd substantive consumer of the literals or until codegen lands)"
       ]
     },
+    "Round 604": {
+      "decision_summary": "scene/caret_state JSON-RPC method lands as 22nd scene/* — fifth and final reactive-substrate introspection method, closing the AI-first observability matrix (theme + animation + scroll + text + caret). Projects CaretBlink (visible + enabled + canonical 530ms period) for \"is the caret on screen this frame?\" queries without pixel scraping.",
+      "changes_bullets": [
+        "pinion-rpc: new caret_state module — pub fn caret_state(runtime_owner, tag) -> Result<CaretStateOutcome, CaretStateError>",
+        "caret_state.rs: CaretStateOutcome {tag, visible, enabled, period_secs} — visible is the this-frame paint decision, enabled is the master gate, period_secs echoes CaretBlink::PERIOD_SECS (0.530)",
+        "caret_state.rs: CaretStateError three-variant non_exhaustive enum — RuntimeOwnerUnavailable / TagRequired / NotBound {tag}",
+        "caret_state.rs: critical no-lazy-init contract via cache_contains gate — use_caret_blink registers an animation driver, so RPC lazy-init would silently grow the tick workload",
+        "dispatch.rs: scene/caret_state routing arm + handle_scene_caret_state + caret_state_outcome_to_json + caret_state_error_to_rpc helpers",
+        "dispatch.rs: module + clippy::too_many_lines doc updated to reflect 22 scene/* method count",
+        "dispatch.rs: 3 R604 wire integration tests — missing owner, missing tag typed-data, happy path with enabled+visible projection + period_secs presence",
+        "caret_state module: 8 R604 direct tests — failure modes, fresh-state disabled-and-hidden invariant, enabled-flips-visible focus-reveals-caret contract, period_secs constant pin, no-slot-on-failure, idempotent two-call snapshot equality, JSON wire shape pin"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-rpc --lib r604: 11 pass / 0 fail (8 caret_state + 3 dispatch wire)",
+        "cargo test --workspace --features pinion-runtime/vello: 2916 pass / 0 fail / 13 ignored (R603 baseline 2905 + 11 R604)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "AI-first §2#2 + §2#7 observability matrix COMPLETE: theme + animation + scroll + text + caret all surfaced as JSON-RPC introspection",
+        "Owner::cache_contains gate pattern ratifies as canonical (5 consumers: theme.rs / animation_state.rs / scroll_state.rs / text_state.rs / caret_state.rs)"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "Mutation pair backlog: scene/set_text + scene/set_caret + scene/set_selection + scene/set_scroll_offset — readers complete in R598..R604, writers wait for 2nd consumer per [[abstraction-needs-second-consumer]] (currently only V::apply_key + platform bridge)",
+        "RPC method-name registry refactor opportunity — 22 scene/* + 11 font/* + 1 text/* + 4 focus/* string literals scattered across dispatch.rs warrant single source-of-truth ledger when a doc generator / code emit pass needs the catalogue",
+        "Substrate introspection generic helper — 5 modules (theme/animation/scroll/text/caret) all share the {check runtime_owner, cache_contains gate, owner.run(use_X(tag)) descend} pattern; a future R-round can lift this into a `substrate_introspect<S, F>` helper once a 3rd-axis-style refactor target appears"
+      ],
+      "publishable_decision_summary": "scene/caret_state JSON-RPC method lands as 22nd scene/* — fifth and final reactive-substrate introspection method, closing the AI-first observability matrix (theme + animation + scroll + text + caret). Projects CaretBlink (visible + enabled + canonical 530ms period) for \"is the caret on screen this frame?\" queries without pixel scraping.",
+      "publishable_changes_bullets": [
+        "pinion-rpc: new caret_state module — pub fn caret_state(runtime_owner, tag) -> Result<CaretStateOutcome, CaretStateError>",
+        "caret_state.rs: CaretStateOutcome {tag, visible, enabled, period_secs} — visible is the this-frame paint decision, enabled is the master gate, period_secs echoes CaretBlink::PERIOD_SECS (0.530)",
+        "caret_state.rs: CaretStateError three-variant non_exhaustive enum — RuntimeOwnerUnavailable / TagRequired / NotBound {tag}",
+        "caret_state.rs: critical no-lazy-init contract via cache_contains gate — use_caret_blink registers an animation driver, so RPC lazy-init would silently grow the tick workload",
+        "dispatch.rs: scene/caret_state routing arm + handle_scene_caret_state + caret_state_outcome_to_json + caret_state_error_to_rpc helpers",
+        "dispatch.rs: module + clippy::too_many_lines doc updated to reflect 22 scene/* method count",
+        "dispatch.rs: 3 R604 wire integration tests — missing owner, missing tag typed-data, happy path with enabled+visible projection + period_secs presence",
+        "caret_state module: 8 R604 direct tests — failure modes, fresh-state disabled-and-hidden invariant, enabled-flips-visible focus-reveals-caret contract, period_secs constant pin, no-slot-on-failure, idempotent two-call snapshot equality, JSON wire shape pin"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-rpc --lib r604: 11 pass / 0 fail (8 caret_state + 3 dispatch wire)",
+        "cargo test --workspace --features pinion-runtime/vello: 2916 pass / 0 fail / 13 ignored (R603 baseline 2905 + 11 R604)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "AI-first §2#2 + §2#7 observability matrix COMPLETE: theme + animation + scroll + text + caret all surfaced as JSON-RPC introspection",
+        "Owner::cache_contains gate pattern ratifies as canonical (5 consumers: theme.rs / animation_state.rs / scroll_state.rs / text_state.rs / caret_state.rs)"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Mutation pair backlog: scene/set_text + scene/set_caret + scene/set_selection + scene/set_scroll_offset — readers complete in R598..R604, writers wait for 2nd consumer per [[abstraction-needs-second-consumer]] (currently only V::apply_key + platform bridge)",
+        "RPC method-name registry refactor opportunity — 22 scene/* + 11 font/* + 1 text/* + 4 focus/* string literals scattered across dispatch.rs warrant single source-of-truth ledger when a doc generator / code emit pass needs the catalogue",
+        "Substrate introspection generic helper — 5 modules (theme/animation/scroll/text/caret) all share the {check runtime_owner, cache_contains gate, owner.run(use_X(tag)) descend} pattern; a future R-round can lift this into a `substrate_introspect<S, F>` helper once a 3rd-axis-style refactor target appears"
+      ]
+    },
     "Round 7": {
       "decision_summary": "Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification",
       "changes_bullets": [

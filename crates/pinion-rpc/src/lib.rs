@@ -10,6 +10,7 @@
 //! point live in [`dispatch`].
 
 pub mod animation_state;
+pub mod caret_state;
 pub mod commands;
 pub mod dispatch;
 pub mod dry_run;
@@ -34,6 +35,7 @@ pub mod theme;
 pub mod wait_for;
 
 pub use animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
+pub use caret_state::{caret_state, CaretStateError, CaretStateOutcome};
 pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
 };

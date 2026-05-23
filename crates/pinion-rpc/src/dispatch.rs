@@ -2,7 +2,7 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R603 — 21 typed):
+//! response envelope. Registered methods (R604 — 22 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
@@ -10,7 +10,7 @@
 //! `scene/list_previews`, `scene/propose_change`,
 //! `scene/apply_preview`, `scene/theme_tokens`,
 //! `scene/set_theme_mode`, `scene/animation_state`,
-//! `scene/scroll_state`, `scene/text_state`. The preview-lifecycle methods take the
+//! `scene/scroll_state`, `scene/text_state`, `scene/caret_state`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
+use crate::caret_state::{caret_state, CaretStateError, CaretStateOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::font::{self, FontError, FontRegistry};
@@ -505,7 +506,7 @@ impl<'a> DispatchContext<'a> {
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 21 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 22 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
 )]
 pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
@@ -617,6 +618,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         }
         "scene/text_state" => {
             handle_scene_text_state(runtime_owner, request.params.as_ref())
+        }
+        "scene/caret_state" => {
+            handle_scene_caret_state(runtime_owner, request.params.as_ref())
         }
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
@@ -2427,6 +2431,54 @@ fn text_state_error_to_rpc(err: &TextStateError) -> RpcError {
         }
         TextStateError::NotBound { tag } => {
             RpcError::invalid_params(format!("text state not bound under tag {tag:?}"))
+                .with_data_string("NotBound")
+        }
+    }
+}
+
+/// R604 §5.22 — `scene/caret_state` typed handler. 22nd `scene/*`
+/// method, read-only. Closes the AI-first observability matrix.
+/// Returns the bound
+/// [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink)
+/// projection — see [`crate::caret_state`] for the wire shape.
+fn handle_scene_caret_state(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let tag = params_value
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tag missing or not a string")
+                .with_data_string("TagRequired")
+        })?;
+    let static_tag: &'static str = Box::leak(tag.to_owned().into_boxed_str());
+    match caret_state(runtime_owner, static_tag) {
+        Ok(outcome) => caret_state_outcome_to_json(outcome),
+        Err(err) => Err(caret_state_error_to_rpc(&err)),
+    }
+}
+
+fn caret_state_outcome_to_json(out: CaretStateOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/caret_state: failed to serialize outcome: {e}",
+        ))
+    })
+}
+
+fn caret_state_error_to_rpc(err: &CaretStateError) -> RpcError {
+    match err {
+        CaretStateError::RuntimeOwnerUnavailable => {
+            RpcError::invalid_params("caret state unavailable")
+                .with_data_string("RuntimeOwnerUnavailable")
+        }
+        CaretStateError::TagRequired => {
+            RpcError::invalid_params("params.tag is required").with_data_string("TagRequired")
+        }
+        CaretStateError::NotBound { tag } => {
+            RpcError::invalid_params(format!("caret state not bound under tag {tag:?}"))
                 .with_data_string("NotBound")
         }
     }
@@ -8331,6 +8383,46 @@ mod tests {
         let err = resp.error.expect("unbound tag must error");
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R604 §5.22 — scene/caret_state wire integration
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r604_scene_caret_state_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/caret_state","params":{"tag":"field"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r604_scene_caret_state_missing_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/caret_state","params":{},"id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing tag must error");
+        assert_eq!(err.data, Some(Value::String("TagRequired".into())));
+    }
+
+    #[test]
+    fn r604_scene_caret_state_happy_path_returns_projection() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let state = owner.run(|| pinion_core::widgets::caret_blink::use_caret_blink("field"));
+        state.set_enabled(true);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/caret_state","params":{"tag":"field"},"id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none());
+        let result = resp.result.expect("result present");
+        assert_eq!(result["tag"], "field");
+        assert_eq!(result["enabled"], true);
+        assert_eq!(result["visible"], true);
+        assert!(result["period_secs"].as_f64().is_some());
     }
 
     #[test]
