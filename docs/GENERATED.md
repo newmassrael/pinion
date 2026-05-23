@@ -18060,6 +18060,42 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 602 — scene/scroll_state JSON-RPC method lands as 20th scene/* — third reactive-substrate introspection axis (after theme R598/R599 and animation R600), projecting ScrollState(offset, max) plus four server-derived edge predicates (at_top / at_bottom / at_left / at_right).
+
+**Changes**:
+- pinion-rpc: new scroll_state module — pub fn scroll_state(runtime_owner, tag: &'static str) -> Result<ScrollStateOutcome, ScrollStateError>
+- scroll_state.rs: ScrollStateOutcome {tag, offset, max, edges} wire shape; ScrollEdges sub-struct groups four edge predicates (struct_excessive_bools allow with W3C-canonical justification)
+- scroll_state.rs: ScrollStateError three-variant non_exhaustive enum — RuntimeOwnerUnavailable / TagRequired / NotBound {tag}
+- scroll_state.rs: ScrollAxisPair {x, y} i32 carrier matches ScrollState's native i32 surface; no widening at the RPC boundary
+- scroll_state.rs: edge predicates compute from offset/max with the W3C "non-scrolling content is trivially at both ends" convention (max == 0 → both at_top and at_bottom true)
+- dispatch.rs: scene/scroll_state routing arm + handle_scene_scroll_state + scroll_state_outcome_to_json + scroll_state_error_to_rpc helpers
+- dispatch.rs: Box::leak bridge for &'static str tag matches use_scroll_state's Owner::cache key contract; bounded leak per canonical AI client literal reuse
+- dispatch.rs: module + clippy::too_many_lines doc updated to reflect 20 scene/* method count
+- dispatch.rs: 4 R602 wire integration tests — missing owner, missing tag param, unbound tag typed-data, happy path with mid-scroll projection
+- scroll_state module: 10 R602 direct tests — failure modes (no owner / unbound tag), zero-bound trivial-both-ends invariant, mid-scroll neither-edge, at_bottom == offset == max, horizontal/vertical axis independence, no-slot-on-failure, idempotent two-call snapshot equality, JSON wire shape pin
+
+
+
+**Verification**:
+- cargo test -p pinion-rpc --lib r602: 14 pass / 0 fail (10 scroll_state + 4 dispatch wire)
+- cargo test --workspace --features pinion-runtime/vello: 2888 pass / 0 fail / 13 ignored (R601 baseline 2874 + 14 R602)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- Owner::cache_contains gate ratifies as the canonical pattern for reactive-substrate introspection RPC — third consumer after theme.rs and animation_state.rs
+- AI-first §2#2 + §2#7 observability matrix progress: theme/animation/scroll now surfaced; text + caret remain
+
+
+
+**Impact**: §5.7, §5.45
+
+
+**Carry forward**:
+- scene/text_state — next reactive-substrate introspection round (use_text_edit_state surface: text + cursor + selection + composition)
+- scene/caret_state — use_caret_blink surface (visible bool + interval ms); completes the observability matrix
+- scene/set_scroll_offset — mutation pair to scene/scroll_state once a 2nd consumer of programmatic scroll-position-set lands (currently only V::apply_key wheel/key dispatch sites)
+- scroll_state introspection extension — surface ScrollState fling-velocity carrier when the spring-driven fling animation lands in a future R-round
+
+
+
 ### Round 7 — Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification
 
 **Changes**:

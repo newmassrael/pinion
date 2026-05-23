@@ -2,14 +2,15 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R600 — 19 typed):
+//! response envelope. Registered methods (R602 — 20 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
 //! `scene/locate_region`, `scene/bbox`, `scene/cancel_preview`,
 //! `scene/list_previews`, `scene/propose_change`,
 //! `scene/apply_preview`, `scene/theme_tokens`,
-//! `scene/set_theme_mode`, `scene/animation_state`. The preview-lifecycle methods take the
+//! `scene/set_theme_mode`, `scene/animation_state`,
+//! `scene/scroll_state`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -57,6 +58,7 @@ use crate::preview::{
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
+use crate::scroll_state::{scroll_state, ScrollStateError, ScrollStateOutcome};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
 use crate::theme::{
@@ -502,7 +504,7 @@ impl<'a> DispatchContext<'a> {
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 19 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 20 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
 )]
 pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
@@ -608,6 +610,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         }
         "scene/animation_state" => {
             handle_scene_animation_state(runtime_owner, request.params.as_ref())
+        }
+        "scene/scroll_state" => {
+            handle_scene_scroll_state(runtime_owner, request.params.as_ref())
         }
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
@@ -2315,6 +2320,59 @@ fn animation_state_error_to_rpc(err: &AnimationStateError) -> RpcError {
                 "params.epsilon {value} must be finite and >= 0",
             ))
             .with_data_string("InvalidEpsilon")
+        }
+    }
+}
+
+/// R602 §5.45 — `scene/scroll_state` typed handler. 20th `scene/*`
+/// method, read-only. Returns the bound
+/// [`ScrollState`](pinion_core::widgets::scroll::ScrollState)
+/// projection — see [`crate::scroll_state`] for the wire shape.
+///
+/// `params.tag` is required (no canonical default for scroll
+/// states); the handler leaks the supplied tag through
+/// [`Box::leak`] for the [`Owner::cache`] key bridge — bounded
+/// leak, canonical AI client uses repeating string literals so most
+/// requests reuse the same `'static` slot.
+fn handle_scene_scroll_state(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let tag = params_value
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tag missing or not a string")
+                .with_data_string("TagRequired")
+        })?;
+    let static_tag: &'static str = Box::leak(tag.to_owned().into_boxed_str());
+    match scroll_state(runtime_owner, static_tag) {
+        Ok(outcome) => scroll_state_outcome_to_json(outcome),
+        Err(err) => Err(scroll_state_error_to_rpc(&err)),
+    }
+}
+
+fn scroll_state_outcome_to_json(out: ScrollStateOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/scroll_state: failed to serialize outcome: {e}",
+        ))
+    })
+}
+
+fn scroll_state_error_to_rpc(err: &ScrollStateError) -> RpcError {
+    match err {
+        ScrollStateError::RuntimeOwnerUnavailable => {
+            RpcError::invalid_params("scroll state unavailable")
+                .with_data_string("RuntimeOwnerUnavailable")
+        }
+        ScrollStateError::TagRequired => {
+            RpcError::invalid_params("params.tag is required").with_data_string("TagRequired")
+        }
+        ScrollStateError::NotBound { tag } => {
+            RpcError::invalid_params(format!("scroll state not bound under tag {tag:?}"))
+                .with_data_string("NotBound")
         }
     }
 }
@@ -8118,5 +8176,64 @@ mod tests {
         let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
         let err = resp.error.expect("non-numeric epsilon must error");
         assert_eq!(err.code, -32602);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R602 §5.45 — scene/scroll_state wire integration
+    //
+    // The fine-grained handler logic is covered by the test battery in
+    // `crate::scroll_state::tests::r602_*`. The cases below exercise
+    // the dispatcher's wire round-trip — params parsing (tag required),
+    // runtime_owner injection, and error → RpcError mapping.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r602_scene_scroll_state_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll_state","params":{"tag":"list"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r602_scene_scroll_state_missing_tag_param_errors() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll_state","params":{},"id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("TagRequired".into())));
+    }
+
+    #[test]
+    fn r602_scene_scroll_state_unbound_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll_state","params":{"tag":"ghost"},"id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("unbound tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    #[test]
+    fn r602_scene_scroll_state_happy_path_returns_projection() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let state = owner.run(|| pinion_core::widgets::scroll::use_scroll_state("list"));
+        state.set_max(0, 480);
+        state.scroll_to(0, 240);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/scroll_state","params":{"tag":"list"},"id":4}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none());
+        let result = resp.result.expect("result present");
+        assert_eq!(result["tag"], "list");
+        assert_eq!(result["offset"]["y"], 240);
+        assert_eq!(result["max"]["y"], 480);
+        assert_eq!(result["edges"]["at_bottom"], false);
+        assert_eq!(result["edges"]["at_top"], false);
     }
 }

@@ -26,6 +26,7 @@ pub mod query;
 pub mod resize;
 pub mod rewind;
 pub mod screenshot;
+pub mod scroll_state;
 pub mod snapshot;
 pub mod text;
 pub mod theme;
@@ -75,6 +76,9 @@ pub use query::{query, QueryError};
 pub use resize::{resize, ResizeError, ResizeOutcome, ResizeParams};
 pub use rewind::{rewind, RewindError};
 pub use screenshot::{screenshot, Screenshot, ScreenshotError};
+pub use scroll_state::{
+    scroll_state, ScrollAxisPair, ScrollEdges, ScrollStateError, ScrollStateOutcome,
+};
 pub use snapshot::{
     snapshot, BoxSnapshot, ContainerSnapshot, ExternalSnapshot, ImageSnapshot, PathSnapshot,
     ScrollSnapshot, SnapshotError, SnapshotNode, TextSnapshot,
