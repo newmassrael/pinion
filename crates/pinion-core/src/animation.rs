@@ -759,6 +759,92 @@ where
     pub fn spring_state(&self) -> SpringState<T> {
         *self.inner.state.borrow()
     }
+
+    // ────────────────────────────────────────────────────────────────
+    // R623 §5.28 — control surface
+    // ────────────────────────────────────────────────────────────────
+
+    /// R623 §5.28 — hard-reset the spring to `value` (and target) with
+    /// **zero velocity**. Equivalent to `SpringState::at_rest(value)`:
+    /// the spring jumps to `value`, the next [`Self::is_at_rest`] read
+    /// returns `true`, and the next [`Owner::tick_animations`] step is
+    /// a no-op until something writes a new [`Self::set_target`].
+    ///
+    /// Differs from [`Self::set_target`] in three ways:
+    /// 1. `current` is overwritten (no smooth fade from the existing
+    ///    position).
+    /// 2. `velocity` is dropped (no carry-through from any in-flight
+    ///    re-target).
+    /// 3. `target` is set to the same `value` (so the spring is at
+    ///    rest, not animating toward).
+    ///
+    /// Common use cases:
+    /// - "Jump to" a known state without animation (e.g. a settings
+    ///   "Reset to defaults" button that should land instantly).
+    /// - Mid-animation interrupt that needs the velocity dropped (a
+    ///   `set_target` mid-flight would carry the velocity through —
+    ///   visually fine for most cases, but `reset` is the explicit
+    ///   "stop AND jump" surface).
+    /// - Test fixtures that need a deterministic starting state.
+    ///
+    /// Writes the wrapper's [`Signal`](crate::reactive::Signal) so
+    /// subscribers re-run on the next reactive tick (equality-skip
+    /// applies if `value` already matches the current `Signal::get`).
+    /// Industry analogues: Framer Motion's `set` (no-animation snap),
+    /// `React Spring`'s `set`, `SwiftUI`'s `.animation(nil) { ... }`.
+    pub fn reset(&self, value: T) {
+        *self.inner.state.borrow_mut() = SpringState::at_rest(value);
+        self.inner.signal.set(value);
+    }
+
+    /// R623 §5.28 — settle at the current `target` with zero velocity.
+    /// Equivalent to `reset(target())` — the spring jumps to wherever
+    /// it was heading and stops, no more steps required.
+    ///
+    /// Common use cases:
+    /// - AI agent or user action: "skip the animation, finish now"
+    ///   (e.g. a "Done" / "Skip animation" UI affordance).
+    /// - Frame-budget eviction: if the application detects it is
+    ///   dropping frames, fast-forwarding non-essential animations
+    ///   to rest can reclaim tick-time.
+    /// - Deterministic snapshot setup: assert the post-animation
+    ///   state without simulating frames.
+    ///
+    /// Industry analogues: Framer Motion's `.stop({immediate: true})`,
+    /// CSS `animation-play-state: paused` + jump-to-end pseudo.
+    pub fn settle(&self) {
+        let target = self.inner.state.borrow().target;
+        self.reset(target);
+    }
+
+    /// R623 §5.28 — cancel: settle at the current `value` (not the
+    /// target) with zero velocity, dropping any in-flight motion.
+    /// Equivalent to `reset(value())`.
+    ///
+    /// The key distinction from [`Self::settle`]: cancel stops at
+    /// the *current visible position*, not at the target. Useful
+    /// when the application wants the animation to halt visibly
+    /// where it is rather than complete the transition.
+    ///
+    /// Common use cases:
+    /// - User aborts a transition mid-flight (e.g. a draggable that
+    ///   was returning to its rest pose; the user grabs it again —
+    ///   cancel the return, lock in the current position as the new
+    ///   rest).
+    /// - Out-of-budget eviction without forcing the visual jump to
+    ///   the target.
+    /// - Spring re-tune mid-animation: cancel the existing motion,
+    ///   then issue a fresh `set_target` with the new value.
+    ///
+    /// Industry analogues: Framer Motion's `.stop()` (without
+    /// `immediate: true`), Web Animations API
+    /// `Animation.cancel()` (different semantics — that one resets
+    /// to the start; pinion's matches the "stop where you are" form
+    /// from React Spring `.pause()`).
+    pub fn cancel(&self) {
+        let current = self.inner.state.borrow().current;
+        self.reset(current);
+    }
 }
 
 impl<T> Clone for Animation<T>
@@ -822,6 +908,110 @@ mod tests {
             (DEFAULT_REST_EPSILON - 0.01).abs() < f32::EPSILON,
             "DEFAULT_REST_EPSILON must equal the canonical 0.01 threshold",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R623 §5.28 — Animation control surface (reset / settle / cancel)
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r623_reset_jumps_to_value_with_zero_velocity() {
+        let owner = Owner::new();
+        let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+        // Set a target so the spring would normally animate toward it.
+        a.set_target(10.0);
+        // Step once via tick_animations so velocity > 0.
+        owner.tick_animations(0.016);
+        assert!(!a.is_at_rest(), "precondition: spring should be in motion");
+        // Reset to a different value.
+        a.reset(5.0);
+        // Spring lands at value, target = value, velocity = 0.
+        assert!((a.value() - 5.0).abs() < f32::EPSILON);
+        assert!((a.target() - 5.0).abs() < f32::EPSILON);
+        assert!(a.is_at_rest(), "reset must drop velocity → at rest");
+    }
+
+    #[test]
+    fn r623_reset_signal_writes_for_subscribers() {
+        let owner = Owner::new();
+        let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+        a.reset(7.0);
+        // Signal::get reflects the new value.
+        assert!((a.signal().get() - 7.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r623_settle_jumps_to_target() {
+        let owner = Owner::new();
+        let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+        a.set_target(42.0);
+        owner.tick_animations(0.016);
+        // Mid-flight: current < target.
+        let before = a.value();
+        assert!(before < 42.0);
+        a.settle();
+        assert!((a.value() - 42.0).abs() < f32::EPSILON);
+        assert!(a.is_at_rest());
+    }
+
+    #[test]
+    fn r623_cancel_holds_at_current_position() {
+        let owner = Owner::new();
+        let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+        a.set_target(100.0);
+        // Step several times so current is somewhere mid-flight.
+        for _ in 0..5 {
+            owner.tick_animations(0.016);
+        }
+        let mid = a.value();
+        assert!(mid > 0.0 && mid < 100.0, "mid-flight precondition");
+        a.cancel();
+        // Current stays where it was; target now also equals current.
+        assert!((a.value() - mid).abs() < f32::EPSILON);
+        assert!((a.target() - mid).abs() < f32::EPSILON);
+        assert!(a.is_at_rest());
+    }
+
+    #[test]
+    fn r623_cancel_then_settle_is_idempotent() {
+        // After cancel, settle should be a no-op (current == target).
+        let owner = Owner::new();
+        let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+        a.set_target(10.0);
+        owner.tick_animations(0.016);
+        a.cancel();
+        let after_cancel = a.value();
+        a.settle();
+        assert!((a.value() - after_cancel).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r623_reset_subsequent_tick_is_noop() {
+        let owner = Owner::new();
+        let a = Animation::new(&owner, 0.0_f32, SpringConfig::DEFAULT);
+        a.reset(5.0);
+        owner.tick_animations(0.016);
+        // At-rest spring + tick = no value change.
+        assert!((a.value() - 5.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r623_animvec4_carrier_supports_control_surface() {
+        // Sanity: the control surface is generic over T: Animatable,
+        // works on AnimVec4 the same as on f32. Pinned because
+        // ThemeLinear's theme-fade animation rides on AnimVec4 and
+        // a future cancel() call from theme code must compile.
+        let owner = Owner::new();
+        let initial = AnimVec4::new(0.0, 0.0, 0.0, 0.0);
+        let target = AnimVec4::new(1.0, 2.0, 3.0, 4.0);
+        let a = Animation::new(&owner, initial, SpringConfig::DEFAULT);
+        a.set_target(target);
+        owner.tick_animations(0.016);
+        a.settle();
+        let v = a.value();
+        assert!((v.x - 1.0).abs() < f32::EPSILON);
+        assert!((v.w - 4.0).abs() < f32::EPSILON);
+        assert!(a.is_at_rest());
     }
 
     #[test]

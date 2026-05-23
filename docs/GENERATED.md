@@ -11231,6 +11231,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R623 — Animation<T> control surface — reset / settle / cancel methods added as framework primitive; industry-canonical analogues from Framer Motion / React Spring / SwiftUI
+
+**Changes**:
+- pinion-core::animation::Animation<T>::reset(value) — hard jump + zero velocity (Framer Motion .set / React Spring set / SwiftUI .animation(nil) analogue)
+- pinion-core::animation::Animation<T>::settle() — jump to current target + zero velocity (Framer Motion .stop({immediate: true}) analogue)
+- pinion-core::animation::Animation<T>::cancel() — hold at current visible position + zero velocity (Framer Motion .stop() / React Spring .pause() analogue)
+- Generic over Animatable T — works on f32 / AnimVec4 / future Color carrier; pinned by r623_animvec4_carrier_supports_control_surface
+- No RPC wire — substrate primitive only per [[abstraction-needs-second-consumer]] held at primitive level; wire follows when 2nd consumer (application code or AI agent need) surfaces
+
+
+
+**Verification**:
+- cargo test --workspace: 3071 pass / 0 fail (R622: 3064 → +7 R623 control-surface tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- r623_reset_jumps_to_value_with_zero_velocity — mid-flight reset drops velocity
+- r623_settle_jumps_to_target — mid-flight settle lands at target instantly
+- r623_cancel_holds_at_current_position — mid-flight cancel preserves visible position
+- r623_cancel_then_settle_is_idempotent — cancel + settle composition deterministic
+- r623_reset_subsequent_tick_is_noop — at-rest spring stays at rest under tick
+
+
+
+**Impact**: §5.28
+
+
+**Carry forward**:
+- 3 remaining debts: Color CSS L4 / error prose / dispatch test split
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
