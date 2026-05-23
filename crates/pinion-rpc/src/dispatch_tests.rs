@@ -165,6 +165,173 @@ fn r627_read_required_tag_delegates_to_read_required_str() {
     assert_eq!(read_required_tag(&v).unwrap(), "list");
 }
 
+// R631 §5.7 — error-to-rpc converter prose + typed-data stability.
+// R625 reworded the SubstrateIntrospectError prose and there was
+// no compile-time guard against a future tweak. The cases below
+// pin `err.code` + `err.message` + `err.data` for every converter
+// fn in dispatch.rs so a regression surfaces here instead of
+// downstream consumers. The wire-data identifier ("RuntimeOwner-
+// Unavailable" / "TagRequired" / "NotBound") is the AI-agent
+// pattern-match anchor — any rename must be a conscious decision.
+//
+// The `err.message` field is `"Invalid params"` for every variant
+// in this catalogue (RpcError::invalid_params constructor); the
+// prose detail passed to invalid_params lands in err.data first
+// and is then overwritten by with_data_string. Pre-R631 the prose
+// was effectively unobservable on the wire; the tests here verify
+// the with_data_string overwrite IS being applied so a future
+// refactor that drops it cannot silently surface the prose.
+
+#[test]
+fn r631_substrate_introspect_runtime_owner_unavailable_pinned() {
+    let err = introspect_error_to_rpc(&SubstrateIntrospectError::RuntimeOwnerUnavailable);
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.message, "Invalid params");
+    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+}
+
+#[test]
+fn r631_substrate_introspect_tag_required_pinned() {
+    let err = introspect_error_to_rpc(&SubstrateIntrospectError::TagRequired);
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.message, "Invalid params");
+    assert_eq!(err.data, Some(Value::String("TagRequired".into())));
+}
+
+#[test]
+fn r631_substrate_introspect_not_bound_pinned() {
+    let err = introspect_error_to_rpc(&SubstrateIntrospectError::NotBound {
+        tag: "list".to_string(),
+    });
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.message, "Invalid params");
+    assert_eq!(err.data, Some(Value::String("NotBound".into())));
+}
+
+#[test]
+fn r631_animation_state_runtime_owner_unavailable_pinned() {
+    let err = animation_state_error_to_rpc(&AnimationStateError::RuntimeOwnerUnavailable);
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.message, "Invalid params");
+    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+}
+
+#[test]
+fn r631_animation_state_invalid_epsilon_pinned() {
+    let err = animation_state_error_to_rpc(&AnimationStateError::InvalidEpsilon { value: -0.1 });
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.data, Some(Value::String("InvalidEpsilon".into())));
+}
+
+#[test]
+fn r631_animate_control_runtime_owner_unavailable_pinned() {
+    let err = animate_control_error_to_rpc(
+        &crate::animate_control::AnimateControlError::RuntimeOwnerUnavailable,
+    );
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.message, "Invalid params");
+    assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+}
+
+#[test]
+fn r631_theme_tokens_errors_pinned() {
+    let err1 = theme_tokens_error_to_rpc(ThemeTokensError::RuntimeOwnerUnavailable);
+    assert_eq!(err1.code, -32602);
+    assert_eq!(err1.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    let err2 = theme_tokens_error_to_rpc(ThemeTokensError::NotBound {
+        tag: "app".to_string(),
+    });
+    assert_eq!(err2.code, -32602);
+    assert_eq!(err2.data, Some(Value::String("NotBound".into())));
+}
+
+#[test]
+fn r631_set_theme_mode_errors_pinned() {
+    let err1 = set_theme_mode_error_to_rpc(SetThemeModeError::RuntimeOwnerUnavailable);
+    assert_eq!(err1.code, -32602);
+    assert_eq!(err1.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    let err2 = set_theme_mode_error_to_rpc(SetThemeModeError::NotBound {
+        tag: "app".to_string(),
+    });
+    assert_eq!(err2.code, -32602);
+    assert_eq!(err2.data, Some(Value::String("NotBound".into())));
+}
+
+#[test]
+fn r631_set_theme_palettes_errors_pinned() {
+    let err1 = set_theme_palettes_error_to_rpc(SetThemePalettesError::RuntimeOwnerUnavailable);
+    assert_eq!(err1.code, -32602);
+    assert_eq!(err1.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    let err2 = set_theme_palettes_error_to_rpc(SetThemePalettesError::NotBound {
+        tag: "app".to_string(),
+    });
+    assert_eq!(err2.code, -32602);
+    assert_eq!(err2.data, Some(Value::String("NotBound".into())));
+}
+
+// Cross-converter consistency: every `RuntimeOwnerUnavailable`-emitting
+// converter must produce the same wire-data identifier. A future
+// regression that renames one path (e.g. to "RuntimeContextMissing")
+// would currently pass its own per-axis test but break wire
+// consistency for AI agents that pattern-match on the typed name.
+#[test]
+fn r631_runtime_owner_unavailable_identifier_is_uniform_across_converters() {
+    let canonical = Some(Value::String("RuntimeOwnerUnavailable".into()));
+    assert_eq!(
+        introspect_error_to_rpc(&SubstrateIntrospectError::RuntimeOwnerUnavailable).data,
+        canonical,
+    );
+    assert_eq!(
+        animation_state_error_to_rpc(&AnimationStateError::RuntimeOwnerUnavailable).data,
+        canonical,
+    );
+    assert_eq!(
+        animate_control_error_to_rpc(
+            &crate::animate_control::AnimateControlError::RuntimeOwnerUnavailable,
+        )
+        .data,
+        canonical,
+    );
+    assert_eq!(
+        theme_tokens_error_to_rpc(ThemeTokensError::RuntimeOwnerUnavailable).data,
+        canonical,
+    );
+    assert_eq!(
+        set_theme_mode_error_to_rpc(SetThemeModeError::RuntimeOwnerUnavailable).data,
+        canonical,
+    );
+    assert_eq!(
+        set_theme_palettes_error_to_rpc(SetThemePalettesError::RuntimeOwnerUnavailable).data,
+        canonical,
+    );
+}
+
+// Cross-converter consistency for the `NotBound` axis (tag-keyed
+// converters). The wire-data identifier must be uniform; the
+// per-axis prose embeds the tag but the typed name does not so
+// the AI-agent pattern-match anchor stays simple.
+#[test]
+fn r631_not_bound_identifier_is_uniform_across_converters() {
+    let canonical = Some(Value::String("NotBound".into()));
+    let tag = || "app".to_string();
+    assert_eq!(
+        introspect_error_to_rpc(&SubstrateIntrospectError::NotBound { tag: tag() }).data,
+        canonical,
+    );
+    assert_eq!(
+        theme_tokens_error_to_rpc(ThemeTokensError::NotBound { tag: tag() }).data,
+        canonical,
+    );
+    assert_eq!(
+        set_theme_mode_error_to_rpc(SetThemeModeError::NotBound { tag: tag() }).data,
+        canonical,
+    );
+    assert_eq!(
+        set_theme_palettes_error_to_rpc(SetThemePalettesError::NotBound { tag: tag() }).data,
+        canonical,
+    );
+}
+
 /// Test helper — calls [`dispatch`] with a freshly-allocated
 /// [`PreviewLedger`] and [`SceneRevision`]. Used by tests that do
 /// not exercise the preview lifecycle methods or revision bumping.

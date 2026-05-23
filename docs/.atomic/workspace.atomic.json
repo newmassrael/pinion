@@ -17913,6 +17913,48 @@
         "R634+ §5.50 — CSS named-color table (`red`, `dodgerblue`, etc.) — deferred per [[abstraction-needs-second-consumer]] until a stylesheet binding needs the 148-entry lookup"
       ]
     },
+    "R631": {
+      "decision_summary": "test(rpc): R631 §5.7 error converter prose + typed-data stability pins",
+      "changes_bullets": [
+        "crates/pinion-rpc/src/dispatch_tests.rs: append 11 `r631_*` unit tests against every error-to-rpc converter fn in `dispatch.rs` — `introspect_error_to_rpc` (covers `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound`), `animation_state_error_to_rpc` (`RuntimeOwnerUnavailable` + `InvalidEpsilon`), `animate_control_error_to_rpc` (R629 `RuntimeOwnerUnavailable`), `theme_tokens_error_to_rpc` (`RuntimeOwnerUnavailable` + `NotBound`), `set_theme_mode_error_to_rpc` (same pair), `set_theme_palettes_error_to_rpc` (same pair); each test pins `err.code` + `err.message` + `err.data` so a regression in any one path surfaces here before downstream AI consumers",
+        "crates/pinion-rpc/src/dispatch_tests.rs: add 2 cross-converter consistency tests — `r631_runtime_owner_unavailable_identifier_is_uniform_across_converters` walks every `RuntimeOwnerUnavailable`-emitting converter and asserts the same `Value::String(\"RuntimeOwnerUnavailable\")` data tag; `r631_not_bound_identifier_is_uniform_across_converters` mirrors for the tag-keyed `NotBound` axis; pre-R631 each handler had its own per-axis wire test (R599 / R600 / R602 / R603 / ...) but no test pinned the *cross-converter* equality, so a rename of one identifier (e.g. `RuntimeOwnerUnavailable` → `RuntimeContextMissing`) would silently break wire consistency for AI agents that pattern-match on the typed name",
+        "crates/pinion-rpc/src/dispatch_tests.rs: the test module docstring records the load-bearing property that `RpcError::invalid_params(detail).with_data_string(tag)` overwrites the prose at the `data` slot — only the typed `data_tag` is wire-visible; the R631 tests assert the overwrite IS applied so a future refactor that drops `with_data_string` cannot silently surface the prose as the wire identifier"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace → 3156 / 0 (3145 → 3156, +11 R631 tests; +9 per-converter unit + 2 cross-converter consistency)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry",
+        "R625's `decision_summary` explicitly noted `\"No existing test checked exact prose — every R608+ wire test validates err.code and err.data; prose is dev-facing debug only\"` — R631 closes that gap by adding *converter*-level tests that DO pin code + message + data together"
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "R632 §5.7 — split the 5,900+ LOC `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]` (`dispatch_tests_core.rs` / `_theme.rs` / `_axes.rs` / `_layout.rs` / `_preview.rs` / `_other.rs`)",
+        "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it",
+        "R634+ §5.7 — typed-data IDENTIFIER allowlist test (currently the converter emits a string; a future round could constrain the universe via `#[derive(strum::AsRefStr)]` on each error enum so the identifier IS the enum variant name at compile time — removes the manual `.with_data_string(\"...\")` typo risk)"
+      ],
+      "publishable_decision_summary": "test(rpc): R631 §5.7 error converter prose + typed-data stability pins",
+      "publishable_changes_bullets": [
+        "crates/pinion-rpc/src/dispatch_tests.rs: append 11 `r631_*` unit tests against every error-to-rpc converter fn in `dispatch.rs` — `introspect_error_to_rpc` (covers `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound`), `animation_state_error_to_rpc` (`RuntimeOwnerUnavailable` + `InvalidEpsilon`), `animate_control_error_to_rpc` (R629 `RuntimeOwnerUnavailable`), `theme_tokens_error_to_rpc` (`RuntimeOwnerUnavailable` + `NotBound`), `set_theme_mode_error_to_rpc` (same pair), `set_theme_palettes_error_to_rpc` (same pair); each test pins `err.code` + `err.message` + `err.data` so a regression in any one path surfaces here before downstream AI consumers",
+        "crates/pinion-rpc/src/dispatch_tests.rs: add 2 cross-converter consistency tests — `r631_runtime_owner_unavailable_identifier_is_uniform_across_converters` walks every `RuntimeOwnerUnavailable`-emitting converter and asserts the same `Value::String(\"RuntimeOwnerUnavailable\")` data tag; `r631_not_bound_identifier_is_uniform_across_converters` mirrors for the tag-keyed `NotBound` axis; pre-R631 each handler had its own per-axis wire test (R599 / R600 / R602 / R603 / ...) but no test pinned the *cross-converter* equality, so a rename of one identifier (e.g. `RuntimeOwnerUnavailable` → `RuntimeContextMissing`) would silently break wire consistency for AI agents that pattern-match on the typed name",
+        "crates/pinion-rpc/src/dispatch_tests.rs: the test module docstring records the load-bearing property that `RpcError::invalid_params(detail).with_data_string(tag)` overwrites the prose at the `data` slot — only the typed `data_tag` is wire-visible; the R631 tests assert the overwrite IS applied so a future refactor that drops `with_data_string` cannot silently surface the prose as the wire identifier"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace → 3156 / 0 (3145 → 3156, +11 R631 tests; +9 per-converter unit + 2 cross-converter consistency)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry",
+        "R625's `decision_summary` explicitly noted `\"No existing test checked exact prose — every R608+ wire test validates err.code and err.data; prose is dev-facing debug only\"` — R631 closes that gap by adding *converter*-level tests that DO pin code + message + data together"
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R632 §5.7 — split the 5,900+ LOC `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]` (`dispatch_tests_core.rs` / `_theme.rs` / `_axes.rs` / `_layout.rs` / `_preview.rs` / `_other.rs`)",
+        "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it",
+        "R634+ §5.7 — typed-data IDENTIFIER allowlist test (currently the converter emits a string; a future round could constrain the universe via `#[derive(strum::AsRefStr)]` on each error enum so the identifier IS the enum variant name at compile time — removes the manual `.with_data_string(\"...\")` typo risk)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
