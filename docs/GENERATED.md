@@ -11626,6 +11626,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R636 — feat(cli): R636 §5.7 pinion figma-fetch-image sub-command + Figma reference PNG verified
+
+**Changes**:
+- crates/pinion-cli/src/figma_image.rs: new module — `FigmaImageArgs` (file_key + node_id positional + `--output` required + `--scale` (default 1.0) + `--format` (default png)) and `run(&FigmaImageArgs)` that implements the documented two-leg Figma image fetch: (1) `GET /v1/images/:key?ids=:node&format=:format&scale=:scale` returns a per-node S3 URL map, (2) `GET <s3_url>` returns the actual binary PNG bytes; pre-signed URL needs no auth header
+- crates/pinion-cli/src/main.rs: register the new `figma-fetch-image` sub-command under the `Command` enum + dispatch in `main` next to the R634 `figma-verify` arm; `mod figma_image;` declared above the existing `mod figma_verify;`
+- Figma response error surfacing — the image-list endpoint reports per-call failures in a top-level `err` JSON field; the CLI propagates the message verbatim so a node-id typo or invisible-node error reaches the user with the exact Figma wording (vs being swallowed under a generic HTTP 200)
+- First real-world fetch — `cargo run -p pinion-cli --release -- figma-fetch-image qluPDRsuDuPM3deySb0ejR '51553:5180' --output /tmp/figma-btn-ref.png --scale 2` produced a 2946-byte 218×80 RGBA PNG (109×40 native size at scale=2); the image confirms the Material 3 Filled Button visual: fully-rounded purple pill, white `Button` label centered, white leading `+` Material Symbols icon — the trailing-icon slot exists but is empty in this particular variant rendering
+- Reference image inspection identified the first substrate-gap evidence: the Figma rendering includes a Material Symbols `+` glyph in the leading-icon slot that the R635 hand-write elided to a placeholder (Figma `INSTANCE` node referencing an external glyph component). The pinion-side rendering will visibly differ at the leading-icon position once R635 paint output is captured — first concrete design-parity gap landed in the audit queue
+
+
+
+**Verification**:
+- cargo build -p pinion-cli → clean
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean
+- End-to-end fetch → 218×80 RGBA PNG written to /tmp/figma-btn-ref.png; `file` reports `PNG image data, 218 x 80, 8-bit/color RGBA, non-interlaced` — exact size at scale=2 confirms the dimension contract (109×40 native × 2)
+- Visual inspection via Read tool surfaces the Material 3 Filled Button: rounded pill, M3 Primary color matching the #675AA4 spec, `Button` label, leading `+` glyph; consistent with the R634-extracted spec at node `51553:5180`
+- mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- R637 §5.7 — pinion-side screenshot capture: `cargo run --release -p figma-button-m3` (or a headless smoke harness) → `scene/screenshot` RPC PNG export at 109×40 native + 218×80 retina, then a pixel-diff against `/tmp/figma-btn-ref.png` with a similarity score; needs to handle the dimension match (pinion shell defaults to 320×160 canvas, the button sits inside — either crop pinion output to the button rect via `scene/bbox` lookup, or pad the Figma reference)
+- R637+ §5.7 substrate gap (FIRST EVIDENCE landed): Material Symbols icon glyph system. Figma renders the leading `+` from an external Material Symbols font; pinion has no icon-font substrate so the leading-icon slot is currently empty in the R635 binding. Three textbook-canonical options: (a) bundle a Material Symbols subset as a SVG path table, (b) treat Material Symbols as a regular `pinion-text` font and let parley shape the glyph by codepoint, (c) new `pinion-icons` crate with a typed `Icon` enum mapping name → SVG path data. (b) is the smallest delta to existing substrate; defer the architectural pick to R638 once a second Figma binding with icons evidences the same need (Cards / Chips / FABs all use Material Symbols)
+- R637+ §5.50 substrate gap: pixel-diff library choice — `image` + `imageproc` crates are the canonical Rust pair (image decodes PNG, imageproc has SSIM / per-channel diff). Alternative is to vendor a minimal `pixelmatch`-style algorithm so pinion-cli stays light. Decide once R637 lands the screenshot side
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

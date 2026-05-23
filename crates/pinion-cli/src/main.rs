@@ -16,6 +16,7 @@
 //! server — it consumes external services (Figma REST API)
 //! one-shot.
 
+mod figma_image;
 mod figma_verify;
 
 use clap::{Parser, Subcommand};
@@ -35,14 +36,23 @@ enum Command {
     /// R634 §5.7 — fetch a Figma file's node tree via the REST API
     /// and dump the JSON to stdout (or `--output` path). The
     /// starting point for the Figma → pinion design-parity loop;
-    /// R635 will add the JSON → `Scene` mapping pass.
+    /// R635 added the first hand-written `Scene` binding
+    /// (`examples/figma-button-m3`).
     FigmaVerify(figma_verify::FigmaVerifyArgs),
+
+    /// R636 §5.7 — export a Figma node as a reference PNG (or
+    /// SVG / JPG / PDF) so the pinion-side
+    /// [`scene/screenshot`](pinion_rpc::screenshot) can be
+    /// pixel-diffed against the Figma original. Two-leg fetch:
+    /// image-list endpoint → per-node S3 URL → PNG bytes.
+    FigmaFetchImage(figma_image::FigmaImageArgs),
 }
 
 fn main() {
     let cli = Cli::parse();
     let result = match &cli.command {
         Command::FigmaVerify(args) => figma_verify::run(args),
+        Command::FigmaFetchImage(args) => figma_image::run(args),
     };
     if let Err(err) = result {
         eprintln!("error: {err}");
