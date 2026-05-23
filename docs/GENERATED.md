@@ -11317,6 +11317,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R626 — dispatch.rs test body lifted to dispatch_tests.rs sibling via #[path] mod attr — file shrinks from 9719 LOC to 4085 LOC; navigation / search / incremental recompile latency improves
+
+**Changes**:
+- pinion-rpc/src/dispatch_tests.rs (new, 5,643 LOC) — verbatim move of the inline `#[cfg(test)] mod tests { ... }` body
+- pinion-rpc/src/dispatch.rs reduces from 9,719 LOC to 4,085 LOC (production code untouched)
+- #[cfg(test)] #[path = "dispatch_tests.rs"] mod tests; declaration replaces the inline body — module path stays `tests`, full private-item access via `use super::*` preserved
+- Indent-stripped (the 4-space inline indent removed) so the new file's top-level items have zero leading whitespace per Rust file convention
+- Future per-axis sub-split lands as additional #[path]'d sibling files; R626 is the first move that opens that door
+
+
+
+**Verification**:
+- cargo test --workspace: 3086 pass / 0 fail (R625 baseline preserved — path attr is a no-op at the type level)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- dispatch_tests.rs starts with `use super::*;` — same scope as the original inline form
+- All R602-R625 wire-integration suites still resolve and pass
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- 7-debt cascade complete — every R613-R626 round repaid one identified debt without introducing new fragility
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
