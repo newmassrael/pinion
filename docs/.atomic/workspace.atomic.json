@@ -18003,6 +18003,60 @@
         "R634+ §5.7 — the parent `dispatch_tests.rs` file could be renamed to `dispatch_tests/mod.rs` with each sibling moved into the new `dispatch_tests/` directory — modern Rust mod-as-directory idiom that avoids the `#[path]` attribute; deferred because the current single-directory layout works and the rename would create churn across multiple commits"
       ]
     },
+    "R633": {
+      "decision_summary": "refactor(core): R633 §5.7 §5.22 BindableCacheSlot lift to pinion-core::test_fixtures",
+      "changes_bullets": [
+        "crates/pinion-core/src/test_fixtures.rs: lift `pub trait BindableCacheSlot: Sized + 'static { fn use_in_scope(tag: &'static str) -> Rc<Self>; }` plus four widget impls (`ScrollState` / `TextEditState` / `ThemeProvider` / `CaretBlink`) into `pinion-core::test_fixtures`; the trait + impls sit under the same `test-fixtures` feature gate (`#[cfg(any(test, feature = \"test-fixtures\"))]`) that already gates the rest of the module per R51.127",
+        "crates/pinion-core/src/test_fixtures.rs: add `pub fn bind_cache_slot<S: BindableCacheSlot>(owner: &Owner, tag: &'static str) -> Rc<S>` helper with `#[must_use]` — wraps `S::use_in_scope(tag)` in `owner.run(...)` so per-axis test sites collapse to a single line",
+        "crates/pinion-rpc/Cargo.toml: append a `[dev-dependencies]` entry activating `pinion-core/test-fixtures` so the trait + impls reach the test build without polluting the production dependency surface (canonical Rust cross-crate test-fixture sharing per [[test-fixtures-feature-gate-pattern]])",
+        "crates/pinion-rpc/src/test_fixtures.rs: reduce the module to a single re-export shim — `pub(crate) use pinion_core::test_fixtures::bind_cache_slot as bind_state;` — keeping the pre-R633 call-site identifier (`crate::test_fixtures::bind_state::<S>(owner, tag)`) so every existing call site in `scroll_state.rs` / `text_state.rs` / `caret_state.rs` / `theme.rs` continues to compile without a rename; net file LOC drops from 96 → 36",
+        "Dep direction flip per the original R633 prompt: pre-R633 `pinion-rpc` defined the trait + impl'd for `pinion-core` widget types via the orphan-rule passport (downstream trait + upstream type — compiled but inverted dep direction). Post-R633 `pinion-core` defines the abstraction, `pinion-rpc` consumes via the dev-dep feature gate; the dep arrow now points only one way through the build graph"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace → 3156 / 0 (unchanged from R632 baseline; zero test deletion or addition)",
+        "cargo test -p pinion-rpc → 714 / 0 (every per-axis fixture site routes through the new pinion-core trait + helper)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced `clippy::must_use_candidate` on `bind_cache_slot`; fixed by adding `#[must_use]` matching the existing `pinion-core::test_fixtures::ButtonFixture::*` helpers)",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R627-R633 debt queue cleared — 7 textbook-canonical micro-rounds (3091 → 3156 pass, +65 net new tests; 1 monolith file split into 4; 6 inline allow blocks consolidated to 1 helper-level allow; 1 new RPC surface for animation control; 1 RPC entry-point name reached spec-canonical coverage); per the original prompt's 'functional axis 우선순위' the next round is a feature-axis pick: widget catalog (DropdownMenu / Dialog / Tooltip / Tabs / Accordion missing) or real-world demo app (TodoMVC / Markdown editor) or Tier 2 streaming axes (screenshot video / partial repaint subscription) or SCE upstream sync",
+        "R634+ §5.7 — the pre-R598 4,749 LOC tail of `dispatch_tests.rs` remains a single file; further sibling carving (query / focus / font / preview / layout / lifecycle) deferred per [[abstraction-needs-second-consumer]]",
+        "R634+ §5.7 — dispatch handler `HandlerKind::Mutate` vs `Read` selection is dev-judged at the match-arm site; a typed-return-signature refactor (~40 handlers) could move the compiler-checked invariant onto the return type itself; deferred per the original prompt's R634+ candidate list",
+        "R634+ §5.7 — `RpcError::invalid_params(detail).with_data_string(tag)` overwrites the detail prose at the `data` slot — R631 pinned this property in tests; a future round could refactor to a single `RpcError::invalid_params_typed(message, data_tag)` constructor that takes both fields cleanly",
+        "R634+ §5.50 — `oklch()` / `lab()` / `color()` (CSS Color 4 wide-gamut) parsers; deferred until pinion paints wide-gamut",
+        "R634+ §5.50 — CSS named-color table (`red`, `dodgerblue`, …) — deferred per [[abstraction-needs-second-consumer]] until a stylesheet binding needs the 148-entry lookup"
+      ],
+      "publishable_decision_summary": "refactor(core): R633 §5.7 §5.22 BindableCacheSlot lift to pinion-core::test_fixtures",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/test_fixtures.rs: lift `pub trait BindableCacheSlot: Sized + 'static { fn use_in_scope(tag: &'static str) -> Rc<Self>; }` plus four widget impls (`ScrollState` / `TextEditState` / `ThemeProvider` / `CaretBlink`) into `pinion-core::test_fixtures`; the trait + impls sit under the same `test-fixtures` feature gate (`#[cfg(any(test, feature = \"test-fixtures\"))]`) that already gates the rest of the module per R51.127",
+        "crates/pinion-core/src/test_fixtures.rs: add `pub fn bind_cache_slot<S: BindableCacheSlot>(owner: &Owner, tag: &'static str) -> Rc<S>` helper with `#[must_use]` — wraps `S::use_in_scope(tag)` in `owner.run(...)` so per-axis test sites collapse to a single line",
+        "crates/pinion-rpc/Cargo.toml: append a `[dev-dependencies]` entry activating `pinion-core/test-fixtures` so the trait + impls reach the test build without polluting the production dependency surface (canonical Rust cross-crate test-fixture sharing per [[test-fixtures-feature-gate-pattern]])",
+        "crates/pinion-rpc/src/test_fixtures.rs: reduce the module to a single re-export shim — `pub(crate) use pinion_core::test_fixtures::bind_cache_slot as bind_state;` — keeping the pre-R633 call-site identifier (`crate::test_fixtures::bind_state::<S>(owner, tag)`) so every existing call site in `scroll_state.rs` / `text_state.rs` / `caret_state.rs` / `theme.rs` continues to compile without a rename; net file LOC drops from 96 → 36",
+        "Dep direction flip per the original R633 prompt: pre-R633 `pinion-rpc` defined the trait + impl'd for `pinion-core` widget types via the orphan-rule passport (downstream trait + upstream type — compiled but inverted dep direction). Post-R633 `pinion-core` defines the abstraction, `pinion-rpc` consumes via the dev-dep feature gate; the dep arrow now points only one way through the build graph"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace → 3156 / 0 (unchanged from R632 baseline; zero test deletion or addition)",
+        "cargo test -p pinion-rpc → 714 / 0 (every per-axis fixture site routes through the new pinion-core trait + helper)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced `clippy::must_use_candidate` on `bind_cache_slot`; fixed by adding `#[must_use]` matching the existing `pinion-core::test_fixtures::ButtonFixture::*` helpers)",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R627-R633 debt queue cleared — 7 textbook-canonical micro-rounds (3091 → 3156 pass, +65 net new tests; 1 monolith file split into 4; 6 inline allow blocks consolidated to 1 helper-level allow; 1 new RPC surface for animation control; 1 RPC entry-point name reached spec-canonical coverage); per the original prompt's 'functional axis 우선순위' the next round is a feature-axis pick: widget catalog (DropdownMenu / Dialog / Tooltip / Tabs / Accordion missing) or real-world demo app (TodoMVC / Markdown editor) or Tier 2 streaming axes (screenshot video / partial repaint subscription) or SCE upstream sync",
+        "R634+ §5.7 — the pre-R598 4,749 LOC tail of `dispatch_tests.rs` remains a single file; further sibling carving (query / focus / font / preview / layout / lifecycle) deferred per [[abstraction-needs-second-consumer]]",
+        "R634+ §5.7 — dispatch handler `HandlerKind::Mutate` vs `Read` selection is dev-judged at the match-arm site; a typed-return-signature refactor (~40 handlers) could move the compiler-checked invariant onto the return type itself; deferred per the original prompt's R634+ candidate list",
+        "R634+ §5.7 — `RpcError::invalid_params(detail).with_data_string(tag)` overwrites the detail prose at the `data` slot — R631 pinned this property in tests; a future round could refactor to a single `RpcError::invalid_params_typed(message, data_tag)` constructor that takes both fields cleanly",
+        "R634+ §5.50 — `oklch()` / `lab()` / `color()` (CSS Color 4 wide-gamut) parsers; deferred until pinion paints wide-gamut",
+        "R634+ §5.50 — CSS named-color table (`red`, `dodgerblue`, …) — deferred per [[abstraction-needs-second-consumer]] until a stylesheet binding needs the 148-entry lookup"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

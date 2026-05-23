@@ -15,5 +15,12 @@ pinion-text-unicode = { path = "../pinion-text-unicode", version = "0.0.1" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+# R633 §5.7 §5.22 — activate `pinion-core::test_fixtures::BindableCacheSlot`
+# for the per-axis test sibling files. Cargo unifies the dep with
+# the regular `[dependencies]` entry above; the `test-fixtures`
+# feature is only active for test/bench builds, never in production.
+pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fixtures"] }
+
 [lints]
 workspace = true

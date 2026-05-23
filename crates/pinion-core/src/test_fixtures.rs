@@ -133,6 +133,85 @@ pub fn settle_owner_animations(owner: &Owner) {
     }
 }
 
+/// R633 §5.7 §5.22 — substrate-level trait that routes a
+/// `'static`-keyed cache binding through the appropriate per-widget
+/// `use_*` hook. Lives in `pinion-core` (forward dep direction) so
+/// `pinion-rpc` (and any other downstream crate that wires a per-tag
+/// cache-binding fixture) consumes the abstraction instead of
+/// defining it.
+///
+/// Pre-R633 the trait lived in `pinion-rpc::test_fixtures` and
+/// impl'd for the `pinion-core` widget types via the orphan-rule
+/// passport ("downstream trait + upstream type"). The arrangement
+/// compiled but inverted the canonical dep direction:
+/// `pinion-rpc` ↑ pinion-core via deps, yet `pinion-rpc`'s trait
+/// reached *down* into core types. R633 flips the trait + impls
+/// into `pinion-core::test_fixtures` (the `test-fixtures` feature
+/// gate established in R51.127 §5.41) and `pinion-rpc` re-exports
+/// or imports the trait by its substrate name.
+///
+/// Per the [[test-fixtures-feature-gate-pattern]] memory the
+/// canonical Rust pattern for cross-crate test fixtures is:
+///
+/// 1. trait + impls live in the upstream crate behind a
+///    `test-fixtures` (or `test-fixture`) feature
+/// 2. downstream `dev-dependencies` activate the feature
+/// 3. the trait + impls never reach a production binary
+///
+/// R633 lands all three: the trait is gated by `cfg(any(test,
+/// feature = \"test-fixtures\"))` (via the `pub mod test_fixtures`
+/// outer cfg in `lib.rs`); `pinion-rpc`'s `[dev-dependencies]`
+/// activates the feature; consumers reach the trait via
+/// `pinion_core::test_fixtures::BindableCacheSlot`.
+pub trait BindableCacheSlot: Sized + 'static {
+    /// Invoke the widget-specific `use_*` hook for `tag`. Must be
+    /// called inside an active [`Owner::run`] scope — the helper
+    /// fn [`bind_cache_slot`] wraps this contract so per-axis test
+    /// sites collapse to a single line.
+    fn use_in_scope(tag: &'static str) -> std::rc::Rc<Self>;
+}
+
+impl BindableCacheSlot for crate::widgets::scroll::ScrollState {
+    fn use_in_scope(tag: &'static str) -> std::rc::Rc<Self> {
+        crate::widgets::scroll::use_scroll_state(tag)
+    }
+}
+
+impl BindableCacheSlot for crate::widgets::text_edit::TextEditState {
+    fn use_in_scope(tag: &'static str) -> std::rc::Rc<Self> {
+        crate::widgets::text_edit::use_text_edit_state(tag)
+    }
+}
+
+impl BindableCacheSlot for crate::theme::ThemeProvider {
+    fn use_in_scope(tag: &'static str) -> std::rc::Rc<Self> {
+        crate::theme::use_theme(tag)
+    }
+}
+
+impl BindableCacheSlot for crate::widgets::caret_blink::CaretBlink {
+    fn use_in_scope(tag: &'static str) -> std::rc::Rc<Self> {
+        crate::widgets::caret_blink::use_caret_blink(tag)
+    }
+}
+
+/// R633 §5.7 §5.22 — bind a substrate-introspection state slot under
+/// `tag` on `owner`. Wraps [`BindableCacheSlot::use_in_scope`] in
+/// [`Owner::run`] so each per-axis test site collapses to a single
+/// line.
+///
+/// Generic over `S: BindableCacheSlot`. Call as
+/// `bind_cache_slot::<ScrollState>(&owner, "list")` (or
+/// `bind_cache_slot::<_>(&owner, "list")` when the return type is
+/// inferred from the binding's later use).
+#[must_use]
+pub fn bind_cache_slot<S: BindableCacheSlot>(
+    owner: &Owner,
+    tag: &'static str,
+) -> std::rc::Rc<S> {
+    owner.run(|| S::use_in_scope(tag))
+}
+
 /// Minimal Button binding for substrate-level tests.
 ///
 /// Carries a [`ButtonExternal`] so the SCXML statechart stays
