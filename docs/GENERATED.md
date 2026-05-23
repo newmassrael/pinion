@@ -17787,6 +17787,30 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 594 — hello-theme apply_key 의 "r"/"R" 단축키가 light+dark accent 를 M3 Blue/Green/Magenta seed 로 cycle (set_palettes 1st consumer).
+
+**Changes**:
+- hello-theme: PALETTE_SEED thread_local + palette_pair_for_seed + cycle_palette_pair helper
+- hello-theme: apply_key 가 focused 'r'/'R' 을 cycle_palette_pair 로 라우팅 (R593 1st consumer)
+- hello-theme: +2 회귀 (cycle order + focused-only key gate)
+
+
+
+**Verification**:
+- cargo test -p hello-theme: 5 pass 0 fail (3 prior + 2 R594)
+- cargo test --workspace --features pinion-runtime/vello: 2816 pass / 0 fail / 13 ignored (+2)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- seed-color UI (slider/picker M3 tonal generation) = 2nd consumer = helper crate 정당 trigger
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

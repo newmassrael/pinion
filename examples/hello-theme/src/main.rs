@@ -82,6 +82,73 @@ const THEME_TAG: &str = "app";
 /// `Scene::External` lookup.
 const TOGGLE_TAG: &str = "theme_toggle";
 
+// ────────────────────────────────────────────────────────────────────
+// R594 §5.50 — Material 3 dynamic-color palette pair cycle
+// ────────────────────────────────────────────────────────────────────
+//
+// First consumer of the R593 `ThemeProvider::set_palettes` atomic
+// batch primitive. Cycles the active light + dark palette pair
+// through three M3 accent tonal seeds (Blue / Green / Magenta) on
+// each "r" / "R" key activation. Both signals mutate inside a single
+// `batch`, so every downstream subscriber (this binding's view fn +
+// the at-rest snap path in `theme_animated`) re-runs at most once
+// per cycle.
+
+// Three accent-seed positions the demo cycles through. Mirrors the
+// Material 3 "Generate from key color" gallery — Blue is the
+// baseline (`Theme::light()` / `Theme::dark()` already ship with
+// it), Green + Magenta override only the `accent` field of each
+// palette while leaving every other role on the canonical Material 3
+// baseline.
+thread_local! {
+    static PALETTE_SEED: std::cell::Cell<u8> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Compose the light + dark palette pair for the given seed index.
+/// Seed `0` is the canonical Material 3 Blue baseline (unmodified).
+/// Seed `1` is Material Green 800 / 200, seed `2` is Material Pink
+/// 700 / 300 — both tonal pairs paired so the dark accent is lifted
+/// for legibility against `#121212`, mirroring the Blue baseline.
+fn palette_pair_for_seed(seed: u8) -> (Theme, Theme) {
+    let mut light = Theme::light();
+    let mut dark = Theme::dark();
+    match seed % 3 {
+        0 => {
+            // Blue baseline — no tweak; both palettes ship M3 Blue.
+        }
+        1 => {
+            light.accent = pinion_core::style::Color::rgb(0x2e, 0x7d, 0x32);
+            dark.accent = pinion_core::style::Color::rgb(0x81, 0xc7, 0x84);
+        }
+        _ => {
+            light.accent = pinion_core::style::Color::rgb(0xc2, 0x18, 0x5b);
+            dark.accent = pinion_core::style::Color::rgb(0xec, 0x40, 0x7a);
+        }
+    }
+    (light, dark)
+}
+
+/// Advance the seed by one, then drive the active provider through a
+/// single `set_palettes` call so both light + dark signals mutate in
+/// the same reactive batch.
+///
+/// **Owner contract**: must be called inside a scope where
+/// [`pinion_core::Owner::current()`] is `Some` — `apply_key` already
+/// runs inside the shell's `root_owner.run` wrap per
+/// [[callback-root-owner-wrap]], so the existing call site is safe.
+/// Tests exercise the helper directly inside an explicit
+/// `owner.run(|| {...})` to honor the same contract.
+fn cycle_palette_pair() {
+    let next = PALETTE_SEED.with(|c| {
+        let n = c.get().wrapping_add(1) % 3;
+        c.set(n);
+        n
+    });
+    let (light, dark) = palette_pair_for_seed(next);
+    use_theme(THEME_TAG).set_palettes(light, dark);
+}
+
 /// Fully-prefixed wire tag for the `Toggle` widget's `"toggle"`
 /// intent, built via `pinion_core::intent_tag!`. See that macro's
 /// doc-comment for the §5.20 R22 wire-form contract — here we just
@@ -326,12 +393,25 @@ impl WidgetCore for HelloThemeView {
     /// `apply_aria_activate`; an activation here flips the value
     /// sidecar, fires the `"toggle"` intent, and `update` then
     /// swaps the palette.
+    ///
+    /// (R594 §5.50) Extra shortcut `"r"` — first consumer of the
+    /// R593 [`ThemeProvider::set_palettes`] atomic batch primitive.
+    /// Cycles the light + dark palette pair through three M3 dynamic-
+    /// color seeds (Blue / Green / Magenta) so the demo can show how
+    /// a single user action atomically retones both sides without
+    /// driving the mode toggle. The active mode stays where the
+    /// Toggle put it; only the *palette pair* swaps. Pinned by
+    /// `r594_apply_key_r_cycles_palette_pair_through_set_palettes`.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
+        if matches!(key, "r" | "R") && focused == Some(Self::tag()) {
+            cycle_palette_pair();
+            return true;
+        }
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
@@ -520,6 +600,80 @@ mod tests {
     /// Pin both light and dark palettes so a regression that swaps
     /// the role back is caught at test time rather than visible
     /// inspection.
+    /// (R594 §5.50) `cycle_palette_pair` is the demo-side consumer of
+    /// the R593 atomic batch primitive — it must advance the
+    /// `PALETTE_SEED` *and* publish a fresh `(light, dark)` pair through
+    /// `ThemeProvider::set_palettes`. Pinning the cycle order here
+    /// guards against a future refactor that accidentally drops one
+    /// of the two signal writes (which would make `set_palettes` look
+    /// equivalent to `set_light_palette` to the test surface).
+    #[test]
+    fn r594_cycle_palette_pair_advances_seed_and_publishes_both_signals() {
+        // Reset the thread-local so a sibling test that ran earlier
+        // cannot smear the seed forward.
+        PALETTE_SEED.with(|c| c.set(0));
+        let owner = Owner::new();
+        owner.run(|| {
+            let provider = use_theme(THEME_TAG);
+            // Seed 0 -> seed 1: Green tonal pair.
+            cycle_palette_pair();
+            assert_eq!(provider.light_palette().accent,
+                pinion_core::style::Color::rgb(0x2e, 0x7d, 0x32),
+                "light accent advanced to Green");
+            assert_eq!(provider.dark_palette().accent,
+                pinion_core::style::Color::rgb(0x81, 0xc7, 0x84),
+                "dark accent advanced to Green (lifted tone)");
+            // Seed 1 -> seed 2: Magenta tonal pair.
+            cycle_palette_pair();
+            assert_eq!(provider.light_palette().accent,
+                pinion_core::style::Color::rgb(0xc2, 0x18, 0x5b));
+            assert_eq!(provider.dark_palette().accent,
+                pinion_core::style::Color::rgb(0xec, 0x40, 0x7a));
+            // Seed 2 -> seed 0: baseline Blue (Theme::light/dark defaults).
+            cycle_palette_pair();
+            assert_eq!(provider.light_palette().accent, Theme::light().accent);
+            assert_eq!(provider.dark_palette().accent, Theme::dark().accent);
+        });
+    }
+
+    /// (R594 §5.50) `apply_key` routes the demo-only `"r"` shortcut
+    /// to [`cycle_palette_pair`] when the toggle tag holds focus.
+    /// Together with the cycle-helper regression above, this pins the
+    /// end-to-end key->batch wiring without requiring the visual
+    /// shell loop to be running.
+    #[test]
+    fn r594_apply_key_r_cycles_palette_pair_when_toggle_focused() {
+        PALETTE_SEED.with(|c| c.set(0));
+        let owner = Owner::new();
+        owner.run(|| {
+            let provider = use_theme(THEME_TAG);
+            let mut scene = view(ToggleState::Idle, false, &Frame::new());
+            let consumed = <HelloThemeView as WidgetCore>::apply_key(
+                &mut scene,
+                Some(<HelloThemeView as WidgetCore>::tag()),
+                "r",
+                pinion_core::Modifiers::default(),
+            );
+            assert!(consumed, "apply_key returns true for the 'r' shortcut");
+            // Cycle landed: light accent moved off Blue.
+            assert_ne!(provider.light_palette().accent, Theme::light().accent);
+            // Unfocused 'r' must NOT consume — guards against
+            // background-tab key leaks. Reset seed before re-firing
+            // so the un-focus check exercises the gate, not state.
+            PALETTE_SEED.with(|c| c.set(0));
+            provider.set_palettes(Theme::light(), Theme::dark());
+            let consumed_blurred = <HelloThemeView as WidgetCore>::apply_key(
+                &mut scene,
+                None,
+                "r",
+                pinion_core::Modifiers::default(),
+            );
+            assert!(!consumed_blurred, "blurred 'r' must not consume");
+            assert_eq!(provider.light_palette().accent, Theme::light().accent,
+                "blurred 'r' must not mutate the palette");
+        });
+    }
+
     #[test]
     fn r57_x_theme_cleanup_track_off_uses_surface_container_highest() {
         // R586 §5.50: same settle structure as the surface-swap test
