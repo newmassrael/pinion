@@ -184,91 +184,67 @@ impl Color {
     /// modern space-separated syntax (`rgb(255 0 0)`), and any other
     /// CSS form (`hsl()`, `oklch()`, `lab()`).
     ///
+    /// # Supported syntax (R630)
+    ///
+    /// - **Legacy comma form** (`rgb(R, G, B)` / `rgba(R, G, B, A)`)
+    /// - **Modern space form** (`rgb(R G B)` / `rgb(R G B / A)`) —
+    ///   W3C CSS Color 4 §8.1 Recommended; the `/` separator
+    ///   introduces an optional alpha (`<number>` 0-1 or
+    ///   `<percentage>` 0%-100%).
+    ///
+    /// Channels are homogeneous within a single call — all three of
+    /// R/G/B must be `<number>` (0-255 integer) or all three must be
+    /// `<percentage>` (0%-100%); mixing is rejected per the spec.
+    ///
     /// # Deferred forms
     ///
-    /// - **Modern space-separated syntax** (`rgb(R G B)` /
-    ///   `rgb(R G B / A)`): deferred to a future round when a CSS
-    ///   modern-form consumer appears. The legacy comma form covers
-    ///   the bulk of practical hand-authored CSS today (W3C still
-    ///   lists both as Recommended).
-    /// - **`hsl()` / `hsla()`**: needs the HSL→sRGB conversion math;
-    ///   deferred per [[abstraction-needs-second-consumer]] until a
-    ///   stylesheet binding requires the cylindrical form.
     /// - **`oklch()` / `lab()` / `color()`** (Level 4 modern):
     ///   wider color-gamut handling — deferred until pinion paints
     ///   wide-gamut.
     #[must_use]
     pub fn from_rgb_function(input: &str) -> Option<Self> {
         let trimmed = input.trim();
-        // Strip prefix `rgb(` or `rgba(`, suffix `)`.
-        let (with_alpha, body) = if let Some(b) = trimmed.strip_prefix("rgba(") {
-            (true, b)
-        } else if let Some(b) = trimmed.strip_prefix("rgb(") {
-            (false, b)
-        } else {
-            return None;
-        };
+        // Strip prefix `rgb(` or `rgba(`, suffix `)`. The `rgba(...)`
+        // variant in modern syntax is identical to `rgb(...)` —
+        // both accept the same set of forms; the `a` suffix is a
+        // legacy artifact retained for backward compat.
+        let body = trimmed
+            .strip_prefix("rgba(")
+            .or_else(|| trimmed.strip_prefix("rgb("))?;
         let body = body.strip_suffix(')')?.trim();
-        // Comma-separated parts.
-        let parts: Vec<&str> = body.split(',').map(str::trim).collect();
-        let expected_len = if with_alpha { 4 } else { 3 };
-        if parts.len() != expected_len {
-            return None;
-        }
-        // Detect whether channels are percentage or integer (must be
-        // homogeneous within the call). All three must agree.
-        let is_percent = parts[0].ends_with('%');
-        for &p in &parts[..3] {
-            if p.ends_with('%') != is_percent {
-                return None;
-            }
-        }
-        let parse_channel = |s: &str| -> Option<u8> {
-            if is_percent {
-                let n: f32 = s.trim_end_matches('%').trim().parse().ok()?;
-                if !(0.0..=100.0).contains(&n) {
-                    return None;
-                }
-                Some(quantize_unit_byte(n * 2.55))
-            } else {
-                let n: i32 = s.parse().ok()?;
-                if !(0..=255).contains(&n) {
-                    return None;
-                }
-                u8::try_from(n).ok()
-            }
-        };
-        let red = parse_channel(parts[0])?;
-        let green = parse_channel(parts[1])?;
-        let blue = parse_channel(parts[2])?;
-        let alpha = if with_alpha {
-            let a: f32 = parts[3].parse().ok()?;
-            if !(0.0..=1.0).contains(&a) {
-                return None;
-            }
-            quantize_unit_byte(a * 255.0)
+        // R630 §5.50 — comma absence selects modern space form;
+        // presence selects legacy comma form. The two forms have
+        // distinct parse trees (comma list with positional alpha vs.
+        // whitespace list with `/`-separated alpha) so the dispatch
+        // happens here.
+        if body.contains(',') {
+            parse_rgb_legacy_body(body)
         } else {
-            0xff
-        };
-        Some(Self::rgba(red, green, blue, alpha))
+            parse_rgb_modern_body(body)
+        }
+        .map(|(r, g, b, a)| Self::rgba(r, g, b, a))
     }
 
     /// R624 §5.50 — single entry-point that accepts any supported
     /// CSS Color Module Level 4 string form and dispatches to the
     /// appropriate parser.
     ///
-    /// Current support matrix:
+    /// Current support matrix (R630):
     ///
     /// - `#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa` (via
     ///   [`Self::from_hex`])
     /// - `rgb(r, g, b)` / `rgba(r, g, b, a)` legacy comma form (via
     ///   [`Self::from_rgb_function`])
+    /// - `rgb(r g b)` / `rgb(r g b / a)` modern space form (also via
+    ///   [`Self::from_rgb_function`])
+    /// - `hsl(h s% l%)` / `hsl(h s% l% / a)` modern space form +
+    ///   `hsl(h, s%, l%)` / `hsla(h, s%, l%, a)` legacy comma form
+    ///   (via [`Self::from_hsl_function`])
     ///
-    /// Deferred per [[abstraction-needs-second-consumer]]: modern
-    /// space-separated `rgb(...)` syntax, `hsl()` / `hsla()`,
-    /// `oklch()` / `lab()` / `color()`. Each parser will land as a
-    /// sibling `from_X_function` next to `from_rgb_function` and
-    /// the dispatcher below will pick it up.
+    /// Deferred: `oklch()` / `lab()` / `color()` (Level 4
+    /// wide-gamut). Each future parser lands as a sibling
+    /// `from_X_function` next to [`Self::from_hsl_function`] and the
+    /// dispatcher below picks it up.
     ///
     /// Use this when the input source is arbitrary CSS-string user
     /// content (theme JSON, stylesheet binding) and the caller does
@@ -281,9 +257,94 @@ impl Color {
             Self::from_hex(trimmed)
         } else if trimmed.starts_with("rgb(") || trimmed.starts_with("rgba(") {
             Self::from_rgb_function(trimmed)
+        } else if trimmed.starts_with("hsl(") || trimmed.starts_with("hsla(") {
+            Self::from_hsl_function(trimmed)
         } else {
             None
         }
+    }
+
+    /// R630 §5.50 — parse a CSS Color Module Level 4 `hsl(...)` or
+    /// `hsla(...)` function string. Accepts both modern space form
+    /// (`hsl(H S% L%)` / `hsl(H S% L% / A)`) and legacy comma form
+    /// (`hsl(H, S%, L%)` / `hsla(H, S%, L%, A)`); the `hsla()`
+    /// variant is identical to `hsl()` in modern syntax — both
+    /// accept the same set of forms (the `a` suffix is a legacy
+    /// artifact retained for backward compat).
+    ///
+    /// # Channel semantics
+    ///
+    /// - **`H`** (hue): `<number>` (degrees) optionally followed by
+    ///   the unit `deg` / `rad` / `turn` / `grad` per CSS Values 4.
+    ///   Wraps to `[0, 360)` so `hsl(720 100% 50%)` is identical to
+    ///   `hsl(0 100% 50%)`.
+    /// - **`S`** (saturation), **`L`** (lightness): `<percentage>`
+    ///   only (the `%` suffix is mandatory per the spec; bare
+    ///   numbers are rejected). Clamped to `[0%, 100%]`.
+    /// - **`A`** (alpha, optional): `<number>` (0-1) or
+    ///   `<percentage>` (0%-100%). Defaults to fully opaque when
+    ///   omitted.
+    ///
+    /// # HSL → sRGB
+    ///
+    /// Uses the canonical W3C piecewise conversion: at lightness
+    /// extremes (`L = 0` or `L = 1`) the output is grayscale
+    /// independently of `H`/`S`; at `S = 0` the output is `L`
+    /// repeated across all three channels (achromatic). The result
+    /// is gamma-encoded sRGB — pinion's internal storage form —
+    /// which round-trips through [`Self::to_hex`] without further
+    /// conversion.
+    ///
+    /// Returns `None` if the input is malformed, channels are out
+    /// of range, or the hue unit is not one of the canonical four.
+    #[must_use]
+    #[allow(
+        clippy::many_single_char_names,
+        reason = "CSS Color 4 §6.2 canonical HSL→sRGB variable names \
+                  (h / s / l / r / g / b) mirror the W3C algorithm"
+    )]
+    pub fn from_hsl_function(input: &str) -> Option<Self> {
+        let trimmed = input.trim();
+        // Strip prefix `hsl(` or `hsla(`, suffix `)`. The `hsla(...)`
+        // variant in modern syntax is identical to `hsl(...)`; the
+        // `a` suffix is a legacy artifact retained for backward
+        // compat (mirrors the rgba/rgb relationship in R630).
+        let body = trimmed
+            .strip_prefix("hsla(")
+            .or_else(|| trimmed.strip_prefix("hsl("))?;
+        let body = body.strip_suffix(')')?.trim();
+        let (h_str, s_str, l_str, a_str) = if body.contains(',') {
+            // Legacy comma form: 3 or 4 comma-separated channels.
+            let parts: Vec<&str> = body.split(',').map(str::trim).collect();
+            match parts.len() {
+                3 => (parts[0], parts[1], parts[2], None),
+                4 => (parts[0], parts[1], parts[2], Some(parts[3])),
+                _ => return None,
+            }
+        } else {
+            // Modern space form: `H S% L% [/ A]`.
+            let mut split = body.splitn(2, '/');
+            let main = split.next()?.trim();
+            let alpha_part = split.next().map(str::trim);
+            let parts: Vec<&str> = main.split_whitespace().collect();
+            if parts.len() != 3 {
+                return None;
+            }
+            (parts[0], parts[1], parts[2], alpha_part)
+        };
+        // CSS Color 4 §6.2 canonical short names `h`/`s`/`l`/`r`/`g`/`b`
+        // mirror the W3C algorithm letter-for-letter — the function
+        // attribute above suppresses `clippy::many_single_char_names`
+        // for this scope.
+        let h = parse_hue(h_str)?;
+        let s = parse_unit_percentage(s_str)?;
+        let l = parse_unit_percentage(l_str)?;
+        let alpha = match a_str {
+            None => 0xff,
+            Some(a) => parse_modern_alpha(a)?,
+        };
+        let (r, g, b) = hsl_to_srgb_bytes(h, s, l);
+        Some(Self::rgba(r, g, b, alpha))
     }
 
     /// R615 §5.50 — encode as a CSS Color Module Level 4 hex literal.
@@ -480,6 +541,217 @@ pub fn scale_normalized_to_px(value: f32, total: u32) -> u32 {
 )]
 fn quantize_unit_byte(scaled: f32) -> u8 {
     scaled.clamp(0.0, 255.0).round() as u8
+}
+
+/// R630 §5.50 — parse the body of a legacy comma-form
+/// `rgb(R, G, B)` / `rgba(R, G, B, A)` call. Channels homogeneous
+/// (all `<percentage>` or all `<number>`); alpha is positional
+/// (4th comma slot), a `<number>` in `[0.0, 1.0]`.
+///
+/// Pre-R630 this body lived inline in [`Color::from_rgb_function`];
+/// R630 splits it out so the dispatcher can choose between legacy
+/// (comma) and modern (space + `/` alpha) parse trees without
+/// nesting `if let` chains in the entry point.
+fn parse_rgb_legacy_body(body: &str) -> Option<(u8, u8, u8, u8)> {
+    let parts: Vec<&str> = body.split(',').map(str::trim).collect();
+    let with_alpha = match parts.len() {
+        3 => false,
+        4 => true,
+        _ => return None,
+    };
+    let (red, green, blue) = parse_rgb_channel_triplet(&parts[..3])?;
+    let alpha = if with_alpha {
+        let a: f32 = parts[3].parse().ok()?;
+        if !(0.0..=1.0).contains(&a) {
+            return None;
+        }
+        quantize_unit_byte(a * 255.0)
+    } else {
+        0xff
+    };
+    Some((red, green, blue, alpha))
+}
+
+/// R630 §5.50 — parse the body of a modern space-form
+/// `rgb(R G B)` / `rgb(R G B / A)` call. Channels homogeneous
+/// (all `<percentage>` or all `<number>`); alpha is introduced by a
+/// `/` separator (W3C CSS Color 4 §8.1) and may be either a
+/// `<number>` (0-1) or a `<percentage>` (0%-100%).
+///
+/// Modern syntax permits one or more whitespace runs between any
+/// two channels (`rgb(255  0   0)`); the `split_whitespace`
+/// tokeniser is the spec-canonical lex for this form.
+fn parse_rgb_modern_body(body: &str) -> Option<(u8, u8, u8, u8)> {
+    // Split on `/` to separate the optional alpha tail.
+    let mut split = body.splitn(2, '/');
+    let main = split.next()?.trim();
+    let alpha_part = split.next().map(str::trim);
+    let channels: Vec<&str> = main.split_whitespace().collect();
+    if channels.len() != 3 {
+        return None;
+    }
+    let (red, green, blue) = parse_rgb_channel_triplet(&channels)?;
+    let alpha = match alpha_part {
+        None => 0xff,
+        Some(a) => parse_modern_alpha(a)?,
+    };
+    Some((red, green, blue, alpha))
+}
+
+/// R630 §5.50 — common RGB-channel triplet parse. Rejects mixed
+/// `<percentage>` + `<number>` triplets per spec; defers to
+/// [`quantize_unit_byte`] for the percent → u8 conversion and to
+/// `u8::try_from` for the integer path (no `as`-cast lossy
+/// truncation).
+fn parse_rgb_channel_triplet(parts: &[&str]) -> Option<(u8, u8, u8)> {
+    if parts.len() != 3 {
+        return None;
+    }
+    let is_percent = parts[0].ends_with('%');
+    for &p in parts {
+        if p.ends_with('%') != is_percent {
+            return None;
+        }
+    }
+    let parse_channel = |s: &str| -> Option<u8> {
+        if is_percent {
+            let n: f32 = s.trim_end_matches('%').trim().parse().ok()?;
+            if !(0.0..=100.0).contains(&n) {
+                return None;
+            }
+            Some(quantize_unit_byte(n * 2.55))
+        } else {
+            let n: i32 = s.parse().ok()?;
+            if !(0..=255).contains(&n) {
+                return None;
+            }
+            u8::try_from(n).ok()
+        }
+    };
+    Some((
+        parse_channel(parts[0])?,
+        parse_channel(parts[1])?,
+        parse_channel(parts[2])?,
+    ))
+}
+
+/// R630 §5.50 — parse the alpha tail of a modern `rgb(...)` /
+/// `hsl(...)` call. Accepts either a bare `<number>` in `[0.0, 1.0]`
+/// or a `<percentage>` in `[0%, 100%]`. Returns the quantized `u8`
+/// alpha byte.
+fn parse_modern_alpha(s: &str) -> Option<u8> {
+    if let Some(pct) = s.strip_suffix('%') {
+        let n: f32 = pct.trim().parse().ok()?;
+        if !(0.0..=100.0).contains(&n) {
+            return None;
+        }
+        Some(quantize_unit_byte(n * 2.55))
+    } else {
+        let n: f32 = s.parse().ok()?;
+        if !(0.0..=1.0).contains(&n) {
+            return None;
+        }
+        Some(quantize_unit_byte(n * 255.0))
+    }
+}
+
+/// R630 §5.50 — parse a CSS `<angle>` (degrees by default, with
+/// optional `deg` / `rad` / `turn` / `grad` units per CSS Values 4)
+/// into a hue degree in `[0, 360)`. Wraps multi-turn inputs
+/// (`hsl(720 100% 50%)` ≡ `hsl(0 100% 50%)`) using
+/// [`f32::rem_euclid`] so negative angles also wrap to the positive
+/// canonical range.
+fn parse_hue(s: &str) -> Option<f32> {
+    let trimmed = s.trim();
+    // R630 strip-suffix order matters: `grad` ends with `rad`, so
+    // the longer-suffix `grad` and `turn` arms must run before
+    // `rad` to avoid a false-positive match (`"100grad"` →
+    // strip "rad" → `"100g"` → parse fail). Same idea for any
+    // future multi-letter suffix that contains a shorter one.
+    let (value_str, factor) = if let Some(v) = trimmed.strip_suffix("grad") {
+        (v, 360.0 / 400.0)
+    } else if let Some(v) = trimmed.strip_suffix("turn") {
+        (v, 360.0_f32)
+    } else if let Some(v) = trimmed.strip_suffix("deg") {
+        (v, 1.0)
+    } else if let Some(v) = trimmed.strip_suffix("rad") {
+        (v, 360.0 / std::f32::consts::TAU)
+    } else {
+        // Unitless hue — only accept if the trimmed string parses
+        // as a bare number. Anything trailing (e.g. `100rev`) must
+        // be rejected per the spec; the parse below covers this.
+        (trimmed, 1.0)
+    };
+    let value: f32 = value_str.trim().parse().ok()?;
+    if !value.is_finite() {
+        return None;
+    }
+    let degrees = value * factor;
+    Some(degrees.rem_euclid(360.0))
+}
+
+/// R630 §5.50 — parse a CSS `<percentage>` literal (`12.5%`) into
+/// a clamped `f32` in `[0.0, 1.0]`. Rejects bare numbers (the `%`
+/// suffix is mandatory for HSL saturation / lightness per spec).
+fn parse_unit_percentage(s: &str) -> Option<f32> {
+    let pct = s.strip_suffix('%')?;
+    let n: f32 = pct.trim().parse().ok()?;
+    if !(0.0..=100.0).contains(&n) {
+        return None;
+    }
+    Some(n / 100.0)
+}
+
+/// R630 §5.50 — canonical W3C HSL → sRGB conversion (CSS Color 4
+/// §6.2). `h` is a degree value in `[0, 360)`; `s` and `l` are unit
+/// fractions in `[0, 1]`. Returns three gamma-encoded sRGB bytes
+/// (pinion's internal storage form).
+///
+/// Achromatic short-circuit: `s == 0` returns `(l, l, l)` directly.
+/// Lightness extremes return grayscale independently of hue.
+#[allow(
+    clippy::many_single_char_names,
+    clippy::float_cmp,
+    reason = "CSS Color 4 §6.2 canonical HSL→sRGB variable names; \
+              s == 0.0 short-circuit matches spec achromatic case"
+)]
+fn hsl_to_srgb_bytes(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    if s == 0.0 {
+        let g = quantize_unit_byte(l * 255.0);
+        return (g, g, g);
+    }
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let h_norm = h / 360.0;
+    let r = hue_to_rgb(p, q, h_norm + 1.0 / 3.0);
+    let g = hue_to_rgb(p, q, h_norm);
+    let b = hue_to_rgb(p, q, h_norm - 1.0 / 3.0);
+    (
+        quantize_unit_byte(r * 255.0),
+        quantize_unit_byte(g * 255.0),
+        quantize_unit_byte(b * 255.0),
+    )
+}
+
+/// R630 §5.50 — W3C HSL → sRGB hue-segment piecewise helper
+/// (CSS Color 4 §6.2). `t` is a unit-circle position; the three
+/// `hue_to_rgb` calls in [`hsl_to_srgb_bytes`] each shift `t` by
+/// ±1/3 to project the per-channel ramp.
+#[allow(
+    clippy::many_single_char_names,
+    reason = "CSS Color 4 §6.2 canonical hue-segment variable names"
+)]
+fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {
+    let t = t.rem_euclid(1.0);
+    if t < 1.0 / 6.0 {
+        p + (q - p) * 6.0 * t
+    } else if t < 0.5 {
+        q
+    } else if t < 2.0 / 3.0 {
+        p + (q - p) * (2.0 / 3.0 - t) * 6.0
+    } else {
+        p
+    }
 }
 
 /// sRGB inverse-EOTF: linear-light `f32` → 8-bit channel with clamp.
@@ -1804,9 +2076,16 @@ mod tests {
     }
 
     #[test]
-    fn r624_from_rgb_function_rejects_modern_space_separated() {
-        // Modern syntax `rgb(255 0 0)` is deferred.
-        assert_eq!(Color::from_rgb_function("rgb(255 0 0)"), None);
+    fn r624_from_rgb_function_rejects_mixed_separator_within_legacy_form() {
+        // R624 pre-R630 pinned the legacy comma form; R630 added the
+        // modern space form. The two parse trees do not mix — a body
+        // that contains a comma routes to the legacy parser and a
+        // body without comma routes to the modern parser. A
+        // half-comma-half-space body is rejected by both because
+        // each parser checks arity on its own tokeniser
+        // (`split(',')` vs `split_whitespace`).
+        assert_eq!(Color::from_rgb_function("rgb(255, 0 0)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(255 0, 0)"), None);
     }
 
     #[test]
@@ -1842,9 +2121,31 @@ mod tests {
 
     #[test]
     fn r624_from_rgb_function_rejects_wrong_arity() {
+        // R630 §5.50 — `rgb()` and `rgba()` are synonyms per CSS
+        // Color 4: both accept 3- or 4-channel legacy comma forms
+        // (and the same modern space forms). Arity outside `[3, 4]`
+        // is the only legacy reject left.
         assert_eq!(Color::from_rgb_function("rgb(255, 0)"), None);
-        assert_eq!(Color::from_rgb_function("rgb(255, 0, 0, 0)"), None);
-        assert_eq!(Color::from_rgb_function("rgba(255, 0, 0)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(255, 0, 0, 0, 0)"), None);
+        assert_eq!(Color::from_rgb_function("rgba(255, 0)"), None);
+    }
+
+    #[test]
+    fn r630_from_rgb_function_accepts_rgba_synonym_with_3_channels() {
+        // CSS Color 4 §8.1: `rgba()` is a synonym for `rgb()`.
+        // Both accept the 3-channel form (alpha defaults to opaque).
+        assert_eq!(
+            Color::from_rgb_function("rgba(255, 0, 0)"),
+            Some(Color::rgba(0xff, 0x00, 0x00, 0xff)),
+        );
+    }
+
+    #[test]
+    fn r630_from_rgb_function_accepts_rgb_synonym_with_4_channels() {
+        // CSS Color 4 §8.1: `rgb()` accepts a 4th alpha channel.
+        let c = Color::from_rgb_function("rgb(255, 0, 0, 0)").unwrap();
+        assert_eq!(c.r, 0xff);
+        assert_eq!(c.a, 0x00);
     }
 
     #[test]
@@ -1894,11 +2195,245 @@ mod tests {
 
     #[test]
     fn r624_from_css_string_rejects_unsupported_forms() {
-        // Deferred per docs: hsl / oklch / lab / named-color / etc.
-        assert_eq!(Color::from_css_string("hsl(0, 100%, 50%)"), None);
+        // R624 + R630 cover #hex / rgb / rgba / hsl / hsla. The
+        // remaining deferred forms (oklch / lab / color / named) are
+        // still rejected.
         assert_eq!(Color::from_css_string("oklch(50% 0.5 0)"), None);
         assert_eq!(Color::from_css_string("red"), None);
         assert_eq!(Color::from_css_string(""), None);
+    }
+
+    // R630 §5.50 — modern CSS Color 4 syntax tests.
+    //
+    // - `rgb(R G B)` / `rgb(R G B / A)` space-form
+    // - `rgb(R G B / 50%)` percent alpha
+    // - `hsl(H S% L%)` / `hsl(H S% L% / A)` space + comma forms
+    // - hue units (deg / rad / turn / grad), achromatic short-circuit
+    // - wrap-around hue, lightness extremes, mixed-separator reject
+
+    #[test]
+    fn r630_from_rgb_function_accepts_modern_integer_triplet() {
+        assert_eq!(
+            Color::from_rgb_function("rgb(255 0 0)"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r630_from_rgb_function_accepts_modern_percentage_triplet() {
+        assert_eq!(
+            Color::from_rgb_function("rgb(100% 0% 0%)"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r630_from_rgb_function_accepts_modern_alpha_slash_number() {
+        let c = Color::from_rgb_function("rgb(255 0 0 / 0.5)").unwrap();
+        assert_eq!(c.r, 0xff);
+        assert_eq!(c.g, 0x00);
+        assert_eq!(c.b, 0x00);
+        assert!((i16::from(c.a) - 128).abs() <= 1, "alpha 0.5 ≈ 128; got {}", c.a);
+    }
+
+    #[test]
+    fn r630_from_rgb_function_accepts_modern_alpha_slash_percent() {
+        let c = Color::from_rgb_function("rgb(255 0 0 / 50%)").unwrap();
+        assert!((i16::from(c.a) - 128).abs() <= 1, "alpha 50% ≈ 128; got {}", c.a);
+    }
+
+    #[test]
+    fn r630_from_rgb_function_tolerates_multiple_whitespace_runs() {
+        assert_eq!(
+            Color::from_rgb_function("rgb(  255   0    0  )"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r630_from_rgb_function_rejects_modern_with_wrong_arity() {
+        assert_eq!(Color::from_rgb_function("rgb(255 0)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(255 0 0 0)"), None);
+    }
+
+    #[test]
+    fn r630_from_rgb_function_rejects_modern_alpha_out_of_range() {
+        assert_eq!(Color::from_rgb_function("rgb(255 0 0 / 1.5)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(255 0 0 / -0.1)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(255 0 0 / 101%)"), None);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_pure_red() {
+        // hsl(0, 100%, 50%) = pure red.
+        assert_eq!(
+            Color::from_hsl_function("hsl(0, 100%, 50%)"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_pure_green() {
+        assert_eq!(
+            Color::from_hsl_function("hsl(120, 100%, 50%)"),
+            Some(Color::rgb(0x00, 0xff, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_pure_blue() {
+        assert_eq!(
+            Color::from_hsl_function("hsl(240, 100%, 50%)"),
+            Some(Color::rgb(0x00, 0x00, 0xff)),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_modern_space_form() {
+        // Modern syntax without commas.
+        assert_eq!(
+            Color::from_hsl_function("hsl(0 100% 50%)"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_alpha_slash() {
+        let c = Color::from_hsl_function("hsl(0 100% 50% / 0.5)").unwrap();
+        assert_eq!(c.r, 0xff);
+        assert!((i16::from(c.a) - 128).abs() <= 1);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_hsla_legacy_alpha_position() {
+        let c = Color::from_hsl_function("hsla(0, 100%, 50%, 0.5)").unwrap();
+        assert_eq!(c.r, 0xff);
+        assert!((i16::from(c.a) - 128).abs() <= 1);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_achromatic_zero_saturation() {
+        // s = 0 → grayscale at lightness L.
+        assert_eq!(
+            Color::from_hsl_function("hsl(0 0% 50%)"),
+            Some(Color::rgb(0x80, 0x80, 0x80)),
+        );
+        assert_eq!(
+            Color::from_hsl_function("hsl(180 0% 25%)"),
+            Some(Color::rgb(0x40, 0x40, 0x40)),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_lightness_extremes_are_grayscale() {
+        assert_eq!(
+            Color::from_hsl_function("hsl(0 100% 0%)"),
+            Some(Color::rgb(0x00, 0x00, 0x00)),
+        );
+        assert_eq!(
+            Color::from_hsl_function("hsl(0 100% 100%)"),
+            Some(Color::rgb(0xff, 0xff, 0xff)),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_hue_wraps_modulo_360() {
+        // 720° is two full turns; equivalent to 0°.
+        assert_eq!(
+            Color::from_hsl_function("hsl(720 100% 50%)"),
+            Color::from_hsl_function("hsl(0 100% 50%)"),
+        );
+        // Negative hue wraps to positive via rem_euclid.
+        assert_eq!(
+            Color::from_hsl_function("hsl(-360 100% 50%)"),
+            Color::from_hsl_function("hsl(0 100% 50%)"),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_accepts_explicit_deg_unit() {
+        assert_eq!(
+            Color::from_hsl_function("hsl(120deg 100% 50%)"),
+            Some(Color::rgb(0x00, 0xff, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_accepts_turn_unit() {
+        // 0.5 turn = 180° = cyan.
+        assert_eq!(
+            Color::from_hsl_function("hsl(0.5turn 100% 50%)"),
+            Some(Color::rgb(0x00, 0xff, 0xff)),
+        );
+    }
+
+    #[test]
+    fn r630_from_hsl_function_accepts_grad_unit() {
+        // 100 grad = 90° = chartreuse-ish (yellow-green).
+        let c = Color::from_hsl_function("hsl(100grad 100% 50%)").unwrap();
+        let expected = Color::from_hsl_function("hsl(90 100% 50%)").unwrap();
+        assert_eq!(c, expected);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_accepts_rad_unit() {
+        use std::f32::consts::PI;
+        let c = Color::from_hsl_function(&format!("hsl({PI}rad 100% 50%)")).unwrap();
+        let expected = Color::from_hsl_function("hsl(180 100% 50%)").unwrap();
+        assert_eq!(c, expected);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_rejects_unknown_hue_unit() {
+        // `rev` is not a CSS Values 4 angle unit.
+        assert_eq!(Color::from_hsl_function("hsl(180rev 100% 50%)"), None);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_rejects_bare_saturation_or_lightness() {
+        // S / L MUST carry the `%` suffix per CSS Color 4.
+        assert_eq!(Color::from_hsl_function("hsl(0 1 0.5)"), None);
+        assert_eq!(Color::from_hsl_function("hsl(0 100% 0.5)"), None);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_rejects_out_of_range_percent() {
+        assert_eq!(Color::from_hsl_function("hsl(0 101% 50%)"), None);
+        assert_eq!(Color::from_hsl_function("hsl(0 100% 101%)"), None);
+        assert_eq!(Color::from_hsl_function("hsl(0 -1% 50%)"), None);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_rejects_wrong_arity() {
+        assert_eq!(Color::from_hsl_function("hsl(0, 100%)"), None);
+        assert_eq!(Color::from_hsl_function("hsl(0, 100%, 50%, 1, 1)"), None);
+        assert_eq!(Color::from_hsl_function("hsl(0 100%)"), None);
+    }
+
+    #[test]
+    fn r630_from_hsl_function_rejects_missing_parens() {
+        assert_eq!(Color::from_hsl_function("hsl 0, 100%, 50%"), None);
+        assert_eq!(Color::from_hsl_function("hsl(0, 100%, 50%"), None);
+    }
+
+    #[test]
+    fn r630_from_css_string_dispatches_to_modern_rgb() {
+        assert_eq!(
+            Color::from_css_string("rgb(255 0 0)"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r630_from_css_string_dispatches_to_hsl() {
+        assert_eq!(
+            Color::from_css_string("hsl(120 100% 50%)"),
+            Some(Color::rgb(0x00, 0xff, 0x00)),
+        );
+        assert_eq!(
+            Color::from_css_string("hsla(0, 100%, 50%, 1)"),
+            Some(Color::rgba(0xff, 0x00, 0x00, 0xff)),
+        );
     }
 
 

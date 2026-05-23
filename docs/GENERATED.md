@@ -11440,6 +11440,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R630 — feat(core): R630 §5.50 from_css_string modern rgb + hsl coverage
+
+**Changes**:
+- crates/pinion-core/src/style.rs: extend `Color::from_rgb_function` with W3C CSS Color 4 §8.1 modern space syntax (`rgb(R G B)` / `rgb(R G B / A)`) alongside the existing legacy comma form; the entry point now dispatches on comma presence (`body.contains(',')`) to one of two sibling helpers (`parse_rgb_legacy_body` / `parse_rgb_modern_body`), each calling a shared `parse_rgb_channel_triplet` so the percent/integer homogeneity rule stays in one place
+- crates/pinion-core/src/style.rs: `rgba()` and `rgb()` are now true synonyms per CSS Color 4 §8.1 — both accept 3-channel (no alpha) and 4-channel (alpha) legacy forms; pre-R630 the prefix constrained arity, but the spec says they are interchangeable; updated the R624 arity test accordingly and added R630 tests pinning each synonym path
+- crates/pinion-core/src/style.rs: add `Color::from_hsl_function(&str) -> Option<Self>` sibling to `from_rgb_function`; supports modern space form (`hsl(H S% L%)` / `hsl(H S% L% / A)`) and legacy comma form (`hsl(H, S%, L%)` / `hsla(H, S%, L%, A)`) with the same dispatch-on-comma pattern; alpha is positional in legacy and `/`-introduced in modern
+- crates/pinion-core/src/style.rs: add helper free functions `parse_modern_alpha` (number-or-percent), `parse_hue` (degrees with optional `deg`/`rad`/`turn`/`grad` unit, wraps via `rem_euclid` per CSS Values 4), `parse_unit_percentage` (mandatory `%` suffix per CSS Color 4), `hsl_to_srgb_bytes` (W3C §6.2 canonical conversion with achromatic + lightness-extreme short-circuits), and `hue_to_rgb` (W3C piecewise hue-segment helper); CSS-spec canonical short names `h`/`s`/`l`/`r`/`g`/`b`/`p`/`q`/`t` mirror the algorithm letter-for-letter and ride single fn-level `clippy::many_single_char_names` allow attributes with `reason = "CSS Color 4 §6.2 canonical ..."`
+- crates/pinion-core/src/style.rs: `parse_hue` strip-suffix order — `grad` / `turn` BEFORE `rad` / `deg` because `grad` ends with `rad`; a naive longest-first miss would false-positive (`"100grad".strip_suffix("rad") = Some("100g")` → parse fails); documented in source comment
+- crates/pinion-core/src/style.rs: `Color::from_css_string` dispatcher gains a third arm for `hsl(`/`hsla(`; the doc-comment is updated with the R630 support matrix (modern rgb space + slash alpha + hsl); deferred forms reduce to `oklch()` / `lab()` / `color()` (Level 4 wide-gamut) and named colors
+- crates/pinion-core/src/style.rs: append 27 R630 unit tests covering modern integer/percent triplets / slash-alpha number + percent / multi-whitespace tolerance / wrong-arity reject / out-of-range alpha reject / HSL primaries (red/green/blue) / modern + legacy hsl forms / achromatic short-circuit / lightness extremes / hue wrap (720° ≡ 0°, -360° ≡ 0°) / all four hue units (deg/rad/turn/grad) / unknown unit reject / bare S/L reject / out-of-range percent reject / wrong-arity reject / missing-parens reject / dispatcher arms; 2 R630 sibling tests pin the rgb/rgba synonym contract; 1 R624 test reworded to reflect the spec-canonical (rgb∧rgba == synonyms) arity rule
+
+
+
+**Verification**:
+- cargo test --workspace → 3145 / 0 (3116 → 3145, +29 net new R630 tests across modern rgb + hsl forms)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced `clippy::many_single_char_names` on CSS-spec canonical letters and `clippy::uninlined_format_args` on a `format!("{}", PI)` test — both resolved with documented fn-level allows + format-arg inlining)
+- mnemosyne-cli validate-workspace → T1 orphan total=0 / round-trip mandatory=1/1 / atomic entry orphan_refs ledger=4 new=+0 / GENERATED.md=sync
+- `Color::from_css_string` matrix expands from 2 forms (#hex + rgb legacy comma) to 5 forms (#hex + rgb legacy comma + rgb modern space + rgb modern space/alpha + hsl modern + hsl legacy); the entry-point name now earns its `from_css_string` label (spec-canonical coverage), closing R630's textbook-canonical decision per the round prompt
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- R631 §5.7 — pin `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound` typed-data prose with unit tests against silent regression; R625 reworded these three identifiers and there is no compile-time guard against a future tweak; the R629 `RuntimeOwnerUnavailable` prose `"animation control unavailable"` joins the per-axis prose list
+- R632 §5.7 — split the 5,800+ LOC `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]`
+- R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it
+- R634+ §5.50 — `oklch()` / `lab()` / `color()` (CSS Color 4 wide-gamut) parsers; deferred until pinion paints wide-gamut
+- R634+ §5.50 — CSS named-color table (`red`, `dodgerblue`, etc.) — deferred per [[abstraction-needs-second-consumer]] until a stylesheet binding needs the 148-entry lookup
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
