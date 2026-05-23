@@ -29011,6 +29011,66 @@
         "RPC method count expansion (17 scene/* + 11 font/* + 1 text/* + 4 focus/*) — doc generator pass may want a single source-of-truth registry instead of repeated string literals"
       ]
     },
+    "Round 599": {
+      "decision_summary": "scene/set_theme_mode JSON-RPC method lands as the mutation pair to scene/theme_tokens — 18th scene/* method, completing the read/write symmetry on the theme axis. The theme_tokens.rs module renames to theme.rs to mirror focus.rs (one module per axis, multiple methods inside).",
+      "changes_bullets": [
+        "pinion-rpc: git-mv theme_tokens.rs → theme.rs and module header rewritten as theme-axis ledger (read + mutate sides documented together)",
+        "theme.rs: pub fn set_theme_mode(runtime_owner, params) -> Result<SetThemeModeOutcome, SetThemeModeError>",
+        "theme.rs: SetThemeModeParams {mode: ThemeMode, tag: Option<String>} + SetThemeModeOutcome {tag, mode, active} + SetThemeModeError (RuntimeOwnerUnavailable / NotBound) typed surface",
+        "theme.rs: pub fn parse_theme_mode(\"light\"|\"dark\"|\"system\") -> Option<ThemeMode> wire-id resolver",
+        "dispatch.rs: scene/set_theme_mode routing arm + handle_scene_set_theme_mode + set_theme_mode_outcome_to_json + set_theme_mode_error_to_rpc helpers",
+        "dispatch.rs: mutates_scene_on_success extended with scene/set_theme_mode so the OCC SceneRevision bumps on a successful mode flip (every use_theme subscriber re-runs)",
+        "dispatch.rs: module + clippy::too_many_lines doc updated to reflect 18 scene/* method count",
+        "dispatch.rs: 7 R599 wire integration tests — missing owner, missing mode param, unknown mode slug, happy path, unbound tag, OCC bump on success, OCC stays on failure",
+        "theme module: 10 R599 direct tests — failure modes, mode flip + echo, System+OS resolution, idempotent same-mode, custom tag, no-slot-on-failure, parse_theme_mode round-trip, JSON outcome shape"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-rpc --lib r599: 17 pass / 0 fail (10 theme + 7 dispatch wire)",
+        "cargo test --workspace --features pinion-runtime/vello: 2857 pass / 0 fail / 13 ignored (R598 baseline 2840 + 17 R599)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "scene/theme_tokens read-side + scene/set_theme_mode mutate-side now symmetrical on the theme axis",
+        "theme.rs module mirrors focus.rs pattern — one file per axis, methods cohabit by reactive substrate ownership"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.34",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "scene/set_theme_light_palette + scene/set_theme_dark_palette + scene/set_theme_palettes — palette mutation triad once a 2nd consumer of ThemeProvider::set_palettes lands (M3 seed-color UI)",
+        "scene/set_theme_mode shell-side AccessKit Action surface — mode toggle as a focusable command for AT clients (mirrors focus/set R51.73 + AccessKit Focus action pair)",
+        "RPC method-name registry refactor (R598 carry) — 18 scene/* + 11 font/* + 1 text/* + 4 focus/* string literals scattered across dispatch.rs match arms warrant a single source-of-truth ledger"
+      ],
+      "publishable_decision_summary": "scene/set_theme_mode JSON-RPC method lands as the mutation pair to scene/theme_tokens — 18th scene/* method, completing the read/write symmetry on the theme axis. The theme_tokens.rs module renames to theme.rs to mirror focus.rs (one module per axis, multiple methods inside).",
+      "publishable_changes_bullets": [
+        "pinion-rpc: git-mv theme_tokens.rs → theme.rs and module header rewritten as theme-axis ledger (read + mutate sides documented together)",
+        "theme.rs: pub fn set_theme_mode(runtime_owner, params) -> Result<SetThemeModeOutcome, SetThemeModeError>",
+        "theme.rs: SetThemeModeParams {mode: ThemeMode, tag: Option<String>} + SetThemeModeOutcome {tag, mode, active} + SetThemeModeError (RuntimeOwnerUnavailable / NotBound) typed surface",
+        "theme.rs: pub fn parse_theme_mode(\"light\"|\"dark\"|\"system\") -> Option<ThemeMode> wire-id resolver",
+        "dispatch.rs: scene/set_theme_mode routing arm + handle_scene_set_theme_mode + set_theme_mode_outcome_to_json + set_theme_mode_error_to_rpc helpers",
+        "dispatch.rs: mutates_scene_on_success extended with scene/set_theme_mode so the OCC SceneRevision bumps on a successful mode flip (every use_theme subscriber re-runs)",
+        "dispatch.rs: module + clippy::too_many_lines doc updated to reflect 18 scene/* method count",
+        "dispatch.rs: 7 R599 wire integration tests — missing owner, missing mode param, unknown mode slug, happy path, unbound tag, OCC bump on success, OCC stays on failure",
+        "theme module: 10 R599 direct tests — failure modes, mode flip + echo, System+OS resolution, idempotent same-mode, custom tag, no-slot-on-failure, parse_theme_mode round-trip, JSON outcome shape"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-rpc --lib r599: 17 pass / 0 fail (10 theme + 7 dispatch wire)",
+        "cargo test --workspace --features pinion-runtime/vello: 2857 pass / 0 fail / 13 ignored (R598 baseline 2840 + 17 R599)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "scene/theme_tokens read-side + scene/set_theme_mode mutate-side now symmetrical on the theme axis",
+        "theme.rs module mirrors focus.rs pattern — one file per axis, methods cohabit by reactive substrate ownership"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.34",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scene/set_theme_light_palette + scene/set_theme_dark_palette + scene/set_theme_palettes — palette mutation triad once a 2nd consumer of ThemeProvider::set_palettes lands (M3 seed-color UI)",
+        "scene/set_theme_mode shell-side AccessKit Action surface — mode toggle as a focusable command for AT clients (mirrors focus/set R51.73 + AccessKit Focus action pair)",
+        "RPC method-name registry refactor (R598 carry) — 18 scene/* + 11 font/* + 1 text/* + 4 focus/* string literals scattered across dispatch.rs match arms warrant a single source-of-truth ledger"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

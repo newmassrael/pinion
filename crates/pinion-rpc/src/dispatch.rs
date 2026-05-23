@@ -2,13 +2,14 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R598 — 17 typed):
+//! response envelope. Registered methods (R599 — 18 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
 //! `scene/locate_region`, `scene/bbox`, `scene/cancel_preview`,
 //! `scene/list_previews`, `scene/propose_change`,
-//! `scene/apply_preview`, `scene/theme_tokens`. The preview-lifecycle methods take the
+//! `scene/apply_preview`, `scene/theme_tokens`,
+//! `scene/set_theme_mode`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -57,7 +58,10 @@ use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
-use crate::theme_tokens::{theme_tokens, ThemeTokensError, ThemeTokensOutcome};
+use crate::theme::{
+    set_theme_mode, theme_tokens, SetThemeModeError, SetThemeModeOutcome, SetThemeModeParams,
+    ThemeTokensError, ThemeTokensOutcome,
+};
 use crate::wait_for::{wait_for, WaitForError, WaitOutcome};
 
 /// JSON-RPC 2.0 request envelope.
@@ -497,7 +501,7 @@ impl<'a> DispatchContext<'a> {
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 17 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 18 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
 )]
 pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
@@ -598,6 +602,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/intents" => handle_scene_intents(scene),
         "scene/commands" => handle_scene_commands(runtime_owner, commands_executor),
         "scene/theme_tokens" => handle_scene_theme_tokens(runtime_owner, request.params.as_ref()),
+        "scene/set_theme_mode" => {
+            handle_scene_set_theme_mode(runtime_owner, request.params.as_ref())
+        }
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
@@ -746,6 +753,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
 /// revision around them; `scene/dry_run` is explicitly non-mutating
 /// per §2#3; `scene/intents` drains a queue without affecting the
 /// rendered scene; the introspection methods are read-only.
+/// `scene/set_theme_mode` (R599) writes a [`Signal`](pinion_core::reactive::Signal)
+/// that every `use_theme` subscriber re-runs on, so the OCC token
+/// must bump to invalidate any in-flight preview's base revision.
 ///
 /// `scene/propose_change` / `scene/cancel_preview` /
 /// `scene/list_previews` touch only the ledger and so do not bump.
@@ -755,7 +765,13 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
 fn mutates_scene_on_success(method: &str) -> bool {
     matches!(
         method,
-        "scene/click" | "scene/rewind" | "scene/invoke",
+        "scene/click"
+            | "scene/rewind"
+            | "scene/invoke"
+            // R599 §5.50 — set_theme_mode writes a Signal that every
+            // view-fn subscribing through `use_theme` re-runs on, so a
+            // re-paint is required and the OCC token must bump.
+            | "scene/set_theme_mode",
     )
 }
 
@@ -2140,10 +2156,10 @@ fn commands_error_to_rpc(err: CommandsError) -> RpcError {
 /// `scene/*` method. Returns the bound
 /// [`ThemeProvider`](pinion_core::theme::ThemeProvider)'s snapshot
 /// projected into the [`ThemeTokensOutcome`] shape — see
-/// [`crate::theme_tokens`] for the JSON wire shape.
+/// [`crate::theme`] for the JSON wire shape.
 ///
 /// `params.tag` is optional; when omitted the lookup resolves
-/// against [`crate::theme_tokens::DEFAULT_THEME_TAG`] (`"app"`,
+/// against [`crate::theme::DEFAULT_THEME_TAG`] (`"app"`,
 /// matching every `examples/hello-*` binary).
 fn handle_scene_theme_tokens(
     runtime_owner: Option<&Owner>,
@@ -2178,6 +2194,62 @@ fn theme_tokens_error_to_rpc(err: ThemeTokensError) -> RpcError {
                 .with_data_string("RuntimeOwnerUnavailable")
         }
         ThemeTokensError::NotBound { tag } => {
+            RpcError::invalid_params(format!("theme provider not bound under tag {tag:?}"))
+                .with_data_string("NotBound")
+        }
+    }
+}
+
+/// R599 §5.50 — `scene/set_theme_mode` typed handler. 18th
+/// `scene/*` method, mutation pair to `scene/theme_tokens`. The
+/// dispatcher's [`mutates_scene_on_success`] gate bumps the
+/// [`SceneRevision`] after this call returns `Ok`.
+fn handle_scene_set_theme_mode(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(params_value) = params else {
+        return Err(RpcError::invalid_params("missing params"));
+    };
+    let mode_str = params_value
+        .get("mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.mode missing or not a string"))?;
+    let mode = crate::theme::parse_theme_mode(mode_str).ok_or_else(|| {
+        RpcError::invalid_params(format!(
+            "params.mode {mode_str:?} not one of \"light\" / \"dark\" / \"system\""
+        ))
+    })?;
+    let tag = params_value
+        .get("tag")
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| RpcError::invalid_params("params.tag must be a string when present"))
+        })
+        .transpose()?;
+    let typed_params = SetThemeModeParams { mode, tag };
+    match set_theme_mode(runtime_owner, &typed_params) {
+        Ok(outcome) => set_theme_mode_outcome_to_json(&outcome),
+        Err(err) => Err(set_theme_mode_error_to_rpc(err)),
+    }
+}
+
+fn set_theme_mode_outcome_to_json(out: &SetThemeModeOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/set_theme_mode: failed to serialize outcome: {e}",
+        ))
+    })
+}
+
+fn set_theme_mode_error_to_rpc(err: SetThemeModeError) -> RpcError {
+    match err {
+        SetThemeModeError::RuntimeOwnerUnavailable => {
+            RpcError::invalid_params("theme view unavailable")
+                .with_data_string("RuntimeOwnerUnavailable")
+        }
+        SetThemeModeError::NotBound { tag } => {
             RpcError::invalid_params(format!("theme provider not bound under tag {tag:?}"))
                 .with_data_string("NotBound")
         }
@@ -7720,7 +7792,7 @@ mod tests {
     // R598 §5.50 — scene/theme_tokens wire integration
     //
     // The fine-grained handler logic is covered by the test battery in
-    // `crate::theme_tokens::tests`. The cases below exercise the
+    // `crate::theme::tests`. The cases below exercise the
     // dispatcher's wire round-trip — params parsing, runtime_owner
     // injection through the builder, and error → RpcError mapping.
     // ─────────────────────────────────────────────────────────────────
@@ -7802,6 +7874,123 @@ mod tests {
         assert_eq!(
             resp.result.unwrap().get("tag").and_then(Value::as_str),
             Some("custom-scope"),
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R599 §5.50 — scene/set_theme_mode wire integration
+    //
+    // Mutation pair to scene/theme_tokens. The fine-grained handler
+    // logic is covered by the test battery in
+    // `crate::theme::tests::r599_*`. The cases below exercise the
+    // dispatcher's wire round-trip — params parsing, runtime_owner
+    // injection, error → RpcError mapping, and the
+    // mutates_scene_on_success OCC bump.
+    // ─────────────────────────────────────────────────────────────────
+
+    fn dispatch_with_runtime_owner_and_revision(
+        scene: &mut Scene,
+        owner: &Owner,
+        revision: &SceneRevision,
+        req: &str,
+    ) -> Option<String> {
+        let previews = PreviewLedger::default();
+        let mut ctx = DispatchContext::new(scene, &previews, revision)
+            .with_runtime_owner(owner);
+        dispatch(&mut ctx, req)
+    }
+
+    #[test]
+    fn r599_scene_set_theme_mode_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r599_scene_set_theme_mode_missing_mode_param_errors() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{},"id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing mode must error");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn r599_scene_set_theme_mode_rejects_unknown_mode_slug() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"AUTO"},"id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("unknown mode slug must error");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn r599_scene_set_theme_mode_happy_path_returns_post_state() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        provider.set_mode(pinion_core::theme::ThemeMode::Light);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":4}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none());
+        let result = resp.result.expect("result present");
+        assert_eq!(result.get("mode").and_then(Value::as_str), Some("dark"));
+        assert_eq!(result.get("active").and_then(Value::as_str), Some("dark"));
+        assert_eq!(result.get("tag").and_then(Value::as_str), Some("app"));
+        // Provider state is the post-mutation value.
+        assert_eq!(provider.mode(), pinion_core::theme::ThemeMode::Dark);
+    }
+
+    #[test]
+    fn r599_scene_set_theme_mode_unbound_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        // No `use_theme` binding — the cache_contains gate trips.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":5}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("unbound tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    #[test]
+    fn r599_scene_set_theme_mode_bumps_revision_on_success() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":6}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        let after = revision.current();
+        assert!(
+            after > before,
+            "set_theme_mode must bump the OCC token (before={before}, after={after})",
+        );
+    }
+
+    #[test]
+    fn r599_scene_set_theme_mode_does_not_bump_revision_on_failure() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        // No theme bound → handler errors. The dispatcher's
+        // `mutates_scene_on_success` gate must not bump.
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":7}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        assert_eq!(
+            revision.current(),
+            before,
+            "a failed set_theme_mode must not bump the OCC token",
         );
     }
 }

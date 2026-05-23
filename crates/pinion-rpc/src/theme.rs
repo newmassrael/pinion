@@ -1,5 +1,22 @@
-//! `scene/theme_tokens` RPC method dispatch — R598 §5.50 + §5.7
-//! 17th scene/* method.
+//! Theme-axis RPC method dispatch — §5.50 + §5.7.
+//!
+//! Houses every `scene/*` method that reads or mutates the
+//! application's bound [`ThemeProvider`] state, mirroring the
+//! `focus.rs` module's pattern (one module per axis, multiple
+//! methods inside).
+//!
+//! Method ledger:
+//!
+//! | Method                  | Direction | Round  |
+//! |-------------------------|-----------|--------|
+//! | `scene/theme_tokens`    | read      | R598   |
+//! | `scene/set_theme_mode`  | mutate    | R599   |
+//!
+//! The mutate side bumps [`SceneRevision`](pinion_core::SceneRevision)
+//! on success because a mode flip changes every subscriber's
+//! rendered palette (re-paint required).
+//!
+//! ## `scene/theme_tokens` — read-side
 //!
 //! Second consumer of [`ColorRole::all`] /
 //! [`ColorRole::name`](pinion_core::theme::ColorRole::name) (R595)
@@ -315,6 +332,121 @@ fn color_to_hex(color: Color) -> String {
     }
 }
 
+// ────────────────────────────────────────────────────────────────────
+// scene/set_theme_mode — mutate-side (R599)
+// ────────────────────────────────────────────────────────────────────
+
+/// Typed request payload for [`set_theme_mode`]. Carries the requested
+/// [`ThemeMode`] (wire `mode = "light" | "dark" | "system"`) plus the
+/// cache tag the mutation applies to (defaults to
+/// [`DEFAULT_THEME_TAG`] when [`None`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetThemeModeParams {
+    /// Target [`ThemeMode`] resolved from the wire `mode` string.
+    pub mode: ThemeMode,
+    /// Cache tag the [`use_theme`] lookup resolves against. [`None`]
+    /// → [`DEFAULT_THEME_TAG`] (`"app"`).
+    pub tag: Option<String>,
+}
+
+/// Snapshot returned to the caller after [`set_theme_mode`] commits
+/// the requested mode. Echoes the post-mutation state so a follow-up
+/// [`theme_tokens`] call is unnecessary when the client only needs
+/// confirmation.
+///
+/// `active` mirrors [`ThemeTokensOutcome::active`] — the same
+/// resolution [`ThemeProvider::theme`] would perform under the new
+/// `mode` and the current [`system_color_scheme`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SetThemeModeOutcome {
+    /// Cache tag the mutation applied to.
+    pub tag: String,
+    /// Post-mutation [`ThemeMode`] as the canonical `snake_case` wire
+    /// identifier — round-trips with the request's `params.mode`.
+    pub mode: String,
+    /// `"light"` / `"dark"` — which palette the application is now
+    /// rendering under the new mode + current OS scheme.
+    pub active: String,
+}
+
+/// Typed errors the [`set_theme_mode`] dispatcher can return.
+///
+/// Mirrors the [`ThemeTokensError`] shape — every variant maps onto
+/// JSON-RPC `-32602 Invalid params` at the dispatch layer with the
+/// variant name surfaced in `error.data`.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetThemeModeError {
+    /// No [`runtime_owner`](crate::DispatchContext) registered on the
+    /// dispatch context — see [`ThemeTokensError::RuntimeOwnerUnavailable`].
+    RuntimeOwnerUnavailable,
+    /// The owner is bound but no [`ThemeProvider`] is cached under
+    /// `tag` yet — see [`ThemeTokensError::NotBound`].
+    NotBound { tag: String },
+}
+
+/// Mutate the bound [`ThemeProvider`]'s active [`ThemeMode`] under
+/// `params.tag` (default [`DEFAULT_THEME_TAG`]) and return the
+/// post-mutation snapshot.
+///
+/// # Side effects
+///
+/// Calls [`ThemeProvider::set_mode`], which writes a
+/// [`Signal`](pinion_core::reactive::Signal) — every subscriber to
+/// [`ThemeProvider::theme`] (typically every view-fn that reads a
+/// palette role) is scheduled for re-run on the next reactive tick.
+/// The dispatcher bumps [`SceneRevision`](pinion_core::SceneRevision)
+/// after this call returns `Ok` so an in-flight preview's
+/// `base_revision` can detect the concurrent mutation at apply time.
+///
+/// # Errors
+///
+/// - [`SetThemeModeError::RuntimeOwnerUnavailable`] — context has no
+///   substrate root [`Owner`].
+/// - [`SetThemeModeError::NotBound`] — no [`ThemeProvider`] is
+///   cached under `tag` yet (the application's first view-fn run has
+///   not happened, or the client used a non-default tag and the
+///   application's `use_theme(_)` call has not run for it).
+pub fn set_theme_mode(
+    runtime_owner: Option<&Owner>,
+    params: &SetThemeModeParams,
+) -> Result<SetThemeModeOutcome, SetThemeModeError> {
+    let Some(owner) = runtime_owner else {
+        return Err(SetThemeModeError::RuntimeOwnerUnavailable);
+    };
+    let resolved_tag: &str = params.tag.as_deref().unwrap_or(DEFAULT_THEME_TAG);
+    // Same `Box::leak` rationale as `theme_tokens` — bounded leak,
+    // canonical call site passes a string literal.
+    let static_tag: &'static str = Box::leak(resolved_tag.to_string().into_boxed_str());
+    if !owner.cache_contains::<ThemeProvider>(static_tag) {
+        return Err(SetThemeModeError::NotBound {
+            tag: resolved_tag.to_string(),
+        });
+    }
+    let provider: std::rc::Rc<ThemeProvider> = owner.run(|| use_theme(static_tag));
+    provider.set_mode(params.mode);
+    let system_scheme = system_color_scheme();
+    let active = active_palette_key(params.mode, system_scheme);
+    Ok(SetThemeModeOutcome {
+        tag: resolved_tag.to_string(),
+        mode: mode_name(params.mode).to_string(),
+        active: active.to_string(),
+    })
+}
+
+/// Parse a wire `mode` string into a [`ThemeMode`] variant. Returns
+/// [`None`] on an unknown slug so the dispatcher can surface a
+/// typed invalid-params error.
+#[must_use]
+pub fn parse_theme_mode(wire: &str) -> Option<ThemeMode> {
+    match wire {
+        "light" => Some(ThemeMode::Light),
+        "dark" => Some(ThemeMode::Dark),
+        "system" => Some(ThemeMode::System),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,5 +704,136 @@ mod tests {
             .expect("color is a string");
         assert!(color_str.starts_with('#'));
         assert_eq!(color_str.len(), 7);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R599 §5.50 — set_theme_mode setter
+    // ─────────────────────────────────────────────────────────────────
+
+    fn params_with_mode(mode: ThemeMode) -> SetThemeModeParams {
+        SetThemeModeParams { mode, tag: None }
+    }
+
+    #[test]
+    fn r599_set_theme_mode_missing_runtime_owner_errors() {
+        let params = params_with_mode(ThemeMode::Dark);
+        let err = set_theme_mode(None, &params).unwrap_err();
+        assert_eq!(err, SetThemeModeError::RuntimeOwnerUnavailable);
+    }
+
+    #[test]
+    fn r599_set_theme_mode_unbound_tag_errors_with_tag_echoed() {
+        let owner = Owner::new();
+        let params = SetThemeModeParams {
+            mode: ThemeMode::Dark,
+            tag: Some("ghost".into()),
+        };
+        let err = set_theme_mode(Some(&owner), &params).unwrap_err();
+        assert_eq!(
+            err,
+            SetThemeModeError::NotBound {
+                tag: "ghost".into()
+            },
+        );
+    }
+
+    #[test]
+    fn r599_set_theme_mode_flips_mode_and_echoes_post_state() {
+        let owner = Owner::new();
+        let provider = bind_provider(&owner, "app");
+        provider.set_mode(ThemeMode::Light);
+        let outcome = set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::Dark)).unwrap();
+        assert_eq!(outcome.mode, "dark");
+        assert_eq!(outcome.active, "dark");
+        assert_eq!(outcome.tag, "app");
+        // Provider's own mode reflects the mutation immediately.
+        assert_eq!(provider.mode(), ThemeMode::Dark);
+    }
+
+    #[test]
+    fn r599_set_theme_mode_system_with_dark_os_resolves_active_to_dark() {
+        let _guard = SystemSchemeGuard::pinned_to(SystemColorScheme::Dark);
+        let owner = Owner::new();
+        let provider = bind_provider(&owner, "app");
+        provider.set_mode(ThemeMode::Light);
+        let outcome =
+            set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::System)).unwrap();
+        assert_eq!(outcome.mode, "system");
+        assert_eq!(outcome.active, "dark");
+    }
+
+    #[test]
+    fn r599_set_theme_mode_is_idempotent_when_same_mode() {
+        // Setting mode to its current value is a valid call — the
+        // Signal::set equality-skip short-circuits, but the outcome
+        // is still the post-state echo.
+        let owner = Owner::new();
+        let provider = bind_provider(&owner, "app");
+        provider.set_mode(ThemeMode::Dark);
+        let outcome =
+            set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::Dark)).unwrap();
+        assert_eq!(outcome.mode, "dark");
+        assert_eq!(provider.mode(), ThemeMode::Dark);
+    }
+
+    #[test]
+    fn r599_set_theme_mode_custom_tag_round_trips() {
+        let owner = Owner::new();
+        let _provider = bind_provider(&owner, "studio");
+        let outcome = set_theme_mode(
+            Some(&owner),
+            &SetThemeModeParams {
+                mode: ThemeMode::Light,
+                tag: Some("studio".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome.tag, "studio");
+        assert_eq!(outcome.mode, "light");
+    }
+
+    #[test]
+    fn r599_set_theme_mode_does_not_insert_a_new_cache_slot() {
+        // Same side-effect contract as theme_tokens — the call uses
+        // cache_contains() to gate before owner.run(use_theme(...)),
+        // so an unbound tag does not silently materialize a provider.
+        let owner = Owner::new();
+        let _ = set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::Dark)).unwrap_err();
+        assert!(
+            !owner.cache_contains::<ThemeProvider>("app"),
+            "set_theme_mode must not materialize a ThemeProvider on a failed lookup",
+        );
+    }
+
+    #[test]
+    fn r599_parse_theme_mode_accepts_three_canonical_slugs() {
+        assert_eq!(parse_theme_mode("light"), Some(ThemeMode::Light));
+        assert_eq!(parse_theme_mode("dark"), Some(ThemeMode::Dark));
+        assert_eq!(parse_theme_mode("system"), Some(ThemeMode::System));
+    }
+
+    #[test]
+    fn r599_parse_theme_mode_rejects_unknown_slug() {
+        assert_eq!(parse_theme_mode("AUTO"), None);
+        assert_eq!(parse_theme_mode(""), None);
+        assert_eq!(parse_theme_mode("Light"), None, "case-sensitive");
+    }
+
+    #[test]
+    fn r599_set_theme_mode_outcome_serializes_to_expected_keys() {
+        let owner = Owner::new();
+        let _provider = bind_provider(&owner, "app");
+        let outcome = set_theme_mode(Some(&owner), &params_with_mode(ThemeMode::Light)).unwrap();
+        let json = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(json["tag"], "app");
+        assert_eq!(json["mode"], "light");
+        assert_eq!(json["active"], "light");
+        // Wire response is the 3-field outcome shape — no palettes
+        // field (clients call scene/theme_tokens for that).
+        let obj = json.as_object().expect("outcome is a JSON object");
+        let mut keys: Vec<&String> = obj.keys().collect();
+        keys.sort();
+        let key_strs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+        assert_eq!(key_strs, vec!["active", "mode", "tag"]);
     }
 }
