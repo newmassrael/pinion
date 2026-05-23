@@ -1206,9 +1206,10 @@ mod tests {
         ColorRole, SystemColorScheme, Theme, ThemeMode, ThemeProvider, set_system_color_scheme,
         system_color_scheme, use_theme,
     };
-    use crate::reactive::Owner;
+    use crate::reactive::{Effect, Owner};
     use crate::style::Color;
     use crate::test_fixtures::settle_owner_animations;
+    use std::cell::Cell;
     use std::rc::Rc;
 
     // ─────────────────────────────────────────────────────────────
@@ -1416,6 +1417,138 @@ mod tests {
                 palette.on_error_container,
             );
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R592 — R57.0 Effect-rerun substrate (Signal auto-subscribe pin)
+    // ─────────────────────────────────────────────────────────────
+
+    /// (R592 §5.50) `ThemeProvider::set_mode` mutates the active
+    /// mode signal; an `Effect` that reads `theme()` (or any path
+    /// derived from `mode()`) must re-run exactly once per mutation.
+    ///
+    /// Pins the R57.0 reactivity contract: `theme()` auto-subscribes
+    /// the current reactive scope to the mode signal, so the
+    /// `set_mode` write reaches every dependent computation through
+    /// the same `Signal::set` notification path the rest of the
+    /// substrate uses (no special-cased re-run channel).
+    ///
+    /// Without this regression a future `ThemeProvider` refactor that
+    /// drops the signal read inside `theme()` (e.g. caching the
+    /// resolved palette on a field) would silently break view-fn
+    /// auto-repaint on theme changes.
+    #[test]
+    fn r592_effect_reruns_on_set_mode() {
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_inner = Rc::clone(&runs);
+        owner.run(|| {
+            let provider = use_theme("r592_set_mode");
+            // Force a determinate starting mode — System would also
+            // subscribe to the global SystemColorScheme signal, which
+            // we are not exercising here. Light is the canonical W3C
+            // fallback.
+            provider.set_mode(ThemeMode::Light);
+            // Eager construction runs the closure once + subscribes
+            // to whatever signals `theme()` reads.
+            let _effect = Effect::new(&owner, move || {
+                let _ = use_theme("r592_set_mode").theme();
+                runs_inner.set(runs_inner.get() + 1);
+            });
+            assert_eq!(runs.get(), 1, "Effect::new eager initial run");
+            provider.set_mode(ThemeMode::Dark);
+            assert_eq!(runs.get(), 2, "set_mode(Dark) re-runs Effect");
+            provider.set_mode(ThemeMode::Light);
+            assert_eq!(runs.get(), 3, "set_mode(Light) re-runs Effect");
+            // Same-value write: Signal::set short-circuits when
+            // `new == old` via PartialEq — no re-run.
+            provider.set_mode(ThemeMode::Light);
+            assert_eq!(runs.get(), 3, "same-value set_mode does not re-run");
+        });
+    }
+
+    /// (R592 §5.50) `ThemeProvider::set_light_palette` mutates the
+    /// light palette signal. While the active mode is `Light`
+    /// (resolved palette comes from the light signal), an `Effect`
+    /// that reads `theme()` must re-run on every light palette write.
+    #[test]
+    fn r592_effect_reruns_on_set_light_palette() {
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_inner = Rc::clone(&runs);
+        owner.run(|| {
+            let provider = use_theme("r592_set_light");
+            provider.set_mode(ThemeMode::Light);
+            let _effect = Effect::new(&owner, move || {
+                let _ = use_theme("r592_set_light").theme();
+                runs_inner.set(runs_inner.get() + 1);
+            });
+            assert_eq!(runs.get(), 1, "eager initial run");
+            // Distinct palette so Signal::set does not short-circuit.
+            let mut tweaked = Theme::light();
+            tweaked.accent = Color::rgb(0x00, 0xff, 0x00);
+            provider.set_light_palette(tweaked);
+            assert_eq!(runs.get(), 2, "set_light_palette re-runs Effect");
+        });
+    }
+
+    /// (R592 §5.50) Mirror of [`r592_effect_reruns_on_set_light_palette`]
+    /// for the dark palette signal under `ThemeMode::Dark`.
+    #[test]
+    fn r592_effect_reruns_on_set_dark_palette() {
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_inner = Rc::clone(&runs);
+        owner.run(|| {
+            let provider = use_theme("r592_set_dark");
+            provider.set_mode(ThemeMode::Dark);
+            let _effect = Effect::new(&owner, move || {
+                let _ = use_theme("r592_set_dark").theme();
+                runs_inner.set(runs_inner.get() + 1);
+            });
+            assert_eq!(runs.get(), 1, "eager initial run");
+            let mut tweaked = Theme::dark();
+            tweaked.accent = Color::rgb(0xff, 0x00, 0x00);
+            provider.set_dark_palette(tweaked);
+            assert_eq!(runs.get(), 2, "set_dark_palette re-runs Effect");
+        });
+    }
+
+    /// (R592 §5.50) When the active mode is `Light` (or `Dark`), the
+    /// global `SystemColorScheme` signal must NOT trigger a re-run —
+    /// `theme()` only subscribes to the system signal when the mode is
+    /// `System`. Pins the careful auto-subscribe contract: reading the
+    /// system signal under the wrong branch would over-subscribe and
+    /// spuriously repaint every Light-mode app on every OS theme flip.
+    #[test]
+    fn r592_effect_in_light_mode_ignores_system_signal() {
+        // Isolate the global system signal from sibling tests.
+        set_system_color_scheme(SystemColorScheme::NoPreference);
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0u32));
+        let runs_inner = Rc::clone(&runs);
+        owner.run(|| {
+            let provider = use_theme("r592_no_system_subscribe");
+            provider.set_mode(ThemeMode::Light);
+            let _effect = Effect::new(&owner, move || {
+                let _ = use_theme("r592_no_system_subscribe").theme();
+                runs_inner.set(runs_inner.get() + 1);
+            });
+            assert_eq!(runs.get(), 1, "eager initial run");
+            set_system_color_scheme(SystemColorScheme::Dark);
+            assert_eq!(
+                runs.get(),
+                1,
+                "Light mode must not subscribe to system signal",
+            );
+            // Confirm the system signal write actually landed — guards
+            // against a future ThemeProvider refactor that drops the
+            // write path entirely (would also keep the counter at 1
+            // by accident).
+            assert_eq!(system_color_scheme(), SystemColorScheme::Dark);
+            // Restore so the next sibling test starts clean.
+            set_system_color_scheme(SystemColorScheme::NoPreference);
+        });
     }
 
     /// (R590 §5.50) The `ThemeLinear` carrier covers the error tier:

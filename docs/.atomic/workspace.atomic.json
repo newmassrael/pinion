@@ -28723,6 +28723,42 @@
         "error tier downstream cascade (hello-button Disabled tonal mapping 등) 소비 있음"
       ]
     },
+    "Round 592": {
+      "decision_summary": "R57.0 Effect-rerun substrate test restored: four regressions pin Signal auto-subscribe contract for set_mode, set_light_palette, set_dark_palette, and mode-gated system signal.",
+      "changes_bullets": [
+        "theme.rs tests: +4 R592 regressions pinning ThemeProvider mutation -> Effect re-run paths",
+        "theme.rs tests: imports Effect + std::cell::Cell for the regression module",
+        "theme.rs doc: backtick fix on Signal::set + ThemeProvider doc_markdown audit"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core --lib theme: 44 pass 0 fail (R590 40 + 4 R592)",
+        "cargo test --workspace --features pinion-runtime/vello: 2812 pass 0 fail 13 ignored (+4 from 2808)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings"
+      ],
+      "impact_refs": [
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "future ThemeProvider field caching refactor must keep the Signal read in theme() so the auto-subscribe path stays intact"
+      ],
+      "publishable_decision_summary": "R57.0 Effect-rerun substrate test 복구; ThemeProvider mutation 4 path (set_mode/set_light/set_dark/mode-gated system) 의 Signal 자동구독 contract 핀.",
+      "publishable_changes_bullets": [
+        "theme.rs tests: +4 R592 회귀 (set_mode / set_light / set_dark / Light-mode system ignore)",
+        "theme.rs tests: Effect + std::cell::Cell import 추가",
+        "theme.rs doc: Signal::set + ThemeProvider 백틱 정정 (doc_markdown clean)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core --lib theme: 44 pass 0 fail (R590 40 + 4 R592)",
+        "cargo test --workspace --features pinion-runtime/vello: 2812 pass / 0 fail / 13 ignored (+4)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings"
+      ],
+      "publishable_impact_refs": [
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "미래 ThemeProvider field-caching refactor 시 theme() Signal read 유지 필수 (R592 회귀가 catch)"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

@@ -17739,6 +17739,30 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 592 — R57.0 Effect-rerun substrate test 복구; ThemeProvider mutation 4 path (set_mode/set_light/set_dark/mode-gated system) 의 Signal 자동구독 contract 핀.
+
+**Changes**:
+- theme.rs tests: +4 R592 회귀 (set_mode / set_light / set_dark / Light-mode system ignore)
+- theme.rs tests: Effect + std::cell::Cell import 추가
+- theme.rs doc: Signal::set + ThemeProvider 백틱 정정 (doc_markdown clean)
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib theme: 44 pass 0 fail (R590 40 + 4 R592)
+- cargo test --workspace --features pinion-runtime/vello: 2812 pass / 0 fail / 13 ignored (+4)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- 미래 ThemeProvider field-caching refactor 시 theme() Signal read 유지 필수 (R592 회귀가 catch)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
