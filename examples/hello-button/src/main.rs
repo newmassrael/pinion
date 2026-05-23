@@ -32,7 +32,7 @@
 //!     tree into a `vello::Scene` and `HelloButtonRenderer` submits it.
 
 use pinion_core::animation::SpringConfig;
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -42,8 +42,9 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 #[cfg(test)]
 use pinion_core::theme::ThemeMode;
 use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_a11y::{AccessNode, AccessState, AriaRole};
+use pinion_derive::widget;
+use pinion_shell::vello_renderer_impl;
 
 // pinion-forge codegen output. Defines `pub struct HelloButtonRenderer`
 // + `pub enum HelloButtonRendererError` + async `new<W: Into<wgpu::
@@ -213,24 +214,57 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     )
 }
 
-/// `WidgetView` binding for the Button widget. Carries no runtime
-/// state — every method is associated (`fn`, not `&self`) so the
+/// `WidgetView` binding for the Button widget. R641 §5.16 lifts the
+/// mechanical [`WidgetCore`] / [`WidgetA11y`] / [`WidgetView`]
+/// trait wiring into the [`#[widget]`](pinion_derive::widget)
+/// attribute — `tag` / `title` / associated types / [`create_external`]
+/// factory / [`initial_size`] are now declarative. The widget-specific
+/// methods ([`read_state`] / [`event_name`] / [`view`] / [`access_node`]
+/// / [`apply_key`] / [`keybinding`]) remain as inherent `fn` items the
+/// macro forwards to.
+///
+/// The unit struct itself still exists solely as the impl carrier —
+/// every emitted trait method is associated (`fn`, not `&self`) so the
 /// shell instantiates `AppShell<ButtonView>` without holding a value
-/// of this type. The unit struct exists solely as the impl carrier.
+/// of this type.
+///
+/// [`create_external`]: pinion_core::WidgetCore::create_external
+/// [`initial_size`]: pinion_shell::WidgetView::initial_size
+/// [`view`]: pinion_core::WidgetCore::view
+/// [`read_state`]: pinion_core::WidgetCore::read_state
+/// [`event_name`]: pinion_core::WidgetCore::event_name
+/// [`access_node`]: pinion_a11y::WidgetA11y::access_node
+/// [`apply_key`]: pinion_core::WidgetCore::apply_key
+/// [`keybinding`]: pinion_core::WidgetCore::keybinding
+#[widget(
+    tag = "main_btn",
+    state = ButtonState,
+    event = ButtonEvent,
+    title = "pinion hello-button (R641 §5.16 #[widget])",
+    renderer = HelloButtonRenderer,
+    initial_size = (WIN_W, WIN_H),
+    external = ButtonExternal::new,
+    apply_key,
+    keybinding,
+)]
 struct ButtonView;
 
-impl WidgetCore for ButtonView {
-    type State = ButtonState;
-    type Event = ButtonEvent;
-
-    fn create_external() -> Box<dyn External> {
-        Box::new(ButtonExternal::new())
+impl ButtonView {
+    /// R641 inherent forward for [`WidgetCore::view`]. The macro
+    /// emits the trait method as `<ButtonView>::view(state, *frame)`
+    /// (deref'd from the trait's `&Frame` to keep the inherent
+    /// signature clippy-clean for the `Copy` 4-byte `Frame` ZST). The
+    /// free-fn implementation below carries the actual view body.
+    fn view(state: ButtonState, frame: Frame) -> Scene {
+        // The free `view(...)` fn above takes `&Frame` (R51.147
+        // hover animation predates the macro's by-value bridging);
+        // re-borrow here to reuse it without touching the inner body.
+        view(state, &frame)
     }
 
-    fn tag() -> &'static str {
-        "main_btn"
-    }
-
+    /// R641 inherent forward for [`WidgetCore::read_state`]. Reads
+    /// live SCXML state through the §5.15 introspect channel — the
+    /// same path AI clients hit via `scene/query /external/state`.
     fn read_state(scene: &Scene) -> ButtonState {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
@@ -242,10 +276,9 @@ impl WidgetCore for ButtonView {
         ButtonState::Idle
     }
 
-    fn view(state: ButtonState, frame: &Frame) -> Scene {
-        view(state, frame)
-    }
-
+    /// R641 inherent forward for [`WidgetCore::event_name`]. Maps the
+    /// typed [`ButtonEvent`] back to the SCXML transition name the
+    /// §5.15 `invoke("send", Text(<name>))` channel consumes.
     fn event_name(event: ButtonEvent) -> &'static str {
         match event {
             ButtonEvent::PointerEnter => "PointerEnter",
@@ -261,10 +294,9 @@ impl WidgetCore for ButtonView {
         }
     }
 
-    fn title() -> &'static str {
-        "pinion hello-button (R51.30 §5.16 pinion-shell)"
-    }
-
+    /// R641 inherent forward for [`WidgetCore::keybinding`]. Maps
+    /// single-character keys to typed [`ButtonEvent`] variants the
+    /// shell dispatches through the §5.15 invoke channel.
     fn keybinding(key: &str) -> Option<ButtonEvent> {
         match key {
             "d" => Some(ButtonEvent::Disable),
@@ -281,12 +313,15 @@ impl WidgetCore for ButtonView {
     /// emits a `"click"` intent (parity with the `Pressed → Hover`
     /// pointer path). `Disabled` ignores activation; the SCXML
     /// transition is absent from that state per the ARIA spec.
+    ///
+    /// R641 §5.16 — moved to inherent method; the
+    /// [`#[widget(..., apply_key)]`](pinion_derive::widget) flag
+    /// instructs the macro to emit the [`WidgetCore::apply_key`]
+    /// forwarding stub.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
-}
 
-impl WidgetA11y for ButtonView {
     /// R51.63 §5.40 — AccessKit semantic tree contribution. Emits a
     /// single `AriaRole::Button` node whose `state_flags` mirror the
     /// four `ButtonState` variants 1:1 (`Idle` = no flags, `Hover` =
@@ -302,7 +337,11 @@ impl WidgetA11y for ButtonView {
     /// `"Disabled"`) directly out of the scene's `TextNode`. AT
     /// clients (Narrator / `VoiceOver` / Orca / `TalkBack`) see the
     /// same label the visible button shows.
-    fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
+    ///
+    /// R641 §5.16 — moved to inherent method; the [`WidgetA11y`]
+    /// impl the macro emits forwards into here unconditionally
+    /// (every widget binding contributes at least one [`AccessNode`]).
+    fn access_node(state: ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
             disabled: matches!(state, ButtonState::Disabled),
@@ -314,14 +353,6 @@ impl WidgetA11y for ButtonView {
             AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)
                 .with_state(access_state),
         ]
-    }
-}
-
-impl WidgetView for ButtonView {
-    type Renderer = HelloButtonRenderer;
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
     }
 }
 
@@ -360,7 +391,7 @@ mod a11y_tests {
     fn enriched(state: ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
         let owner = pinion_core::Owner::new();
         let scene = owner.run(|| view(state, &Frame::new()));
-        let mut nodes = ButtonView::access_node(&state, focused);
+        let mut nodes = ButtonView::access_node(state, focused);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         nodes
     }
@@ -383,7 +414,7 @@ mod a11y_tests {
 
     #[test]
     fn hover_state_sets_hovered_flag() {
-        let nodes = ButtonView::access_node(&ButtonState::Hover, None);
+        let nodes = ButtonView::access_node(ButtonState::Hover, None);
         assert!(nodes[0].state.hovered);
         assert!(!nodes[0].state.pressed);
         assert!(!nodes[0].state.disabled);
@@ -391,32 +422,32 @@ mod a11y_tests {
 
     #[test]
     fn pressed_state_sets_pressed_flag() {
-        let nodes = ButtonView::access_node(&ButtonState::Pressed, None);
+        let nodes = ButtonView::access_node(ButtonState::Pressed, None);
         assert!(nodes[0].state.pressed);
         assert!(!nodes[0].state.hovered);
     }
 
     #[test]
     fn focused_tag_sets_focused_flag() {
-        let nodes = ButtonView::access_node(&ButtonState::Idle, Some("main_btn"));
+        let nodes = ButtonView::access_node(ButtonState::Idle, Some("main_btn"));
         assert!(nodes[0].state.focused);
     }
 
     #[test]
     fn other_focused_tag_does_not_set_focused() {
-        let nodes = ButtonView::access_node(&ButtonState::Idle, Some("other_widget"));
+        let nodes = ButtonView::access_node(ButtonState::Idle, Some("other_widget"));
         assert!(!nodes[0].state.focused);
     }
 
     #[test]
     fn checked_is_none_for_button() {
-        let nodes = ButtonView::access_node(&ButtonState::Idle, None);
+        let nodes = ButtonView::access_node(ButtonState::Idle, None);
         assert_eq!(nodes[0].state.checked, None);
     }
 
     #[test]
     fn bare_access_node_leaves_name_none() {
-        let nodes = ButtonView::access_node(&ButtonState::Idle, None);
+        let nodes = ButtonView::access_node(ButtonState::Idle, None);
         assert!(
             nodes[0].name.is_none(),
             "name comes from enrich_names_from_scene, not from access_node"

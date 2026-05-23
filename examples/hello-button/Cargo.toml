@@ -22,6 +22,12 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # minimal (only the shell-internal substrate is re-exported) so each
 # widget binding imports a11y primitives directly.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R641 §5.16 — `#[pinion_derive::widget(...)]` attribute macro emits
+# the WidgetCore + WidgetA11y + WidgetView forwarding trio (tag /
+# title / initial_size / Renderer / create_external mechanical wiring).
+# Widget-specific logic (view / read_state / event_name / access_node
+# / apply_key) stays as inherent methods the macro forwards to.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
 # R51.30 paint-side AppShell. The shell pulls pinion-runtime (vello
 # feature) + pinion-rpc + pinion-text + winit + pollster transitively,
 # so this example's direct dep list collapses to "the widget I'm

@@ -11789,6 +11789,42 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R641 — R641 §5.16 #[pinion_derive::widget] attribute macro skeleton — WidgetCore/WidgetA11y/WidgetView 3-trait forwarding emit + hello-button first client retrofit + RPC parity
+
+**Changes**:
+- crates/pinion-derive/src/widget.rs new (~390 LOC): expand(attr, item) parses attribute (tag/state/event/title/renderer/initial_size/external + 7 optional flag attrs) + emits 3 trait impls. Required forwards = read_state/event_name/view/access_node always emitted to inherent fns on the unit struct. Optional forwards (apply_key/keybinding/apply_composition/apply_middle_click/focusable_tags/fmt_state_log/create_extra_externals) opt-in via bare-identifier flag attrs
+- crates/pinion-derive/src/lib.rs: #[proc_macro_attribute] pub fn widget(...) entry point + module docstring expanded for the §5.16 axis. existing #[derive(IntentTag)] surface unchanged
+- Macro design canon: (a) by-value bridge — inherent fns take `Copy` State/Frame by value (matching clippy::trivially_copy_pass_by_ref preference), macro emits trait by-ref signature and deref's at the forwarding call site. (b) Full impl emit — Rust forbids split `impl Trait for X` blocks so the macro emits the whole impl; widget-specific logic forwarded to inherent fns, default-OK methods stay at trait defaults unless opt-in flag
+- examples/hello-button/Cargo.toml: pinion-derive workspace dep added (production, not just dev) since the macro emit is consumed at the binary's main.rs compile path
+- examples/hello-button/src/main.rs retrofit: removed 60 LOC of mechanical `impl WidgetCore` / `impl WidgetA11y` / `impl WidgetView` boilerplate (tag/title/Renderer/initial_size/create_external/State+Event associated types/WidgetA11y wrapper) replaced by single #[widget(...)] attribute on the unit struct. Widget-specific logic moved to inherent `impl ButtonView { fn view / read_state / event_name / keybinding / apply_key / access_node }` block. By-value signatures for view + access_node match the macro's bridging convention
+- tools/demos/hello_button_r641.py new: RPC parity dogfood — spawns hello-button + drives Idle→Hover→Pressed→Hover (click)→Idle pointer arc + Disable/Enable lifecycle via scene/invoke '/external/send'. Verifies the macro-emitted trait impls forward identically to the pre-R641 hand-written form
+- Substrate-gap carry: scene/key always routes through handle_named_key, so character-key keybinding mappings (`d`/`e` → Disable/Enable) cannot be RPC-tested. The macro's keybinding flag is compile-time verified (trait method emit); R660+ candidate to add scene/key character-vs-named arm
+
+
+
+**Verification**:
+- cargo test --workspace: 3181 pass / 0 fail / 16 ignored (no regression, hello-button 12 a11y tests still pass post-retrofit)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (deny pedantic baseline)
+- validate_workspace: T1 orphan=0 / round-trip=1/1 / GENERATED.md=sync / no new T3 reject
+- python3 tools/demos/hello_button_r641.py: PASS 1.05s — 6-step pointer + lifecycle RPC arc via macro-emitted trait impls bit-equivalent to pre-R641 hand-written form
+- python3 tools/demos/hello_toggle_activate.py: PASS 0.87s, hello_toggle_click.py: PASS 0.98s — hello-toggle (not retrofitted at R641) still works, no cross-binding regression
+- python3 tools/demos/figma_button_m3_r640.py: PASS — R640 binding (not retrofitted) still drives all 9-point pixel + RPC pointer arc assertions
+
+
+
+**Impact**: §5.16, §5.20, §5.40, §5.41
+
+
+**Carry forward**:
+- LOC delta hello-button: 508 → 539 (net +31). Pure logic LOC reduced by ~60 (trait impl method ceremony removed); doc comments + macro flag annotations added ~90 (substrate establishment is documented in-source). Real LOC savings compound at R642+ when access_node enum→flag mapping derives + R643 read_state/event_name auto-derives land. R641's value is laying the proc-macro infrastructure, not the LOC delta today
+- R642 next per session queue — derive #[widget(role=Button)] auto-emit access_node from state-flag mapping. Removes the ~14 LOC inherent `fn access_node` from every binding. Substrate evidence: 17+ bindings have parallel `AccessState { focused:..., disabled:..., hovered:..., pressed:..., checked:... }` patterns
+- R643 candidate — derive read_state + event_name from SCXML state/event enum variant names (PascalCase convention). Requires either (a) pinion-forge codegen template emits #[derive(WidgetName)] on ButtonState/ButtonEvent (pinion-side, NOT vendor/sce — confirmed per [[sce-priority-over-pinion]]) or (b) orphan-rule-safe external trait impl module. Decision deferred to R643 when the substrate landing finally encounters the SCE-generated type
+- R660+ substrate gap: scene/key character-vs-named dispatch arm — currently RPC scene/key only routes named keys; character keys (a-z, 0-9) consulted by WidgetCore::keybinding only fire from real winit Key::Character events. AI-side keybinding verification requires this; carry until first AI-test client surfaces
+- ime_caret_rect / access_focus_target / access_child_invoke / update flag forwards NOT emitted at R641 because the test suite + 17 bindings carry no IME / composite + reducer evidence yet. When a third binding triggers any of these (textfield uses ime_caret_rect; radio-group uses access_focus_target+access_child_invoke), expand the macro emit at that round per [[abstraction-needs-second-consumer]]
+- Other 17 example bindings (hello-toggle / hello-textfield / hello-slider / hello-checkbox / hello-radio / hello-listbox / etc.) NOT retrofitted at R641. hello-button is the first-client validation; mass retrofit defers to R650 (ergonomics-axis measurement round) so each binding's specific override surface gets a one-pass review against the macro's opt-in flag table
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

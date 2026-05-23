@@ -1,6 +1,9 @@
-//! Derive macros for the §5.20 intent system.
+//! Derive + attribute macros for the §5.20 intent system and the
+//! §5.16 widget binding skeleton.
 //!
-//! `#[derive(IntentTag)]` lifts an enum into the [`IntentTag`] trait so
+//! ## `#[derive(IntentTag)]`
+//!
+//! Lifts an enum into the [`IntentTag`] trait so
 //! authors describe widget-emitted intents declaratively. Variant
 //! attributes use the `#[tag("name")]` form; the macro derives
 //! `const_tag` / `from_intent` / `schema` against the
@@ -20,12 +23,34 @@
 //! the [`IntrospectValue::Object`] / `Array` expansion carry-forward
 //! noted in §5.20.
 //!
+//! ## `#[pinion::widget(...)]` (R641 §5.16)
+//!
+//! Attribute macro that emits the three forwarding trait impls
+//! ([`WidgetCore`] + [`WidgetA11y`] + [`WidgetView`]) every visual
+//! binding declares, lifting the mechanical wiring (tag / title /
+//! associated types / [`create_external`] factory / [`initial_size`])
+//! out of every example main.rs while keeping the widget-specific
+//! logic ([`view`] / [`read_state`] / [`event_name`] /
+//! [`access_node`]) as inherent methods the macro forwards into. See
+//! [`widget`] module docs for the full attribute table.
+//!
 //! The macro emits no `use` statements that would shadow caller
 //! symbols — every reference goes through the absolute
-//! `::pinion_core::intent::…` path.
+//! `::pinion_core::…` / `::pinion_a11y::…` / `::pinion_shell::…` path.
 //!
 //! [`IntentTag`]: pinion_core::intent::IntentTag
 //! [`IntrospectValue`]: pinion_core::external::IntrospectValue
+//! [`WidgetCore`]: pinion_core::WidgetCore
+//! [`WidgetA11y`]: pinion_a11y::WidgetA11y
+//! [`WidgetView`]: pinion_shell::WidgetView
+//! [`create_external`]: pinion_core::WidgetCore::create_external
+//! [`initial_size`]: pinion_shell::WidgetView::initial_size
+//! [`view`]: pinion_core::WidgetCore::view
+//! [`read_state`]: pinion_core::WidgetCore::read_state
+//! [`event_name`]: pinion_core::WidgetCore::event_name
+//! [`access_node`]: pinion_a11y::WidgetA11y::access_node
+
+mod widget;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -40,6 +65,22 @@ use syn::{spanned::Spanned, Data, DeriveInput, Fields, Lit, Meta, Variant};
 pub fn derive_intent_tag(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as DeriveInput);
     match expand_intent_tag(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// R641 §5.16 — `#[widget(...)]` attribute macro emitting the
+/// [`WidgetCore`](pinion_core::WidgetCore) + [`WidgetA11y`](pinion_a11y::WidgetA11y)
+/// + [`WidgetView`](pinion_shell::WidgetView) forwarding trio.
+///
+/// See [`widget`] module docs for the full attribute reference and
+/// the optional-flag table.
+#[proc_macro_attribute]
+pub fn widget(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr2: TokenStream2 = attr.into();
+    let item2: TokenStream2 = item.into();
+    match widget::expand(attr2, item2) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
