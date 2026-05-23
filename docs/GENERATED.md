@@ -3903,6 +3903,7 @@ if __name__ == "__main__":
 - R57.X.theme-fade: cascade tests use 2-phase owner.run + settle + owner.run for clean retarget.
 - R586 ime_caret_rect lock-step 마이그는 same-frame cache hit 도출 — roll back 시 cache miss 증가 (R587 측정).
 - hello-textfield fade per-frame shape ~1-2ms × 12 = ~6-12% budget; visible threshold 아래 (R587).
+- ColorRole +4 error tier (M3 Error 40/100/90/10 light, 80/20/30/90 dark); non_exhaustive 유지 (R590).
 
 
 
@@ -17710,6 +17711,31 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 **Carry forward**:
 - demo color constants = Theme palette mirror; palette baseline 이동 시 lock-step audit
+
+
+
+### Round 590 — ColorRole 에 Material 3 error tier 4 variants 추가 (Error/OnError/ErrorContainer/OnErrorContainer); Theme light+dark + ThemeLinear carrier + 4 회귀.
+
+**Changes**:
+- theme.rs: ColorRole +4 variants (Error/OnError/ErrorContainer/OnErrorContainer) + non_exhaustive
+- theme.rs: Theme +4 fields + M3 light/dark hex + resolve +4 arms
+- theme.rs: ThemeLinear +4 fields + from_theme/to_theme + Animatable 5 method arms
+- theme.rs: +4 progression tests (light/dark palette pin, resolve dispatch, linear round-trip)
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib theme: 40 pass 0 fail (R589 36 + 4 R590)
+- cargo test --workspace --features pinion-runtime/vello: 2808 pass / 0 fail / 13 ignored (+4)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- error tier downstream cascade (hello-button Disabled tonal mapping 등) 소비 있음
 
 
 

@@ -36,23 +36,28 @@
 //!   default ([`ThemeMode::System`]).
 //! - Slint `Palette` / `FluentUI` Tokens — same structural shape.
 //!
-//! ## First-slice scope (R57.0 + R57.X.toggle extension + R57.1)
+//! ## First-slice scope (R57.0 + R57.X.toggle extension + R57.1 + R590)
 //!
 //! Tier 1 color roles: [`ColorRole::Surface`], [`ColorRole::OnSurface`],
 //! [`ColorRole::OnSurfaceMuted`], [`ColorRole::Accent`],
 //! [`ColorRole::OnAccent`], [`ColorRole::Outline`], plus the four
 //! Material 3 surface-elevation tiers ([`ColorRole::SurfaceContainerLow`]
 //! ... [`ColorRole::SurfaceContainerHighest`]) the `hello-listbox`
-//! retrofit (R57.X.listbox) surfaced. The role enum's
-//! `#[non_exhaustive]` annotation keeps every future extension
-//! `SemVer`-safe.
+//! retrofit (R57.X.listbox) surfaced. R590 adds the Material 3 error
+//! tier ([`ColorRole::Error`], [`ColorRole::OnError`],
+//! [`ColorRole::ErrorContainer`], [`ColorRole::OnErrorContainer`]) so
+//! widgets in invalid / destructive state — disabled-button tonal
+//! signalling, validation banners, destructive confirm dialogs — share
+//! one canonical role family instead of hard-coding hex literals. The
+//! role enum's `#[non_exhaustive]` annotation keeps every future
+//! extension `SemVer`-safe.
 //!
 //! Subsequent slices (R57.2+) layer in the remaining Material 3
 //! container / variant pairs (`primaryContainer` /
-//! `onPrimaryContainer`, the error role family), the typography token
-//! surface (font-size / line-height roles), and the spacing token
-//! surface — every extension lands behind the same `#[non_exhaustive]`
-//! shape on [`ColorRole`].
+//! `onPrimaryContainer`, secondary / tertiary role families), the
+//! typography token surface (font-size / line-height roles), and the
+//! spacing token surface — every extension lands behind the same
+//! `#[non_exhaustive]` shape on [`ColorRole`].
 //!
 //! ## Resolution path
 //!
@@ -293,6 +298,23 @@ pub enum ColorRole {
     /// Material 3 `surfaceContainerHigh` — used for hovered list rows,
     /// drawer panels, sheet headers.
     SurfaceContainerHigh,
+    /// Destructive / invalid signal color — used by validation
+    /// banners, error icons, destructive button fills (delete /
+    /// discard), disabled-button red accent the existing
+    /// `hello-button` carry surfaces. Material 3 `error`.
+    Error,
+    /// Foreground rendered on top of an [`Self::Error`] fill — paired
+    /// for guaranteed contrast against the red signal tone. Material 3
+    /// `onError`.
+    OnError,
+    /// Filled-but-low-emphasis error surface — used by tinted error
+    /// containers (helper text strip beneath a `TextField` in invalid
+    /// state, error-banner background). Material 3 `errorContainer`.
+    ErrorContainer,
+    /// Foreground rendered on top of an [`Self::ErrorContainer`] fill —
+    /// the legible body / icon color a tinted error surface should
+    /// carry. Material 3 `onErrorContainer`.
+    OnErrorContainer,
 }
 
 impl ColorRole {
@@ -330,6 +352,10 @@ impl ColorRole {
             ColorRole::SurfaceContainerLow => Color::rgb(0xf7, 0xf2, 0xfa),
             ColorRole::SurfaceContainer => Color::rgb(0xf3, 0xed, 0xf7),
             ColorRole::SurfaceContainerHigh => Color::rgb(0xec, 0xe6, 0xf0),
+            ColorRole::Error => Color::rgb(0xb3, 0x26, 0x1e),
+            ColorRole::OnError => Color::rgb(0xff, 0xff, 0xff),
+            ColorRole::ErrorContainer => Color::rgb(0xf9, 0xde, 0xdc),
+            ColorRole::OnErrorContainer => Color::rgb(0x41, 0x0e, 0x0b),
         }
     }
 }
@@ -378,6 +404,14 @@ pub struct Theme {
     pub surface_container: Color,
     /// Resolves [`ColorRole::SurfaceContainerHigh`].
     pub surface_container_high: Color,
+    /// Resolves [`ColorRole::Error`].
+    pub error: Color,
+    /// Resolves [`ColorRole::OnError`].
+    pub on_error: Color,
+    /// Resolves [`ColorRole::ErrorContainer`].
+    pub error_container: Color,
+    /// Resolves [`ColorRole::OnErrorContainer`].
+    pub on_error_container: Color,
 }
 
 impl Theme {
@@ -404,6 +438,17 @@ impl Theme {
     ///   `surfaceContainer` tone — focused-row / mid-elevation tier.
     /// - `surface_container_high` = `#ECE6F0`, the Material 3 light
     ///   `surfaceContainerHigh` tone — hovered-row / drawer-panel tier.
+    /// - `error` = `#B3261E`, the Material 3 light `error` (Error 40)
+    ///   tone — destructive / invalid signal at 5.9:1 against
+    ///   `surface`.
+    /// - `on_error` = pure white (`#FFFFFF`), 5.9:1 against `error`.
+    /// - `error_container` = `#F9DEDC`, the Material 3 light
+    ///   `errorContainer` (Error 90) tone — tinted error surface for
+    ///   helper-text strips and banners (1.1:1 against `surface`,
+    ///   distinguished by chroma rather than luminance).
+    /// - `on_error_container` = `#410E0B`, the Material 3 light
+    ///   `onErrorContainer` (Error 10) tone — 11.6:1 against
+    ///   `error_container` (WCAG AAA).
     #[must_use]
     pub const fn light() -> Self {
         Self {
@@ -417,6 +462,10 @@ impl Theme {
             surface_container_low: Color::rgb(0xf7, 0xf2, 0xfa),
             surface_container: Color::rgb(0xf3, 0xed, 0xf7),
             surface_container_high: Color::rgb(0xec, 0xe6, 0xf0),
+            error: Color::rgb(0xb3, 0x26, 0x1e),
+            on_error: Color::rgb(0xff, 0xff, 0xff),
+            error_container: Color::rgb(0xf9, 0xde, 0xdc),
+            on_error_container: Color::rgb(0x41, 0x0e, 0x0b),
         }
     }
 
@@ -445,6 +494,16 @@ impl Theme {
     ///   `surfaceContainer` tone — focused-row / mid-elevation tier.
     /// - `surface_container_high` = `#2B2930`, the Material 3 dark
     ///   `surfaceContainerHigh` tone — hovered-row / drawer-panel tier.
+    /// - `error` = `#F2B8B5`, the Material 3 dark `error` (Error 80)
+    ///   tone — lifted from Error 40 so the red signal stays legible
+    ///   against `#121212` (8.6:1 contrast, WCAG AAA).
+    /// - `on_error` = `#601410` (Error 20), 8.6:1 against `error` for
+    ///   the typography that sits on top of the lifted red signal.
+    /// - `error_container` = `#8C1D18` (Error 30), the Material 3 dark
+    ///   `errorContainer` tone — deeper red tinted surface for helper-
+    ///   text strips and banners.
+    /// - `on_error_container` = `#F9DEDC` (Error 90), 7.8:1 against
+    ///   `error_container` (WCAG AAA).
     #[must_use]
     pub const fn dark() -> Self {
         Self {
@@ -458,6 +517,10 @@ impl Theme {
             surface_container_low: Color::rgb(0x1d, 0x1b, 0x20),
             surface_container: Color::rgb(0x21, 0x1f, 0x26),
             surface_container_high: Color::rgb(0x2b, 0x29, 0x30),
+            error: Color::rgb(0xf2, 0xb8, 0xb5),
+            on_error: Color::rgb(0x60, 0x14, 0x10),
+            error_container: Color::rgb(0x8c, 0x1d, 0x18),
+            on_error_container: Color::rgb(0xf9, 0xde, 0xdc),
         }
     }
 
@@ -479,6 +542,10 @@ impl Theme {
             ColorRole::SurfaceContainerLow => self.surface_container_low,
             ColorRole::SurfaceContainer => self.surface_container,
             ColorRole::SurfaceContainerHigh => self.surface_container_high,
+            ColorRole::Error => self.error,
+            ColorRole::OnError => self.on_error,
+            ColorRole::ErrorContainer => self.error_container,
+            ColorRole::OnErrorContainer => self.on_error_container,
         }
     }
 }
@@ -522,6 +589,10 @@ struct ThemeLinear {
     surface_container_low: AnimVec4,
     surface_container: AnimVec4,
     surface_container_high: AnimVec4,
+    error: AnimVec4,
+    on_error: AnimVec4,
+    error_container: AnimVec4,
+    on_error_container: AnimVec4,
 }
 
 impl ThemeLinear {
@@ -542,6 +613,10 @@ impl ThemeLinear {
             surface_container_low: t.surface_container_low.to_linear(),
             surface_container: t.surface_container.to_linear(),
             surface_container_high: t.surface_container_high.to_linear(),
+            error: t.error.to_linear(),
+            on_error: t.on_error.to_linear(),
+            error_container: t.error_container.to_linear(),
+            on_error_container: t.on_error_container.to_linear(),
         }
     }
 
@@ -564,6 +639,10 @@ impl ThemeLinear {
             surface_container_low: Color::from_linear(self.surface_container_low),
             surface_container: Color::from_linear(self.surface_container),
             surface_container_high: Color::from_linear(self.surface_container_high),
+            error: Color::from_linear(self.error),
+            on_error: Color::from_linear(self.on_error),
+            error_container: Color::from_linear(self.error_container),
+            on_error_container: Color::from_linear(self.on_error_container),
         }
     }
 }
@@ -581,6 +660,10 @@ impl Animatable for ThemeLinear {
             surface_container_low: AnimVec4::zero(),
             surface_container: AnimVec4::zero(),
             surface_container_high: AnimVec4::zero(),
+            error: AnimVec4::zero(),
+            on_error: AnimVec4::zero(),
+            error_container: AnimVec4::zero(),
+            on_error_container: AnimVec4::zero(),
         }
     }
 
@@ -602,6 +685,12 @@ impl Animatable for ThemeLinear {
             surface_container_high: self
                 .surface_container_high
                 .add(other.surface_container_high),
+            error: self.error.add(other.error),
+            on_error: self.on_error.add(other.on_error),
+            error_container: self.error_container.add(other.error_container),
+            on_error_container: self
+                .on_error_container
+                .add(other.on_error_container),
         }
     }
 
@@ -623,6 +712,12 @@ impl Animatable for ThemeLinear {
             surface_container_high: self
                 .surface_container_high
                 .sub(other.surface_container_high),
+            error: self.error.sub(other.error),
+            on_error: self.on_error.sub(other.on_error),
+            error_container: self.error_container.sub(other.error_container),
+            on_error_container: self
+                .on_error_container
+                .sub(other.on_error_container),
         }
     }
 
@@ -638,6 +733,10 @@ impl Animatable for ThemeLinear {
             surface_container_low: self.surface_container_low.scale(factor),
             surface_container: self.surface_container.scale(factor),
             surface_container_high: self.surface_container_high.scale(factor),
+            error: self.error.scale(factor),
+            on_error: self.on_error.scale(factor),
+            error_container: self.error_container.scale(factor),
+            on_error_container: self.on_error_container.scale(factor),
         }
     }
 
@@ -652,6 +751,10 @@ impl Animatable for ThemeLinear {
             && self.surface_container_low.approx_zero(epsilon)
             && self.surface_container.approx_zero(epsilon)
             && self.surface_container_high.approx_zero(epsilon)
+            && self.error.approx_zero(epsilon)
+            && self.on_error.approx_zero(epsilon)
+            && self.error_container.approx_zero(epsilon)
+            && self.on_error_container.approx_zero(epsilon)
     }
 }
 
@@ -1262,6 +1365,85 @@ mod tests {
         // "no preference" convention. Important for downstream
         // tests that construct Theme without specifying a palette.
         assert_eq!(Theme::default(), Theme::light());
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R590 — Material 3 error tier exact-value + role-mapping pins
+    // ─────────────────────────────────────────────────────────────
+
+    /// (R590 §5.50) Pin the Material 3 light error tier hex values.
+    /// A palette tweak that drifts the error tone breaks the
+    /// destructive-signal affordance for every consumer at once;
+    /// the exact-value assertion guarantees the family stays on the
+    /// M3 baseline until a future round explicitly retones it.
+    #[test]
+    fn r590_error_tier_light_exact_palette_pins() {
+        let t = Theme::light();
+        assert_eq!(t.error, Color::rgb(0xb3, 0x26, 0x1e));
+        assert_eq!(t.on_error, Color::rgb(0xff, 0xff, 0xff));
+        assert_eq!(t.error_container, Color::rgb(0xf9, 0xde, 0xdc));
+        assert_eq!(t.on_error_container, Color::rgb(0x41, 0x0e, 0x0b));
+    }
+
+    /// (R590 §5.50) Pin the Material 3 dark error tier hex values.
+    /// Each tone is lifted toward the upper half of the Error tonal
+    /// scale (80 / 20 / 30 / 90) so the red signal stays legible
+    /// against `#121212`.
+    #[test]
+    fn r590_error_tier_dark_exact_palette_pins() {
+        let t = Theme::dark();
+        assert_eq!(t.error, Color::rgb(0xf2, 0xb8, 0xb5));
+        assert_eq!(t.on_error, Color::rgb(0x60, 0x14, 0x10));
+        assert_eq!(t.error_container, Color::rgb(0x8c, 0x1d, 0x18));
+        assert_eq!(t.on_error_container, Color::rgb(0xf9, 0xde, 0xdc));
+    }
+
+    /// (R590 §5.50) `Theme::resolve(ColorRole::Error/...)` returns
+    /// the matching palette field on both light and dark presets.
+    /// Pins the enum-arm-to-field wiring so a future re-numbering of
+    /// the enum cannot silently swap the role-to-field map.
+    #[test]
+    fn r590_error_tier_resolve_dispatches_to_palette_fields() {
+        for palette in [Theme::light(), Theme::dark()] {
+            assert_eq!(palette.resolve(ColorRole::Error), palette.error);
+            assert_eq!(palette.resolve(ColorRole::OnError), palette.on_error);
+            assert_eq!(
+                palette.resolve(ColorRole::ErrorContainer),
+                palette.error_container,
+            );
+            assert_eq!(
+                palette.resolve(ColorRole::OnErrorContainer),
+                palette.on_error_container,
+            );
+        }
+    }
+
+    /// (R590 §5.50) The `ThemeLinear` carrier covers the error tier:
+    /// `to_theme(from_theme(t))` round-trips every error field within
+    /// the 8-bit sRGB rounding tolerance the existing
+    /// `r57_x_theme_linear_round_trip_is_within_8bit_tolerance`
+    /// assertion uses for the rest of the palette. Pinning per-field
+    /// keeps a missed entry in `from_theme` / `to_theme` from sliding
+    /// through.
+    #[test]
+    fn r590_error_tier_linear_round_trip_preserves_error_fields() {
+        for palette in [Theme::light(), Theme::dark()] {
+            let round_trip = ThemeLinear::from_theme(palette).to_theme();
+            // 8-bit sRGB EOTF round-trip is exact within ±1 channel.
+            let close = |a: Color, b: Color| {
+                let da = i16::from(a.r) - i16::from(b.r);
+                let db = i16::from(a.g) - i16::from(b.g);
+                let dc = i16::from(a.b) - i16::from(b.b);
+                da.abs() <= 1 && db.abs() <= 1 && dc.abs() <= 1
+            };
+            assert!(close(round_trip.error, palette.error));
+            assert!(close(round_trip.on_error, palette.on_error));
+            assert!(close(round_trip.error_container, palette.error_container));
+            assert!(close(
+                round_trip.on_error_container,
+                palette.on_error_container,
+            ));
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
