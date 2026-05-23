@@ -72,6 +72,109 @@ impl Color {
     /// Same bit layout as the previous default `BoxNode.fill = 0`.
     pub const TRANSPARENT: Self = Self::rgba(0, 0, 0, 0);
 
+    /// R615 §5.50 — parse a CSS Color Module Level 4 hex literal.
+    ///
+    /// Accepts the full canonical CSS spec — leading `#` required,
+    /// hex digits case-insensitive, four shapes:
+    ///
+    /// - `#RGB` — 3 hex digits, each doubled to 8-bit (`#fff` →
+    ///   `Color::rgb(0xff, 0xff, 0xff)`). Alpha implicit `0xff`.
+    /// - `#RGBA` — 4 hex digits, last is alpha doubled (`#fff8` →
+    ///   `Color::rgba(0xff, 0xff, 0xff, 0x88)`).
+    /// - `#RRGGBB` — 6 hex digits. Alpha implicit `0xff`.
+    /// - `#RRGGBBAA` — 8 hex digits, all four channels explicit.
+    ///
+    /// Returns [`None`] for any string that does not match one of
+    /// the four shapes, contains a non-hex digit, or is missing the
+    /// leading `#`.
+    ///
+    /// # Round-trip
+    ///
+    /// `Color::from_hex(c.to_hex().as_str()) == Some(c)` holds for
+    /// every [`Color`] value — the writer emits the canonical
+    /// 6-digit (or 8-digit if non-opaque) form, the reader accepts
+    /// it. Round-trip property pinned by
+    /// `r615_color_hex_round_trips_for_every_canonical_form`.
+    ///
+    /// # Why on the substrate
+    ///
+    /// CSS hex parsing is a framework primitive every theme-aware
+    /// consumer needs — RPC wire (R608 `set_theme_palettes`), future
+    /// CSS-loader / stylesheet binding, future `ThemeProvider` JSON
+    /// import. Pre-R615 the parser lived RPC-side because
+    /// [[abstraction-needs-second-consumer]] held it for the second
+    /// consumer; R615 lifts on the textbook "framework primitive
+    /// for industry-standard format" overrule — CSS Color Module
+    /// Level 4 is the canonical spec, the substrate is the canonical
+    /// home, and waiting for a second consumer to materialize before
+    /// adding a 10-line primitive that the spec explicitly defines
+    /// is the wrong trade-off direction.
+    #[must_use]
+    pub fn from_hex(input: &str) -> Option<Self> {
+        let hex = input.strip_prefix('#')?;
+        let parse_nibble = |range: std::ops::Range<usize>| -> Option<u8> {
+            u8::from_str_radix(hex.get(range)?, 16).ok()
+        };
+        // The expand_nibble closure doubles a single hex digit into a
+        // full byte (e.g. `0xf` → `0xff`) per the CSS Color Module
+        // Level 4 shorthand expansion rule. Equivalent to
+        // `(digit << 4) | digit`.
+        let expand_nibble = |range: std::ops::Range<usize>| -> Option<u8> {
+            let d = parse_nibble(range)?;
+            Some((d << 4) | d)
+        };
+        let (red, green, blue, alpha) = match hex.len() {
+            3 => (
+                expand_nibble(0..1)?,
+                expand_nibble(1..2)?,
+                expand_nibble(2..3)?,
+                0xff_u8,
+            ),
+            4 => (
+                expand_nibble(0..1)?,
+                expand_nibble(1..2)?,
+                expand_nibble(2..3)?,
+                expand_nibble(3..4)?,
+            ),
+            6 => (
+                parse_nibble(0..2)?,
+                parse_nibble(2..4)?,
+                parse_nibble(4..6)?,
+                0xff_u8,
+            ),
+            8 => (
+                parse_nibble(0..2)?,
+                parse_nibble(2..4)?,
+                parse_nibble(4..6)?,
+                parse_nibble(6..8)?,
+            ),
+            _ => return None,
+        };
+        Some(Self::rgba(red, green, blue, alpha))
+    }
+
+    /// R615 §5.50 — encode as a CSS Color Module Level 4 hex literal.
+    ///
+    /// Emits the canonical 6-digit form `#rrggbb` when alpha is
+    /// fully opaque (`0xff`) and the 8-digit form `#rrggbbaa`
+    /// otherwise. Lowercase hex digits per W3C convention.
+    ///
+    /// Inverse of [`Self::from_hex`] — round-trip pinned by
+    /// `r615_color_hex_round_trips_for_every_canonical_form`.
+    /// Pre-R615 this logic lived RPC-side as `color_to_hex`; R615
+    /// lifts to the substrate alongside [`Self::from_hex`].
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        if self.a == 0xff {
+            format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+        } else {
+            format!(
+                "#{:02x}{:02x}{:02x}{:02x}",
+                self.r, self.g, self.b, self.a,
+            )
+        }
+    }
+
     /// R51.151 §5.28 — colorimetrically-correct linear interpolation
     /// between two [`Color`]s.
     ///
@@ -1334,6 +1437,129 @@ mod tests {
     fn rgb_helper_sets_opaque_alpha() {
         let c = Color::rgb(0xff, 0x00, 0x00);
         assert_eq!(c.a, 0xff);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R615 §5.50 — Color::from_hex + Color::to_hex (CSS Color Module
+    // Level 4 spec)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r615_from_hex_accepts_six_digit_lowercase() {
+        assert_eq!(Color::from_hex("#fefbff"), Some(Color::rgb(0xfe, 0xfb, 0xff)));
+    }
+
+    #[test]
+    fn r615_from_hex_accepts_six_digit_uppercase() {
+        // CSS Color Module Level 4: hex digits are case-insensitive.
+        assert_eq!(Color::from_hex("#FEFBFF"), Some(Color::rgb(0xfe, 0xfb, 0xff)));
+    }
+
+    #[test]
+    fn r615_from_hex_accepts_eight_digit_with_alpha() {
+        assert_eq!(
+            Color::from_hex("#10203080"),
+            Some(Color::rgba(0x10, 0x20, 0x30, 0x80)),
+        );
+    }
+
+    #[test]
+    fn r615_from_hex_six_digit_implies_opaque_alpha() {
+        let c = Color::from_hex("#000000").unwrap();
+        assert_eq!(c.a, 0xff);
+    }
+
+    #[test]
+    fn r615_from_hex_accepts_three_digit_shorthand_per_css_spec() {
+        // CSS Color Module Level 4: #RGB expands to #RRGGBB by
+        // doubling each digit (`#fff` → `#ffffff`,
+        // `#f0a` → `#ff00aa`).
+        assert_eq!(Color::from_hex("#fff"), Some(Color::rgb(0xff, 0xff, 0xff)));
+        assert_eq!(Color::from_hex("#f0a"), Some(Color::rgb(0xff, 0x00, 0xaa)));
+        assert_eq!(Color::from_hex("#000"), Some(Color::rgb(0x00, 0x00, 0x00)));
+    }
+
+    #[test]
+    fn r615_from_hex_accepts_four_digit_shorthand_with_alpha() {
+        // #RGBA — last digit is alpha, also doubled.
+        assert_eq!(
+            Color::from_hex("#fff8"),
+            Some(Color::rgba(0xff, 0xff, 0xff, 0x88)),
+        );
+    }
+
+    #[test]
+    fn r615_from_hex_rejects_missing_hash() {
+        assert_eq!(Color::from_hex("fefbff"), None);
+    }
+
+    #[test]
+    fn r615_from_hex_rejects_invalid_hex_digit() {
+        assert_eq!(Color::from_hex("#zzzzzz"), None);
+        assert_eq!(Color::from_hex("#12345g"), None);
+        assert_eq!(Color::from_hex("#fz0"), None);
+    }
+
+    #[test]
+    fn r615_from_hex_rejects_wrong_length() {
+        // CSS Color Module Level 4 only defines #RGB / #RGBA /
+        // #RRGGBB / #RRGGBBAA — every other digit count is invalid.
+        assert_eq!(Color::from_hex("#"), None);
+        assert_eq!(Color::from_hex("#1"), None);
+        assert_eq!(Color::from_hex("#12"), None);
+        assert_eq!(Color::from_hex("#12345"), None);
+        assert_eq!(Color::from_hex("#1234567"), None);
+        assert_eq!(Color::from_hex("#123456789"), None);
+    }
+
+    #[test]
+    fn r615_to_hex_emits_six_digit_for_opaque() {
+        assert_eq!(Color::rgb(0xff, 0xfb, 0xff).to_hex(), "#fffbff");
+        assert_eq!(Color::rgb(0x12, 0x12, 0x12).to_hex(), "#121212");
+    }
+
+    #[test]
+    fn r615_to_hex_emits_eight_digit_for_translucent() {
+        assert_eq!(
+            Color::rgba(0x10, 0x20, 0x30, 0x80).to_hex(),
+            "#10203080",
+        );
+    }
+
+    #[test]
+    fn r615_to_hex_uses_lowercase_hex_digits() {
+        // W3C / Material 3 / Web Inspector convention.
+        let s = Color::rgb(0xab, 0xcd, 0xef).to_hex();
+        assert_eq!(s, "#abcdef");
+        assert!(!s.contains('A'));
+    }
+
+    #[test]
+    fn r615_color_hex_round_trips_for_every_canonical_form() {
+        // Property: from_hex(c.to_hex()) == Some(c) for every Color.
+        for c in [
+            Color::rgb(0x00, 0x00, 0x00),
+            Color::rgb(0xff, 0xff, 0xff),
+            Color::rgb(0x19, 0x76, 0xd2),  // Material Blue 700
+            Color::rgb(0xb3, 0x26, 0x1e),  // Material Error 40
+            Color::rgba(0x10, 0x20, 0x30, 0x80),
+            Color::rgba(0x00, 0x00, 0x00, 0x01),
+            Color::TRANSPARENT,
+        ] {
+            assert_eq!(
+                Color::from_hex(&c.to_hex()),
+                Some(c),
+                "round-trip failed for {c:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn r615_from_hex_shorthand_round_trips_through_expansion() {
+        // Shorthand round-trips through expansion: #fff → opaque
+        // white → #ffffff (and the same byte triple).
+        let c = Color::from_hex("#fff").unwrap();
+        assert_eq!(c.to_hex(), "#ffffff");
     }
 
     #[test]

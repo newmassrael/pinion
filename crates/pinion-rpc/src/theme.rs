@@ -284,17 +284,12 @@ fn project_palette(theme: &Theme) -> PaletteTokens {
         .collect()
 }
 
-/// `#rrggbb` when `color.a == 0xff`; `#rrggbbaa` otherwise. Matches
-/// the CSS Color Module Level 4 form.
+/// R615 §5.50 — wire-side delegate to [`Color::to_hex`] (substrate
+/// primitive). Pre-R615 the encoder lived RPC-side; R615 lifted both
+/// reader + writer to `pinion-core::style::Color` as the canonical
+/// home for CSS Color Module Level 4 hex parsing.
 fn color_to_hex(color: Color) -> String {
-    if color.a == 0xff {
-        format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
-    } else {
-        format!(
-            "#{:02x}{:02x}{:02x}{:02x}",
-            color.r, color.g, color.b, color.a,
-        )
-    }
+    color.to_hex()
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -704,41 +699,16 @@ fn theme_from_role_map(map: &std::collections::HashMap<ColorRole, Color>) -> The
     }
 }
 
-/// Parse a CSS Color Module Level 4 hex literal into a [`Color`].
-///
-/// Accepts the two shapes [`color_to_hex`] emits — `#rrggbb` (alpha
-/// implicit `0xff`) and `#rrggbbaa` — case-insensitive. Rejects
-/// 3-digit `#rgb` / 4-digit `#rgba` shorthand and any string missing
-/// the leading `#`, because [`color_to_hex`] never emits those forms
-/// and accepting them would create a wire-shape asymmetry between the
-/// reader and the writer.
-///
-/// Lives RPC-side because it is the only consumer right now (the
-/// AI-first write path); the [[abstraction-needs-second-consumer]]
-/// discipline holds the lift to `Color::from_hex` on `pinion-core`
-/// until a second consumer (CSS-loader, stylesheet binding, …)
-/// surfaces.
+/// R615 §5.50 — wire-side delegate to [`Color::from_hex`] (substrate
+/// primitive). Pre-R615 the parser lived RPC-side with a narrower
+/// strict-subset accept policy (`#rrggbb` / `#rrggbbaa` only); R615
+/// lifted to `pinion-core::style::Color::from_hex` and the wire now
+/// follows the full CSS Color Module Level 4 spec — 3-digit `#rgb`
+/// and 4-digit `#rgba` shorthand expand canonically (`#fff` →
+/// `#ffffff` byte-equivalent). Round-trip with [`color_to_hex`] is
+/// preserved because the encoder still emits 6-digit / 8-digit.
 fn parse_color_hex(input: &str) -> Option<Color> {
-    let hex = input.strip_prefix('#')?;
-    let parse_byte = |range: std::ops::Range<usize>| -> Option<u8> {
-        u8::from_str_radix(hex.get(range)?, 16).ok()
-    };
-    let (red, green, blue, alpha) = match hex.len() {
-        6 => (
-            parse_byte(0..2)?,
-            parse_byte(2..4)?,
-            parse_byte(4..6)?,
-            0xff_u8,
-        ),
-        8 => (
-            parse_byte(0..2)?,
-            parse_byte(2..4)?,
-            parse_byte(4..6)?,
-            parse_byte(6..8)?,
-        ),
-        _ => return None,
-    };
-    Some(Color::rgba(red, green, blue, alpha))
+    Color::from_hex(input)
 }
 
 #[cfg(test)]
@@ -1179,10 +1149,18 @@ mod tests {
     }
 
     #[test]
-    fn r608_parse_color_hex_rejects_three_digit_shorthand() {
-        // Intentionally tighter than CSS — the writer (color_to_hex)
-        // never emits 3-digit forms, so the reader stays symmetric.
-        assert_eq!(parse_color_hex("#fff"), None);
+    fn r615_parse_color_hex_accepts_three_digit_shorthand_via_substrate_lift() {
+        // R615 §5.50 — wire is now a thin delegate to
+        // Color::from_hex (substrate). CSS Color Module Level 4
+        // shorthand expansion lights up: `#fff` → 0xffffff. Pre-R615
+        // the wire rejected shorthand for symmetric strictness with
+        // the writer; R615 relaxed the reader to full CSS spec while
+        // keeping the writer emitting 6/8-digit. Round-trip property
+        // (read response → modify → write back) is preserved because
+        // the writer's output always falls under the strict subset
+        // the pre-R615 reader accepted.
+        assert_eq!(parse_color_hex("#fff"), Some(Color::rgb(0xff, 0xff, 0xff)));
+        assert_eq!(parse_color_hex("#f0a"), Some(Color::rgb(0xff, 0x00, 0xaa)));
     }
 
     #[test]
@@ -1193,7 +1171,11 @@ mod tests {
 
     #[test]
     fn r608_parse_color_hex_rejects_wrong_length() {
+        // CSS Color Module Level 4 defines only the four shapes
+        // (#RGB / #RGBA / #RRGGBB / #RRGGBBAA). 1/2/5/7/9-digit
+        // inputs surface as None.
         assert_eq!(parse_color_hex("#1"), None);
+        assert_eq!(parse_color_hex("#12"), None);
         assert_eq!(parse_color_hex("#12345"), None);
         assert_eq!(parse_color_hex("#1234567"), None);
         assert_eq!(parse_color_hex("#123456789"), None);

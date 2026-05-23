@@ -11014,6 +11014,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R615 — Color::from_hex + Color::to_hex substrate lift — CSS Color Module Level 4 paired primitive moves to pinion-core where it belongs as a framework primitive
+
+**Changes**:
+- pinion-core::style::Color::from_hex (R615 §5.50) — full CSS Color Module Level 4 spec (3/4/6/8-digit forms, case-insensitive, leading # required)
+- pinion-core::style::Color::to_hex (R615 §5.50) — emits canonical #rrggbb (opaque) or #rrggbbaa (translucent), lowercase per W3C
+- pinion-rpc::theme::parse_color_hex + color_to_hex collapse to 1-line delegates of the substrate primitives
+- Pre-R615 wire-side rejected 3/4-digit shorthand for symmetric strictness; R615 wire now follows full CSS spec while writer still emits 6/8-digit — round-trip preserved (writer output is always a strict-subset reader-acceptable form)
+- Overrides [[abstraction-needs-second-consumer]] on the framework-primitive ground: CSS Color Module Level 4 is canonical, substrate is canonical home, waiting for 2nd consumer to materialize for a 10-line spec-defined primitive was the wrong direction
+
+
+
+**Verification**:
+- cargo test --workspace: 3058 pass / 0 fail (R614: 3044 → +14 R615 substrate + wire tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- r615_color_hex_round_trips_for_every_canonical_form — property: from_hex(c.to_hex()) == Some(c) for opaque + translucent + edge values + TRANSPARENT
+- r615_from_hex_accepts_three_digit_shorthand_per_css_spec — #fff / #f0a expand canonically per CSS spec
+- r615_from_hex_accepts_four_digit_shorthand_with_alpha — #fff8 expands to (0xff, 0xff, 0xff, 0x88)
+- r615_to_hex_uses_lowercase_hex_digits — W3C / Material 3 / Web Inspector convention pinned
+- r615_parse_color_hex_accepts_three_digit_shorthand_via_substrate_lift — wire-side relaxation pinned with rationale comment
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- R616: error mapper 3-shim trio inline (scroll/text/caret_state_error_to_rpc)
+- R617: theme tag optional shape dispatch helper lift (3 sites)
+- R618: SetTextParams String ownership review
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
