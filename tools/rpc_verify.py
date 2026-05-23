@@ -12,6 +12,14 @@ as AI primary path") + §2 invariant #7 ("scene-as-data"): every visual
 round should end with a `tools/demos/*.py` that proves the change by
 typed RPC, not by asking the human reader to describe a screenshot.
 
+R640 §5.7 — gained the [`read_png_rgba8`] / [`sample_png_points`]
+helpers so any demo that pairs `PINION_SCREENSHOT` capture with the
+9-point pixel sample mandated by `[[center-only-pixel-sample-anti-pattern]]`
+no longer needs PIL / Pillow as a third-party dep. The decoder
+handles the subset the wgpu + vello + `png` substrate emits (RGBA
+8-bit, non-interlaced, all five filter types) — enough for every
+pinion design-parity binding.
+
 Python 3.9+ stdlib only — no third-party deps. Run from the workspace
 root so `cargo run -p <example>` resolves.
 """
@@ -22,10 +30,12 @@ import json
 import queue
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import threading
 import time
+import zlib
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -471,6 +481,180 @@ def node_center(node: dict) -> tuple[float, float]:
     cx = float(rect["x"]) + float(rect["w"]) / 2.0
     cy = float(rect["y"]) + float(rect["h"]) / 2.0
     return (cx, cy)
+
+
+@dataclass(frozen=True)
+class Png:
+    """Decoded PNG framebuffer — row-major, top-left origin, RGBA8.
+
+    `pixels` is a `bytes` of length `width * height * 4`. Pixel `(x, y)`
+    lives at offset `(y * width + x) * 4`; the four bytes there are
+    `R, G, B, A` — same shape `HeadlessScreenshot::render_to_rgba8`
+    returns at the Rust side.
+    """
+
+    width: int
+    height: int
+    pixels: bytes
+
+
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def read_png_rgba8(path: Path | str) -> Png:
+    """Decode an RGBA8 non-interlaced PNG via the stdlib (zlib + struct).
+
+    Targets the exact subset the wgpu + vello + `png` substrate at
+    `pinion-shell::headless_screenshot` emits:
+
+      * 8-bit-per-channel RGBA (color type 6, bit depth 8)
+      * no interlace (Adam7 not supported here)
+      * any of the five PNG filters per row (None, Sub, Up, Average,
+        Paeth)
+
+    R640 §5.7 — the 9-point pixel sampler (`sample_png_points`) sits on
+    top of this. Raises `AssertionError` on any format the substrate
+    does not produce, so a future format drift surfaces here rather
+    than at a downstream pixel comparison.
+    """
+    raw = Path(path).read_bytes()
+    if not raw.startswith(_PNG_SIGNATURE):
+        raise AssertionError(f"{path}: not a PNG (signature mismatch)")
+    pos = len(_PNG_SIGNATURE)
+    width = height = 0
+    bit_depth = color_type = interlace = -1
+    idat = bytearray()
+    seen_iend = False
+    while pos < len(raw):
+        if pos + 8 > len(raw):
+            raise AssertionError(f"{path}: truncated chunk header at {pos}")
+        (length,) = struct.unpack(">I", raw[pos : pos + 4])
+        chunk_type = raw[pos + 4 : pos + 8]
+        data = raw[pos + 8 : pos + 8 + length]
+        pos += 8 + length + 4  # skip data + CRC32
+        if chunk_type == b"IHDR":
+            if length != 13:
+                raise AssertionError(f"{path}: IHDR length {length} != 13")
+            (width, height, bit_depth, color_type, _comp, _filt, interlace) = (
+                struct.unpack(">IIBBBBB", data)
+            )
+        elif chunk_type == b"IDAT":
+            idat.extend(data)
+        elif chunk_type == b"IEND":
+            seen_iend = True
+            break
+    if not seen_iend:
+        raise AssertionError(f"{path}: missing IEND chunk")
+    if bit_depth != 8 or color_type != 6:
+        raise AssertionError(
+            f"{path}: only RGBA8 (color type 6, bit depth 8) supported, "
+            f"got color_type={color_type} bit_depth={bit_depth}"
+        )
+    if interlace != 0:
+        raise AssertionError(f"{path}: interlaced PNG not supported")
+    decompressed = zlib.decompress(bytes(idat))
+    bpp = 4  # RGBA8
+    row_len = width * bpp
+    stride = row_len + 1  # 1 filter byte per row
+    if len(decompressed) != stride * height:
+        raise AssertionError(
+            f"{path}: decompressed size {len(decompressed)} != {stride * height}"
+        )
+
+    out = bytearray(row_len * height)
+    prev_row = bytes(row_len)
+    for y in range(height):
+        row_start = y * stride
+        filter_byte = decompressed[row_start]
+        scanline = decompressed[row_start + 1 : row_start + 1 + row_len]
+        cur = bytearray(row_len)
+        if filter_byte == 0:  # None
+            cur[:] = scanline
+        elif filter_byte == 1:  # Sub
+            for i in range(row_len):
+                left = cur[i - bpp] if i >= bpp else 0
+                cur[i] = (scanline[i] + left) & 0xFF
+        elif filter_byte == 2:  # Up
+            for i in range(row_len):
+                cur[i] = (scanline[i] + prev_row[i]) & 0xFF
+        elif filter_byte == 3:  # Average
+            for i in range(row_len):
+                left = cur[i - bpp] if i >= bpp else 0
+                above = prev_row[i]
+                cur[i] = (scanline[i] + ((left + above) >> 1)) & 0xFF
+        elif filter_byte == 4:  # Paeth
+            for i in range(row_len):
+                left = cur[i - bpp] if i >= bpp else 0
+                above = prev_row[i]
+                upper_left = prev_row[i - bpp] if i >= bpp else 0
+                p = left + above - upper_left
+                pa = abs(p - left)
+                pb = abs(p - above)
+                pc = abs(p - upper_left)
+                if pa <= pb and pa <= pc:
+                    predictor = left
+                elif pb <= pc:
+                    predictor = above
+                else:
+                    predictor = upper_left
+                cur[i] = (scanline[i] + predictor) & 0xFF
+        else:
+            raise AssertionError(
+                f"{path}: unknown PNG filter byte {filter_byte} at row {y}"
+            )
+        out[y * row_len : (y + 1) * row_len] = cur
+        prev_row = bytes(cur)
+    return Png(width=width, height=height, pixels=bytes(out))
+
+
+def png_pixel(png: Png, x: int, y: int) -> tuple[int, int, int, int]:
+    """Return the `(R, G, B, A)` byte tuple at `(x, y)` in `png`."""
+    if not 0 <= x < png.width or not 0 <= y < png.height:
+        raise AssertionError(
+            f"({x}, {y}) outside {png.width}x{png.height} viewport"
+        )
+    offset = (y * png.width + x) * 4
+    return (
+        png.pixels[offset],
+        png.pixels[offset + 1],
+        png.pixels[offset + 2],
+        png.pixels[offset + 3],
+    )
+
+
+def sample_png_points(
+    png: Png, points: list[tuple[int, int]]
+) -> list[tuple[int, int, int, int]]:
+    """Vectorised [`png_pixel`] for the 9-point sample arc.
+
+    R640 §5.7 — pair with `PINION_SCREENSHOT` capture +
+    `[[center-only-pixel-sample-anti-pattern]]` to verify both
+    interior fill AND corner / edge roundness in one assertion batch.
+    The companion `figma_button_m3_r640.py` demo is the first client.
+    """
+    return [png_pixel(png, x, y) for (x, y) in points]
+
+
+def assert_pixel_eq(
+    actual: tuple[int, int, int, int],
+    expected: tuple[int, int, int, int],
+    label: str,
+    tolerance: int = 0,
+) -> None:
+    """Per-channel RGBA byte equality with a tolerance band.
+
+    `tolerance=0` enforces bit-exact match. Higher values tolerate the
+    small anti-alias bleed wgpu + vello pipeline produces at fill /
+    canvas boundaries (the area AA mode default per
+    `headless_screenshot.rs`); a few-byte band covers the half-pixel
+    coverage interpolation without admitting whole-channel drift.
+    """
+    diffs = [abs(int(a) - int(e)) for a, e in zip(actual, expected)]
+    if max(diffs) > tolerance:
+        raise AssertionError(
+            f"{label}: expected {expected} ±{tolerance}, "
+            f"got {actual} (max diff {max(diffs)})"
+        )
 
 
 def run_demo(name: str, body) -> int:

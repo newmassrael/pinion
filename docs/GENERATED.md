@@ -11752,6 +11752,43 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R640 — R640 §5.7 figma-button-m3 reactive Material 3 lift — SCXML state introspect + hover spring + M3 state-layer overlay matrix
+
+**Changes**:
+- examples/figma-button-m3/src/main.rs: read_state() lifted from clamped Idle to External SCXML introspect query (mirrors hello-button R51.30 pattern); event_name() maps the 7 pointer/lifecycle ButtonEvent variants to their SCXML transition names; title() updated 'R635 static' -> 'R640 reactive'
+- examples/figma-button-m3/src/main.rs: button_fill_for(state) helper applies the Material 3 state-layer overlay matrix — Idle/Hover spring-interpolated via Color::lerp(BTN_FILL, lerp(BTN_FILL, LABEL_FG, 0.08), progress), Pressed = lerp(BTN_FILL, LABEL_FG, 0.12), Disabled = lerp(BTN_FILL, CANVAS_BG, 0.38); HOVER_OVERLAY=0.08 / PRESSED_OVERLAY=0.12 / DISABLED_OVERLAY=0.38 named consts pin the M3 spec weights
+- examples/figma-button-m3/src/main.rs: drive_hover_progress(state) hover spring via Owner::cache(HOVER_ANIM_KEY, ...) + Animation::new(SpringConfig::default()) — same R51.150 §5.22 owner-scoped cache shape hello-button (R51.147 §5.28) has carried; per-binding owner-scoped, no thread-local global
+- examples/figma-button-m3/src/main.rs: access_node mirrors live ButtonState into hovered/pressed/disabled AccessState flags (R635 clamped all to false); focused stays at the shell-supplied tag predicate
+- examples/figma-button-m3/src/main.rs: apply_key intentionally inert at R640 — keyboard ARIA Space/Enter activation deferred behind the paint_focus_ring corner_radius gap (R639 watch-out item); pointer arc is fully wired
+- examples/figma-button-m3/Cargo.toml: dev-dependency on pinion-core with features=['test-fixtures'] for assert_widget_view_carries_tag + settle_owner_animations regression helpers; package description updated to reflect the reactive lift
+- examples/figma-button-m3/src/main.rs tests/: 17 unit tests pinning (a) colour math per state — r640_idle_fill_is_raw_figma_primary / r640_pressed_fill_is_m3_pressed_state_layer / r640_disabled_fill_fades_toward_canvas / r640_hover_endpoint_is_m3_hover_state_layer (settles spring), (b) scene structure — corner_radius=100 + size=109x40 + tag='figma_button_m3' + per-state fill dispatch, (c) ARIA AccessState flag mapping for the four ButtonState variants + focused tag, (d) event_name round-trip for all 7 InputRouter-emitted variants, (e) parse_button_state + read_state default arc
+- tools/rpc_verify.py: read_png_rgba8 / png_pixel / sample_png_points / assert_pixel_eq helpers (stdlib zlib+struct PNG decoder for color type 6 / bit depth 8 / non-interlaced, handles all five PNG filter types — None/Sub/Up/Average/Paeth); R640 demo first client, future figma-X-m3 bindings share substrate; no PIL/Pillow third-party dep introduced (rpc_verify.py stdlib-only contract preserved)
+- tools/demos/figma_button_m3_r640.py new: dual-phase verification — Phase 1 captures PINION_SCREENSHOT via subprocess + decodes PNG + asserts 9-point pixel sample (5 interior centre/deep-edge fill at #675AA4 +/- 4 AA tolerance / 4 bbox-corners at canvas #1F1F1F +/- 6 AA tolerance / 1 far-canvas bit-exact); Phase 2 spawns RpcSubprocess + drives Idle->Hover->Pressed->Hover->Idle pointer arc via scene/invoke '/external/send' + scene/query '/external/state' + Disable/Enable lifecycle
+
+
+
+**Verification**:
+- cargo test --workspace: 3181 pass / 0 fail / 14 ignored (3164 -> 3181, +17 new figma-button-m3 tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (deny pedantic baseline)
+- validate_workspace: T1 orphan=0 / round-trip=1/1 / GENERATED.md=sync / no new T3 reject / no new violations (R51.186 ledger 4 known-stale carry unchanged)
+- python3 tools/demos/figma_button_m3_r640.py: PASS 1.45s — pixel + RPC dual-phase
+- 9-point pixel sample on /tmp/pinion-btn-r640.png post-capture: center (160,80)=BTN_FILL, deep-edge interior x4 = BTN_FILL +/- 4, bbox-corners x4 = CANVAS_BG +/- 6 (R639 regression sentinel intact — round pill cuts corners cleanly), far-canvas (16,16) = CANVAS_BG bit-exact
+- RPC state arc: Idle (initial) -> PointerEnter -> Hover -> PointerDown -> Pressed -> PointerUp -> Hover (M3 click resolves Pressed->Hover; click intent emitted) -> PointerLeave -> Idle, then Disable -> Disabled -> Enable -> Idle. Every assertion bit-exact against SCXML state name returned by /external/state introspect
+
+
+
+**Impact**: §5.7, §5.16, §5.22, §5.28, §5.38, §5.39, §5.40, §5.49
+
+
+**Carry forward**:
+- Focus-ring + keyboard activation deferred — paint_focus_ring (R51.58) still ignores BoxStyle.corner_radius. Wiring ARIA Space/Enter on figma-button-m3 requires fixing the focus ring substrate first; bundling both is its own round (R660+ candidate). Pointer-only at R640 keeps the spec-parity visual clean for mouse/touch users
+- Ripple animation (M3 pressed touch ripple) — needs §5.27 path-animation substrate; queued behind R660+ Figma axis (figma-card-m3 + Material Symbols + per-corner radius + drop shadow). Material 3 reference Android implementation does emit ripple at Pressed; pinion currently emits state-layer fade only
+- R641 candidate per session queue — pinion-derive #[pinion::widget] proc-macro skeleton (auto-derive WidgetCore + WidgetA11y + WidgetView from state enum + events enum); figma-button-m3 R640 form is the 'before' LOC baseline (~480 LOC) for the ergonomics-axis LOC reduction measurement
+- Material 3 onPrimary endpoint hardcoded as LABEL_FG (#FFFFFF) — matches the M3 baseline scheme; if a future Figma binding carries a different M3 scheme (custom seed colour) the overlay endpoint should resolve through that scheme's onPrimary token, not LABEL_FG. Currently no second Figma binding evidences this need — substrate lift deferred per [[abstraction-needs-second-consumer]]
+- stdlib PNG decoder in rpc_verify.py is the first client for the 9-point pixel sample harness; second client (figma-card-m3 or similar) will validate the helper's reuse shape — if a future binding needs alpha blending or premultiplied unmultiply the substrate may need extension
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

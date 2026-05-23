@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R635 §5.7 — first Figma → pinion design-parity binding. Re-creates the Material 3 'Filled / Enabled' Button (109×40, #675AA4 fill, 100px radius, Roboto Medium 14px white label) from the Material 3 Design Kit Community file; the spec was extracted via `pinion figma-verify` (R634)."
+description = "R640 §5.7 — reactive Material 3 Filled Button binding. R635 captured the Figma node `51553:5180` (109×40 px, #675AA4 fill, 100 px radius, Roboto Medium 14 px white label) as a static one-frame snapshot; R640 lifts the widget onto the SCXML reactive substrate (`ButtonExternal` introspect + spring-driven hover state-layer overlay) so pointer events visibly drive the Material 3 state matrix."
 publish = false
 
 [[bin]]
@@ -17,6 +17,14 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 + R640 — `pinion_core::test_fixtures::{assert_widget_view_carries_tag,
+# settle_owner_animations}` regression helpers. R640 reuses both:
+# `assert_widget_view_carries_tag` for the composite paint-root-tag
+# convention, `settle_owner_animations` to drain the hover spring
+# before the lerp-endpoint assertion in `r640_hover_endpoint_*`.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
 
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
