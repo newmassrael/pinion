@@ -50,6 +50,21 @@ authors = ["pinion contributors"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# R634 §5.7 — pinion-cli developer command framework. clap is the
+# de-facto Rust CLI standard; the `derive` feature avoids the
+# stringly-typed builder API in favour of #[derive(Parser)] +
+# #[derive(Subcommand)] sub-command routing. Sync (no tokio).
+clap = { version = "4", features = ["derive"] }
+
+# R634 §5.7 — pinion-cli HTTP transport for the Figma REST API
+# fetch + image export. ureq is a sync blocking client (no
+# tokio runtime — pinion-cli stays sync per §6.3 framework
+# boundary) with a tiny dep footprint; the `json` feature pulls
+# the serde_json integration for direct typed-deserialize.
+# `tls` feature uses rustls (no native OpenSSL link, portable
+# across Linux/macOS/Windows for the same binary).
+ureq = { version = "2", features = ["json", "tls"], default-features = false }
+
 # §4 first dogfood (examples/hello-button + ai-introspect-demo): winit
 # window. The pre-R46.5 softbuffer paint backend has been retired in
 # favour of the Vello GPU path (R46.2 emit template + R46.3 first

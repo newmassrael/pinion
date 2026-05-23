@@ -12,5 +12,18 @@ pinion-core = { path = "../pinion-core", version = "0.0.1" }
 pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
 pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
 
+# R634 §5.7 — figma-verify sub-command. clap drives the CLI shape;
+# ureq fetches Figma REST API responses (sync — no tokio runtime
+# at the CLI boundary per §6.3); serde / serde_json deserialize
+# the node-tree JSON for downstream Scene mapping (R635+).
+clap = { workspace = true }
+ureq = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "pinion"
+path = "src/main.rs"
+
 [lints]
 workspace = true

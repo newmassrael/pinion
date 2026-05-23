@@ -18057,6 +18057,58 @@
         "R634+ §5.50 — CSS named-color table (`red`, `dodgerblue`, …) — deferred per [[abstraction-needs-second-consumer]] until a stylesheet binding needs the 148-entry lookup"
       ]
     },
+    "R634": {
+      "decision_summary": "feat(cli): R634 §5.7 pinion figma-verify sub-command + Figma REST fetch",
+      "changes_bullets": [
+        "Cargo.toml: add `clap = { version = \"4\", features = [\"derive\"] }` and `ureq = { version = \"2\", features = [\"json\", \"tls\"], default-features = false }` to `[workspace.dependencies]`; ureq runs sync at the CLI boundary (no tokio runtime) and uses rustls for portable TLS without a native OpenSSL link",
+        "crates/pinion-cli/Cargo.toml: add the new deps + a `[[bin]] name = \"pinion\"` block so the binary is invoked as `cargo run -p pinion-cli -- ...` (or `pinion ...` once installed)",
+        "crates/pinion-cli/src/main.rs: replace the pre-R634 `fn main() {}` stub with a `clap` derive root (`Cli` + `Command` enum) routing to the first sub-command `figma-verify`; future sub-commands land alongside the round that needs them per the [[abstraction-needs-second-consumer]] discipline",
+        "crates/pinion-cli/src/figma_verify.rs: new module — `FigmaVerifyArgs` (file_key positional + `--output` + `--ids` flags) and `run(&FigmaVerifyArgs) -> Result<(), Box<dyn Error>>` that reads `FIGMA_TOKEN` env var, calls the Figma REST `GET /v1/files/:key` endpoint with optional `?ids=` filter, deserializes to `serde_json::Value`, pretty-prints, and writes to stdout or the `--output` path",
+        "Figma authentication contract: token is sourced exclusively from `FIGMA_TOKEN` env var — the CLI never reads from a config file or accepts the token as a flag, so accidental shell-history / git-blame leakage is impossible by construction; the recommended scope is `File content` read-only (figma.com → Settings → Personal access tokens)",
+        "Wire shape: `FILE_KEY` is the URL path segment between `/design/` (or `/file/`) and the file name in a Figma URL; the response is the full DocumentNode tree (FRAME / GROUP / RECTANGLE / TEXT / VECTOR / etc. all typed) which R635 will map to `Scene` / `LayoutStyle` / `BoxStyle`"
+      ],
+      "verification_bullets": [
+        "cargo build -p pinion-cli → clean (ureq 2.12.1 + clap 4.6.1 + transitive rustls / webpki / idna / url — first-time compile only)",
+        "cargo test --workspace → 3156 / 0 (unchanged from R633 baseline; the CLI is execution-only, no library code so no unit tests yet — R635 will add JSON → Scene mapping with substrate tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced 5 clippy::pedantic lints — doc_markdown / needless_pass_by_value / unnecessary_debug_formatting — all addressed inline)",
+        "Smoke: `cargo run -p pinion-cli --quiet -- figma-verify --help` emits the documented usage; `cargo run -p pinion-cli --quiet -- figma-verify FAKEKEY` without `FIGMA_TOKEN` set returns the documented missing-token error message with non-zero exit code",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry"
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "R635 §5.7 §5.2 — JSON → Scene mapping pass: `FRAME` → `ContainerNode` + `LayoutStyle` (Figma `layoutMode` AUTO_LAYOUT → `FlexDirection`, `itemSpacing` → gap, `padding{Left,Right,Top,Bottom}` → `LayoutStyle.padding`); `RECTANGLE` → `BoxNode` + `BoxStyle` (`fills[0].color` → `Color`, `cornerRadius` → `BoxStyle.radius` — uniform only until R636+ adds per-corner); `TEXT` → `TextNode` + `TextStyle` (`characters` + `style.fontSize` + `style.fills`); each unsupported Figma feature surfaces a `substrate-gap` log line that feeds the R636+ axis queue",
+        "R636+ §5.7 §5.50 — `pinion figma-verify --pixel-diff` mode: take a `scene/screenshot` of the mapped Scene + a Figma `GET /v1/images/:key?nodes=...&format=png` export + compute a per-pixel diff (image dimensions match by design — the Scene is positioned and sized from the same Figma node tree). The diff PNG plus an aggregate similarity score lands in `--output-dir` so the design-parity gap is documentable in PR descriptions",
+        "R636+ §5.2 §5.50 — substrate axis extensions identified by the first design-parity loop: per-corner `BoxStyle.radius` (Figma `rectangleCornerRadii: [tl, tr, br, bl]`); `BoxStyle.shadow` (Figma `effects[]` with `DROP_SHADOW` / `INNER_SHADOW`); `Fill::LinearGradient` / `Fill::RadialGradient` (Figma `fills[]` with type `GRADIENT_LINEAR` / `GRADIENT_RADIAL` carrying `gradientStops`); `TextStyle.weight` numeric scale (Figma `fontWeight: 100..=900`); each is its own substrate round once a real Figma file evidences the need",
+        "R634 → R635 hand-off requires the user to (a) duplicate a production Material 3 Settings design from Figma Community into their account, (b) issue a `FIGMA_TOKEN` with File content read scope, (c) supply the `FILE_KEY` from the duplicated file's URL; pre-R635 R634 already validates the auth + fetch + JSON parse path without needing the user to commit a token to the repo"
+      ],
+      "publishable_decision_summary": "feat(cli): R634 §5.7 pinion figma-verify sub-command + Figma REST fetch",
+      "publishable_changes_bullets": [
+        "Cargo.toml: add `clap = { version = \"4\", features = [\"derive\"] }` and `ureq = { version = \"2\", features = [\"json\", \"tls\"], default-features = false }` to `[workspace.dependencies]`; ureq runs sync at the CLI boundary (no tokio runtime) and uses rustls for portable TLS without a native OpenSSL link",
+        "crates/pinion-cli/Cargo.toml: add the new deps + a `[[bin]] name = \"pinion\"` block so the binary is invoked as `cargo run -p pinion-cli -- ...` (or `pinion ...` once installed)",
+        "crates/pinion-cli/src/main.rs: replace the pre-R634 `fn main() {}` stub with a `clap` derive root (`Cli` + `Command` enum) routing to the first sub-command `figma-verify`; future sub-commands land alongside the round that needs them per the [[abstraction-needs-second-consumer]] discipline",
+        "crates/pinion-cli/src/figma_verify.rs: new module — `FigmaVerifyArgs` (file_key positional + `--output` + `--ids` flags) and `run(&FigmaVerifyArgs) -> Result<(), Box<dyn Error>>` that reads `FIGMA_TOKEN` env var, calls the Figma REST `GET /v1/files/:key` endpoint with optional `?ids=` filter, deserializes to `serde_json::Value`, pretty-prints, and writes to stdout or the `--output` path",
+        "Figma authentication contract: token is sourced exclusively from `FIGMA_TOKEN` env var — the CLI never reads from a config file or accepts the token as a flag, so accidental shell-history / git-blame leakage is impossible by construction; the recommended scope is `File content` read-only (figma.com → Settings → Personal access tokens)",
+        "Wire shape: `FILE_KEY` is the URL path segment between `/design/` (or `/file/`) and the file name in a Figma URL; the response is the full DocumentNode tree (FRAME / GROUP / RECTANGLE / TEXT / VECTOR / etc. all typed) which R635 will map to `Scene` / `LayoutStyle` / `BoxStyle`"
+      ],
+      "publishable_verification_bullets": [
+        "cargo build -p pinion-cli → clean (ureq 2.12.1 + clap 4.6.1 + transitive rustls / webpki / idna / url — first-time compile only)",
+        "cargo test --workspace → 3156 / 0 (unchanged from R633 baseline; the CLI is execution-only, no library code so no unit tests yet — R635 will add JSON → Scene mapping with substrate tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (initial run surfaced 5 clippy::pedantic lints — doc_markdown / needless_pass_by_value / unnecessary_debug_formatting — all addressed inline)",
+        "Smoke: `cargo run -p pinion-cli --quiet -- figma-verify --help` emits the documented usage; `cargo run -p pinion-cli --quiet -- figma-verify FAKEKEY` without `FIGMA_TOKEN` set returns the documented missing-token error message with non-zero exit code",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry"
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R635 §5.7 §5.2 — JSON → Scene mapping pass: `FRAME` → `ContainerNode` + `LayoutStyle` (Figma `layoutMode` AUTO_LAYOUT → `FlexDirection`, `itemSpacing` → gap, `padding{Left,Right,Top,Bottom}` → `LayoutStyle.padding`); `RECTANGLE` → `BoxNode` + `BoxStyle` (`fills[0].color` → `Color`, `cornerRadius` → `BoxStyle.radius` — uniform only until R636+ adds per-corner); `TEXT` → `TextNode` + `TextStyle` (`characters` + `style.fontSize` + `style.fills`); each unsupported Figma feature surfaces a `substrate-gap` log line that feeds the R636+ axis queue",
+        "R636+ §5.7 §5.50 — `pinion figma-verify --pixel-diff` mode: take a `scene/screenshot` of the mapped Scene + a Figma `GET /v1/images/:key?nodes=...&format=png` export + compute a per-pixel diff (image dimensions match by design — the Scene is positioned and sized from the same Figma node tree). The diff PNG plus an aggregate similarity score lands in `--output-dir` so the design-parity gap is documentable in PR descriptions",
+        "R636+ §5.2 §5.50 — substrate axis extensions identified by the first design-parity loop: per-corner `BoxStyle.radius` (Figma `rectangleCornerRadii: [tl, tr, br, bl]`); `BoxStyle.shadow` (Figma `effects[]` with `DROP_SHADOW` / `INNER_SHADOW`); `Fill::LinearGradient` / `Fill::RadialGradient` (Figma `fills[]` with type `GRADIENT_LINEAR` / `GRADIENT_RADIAL` carrying `gradientStops`); `TextStyle.weight` numeric scale (Figma `fontWeight: 100..=900`); each is its own substrate round once a real Figma file evidences the need",
+        "R634 → R635 hand-off requires the user to (a) duplicate a production Material 3 Settings design from Figma Community into their account, (b) issue a `FIGMA_TOKEN` with File content read scope, (c) supply the `FILE_KEY` from the duplicated file's URL; pre-R635 R634 already validates the auth + fetch + JSON parse path without needing the user to commit a token to the repo"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
