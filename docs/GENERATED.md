@@ -11261,6 +11261,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R624 — Color::from_rgb_function + Color::from_css_string — CSS Color Module Level 4 surface expanded beyond hex; legacy rgb()/rgba() comma form supported; dispatcher entry point for arbitrary CSS-string user content
+
+**Changes**:
+- pinion-core::style::Color::from_rgb_function (R624 §5.50) — parses CSS Color L4 legacy comma form: rgb(r,g,b) / rgba(r,g,b,a) with integer or percentage channels
+- pinion-core::style::Color::from_css_string — dispatcher entry point: hex via from_hex / rgb/rgba via from_rgb_function; deferred forms surface as None
+- Channel-unit consistency enforced per CSS spec (mixing percent + integer rejected)
+- Alpha as float 0.0..=1.0 per legacy rgba(); percent alpha and modern slash syntax deferred
+- Deferred forms documented: modern space-separated rgb(R G B), hsl()/hsla(), oklch()/lab()/color() — each lands as sibling from_X_function when 2nd consumer surfaces
+
+
+
+**Verification**:
+- cargo test --workspace: 3086 pass / 0 fail (R623: 3071 → +15 R624 CSS parser tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny + clippy::cast_* allow with reason)
+- r624_from_rgb_function_accepts_legacy_integer_triplet + percentage_triplet — both forms pinned
+- r624_from_rgb_function_rejects_modern_space_separated — deferred form explicit
+- r624_from_rgb_function_rejects_mixed_percent_and_integer — CSS spec consistency
+- r624_from_rgb_function_rejects_out_of_range_integer / _percent / _alpha — channel bounds enforced
+- r624_from_css_string_dispatches_to_hex + _rgb_function + rejects_unsupported_forms
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- 2 remaining debts: error prose / dispatch test split
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

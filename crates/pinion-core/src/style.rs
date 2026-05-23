@@ -153,6 +153,156 @@ impl Color {
         Some(Self::rgba(red, green, blue, alpha))
     }
 
+    /// R624 §5.50 — parse a CSS Color Module Level 4 `rgb()` /
+    /// `rgba()` functional notation literal.
+    ///
+    /// Accepts the **legacy comma-separated** form per the CSS spec:
+    ///
+    /// - `rgb(r, g, b)` — three integer or percentage channels
+    ///   (`rgb(255, 0, 0)` or `rgb(100%, 0%, 0%)`); implicit
+    ///   opaque alpha.
+    /// - `rgba(r, g, b, a)` — three channels plus a `0.0..=1.0`
+    ///   alpha (`rgba(255, 0, 0, 0.5)`).
+    ///
+    /// Whitespace around commas + parens is tolerated. Channel
+    /// values:
+    ///
+    /// - Integer in `0..=255` (`255` / `0` / mid).
+    /// - Percentage in `0%..=100%` (`100%` / `0%` / `50%`).
+    ///
+    /// Mixing integer and percentage channels is rejected (CSS spec
+    /// requires consistency within a single call). Alpha is a
+    /// floating-point `0.0..=1.0` value (no percent form to keep the
+    /// parser simple — CSS Color Level 4 also accepts `%` for alpha
+    /// but the bulk of consumers send float).
+    ///
+    /// # Returns
+    ///
+    /// `Some(Color)` on a well-formed `rgb(...)` / `rgba(...)`
+    /// literal; `None` on any malformed input — including missing
+    /// parentheses, mixed unit channels, out-of-range integers, the
+    /// modern space-separated syntax (`rgb(255 0 0)`), and any other
+    /// CSS form (`hsl()`, `oklch()`, `lab()`).
+    ///
+    /// # Deferred forms
+    ///
+    /// - **Modern space-separated syntax** (`rgb(R G B)` /
+    ///   `rgb(R G B / A)`): deferred to a future round when a CSS
+    ///   modern-form consumer appears. The legacy comma form covers
+    ///   the bulk of practical hand-authored CSS today (W3C still
+    ///   lists both as Recommended).
+    /// - **`hsl()` / `hsla()`**: needs the HSL→sRGB conversion math;
+    ///   deferred per [[abstraction-needs-second-consumer]] until a
+    ///   stylesheet binding requires the cylindrical form.
+    /// - **`oklch()` / `lab()` / `color()`** (Level 4 modern):
+    ///   wider color-gamut handling — deferred until pinion paints
+    ///   wide-gamut.
+    #[must_use]
+    pub fn from_rgb_function(input: &str) -> Option<Self> {
+        let trimmed = input.trim();
+        // Strip prefix `rgb(` or `rgba(`, suffix `)`.
+        let (with_alpha, body) = if let Some(b) = trimmed.strip_prefix("rgba(") {
+            (true, b)
+        } else if let Some(b) = trimmed.strip_prefix("rgb(") {
+            (false, b)
+        } else {
+            return None;
+        };
+        let body = body.strip_suffix(')')?.trim();
+        // Comma-separated parts.
+        let parts: Vec<&str> = body.split(',').map(str::trim).collect();
+        let expected_len = if with_alpha { 4 } else { 3 };
+        if parts.len() != expected_len {
+            return None;
+        }
+        // Detect whether channels are percentage or integer (must be
+        // homogeneous within the call). All three must agree.
+        let is_percent = parts[0].ends_with('%');
+        for &p in &parts[..3] {
+            if p.ends_with('%') != is_percent {
+                return None;
+            }
+        }
+        let parse_channel = |s: &str| -> Option<u8> {
+            if is_percent {
+                let n: f32 = s.trim_end_matches('%').trim().parse().ok()?;
+                if !(0.0..=100.0).contains(&n) {
+                    return None;
+                }
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "n is clamped to 0.0..=100.0; final byte is bounded 0..=255"
+                )]
+                Some((n * 2.55).round() as u8)
+            } else {
+                let n: i32 = s.parse().ok()?;
+                if !(0..=255).contains(&n) {
+                    return None;
+                }
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "n is bounded 0..=255 above; cast is exact"
+                )]
+                Some(n as u8)
+            }
+        };
+        let red = parse_channel(parts[0])?;
+        let green = parse_channel(parts[1])?;
+        let blue = parse_channel(parts[2])?;
+        let alpha = if with_alpha {
+            let a: f32 = parts[3].parse().ok()?;
+            if !(0.0..=1.0).contains(&a) {
+                return None;
+            }
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a is clamped to 0.0..=1.0; final byte is bounded 0..=255"
+            )]
+            {
+                (a * 255.0).round() as u8
+            }
+        } else {
+            0xff
+        };
+        Some(Self::rgba(red, green, blue, alpha))
+    }
+
+    /// R624 §5.50 — single entry-point that accepts any supported
+    /// CSS Color Module Level 4 string form and dispatches to the
+    /// appropriate parser.
+    ///
+    /// Current support matrix:
+    ///
+    /// - `#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa` (via
+    ///   [`Self::from_hex`])
+    /// - `rgb(r, g, b)` / `rgba(r, g, b, a)` legacy comma form (via
+    ///   [`Self::from_rgb_function`])
+    ///
+    /// Deferred per [[abstraction-needs-second-consumer]]: modern
+    /// space-separated `rgb(...)` syntax, `hsl()` / `hsla()`,
+    /// `oklch()` / `lab()` / `color()`. Each parser will land as a
+    /// sibling `from_X_function` next to `from_rgb_function` and
+    /// the dispatcher below will pick it up.
+    ///
+    /// Use this when the input source is arbitrary CSS-string user
+    /// content (theme JSON, stylesheet binding) and the caller does
+    /// not pre-know which form. When the form is known (e.g. an RPC
+    /// wire that only ships hex), call the specific parser directly.
+    #[must_use]
+    pub fn from_css_string(input: &str) -> Option<Self> {
+        let trimmed = input.trim();
+        if trimmed.starts_with('#') {
+            Self::from_hex(trimmed)
+        } else if trimmed.starts_with("rgb(") || trimmed.starts_with("rgba(") {
+            Self::from_rgb_function(trimmed)
+        } else {
+            None
+        }
+    }
+
     /// R615 §5.50 — encode as a CSS Color Module Level 4 hex literal.
     ///
     /// Emits the canonical 6-digit form `#rrggbb` when alpha is
@@ -1561,6 +1711,141 @@ mod tests {
         let c = Color::from_hex("#fff").unwrap();
         assert_eq!(c.to_hex(), "#ffffff");
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // R624 §5.50 — Color::from_rgb_function + Color::from_css_string
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r624_from_rgb_function_accepts_legacy_integer_triplet() {
+        assert_eq!(
+            Color::from_rgb_function("rgb(255, 0, 0)"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r624_from_rgb_function_accepts_legacy_percentage_triplet() {
+        assert_eq!(
+            Color::from_rgb_function("rgb(100%, 0%, 0%)"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r624_from_rgba_function_accepts_legacy_with_float_alpha() {
+        let c = Color::from_rgb_function("rgba(255, 0, 0, 0.5)").unwrap();
+        assert_eq!((c.r, c.g, c.b), (0xff, 0x00, 0x00));
+        // Alpha rounds to 128 (0.5 * 255 ≈ 127.5 → 128).
+        assert_eq!(c.a, 128);
+    }
+
+    #[test]
+    fn r624_from_rgb_function_tolerates_whitespace() {
+        assert_eq!(
+            Color::from_rgb_function("rgb( 255 , 128 , 64 )"),
+            Some(Color::rgb(255, 128, 64)),
+        );
+    }
+
+    #[test]
+    fn r624_from_rgb_function_rejects_modern_space_separated() {
+        // Modern syntax `rgb(255 0 0)` is deferred.
+        assert_eq!(Color::from_rgb_function("rgb(255 0 0)"), None);
+    }
+
+    #[test]
+    fn r624_from_rgb_function_rejects_mixed_percent_and_integer() {
+        // CSS spec requires channel-unit consistency within one call.
+        assert_eq!(Color::from_rgb_function("rgb(100%, 0, 0)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(255, 0%, 0)"), None);
+    }
+
+    #[test]
+    fn r624_from_rgb_function_rejects_out_of_range_integer() {
+        assert_eq!(Color::from_rgb_function("rgb(256, 0, 0)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(-1, 0, 0)"), None);
+    }
+
+    #[test]
+    fn r624_from_rgb_function_rejects_out_of_range_percent() {
+        assert_eq!(Color::from_rgb_function("rgb(101%, 0%, 0%)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(-1%, 0%, 0%)"), None);
+    }
+
+    #[test]
+    fn r624_from_rgba_function_rejects_out_of_range_alpha() {
+        assert_eq!(
+            Color::from_rgb_function("rgba(255, 0, 0, 1.5)"),
+            None,
+        );
+        assert_eq!(
+            Color::from_rgb_function("rgba(255, 0, 0, -0.1)"),
+            None,
+        );
+    }
+
+    #[test]
+    fn r624_from_rgb_function_rejects_wrong_arity() {
+        assert_eq!(Color::from_rgb_function("rgb(255, 0)"), None);
+        assert_eq!(Color::from_rgb_function("rgb(255, 0, 0, 0)"), None);
+        assert_eq!(Color::from_rgb_function("rgba(255, 0, 0)"), None);
+    }
+
+    #[test]
+    fn r624_from_rgb_function_rejects_missing_parens() {
+        assert_eq!(Color::from_rgb_function("rgb 255, 0, 0"), None);
+        assert_eq!(Color::from_rgb_function("rgb(255, 0, 0"), None);
+        assert_eq!(Color::from_rgb_function("rgb 255, 0, 0)"), None);
+    }
+
+    #[test]
+    fn r624_from_css_string_dispatches_to_hex() {
+        // Per the dispatcher: `#...` lands in from_hex.
+        assert_eq!(
+            Color::from_css_string("#19 76d2".trim_end()),
+            None,
+            "embedded whitespace inside hex literal is rejected",
+        );
+        assert_eq!(
+            Color::from_css_string("#1976d2"),
+            Some(Color::rgb(0x19, 0x76, 0xd2)),
+        );
+    }
+
+    #[test]
+    fn r624_from_css_string_dispatches_to_rgb_function() {
+        assert_eq!(
+            Color::from_css_string("rgb(255, 0, 0)"),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+        assert_eq!(
+            Color::from_css_string("rgba(0, 0, 0, 1)"),
+            Some(Color::rgba(0, 0, 0, 0xff)),
+        );
+    }
+
+    #[test]
+    fn r624_from_css_string_tolerates_leading_trailing_whitespace() {
+        assert_eq!(
+            Color::from_css_string("   #ffffff   "),
+            Some(Color::rgb(0xff, 0xff, 0xff)),
+        );
+        assert_eq!(
+            Color::from_css_string("   rgb(255, 0, 0)   "),
+            Some(Color::rgb(0xff, 0x00, 0x00)),
+        );
+    }
+
+    #[test]
+    fn r624_from_css_string_rejects_unsupported_forms() {
+        // Deferred per docs: hsl / oklch / lab / named-color / etc.
+        assert_eq!(Color::from_css_string("hsl(0, 100%, 50%)"), None);
+        assert_eq!(Color::from_css_string("oklch(50% 0.5 0)"), None);
+        assert_eq!(Color::from_css_string("red"), None);
+        assert_eq!(Color::from_css_string(""), None);
+    }
+
 
     #[test]
     fn from_argb_decodes_softbuffer_layout() {
