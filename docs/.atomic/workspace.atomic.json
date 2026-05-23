@@ -16992,6 +16992,58 @@
         "lookup helper reused at R609 + R610 write sites — 2 write consumers now; if R611-R612 add 1+ more consider mutate_substrate lift per [[abstraction-needs-second-consumer]]"
       ]
     },
+    "R611": {
+      "decision_summary": "scene/set_selection RPC method — paired mutation for the selection-axis of TextEditState; anchor/focus W3C semantics surface through OCC bump + post-snap echo",
+      "changes_bullets": [
+        "pinion-rpc::text_state::set_selection + SetSelectionParams (R611 §5.7 §5.22) — 26th typed scene/* method, mutation pair for selection-axis",
+        "pinion-rpc::dispatch::handle_scene_set_selection + read_usize_field helper — byte-offset parsing with InvalidByteOffset / TagRequired / NotBound / RuntimeOwnerUnavailable typed variants",
+        "pinion-rpc::dispatch::mutates_scene_on_success extends — OCC bump on success (set_selection writes caret_pos + selection_anchor inside `reactive::batch`)",
+        "Wire response = TextStateOutcome (full shape; substrate char-boundary snap + length clamp + W3C anchor pinning surface in post-state echo)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 3025 pass / 0 fail (R610: 3007 → +18 R611 unit + wire tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)",
+        "r611_set_selection_anchor_after_focus_records_anchor_at_end — W3C anchor pinning preserved through wire",
+        "r611_set_selection_collapsed_anchor_equals_focus_clears_selection — substrate collapse to caret-only surfaces",
+        "r611_set_selection_snaps_to_char_boundary_for_multibyte_text — mid-codepoint anchor/focus snap surfaces in echo",
+        "r611_set_selection_clamps_offsets_to_text_length — substrate clamp surfaces",
+        "r611_scene_set_selection_bumps_revision_on_success + _does_not_bump_revision_on_failure — OCC gate pinned both directions"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R612: scene/set_caret (caret-byte-offset wire; tag required; OCC bump)",
+        "AI-first write matrix: theme/mode + theme/palettes + scroll/offset + text + selection covered (5/6). caret pending",
+        "lookup helper write-side reuse count: R609 + R610 + R611 = 3 consumers. R612 = 4 — strict Rule of Three already passed; consider mutate_substrate lift for after R612 lands"
+      ],
+      "publishable_decision_summary": "scene/set_selection RPC method — paired mutation for the selection-axis of TextEditState; anchor/focus W3C semantics surface through OCC bump + post-snap echo",
+      "publishable_changes_bullets": [
+        "pinion-rpc::text_state::set_selection + SetSelectionParams (R611 §5.7 §5.22) — 26th typed scene/* method, mutation pair for selection-axis",
+        "pinion-rpc::dispatch::handle_scene_set_selection + read_usize_field helper — byte-offset parsing with InvalidByteOffset / TagRequired / NotBound / RuntimeOwnerUnavailable typed variants",
+        "pinion-rpc::dispatch::mutates_scene_on_success extends — OCC bump on success (set_selection writes caret_pos + selection_anchor inside `reactive::batch`)",
+        "Wire response = TextStateOutcome (full shape; substrate char-boundary snap + length clamp + W3C anchor pinning surface in post-state echo)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 3025 pass / 0 fail (R610: 3007 → +18 R611 unit + wire tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)",
+        "r611_set_selection_anchor_after_focus_records_anchor_at_end — W3C anchor pinning preserved through wire",
+        "r611_set_selection_collapsed_anchor_equals_focus_clears_selection — substrate collapse to caret-only surfaces",
+        "r611_set_selection_snaps_to_char_boundary_for_multibyte_text — mid-codepoint anchor/focus snap surfaces in echo",
+        "r611_set_selection_clamps_offsets_to_text_length — substrate clamp surfaces",
+        "r611_scene_set_selection_bumps_revision_on_success + _does_not_bump_revision_on_failure — OCC gate pinned both directions"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R612: scene/set_caret (caret-byte-offset wire; tag required; OCC bump)",
+        "AI-first write matrix: theme/mode + theme/palettes + scroll/offset + text + selection covered (5/6). caret pending",
+        "lookup helper write-side reuse count: R609 + R610 + R611 = 3 consumers. R612 = 4 — strict Rule of Three already passed; consider mutate_substrate lift for after R612 lands"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

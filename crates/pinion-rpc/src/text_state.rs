@@ -258,6 +258,71 @@ pub fn set_text(
     })
 }
 
+// ────────────────────────────────────────────────────────────────────
+// scene/set_selection — mutate-side (R611)
+// ────────────────────────────────────────────────────────────────────
+
+/// Typed request payload for [`set_selection`]. Carries the
+/// `(anchor, focus)` byte-offset pair and the cache tag the mutation
+/// applies to.
+///
+/// `anchor` and `focus` follow the W3C `Selection` semantics:
+/// `anchor` is the user-pinned end of the selection (where Shift+Arrow
+/// extension started), `focus` is the moving end (where the caret
+/// lands). When `anchor == focus` the selection collapses and the
+/// substrate clears the `selection_anchor` signal — a caret-only
+/// state.
+///
+/// The substrate's
+/// [`TextEditState::set_selection`](pinion_core::widgets::text_edit::TextEditState::set_selection)
+/// (a) snaps both offsets to the nearest `char` boundary, (b) clamps
+/// both to `[0, text.len()]`, (c) writes `caret_pos` to the snapped
+/// `focus`, and (d) collapses to `selection_anchor = None` if the
+/// snapped values coincide. AI agents observe all four behaviours
+/// through the returned [`TextStateOutcome`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetSelectionParams<'a> {
+    /// Cache tag the
+    /// [`use_text_edit_state`](pinion_core::widgets::text_edit::use_text_edit_state)
+    /// lookup resolves against. Required (no default).
+    pub tag: &'a str,
+    /// User-pinned end of the selection (byte offset). Snapped to
+    /// the nearest `char` boundary by the substrate.
+    pub anchor: usize,
+    /// Moving end of the selection (byte offset) — equal to the
+    /// caret position post-call. Snapped to the nearest `char`
+    /// boundary by the substrate.
+    pub focus: usize,
+}
+
+/// Mutate the bound [`TextEditState`]'s selection under `params.tag`
+/// and return the post-mutation [`TextStateOutcome`].
+///
+/// # Side effects
+///
+/// Calls [`TextEditState::set_selection`] which writes both
+/// `caret_pos` and `selection_anchor` signals inside a single
+/// [`batch`](pinion_core::reactive::batch). Subscribers re-run at
+/// most once per call. The dispatcher bumps
+/// [`SceneRevision`](pinion_core::SceneRevision) after this call
+/// returns `Ok`.
+///
+/// # Errors
+///
+/// - [`TextStateError::RuntimeOwnerUnavailable`] — no substrate
+///   owner attached on the dispatch context.
+/// - [`TextStateError::NotBound`] — owner has no text-edit state
+///   cached under `params.tag`.
+pub fn set_selection(
+    runtime_owner: Option<&Owner>,
+    params: &SetSelectionParams<'_>,
+) -> Result<TextStateOutcome, TextStateError> {
+    lookup::<TextEditState, _, _>(runtime_owner, params.tag, |tag, state| {
+        state.set_selection(params.anchor, params.focus);
+        TextStateOutcome::from_state(tag, state)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,5 +647,129 @@ mod tests {
         assert_eq!(json["selection"], serde_json::Value::Null);
         assert_eq!(json["is_composing"], false);
         assert_eq!(json["preedit"], serde_json::Value::Null);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R611 §5.22 — set_selection setter
+    // ─────────────────────────────────────────────────────────────────
+
+    fn sel_params(tag: &str, anchor: usize, focus: usize) -> SetSelectionParams<'_> {
+        SetSelectionParams { tag, anchor, focus }
+    }
+
+    #[test]
+    fn r611_set_selection_missing_runtime_owner_errors() {
+        let err = set_selection(None, &sel_params("field", 0, 3)).unwrap_err();
+        assert_eq!(err, TextStateError::RuntimeOwnerUnavailable);
+    }
+
+    #[test]
+    fn r611_set_selection_unbound_tag_errors_with_tag_echoed() {
+        let owner = Owner::new();
+        let err = set_selection(Some(&owner), &sel_params("ghost", 0, 3)).unwrap_err();
+        assert_eq!(
+            err,
+            TextStateError::NotBound {
+                tag: "ghost".into(),
+            },
+        );
+    }
+
+    #[test]
+    fn r611_set_selection_writes_range_and_returns_post_state() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello world".to_owned());
+        let outcome = set_selection(Some(&owner), &sel_params("field", 0, 5)).unwrap();
+        assert_eq!(outcome.tag, "field");
+        assert!(outcome.has_selection);
+        let sel = outcome.selection.expect("selection present");
+        assert_eq!(sel.start, 0);
+        assert_eq!(sel.end, 5);
+        assert_eq!(sel.anchor, 0);
+        // Caret = focus per W3C Selection contract.
+        assert_eq!(outcome.caret, 5);
+        // Substrate state mirrors the wire response.
+        assert_eq!(state.caret(), 5);
+    }
+
+    #[test]
+    fn r611_set_selection_anchor_after_focus_records_anchor_at_end() {
+        // anchor=5, focus=0 → user selected right-to-left. start=0,
+        // end=5, but anchor remains pinned at 5 (the user's drag
+        // start). Pinned per W3C Selection semantics.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello world".to_owned());
+        let outcome = set_selection(Some(&owner), &sel_params("field", 5, 0)).unwrap();
+        let sel = outcome.selection.expect("selection present");
+        assert_eq!(sel.start, 0);
+        assert_eq!(sel.end, 5);
+        assert_eq!(sel.anchor, 5);
+        assert_eq!(outcome.caret, 0, "caret lands at focus");
+        assert_eq!(state.caret(), 0);
+    }
+
+    #[test]
+    fn r611_set_selection_collapsed_anchor_equals_focus_clears_selection() {
+        // anchor == focus → substrate collapses to caret-only state.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello world".to_owned());
+        let outcome = set_selection(Some(&owner), &sel_params("field", 3, 3)).unwrap();
+        assert!(!outcome.has_selection);
+        assert!(outcome.selection.is_none());
+        assert_eq!(outcome.caret, 3);
+        assert!(state.selection_range().is_none());
+    }
+
+    #[test]
+    fn r611_set_selection_clamps_offsets_to_text_length() {
+        // anchor=0, focus=999 → substrate clamps to text.len() = 5.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello".to_owned());
+        let outcome = set_selection(Some(&owner), &sel_params("field", 0, 999)).unwrap();
+        let sel = outcome.selection.expect("selection present");
+        assert_eq!(sel.start, 0);
+        assert_eq!(sel.end, 5);
+        assert_eq!(outcome.caret, 5);
+    }
+
+    #[test]
+    fn r611_set_selection_snaps_to_char_boundary_for_multibyte_text() {
+        // "안녕" = 6 bytes, with char boundaries at 0 / 3 / 6.
+        // anchor=1 (mid-codepoint) snaps to 0; focus=4 (mid) snaps
+        // to 3. The wire payload sees the post-snap values.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("안녕".to_owned());
+        let outcome = set_selection(Some(&owner), &sel_params("field", 1, 4)).unwrap();
+        let sel = outcome.selection.expect("selection present");
+        assert_eq!(sel.start, 0);
+        assert_eq!(sel.end, 3);
+        assert_eq!(outcome.caret, 3);
+    }
+
+    #[test]
+    fn r611_set_selection_does_not_insert_a_new_cache_slot() {
+        let owner = Owner::new();
+        let _ = set_selection(Some(&owner), &sel_params("phantom", 0, 1)).unwrap_err();
+        assert!(!owner.cache_contains::<TextEditState>("phantom"));
+    }
+
+    #[test]
+    fn r611_set_selection_outcome_serializes_to_full_text_state_shape() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello".to_owned());
+        let outcome = set_selection(Some(&owner), &sel_params("field", 0, 5)).unwrap();
+        let json = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(json["tag"], "field");
+        assert_eq!(json["caret"], 5);
+        assert_eq!(json["has_selection"], true);
+        assert_eq!(json["selection"]["start"], 0);
+        assert_eq!(json["selection"]["end"], 5);
+        assert_eq!(json["selection"]["anchor"], 0);
     }
 }

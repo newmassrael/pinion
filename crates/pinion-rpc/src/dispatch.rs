@@ -2,7 +2,7 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R610 — 25 typed):
+//! response envelope. Registered methods (R611 — 26 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
@@ -12,7 +12,8 @@
 //! `scene/set_theme_mode`, `scene/set_theme_palettes`,
 //! `scene/animation_state`, `scene/scroll_state`,
 //! `scene/set_scroll_offset`, `scene/text_state`,
-//! `scene/set_text`, `scene/caret_state`. The preview-lifecycle methods take the
+//! `scene/set_text`, `scene/set_selection`,
+//! `scene/caret_state`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -67,7 +68,9 @@ use crate::scroll_state::{
 use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
-use crate::text_state::{set_text, text_state, SetTextParams, TextStateOutcome};
+use crate::text_state::{
+    set_selection, set_text, text_state, SetSelectionParams, SetTextParams, TextStateOutcome,
+};
 use crate::theme::{
     parse_palette_value, set_theme_mode, set_theme_palettes, theme_tokens, PaletteParseError,
     SetThemeModeError, SetThemeModeOutcome, SetThemeModeParams, SetThemePalettesError,
@@ -632,6 +635,9 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             handle_scene_text_state(runtime_owner, request.params.as_ref())
         }
         "scene/set_text" => handle_scene_set_text(runtime_owner, request.params.as_ref()),
+        "scene/set_selection" => {
+            handle_scene_set_selection(runtime_owner, request.params.as_ref())
+        }
         "scene/caret_state" => {
             handle_scene_caret_state(runtime_owner, request.params.as_ref())
         }
@@ -819,7 +825,12 @@ fn mutates_scene_on_success(method: &str) -> bool {
             // `reactive::batch`. Every subscriber re-runs once, the
             // visible field text changes wholesale, and the OCC
             // token must bump.
-            | "scene/set_text",
+            | "scene/set_text"
+            // R611 §5.22 — set_selection writes `caret_pos` and
+            // `selection_anchor` inside one `reactive::batch`. The
+            // visible caret + selection-highlight change; the OCC
+            // token must bump.
+            | "scene/set_selection",
     )
 }
 
@@ -2657,6 +2668,69 @@ fn handle_scene_set_text(
         Ok(outcome) => text_state_outcome_to_json(&outcome),
         Err(err) => Err(text_state_error_to_rpc(&err)),
     }
+}
+
+/// R611 §5.22 — `scene/set_selection` typed handler. 26th `scene/*`
+/// method, mutation pair to `scene/text_state` for the
+/// selection-axis specifically (paired alongside the text-axis
+/// [`handle_scene_set_text`] and the caret-axis R612 setter).
+///
+/// Wire shape — request:
+/// `{"tag": "<field_tag>", "anchor": <usize>, "focus": <usize>}`.
+/// Response is the same [`TextStateOutcome`] shape `scene/text_state`
+/// returns. The substrate snaps both offsets to `char` boundaries
+/// and clamps them to `[0, text.len()]`; the response echoes the
+/// post-snap state. When `anchor == focus` post-snap the selection
+/// collapses to caret-only — surfaced as `selection: null` +
+/// `has_selection: false`.
+fn handle_scene_set_selection(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let tag = params_value
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tag missing or not a string")
+                .with_data_string("TagRequired")
+        })?;
+    let anchor = read_usize_field(params_value, "anchor")?;
+    let focus = read_usize_field(params_value, "focus")?;
+    let typed_params = SetSelectionParams {
+        tag,
+        anchor,
+        focus,
+    };
+    match set_selection(runtime_owner, &typed_params) {
+        Ok(outcome) => text_state_outcome_to_json(&outcome),
+        Err(err) => Err(text_state_error_to_rpc(&err)),
+    }
+}
+
+/// Parse `params.<field>` as a non-negative `usize` (byte offset into
+/// a UTF-8 string). Rejects missing fields, negative integers, and
+/// floats. Surfaces a typed `InvalidByteOffset` data string at the
+/// `error.data` level so AI clients pattern-match on the variant tag.
+fn read_usize_field(params: &Value, field: &str) -> Result<usize, RpcError> {
+    let value = params.get(field).ok_or_else(|| {
+        RpcError::invalid_params(format!("params.{field} missing"))
+            .with_data_string("InvalidByteOffset")
+    })?;
+    if let Some(int_v) = value.as_u64() {
+        return usize::try_from(int_v).map_err(|_| {
+            RpcError::invalid_params(format!(
+                "params.{field} {int_v} out of usize range",
+            ))
+            .with_data_string("InvalidByteOffset")
+        });
+    }
+    Err(
+        RpcError::invalid_params(format!(
+            "params.{field} must be a non-negative integer",
+        ))
+        .with_data_string("InvalidByteOffset"),
+    )
 }
 
 /// R604 §5.22 — `scene/caret_state` typed handler. 22nd `scene/*`
@@ -9123,6 +9197,135 @@ mod tests {
             revision.current(),
             before,
             "a failed set_text must not bump the OCC token",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R611 §5.22 — scene/set_selection wire integration
+    //
+    // Mutation pair to scene/text_state for the selection-axis. The
+    // fine-grained handler logic is covered in
+    // `crate::text_state::tests::r611_*`. The cases below exercise
+    // the dispatcher's wire round-trip — typed params parsing,
+    // error → RpcError mapping, OCC bump.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r611_scene_set_selection_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"tag":"field","anchor":0,"focus":3},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r611_scene_set_selection_missing_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"anchor":0,"focus":3},"id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("TagRequired".into())));
+    }
+
+    #[test]
+    fn r611_scene_set_selection_missing_anchor_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"tag":"field","focus":3},"id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing anchor must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidByteOffset".into())));
+    }
+
+    #[test]
+    fn r611_scene_set_selection_missing_focus_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"tag":"field","anchor":0},"id":4}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing focus must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidByteOffset".into())));
+    }
+
+    #[test]
+    fn r611_scene_set_selection_rejects_negative_offset() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        // Negative integers are rejected by serde_json's `as_u64` path.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"tag":"field","anchor":-1,"focus":3},"id":5}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("negative anchor must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidByteOffset".into())));
+    }
+
+    #[test]
+    fn r611_scene_set_selection_unbound_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"tag":"ghost","anchor":0,"focus":3},"id":6}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("unbound tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    #[test]
+    fn r611_scene_set_selection_happy_path_returns_post_state() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        state.set_text("Hello world".to_owned());
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"tag":"field","anchor":0,"focus":5},"id":7}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none(), "happy path must not error");
+        let result = resp.result.expect("result present");
+        assert_eq!(result["tag"], "field");
+        assert_eq!(result["caret"], 5);
+        assert_eq!(result["has_selection"], true);
+        assert_eq!(result["selection"]["start"], 0);
+        assert_eq!(result["selection"]["end"], 5);
+        assert_eq!(result["selection"]["anchor"], 0);
+    }
+
+    #[test]
+    fn r611_scene_set_selection_bumps_revision_on_success() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        state.set_text("Hello".to_owned());
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"tag":"field","anchor":0,"focus":3},"id":8}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        let after = revision.current();
+        assert!(
+            after > before,
+            "set_selection must bump the OCC token (before={before}, after={after})",
+        );
+    }
+
+    #[test]
+    fn r611_scene_set_selection_does_not_bump_revision_on_failure() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_selection","params":{"tag":"ghost","anchor":0,"focus":3},"id":9}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        assert_eq!(
+            revision.current(),
+            before,
+            "a failed set_selection must not bump the OCC token",
         );
     }
 
