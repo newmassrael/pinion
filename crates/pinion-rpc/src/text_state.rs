@@ -397,10 +397,12 @@ pub fn set_caret(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::widgets::text_edit::use_text_edit_state;
 
+    // R622 §5.7 — 1-line typed wrapper specializing
+    // crate::test_fixtures::bind_state to TextEditState. The
+    // owner.run + use_* glue lives in the shared module.
     fn bind_state(owner: &Owner, tag: &'static str) -> std::rc::Rc<TextEditState> {
-        owner.run(|| use_text_edit_state(tag))
+        crate::test_fixtures::bind_state::<TextEditState>(owner, tag)
     }
 
     // ─────────────────────────────────────────────────────────────────

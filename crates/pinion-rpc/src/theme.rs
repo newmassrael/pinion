@@ -734,7 +734,16 @@ fn parse_color_hex(input: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::theme::{set_system_color_scheme, use_theme, Theme, ThemeMode};
+    use pinion_core::theme::{set_system_color_scheme, Theme, ThemeMode};
+
+    // R622 §5.7 — 1-line typed wrapper specializing
+    // crate::test_fixtures::bind_state to ThemeProvider (with the
+    // per-axis name `bind_provider` preserved for theme's 21 call
+    // sites — the substrate hook is `use_theme`, the cached type
+    // is `ThemeProvider`, so `bind_provider` is the local idiom).
+    fn bind_provider(owner: &Owner, tag: &'static str) -> std::rc::Rc<ThemeProvider> {
+        crate::test_fixtures::bind_state::<ThemeProvider>(owner, tag)
+    }
 
     /// Snapshot the global `system_color_scheme` for the duration of a
     /// test. Drop-time restore so an early panic leaves the global
@@ -758,9 +767,6 @@ mod tests {
         }
     }
 
-    fn bind_provider(owner: &Owner, tag: &'static str) -> std::rc::Rc<ThemeProvider> {
-        owner.run(|| use_theme(tag))
-    }
 
     // ─────────────────────────────────────────────────────────────────
     // Failure modes

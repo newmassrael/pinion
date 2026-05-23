@@ -35,6 +35,9 @@ pub mod text_state;
 pub mod theme;
 pub mod wait_for;
 
+#[cfg(test)]
+pub(crate) mod test_fixtures;
+
 pub use animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
 pub use caret_state::{caret_state, CaretStateError, CaretStateOutcome};
 pub use commands::{

@@ -11206,6 +11206,31 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R622 — test_fixtures crate-internal module + CacheBindable trait — owner.run + use_* pairing centralized; per-axis bind_X wrappers reduced to 1-line typed specializations
+
+**Changes**:
+- pinion-rpc::test_fixtures (new module, #[cfg(test)] pub(crate)) — CacheBindable trait + 4 impls (ScrollState / TextEditState / ThemeProvider / CaretBlink) + bind_state<S> generic helper
+- Per-axis test modules (scroll_state / text_state / caret_state / theme) reduce to 1-line typed wrapper that pins the generic for inference — owner.run + use_* glue now lives in one place
+- Dead `use pinion_core::widgets::*::use_*` imports removed from per-axis test modules (R622 deletion sweep)
+- test_fixtures.rs documents the trait + alternative design (4 named wrappers vs trait + generic) at the module level so a future 5th axis lands as one impl, not a new file
+
+
+
+**Verification**:
+- cargo test --workspace: 3064 pass / 0 fail (R621 baseline preserved — refactor only)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- Generic helper compiles without turbofish at the per-axis wrapper site — trait dispatch via `S::use_in_scope(tag)` resolves at monomorphization time
+
+
+
+**Impact**: §5.7, §5.22
+
+
+**Carry forward**:
+- 4 remaining debts: Animation control / Color CSS L4 / error prose / dispatch test split
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

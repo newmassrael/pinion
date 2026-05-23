@@ -130,10 +130,11 @@ pub fn caret_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::widgets::caret_blink::use_caret_blink;
 
+    // R622 §5.7 — 1-line typed wrapper specializing
+    // crate::test_fixtures::bind_state to CaretBlink.
     fn bind_state(owner: &Owner, tag: &'static str) -> std::rc::Rc<CaretBlink> {
-        owner.run(|| use_caret_blink(tag))
+        crate::test_fixtures::bind_state::<CaretBlink>(owner, tag)
     }
 
     // ─────────────────────────────────────────────────────────────────

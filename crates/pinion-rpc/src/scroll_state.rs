@@ -259,10 +259,15 @@ pub fn set_scroll_offset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::widgets::scroll::use_scroll_state;
 
+    // R622 §5.7 — 1-line typed wrapper that pins the generic
+    // parameter for type inference at call sites. The
+    // owner.run + use_* glue lives in crate::test_fixtures::bind_state
+    // (generic over CacheBindable); this wrapper just specializes
+    // to ScrollState. Pre-R622 the 3-line owner.run body was
+    // open-coded in 4 axis modules.
     fn bind_state(owner: &Owner, tag: &'static str) -> std::rc::Rc<ScrollState> {
-        owner.run(|| use_scroll_state(tag))
+        crate::test_fixtures::bind_state::<ScrollState>(owner, tag)
     }
 
     // ─────────────────────────────────────────────────────────────────
