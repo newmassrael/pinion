@@ -2267,7 +2267,7 @@ fn set_theme_mode_error_to_rpc(err: SetThemeModeError) -> RpcError {
 ///
 /// `params.epsilon` is optional; when omitted the handler defers to
 /// [`crate::animation_state::animation_state`] which falls back to
-/// [`Animation::DEFAULT_REST_EPSILON`](pinion_core::animation::Animation::DEFAULT_REST_EPSILON).
+/// [`pinion_core::animation::DEFAULT_REST_EPSILON`].
 fn handle_scene_animation_state(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,

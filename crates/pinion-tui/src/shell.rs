@@ -137,10 +137,11 @@ const ACTIVE_POLL_MS: u64 = 16;
 
 /// R51.148 §5.28 — spring settlement epsilon forwarded to
 /// [`pinion_core::reactive::Owner::any_animation_active`]. Matches
-/// the default [`pinion_core::Animation::DEFAULT_REST_EPSILON`] so
-/// the shell's "stop painting" threshold lines up with the spring
-/// solver's own rest criterion.
-const REST_EPSILON: f32 = pinion_core::Animation::<f32>::DEFAULT_REST_EPSILON;
+/// the substrate-level
+/// [`pinion_core::DEFAULT_REST_EPSILON`] (R601 lift) so the shell's
+/// "stop painting" threshold lines up with the spring solver's own
+/// rest criterion.
+const REST_EPSILON: f32 = pinion_core::DEFAULT_REST_EPSILON;
 
 /// R51.110.2 §5.41 — run the TUI binding `V` end-to-end against the
 /// live terminal.

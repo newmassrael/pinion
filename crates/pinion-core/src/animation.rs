@@ -573,6 +573,22 @@ use serde::de::DeserializeOwned;
 
 use crate::reactive::{Owner, Signal};
 
+/// Sub-pixel rest threshold — an [`Animation`] is considered settled
+/// when both displacement-from-target and velocity drop below this
+/// component-wise. R601 §5.28 §5.7 lifts this to a non-generic
+/// module-level const so consumers outside the `Animation<T>` impl
+/// block can name it without specifying the carrier type. The
+/// [`Animation::DEFAULT_REST_EPSILON`] associated const remains as
+/// an in-impl alias for discovery; both paths return the same
+/// value.
+///
+/// Value rationale: `0.01` matches the visual noise floor at typical
+/// `HiDPI` device pixel ratios (a sub-pixel quarter-displacement
+/// stops being perceptible past the panel's rendering precision)
+/// and is the canonical Material 3 / `SwiftUI` spring-solver
+/// settlement threshold.
+pub const DEFAULT_REST_EPSILON: f32 = 0.01;
+
 /// Object-safe surface for the [`Owner`] tick dispatch.
 ///
 /// [`Owner::tick_animations`] walks the registry as `&dyn Tickable` so all
@@ -661,9 +677,13 @@ impl<T> Animation<T>
 where
     T: Animatable + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
 {
-    /// Sub-pixel rest threshold — animation considered settled when both
-    /// displacement-from-target and velocity drop below this component-wise.
-    pub const DEFAULT_REST_EPSILON: f32 = 0.01;
+    /// In-impl alias for the module-level
+    /// [`DEFAULT_REST_EPSILON`](crate::animation::DEFAULT_REST_EPSILON)
+    /// const (R601 §5.28 §5.7). Kept for discoverability — when the
+    /// caller already has the [`Animation`] type in scope, the
+    /// associated-const path is more ergonomic than the module path.
+    /// Both forms return the same `0.01` threshold.
+    pub const DEFAULT_REST_EPSILON: f32 = crate::animation::DEFAULT_REST_EPSILON;
 
     /// Construct a spring-animated value at rest at `initial`, registered
     /// for tick dispatch on `owner`. Re-target via [`Animation::set_target`].
@@ -767,6 +787,42 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─────────────────────────────────────────────────────────────────
+    // R601 §5.28 — DEFAULT_REST_EPSILON substrate lift
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r601_default_rest_epsilon_module_const_matches_animation_alias() {
+        // The Animation<T>::DEFAULT_REST_EPSILON associated const is
+        // an alias for the module-level DEFAULT_REST_EPSILON since
+        // R601. Both names must resolve to the same bit pattern —
+        // a future refactor that drifts the two would surface here.
+        // bit-pattern equality is the right comparison for an alias
+        // contract (both sides are the same compile-time literal, no
+        // arithmetic).
+        assert_eq!(
+            DEFAULT_REST_EPSILON.to_bits(),
+            Animation::<f32>::DEFAULT_REST_EPSILON.to_bits(),
+            "module const must equal the in-impl alias",
+        );
+        assert_eq!(
+            DEFAULT_REST_EPSILON.to_bits(),
+            Animation::<AnimVec4>::DEFAULT_REST_EPSILON.to_bits(),
+            "the alias resolves identically regardless of carrier T",
+        );
+    }
+
+    #[test]
+    fn r601_default_rest_epsilon_value_is_canonical_0_01() {
+        // The numeric value itself is pinned by every spring-driven
+        // widget cascade (theme-fade, scroll fling, caret blink) so a
+        // change is a cross-cutting visual regression risk.
+        assert!(
+            (DEFAULT_REST_EPSILON - 0.01).abs() < f32::EPSILON,
+            "DEFAULT_REST_EPSILON must equal the canonical 0.01 threshold",
+        );
+    }
 
     #[test]
     fn f32_lerp_endpoints() {

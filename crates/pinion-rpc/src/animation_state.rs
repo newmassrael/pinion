@@ -46,11 +46,11 @@
 //! ```
 //!
 //! `params.epsilon` is optional; when omitted the dispatcher uses
-//! [`DEFAULT_REST_EPSILON`] (`0.01`, mirroring
-//! [`Animation::DEFAULT_REST_EPSILON`](pinion_core::animation::Animation::DEFAULT_REST_EPSILON)).
-//! The chosen value is echoed back in the response so the agent can
-//! record exactly which settlement threshold the framework evaluated
-//! against.
+//! the substrate-level
+//! [`DEFAULT_REST_EPSILON`](pinion_core::animation::DEFAULT_REST_EPSILON)
+//! (`0.01`). The chosen value is echoed back in the response so the
+//! agent can record exactly which settlement threshold the framework
+//! evaluated against.
 //!
 //! ## Side-effect contract
 //!
@@ -60,17 +60,9 @@
 //! an active reactive computation, so the introspection neither
 //! subscribes the framework nor schedules a re-paint.
 
+use pinion_core::animation::DEFAULT_REST_EPSILON;
 use pinion_core::reactive::Owner;
 use serde::Serialize;
-
-/// Settlement threshold for "the spring solver considers this animation
-/// at rest" when [`animation_state`] callers omit `params.epsilon`.
-/// Mirrors [`Animation::DEFAULT_REST_EPSILON`](pinion_core::animation::Animation::DEFAULT_REST_EPSILON)
-/// — the per-type generic const cannot be named without specifying
-/// the carrier `T`, so the threshold is duplicated here at the RPC
-/// surface (the canonical pinion-core value is the source of truth;
-/// a future R-round can lift it into a non-generic substrate const).
-pub const DEFAULT_REST_EPSILON: f32 = 0.01;
 
 /// Typed errors the [`animation_state`] dispatcher can return. Every
 /// variant maps onto a JSON-RPC `-32602 Invalid params` response at

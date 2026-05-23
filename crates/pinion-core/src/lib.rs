@@ -28,7 +28,7 @@ mod multi_window;
 
 pub use animation::{
     Animatable, AnimRect, AnimVec2, AnimVec4, Animation, Easing, SpringConfig, SpringState,
-    Tickable, Tween,
+    Tickable, Tween, DEFAULT_REST_EPSILON,
 };
 pub use clipboard::{Clipboard, ClipboardSelection, InMemoryClipboard};
 pub use command::Command;

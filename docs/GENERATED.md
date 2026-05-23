@@ -18027,6 +18027,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 601 — pinion-core::animation::DEFAULT_REST_EPSILON lifted to a non-generic module-level pub const so consumers outside the Animation<T> impl block can name the canonical settlement threshold without specifying the carrier type. R600 carry repaid in the round after it surfaced.
+
+**Changes**:
+- animation.rs: pub const DEFAULT_REST_EPSILON: f32 = 0.01 lifted above the Tickable trait with rationale doc (HiDPI noise floor + M3/SwiftUI canonical)
+- animation.rs: Animation::<T>::DEFAULT_REST_EPSILON associated const now aliases the module const (`crate::animation::DEFAULT_REST_EPSILON`) — both paths resolve to the same value, in-impl form kept for discoverability
+- pinion-core/lib.rs: DEFAULT_REST_EPSILON added to the crate-root pub use so consumers can write `pinion_core::DEFAULT_REST_EPSILON`
+- pinion-rpc/animation_state.rs: removed the duplicate `pub const DEFAULT_REST_EPSILON: f32 = 0.01` and the explanatory carry note; now imports the substrate const directly
+- pinion-rpc/dispatch.rs: doc link points to `pinion_core::animation::DEFAULT_REST_EPSILON` (single source of truth)
+- pinion-shell/substrate.rs: pinion_core::Animation::<f32>::DEFAULT_REST_EPSILON → pinion_core::DEFAULT_REST_EPSILON
+- pinion-tui/shell.rs: same rewrite + comment refresh referencing R601 lift
+- animation.rs: +2 R601 tests — alias bit-pattern equality across f32 / AnimVec4, canonical 0.01 value pin
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib r601: 2 pass / 0 fail (alias equality + value pin)
+- cargo test --workspace --features pinion-runtime/vello: 2874 pass / 0 fail / 13 ignored (R600 baseline 2872 + 2 R601)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- single source of truth: 0.01 lives in one place (pinion-core::animation::DEFAULT_REST_EPSILON); the in-impl alias references it textually
+- abstraction-needs-second-consumer ratify: pinion-shell + pinion-tui + pinion-rpc all consume the substrate const, ratifying the lift
+
+
+
+**Impact**: §5.7, §5.28
+
+
+**Carry forward**:
+- scene/scroll_state — next reactive-substrate introspection round (use_scroll_state surface; same Owner::cache_contains gate pattern as theme_tokens)
+- scene/text_state + scene/caret_state — remaining reactive-substrate introspection methods completing the AI-first observability matrix
+- Animation<T>::DEFAULT_REST_EPSILON associated const — deprecation candidate once every external caller has migrated to the module const, but the in-impl form is the more discoverable surface when Animation is already in scope so the alias is likely a permanent dual-path
+
+
+
 ### Round 7 — Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification
 
 **Changes**:

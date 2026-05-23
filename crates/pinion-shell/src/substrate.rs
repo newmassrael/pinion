@@ -908,7 +908,7 @@ impl<V: WidgetView> ShellCore<V> {
         // surface idles until the next input / state change.
         if self
             .core
-            .any_animation_active(pinion_core::Animation::<f32>::DEFAULT_REST_EPSILON)
+            .any_animation_active(pinion_core::DEFAULT_REST_EPSILON)
         {
             self.redraw_requested = true;
         }
