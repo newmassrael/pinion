@@ -18209,6 +18209,66 @@
         "R637+ §5.50 substrate gap: pixel-diff library choice — `image` + `imageproc` crates are the canonical Rust pair (image decodes PNG, imageproc has SSIM / per-channel diff). Alternative is to vendor a minimal `pixelmatch`-style algorithm so pinion-cli stays light. Decide once R637 lands the screenshot side"
       ]
     },
+    "R637": {
+      "decision_summary": "R637 §5.16 §5.7 headless screenshot substrate + PINION_SCREENSHOT env hook",
+      "changes_bullets": [
+        "crates/pinion-shell/src/headless_screenshot.rs new: HeadlessScreenshot wgpu+vello headless renderer; render_to_rgba8 / render_to_png + typed HeadlessScreenshotError surface (AdapterNotFound / DeviceRequest / VelloInit / VelloRender / BufferMap / PngEncode / Io / ZeroDimension)",
+        "wgpu pipeline: Rgba8Unorm STORAGE_BINDING+COPY_SRC texture → vello::Renderer::render_to_texture → COPY_DST+MAP_READ staging buffer with COPY_BYTES_PER_ROW_ALIGNMENT (256) row padding → map_async + device.poll(PollType::Wait) → row-padding strip → premultiplied RGBA8 Vec<u8>",
+        "crates/pinion-shell/src/app.rs: try_headless_screenshot::<V>() helper reads PINION_SCREENSHOT env, drives ShellCore::compute_paint_scene → paint_adapter::to_vello → HeadlessScreenshot::render_to_png + BufWriter<File>; both run::<V>() and run_with_handlers::<V>() opt in before winit EventLoop construction; non-zero exit on adapter/render/IO failure (silent-empty-PNG avoided)",
+        "Cargo.toml workspace deps: png 0.17 added (encode-only, single-purpose; image-rs umbrella deferred to R638 figma-diff CLI which needs decode+diff arithmetic)",
+        "crates/pinion-shell/Cargo.toml: png workspace dep wired",
+        "crates/pinion-shell/src/lib.rs: pub mod headless_screenshot + pub use HeadlessScreenshot/HeadlessScreenshotError re-export; lib docstring R637 paragraph documenting PINION_SCREENSHOT env contract",
+        "examples/figma-button-m3/src/main.rs: module docstring R637 screenshot capture section (PINION_SCREENSHOT=/tmp/pinion-btn.png + R636 reference fetch pairing for R638 diff input)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 3157 pass / 0 fail / 14 ignored (3156→3157 delta = HeadlessScreenshotError::ZeroDimension Display assertion + renders_solid_fill_to_unpadded_rgba8 cold-boot smoke marked #[ignore])",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (workspace.lints baseline preserved; 2 doc_markdown corrections applied during land — `scene/screenshot` AppShell backtick + VelloRenderer backtick)",
+        "End-to-end Figma → pinion design-parity loop closed: PINION_SCREENSHOT=/tmp/pinion-btn.png ./target/release/figma-button-m3 wrote 320x160 RGBA8 → 4097-byte PNG; center pixel (160,80)=(103,80,164,255) matches BTN_FILL #675AA4, canvas (40,80)/(280,80)=(31,31,31,255) matches CANVAS_BG #1F1F1F, visual inspection confirms M3 Filled Button + 'Button' label paint",
+        "mnemosyne-cli validate-workspace: T1 orphan=0+0 / round-trip mandatory=1/1 / T3 reject=0 (baseline R51.186 ledgered orphan_refs=4 preserved, no new entries)",
+        "wgpu 26 / vello 0.6 type alignment validated against /home/coin/.cargo/registry vello-0.6.0/src/lib.rs + wgpu-26.0.1: ImageDataLayout→TexelCopyBufferLayout, MaintainBase→PollType (Wait), AaSupport{area,msaa8,msaa16}, RendererOptions{use_cpu,antialiasing_support,num_init_threads,pipeline_cache}"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R638: pinion figma-diff CLI sub-command — image + imageproc workspace deps, SSIM / per-pixel RGBA8 delta + diff PNG output; compares /tmp/pinion-btn.png vs /tmp/figma-btn-ref.png produced by R634+R636+R637 trio",
+        "R639: figma-card-m3 second design-parity binding — drop shadow + per-corner radius + Material Symbols icon glyph triple-evidence substrate gap surfaced",
+        "R640+: scene/screenshot RPC live-wire — current substrate is sync standalone (own adapter/device); follow-up plumbs ShellCore::dispatch_rpc through AppShell's live wgpu Device/Queue so the RPC method returns pixels from the running surface renderer instead of re-allocating headless",
+        "HeadlessScreenshot first-paint-only: no animation tick / dt advance, no reactive Signal updates after capture. Animation-aware screenshots (R643+?) need scene/animate_settle + screenshot pair or a tick-N-frames variant",
+        "HeadlessScreenshot allocates fresh texture + staging buffer per call; reuse cache (size-keyed) is a perf optimization deferred until the first multi-shot consumer surfaces (R639+ Card binding may trigger)"
+      ],
+      "publishable_decision_summary": "R637 §5.16 §5.7 headless screenshot substrate + PINION_SCREENSHOT env hook",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/src/headless_screenshot.rs new: HeadlessScreenshot wgpu+vello headless renderer; render_to_rgba8 / render_to_png + typed HeadlessScreenshotError surface (AdapterNotFound / DeviceRequest / VelloInit / VelloRender / BufferMap / PngEncode / Io / ZeroDimension)",
+        "wgpu pipeline: Rgba8Unorm STORAGE_BINDING+COPY_SRC texture → vello::Renderer::render_to_texture → COPY_DST+MAP_READ staging buffer with COPY_BYTES_PER_ROW_ALIGNMENT (256) row padding → map_async + device.poll(PollType::Wait) → row-padding strip → premultiplied RGBA8 Vec<u8>",
+        "crates/pinion-shell/src/app.rs: try_headless_screenshot::<V>() helper reads PINION_SCREENSHOT env, drives ShellCore::compute_paint_scene → paint_adapter::to_vello → HeadlessScreenshot::render_to_png + BufWriter<File>; both run::<V>() and run_with_handlers::<V>() opt in before winit EventLoop construction; non-zero exit on adapter/render/IO failure (silent-empty-PNG avoided)",
+        "Cargo.toml workspace deps: png 0.17 added (encode-only, single-purpose; image-rs umbrella deferred to R638 figma-diff CLI which needs decode+diff arithmetic)",
+        "crates/pinion-shell/Cargo.toml: png workspace dep wired",
+        "crates/pinion-shell/src/lib.rs: pub mod headless_screenshot + pub use HeadlessScreenshot/HeadlessScreenshotError re-export; lib docstring R637 paragraph documenting PINION_SCREENSHOT env contract",
+        "examples/figma-button-m3/src/main.rs: module docstring R637 screenshot capture section (PINION_SCREENSHOT=/tmp/pinion-btn.png + R636 reference fetch pairing for R638 diff input)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 3157 pass / 0 fail / 14 ignored (3156→3157 delta = HeadlessScreenshotError::ZeroDimension Display assertion + renders_solid_fill_to_unpadded_rgba8 cold-boot smoke marked #[ignore])",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (workspace.lints baseline preserved; 2 doc_markdown corrections applied during land — `scene/screenshot` AppShell backtick + VelloRenderer backtick)",
+        "End-to-end Figma → pinion design-parity loop closed: PINION_SCREENSHOT=/tmp/pinion-btn.png ./target/release/figma-button-m3 wrote 320x160 RGBA8 → 4097-byte PNG; center pixel (160,80)=(103,80,164,255) matches BTN_FILL #675AA4, canvas (40,80)/(280,80)=(31,31,31,255) matches CANVAS_BG #1F1F1F, visual inspection confirms M3 Filled Button + 'Button' label paint",
+        "mnemosyne-cli validate-workspace: T1 orphan=0+0 / round-trip mandatory=1/1 / T3 reject=0 (baseline R51.186 ledgered orphan_refs=4 preserved, no new entries)",
+        "wgpu 26 / vello 0.6 type alignment validated against /home/coin/.cargo/registry vello-0.6.0/src/lib.rs + wgpu-26.0.1: ImageDataLayout→TexelCopyBufferLayout, MaintainBase→PollType (Wait), AaSupport{area,msaa8,msaa16}, RendererOptions{use_cpu,antialiasing_support,num_init_threads,pipeline_cache}"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R638: pinion figma-diff CLI sub-command — image + imageproc workspace deps, SSIM / per-pixel RGBA8 delta + diff PNG output; compares /tmp/pinion-btn.png vs /tmp/figma-btn-ref.png produced by R634+R636+R637 trio",
+        "R639: figma-card-m3 second design-parity binding — drop shadow + per-corner radius + Material Symbols icon glyph triple-evidence substrate gap surfaced",
+        "R640+: scene/screenshot RPC live-wire — current substrate is sync standalone (own adapter/device); follow-up plumbs ShellCore::dispatch_rpc through AppShell's live wgpu Device/Queue so the RPC method returns pixels from the running surface renderer instead of re-allocating headless",
+        "HeadlessScreenshot first-paint-only: no animation tick / dt advance, no reactive Signal updates after capture. Animation-aware screenshots (R643+?) need scene/animate_settle + screenshot pair or a tick-N-frames variant",
+        "HeadlessScreenshot allocates fresh texture + staging buffer per call; reuse cache (size-keyed) is a perf optimization deferred until the first multi-shot consumer surfaces (R639+ Card binding may trigger)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

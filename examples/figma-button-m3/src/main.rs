@@ -32,6 +32,19 @@
 //! disabled variants are separate Figma COMPONENT nodes that lands
 //! as their own bindings once the Filled / Enabled spec verifies
 //! end-to-end.
+//!
+//! ## R637 screenshot capture
+//!
+//! ```sh
+//! PINION_SCREENSHOT=/tmp/pinion-btn.png cargo run -p figma-button-m3
+//! ```
+//!
+//! The R637 `pinion_shell::run` env hook bypasses winit, drives the
+//! initial paint scene through the wgpu + vello headless renderer,
+//! and writes the PNG. Pair with the R636 reference fetch
+//! (`pinion figma-fetch-image qluPDRsuDuPM3deySb0ejR 51553:5180 -o
+//! /tmp/figma-btn-ref.png --scale 2`) for the side-by-side diff
+//! R638 `pinion figma-diff` will consume.
 
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};

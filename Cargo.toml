@@ -146,6 +146,17 @@ ratatui = "0.29"
 # avoids breakage when ratatui upgrades its crossterm pin.
 crossterm = "0.28"
 
+# R637 §5.16 §5.7 — PNG encoder for the headless screenshot substrate.
+# `png` is the de-facto Rust PNG crate (image-rs maintainer continuity);
+# pulled directly (not transitively via `image`) so the only added
+# compile cost is the encoder itself + `miniz_oxide` (zlib). Used by
+# `pinion-shell::headless_screenshot::HeadlessScreenshot::render_to_png`
+# to write RGBA8 framebuffer bytes (post-wgpu-readback) as a Web-grade
+# 8-bit-per-channel PNG file. R638 (`pinion figma-diff`) will pull
+# `image` proper for decode + diff arithmetic; this round stays at the
+# minimum surface (encode only).
+png = "0.17"
+
 # §5.37.3 R50.2.8 — criterion micro-benchmark harness. Workspace-side
 # pin so future performance-instrumented crates (text shaping, BIDI,
 # GSUB lookup, layout cache, etc.) share a single version. Consumers

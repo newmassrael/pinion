@@ -55,6 +55,11 @@ accesskit_winit = { workspace = true }
 # tests. We pin the default-features off `tokio` (no need for net/fs
 # at this round) but enable everything via `enable_all` per-runtime.
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+# R637 §5.16 §5.7 — PNG encoder for `headless_screenshot::HeadlessScreenshot::render_to_png`.
+# `png` crate is the encode-only path (decode + diff lives in
+# pinion-cli R638+); the dep is single-purpose so this crate stays
+# in the substrate role without adopting the broader `image` umbrella.
+png = { workspace = true }
 
 # R51.175 §5.41 — expose `pinion_shell::test_fixtures` (Vello-side
 # WidgetView impl for the shared `EchoButtonFixture` reducer fixture)

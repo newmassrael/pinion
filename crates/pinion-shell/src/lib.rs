@@ -44,6 +44,13 @@
 //! model / surface ownership differ enough that a unified abstraction
 //! would leak. The §6.3 view-fn purity invariant is the cross-shell
 //! contract; everything else is shell-local.
+//!
+//! R637 §5.16 §5.7 — every binary using [`run`] / [`run_with_handlers`]
+//! also honours the `PINION_SCREENSHOT=<path>` env var: when set, the
+//! shell bypasses winit, drives the initial paint scene through
+//! [`headless_screenshot::HeadlessScreenshot`] (wgpu + vello, no
+//! surface), writes the PNG, and exits. See the module docstring for
+//! the rationale (Figma → pinion design-parity verification path).
 
 use std::sync::Arc;
 
@@ -54,6 +61,7 @@ use winit::window::Window;
 
 mod app;
 pub mod executor;
+pub mod headless_screenshot;
 mod substrate;
 pub mod typeahead;
 
@@ -70,6 +78,7 @@ pub mod test_fixtures;
 
 pub use app::{run, run_with_handlers, AppShell};
 pub use executor::{build_executor_and_sink, ProxyIntentSink, TokioExecutor};
+pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
 pub use substrate::{AccessEmitDecision, ShellCore};
 
 /// Winit user-event variants that reach the UI thread out-of-band.

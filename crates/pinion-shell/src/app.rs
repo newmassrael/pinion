@@ -1147,6 +1147,15 @@ mod r56_2_a_winit_ime_mapping_tests {
 /// pinion supports), so this is treated as an unrecoverable setup
 /// fault rather than a propagated error.
 pub fn run<V: WidgetView>() {
+    // R637 §5.16 §5.7 — `PINION_SCREENSHOT=<path>` env hook. When
+    // set, the binary bypasses winit entirely: build the initial
+    // paint scene through the same `ShellCore` substrate the live
+    // path uses, render it through `HeadlessScreenshot` (wgpu +
+    // vello, no surface), write the PNG, exit cleanly. See
+    // [`crate::headless_screenshot`] for the substrate rationale.
+    if try_headless_screenshot::<V>() {
+        return;
+    }
     let event_loop = EventLoop::<AppEvent>::with_user_event()
         .build()
         .expect("winit EventLoop::with_user_event failed");
@@ -1182,6 +1191,16 @@ pub fn run<V: WidgetView>() {
 /// thread (the OS-level thread-spawn failure that
 /// [`TokioExecutor::new`](crate::TokioExecutor) wraps).
 pub fn run_with_handlers<V: WidgetView>(registry: HandlerRegistry) {
+    // R637 §5.16 §5.7 — see `run::<V>` for the headless screenshot
+    // env contract; the handler-installing variant respects the
+    // same hook so design-parity verification works for command-
+    // driven examples too. Handlers are not invoked during the
+    // screenshot path — the substrate captures the initial paint
+    // scene only, no async resolution cycle runs.
+    if try_headless_screenshot::<V>() {
+        let _ = registry;
+        return;
+    }
     let event_loop = EventLoop::<AppEvent>::with_user_event()
         .build()
         .expect("winit EventLoop::with_user_event failed");
@@ -1201,6 +1220,57 @@ pub fn run_with_handlers<V: WidgetView>(registry: HandlerRegistry) {
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("shell: event loop error: {e}");
     }
+}
+
+/// R637 §5.16 §5.7 — env-hook plumbing for [`run`] / [`run_with_handlers`].
+///
+/// Reads `PINION_SCREENSHOT`. When unset, returns `false` so the
+/// caller continues into the winit event loop. When set, builds the
+/// initial paint scene through [`ShellCore::compute_paint_scene`]
+/// (the same path the live render loop drives every redraw — closes
+/// the [[ai-first-rpc-introspection-obligation]] gap that
+/// design-parity verification cannot use the live binary in
+/// headless / CI environments), renders it through
+/// [`crate::headless_screenshot::HeadlessScreenshot`] (wgpu + vello,
+/// no winit surface), writes a PNG, and returns `true`. Any error
+/// surfaces as `eprintln!` + `std::process::exit(1)` so CI / shell
+/// pipelines see a non-zero exit code on capture failure rather
+/// than a silently-empty PNG.
+fn try_headless_screenshot<V: WidgetView>() -> bool {
+    let Ok(path) = std::env::var("PINION_SCREENSHOT") else {
+        return false;
+    };
+    let mut core = ShellCore::<V>::new();
+    let (w, h) = V::initial_size();
+    let paint_scene = core.compute_paint_scene(w, h);
+    let base = paint_adapter::root_background(&paint_scene);
+    let mut vello_scene = VelloScene::new();
+    paint_adapter::to_vello(
+        &paint_scene,
+        &|_b: &BoxNode| None,
+        core.text_cache_mut(),
+        &mut vello_scene,
+    );
+    let mut shot = match crate::HeadlessScreenshot::new() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("shell: PINION_SCREENSHOT: {e}");
+            std::process::exit(1);
+        }
+    };
+    let file = match std::fs::File::create(&path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("shell: PINION_SCREENSHOT create {path}: {e}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = shot.render_to_png(&vello_scene, w, h, base, std::io::BufWriter::new(file)) {
+        eprintln!("shell: PINION_SCREENSHOT render_to_png: {e}");
+        std::process::exit(1);
+    }
+    eprintln!("shell: PINION_SCREENSHOT wrote {w}x{h} RGBA8 → {path}");
+    true
 }
 
 #[cfg(test)]

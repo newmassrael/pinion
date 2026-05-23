@@ -3122,6 +3122,7 @@ dependencies = [
  "pinion-runtime",
  "pinion-shell",
  "pinion-text",
+ "png",
  "pollster",
  "tokio",
  "vello",
