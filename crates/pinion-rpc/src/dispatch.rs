@@ -2232,14 +2232,7 @@ fn handle_scene_theme_tokens(
     runtime_owner: Option<&Owner>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
-    let tag = params
-        .and_then(|p| p.get("tag"))
-        .map(|v| {
-            v.as_str().ok_or_else(|| {
-                RpcError::invalid_params("params.tag must be a string when present")
-            })
-        })
-        .transpose()?;
+    let tag = read_optional_tag(params)?;
     match theme_tokens(runtime_owner, tag) {
         Ok(outcome) => theme_tokens_outcome_to_json(&outcome),
         Err(err) => Err(theme_tokens_error_to_rpc(err)),
@@ -2287,14 +2280,7 @@ fn handle_scene_set_theme_mode(
             "params.mode {mode_str:?} not one of \"light\" / \"dark\" / \"system\""
         ))
     })?;
-    let tag = params_value
-        .get("tag")
-        .map(|v| {
-            v.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| RpcError::invalid_params("params.tag must be a string when present"))
-        })
-        .transpose()?;
+    let tag = read_optional_tag(Some(params_value))?.map(str::to_owned);
     let typed_params = SetThemeModeParams { mode, tag };
     match set_theme_mode(runtime_owner, &typed_params) {
         Ok(outcome) => set_theme_mode_outcome_to_json(&outcome),
@@ -2353,14 +2339,7 @@ fn handle_scene_set_theme_palettes(
         .ok_or_else(|| RpcError::invalid_params("params.dark missing"))?;
     let light = parse_palette_value(light_value, "light").map_err(palette_parse_error_to_rpc)?;
     let dark = parse_palette_value(dark_value, "dark").map_err(palette_parse_error_to_rpc)?;
-    let tag = params_value
-        .get("tag")
-        .map(|v| {
-            v.as_str().ok_or_else(|| {
-                RpcError::invalid_params("params.tag must be a string when present")
-            })
-        })
-        .transpose()?;
+    let tag = read_optional_tag(Some(params_value))?;
     let typed_params = SetThemePalettesParams {
         light,
         dark,
@@ -2559,6 +2538,48 @@ fn handle_scene_set_scroll_offset(
         Ok(outcome) => scroll_state_outcome_to_json(&outcome),
         Err(err) => Err(introspect_error_to_rpc("scroll state", &err)),
     }
+}
+
+/// R617 §5.7 — extract the optional `params.tag` field as a
+/// `&str`. Paired with R613 [`read_required_tag`] for the
+/// two distinct wire-shape contracts:
+///
+/// - **Required tag** (widget-axis RPCs like `scene/scroll_state`,
+///   `scene/set_text`, …) — every scrollable widget / text-edit
+///   field has its own cache tag; there is no canonical default,
+///   so an absent `params.tag` is `-32602 Invalid params` with
+///   typed `TagRequired`. See [`read_required_tag`].
+///
+/// - **Optional tag** (theme-axis RPCs like `scene/theme_tokens`,
+///   `scene/set_theme_mode`, `scene/set_theme_palettes`) — every
+///   `examples/hello-*` binary binds the [`ThemeProvider`] under
+///   the canonical [`crate::theme::DEFAULT_THEME_TAG`] (`"app"`),
+///   so omitting `params.tag` resolves against the default. The
+///   typed fn signature accepts `Option<&str>` and falls back to
+///   the default tag when the option is `None`.
+///
+/// `params` itself is `Option<&Value>` because the JSON-RPC
+/// envelope makes `params` an optional field at the spec level —
+/// `scene/theme_tokens` with no `params` block at all is a valid
+/// request. Returns `Ok(None)` when `params` is absent OR
+/// `params.tag` is absent; returns `Ok(Some(s))` when present and
+/// a string; returns `Err(_)` when present but a non-string.
+///
+/// # Errors
+///
+/// Returns `-32602 Invalid params` (no typed `error.data` — the
+/// pre-R617 prose was `"params.tag must be a string when present"`,
+/// retained verbatim so existing client log-scrapers do not regress.)
+/// when `params.tag` is present but not a JSON string.
+fn read_optional_tag(params: Option<&Value>) -> Result<Option<&str>, RpcError> {
+    params
+        .and_then(|p| p.get("tag"))
+        .map(|v| {
+            v.as_str().ok_or_else(|| {
+                RpcError::invalid_params("params.tag must be a string when present")
+            })
+        })
+        .transpose()
 }
 
 /// R613 §5.7 — extract the required `params.tag` field as a `&str`.
@@ -4040,6 +4061,39 @@ mod tests {
                 Some(Value::String("TagRequired".into())),
                 "non-string tag must surface TagRequired",
             );
+        }
+    }
+
+    // R617 §5.7 — read_optional_tag helper unit tests.
+    #[test]
+    fn r617_read_optional_tag_returns_none_when_params_absent() {
+        assert_eq!(read_optional_tag(None).unwrap(), None);
+    }
+
+    #[test]
+    fn r617_read_optional_tag_returns_none_when_field_absent() {
+        let v = serde_json::json!({"other": "x"});
+        assert_eq!(read_optional_tag(Some(&v)).unwrap(), None);
+    }
+
+    #[test]
+    fn r617_read_optional_tag_returns_string_when_present() {
+        let v = serde_json::json!({"tag": "studio"});
+        assert_eq!(read_optional_tag(Some(&v)).unwrap(), Some("studio"));
+    }
+
+    #[test]
+    fn r617_read_optional_tag_rejects_non_string_value() {
+        // Theme-axis optional-tag shape — typed `error.data` is NOT
+        // attached (prose-only error, matching pre-R617 behaviour).
+        for invalid in [
+            serde_json::json!({"tag": 42}),
+            serde_json::json!({"tag": true}),
+            serde_json::json!({"tag": null}),
+            serde_json::json!({"tag": []}),
+        ] {
+            let err = read_optional_tag(Some(&invalid)).unwrap_err();
+            assert_eq!(err.code, -32602);
         }
     }
 

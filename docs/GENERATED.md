@@ -11071,6 +11071,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R617 — read_optional_tag dispatch helper paired with R613 read_required_tag — 3-site theme-axis optional-tag duplication collapses to one helper
+
+**Changes**:
+- pinion-rpc::dispatch::read_optional_tag (R617 §5.7) — paired with read_required_tag for the two wire-shape contracts (required vs optional/default)
+- 3 theme-axis dispatch handlers reduce to single-line call — handle_scene_theme_tokens (R598) / handle_scene_set_theme_mode (R599) / handle_scene_set_theme_palettes (R608)
+- Helper accepts Option<&Value> so it works both for theme_tokens (params may be entirely absent) and for set_theme_mode / set_theme_palettes (params guaranteed-Some after upstream gate)
+- Helper docstring documents the required vs optional contract distinction so future tag-bearing surfaces (read_required_tag for widget-axis, read_optional_tag for default-bearing axis) pick the right one
+
+
+
+**Verification**:
+- cargo test --workspace: 3062 pass / 0 fail (R616: 3058 → +4 R617 helper unit tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- r617_read_optional_tag_returns_none_when_params_absent — envelope-level absent params handled
+- r617_read_optional_tag_returns_none_when_field_absent — params present but no tag field
+- r617_read_optional_tag_returns_string_when_present — happy path
+- r617_read_optional_tag_rejects_non_string_value — 4 non-string variants all -32602
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- R618: SetTextParams String ownership review (and SetThemeModeParams.tag Option<String> vs SetThemePalettesParams.tag Option<&str> asymmetry — both should converge)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
