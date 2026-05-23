@@ -2563,7 +2563,7 @@ fn handle_scene_scroll_state(
     // `&str`, no `Box::leak` bridge needed.
     match scroll_state(runtime_owner, tag) {
         Ok(outcome) => scroll_state_outcome_to_json(&outcome),
-        Err(err) => Err(introspect_error_to_rpc("scroll state", &err)),
+        Err(err) => Err(introspect_error_to_rpc(&err)),
     }
 }
 
@@ -2597,7 +2597,7 @@ fn handle_scene_set_scroll_offset(
     let typed_params = SetScrollOffsetParams { tag, x, y };
     match set_scroll_offset(runtime_owner, &typed_params) {
         Ok(outcome) => scroll_state_outcome_to_json(&outcome),
-        Err(err) => Err(introspect_error_to_rpc("scroll state", &err)),
+        Err(err) => Err(introspect_error_to_rpc(&err)),
     }
 }
 
@@ -2759,7 +2759,7 @@ fn handle_scene_text_state(
     // R605 §5.22 — see scroll_state handler for rationale.
     match text_state(runtime_owner, tag) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
-        Err(err) => Err(introspect_error_to_rpc("text state", &err)),
+        Err(err) => Err(introspect_error_to_rpc(&err)),
     }
 }
 
@@ -2797,7 +2797,7 @@ fn handle_scene_set_text(
     let typed_params = SetTextParams { tag, text };
     match set_text(runtime_owner, &typed_params) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
-        Err(err) => Err(introspect_error_to_rpc("text state", &err)),
+        Err(err) => Err(introspect_error_to_rpc(&err)),
     }
 }
 
@@ -2829,7 +2829,7 @@ fn handle_scene_set_selection(
     };
     match set_selection(runtime_owner, &typed_params) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
-        Err(err) => Err(introspect_error_to_rpc("text state", &err)),
+        Err(err) => Err(introspect_error_to_rpc(&err)),
     }
 }
 
@@ -2855,7 +2855,7 @@ fn handle_scene_set_caret(
     let typed_params = SetCaretParams { tag, pos };
     match set_caret(runtime_owner, &typed_params) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
-        Err(err) => Err(introspect_error_to_rpc("text state", &err)),
+        Err(err) => Err(introspect_error_to_rpc(&err)),
     }
 }
 
@@ -2898,7 +2898,7 @@ fn handle_scene_caret_state(
     // R605 §5.22 — see scroll_state handler for rationale.
     match caret_state(runtime_owner, tag) {
         Ok(outcome) => caret_state_outcome_to_json(&outcome),
-        Err(err) => Err(introspect_error_to_rpc("caret state", &err)),
+        Err(err) => Err(introspect_error_to_rpc(&err)),
     }
 }
 
@@ -2911,35 +2911,35 @@ fn caret_state_outcome_to_json(out: &CaretStateOutcome) -> Result<Value, RpcErro
 }
 
 /// R607 §5.7 §5.22 — shared
-/// [`SubstrateIntrospectError`] → [`RpcError`] mapping. `domain`
-/// is the human-readable label that prefixes the
-/// `RuntimeOwnerUnavailable` message (e.g. `"scroll state"`,
-/// `"text state"`, `"caret state"`). The `error.data` wire
-/// identifier is sourced from [`introspect_error_to_data`] so
-/// every callsite shares one source of truth for the typed-name
-/// catalogue.
+/// [`SubstrateIntrospectError`] → [`RpcError`] mapping. The
+/// `error.data` wire identifier is sourced from
+/// [`introspect_error_to_data`] so every callsite shares one
+/// source of truth for the typed-name catalogue.
 ///
-/// R616 §5.7 — inlined directly into the 7 handler `Err(_)` arms
-/// (each handler passes its own domain label string). Pre-R616
-/// three 1-line wrappers (`scroll_state_error_to_rpc` /
-/// `text_state_error_to_rpc` / `caret_state_error_to_rpc`)
-/// existed as per-axis shims; the wrappers added zero semantic
-/// value over the call-site-explicit form `introspect_error_to_rpc("scroll state", &err)`
-/// and forced future readers through one extra indirection
-/// before reaching the actual mapping logic. Inlining keeps the
-/// domain label visible at the call site (where the handler's
-/// axis is already named) and collapses three names into one.
-fn introspect_error_to_rpc(domain: &str, err: &SubstrateIntrospectError) -> RpcError {
+/// R616 §5.7 — inlined directly into the handler `Err(_)` arms;
+/// each handler previously passed its own `domain` label string.
+///
+/// R625 §5.7 — `domain` parameter removed: pre-R625 prose
+/// interpolated the per-axis label (e.g. `"scroll state
+/// unavailable"`), but the method name in the originating JSON-RPC
+/// request already identifies the axis, so the prose embedding was
+/// information-redundant. R625 collapses to fixed prose per variant
+/// — the typed `error.data` keeps the wire identifier; the prose
+/// is now self-descriptive without needing the per-axis prefix.
+/// Net effect: every handler `Err(_)` arm calls
+/// `introspect_error_to_rpc(&err)` with no string argument; all 7
+/// handlers identical at the call site.
+fn introspect_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
     let data = introspect_error_to_data(err);
     match err {
         SubstrateIntrospectError::RuntimeOwnerUnavailable => {
-            RpcError::invalid_params(format!("{domain} unavailable")).with_data_string(data)
+            RpcError::invalid_params("RPC runtime owner not registered").with_data_string(data)
         }
         SubstrateIntrospectError::TagRequired => {
             RpcError::invalid_params("params.tag is required").with_data_string(data)
         }
         SubstrateIntrospectError::NotBound { tag } => {
-            RpcError::invalid_params(format!("{domain} not bound under tag {tag:?}"))
+            RpcError::invalid_params(format!("cache slot not bound for tag {tag:?}"))
                 .with_data_string(data)
         }
     }

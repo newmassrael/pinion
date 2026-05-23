@@ -11291,6 +11291,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R625 — introspect_error_to_rpc domain parameter removed — per-axis prose embedding was information-redundant with the originating method name; fixed prose per variant + typed error.data unchanged
+
+**Changes**:
+- pinion-rpc::dispatch::introspect_error_to_rpc signature reduces from (domain: &str, err) → (err) only
+- Fixed prose per variant: 'RPC runtime owner not registered' / 'params.tag is required' / 'cache slot not bound for tag {tag:?}'
+- 7 handler Err arms (scroll_state / set_scroll_offset / text_state / set_text / set_selection / set_caret / caret_state) all become identical introspect_error_to_rpc(&err)
+- error.data wire identifier unchanged (RuntimeOwnerUnavailable / TagRequired / NotBound) — typed AI-agent contract preserved
+- Information lost in prose (per-axis domain) is already in the JSON-RPC method name field of the originating request — no actual loss to the caller
+
+
+
+**Verification**:
+- cargo test --workspace: 3086 pass / 0 fail (R624 baseline preserved — typed error.data unchanged)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- No existing test checked exact prose — every R608+ wire test validates err.code and err.data; prose is dev-facing debug only
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- 1 remaining debt: dispatch.rs test 모듈 분할 (9641 LOC, tests 5600 LOC)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
