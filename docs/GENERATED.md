@@ -11670,11 +11670,11 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 **Verification**:
-- cargo test --workspace: 3157 pass / 0 fail / 14 ignored (3156→3157 delta = HeadlessScreenshotError::ZeroDimension Display assertion + renders_solid_fill_to_unpadded_rgba8 cold-boot smoke marked #[ignore])
-- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (workspace.lints baseline preserved; 2 doc_markdown corrections applied during land — `scene/screenshot` AppShell backtick + VelloRenderer backtick)
-- End-to-end Figma → pinion design-parity loop closed: PINION_SCREENSHOT=/tmp/pinion-btn.png ./target/release/figma-button-m3 wrote 320x160 RGBA8 → 4097-byte PNG; center pixel (160,80)=(103,80,164,255) matches BTN_FILL #675AA4, canvas (40,80)/(280,80)=(31,31,31,255) matches CANVAS_BG #1F1F1F, visual inspection confirms M3 Filled Button + 'Button' label paint
-- mnemosyne-cli validate-workspace: T1 orphan=0+0 / round-trip mandatory=1/1 / T3 reject=0 (baseline R51.186 ledgered orphan_refs=4 preserved, no new entries)
-- wgpu 26 / vello 0.6 type alignment validated against /home/coin/.cargo/registry vello-0.6.0/src/lib.rs + wgpu-26.0.1: ImageDataLayout→TexelCopyBufferLayout, MaintainBase→PollType (Wait), AaSupport{area,msaa8,msaa16}, RendererOptions{use_cpu,antialiasing_support,num_init_threads,pipeline_cache}
+- cargo test --workspace: 3157 pass / 0 fail / 14 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- REDACTED (R639): original 'design-parity loop closed' claim based on 3-pixel sample
+- REDACTED (R639): corner round was sharp; corner_radius not wired through paint_adapter
+- wgpu 26 / vello 0.6 type alignment validated vs registry sources
 
 
 
@@ -11702,11 +11702,12 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 **Verification**:
-- cargo test --workspace: 3162 pass / 0 fail / 14 ignored (3157→3162 delta = 5 new figma_diff unit tests: identical-images / single-channel-delta / diff-vis-identical-white / diff-vis-max-red / resize-mode-parse)
-- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (3 targeted allows added with rationale: cast_precision_loss via u64_to_f64 helper, cast_possible_truncation on bounded intensity u8 cast, enum_variant_names on Command::Figma* CLI surface)
-- Self-diff sanity: pinion figma-diff /tmp/pinion-btn.png /tmp/pinion-btn.png reports 100% exact match + all-zero per-channel deltas (51200 / 51200 pixels)
-- Dim mismatch error path: omitting --resize surfaces typed exit code 1 with `dimension mismatch: a=320x160 b=218x80; pass --resize a-to-b or --resize b-to-a` message — no silent buggy comparison
-- mnemosyne-cli validate-workspace: T1 orphan=0+0 / round-trip mandatory=1/1 / T3 reject=0 (baseline preserved)
+- cargo test --workspace: 3162 pass / 0 fail / 14 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- Self-diff sanity: a vs a reports 100% match + zero deltas
+- Dim mismatch surfaces typed exit-1 with explicit dim values
+- REDACTED (R639): 'fill bit-exact substrate passed' was center-pixel only
+- REDACTED (R639): paint_adapter dropped corner_radius; 2.2% reflected the gap
 
 
 
@@ -11717,6 +11718,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - Diff metric semantics gap: current 2.2% match between pinion 320x160 canvas + Figma 218x80 button-only ref captures the framing mismatch correctly but offers limited design-parity signal. R639+ refines either via (a) scene/bbox RPC crop pinion to button extents before diff, or (b) padded reference (Figma export with surrounding canvas) before diff. Hand-decision once R639 figma-card-m3 second binding lands as the substrate-evidence trigger
 - SSIM / imageproc deferral: MAE + exact-match-percent surfaced every divergence in the R635/R637/R638 cycle. Add imageproc workspace dep + ssim() integration only when MAE proves insufficient for a real R639+ case (likely never — Material spec colors are bit-exact; SSIM signal kicks in for perceptual judgement which is not the design-parity loop's focus)
 - Alpha channel comparison: diff visualization summed |dr|+|dg|+|db| only — alpha mismatch surfaces in metrics ([3] slot) but not in the visualization. Likely fine since pinion always writes alpha=255 + Figma exports vary; revisit if R639+ Card binding exposes transparent overlays where alpha differences carry design intent
+
+
+
+### R639 — R639 §5.16 §5.2 paint_adapter corner_radius wire-up + R637/R638 false-verification redaction
+
+**Changes**:
+- crates/pinion-runtime/src/paint_adapter.rs: fill_rect signature adds corner_radius: u32 arg; dispatches to vello::kurbo::RoundedRect when > 0 (kurbo auto-clamps radius to min(w,h)/2 producing pill shape) else KurboRect (legacy zero-cost path)
+- Scene::Container + Scene::Box callsites updated to pass c.style.corner_radius / b.style.corner_radius (previously dropped on the floor — BoxStyle.corner_radius field + with_corner_radius(u32) builder existed since R57.X but never reached the paint pipeline)
+- User-found substrate gap evidence: figma-button-m3 (R635) called .with_corner_radius(100) but rendered a sharp rectangle. 4-corner pixel sample on /tmp/pinion-btn.png after R639 confirms TL/TR/BL/BR all = canvas color (round-cut away) with smooth antialias transition at e.g. (106,80) = (97,76,153) (linear-space lerp between canvas (31,31,31) and button (103,80,164))
+- R637 + R638 publishable_verification_bullets replaced via set_changelog_publishable_verification: original 'design-parity loop closed' / 'fill bit-exact substrate passed' / 'visual inspection confirms' framings were based on 3-pixel center+canvas sample only — corner round was never verified; ledger drafts (kind=honesty-correction) appended to mnemosyne.toml [[publishable_override_ledger]] per R296 gate
+- 2 new paint_adapter unit tests: r639_fill_rect_zero_radius_path_is_sharp (legacy path preserved, vello.encoding().n_paths > 0) + r639_fill_rect_nonzero_radius_emits_rounded_rect (rounded path has strictly more n_path_segments than sharp — wire evidence independent of kurbo internals)
+
+
+
+**Verification**:
+- cargo test --workspace: 3164 pass / 0 fail / 14 ignored
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- 4-corner + 2-edge + interior pixel sample on /tmp/pinion-btn.png post-R639: all 4 corners = canvas (round cuts away), diagonal AA at (111,66)=(63,52,89)
+- Left-edge horizontal scan at y=80: clean canvas→AA(97,76,153)→button transition at x=106
+- Live X11 capture of figma-button-m3 wgpu surface (window 0x3c00004): visible pill shape matches Figma reference
+
+
+
+**Impact**: §5.2, §5.16
+
+
+**Carry forward**:
+- AI-first verification anti-pattern documented in memory: center-only pixel sample = false confidence. Future visual rounds require corner-aware sample (4 corners + bbox edges + center) + bbox-derived ROI assertions before any 'design-parity verified' framing
+- Per-corner radius (Figma rectangleCornerRadii: [tl, tr, br, bl]) still deferred to its own round (R641 in original queue). kurbo::RoundedRectRadii substrate ready; only BoxStyle field expansion (u32 → Radius enum) + paint_adapter dispatch needed when the first asymmetric binding lands
+- paint_focus_ring (R51.58) still emits a sharp rectangular focus ring. Once a focusable widget with non-zero corner_radius lands, the focus ring will visually mismatch the widget shape — follow-up round wires corner_radius through focus_ring path too. figma-button-m3 not focus-routed today so no immediate user-visible regression
+- User direct need carry-forward: M3 hover/pressed/disabled state layer (white 0.08 / 0.12 opacity overlay) + clickable button binding — figma-button-m3 is still 'intentionally static' per R635 design. New round (next after R639 land) lifts it to reactive M3 Filled Button
 
 
 
