@@ -29,6 +29,7 @@ pub mod screenshot;
 pub mod scroll_state;
 pub mod snapshot;
 pub mod text;
+pub mod text_state;
 pub mod theme;
 pub mod wait_for;
 
@@ -84,6 +85,7 @@ pub use snapshot::{
     ScrollSnapshot, SnapshotError, SnapshotNode, TextSnapshot,
 };
 pub use text::{text_normalize, NormalizeForm, NormalizeOutcome};
+pub use text_state::{text_state, TextSelectionView, TextStateError, TextStateOutcome};
 pub use theme::{
     set_theme_mode, theme_tokens, PaletteCatalogue, PaletteTokens, SetThemeModeError,
     SetThemeModeOutcome, SetThemeModeParams, ThemeTokenView, ThemeTokensError,

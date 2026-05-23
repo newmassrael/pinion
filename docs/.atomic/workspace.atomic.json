@@ -29313,6 +29313,68 @@
         "scroll_state introspection extension — surface ScrollState fling-velocity carrier when the spring-driven fling animation lands in a future R-round"
       ]
     },
+    "Round 603": {
+      "decision_summary": "scene/text_state JSON-RPC method lands as 21st scene/* — fourth reactive-substrate introspection axis. Projects TextEditState (text + caret + selection + IME composition) so AI agents can verify text-field state without pixel scraping; surface mirrors W3C HTMLInputElement / Selection / CompositionEvent reading contracts.",
+      "changes_bullets": [
+        "pinion-rpc: new text_state module — pub fn text_state(runtime_owner, tag) -> Result<TextStateOutcome, TextStateError>",
+        "text_state.rs: TextStateOutcome {tag, text, caret, has_selection, selection, is_composing, preedit} mirrors W3C input-element + selection + composition reading contracts",
+        "text_state.rs: TextSelectionView {start, end, anchor} — anchor preserves the user-pinned drag start across shift-arrow extension (W3C Selection.anchorOffset)",
+        "text_state.rs: TextStateError three-variant non_exhaustive enum — RuntimeOwnerUnavailable / TagRequired / NotBound {tag}",
+        "text_state.rs: has_selection + is_composing surface as root predicates (W3C Selection.isCollapsed / KeyboardEvent.isComposing mirror); detail fields nullable to keep \"is the user X?\" query a single field lookup",
+        "dispatch.rs: scene/text_state routing arm + handle_scene_text_state + text_state_outcome_to_json + text_state_error_to_rpc helpers",
+        "dispatch.rs: Box::leak &'static bridge for the use_text_edit_state Owner::cache key (canonical AI client reuses string literals)",
+        "dispatch.rs: module + clippy::too_many_lines doc updated to reflect 21 scene/* method count",
+        "dispatch.rs: 4 R603 wire integration tests — missing owner, missing tag param, unbound tag typed-data, happy path with selection projection",
+        "text_state module: 13 R603 direct tests — failure modes, fresh-state empty defaults, text+caret round-trip, active selection start/end/anchor, collapsed-selection-as-none, IME compositionstart/update/cancel lifecycle, anchor preservation across select_right, no-slot-on-failure, idempotent two-call snapshot equality, JSON wire shape pin + collapsed-selection-null pin"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-rpc --lib r603: 17 pass / 0 fail (13 text_state + 4 dispatch wire)",
+        "cargo test --workspace --features pinion-runtime/vello: 2905 pass / 0 fail / 13 ignored (R602 baseline 2888 + 17 R603)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "Reactive-substrate introspection ratifies as the canonical AI-first observability pattern — fourth consumer after theme.rs / animation_state.rs / scroll_state.rs",
+        "AI-first §2#2 + §2#7 observability matrix: theme/animation/scroll/text surfaced; caret remains"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "scene/caret_state — final reactive-substrate introspection round (use_caret_blink: visible bool + interval ms); completes the observability matrix",
+        "scene/set_text — mutation pair to scene/text_state once a 2nd consumer of programmatic text mutation lands (currently only V::apply_key dispatch + IME platform bridge)",
+        "scene/selection_set — cursor + selection mutation surface (set_caret / set_selection) for AI-driven text editing automation; same 2nd-consumer gate",
+        "RPC method-name registry refactor — 21 scene/* + 11 font/* + 1 text/* + 4 focus/* string literals scattered across dispatch.rs warrant single source-of-truth ledger (R598 / R599 carry; defer until 3rd substantive consumer of the literals or until codegen lands)"
+      ],
+      "publishable_decision_summary": "scene/text_state JSON-RPC method lands as 21st scene/* — fourth reactive-substrate introspection axis. Projects TextEditState (text + caret + selection + IME composition) so AI agents can verify text-field state without pixel scraping; surface mirrors W3C HTMLInputElement / Selection / CompositionEvent reading contracts.",
+      "publishable_changes_bullets": [
+        "pinion-rpc: new text_state module — pub fn text_state(runtime_owner, tag) -> Result<TextStateOutcome, TextStateError>",
+        "text_state.rs: TextStateOutcome {tag, text, caret, has_selection, selection, is_composing, preedit} mirrors W3C input-element + selection + composition reading contracts",
+        "text_state.rs: TextSelectionView {start, end, anchor} — anchor preserves the user-pinned drag start across shift-arrow extension (W3C Selection.anchorOffset)",
+        "text_state.rs: TextStateError three-variant non_exhaustive enum — RuntimeOwnerUnavailable / TagRequired / NotBound {tag}",
+        "text_state.rs: has_selection + is_composing surface as root predicates (W3C Selection.isCollapsed / KeyboardEvent.isComposing mirror); detail fields nullable to keep \"is the user X?\" query a single field lookup",
+        "dispatch.rs: scene/text_state routing arm + handle_scene_text_state + text_state_outcome_to_json + text_state_error_to_rpc helpers",
+        "dispatch.rs: Box::leak &'static bridge for the use_text_edit_state Owner::cache key (canonical AI client reuses string literals)",
+        "dispatch.rs: module + clippy::too_many_lines doc updated to reflect 21 scene/* method count",
+        "dispatch.rs: 4 R603 wire integration tests — missing owner, missing tag param, unbound tag typed-data, happy path with selection projection",
+        "text_state module: 13 R603 direct tests — failure modes, fresh-state empty defaults, text+caret round-trip, active selection start/end/anchor, collapsed-selection-as-none, IME compositionstart/update/cancel lifecycle, anchor preservation across select_right, no-slot-on-failure, idempotent two-call snapshot equality, JSON wire shape pin + collapsed-selection-null pin"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-rpc --lib r603: 17 pass / 0 fail (13 text_state + 4 dispatch wire)",
+        "cargo test --workspace --features pinion-runtime/vello: 2905 pass / 0 fail / 13 ignored (R602 baseline 2888 + 17 R603)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings",
+        "Reactive-substrate introspection ratifies as the canonical AI-first observability pattern — fourth consumer after theme.rs / animation_state.rs / scroll_state.rs",
+        "AI-first §2#2 + §2#7 observability matrix: theme/animation/scroll/text surfaced; caret remains"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scene/caret_state — final reactive-substrate introspection round (use_caret_blink: visible bool + interval ms); completes the observability matrix",
+        "scene/set_text — mutation pair to scene/text_state once a 2nd consumer of programmatic text mutation lands (currently only V::apply_key dispatch + IME platform bridge)",
+        "scene/selection_set — cursor + selection mutation surface (set_caret / set_selection) for AI-driven text editing automation; same 2nd-consumer gate",
+        "RPC method-name registry refactor — 21 scene/* + 11 font/* + 1 text/* + 4 focus/* string literals scattered across dispatch.rs warrant single source-of-truth ledger (R598 / R599 carry; defer until 3rd substantive consumer of the literals or until codegen lands)"
+      ]
+    },
     "Round 7": {
       "decision_summary": "Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification",
       "changes_bullets": [
