@@ -2,13 +2,13 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R40.6 — 16 typed):
+//! response envelope. Registered methods (R598 — 17 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
 //! `scene/locate_region`, `scene/bbox`, `scene/cancel_preview`,
 //! `scene/list_previews`, `scene/propose_change`,
-//! `scene/apply_preview`. The preview-lifecycle methods take the
+//! `scene/apply_preview`, `scene/theme_tokens`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -57,6 +57,7 @@ use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
+use crate::theme_tokens::{theme_tokens, ThemeTokensError, ThemeTokensOutcome};
 use crate::wait_for::{wait_for, WaitForError, WaitOutcome};
 
 /// JSON-RPC 2.0 request envelope.
@@ -496,7 +497,7 @@ impl<'a> DispatchContext<'a> {
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 16 scene/* + 11 font/* + 1 text/*)"
+    reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 17 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
 )]
 pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
@@ -596,6 +597,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/intervene" => handle_scene_intervene(scene, request.params.as_ref()),
         "scene/intents" => handle_scene_intents(scene),
         "scene/commands" => handle_scene_commands(runtime_owner, commands_executor),
+        "scene/theme_tokens" => handle_scene_theme_tokens(runtime_owner, request.params.as_ref()),
         "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
         "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
         "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
@@ -2132,6 +2134,54 @@ fn commands_error_to_rpc(err: CommandsError) -> RpcError {
     // `CommandsError` is `#[non_exhaustive]` with no v0 variants —
     // see [`crate::commands::CommandsError`].
     match err {}
+}
+
+/// R598 §5.50 — `scene/theme_tokens` typed handler. 17th
+/// `scene/*` method. Returns the bound
+/// [`ThemeProvider`](pinion_core::theme::ThemeProvider)'s snapshot
+/// projected into the [`ThemeTokensOutcome`] shape — see
+/// [`crate::theme_tokens`] for the JSON wire shape.
+///
+/// `params.tag` is optional; when omitted the lookup resolves
+/// against [`crate::theme_tokens::DEFAULT_THEME_TAG`] (`"app"`,
+/// matching every `examples/hello-*` binary).
+fn handle_scene_theme_tokens(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let tag = params
+        .and_then(|p| p.get("tag"))
+        .map(|v| {
+            v.as_str().ok_or_else(|| {
+                RpcError::invalid_params("params.tag must be a string when present")
+            })
+        })
+        .transpose()?;
+    match theme_tokens(runtime_owner, tag) {
+        Ok(outcome) => theme_tokens_outcome_to_json(&outcome),
+        Err(err) => Err(theme_tokens_error_to_rpc(err)),
+    }
+}
+
+fn theme_tokens_outcome_to_json(out: &ThemeTokensOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/theme_tokens: failed to serialize outcome: {e}",
+        ))
+    })
+}
+
+fn theme_tokens_error_to_rpc(err: ThemeTokensError) -> RpcError {
+    match err {
+        ThemeTokensError::RuntimeOwnerUnavailable => {
+            RpcError::invalid_params("theme view unavailable")
+                .with_data_string("RuntimeOwnerUnavailable")
+        }
+        ThemeTokensError::NotBound { tag } => {
+            RpcError::invalid_params(format!("theme provider not bound under tag {tag:?}"))
+                .with_data_string("NotBound")
+        }
+    }
 }
 
 fn handle_scene_locate(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -7663,6 +7713,95 @@ mod tests {
         assert_eq!(
             resp.result.unwrap().get("focused").and_then(Value::as_str),
             Some("main_btn"),
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R598 §5.50 — scene/theme_tokens wire integration
+    //
+    // The fine-grained handler logic is covered by the test battery in
+    // `crate::theme_tokens::tests`. The cases below exercise the
+    // dispatcher's wire round-trip — params parsing, runtime_owner
+    // injection through the builder, and error → RpcError mapping.
+    // ─────────────────────────────────────────────────────────────────
+
+    fn dispatch_with_runtime_owner(
+        scene: &mut Scene,
+        owner: &Owner,
+        req: &str,
+    ) -> Option<String> {
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut ctx = DispatchContext::new(scene, &previews, &revision)
+            .with_runtime_owner(owner);
+        dispatch(&mut ctx, req)
+    }
+
+    #[test]
+    fn r598_scene_theme_tokens_without_runtime_owner_errors() {
+        // No runtime_owner attached on the context — the handler must
+        // surface `theme view unavailable` as invalid_params with the
+        // typed variant name in `data`.
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/theme_tokens","id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r598_scene_theme_tokens_unbound_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/theme_tokens","id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("unbound tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    #[test]
+    fn r598_scene_theme_tokens_returns_palette_catalogue_via_dispatch() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        // Bind the default-tag ThemeProvider so the dispatcher hits
+        // the happy path.
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/theme_tokens","id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none(), "happy path must not error");
+        let result = resp.result.expect("result present");
+        assert_eq!(result.get("tag").and_then(Value::as_str), Some("app"));
+        assert!(result.get("mode").and_then(Value::as_str).is_some());
+        assert!(result["palettes"]["light"].is_array());
+        assert!(result["palettes"]["dark"].is_array());
+        assert!(!result["palettes"]["light"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn r598_scene_theme_tokens_rejects_non_string_tag() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("app"));
+        // params.tag is a number, not a string — invalid_params.
+        let req = r#"{"jsonrpc":"2.0","method":"scene/theme_tokens","params":{"tag":42},"id":4}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("non-string tag must error");
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn r598_scene_theme_tokens_custom_tag_round_trips() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _provider = owner.run(|| pinion_core::theme::use_theme("custom-scope"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/theme_tokens","params":{"tag":"custom-scope"},"id":5}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none());
+        assert_eq!(
+            resp.result.unwrap().get("tag").and_then(Value::as_str),
+            Some("custom-scope"),
         );
     }
 }

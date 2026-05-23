@@ -17887,6 +17887,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 598 — scene/theme_tokens JSON-RPC method lands as 17th scene/* — second consumer of ColorRole::all + ColorRole::name (R595) and of DispatchContext::runtime_owner (R597), surfacing the bound ThemeProvider palette catalogue (light + dark) through the AI-first introspection contract (§2#2 + §2#7).
+
+**Changes**:
+- pinion-rpc: new theme_tokens module — pub fn theme_tokens(runtime_owner, tag) -> Result<ThemeTokensOutcome, ThemeTokensError>
+- theme_tokens: ThemeTokensOutcome wire shape {tag, mode, system_scheme, active, palettes: {light: [...], dark: [...]}} mirrors W3C CSS Color Level 4 + Material 3 token convention
+- theme_tokens: ThemeTokensError two-variant non_exhaustive enum — RuntimeOwnerUnavailable / NotBound {tag} with typed name in error.data for AI pattern-match
+- theme_tokens: project_palette walks ColorRole::all() in declaration order; color_to_hex renders #rrggbb / #rrggbbaa per CSS Color Module Level 4
+- theme_tokens: cache_contains::<ThemeProvider>(tag) gate keeps the call side-effect-free (no new Owner::cache slot inserted on lookup miss)
+- theme_tokens: DEFAULT_THEME_TAG = "app" const matches every hello-* binary's THEME_TAG convention
+- dispatch.rs: scene/theme_tokens routing arm + handle_scene_theme_tokens + theme_tokens_outcome_to_json + theme_tokens_error_to_rpc helpers
+- dispatch.rs: module + clippy::too_many_lines doc updated to reflect 17 scene/* method count
+- dispatch.rs: 5 integration tests pin wire round-trip — missing runtime_owner, unbound tag, happy path, non-string tag rejection, custom-tag round-trip
+- theme_tokens module: 16 direct tests pin failure modes + role catalogue completeness + mode/scheme/active resolution + hex encoding + side-effect freedom + JSON shape
+
+
+
+**Verification**:
+- cargo test -p pinion-rpc --lib r598: 21 pass / 0 fail (16 theme_tokens + 5 dispatch wire)
+- cargo test --workspace --features pinion-runtime/vello: 2840 pass / 0 fail / 13 ignored (R597 baseline 2819 + 21 R598)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- abstraction-needs-second-consumer ratify: ColorRole::all + ColorRole::name (R595) now consumed by both pinion-core internals and pinion-rpc::theme_tokens
+- runtime_owner R597 rename ratified: second consumer outside scene/commands lands as planned in R597 carry
+
+
+
+**Impact**: §5.7, §5.50
+
+
+**Carry forward**:
+- Material 3 dynamic-color tonal palette pair (seed color) UI consumer of ThemeProvider::set_palettes — 2nd consumer beyond hello-theme R-shortcut
+- scene/theme_tokens 'mode' field setter dual — POST/PATCH scene/theme_mode RPC method when AI agent needs to flip without exporting an invoke target
+- RPC method count expansion (17 scene/* + 11 font/* + 1 text/* + 4 focus/*) — doc generator pass may want a single source-of-truth registry instead of repeated string literals
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

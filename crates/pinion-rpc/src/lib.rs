@@ -27,6 +27,7 @@ pub mod rewind;
 pub mod screenshot;
 pub mod snapshot;
 pub mod text;
+pub mod theme_tokens;
 pub mod wait_for;
 
 pub use commands::{
@@ -77,4 +78,8 @@ pub use snapshot::{
     ScrollSnapshot, SnapshotError, SnapshotNode, TextSnapshot,
 };
 pub use text::{text_normalize, NormalizeForm, NormalizeOutcome};
+pub use theme_tokens::{
+    theme_tokens, PaletteCatalogue, PaletteTokens, ThemeTokenView, ThemeTokensError,
+    ThemeTokensOutcome, DEFAULT_THEME_TAG,
+};
 pub use wait_for::{wait_for, WaitForError, WaitOutcome};
