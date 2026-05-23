@@ -17751,6 +17751,54 @@
         "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines `BindableCacheSlot` and each widget type self-impls; `pinion-rpc` consumes the trait downstream rather than defining it and impl'ing for `pinion-core` types under the orphan-rule passport"
       ]
     },
+    "R628": {
+      "decision_summary": "refactor(core): R628 §5.50 quantize_unit_byte single-helper lift",
+      "changes_bullets": [
+        "crates/pinion-core/src/style.rs: lift `quantize_unit_byte(scaled: f32) -> u8` single-helper that absorbs four byte-identical inline `(_).round() as u8` color-quantize sites — `Color::from_rgb_function` percent + alpha branches (R624 ×2), `srgb_encode` inverse-EOTF tail (R51.151), `linear_alpha_encode` tail (R51.151); the helper internally clamps to `[0.0, 255.0]` so the `as` cast is exact within `u8` range and concentrates the `clippy::cast_possible_truncation` / `cast_sign_loss` allow at a single documented location with a `reason = ...` justification",
+        "crates/pinion-core/src/style.rs: `from_rgb_function` integer branch swaps `n as u8` for `u8::try_from(n).ok()` (no allow needed — `n` already bounded `0..=255` `i32`, `try_from` succeeds by construction)",
+        "crates/pinion-core/src/style.rs: `srgb_encode` + `linear_alpha_encode` lose their function-level allow attributes (the cast is now isolated inside `quantize_unit_byte`)",
+        "crates/pinion-core/src/style.rs: append 4 unit tests `r628_quantize_unit_byte_*` covering zero/max boundaries, half-away-from-zero rounding (127.5→28, 128.5→29, 127.4999→127), over-range saturation (255.5/300.0/1e6 → 255), under-range saturation (−0.5/−1e6 → 0)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace → 3095 / 0 (3091 → 3095, +4 R628 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (3 inline allow blocks → 1 helper-level allow with reason)",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry",
+        "four byte-identical sites cross [[three-site-internal-duplication-substrate-lift]]'s rule-of-three threshold; the prompt directive `try_into 정통` cannot be literally satisfied (no `TryFrom<f32> for u8` in stable safe Rust) so the textbook canonical is the helper-isolate pattern with a single bounded-contract allow"
+      ],
+      "impact_refs": [
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "R629 §5.7 §5.28 — wire `scene/animate_reset` / `scene/animate_settle` / `scene/animate_cancel` RPC methods over the R623 `Animation<T>` control surface so the AI-first write matrix extends to the animation axis (6/6)",
+        "R630 §5.50 — extend `Color::from_css_string` with modern CSS Color 4 syntax (`rgb(R G B)` space-syntax + `rgb(R G B / A)` alpha-slash + `hsl(H S% L%)`) so the entry point earns its `from_css_string` name",
+        "R631 §5.7 — pin `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound` typed-data prose with unit tests against silent regression",
+        "R632 §5.7 — split the 5,643 LOC `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]`",
+        "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it"
+      ],
+      "publishable_decision_summary": "refactor(core): R628 §5.50 quantize_unit_byte single-helper lift",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/style.rs: lift `quantize_unit_byte(scaled: f32) -> u8` single-helper that absorbs four byte-identical inline `(_).round() as u8` color-quantize sites — `Color::from_rgb_function` percent + alpha branches (R624 ×2), `srgb_encode` inverse-EOTF tail (R51.151), `linear_alpha_encode` tail (R51.151); the helper internally clamps to `[0.0, 255.0]` so the `as` cast is exact within `u8` range and concentrates the `clippy::cast_possible_truncation` / `cast_sign_loss` allow at a single documented location with a `reason = ...` justification",
+        "crates/pinion-core/src/style.rs: `from_rgb_function` integer branch swaps `n as u8` for `u8::try_from(n).ok()` (no allow needed — `n` already bounded `0..=255` `i32`, `try_from` succeeds by construction)",
+        "crates/pinion-core/src/style.rs: `srgb_encode` + `linear_alpha_encode` lose their function-level allow attributes (the cast is now isolated inside `quantize_unit_byte`)",
+        "crates/pinion-core/src/style.rs: append 4 unit tests `r628_quantize_unit_byte_*` covering zero/max boundaries, half-away-from-zero rounding (127.5→28, 128.5→29, 127.4999→127), over-range saturation (255.5/300.0/1e6 → 255), under-range saturation (−0.5/−1e6 → 0)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace → 3095 / 0 (3091 → 3095, +4 R628 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (3 inline allow blocks → 1 helper-level allow with reason)",
+        "mnemosyne-cli validate-workspace baseline holds; the change does not touch atomic store outside this changelog entry",
+        "four byte-identical sites cross [[three-site-internal-duplication-substrate-lift]]'s rule-of-three threshold; the prompt directive `try_into 정통` cannot be literally satisfied (no `TryFrom<f32> for u8` in stable safe Rust) so the textbook canonical is the helper-isolate pattern with a single bounded-contract allow"
+      ],
+      "publishable_impact_refs": [
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R629 §5.7 §5.28 — wire `scene/animate_reset` / `scene/animate_settle` / `scene/animate_cancel` RPC methods over the R623 `Animation<T>` control surface so the AI-first write matrix extends to the animation axis (6/6)",
+        "R630 §5.50 — extend `Color::from_css_string` with modern CSS Color 4 syntax (`rgb(R G B)` space-syntax + `rgb(R G B / A)` alpha-slash + `hsl(H S% L%)`) so the entry point earns its `from_css_string` name",
+        "R631 §5.7 — pin `RuntimeOwnerUnavailable` / `TagRequired` / `NotBound` typed-data prose with unit tests against silent regression",
+        "R632 §5.7 — split the 5,643 LOC `dispatch_tests.rs` monolith into per-axis sibling files via `#[path]`",
+        "R633 §5.7 §5.22 — flip the `pinion-rpc::test_fixtures::CacheBindable` dependency direction so `pinion-core` defines the trait and `pinion-rpc` consumes it"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

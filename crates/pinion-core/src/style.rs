@@ -229,23 +229,13 @@ impl Color {
                 if !(0.0..=100.0).contains(&n) {
                     return None;
                 }
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "n is clamped to 0.0..=100.0; final byte is bounded 0..=255"
-                )]
-                Some((n * 2.55).round() as u8)
+                Some(quantize_unit_byte(n * 2.55))
             } else {
                 let n: i32 = s.parse().ok()?;
                 if !(0..=255).contains(&n) {
                     return None;
                 }
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "n is bounded 0..=255 above; cast is exact"
-                )]
-                Some(n as u8)
+                u8::try_from(n).ok()
             }
         };
         let red = parse_channel(parts[0])?;
@@ -256,14 +246,7 @@ impl Color {
             if !(0.0..=1.0).contains(&a) {
                 return None;
             }
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "a is clamped to 0.0..=1.0; final byte is bounded 0..=255"
-            )]
-            {
-                (a * 255.0).round() as u8
-            }
+            quantize_unit_byte(a * 255.0)
         } else {
             0xff
         };
@@ -465,8 +448,41 @@ pub fn scale_normalized_to_px(value: f32, total: u32) -> u32 {
     pixels.min(total)
 }
 
+/// R628 §5.50 — quantize a bounded `f32` (caller-supplied, nominally
+/// `[0.0, 255.0]`) to a `u8` color channel byte.
+///
+/// Single-site `clippy::cast_possible_truncation` / `cast_sign_loss`
+/// allow that absorbs four pre-R628 inline copies:
+///
+/// 1. [`Color::from_rgb_function`] percent branch (`n * 2.55`)
+/// 2. [`Color::from_rgb_function`] alpha branch (`a * 255.0`)
+/// 3. [`srgb_encode`] inverse-EOTF tail (`n * 255.0`)
+/// 4. [`linear_alpha_encode`] tail (`a * 255.0`)
+///
+/// Each call site bounded the input before the cast; the lint fires
+/// because clippy does not analyse range. The internal
+/// [`f32::clamp`] to `[0.0, 255.0]` makes the `as` cast exact even
+/// if the caller's pre-cast multiplication drifted slightly outside
+/// the nominal range (e.g. `1.055 * x^(1/2.4) - 0.055` for `x` at
+/// the unit boundary). Per
+/// [[three-site-internal-duplication-substrate-lift]] a 4-site copy
+/// crosses the rule-of-three threshold; the helper concentrates the
+/// allow in one documented location.
+///
+/// `f32::NaN` reaches [`f32::clamp`] only when the caller's contract
+/// is violated (no call site passes NaN). `clamp` panics on `NaN`
+/// per stdlib — matches the [[clamp-frame-dt-anchor-nan-guard]]
+/// fail-fast policy.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "input clamped to [0.0, 255.0] above; cast is exact within u8 range"
+)]
+fn quantize_unit_byte(scaled: f32) -> u8 {
+    scaled.clamp(0.0, 255.0).round() as u8
+}
+
 /// sRGB inverse-EOTF: linear-light `f32` → 8-bit channel with clamp.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn srgb_encode(l: f32) -> u8 {
     let clamped = l.clamp(0.0, 1.0);
     let n = if clamped <= 0.003_130_8 {
@@ -474,14 +490,13 @@ fn srgb_encode(l: f32) -> u8 {
     } else {
         1.055 * clamped.powf(1.0 / 2.4) - 0.055
     };
-    (n.clamp(0.0, 1.0) * 255.0).round() as u8
+    quantize_unit_byte(n.clamp(0.0, 1.0) * 255.0)
 }
 
 /// Linear alpha encoder — alpha is interpolated directly in linear,
 /// no gamma curve. Clamp + round to `u8`.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn linear_alpha_encode(a: f32) -> u8 {
-    (a.clamp(0.0, 1.0) * 255.0).round() as u8
+    quantize_unit_byte(a.clamp(0.0, 1.0) * 255.0)
 }
 
 #[cfg(test)]
@@ -556,6 +571,46 @@ mod color_linear_tests {
         let over = AnimVec4::new(2.0, -0.5, 1.5, 1.2);
         let c = Color::from_linear(over);
         assert_eq!(c, Color::rgba(255, 0, 255, 255));
+    }
+
+    // R628 §5.50 — quantize_unit_byte single-helper lift unit tests.
+    // The four pre-R628 inline `(_).round() as u8` sites all funnel
+    // through `quantize_unit_byte` now; the cases below pin the
+    // helper's clamp + round + cast contract at the boundary points
+    // so a future tweak surfaces here before the four consumers
+    // (`from_rgb_function` ×2 + `srgb_encode` + `linear_alpha_encode`)
+    // regress.
+    #[test]
+    fn r628_quantize_unit_byte_zero_and_max() {
+        assert_eq!(quantize_unit_byte(0.0), 0);
+        assert_eq!(quantize_unit_byte(255.0), 255);
+    }
+
+    #[test]
+    fn r628_quantize_unit_byte_rounds_half_to_even_or_away() {
+        // f32::round rounds half away from zero (towards +infinity
+        // for positive values). 127.5 -> 128, 128.5 -> 129.
+        assert_eq!(quantize_unit_byte(127.5), 128);
+        assert_eq!(quantize_unit_byte(128.5), 129);
+        assert_eq!(quantize_unit_byte(127.4999), 127);
+    }
+
+    #[test]
+    fn r628_quantize_unit_byte_saturates_over_range() {
+        // Drift past 255.0 (e.g. srgb inverse-EOTF tail) saturates
+        // to 255 — does not wrap-on-cast.
+        assert_eq!(quantize_unit_byte(255.5), 255);
+        assert_eq!(quantize_unit_byte(300.0), 255);
+        assert_eq!(quantize_unit_byte(1e6), 255);
+    }
+
+    #[test]
+    fn r628_quantize_unit_byte_saturates_under_range() {
+        // Negative drift (e.g. sRGB encode at the dark boundary
+        // where `1.055 * x^(1/2.4) - 0.055` may go slightly negative
+        // for tiny `x`) saturates to 0.
+        assert_eq!(quantize_unit_byte(-0.5), 0);
+        assert_eq!(quantize_unit_byte(-1e6), 0);
     }
 
     // ─────────────────────────────────────────────────────────────
