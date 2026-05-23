@@ -2,7 +2,7 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R611 — 26 typed):
+//! response envelope. Registered methods (R612 — 27 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
@@ -12,7 +12,7 @@
 //! `scene/set_theme_mode`, `scene/set_theme_palettes`,
 //! `scene/animation_state`, `scene/scroll_state`,
 //! `scene/set_scroll_offset`, `scene/text_state`,
-//! `scene/set_text`, `scene/set_selection`,
+//! `scene/set_text`, `scene/set_selection`, `scene/set_caret`,
 //! `scene/caret_state`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
@@ -69,7 +69,8 @@ use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectE
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
 use crate::text_state::{
-    set_selection, set_text, text_state, SetSelectionParams, SetTextParams, TextStateOutcome,
+    set_caret, set_selection, set_text, text_state, SetCaretParams, SetSelectionParams,
+    SetTextParams, TextStateOutcome,
 };
 use crate::theme::{
     parse_palette_value, set_theme_mode, set_theme_palettes, theme_tokens, PaletteParseError,
@@ -638,6 +639,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/set_selection" => {
             handle_scene_set_selection(runtime_owner, request.params.as_ref())
         }
+        "scene/set_caret" => handle_scene_set_caret(runtime_owner, request.params.as_ref()),
         "scene/caret_state" => {
             handle_scene_caret_state(runtime_owner, request.params.as_ref())
         }
@@ -830,7 +832,13 @@ fn mutates_scene_on_success(method: &str) -> bool {
             // `selection_anchor` inside one `reactive::batch`. The
             // visible caret + selection-highlight change; the OCC
             // token must bump.
-            | "scene/set_selection",
+            | "scene/set_selection"
+            // R612 §5.22 — set_caret writes `caret_pos` (and drops
+            // `selection_anchor` if active) inside one
+            // `reactive::batch`. The visible caret reposition + any
+            // collapsed selection-highlight require a re-paint, and
+            // the OCC token must bump.
+            | "scene/set_caret",
     )
 }
 
@@ -2703,6 +2711,38 @@ fn handle_scene_set_selection(
         focus,
     };
     match set_selection(runtime_owner, &typed_params) {
+        Ok(outcome) => text_state_outcome_to_json(&outcome),
+        Err(err) => Err(text_state_error_to_rpc(&err)),
+    }
+}
+
+/// R612 §5.22 — `scene/set_caret` typed handler. 27th `scene/*`
+/// method, completes the write-side matrix for the text-axis
+/// triplet (text / selection / caret). The dispatcher's
+/// [`mutates_scene_on_success`] gate bumps the [`SceneRevision`]
+/// after this call returns `Ok`.
+///
+/// Wire shape — request:
+/// `{"tag": "<field_tag>", "pos": <usize>}`. Response is the same
+/// [`TextStateOutcome`] shape `scene/text_state` returns. The
+/// substrate clamps `pos` to `[0, text.len()]`, snaps to a `char`
+/// boundary, and drops any active selection per the W3C
+/// `selectionchange` canonical.
+fn handle_scene_set_caret(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let tag = params_value
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tag missing or not a string")
+                .with_data_string("TagRequired")
+        })?;
+    let pos = read_usize_field(params_value, "pos")?;
+    let typed_params = SetCaretParams { tag, pos };
+    match set_caret(runtime_owner, &typed_params) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
         Err(err) => Err(text_state_error_to_rpc(&err)),
     }
@@ -9326,6 +9366,119 @@ mod tests {
             revision.current(),
             before,
             "a failed set_selection must not bump the OCC token",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R612 §5.22 — scene/set_caret wire integration
+    //
+    // Closes the AI-first write-side matrix. The fine-grained handler
+    // logic is covered in `crate::text_state::tests::r612_*`. The
+    // cases below exercise the dispatcher's wire round-trip — typed
+    // params parsing, error → RpcError mapping, OCC bump.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r612_scene_set_caret_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":3},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r612_scene_set_caret_missing_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"pos":3},"id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("TagRequired".into())));
+    }
+
+    #[test]
+    fn r612_scene_set_caret_missing_pos_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field"},"id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing pos must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidByteOffset".into())));
+    }
+
+    #[test]
+    fn r612_scene_set_caret_rejects_negative_pos() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":-1},"id":4}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("negative pos must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("InvalidByteOffset".into())));
+    }
+
+    #[test]
+    fn r612_scene_set_caret_unbound_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"ghost","pos":3},"id":5}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("unbound tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    #[test]
+    fn r612_scene_set_caret_happy_path_returns_post_state() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        state.set_text("Hello world".to_owned());
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":5},"id":6}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none(), "happy path must not error");
+        let result = resp.result.expect("result present");
+        assert_eq!(result["tag"], "field");
+        assert_eq!(result["caret"], 5);
+        assert_eq!(result["has_selection"], false);
+        assert_eq!(state.caret(), 5);
+    }
+
+    #[test]
+    fn r612_scene_set_caret_bumps_revision_on_success() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        state.set_text("Hello".to_owned());
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"field","pos":3},"id":7}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        let after = revision.current();
+        assert!(
+            after > before,
+            "set_caret must bump the OCC token (before={before}, after={after})",
+        );
+    }
+
+    #[test]
+    fn r612_scene_set_caret_does_not_bump_revision_on_failure() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_caret","params":{"tag":"ghost","pos":3},"id":8}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        assert_eq!(
+            revision.current(),
+            before,
+            "a failed set_caret must not bump the OCC token",
         );
     }
 

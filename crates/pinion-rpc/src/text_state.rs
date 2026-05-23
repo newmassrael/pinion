@@ -323,6 +323,59 @@ pub fn set_selection(
     })
 }
 
+// ────────────────────────────────────────────────────────────────────
+// scene/set_caret — mutate-side (R612)
+// ────────────────────────────────────────────────────────────────────
+
+/// Typed request payload for [`set_caret`]. Carries the target caret
+/// byte offset and the cache tag the mutation applies to.
+///
+/// The substrate's
+/// [`TextEditState::set_caret`](pinion_core::widgets::text_edit::TextEditState::set_caret)
+/// (a) clamps `pos` to `[0, text.len()]`, (b) snaps to the nearest
+/// preceding `char` boundary if `pos` would land mid-codepoint, and
+/// (c) drops any active selection per the W3C `selectionchange`
+/// canonical (any caret reposition that is not a Shift-modified
+/// extension collapses to caret-only). AI agents observe all three
+/// behaviours through the returned [`TextStateOutcome`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetCaretParams<'a> {
+    /// Cache tag the
+    /// [`use_text_edit_state`](pinion_core::widgets::text_edit::use_text_edit_state)
+    /// lookup resolves against. Required (no default).
+    pub tag: &'a str,
+    /// Target caret byte offset. Clamped + snapped by the substrate.
+    pub pos: usize,
+}
+
+/// Mutate the bound [`TextEditState`]'s caret under `params.tag` and
+/// return the post-mutation [`TextStateOutcome`].
+///
+/// # Side effects
+///
+/// Calls [`TextEditState::set_caret`] which writes `caret_pos` and
+/// (if a selection was active) clears `selection_anchor` inside a
+/// single [`batch`](pinion_core::reactive::batch). Subscribers re-run
+/// at most once per call. The dispatcher bumps
+/// [`SceneRevision`](pinion_core::SceneRevision) after this call
+/// returns `Ok`.
+///
+/// # Errors
+///
+/// - [`TextStateError::RuntimeOwnerUnavailable`] — no substrate
+///   owner attached on the dispatch context.
+/// - [`TextStateError::NotBound`] — owner has no text-edit state
+///   cached under `params.tag`.
+pub fn set_caret(
+    runtime_owner: Option<&Owner>,
+    params: &SetCaretParams<'_>,
+) -> Result<TextStateOutcome, TextStateError> {
+    lookup::<TextEditState, _, _>(runtime_owner, params.tag, |tag, state| {
+        state.set_caret(params.pos);
+        TextStateOutcome::from_state(tag, state)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -771,5 +824,102 @@ mod tests {
         assert_eq!(json["selection"]["start"], 0);
         assert_eq!(json["selection"]["end"], 5);
         assert_eq!(json["selection"]["anchor"], 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R612 §5.22 — set_caret setter
+    // ─────────────────────────────────────────────────────────────────
+
+    fn caret_params(tag: &str, pos: usize) -> SetCaretParams<'_> {
+        SetCaretParams { tag, pos }
+    }
+
+    #[test]
+    fn r612_set_caret_missing_runtime_owner_errors() {
+        let err = set_caret(None, &caret_params("field", 3)).unwrap_err();
+        assert_eq!(err, TextStateError::RuntimeOwnerUnavailable);
+    }
+
+    #[test]
+    fn r612_set_caret_unbound_tag_errors_with_tag_echoed() {
+        let owner = Owner::new();
+        let err = set_caret(Some(&owner), &caret_params("ghost", 3)).unwrap_err();
+        assert_eq!(
+            err,
+            TextStateError::NotBound {
+                tag: "ghost".into(),
+            },
+        );
+    }
+
+    #[test]
+    fn r612_set_caret_writes_pos_and_returns_post_state() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello world".to_owned());
+        let outcome = set_caret(Some(&owner), &caret_params("field", 5)).unwrap();
+        assert_eq!(outcome.tag, "field");
+        assert_eq!(outcome.caret, 5);
+        assert!(!outcome.has_selection);
+        assert!(outcome.selection.is_none());
+        assert_eq!(state.caret(), 5);
+    }
+
+    #[test]
+    fn r612_set_caret_clamps_to_text_length() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello".to_owned());
+        let outcome = set_caret(Some(&owner), &caret_params("field", 999)).unwrap();
+        assert_eq!(outcome.caret, 5, "caret clamped to text.len() = 5");
+    }
+
+    #[test]
+    fn r612_set_caret_snaps_to_char_boundary_for_multibyte_text() {
+        // "안녕" = 6 bytes, char boundaries at 0 / 3 / 6. Pos = 1
+        // lands mid-codepoint; substrate snaps to preceding boundary.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("안녕".to_owned());
+        let outcome = set_caret(Some(&owner), &caret_params("field", 1)).unwrap();
+        assert_eq!(outcome.caret, 0, "mid-codepoint snaps to preceding boundary");
+        let outcome = set_caret(Some(&owner), &caret_params("field", 4)).unwrap();
+        assert_eq!(outcome.caret, 3);
+    }
+
+    #[test]
+    fn r612_set_caret_drops_active_selection_per_w3c_canonical() {
+        // W3C: any explicit caret reposition that is not a Shift-
+        // modified extension collapses any active selection.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello world".to_owned());
+        state.set_selection(0, 5);
+        assert!(state.selection_range().is_some(), "precondition");
+        let outcome = set_caret(Some(&owner), &caret_params("field", 7)).unwrap();
+        assert!(!outcome.has_selection);
+        assert!(outcome.selection.is_none());
+        assert_eq!(outcome.caret, 7);
+        assert!(state.selection_range().is_none());
+    }
+
+    #[test]
+    fn r612_set_caret_does_not_insert_a_new_cache_slot() {
+        let owner = Owner::new();
+        let _ = set_caret(Some(&owner), &caret_params("phantom", 0)).unwrap_err();
+        assert!(!owner.cache_contains::<TextEditState>("phantom"));
+    }
+
+    #[test]
+    fn r612_set_caret_outcome_serializes_to_full_text_state_shape() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Hello".to_owned());
+        let outcome = set_caret(Some(&owner), &caret_params("field", 3)).unwrap();
+        let json = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(json["tag"], "field");
+        assert_eq!(json["caret"], 3);
+        assert_eq!(json["has_selection"], false);
+        assert_eq!(json["selection"], serde_json::Value::Null);
     }
 }

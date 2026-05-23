@@ -10931,6 +10931,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R612 — scene/set_caret RPC method — closes AI-first write-side matrix (5/5); caret reposition with substrate clamp + char-boundary snap + W3C selection-drop surfaced through OCC bump
+
+**Changes**:
+- pinion-rpc::text_state::set_caret + SetCaretParams (R612 §5.7 §5.22) — 27th typed scene/* method, completes text-axis triplet (text / selection / caret)
+- pinion-rpc::dispatch::handle_scene_set_caret reuses read_usize_field (R611 lift; 2nd consumer ratifies the helper)
+- pinion-rpc::dispatch::mutates_scene_on_success extends — OCC bump on success (set_caret writes caret_pos + drops selection_anchor inside `reactive::batch`)
+- AI-first write matrix COMPLETE: theme/mode + theme/palettes + scroll/offset + text + selection + caret (5/5 read pairs land a corresponding write)
+
+
+
+**Verification**:
+- cargo test --workspace: 3041 pass / 0 fail (R611: 3025 → +16 R612 unit + wire tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- r612_set_caret_clamps_to_text_length — substrate length clamp surfaces
+- r612_set_caret_snaps_to_char_boundary_for_multibyte_text — mid-codepoint snap to preceding boundary surfaces
+- r612_set_caret_drops_active_selection_per_w3c_canonical — selectionchange drop surfaces in outcome
+- r612_scene_set_caret_bumps_revision_on_success + _does_not_bump_revision_on_failure — OCC gate pinned both directions
+
+
+
+**Impact**: §5.7, §5.22
+
+
+**Carry forward**:
+- AI-first write matrix COMPLETE — every scene/* read pair now has a write peer; AI agents can read/modify/write any reactive substrate slot through one wire-symmetric loop
+- lookup helper write-side consumers: R609 + R610 + R611 + R612 = 4 sites. Rule of Three exceeded — next round (R613+) consider mutate_substrate lift to formalize the write-side helper alongside R607 read-side `lookup`
+- Substrate axis coverage gap audit: animation_state has read but no write (R600 stream-introspection only; mutation would require Animation reset/cancel surface). Defer until substrate exposes Animation::reset / cancel through a stable trait
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
