@@ -16938,6 +16938,60 @@
         "lookup helper reused for write-side at R609 — if R610-R612 add 2 more write call sites consider mutate_substrate lift (currently 1 write consumer; deferred per [[abstraction-needs-second-consumer]])"
       ]
     },
+    "R610": {
+      "decision_summary": "scene/set_text RPC method — paired mutation to scene/text_state for AI-first text field editing; OCC bump + post-state echo with substrate side-effects (selection/preedit drop + caret clamp)",
+      "changes_bullets": [
+        "pinion-rpc::text_state::set_text + SetTextParams (R610 §5.7 §5.22) — 25th typed scene/* method, mutation pair to text_state read",
+        "pinion-rpc::dispatch::handle_scene_set_text — TagRequired + TextRequired + NotBound + RuntimeOwnerUnavailable typed variants surfacing through -32602 invalid_params with error.data string",
+        "pinion-rpc::dispatch::mutates_scene_on_success extends — OCC bump on success (set_text drops selection + preedit + clamps caret inside `reactive::batch`)",
+        "Wire response = TextStateOutcome (full shape; substrate side-effects surface in post-state echo — AI agent verifies cleared selection / cleared preedit / clamped caret in one round-trip)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 3007 pass / 0 fail (R609: 2989 → +18 R610 unit + wire tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)",
+        "r610_set_text_drops_active_selection_per_substrate_contract — substrate selection drop surfaces in outcome",
+        "r610_set_text_drops_ime_preedit_per_substrate_contract — substrate preedit drop surfaces in outcome",
+        "r610_set_text_clamps_caret_to_new_text_length — substrate caret clamp surfaces in outcome",
+        "r610_set_text_accepts_unicode_text_and_preserves_char_boundary — char-boundary snap preserved through wire",
+        "r610_scene_set_text_bumps_revision_on_success + _does_not_bump_revision_on_failure — OCC gate pinned both directions"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R611: scene/set_selection (anchor + focus pair; OCC bump)",
+        "R612: scene/set_caret (caret-byte-offset wire; OCC bump)",
+        "AI-first write matrix: theme/mode + theme/palettes + scroll/offset + text covered (4/5). selection + caret pending",
+        "lookup helper reused at R609 + R610 write sites — 2 write consumers now; if R611-R612 add 1+ more consider mutate_substrate lift per [[abstraction-needs-second-consumer]]"
+      ],
+      "publishable_decision_summary": "scene/set_text RPC method — paired mutation to scene/text_state for AI-first text field editing; OCC bump + post-state echo with substrate side-effects (selection/preedit drop + caret clamp)",
+      "publishable_changes_bullets": [
+        "pinion-rpc::text_state::set_text + SetTextParams (R610 §5.7 §5.22) — 25th typed scene/* method, mutation pair to text_state read",
+        "pinion-rpc::dispatch::handle_scene_set_text — TagRequired + TextRequired + NotBound + RuntimeOwnerUnavailable typed variants surfacing through -32602 invalid_params with error.data string",
+        "pinion-rpc::dispatch::mutates_scene_on_success extends — OCC bump on success (set_text drops selection + preedit + clamps caret inside `reactive::batch`)",
+        "Wire response = TextStateOutcome (full shape; substrate side-effects surface in post-state echo — AI agent verifies cleared selection / cleared preedit / clamped caret in one round-trip)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 3007 pass / 0 fail (R609: 2989 → +18 R610 unit + wire tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)",
+        "r610_set_text_drops_active_selection_per_substrate_contract — substrate selection drop surfaces in outcome",
+        "r610_set_text_drops_ime_preedit_per_substrate_contract — substrate preedit drop surfaces in outcome",
+        "r610_set_text_clamps_caret_to_new_text_length — substrate caret clamp surfaces in outcome",
+        "r610_set_text_accepts_unicode_text_and_preserves_char_boundary — char-boundary snap preserved through wire",
+        "r610_scene_set_text_bumps_revision_on_success + _does_not_bump_revision_on_failure — OCC gate pinned both directions"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R611: scene/set_selection (anchor + focus pair; OCC bump)",
+        "R612: scene/set_caret (caret-byte-offset wire; OCC bump)",
+        "AI-first write matrix: theme/mode + theme/palettes + scroll/offset + text covered (4/5). selection + caret pending",
+        "lookup helper reused at R609 + R610 write sites — 2 write consumers now; if R611-R612 add 1+ more consider mutate_substrate lift per [[abstraction-needs-second-consumer]]"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

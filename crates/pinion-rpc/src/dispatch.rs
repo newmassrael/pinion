@@ -2,7 +2,7 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R609 — 24 typed):
+//! response envelope. Registered methods (R610 — 25 typed):
 //! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
 //! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
 //! `scene/invoke`, `scene/intents`, `scene/locate`,
@@ -12,7 +12,7 @@
 //! `scene/set_theme_mode`, `scene/set_theme_palettes`,
 //! `scene/animation_state`, `scene/scroll_state`,
 //! `scene/set_scroll_offset`, `scene/text_state`,
-//! `scene/caret_state`. The preview-lifecycle methods take the
+//! `scene/set_text`, `scene/caret_state`. The preview-lifecycle methods take the
 //! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
 //! receives from its caller alongside the scene.
 //!
@@ -67,7 +67,7 @@ use crate::scroll_state::{
 use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
-use crate::text_state::{text_state, TextStateOutcome};
+use crate::text_state::{set_text, text_state, SetTextParams, TextStateOutcome};
 use crate::theme::{
     parse_palette_value, set_theme_mode, set_theme_palettes, theme_tokens, PaletteParseError,
     SetThemeModeError, SetThemeModeOutcome, SetThemeModeParams, SetThemePalettesError,
@@ -631,6 +631,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         "scene/text_state" => {
             handle_scene_text_state(runtime_owner, request.params.as_ref())
         }
+        "scene/set_text" => handle_scene_set_text(runtime_owner, request.params.as_ref()),
         "scene/caret_state" => {
             handle_scene_caret_state(runtime_owner, request.params.as_ref())
         }
@@ -812,7 +813,13 @@ fn mutates_scene_on_success(method: &str) -> bool {
             // `reactive::batch`. Subscribers re-run, the visible
             // scroll position changes, a re-paint is required, and
             // the OCC token must bump.
-            | "scene/set_scroll_offset",
+            | "scene/set_scroll_offset"
+            // R610 §5.22 — set_text writes the text + caret +
+            // selection + preedit signals inside `set_text`'s
+            // `reactive::batch`. Every subscriber re-runs once, the
+            // visible field text changes wholesale, and the OCC
+            // token must bump.
+            | "scene/set_text",
     )
 }
 
@@ -2611,6 +2618,45 @@ fn text_state_outcome_to_json(out: &TextStateOutcome) -> Result<Value, RpcError>
 
 fn text_state_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
     introspect_error_to_rpc("text state", err)
+}
+
+/// R610 §5.22 — `scene/set_text` typed handler. 25th `scene/*`
+/// method, mutation pair to `scene/text_state`. The dispatcher's
+/// [`mutates_scene_on_success`] gate bumps the
+/// [`SceneRevision`] after this call returns `Ok`.
+///
+/// Wire shape — request: `{"tag": "<field_tag>", "text": "<utf8>"}`.
+/// Response is the same [`TextStateOutcome`] shape `scene/text_state`
+/// returns. The substrate's `set_text` drops any active selection,
+/// drops any IME preedit, and clamps the caret to the new text
+/// length — all three side effects surface in the response.
+fn handle_scene_set_text(
+    runtime_owner: Option<&Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
+    let tag = params_value
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tag missing or not a string")
+                .with_data_string("TagRequired")
+        })?;
+    let text = params_value
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.text missing or not a string")
+                .with_data_string("TextRequired")
+        })?;
+    let typed_params = SetTextParams {
+        tag,
+        text: text.to_owned(),
+    };
+    match set_text(runtime_owner, &typed_params) {
+        Ok(outcome) => text_state_outcome_to_json(&outcome),
+        Err(err) => Err(text_state_error_to_rpc(&err)),
+    }
 }
 
 /// R604 §5.22 — `scene/caret_state` typed handler. 22nd `scene/*`
@@ -8967,6 +9013,117 @@ mod tests {
         let err = resp.error.expect("unbound tag must error");
         assert_eq!(err.code, -32602);
         assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R610 §5.22 — scene/set_text wire integration
+    //
+    // Mutation pair to scene/text_state. The fine-grained handler
+    // logic is covered in `crate::text_state::tests::r610_*`. The
+    // cases below exercise the dispatcher's wire round-trip — typed
+    // params parsing, error → RpcError mapping, and OCC bump.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r610_scene_set_text_without_runtime_owner_errors() {
+        let mut scene = counted_scene(0);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"field","text":"Hi"},"id":1}"#;
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("missing runtime_owner must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("RuntimeOwnerUnavailable".into())));
+    }
+
+    #[test]
+    fn r610_scene_set_text_missing_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"text":"Hi"},"id":2}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("TagRequired".into())));
+    }
+
+    #[test]
+    fn r610_scene_set_text_missing_text_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"field"},"id":3}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("missing text must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("TextRequired".into())));
+    }
+
+    #[test]
+    fn r610_scene_set_text_rejects_non_string_text() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"field","text":42},"id":4}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("non-string text must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("TextRequired".into())));
+    }
+
+    #[test]
+    fn r610_scene_set_text_unbound_tag_errors_with_typed_data() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"ghost","text":"Hi"},"id":5}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        let err = resp.error.expect("unbound tag must error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("NotBound".into())));
+    }
+
+    #[test]
+    fn r610_scene_set_text_happy_path_returns_post_state() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"field","text":"Hello, world!"},"id":6}"#;
+        let resp = parse_response(&dispatch_with_runtime_owner(&mut scene, &owner, req).unwrap());
+        assert!(resp.error.is_none(), "happy path must not error");
+        let result = resp.result.expect("result present");
+        assert_eq!(result["tag"], "field");
+        assert_eq!(result["text"], "Hello, world!");
+        assert_eq!(result["has_selection"], false);
+        assert_eq!(state.text(), "Hello, world!");
+    }
+
+    #[test]
+    fn r610_scene_set_text_bumps_revision_on_success() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let _state = owner.run(|| pinion_core::widgets::text_edit::use_text_edit_state("field"));
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"field","text":"Hi"},"id":7}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        let after = revision.current();
+        assert!(
+            after > before,
+            "set_text must bump the OCC token (before={before}, after={after})",
+        );
+    }
+
+    #[test]
+    fn r610_scene_set_text_does_not_bump_revision_on_failure() {
+        let mut scene = counted_scene(0);
+        let owner = Owner::new();
+        let revision = SceneRevision::default();
+        let before = revision.current();
+        let req = r#"{"jsonrpc":"2.0","method":"scene/set_text","params":{"tag":"ghost","text":"x"},"id":8}"#;
+        let _ = dispatch_with_runtime_owner_and_revision(&mut scene, &owner, &revision, req);
+        assert_eq!(
+            revision.current(),
+            before,
+            "a failed set_text must not bump the OCC token",
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────

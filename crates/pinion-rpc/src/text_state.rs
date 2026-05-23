@@ -1,4 +1,4 @@
-//! `scene/text_state` RPC method dispatch — R603 §5.22 + §5.7.
+//! `scene/text_state` + `scene/set_text` RPC method dispatch — R603 / R610 §5.22 + §5.7.
 //!
 //! Fourth reactive-substrate introspection method (after
 //! [`crate::theme`] R598/R599, [`crate::animation_state`] R600,
@@ -8,6 +8,12 @@
 //! `tag` so AI agents can verify typed text, caret position,
 //! selection range, and IME composition state without scraping
 //! pixels from `scene/snapshot`.
+//!
+//! R610 §5.22 adds the mutation pair `scene/set_text` whose
+//! response is the same [`TextStateOutcome`] shape — wire symmetry
+//! for the read/modify/write loop. The setter inherits the
+//! substrate's "text swap drops selection + preedit + clamps caret"
+//! contract; the post-state echo surfaces all three side effects.
 //!
 //! ## Wire shape
 //!
@@ -191,6 +197,67 @@ pub fn text_state(
     lookup::<TextEditState, _, _>(runtime_owner, tag, TextStateOutcome::from_state)
 }
 
+// ────────────────────────────────────────────────────────────────────
+// scene/set_text — mutate-side (R610)
+// ────────────────────────────────────────────────────────────────────
+
+/// Typed request payload for [`set_text`]. Carries the new text and
+/// the cache tag the mutation applies to.
+///
+/// Tag is **required** — per-field tagged ([`scroll_state`](crate::scroll_state)
+/// pattern; no canonical default).
+///
+/// The substrate's
+/// [`TextEditState::set_text`](pinion_core::widgets::text_edit::TextEditState::set_text)
+/// (a) drops any active selection (the byte offsets would no longer
+/// make sense against the new text), (b) drops any IME preedit (same
+/// rationale), and (c) clamps the caret to the new text's length plus
+/// snaps it to the nearest preceding `char` boundary if it would
+/// land mid-codepoint. AI agents observe all three side effects
+/// through the returned [`TextStateOutcome`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetTextParams<'a> {
+    /// Cache tag the
+    /// [`use_text_edit_state`](pinion_core::widgets::text_edit::use_text_edit_state)
+    /// lookup resolves against. Required (no default).
+    pub tag: &'a str,
+    /// New committed text. Replaces the bound state's `text` field
+    /// wholesale.
+    pub text: String,
+}
+
+/// Mutate the bound [`TextEditState`]'s `text` under `params.tag`
+/// and return the post-mutation [`TextStateOutcome`].
+///
+/// # Side effects
+///
+/// Calls [`TextEditState::set_text`] which writes the text +
+/// caret + selection + preedit signals inside a single
+/// [`batch`](pinion_core::reactive::batch). Subscribers re-run at
+/// most once per call. The dispatcher bumps
+/// [`SceneRevision`](pinion_core::SceneRevision) after this call
+/// returns `Ok` so any in-flight preview's `base_revision` detects
+/// the concurrent mutation at apply time.
+///
+/// # Errors
+///
+/// - [`TextStateError::RuntimeOwnerUnavailable`] — no substrate
+///   owner attached on the dispatch context.
+/// - [`TextStateError::NotBound`] — owner has no text-edit state
+///   cached under `params.tag`.
+pub fn set_text(
+    runtime_owner: Option<&Owner>,
+    params: &SetTextParams<'_>,
+) -> Result<TextStateOutcome, TextStateError> {
+    // Same `lookup` reuse rationale as R609 (scroll_state) — see
+    // [`crate::scroll_state::set_scroll_offset`] for the deferred
+    // `mutate_substrate` lift discussion.
+    lookup::<TextEditState, _, _>(runtime_owner, params.tag, |tag, state| {
+        state.set_text(params.text.clone());
+        TextStateOutcome::from_state(tag, state)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +436,151 @@ mod tests {
         let json = serde_json::to_value(&outcome).unwrap();
         assert_eq!(json["selection"], serde_json::Value::Null);
         assert_eq!(json["has_selection"], false);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R610 §5.22 — set_text setter
+    // ─────────────────────────────────────────────────────────────────
+
+    fn set_text_params<'a>(tag: &'a str, text: &str) -> SetTextParams<'a> {
+        SetTextParams {
+            tag,
+            text: text.to_owned(),
+        }
+    }
+
+    #[test]
+    fn r610_set_text_missing_runtime_owner_errors() {
+        let err = set_text(None, &set_text_params("field", "Hello")).unwrap_err();
+        assert_eq!(err, TextStateError::RuntimeOwnerUnavailable);
+    }
+
+    #[test]
+    fn r610_set_text_unbound_tag_errors_with_tag_echoed() {
+        let owner = Owner::new();
+        let err = set_text(Some(&owner), &set_text_params("ghost", "Hello")).unwrap_err();
+        assert_eq!(
+            err,
+            TextStateError::NotBound {
+                tag: "ghost".into(),
+            },
+        );
+    }
+
+    #[test]
+    fn r610_set_text_writes_text_and_returns_post_state() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        let outcome = set_text(Some(&owner), &set_text_params("field", "Hello, world!"))
+            .expect("happy path");
+        assert_eq!(outcome.tag, "field");
+        assert_eq!(outcome.text, "Hello, world!");
+        // Pre-existing caret 0 stays 0 (within bounds for new text).
+        assert_eq!(outcome.caret, 0);
+        // Substrate immediately reflects the mutation.
+        assert_eq!(state.text(), "Hello, world!");
+    }
+
+    #[test]
+    fn r610_set_text_drops_active_selection_per_substrate_contract() {
+        // Substrate set_text invariant: selection is dropped because
+        // the byte offsets reference the pre-mutation text and become
+        // meaningless after the swap. AI agents see selection=None
+        // in the post-state.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Old text here".to_owned());
+        state.set_selection(0, 5);
+        assert!(state.selection_range().is_some(), "precondition");
+        let outcome = set_text(Some(&owner), &set_text_params("field", "Brand new"))
+            .expect("happy path");
+        assert!(!outcome.has_selection);
+        assert!(outcome.selection.is_none());
+        assert!(state.selection_range().is_none());
+    }
+
+    #[test]
+    fn r610_set_text_drops_ime_preedit_per_substrate_contract() {
+        // Same rationale as selection — IME preedit byte offsets
+        // become meaningless against the new text.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.preedit_start();
+        state.preedit_update("한");
+        assert!(state.is_composing(), "precondition");
+        let outcome = set_text(Some(&owner), &set_text_params("field", "fresh"))
+            .expect("happy path");
+        assert!(!outcome.is_composing);
+        assert!(outcome.preedit.is_none());
+    }
+
+    #[test]
+    fn r610_set_text_clamps_caret_to_new_text_length() {
+        // Substrate set_text invariant: caret is clamped to
+        // `[0, new_text.len()]`. Place caret past the new shorter
+        // text and verify the outcome reflects the clamp.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("A long original string".to_owned());
+        state.set_caret(15);
+        assert_eq!(state.caret(), 15, "precondition");
+        let outcome = set_text(Some(&owner), &set_text_params("field", "short"))
+            .expect("happy path");
+        assert_eq!(outcome.text, "short");
+        // Caret clamped to text.len() = 5.
+        assert_eq!(outcome.caret, 5);
+    }
+
+    #[test]
+    fn r610_set_text_accepts_empty_string() {
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        state.set_text("Some content".to_owned());
+        state.set_caret(4);
+        let outcome = set_text(Some(&owner), &set_text_params("field", "")).expect("happy path");
+        assert_eq!(outcome.text, "");
+        assert_eq!(outcome.caret, 0, "caret clamped to text.len() = 0");
+        assert_eq!(state.text(), "");
+    }
+
+    #[test]
+    fn r610_set_text_accepts_unicode_text_and_preserves_char_boundary() {
+        // Multi-byte UTF-8 input — substrate snaps caret to nearest
+        // `char` boundary. Pre-set caret to a byte offset that would
+        // land mid-codepoint after the swap; outcome must show a
+        // valid boundary.
+        let owner = Owner::new();
+        let state = bind_state(&owner, "field");
+        // Initial text long enough to seed a non-zero caret.
+        state.set_text("0123456789".to_owned());
+        state.set_caret(10);
+        let outcome = set_text(Some(&owner), &set_text_params("field", "안녕")).expect("happy path");
+        assert_eq!(outcome.text, "안녕");
+        // "안녕" = 6 bytes (3 + 3). Caret clamped to byte 6 (end of
+        // text); ends are always char boundaries.
+        assert_eq!(outcome.caret, 6);
+    }
+
+    #[test]
+    fn r610_set_text_does_not_insert_a_new_cache_slot() {
+        let owner = Owner::new();
+        let _ = set_text(Some(&owner), &set_text_params("phantom", "x")).unwrap_err();
+        assert!(!owner.cache_contains::<TextEditState>("phantom"));
+    }
+
+    #[test]
+    fn r610_set_text_outcome_serializes_to_full_text_state_shape() {
+        let owner = Owner::new();
+        let _state = bind_state(&owner, "field");
+        let outcome = set_text(Some(&owner), &set_text_params("field", "Hello"))
+            .expect("happy path");
+        let json = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(json["tag"], "field");
+        assert_eq!(json["text"], "Hello");
+        assert_eq!(json["caret"], 0);
+        assert_eq!(json["has_selection"], false);
+        assert_eq!(json["selection"], serde_json::Value::Null);
+        assert_eq!(json["is_composing"], false);
+        assert_eq!(json["preedit"], serde_json::Value::Null);
     }
 }
