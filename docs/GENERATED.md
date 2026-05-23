@@ -10961,6 +10961,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R613 — read_required_tag dispatch helper lift — collapses 7 byte-identical params.tag extraction sites into one helper, per Rule of Three internal-duplication discipline
+
+**Changes**:
+- pinion-rpc::dispatch::read_required_tag (R613 §5.7) — new helper paired with the read-side substrate_introspect::lookup R607 abstraction
+- 7 dispatch handlers refactored to single-line call — handle_scene_scroll_state / set_scroll_offset / text_state / set_text / set_selection / set_caret / caret_state
+- Wire-data identifier `TagRequired` and the standard 'params.tag missing or not a string' prose now live in one place — future scrub touches one fn instead of seven
+
+
+
+**Verification**:
+- cargo test --workspace: 3044 pass / 0 fail (R612: 3041 → +3 R613 helper unit tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- r613_read_required_tag_returns_string_when_present — happy path
+- r613_read_required_tag_missing_errors_with_typed_data — missing tag → TagRequired
+- r613_read_required_tag_non_string_errors_with_typed_data — 5 non-string variants (number/bool/null/array/object) all surface TagRequired
+- Existing R602+ wire-integration suites still pass — byte-identical wire shape preserved
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- Theme tag extraction (R598/R599/R608) uses a DIFFERENT shape — optional with 'must be a string when present' prose. Distinct because theme tag has a canonical default (DEFAULT_THEME_TAG = 'app'); not folded into read_required_tag
+- next debt candidates: (a) lookup helper docstring update to acknowledge write-side reuse (R609+ ratify); (b) introspect_error_to_rpc helper has 3+ consumers — examine if scroll_state_error_to_rpc / text_state_error_to_rpc / caret_state_error_to_rpc can collapse
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

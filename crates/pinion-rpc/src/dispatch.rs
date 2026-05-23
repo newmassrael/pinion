@@ -2518,13 +2518,7 @@ fn handle_scene_scroll_state(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
-    let tag = params_value
-        .get("tag")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.tag missing or not a string")
-                .with_data_string("TagRequired")
-        })?;
+    let tag = read_required_tag(params_value)?;
     // R605 §5.22 — `Owner::cache_get_by_str` accepts a borrowed
     // `&str`, no `Box::leak` bridge needed.
     match scroll_state(runtime_owner, tag) {
@@ -2561,13 +2555,7 @@ fn handle_scene_set_scroll_offset(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
-    let tag = params_value
-        .get("tag")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.tag missing or not a string")
-                .with_data_string("TagRequired")
-        })?;
+    let tag = read_required_tag(params_value)?;
     let x = read_i32_field(params_value, "x")?;
     let y = read_i32_field(params_value, "y")?;
     let typed_params = SetScrollOffsetParams { tag, x, y };
@@ -2575,6 +2563,51 @@ fn handle_scene_set_scroll_offset(
         Ok(outcome) => scroll_state_outcome_to_json(&outcome),
         Err(err) => Err(scroll_state_error_to_rpc(&err)),
     }
+}
+
+/// R613 §5.7 — extract the required `params.tag` field as a `&str`.
+///
+/// Lifted in R613 from seven byte-identical dispatch sites that all
+/// projected the same wire shape:
+///
+/// ```text
+/// params_value
+///     .get("tag")
+///     .and_then(Value::as_str)
+///     .ok_or_else(|| invalid_params(...).with_data_string("TagRequired"))?;
+/// ```
+///
+/// The 4-line copy lived at: `handle_scene_scroll_state` (R602),
+/// `handle_scene_set_scroll_offset` (R609),
+/// `handle_scene_text_state` (R603),
+/// `handle_scene_set_text` (R610),
+/// `handle_scene_set_selection` (R611),
+/// `handle_scene_set_caret` (R612),
+/// `handle_scene_caret_state` (R604).
+///
+/// Per [[three-site-internal-duplication-substrate-lift]] a 3+
+/// repeated within-binding pattern lifts to a substrate helper; this
+/// pattern crossed the rule at R604 and the count kept climbing
+/// through every R609-R612 setter. The lift collapses each call
+/// site to one line and keeps the `TagRequired` wire-data identifier
+/// in a single place — future scrub of the wire-message prose touches
+/// one function instead of seven.
+///
+/// # Errors
+///
+/// Returns a `-32602 Invalid params` with `error.data = "TagRequired"`
+/// when `params.tag` is missing or is a non-string value (number,
+/// bool, null, array, object). Matches the typed
+/// [`SubstrateIntrospectError::TagRequired`] variant the read-side
+/// `lookup` helper documents.
+fn read_required_tag(params: &Value) -> Result<&str, RpcError> {
+    params
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.tag missing or not a string")
+                .with_data_string("TagRequired")
+        })
 }
 
 /// Parse `params.<field>` as an `i32`. Rejects floats with a
@@ -2613,13 +2646,7 @@ fn handle_scene_text_state(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
-    let tag = params_value
-        .get("tag")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.tag missing or not a string")
-                .with_data_string("TagRequired")
-        })?;
+    let tag = read_required_tag(params_value)?;
     // R605 §5.22 — see scroll_state handler for rationale.
     match text_state(runtime_owner, tag) {
         Ok(outcome) => text_state_outcome_to_json(&outcome),
@@ -2654,13 +2681,7 @@ fn handle_scene_set_text(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
-    let tag = params_value
-        .get("tag")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.tag missing or not a string")
-                .with_data_string("TagRequired")
-        })?;
+    let tag = read_required_tag(params_value)?;
     let text = params_value
         .get("text")
         .and_then(Value::as_str)
@@ -2696,13 +2717,7 @@ fn handle_scene_set_selection(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
-    let tag = params_value
-        .get("tag")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.tag missing or not a string")
-                .with_data_string("TagRequired")
-        })?;
+    let tag = read_required_tag(params_value)?;
     let anchor = read_usize_field(params_value, "anchor")?;
     let focus = read_usize_field(params_value, "focus")?;
     let typed_params = SetSelectionParams {
@@ -2733,13 +2748,7 @@ fn handle_scene_set_caret(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
-    let tag = params_value
-        .get("tag")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.tag missing or not a string")
-                .with_data_string("TagRequired")
-        })?;
+    let tag = read_required_tag(params_value)?;
     let pos = read_usize_field(params_value, "pos")?;
     let typed_params = SetCaretParams { tag, pos };
     match set_caret(runtime_owner, &typed_params) {
@@ -2783,13 +2792,7 @@ fn handle_scene_caret_state(
     params: Option<&Value>,
 ) -> Result<Value, RpcError> {
     let params_value = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
-    let tag = params_value
-        .get("tag")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.tag missing or not a string")
-                .with_data_string("TagRequired")
-        })?;
+    let tag = read_required_tag(params_value)?;
     // R605 §5.22 — see scroll_state handler for rationale.
     match caret_state(runtime_owner, tag) {
         Ok(outcome) => caret_state_outcome_to_json(&outcome),
@@ -3997,6 +4000,47 @@ mod tests {
 
     fn parse_response(s: &str) -> Response {
         serde_json::from_str(s).expect("dispatch produced invalid response JSON")
+    }
+
+    // R613 §5.7 — read_required_tag helper unit tests. The full
+    // dispatch wire round-trip is exercised by the per-method R602+
+    // wire-integration suites, which all relied on this pattern
+    // pre-R613; the cases below pin the lifted helper's exact
+    // failure shape so a future tweak of the wire-data identifier
+    // surfaces here before downstream consumers regress.
+    #[test]
+    fn r613_read_required_tag_returns_string_when_present() {
+        let v = serde_json::json!({ "tag": "list" });
+        let out = read_required_tag(&v).unwrap();
+        assert_eq!(out, "list");
+    }
+
+    #[test]
+    fn r613_read_required_tag_missing_errors_with_typed_data() {
+        let v = serde_json::json!({});
+        let err = read_required_tag(&v).unwrap_err();
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.data, Some(Value::String("TagRequired".into())));
+    }
+
+    #[test]
+    fn r613_read_required_tag_non_string_errors_with_typed_data() {
+        // Number, bool, null, array, object — all rejected.
+        for invalid in [
+            serde_json::json!({"tag": 42}),
+            serde_json::json!({"tag": true}),
+            serde_json::json!({"tag": null}),
+            serde_json::json!({"tag": ["a"]}),
+            serde_json::json!({"tag": {"k": "v"}}),
+        ] {
+            let err = read_required_tag(&invalid).unwrap_err();
+            assert_eq!(err.code, -32602);
+            assert_eq!(
+                err.data,
+                Some(Value::String("TagRequired".into())),
+                "non-string tag must surface TagRequired",
+            );
+        }
     }
 
     /// Test helper — calls [`dispatch`] with a freshly-allocated

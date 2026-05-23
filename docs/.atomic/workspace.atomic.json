@@ -17094,6 +17094,50 @@
         "Substrate axis coverage gap audit: animation_state has read but no write (R600 stream-introspection only; mutation would require Animation reset/cancel surface). Defer until substrate exposes Animation::reset / cancel through a stable trait"
       ]
     },
+    "R613": {
+      "decision_summary": "read_required_tag dispatch helper lift — collapses 7 byte-identical params.tag extraction sites into one helper, per Rule of Three internal-duplication discipline",
+      "changes_bullets": [
+        "pinion-rpc::dispatch::read_required_tag (R613 §5.7) — new helper paired with the read-side substrate_introspect::lookup R607 abstraction",
+        "7 dispatch handlers refactored to single-line call — handle_scene_scroll_state / set_scroll_offset / text_state / set_text / set_selection / set_caret / caret_state",
+        "Wire-data identifier `TagRequired` and the standard 'params.tag missing or not a string' prose now live in one place — future scrub touches one fn instead of seven"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 3044 pass / 0 fail (R612: 3041 → +3 R613 helper unit tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)",
+        "r613_read_required_tag_returns_string_when_present — happy path",
+        "r613_read_required_tag_missing_errors_with_typed_data — missing tag → TagRequired",
+        "r613_read_required_tag_non_string_errors_with_typed_data — 5 non-string variants (number/bool/null/array/object) all surface TagRequired",
+        "Existing R602+ wire-integration suites still pass — byte-identical wire shape preserved"
+      ],
+      "impact_refs": [
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "Theme tag extraction (R598/R599/R608) uses a DIFFERENT shape — optional with 'must be a string when present' prose. Distinct because theme tag has a canonical default (DEFAULT_THEME_TAG = 'app'); not folded into read_required_tag",
+        "next debt candidates: (a) lookup helper docstring update to acknowledge write-side reuse (R609+ ratify); (b) introspect_error_to_rpc helper has 3+ consumers — examine if scroll_state_error_to_rpc / text_state_error_to_rpc / caret_state_error_to_rpc can collapse"
+      ],
+      "publishable_decision_summary": "read_required_tag dispatch helper lift — collapses 7 byte-identical params.tag extraction sites into one helper, per Rule of Three internal-duplication discipline",
+      "publishable_changes_bullets": [
+        "pinion-rpc::dispatch::read_required_tag (R613 §5.7) — new helper paired with the read-side substrate_introspect::lookup R607 abstraction",
+        "7 dispatch handlers refactored to single-line call — handle_scene_scroll_state / set_scroll_offset / text_state / set_text / set_selection / set_caret / caret_state",
+        "Wire-data identifier `TagRequired` and the standard 'params.tag missing or not a string' prose now live in one place — future scrub touches one fn instead of seven"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 3044 pass / 0 fail (R612: 3041 → +3 R613 helper unit tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)",
+        "r613_read_required_tag_returns_string_when_present — happy path",
+        "r613_read_required_tag_missing_errors_with_typed_data — missing tag → TagRequired",
+        "r613_read_required_tag_non_string_errors_with_typed_data — 5 non-string variants (number/bool/null/array/object) all surface TagRequired",
+        "Existing R602+ wire-integration suites still pass — byte-identical wire shape preserved"
+      ],
+      "publishable_impact_refs": [
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Theme tag extraction (R598/R599/R608) uses a DIFFERENT shape — optional with 'must be a string when present' prose. Distinct because theme tag has a canonical default (DEFAULT_THEME_TAG = 'app'); not folded into read_required_tag",
+        "next debt candidates: (a) lookup helper docstring update to acknowledge write-side reuse (R609+ ratify); (b) introspect_error_to_rpc helper has 3+ consumers — examine if scroll_state_error_to_rpc / text_state_error_to_rpc / caret_state_error_to_rpc can collapse"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
