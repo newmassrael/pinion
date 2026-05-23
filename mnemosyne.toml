@@ -685,3 +685,12 @@ reason = "R56.1.g audit-minimal pattern: append minimal ASCII, then expand publi
 applied_in = "Round 588"
 content_hash_before = "852b6aed791c5d626655b9f090aaa2d5b79f68db78e3df81dc2906bd132fa013"
 content_hash_after = "2b7ea62786479b09cf78c2be01b2ce5bacc7cf0b350b867f895ffda87c436f43"
+
+[[publishable_override_ledger]]
+kind = "audit-minimal expansion"
+target_id = "Round 589"
+fields = ["publishable_decision_summary", "publishable_changes_bullets", "publishable_verification_bullets", "publishable_carry_forward_bullets"]
+reason = "R56.1.g audit-minimal pattern: append minimal ASCII, then expand publishable to Korean detailed shape. Ledger row required by R296 gate."
+applied_in = "Round 589"
+content_hash_before = "edd16f625509f9cc0ce963d4e7fa80c98bbab76d0d4d563f36688b71f9fbfd09"
+content_hash_after = "1b29ee610635411aff5efbec96c71ce0d7e56af248b682a257629d708e18da04"

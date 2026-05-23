@@ -17690,6 +17690,29 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 589 — hello_listbox_focus_border demo 의 FOCUS_BORDER_RGB 를 Theme::light().accent (0x19,0x76,0xD2) 로 갱신 — R577 listbox retrofit lock-step.
+
+**Changes**:
+- hello_listbox_focus_border.py: FOCUS_BORDER_RGB → M3 primary accent (0x19,0x76,0xD2)
+- docstring + lock-step 주석 추가 (Theme::light().accent canonical source)
+
+
+
+**Verification**:
+- python3 tools/demos/hello_listbox_focus_border.py: PASS (0.84s)
+- 14/14 demos PASS 재획득 (R577 carry 청산)
+- cargo build --release -p hello-listbox: ok
+
+
+
+**Impact**: §5.49, §5.50
+
+
+**Carry forward**:
+- demo color constants = Theme palette mirror; palette baseline 이동 시 lock-step audit
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

@@ -28648,6 +28648,42 @@
         "doc test rust,no_run + # hidden imports = Rust std lib canonical 패턴"
       ]
     },
+    "Round 589": {
+      "decision_summary": "hello_listbox_focus_border demo FOCUS_BORDER_RGB updated to Theme::light().accent (0x19,0x76,0xD2) tracking R577 listbox retrofit.",
+      "changes_bullets": [
+        "tools/demos/hello_listbox_focus_border.py: FOCUS_BORDER_RGB refreshed to M3 primary accent",
+        "docstring + lock-step note added pointing to Theme::light().accent canonical source"
+      ],
+      "verification_bullets": [
+        "python3 tools/demos/hello_listbox_focus_border.py: PASS (0.84s)",
+        "14/14 demos PASS regression line restored after R577 carry",
+        "cargo build --release -p hello-listbox: ok"
+      ],
+      "impact_refs": [
+        "5.49",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "demo color constants ride Theme palette fields; lock-step audit when palette baselines move"
+      ],
+      "publishable_decision_summary": "hello_listbox_focus_border demo 의 FOCUS_BORDER_RGB 를 Theme::light().accent (0x19,0x76,0xD2) 로 갱신 — R577 listbox retrofit lock-step.",
+      "publishable_changes_bullets": [
+        "hello_listbox_focus_border.py: FOCUS_BORDER_RGB → M3 primary accent (0x19,0x76,0xD2)",
+        "docstring + lock-step 주석 추가 (Theme::light().accent canonical source)"
+      ],
+      "publishable_verification_bullets": [
+        "python3 tools/demos/hello_listbox_focus_border.py: PASS (0.84s)",
+        "14/14 demos PASS 재획득 (R577 carry 청산)",
+        "cargo build --release -p hello-listbox: ok"
+      ],
+      "publishable_impact_refs": [
+        "5.49",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "demo color constants = Theme palette mirror; palette baseline 이동 시 lock-step audit"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [
