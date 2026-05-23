@@ -191,6 +191,55 @@ pub enum SystemColorScheme {
     Dark,
 }
 
+impl SystemColorScheme {
+    /// R606 §5.50 — every [`SystemColorScheme`] variant in a fixed,
+    /// schema-stable order. Mirrors [`ColorRole::all`] (R595) so a
+    /// downstream consumer (RPC introspection, doc generator, AT
+    /// bridge) can iterate the slice once and trust the pinion-side
+    /// enumeration as the canonical answer. A future Tier-2 variant
+    /// lands at the end of the slice for the same reason the enum
+    /// carries `#[non_exhaustive]`: callers that match on
+    /// [`Self::name`] keep working without source edits.
+    ///
+    /// Pinned by `r606_system_color_scheme_all_enumerates_every_variant`.
+    #[must_use]
+    pub const fn all() -> &'static [SystemColorScheme] {
+        &[
+            SystemColorScheme::NoPreference,
+            SystemColorScheme::Light,
+            SystemColorScheme::Dark,
+        ]
+    }
+
+    /// R606 §5.50 — canonical `snake_case` wire identifier mirroring
+    /// the W3C `prefers-color-scheme` media-query value names
+    /// (`no-preference` is rendered as `no_preference` to keep the
+    /// pinion wire shape `snake_case`-consistent with [`ColorRole::name`]).
+    ///
+    /// The match is hand-written rather than derived (variant name
+    /// `CamelCase` → `snake_case`) so the wire id stays stable across
+    /// future enum-variant renames. A `Debug` / `strum` derivation
+    /// would silently leak a rename into the wire — the opposite of
+    /// what introspection consumers want.
+    ///
+    /// Internal to pinion-core: the match is exhaustive on the
+    /// `#[non_exhaustive]` enum (intra-crate patterns can be
+    /// exhaustive); a future variant addition fails to compile here
+    /// and forces the maintainer to choose a wire id deliberately
+    /// rather than fall through a silent default in a downstream
+    /// crate.
+    ///
+    /// Pinned by `r606_system_color_scheme_name_round_trips_with_all`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            SystemColorScheme::NoPreference => "no_preference",
+            SystemColorScheme::Light => "light",
+            SystemColorScheme::Dark => "dark",
+        }
+    }
+}
+
 thread_local! {
     /// R57.1 §5.50 — global OS color-scheme signal. One per UI
     /// thread; written by the platform backend on
@@ -935,6 +984,32 @@ pub enum ThemeMode {
     System,
 }
 
+impl ThemeMode {
+    /// R606 §5.50 — every [`ThemeMode`] variant in a fixed,
+    /// schema-stable order. Same rationale + carry contract as
+    /// [`SystemColorScheme::all`] and [`ColorRole::all`].
+    ///
+    /// Pinned by `r606_theme_mode_all_enumerates_every_variant`.
+    #[must_use]
+    pub const fn all() -> &'static [ThemeMode] {
+        &[ThemeMode::Light, ThemeMode::Dark, ThemeMode::System]
+    }
+
+    /// R606 §5.50 — canonical `snake_case` wire identifier. Same
+    /// rationale + maintenance contract as [`SystemColorScheme::name`]
+    /// and [`ColorRole::name`].
+    ///
+    /// Pinned by `r606_theme_mode_name_round_trips_with_all`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            ThemeMode::Light => "light",
+            ThemeMode::Dark => "dark",
+            ThemeMode::System => "system",
+        }
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────
 // ThemeProvider — reactive wrapper, Owner::cache-resolved
 // ────────────────────────────────────────────────────────────────────
@@ -1318,6 +1393,63 @@ mod tests {
     use crate::test_fixtures::settle_owner_animations;
     use std::cell::Cell;
     use std::rc::Rc;
+
+    // ─────────────────────────────────────────────────────────────
+    // R606 §5.50 — ThemeMode / SystemColorScheme ::name + ::all
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r606_theme_mode_all_enumerates_every_variant() {
+        // The slice must list every current variant in declaration
+        // order. A future #[non_exhaustive] addition lands at the
+        // end; this test will then need its expected list updated,
+        // surfacing the new variant to anyone relying on ::all.
+        let all = ThemeMode::all();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0], ThemeMode::Light);
+        assert_eq!(all[1], ThemeMode::Dark);
+        assert_eq!(all[2], ThemeMode::System);
+    }
+
+    #[test]
+    fn r606_theme_mode_name_round_trips_with_all() {
+        // Every variant in ::all must map to a stable wire id; no
+        // "unknown" / "" sentinels. When a future variant lands,
+        // ::all grows and this loop runs the new variant through
+        // ::name — the exhaustive match in ::name fails to compile
+        // until the maintainer chooses a wire id deliberately.
+        let pairs: &[(ThemeMode, &str)] = &[
+            (ThemeMode::Light, "light"),
+            (ThemeMode::Dark, "dark"),
+            (ThemeMode::System, "system"),
+        ];
+        assert_eq!(pairs.len(), ThemeMode::all().len());
+        for (mode, expected) in pairs {
+            assert_eq!(mode.name(), *expected);
+        }
+    }
+
+    #[test]
+    fn r606_system_color_scheme_all_enumerates_every_variant() {
+        let all = SystemColorScheme::all();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0], SystemColorScheme::NoPreference);
+        assert_eq!(all[1], SystemColorScheme::Light);
+        assert_eq!(all[2], SystemColorScheme::Dark);
+    }
+
+    #[test]
+    fn r606_system_color_scheme_name_round_trips_with_all() {
+        let pairs: &[(SystemColorScheme, &str)] = &[
+            (SystemColorScheme::NoPreference, "no_preference"),
+            (SystemColorScheme::Light, "light"),
+            (SystemColorScheme::Dark, "dark"),
+        ];
+        assert_eq!(pairs.len(), SystemColorScheme::all().len());
+        for (scheme, expected) in pairs {
+            assert_eq!(scheme.name(), *expected);
+        }
+    }
 
     // ─────────────────────────────────────────────────────────────
     // ColorRole — exhaustive role enumeration + default_for fallback

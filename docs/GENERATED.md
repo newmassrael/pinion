@@ -18198,6 +18198,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 606 — ThemeMode::name + ::all and SystemColorScheme::name + ::all lifted to pinion-core (parallel to R595 ColorRole pattern). Deletes the silent `_ => "unknown"` wildcard helpers in pinion-rpc — a future #[non_exhaustive] variant addition now fails the substrate's exhaustive name() match at compile time, forcing a deliberate wire-id choice instead of a downstream-crate silent default.
+
+**Changes**:
+- pinion-core/theme.rs: pub const fn ThemeMode::name + pub const fn ThemeMode::all() -> &'static [ThemeMode]
+- pinion-core/theme.rs: pub const fn SystemColorScheme::name + pub const fn SystemColorScheme::all() -> &'static [SystemColorScheme]
+- Both ::name match arms are exhaustive on the #[non_exhaustive] enum (intra-crate exhaustivity); a future variant addition surfaces as a compile error in pinion-core, not as a silent fallback in a downstream crate
+- pinion-core/theme.rs tests: +4 R606 — ::all variant-count + declaration-order pin (ThemeMode + SystemColorScheme), ::name round-trip against ::all (per-variant wire-id assertion)
+- pinion-rpc/theme.rs: helper fns mode_name + system_scheme_name deleted (delegated to substrate ::name); active_palette_key refactored to match directly on enum variants with a single `_` arm folding Light + future variants onto the W3C `no-preference → light` fallback (no clippy::match_same_arms)
+- pinion-rpc/theme.rs: ThemeTokensOutcome.mode + .system_scheme + SetThemeModeOutcome.mode use the substrate ::name (single source of truth for wire ids)
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib r606: 4 pass / 0 fail (variant enumeration + name round-trip)
+- cargo test --workspace --features pinion-runtime/vello: 2925 pass / 0 fail / 13 ignored (R605 baseline 2921 + 4 R606)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- Silent wildcard debt repaid — pinion-rpc no longer carries a per-crate copy of the ThemeMode / SystemColorScheme variant table
+- Future variant safety: a pinion-core ThemeMode addition fails substrate ::name compile, forcing both the wire-id and the active_palette_key fallback to be considered deliberately
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- pinion-rpc internal duplication across 5 substrate-introspection modules still standing — next textbook target is a generic substrate_introspect<S, V, F>(runtime_owner, tag, project) helper that lifts the common {Option<Owner> gate → cache_get_by_str<S> → NotBound on miss → project(&S)} skeleton; the 5-consumer + uniform shape passes the [[abstraction-needs-second-consumer]] discipline now
+- Mutation pair backlog (scene/set_text + set_caret + set_selection + set_scroll_offset) still open — readers complete in R598..R604; writers wait for a real 2nd consumer
+- active_palette_key fallback arm still folds Light + future ThemeMode variants onto "light" — deliberate per the W3C `no-preference` convention but a future explicit `HighContrast` / `AutoTinted` variant should re-evaluate this assumption
+
+
+
 ### Round 7 — Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification
 
 **Changes**:

@@ -230,8 +230,8 @@ pub fn theme_tokens(
     let dark_palette = provider.dark_palette();
     Ok(ThemeTokensOutcome {
         tag: resolved_tag.to_string(),
-        mode: mode_name(mode).to_string(),
-        system_scheme: system_scheme_name(system_scheme).to_string(),
+        mode: mode.name().to_string(),
+        system_scheme: system_scheme.name().to_string(),
         active: active.to_string(),
         palettes: PaletteCatalogue {
             light: project_palette(&light_palette),
@@ -241,66 +241,32 @@ pub fn theme_tokens(
 }
 
 /// `"light"` / `"dark"` lookup key matching the resolution
-/// [`ThemeProvider::theme`] performs: `Light` / `Dark` short-circuit;
-/// `System` defers to the OS [`SystemColorScheme`] with the W3C
-/// `no_preference` → light fallback.
+/// [`ThemeProvider::theme`] performs: `Light` short-circuits to
+/// `"light"`, `Dark` to `"dark"`, `System` defers to the OS
+/// [`SystemColorScheme`] with the W3C `no_preference` → light
+/// fallback.
 ///
-/// Both [`ThemeMode`] and [`SystemColorScheme`] are
-/// `#[non_exhaustive]`; the wildcard arms fall back to `"light"`
-/// (the W3C `prefers-color-scheme: no-preference` default) so the
-/// resolution never panics if pinion-core grows a new variant.
-/// A future variant should land an explicit arm here in the same
-/// commit that grows the enum — the existing R598 tests pin every
-/// current variant so the addition surfaces as a missing wire id
-/// (`"unknown"` in [`mode_name`] / [`system_scheme_name`]).
-#[allow(
-    clippy::match_same_arms,
-    reason = "the explicit arms enumerate every current ThemeMode \
-              / SystemColorScheme variant so a future variant \
-              addition surfaces as a documentation+test signal; \
-              the `_` arm only defends the W3C `no-preference` → \
-              light fallback for the unknown-variant case. \
-              Merging the explicit arm into the wildcard would erase \
-              the per-variant intent the resolution is built to \
-              express."
-)]
+/// Post-R606 the [`ThemeMode`] → wire-id and [`SystemColorScheme`]
+/// → wire-id mappings live on the substrate's exhaustive
+/// [`ThemeMode::name`] / [`SystemColorScheme::name`] (R606 §5.50)
+/// — see `outcome.mode` / `outcome.system_scheme` serialization.
+/// This helper resolves the *active palette key* (a separate
+/// concept from wire-id naming) and intentionally folds every
+/// non-Dark variant onto `"light"` per the W3C
+/// `prefers-color-scheme: no-preference` fallback convention,
+/// including future `#[non_exhaustive]` additions.
 fn active_palette_key(mode: ThemeMode, scheme: SystemColorScheme) -> &'static str {
     match mode {
-        ThemeMode::Light => "light",
         ThemeMode::Dark => "dark",
         ThemeMode::System => match scheme {
             SystemColorScheme::Dark => "dark",
-            SystemColorScheme::Light | SystemColorScheme::NoPreference => "light",
+            // Light / NoPreference / future scheme variants →
+            // W3C `prefers-color-scheme: no-preference` fallback.
             _ => "light",
         },
+        // Light + future ThemeMode variants → light palette per the
+        // same W3C fallback convention applied at the mode level.
         _ => "light",
-    }
-}
-
-/// `snake_case` wire identifier for [`ThemeMode`]. Mirrors the
-/// [`ColorRole::name`] convention so the JSON consumer can rely on a
-/// single naming style across the entire surface. Future
-/// `#[non_exhaustive]` variants render as `"unknown"` until the
-/// match grows — the corresponding round should land both the new
-/// enum variant in pinion-core and the new arm here.
-fn mode_name(mode: ThemeMode) -> &'static str {
-    match mode {
-        ThemeMode::Light => "light",
-        ThemeMode::Dark => "dark",
-        ThemeMode::System => "system",
-        _ => "unknown",
-    }
-}
-
-/// `snake_case` wire identifier for [`SystemColorScheme`]. Same
-/// rationale as [`mode_name`]; the `no_preference` slug mirrors the
-/// W3C `prefers-color-scheme: no-preference` media query.
-fn system_scheme_name(scheme: SystemColorScheme) -> &'static str {
-    match scheme {
-        SystemColorScheme::Light => "light",
-        SystemColorScheme::Dark => "dark",
-        SystemColorScheme::NoPreference => "no_preference",
-        _ => "unknown",
     }
 }
 
@@ -424,7 +390,7 @@ pub fn set_theme_mode(
     let active = active_palette_key(params.mode, system_scheme);
     Ok(SetThemeModeOutcome {
         tag: resolved_tag.to_string(),
-        mode: mode_name(params.mode).to_string(),
+        mode: params.mode.name().to_string(),
         active: active.to_string(),
     })
 }
