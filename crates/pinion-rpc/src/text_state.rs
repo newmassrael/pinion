@@ -81,21 +81,12 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::text_edit::TextEditState;
 use serde::Serialize;
 
-/// Typed errors the [`text_state`] dispatcher can return. Every
-/// variant maps onto a JSON-RPC `-32602 Invalid params` at the
-/// dispatch layer with the variant name in `error.data`.
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TextStateError {
-    /// No [`runtime_owner`](crate::DispatchContext) on the dispatch
-    /// context.
-    RuntimeOwnerUnavailable,
-    /// `params.tag` missing — required because text-edit states are
-    /// per-field tagged with no canonical default.
-    TagRequired,
-    /// Owner has no [`TextEditState`] cached under `tag` yet.
-    NotBound { tag: String },
-}
+use crate::substrate_introspect::{lookup, SubstrateIntrospectError};
+
+/// Typed errors the [`text_state`] dispatcher can return. R607
+/// §5.7 §5.22 aliased to [`SubstrateIntrospectError`]. See the
+/// `scroll_state` companion for the lift rationale.
+pub type TextStateError = SubstrateIntrospectError;
 
 /// Selection projection. `start <= end`, both `char` boundaries.
 /// `anchor` is one of `start` or `end` (whichever the user pinned).
@@ -197,15 +188,7 @@ pub fn text_state(
     runtime_owner: Option<&Owner>,
     tag: &str,
 ) -> Result<TextStateOutcome, TextStateError> {
-    let Some(owner) = runtime_owner else {
-        return Err(TextStateError::RuntimeOwnerUnavailable);
-    };
-    let state: std::rc::Rc<TextEditState> = owner
-        .cache_get_by_str::<TextEditState>(tag)
-        .ok_or_else(|| TextStateError::NotBound {
-            tag: tag.to_owned(),
-        })?;
-    Ok(TextStateOutcome::from_state(tag, &state))
+    lookup::<TextEditState, _, _>(runtime_owner, tag, TextStateOutcome::from_state)
 }
 
 #[cfg(test)]

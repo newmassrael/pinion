@@ -62,23 +62,17 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::scroll::ScrollState;
 use serde::Serialize;
 
-/// Typed errors the [`scroll_state`] dispatcher can return. Every
-/// variant maps onto a JSON-RPC `-32602 Invalid params` at the
-/// dispatch layer with the variant name in `error.data`.
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScrollStateError {
-    /// No [`runtime_owner`](crate::DispatchContext) registered on
-    /// the dispatch context.
-    RuntimeOwnerUnavailable,
-    /// `params.tag` was missing — required because scroll states do
-    /// not share a canonical default tag (each widget uses its own).
-    TagRequired,
-    /// The owner has no [`ScrollState`] cached under `tag` yet. The
-    /// application typically binds it on the first view-fn run via
-    /// [`use_scroll_state`].
-    NotBound { tag: String },
-}
+use crate::substrate_introspect::{lookup, SubstrateIntrospectError};
+
+/// Typed errors the [`scroll_state`] dispatcher can return. R607
+/// §5.7 §5.22 aliased to [`SubstrateIntrospectError`] because
+/// scroll-state, text-state, and caret-state introspection all
+/// share the same three failure modes (no runtime owner, missing
+/// tag, unbound cache slot). The alias keeps call-site naming
+/// distinct so a future divergence (e.g. a scroll-specific
+/// `InvalidAxis` error) can replace the alias with a dedicated
+/// enum without rippling through the unrelated modules.
+pub type ScrollStateError = SubstrateIntrospectError;
 
 /// Per-axis pair (offset and max). Two `i32`s — the
 /// [`ScrollState`] backing carries `i32` natively, no widening at
@@ -178,15 +172,7 @@ pub fn scroll_state(
     runtime_owner: Option<&Owner>,
     tag: &str,
 ) -> Result<ScrollStateOutcome, ScrollStateError> {
-    let Some(owner) = runtime_owner else {
-        return Err(ScrollStateError::RuntimeOwnerUnavailable);
-    };
-    let state: std::rc::Rc<ScrollState> = owner
-        .cache_get_by_str::<ScrollState>(tag)
-        .ok_or_else(|| ScrollStateError::NotBound {
-            tag: tag.to_owned(),
-        })?;
-    Ok(ScrollStateOutcome::from_state(tag, &state))
+    lookup::<ScrollState, _, _>(runtime_owner, tag, ScrollStateOutcome::from_state)
 }
 
 #[cfg(test)]

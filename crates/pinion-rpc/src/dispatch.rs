@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
-use crate::caret_state::{caret_state, CaretStateError, CaretStateOutcome};
+use crate::caret_state::{caret_state, CaretStateOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::font::{self, FontError, FontRegistry};
@@ -59,10 +59,11 @@ use crate::preview::{
 use crate::query::{query, QueryError};
 use crate::rewind::{rewind, RewindError};
 use crate::screenshot::{screenshot, Screenshot, ScreenshotError};
-use crate::scroll_state::{scroll_state, ScrollStateError, ScrollStateOutcome};
+use crate::scroll_state::{scroll_state, ScrollStateOutcome};
+use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
-use crate::text_state::{text_state, TextStateError, TextStateOutcome};
+use crate::text_state::{text_state, TextStateOutcome};
 use crate::theme::{
     set_theme_mode, theme_tokens, SetThemeModeError, SetThemeModeOutcome, SetThemeModeParams,
     ThemeTokensError, ThemeTokensOutcome,
@@ -2369,20 +2370,8 @@ fn scroll_state_outcome_to_json(out: &ScrollStateOutcome) -> Result<Value, RpcEr
     })
 }
 
-fn scroll_state_error_to_rpc(err: &ScrollStateError) -> RpcError {
-    match err {
-        ScrollStateError::RuntimeOwnerUnavailable => {
-            RpcError::invalid_params("scroll state unavailable")
-                .with_data_string("RuntimeOwnerUnavailable")
-        }
-        ScrollStateError::TagRequired => {
-            RpcError::invalid_params("params.tag is required").with_data_string("TagRequired")
-        }
-        ScrollStateError::NotBound { tag } => {
-            RpcError::invalid_params(format!("scroll state not bound under tag {tag:?}"))
-                .with_data_string("NotBound")
-        }
-    }
+fn scroll_state_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
+    introspect_error_to_rpc("scroll state", err)
 }
 
 /// R603 §5.22 — `scene/text_state` typed handler. 21st `scene/*`
@@ -2420,20 +2409,8 @@ fn text_state_outcome_to_json(out: &TextStateOutcome) -> Result<Value, RpcError>
     })
 }
 
-fn text_state_error_to_rpc(err: &TextStateError) -> RpcError {
-    match err {
-        TextStateError::RuntimeOwnerUnavailable => {
-            RpcError::invalid_params("text state unavailable")
-                .with_data_string("RuntimeOwnerUnavailable")
-        }
-        TextStateError::TagRequired => {
-            RpcError::invalid_params("params.tag is required").with_data_string("TagRequired")
-        }
-        TextStateError::NotBound { tag } => {
-            RpcError::invalid_params(format!("text state not bound under tag {tag:?}"))
-                .with_data_string("NotBound")
-        }
-    }
+fn text_state_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
+    introspect_error_to_rpc("text state", err)
 }
 
 /// R604 §5.22 — `scene/caret_state` typed handler. 22nd `scene/*`
@@ -2468,18 +2445,29 @@ fn caret_state_outcome_to_json(out: &CaretStateOutcome) -> Result<Value, RpcErro
     })
 }
 
-fn caret_state_error_to_rpc(err: &CaretStateError) -> RpcError {
+fn caret_state_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
+    introspect_error_to_rpc("caret state", err)
+}
+
+/// R607 §5.7 §5.22 — shared
+/// [`SubstrateIntrospectError`] → [`RpcError`] mapping. `domain`
+/// is the human-readable label that prefixes the
+/// `RuntimeOwnerUnavailable` message (e.g. `"scroll state"`,
+/// `"text state"`). The `error.data` wire identifier is sourced
+/// from [`introspect_error_to_data`] so the three RPC modules
+/// share one source of truth for the typed-name catalogue.
+fn introspect_error_to_rpc(domain: &str, err: &SubstrateIntrospectError) -> RpcError {
+    let data = introspect_error_to_data(err);
     match err {
-        CaretStateError::RuntimeOwnerUnavailable => {
-            RpcError::invalid_params("caret state unavailable")
-                .with_data_string("RuntimeOwnerUnavailable")
+        SubstrateIntrospectError::RuntimeOwnerUnavailable => {
+            RpcError::invalid_params(format!("{domain} unavailable")).with_data_string(data)
         }
-        CaretStateError::TagRequired => {
-            RpcError::invalid_params("params.tag is required").with_data_string("TagRequired")
+        SubstrateIntrospectError::TagRequired => {
+            RpcError::invalid_params("params.tag is required").with_data_string(data)
         }
-        CaretStateError::NotBound { tag } => {
-            RpcError::invalid_params(format!("caret state not bound under tag {tag:?}"))
-                .with_data_string("NotBound")
+        SubstrateIntrospectError::NotBound { tag } => {
+            RpcError::invalid_params(format!("{domain} not bound under tag {tag:?}"))
+                .with_data_string(data)
         }
     }
 }

@@ -29,6 +29,7 @@ pub mod rewind;
 pub mod screenshot;
 pub mod scroll_state;
 pub mod snapshot;
+pub mod substrate_introspect;
 pub mod text;
 pub mod text_state;
 pub mod theme;
@@ -81,6 +82,9 @@ pub use rewind::{rewind, RewindError};
 pub use screenshot::{screenshot, Screenshot, ScreenshotError};
 pub use scroll_state::{
     scroll_state, ScrollAxisPair, ScrollEdges, ScrollStateError, ScrollStateOutcome,
+};
+pub use substrate_introspect::{
+    introspect_error_to_data, lookup as substrate_lookup, SubstrateIntrospectError,
 };
 pub use snapshot::{
     snapshot, BoxSnapshot, ContainerSnapshot, ExternalSnapshot, ImageSnapshot, PathSnapshot,

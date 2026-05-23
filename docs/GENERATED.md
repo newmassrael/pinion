@@ -18229,6 +18229,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 607 — substrate_introspect helper module lifts the 3-site duplication across scroll_state / text_state / caret_state. SubstrateIntrospectError replaces three identical per-module enums; lookup<S, V, F> collapses the {Option<Owner> gate → cache_get_by_str → NotBound on miss → project} skeleton into one call. dispatch.rs collapses three error_to_rpc helpers into one introspect_error_to_rpc(domain, err) routine.
+
+**Changes**:
+- pinion-rpc/substrate_introspect.rs: new module — pub enum SubstrateIntrospectError {RuntimeOwnerUnavailable, TagRequired, NotBound {tag}}; pub fn lookup<S, V, F>(runtime_owner, tag, project); pub fn introspect_error_to_data(&err) -> &'static str
+- scroll_state.rs / text_state.rs / caret_state.rs: per-module error enums replaced with type aliases to SubstrateIntrospectError; X_state(...) collapsed to a one-line lookup<S, V, _>(runtime_owner, tag, OutcomeView::from_state) delegate
+- dispatch.rs: three separate scroll/text/caret_state_error_to_rpc helpers collapsed to one shared introspect_error_to_rpc(domain, &err); per-domain RuntimeOwnerUnavailable / NotBound messages now share the wire-id catalogue via introspect_error_to_data
+- lib.rs: pub use substrate_introspect::{introspect_error_to_data, lookup as substrate_lookup, SubstrateIntrospectError}
+- substrate_introspect module: 5 R607 unit tests — lookup returns RuntimeOwnerUnavailable when owner is None, NotBound with tag echoed when missing, projection round-trips on hit, failed miss never inserts a phantom slot, introspect_error_to_data wire-id pin for all 3 variants
+
+
+
+**Verification**:
+- cargo test -p pinion-rpc --lib r607: 5 pass / 0 fail
+- cargo test --workspace --features pinion-runtime/vello: 2930 pass / 0 fail / 13 ignored (R606 baseline 2925 + 5 R607)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+- [[three-site-internal-duplication-substrate-lift]] discipline ratified — 5 consumers of cache_get_by_str + 3 consumers of the gate skeleton justify the lift
+- Internal duplication carry from R605 / R606 cleared; the per-module body shrinks from 12 lines to 1 line of delegate (90% reduction)
+
+
+
+**Impact**: §5.7, §5.22
+
+
+**Carry forward**:
+- theme.rs (theme_tokens + set_theme_mode) does not yet use substrate_introspect::lookup because the theme axis has a default tag ("app") + multi-shape outcome — a future R-round can extend lookup with an optional `default_tag` parameter once a 2nd default-tag consumer appears
+- animation_state.rs does not use substrate_introspect because its substrate primitive is Owner::any_animation_active (not Owner::cache) — different shape, no lift target
+- Mutation pair backlog still open: scene/set_text + set_caret + set_selection + set_scroll_offset — awaiting 2nd consumer beyond V::apply_key + platform bridge
+
+
+
 ### Round 7 — Round 7 — §5.15 External primitive integration contract (8 items) ratified; §5.12 extended with 7th RPC method screenshot for pixel verification
 
 **Changes**:

@@ -65,21 +65,12 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::caret_blink::CaretBlink;
 use serde::Serialize;
 
-/// Typed errors the [`caret_state`] dispatcher can return. Every
-/// variant maps onto a JSON-RPC `-32602 Invalid params` at the
-/// dispatch layer with the variant name in `error.data`.
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CaretStateError {
-    /// No [`runtime_owner`](crate::DispatchContext) on the dispatch
-    /// context.
-    RuntimeOwnerUnavailable,
-    /// `params.tag` missing — required because caret blinks are
-    /// per-field tagged with no canonical default.
-    TagRequired,
-    /// Owner has no [`CaretBlink`] cached under `tag` yet.
-    NotBound { tag: String },
-}
+use crate::substrate_introspect::{lookup, SubstrateIntrospectError};
+
+/// Typed errors the [`caret_state`] dispatcher can return. R607
+/// §5.7 §5.22 aliased to [`SubstrateIntrospectError`]. See the
+/// `scroll_state` companion for the lift rationale.
+pub type CaretStateError = SubstrateIntrospectError;
 
 /// Snapshot of the bound [`CaretBlink`]'s observable surface plus
 /// the canonical blink period for client-side phase-flip ETA math.
@@ -133,15 +124,7 @@ pub fn caret_state(
     runtime_owner: Option<&Owner>,
     tag: &str,
 ) -> Result<CaretStateOutcome, CaretStateError> {
-    let Some(owner) = runtime_owner else {
-        return Err(CaretStateError::RuntimeOwnerUnavailable);
-    };
-    let state: std::rc::Rc<CaretBlink> = owner
-        .cache_get_by_str::<CaretBlink>(tag)
-        .ok_or_else(|| CaretStateError::NotBound {
-            tag: tag.to_owned(),
-        })?;
-    Ok(CaretStateOutcome::from_state(tag, &state))
+    lookup::<CaretBlink, _, _>(runtime_owner, tag, CaretStateOutcome::from_state)
 }
 
 #[cfg(test)]
