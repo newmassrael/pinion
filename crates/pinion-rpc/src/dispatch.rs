@@ -580,10 +580,14 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
 
     let is_notification = request.id.is_none();
     let id = request.id.clone();
-    let method_name = request.method.clone();
 
-    let outcome = match request.method.as_str() {
-        "scene/query" => handle_scene_query(scene, request.params.as_ref()),
+    // R620 §5.7 — every match arm returns `(handler_outcome, kind)`;
+    // the kind is the OCC bump contract right at the arm so the
+    // compiler enforces the pairing (missing kind = tuple shape
+    // mismatch). See `HandlerKind` docstring for the read-vs-mutate
+    // taxonomy.
+    let (outcome, kind) = match request.method.as_str() {
+        "scene/query" => (handle_scene_query(scene, request.params.as_ref()), HandlerKind::Read),
         "scene/click" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -595,79 +599,130 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
                 reason = "dyn FnMut is not DerefMut; manual reborrow required"
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
-            handle_scene_click(inbox, producer, last_paint_layout, request.params.as_ref())
+            (
+                handle_scene_click(inbox, producer, last_paint_layout, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
         }
-        "scene/rewind" => handle_scene_rewind(scene, request.params.as_ref()),
+        "scene/rewind" => (
+            handle_scene_rewind(scene, request.params.as_ref()),
+            HandlerKind::Mutate,
+        ),
         "scene/snapshot" => {
-            // Same reborrow pattern as `scene/layout` — `dyn FnMut` is
-            // not `DerefMut`, so the manual `&mut **p` is required;
-            // clippy::option_as_ref_deref would mis-suggest `.as_deref_mut()`.
             #[allow(
                 clippy::option_as_ref_deref,
                 reason = "dyn FnMut is not DerefMut; manual reborrow required"
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
-            handle_scene_snapshot(scene, producer, request.params.as_ref())
+            (
+                handle_scene_snapshot(scene, producer, request.params.as_ref()),
+                HandlerKind::Read,
+            )
         }
-        "scene/dry_run" => handle_scene_dry_run(scene, request.params.as_ref()),
-        "scene/waitFor" => handle_scene_wait_for(scene, request.params.as_ref()),
-        "scene/screenshot" => handle_scene_screenshot(scene, request.params.as_ref()),
-        "scene/invoke" => handle_scene_invoke(scene, request.params.as_ref()),
-        "scene/intervene" => handle_scene_intervene(scene, request.params.as_ref()),
-        "scene/intents" => handle_scene_intents(scene),
-        "scene/commands" => handle_scene_commands(runtime_owner, commands_executor),
-        "scene/theme_tokens" => handle_scene_theme_tokens(runtime_owner, request.params.as_ref()),
-        "scene/set_theme_mode" => {
-            handle_scene_set_theme_mode(runtime_owner, request.params.as_ref())
-        }
-        "scene/set_theme_palettes" => {
-            handle_scene_set_theme_palettes(runtime_owner, request.params.as_ref())
-        }
-        "scene/animation_state" => {
-            handle_scene_animation_state(runtime_owner, request.params.as_ref())
-        }
-        "scene/scroll_state" => {
-            handle_scene_scroll_state(runtime_owner, request.params.as_ref())
-        }
-        "scene/set_scroll_offset" => {
-            handle_scene_set_scroll_offset(runtime_owner, request.params.as_ref())
-        }
-        "scene/text_state" => {
-            handle_scene_text_state(runtime_owner, request.params.as_ref())
-        }
-        "scene/set_text" => handle_scene_set_text(runtime_owner, request.params.as_ref()),
-        "scene/set_selection" => {
-            handle_scene_set_selection(runtime_owner, request.params.as_ref())
-        }
-        "scene/set_caret" => handle_scene_set_caret(runtime_owner, request.params.as_ref()),
-        "scene/caret_state" => {
-            handle_scene_caret_state(runtime_owner, request.params.as_ref())
-        }
-        "scene/locate" => handle_scene_locate(scene, request.params.as_ref()),
-        "scene/locate_region" => handle_scene_locate_region(scene, request.params.as_ref()),
-        "scene/bbox" => handle_scene_bbox(scene, request.params.as_ref()),
+        "scene/dry_run" => (
+            handle_scene_dry_run(scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/waitFor" => (
+            handle_scene_wait_for(scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/screenshot" => (
+            handle_scene_screenshot(scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/invoke" => (
+            handle_scene_invoke(scene, request.params.as_ref()),
+            HandlerKind::Mutate,
+        ),
+        "scene/intervene" => (
+            handle_scene_intervene(scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/intents" => (handle_scene_intents(scene), HandlerKind::Read),
+        "scene/commands" => (
+            handle_scene_commands(runtime_owner, commands_executor),
+            HandlerKind::Read,
+        ),
+        "scene/theme_tokens" => (
+            handle_scene_theme_tokens(runtime_owner, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/set_theme_mode" => (
+            handle_scene_set_theme_mode(runtime_owner, request.params.as_ref()),
+            HandlerKind::Mutate,
+        ),
+        "scene/set_theme_palettes" => (
+            handle_scene_set_theme_palettes(runtime_owner, request.params.as_ref()),
+            HandlerKind::Mutate,
+        ),
+        "scene/animation_state" => (
+            handle_scene_animation_state(runtime_owner, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/scroll_state" => (
+            handle_scene_scroll_state(runtime_owner, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/set_scroll_offset" => (
+            handle_scene_set_scroll_offset(runtime_owner, request.params.as_ref()),
+            HandlerKind::Mutate,
+        ),
+        "scene/text_state" => (
+            handle_scene_text_state(runtime_owner, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/set_text" => (
+            handle_scene_set_text(runtime_owner, request.params.as_ref()),
+            HandlerKind::Mutate,
+        ),
+        "scene/set_selection" => (
+            handle_scene_set_selection(runtime_owner, request.params.as_ref()),
+            HandlerKind::Mutate,
+        ),
+        "scene/set_caret" => (
+            handle_scene_set_caret(runtime_owner, request.params.as_ref()),
+            HandlerKind::Mutate,
+        ),
+        "scene/caret_state" => (
+            handle_scene_caret_state(runtime_owner, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/locate" => (
+            handle_scene_locate(scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/locate_region" => (
+            handle_scene_locate_region(scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/bbox" => (
+            handle_scene_bbox(scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
         "scene/resize" => {
-            // Same reborrow pattern as `scene/layout` — dyn FnMut is
-            // not DerefMut, so `.as_deref_mut()` cannot apply.
             #[allow(
                 clippy::option_as_ref_deref,
                 reason = "dyn FnMut is not DerefMut; manual reborrow required"
             )]
             let req = resize_request.as_mut().map(|p| &mut **p);
-            handle_scene_resize(req, request.params.as_ref())
+            (
+                handle_scene_resize(req, request.params.as_ref()),
+                // Async — actual scene mutation lands when the
+                // embedder repaints. No immediate OCC bump.
+                HandlerKind::Read,
+            )
         }
         "scene/layout" => {
-            // `Option<&mut &mut dyn FnMut>` → `Option<&mut dyn FnMut>`.
-            // clippy::option_as_ref_deref suggests `.as_deref_mut()`,
-            // but `dyn FnMut` does not implement `DerefMut`, so the
-            // explicit reborrow is required; the lint fires on the
-            // surface shape, not the type-check semantics.
             #[allow(
                 clippy::option_as_ref_deref,
                 reason = "dyn FnMut is not DerefMut; manual reborrow required"
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
-            handle_scene_layout(producer, last_paint_layout, request.params.as_ref())
+            (
+                handle_scene_layout(producer, last_paint_layout, request.params.as_ref()),
+                HandlerKind::Read,
+            )
         }
         "scene/key" => {
             #[allow(
@@ -680,13 +735,14 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
                 reason = "dyn FnMut is not DerefMut; manual reborrow required"
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
-            handle_scene_key(inbox, producer, last_paint_layout, request.params.as_ref())
+            (
+                handle_scene_key(inbox, producer, last_paint_layout, request.params.as_ref()),
+                // Input enqueue — mutation deferred to next dispatch
+                // cycle; no immediate OCC bump.
+                HandlerKind::Read,
+            )
         }
         "scene/wheel" => {
-            // Same reborrow pattern as `scene/layout` — the inbox is
-            // a `&mut Vec<...>` and clippy::option_as_ref_deref would
-            // suggest `.as_deref_mut()`, but `Vec<T>` does not
-            // implement `DerefMut`; the manual reborrow is required.
             #[allow(
                 clippy::option_as_ref_deref,
                 reason = "Vec is not DerefMut; manual reborrow required"
@@ -697,7 +753,10 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
                 reason = "dyn FnMut is not DerefMut; manual reborrow required"
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
-            handle_scene_wheel(inbox, producer, last_paint_layout, request.params.as_ref())
+            (
+                handle_scene_wheel(inbox, producer, last_paint_layout, request.params.as_ref()),
+                HandlerKind::Read,
+            )
         }
         "scene/scroll" => {
             #[allow(
@@ -705,60 +764,111 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
                 reason = "dyn FnMut is not DerefMut; manual reborrow required"
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
-            handle_scene_scroll(producer, last_paint_layout, request.params.as_ref())
+            (
+                handle_scene_scroll(producer, last_paint_layout, request.params.as_ref()),
+                HandlerKind::Read,
+            )
         }
-        "scene/cancel_preview" => handle_scene_cancel_preview(previews, request.params.as_ref()),
-        "scene/list_previews" => handle_scene_list_previews(previews),
-        "scene/propose_change" => {
-            handle_scene_propose_change(previews, revision, request.params.as_ref())
-        }
-        "scene/apply_preview" => {
-            handle_scene_apply_preview(scene, revision, previews, request.params.as_ref())
-        }
-        "font/parse" => handle_font_parse(font_registry, request.params.as_ref()),
-        "font/family_name" => handle_font_family_name(font_registry, request.params.as_ref()),
-        "font/glyph_id_for" => handle_font_glyph_id_for(font_registry, request.params.as_ref()),
-        "font/glyph_outline" => {
-            handle_font_glyph_outline(font_registry, request.params.as_ref())
-        }
-        "font/cmap_subtables" => {
-            handle_font_cmap_subtables(font_registry, request.params.as_ref())
-        }
-        "font/metrics" => handle_font_metrics(font_registry, request.params.as_ref()),
-        "font/subfamily_name" => {
-            handle_font_subfamily_name(font_registry, request.params.as_ref())
-        }
-        "font/full_name" => handle_font_full_name(font_registry, request.params.as_ref()),
-        "font/postscript_name" => {
-            handle_font_postscript_name(font_registry, request.params.as_ref())
-        }
-        "font/dispose" => handle_font_dispose(font_registry, request.params.as_ref()),
-        "font/list" => handle_font_list(font_registry),
-        "text/normalize" => handle_text_normalize(request.params.as_ref()),
-        // R51.73 §5.40 — focus surface as JSON-RPC dual to AccessKit
-        // Focus action. Both methods require the embedder to have
-        // registered a `FocusManager` via `with_focus_manager`.
-        "focus/set" => crate::focus::handle_focus_set(
-            focus_manager.as_deref_mut(),
-            request.params.as_ref(),
+        "scene/cancel_preview" => (
+            handle_scene_cancel_preview(previews, request.params.as_ref()),
+            HandlerKind::Read,
         ),
-        "focus/get" => crate::focus::handle_focus_get(focus_manager.as_deref()),
-        // R51.74 §5.40 — Tab / Shift+Tab equivalents for AI clients.
-        "focus/next" => crate::focus::handle_focus_next(focus_manager.as_deref_mut()),
-        // Last `focus_manager` arm — move directly; the
-        // `as_deref_mut()` call would be a no-op identity reborrow
-        // on `Option<&mut FocusManager>`.
-        "focus/prev" => crate::focus::handle_focus_prev(focus_manager),
-        _ => Err(RpcError::new(-32601, "Method not found")
-            .with_data_string(request.method.clone())),
+        "scene/list_previews" => (
+            handle_scene_list_previews(previews),
+            HandlerKind::Read,
+        ),
+        "scene/propose_change" => (
+            handle_scene_propose_change(previews, revision, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/apply_preview" => (
+            handle_scene_apply_preview(scene, revision, previews, request.params.as_ref()),
+            // apply_preview bumps SceneRevision INTERNALLY (via
+            // crate::preview::apply_preview); a dispatcher-side bump
+            // would double-count. HandlerKind::Read signals "do not
+            // bump from here".
+            HandlerKind::Read,
+        ),
+        "font/parse" => (
+            handle_font_parse(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/family_name" => (
+            handle_font_family_name(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/glyph_id_for" => (
+            handle_font_glyph_id_for(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/glyph_outline" => (
+            handle_font_glyph_outline(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/cmap_subtables" => (
+            handle_font_cmap_subtables(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/metrics" => (
+            handle_font_metrics(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/subfamily_name" => (
+            handle_font_subfamily_name(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/full_name" => (
+            handle_font_full_name(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/postscript_name" => (
+            handle_font_postscript_name(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/dispose" => (
+            handle_font_dispose(font_registry, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "font/list" => (handle_font_list(font_registry), HandlerKind::Read),
+        "text/normalize" => (
+            handle_text_normalize(request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "focus/set" => (
+            crate::focus::handle_focus_set(
+                focus_manager.as_deref_mut(),
+                request.params.as_ref(),
+            ),
+            // Focus state tracked independently of SceneRevision.
+            HandlerKind::Read,
+        ),
+        "focus/get" => (
+            crate::focus::handle_focus_get(focus_manager.as_deref()),
+            HandlerKind::Read,
+        ),
+        "focus/next" => (
+            crate::focus::handle_focus_next(focus_manager.as_deref_mut()),
+            HandlerKind::Read,
+        ),
+        "focus/prev" => (
+            crate::focus::handle_focus_prev(focus_manager),
+            HandlerKind::Read,
+        ),
+        _ => (
+            Err(RpcError::new(-32601, "Method not found")
+                .with_data_string(request.method.clone())),
+            HandlerKind::Read,
+        ),
     };
 
-    // §5.34 R40.4: bump the OCC token after any mutating handler
-    // succeeds. The match-on-method list is the single source of
-    // truth for "does this method change visible scene state?";
-    // conservative bumping (occasional spurious bump) is preferred
-    // to a missed bump, which would silently mask preview staleness.
-    if outcome.is_ok() && mutates_scene_on_success(method_name.as_str()) {
+    // §5.34 R40.4 + R620 §5.7 — bump the OCC token after any
+    // mutating handler succeeds. Pre-R620 the decision was an
+    // external `mutates_scene_on_success(method: &str)` matches!
+    // gate that the dispatch match arm had to mirror. R620 moves
+    // the kind tag into the match arm itself (tuple shape forces
+    // every arm to declare a kind), so the bump decision now reads
+    // straight off `kind` with no separate cross-reference.
+    if outcome.is_ok() && matches!(kind, HandlerKind::Mutate) {
         revision.bump();
     }
 
@@ -784,62 +894,43 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     Some(serialize(&resp))
 }
 
-/// Single source of truth for "method mutates scene state on success".
+/// R620 §5.7 — typed flag every match arm in [`dispatch`] tags onto
+/// its handler outcome so the dispatcher can decide whether to bump
+/// the [`SceneRevision`] OCC token after the handler returns `Ok`.
 ///
-/// `scene/click` / `scene/rewind` / `scene/invoke` mutate via
-/// `External::invoke` semantics and the dispatcher bumps the
-/// revision around them; `scene/dry_run` is explicitly non-mutating
-/// per §2#3; `scene/intents` drains a queue without affecting the
-/// rendered scene; the introspection methods are read-only.
-/// `scene/set_theme_mode` (R599) writes a [`Signal`](pinion_core::reactive::Signal)
-/// that every `use_theme` subscriber re-runs on, so the OCC token
-/// must bump to invalidate any in-flight preview's base revision.
-///
-/// `scene/propose_change` / `scene/cancel_preview` /
-/// `scene/list_previews` touch only the ledger and so do not bump.
-/// `scene/apply_preview` mutates the scene but bumps internally
-/// (via [`crate::preview::apply_preview`]), so it is intentionally
-/// **excluded** here to avoid a double-bump.
-fn mutates_scene_on_success(method: &str) -> bool {
-    matches!(
-        method,
-        "scene/click"
-            | "scene/rewind"
-            | "scene/invoke"
-            // R599 §5.50 — set_theme_mode writes a Signal that every
-            // view-fn subscribing through `use_theme` re-runs on, so a
-            // re-paint is required and the OCC token must bump.
-            | "scene/set_theme_mode"
-            // R608 §5.50 — set_theme_palettes writes both palette
-            // Signals inside a single `reactive::batch`; downstream
-            // view-fns re-run once on the next reactive tick, and a
-            // re-paint is required. OCC token must bump so any
-            // in-flight preview's base revision detects the swap.
-            | "scene/set_theme_palettes"
-            // R609 §5.45 — set_scroll_offset writes both axis
-            // Signals (offset_x + offset_y) inside `scroll_to`'s
-            // `reactive::batch`. Subscribers re-run, the visible
-            // scroll position changes, a re-paint is required, and
-            // the OCC token must bump.
-            | "scene/set_scroll_offset"
-            // R610 §5.22 — set_text writes the text + caret +
-            // selection + preedit signals inside `set_text`'s
-            // `reactive::batch`. Every subscriber re-runs once, the
-            // visible field text changes wholesale, and the OCC
-            // token must bump.
-            | "scene/set_text"
-            // R611 §5.22 — set_selection writes `caret_pos` and
-            // `selection_anchor` inside one `reactive::batch`. The
-            // visible caret + selection-highlight change; the OCC
-            // token must bump.
-            | "scene/set_selection"
-            // R612 §5.22 — set_caret writes `caret_pos` (and drops
-            // `selection_anchor` if active) inside one
-            // `reactive::batch`. The visible caret reposition + any
-            // collapsed selection-highlight require a re-paint, and
-            // the OCC token must bump.
-            | "scene/set_caret",
-    )
+/// Pre-R620 the equivalent decision lived in a separate
+/// `mutates_scene_on_success(method: &str)` function that did a
+/// `matches!` against the method name. Adding a new mutating method
+/// required updating *two* sites — the dispatch match arm + this
+/// helper — and the compiler did not enforce the pairing. R620 moves
+/// the kind tag to the match arm itself: every arm now returns
+/// `(Result<Value, RpcError>, HandlerKind)`, so adding a new arm
+/// without choosing a kind fails to compile (tuple shape mismatch).
+/// The two-site fragility is eliminated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HandlerKind {
+    /// Pure read OR side-effect that does NOT change
+    /// [`SceneRevision`]-tracked state:
+    ///
+    /// - Pure introspection (`scene/query`, `scene/snapshot`,
+    ///   `scene/dry_run`, `scene/locate`, every `*_state` reader,
+    ///   every `font/*`).
+    /// - Deferred input enqueue (`scene/key` / `scene/wheel` /
+    ///   `scene/scroll`) — the mutation happens later, not at
+    ///   handler return.
+    /// - Self-bumping handlers (`scene/apply_preview`) — the
+    ///   handler itself calls `revision.bump()` so a dispatcher-side
+    ///   bump would double-count.
+    /// - Out-of-OCC-scope state (`focus/*`) — focus is tracked
+    ///   independently of [`SceneRevision`].
+    Read,
+    /// Synchronous mutation of [`SceneRevision`]-tracked scene
+    /// state. The dispatcher bumps the OCC token after the handler
+    /// returns `Ok`. Adding a new mutating method = add a match arm
+    /// returning `HandlerKind::Mutate` — the kind is visible at the
+    /// arm itself, so a code reader can see the OCC contract in
+    /// place instead of cross-referencing a separate helper.
+    Mutate,
 }
 
 fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
@@ -2262,7 +2353,7 @@ fn theme_tokens_error_to_rpc(err: ThemeTokensError) -> RpcError {
 
 /// R599 §5.50 — `scene/set_theme_mode` typed handler. 18th
 /// `scene/*` method, mutation pair to `scene/theme_tokens`. The
-/// dispatcher's [`mutates_scene_on_success`] gate bumps the
+/// dispatcher's [`HandlerKind::Mutate`] tag bumps the
 /// [`SceneRevision`] after this call returns `Ok`.
 fn handle_scene_set_theme_mode(
     runtime_owner: Option<&Owner>,
@@ -2313,7 +2404,7 @@ fn set_theme_mode_error_to_rpc(err: SetThemeModeError) -> RpcError {
 /// `scene/*` method. Replaces both palettes on the bound
 /// [`ThemeProvider`] in a single
 /// [`reactive::batch`](pinion_core::reactive::batch); the dispatcher's
-/// [`mutates_scene_on_success`] gate bumps the
+/// [`HandlerKind::Mutate`] match-arm tag bumps the
 /// [`SceneRevision`](pinion_core::SceneRevision) after this call
 /// returns `Ok`.
 ///
@@ -2512,7 +2603,7 @@ fn scroll_state_outcome_to_json(out: &ScrollStateOutcome) -> Result<Value, RpcEr
 
 /// R609 §5.45 — `scene/set_scroll_offset` typed handler. 24th
 /// `scene/*` method, mutation pair to `scene/scroll_state`. The
-/// dispatcher's [`mutates_scene_on_success`] gate bumps the
+/// dispatcher's [`HandlerKind::Mutate`] tag bumps the
 /// [`SceneRevision`] after this call returns `Ok`.
 ///
 /// `params.tag` is required, `params.x` / `params.y` are required
@@ -2677,7 +2768,7 @@ fn text_state_outcome_to_json(out: &TextStateOutcome) -> Result<Value, RpcError>
 
 /// R610 §5.22 — `scene/set_text` typed handler. 25th `scene/*`
 /// method, mutation pair to `scene/text_state`. The dispatcher's
-/// [`mutates_scene_on_success`] gate bumps the
+/// [`HandlerKind::Mutate`] match-arm tag bumps the
 /// [`SceneRevision`] after this call returns `Ok`.
 ///
 /// Wire shape — request: `{"tag": "<field_tag>", "text": "<utf8>"}`.
@@ -2740,7 +2831,7 @@ fn handle_scene_set_selection(
 /// R612 §5.22 — `scene/set_caret` typed handler. 27th `scene/*`
 /// method, completes the write-side matrix for the text-axis
 /// triplet (text / selection / caret). The dispatcher's
-/// [`mutates_scene_on_success`] gate bumps the [`SceneRevision`]
+/// [`HandlerKind::Mutate`] match-arm tag drives the [`SceneRevision`]
 /// after this call returns `Ok`.
 ///
 /// Wire shape — request:
@@ -8552,7 +8643,7 @@ mod tests {
     // `crate::theme::tests::r599_*`. The cases below exercise the
     // dispatcher's wire round-trip — params parsing, runtime_owner
     // injection, error → RpcError mapping, and the
-    // mutates_scene_on_success OCC bump.
+    // HandlerKind::Mutate match-arm OCC bump (R620).
     // ─────────────────────────────────────────────────────────────────
 
     fn dispatch_with_runtime_owner_and_revision(
@@ -8649,7 +8740,7 @@ mod tests {
         let mut scene = counted_scene(0);
         let owner = Owner::new();
         // No theme bound → handler errors. The dispatcher's
-        // `mutates_scene_on_success` gate must not bump.
+        // HandlerKind::Mutate arm only bumps on Ok; Err must not.
         let revision = SceneRevision::default();
         let before = revision.current();
         let req = r#"{"jsonrpc":"2.0","method":"scene/set_theme_mode","params":{"mode":"dark"},"id":7}"#;
@@ -8670,7 +8761,7 @@ mod tests {
     // `crate::theme::tests::r608_*`. The cases below exercise the
     // dispatcher's wire round-trip — required `light`/`dark` params,
     // typed parse-error data, runtime_owner injection, and the
-    // mutates_scene_on_success OCC bump.
+    // HandlerKind::Mutate match-arm OCC bump (R620).
     // ─────────────────────────────────────────────────────────────────
 
     /// Build a full role/color array of the canonical
@@ -8909,7 +9000,7 @@ mod tests {
         let mut scene = counted_scene(0);
         let owner = Owner::new();
         // No theme bound → handler errors. The dispatcher's
-        // `mutates_scene_on_success` gate must not bump.
+        // HandlerKind::Mutate arm only bumps on Ok; Err must not.
         let revision = SceneRevision::default();
         let before = revision.current();
         let req = serde_json::json!({
@@ -9057,7 +9148,7 @@ mod tests {
     // `crate::scroll_state::tests::r609_*`. The cases below exercise
     // the dispatcher's wire round-trip — required tag, integer field
     // parsing, error → RpcError mapping, and the
-    // mutates_scene_on_success OCC bump.
+    // HandlerKind::Mutate match-arm OCC bump (R620).
     // ─────────────────────────────────────────────────────────────────
 
     #[test]
@@ -9167,7 +9258,7 @@ mod tests {
         let mut scene = counted_scene(0);
         let owner = Owner::new();
         // No scroll state bound → handler errors. The dispatcher's
-        // `mutates_scene_on_success` gate must not bump.
+        // HandlerKind::Mutate arm only bumps on Ok; Err must not.
         let revision = SceneRevision::default();
         let before = revision.current();
         let req = r#"{"jsonrpc":"2.0","method":"scene/set_scroll_offset","params":{"tag":"ghost","x":0,"y":120},"id":9}"#;

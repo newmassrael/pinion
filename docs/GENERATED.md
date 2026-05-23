@@ -11154,6 +11154,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R620 — HandlerKind typed-tuple match-arm tag replaces mutates_scene_on_success fragility — adding a new dispatch method now requires the kind declaration at the arm (compiler-enforced) instead of cross-referencing a separate matches gate
+
+**Changes**:
+- pinion-rpc::dispatch::HandlerKind { Read, Mutate } enum lifted as the OCC bump contract tag
+- Every dispatch match arm rewrites to (handler_outcome, HandlerKind::X) tuple — ~50 arms total
+- Old mutates_scene_on_success(method: &str) -> bool function deleted (45 lines net removal)
+- OCC bump logic reads off `matches!(kind, HandlerKind::Mutate)` directly — single source of truth at the arm site
+- Test comments / handler docstrings updated from `mutates_scene_on_success` to `HandlerKind::Mutate match-arm tag` everywhere
+
+
+
+**Verification**:
+- cargo test --workspace: 3062 pass / 0 fail (R619 baseline preserved — OCC contract unchanged at wire level)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny)
+- Compiler-enforcement check: removing one HandlerKind tag from a match arm immediately produces tuple-shape-mismatch error (verified mentally; tuple destructuring requires the second element)
+- Existing R608+/R610+/R611+/R612+ bump-on-success + no-bump-on-failure tests still pin the contract
+
+
+
+**Impact**: §5.7
+
+
+**Carry forward**:
+- 6 remaining debts: handler params signature wrapper / test fixture lift / Animation control / Color CSS L4 / error prose / dispatch test split
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
