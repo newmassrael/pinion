@@ -2281,7 +2281,7 @@ fn handle_scene_set_theme_mode(
         ))
     })?;
     let tag = read_optional_tag(Some(params_value))?;
-    let typed_params = SetThemeModeParams { mode, tag };
+    let typed_params = SetThemeModeParams { tag, mode };
     match set_theme_mode(runtime_owner, &typed_params) {
         Ok(outcome) => set_theme_mode_outcome_to_json(&outcome),
         Err(err) => Err(set_theme_mode_error_to_rpc(err)),
@@ -2340,11 +2340,7 @@ fn handle_scene_set_theme_palettes(
     let light = parse_palette_value(light_value, "light").map_err(palette_parse_error_to_rpc)?;
     let dark = parse_palette_value(dark_value, "dark").map_err(palette_parse_error_to_rpc)?;
     let tag = read_optional_tag(Some(params_value))?;
-    let typed_params = SetThemePalettesParams {
-        light,
-        dark,
-        tag,
-    };
+    let typed_params = SetThemePalettesParams { tag, light, dark };
     match set_theme_palettes(runtime_owner, &typed_params) {
         Ok(outcome) => set_theme_palettes_outcome_to_json(&outcome),
         Err(err) => Err(set_theme_palettes_error_to_rpc(err)),

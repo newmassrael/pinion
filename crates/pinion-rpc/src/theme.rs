@@ -312,11 +312,18 @@ fn color_to_hex(color: Color) -> String {
 /// surface across every R608+ setter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetThemeModeParams<'a> {
-    /// Target [`ThemeMode`] resolved from the wire `mode` string.
-    pub mode: ThemeMode,
     /// Cache tag the [`use_theme`] lookup resolves against. [`None`]
     /// → [`DEFAULT_THEME_TAG`] (`"app"`).
+    ///
+    /// R619 §5.50 — `tag` field moved to first position to match the
+    /// Rust identity-first convention every R608+ widget-axis setter
+    /// uses (`SetScrollOffsetParams.tag` / `SetTextParams.tag` / …).
+    /// `std::fs::File::open(path)` / `std::process::Command::new(program)`
+    /// are the canonical analogues. Tag is the scope identifier; the
+    /// mutation arguments follow.
     pub tag: Option<&'a str>,
+    /// Target [`ThemeMode`] resolved from the wire `mode` string.
+    pub mode: ThemeMode,
 }
 
 /// Snapshot returned to the caller after [`set_theme_mode`] commits
@@ -435,13 +442,16 @@ pub fn parse_theme_mode(wire: &str) -> Option<ThemeMode> {
 /// (`{"role": "...", "color": "#rrggbb"}` array per palette).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetThemePalettesParams<'a> {
+    /// Cache tag the [`use_theme`](pinion_core::theme::use_theme)
+    /// lookup resolves against. [`None`] → [`DEFAULT_THEME_TAG`].
+    ///
+    /// R619 §5.50 — tag-first convention; see [`SetThemeModeParams`]
+    /// for the rationale.
+    pub tag: Option<&'a str>,
     /// Complete light palette — every [`ColorRole`] field bound.
     pub light: Theme,
     /// Complete dark palette — every [`ColorRole`] field bound.
     pub dark: Theme,
-    /// Cache tag the [`use_theme`](pinion_core::theme::use_theme)
-    /// lookup resolves against. [`None`] → [`DEFAULT_THEME_TAG`].
-    pub tag: Option<&'a str>,
 }
 
 /// Snapshot returned to the caller after [`set_theme_palettes`] commits

@@ -11126,6 +11126,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R619 — Setter typed-params field order converges to tag-first per Rust identity-first convention — matches std::fs::File::open(path) / Command::new(program) canon and unifies the R608+ setter surface
+
+**Changes**:
+- pinion-rpc::theme::SetThemeModeParams field order: tag (Option<&'a str>) first, mode after
+- pinion-rpc::theme::SetThemePalettesParams field order: tag first, light + dark after
+- pinion-rpc::dispatch.rs constructor sites updated to declaration-order matching
+- All R608+ setter typed-params now follow tag-first: theme_mode / theme_palettes / scroll_offset / text / selection / caret — zero exceptions
+- clippy::inconsistent_struct_constructor would have caught the declaration/constructor drift but only on the post-R619 declaration; pinned by the lint going forward
+
+
+
+**Verification**:
+- cargo test --workspace: 3062 pass / 0 fail (R618 baseline preserved — field-order refactor only)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warning / 0 error (clippy::pedantic deny + clippy::inconsistent_struct_constructor green)
+- All existing R598+/R599+/R608+ wire-integration tests still pass byte-for-byte — struct literal init is field-order-agnostic for the caller; only declaration / constructor inner order changed
+
+
+
+**Impact**: §5.7, §5.50
+
+
+**Carry forward**:
+- AI-first write matrix typed-params surface fully unified (borrowed lifetimes + tag-first order). Next exploration: animation-axis write surface (Animation::reset / settle) deferred per [[abstraction-needs-second-consumer]] until 2nd consumer (application or framework code) materializes
+- Documentation gap (README.md / docs.rs / user guide) remains — user instruction did not request documentation creation; honoring the global-rule constraint
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
