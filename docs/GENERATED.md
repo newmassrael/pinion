@@ -3484,6 +3484,7 @@ fn create_external() -> Box<dyn External> {
 - R51.124 — pinion-tui::ShellCoreTui wraps CoreShell<V> + refresh_state 제거 (auto-tail, 4-round #3)
 - R51.125 (dispatch_rpc trait) defer — cycle 0 / 1 impl / 2nd RPC consumer 없음 (TUI carry)
 - R51.140 — clippy lint family 사전-audit 회복 (R51.137-139 reactive 10건 누적) [[clippy-pre-audit-recovery]]
+- test_fixtures doc: rust,no_run + # hidden imports (Rust canonical); compile-check 보존 (R588).
 
 
 
@@ -17663,6 +17664,29 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 **Carry forward**:
 - LayoutCache paint-style split: 2nd consumer = multi-line text editor 등장 시 framework substrate fix
 - 자가-점검 #302 첫 정통화: 측정 결과 (c) 결정 (lock-step 유지 + carry 명시), measurement trail 정통
+
+
+
+### Round 588 — R588 #303: test_fixtures.rs 두 doc example rust,no_run + # hidden imports로 compile-check 유지.
+
+**Changes**:
+- assert_widget_view_carries_tag doc: rust,no_run + # hidden + ButtonFixture body
+- settle_owner_animations doc: rust,no_run + # hidden imports + minimal Owner body
+
+
+
+**Verification**:
+- cargo test --doc -p pinion-core --features test-fixtures: 5 tests 3 pass 0 fail 2 ignored
+- cargo test --workspace --features pinion-runtime/vello: 2804 pass / 0 fail / 13 ignored (+2 -2)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings 유지
+
+
+
+**Impact**: §5.41, §5.49, §5.50
+
+
+**Carry forward**:
+- doc test rust,no_run + # hidden imports = Rust std lib canonical 패턴
 
 
 

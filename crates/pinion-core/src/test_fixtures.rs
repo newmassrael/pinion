@@ -56,17 +56,14 @@ use crate::Frame;
 ///
 /// ## Usage
 ///
-/// ```rust,ignore
-/// use pinion_core::test_fixtures::assert_widget_view_carries_tag;
-/// use pinion_core::Frame;
-///
-/// #[test]
-/// fn r55_g20_view_contains_composite_paint_root_tag() {
-///     assert_widget_view_carries_tag::<MyWidget>(
-///         MyWidgetState::default(),
-///         &Frame::new(),
-///     );
-/// }
+/// ```rust,no_run
+/// # use pinion_core::test_fixtures::{assert_widget_view_carries_tag, ButtonFixture};
+/// # use pinion_core::widgets::button::ButtonState;
+/// # use pinion_core::Frame;
+/// assert_widget_view_carries_tag::<ButtonFixture>(
+///     ButtonState::Idle,
+///     &Frame::default(),
+/// );
 /// ```
 ///
 /// The `<V>` generic resolves both the view fn and the tag through
@@ -109,26 +106,19 @@ pub fn assert_widget_view_carries_tag<V: WidgetCore>(state: V::State, frame: &Fr
 ///
 /// ## Usage pattern (R57.X.theme-fade widget cascade)
 ///
-/// ```rust,ignore
-/// use pinion_core::reactive::Owner;
-/// use pinion_core::test_fixtures::settle_owner_animations;
-/// use pinion_core::theme::{use_theme, Theme, ThemeMode};
-///
+/// ```rust,no_run
+/// # use pinion_core::reactive::Owner;
+/// # use pinion_core::test_fixtures::settle_owner_animations;
 /// let owner = Owner::new();
 /// owner.run(|| {
-///     use_theme(TAG).set_mode(ThemeMode::Light);
-///     let scene = view(state, &Frame::default());
-///     assert_eq!(panel_fill(&scene), Theme::light().surface);
-///     // Flip mode + trigger the spring re-target by reading the
-///     // animated accessor once.
-///     use_theme(TAG).set_mode(ThemeMode::Dark);
-///     let _ = view(state, &Frame::default());
+///     // Register / re-target Animations against this Owner (e.g.
+///     // flip the active ThemeMode so theme_animated() retargets
+///     // its ThemeLinear spring toward the new palette).
 /// });
 /// settle_owner_animations(&owner);
 /// owner.run(|| {
-///     // Snap engaged — exact equality against the new palette.
-///     let scene = view(state, &Frame::default());
-///     assert_eq!(panel_fill(&scene), Theme::dark().surface);
+///     // Springs at rest — palette-cascade assertions can compare
+///     // against `Theme::dark().surface` etc. via exact equality.
 /// });
 /// ```
 ///
