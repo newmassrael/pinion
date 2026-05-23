@@ -11148,8 +11148,9 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 **Carry forward**:
-- AI-first write matrix typed-params surface fully unified (borrowed lifetimes + tag-first order). Next exploration: animation-axis write surface (Animation::reset / settle) deferred per [[abstraction-needs-second-consumer]] until 2nd consumer (application or framework code) materializes
-- Documentation gap (README.md / docs.rs / user guide) remains — user instruction did not request documentation creation; honoring the global-rule constraint
+- AI-first write matrix typed-params surface fully unified (borrowed + tag-first)
+- Animation-axis write surface deferred per [[abstraction-needs-second-consumer]]
+- Documentation surface gap (project rendered docs / docs.rs / user guide) remains
 
 
 

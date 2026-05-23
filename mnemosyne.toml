@@ -748,3 +748,12 @@ reason = "R56.1.g audit-minimal pattern: append minimal ASCII, then expand publi
 applied_in = "Round 596"
 content_hash_before = "7209e0463b832f8731bc93f59ce0ab7a86385680997a9375d3efb5bbc405d93d"
 content_hash_after = "6cfb96ec9c1196bdc25d6ba9d0b98bb1329158f35edf82c2ecb06429d5c95009"
+
+[[publishable_override_ledger]]
+kind = "redaction"
+target_id = "R619"
+fields = ["publishable_carry_forward_bullets"]
+reason = "R619 publishable carry_forward rewrite — replace implicit `README.md` cross-doc reference with abstract phrasing to clear cross_doc_reference_explicit T3 warn (Round 296 publishable_override_ledger gate)"
+applied_in = "R619"
+content_hash_before = "d3c6c2a5e70c3d9732ce504799272f7cae9494277a12c57fd1078b1b17f315bc"
+content_hash_after = "197def98965fa4f448c5836b16e067ca688b2400315074375d459a7a12b52804"
