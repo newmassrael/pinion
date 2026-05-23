@@ -17835,6 +17835,30 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 596 — hello-theme view 에 palette_cycle_hint tag 의 'Press R to cycle' affordance label 추가 — R594 단축키의 AT + RPC discoverability.
+
+**Changes**:
+- hello-theme: HINT_TAG + HINT_FONT_PX const 2
+- hello-theme: view-fn 이 accent banner 아래 tagged hint container append
+- hello-theme: +1 회귀 (scene.contains_tag(HINT_TAG) discoverability pin)
+
+
+
+**Verification**:
+- cargo test -p hello-theme: 6 pass 0 fail (R594 5 + 1 R596)
+- cargo test --workspace --features pinion-runtime/vello: 2819 pass / 0 fail / 13 ignored (+1)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- i18n carry: hint 문자열 English-only; ko/ja/zh 해당은 미래 locale layer
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:

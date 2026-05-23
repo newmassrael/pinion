@@ -28867,6 +28867,42 @@
         "RPC scene/introspect 가 ColorRole::all + name 을 사용해 token 카탈로그 노출 (2nd consumer)"
       ]
     },
+    "Round 596": {
+      "decision_summary": "hello-theme view emits Press R to cycle palette affordance hint tagged palette_cycle_hint for AT + RPC discoverability of the R594 shortcut.",
+      "changes_bullets": [
+        "hello-theme: HINT_TAG + HINT_FONT_PX constants for the new affordance label",
+        "hello-theme: view-fn appends tagged hint container below accent banner",
+        "hello-theme: +1 regression pinning scene.contains_tag(HINT_TAG) discoverability"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-theme: 6 pass 0 fail (R594 5 + 1 R596)",
+        "cargo test --workspace --features pinion-runtime/vello: 2819 pass 0 fail 13 ignored (+1)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings"
+      ],
+      "impact_refs": [
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "i18n carry: hint string literal English-only; ko/ja/zh translation behind a future locale layer"
+      ],
+      "publishable_decision_summary": "hello-theme view 에 palette_cycle_hint tag 의 'Press R to cycle' affordance label 추가 — R594 단축키의 AT + RPC discoverability.",
+      "publishable_changes_bullets": [
+        "hello-theme: HINT_TAG + HINT_FONT_PX const 2",
+        "hello-theme: view-fn 이 accent banner 아래 tagged hint container append",
+        "hello-theme: +1 회귀 (scene.contains_tag(HINT_TAG) discoverability pin)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-theme: 6 pass 0 fail (R594 5 + 1 R596)",
+        "cargo test --workspace --features pinion-runtime/vello: 2819 pass / 0 fail / 13 ignored (+1)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings"
+      ],
+      "publishable_impact_refs": [
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "i18n carry: hint 문자열 English-only; ko/ja/zh 해당은 미래 locale layer"
+      ]
+    },
     "Round 6": {
       "decision_summary": "Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green",
       "changes_bullets": [

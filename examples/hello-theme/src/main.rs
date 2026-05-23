@@ -62,6 +62,10 @@ const ROW_GAP: u32 = 14;
 const TITLE_FONT_PX: u32 = 18;
 const STATUS_FONT_PX: u32 = 12;
 const ACCENT_LABEL_FONT_PX: u32 = 13;
+// R596 §5.50 — Tag for the "Press R" affordance hint so the AT-side
+// + RPC snapshot can locate the label without scanning text bodies.
+const HINT_TAG: &str = "palette_cycle_hint";
+const HINT_FONT_PX: u32 = 11;
 
 const ACCENT_W: u32 = 160;
 const ACCENT_H: u32 = 32;
@@ -263,6 +267,23 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 
     let accent_banner = accent_banner(theme);
     let outline_divider = outline_divider(theme);
+    // R596 §5.50 — discoverability affordance for the R594 'r' / 'R'
+    // shortcut. Without the hint a user has no way to discover the
+    // palette-cycle action; the label sits below the accent banner so
+    // the visual flow reads top → bottom as "label, toggle, mode,
+    // divider, accent sample, secondary affordance". `HINT_TAG`
+    // exposes the label through scene/snapshot for the AT-side and
+    // for regression tests that pin discoverability.
+    let hint = Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            "Press R to cycle palette",
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(HINT_FONT_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_tag(HINT_TAG),
+    );
 
     Scene::Container(
         ContainerNode::new(vec![
@@ -271,6 +292,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
             status,
             outline_divider,
             accent_banner,
+            hint,
         ])
         .with_style(
             BoxStyle::filled(theme.resolve(ColorRole::Surface))
@@ -600,6 +622,20 @@ mod tests {
     /// Pin both light and dark palettes so a regression that swaps
     /// the role back is caught at test time rather than visible
     /// inspection.
+    /// (R596 §5.50) The "Press R to cycle palette" affordance hint
+    /// must land in the painted scene so users can discover the R594
+    /// keyboard shortcut. Pinned by tag lookup — a future refactor
+    /// that drops the hint label silently regresses discoverability.
+    #[test]
+    fn r596_view_emits_palette_cycle_hint_tagged_for_discoverability() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let scene = view(ToggleState::Idle, false, &Frame::new());
+            assert!(scene.contains_tag(HINT_TAG),
+                "scene must carry the palette_cycle_hint tag for AT + RPC discovery");
+        });
+    }
+
     /// (R594 §5.50) `cycle_palette_pair` is the demo-side consumer of
     /// the R593 atomic batch primitive — it must advance the
     /// `PALETTE_SEED` *and* publish a fresh `(light, dark)` pair through
