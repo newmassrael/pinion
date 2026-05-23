@@ -318,6 +318,76 @@ pub enum ColorRole {
 }
 
 impl ColorRole {
+    /// Every [`ColorRole`] variant in a fixed, schema-stable order.
+    /// First introduced in R595 §5.50 to support introspection
+    /// surfaces (RPC clients enumerating theme tokens, AT bridges
+    /// listing role labels, doc generators) without each call site
+    /// re-listing the enum and risking drift when a future Tier 2
+    /// addition lands behind `#[non_exhaustive]`.
+    ///
+    /// The order matches the variant declaration order — `Surface`
+    /// first, the surface-elevation tiers next, the error tier last
+    /// — so a downstream consumer can iterate the slice once and
+    /// trust the pinion-side schema as the canonical answer. A future
+    /// extension lands at the end of the slice for the same reason
+    /// the enum carries `#[non_exhaustive]`: callers that match on
+    /// `name()` keep working without source edits.
+    ///
+    /// Pinned by `r595_all_enumerates_every_variant`.
+    #[must_use]
+    pub const fn all() -> &'static [ColorRole] {
+        &[
+            ColorRole::Surface,
+            ColorRole::OnSurface,
+            ColorRole::OnSurfaceMuted,
+            ColorRole::Accent,
+            ColorRole::OnAccent,
+            ColorRole::Outline,
+            ColorRole::SurfaceContainerHighest,
+            ColorRole::SurfaceContainerLow,
+            ColorRole::SurfaceContainer,
+            ColorRole::SurfaceContainerHigh,
+            ColorRole::Error,
+            ColorRole::OnError,
+            ColorRole::ErrorContainer,
+            ColorRole::OnErrorContainer,
+        ]
+    }
+
+    /// Canonical `snake_case` identifier — mirrors the [`Theme`] field
+    /// name and the Material 3 token slug downstream consumers
+    /// (RPC introspection, AT a11y labels, doc generators) already
+    /// expect.
+    ///
+    /// The mapping is hand-written rather than derived (variant name
+    /// `CamelCase` → field `snake_case`) so renames stay one-way: a
+    /// future variant rename triggers the compiler's exhaustive
+    /// match arm here, surfacing the rename to anyone relying on the
+    /// stable wire identifier. A `Debug` / `strum` derivation would
+    /// silently track the variant name and leak the rename into the
+    /// wire — the opposite of what introspection consumers want.
+    ///
+    /// Pinned by `r595_name_round_trips_with_theme_field_naming`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            ColorRole::Surface => "surface",
+            ColorRole::OnSurface => "on_surface",
+            ColorRole::OnSurfaceMuted => "on_surface_muted",
+            ColorRole::Accent => "accent",
+            ColorRole::OnAccent => "on_accent",
+            ColorRole::Outline => "outline",
+            ColorRole::SurfaceContainerHighest => "surface_container_highest",
+            ColorRole::SurfaceContainerLow => "surface_container_low",
+            ColorRole::SurfaceContainer => "surface_container",
+            ColorRole::SurfaceContainerHigh => "surface_container_high",
+            ColorRole::Error => "error",
+            ColorRole::OnError => "on_error",
+            ColorRole::ErrorContainer => "error_container",
+            ColorRole::OnErrorContainer => "on_error_container",
+        }
+    }
+
     /// Deterministic fallback when a role is consulted on a palette
     /// that has not been bound yet. Returns the light-palette default
     /// — applications using a dark palette should bind every role
@@ -1403,6 +1473,88 @@ mod tests {
         // "no preference" convention. Important for downstream
         // tests that construct Theme without specifying a palette.
         assert_eq!(Theme::default(), Theme::light());
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R595 — ColorRole::all() + name() introspection surface
+    // ─────────────────────────────────────────────────────────────
+
+    /// (R595 §5.50) `ColorRole::all()` must enumerate every variant
+    /// declared on the enum. Without this pin, a future Tier 2
+    /// addition that forgets to extend the slice would silently
+    /// truncate every introspection consumer's role list.
+    ///
+    /// The exhaustive match below produces a compiler error rather
+    /// than a test failure when a new variant lands without slice
+    /// coverage — exactly the developer experience the helper exists
+    /// to provide.
+    #[test]
+    fn r595_all_enumerates_every_variant() {
+        // Touch every variant in a match — adding a Tier 2 variant
+        // requires extending both this arm and `ColorRole::all`, so
+        // the compiler enforces the pairing.
+        for role in ColorRole::all() {
+            let _: () = match role {
+                ColorRole::Surface
+                | ColorRole::OnSurface
+                | ColorRole::OnSurfaceMuted
+                | ColorRole::Accent
+                | ColorRole::OnAccent
+                | ColorRole::Outline
+                | ColorRole::SurfaceContainerHighest
+                | ColorRole::SurfaceContainerLow
+                | ColorRole::SurfaceContainer
+                | ColorRole::SurfaceContainerHigh
+                | ColorRole::Error
+                | ColorRole::OnError
+                | ColorRole::ErrorContainer
+                | ColorRole::OnErrorContainer => (),
+            };
+        }
+        // Variant count = current Tier 1 + R590 error tier (14).
+        assert_eq!(ColorRole::all().len(), 14);
+        // No duplicates — pure-set semantics.
+        let mut names: Vec<_> = ColorRole::all().iter().map(|r| r.name()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 14, "names must be unique");
+    }
+
+    /// (R595 §5.50) `ColorRole::name()` returns the canonical
+    /// `snake_case` identifier — every value matches the `snake_case`
+    /// form of the [`Theme`] field that backs the role under
+    /// [`Theme::resolve`]. Pinned so the wire identifier and the
+    /// in-process field name stay in sync; a rename of either side
+    /// without the other would break RPC introspection consumers
+    /// silently.
+    #[test]
+    fn r595_name_round_trips_with_theme_field_naming() {
+        // Spot-check each axis: the surface tier, the elevation
+        // family, the accent / on_accent pair, the outline hairline,
+        // and the R590 error tier.
+        assert_eq!(ColorRole::Surface.name(), "surface");
+        assert_eq!(ColorRole::OnSurface.name(), "on_surface");
+        assert_eq!(ColorRole::OnSurfaceMuted.name(), "on_surface_muted");
+        assert_eq!(ColorRole::Accent.name(), "accent");
+        assert_eq!(ColorRole::OnAccent.name(), "on_accent");
+        assert_eq!(ColorRole::Outline.name(), "outline");
+        assert_eq!(
+            ColorRole::SurfaceContainerHighest.name(),
+            "surface_container_highest",
+        );
+        assert_eq!(
+            ColorRole::SurfaceContainerLow.name(),
+            "surface_container_low",
+        );
+        assert_eq!(ColorRole::SurfaceContainer.name(), "surface_container");
+        assert_eq!(
+            ColorRole::SurfaceContainerHigh.name(),
+            "surface_container_high",
+        );
+        assert_eq!(ColorRole::Error.name(), "error");
+        assert_eq!(ColorRole::OnError.name(), "on_error");
+        assert_eq!(ColorRole::ErrorContainer.name(), "error_container");
+        assert_eq!(ColorRole::OnErrorContainer.name(), "on_error_container");
     }
 
     // ─────────────────────────────────────────────────────────────

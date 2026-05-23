@@ -17811,6 +17811,30 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### Round 595 — ColorRole 에 all() static-slice + name() snake_case wire id 추가 — RPC introspection / AT bridge / doc generator consumer 용 substrate.
+
+**Changes**:
+- theme.rs: ColorRole::all() static slice (declaration order 14 variants)
+- theme.rs: ColorRole::name() exhaustive match returning canonical snake_case wire id
+- theme.rs: +2 회귀 (slice enumeration + name round-trip with Theme fields)
+
+
+
+**Verification**:
+- cargo test -p pinion-core --lib theme: 48 pass 0 fail (R593 46 + 2 R595)
+- cargo test --workspace --features pinion-runtime/vello: 2818 pass / 0 fail / 13 ignored (+2)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings
+
+
+
+**Impact**: §5.50
+
+
+**Carry forward**:
+- RPC scene/introspect 가 ColorRole::all + name 을 사용해 token 카탈로그 노출 (2nd consumer)
+
+
+
 ### Round 6 — Round 6 — Cargo workspace skeleton realized: 4 crates (pinion-core/runtime/rpc/cli), Rust 1.85.0 stable, edition 2024; cargo check green
 
 **Changes**:
