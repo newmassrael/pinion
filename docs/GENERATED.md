@@ -12359,6 +12359,48 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R658 — R658 §5.16/§5.45/§5.40 — todomvc per-item toggle (`completed: bool` + `TodoToggleExternal` singleton via R55.D.5 2nd ExtraExternal + ☐/☑ glyph + muted text) + Scroll wrap (WIN_H magic cleanup via R55.A ScrollNode + R55.B ScrollState) atomic land; Phase-2.1 CRUD axis 2nd round (R655 scaffold → R656 stable-id+delete → R657 paint-lift → R658 toggle+scroll), no new framework substrate (multi-External + composite-tag + Scroll all pre-existing).
+
+**Changes**:
+- examples/todomvc/src/main.rs — TodoItem extended: `completed: bool` field (id + text + completed); R655/R656 fresh-entry Enter handler stamps `completed: false`. serde derive preserved (R57 escape hatch).
+- examples/todomvc/src/main.rs — NEW `TodoToggleExternal` singleton (~290 LOC inc docs): `Rc<Signal<Vec<TodoItem>>>` shared with TodoDeleteExternal via `Owner::cache` dedup; `toggle_by_id(target_id)` = `set_with(map(flip if id==target else clone))`; `parse_send_payload` private helper (R658 2nd consumer of composite-tag parse — Rule of Three NOT met yet → kept inline). External backends = [Gui, Tui, Rpc] / Skip fallback / UiThreadSync / Framework repaint. ExternalIntrospect schema = (count int / completed_count int / ids_completed json / send string / toggle int). `invoke("send", "<id>:PointerDown")` flips; PointerUp/Leave/Enter/Cancel = Bool(false) accepted-no-op. `invoke("toggle", Int(id))` direct typed route returns Bool(post_completed).
+- examples/todomvc/src/main.rs — `create_extra_externals` returns `[TodoDeleteExternal, TodoToggleExternal]` — 2nd consumer of multi-External `ExtraExternal` substrate beyond `hello-listbox` (R55.D.5 listbox + scrollbar = 1st). State scene composes as `Container([primary_textfield, todo_delete, todo_toggle])`; existing read sites use `Scene::find_external_with_tag(TF_TAG)` which is already shape-agnostic.
+- examples/todomvc/src/main.rs — `build_todos_list` per-row layout now `[toggle_button, entry_text, delete_button]` with `JustifyContent::SpaceBetween` (toggle pins left, delete pins right). Toggle = tagged `todo_toggle#<id>` Container + 24x24 WCAG 2.5.5 AAA hit target + `\u{2610}` (☐) or `\u{2611}` (☑) glyph + `aria_label="Toggle complete"`. Text style splits: active = `ColorRole::OnSurface`, completed = `ColorRole::OnSurfaceMuted` (Option B — no strikethrough, text-decoration substrate is R663+ 2nd-consumer candidate). Header text reflects progress: `Todos (N)` when 0 completed, `Todos (X of N completed)` when ≥1.
+- examples/todomvc/src/main.rs — list region wrapped in `Scene::Scroll(ScrollNode::from_state(use_scroll_state("todomvc.list_scroll"), Rect(0,0,360,220), todos_list_content))`. R658 carry inline cleanup: WIN_H=480 magic budget now sized to `title_section + gap + LIST_VIEWPORT_H=220 + padding`; 7+ rows scroll via wheel/Arrow within fixed window. 2nd consumer of `use_scroll_state` beyond `hello-listbox` per [[abstraction-needs-second-consumer]] — substrate stays unchanged; if 3rd consumer surfaces, lift to `view_scroll_list` helper.
+- examples/todomvc/src/main.rs — `WidgetA11y::access_node` per-row emission now `[ListItem, CheckBox, Button]` (was `[ListItem, Button]` in R656). CheckBox node carries `AccessState::checked = Some(item.completed)` per W3C WAI-ARIA 1.2 canonical aria-checked semantic. The R658 test pins this contract via `r658_access_node_emits_listitem_and_button_per_entry`'s upgrade (6 → 8 nodes for 2 items).
+- examples/todomvc/src/main.rs — new constants: TOGGLE_TAG / TOGGLE_TAG_PREFIX / TOGGLE_BUTTON_W=24 / TOGGLE_BUTTON_H=24 / TOGGLE_FONT_SIZE_PX=18 / TOGGLE_GLYPH_UNCHECKED=`\u{2610}` / TOGGLE_GLYPH_CHECKED=`\u{2611}` / LIST_SCROLL_KEY=`todomvc.list_scroll` / LIST_VIEWPORT_W=360 / LIST_VIEWPORT_H=220. Honors `[[non-ascii-literal-named-const-escape]]` (`\u{XXXX}` form in source, raw glyph only in doc strings).
+- examples/todomvc/src/main.rs tests (+15 new R658 tests, +1 R655/R656 helper update): `find_tagged_container` walks `Scene::Scroll(s) => s.content` so LIST_TAG lookup survives the new wrapper. R658 tests: `r658_fresh_todo_item_starts_active`, `r658_unchecked_toggle_glyph_appears_per_active_row`, `r658_checked_toggle_glyph_appears_per_completed_row`, `r658_view_carries_toggle_tag_per_item`, `r658_completed_header_reflects_progress`, `r658_toggle_external_send_pointerdown_flips_completed`, `r658_toggle_external_send_double_flips_back`, `r658_toggle_external_send_pointerup_is_no_op`, `r658_toggle_external_direct_invoke_returns_post_state`, `r658_toggle_external_unknown_id_is_silent`, `r658_toggle_external_query_completed_count`, `r658_toggle_external_malformed_send_rejected`, `r658_view_wraps_list_in_scroll_node`, `r658_scroll_state_persists_across_view_calls`, `r658_scroll_state_offset_round_trips`. Updated R655/R656 tests (4): `r656_build_todos_list_header_reflects_entry_count` 7→10 text nodes; `r656_create_extra_externals_registers_todo_delete` 1→2 extras with tag membership assertion; `r656_access_node_emits_listitem_and_button_per_entry` 6→8 nodes with CheckBox row check.
+- tools/demos/todomvc_r658.py (NEW, 439 LOC, 35 assertions PASS 3.53s): end-to-end AI-driving verify — initial Scroll wrap detection + viewport=220 lock + 3 fresh items active + click `todo_toggle#<id>` flips + header progress + click again unflips + toggle alpha+gamma + delete completed alpha + R656 stable-id under toggle+delete combo + grow to 7 items scroll engagement + final gamma still completed + stable id contract.
+
+
+
+**Verification**:
+- cargo test -p todomvc: 41 PASS / 0 fail (26 R655/R656 inherited + 15 R658 new). 0.06s.
+- cargo test --workspace --features pinion-core/test-fixtures: workspace-wide PASS (no regressions across pinion-core / pinion-runtime / pinion-rpc / pinion-shell / pinion-widget-paint / a11y / etc.).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings under deny(warnings) + clippy::pedantic (R658 fix-ups: 9 doc-backtick lints on `TasteJS`/`TodoMVC`/`macOS`/`todo_delete`/`todo_toggle`/`PointerDown`/`PointerUp`/`PointerLeave`/`PointerCancel`/`InputRouter`; 1 `map(.).unwrap_or(false)` → `.any(|item| item.id == id && item.completed)`; 1 `too_many_lines` allow on `build_todos_list` with reason).
+- cargo build --release -p todomvc: clean compile.
+- PINION_SCREENSHOT=/tmp/r658_todomvc.png ./target/release/todomvc: 480x480 RGBA8 19,438 bytes (R657 baseline was 19,436; +2 bytes from Scroll wrapper PNG compression artifact, visually identical at initial empty-list state).
+- Regression — hello-textfield bit-identical: 480x200 RGBA8 9,124 bytes (= R657 baseline exactly), hello-listbox 360x320 RGBA8 14,666 bytes (independent of R658).
+- tools/demos/todomvc_r658.py: 35 typed assertions PASS in 3.53s — covers Scroll wrap detection / per-row toggle glyph flip / header progress text / monoidal toggle (2x click un-completes) / completed flag survives sibling delete / 7-item scroll engagement / R656 stable-id under R658 toggle+delete combo.
+- tools/demos/todomvc_r655.py: PASS 2.16s (R655 demo regression-clean).
+- tools/demos/todomvc_r656.py: PASS 2.65s (R656 demo regression-clean — stable-id contract + composite-tag delete still works under R658 multi-External addition).
+- Mnemosyne validate_workspace: T1 orphan total=0 / round-trip mandatory=1/1 (baseline preserved; the 4 R51.186 ledgered orphans are pre-existing config skew, unchanged by R658).
+
+
+
+**Impact**: §5.16, §5.45, §5.40, §5.13, §5.22, §5.35
+
+
+**Carry forward**:
+- Carry — text-decoration strikethrough for completed entries: R658 Option B (muted color only) shipped. Strikethrough requires `TextStyle::text_decoration` framework primitive — defer until 2nd consumer requests (R663 settings panel disabled-label might trigger).
+- Carry — scene/invoke v0 still primary-only: `/external/todo_toggle` direct RPC route unreachable (same R656 carry for `/external/todo_delete`). Unit tests + paint-side composite-tag wire cover the contract. R690+ axis lifts path syntax to `/<segments>/external/<introspect>` index walk for direct typed AI driving.
+- Carry — Rule-of-Three composite-tag parse helper: `parse_send_payload` now duplicated across TodoDeleteExternal (R656) + TodoToggleExternal (R658). 2-of-3 — next consumer (R660 edit External or R663 settings panel) triggers lift to `pinion_core::composite_tag::parse_send_payload` substrate.
+- Carry — list scroll wrap as substrate: R658 is 2nd consumer of `use_scroll_state` beyond `hello-listbox`. Per [[abstraction-needs-second-consumer]] the substrate stays inline; if R663 settings panel reuses `list inside Scroll viewport` shape, lift to `view_scroll_list(theme, items, scroll_key, viewport)` helper.
+- Carry — clicking text label region (between toggle and delete) produces no External dispatch today (row's `todo_item#<id>` tag has no External). R660 edit hook (double-click → enter edit mode) is the natural consumer.
+- Carry inline-cleanup honest — WIN_H=480 magic + no scrollbar peer: R658 lands the Scroll wrap so the list never overflows, but the visible scrollbar peer (hello-listbox R55.D.4) is NOT yet wired into todomvc — users scroll via wheel only. The peer is reachable via the same ScrollState; binding-side composition is a R660+ polish round.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

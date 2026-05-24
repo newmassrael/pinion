@@ -98,12 +98,13 @@ use pinion_core::external::{
     IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
+use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
@@ -186,6 +187,75 @@ const ITEM_TAG_PREFIX: &str = "todo_item";
 /// [`DELETE_TAG`]).
 const DELETE_TAG_PREFIX: &str = "todo_delete";
 
+/// (R658 §5.16) Singleton paint + state tag for the per-item toggle
+/// (completed flag) handler. Mirrors [`DELETE_TAG`] — registered via
+/// [`WidgetCore::create_extra_externals`] as the 2nd sibling
+/// [`ExtraExternal`] under primary tag `"todo_toggle"`. The
+/// per-row paint tag is `"todo_toggle#<id>"`; the R51.42 §5.35
+/// composite-tag wire splits on `#` so the [`InputRouter`] resolves
+/// the primary against [`TodoToggleExternal`] and forwards the
+/// sub-index `<id>` as part of `invoke("send", "{id}:{Event}")`.
+/// 2nd consumer of the multi-External `create_extra_externals`
+/// substrate ([[multi-external-substrate-extra-externals-pattern]],
+/// R55.D.5 listbox + scrollbar was 1st, R658 todomvc toggle + delete
+/// is 2nd).
+const TOGGLE_TAG: &str = "todo_toggle";
+
+/// (R658 §5.16) Per-item toggle-button paint tag prefix. Full
+/// per-item tag is `"todo_toggle#<id>"`. Mirrors [`DELETE_TAG_PREFIX`].
+const TOGGLE_TAG_PREFIX: &str = "todo_toggle";
+
+/// (R658 §5.16) Width of the per-item toggle button. Matches the
+/// 24×24 WCAG 2.5.5 AAA target-size recommendation [`DELETE_BUTTON_W`]
+/// uses for the destructive affordance, so the two side buttons sit
+/// symmetrical at the row edges.
+const TOGGLE_BUTTON_W: u32 = 24;
+/// (R658 §5.16) Height of the per-item toggle button. Square hit
+/// target, symmetric with [`DELETE_BUTTON_H`].
+const TOGGLE_BUTTON_H: u32 = 24;
+/// (R658 §5.16) Font size for the `☐` / `☑` toggle glyphs. 18 px to
+/// match the destructive [`DELETE_FONT_SIZE_PX`] glyph weight so the
+/// two row affordances read with equal visual prominence.
+const TOGGLE_FONT_SIZE_PX: u32 = 18;
+
+/// (R658 §5.16) Unchecked toggle glyph (Unicode `BALLOT BOX`,
+/// U+2610). Pulled into a named const + `\u{...}` escape per
+/// `[[non-ascii-literal-named-const-escape]]` so the source file
+/// stays ASCII-only.
+const TOGGLE_GLYPH_UNCHECKED: &str = "\u{2610}";
+
+/// (R658 §5.16) Checked toggle glyph (Unicode
+/// `BALLOT BOX WITH CHECK`, U+2611). Single-codepoint canonical for
+/// "completed todo" used by the `TasteJS` `TodoMVC` HTML reference,
+/// by `macOS` Reminders, and by GitHub Markdown task lists — Unicode
+/// parley/swash shaping draws this without needing a custom SVG
+/// asset.
+const TOGGLE_GLYPH_CHECKED: &str = "\u{2611}";
+
+/// (R658 §5.16) [`Owner::cache`] key for the reactive [`ScrollState`]
+/// owning the todo list's vertical scroll offset + max-y bound.
+/// Mirror of `hello-listbox`'s `SCROLL_KEY = "main_list_scroll"`
+/// shape — the [`use_scroll_state`] hook resolves through this key
+/// inside the view fn, and the runtime's [`compute_layout`] pass
+/// writes the laid-out max-y back through the same `Rc<ScrollState>`
+/// on the next frame.
+const LIST_SCROLL_KEY: &str = "todomvc.list_scroll";
+
+/// (R658 §5.16) Vertical viewport height for the todo list scroll
+/// container. Sized so 5 fully-visible rows fit (each ~30 px tall at
+/// 14 px font + 6 px gap → 36 px row total × 5 = 180 px) plus the
+/// "Todos (N)" header (~24 px) plus a few pixels of breathing
+/// room — the 6th-onward row scrolls beneath the visible window edge
+/// via wheel / Arrow keys / future scrollbar drag (R55.D.4 substrate
+/// inherited via [`use_scroll_state`], reused per
+/// [[abstraction-needs-second-consumer]]).
+const LIST_VIEWPORT_H: u32 = 220;
+/// (R658 §5.16) Horizontal viewport width — same width as the text
+/// input field above so the list and the field visually align (the
+/// `tf_paint::view_field` substrate paints a 360-px-wide field, so
+/// 360 px gives a flush column).
+const LIST_VIEWPORT_W: u32 = 360;
+
 /// (R656 §5.16) Width of the per-item delete button in logical
 /// pixels. Sized to comfortably host the `MULTIPLICATION_SIGN` (×,
 /// U+00D7) glyph at [`DELETE_FONT_SIZE_PX`] with a few pixels of
@@ -221,11 +291,14 @@ const DELETE_GLYPH: &str = "\u{00D7}";
 
 const WIN_W: u32 = 480;
 // R655 §5.16 — tall enough to host the textfield section (title +
-// field + status ≈ 120 px) plus a ~280 px todo list region, mirroring
-// the macOS / iOS Reminders-app vertical rhythm. The list grows
-// downward; clipping into a scroll container is deferred to a later
-// round when scroll-on-overflow surfaces (per
-// [[abstraction-needs-second-consumer]]).
+// field + status ≈ 120 px) plus the [`LIST_VIEWPORT_H`] todo list
+// region, mirroring the macOS / iOS Reminders-app vertical rhythm.
+// R658 §5.16 — the list region is now a [`ScrollNode`] of fixed
+// viewport height [`LIST_VIEWPORT_H`]; rows past the visible window
+// scroll via wheel / Arrow / future scrollbar drag rather than
+// causing the outer window flex to overflow. The WIN_H constant
+// (R655 carry magic) is therefore now `title_section + gap +
+// LIST_VIEWPORT_H + padding` rather than an unbounded growth budget.
 const WIN_H: u32 = 480;
 
 /// (R57.X.textfield §5.50) [`ThemeProvider`] cache key. Matches the
@@ -268,6 +341,17 @@ pub struct TodoItem {
     /// list (the trim guard in `apply_key` also drops blank-only
     /// submissions per the `TasteJS` `TodoMVC` spec).
     pub text: String,
+    /// (R658 §5.16) Completion flag. Defaults to `false` on submit;
+    /// flipped by [`TodoToggleExternal`] in response to a click on
+    /// the per-row `todo_toggle#<id>` button (paint-side composite-
+    /// tag wire) OR the direct `invoke("toggle", Int(id))` RPC
+    /// route. When `true`, the per-row paint substitutes the
+    /// `☐` (U+2610) glyph with `☑` (U+2611) and the entry text
+    /// renders through [`ColorRole::OnSurfaceMuted`] to signal
+    /// "done" without obstructing readability (no strikethrough
+    /// today — text-decoration is a R663+ framework primitive
+    /// candidate per [[abstraction-needs-second-consumer]]).
+    pub completed: bool,
 }
 
 /// (R655/R656 §5.16) `Owner::cache`-keyed hook returning the shared
@@ -541,16 +625,37 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // independently from the textfield. Reading `todos.get()`
     // subscribes the view fn to the `Signal<Vec<TodoItem>>`, so a
     // `set_with` from the Enter handler OR from
-    // [`TodoDeleteExternal::delete_by_id`] re-runs paint with the
-    // new entries on the next frame. R656 swapped the inner element
-    // type from `String` to [`TodoItem`] so each row carries a
-    // stable u64 id under deletes.
+    // [`TodoDeleteExternal::delete_by_id`] (R656) OR from
+    // [`TodoToggleExternal::toggle_by_id`] (R658) re-runs paint with
+    // the new entries on the next frame. R656 swapped the inner
+    // element type from `String` to [`TodoItem`] so each row carries
+    // a stable u64 id under deletes; R658 added `completed: bool`.
+    //
+    // R658 §5.16 — the list region is wrapped in a [`ScrollNode`]
+    // anchored on the shared `Rc<ScrollState>` (key
+    // [`LIST_SCROLL_KEY`]) so 6+ entries scroll smoothly within the
+    // fixed [`LIST_VIEWPORT_H`] window instead of pushing the outer
+    // window flex past [`WIN_H`]. The substrate (R55.A / R55.B /
+    // R55.G.5 layout pass) writes the `max_y` bound automatically
+    // from the laid-out content — no manual `set_max` plumbing in
+    // the binding. 2nd consumer of the [`use_scroll_state`] hook
+    // beyond `hello-listbox` (R51.190 / R55.G), so per
+    // [[abstraction-needs-second-consumer]] the substrate stays as
+    // is; if a 3rd consumer surfaces a common "list-with-scroll"
+    // shape, the wrapper lifts to a `view_scroll_list` helper.
     let todos = use_todos();
     let entries: Vec<TodoItem> = todos.get();
-    let todos_list = build_todos_list(&theme, &entries);
+    let todos_list_content = build_todos_list(&theme, &entries);
+
+    let scroll_state = use_scroll_state(LIST_SCROLL_KEY);
+    let todos_scroll = Scene::Scroll(ScrollNode::from_state(
+        scroll_state,
+        Rect::new(0, 0, LIST_VIEWPORT_W, LIST_VIEWPORT_H),
+        todos_list_content,
+    ));
 
     Scene::Container(
-        ContainerNode::new(vec![title, field, status, todos_list])
+        ContainerNode::new(vec![title, field, status, todos_scroll])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
@@ -821,6 +926,262 @@ impl ExternalIntrospect for TodoDeleteExternal {
     }
 }
 
+/// (R658 §5.16) Singleton per-item toggle (completed-flag) handler.
+/// Registered via [`WidgetCore::create_extra_externals`] under
+/// primary tag [`TOGGLE_TAG`] (`"todo_toggle"`) as the **2nd**
+/// sibling [`ExtraExternal`] alongside [`TodoDeleteExternal`]. The
+/// state-scene root composes as
+/// `Scene::Container([primary_textfield, todo_delete, todo_toggle])`
+/// per R55.D.5 §5.45 — multi-External lookup walks
+/// [`Scene::find_external_with_tag`] so primary / extras read-side
+/// stays shape-agnostic.
+///
+/// 2nd consumer of `create_extra_externals` at the framework level
+/// — `hello-listbox` (R55.D.5) registered the listbox + scrollbar
+/// pair as the 1st consumer; the R658 todomvc binding is the 2nd
+/// (`todo_delete` + `todo_toggle` pair). The
+/// [[multi-external-substrate-extra-externals-pattern]] memory
+/// stays valid without any substrate change because the R55.D.5
+/// substrate already supports an arbitrary `Vec<ExtraExternal>`.
+///
+/// Wire form — identical to [`TodoDeleteExternal`]:
+/// - Paint scene emits `Scene::Container { tag: "todo_toggle#<id>" }`
+///   per row (paint-side composite tag).
+/// - [`InputRouter`]'s `dispatch_send` splits the tag on `#` and
+///   forwards the sub-index `<id>` as part of `invoke("send",
+///   "<id>:PointerDown")`.
+/// - The direct RPC route `scene/invoke {path: "/external/todo_toggle",
+///   method: "toggle", args: <id>}` reaches `invoke("toggle",
+///   Int(<id>))` and produces the same `Signal::set_with` mutation.
+///
+/// Mutation contract: `PointerDown` / direct `toggle` invocation
+/// **flips** `completed` (not "set to true") so a 2nd click on a
+/// completed row returns it to active. `PointerUp` / `PointerEnter`
+/// / `PointerLeave` / `PointerCancel` are accepted-as-no-op
+/// (Bool(false)) so the `InputRouter`'s standard dispatch cycle
+/// does not see `Rejected` for routine paint events — same
+/// convention as the destructive [`TodoDeleteExternal::invoke`]
+/// path.
+#[derive(Debug)]
+pub struct TodoToggleExternal {
+    /// Shared `Rc<Signal<Vec<TodoItem>>>` — the same instance
+    /// [`TodoDeleteExternal::todos`] holds. Both Externals register
+    /// inside the framework's `root_owner.run(...)` wrap from
+    /// [`create_extra_externals`] so [`use_todos`] dedups against
+    /// the same `Owner::cache` slot.
+    todos: Rc<Signal<Vec<TodoItem>>>,
+}
+
+impl TodoToggleExternal {
+    /// Construct a fresh handler bound to the supplied todo list
+    /// signal. Symmetric with [`TodoDeleteExternal::new`].
+    #[must_use]
+    pub fn new(todos: Rc<Signal<Vec<TodoItem>>>) -> Self {
+        Self { todos }
+    }
+
+    /// (R658 §5.16) Flip the `completed` flag of the entry whose
+    /// `id` matches `target_id`. No-op when no such entry exists
+    /// (idempotent: a double-click that triggers two `PointerDown`s
+    /// before the next paint cycle redraws the row reverts to the
+    /// pre-click state, exactly the W3C "click toggles" UX
+    /// convention — for a R658 demo this is the textbook minimum;
+    /// if a future round wires up "debounce within frame" the call
+    /// site stays unchanged). Uses [`Signal::set_with`] so the
+    /// reactive equality-skip suppresses the view-fn re-run when
+    /// no entry matched (rare edge case where AI client sends a
+    /// stale id — silent absorbtion is the safe default).
+    fn toggle_by_id(&self, target_id: u64) {
+        self.todos.set_with(|prev| {
+            prev.iter()
+                .map(|item| {
+                    if item.id == target_id {
+                        TodoItem {
+                            completed: !item.completed,
+                            ..item.clone()
+                        }
+                    } else {
+                        item.clone()
+                    }
+                })
+                .collect()
+        });
+    }
+
+    /// Mirror of [`TodoDeleteExternal::parse_send_payload`] — kept as
+    /// a private helper rather than a shared free fn because R658 is
+    /// the **2nd** consumer of the composite-tag parse idiom and
+    /// `[[abstraction-needs-second-consumer]]` reads the substantive
+    /// 5-LOC body as **not yet** a substrate lift candidate (a 3rd
+    /// consumer — R660+ edit / a 4th composed app — would trigger
+    /// the lift into `pinion_core::composite_tag::parse_send_payload`).
+    fn parse_send_payload(payload: &str) -> Option<(u64, &str)> {
+        let (id_str, event_name) = payload.split_once(':')?;
+        if event_name.is_empty() {
+            return None;
+        }
+        let id: u64 = id_str.parse().ok()?;
+        Some((id, event_name))
+    }
+}
+
+impl External for TodoToggleExternal {
+    /// All three backends supported — paint is owned by the view fn
+    /// (the per-row checkbox glyph), so backend declaration is
+    /// purely about dispatch surface. Mirror of
+    /// [`TodoDeleteExternal::backends`].
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
+    }
+
+    /// Framework drives repaint — toggling `completed` mutates the
+    /// shared `Rc<Signal<Vec<TodoItem>>>`, which auto-subscribes the
+    /// view-fn for the next paint cycle.
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    /// UI-thread sync — mutations land on the same thread as the
+    /// view-fn / IME caret / ARIA enrich subscribers.
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for TodoToggleExternal {
+    /// Read-only counters + the toggle action surface:
+    /// - `count`: total entry count (mirror of
+    ///   [`TodoDeleteExternal`]'s `count`).
+    /// - `completed_count`: number of entries whose `completed` flag
+    ///   is `true` — convenience for AI clients verifying derived
+    ///   state without walking the JSON `ids` array.
+    /// - `ids_completed`: JSON array of ids whose `completed` is
+    ///   true.
+    /// - `send`: R51.42 wire form `"<id>:<EventName>"`.
+    /// - `toggle`: direct typed `Int(id)` → `Bool(new_completed)`
+    ///   route, parallel to `delete`'s direct `Int(id)` shape.
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("count", "int"),
+            ("completed_count", "int"),
+            ("ids_completed", "json"),
+            ("send", "string"),
+            ("toggle", "int"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        let snapshot = self.todos.get();
+        match path {
+            "count" => Some(IntrospectValue::Int(
+                i64::try_from(snapshot.len()).expect("todo count must fit in i64"),
+            )),
+            "completed_count" => {
+                let n = snapshot.iter().filter(|i| i.completed).count();
+                Some(IntrospectValue::Int(
+                    i64::try_from(n).expect("completed count must fit in i64"),
+                ))
+            }
+            "ids_completed" => {
+                let arr: Vec<serde_json::Value> = snapshot
+                    .iter()
+                    .filter(|i| i.completed)
+                    .map(|item| serde_json::Value::from(item.id))
+                    .collect();
+                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+            }
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        match path {
+            "count" | "completed_count" | "ids_completed" => {
+                Err(InterveneError::ReadOnly)
+            }
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // R51.42 §5.35 — InputRouter's `dispatch_send` lands here
+            // with payload `"<id>:PointerDown"`. PointerDown commits
+            // the toggle (single-shot flip); PointerUp / Enter /
+            // Leave / Cancel return `Bool(false)` so the dispatch
+            // loop sees "handled, no state change" and never
+            // `Rejected`s a routine paint event. Same convention as
+            // [`TodoDeleteExternal::invoke`].
+            "send" => match args {
+                IntrospectValue::Text(ref payload) => {
+                    let (id, event_name) = Self::parse_send_payload(payload)
+                        .ok_or(InvokeError::Rejected)?;
+                    if event_name == "PointerDown" {
+                        let was_present = self
+                            .todos
+                            .get()
+                            .iter()
+                            .any(|item| item.id == id);
+                        self.toggle_by_id(id);
+                        // R658 — Bool(was_present) reports whether
+                        // the toggle observed an existing id (so the
+                        // AI client can distinguish "I flipped an
+                        // existing item" from "no-op against an
+                        // unknown id" without an extra `query`
+                        // round-trip).
+                        Ok(IntrospectValue::Bool(was_present))
+                    } else {
+                        Ok(IntrospectValue::Bool(false))
+                    }
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R658 §5.16 — direct toggle by id. Returns the
+            // **post-toggle** `completed` value as `Bool(...)` so the
+            // AI client can confirm the new state in one
+            // round-trip (rather than re-querying `ids_completed`).
+            // Unknown ids return `Bool(false)` — semantically
+            // "no flip happened" without distinguishing "unknown id"
+            // vs "id existed and is now false". For the rare case
+            // the caller needs the distinction, `query("count")` /
+            // `query("ids_completed")` already expose enough state.
+            "toggle" => match args {
+                IntrospectValue::Int(i) => {
+                    let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    self.toggle_by_id(id);
+                    let post_completed = self
+                        .todos
+                        .get()
+                        .iter()
+                        .any(|item| item.id == id && item.completed);
+                    Ok(IntrospectValue::Bool(post_completed))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
 /// (R655/R656 §5.16) Build the todo list section `Scene::Container`:
 ///
 /// - When `entries` is empty, returns an empty container (still
@@ -836,21 +1197,64 @@ impl ExternalIntrospect for TodoDeleteExternal {
 /// `Vec<T> -> Vec<Scene>` rendering is per-binding right now; if a
 /// 2nd composed application reuses the shape, a `list_view` helper
 /// lifts to substrate per [[abstraction-needs-second-consumer]].
+#[allow(
+    clippy::too_many_lines,
+    reason = "single-purpose list builder — splitting per-row construction into a helper hurts locality without reducing complexity (R658 §5.16 toggle + entry + delete trio composes one row)"
+)]
 fn build_todos_list(theme: &Theme, entries: &[TodoItem]) -> Scene {
     let header_style = TextStyle::new()
         .with_size_px(LIST_TITLE_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
-    let item_style = TextStyle::new()
+    // (R658 §5.16) Active vs completed text colour split. The active
+    // ramp lifts the text to `OnSurface` (full contrast — "to do");
+    // the completed ramp drops to `OnSurfaceMuted` so finished
+    // entries visually recede without a strikethrough decoration
+    // (text-decoration substrate is a R663+ candidate per
+    // [[abstraction-needs-second-consumer]] — no 2nd consumer wants
+    // strikethrough yet, so a muted-fade affordance carries the
+    // "done" semantic alone). Both styles are pre-built outside the
+    // loop so per-row construction stays a single `.clone()` call.
+    let item_style_active = TextStyle::new()
         .with_size_px(LIST_ITEM_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurface));
+    let item_style_completed = TextStyle::new()
+        .with_size_px(LIST_ITEM_FONT_SIZE_PX)
+        .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
     let delete_style = TextStyle::new()
         .with_size_px(DELETE_FONT_SIZE_PX)
         .with_fg(delete_glyph_color(theme));
+    // (R658 §5.16) Toggle glyph colour ramp — matches the entry
+    // text on the same row so the row reads as a single visual
+    // unit. The W3C ARIA "checkbox" widget convention leaves colour
+    // modulation to CSS; pinion's design-token equivalent is the
+    // `ColorRole` palette, so `OnSurface` vs `OnSurfaceMuted`
+    // parallels the M3 checked vs unchecked tint without inventing
+    // a new role just for this binding.
+    let toggle_style_active = TextStyle::new()
+        .with_size_px(TOGGLE_FONT_SIZE_PX)
+        .with_fg(theme.resolve(ColorRole::OnSurface));
+    let toggle_style_completed = TextStyle::new()
+        .with_size_px(TOGGLE_FONT_SIZE_PX)
+        .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
 
+    // (R658 §5.16) Header text reflects the completed count when at
+    // least one entry is completed (mirrors the TasteJS TodoMVC
+    // "<N> items left" footer; we condense to a single line). The
+    // R655/R656 empty-list placeholder + plain-count header
+    // (`Todos (N)`) stay unchanged when nothing is completed.
     let header_text = if entries.is_empty() {
         String::from("No todos yet — type and press Enter")
     } else {
-        format!("Todos ({})", entries.len())
+        let completed = entries.iter().filter(|i| i.completed).count();
+        if completed == 0 {
+            format!("Todos ({})", entries.len())
+        } else {
+            format!(
+                "Todos ({} of {} completed)",
+                completed,
+                entries.len(),
+            )
+        }
     };
     let header = Scene::Text(TextNode::styled(
         header_text,
@@ -876,11 +1280,51 @@ fn build_todos_list(theme: &Theme, entries: &[TodoItem]) -> Scene {
     for item in entries {
         let row_tag = format!("{ITEM_TAG_PREFIX}#{}", item.id);
         let delete_tag = format!("{DELETE_TAG_PREFIX}#{}", item.id);
+        let toggle_tag = format!("{TOGGLE_TAG_PREFIX}#{}", item.id);
 
+        // (R658 §5.16) Toggle button — left-side `☐`/`☑` glyph
+        // mirroring the right-side `×` delete button's hit-target +
+        // composite-tag wire shape. The chosen glyph reflects the
+        // current `completed` state: U+2610 (BALLOT BOX) for active,
+        // U+2611 (BALLOT BOX WITH CHECK) for completed.
+        let (toggle_glyph_str, toggle_style_for_row) = if item.completed {
+            (TOGGLE_GLYPH_CHECKED, toggle_style_completed.clone())
+        } else {
+            (TOGGLE_GLYPH_UNCHECKED, toggle_style_active.clone())
+        };
+        let toggle_glyph = Scene::Text(TextNode::styled(
+            toggle_glyph_str,
+            Rect::default(),
+            toggle_style_for_row,
+        ));
+        let toggle_button = Scene::Container(
+            ContainerNode::new(vec![toggle_glyph])
+                .with_tag(toggle_tag)
+                // (R658 §5.16) Static "Toggle complete" aria-label
+                // so screen readers announce a stable affordance
+                // name. The dynamic checked / unchecked state lives
+                // on the per-item AriaRole::CheckBox AccessNode
+                // emitted by [`access_node`] (R658 §5.40), which is
+                // the W3C-canonical place for state in `aria-checked`.
+                .with_aria_label("Toggle complete")
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_justify(JustifyContent::Center)
+                        .with_align_items(AlignItems::Center)
+                        .with_size(Size::px(TOGGLE_BUTTON_W, TOGGLE_BUTTON_H)),
+                ),
+        );
+
+        let item_style_for_row = if item.completed {
+            item_style_completed.clone()
+        } else {
+            item_style_active.clone()
+        };
         let entry_text = Scene::Text(TextNode::styled(
             item.text.clone(),
             Rect::default(),
-            item_style.clone(),
+            item_style_for_row,
         ));
 
         // R656 §5.16 — the delete button is a tagged Container
@@ -916,8 +1360,16 @@ fn build_todos_list(theme: &Theme, entries: &[TodoItem]) -> Scene {
                 ),
         );
 
+        // R658 §5.16 — row children become
+        // `[toggle_button, entry_text, delete_button]` with
+        // `JustifyContent::SpaceBetween`: toggle pins to the left
+        // edge, delete pins to the right, the entry text floats
+        // between them. The row's `todo_item#<id>` outer tag stays
+        // the catch-all for clicks that land on the text (which
+        // produce no External dispatch today — R660+ edit candidate
+        // per [[abstraction-needs-second-consumer]]).
         let row = Scene::Container(
-            ContainerNode::new(vec![entry_text, delete_button])
+            ContainerNode::new(vec![toggle_button, entry_text, delete_button])
                 .with_tag(row_tag)
                 .with_layout(
                     LayoutStyle::new()
@@ -1001,10 +1453,26 @@ impl WidgetCore for TodoMvcView {
     /// [`Self::read_state`] needed.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let todos = use_todos();
-        vec![ExtraExternal::new(
-            DELETE_TAG,
-            Box::new(TodoDeleteExternal::new(todos)),
-        )]
+        // R658 §5.16 — two sibling Externals share the same
+        // `Rc<Signal<Vec<TodoItem>>>` (delete + toggle). The
+        // R55.D.5 substrate composes the state-scene root as
+        // `Scene::Container([primary_textfield, todo_delete,
+        // todo_toggle])`; multi-External lookup walks
+        // `Scene::find_external_with_tag` so the existing read /
+        // dispatch sites stay shape-agnostic. 2nd consumer of
+        // multi-External `create_extra_externals` at the framework
+        // level (`hello-listbox` listbox + scrollbar = 1st), per
+        // [[multi-external-substrate-extra-externals-pattern]].
+        vec![
+            ExtraExternal::new(
+                DELETE_TAG,
+                Box::new(TodoDeleteExternal::new(todos.clone())),
+            ),
+            ExtraExternal::new(
+                TOGGLE_TAG,
+                Box::new(TodoToggleExternal::new(todos)),
+            ),
+        ]
     }
 
     /// (R55.D.5 §5.45) Multi-External binding (R656 adds the
@@ -1108,9 +1576,15 @@ impl WidgetCore for TodoMvcView {
                 let todos = use_todos();
                 todos.set_with(|prev| {
                     let mut next = prev.clone();
+                    // R658 §5.16 — every freshly submitted entry
+                    // starts active (`completed: false`). The user
+                    // toggles to completed via the per-row `☐`/`☑`
+                    // button OR an AI client via the direct
+                    // `invoke("toggle", Int(id))` RPC path.
                     next.push(TodoItem {
                         id,
                         text: entry_text.clone(),
+                        completed: false,
                     });
                     next
                 });
@@ -1316,15 +1790,37 @@ impl WidgetA11y for TodoMvcView {
         ];
 
         // R656 §5.40 — list root + items + delete buttons.
+        // R658 §5.40 — per-row also emits an AriaRole::CheckBox
+        // node for the toggle button with `aria-checked` reflecting
+        // the entry's `completed` field. The W3C WAI-ARIA 1.2
+        // canonical mapping for a "checkbox" widget puts the
+        // checked/unchecked state on `aria-checked`, not on any
+        // visible glyph — screen readers read this announcement
+        // independent of the row's text.
         let entries = use_todos().get();
         let mut list_node = AccessNode::new(LIST_TAG, AriaRole::List);
         for item in &entries {
             let row_tag = format!("{ITEM_TAG_PREFIX}#{}", item.id);
             let delete_tag = format!("{DELETE_TAG_PREFIX}#{}", item.id);
+            let toggle_tag = format!("{TOGGLE_TAG_PREFIX}#{}", item.id);
             list_node = list_node.with_child(row_tag.clone());
             nodes.push(
                 AccessNode::new(row_tag, AriaRole::ListItem)
                     .with_value(AccessValue::Text(item.text.clone())),
+            );
+            // R658 §5.40 — checkbox node carries `aria-checked` via
+            // `AccessState::checked = Some(<bool>)`. The
+            // `enrich_names_from_scene` pass picks up the static
+            // "Toggle complete" aria-label from the paint scene; the
+            // dynamic state lives here (W3C-canonical split).
+            nodes.push(
+                AccessNode::new(toggle_tag, AriaRole::CheckBox).with_state(AccessState {
+                    focused: false,
+                    disabled: false,
+                    hovered: false,
+                    pressed: false,
+                    checked: Some(item.completed),
+                }),
             );
             // R656 §5.40 — delete button is a Button child of the
             // ListItem (semantically) but pinion's flat AccessNode
@@ -1445,8 +1941,10 @@ mod tests {
     //! app depends on.
     use super::{
         allocate_todo_id, build_todos_list, use_next_todo_id, use_todos, view,
-        TodoDeleteExternal, TodoItem, TodoMvcView, DELETE_GLYPH, DELETE_TAG,
-        DELETE_TAG_PREFIX, ITEM_TAG_PREFIX, LIST_TAG, TF_TAG,
+        TodoDeleteExternal, TodoItem, TodoMvcView, TodoToggleExternal, DELETE_GLYPH,
+        DELETE_TAG, DELETE_TAG_PREFIX, ITEM_TAG_PREFIX, LIST_SCROLL_KEY, LIST_TAG,
+        TF_TAG, TOGGLE_GLYPH_CHECKED, TOGGLE_GLYPH_UNCHECKED, TOGGLE_TAG,
+        TOGGLE_TAG_PREFIX,
     };
     use pinion_a11y::{AriaRole, WidgetA11y};
     use pinion_core::external::{External, IntrospectValue};
@@ -1574,10 +2072,12 @@ mod tests {
                 next.push(TodoItem {
                     id: 1,
                     text: "milk".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 2,
                     text: "eggs".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -1608,6 +2108,7 @@ mod tests {
                     next.push(TodoItem {
                         id: *id,
                         text: (*name).to_owned(),
+                        completed: false,
                     });
                 }
                 next
@@ -1647,6 +2148,14 @@ mod tests {
         if acc.is_some() {
             return;
         }
+        // R658 §5.16 — recurse through `Scene::Scroll` content (the
+        // todo list is now wrapped in a ScrollNode so the tagged
+        // container lives inside `scroll.content`, not at the
+        // top-level Container layer).
+        if let Scene::Scroll(sc) = s {
+            find_tagged_container(&sc.content, tag, acc);
+            return;
+        }
         if let Scene::Container(c) = s
             && c.tag.as_deref() == Some(tag)
         {
@@ -1669,10 +2178,12 @@ mod tests {
                 next.push(TodoItem {
                     id: 1,
                     text: "first".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 2,
                     text: "second".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -1737,6 +2248,7 @@ mod tests {
                 next.push(TodoItem {
                     id: 1,
                     text: "a".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -1745,6 +2257,7 @@ mod tests {
                 next.push(TodoItem {
                     id: 2,
                     text: "b".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -1754,11 +2267,13 @@ mod tests {
                 vec![
                     TodoItem {
                         id: 1,
-                        text: "a".to_owned()
+                        text: "a".to_owned(),
+                        completed: false,
                     },
                     TodoItem {
                         id: 2,
-                        text: "b".to_owned()
+                        text: "b".to_owned(),
+                        completed: false,
                     },
                 ],
                 "set_with closure semantics — sequential appends preserve order",
@@ -1794,27 +2309,30 @@ mod tests {
                 TodoItem {
                     id: 10,
                     text: "x".to_owned(),
+                    completed: false,
                 },
                 TodoItem {
                     id: 20,
                     text: "y".to_owned(),
+                    completed: false,
                 },
                 TodoItem {
                     id: 30,
                     text: "z".to_owned(),
+                    completed: false,
                 },
             ],
         );
         let texts = collect_text_nodes(&scene);
         assert_eq!(texts.first().map(String::as_str), Some("Todos (3)"));
-        // R656 — text walk = header + per-row(entry_text + DELETE_GLYPH)
-        // = 1 + 3 * 2 = 7. The R655 contract (1 + 3 = 4) was strictly
-        // text-node count; R656's delete glyph adds the second text per
-        // row.
+        // R658 — text walk = header + per-row(toggle_glyph +
+        // entry_text + delete_glyph) = 1 + 3 * 3 = 10. R656 was
+        // header + per-row(entry + delete) = 1 + 3*2 = 7; the R658
+        // toggle glyph adds one more text node per row.
         assert_eq!(
             texts.len(),
-            7,
-            "R656: header + 3 * (entry + delete glyph) = 7 text nodes",
+            10,
+            "R658: header + 3 * (toggle + entry + delete glyph) = 10 text nodes",
         );
     }
 
@@ -1831,14 +2349,17 @@ mod tests {
                 next.push(TodoItem {
                     id: 1,
                     text: "alpha".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 2,
                     text: "beta".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 3,
                     text: "gamma".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -1916,6 +2437,7 @@ mod tests {
                     next.push(TodoItem {
                         id,
                         text: text.to_owned(),
+                        completed: false,
                     });
                     next
                 });
@@ -1945,10 +2467,12 @@ mod tests {
                 next.push(TodoItem {
                     id: 11,
                     text: "alpha".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 22,
                     text: "beta".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -1980,6 +2504,7 @@ mod tests {
                 next.push(TodoItem {
                     id: 5,
                     text: "stays".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -2007,10 +2532,12 @@ mod tests {
                 next.push(TodoItem {
                     id: 100,
                     text: "first".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 200,
                     text: "second".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -2036,6 +2563,7 @@ mod tests {
                 next.push(TodoItem {
                     id: 7,
                     text: "alone".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -2061,14 +2589,17 @@ mod tests {
                 next.push(TodoItem {
                     id: 1,
                     text: "a".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 2,
                     text: "b".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 3,
                     text: "c".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -2091,10 +2622,12 @@ mod tests {
                 next.push(TodoItem {
                     id: 7,
                     text: "seven".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 42,
                     text: "answer".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -2143,11 +2676,23 @@ mod tests {
 
     #[test]
     fn r656_create_extra_externals_registers_todo_delete() {
+        // R658 §5.16 — extras = [TodoDeleteExternal, TodoToggleExternal]
+        // (2 entries). DELETE_TAG still registered, TOGGLE_TAG added
+        // alongside per the R55.D.5 multi-External composition. The
+        // R656 invariant (DELETE_TAG present) survives — the test
+        // now asserts on the tag membership, not on a hard length of
+        // one.
         with_owner(|| {
             let extras: Vec<ExtraExternal> =
                 <TodoMvcView as WidgetCore>::create_extra_externals();
-            assert_eq!(extras.len(), 1, "exactly one extra External");
-            assert_eq!(extras[0].tag, DELETE_TAG);
+            assert_eq!(
+                extras.len(),
+                2,
+                "R658: exactly two extras (delete + toggle)",
+            );
+            let tags: Vec<&str> = extras.iter().map(|e| e.tag).collect();
+            assert!(tags.contains(&DELETE_TAG), "DELETE_TAG still registered");
+            assert!(tags.contains(&TOGGLE_TAG), "R658 TOGGLE_TAG registered");
         });
     }
 
@@ -2180,10 +2725,12 @@ mod tests {
                 next.push(TodoItem {
                     id: 1,
                     text: "milk".to_owned(),
+                    completed: false,
                 });
                 next.push(TodoItem {
                     id: 2,
                     text: "eggs".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -2191,22 +2738,40 @@ mod tests {
                 &(TextFieldState::Idle, 0),
                 Some(TF_TAG),
             );
-            // Expected order: [textbox, listitem#1, button(delete#1),
-            // listitem#2, button(delete#2), list_root]
-            assert_eq!(nodes.len(), 6);
+            // R658 §5.40 — expected order:
+            // [textbox,
+            //  listitem#1, checkbox(toggle#1), button(delete#1),
+            //  listitem#2, checkbox(toggle#2), button(delete#2),
+            //  list_root]
+            // = 1 + 2 * 3 + 1 = 8. R656 was 1 + 2*2 + 1 = 6;
+            // R658 inserts one CheckBox node per row between the
+            // ListItem and its Button (toggle is left of the entry
+            // text in the visible paint order; AT cursor traversal
+            // mirrors visible order).
+            assert_eq!(nodes.len(), 8, "R658: 1 + 2 * 3 + 1 = 8 nodes");
             assert_eq!(nodes[0].role, AriaRole::TextInput);
             assert_eq!(nodes[1].role, AriaRole::ListItem);
             assert_eq!(nodes[1].tag, "todo_item#1");
-            assert_eq!(nodes[2].role, AriaRole::Button);
-            assert_eq!(nodes[2].tag, "todo_delete#1");
-            assert_eq!(nodes[3].role, AriaRole::ListItem);
-            assert_eq!(nodes[3].tag, "todo_item#2");
-            assert_eq!(nodes[4].role, AriaRole::Button);
-            assert_eq!(nodes[4].tag, "todo_delete#2");
-            // list root references both items by tag.
-            assert_eq!(nodes[5].role, AriaRole::List);
+            assert_eq!(nodes[2].role, AriaRole::CheckBox);
+            assert_eq!(nodes[2].tag, "todo_toggle#1");
             assert_eq!(
-                nodes[5].children,
+                nodes[2].state.checked,
+                Some(false),
+                "R658: aria-checked starts false for fresh entries",
+            );
+            assert_eq!(nodes[3].role, AriaRole::Button);
+            assert_eq!(nodes[3].tag, "todo_delete#1");
+            assert_eq!(nodes[4].role, AriaRole::ListItem);
+            assert_eq!(nodes[4].tag, "todo_item#2");
+            assert_eq!(nodes[5].role, AriaRole::CheckBox);
+            assert_eq!(nodes[5].tag, "todo_toggle#2");
+            assert_eq!(nodes[5].state.checked, Some(false));
+            assert_eq!(nodes[6].role, AriaRole::Button);
+            assert_eq!(nodes[6].tag, "todo_delete#2");
+            // list root references both items by tag.
+            assert_eq!(nodes[7].role, AriaRole::List);
+            assert_eq!(
+                nodes[7].children,
                 vec!["todo_item#1".to_owned(), "todo_item#2".to_owned()],
             );
         });
@@ -2225,6 +2790,7 @@ mod tests {
                 next.push(TodoItem {
                     id: 1,
                     text: "row".to_owned(),
+                    completed: false,
                 });
                 next
             });
@@ -2233,10 +2799,495 @@ mod tests {
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
             let texts = collect_text_nodes(list);
-            // header + entry + × glyph
+            // header + toggle glyph + entry + × glyph
             assert!(
                 texts.iter().any(|t| t == DELETE_GLYPH),
                 "per-row × glyph present",
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R658 §5.16 — TodoItem.completed migration + toggle glyph
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r658_fresh_todo_item_starts_active() {
+        // The Enter handler stamps `completed: false` on freshly
+        // pushed entries (mirrored in `r656_allocate_does_not_collide`
+        // setup). Confirm directly via a `TodoItem` ctor: the field
+        // is a plain `bool` with no derived default, so a Clone/Debug
+        // round-trip preserves the explicit value.
+        let item = TodoItem {
+            id: 1,
+            text: "fresh".to_owned(),
+            completed: false,
+        };
+        assert!(!item.completed, "R658: fresh todo defaults to active");
+        let toggled = TodoItem {
+            completed: !item.completed,
+            ..item.clone()
+        };
+        assert!(toggled.completed, "R658: flip flips the bool");
+        assert_eq!(toggled.id, item.id, "id stays stable under toggle");
+        assert_eq!(toggled.text, item.text, "text stays stable under toggle");
+    }
+
+    #[test]
+    fn r658_unchecked_toggle_glyph_appears_per_active_row() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "milk".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let mut list_root = None;
+            find_tagged_container(&scene, LIST_TAG, &mut list_root);
+            let list = list_root.expect("LIST_TAG present (inside Scroll)");
+            let texts = collect_text_nodes(list);
+            assert!(
+                texts.iter().any(|t| t == TOGGLE_GLYPH_UNCHECKED),
+                "R658: active row paints unchecked U+2610 glyph",
+            );
+            assert!(
+                !texts.iter().any(|t| t == TOGGLE_GLYPH_CHECKED),
+                "R658: active row must NOT paint checked U+2611",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_checked_toggle_glyph_appears_per_completed_row() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "milk".to_owned(),
+                    completed: true,
+                });
+                next
+            });
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let mut list_root = None;
+            find_tagged_container(&scene, LIST_TAG, &mut list_root);
+            let list = list_root.expect("LIST_TAG present (inside Scroll)");
+            let texts = collect_text_nodes(list);
+            assert!(
+                texts.iter().any(|t| t == TOGGLE_GLYPH_CHECKED),
+                "R658: completed row paints checked U+2611 glyph",
+            );
+            assert!(
+                !texts.iter().any(|t| t == TOGGLE_GLYPH_UNCHECKED),
+                "R658: completed row must NOT paint unchecked U+2610",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_view_carries_toggle_tag_per_item() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 11,
+                    text: "x".to_owned(),
+                    completed: false,
+                });
+                next.push(TodoItem {
+                    id: 22,
+                    text: "y".to_owned(),
+                    completed: true,
+                });
+                next
+            });
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            for id in [11_u64, 22] {
+                let needle = format!("{TOGGLE_TAG_PREFIX}#{id}");
+                assert!(
+                    scene.contains_tag(needle.as_str()),
+                    "R658: scene must carry {needle} per-item toggle tag",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r658_completed_header_reflects_progress() {
+        // Header text is `"Todos (N)"` when no entry is completed
+        // and `"Todos (X of N completed)"` when at least one is.
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "a".to_owned(),
+                    completed: false,
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "b".to_owned(),
+                    completed: true,
+                });
+                next.push(TodoItem {
+                    id: 3,
+                    text: "c".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let mut list_root = None;
+            find_tagged_container(&scene, LIST_TAG, &mut list_root);
+            let list = list_root.expect("LIST_TAG present");
+            let texts = collect_text_nodes(list);
+            assert_eq!(
+                texts.first().map(String::as_str),
+                Some("Todos (1 of 3 completed)"),
+                "R658: progress header reflects completed count",
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R658 §5.16 — TodoToggleExternal: composite-tag + direct invoke
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r658_toggle_external_send_pointerdown_flips_completed() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 11,
+                    text: "alpha".to_owned(),
+                    completed: false,
+                });
+                next.push(TodoItem {
+                    id: 22,
+                    text: "beta".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let mut handler = TodoToggleExternal::new(use_todos());
+            let result = handler
+                .introspect_mut()
+                .expect("introspect_mut wired")
+                .invoke(
+                    "send",
+                    IntrospectValue::Text("11:PointerDown".to_owned()),
+                )
+                .expect("PointerDown for id=11 must succeed");
+            assert_eq!(
+                result,
+                IntrospectValue::Bool(true),
+                "send/PointerDown returns Bool(was_present)",
+            );
+            let snapshot = use_todos().get();
+            // id=11 flipped, id=22 untouched. Stable count.
+            assert_eq!(snapshot.len(), 2);
+            assert!(
+                snapshot.iter().find(|i| i.id == 11).unwrap().completed,
+                "id=11 toggled to completed=true",
+            );
+            assert!(
+                !snapshot.iter().find(|i| i.id == 22).unwrap().completed,
+                "id=22 untouched (sibling completed flag preserved)",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_toggle_external_send_double_flips_back() {
+        // Two consecutive PointerDowns flip the completed flag on +
+        // off — the toggle is monoidal, NOT idempotent (a 2nd click
+        // un-completes the entry).
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 5,
+                    text: "flip".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let mut handler = TodoToggleExternal::new(use_todos());
+            handler
+                .introspect_mut()
+                .unwrap()
+                .invoke(
+                    "send",
+                    IntrospectValue::Text("5:PointerDown".to_owned()),
+                )
+                .unwrap();
+            assert!(use_todos().get()[0].completed, "1st flip → true");
+            handler
+                .introspect_mut()
+                .unwrap()
+                .invoke(
+                    "send",
+                    IntrospectValue::Text("5:PointerDown".to_owned()),
+                )
+                .unwrap();
+            assert!(
+                !use_todos().get()[0].completed,
+                "2nd flip → false (monoidal toggle, NOT idempotent)",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_toggle_external_send_pointerup_is_no_op() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 5,
+                    text: "stays".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let mut handler = TodoToggleExternal::new(use_todos());
+            let result = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke(
+                    "send",
+                    IntrospectValue::Text("5:PointerUp".to_owned()),
+                )
+                .unwrap();
+            assert_eq!(
+                result,
+                IntrospectValue::Bool(false),
+                "PointerUp accepted as no-op (no Rejected)",
+            );
+            assert!(
+                !use_todos().get()[0].completed,
+                "PointerUp does NOT flip completed",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_toggle_external_direct_invoke_returns_post_state() {
+        // Direct `invoke("toggle", Int(id))` returns the **post-flip**
+        // completed bool (parallel to delete's `was_present`, but for
+        // toggle the post-state is the AI-useful value).
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 100,
+                    text: "x".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let mut handler = TodoToggleExternal::new(use_todos());
+            let result = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("toggle", IntrospectValue::Int(100))
+                .unwrap();
+            assert_eq!(
+                result,
+                IntrospectValue::Bool(true),
+                "1st toggle of id=100 returns Bool(true) post-flip",
+            );
+            let result2 = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("toggle", IntrospectValue::Int(100))
+                .unwrap();
+            assert_eq!(
+                result2,
+                IntrospectValue::Bool(false),
+                "2nd toggle of id=100 returns Bool(false) post-flip",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_toggle_external_unknown_id_is_silent() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 7,
+                    text: "alone".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let mut handler = TodoToggleExternal::new(use_todos());
+            let result = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("toggle", IntrospectValue::Int(999))
+                .unwrap();
+            // Unknown id → Bool(false) (no flip happened, item not
+            // found). The existing entry is unaffected.
+            assert_eq!(result, IntrospectValue::Bool(false));
+            assert!(!use_todos().get()[0].completed);
+        });
+    }
+
+    #[test]
+    fn r658_toggle_external_query_completed_count() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "a".to_owned(),
+                    completed: true,
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "b".to_owned(),
+                    completed: false,
+                });
+                next.push(TodoItem {
+                    id: 3,
+                    text: "c".to_owned(),
+                    completed: true,
+                });
+                next
+            });
+            let handler = TodoToggleExternal::new(use_todos());
+            let intro = handler.introspect().unwrap();
+            assert_eq!(
+                intro.query("count").unwrap(),
+                IntrospectValue::Int(3),
+                "count slot mirrors total entries",
+            );
+            assert_eq!(
+                intro.query("completed_count").unwrap(),
+                IntrospectValue::Int(2),
+                "completed_count slot mirrors completed entries",
+            );
+            // ids_completed lists only completed ids in declaration order.
+            assert_eq!(
+                intro.query("ids_completed").unwrap(),
+                IntrospectValue::Json(serde_json::json!([1, 3])),
+                "ids_completed JSON array preserves insertion order",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_toggle_external_malformed_send_rejected() {
+        with_owner(|| {
+            let mut handler = TodoToggleExternal::new(use_todos());
+            // Missing colon → Rejected.
+            let no_colon = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("noseparator".to_owned()));
+            assert!(no_colon.is_err());
+            // Non-integer sub-index → Rejected.
+            let bad_id = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("xx:PointerDown".to_owned()));
+            assert!(bad_id.is_err());
+            // Empty event name → Rejected.
+            let no_event = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("1:".to_owned()));
+            assert!(no_event.is_err());
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R658 §5.16 — ScrollNode wrap (WIN_H magic cleanup)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r658_view_wraps_list_in_scroll_node() {
+        // R658 — the LIST_TAG container must live inside a
+        // Scene::Scroll wrapper (WIN_H magic cleanup). Walk the
+        // top-level outer Container's children and confirm at least
+        // one Scene::Scroll wraps a container carrying the
+        // LIST_SCROLL_KEY-derived tag.
+        with_owner(|| {
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let mut found_scroll_with_list = false;
+            if let Scene::Container(outer) = &scene {
+                for child in &outer.children {
+                    if let Scene::Scroll(sn) = child {
+                        if sn.content.contains_tag(LIST_TAG) {
+                            found_scroll_with_list = true;
+                            // The Scroll node carries the
+                            // LIST_SCROLL_KEY as its derived tag (via
+                            // ScrollNode::from_state ← ScrollState::tag).
+                            assert_eq!(
+                                sn.tag.as_deref(),
+                                Some(LIST_SCROLL_KEY),
+                                "R658: ScrollNode tag derived from LIST_SCROLL_KEY",
+                            );
+                        }
+                    }
+                }
+            }
+            assert!(
+                found_scroll_with_list,
+                "R658: list region wrapped in Scene::Scroll(...) carrying LIST_TAG inside",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_scroll_state_persists_across_view_calls() {
+        with_owner(|| {
+            // First view call instantiates ScrollState in the Owner
+            // cache.
+            let _ = view((TextFieldState::Idle, 0), &Frame::default());
+            let scroll_state_a =
+                pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
+            let scroll_state_b =
+                pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
+            assert!(
+                std::rc::Rc::ptr_eq(&scroll_state_a, &scroll_state_b),
+                "R658: use_scroll_state(LIST_SCROLL_KEY) dedups across calls",
+            );
+        });
+    }
+
+    #[test]
+    fn r658_scroll_state_offset_round_trips() {
+        with_owner(|| {
+            let _ = view((TextFieldState::Idle, 0), &Frame::default());
+            let scroll_state =
+                pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
+            // Declare a max bound + scroll. The view fn's
+            // ScrollNode::from_state reads offset() on the next paint
+            // so the value flows out to the rendered geometry.
+            scroll_state.set_max(0, 200);
+            scroll_state.scroll_to(0, 80);
+            assert_eq!(
+                scroll_state.offset(),
+                (0, 80),
+                "R658: scroll_to round-trips into offset()",
             );
         });
     }
