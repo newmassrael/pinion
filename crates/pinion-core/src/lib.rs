@@ -5,6 +5,7 @@ pub mod command;
 pub mod composite_tag;
 pub mod event;
 pub mod external;
+pub mod focus_request;
 pub mod frame;
 pub mod input;
 pub mod intent;

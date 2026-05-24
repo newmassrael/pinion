@@ -11,15 +11,20 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §1. Vision
 
 
-**Intent**: AI-native cross-platform GUI framework synthesized via SCE statechart and structured-scene DSL; Rust impl
+**Intent**: AI-native GUI framework progressing through 4 phases (Foundation, Professional GUI, Game engine substrate per §2 #4 dual execution, AAA editor self-hosted), AI-introspection 1st-class throughout.
 
 
 **Rationale**:
-- Existing GUI frameworks treat AI debugging as add-on, not first-class concern
+- Existing GUI frameworks treat AI debug as add-on; pinion makes it 1st-class through every phase
+- Existing game engines (Unreal/Unity/Bevy) have no AI-introspection; pinion bridges GUI+game
 - Token-efficient introspection requires structured scene, not opaque paint callbacks
-- SCE statechart kind naturally fits widget/screen/gesture state machines
-- Single source set multi-backend codegen pattern proven in watching-zenoh
-- Qt commercial-only MCU GUI track creates demand for open synthesis alternative
+- SCE statechart fits widget/screen/gesture + game-AI state machines naturally
+- §2 #4 mode toggle = immediate-mode game loop ↔ retained widget tree dual execution
+- Same binary: settings panel = retained; 3D viewport = immediate per-frame render
+- Phase A foundation substrate (R655-R667) cascades ROI into Phase B-D
+- Phase D editor self-hosted = pinion writes its own Unreal-class IDE — dogfood
+- Northern-star: AAA game shippable + editor self-hosted, AI-introspection 1st-class
+- Qt MCU + Unreal market split shows demand for unified GUI+game with synthesis
 
 
 
@@ -82,6 +87,11 @@ Source: `docs/.atomic/workspace.atomic.json`
 **Caveats**:
 - R24.5: invariant #5 reworded (statechart → SCE-managed); #8 added (SCE as AI authoring surface).
 - R37.9: #8 = universal cross-framework patterns; framework authoring (pinion-forge) out of scope
+- R663.5: #4 mode toggle = Phase C game-engine entry, NOT GUI diff optimization
+- R663.5: immediate-mode game loop (60-144fps) ↔ retained widget tree (idle 30fps) dual
+- R663.5: same binary — settings panel retained, 3D viewport immediate per-Container opt-in
+- R663.5: ImmediateModeNode primitive lifts at Phase C entry (R1000+ axis)
+- R663.5: northern-star = AAA game shippable + Unreal-class editor self-hosted in pinion
 
 
 
@@ -12562,6 +12572,42 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - R664 todomvc edit-in-place — R663 substrate consumer. Per-item double-click on todo_item#<id> text → enter edit mode (use_editing_id Owner::cache + per-item TextEditState via use_text_edit_state(format!("todo_edit#{id}"))); Enter commits new text; Escape cancels. view_field 3rd consumer ROI confirmation (R657 lift validates).
 - winit-side double-click detection (300ms / 5px threshold) — currently the substrate fires DoubleClick only when the AI client explicitly requests scene/double_click. Native paint-side double-click detection (consecutive MouseInput::Pressed events within the OS double-click window) is a follow-up GUI-backend axis (R670+). The RPC primary path (§2 #2) lands today; native paint parity carries until a paint-side widget cares.
 - DoubleClick is symmetric with the existing Click selector taxonomy; future Triple+Click etc. would extend DeferredInput rather than mutate this variant (TasteJS convention covers up to detail:2 for double-activate; triple-click for paragraph-select belongs to future text-edit axis).
+
+
+
+### R664 — R664 §5.16 §5.38 §5.39 §5.49 — todomvc edit-in-place + R663 paint-side double-click substrate consumer + focus_request mailbox + AT-action coverage
+
+**Changes**:
+- pinion-runtime::input::InputRouter — W3C native paint-side double-click detection (300ms / 5px threshold per axis, same target gate). Second consecutive pointer_down on the same hover_target within the window dispatches a synthetic `DoubleClick` named event in addition to `PointerDown`. Unifies the R663 RPC DeferredInput::DoubleClick drain (zero-delta drain trivially fires detection) with native winit MouseInput presses at the framework tier per [[r47-class-incident-prevention]]. 4 unit tests pin the threshold matrix (back-to-back / spatial / cross-target / triple-press reset).
+- pinion-core::focus_request — programmatic focus-change mailbox (`request(tag)` / `drain()`, thread_local Cell<Option<String>> last-write-wins). New module so widget bodies (External::invoke, reducers, Effect callbacks) can request focus without reaching across the pinion-runtime FocusManager boundary. Mirrors React useImperativeHandle / Solid createRef / Flutter FocusNode.requestFocus shape. 5 unit tests cover the request/drain/clear/overwrite/owned-payload contract.
+- pinion-shell::ShellCore::handle_tail — drain_focus_request post-dispatch hook applies pending focus requests through FocusManager::focus_set + notify_focus_change so External::on_focus_change observers fire identically to a mouse-driven focus transition. Substrate-side, no application surface change.
+- examples/todomvc — edit-in-place axis lands end-to-end: use_editing_id reactive Signal<Option<u64>>, TodoEditExternal (5th ExtraExternal under ITEM_TAG) handling `<id>:DoubleClick` via composite-tag wire, TextFieldExternal at EDIT_TF_TAG (6th ExtraExternal) wired through use_text_edit_state/use_caret_blink/use_clipboard, build_todos_list conditional row swap to tf_paint::view_field (3rd consumer of the R657-lifted substrate — view_field ROI confirmed), apply_key_edit handler (Enter commit / Escape cancel / delegate other), commit_edit erase-to-delete (TasteJS canonical), strikethrough TextDecoration on completed item text (2nd consumer of pinion-core TextDecoration substrate). State tuple expanded to (TextFieldState, u32, FilterRadioStates, TextFieldState, u32) to carry editor SCXML state + caret. Multi-text-input apply_composition / apply_middle_click extended for EDIT_TF_TAG target.
+- examples/todomvc::WidgetA11y::access_child_invoke — extended for 4 composites via per_item_int_action helper (delete / toggle / item-edit) + filter_at_action split. R662 parent_tag substrate reaches 4-of-4 application consumer push (filter / delete / toggle / item). AT-side Click on todo_item enters edit mode (the AT equivalent of double-click).
+- tools/demos/todomvc_r664.py — 34-assertion AI-first introspection demo: boot steady state → add 3 rows → double-click activates edit → seed text + auto-focus → Backspace + retype + Enter commit → row text updated → Escape cancel → erase-to-delete → strikethrough decoration on completed row → re-entry editor cleanup → selector validation. Drives entirely through scene/double_click + scene/key + scene/snapshot (primary-External-only RPC v0 limit honored via state-snapshot introspect-field walk).
+- examples/todomvc test battery — 17 new R664 regressions (use_editing_id default / begin_edit activate + stale / view paint swap on/off / commit preserves completed / commit erase-deletes / cancel preserves / focus_request both directions / send DoubleClick wire / send Pointer no-op / focusable_tags / strikethrough decoration / AT Click on item-delete-toggle). Pre-existing tests migrated to 5-tuple State + `r664_create_extra_externals_registers_six_siblings` consolidated count assertion per [[test-name-numeric-count-renaming]].
+- §1 Vision section — Phase A/B/C/D progression update (Foundation → Professional GUI → Game-engine dual-execution per §2 #4 → AAA editor self-hosted), R663.5 caveats annotating the §2 #4 mode toggle as game-engine entry point rather than GUI diff optimization.
+
+
+
+**Verification**:
+- Workspace: cargo test --workspace = 3328 passed / 0 failed (R663 baseline 3303 + 25 new — 4 InputRouter double-click + 5 focus_request + 17 todomvc R664 - 1 retired duplicate count test).
+- Workspace: cargo clippy --workspace --all-targets --features pinion-runtime/vello = clean (pedantic deny baseline preserved).
+- Visible: cargo run --release -p todomvc — double-click on row text reveals inline editor with seeded text + caret at end, Enter commits + restores main field focus, Escape cancels untouched, completed row text rendered with strikethrough decoration.
+- AI-first verify: python3 tools/demos/todomvc_r664.py = PASS in 5.72s (34 assertions covering edit entry + commit + cancel + erase-delete + strikethrough + re-entry cleanup).
+- InputRouter unit tests cover W3C threshold matrix: back-to-back zero-delay → DoubleClick fires; 10px-apart presses → no DoubleClick; cross-target presses → no DoubleClick; triple press → exactly 2 DoubleClick across 4 presses (binary single/double per [[abstraction-needs-second-consumer]] until a triple consumer surfaces).
+- focus_request mailbox unit tests pin the request → drain → clear → overwrite contract; owned-String payload accepted for future dynamic-key consumer; thread_local Cell::take pattern preserves zero-cost steady state.
+
+
+
+**Impact**: §5.16, §5.38, §5.39, §5.49, §5.50, §2
+
+
+**Carry forward**:
+- scene/query + scene/invoke v0 are primary-External-only (R690+ multi-External addressing carry) — the R664 demo works around via state-scene snapshot introspect-field walk; the R690 lift unifies query/invoke selector with the introspect surface.
+- scene/double_click at-coord form against Scene::Scroll content uses content-local rect (R51.200 absolute_rect_of carry) — R664 demo skips at-form on rows inside the scroll viewport, uses path-form which the substrate routes correctly.
+- EDIT_TF_TAG is unconditionally in focusable_tags so the programmatic focus_request succeeds; Tab order visits a ghost stop when no row is editing. Dynamic focusable_tags (per-paint refresh) is a substrate axis deferred until a 2nd consumer of conditional focus-stops surfaces per [[abstraction-needs-second-consumer]].
+- Per-item TextEditState multi-instance (dynamic Owner::cache key) deferred — single-slot reuse satisfies TasteJS canonical (one row editable at a time). Lift when a 2nd consumer of multi-row simultaneous edit surfaces.
+- SCE-004 (vendor/sce Forge codegen serde derive) honest carry — external dependency, R664 cannot land directly.
 
 
 

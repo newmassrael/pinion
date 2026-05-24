@@ -1287,6 +1287,42 @@ impl<V: WidgetView> ShellCore<V> {
                 cmd.payload,
             );
         }
+        // R664 §5.39 — drain the programmatic focus-request mailbox a
+        // widget body (`External::invoke`, reducer, `Effect`) may have
+        // populated during this dispatch. Routes through the same
+        // `FocusManager::focus_set` + `notify_focus_change` pair the
+        // mouse-driven [`Self::click_to_focus`] uses so observers
+        // (`External::on_focus_change`, the `TextField` IME bridge,
+        // the `CaretBlink` enable gate) see one consistent focus
+        // transition arc regardless of whether the focus came from a
+        // pointer press or a programmatic request.
+        self.drain_focus_request();
+    }
+
+    /// R664 §5.39 — pop one pending [`pinion_core::focus_request`]
+    /// entry and apply it via [`FocusManager::focus_set`] +
+    /// [`Self::notify_focus_change`]. No-op on empty mailbox (the
+    /// zero-cost steady state). Bumps the §5.34 revision + requests a
+    /// redraw on a real focus mutation so the next paint surfaces the
+    /// focus-ring highlight and any focus-gated reactive subscriptions
+    /// (e.g. an `EDIT_TF_TAG`-keyed
+    /// [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink)
+    /// activates) catch up before the user types.
+    fn drain_focus_request(&mut self) {
+        let Some(tag) = pinion_core::focus_request::drain() else {
+            return;
+        };
+        let focus_before = self.focus.focused().map(str::to_owned);
+        if !self.focus.focus_set(&tag) {
+            // Unknown / non-focusable tag — silent no-op (matches
+            // the `click_to_focus` rejection arm). The widget body
+            // requested focus on a tag the binding never enumerated
+            // in `focusable_tags()` or the focus is already there.
+            return;
+        }
+        self.notify_focus_change(focus_before.as_deref());
+        self.revision.bump();
+        self.request_redraw();
     }
 
     /// R51.159 §5.23 — install or replace the

@@ -77,10 +77,29 @@
 //!   a separate carry.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
+
+/// R664 §5.49 — W3C UI Events `dblclick` time threshold (milliseconds).
+/// Two consecutive `pointer_down` calls within this window on the same
+/// target with a position delta under [`DOUBLE_CLICK_DIST_PX`] dispatch
+/// a synthetic `DoubleClick` named event in addition to the second
+/// `PointerDown`. 300 ms is the W3C-canonical default
+/// (Web `UIEvent.detail` definition, Windows `GetDoubleClickTime`'s
+/// system-tunable default, macOS `NSEvent.doubleClickInterval` default).
+const DOUBLE_CLICK_TIME_MS: u128 = 300;
+
+/// R664 §5.49 — W3C UI Events `dblclick` position tolerance (logical
+/// pixels). Two consecutive presses within [`DOUBLE_CLICK_TIME_MS`] on
+/// the same target must land within this Manhattan-distance window per
+/// axis to qualify as a double-click; a small drag between the two
+/// presses disqualifies (mirrors the Material 3 "intentional gesture"
+/// + Cocoa `NSEvent.mouseLocation` tolerance). 5 logical px is the
+///   `Material 3` + Cocoa convention.
+const DOUBLE_CLICK_DIST_PX: f64 = 5.0;
 
 /// R51.38 §5.35 — pointer identity used by every [`InputRouter`]
 /// input method to route per-pointer cursor / hover / capture state.
@@ -257,6 +276,21 @@ pub struct InputRouter {
     /// documented industry precedent (Button=false, Slider=true)
     /// and pinion's own widget catalog all return static bools.
     hover_wants_capture: HashMap<PointerId, bool>,
+    /// R664 §5.49 — per-pointer "last `pointer_down` we dispatched"
+    /// snapshot used by [`pointer_down`](Self::pointer_down) to detect
+    /// the W3C `UIEvent.detail == 2` double-click pattern: the next
+    /// press lands within [`DOUBLE_CLICK_TIME_MS`] on the same target
+    /// with a position delta below [`DOUBLE_CLICK_DIST_PX`] per axis.
+    /// `(instant, x, y, target_tag)` tuple — `instant` is the press
+    /// timestamp, `(x, y)` is the cursor at press time (logical pixels),
+    /// `target_tag` is the resolved hit-test target so a 2nd press on a
+    /// *different* widget never triggers a stale double-click. Cleared
+    /// after a double-click fires so the next 2-click cycle starts
+    /// fresh (a triple-click is *not* the same as detail=2 + detail=3
+    /// in the W3C spec — pinion sticks to the binary single/double
+    /// distinction until a 2nd consumer requests triple, per
+    /// `[[abstraction-needs-second-consumer]]`).
+    last_press: HashMap<PointerId, (Instant, f64, f64, String)>,
 }
 
 impl InputRouter {
@@ -366,6 +400,25 @@ impl InputRouter {
     /// and suppresses hover / leave dispatch for this pointer.
     /// Button-like widgets keep the default `false` and observe no
     /// behaviour change.
+    ///
+    /// R664 §5.49 — W3C UI Events `dblclick` detection. After the
+    /// standard `PointerDown` dispatch, the router compares this
+    /// press against [`last_press`](Self::last_press) for `id`: if the
+    /// previous press hit the same `target_tag` within
+    /// [`DOUBLE_CLICK_TIME_MS`] and the cursor moved less than
+    /// [`DOUBLE_CLICK_DIST_PX`] per axis, the router synthesises a
+    /// second named event `DoubleClick` to the same target on top of
+    /// the normal `PointerDown`. Widgets that distinguish single from
+    /// double activation handle the `DoubleClick` arm in their
+    /// `invoke("send", ...)` `match`; widgets that don't (the entire
+    /// pre-R664 catalogue) silently ignore the extra event so the
+    /// extension is fully additive. The
+    /// [`DeferredInput::DoubleClick`](pinion_rpc::dispatch::DeferredInput::DoubleClick)
+    /// RPC drain reaches this same detection because its expansion
+    /// fires two consecutive `pointer_down` calls with zero cursor
+    /// move in between — the threshold check trivially fires for the
+    /// second press, unifying the native winit and RPC-injected paths
+    /// at the framework tier per [[r47-class-incident-prevention]].
     pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
         if let Some(tag) = self.hover_targets.get(&id).cloned() {
             dispatch_send(state_scene, &tag, "PointerDown");
@@ -392,6 +445,33 @@ impl InputRouter {
                 if let Some(&(x, y)) = self.cursors.get(&id) {
                     self.forward_pointer_move(state_scene, &tag, x, y);
                 }
+            }
+
+            // R664 §5.49 — double-click detection. Same target +
+            // within W3C `dblclick` time + space window → synthesise
+            // a `DoubleClick` named event on top of `PointerDown`.
+            let now = Instant::now();
+            let cursor = self.cursors.get(&id).copied();
+            let is_double = match (self.last_press.get(&id), cursor) {
+                (Some(prev), Some((cx, cy))) => {
+                    let elapsed = now.duration_since(prev.0).as_millis();
+                    let dx = (prev.1 - cx).abs();
+                    let dy = (prev.2 - cy).abs();
+                    prev.3 == tag
+                        && elapsed < DOUBLE_CLICK_TIME_MS
+                        && dx < DOUBLE_CLICK_DIST_PX
+                        && dy < DOUBLE_CLICK_DIST_PX
+                }
+                _ => false,
+            };
+            if is_double {
+                dispatch_send(state_scene, &tag, "DoubleClick");
+                // Detail=2 fired; the next press starts a fresh cycle
+                // (no rolling triple-click — pinion stops at binary
+                // single/double until a 2nd consumer surfaces).
+                self.last_press.remove(&id);
+            } else if let Some((cx, cy)) = cursor {
+                self.last_press.insert(id, (now, cx, cy, tag));
             }
         }
     }
@@ -2568,5 +2648,117 @@ mod tests {
             read(&eb),
             vec!["PointerEnter".to_string(), "PointerLeave".into()],
         );
+    }
+
+    // ─── R664 §5.49 W3C double-click detection ─────────────────────
+
+    /// Two consecutive presses with no cursor move in between (the
+    /// `DeferredInput::DoubleClick` drain shape) fire one synthetic
+    /// `DoubleClick` named event on top of the second `PointerDown`.
+    /// The first press only emits `PointerDown` — `DoubleClick`
+    /// requires the prior `last_press` snapshot.
+    #[test]
+    fn r664_back_to_back_presses_emit_double_click_event() {
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_button();
+        let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        // First click cycle: PointerEnter + PointerDown + PointerUp.
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        // Second press at the same coord — well inside W3C 300ms / 5px.
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            read(&captures),
+            vec![
+                "PointerEnter".to_string(),
+                "PointerDown".into(),
+                "PointerUp".into(),
+                "PointerDown".into(),
+                "DoubleClick".into(),
+                "PointerUp".into(),
+            ],
+        );
+    }
+
+    /// Position delta exceeding [`DOUBLE_CLICK_DIST_PX`] between the
+    /// two presses disqualifies the W3C `dblclick` heuristic — the
+    /// second press is a normal `PointerDown` with no synthetic
+    /// `DoubleClick`. 10 px on the same widget is enough; the Material
+    /// 3 / Cocoa convention rejects 6 px+.
+    #[test]
+    fn r664_spatially_separated_presses_do_not_double_click() {
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_button();
+        let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        // Cursor moves 10 px before second press — over the 5 px window.
+        router.cursor_moved(PointerId::MOUSE, 110.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert!(
+            !read(&captures).iter().any(|s| s == "DoubleClick"),
+            "second press 10 px away must not double-click",
+        );
+    }
+
+    /// A press on widget A then a press on widget B does not produce
+    /// `DoubleClick` even if temporally adjacent — the `last_press`
+    /// guard tracks the target tag, not just the timestamp. Mirror of
+    /// the W3C `target` equality requirement in the `dblclick`
+    /// dispatch contract.
+    #[test]
+    fn r664_cross_target_presses_do_not_double_click() {
+        let mut router = InputRouter::new();
+        let (mut state, (ea, _ma), (eb, _mb)) = state_with_two_sliders();
+        router.update_paint_scene(paint_with_two_sliders(200, 200), &mut state);
+        let touch = PointerId::touch(0);
+        // Single pointer crosses widgets — same PointerId.
+        router.cursor_moved(touch, 50.0, 50.0, &mut state); // on slider A
+        router.pointer_down(touch, &mut state);
+        router.pointer_up(touch, &mut state);
+        router.cursor_moved(touch, 150.0, 50.0, &mut state); // on slider B
+        router.pointer_down(touch, &mut state);
+        router.pointer_up(touch, &mut state);
+        assert!(
+            !read(&ea).iter().any(|s| s == "DoubleClick"),
+            "slider A press → release must not see DoubleClick after target switch",
+        );
+        assert!(
+            !read(&eb).iter().any(|s| s == "DoubleClick"),
+            "slider B first press must not see stale DoubleClick from slider A",
+        );
+    }
+
+    /// Triple-click resets after detail=2 — the third press starts a
+    /// fresh single/double cycle. The 4th press completes another
+    /// double-click. Confirms the substrate pins binary single/double
+    /// per `[[abstraction-needs-second-consumer]]` until a triple
+    /// consumer surfaces.
+    #[test]
+    fn r664_triple_press_resets_after_double() {
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_button();
+        let paint = paint_with_button(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        // 1st press — single. 2nd press — double. 3rd press — single
+        // again (no triple). 4th press — double again.
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&captures);
+        let double_count = log.iter().filter(|s| s.as_str() == "DoubleClick").count();
+        assert_eq!(double_count, 2, "exactly two DoubleClick fires across 4 presses");
     }
 }

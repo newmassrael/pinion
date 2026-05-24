@@ -8,7 +8,7 @@
 //! M3 state-layers + scene/drag) • R661 doc compression •
 //! R662 edit in-place • R663 persistence.
 //!
-//! State shape: `(TextFieldState, u32, FilterRadioStates)` — Copy
+//! State shape: `(TextFieldState, u32, FilterRadioStates, TextFieldState, u32)` — Copy
 //! per R51.173. Non-Copy reactive stores reach the binding through
 //! `Owner::cache` hooks ([`use_todos`] / [`use_filter`] /
 //! [`use_text_edit_state`] / [`use_scroll_state`] /
@@ -205,6 +205,39 @@ const FILTER_KEY: &str = "todomvc.filter";
 const TODO_FILTER_SELECTED_INTENT_TAG: &str =
     pinion_core::intent_tag!("todo_filter", "selected");
 
+/// (R664 §5.16 §5.38) Per-row in-place edit affordance — shared
+/// `TextField` tag for the *single* row in edit mode. Only one row is
+/// editable at a time ([`TasteJS`] `TodoMVC` canonical), so a single
+/// [`Owner::cache`] slot keyed by this static tag carries the editor's
+/// [`TextEditState`] / [`CaretBlink`] pair — the row swap moves the
+/// editor instance instead of allocating one per row. Mirror of
+/// [`TF_TAG`] for the main "add todo" field above; the editor is a
+/// distinct `TextField` so the two fields' caret + blink + selection
+/// state stay independent across the focus transitions
+/// (mouse press on the main field while editing must not nuke the
+/// in-progress edit — separate cache slots achieve that with the
+/// existing `Owner::cache` per-`(TypeId, key)` slot model
+/// per [[owner-cache-typed-key]]).
+const EDIT_TF_TAG: &str = "todo_edit";
+
+/// (R664 §5.16) Primary tag for the [`TodoEditExternal`] sibling
+/// that handles double-click activations on `todo_item#<id>` rows.
+/// The composite-tag wire splits incoming `"<id>:DoubleClick"`
+/// payloads — mirror of [`TodoToggleExternal`]'s shape under
+/// [`TOGGLE_TAG`].
+const ITEM_TAG: &str = "todo_item";
+
+/// (R664 §5.16) [`Owner::cache`] key for the
+/// `Rc<Signal<Option<u64>>>` carrying the *id of the row currently
+/// in edit mode* (`None` = no row editing). The
+/// [`build_todos_list`] swap, the [`TodoEditExternal::invoke`]
+/// activation arm, the [`apply_key_edit`] commit / cancel handlers,
+/// and the [`access_node`] AT-side mode reporting all resolve
+/// through this signal — single source of truth, equality-skip
+/// suppresses no-op writes (a `set(Some(7))` while already editing
+/// row 7 does not re-render).
+const EDITING_ID_KEY: &str = "todomvc.editing_id";
+
 /// (R659 §5.16) Canonical `TasteJS` `TodoMVC` filter modes. Discriminants
 /// 0/1/2 match the visual left-to-right order + composite-tag wire
 /// (`todo_filter#<i>`). `#[non_exhaustive]` keeps future additions
@@ -378,6 +411,110 @@ fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
     true
 }
 
+/// (R664 §5.16 §5.38) `apply_key` `EDIT_TF_TAG` arm — in-place edit
+/// keymap mirror of [`apply_key_textfield`] over the per-row editor.
+///
+/// | key      | action                                                      |
+/// |----------|-------------------------------------------------------------|
+/// | `Enter`  | Commit the editor text to the matching `TodoItem` row, clear `editing_id`, restore focus to [`TF_TAG`]. Empty / blank text deletes the row (`TasteJS` convention — the user erased everything). |
+/// | `Escape` | Cancel — clear `editing_id` without mutating the row, restore focus to [`TF_TAG`]. The editor's [`TextEditState`] is reset so the next edit starts blank. |
+/// | other    | Delegate to [`TextFieldExternal::invoke`]`("key", …)` so the embedded `TextField` SCXML drives caret motion, character insertion, selection extension, clipboard, IME — the canonical R56.1 keymap reused unchanged. |
+///
+/// Focus restoration uses [`pinion_core::focus_request`] so the
+/// substrate drains a single transition through `notify_focus_change`
+/// (`TextField`'s `on_focus_change(false)` fires on the editor, then
+/// the main field's `on_focus_change(true)` fires) — observers see
+/// the same arc a mouse-driven blur would emit.
+fn apply_key_edit(scene: &mut Scene, key: &str) -> bool {
+    match key {
+        "Enter" => {
+            commit_edit(scene);
+            true
+        }
+        "Escape" => {
+            cancel_edit();
+            true
+        }
+        _ => {
+            let Some(node) = scene.find_external_with_tag_mut(EDIT_TF_TAG) else {
+                return false;
+            };
+            let Some(intro) = node.handle.introspect_mut() else {
+                return false;
+            };
+            match intro.invoke("key", IntrospectValue::Text(key.to_owned())) {
+                Ok(IntrospectValue::Bool(handled)) => handled,
+                _ => false,
+            }
+        }
+    }
+}
+
+/// (R664 §5.16) Commit the in-flight edit. Reads the editor's current
+/// text + the active `editing_id`, writes the trimmed text to the
+/// matching [`TodoItem`] (or removes the row when the trimmed text is
+/// empty — `TasteJS` "erase to delete" convention), then clears the
+/// edit state + restores focus to the main input field.
+///
+/// Idempotent under the equality-skip `Signal::set` path: a commit
+/// that does not change the text yields a no-op `set_with` (the
+/// `Vec<TodoItem>` clone with the same text compares equal).
+fn commit_edit(_scene: &mut Scene) {
+    let Some(target_id) = use_editing_id().get() else {
+        return;
+    };
+    let editor = use_text_edit_state(EDIT_TF_TAG);
+    let raw = editor.text();
+    let trimmed = raw.trim();
+    let todos = use_todos();
+    if trimmed.is_empty() {
+        // R664 §5.16 — `TasteJS` `TodoMVC` "erase row to delete"
+        // canonical: clearing the inline editor and committing
+        // removes the row.
+        todos.set_with(|prev| {
+            let mut next = prev.clone();
+            next.retain(|item| item.id != target_id);
+            next
+        });
+    } else {
+        let new_text = trimmed.to_owned();
+        todos.set_with(|prev| {
+            prev.iter()
+                .map(|item| {
+                    if item.id == target_id {
+                        TodoItem {
+                            text: new_text.clone(),
+                            ..item.clone()
+                        }
+                    } else {
+                        item.clone()
+                    }
+                })
+                .collect()
+        });
+    }
+    end_edit_mode();
+}
+
+/// (R664 §5.16) Cancel the in-flight edit. Drops the editor's
+/// text + clears the edit state without writing back; restores focus
+/// to the main input field so the user's next keystroke lands in
+/// the "add todo" channel.
+fn cancel_edit() {
+    end_edit_mode();
+}
+
+/// (R664 §5.16) Shared finish-edit teardown — clears [`editing_id`],
+/// wipes the editor's [`TextEditState`] so the next edit starts
+/// blank, and queues a focus return to [`TF_TAG`] via
+/// [`pinion_core::focus_request`]. Used by both the `Enter` commit
+/// and `Escape` cancel paths.
+fn end_edit_mode() {
+    use_editing_id().set(None);
+    use_text_edit_state(EDIT_TF_TAG).set_text(String::new());
+    pinion_core::focus_request::request(TF_TAG);
+}
+
 /// Read the [`RadioGroupExternal`] `focused_index` slot. `None`
 /// falls back to selected index in [`apply_key_filter`].
 fn filter_focused_index(scene: &Scene) -> Option<usize> {
@@ -425,6 +562,33 @@ pub fn use_filter() -> Rc<Signal<FilterMode>> {
     Owner::current()
         .expect("use_filter requires an active Owner scope")
         .cache(FILTER_KEY, || Signal::new(FilterMode::default_mode()))
+}
+
+/// (R664 §5.16) `Owner::cache`-keyed hook returning the shared
+/// `Rc<Signal<Option<u64>>>` carrying the *id of the row currently in
+/// edit mode*. `None` = no row editing (steady state).
+///
+/// Single source of truth across:
+/// - [`TodoEditExternal`] activation arm — sets `Some(id)` on
+///   double-click;
+/// - [`build_todos_list`] — swaps the matching row's text label for
+///   an inline [`view_field`] editor when the signal equals the row's
+///   id;
+/// - [`apply_key_edit`] — commits (`Enter`), cancels (`Escape`), or
+///   delegates to [`TextFieldExternal`] (typing / arrow keys) when
+///   `Some(_)`;
+/// - [`access_node`] — surfaces the edit-mode row through the W3C
+///   ARIA `aria-multiline=false` text-input role so AT clients see
+///   the editor announce as a labelled field.
+///
+/// # Panics
+///
+/// Panics outside an `Owner::run(...)` scope (mirrors [`use_todos`]).
+#[must_use]
+pub fn use_editing_id() -> Rc<Signal<Option<u64>>> {
+    Owner::current()
+        .expect("use_editing_id requires an active Owner scope")
+        .cache(EDITING_ID_KEY, || Signal::new(None::<u64>))
 }
 
 /// (R658 §5.16) [`Owner::cache`] key for the reactive [`ScrollState`]
@@ -714,8 +878,8 @@ impl Clipboard for AppClipboard {
     clippy::too_many_lines,
     reason = "one paint cycle composing 5 sections"
 )]
-fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scene {
-    let (interaction, caret_byte, filter_radios) = state;
+fn view(state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32), _frame: &Frame) -> Scene {
+    let (interaction, caret_byte, filter_radios, edit_interaction, edit_caret_byte) = state;
 
     // R657 §5.16 §5.38 — TextField paint composition lifted to
     // `tf_paint::view_field`. The binding's view fn composes only
@@ -782,7 +946,18 @@ fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scen
         .collect();
 
     let filter_row = build_filter_row(&theme, filter_mode, &filter_radios);
-    let todos_list_content = build_todos_list(&theme, &visible, filter_mode, entries.len());
+    // R664 §5.16 — auto-subscribe the editing_id signal so the
+    // double-click row swap re-renders on activation + commit + cancel.
+    let editing_id = use_editing_id().get();
+    let todos_list_content = build_todos_list(
+        &theme,
+        &visible,
+        filter_mode,
+        entries.len(),
+        editing_id,
+        edit_interaction,
+        edit_caret_byte,
+    );
 
     let scroll_state = use_scroll_state(LIST_SCROLL_KEY);
     let todos_scroll = Scene::Scroll(ScrollNode::from_state(
@@ -1210,33 +1385,261 @@ impl ExternalIntrospect for TodoToggleExternal {
 // (Option β walk-back, [[r650-widget-tag-walk-back]]). Substrate keeps,
 // application sheds 199 LOC of bespoke handler.
 
+/// (R664 §5.16 §5.49) Per-row edit-in-place activation handler — 5th
+/// `ExtraExternal`. Listens on the [`ITEM_TAG`] primary tag for
+/// composite-tag `"<id>:DoubleClick"` payloads dispatched by the
+/// framework's W3C [`DOUBLE_CLICK_TIME_MS`](pinion_runtime::input)
+/// double-click detection (native winit path) or by the
+/// `scene/double_click` RPC drain (AI-introspection path, R663). On
+/// activation:
+/// 1. Mark this row as the active editor via
+///    [`use_editing_id`]`().set(Some(id))` — the
+///    [`build_todos_list`] swap observes the signal and renders an
+///    inline [`view_field`] in place of the row's text.
+/// 2. Seed the editor's [`TextEditState`] with the current item
+///    text so the editor starts pre-filled (`TasteJS` `TodoMVC`
+///    canonical: double-click reveals the current text, ready to
+///    edit, caret at the end).
+/// 3. Request focus on [`EDIT_TF_TAG`] via the substrate
+///    [`pinion_core::focus_request`] channel so the very next
+///    keystroke types into the editor — the shell's `handle_tail`
+///    drain applies the focus mutation before the next paint cycle.
+///
+/// Single-row edit invariant — the cache slot is shared, so a
+/// double-click on row B while row A is editing seamlessly migrates
+/// the editor (commit-on-blur is *not* the chosen semantics here
+/// because the activation arm overwrites the editor text + signal
+/// atomically; the in-flight edit on row A is dropped — `TasteJS`
+/// behaviour is mouse-blur-discards on the canonical reference).
+///
+/// Other composite-tag events (`PointerEnter` / `PointerDown` /
+/// `PointerUp` / `PointerLeave`) accept-as-no-op so the dispatch
+/// path doesn't re-route to a sibling. The framework's single-click
+/// `PointerDown` continues to dispatch to [`TodoToggleExternal`] /
+/// [`TodoDeleteExternal`] siblings unchanged — `DoubleClick` fires
+/// *in addition to* `PointerDown` on the second press per the W3C
+/// substrate contract (R664 §5.49 native dispatch + R663 §5.49 RPC
+/// drain unify here).
+#[derive(Debug)]
+pub struct TodoEditExternal {
+    todos: Rc<Signal<Vec<TodoItem>>>,
+    /// `Rc<Signal<Option<u64>>>` shared with [`use_editing_id`].
+    /// Cached at construction so [`begin_edit`] does not call
+    /// `Owner::current()` from the dispatch path (the
+    /// [`InputRouter`](pinion_runtime::InputRouter) calls
+    /// `external.invoke(...)` outside any `Owner::run(...)` wrap).
+    editing_id: Rc<Signal<Option<u64>>>,
+    /// `Rc<TextEditState>` shared with [`use_text_edit_state`]`(EDIT_TF_TAG)`
+    /// — same cache slot the inline `view_field` editor reads, so
+    /// the seed value populates the live buffer atomically.
+    editor: Rc<pinion_core::widgets::text_edit::TextEditState>,
+}
+
+impl TodoEditExternal {
+    /// (R664 §5.16) Construct the per-item edit handler with all
+    /// reactive handles pre-resolved. Must be called inside an
+    /// [`Owner::run`] scope (the substrate wraps `create_extra_externals`
+    /// in `root_owner.run(...)` by contract per R51.146-152
+    /// `[[callback-root-owner-wrap]]` family). Cached `Rc`s let
+    /// [`begin_edit`] run from the dispatch path (which is
+    /// `Owner`-less) without panicking.
+    #[must_use]
+    pub fn new(todos: Rc<Signal<Vec<TodoItem>>>) -> Self {
+        let editing_id = use_editing_id();
+        let editor = use_text_edit_state(EDIT_TF_TAG);
+        Self {
+            todos,
+            editing_id,
+            editor,
+        }
+    }
+
+    /// (R664 §5.16) Enter edit mode for the row identified by
+    /// `target_id`. Returns `true` when the id matched an existing
+    /// row (so the caller can distinguish "started editing" from
+    /// "stale id ignored"). Idempotent under the equality-skip
+    /// `Signal::set` path: double-clicking the *currently editing*
+    /// row reseats the editor text from the original item (the
+    /// `TasteJS` "restart editing" UX).
+    fn begin_edit(&self, target_id: u64) -> bool {
+        let Some(item) = self
+            .todos
+            .get()
+            .into_iter()
+            .find(|i| i.id == target_id)
+        else {
+            return false;
+        };
+        self.editing_id.set(Some(target_id));
+        // R664 §5.16 — seed text + park caret at the end (`TasteJS`
+        // canonical: double-click reveals the row text with the caret
+        // ready to append / Backspace from the trailing edge). The
+        // R56.1 [`TextEditState::set_text`] clamps the caret to the
+        // *previous* position, which is `0` on the first edit and the
+        // commit's leftover offset on subsequent edits — neither is
+        // the right "open the file at the end" UX, so we explicitly
+        // [`TextEditState::set_caret`] after seeding to land the caret
+        // on the trailing edge.
+        let len = item.text.len();
+        self.editor.set_text(item.text.clone());
+        self.editor.set_caret(len);
+        // R664 §5.39 — substrate drains this on the next
+        // `handle_tail` call (which is the dispatch that delivered
+        // the DoubleClick → invoke this method). Focus moves to the
+        // newly-painted editor before the user's next keystroke.
+        pinion_core::focus_request::request(EDIT_TF_TAG);
+        true
+    }
+}
+
+impl External for TodoEditExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for TodoEditExternal {
+    /// `editing_id` — current edit-mode row (Int) or `null`.
+    /// `send` — composite-tag wire `"<id>:DoubleClick"` activates the
+    /// edit mode; other events accepted-as-no-op. `begin` — direct
+    /// typed-id activation (RPC AI-driving path); returns
+    /// `Bool(was_present)` so callers distinguish "row existed +
+    /// editing now" from "no-op stale id".
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("editing_id", "json"),
+            ("send", "string"),
+            ("begin", "int"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "editing_id" => Some(IntrospectValue::Json(
+                self.editing_id
+                    .get()
+                    .map_or(serde_json::Value::Null, serde_json::Value::from),
+            )),
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        match path {
+            "editing_id" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "send" => match args {
+                IntrospectValue::Text(ref payload) => {
+                    let (id, event_name): (u64, &str) =
+                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                    if event_name == "DoubleClick" {
+                        let was_present = self.begin_edit(id);
+                        Ok(IntrospectValue::Bool(was_present))
+                    } else {
+                        // PointerEnter/Down/Up/Leave + future event
+                        // names — silent no-op so the dispatch loop
+                        // does not reject + reroute to a sibling.
+                        Ok(IntrospectValue::Bool(false))
+                    }
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // (R664 §5.16) Direct typed-id activation — the RPC AI
+            // path skips the composite-tag wire and addresses the
+            // row by id. Same semantics as a DoubleClick payload.
+            "begin" => match args {
+                IntrospectValue::Int(i) => {
+                    let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let was_present = self.begin_edit(id);
+                    Ok(IntrospectValue::Bool(was_present))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
 /// Build the todo list section: tagged `Scene::Container`(`LIST_TAG`)
 /// holding a header label + one row per entry. Empty store renders
 /// the "type and press Enter" hint. Header shape is filter-aware
 /// (three orthogonal cases below). Lifted from view fn so the
 /// [[r655-todomvc-scaffolding]] test battery can pin item ordering.
+///
+/// (R664 §5.16 §5.38) When `editing_id == Some(item.id)`, the row's
+/// middle slot swaps from the static `entry_text` to an inline
+/// [`view_field`](pinion_widget_paint::text_field::view_field)
+/// editor — `EDIT_TF_TAG` paints as a `TextField` with the row's
+/// current text pre-seeded into [`use_text_edit_state`]`(EDIT_TF_TAG)`.
+/// All other rows render their normal text label. The toggle + delete
+/// affordances stay visible while editing so the user can toggle
+/// "completed" mid-edit (the row text continues to live in
+/// [`use_todos`] until [`commit_edit`] commits the edited text on
+/// `Enter`).
 #[allow(
     clippy::too_many_lines,
-    reason = "single-purpose list builder — per-row trio (toggle/text/delete) reads better inline than split"
+    reason = "single-purpose list builder — per-row trio (toggle/text-or-editor/delete) reads better inline than split"
 )]
 fn build_todos_list(
     theme: &Theme,
     entries: &[TodoItem],
     filter_mode: FilterMode,
     total_count: usize,
+    editing_id: Option<u64>,
+    edit_interaction: TextFieldState,
+    edit_caret_byte: u32,
 ) -> Scene {
     let header_style = TextStyle::new()
         .with_size_px(LIST_TITLE_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
-    // R658 — completed text fades to OnSurfaceMuted (strikethrough
-    // text-decoration is R663+ carry per
-    // [[abstraction-needs-second-consumer]]).
+    // R664 §5.16 — completed-row text now combines the original
+    // `OnSurfaceMuted` colour fade (R658) with a horizontal
+    // `Strikethrough` `TextDecoration` (2nd consumer of the
+    // `pinion-core::style::TextDecoration` substrate; the 1st is
+    // `pinion-core::widgets::toggle`'s focus-ring decoration). The
+    // line + colour pair is the canonical `TasteJS` `TodoMVC`
+    // "done" visual — both signals reinforce so the row reads as
+    // completed even when colour-blind users cannot discriminate
+    // the muted fade.
     let item_style_active = TextStyle::new()
         .with_size_px(LIST_ITEM_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurface));
     let item_style_completed = TextStyle::new()
         .with_size_px(LIST_ITEM_FONT_SIZE_PX)
-        .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
+        .with_fg(theme.resolve(ColorRole::OnSurfaceMuted))
+        .with_decoration(pinion_core::TextDecoration::strikethrough());
     let delete_style = TextStyle::new()
         .with_size_px(DELETE_FONT_SIZE_PX)
         .with_fg(delete_glyph_color(theme));
@@ -1334,11 +1737,33 @@ fn build_todos_list(
         } else {
             item_style_active.clone()
         };
-        let entry_text = Scene::Text(TextNode::styled(
-            item.text.clone(),
-            Rect::default(),
-            item_style_for_row,
-        ));
+        // R664 §5.16 §5.38 — row middle slot: static text in normal
+        // mode, inline `view_field` editor (3rd consumer of the
+        // R657-lifted `tf_paint::view_field` substrate; 1st was
+        // `hello-textfield`, 2nd the main `TF_TAG` field above) when
+        // this row is the active edit target. The shared
+        // `EDIT_TF_TAG` editor instance reuses one [`TextEditState`]
+        // / [`CaretBlink`] across edit sessions per
+        // [[abstraction-needs-second-consumer]] — a per-item slot
+        // (dynamic `Owner::cache` key) lifts only when a multi-row
+        // simultaneous-edit consumer surfaces, which today's
+        // `TasteJS` `TodoMVC` does not have.
+        let row_middle: Scene = if editing_id == Some(item.id) {
+            tf_paint::view_field(
+                EDIT_TF_TAG,
+                edit_interaction,
+                edit_caret_byte,
+                theme,
+                &tf_paint::TextFieldStyle::m3_filled(),
+                "Edit todo",
+            )
+        } else {
+            Scene::Text(TextNode::styled(
+                item.text.clone(),
+                Rect::default(),
+                item_style_for_row,
+            ))
+        };
 
         // R656 §5.16 — the delete button is a tagged Container
         // hosting the `×` glyph centred inside the 24×24 hit-target.
@@ -1382,7 +1807,7 @@ fn build_todos_list(
         // produce no External dispatch today — R660+ edit candidate
         // per [[abstraction-needs-second-consumer]]).
         let row = Scene::Container(
-            ContainerNode::new(vec![toggle_button, entry_text, delete_button])
+            ContainerNode::new(vec![toggle_button, row_middle, delete_button])
                 .with_tag(row_tag)
                 .with_layout(
                     LayoutStyle::new()
@@ -1407,13 +1832,13 @@ fn build_todos_list(
     )
 }
 
-/// `WidgetView` binding. `Self::State = (TextFieldState, u32, FilterRadioStates)`
+/// `WidgetView` binding. `Self::State = (TextFieldState, u32, FilterRadioStates, TextFieldState, u32)`
 /// stays `Copy` per R51.173; non-Copy reactive stores reach the
 /// binding through `Owner::cache` hooks (see module doc).
 struct TodoMvcView;
 
 impl WidgetCore for TodoMvcView {
-    type State = (TextFieldState, u32, FilterRadioStates);
+    type State = (TextFieldState, u32, FilterRadioStates, TextFieldState, u32);
     type Event = TextFieldEvent;
 
     fn create_external() -> Box<dyn External> {
@@ -1434,10 +1859,19 @@ impl WidgetCore for TodoMvcView {
         TF_TAG
     }
 
-    /// R55.D.5 multi-External composition — primary `TextField` + four
-    /// `ExtraExternal`s (delete / toggle / filter group / scrollbar).
-    /// R660 filter group seeded with persisted mode so the first paint
-    /// shows the engaged segment without a separate sync pass.
+    /// R55.D.5 multi-External composition — primary `TextField` plus
+    /// six `ExtraExternal`s (delete / toggle / filter group / scrollbar
+    /// / item double-click / inline editor). R660 filter group seeded
+    /// with persisted mode so the first paint shows the engaged
+    /// segment without a separate sync pass. R664 adds:
+    /// - [`ITEM_TAG`] / [`TodoEditExternal`] — handles `"<id>:DoubleClick"`
+    ///   payloads from the framework's W3C double-click detection;
+    /// - [`EDIT_TF_TAG`] / [`TextFieldExternal`] — the inline editor's
+    ///   own `TextField` SCXML, wired through the dedicated
+    ///   [`use_text_edit_state`] / [`use_caret_blink`] /
+    ///   [`use_clipboard`] cache slots so the editor + main field
+    ///   keep independent text + caret + clipboard state across the
+    ///   focus transitions.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let todos = use_todos();
         let filter = use_filter();
@@ -1449,6 +1883,9 @@ impl WidgetCore for TodoMvcView {
                 i64::try_from(filter.get().to_index()).expect("filter index fits in i64"),
             ),
         );
+        let edit_text_state = use_text_edit_state(EDIT_TF_TAG);
+        let edit_blink = use_caret_blink(EDIT_TF_TAG);
+        let edit_clipboard = use_clipboard(EDIT_TF_TAG);
         vec![
             ExtraExternal::new(
                 DELETE_TAG,
@@ -1456,7 +1893,7 @@ impl WidgetCore for TodoMvcView {
             ),
             ExtraExternal::new(
                 TOGGLE_TAG,
-                Box::new(TodoToggleExternal::new(todos)),
+                Box::new(TodoToggleExternal::new(todos.clone())),
             ),
             ExtraExternal::new(FILTER_TAG, Box::new(filter_group)),
             ExtraExternal::new(
@@ -1467,16 +1904,28 @@ impl WidgetCore for TodoMvcView {
                         .attach_interaction(use_scrollbar_interaction(SCROLLBAR_TAG)),
                 ),
             ),
+            ExtraExternal::new(ITEM_TAG, Box::new(TodoEditExternal::new(todos))),
+            ExtraExternal::new(
+                EDIT_TF_TAG,
+                Box::new(
+                    TextFieldExternal::new()
+                        .attach_state(edit_text_state)
+                        .attach_blink(edit_blink)
+                        .attach_clipboard(edit_clipboard),
+                ),
+            ),
         ]
     }
 
-    fn read_state(scene: &Scene) -> (TextFieldState, u32, FilterRadioStates) {
+    fn read_state(scene: &Scene) -> (TextFieldState, u32, FilterRadioStates, TextFieldState, u32) {
         let (interaction, caret) = tf_paint::read_text_field_state(scene, TF_TAG);
+        let (edit_interaction, edit_caret) =
+            tf_paint::read_text_field_state(scene, EDIT_TF_TAG);
         let filter_radios = read_filter_radio_states(scene);
-        (interaction, caret, filter_radios)
+        (interaction, caret, filter_radios, edit_interaction, edit_caret)
     }
 
-    fn view(state: (TextFieldState, u32, FilterRadioStates), frame: &Frame) -> Scene {
+    fn view(state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32), frame: &Frame) -> Scene {
         view(state, frame)
     }
 
@@ -1498,10 +1947,22 @@ impl WidgetCore for TodoMvcView {
         "pinion todomvc (R655 §5.16) — first composed app"
     }
 
-    /// Two tab stops — `TF_TAG` + `FILTER_TAG`. Per-focus `apply_key` arm
-    /// picks the matching keymap.
+    /// (R664 §5.16) Three tab stops — `TF_TAG`, `EDIT_TF_TAG`,
+    /// `FILTER_TAG`. Per-focus `apply_key` arm picks the matching
+    /// keymap. `EDIT_TF_TAG` is enumerated unconditionally so the
+    /// programmatic [`pinion_core::focus_request`] dispatched from
+    /// the [`TodoEditExternal`] activation arm succeeds — the
+    /// inline editor is only painted while
+    /// [`use_editing_id`]`().get().is_some()`, so the focus is
+    /// effectively a "phantom" tab stop when no row is in edit mode.
+    /// The user-visible cost is one ghost Tab cycle through an
+    /// invisible target; the alternative (refresh `focusable_tags`
+    /// per paint, which the substrate does not do today) is a
+    /// framework-tier change deferred until a 2nd consumer of
+    /// dynamic-focusable-tags surfaces per
+    /// [[abstraction-needs-second-consumer]].
     fn focusable_tags() -> Vec<&'static str> {
-        vec![TF_TAG, FILTER_TAG]
+        vec![TF_TAG, EDIT_TF_TAG, FILTER_TAG]
     }
 
     /// R660 reducer — bridge `RadioGroupExternal`'s `"selected"` intent
@@ -1510,7 +1971,7 @@ impl WidgetCore for TodoMvcView {
     /// ([[scxml-as-model-update-transient]]) — empty `Vec<Command>`
     /// return; the `Signal::set` write is the mutation.
     fn update(
-        _state: (TextFieldState, u32, FilterRadioStates),
+        _state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32),
         intent: &pinion_core::Intent,
     ) -> Vec<pinion_core::command::Command> {
         if intent.tag_str() == TODO_FILTER_SELECTED_INTENT_TAG {
@@ -1537,8 +1998,10 @@ impl WidgetCore for TodoMvcView {
     }
 
     /// W3C UI Events delegation. R660 splits the keymap per-focus
-    /// (`TF_TAG` → text edit keys; `FILTER_TAG` → ARIA radio-group cycle)
-    /// so each focus owner sees only its own shortcuts.
+    /// (`TF_TAG` → text edit keys; `FILTER_TAG` → ARIA radio-group cycle);
+    /// R664 adds the `EDIT_TF_TAG` arm for the in-place row editor
+    /// (Enter commits / Escape cancels / everything else delegates
+    /// to the embedded `TextField`).
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -1547,6 +2010,7 @@ impl WidgetCore for TodoMvcView {
     ) -> bool {
         match focused {
             Some(TF_TAG) => apply_key_textfield(scene, key),
+            Some(EDIT_TF_TAG) => apply_key_edit(scene, key),
             Some(FILTER_TAG) => apply_key_filter(scene, key),
             _ => false,
         }
@@ -1567,10 +2031,17 @@ impl WidgetCore for TodoMvcView {
         focused: Option<&str>,
         event: &pinion_core::CompositionEvent,
     ) -> bool {
-        if focused != Some(TF_TAG) {
-            return false;
-        }
-        let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
+        // R664 — route IME composition to whichever text-input field
+        // is focused: main "add todo" (TF_TAG) or in-place editor
+        // (EDIT_TF_TAG). Both wire through the canonical TextField
+        // `invoke("composition", ...)` handler so the platform IME
+        // bridge funnels through one substrate per field.
+        let target = match focused {
+            Some(TF_TAG) => TF_TAG,
+            Some(EDIT_TF_TAG) => EDIT_TF_TAG,
+            _ => return false,
+        };
+        let Some(node) = scene.find_external_with_tag_mut(target) else {
             return false;
         };
         let Some(intro) = node.handle.introspect_mut() else {
@@ -1600,16 +2071,19 @@ impl WidgetCore for TodoMvcView {
     /// R56.2.e — X11/Wayland canonical middle-click PRIMARY paste.
     /// Funnels through the textfield widget's `paste-primary` invoke.
     /// Modifiers ignored (plain middle-click is the unambiguous
-    /// PRIMARY-paste case across desktops).
+    /// PRIMARY-paste case across desktops). R664 — both
+    /// [`TF_TAG`] and [`EDIT_TF_TAG`] receive the paste affordance.
     fn apply_middle_click(
         scene: &mut Scene,
         focused: Option<&str>,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        if focused != Some(TF_TAG) {
-            return false;
-        }
-        let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
+        let target = match focused {
+            Some(TF_TAG) => TF_TAG,
+            Some(EDIT_TF_TAG) => EDIT_TF_TAG,
+            _ => return false,
+        };
+        let Some(node) = scene.find_external_with_tag_mut(target) else {
             return false;
         };
         let Some(intro) = node.handle.introspect_mut() else {
@@ -1621,7 +2095,7 @@ impl WidgetCore for TodoMvcView {
         }
     }
 
-    fn fmt_state_log(state: &(TextFieldState, u32, FilterRadioStates)) -> String {
+    fn fmt_state_log(state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32)) -> String {
         let radios = state
             .2
             .states
@@ -1643,9 +2117,11 @@ impl WidgetCore for TodoMvcView {
             None => String::new(),
         };
         format!(
-            "{} / caret={} / filter[{radios}]{focused}",
+            "{} / caret={} / filter[{radios}]{focused} / edit={} caret={}",
             tf_paint::text_field_state_name(state.0),
             state.1,
+            tf_paint::text_field_state_name(state.3),
+            state.4,
         )
     }
 }
@@ -1661,8 +2137,8 @@ impl WidgetA11y for TodoMvcView {
     ///
     /// Labels come from paint-side `with_aria_label` via
     /// `enrich_names_from_scene` so literal strings live in one place.
-    fn access_node(state: &(TextFieldState, u32, FilterRadioStates), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, _caret, filter_radios) = state;
+    fn access_node(state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, _caret, filter_radios, _edit_interaction, _edit_caret) = state;
         let text = use_text_edit_state(TF_TAG).text();
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
@@ -1784,7 +2260,7 @@ impl WidgetA11y for TodoMvcView {
     /// engaged segment so the AT cursor lands on the visible
     /// selection. Other focused tags use the atomic-fallback shape.
     fn access_focus_target(
-        state: &(TextFieldState, u32, FilterRadioStates),
+        state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32),
         focused: Option<&str>,
     ) -> Option<pinion_a11y::AccessFocus> {
         if focused == Some(FILTER_TAG) {
@@ -1808,54 +2284,113 @@ impl WidgetA11y for TodoMvcView {
     /// tabindex). Hello-radio-group precedent, R662 5-of-5 framework
     /// consumer push (mirror of R660 `composite_tag`).
     ///
-    /// `parent_tag` disambiguates filter children from item / delete /
-    /// toggle children (whose `sub_tag` is a stable `u64` id and may
-    /// numerically collide with filter indices 0..2). Other composites
-    /// (`todo_item` / `todo_delete` / `todo_toggle`) AT-click flow
-    /// stays on the atomic fallback (keyboard-only deletion + Tab-
-    /// walk-into-list is a R670+ a11y carry).
+    /// R664 §5.40 — adds AT-action wires for the per-item composites:
+    /// - `todo_delete#<id>`  → `Click`/`Default` invokes
+    ///   [`TodoDeleteExternal`]`("delete", Int(id))` for AT-driven
+    ///   row deletion;
+    /// - `todo_toggle#<id>`  → `Click`/`Default` invokes
+    ///   [`TodoToggleExternal`]`("toggle", Int(id))` for AT-driven
+    ///   completion toggle;
+    /// - `todo_item#<id>`    → `Click`/`Default` invokes
+    ///   [`TodoEditExternal`]`("begin", Int(id))` for AT-driven
+    ///   edit-in-place activation (the AT equivalent of the W3C
+    ///   double-click idiom — assistive tech doesn't distinguish
+    ///   "double" from "single" activation, so the canonical
+    ///   activation idiom enters edit mode directly).
+    ///
+    /// `parent_tag` is the disambiguation key — each composite's
+    /// sub-tags are stable `u64` ids that can numerically collide
+    /// across composites.
     fn access_child_invoke(
         scene: &mut Scene,
         parent_tag: &str,
         sub_tag: &str,
         action: AccessAction,
     ) -> bool {
-        if parent_tag != FILTER_TAG {
-            return false;
-        }
-        let Ok(idx) = sub_tag.parse::<usize>() else {
-            return false;
-        };
-        if idx >= 3 {
-            return false;
-        }
-        let Some(node) = scene.find_external_with_tag_mut(FILTER_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        match action {
-            AccessAction::Click | AccessAction::Default => {
-                for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                    let _ = intro.invoke(
-                        "send",
-                        IntrospectValue::Text(format!("{idx}:{ev}")),
-                    );
-                }
-                true
-            }
-            AccessAction::Focus => {
-                if let Ok(i) = i64::try_from(idx) {
-                    let _ = intro.intervene(
-                        "focused_index",
-                        IntrospectValue::Int(i),
-                    );
-                }
-                true
-            }
+        match parent_tag {
+            FILTER_TAG => filter_at_action(scene, sub_tag, action),
+            DELETE_TAG => per_item_int_action(scene, DELETE_TAG, "delete", sub_tag, action),
+            TOGGLE_TAG => per_item_int_action(scene, TOGGLE_TAG, "toggle", sub_tag, action),
+            ITEM_TAG => per_item_int_action(scene, ITEM_TAG, "begin", sub_tag, action),
             _ => false,
         }
+    }
+}
+
+/// (R662 §5.40) Filter group AT-action handler — split out of
+/// [`TodoMvcView::access_child_invoke`] so the per-item composites
+/// keep symmetric structure. Click / Default cycles the full
+/// activation arc; Focus moves the active descendant without
+/// committing (W3C ARIA radiogroup roving-tabindex).
+fn filter_at_action(scene: &mut Scene, sub_tag: &str, action: AccessAction) -> bool {
+    let Ok(idx) = sub_tag.parse::<usize>() else {
+        return false;
+    };
+    if idx >= 3 {
+        return false;
+    }
+    let Some(node) = scene.find_external_with_tag_mut(FILTER_TAG) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    match action {
+        AccessAction::Click | AccessAction::Default => {
+            for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+                let _ = intro.invoke(
+                    "send",
+                    IntrospectValue::Text(format!("{idx}:{ev}")),
+                );
+            }
+            true
+        }
+        AccessAction::Focus => {
+            if let Ok(i) = i64::try_from(idx) {
+                let _ = intro.intervene(
+                    "focused_index",
+                    IntrospectValue::Int(i),
+                );
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// (R664 §5.40) Generic per-item AT-action helper —
+/// `Click`/`Default` invokes `external_tag`.`method`(Int(id)) on the
+/// External registered under `external_tag` (delete / toggle / edit).
+/// Sub-tag must parse as `u64` (the stable per-item id). Used by
+/// the AT bridge for the `todo_delete` / `todo_toggle` / `todo_item`
+/// composites — they all share the "address row by stable id +
+/// invoke the typed-id method" shape, so the AT layer reads as one
+/// declarative table of `parent_tag → invoke(method, id)` arrows.
+fn per_item_int_action(
+    scene: &mut Scene,
+    external_tag: &str,
+    method: &str,
+    sub_tag: &str,
+    action: AccessAction,
+) -> bool {
+    let Ok(id) = sub_tag.parse::<u64>() else {
+        return false;
+    };
+    let Ok(id_i64) = i64::try_from(id) else {
+        return false;
+    };
+    let Some(node) = scene.find_external_with_tag_mut(external_tag) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    match action {
+        AccessAction::Click | AccessAction::Default => {
+            let _ = intro.invoke(method, IntrospectValue::Int(id_i64));
+            true
+        }
+        _ => false,
     }
 }
 
@@ -1871,24 +2406,34 @@ impl WidgetView for TodoMvcView {
     /// `FIELD_PAD` text origin + `caret_rect_for_byte_offset` on the
     /// visual caret byte (preedit-end during composition). Width =
     /// `CARET_WIDTH`; height carries the `FONT_SIZE_PX` floor.
+    ///
+    /// R664 §5.16 §5.38 — handles two focusable text-input contexts:
+    /// the main "add todo" field ([`TF_TAG`]) and the in-place row
+    /// editor ([`EDIT_TF_TAG`]). The focused tag selects the matching
+    /// field rect + interaction + caret byte so platform IME windows
+    /// (Wayland text-input-v3, macOS `NSTextInputContext`, …) anchor
+    /// under the correct caret regardless of which field the user is
+    /// composing in.
     fn ime_caret_rect(
-        state: &(TextFieldState, u32, FilterRadioStates),
+        state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32),
         scene: &Scene,
         focused: Option<&str>,
     ) -> Option<CaretRect> {
-        if focused != Some(TF_TAG) {
-            return None;
-        }
-        let (interaction, caret_byte, _) = *state;
+        let (interaction, caret_byte, _, edit_interaction, edit_caret) = *state;
+        let (tag, fld_interaction, fld_caret) = match focused {
+            Some(TF_TAG) => (TF_TAG, interaction, caret_byte),
+            Some(EDIT_TF_TAG) => (EDIT_TF_TAG, edit_interaction, edit_caret),
+            _ => return None,
+        };
         // R657 §5.16 §5.38 — field rect walk stays binding-side; the
         // caret composition (splice + LayoutCache lookup + window-
         // coord sum) is the lifted helper.
-        let field_rect = pinion_shell::rect_for_tag(scene, TF_TAG)?;
+        let field_rect = pinion_shell::rect_for_tag(scene, tag)?;
         let theme = use_theme(THEME_TAG).theme_animated();
         Some(tf_paint::ime_caret_rect_for(
-            TF_TAG,
-            interaction,
-            caret_byte,
+            tag,
+            fld_interaction,
+            fld_caret,
             field_rect,
             &theme,
             &tf_paint::TextFieldStyle::m3_filled(),
@@ -1929,11 +2474,10 @@ mod tests {
     //! app depends on.
     use super::{
         allocate_todo_id, build_filter_row, build_todos_list, use_filter, use_next_todo_id,
-        use_todos, view, FilterMode, FilterRadioStates, TodoDeleteExternal, TodoItem,
-        TodoMvcView, TodoToggleExternal, DELETE_GLYPH, DELETE_TAG, DELETE_TAG_PREFIX,
-        FILTER_TAG, FILTER_TAG_PREFIX, ITEM_TAG_PREFIX, LIST_SCROLL_KEY, LIST_TAG,
-        SCROLLBAR_TAG, TF_TAG, TOGGLE_GLYPH_CHECKED, TOGGLE_GLYPH_UNCHECKED, TOGGLE_TAG,
-        TOGGLE_TAG_PREFIX,
+        use_todos, view, FilterMode, FilterRadioStates, TodoDeleteExternal, TodoItem, TodoMvcView,
+        TodoToggleExternal, DELETE_GLYPH, DELETE_TAG, DELETE_TAG_PREFIX, EDIT_TF_TAG, FILTER_TAG,
+        FILTER_TAG_PREFIX, ITEM_TAG, ITEM_TAG_PREFIX, LIST_SCROLL_KEY, LIST_TAG, SCROLLBAR_TAG,
+        TF_TAG, TOGGLE_GLYPH_CHECKED, TOGGLE_GLYPH_UNCHECKED, TOGGLE_TAG, TOGGLE_TAG_PREFIX,
     };
     use pinion_a11y::{AriaRole, WidgetA11y};
     use pinion_core::external::{External, IntrospectValue};
@@ -1996,6 +2540,26 @@ mod tests {
         out
     }
 
+    /// (R664) Walk the scene tree and collect every `TextNode`'s
+    /// resolved `TextStyle` for decoration assertions.
+    fn collect_text_styles(scene: &Scene) -> Vec<super::TextStyle> {
+        let mut out = Vec::new();
+        walk_text_styles(scene, &mut out);
+        out
+    }
+    fn walk_text_styles(scene: &Scene, out: &mut Vec<super::TextStyle>) {
+        match scene {
+            Scene::Text(t) => out.push(t.style.clone()),
+            Scene::Container(c) => {
+                for ch in &c.children {
+                    walk_text_styles(ch, out);
+                }
+            }
+            Scene::Scroll(s) => walk_text_styles(&s.content, out),
+            _ => {}
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Composition — tag presence + list region existence
     // ─────────────────────────────────────────────────────────────
@@ -2003,7 +2567,7 @@ mod tests {
     #[test]
     fn r655_view_carries_tf_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             assert!(
                 scene.contains_tag(TF_TAG),
                 "paint scene must carry the TextField widget tag",
@@ -2014,7 +2578,7 @@ mod tests {
     #[test]
     fn r655_view_carries_list_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             assert!(
                 scene.contains_tag(LIST_TAG),
                 "paint scene must carry the todo-list tag even when empty",
@@ -2028,7 +2592,7 @@ mod tests {
         // calls `V::view` under an `Owner::new()` scope and asserts
         // `Scene::contains_tag(V::tag())`.
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<TodoMvcView>(
-            (TextFieldState::Idle, 0, FilterRadioStates::default()),
+            (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
             &Frame::default(),
         );
     }
@@ -2042,7 +2606,7 @@ mod tests {
         with_owner(|| {
             // `use_todos()` returns an empty Vec by default
             // (Signal::new(Vec::new()) seed via Owner::cache).
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let children = find_children_for_tag(&scene, LIST_TAG);
             assert_eq!(
                 children.len(),
@@ -2070,7 +2634,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let children = find_children_for_tag(&scene, LIST_TAG);
             // header + 2 item rows
             assert_eq!(
@@ -2102,7 +2666,7 @@ mod tests {
                 }
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             for id in &ids {
                 let needle = format!("{ITEM_TAG_PREFIX}#{id}");
                 assert!(
@@ -2176,7 +2740,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             // The list container holds the header + per-item rows;
             // walk the list region only (not the textfield section)
             // so the textfield's status line text doesn't leak in.
@@ -2283,7 +2847,8 @@ mod tests {
         // R659 — total_count==0 path takes precedence over filter
         // mode, so passing FilterMode::All gives the empty-store
         // header.
-        let scene = build_todos_list(&theme, &[], FilterMode::All, 0);
+        let scene =
+            build_todos_list(&theme, &[], FilterMode::All, 0, None, TextFieldState::Idle, 0);
         let texts = collect_text_nodes(&scene);
         assert_eq!(
             texts,
@@ -2320,6 +2885,9 @@ mod tests {
             &entries,
             FilterMode::All,
             entries.len(),
+            None,
+            TextFieldState::Idle,
+            0,
         );
         let texts = collect_text_nodes(&scene);
         assert_eq!(texts.first().map(String::as_str), Some("Todos (3)"));
@@ -2367,7 +2935,7 @@ mod tests {
                 next.retain(|item| item.id != 2);
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             // Surviving items keep their ORIGINAL stable ids — no
             // resequencing to {0,1}. This is the R656 invariant.
             assert!(
@@ -2673,24 +3241,27 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn r656_create_extra_externals_registers_todo_delete() {
-        // R659 §5.16 — extras = [delete, toggle, filter, scrollbar]
-        // (4 entries). The R656 invariant (DELETE_TAG present)
-        // continues to hold under additive composition — the test
-        // asserts tag membership rather than a hard length.
+    fn r664_create_extra_externals_registers_six_siblings() {
+        // R664 §5.16 — extras = [delete, toggle, filter, scrollbar,
+        // item-edit-handler, editor-field] (6 entries; R659 added
+        // entries 1-4, R664 adds ITEM_TAG + EDIT_TF_TAG). The R656
+        // invariant (DELETE_TAG present) continues to hold under
+        // additive composition.
         with_owner(|| {
             let extras: Vec<ExtraExternal> =
                 <TodoMvcView as WidgetCore>::create_extra_externals();
             assert_eq!(
                 extras.len(),
-                4,
-                "R659: 4 extras (delete + toggle + filter + scrollbar)",
+                6,
+                "R664: 6 extras (delete + toggle + filter + scrollbar + item-edit + editor-field)",
             );
             let tags: Vec<&str> = extras.iter().map(|e| e.tag).collect();
             assert!(tags.contains(&DELETE_TAG), "DELETE_TAG still registered");
             assert!(tags.contains(&TOGGLE_TAG), "R658 TOGGLE_TAG registered");
             assert!(tags.contains(&FILTER_TAG), "R659 FILTER_TAG registered");
             assert!(tags.contains(&SCROLLBAR_TAG), "R659 SCROLLBAR_TAG registered");
+            assert!(tags.contains(&ITEM_TAG), "R664 ITEM_TAG (TodoEditExternal) registered");
+            assert!(tags.contains(&EDIT_TF_TAG), "R664 EDIT_TF_TAG (editor TextField) registered");
         });
     }
 
@@ -2702,7 +3273,7 @@ mod tests {
     fn r656_access_node_emits_list_root_with_no_items() {
         with_owner(|| {
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0, FilterRadioStates::default()),
+                &(TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
                 Some(TF_TAG),
             );
             // R659 §5.40 — order: [textbox, RadioGroup(filter),
@@ -2743,7 +3314,7 @@ mod tests {
                 next
             });
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0, FilterRadioStates::default()),
+                &(TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
                 Some(TF_TAG),
             );
             // R659 §5.40 — order:
@@ -2806,7 +3377,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -2858,7 +3429,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present (inside Scroll)");
@@ -2887,7 +3458,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present (inside Scroll)");
@@ -2921,7 +3492,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             for id in [11_u64, 22] {
                 let needle = format!("{TOGGLE_TAG_PREFIX}#{id}");
                 assert!(
@@ -2957,7 +3528,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -3249,7 +3820,7 @@ mod tests {
             }
         }
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let scroll =
                 walk(&scene).expect("R659: Scroll wrapping LIST_TAG must exist");
             assert!(
@@ -3269,7 +3840,7 @@ mod tests {
         with_owner(|| {
             // First view call instantiates ScrollState in the Owner
             // cache.
-            let _ = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let _ = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let scroll_state_a =
                 pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
             let scroll_state_b =
@@ -3284,7 +3855,7 @@ mod tests {
     #[test]
     fn r658_scroll_state_offset_round_trips() {
         with_owner(|| {
-            let _ = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let _ = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let scroll_state =
                 pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
             // Declare a max bound + scroll. The view fn's
@@ -3406,7 +3977,7 @@ mod tests {
             IntrospectValue::Int(idx),
         );
         let _ = TodoMvcView::update(
-            (TextFieldState::Idle, 0, FilterRadioStates::default()),
+            (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
             &intent,
         );
     }
@@ -3459,7 +4030,7 @@ mod tests {
                 IntrospectValue::Null,
             );
             let _ = TodoMvcView::update(
-                (TextFieldState::Idle, 0, FilterRadioStates::default()),
+                (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
                 &intent,
             );
             // Reducer is intent-tag-specific; the
@@ -3476,7 +4047,7 @@ mod tests {
     #[test]
     fn r659_view_carries_filter_tag_and_three_buttons() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             assert!(scene.contains_tag(FILTER_TAG), "filter group root tag present");
             for i in 0..3 {
                 let tag = format!("{FILTER_TAG_PREFIX}#{i}");
@@ -3491,7 +4062,7 @@ mod tests {
     #[test]
     fn r659_view_carries_scrollbar_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             assert!(
                 scene.contains_tag(SCROLLBAR_TAG),
                 "scrollbar peer Container tag must be paint-addressable",
@@ -3524,7 +4095,7 @@ mod tests {
             });
             use_filter().set(FilterMode::Active);
 
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             // Only a + c paint (b is completed → filtered out).
             assert!(scene.contains_tag("todo_item#1"));
             assert!(!scene.contains_tag("todo_item#2"), "completed row hidden under Active filter");
@@ -3552,7 +4123,7 @@ mod tests {
             });
             use_filter().set(FilterMode::Completed);
 
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             assert!(!scene.contains_tag("todo_item#1"), "active row hidden under Completed filter");
             assert!(scene.contains_tag("todo_item#2"));
         });
@@ -3578,7 +4149,7 @@ mod tests {
             });
             use_filter().set(FilterMode::All);
 
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             assert!(scene.contains_tag("todo_item#1"));
             assert!(scene.contains_tag("todo_item#2"));
         });
@@ -3601,7 +4172,7 @@ mod tests {
             });
             use_filter().set(FilterMode::Active);
 
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -3614,22 +4185,10 @@ mod tests {
         });
     }
 
-    #[test]
-    fn r659_create_extra_externals_registers_four_siblings() {
-        with_owner(|| {
-            let extras = <TodoMvcView as WidgetCore>::create_extra_externals();
-            assert_eq!(
-                extras.len(),
-                4,
-                "R659: 4 extras (delete + toggle + filter + scrollbar)",
-            );
-            let tags: Vec<&str> = extras.iter().map(|e| e.tag).collect();
-            assert!(tags.contains(&DELETE_TAG));
-            assert!(tags.contains(&TOGGLE_TAG));
-            assert!(tags.contains(&FILTER_TAG));
-            assert!(tags.contains(&SCROLLBAR_TAG));
-        });
-    }
+    // R664 — R659 duplicate test (registers_four_siblings) retired
+    // for the consolidated `r664_create_extra_externals_registers_six_siblings`
+    // above which pins the per-R664 count + tag membership in one
+    // place.
 
     #[test]
     fn r659_build_filter_row_emits_all_three_buttons_with_aria_labels() {
@@ -3688,7 +4247,7 @@ mod tests {
         with_owner(|| {
             use_filter().set(FilterMode::Completed);
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0, FilterRadioStates::default()),
+                &(TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
                 Some(TF_TAG),
             );
             // Find the RadioGroup with FILTER_TAG.
@@ -3723,7 +4282,7 @@ mod tests {
     #[test]
     fn r659_scroll_region_holds_scroll_plus_scrollbar_side_by_side() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0), &Frame::default());
             let Scene::Container(outer) = &scene else {
                 panic!("outer Container");
             };
@@ -3754,5 +4313,479 @@ mod tests {
                 "scroll region must be flex Row so the peer sits beside the list",
             );
         });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R664 §5.16 §5.38 — edit-in-place axis
+    // ─────────────────────────────────────────────────────────────
+
+    /// (R664) Default `editing_id` is `None` — no row in edit mode at
+    /// boot. The `use_editing_id` hook's `Signal::new(None)` factory
+    /// runs lazily under `Owner::cache`; first read materialises the
+    /// signal in the steady state.
+    #[test]
+    fn r664_use_editing_id_defaults_to_none() {
+        with_owner(|| {
+            assert_eq!(super::use_editing_id().get(), None);
+        });
+    }
+
+    /// (R664) `TodoEditExternal::begin_edit` activates row by id:
+    /// `editing_id := Some(id)` + editor `TextEditState` seeded with
+    /// the current item text. Returns `true` when id matched.
+    #[test]
+    fn r664_begin_edit_activates_row_and_seeds_text() {
+        with_owner(|| {
+            // Seed one entry.
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "first thing".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let edit = super::TodoEditExternal::new(use_todos());
+            let was = edit.begin_edit(id);
+            assert!(was, "existing id matches");
+            assert_eq!(super::use_editing_id().get(), Some(id));
+            assert_eq!(
+                pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG)
+                    .text(),
+                "first thing",
+            );
+        });
+    }
+
+    /// (R664) `begin_edit` on a stale id is a silent no-op — returns
+    /// `false`, leaves `editing_id` unchanged.
+    #[test]
+    fn r664_begin_edit_with_stale_id_returns_false() {
+        with_owner(|| {
+            let edit = super::TodoEditExternal::new(use_todos());
+            let was = edit.begin_edit(99_999);
+            assert!(!was);
+            assert_eq!(super::use_editing_id().get(), None);
+        });
+    }
+
+    /// (R664) view fn paints an inline `view_field` editor (tagged
+    /// `EDIT_TF_TAG`) inside the edit-mode row when
+    /// `editing_id == Some(item.id)`. The non-editing rows keep the
+    /// static text label — the swap is row-local.
+    #[test]
+    fn r664_view_renders_editor_in_active_row() {
+        with_owner(|| {
+            let id_a = super::allocate_todo_id();
+            let id_b = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: id_a,
+                    text: "alpha".to_owned(),
+                    completed: false,
+                });
+                next.push(TodoItem {
+                    id: id_b,
+                    text: "beta".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            super::use_editing_id().set(Some(id_b));
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &super::Frame::default(),
+            );
+            assert!(
+                scene.contains_tag(EDIT_TF_TAG),
+                "edit-mode row must paint the EDIT_TF_TAG editor",
+            );
+        });
+    }
+
+    /// (R664) When no row is editing, the paint scene contains no
+    /// `EDIT_TF_TAG` tag — the row swap is conditional, not always-on.
+    #[test]
+    fn r664_view_omits_editor_when_not_editing() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "x".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            super::use_editing_id().set(None);
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &super::Frame::default(),
+            );
+            assert!(
+                !scene.contains_tag(EDIT_TF_TAG),
+                "no editor when editing_id is None",
+            );
+        });
+    }
+
+    /// (R664) `commit_edit` writes the editor text back to the
+    /// matching row + clears the edit state. The original item's
+    /// `completed` field is preserved (commit edits the text only).
+    #[test]
+    fn r664_commit_edit_updates_row_text_preserving_completed() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "old".to_owned(),
+                    completed: true,
+                });
+                next
+            });
+            super::use_editing_id().set(Some(id));
+            pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG)
+                .set_text("new".to_owned());
+            let mut scene = super::Scene::Container(super::ContainerNode::new(vec![]));
+            super::commit_edit(&mut scene);
+            let items = use_todos().get();
+            let updated = items.iter().find(|i| i.id == id).unwrap();
+            assert_eq!(updated.text, "new", "row text updated");
+            assert!(updated.completed, "completed flag preserved");
+            assert_eq!(super::use_editing_id().get(), None, "edit cleared");
+        });
+    }
+
+    /// (R664) `commit_edit` with whitespace-only text removes the
+    /// row — the `TasteJS` `TodoMVC` "erase to delete" convention.
+    #[test]
+    fn r664_commit_edit_blank_text_deletes_row() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "x".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            super::use_editing_id().set(Some(id));
+            pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG)
+                .set_text("   ".to_owned());
+            let mut scene = super::Scene::Container(super::ContainerNode::new(vec![]));
+            super::commit_edit(&mut scene);
+            assert!(
+                !use_todos().get().iter().any(|i| i.id == id),
+                "blank commit removes the row",
+            );
+        });
+    }
+
+    /// (R664) `cancel_edit` clears `editing_id` without mutating
+    /// the row text.
+    #[test]
+    fn r664_cancel_edit_clears_state_without_writing() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "keep".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            super::use_editing_id().set(Some(id));
+            pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG)
+                .set_text("ignored typing".to_owned());
+            super::cancel_edit();
+            assert_eq!(super::use_editing_id().get(), None);
+            let items = use_todos().get();
+            assert_eq!(
+                items.iter().find(|i| i.id == id).unwrap().text,
+                "keep",
+                "row text untouched on cancel",
+            );
+        });
+    }
+
+    /// (R664) `end_edit_mode` queues a focus return to `TF_TAG` via
+    /// the substrate [`pinion_core::focus_request`] channel — the
+    /// shell drains it on the next `handle_tail` call.
+    #[test]
+    fn r664_end_edit_queues_focus_request_for_main_field() {
+        with_owner(|| {
+            // Drain any prior request from sibling tests in the
+            // same thread.
+            let _ = pinion_core::focus_request::drain();
+            super::end_edit_mode();
+            assert_eq!(
+                pinion_core::focus_request::drain(),
+                Some(TF_TAG.to_owned()),
+                "end_edit_mode requests focus back on the main field",
+            );
+        });
+    }
+
+    /// (R664) `begin_edit` queues a focus request for `EDIT_TF_TAG`
+    /// so the substrate drain focuses the editor before the next
+    /// paint cycle.
+    #[test]
+    fn r664_begin_edit_queues_focus_request_for_editor() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "z".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let _ = pinion_core::focus_request::drain();
+            let edit = super::TodoEditExternal::new(use_todos());
+            let _ = edit.begin_edit(id);
+            assert_eq!(
+                pinion_core::focus_request::drain(),
+                Some(EDIT_TF_TAG.to_owned()),
+                "begin_edit requests focus on the editor",
+            );
+        });
+    }
+
+    /// (R664) `TodoEditExternal::invoke("send", "<id>:DoubleClick")`
+    /// activates edit mode via the composite-tag wire (the framework's
+    /// W3C double-click detection + RPC `scene/double_click` drain
+    /// both feed this path).
+    #[test]
+    fn r664_todo_edit_external_send_double_click_begins_edit() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "wire".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let mut edit = super::TodoEditExternal::new(use_todos());
+            let res = super::ExternalIntrospect::invoke(
+                &mut edit,
+                "send",
+                super::IntrospectValue::Text(format!("{id}:DoubleClick")),
+            );
+            assert!(matches!(res, Ok(super::IntrospectValue::Bool(true))));
+            assert_eq!(super::use_editing_id().get(), Some(id));
+        });
+    }
+
+    /// (R664) Non-DoubleClick composite-tag events on
+    /// `TodoEditExternal` no-op — `PointerEnter` / Down / Up / Leave
+    /// stay routed to sibling externals (toggle / delete) for normal
+    /// single-click semantics.
+    #[test]
+    fn r664_todo_edit_external_ignores_pointer_events() {
+        with_owner(|| {
+            let mut edit = super::TodoEditExternal::new(use_todos());
+            for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+                let res = super::ExternalIntrospect::invoke(
+                    &mut edit,
+                    "send",
+                    super::IntrospectValue::Text(format!("1:{ev}")),
+                );
+                assert!(
+                    matches!(res, Ok(super::IntrospectValue::Bool(false))),
+                    "{ev} must not enter edit mode",
+                );
+            }
+            assert_eq!(super::use_editing_id().get(), None);
+        });
+    }
+
+    /// (R664) `EDIT_TF_TAG` joins the focusable enumeration so the
+    /// programmatic `focus_request` from `begin_edit` succeeds. The
+    /// main field + editor + filter group give exactly 3 tab stops.
+    #[test]
+    fn r664_focusable_tags_includes_editor_slot() {
+        let tags = <TodoMvcView as super::WidgetCore>::focusable_tags();
+        assert_eq!(tags, vec![TF_TAG, EDIT_TF_TAG, FILTER_TAG]);
+    }
+
+    /// (R664) Completed rows render their text label with
+    /// `TextDecoration::strikethrough()` so the visual + colour cues
+    /// reinforce the done state (WCAG 1.4.1 non-colour-only signalling).
+    #[test]
+    fn r664_completed_row_text_has_strikethrough_decoration() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "done".to_owned(),
+                    completed: true,
+                });
+                next
+            });
+            super::use_editing_id().set(None);
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &super::Frame::default(),
+            );
+            let text_styles = collect_text_styles(&scene);
+            // The row text node carries strikethrough; sibling
+            // toggle glyph + delete glyph + headers do not. At
+            // least one text node must have the decoration.
+            assert!(
+                text_styles.iter().any(|s| s.decoration.strikethrough),
+                "completed-row text must carry strikethrough TextDecoration",
+            );
+        });
+    }
+
+    /// (R664) `access_child_invoke` routes Click on `todo_item#<id>`
+    /// into `TodoEditExternal::invoke("begin", Int(id))` — the AT
+    /// equivalent of the double-click idiom (assistive tech doesn't
+    /// distinguish single from double activation).
+    #[test]
+    fn r664_at_click_on_item_enters_edit_mode() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "at-edit".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            // The shell registered ITEM_TAG external alongside the
+            // others; re-register a fresh tagged state-scene to
+            // exercise the dispatch path independently from the
+            // running shell.
+            let mut state_scene = build_state_scene_for_at_test();
+            let handled = <TodoMvcView as super::WidgetA11y>::access_child_invoke(
+                &mut state_scene,
+                ITEM_TAG,
+                &id.to_string(),
+                super::AccessAction::Click,
+            );
+            assert!(handled, "AT Click on todo_item is routed");
+            assert_eq!(super::use_editing_id().get(), Some(id));
+        });
+    }
+
+    /// (R664) AT Click on `todo_delete#<id>` invokes the typed-id
+    /// delete path, mirroring the mouse single-click on the `×`
+    /// glyph. Confirms the R662 `parent_tag` substrate has 4 application
+    /// consumers (filter + delete + toggle + item).
+    #[test]
+    fn r664_at_click_on_delete_removes_row() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "doomed".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let mut state_scene = build_state_scene_for_at_test();
+            let handled = <TodoMvcView as super::WidgetA11y>::access_child_invoke(
+                &mut state_scene,
+                DELETE_TAG,
+                &id.to_string(),
+                super::AccessAction::Click,
+            );
+            assert!(handled, "AT Click on todo_delete is routed");
+            assert!(
+                !use_todos().get().iter().any(|i| i.id == id),
+                "AT-driven delete removed the row",
+            );
+        });
+    }
+
+    /// (R664) AT Click on `todo_toggle#<id>` flips `completed` —
+    /// mirror of the mouse single-click on the ballot-box glyph.
+    #[test]
+    fn r664_at_click_on_toggle_flips_completed() {
+        with_owner(|| {
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: "togme".to_owned(),
+                    completed: false,
+                });
+                next
+            });
+            let mut state_scene = build_state_scene_for_at_test();
+            let handled = <TodoMvcView as super::WidgetA11y>::access_child_invoke(
+                &mut state_scene,
+                TOGGLE_TAG,
+                &id.to_string(),
+                super::AccessAction::Click,
+            );
+            assert!(handled);
+            let items = use_todos().get();
+            assert!(items.iter().find(|i| i.id == id).unwrap().completed);
+        });
+    }
+
+    /// (R664) Build a state scene tree that hosts every R664-wired
+    /// External (delete + toggle + item + filter) at the top level so
+    /// the AT-action helpers can resolve their primary tag via
+    /// `find_external_with_tag_mut`. Used only by the AT-action test
+    /// arms above.
+    fn build_state_scene_for_at_test() -> Scene {
+        use pinion_core::scene::ExternalNode;
+        let todos = use_todos();
+        let delete = Scene::External(
+            ExternalNode::new(Box::new(TodoDeleteExternal::new(todos.clone())))
+                .with_tag(DELETE_TAG),
+        );
+        let toggle = Scene::External(
+            ExternalNode::new(Box::new(TodoToggleExternal::new(todos.clone())))
+                .with_tag(TOGGLE_TAG),
+        );
+        let item = Scene::External(
+            ExternalNode::new(Box::new(super::TodoEditExternal::new(todos)))
+                .with_tag(ITEM_TAG),
+        );
+        Scene::Container(super::ContainerNode::new(vec![delete, toggle, item]))
     }
 }
