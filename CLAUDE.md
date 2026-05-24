@@ -4,10 +4,11 @@
 
 Reading order when entering this repo:
 
-1. **`docs/GENERATED.md`** — full spec, auto-rendered from atomic store. Read top to bottom.
-2. **`mnemosyne://concepts/overview`** — Mnemosyne contract; mutations to docs go through typed primitives, never direct edits.
-3. **This `CLAUDE.md`** — project-specific operational rules and structure map.
-4. **`git log --oneline`** — implementation progress since spec phase ended.
+1. **`docs/SEED_PROMPT.md`** — R663.5 canonical baseline for R664+ rounds. Northern-star (AAA + editor self-hosted), 4-phase progression, current round directives, watch-out list. Read this first; everything else is reference.
+2. **`docs/GENERATED.md`** — full spec, auto-rendered from atomic store. Read top to bottom.
+3. **`mnemosyne://concepts/overview`** — Mnemosyne contract; mutations to docs go through typed primitives, never direct edits.
+4. **This `CLAUDE.md`** — project-specific operational rules and structure map.
+5. **`git log --oneline`** — implementation progress since spec phase ended.
 
 ## Project identity
 

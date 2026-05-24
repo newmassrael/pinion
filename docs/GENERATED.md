@@ -12606,6 +12606,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R663.6 — R663.6 §1 — docs/SEED_PROMPT.md (R663.5 5-layer 동기화의 마지막 layer): git-tracked canonical baseline for R664+ rounds, northern-star anchor.
+
+**Changes**:
+- docs/SEED_PROMPT.md 신규 (~14K chars): R663.5 정정 후 첫 canonical seed prompt. 명시적 북극성 (AAA game shippable + Unreal-class editor self-hosted in pinion itself) + 4-phase progression (A/B/C/D) + 현재 가중 진척 ~6% + R660-R663.5 5 세션 결과 + R664 8 atomic 청산 항목 + R665-R667 Phase A 완성 cascade + R700+ Phase B 진입 + R1000+ Phase C 진입 + R2500+ Phase D 진입 라운드 매핑. R663-R664 honest 부채 5+1 명시 + watch out 누적 + lessons + 명시적 금지 + 시작 명령. 매 세션 첫 입력 용 (또는 '@docs/SEED_PROMPT.md 읽고 진행').
+- CLAUDE.md Quick start: Reading order step 1 로 docs/SEED_PROMPT.md 추가 — §Vision 이전에 먼저 읽을 baseline. 'Read this first; everything else is reference' 명시.
+- R663.5 5-layer 동기화의 5번째 layer 완성. R663.5 안에서 amend 불가 (CLAUDE.md never-amend 룰) 따라 R663.6 별도 round entry. 그러나 R663.5 + R663.6 = 단일 logical 'vision 정정 round' (5-layer 동기화).
+
+
+
+**Verification**:
+- mnemosyne-cli validate-workspace 재실행 필요 (이 entry append 후 atomic ledger entries 528 → 529, sections 61 불변).
+- 0 code change — doc-only round. cargo test / clippy 영향 0.
+- 다음 세션 첫 prompt: '@docs/SEED_PROMPT.md 읽고 R664 진행' 또는 SEED_PROMPT.md 전체 복사-붙여넣기. axis 선택 anchor = '이 라운드가 AAA + editor self-hosted 에 얼마나 가까이 가는가' 로 재설정.
+
+
+
+**Impact**: §1
+
+
+**Carry forward**:
+- docs/SEED_PROMPT.md 는 git-tracked. 매 라운드 종료 시 '직전 N 세션 결과' + '다음 텍스트북 캐논' + 'watch out' + 'lessons' 갱신 mandatory — SEED_PROMPT.md 자체가 각 라운드 commit 의 일부로 갱신.
+- R667 (Phase A 종료) 시점에 SEED_PROMPT.md major 갱신 — Phase A finalisation framing 을 Phase B entry framing 으로 전환. R700 이 다음 canonical baseline.
+- R1000 (Phase C 진입) / R2500 (Phase D 진입) 각각 phase transition 라운드에서 SEED_PROMPT.md 동일 수준 갱신 mandatory — axis 선택 anchor 가 phase 마다 재설정
+
+
+
 ### R664 — R664 §5.16 §5.38 §5.39 §5.49 — todomvc edit-in-place + R663 paint-side double-click substrate consumer + focus_request mailbox + AT-action coverage
 
 **Changes**:
