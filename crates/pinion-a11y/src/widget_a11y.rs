@@ -116,6 +116,13 @@ pub trait WidgetA11y: WidgetCore {
     /// calls this hook so composite widgets can wire the activation
     /// through their existing wire-format invocation path.
     ///
+    /// R662 §5.40 — the `parent_tag` argument disambiguates multi-
+    /// composite bindings (e.g. todomvc carries both `todo_filter#<i>`
+    /// and `todo_item#<id>` children; the `sub_tag` alone is ambiguous
+    /// because filter indices `1`/`2` collide with `TodoItem` id `1`/`2`).
+    /// Single-composite bindings (hello-radio-group, hello-listbox)
+    /// can ignore the argument.
+    ///
     /// Returns `true` if the action was handled — the shell then
     /// bumps the §5.34 revision, refreshes cached state, and drains
     /// pending intents. Returns `false` to let the shell fall through
@@ -132,6 +139,7 @@ pub trait WidgetA11y: WidgetCore {
     /// the write-path gap for composites.
     fn access_child_invoke(
         _scene: &mut Scene,
+        _parent_tag: &str,
         _sub_tag: &str,
         _action: AccessAction,
     ) -> bool {

@@ -60,7 +60,7 @@ use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::{Color, Frame, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessAction, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_text::CaretRect;
 // R657 §5.16 §5.38 — lifted TextField paint substrate shared with
@@ -1798,6 +1798,64 @@ impl WidgetA11y for TodoMvcView {
             ));
         }
         focused.map(pinion_a11y::AccessFocus::atomic)
+    }
+
+    /// R662 §5.40 — multi-composite dispatch: route AT actions on
+    /// `todo_filter#<i>` sub-tags into the framework `RadioGroupExternal`
+    /// via the composite-tag wire. Click / Default fire the full
+    /// PointerEnter/Down/Up/Leave activation cycle; Focus moves the
+    /// AT-side active-descendant without committing (R51.87 roving-
+    /// tabindex). Hello-radio-group precedent, R662 5-of-5 framework
+    /// consumer push (mirror of R660 `composite_tag`).
+    ///
+    /// `parent_tag` disambiguates filter children from item / delete /
+    /// toggle children (whose `sub_tag` is a stable `u64` id and may
+    /// numerically collide with filter indices 0..2). Other composites
+    /// (`todo_item` / `todo_delete` / `todo_toggle`) AT-click flow
+    /// stays on the atomic fallback (keyboard-only deletion + Tab-
+    /// walk-into-list is a R670+ a11y carry).
+    fn access_child_invoke(
+        scene: &mut Scene,
+        parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
+        if parent_tag != FILTER_TAG {
+            return false;
+        }
+        let Ok(idx) = sub_tag.parse::<usize>() else {
+            return false;
+        };
+        if idx >= 3 {
+            return false;
+        }
+        let Some(node) = scene.find_external_with_tag_mut(FILTER_TAG) else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        match action {
+            AccessAction::Click | AccessAction::Default => {
+                for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+                    let _ = intro.invoke(
+                        "send",
+                        IntrospectValue::Text(format!("{idx}:{ev}")),
+                    );
+                }
+                true
+            }
+            AccessAction::Focus => {
+                if let Ok(i) = i64::try_from(idx) {
+                    let _ = intro.intervene(
+                        "focused_index",
+                        IntrospectValue::Int(i),
+                    );
+                }
+                true
+            }
+            _ => false,
+        }
     }
 }
 

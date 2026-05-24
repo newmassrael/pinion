@@ -412,6 +412,7 @@ impl WidgetCore for TestView {
 impl WidgetA11y for TestView {
     fn access_child_invoke(
         _scene: &mut Scene,
+        _parent_tag: &str,
         sub_tag: &str,
         action: AccessAction,
     ) -> bool {

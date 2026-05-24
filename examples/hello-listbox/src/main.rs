@@ -675,7 +675,7 @@ impl WidgetA11y for ListBoxView {
     }
 
     /// R51.70 §5.40 — composite child action dispatch.
-    fn access_child_invoke(scene: &mut Scene, sub_tag: &str, action: AccessAction) -> bool {
+    fn access_child_invoke(scene: &mut Scene, _parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
         let Ok(idx) = sub_tag.parse::<usize>() else {
             return false;
         };

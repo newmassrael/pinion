@@ -298,6 +298,8 @@ pub use sm::{ScrollBarEvent, ScrollBarState};
 /// framework-owned [`ScrollBarExternal`] writes through [`Self::set`]
 /// every SCXML transition.
 ///
+/// # SCE-004 stop-gap — numeric-tag wrapper
+///
 /// Internally stores [`ScrollBarState`] as a numeric tag in a
 /// `Signal<u8>` because Forge-generated `ScrollBarState` lacks the
 /// `Serialize + DeserializeOwned` bounds [`Signal::new`] requires.
@@ -305,6 +307,18 @@ pub use sm::{ScrollBarEvent, ScrollBarState};
 /// `2 = Dragging`, `3 = Disabled` — pinned by the unit tests at the
 /// bottom of this file so a future SCXML edit cannot silently
 /// re-number a variant.
+///
+/// This wrapper is a **stop-gap**, not the textbook canonical shape.
+/// The proper fix lives in `vendor/sce`: Forge codegen should emit
+/// `#[derive(serde::Serialize, serde::Deserialize)]` on every state /
+/// event enum (either default, or via `CompileOptions::state_enum_derives`).
+/// The vendor/sce upstream debt is tracked as **SCE-004** alongside
+/// **SCE-002** ([[sce-upstream-debts]] memory). Once Forge emits the
+/// serde derives, this wrapper collapses to
+/// `pub type ScrollBarInteractionSignal = Signal<ScrollBarState>;`
+/// and the round-trip tests retire — the cost of carrying it now is
+/// the ~100-LOC scaffold + one bookkeeping rule (extend `tag_for` /
+/// `state_for` whenever the SCXML adds a state).
 ///
 /// [`Effect`]: crate::reactive::Effect
 /// [`Owner`]: crate::reactive::Owner

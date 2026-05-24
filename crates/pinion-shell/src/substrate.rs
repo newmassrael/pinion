@@ -1522,7 +1522,7 @@ impl<V: WidgetView> ShellCore<V> {
                     // back to the atomic `apply_key` chain (no
                     // keyboard equivalent for "make this the active
                     // descendant").
-                    let _ = V::access_child_invoke(self.core.scene_mut(), sub, action.kind);
+                    let _ = V::access_child_invoke(self.core.scene_mut(), parent_tag, sub, action.kind);
                     self.revision.bump();
                     let tail = self.core.tail();
                     self.handle_tail(&tail);
@@ -1540,7 +1540,7 @@ impl<V: WidgetView> ShellCore<V> {
                     // refresh / drain bookkeeping `apply_a11y_key`
                     // performs so AT-driven activation matches the
                     // keyboard path 1:1.
-                    if V::access_child_invoke(self.core.scene_mut(), sub, action.kind) {
+                    if V::access_child_invoke(self.core.scene_mut(), parent_tag, sub, action.kind) {
                         self.revision.bump();
                         let tail = self.core.tail();
                         self.handle_tail(&tail);

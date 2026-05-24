@@ -448,7 +448,7 @@ impl WidgetA11y for RadioGroupView {
     /// the parent focus + active-descendant model surface the right
     /// active row visually. Other actions decline so the shell
     /// stays in charge of the fallback chain.
-    fn access_child_invoke(scene: &mut Scene, sub_tag: &str, action: AccessAction) -> bool {
+    fn access_child_invoke(scene: &mut Scene, _parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
         let Ok(idx) = sub_tag.parse::<usize>() else {
             return false;
         };
@@ -859,6 +859,7 @@ mod tests {
         let mut s = scene();
         assert!(RadioGroupView::access_child_invoke(
             &mut s,
+            PRIMARY_TAG,
             "1",
             AccessAction::Click,
         ));
@@ -870,6 +871,7 @@ mod tests {
         let mut s = scene();
         assert!(RadioGroupView::access_child_invoke(
             &mut s,
+            PRIMARY_TAG,
             "2",
             AccessAction::Default,
         ));
@@ -879,9 +881,9 @@ mod tests {
     #[test]
     fn access_child_invoke_subsequent_click_switches_selection() {
         let mut s = scene();
-        assert!(RadioGroupView::access_child_invoke(&mut s, "0", AccessAction::Click));
+        assert!(RadioGroupView::access_child_invoke(&mut s, PRIMARY_TAG, "0", AccessAction::Click));
         assert_eq!(selected_index(&s), Some(0));
-        assert!(RadioGroupView::access_child_invoke(&mut s, "2", AccessAction::Click));
+        assert!(RadioGroupView::access_child_invoke(&mut s, PRIMARY_TAG, "2", AccessAction::Click));
         assert_eq!(selected_index(&s), Some(2));
     }
 
@@ -890,10 +892,11 @@ mod tests {
         let mut s = scene();
         // Pre-select index 1 via Click so we can detect that Focus
         // does not perturb the existing selection.
-        let _ = RadioGroupView::access_child_invoke(&mut s, "1", AccessAction::Click);
+        let _ = RadioGroupView::access_child_invoke(&mut s, PRIMARY_TAG, "1", AccessAction::Click);
         let before = selected_index(&s);
         assert!(RadioGroupView::access_child_invoke(
             &mut s,
+            PRIMARY_TAG,
             "0",
             AccessAction::Focus,
         ));
@@ -905,6 +908,7 @@ mod tests {
         let mut s = scene();
         assert!(!RadioGroupView::access_child_invoke(
             &mut s,
+            PRIMARY_TAG,
             "9",
             AccessAction::Click,
         ));
@@ -916,6 +920,7 @@ mod tests {
         let mut s = scene();
         assert!(!RadioGroupView::access_child_invoke(
             &mut s,
+            PRIMARY_TAG,
             "foo",
             AccessAction::Click,
         ));
@@ -930,6 +935,7 @@ mod tests {
         // activation.
         assert!(!RadioGroupView::access_child_invoke(
             &mut s,
+            PRIMARY_TAG,
             "0",
             AccessAction::Increment,
         ));
@@ -940,6 +946,7 @@ mod tests {
         let mut s = scene();
         assert!(!RadioGroupView::access_child_invoke(
             &mut s,
+            PRIMARY_TAG,
             "0",
             AccessAction::Other,
         ));

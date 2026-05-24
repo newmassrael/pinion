@@ -12506,6 +12506,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R662 — R662 §5.16 §5.40 — SCE-004 upstream debt registered + WidgetA11y::access_child_invoke parent_tag substrate extension + todomvc filter AT-action wire.
+
+**Changes**:
+- memory/sce-upstream-debts.md: SCE-004 entry appended — Forge codegen state/event enum missing Serialize/Deserialize derive blocks `Signal<T>`. R660 ScrollBarInteractionSignal numeric-tag wrapper documented as stop-gap; textbook canonical fix lives in vendor/sce (CompileOptions::state_enum_derives or default-on serde derives). Tracked alongside SCE-002 (same consumer-injectable-derive axis). Per [[sce-priority-over-pinion]] — pinion-side workaround carries `# SCE-004 stop-gap` doc-anchor; retirement collapses ScrollBarInteractionSignal to `Signal<ScrollBarState>` directly.
+- crates/pinion-core/src/widgets/scrollbar.rs: ScrollBarInteractionSignal struct doc gains explicit `# SCE-004 stop-gap` section anchoring the upstream debt + retirement plan (~100-LOC scaffold + tag_for/state_for mapping + round-trip test all retire when Forge serde derives land).
+- crates/pinion-a11y/src/widget_a11y.rs: WidgetA11y::access_child_invoke trait method signature extended with `parent_tag: &str` argument. R662 §5.40 — multi-composite bindings (todomvc carries both `todo_filter#<i>` and `todo_item#<id>` children with colliding numeric sub_tags) require parent_tag disambiguation; single-composite bindings (hello-radio-group / hello-listbox) ignore it. Default impl unchanged (`false`).
+- crates/pinion-shell/src/substrate.rs: dispatch_access_action passes `parent_tag` to V::access_child_invoke at both call sites (Focus + Click/Default arcs).
+- examples/hello-radio-group/src/main.rs + examples/hello-listbox/src/main.rs + examples/hello-listbox-multi/src/main.rs: access_child_invoke impl signatures updated to accept `_parent_tag: &str` (ignored for single-composite bindings). hello-radio-group's 11 unit-test call sites updated to pass PRIMARY_TAG.
+- crates/pinion-shell/tests/dispatch_core.rs: TestView::access_child_invoke updated to new signature.
+- examples/todomvc/src/main.rs: WidgetA11y::access_child_invoke impl added — parent_tag == FILTER_TAG dispatch only; sub_tag parse to 0..3 → invoke send/intervene on the framework RadioGroupExternal. Click/Default fire full PointerEnter/Down/Up/Leave composite-tag wire; Focus intervenes `focused_index` for the R51.87 roving-tabindex active-descendant divergence path. todo_item / todo_delete / todo_toggle AT-action wire stays on atomic fallback (R670+ a11y carry).
+
+
+
+**Verification**:
+- cargo test --workspace passes: 3303 tests, 0 failed. hello-radio-group's 11 access_child_invoke unit tests + the shell's dispatch_core integration test all pass with the new signature; substrate API change is bit-identical at observable behaviour.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello passes clean. 3 follow-up backtick fixes applied (sub_tag / TodoItem / composite_tag) for the doc_markdown gate.
+- tools/demos/todomvc_r660.py PASS in 6.57s — the existing 40-assertion R660 sweep regresses zero (substrate signature change is pure additive; filter wire only handles new AT requests that didn't reach the binding before).
+
+
+
+**Impact**: §5.16, §5.40
+
+
+**Carry forward**:
+- SCE-004 open — Forge codegen serde derives. When upstream lands, ScrollBarInteractionSignal numeric-tag wrapper retires to `pub type ... = Signal<ScrollBarState>;` (estimated -100 LOC). Same SCE-002 axis (consumer-injectable derive hook) blocks both.
+- WidgetA11y::access_child_invoke parent_tag is now framework-canonical for multi-composite bindings. Single-composite bindings (hello-radio-group / hello-listbox / hello-listbox-multi) inherit the `_parent_tag` ignore convention — boilerplate, but type-safe.
+- todomvc per-item delete / toggle AT-click wire stays on atomic fallback (the AT-click path on a `todo_delete#<id>` button does not fire the delete; only mouse + RPC do). Carrying as R670+ a11y axis — needs a 2nd consumer with the same pattern before lift per [[abstraction-needs-second-consumer]].
+- R663 edit-in-place (original seed-prompt R661 axis) — TodoMvc double-click → TextField widget swap; view_field 3rd consumer ROI confirmation. Next round.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
