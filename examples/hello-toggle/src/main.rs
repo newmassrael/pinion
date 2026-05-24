@@ -37,7 +37,7 @@
 //! produced this refactor (R51.30 immediate response to R51.29
 //! N=2 evidence).
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 // Borrowed in the V::update reducer to read the post-flip authority
 // out of the Toggle intent's payload — see the body comment for why
 // the intent payload (not V::read_state) is the canonical source.
@@ -50,8 +50,10 @@ use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{Color, ColorRole, Command, Frame, Scene, ThemeMode, WidgetCore, use_theme};
 #[cfg(test)]
 use pinion_core::Theme;
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+#[cfg(test)]
+use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+use pinion_derive::widget;
+use pinion_shell::vello_renderer_impl;
 
 // pinion-forge codegen output. Defines `pub struct HelloToggleRenderer`
 // + `pub enum HelloToggleRendererError` + async `new<W: Into<wgpu::
@@ -259,23 +261,55 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     )
 }
 
-/// `WidgetView` binding for the Toggle widget. The state shape is
-/// the joint `(ToggleState, bool)` pair — interaction state + the
-/// Off/On value sidecar [`Toggle::is_on`].
+/// `WidgetView` binding for the Toggle widget. R653 §5.16 retrofit:
+/// the [`#[widget]`](pinion_derive::widget) attribute below derives
+/// the mechanical [`WidgetCore`] / [`WidgetA11y`] / [`WidgetView`]
+/// shim using three R653-new substrate axes — `state_flags(checked =
+/// bool_field(1))` extracts the on/off bit from the tuple's second
+/// elem ([[r653-state-flags-bool-field]]), `access_value =
+/// bool_field(1)` adds the `.with_value(AccessValue::Bool(state.1))`
+/// chain the Switch role needs, and the `update` flag forwards the
+/// R27 reducer that swaps the [`ThemeProvider`] palette on the
+/// `"toggle"` intent. The binding still owns the methods the macro
+/// cannot derive: `view` (calls the free [`view`] fn), `read_state`
+/// (tuple state reads two introspect fields per [[r645-tuple-state-state-flags]]
+/// `WidgetStateName` covers only the enum half), `event_name`
+/// (`ToggleEvent` has no `WidgetEventName` impl yet — SCE-002 carry),
+/// `keybinding` / `apply_key` (custom ARIA dispatch), `update`
+/// (theme palette swap), and `fmt_state_log` (custom format).
+///
+/// [`WidgetCore`]: pinion_core::WidgetCore
+/// [`WidgetA11y`]: pinion_a11y::WidgetA11y
+/// [`WidgetView`]: pinion_shell::WidgetView
+/// [`ThemeProvider`]: pinion_core::ThemeProvider
+#[widget(
+    tag = "main_toggle",
+    state = (ToggleState, bool),
+    event = ToggleEvent,
+    title = "pinion hello-toggle (R653 §5.16 #[widget] retrofit)",
+    renderer = HelloToggleRenderer,
+    initial_size = (WIN_W, WIN_H),
+    external = ToggleExternal::new,
+    role = Switch,
+    state_flags(
+        hovered = Hover,
+        pressed = Pressed,
+        disabled = Disabled,
+        checked = bool_field(1),
+    ),
+    access_value = bool_field(1),
+    apply_key,
+    keybinding,
+    update,
+    fmt_state_log,
+)]
 struct ToggleView;
 
-impl WidgetCore for ToggleView {
-    type State = (ToggleState, bool);
-    type Event = ToggleEvent;
-
-    fn create_external() -> Box<dyn External> {
-        Box::new(ToggleExternal::new())
-    }
-
-    fn tag() -> &'static str {
-        "main_toggle"
-    }
-
+impl ToggleView {
+    /// Tuple-state introspect: pulls both the SCXML state name (via
+    /// `query("state")`) and the Off/On sidecar (via `query("value")`).
+    /// Defaults to `(Idle, false)` when either field is missing so a
+    /// fresh External (zero introspect output) reads as Off-Idle.
     fn read_state(scene: &Scene) -> (ToggleState, bool) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
@@ -291,8 +325,12 @@ impl WidgetCore for ToggleView {
         (ToggleState::Idle, false)
     }
 
-    fn view(state: (ToggleState, bool), frame: &Frame) -> Scene {
-        view(state.0, state.1, frame)
+    /// R641 §5.16 inherent view shim. The macro emits the trait method
+    /// as `<ToggleView>::view(state, *frame)` (deref'd from the
+    /// trait's `&Frame` per [[widget-macro-by-value-bridge]]). This
+    /// fn unpacks the tuple state and forwards to the free [`view`].
+    fn view(state: (ToggleState, bool), frame: Frame) -> Scene {
+        view(state.0, state.1, &frame)
     }
 
     fn event_name(event: ToggleEvent) -> &'static str {
@@ -306,10 +344,6 @@ impl WidgetCore for ToggleView {
             // Internal SCXML variants — route through a sentinel.
             _ => "__internal__",
         }
-    }
-
-    fn title() -> &'static str {
-        "pinion hello-toggle (R57.X.toggle §5.50 theme retrofit)"
     }
 
     fn keybinding(key: &str) -> Option<ToggleEvent> {
@@ -326,7 +360,12 @@ impl WidgetCore for ToggleView {
     /// intent in parity with a pointer click. ARIA toggle buttons
     /// accept both keys; pure ARIA checkboxes accept only Space —
     /// `hello-toggle` is a toggle button so both land here.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
@@ -338,24 +377,17 @@ impl WidgetCore for ToggleView {
     /// **Authority source = `intent.payload`, not `state`.** The
     /// `"toggle"` intent fires from inside the Toggle SCXML's
     /// `Pressed -> Hover` transition; that transition is in flight
-    /// while [`Self::update`] runs, so [`Self::read_state`] still
-    /// observes the *pre*-flip `Off` value. The intent payload
+    /// while `update` runs, so [`read_state`] still observes the
+    /// *pre*-flip `Off` value. The intent payload
     /// (`IntrospectValue::Bool(new_value)`) carries the canonical
     /// post-flip on/off bit, mirroring the W3C event-driven contract
     /// (event detail is authoritative for the action that produced
     /// the event). Same fix lives in `hello-theme` for the parity
     /// substrate demo.
     ///
-    /// Owner-current discipline: the shell wraps this call in
-    /// `root_owner.run` ([[callback-root-owner-wrap]]) so
-    /// [`use_theme`] resolves the same [`ThemeProvider`] Rc the
-    /// view-fn subscribes to — the typed [`Owner::cache`] slot keyed
-    /// by [`THEME_TAG`] is shared across both halves.
-    ///
-    /// Signal equality-skip covers the
-    /// [[reducer-incoming-vs-drain-symmetry]] double-fire: a second
-    /// call against the now-active palette is a no-op rather than a
-    /// double-paint.
+    /// [`read_state`]: ToggleView::read_state
+    /// [`ThemeProvider`]: pinion_core::ThemeProvider
+    /// [`Toggle`]: pinion_core::widgets::toggle::Toggle
     fn update(_state: (ToggleState, bool), intent: &Intent) -> Vec<Command> {
         if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {
             if let IntrospectValue::Bool(on) = intent.payload {
@@ -366,48 +398,12 @@ impl WidgetCore for ToggleView {
         Vec::new()
     }
 
-    fn fmt_state_log(state: &(ToggleState, bool)) -> String {
+    fn fmt_state_log(state: (ToggleState, bool)) -> String {
         format!(
             "{} / {}",
             toggle_state_name(state.0),
             if state.1 { "On" } else { "Off" },
         )
-    }
-}
-
-impl WidgetA11y for ToggleView {
-    /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
-    /// single `AriaRole::Switch` node (toggle button per WAI-ARIA;
-    /// distinct from `AriaRole::CheckBox` because Switch carries
-    /// On/Off semantics rather than tri-state Checked/Unchecked/Mixed).
-    /// `value` is `AccessValue::Bool(on)`; `state.checked` mirrors
-    /// the same boolean so AT clients reading either field see a
-    /// consistent on/off state.
-    ///
-    /// R51.69 §5.40 — the accessible name is sourced from the
-    /// track container's `aria_label` override (set in `view`) so
-    /// the literal `"Dark mode"` lives in exactly one place. The
-    /// shell's `enrich_names_from_scene` lifts it onto this node.
-    fn access_node(state: &(ToggleState, bool), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, on) = (state.0, state.1);
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, ToggleState::Disabled),
-            hovered: matches!(interaction, ToggleState::Hover),
-            pressed: matches!(interaction, ToggleState::Pressed),
-            checked: Some(on),
-        };
-        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Switch)
-            .with_value(AccessValue::Bool(on))
-            .with_state(access_state)]
-    }
-}
-
-impl WidgetView for ToggleView {
-    type Renderer = HelloToggleRenderer;
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
     }
 }
 

@@ -19,6 +19,13 @@ path = "src/main.rs"
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` attribute macro emits
+# the WidgetCore + WidgetA11y + WidgetView forwarding trio. R653-new
+# substrate axes used here: `state_flags(checked = bool_field(1))` for
+# tuple-second-elem direct bool extraction + `access_value =
+# bool_field(1)` for the Switch `.with_value(AccessValue::Bool(...))`
+# chain + `update` flag for the R27 theme palette swap reducer.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
 # R51.30 paint-side AppShell. The shell pulls pinion-runtime (vello
 # feature) + pinion-rpc + pinion-text + winit + pollster transitively,
 # so this example's direct dep list collapses to "the widget I'm

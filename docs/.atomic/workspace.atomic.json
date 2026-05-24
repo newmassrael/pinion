@@ -19084,6 +19084,62 @@
         "R655 §§1 + §2 #6 entry to application-tier (TodoMVC class composed app). Substrate debt cleared, retrofit cascade complete, ROI net-negative on substrate, ready for the AI-native composed-app driving demo the north-star requires"
       ]
     },
+    "R653": {
+      "decision_summary": "R653 §5.16 #[widget] macro 3-axis substrate extension + hello-toggle first consumer (Cat A retrofit enabler)",
+      "changes_bullets": [
+        "crates/pinion-derive/src/widget.rs (+250 LOC / -45 LOC): 3 new substrate axes (a) `state_flags(checked = bool_field(N))` — tuple-second-elem direct bool extraction via new `StateFlagSource { Variant(Ident), BoolField(usize) }` enum + `require_variant` parser helper that rejects `bool_field` for `hovered`/`pressed`/`disabled` (interaction state is always enum-variant dispatched); (b) top-level `access_value = bool_field(N)` arg + `value_chain` token-stream slotted between `AccessNode::new(...)` and `.with_state(...)` emitting `.with_value(AccessValue::Bool(state.N))` for value-bearing ARIA roles (Switch/CheckBox/RadioButton — only `Bool` variant today); (c) `update` flag added to `KNOWN_FLAGS` + `emit_optional_forwards` branch forwarding `WidgetCore::update(state, intent) -> Vec<Command>` to inherent fn",
+        "examples/hello-toggle/src/main.rs (+144 ins / -95 del = +49 net): R652 Cat A first-consumer validator. Replaced 3 hand-written impl blocks (`WidgetCore` 110 LOC / `WidgetA11y` 27 LOC / `WidgetView` 7 LOC = 144 LOC manual) with single `#[widget(...)]` attribute (22 LOC) + `impl ToggleView { ... }` (~120 LOC inherent fns + rich doc comments). Mechanical-shim delta ~ -24 LOC, masked by deliberately preserved doc coverage describing what each derived axis emits",
+        "Inherent fns retained on ToggleView (macro cannot derive): `view` (free-fn shim, tuple state unpack), `read_state` (tuple state reads `query(\"state\")` + `query(\"value\")` — WidgetStateName covers only enum half per R645), `event_name` (ToggleEvent has no WidgetEventName impl yet — SCE-002 carry), `keybinding`/`apply_key` (custom ARIA dispatch), `update` (theme palette swap with intent.payload authority per [[intent-payload-post-flip-authority]]), `fmt_state_log` (custom format)",
+        "examples/hello-toggle/Cargo.toml: added `pinion-derive = { path = ..., version = \"0.0.1\" }` dependency (the third dep adoption after hello-button + figma-button-m3 + hello-slider; consistent pattern for the R654 cascade)",
+        "R652 ROI matrix corrected — initial Cat A '5 bindings immediate retrofit, zero substrate change' framing was wrong. Discovery: 4 of 5 Cat A bindings (toggle/checkbox/radio/theme) all need `with_value(AccessValue::Bool(...))` AND `checked = bool_field(N)` (bool tuple second-elem extraction) which the R642+R645 substrate did NOT support. Honest substrate-incompleteness-signal cascade (first-consumer reveals 3 gaps) lands the proper substrate this round before R654 cascade",
+        "Two clippy `doc_markdown` first-attempt warnings (`AccessValue` missing backticks) caught + fixed in same round — process-quality reminder per [[clippy-pre-audit-recovery]]"
+      ],
+      "verification_bullets": [
+        "cargo check -p pinion-derive: clean (3 substrate axes compile + parser/emit unification preserves R641-R645 baseline)",
+        "cargo check -p hello-toggle: clean (after Cargo.toml dep add + ToggleExternal import retained for `external = ToggleExternal::new` macro arg + `Self::tag()` short form retained per [[clippy-pre-audit-recovery]] WidgetCore-import-in-scope requirement)",
+        "cargo test -p hello-toggle: 8 passed / 0 failed (all 8 pre-existing a11y_tests pass post-retrofit: off_idle / on_idle / disabled_sets / focused_tag / aria_label / r55_g20_view_contains / r57_x_toggle_track_fill_swaps + r57_x_toggle_on_state_fills — `value: Some(AccessValue::Bool(false))` + `state.checked: Some(false)` assertions pin both R653-derived axes work end-to-end)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean after 2 `doc_markdown` `AccessValue` backtick fixes (process maturity reminder caught the issue same-round)",
+        "cargo test --workspace: 53 test-result-ok groups / 0 failed (R649 baseline 3206 + R650 +5 substrate = 3211 → R653 same +0 binding test count; substrate is exercised via hello-toggle's 8 existing tests rather than new fixture, since hello-toggle is the substrate-validator consumer)",
+        "mnemosyne validate_workspace: T1 orphan total = 0, round-trip 1/1, atomic ledger 515 → 516 entries, no T1/T2 regressions"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R654 §5.16: Cat A cascade (3 bindings) — hello-checkbox + hello-radio + hello-theme all share `(EnumState, bool)` shape; retrofit via `#[widget(... state_flags(checked = bool_field(1)) access_value = bool_field(1) ...)]` with hello-toggle as the parallel reference. hello-commands (single ButtonState, no value) added to the cascade as the simpler R642 baseline Cat A target — 4-binding R654 commit",
+        "Honest expected R654 delta: 4 retrofits × ~25-50 LOC per binding (consistent with hello-toggle's masked -24 LOC mechanical savings; cascade should accumulate -100 to -200 LOC binding-side, with substrate cost already amortized over R653)",
+        "Cat B (slider-vertical / textfield value-bearing tuple) still deferred: needs `access_value = Float(...)` / `access_value = Int(...)` extensions per [[abstraction-needs-second-consumer]] — wait for 2nd value-bearing consumer surfaces (likely R670+ after composed-app discovery)",
+        "ToggleEvent / CheckboxEvent / RadioEvent / ButtonEvent (the latter already has) WidgetEventName impls need land in crates/pinion-core/src/widgets/<widget>.rs alongside `widget_state_name!` to enable `event_name_derive` flag — currently SCE-002 carry burden; future SCE upstream PR (option A from [[sce-upstream-debts]] SCE-002) eliminates this manually",
+        "WidgetCore import discipline: retrofitted bindings using `Self::tag()` inside binary (non-test) code need `WidgetCore` in non-cfg(test) scope. Fully-qualified `<Self as ::pinion_core::WidgetCore>::tag()` is verbose; `Self::tag()` is the binding-canonical idiom"
+      ],
+      "publishable_decision_summary": "R653 §5.16 #[widget] macro 3-axis substrate extension + hello-toggle first consumer (Cat A retrofit enabler)",
+      "publishable_changes_bullets": [
+        "crates/pinion-derive/src/widget.rs (+250 LOC / -45 LOC): 3 new substrate axes (a) `state_flags(checked = bool_field(N))` — tuple-second-elem direct bool extraction via new `StateFlagSource { Variant(Ident), BoolField(usize) }` enum + `require_variant` parser helper that rejects `bool_field` for `hovered`/`pressed`/`disabled` (interaction state is always enum-variant dispatched); (b) top-level `access_value = bool_field(N)` arg + `value_chain` token-stream slotted between `AccessNode::new(...)` and `.with_state(...)` emitting `.with_value(AccessValue::Bool(state.N))` for value-bearing ARIA roles (Switch/CheckBox/RadioButton — only `Bool` variant today); (c) `update` flag added to `KNOWN_FLAGS` + `emit_optional_forwards` branch forwarding `WidgetCore::update(state, intent) -> Vec<Command>` to inherent fn",
+        "examples/hello-toggle/src/main.rs (+144 ins / -95 del = +49 net): R652 Cat A first-consumer validator. Replaced 3 hand-written impl blocks (`WidgetCore` 110 LOC / `WidgetA11y` 27 LOC / `WidgetView` 7 LOC = 144 LOC manual) with single `#[widget(...)]` attribute (22 LOC) + `impl ToggleView { ... }` (~120 LOC inherent fns + rich doc comments). Mechanical-shim delta ~ -24 LOC, masked by deliberately preserved doc coverage describing what each derived axis emits",
+        "Inherent fns retained on ToggleView (macro cannot derive): `view` (free-fn shim, tuple state unpack), `read_state` (tuple state reads `query(\"state\")` + `query(\"value\")` — WidgetStateName covers only enum half per R645), `event_name` (ToggleEvent has no WidgetEventName impl yet — SCE-002 carry), `keybinding`/`apply_key` (custom ARIA dispatch), `update` (theme palette swap with intent.payload authority per [[intent-payload-post-flip-authority]]), `fmt_state_log` (custom format)",
+        "examples/hello-toggle/Cargo.toml: added `pinion-derive = { path = ..., version = \"0.0.1\" }` dependency (the third dep adoption after hello-button + figma-button-m3 + hello-slider; consistent pattern for the R654 cascade)",
+        "R652 ROI matrix corrected — initial Cat A '5 bindings immediate retrofit, zero substrate change' framing was wrong. Discovery: 4 of 5 Cat A bindings (toggle/checkbox/radio/theme) all need `with_value(AccessValue::Bool(...))` AND `checked = bool_field(N)` (bool tuple second-elem extraction) which the R642+R645 substrate did NOT support. Honest substrate-incompleteness-signal cascade (first-consumer reveals 3 gaps) lands the proper substrate this round before R654 cascade",
+        "Two clippy `doc_markdown` first-attempt warnings (`AccessValue` missing backticks) caught + fixed in same round — process-quality reminder per [[clippy-pre-audit-recovery]]"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check -p pinion-derive: clean (3 substrate axes compile + parser/emit unification preserves R641-R645 baseline)",
+        "cargo check -p hello-toggle: clean (after Cargo.toml dep add + ToggleExternal import retained for `external = ToggleExternal::new` macro arg + `Self::tag()` short form retained per [[clippy-pre-audit-recovery]] WidgetCore-import-in-scope requirement)",
+        "cargo test -p hello-toggle: 8 passed / 0 failed (all 8 pre-existing a11y_tests pass post-retrofit: off_idle / on_idle / disabled_sets / focused_tag / aria_label / r55_g20_view_contains / r57_x_toggle_track_fill_swaps + r57_x_toggle_on_state_fills — `value: Some(AccessValue::Bool(false))` + `state.checked: Some(false)` assertions pin both R653-derived axes work end-to-end)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean after 2 `doc_markdown` `AccessValue` backtick fixes (process maturity reminder caught the issue same-round)",
+        "cargo test --workspace: 53 test-result-ok groups / 0 failed (R649 baseline 3206 + R650 +5 substrate = 3211 → R653 same +0 binding test count; substrate is exercised via hello-toggle's 8 existing tests rather than new fixture, since hello-toggle is the substrate-validator consumer)",
+        "mnemosyne validate_workspace: T1 orphan total = 0, round-trip 1/1, atomic ledger 515 → 516 entries, no T1/T2 regressions"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R654 §5.16: Cat A cascade (3 bindings) — hello-checkbox + hello-radio + hello-theme all share `(EnumState, bool)` shape; retrofit via `#[widget(... state_flags(checked = bool_field(1)) access_value = bool_field(1) ...)]` with hello-toggle as the parallel reference. hello-commands (single ButtonState, no value) added to the cascade as the simpler R642 baseline Cat A target — 4-binding R654 commit",
+        "Honest expected R654 delta: 4 retrofits × ~25-50 LOC per binding (consistent with hello-toggle's masked -24 LOC mechanical savings; cascade should accumulate -100 to -200 LOC binding-side, with substrate cost already amortized over R653)",
+        "Cat B (slider-vertical / textfield value-bearing tuple) still deferred: needs `access_value = Float(...)` / `access_value = Int(...)` extensions per [[abstraction-needs-second-consumer]] — wait for 2nd value-bearing consumer surfaces (likely R670+ after composed-app discovery)",
+        "ToggleEvent / CheckboxEvent / RadioEvent / ButtonEvent (the latter already has) WidgetEventName impls need land in crates/pinion-core/src/widgets/<widget>.rs alongside `widget_state_name!` to enable `event_name_derive` flag — currently SCE-002 carry burden; future SCE upstream PR (option A from [[sce-upstream-debts]] SCE-002) eliminates this manually",
+        "WidgetCore import discipline: retrofitted bindings using `Self::tag()` inside binary (non-test) code need `WidgetCore` in non-cfg(test) scope. Fully-qualified `<Self as ::pinion_core::WidgetCore>::tag()` is verbose; `Self::tag()` is the binding-canonical idiom"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -97,17 +97,31 @@
 //! | `hovered`  | `matches!(state, State::Variant)`    | `false`          |
 //! | `pressed`  | `matches!(state, State::Variant)`    | `false`          |
 //! | `disabled` | `matches!(state, State::Variant)`    | `false`          |
-//! | `checked`  | `Some(matches!(state, State::Variant))` | `None`        |
+//! | `checked`  | `Some(matches!(state, State::Variant))` _or_ `Some(state.N)` | `None`        |
 //!
 //! `focused` is auto-derived from `focused == Some(<Self as WidgetCore>::tag())`
 //! for every declarative node — no `state_flags` entry needed.
 //!
+//! R653 §5.16 — `checked` accepts a second form `bool_field(N)` to
+//! support tuple-state widgets `(EnumState, bool)` (R51.4 Toggle /
+//! R51.5 Checkbox / R51.6 Radio / R57.X.toggle hello-theme) where the
+//! on/off semantic is carried by the second tuple element (a
+//! `bool`), not by an enum variant. `checked = bool_field(1)` emits
+//! `Some(state.1)` directly. The enum-variant form
+//! (`checked = OnVariant`) is unchanged and remains the only form
+//! `hovered` / `pressed` / `disabled` accept (those three are always
+//! interaction-state-enum dispatched).
+//!
 //! Multi-field state structs (`CheckboxState { ..., checked: bool }`)
-//! aren't reachable from `state_flags` v0 — those bindings stay on the
-//! inherent path until a future macro round teaches the parser the
-//! field-access form (`checked = field(checked)`). R642 covers the
-//! enum-variant shape (`ButtonState::Hover`, `ToggleState::On`) the
-//! survey identified as the 80 % case.
+//! still aren't reachable from `state_flags` v0 — those bindings stay
+//! on the inherent path until a future macro round teaches the parser
+//! the field-access form (`checked = field(checked)`). R642 covers the
+//! enum-variant shape (`ButtonState::Hover`); R645 lifts that to
+//! `(EnumState, _)` tuple first-elem dispatch for `hovered` /
+//! `pressed` / `disabled`; R653 extends `checked` with the second-
+//! elem bool extraction so the Cat A Toggle / Checkbox / Radio /
+//! Theme retrofit cascade (R652 ROI matrix) lands without manual
+//! `WidgetA11y` impls.
 //!
 //! ## Optional forward flags
 //!
@@ -125,6 +139,7 @@
 //! | `apply_key`          | `false` (no key handled)              | ARIA Space/Enter activation, Arrow keys, custom keys                                                          |
 //! | `keybinding`         | `None` (no character-key mapping)     | Single-char shortcuts mapping to `Self::Event`                                                                |
 //! | `state_name_derive`  | forward to inherent `fn read_state` + `fn event_name` (R641) | Enum-shaped `Self::State` + `Self::Event` with [`WidgetStateName`] + [`WidgetEventName`] impls (R643) |
+//! | `update`             | `Vec::new()` (no reducer side effects) | R27 reducer that turns SCXML intents into `Command`s — Toggle / Theme flip the palette here (R653)             |
 //!
 //! [`WidgetStateName`]: pinion_core::WidgetStateName
 //! [`WidgetEventName`]: pinion_core::WidgetEventName
@@ -214,6 +229,7 @@ pub(crate) fn expand(
         external,
         role,
         state_flags,
+        access_value,
         flags,
     } = args;
 
@@ -241,7 +257,7 @@ pub(crate) fn expand(
     let a11y_impl = if flags.contains("a11y_manual") {
         TokenStream2::new()
     } else {
-        emit_a11y_impl(view_ident, &state, role.as_ref(), &state_flags)
+        emit_a11y_impl(view_ident, &state, role.as_ref(), &state_flags, access_value.as_ref())
     };
     // R645 §5.16 — derive flags split. `state_name_derive` was the
     // R643 combined flag; R645 split it so tuple-state bindings
@@ -376,6 +392,28 @@ fn emit_optional_forwards(
             }
         });
     }
+    if flags.contains("update") {
+        // R653 §5.16 — forward the R27 reducer side-effect hook
+        // (`WidgetCore::update`). Trait signature takes State by value
+        // (Copy bound on `Self::State` guarantees no borrow contention
+        // with the in-flight SCXML transition observed via read_state).
+        // The inherent body owns the Intent dispatch + Vec<Command>
+        // return; the macro just bridges the trait method.
+        //
+        // First consumer = `hello-toggle` / `hello-theme` (R57.X theme
+        // palette flip on toggle intent — authority comes from
+        // intent.payload, NOT V::read_state which lags the in-flight
+        // SCXML transition by one tick per
+        // [[intent-payload-post-flip-authority]]).
+        out.extend(quote! {
+            fn update(
+                state: #state,
+                intent: &::pinion_core::intent::Intent,
+            ) -> ::std::vec::Vec<::pinion_core::command::Command> {
+                <#view_ident>::update(state, intent)
+            }
+        });
+    }
     out
 }
 
@@ -402,6 +440,7 @@ fn emit_a11y_impl(
     state: &Type,
     role: Option<&Ident>,
     state_flags: &StateFlagsConfig,
+    access_value: Option<&StateFlagSource>,
 ) -> TokenStream2 {
     if let Some(role_ident) = role {
         // R645 §5.16 — tuple state `(SliderState, f32)` etc. dispatches
@@ -425,12 +464,49 @@ fn emit_a11y_impl(
         let disabled_expr = bool_flag(&state_flags.disabled);
         let checked_expr = state_flags.checked.as_ref().map_or_else(
             || quote! { ::core::option::Option::None },
-            |v| quote! {
-                ::core::option::Option::Some(
-                    ::core::matches!(#match_target, #enum_type::#v)
-                )
+            |source| match source {
+                StateFlagSource::Variant(v) => quote! {
+                    ::core::option::Option::Some(
+                        ::core::matches!(#match_target, #enum_type::#v)
+                    )
+                },
+                // R653 §5.16 — tuple-state second-elem direct bool
+                // extraction. `state.N` (N must be < tuple arity, parser
+                // accepted the literal). For `(EnumState, bool)` the
+                // canonical use is `checked = bool_field(1)`.
+                StateFlagSource::BoolField(idx) => {
+                    let idx_lit = syn::Index::from(*idx);
+                    quote! { ::core::option::Option::Some(state.#idx_lit) }
+                }
             },
         );
+
+        // R653 §5.16 — optional `.with_value(AccessValue::Bool(state.N))`
+        // chain for value-bearing ARIA roles (Switch / CheckBox /
+        // RadioButton). Slotted between `AccessNode::new(...)` and
+        // `.with_state(...)` to mirror the hand-written body order
+        // every Cat A binding (R652 ROI matrix) used pre-retrofit.
+        let value_chain = match access_value {
+            None => TokenStream2::new(),
+            Some(StateFlagSource::BoolField(idx)) => {
+                let idx_lit = syn::Index::from(*idx);
+                quote! {
+                    .with_value(::pinion_a11y::AccessValue::Bool(state.#idx_lit))
+                }
+            }
+            Some(StateFlagSource::Variant(_)) => {
+                // Defended at parse time (`access_value = bool_field(N)`
+                // is the only accepted form), so this branch is
+                // unreachable in well-formed input. Emit a compile-time
+                // error rather than swallowing it silently.
+                quote! {
+                    ::std::compile_error!(
+                        "internal: `access_value = Variant` form reached emit; \
+                         parser should have rejected at the call site"
+                    )
+                }
+            }
+        };
 
         quote! {
             impl ::pinion_a11y::WidgetA11y for #view_ident {
@@ -455,6 +531,7 @@ fn emit_a11y_impl(
                             <#view_ident as ::pinion_core::WidgetCore>::tag(),
                             ::pinion_a11y::AriaRole::#role_ident,
                         )
+                        #value_chain
                         .with_state(access_state)
                     ]
                 }
@@ -479,12 +556,31 @@ fn emit_a11y_impl(
     }
 }
 
+/// (R653 §5.16) Source form of a `state_flags(checked = ...)` value.
+///
+/// `Variant` covers the R642 enum-variant form (`checked = OnVariant`
+/// matches `state.0` against an enum carried by the first tuple elem
+/// or by the state itself when non-tuple). `BoolField` is the new
+/// tuple-second-elem direct bool extraction
+/// (`checked = bool_field(1)`) for `(EnumState, bool)` widgets where
+/// the on/off semantic isn't an enum variant — Cat A retrofit
+/// (R652) target shape.
+enum StateFlagSource {
+    Variant(Ident),
+    BoolField(usize),
+}
+
 #[derive(Default)]
 struct StateFlagsConfig {
     hovered: Option<Ident>,
     pressed: Option<Ident>,
     disabled: Option<Ident>,
-    checked: Option<Ident>,
+    /// (R653 §5.16) Accepts either an enum-variant ident
+    /// (`checked = OnVariant`) or the tuple-second-elem direct bool
+    /// extraction (`checked = bool_field(N)`). The other three flags
+    /// (`hovered` / `pressed` / `disabled`) are always interaction-
+    /// state-enum dispatched, so they keep the simpler `Ident` slot.
+    checked: Option<StateFlagSource>,
 }
 
 struct WidgetArgs {
@@ -497,6 +593,16 @@ struct WidgetArgs {
     external: Expr,
     role: Option<Ident>,
     state_flags: StateFlagsConfig,
+    /// (R653 §5.16) Optional `access_value = bool_field(N)` top-level
+    /// arg that adds a `.with_value(AccessValue::Bool(state.N))` chain
+    /// to the derived `WidgetA11y::access_node` body. Mandatory for
+    /// value-bearing ARIA roles (`Switch` / `CheckBox` / `RadioButton`
+    /// — Cat A retrofit targets per R652). Only the `Bool` `AccessValue`
+    /// variant is supported today; `Float` / `Int` await their 2nd
+    /// consumer per [[abstraction-needs-second-consumer]]
+    /// (e.g. `Slider` Cat B retrofit when value-sidecar substrate
+    /// research lands).
+    access_value: Option<StateFlagSource>,
     flags: HashSet<String>,
 }
 
@@ -514,6 +620,7 @@ struct WidgetArgsBuilder {
     external: Option<Expr>,
     role: Option<Ident>,
     state_flags: Option<StateFlagsConfig>,
+    access_value: Option<StateFlagSource>,
     flags: HashSet<String>,
 }
 
@@ -547,6 +654,13 @@ impl WidgetArgsBuilder {
                 }
                 Ok(())
             }
+            WidgetArg::AccessValue(source, span) => {
+                if self.access_value.is_some() {
+                    return Err(syn::Error::new(span, "duplicate 'access_value' attribute"));
+                }
+                self.access_value = Some(source);
+                Ok(())
+            }
         }
     }
 
@@ -565,6 +679,17 @@ impl WidgetArgsBuilder {
                 ));
             }
         }
+        // R653 §5.16 — same anchor rule for `access_value`. Without a
+        // derived `access_node` body (`role = X`) there is nowhere to
+        // chain `.with_value(...)` onto, so a bare `access_value` is a
+        // typo we'd rather catch at parse time.
+        if self.access_value.is_some() && self.role.is_none() {
+            return Err(syn::Error::new(
+                input_span,
+                "'access_value = ...' requires 'role = <AriaRole>' (the chain \
+                 attaches to the derived access_node body)",
+            ));
+        }
         let missing = |field: &str| {
             syn::Error::new(input_span, format!("missing required 'widget' attribute: {field}"))
         };
@@ -578,6 +703,7 @@ impl WidgetArgsBuilder {
             external: self.external.ok_or_else(|| missing("external"))?,
             role: self.role,
             state_flags: self.state_flags.unwrap_or_default(),
+            access_value: self.access_value,
             flags: self.flags,
         })
     }
@@ -634,6 +760,15 @@ enum WidgetArg {
     External(Expr),
     Role(Ident),
     StateFlags(StateFlagsConfig, proc_macro2::Span),
+    /// (R653 §5.16) `access_value = bool_field(N)` parsed into the
+    /// same `StateFlagSource` enum the `state_flags(checked = ...)`
+    /// slot uses; today only the `BoolField` variant is meaningful
+    /// here (a bare ident `Variant` would emit `AccessValue::Bool(
+    /// matches!(state.0, EnumType::Variant))` which is not a
+    /// well-typed `AccessValue` and would silently mis-typecheck
+    /// against `AccessValue::Bool(bool)` — the finaliser rejects
+    /// the Variant form via `expect_bool_field`).
+    AccessValue(StateFlagSource, proc_macro2::Span),
     Flag(String, proc_macro2::Span),
 }
 
@@ -645,6 +780,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "event_name_derive",  // R645 split
     "fmt_state_log",      // R645 restore (2nd consumer: Slider)
     "a11y_manual",        // R645: opt out of WidgetA11y emit (binding provides custom impl)
+    "update",             // R653: forward WidgetCore::update (R27 reducer side effects)
 ];
 
 impl Parse for WidgetArg {
@@ -680,6 +816,27 @@ impl Parse for WidgetArg {
                 }
                 "external" => Ok(Self::External(input.parse()?)),
                 "role" => Ok(Self::Role(input.parse()?)),
+                "access_value" => {
+                    // R653 §5.16 — accept only the `bool_field(N)`
+                    // call form. The bare-ident form is reserved for
+                    // enum-variant dispatch in `state_flags`; for the
+                    // AccessValue chain the macro can only emit
+                    // `AccessValue::Bool(state.N)` today.
+                    let head: Ident = input.parse()?;
+                    if !input.peek(syn::token::Paren) || head != "bool_field" {
+                        return Err(syn::Error::new(
+                            head.span(),
+                            "'access_value = bool_field(N)' is the only \
+                             accepted form today (AccessValue::Bool variant; \
+                             Float/Int await their 2nd consumer)",
+                        ));
+                    }
+                    let content;
+                    syn::parenthesized!(content in input);
+                    let idx_lit: syn::LitInt = content.parse()?;
+                    let idx: usize = idx_lit.base10_parse()?;
+                    Ok(Self::AccessValue(StateFlagSource::BoolField(idx), key.span()))
+                }
                 _ => Err(syn::Error::new(
                     key.span(),
                     format!("unknown widget attribute: '{key_str}'"),
@@ -719,29 +876,36 @@ impl Parse for WidgetArg {
     }
 }
 
-/// Parse the inside of `state_flags(...)`. Accepts a
-/// comma-separated list of `flag = Variant` pairs where `flag` is one
-/// of `hovered` / `pressed` / `disabled` / `checked` and `Variant` is
-/// a bare ident (one variant of the state enum named in `state = X`).
+/// Parse the inside of `state_flags(...)`. Accepts a comma-separated
+/// list of `flag = <source>` pairs where `flag` is one of `hovered` /
+/// `pressed` / `disabled` / `checked`. The `<source>` form depends on
+/// the flag: `hovered` / `pressed` / `disabled` accept only a bare
+/// variant ident (`Hover`, `Pressed`, `Disabled`) since interaction
+/// state is always enum-variant dispatched; `checked` accepts either
+/// a bare variant ident OR the R653 §5.16 `bool_field(N)` call form
+/// for tuple-state second-elem direct bool extraction.
 fn parse_state_flags(input: ParseStream) -> syn::Result<StateFlagsConfig> {
     let mut cfg = StateFlagsConfig::default();
     let entries: Punctuated<StateFlagEntry, Token![,]> = Punctuated::parse_terminated(input)?;
     for entry in entries {
-        let StateFlagEntry { name, variant } = entry;
+        let StateFlagEntry { name, source } = entry;
         match name.to_string().as_str() {
             "hovered" => {
+                let variant = require_variant(&name, "hovered", source)?;
                 if cfg.hovered.is_some() {
                     return Err(syn::Error::new(name.span(), "duplicate 'hovered' state_flag"));
                 }
                 cfg.hovered = Some(variant);
             }
             "pressed" => {
+                let variant = require_variant(&name, "pressed", source)?;
                 if cfg.pressed.is_some() {
                     return Err(syn::Error::new(name.span(), "duplicate 'pressed' state_flag"));
                 }
                 cfg.pressed = Some(variant);
             }
             "disabled" => {
+                let variant = require_variant(&name, "disabled", source)?;
                 if cfg.disabled.is_some() {
                     return Err(syn::Error::new(name.span(), "duplicate 'disabled' state_flag"));
                 }
@@ -751,7 +915,7 @@ fn parse_state_flags(input: ParseStream) -> syn::Result<StateFlagsConfig> {
                 if cfg.checked.is_some() {
                     return Err(syn::Error::new(name.span(), "duplicate 'checked' state_flag"));
                 }
-                cfg.checked = Some(variant);
+                cfg.checked = Some(source);
             }
             other => {
                 return Err(syn::Error::new(
@@ -769,14 +933,58 @@ fn parse_state_flags(input: ParseStream) -> syn::Result<StateFlagsConfig> {
 
 struct StateFlagEntry {
     name: Ident,
-    variant: Ident,
+    source: StateFlagSource,
 }
 
 impl Parse for StateFlagEntry {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let name: Ident = input.parse()?;
         let _: Token![=] = input.parse()?;
-        let variant: Ident = input.parse()?;
-        Ok(Self { name, variant })
+        let head: Ident = input.parse()?;
+        // R653 §5.16 — call form `bool_field(N)` distinguishes the
+        // tuple-second-elem direct bool extraction from the bare
+        // enum-variant form. Only `bool_field` is currently accepted
+        // as a callable; any other call form is a parse-time reject so
+        // a typo cannot silently land as an unknown ident.
+        let source = if input.peek(syn::token::Paren) {
+            if head != "bool_field" {
+                return Err(syn::Error::new(
+                    head.span(),
+                    format!(
+                        "unknown state_flag source form '{head}(...)' — \
+                         only 'bool_field(N)' is accepted as a callable; \
+                         use a bare variant ident for the enum form",
+                    ),
+                ));
+            }
+            let content;
+            syn::parenthesized!(content in input);
+            let idx_lit: syn::LitInt = content.parse()?;
+            let idx: usize = idx_lit.base10_parse()?;
+            StateFlagSource::BoolField(idx)
+        } else {
+            StateFlagSource::Variant(head)
+        };
+        Ok(Self { name, source })
+    }
+}
+
+/// (R653 §5.16) Validate that a `state_flags(...)` entry uses the
+/// enum-variant form rather than `bool_field(N)`. `hovered` / `pressed`
+/// / `disabled` are always interaction-state-enum dispatched (a `bool`
+/// field cannot encode the "currently hovered" semantic), so the
+/// parser rejects the call form for those three slots with a span
+/// pointed at the flag name.
+fn require_variant(name: &Ident, flag: &str, source: StateFlagSource) -> syn::Result<Ident> {
+    match source {
+        StateFlagSource::Variant(v) => Ok(v),
+        StateFlagSource::BoolField(_) => Err(syn::Error::new(
+            name.span(),
+            format!(
+                "'{flag}' state_flag requires a bare enum-variant ident; \
+                 the 'bool_field(N)' call form is accepted only for 'checked' \
+                 (interaction state is always enum-variant dispatched)",
+            ),
+        )),
     }
 }
