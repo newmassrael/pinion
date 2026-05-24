@@ -53,25 +53,27 @@
 //! to blur → caret disappears, the SCXML transitions
 //! `Focused → Idle`. Press `d` to disable, `e` to re-enable.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
 use pinion_platform_clipboard::ArboardClipboard;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::Owner;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
-use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_text::{caret_rect_for_byte_offset, CaretRect, LayoutCache};
+use pinion_text::CaretRect;
+// R657 §5.16 §5.38 — lifted TextField paint substrate (view body +
+// IME caret rect + state name lookup + SCXML read helper).
+use pinion_widget_paint::text_field as tf_paint;
 
 // pinion-forge codegen output. Defines `pub struct HelloTextFieldRenderer`
 // + async `new<W: Into<wgpu::SurfaceTarget<'static>>>` + sync
@@ -99,127 +101,28 @@ const WIN_H: u32 = 200;
 /// host binds them together.
 const THEME_TAG: &str = "app";
 
-// Field surface — 360×40 with 8 px padding, 4 px corner radius. Fill
-// shifts on focus to give the user a clear "the input is live" cue
-// without an explicit border-colour change (CSS `:focus-visible`
-// convention scaled down to a flat-fill palette).
-//
-// (R57.X.textfield §5.50) Fill / text / caret / selection / preedit
-// colors are now theme-resolved per the M3 TextField role mapping
-// captured in [`build_text_style`] + the view body. Pre-cleanup these
-// lived as `Color::rgb(...)` consts; the migration replaces every
-// site with `theme.resolve(role)` so the same view-fn renders
-// correctly under both light and dark palettes.
-const FIELD_W: u32 = 360;
-const FIELD_H: u32 = 40;
-const FIELD_PAD: u32 = 8;
-const FIELD_CORNER: u32 = 4;
-/// (R57.X.textfield §5.50) Selection tint alpha — the rect paints at
-/// this opacity over the [`ColorRole::Accent`] color so the underlying
-/// glyphs stay readable while the band marks the selection range.
-/// 0xA0 matches the macOS / Chrome "system selection" overlay weight.
-const SELECTION_ALPHA: u8 = 0xa0;
-/// (R57.X.textfield §5.50) Preedit background tint alpha — fainter
-/// than selection so the IME composition segment reads as
-/// "provisional, not yet committed". 0x40 ≈ 25 % opacity.
-const PREEDIT_BG_ALPHA: u8 = 0x40;
-const PREEDIT_UNDERLINE_THICKNESS: u32 = 1;
-// 2 px caret reads cleanly on the integer-scaled 1.0× displays the
-// hello-* gallery is sized for; Hi-DPI displays where AA softens
-// single-pixel lines could drop to 1 px (the substrate
-// `caret_rect_for_byte_offset` accepts the width as f32, the binding
-// can pick per-DPI).
-const CARET_WIDTH: u32 = 2;
+// R657 §5.16 §5.38 — Field surface sizing (360×40 with 8 px padding,
+// 4 px corner radius), font + caret width, selection / preedit alpha
+// tuning all live in [`tf_paint::TextFieldStyle::m3_filled`] in the
+// pinion-widget-paint crate. The binding uses the M3 default; a
+// custom-styled variant would pass a different `TextFieldStyle` to
+// [`tf_paint::view_field`].
 
-const FONT_SIZE_PX: u32 = 18;
+// Title label font size — kept binding-local because it's part of
+// the surrounding chrome composition (not the field substrate).
+const TITLE_FONT_SIZE_PX: u32 = 18;
+const STATUS_FONT_SIZE_PX: u32 = 12;
 
 // Gap between title / field / status line in the root column flex —
 // matches the macOS / iOS settings-pane vertical rhythm (~16 px
 // between related controls).
 const ROW_GAP: u32 = 16;
 
-/// `Owner::cache`-keyed parley [`LayoutCache`] hook. Mirrors the
-/// [`use_text_edit_state`] / [`use_caret_blink`] convention — the
-/// view fn calls this each paint, the cache returns the same
-/// `Rc<RefCell<LayoutCache>>` every time (Owner cache key dedup), and
-/// the `RefCell` admits the `&mut self` parley `Layout` build /
-/// lookup that `LayoutCache::layout` requires.
-///
-/// The cache key (`"hello_textfield.layout_cache"`) is binding-private
-/// — no other view fn shares this `LayoutCache` instance, so a future
-/// hello-textarea binding gets its own cache by passing a different
-/// key. Per-binding caches are the canonical scope on this slice; a
-/// framework-wide shared layout cache substrate is a separate axis
-/// (the [[substrate-incompleteness-signal]] for a multi-textfield
-/// binding hasn't fired yet).
-fn use_layout_cache(key: &'static str) -> Rc<RefCell<LayoutCache>> {
-    Owner::current()
-        .expect("use_layout_cache requires an active Owner scope")
-        .cache(key, || RefCell::new(LayoutCache::new()))
-}
-
-/// (R57.X.textfield §5.50) Material 3 `TextField` text foreground —
-/// `ColorRole::OnSurface` when enabled, `ColorRole::OnSurfaceMuted`
-/// when the field is in the disabled posture. Lifted out of the
-/// view-fn + `ime_caret_rect` so both paths produce the same
-/// `TextStyle.fg` and the shared [`LayoutCache`] key matches across
-/// the two calls — the pre-cleanup `(text, style, max_width)` tuple
-/// hit relied on a `TEXT_COLOR` literal, the role-resolved variant
-/// keeps that hit while picking up theme swaps.
-fn text_fg_for(theme: &Theme, interaction: TextFieldState) -> Color {
-    if matches!(interaction, TextFieldState::Disabled) {
-        theme.resolve(ColorRole::OnSurfaceMuted)
-    } else {
-        theme.resolve(ColorRole::OnSurface)
-    }
-}
-
-/// (R57.X.textfield §5.50) Material 3 `TextField` filled-variant
-/// container fill — `ColorRole::SurfaceContainerHighest` is the
-/// canonical M3 `TextField` "filled" surface. Focused state lifts
-/// one tier (R51 mirror) to `SurfaceContainerHigh` so the active
-/// field reads as elevated without a heavy border ring. Disabled
-/// fades toward `Surface` per the M3 38 % disabled overlay
-/// convention.
-fn field_fill_for(theme: &Theme, interaction: TextFieldState) -> Color {
-    match interaction {
-        TextFieldState::Idle => theme.resolve(ColorRole::SurfaceContainerHighest),
-        TextFieldState::Focused | TextFieldState::Editing => {
-            theme.resolve(ColorRole::SurfaceContainerHigh)
-        }
-        TextFieldState::Disabled => theme
-            .resolve(ColorRole::SurfaceContainerHighest)
-            .lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
-}
-
-/// (R57.X.textfield §5.50) Selection rect tint — semi-transparent
-/// `ColorRole::Accent` overlay. Building the color manually preserves
-/// the M3 caret-color = Accent identity (the selection inherits the
-/// active-control hue) while honouring [`SELECTION_ALPHA`] so the
-/// glyphs under the band stay readable.
-fn selection_fill(theme: &Theme) -> Color {
-    let a = theme.resolve(ColorRole::Accent);
-    Color::rgba(a.r, a.g, a.b, SELECTION_ALPHA)
-}
-
-/// (R57.X.textfield §5.50) Preedit background tint — fainter Accent
-/// overlay than [`selection_fill`] so the IME composition segment
-/// reads as provisional. Companion role for [`preedit_underline`].
-fn preedit_bg_fill(theme: &Theme) -> Color {
-    let a = theme.resolve(ColorRole::Accent);
-    Color::rgba(a.r, a.g, a.b, PREEDIT_BG_ALPHA)
-}
-
-/// (R57.X.textfield §5.50) Preedit underline color — opaque Accent.
-/// Mirrors the M3 / canonical IME convention where the underline
-/// matches the active control hue (caret + underline + selection all
-/// resolve through `ColorRole::Accent` so a palette swap re-stains
-/// the field's interactive affordances coherently).
-fn preedit_underline(theme: &Theme) -> Color {
-    theme.resolve(ColorRole::Accent)
-}
-
+// R657 §5.16 §5.38 — use_layout_cache / text_fg_for / field_fill_for
+// / selection_fill / preedit_bg_fill / preedit_underline lifted to
+// `pinion_widget_paint::text_field` (private impl details of
+// [`tf_paint::view_field`] + [`tf_paint::ime_caret_rect_for`]).
+//
 /// R56.1.e §5.22 / R56.2.b §5.22 — `Owner::cache`-keyed clipboard
 /// hook. Mirrors the [`use_text_edit_state`] / [`use_caret_blink`]
 /// hooks; the cache key dedups so the External's `attach_clipboard`
@@ -281,40 +184,9 @@ impl Clipboard for AppClipboard {
     }
 }
 
-/// Saturating cast from layout-space f32 to paint-space u32. Negative
-/// values clamp to 0; out-of-range positives clamp to `u32::MAX`.
-/// `NaN` / `Infinity` clamp to 0 (defensive — parley's
-/// [`caret_rect_for_byte_offset`] is `finite`-guaranteed by the
-/// R56.1.b.2 test battery, but the saturating-cast convention stays
-/// the textbook narrowing seam per [[r56-1-b-2-parley-f32-narrowing]]).
-fn saturating_f32_to_u32(v: f32) -> u32 {
-    // `u32::MAX as f32` rounds up to 4.294967296e9 (next representable
-    // f32) — values >= that round-trip out of range, so the comparison
-    // is well-defined as the saturating ceiling check despite the
-    // f32 precision loss on the upper-bound constant itself.
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "u32::MAX -> f32 rounds to a single saturating ceiling"
-    )]
-    let ceiling = u32::MAX as f32;
-    if !v.is_finite() || v < 0.0 {
-        0
-    } else if v >= ceiling {
-        u32::MAX
-    } else {
-        // `as` cast is bounded by the two guards above — any in-range
-        // finite positive f32 truncates losslessly to u32 for the
-        // paint-space dimensions this binding operates in (<= window
-        // size in logical pixels).
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "guarded by is_finite / >=0 / < ceiling above"
-        )]
-        let out = v as u32;
-        out
-    }
-}
+// R657 §5.16 §5.38 — `saturating_f32_to_u32` lifted to
+// `pinion_widget_paint::text_field` (private helper used by
+// `view_field` + `ime_caret_rect_for`).
 
 /// view-fn (§6.3): pure-ish sync mapping `(state, frame) -> Scene`.
 /// "Pure-ish" because the reactive [`Signal`](pinion_core::reactive::Signal)
@@ -338,264 +210,60 @@ fn saturating_f32_to_u32(v: f32) -> u32 {
 ///    same data the visible field renders via `scene/query`.
 #[allow(
     clippy::trivially_copy_pass_by_ref,
-    clippy::too_many_lines,
-    reason = "view-fn shape mirrors hello-toggle / hello-listbox — one paint cycle, sequential composition"
+    reason = "view-fn shape mirrors hello-toggle / hello-listbox"
 )]
 fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     let (interaction, caret_byte) = state;
 
-    let text_state = use_text_edit_state(TF_TAG);
-    let blink = use_caret_blink(TF_TAG);
-    let text = text_state.text();
-
-    // R56.2.f §5.38 §5.22 — preedit splice via the substrate helper.
-    // Returns (effective_text, visual_caret_byte, preedit_byte_range):
-    // the composed view of "committed buffer + spliced preedit" the
-    // user sees during IME composition. When no composition is active
-    // (or the preedit string is empty), effective_text == committed
-    // text and the range is None. Mirrors W3C compositionupdate
-    // canonical caret-at-preedit-end semantics. The TUI binding
-    // (hello-textfield-tui) and the `ime_caret_rect` impl below use
-    // the same helper so all three paths share one splice — the
-    // LayoutCache key (effective_text + style) hits across the paths
-    // and no per-path duplication can drift.
-    let (effective_text, visual_caret_byte, preedit_byte_range) =
-        text_state.splice_preedit(caret_byte as usize);
-    let preedit = text_state.preedit();
-
+    // R657 §5.16 §5.38 — TextField paint composition (caret /
+    // selection / preedit overlays) lifted to
+    // [`tf_paint::view_field`] in the pinion-widget-paint crate.
+    // The binding only composes its surrounding chrome (title +
+    // status line) around the lifted field substrate.
+    //
     // (R57.X.textfield §5.50) Active palette — `use_theme` auto-
     // subscribes this view-fn so a `ThemeProvider::set_theme` from
     // anywhere in the application re-runs the view + repaints the
-    // field + caret + selection band with the new tones.
-    // (R586 §5.50) `theme_animated` opts in to the R57.X.theme-fade
-    // cross-fade; the at-rest snap path keeps the instant contract
-    // identical to `theme()` once the spring has settled.
+    // field + caret + selection band with the new tones. R586 §5.50
+    // `theme_animated` opts in to the R57.X.theme-fade cross-fade;
+    // the at-rest snap path keeps the instant contract identical to
+    // `theme()` once the spring has settled.
     let theme = use_theme(THEME_TAG).theme_animated();
-    let text_style = TextStyle::new()
-        .with_size_px(FONT_SIZE_PX)
-        .with_fg(text_fg_for(&theme, interaction));
 
-    // Caret geometry — shape the current effective_text once via the
-    // shared `LayoutCache`, then look up the cursor rect at the
-    // visual caret offset. The `LayoutCache::layout` LRU returns the
-    // same `Layout` reference for the same `(text, style, max_width)`
-    // tuple, so re-runs of the view fn inside the same paint cycle
-    // reuse the shaped run instead of re-shaping per call.
-    //
-    // R56.1.f.3 §5.22 — selection range pixel geometry. When a
-    // selection is active, two extra `caret_rect_for_byte_offset`
-    // lookups derive the start + end x offsets so the selection box
-    // can paint behind the text. The same shared `LayoutCache`
-    // reuses the shaped run across all three queries — no repeated
-    // shaping work.
-    //
-    // R56.1.g.3 §5.22 — preedit pixel range derives from two more
-    // `caret_rect_for_byte_offset` calls against the same shaped
-    // effective_text run; the underline + tinted background paint
-    // behind the glyphs in the preedit byte range.
-    let layout_cache = use_layout_cache("hello_textfield.layout_cache");
-    let selection_range = text_state.selection_range();
-    let (caret_pixel_rect, selection_pixel, preedit_pixel) = {
-        let mut cache = layout_cache.borrow_mut();
-        let layout = cache.layout(effective_text.as_str(), &text_style, None);
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "CARET_WIDTH fits f32 losslessly (2 << 23 ceiling)"
-        )]
-        let rect = caret_rect_for_byte_offset(
-            layout,
-            visual_caret_byte,
-            CARET_WIDTH as f32,
-        );
-        let height_floor = saturating_f32_to_u32(rect.height).max(FONT_SIZE_PX);
-        let caret = (
-            saturating_f32_to_u32(rect.x),
-            saturating_f32_to_u32(rect.y),
-            height_floor,
-        );
-        let selection = selection_range.map(|(start, end)| {
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "CARET_WIDTH fits f32 losslessly"
-            )]
-            let start_rect =
-                caret_rect_for_byte_offset(layout, start, CARET_WIDTH as f32);
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "CARET_WIDTH fits f32 losslessly"
-            )]
-            let end_rect = caret_rect_for_byte_offset(layout, end, CARET_WIDTH as f32);
-            let start_x = saturating_f32_to_u32(start_rect.x);
-            let end_x = saturating_f32_to_u32(end_rect.x);
-            let sel_y = saturating_f32_to_u32(start_rect.y);
-            let sel_h = saturating_f32_to_u32(start_rect.height).max(FONT_SIZE_PX);
-            (start_x, sel_y, end_x.saturating_sub(start_x), sel_h)
-        });
-        let preedit_p = preedit_byte_range.map(|(start, end)| {
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "CARET_WIDTH fits f32 losslessly"
-            )]
-            let start_rect =
-                caret_rect_for_byte_offset(layout, start, CARET_WIDTH as f32);
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "CARET_WIDTH fits f32 losslessly"
-            )]
-            let end_rect = caret_rect_for_byte_offset(layout, end, CARET_WIDTH as f32);
-            let start_x = saturating_f32_to_u32(start_rect.x);
-            let end_x = saturating_f32_to_u32(end_rect.x);
-            let pre_y = saturating_f32_to_u32(start_rect.y);
-            let pre_h = saturating_f32_to_u32(start_rect.height).max(FONT_SIZE_PX);
-            (start_x, pre_y, end_x.saturating_sub(start_x), pre_h)
-        });
-        (caret, selection, preedit_p)
-    };
-    let (caret_layout_x, caret_layout_y, caret_box_height) = caret_pixel_rect;
-
-    let field_fill = field_fill_for(&theme, interaction);
-
-    // Text node — natural-flow child of the field container. Empty
-    // text is rendered as a zero-width run so the caret still appears
-    // at x=0 inside the padded field.
-    //
-    // R56.1.g.3 §5.22 — during composition, the rendered text is the
-    // composed `effective_text` (committed buffer + spliced preedit
-    // at the caret position), not the raw `text_state.text()` buffer.
-    let text_node = Scene::Text(TextNode::styled(
-        effective_text.clone(),
-        Rect::default(),
-        text_style,
-    ));
-
-    // Caret — only painted when the widget is focused (Focused or
-    // Editing) AND the blink phase is currently visible. R56.1.h sync
-    // ties the blink's enabled gate to the SCXML state, so the blink
-    // is always paused (and `visible()` returns `false`) outside the
-    // focused/editing posture. Reading `blink.visible()` subscribes
-    // to the underlying Signal — the next phase flip auto-triggers a
-    // view re-run via the substrate's reactive paint loop.
-    let caret_painted = matches!(
+    let field = tf_paint::view_field(
+        TF_TAG,
         interaction,
-        TextFieldState::Focused | TextFieldState::Editing,
-    ) && blink.visible();
-
-    let mut field_children: Vec<Scene> = Vec::with_capacity(4);
-    // R56.1.f.3 §5.22 — selection rect paints BEFORE text_node so
-    // the glyphs render on top of the tinted band. Vello composites
-    // children in vector order (later children paint atop earlier).
-    if let Some((sel_x, sel_y, sel_w, sel_h)) = selection_pixel {
-        if sel_w > 0 {
-            let sel_left = FIELD_PAD.saturating_add(sel_x);
-            let sel_top = FIELD_PAD.saturating_add(sel_y);
-            let selection_box = Scene::Box(
-                BoxNode::new(Rect::default(), BoxStyle::filled(selection_fill(&theme)))
-                    .with_layout(
-                        LayoutStyle::new()
-                            .with_size(Size::px(sel_w, sel_h))
-                            .with_absolute_position(sel_left, sel_top),
-                    ),
-            );
-            field_children.push(selection_box);
-        }
-    }
-    // R56.1.g.3 §5.22 — preedit background tint paints BEFORE the
-    // text node (same layering rule as the selection band) so glyphs
-    // composite on top of the tint. The IME affordance reads as
-    // "this run is provisional".
-    if let Some((pre_x, pre_y, pre_w, pre_h)) = preedit_pixel {
-        if pre_w > 0 {
-            let pre_left = FIELD_PAD.saturating_add(pre_x);
-            let pre_top = FIELD_PAD.saturating_add(pre_y);
-            let preedit_bg = Scene::Box(
-                BoxNode::new(Rect::default(), BoxStyle::filled(preedit_bg_fill(&theme)))
-                    .with_layout(
-                        LayoutStyle::new()
-                            .with_size(Size::px(pre_w, pre_h))
-                            .with_absolute_position(pre_left, pre_top),
-                    ),
-            );
-            field_children.push(preedit_bg);
-        }
-    }
-    field_children.push(text_node);
-    // R56.1.g.3 §5.22 — preedit underline paints AFTER the text node
-    // so the line sits over the descender region (visual "this is a
-    // preedit run" affordance). 1 px line below the text baseline +
-    // a sliver of descender room — the canonical IME underline shape.
-    if let Some((pre_x, pre_y, pre_w, pre_h)) = preedit_pixel {
-        if pre_w > 0 {
-            let pre_left = FIELD_PAD.saturating_add(pre_x);
-            let underline_top = FIELD_PAD
-                .saturating_add(pre_y)
-                .saturating_add(pre_h)
-                .saturating_sub(PREEDIT_UNDERLINE_THICKNESS);
-            let underline = Scene::Box(
-                BoxNode::new(
-                    Rect::default(),
-                    BoxStyle::filled(preedit_underline(&theme)),
-                )
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_size(Size::px(pre_w, PREEDIT_UNDERLINE_THICKNESS))
-                        .with_absolute_position(pre_left, underline_top),
-                ),
-            );
-            field_children.push(underline);
-        }
-    }
-    if caret_painted {
-        let caret_left = FIELD_PAD.saturating_add(caret_layout_x);
-        let caret_top = FIELD_PAD.saturating_add(caret_layout_y);
-        let caret_box = Scene::Box(
-            BoxNode::new(Rect::default(), BoxStyle::filled(theme.resolve(ColorRole::Accent))).with_layout(
-                LayoutStyle::new()
-                    .with_size(Size::px(CARET_WIDTH, caret_box_height))
-                    .with_absolute_position(caret_left, caret_top),
-            ),
-        );
-        field_children.push(caret_box);
-    }
-
-    let field = Scene::Container(
-        ContainerNode::new(field_children)
-            .with_tag(TF_TAG)
-            // R51.69 §5.40 — explicit accessible-name (WAI-ARIA
-            // `aria-label`). Pinned at the field container so the
-            // scene-walk name derivation in
-            // [`enrich_names_from_scene`] populates the AccessNode's
-            // `name` without a duplicate literal in `access_node`.
-            .with_aria_label("Text input")
-            .with_style(BoxStyle::filled(field_fill).with_corner_radius(FIELD_CORNER))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Start)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(FIELD_W, FIELD_H))
-                    .with_padding(Rect::new(FIELD_PAD, FIELD_PAD, FIELD_PAD, FIELD_PAD)),
-            ),
+        caret_byte,
+        &theme,
+        &tf_paint::TextFieldStyle::m3_filled(),
+        "Text input",
     );
 
     let title = Scene::Text(TextNode::styled(
         "TextField",
         Rect::default(),
         TextStyle::new()
-            .with_size_px(18)
+            .with_size_px(TITLE_FONT_SIZE_PX)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
     // R56.1.g.3 §5.22 — status line carries the preedit state so the
     // AI side can verify composition lifecycle through the visible
     // status row (mirror of the `scene/query` `preedit` slot —
-    // observable both visually and over RPC).
+    // observable both visually and over RPC). The status text reads
+    // the reactive TextEditState directly; the field paint already
+    // walked it through the lifted helper, both subscriptions land
+    // on the same `Rc<TextEditState>` per Owner::cache dedup.
+    let text_state = use_text_edit_state(TF_TAG);
+    let text = text_state.text();
+    let preedit = text_state.preedit();
     let preedit_status = match preedit.as_ref() {
         Some(p) => format!(" | preedit=\"{p}\""),
         None => String::new(),
     };
     let status_str = format!(
         "{} | caret={} | text=\"{}\"{}",
-        text_field_state_name(interaction),
+        tf_paint::text_field_state_name(interaction),
         caret_byte,
         text,
         preedit_status,
@@ -604,7 +272,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         status_str,
         Rect::default(),
         TextStyle::new()
-            .with_size_px(12)
+            .with_size_px(STATUS_FONT_SIZE_PX)
             .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
 
@@ -672,25 +340,12 @@ impl WidgetCore for TextFieldView {
     /// (R55.D.5 cascade lesson), so the read site is shape-agnostic
     /// even though this binding doesn't use `create_extra_externals`.
     fn read_state(scene: &Scene) -> (TextFieldState, u32) {
-        let Some(node) = scene.find_external_with_tag(TF_TAG) else {
-            return (TextFieldState::Idle, 0);
-        };
-        let Some(intro) = node.handle.introspect() else {
-            return (TextFieldState::Idle, 0);
-        };
-        let interaction = match intro.query("state") {
-            Some(IntrospectValue::Text(name)) => parse_text_field_state(&name),
-            _ => TextFieldState::Idle,
-        };
-        let caret = match intro.query("caret") {
-            // i64 → u32 — caret is bounded by text length, which is
-            // u32-bounded by every realistic UI text input. Negative
-            // values are unreachable (TextEditState clamps at the
-            // intervene seam); `try_from` defends without a panic.
-            Some(IntrospectValue::Int(n)) => u32::try_from(n.max(0)).unwrap_or(u32::MAX),
-            _ => 0,
-        };
-        (interaction, caret)
+        // R657 §5.16 §5.38 — delegate to the lifted helper that both
+        // bindings (hello-textfield + todomvc) share. The same scene
+        // walk + introspect read happens in one substrate place,
+        // backward-compatible with the R55.D.5 single-vs-multi
+        // External shape (find_external_with_tag handles both).
+        tf_paint::read_text_field_state(scene, TF_TAG)
     }
 
     fn view(state: (TextFieldState, u32), frame: &Frame) -> Scene {
@@ -874,7 +529,7 @@ impl WidgetCore for TextFieldView {
     fn fmt_state_log(state: &(TextFieldState, u32)) -> String {
         format!(
             "{} / caret={}",
-            text_field_state_name(state.0),
+            tf_paint::text_field_state_name(state.0),
             state.1,
         )
     }
@@ -950,10 +605,6 @@ impl WidgetView for TextFieldView {
     /// to a sliver when the layout's reported `height` is short
     /// (the same floor the view fn applies for the visible caret
     /// box).
-    #[allow(
-        clippy::similar_names,
-        reason = "field_origin_x_f / field_origin_y_f mirror the field_rect.x / field_rect.y source; renaming further would obscure the source-mapping symmetry the caret arithmetic depends on"
-    )]
     fn ime_caret_rect(
         state: &(TextFieldState, u32),
         scene: &Scene,
@@ -963,103 +614,27 @@ impl WidgetView for TextFieldView {
             return None;
         }
         let (interaction, caret_byte) = *state;
-        let text_state = use_text_edit_state(TF_TAG);
-        // R56.2.f §5.38 §5.22 — splice via the substrate helper so the
-        // effective_text + visual_caret_byte match the view fn
-        // exactly. The LayoutCache key (effective_text + style)
-        // hits the same cached layout the view fn produced this
-        // frame — the candidate-popup geometry tracks the rendered
-        // cursor with zero extra shaping work.
-        let (effective_text, visual_caret_byte, _preedit_byte_range) =
-            text_state.splice_preedit(caret_byte as usize);
-        // Mirror the view fn's text style (incl. interaction-dependent
-        // fg) so the `(text, style, max_width)` cache key matches and
-        // the `LayoutCache::layout` lookup is a hit. (R57.X.textfield
-        // §5.50) Both sites resolve through [`text_fg_for`] so a
-        // palette swap re-keys both LayoutCache reads in lock-step
-        // without drifting the cache identity. (R586 §5.50) Mirror
-        // the view-fn migration — both sites read the same animated
-        // palette so the cache identity stays in lock-step during the
-        // R57.X.theme-fade cross-fade and snaps together at rest.
-        //
-        // (R587 §5.36) Why lock-step beats rolling this site back to
-        // `theme()` during the fade: `LayoutKey` includes `fg_color`,
-        // so each frame the view fn emits a fresh entry under the
-        // in-flight lerp color. With lock-step both sites query the
-        // *same* fresh entry (same-frame cache hit, zero extra shape
-        // pass). Reading `theme()` here instead would key a separate
-        // target-color entry per frame, doubling the cache footprint
-        // and adding one shape per first-frame-after-flip — strictly
-        // worse than the lock-step path. The over-specified key (paint
-        // metadata in a shape-only cache) is a latent perf hazard for
-        // long / multi-line consumers; carried as a Rule of Three split
-        // on `pinion_text::cache::LayoutKey`.
-        let theme = use_theme(THEME_TAG).theme_animated();
-        let text_style = TextStyle::new()
-            .with_size_px(FONT_SIZE_PX)
-            .with_fg(text_fg_for(&theme, interaction));
+        // R657 §5.16 §5.38 — field rect walk stays binding-side (the
+        // pinion-runtime helper is not pulled into pinion-widget-paint
+        // — see crate docs for the dep-graph rationale). The caret
+        // composition (splice + LayoutCache lookup + window-coord
+        // sum) is the lifted [`tf_paint::ime_caret_rect_for`] helper.
         let field_rect = pinion_shell::rect_for_tag(scene, TF_TAG)?;
-        let layout_cache = use_layout_cache("hello_textfield.layout_cache");
-        let caret_local = {
-            let mut cache = layout_cache.borrow_mut();
-            let layout = cache.layout(effective_text.as_str(), &text_style, None);
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "CARET_WIDTH fits f32 losslessly (2 << 23 ceiling)"
-            )]
-            let cw = CARET_WIDTH as f32;
-            caret_rect_for_byte_offset(layout, visual_caret_byte, cw)
-        };
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "field_rect.{x,y} are u32 viewport coords; window sizes never approach 2^24 logical px"
-        )]
-        let field_origin_x_f = field_rect.x as f32;
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "field_rect.{x,y} are u32 viewport coords; window sizes never approach 2^24 logical px"
-        )]
-        let field_origin_y_f = field_rect.y as f32;
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "FIELD_PAD + FONT_SIZE_PX are small u32 constants"
-        )]
-        let pad_f = FIELD_PAD as f32;
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "FONT_SIZE_PX small u32 constant"
-        )]
-        let font_size_f = FONT_SIZE_PX as f32;
-        Some(CaretRect::new(
-            field_origin_x_f + pad_f + caret_local.x,
-            field_origin_y_f + pad_f + caret_local.y,
-            caret_local.width.max(1.0),
-            caret_local.height.max(font_size_f),
+        let theme = use_theme(THEME_TAG).theme_animated();
+        Some(tf_paint::ime_caret_rect_for(
+            TF_TAG,
+            interaction,
+            caret_byte,
+            field_rect,
+            &theme,
+            &tf_paint::TextFieldStyle::m3_filled(),
         ))
     }
 }
 
-/// Inverse of the SCXML-emitted state name surface
-/// (`text_field_state_name`). Defensive default (`Idle`) on any
-/// unexpected token guards against a future SCXML rename leaking a
-/// silent crash.
-fn parse_text_field_state(name: &str) -> TextFieldState {
-    match name {
-        "Focused" => TextFieldState::Focused,
-        "Editing" => TextFieldState::Editing,
-        "Disabled" => TextFieldState::Disabled,
-        _ => TextFieldState::Idle,
-    }
-}
-
-fn text_field_state_name(state: TextFieldState) -> &'static str {
-    match state {
-        TextFieldState::Idle => "Idle",
-        TextFieldState::Focused => "Focused",
-        TextFieldState::Editing => "Editing",
-        TextFieldState::Disabled => "Disabled",
-    }
-}
+// R657 §5.16 §5.38 — parse_text_field_state / text_field_state_name
+// lifted to `pinion_widget_paint::text_field` and reached via
+// `tf_paint::parse_text_field_state` / `tf_paint::text_field_state_name`.
 
 fn main() {
     pinion_shell::run::<TextFieldView>();
@@ -1071,10 +646,13 @@ mod tests {
     //! Pinned at the binding level so a substrate rename / contract
     //! drift surfaces here before reaching the visible demo path.
 
-    use super::{
-        field_fill_for, parse_text_field_state, preedit_underline, selection_fill,
-        text_field_state_name, view, TextFieldView, THEME_TAG, TF_TAG,
-    };
+    // R657 §5.16 §5.38 — substrate-side tests (state name lookup,
+    // M3 color role mapping, view_field scene shape) moved into the
+    // pinion-widget-paint crate where their helpers now live. Binding-
+    // local tests below cover the BINDING contract: view-fn tag
+    // presence, access_node shape, caret position smoke, palette-swap
+    // reactive wiring through the binding's view fn.
+    use super::{view, TextFieldView, THEME_TAG, TF_TAG};
     use pinion_a11y::{AccessValue, AriaRole, WidgetA11y};
     use pinion_core::reactive::Owner;
     use pinion_core::theme::{use_theme, Theme, ThemeMode};
@@ -1091,31 +669,9 @@ mod tests {
         Owner::new().run(f)
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Name <-> state round-trip
-    // ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn r56_1_b_1_state_name_round_trips() {
-        for s in [
-            TextFieldState::Idle,
-            TextFieldState::Focused,
-            TextFieldState::Editing,
-            TextFieldState::Disabled,
-        ] {
-            assert_eq!(
-                parse_text_field_state(text_field_state_name(s)),
-                s,
-                "round-trip must preserve {s:?}",
-            );
-        }
-    }
-
-    #[test]
-    fn r56_1_b_1_unknown_state_name_defaults_to_idle() {
-        assert_eq!(parse_text_field_state("wat"), TextFieldState::Idle);
-        assert_eq!(parse_text_field_state(""), TextFieldState::Idle);
-    }
+    // R657 §5.16 §5.38 — state-name round-trip + unknown-token
+    // default coverage moved to `pinion-widget-paint::text_field`
+    // tests where the helpers now live.
 
     // ─────────────────────────────────────────────────────────────
     // View — caret rendering gate
@@ -1303,70 +859,13 @@ mod tests {
         );
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // R57.X.textfield §5.50 — theme retrofit regression. Pins the
-    // M3 TextField role mapping so a future palette swap surfaces
-    // visibly through the role channel rather than back through an
-    // RGB literal regression.
-    // ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn r57_x_textfield_idle_fill_uses_surface_container_highest() {
-        // Idle = M3 canonical filled TextField surface.
-        with_owner(|| {
-            let light = Theme::light();
-            assert_eq!(
-                field_fill_for(&light, TextFieldState::Idle),
-                light.surface_container_highest,
-            );
-            let dark = Theme::dark();
-            assert_eq!(
-                field_fill_for(&dark, TextFieldState::Idle),
-                dark.surface_container_highest,
-            );
-        });
-    }
-
-    #[test]
-    fn r57_x_textfield_focused_fill_lifts_one_surface_tier() {
-        // Focused / Editing = `SurfaceContainerHigh` (one tier above
-        // idle) so the active field reads as elevated without a
-        // heavy border ring.
-        with_owner(|| {
-            let light = Theme::light();
-            assert_eq!(
-                field_fill_for(&light, TextFieldState::Focused),
-                light.surface_container_high,
-            );
-            assert_eq!(
-                field_fill_for(&light, TextFieldState::Editing),
-                light.surface_container_high,
-            );
-        });
-    }
-
-    #[test]
-    fn r57_x_textfield_selection_and_preedit_use_accent_role() {
-        // Selection / preedit underline both anchor on
-        // `ColorRole::Accent` so a palette swap restains the
-        // interactive affordances coherently. Selection adds the
-        // `SELECTION_ALPHA` overlay; underline stays opaque.
-        with_owner(|| {
-            let light = Theme::light();
-            let sel = selection_fill(&light);
-            assert_eq!(sel.r, light.accent.r);
-            assert_eq!(sel.g, light.accent.g);
-            assert_eq!(sel.b, light.accent.b);
-            // SELECTION_ALPHA is intentionally opaque enough to
-            // read against the field, faint enough to keep glyph
-            // contrast — pin the exact value so regressions surface.
-            assert_eq!(sel.a, 0xa0);
-            assert_eq!(
-                preedit_underline(&light),
-                Color::rgba(light.accent.r, light.accent.g, light.accent.b, 0xff),
-            );
-        });
-    }
+    // R657 §5.16 §5.38 — M3 fill role + selection-accent contract
+    // covered by `pinion-widget-paint::text_field` tests; private
+    // helpers field_fill_for / selection_fill / preedit_underline
+    // are no longer reachable from this crate. The binding's
+    // theme reactive wiring is still verified end-to-end by the
+    // palette-swap test below (which observes the resulting paint
+    // scene Container fill, not the private helper output).
 
     #[test]
     fn r57_x_textfield_palette_swap_propagates_through_view() {

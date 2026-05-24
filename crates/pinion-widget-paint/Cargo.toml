@@ -1,0 +1,26 @@
+[package]
+name = "pinion-widget-paint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R657 §5.16 §5.38 — backend-agnostic per-widget paint composition helpers. Sits between pinion-core (Scene primitives + Style + Theme + widget statecharts) and the per-backend shells (pinion-shell GUI / pinion-tui TUI), so both backends consume one source of truth for widget visual rendering. First consumer (R657) is TextField — surfacing the ~280 LOC of caret/selection/preedit composition that hello-textfield + todomvc previously duplicated. Future axes extend with toggle.rs / slider.rs / etc. as 2nd-consumer signals fire per [[abstraction-needs-second-consumer]]."
+
+[dependencies]
+# R657 §5.16 — Scene + Style + Theme + ColorRole + widget statechart
+# enums (TextFieldState). The crate is foundational atoms only; the
+# widget paint composition helpers compose those atoms.
+pinion-core = { path = "../pinion-core" }
+# R657 §5.16 R56.1.b.2 §5.36 — LayoutCache + caret_rect_for_byte_offset.
+# The substrate this crate's helpers wrap into widget-shape Scene
+# fragments (TextField caret, selection band, preedit underline all
+# resolve through these primitives).
+pinion-text = { path = "../pinion-text" }
+# R657 §5.16 §5.40 — AriaRole + AccessNode for a11y carriage. The
+# widget paint helpers produce Scene with the right `with_aria_label`
+# overrides so the a11y enrich pass downstream wires them.
+pinion-a11y = { path = "../pinion-a11y" }
+
+[lints]
+workspace = true

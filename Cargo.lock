@@ -1793,6 +1793,7 @@ dependencies = [
  "pinion-platform-clipboard",
  "pinion-shell",
  "pinion-text",
+ "pinion-widget-paint",
  "serde_json",
  "vello",
 ]
@@ -3206,6 +3207,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinion-widget-paint"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-text",
+]
+
+[[package]]
 name = "piper"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4170,6 +4180,7 @@ dependencies = [
  "pinion-platform-clipboard",
  "pinion-shell",
  "pinion-text",
+ "pinion-widget-paint",
  "serde",
  "serde_json",
  "vello",

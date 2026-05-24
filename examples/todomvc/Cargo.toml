@@ -37,6 +37,11 @@ pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", v
 # the view fn's caret geometry lookup (shape text once per paint,
 # read cursor rect from the cached parley `Layout`).
 pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+# R657 §5.16 §5.38 — backend-agnostic TextField paint composition
+# helpers shared with hello-textfield. Removes the ~280 LOC view
+# body duplicate that R655 surfaced as the 2nd-consumer signal per
+# [[abstraction-needs-second-consumer]].
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 # R46.5 §5.16: the `TodoMvcRenderer` struct emitted by `build.rs`
 # references `::vello::*` and `::vello::wgpu::*` directly
 # (R46.3.3 fully-qualified codegen path); the `vello_renderer_impl!`

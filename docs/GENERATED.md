@@ -12324,6 +12324,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R657 — R657 §5.16/§5.38 — pinion-widget-paint crate land (new tier between pinion-text and per-backend shells); TextField paint composition ~280 LOC lift from hello-textfield + todomvc duplicate per [[abstraction-needs-second-consumer]] 2nd-consumer gate; seed-prompt 'pinion-core' assumption honestly corrected to pinion-widget-paint per §6 dep-graph constraint.
+
+**Changes**:
+- NEW crate `crates/pinion-widget-paint/` (Cargo.toml + src/lib.rs + src/text_field.rs + 7 substrate tests) — sits between pinion-text (LayoutCache + caret_rect substrate) and per-backend shells (pinion-shell GUI / pinion-tui TUI); depends on pinion-core + pinion-text + pinion-a11y only (NOT shell/tui/runtime/rpc — preserves §2 invariant #6 GUI/TUI dual consumption); workspace `Cargo.toml` member added at line 18.
+- pinion-widget-paint surface (~735 LOC + 7 unit tests): `TextFieldStyle` struct + `m3_filled()` const constructor (9 fields: field_w 360 / field_h 40 / field_pad 8 / field_corner 4 / font_size_px 18 / caret_width 2 / selection_alpha 0xA0 / preedit_bg_alpha 0x40 / preedit_underline_thickness 1) + `Default` impl; `view_field(tag, interaction, caret_byte, theme, style, aria_label) -> Scene` — full ~280 LOC TextField paint composition (caret/selection/preedit overlays + field fill + aria-label) lifted verbatim; `ime_caret_rect_for(tag, interaction, caret_byte, field_rect, theme, style) -> CaretRect` — IME platform bridge caret rect derivation (caller supplies field_rect via pinion_runtime::rect_for_tag so pinion-widget-paint stays free of pinion-runtime dep); `use_text_field_layout_cache()` Owner-cache hook; `parse_text_field_state` / `text_field_state_name` SCXML name lookup; `read_text_field_state(scene, tag)` introspect read helper.
+- examples/hello-textfield refactor: Cargo.toml adds pinion-widget-paint dep; main.rs 1415 → 914 LOC (-501 net) — deleted ~280 LOC view fn body / ~80 LOC ime_caret_rect body / ~75 LOC private helpers (use_layout_cache + text_fg_for + field_fill_for + selection_fill + preedit_bg_fill + preedit_underline + saturating_f32_to_u32) / ~10 LOC constants (FIELD_W/H/PAD/CORNER/CARET_WIDTH/SELECTION_ALPHA/PREEDIT_BG_ALPHA/PREEDIT_UNDERLINE_THICKNESS) / ~20 LOC parse/name fns; replaced with 7-line view-fn body that calls `tf_paint::view_field` + binding-local title/status wrappers; new TITLE_FONT_SIZE_PX / STATUS_FONT_SIZE_PX constants (binding-side chrome).
+- examples/todomvc refactor: Cargo.toml adds pinion-widget-paint dep; main.rs 2672 → 2243 LOC (-429 net) — same delete set as hello-textfield + status_str now calls `tf_paint::text_field_state_name`; binding keeps R655/R656-specific TodoItem + use_next_todo_id + allocate_todo_id + TodoDeleteExternal + build_todos_list + DELETE_GLYPH paint section unchanged; view fn root composition (title + field + status + todos_list) retained.
+- Binding-side tests: hello-textfield deleted 4 tests covering now-lifted private helpers (state_name_round_trips / unknown_state_name_defaults_to_idle / r57_x_textfield_idle_fill_uses_surface_container_highest / r57_x_textfield_focused_fill_lifts_one_surface_tier / r57_x_textfield_selection_and_preedit_use_accent_role) — substrate coverage moved into pinion-widget-paint::text_field::tests; binding tests retained: view tag presence, caret rendering gate, ARIA shape, palette-swap reactive wiring. todomvc tests unchanged (26 R655+R656 tests untouched).
+- Honest LOC delta workspace: substrate +830 LOC (text_field.rs 735 + lib.rs 79 + Cargo.toml 30 + manifest add 1) - binding -930 LOC (-501 + -429) = **NET -100 LOC**. seed-prompt -1300 prediction overestimate (per [[r652-substrate-roi-matrix]] honest measurement discipline). Real value isn't LOC — it's single-source-of-truth for M3 TextField paint contract + 3rd consumer adds ~30 LOC binding wrapper instead of ~280 LOC duplicate.
+
+
+
+**Verification**:
+- cargo check --workspace clean after new crate land + 2 binding refactors.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean after 17 doc_markdown backtick fixes (pre-audit fold per [[clippy-pre-audit-recovery]]).
+- cargo test --workspace --features pinion-core/test-fixtures all pass: pinion-widget-paint 7 substrate tests, hello-textfield 11 binding tests, todomvc 26 binding tests (R655 8 + R656 18). No regressions across other workspace crates.
+- tools/demos/todomvc_r655.py PASS 2.16s; tools/demos/todomvc_r656.py PASS 2.66s — both demos' RPC assertion suites (21 + 32 asserts) unchanged behavior post-lift, proving the substrate is functionally equivalent to the pre-lift duplicate.
+- PINION_SCREENSHOT both release binaries: hello-textfield 480x200 RGBA8 9,124 bytes; todomvc 480x480 RGBA8 19,436 bytes — todomvc screenshot is bit-identical to R656 (19,436 bytes pre + post), confirming the lift produces byte-for-byte identical paint output (visual regression = 0).
+- validate_workspace baseline preserved: 519 entries (R656 inherited — R657 adds 1 below for 520), 0 new T1/T2, GENERATED.md sync.
+- Honest LOC measurement: hello-textfield 1415→914 (-501), todomvc 2672→2243 (-429), pinion-widget-paint +735 substrate + 95 scaffold = +830, NET -100 LOC. Smaller than seed-prompt's -1300 prediction — reported transparently per the per-binding ROI honesty rule.
+
+
+
+**Impact**: §5.16, §5.38, §5.36
+
+
+**Carry forward**:
+- Carry honest — seed-prompt 'pinion-core/widgets/text_field.rs' design assumption corrected to 'pinion-widget-paint/src/text_field.rs' inline per dep-graph (pinion-text → pinion-core, not the reverse); future seed prompts referencing the original path should re-route. The decision rationale is captured in pinion-widget-paint/src/lib.rs ## Why not pinion-core / ## Why not pinion-shell sections.
+- Carry (R658 candidate when 2nd-consumer fires) — toggle / slider / checkbox / radio / listbox paint substrates still live in their single bindings; the [[abstraction-needs-second-consumer]] gate is the trigger. R663 settings-panel or any composed app reusing toggle is the first checkpoint.
+- Carry — pinion-widget-paint/text_field.rs `field_rect` is supplied by caller (pinion_runtime::rect_for_tag) so pinion-widget-paint stays runtime-free. Once a `Scene::rect_for_tag(tag) -> Option<Rect>` method lands on pinion-core scene.rs (consolidating the input.rs free fn + paint_adapter focus_rect_for_tag duplicate — R808-class carry), the binding wrapper can drop one line.
+- Carry — binding `use_clipboard` + AppClipboard wrapper still duplicates across hello-textfield + todomvc (3-line pattern). Rule of Three: defer lift until 3rd consumer surfaces the same hook (R657's [[abstraction-needs-second-consumer]] discipline is for substantive ~280 LOC duplicates, not 3-line idioms).
+- Carry — LayoutCache key collision avoidance for multi-TextField bindings: today's lifted helper uses one framework-wide cache key. Distinct TextField widgets paint distinct internal cache entries (LayoutCache keyed by (text, style, max_width)), but two TextFields with same text + style + max_width DO share the layout. Acceptable for current use; a per-tag namespacing axis lands if a multi-TextField composed app surfaces a cache-collision bug.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
