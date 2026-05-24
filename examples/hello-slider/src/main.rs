@@ -50,16 +50,19 @@
 //! route uses, so the AI client and the keyboard path see the
 //! identical observable state transitions.
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
-use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::{
+    scale_normalized_to_px, Color, Frame, Scene, WidgetCore, WidgetStateName,
+};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
+use pinion_derive::widget;
+use pinion_shell::vello_renderer_impl;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSliderRenderer, HelloSliderRendererError);
@@ -213,7 +216,7 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
     ));
     let status_str = format!(
         "{} | {value_clamped:.2}",
-        slider_state_name(state),
+        state.as_name(),
     );
     let status = Scene::Text(TextNode::styled(
         status_str,
@@ -235,32 +238,59 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
     )
 }
 
+/// `WidgetView` binding for the Slider widget. R645 §5.16 lifted the
+/// mechanical [`WidgetCore`] / [`WidgetA11y`] / [`WidgetView`] trait
+/// wiring into the [`#[widget]`](pinion_derive::widget) attribute,
+/// + extended R642's `state_flags(...)` to tuple state types like
+/// `(SliderState, f32)` (the macro auto-extracts `state.0` for the
+/// flag matches). `event_name_derive` + `fmt_state_log` flags drop
+/// the per-binding match arms; `read_state` stays inherent because
+/// tuple read requires two introspect queries (`state` + `value`)
+/// that the R643 single-field derive cannot express today.
+///
+/// [`WidgetCore`]: pinion_core::WidgetCore
+/// [`WidgetA11y`]: pinion_a11y::WidgetA11y
+/// [`WidgetView`]: pinion_shell::WidgetView
+#[widget(
+    tag = "main_slider",
+    state = (SliderState, f32),
+    event = SliderEvent,
+    title = "pinion hello-slider (R645 §5.16 #[widget] tuple-state)",
+    renderer = HelloSliderRenderer,
+    initial_size = (WIN_W, WIN_H),
+    external = SliderExternal::new,
+    apply_key,
+    keybinding,
+    event_name_derive,
+    fmt_state_log,
+    a11y_manual,
+)]
 struct SliderView;
 
-impl WidgetCore for SliderView {
-    type State = (SliderState, f32);
-    type Event = SliderEvent;
-
-    fn create_external() -> Box<dyn External> {
-        Box::new(SliderExternal::new())
+impl SliderView {
+    /// R645 inherent forward for [`WidgetCore::view`]. The macro
+    /// emits `<SliderView>::view(state, *frame)`; we receive the
+    /// `Copy` tuple state by value, then dispatch into the free
+    /// `view(state, value, frame)` fn that paints.
+    fn view(state: (SliderState, f32), frame: Frame) -> Scene {
+        view(state.0, state.1, &frame)
     }
 
-    fn tag() -> &'static str {
-        "main_slider"
-    }
-
+    /// R645 inherent forward for [`WidgetCore::read_state`]. Tuple
+    /// state reads through two introspect fields (`state` text +
+    /// `value` float). The state half routes through the R643
+    /// [`WidgetStateName::from_name_or_default`] derive (drops the
+    /// per-binding `parse_slider_state` helper); the value half
+    /// uses [`IntrospectValue::as_f32`] (R51.155) for the f64 → f32
+    /// narrowing.
     fn read_state(scene: &Scene) -> (SliderState, f32) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
                 let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    parse_slider_state(&name)
+                    SliderState::from_name_or_default(&name)
                 } else {
                     SliderState::Idle
                 };
-                // R51.155 §5.15 — `IntrospectValue::as_f32` folds
-                // the `Float(v) => v as f32` match + the
-                // `#[allow(clippy::cast_possible_truncation)]` lint
-                // (f64 → f32 narrowing) into the framework primitive.
                 let value = intro
                     .query("value")
                     .and_then(|v| v.as_f32())
@@ -269,34 +299,6 @@ impl WidgetCore for SliderView {
             }
         }
         (SliderState::Idle, 0.0)
-    }
-
-    fn view(state: (SliderState, f32), frame: &Frame) -> Scene {
-        view(state.0, state.1, frame)
-    }
-
-    fn event_name(event: SliderEvent) -> &'static str {
-        match event {
-            SliderEvent::PointerEnter => "PointerEnter",
-            SliderEvent::PointerLeave => "PointerLeave",
-            SliderEvent::PointerDown => "PointerDown",
-            SliderEvent::PointerUp => "PointerUp",
-            SliderEvent::Disable => "Disable",
-            SliderEvent::Enable => "Enable",
-            _ => "__internal__",
-        }
-    }
-
-    fn title() -> &'static str {
-        "pinion hello-slider (R51.35 §5.38 pinion-shell + R51.34 capture)"
-    }
-
-    fn keybinding(key: &str) -> Option<SliderEvent> {
-        match key {
-            "d" => Some(SliderEvent::Disable),
-            "e" => Some(SliderEvent::Enable),
-            _ => None,
-        }
     }
 
     /// W3C/ARIA Slider keyboard accessibility — wires the six
@@ -341,22 +343,39 @@ impl WidgetCore for SliderView {
             .is_ok()
     }
 
-    fn fmt_state_log(state: &(SliderState, f32)) -> String {
-        format!("{} / {:.2}", slider_state_name(state.0), state.1)
+    fn keybinding(key: &str) -> Option<SliderEvent> {
+        match key {
+            "d" => Some(SliderEvent::Disable),
+            "e" => Some(SliderEvent::Enable),
+            _ => None,
+        }
+    }
+
+    /// R645 §5.16 — `fmt_state_log` flag forwards to this inherent
+    /// method. Replaced the per-binding `slider_state_name` helper
+    /// with the R643 [`WidgetStateName::as_name`] derive — single
+    /// source of truth for the variant ↔ string mapping.
+    /// [[widget-macro-by-value-bridge]] — by-value signature matches
+    /// the `clippy::trivially_copy_pass_by_ref` preference for Copy
+    /// state types; macro forwards `<View>::fmt_state_log(*state)`
+    /// from the trait's `&Self::State` argument.
+    fn fmt_state_log(state: (SliderState, f32)) -> String {
+        format!("{} / {:.2}", state.0.as_name(), state.1)
     }
 }
 
-impl WidgetA11y for SliderView {
-    /// R51.65 §5.40 — AccessKit semantic tree contribution. Emits a
-    /// single `AriaRole::Slider` node carrying an `AccessValue::Float`
-    /// with `min` / `max` matching the widget's normalized [0.0, 1.0]
-    /// range (the same range the introspect schema's `"value"` key
-    /// reports). `state.checked` stays `None` (Slider is not a
-    /// check-like widget).
-    ///
-    /// R51.69 §5.40 — the accessible name comes from the track
-    /// container's `aria_label` override (set in `view`) so the
-    /// `"Volume"` literal lives in exactly one place.
+// R645 §5.16 — Slider's a11y node carries `AccessValue::Float
+// {value, min, max}` extracted from `state.1` — beyond the
+// state_flags-only derive in R642. The macro auto-emits the
+// `role + state_flags` body for `focused / disabled / hovered /
+// pressed` (R642 + R645 tuple expansion) but cannot reach the
+// `.with_value(...)` chain without value-extraction syntax. Per
+// [[abstraction-needs-second-consumer]] the value-bearing form
+// waits on a 2nd consumer (TextField publishes AccessValue::Text,
+// not Float, so not the same shape; future ProgressBar or
+// secondary Slider would be the 2nd Float consumer). For now the
+// macro's derived a11y impl is overridden by this manual one.
+impl pinion_a11y::WidgetA11y for SliderView {
     fn access_node(state: &(SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, value) = (state.0, state.1);
         let access_state = AccessState {
@@ -369,32 +388,6 @@ impl WidgetA11y for SliderView {
         vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
             .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })
             .with_state(access_state)]
-    }
-}
-
-impl WidgetView for SliderView {
-    type Renderer = HelloSliderRenderer;
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
-    }
-}
-
-fn parse_slider_state(name: &str) -> SliderState {
-    match name {
-        "Hover" => SliderState::Hover,
-        "Dragging" => SliderState::Dragging,
-        "Disabled" => SliderState::Disabled,
-        _ => SliderState::Idle,
-    }
-}
-
-fn slider_state_name(state: SliderState) -> &'static str {
-    match state {
-        SliderState::Idle => "Idle",
-        SliderState::Hover => "Hover",
-        SliderState::Dragging => "Dragging",
-        SliderState::Disabled => "Disabled",
     }
 }
 
@@ -552,6 +545,7 @@ mod tests {
 #[cfg(test)]
 mod a11y_tests {
     use super::*;
+    use pinion_a11y::WidgetA11y;
 
     fn enriched(state: (SliderState, f32), focused: Option<&str>) -> Vec<AccessNode> {
         let (s, v) = state;

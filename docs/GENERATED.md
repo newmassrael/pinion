@@ -11919,6 +11919,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R645 — R645 §5.16 — tuple-state state_flags expansion + read_state/event_name derive split + fmt_state_log/a11y_manual flag restoration; hello-slider first tuple-state retrofit (evidence-first cascade pivot)
+
+**Changes**:
+- pinion-derive/src/widget.rs: emit_a11y_impl auto-detects Type::Tuple for state, extracts first elem as enum type, emits matches!(state.0, EnumType::Variant). Non-tuple state matches directly (R642 behaviour). Tuple-state widgets (Slider/TextField/Toggle class) now reach the declarative state_flags derive.
+- pinion-derive: split state_name_derive flag into read_state_derive + event_name_derive (state_name_derive kept as combined alias for R642/R643 retrofit back-compat). Tuple-state bindings can derive event_name (enum event) without claiming read_state_derive (tuple read needs 2-field introspect, R643 single-field can't express).
+- pinion-derive: restore fmt_state_log flag (R642.A pruned for zero consumers; Slider is now 2nd consumer per [[abstraction-needs-second-consumer]] — hello-toggle was R641-era 1st). Macro forwards `<View>::fmt_state_log(*state)` with [[widget-macro-by-value-bridge]] deref so user code stays clippy-clean.
+- pinion-derive: add a11y_manual flag — suppresses WidgetA11y emit entirely so value-bearing widgets (Slider: AccessValue::Float) can provide their own impl block past the macro's state_flags-only derive.
+- pinion-core/src/widgets/slider.rs: invoke widget_state_name!(SliderState, default = Idle, [...]) + widget_event_name!(SliderEvent, [...]). 9-variant event enum including SCXML 3.13 Null sentinel.
+- examples/hello-slider: adopt #[widget(...)] with tuple state + a11y_manual + event_name_derive + fmt_state_log. Drop fn event_name + parse_slider_state + slider_state_name helpers. fmt_state_log + read_state replace per-binding parse helpers with WidgetStateName::{as_name, from_name_or_default}. Net -10 LOC at the binding (smaller savings than R642/R643 button retrofit because manual WidgetA11y stays — value-bearing).
+- examples/hello-slider/Cargo.toml: add pinion-derive dep.
+- hello-textfield retrofit deferred to R646 — survey revealed additional gap (ime_caret_rect is WidgetView trait method not in macro emit; needs view_manual opt-out or restored flag). True evidence-first pivot — no premature substrate.
+
+
+
+**Verification**:
+- cargo test --workspace: 3183 pass / 0 fail (R644 baseline maintained). hello-slider 21 tests + 7 a11y tests all pass. Manual WidgetA11y impl coexists cleanly with macro forwarding for the other two traits.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings. Pre-commit fixed trivially_copy_pass_by_ref on fmt_state_log inherent (macro emits *state deref per [[widget-macro-by-value-bridge]]).
+- mnemosyne validate_workspace: T1 orphan 0/0, round-trip 1/1, ledger sync.
+- Honest LOC: hello-slider 627 → 617 = -10 (binding cascade savings smaller than Button because Slider's value-bearing access_node stays manual). Substrate: pinion-core +21 (Slider widget_*_name! calls) + pinion-derive +76 (tuple state detect + 3 new flags + 1 opt-out flag). Net R645: +87 LOC. Cumulative R641-R645: +571 LOC. R645 evidence-first VALUE: 4 future retrofit-blocking gaps identified + 3 closed in same round (tuple state, fmt_state_log flag, a11y_manual escape). hello-textfield R646 + hello-toggle R647 retrofits will each save 30-50 LOC + close additional gaps.
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- R646: hello-textfield retrofit. Gaps: ime_caret_rect (WidgetView trait method) — needs either view_manual opt-out flag OR restored ime_caret_rect flag with text-input-class consumer count check. apply_composition + apply_middle_click both used (R642.A pruned, single consumer = textfield until 2nd text widget lands).
+- R647: hello-toggle retrofit. Gaps: update flag (R642.A pruned, 1st consumer was toggle in R641-era; restoring needs 2nd consumer ack OR justified solo restore). tuple-state + checked = bool field-access (R645 state_flags can match enum half but cannot extract bool from .1).
+- R648+ ergonomic flow: R646 (TextField) + R647 (Toggle) cascade evidence rounds; then revisit R645 substrate cumulative ROI. hello-checkbox / hello-radio (also tuple-state with checked field) follow same path once Toggle pattern proves out.
+- state_flags v0 still cannot express `checked = field_access` (tuple .1 bool extraction). Pin as R647 design question — `checked = field(1)` syntax vs `checked_from_value` flag vs manual access_node override.
+- Cumulative LOC creep is the dominant cost signal. R645-R650 cascade must net negative or R641-R644 substrate stays unjustified. R650 measurement obligation: report cumulative + flag/feature-level ROI.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -231,10 +231,31 @@ pub(crate) fn expand(
         },
     };
 
-    let optional_forwards = emit_optional_forwards(view_ident, &event, &flags);
-    let a11y_impl = emit_a11y_impl(view_ident, &state, role.as_ref(), &state_flags);
-    let derive_state_name = flags.contains("state_name_derive");
-    let read_state_body = if derive_state_name {
+    let optional_forwards = emit_optional_forwards(view_ident, &state, &event, &flags);
+    // R645 §5.16 — `a11y_manual` flag suppresses the WidgetA11y emit
+    // entirely (Slider needs `.with_value(AccessValue::Float)` past
+    // the macro's `state_flags`-only derive; ImageButton or other
+    // value-bearing widgets would join that path). Without the flag
+    // the macro emits either the R642 derived form (role present)
+    // or the R641 forwarding form (role absent).
+    let a11y_impl = if flags.contains("a11y_manual") {
+        TokenStream2::new()
+    } else {
+        emit_a11y_impl(view_ident, &state, role.as_ref(), &state_flags)
+    };
+    // R645 §5.16 — derive flags split. `state_name_derive` was the
+    // R643 combined flag; R645 split it so tuple-state bindings
+    // (`Slider` / `TextField` / `Toggle` — first elem enum + second
+    // elem value field) can use `event_name_derive` alone without
+    // claiming `read_state_derive` they cannot satisfy (tuple
+    // `read_state` reads two introspect fields; `WidgetStateName`
+    // only covers the enum half today). `state_name_derive` is
+    // still accepted as an alias for the combined R643 form to
+    // keep R642/R643 retrofit bindings working unchanged.
+    let combined = flags.contains("state_name_derive");
+    let derive_read_state = combined || flags.contains("read_state_derive");
+    let derive_event_name = combined || flags.contains("event_name_derive");
+    let read_state_body = if derive_read_state {
         // R643 §5.16 — derive via WidgetStateName trait. Walks the
         // same introspect chain every binding hand-wrote pre-R643
         // (Scene::External → ExternalIntrospect → query("state") →
@@ -257,7 +278,7 @@ pub(crate) fn expand(
     } else {
         quote! { <#view_ident>::read_state(scene) }
     };
-    let event_name_body = if derive_state_name {
+    let event_name_body = if derive_event_name {
         // R643 §5.16 — derive via WidgetEventName trait. Every variant
         // (including the SCXML 3.13 Null sentinel + internal-only
         // ones the winit handler never produces) gets its canonical
@@ -315,6 +336,7 @@ pub(crate) fn expand(
 
 fn emit_optional_forwards(
     view_ident: &Ident,
+    state: &Type,
     event: &Type,
     flags: &HashSet<String>,
 ) -> TokenStream2 {
@@ -338,6 +360,22 @@ fn emit_optional_forwards(
             }
         });
     }
+    if flags.contains("fmt_state_log") {
+        // R645 §5.16 — restore the R642.A-pruned flag. Slider is the
+        // 2nd consumer (`hello-toggle` was the R641-era 1st); the
+        // [[abstraction-needs-second-consumer]] gate now passes.
+        //
+        // [[widget-macro-by-value-bridge]] — trait method is `&Self::State`
+        // but small Copy state ((Enum, f32) = 8 bytes) trips
+        // `clippy::trivially_copy_pass_by_ref` on the inherent fn.
+        // Macro absorbs the deref + the inherent takes by-value so
+        // user code stays clippy-clean.
+        out.extend(quote! {
+            fn fmt_state_log(state: &#state) -> ::std::string::String {
+                <#view_ident>::fmt_state_log(*state)
+            }
+        });
+    }
     out
 }
 
@@ -345,12 +383,20 @@ fn emit_optional_forwards(
 ///
 /// - When `role` is supplied → emit a derived single-node body using
 ///   the declarative `state_flags(...)` mapping (80 % case). No
-///   inherent `fn access_node` required on the unit struct.
+///   inherent `fn access_node` required on the unit struct. R645
+///   extended this to tuple state types `(StateEnum, ValueT)` —
+///   the macro auto-extracts the first tuple element as the enum
+///   to match against, so [`Slider`] / [`TextField`] / [`Toggle`]
+///   class widgets get the same declarative form without manual
+///   tuple-destructuring boilerplate.
 /// - When `role` is absent → forward to `<#view_ident>::access_node`,
 ///   preserving R641 behaviour for composite widgets that need the
 ///   inherent escape hatch (`RadioGroup`, `Listbox`).
 ///
 /// [`WidgetA11y`]: pinion_a11y::WidgetA11y
+/// [`Slider`]: pinion_a11y::AriaRole::Slider
+/// [`TextField`]: pinion_a11y::AriaRole::TextInput
+/// [`Toggle`]: pinion_a11y::AriaRole::Switch
 fn emit_a11y_impl(
     view_ident: &Ident,
     state: &Type,
@@ -358,10 +404,20 @@ fn emit_a11y_impl(
     state_flags: &StateFlagsConfig,
 ) -> TokenStream2 {
     if let Some(role_ident) = role {
+        // R645 §5.16 — tuple state `(SliderState, f32)` etc. dispatches
+        // bool flags on the first element. Non-tuple state matches the
+        // value directly (R642 behaviour).
+        let (match_target, enum_type) = match state {
+            Type::Tuple(tup) if !tup.elems.is_empty() => {
+                let first = tup.elems.first().expect("non-empty per match guard");
+                (quote! { state.0 }, quote! { #first })
+            }
+            _ => (quote! { state }, quote! { #state }),
+        };
         let bool_flag = |v: &Option<Ident>| {
             v.as_ref().map_or_else(
                 || quote! { false },
-                |variant| quote! { ::core::matches!(state, #state::#variant) },
+                |variant| quote! { ::core::matches!(#match_target, #enum_type::#variant) },
             )
         };
         let hovered_expr = bool_flag(&state_flags.hovered);
@@ -369,7 +425,11 @@ fn emit_a11y_impl(
         let disabled_expr = bool_flag(&state_flags.disabled);
         let checked_expr = state_flags.checked.as_ref().map_or_else(
             || quote! { ::core::option::Option::None },
-            |v| quote! { ::core::option::Option::Some(::core::matches!(state, #state::#v)) },
+            |v| quote! {
+                ::core::option::Option::Some(
+                    ::core::matches!(#match_target, #enum_type::#v)
+                )
+            },
         );
 
         quote! {
@@ -580,7 +640,11 @@ enum WidgetArg {
 const KNOWN_FLAGS: &[&str] = &[
     "apply_key",
     "keybinding",
-    "state_name_derive",
+    "state_name_derive",  // R643 combined; kept as alias for R642 bindings
+    "read_state_derive",  // R645 split
+    "event_name_derive",  // R645 split
+    "fmt_state_log",      // R645 restore (2nd consumer: Slider)
+    "a11y_manual",        // R645: opt out of WidgetA11y emit (binding provides custom impl)
 ];
 
 impl Parse for WidgetArg {

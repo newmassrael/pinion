@@ -42,6 +42,27 @@ mod sm {
 pub use sm::{SliderEvent, SliderState};
 use sm::SliderPolicy;
 
+// R645 §5.16 — pinion-side WidgetStateName + WidgetEventName impls
+// for the sce-build-emitted enums. vendor/sce templates emit no
+// pinion-side derives ([[sce-priority-over-pinion]]); the declarative
+// macros below carry the impls. `state_name_derive` + `event_name_derive`
+// on `#[widget(...)]` use these to drop the binding's per-binding
+// `parse_slider_state` + `match` arms.
+crate::widget_state_name!(SliderState, default = Idle, [
+    Idle, Hover, Dragging, Disabled,
+]);
+crate::widget_event_name!(SliderEvent, [
+    Disable,
+    Enable,
+    PointerCancel,
+    PointerDown,
+    PointerEnter,
+    PointerLeave,
+    PointerUp,
+    SliderActivate,
+    Null,
+]);
+
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
