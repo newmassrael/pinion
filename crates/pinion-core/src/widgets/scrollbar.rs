@@ -267,10 +267,142 @@ mod sm {
 }
 
 pub use sm::{ScrollBarEvent, ScrollBarState};
+
+// ─────────────────────────────────────────────────────────────────
+// R660 §5.45 — reactive interaction-state mirror
+//
+// View-fn code (`pinion_widget_paint::scrollbar::view_vertical_scrollbar`)
+// needs the live `ScrollBarState` to compute the Material 3 thumb
+// state-layer overlay (Idle = `Outline` flat; Hover = +0.08 OnSurface
+// overlay; Dragging = +0.16 OnSurface overlay; Disabled fades toward
+// the track tint). The framework owns the `ScrollBarExternal`
+// through [`WidgetCore::create_extra_externals`], so the view fn has
+// no direct reference to it — the standard pinion bridge for this
+// gap is an `Owner::cache` singleton holding a reactive primitive,
+// mirroring the [[owner-cache-typed-key]] pattern that
+// `use_text_edit_state` / `use_caret_blink` already follow.
+//
+// Forge-generated `ScrollBarState` carries `Debug + Clone + Copy +
+// PartialEq + Eq + Hash` but lacks `Serialize / DeserializeOwned`,
+// so it cannot back a `Signal<ScrollBarState>` directly. The
+// canonical workaround (and the cheapest at the wire) is a numeric-
+// tag mirror: `Signal<u8>` internally, typed `get` / `set` boundary
+// on the outside.
+// ─────────────────────────────────────────────────────────────────
+
+/// (R660 §5.45) Reactive mirror of a paired
+/// [`ScrollBarExternal`]'s interaction state. `Owner::cache` singleton
+/// (one instance per `tag` per [`Owner`]); the application reads
+/// through [`Self::get`] in its view fn (auto-subscribing the
+/// rendering [`Effect`] so a hover repaints the thumb tint), the
+/// framework-owned [`ScrollBarExternal`] writes through [`Self::set`]
+/// every SCXML transition.
+///
+/// Internally stores [`ScrollBarState`] as a numeric tag in a
+/// `Signal<u8>` because Forge-generated `ScrollBarState` lacks the
+/// `Serialize + DeserializeOwned` bounds [`Signal::new`] requires.
+/// Tag mapping is stable across releases: `0 = Idle`, `1 = Hover`,
+/// `2 = Dragging`, `3 = Disabled` — pinned by the unit tests at the
+/// bottom of this file so a future SCXML edit cannot silently
+/// re-number a variant.
+///
+/// [`Effect`]: crate::reactive::Effect
+/// [`Owner`]: crate::reactive::Owner
+pub struct ScrollBarInteractionSignal {
+    inner: Signal<u8>,
+}
+
+impl ScrollBarInteractionSignal {
+    /// Construct a fresh signal initialised to [`ScrollBarState::Idle`].
+    /// Matches the SCXML's initial state so the view-fn first paint
+    /// sees the same value the framework starts with.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: Signal::new(Self::tag_for(ScrollBarState::Idle)),
+        }
+    }
+
+    /// Read the mirrored interaction state. Subscribes the current
+    /// reactive scope (the view-fn's render `Effect`) so the next
+    /// state transition fires a repaint.
+    #[must_use]
+    pub fn get(&self) -> ScrollBarState {
+        Self::state_for(self.inner.get())
+    }
+
+    /// Write the mirrored interaction state. No-op (Signal equality-
+    /// skip) when the tag is unchanged, so an idle SCXML re-entry
+    /// does not chum the reactive graph.
+    pub fn set(&self, state: ScrollBarState) {
+        self.inner.set(Self::tag_for(state));
+    }
+
+    /// Stable numeric tag for a [`ScrollBarState`]. Public only at
+    /// the test boundary; production callers reach the value
+    /// through [`Self::get`] / [`Self::set`].
+    fn tag_for(state: ScrollBarState) -> u8 {
+        match state {
+            ScrollBarState::Idle => 0,
+            ScrollBarState::Hover => 1,
+            ScrollBarState::Dragging => 2,
+            ScrollBarState::Disabled => 3,
+        }
+    }
+
+    /// Inverse of [`Self::tag_for`]. Unknown tags collapse to
+    /// `Idle` — defensive against a corrupted snapshot / restore
+    /// payload from a future schema bump.
+    fn state_for(tag: u8) -> ScrollBarState {
+        match tag {
+            1 => ScrollBarState::Hover,
+            2 => ScrollBarState::Dragging,
+            3 => ScrollBarState::Disabled,
+            _ => ScrollBarState::Idle,
+        }
+    }
+}
+
+impl Default for ScrollBarInteractionSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl core::fmt::Debug for ScrollBarInteractionSignal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ScrollBarInteractionSignal")
+            .field("state", &self.get())
+            .finish()
+    }
+}
+
+/// (R660 §5.45) [`Owner::cache`] hook returning the shared
+/// [`ScrollBarInteractionSignal`] for `tag`. Same shape as
+/// [`use_text_edit_state`](crate::widgets::text_edit::use_text_edit_state) —
+/// per-`tag` singleton, lives for the [`Owner`](crate::reactive::Owner)'s
+/// lifetime, returned through an [`Rc`] so the application can clone
+/// it once to thread into both [`ScrollBarExternal::attach_interaction`]
+/// (the write side) and the view fn (the read side).
+///
+/// # Panics
+///
+/// Panics if there is no active [`Owner`](crate::reactive::Owner)
+/// scope. Framework-internal dispatch sites already supply the
+/// `root_owner.run()` wrap; application code only reaches this hook
+/// from inside `V::view` / `V::create_extra_externals` / similar
+/// callbacks where the wrap is guaranteed.
+#[must_use]
+pub fn use_scrollbar_interaction(tag: &'static str) -> Rc<ScrollBarInteractionSignal> {
+    Owner::current()
+        .expect("use_scrollbar_interaction requires an active Owner scope")
+        .cache(tag, ScrollBarInteractionSignal::new)
+}
 use sm::ScrollBarPolicy;
 
 use std::rc::Rc;
 
+use crate::reactive::{Owner, Signal};
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
@@ -318,6 +450,13 @@ pub struct ScrollBar {
     /// the first `pointer_move`; that frame captures the snapshot,
     /// every subsequent `pointer_move` applies the delta against it.
     drag_start: Option<DragStart>,
+    /// R660 §5.45 — optional reactive mirror of [`Self::state`] the
+    /// `send` path writes after every SCXML transition. View-fn code
+    /// reads through the paired [`ScrollBarInteractionSignal::get`]
+    /// to pick the Material 3 thumb state-layer overlay. `None` for
+    /// bare bars (paint-only previews / unit tests that do not
+    /// exercise the visual hover/drag styling).
+    interaction: Option<Rc<ScrollBarInteractionSignal>>,
 }
 
 /// R55.D.3 §5.45 — drag-start snapshot. Captured on the first
@@ -358,6 +497,7 @@ impl ScrollBar {
             orientation: ScrollBarOrientation::Vertical,
             state: None,
             drag_start: None,
+            interaction: None,
         }
     }
 
@@ -372,6 +512,7 @@ impl ScrollBar {
             orientation,
             state: None,
             drag_start: None,
+            interaction: None,
         }
     }
 
@@ -391,6 +532,25 @@ impl ScrollBar {
     #[must_use]
     pub fn attach_state(mut self, state: Rc<ScrollState>) -> Self {
         self.state = Some(state);
+        self
+    }
+
+    /// R660 §5.45 — attach a [`ScrollBarInteractionSignal`] mirror so
+    /// every SCXML state transition through [`Self::send`] writes the
+    /// new [`ScrollBarState`] into the shared signal. View-fn code
+    /// subscribes on the read side to repaint the Material 3 thumb
+    /// state-layer (`Outline` flat at Idle; `+0.08 OnSurface` at
+    /// Hover; `+0.16 OnSurface` at Dragging; faded at Disabled).
+    ///
+    /// Builder-style; chain after [`Self::new`] / [`Self::with_orientation`]
+    /// / [`Self::attach_state`]. The initial write happens here so the
+    /// view fn observes the seeded `Idle` state on the very first paint
+    /// (cheap — Signal equality-skip drops the write when the slot
+    /// already holds `Idle`).
+    #[must_use]
+    pub fn attach_interaction(mut self, handle: Rc<ScrollBarInteractionSignal>) -> Self {
+        handle.set(self.inner.state());
+        self.interaction = Some(handle);
         self
     }
 
@@ -426,6 +586,13 @@ impl ScrollBar {
         self.inner.send(event);
         if !matches!(self.inner.state(), ScrollBarState::Dragging) {
             self.drag_start = None;
+        }
+        // R660 §5.45 — mirror the post-transition state into the
+        // shared reactive signal so view-fn code repaints the thumb
+        // with the matching M3 state-layer (no-op if no mirror was
+        // attached).
+        if let Some(handle) = &self.interaction {
+            handle.set(self.inner.state());
         }
     }
 
@@ -531,6 +698,18 @@ impl ScrollBarExternal {
         // observable state — drag_start / state both `None`, SCXML
         // freshly initialized to `Idle`).
         self.em.inner = std::mem::take(&mut self.em.inner).attach_state(state);
+        self
+    }
+
+    /// R660 §5.45 — attach a [`ScrollBarInteractionSignal`] reactive
+    /// mirror. Delegates to [`ScrollBar::attach_interaction`]; the
+    /// inner `ScrollBar::send` path writes the new state into the
+    /// signal on every transition so view-fn code repaints the M3
+    /// state-layer overlay (Hover / Dragging / Disabled tints).
+    /// Builder-style — chain alongside [`Self::attach_state`].
+    #[must_use]
+    pub fn attach_interaction(mut self, handle: Rc<ScrollBarInteractionSignal>) -> Self {
+        self.em.inner = std::mem::take(&mut self.em.inner).attach_interaction(handle);
         self
     }
 

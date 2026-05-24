@@ -784,6 +784,34 @@ impl<V: WidgetView> ShellCore<V> {
                     self.cursor_moved(PointerId::MOUSE, x, y);
                     self.handle_named_key(key);
                 }
+                // R660 §5.49 — `scene/drag` mirror: press at `from`,
+                // march cursor linearly to `to` across `steps` frames
+                // (each one forwarded to `InputRouter::cursor_moved`
+                // under the R51.34 capture lock so the receiving
+                // widget's `pointer_move` arc runs identically to a
+                // real-mouse drag), then release. `steps == 0` lands
+                // as a press / release at `from` (degenerate but
+                // well-defined — RPC client gets exactly what it
+                // asked for).
+                DeferredInput::Drag {
+                    from_x,
+                    from_y,
+                    to_x,
+                    to_y,
+                    steps,
+                } => {
+                    self.cursor_moved(PointerId::MOUSE, from_x, from_y);
+                    self.mouse_pressed(PointerId::MOUSE);
+                    if steps > 0 {
+                        for step in 1..=steps {
+                            let t = f64::from(step) / f64::from(steps);
+                            let x = from_x + (to_x - from_x) * t;
+                            let y = from_y + (to_y - from_y) * t;
+                            self.cursor_moved(PointerId::MOUSE, x, y);
+                        }
+                    }
+                    self.mouse_released(PointerId::MOUSE);
+                }
                 _ => {}
             }
         }

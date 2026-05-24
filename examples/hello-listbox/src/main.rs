@@ -74,7 +74,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::scroll::use_scroll_state;
-use pinion_core::widgets::scrollbar::ScrollBarExternal;
+use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExternal};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 // R659 §5.45 — `build_scrollbar_visual` lifted to
 // `pinion_widget_paint::scrollbar` after the 2nd-consumer signal
@@ -239,8 +239,17 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
     // `(offset, max)` through the same `Rc<ScrollState>` clone
     // `ScrollNode::from_state` consumes below.
     let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll_state, &theme, &scrollbar_style);
+    // R660 §5.45 — same handle the matching `ScrollBarExternal`
+    // writes to in `create_extra_externals`. `.get()` auto-subscribes
+    // the rendering Effect so a Hover / Dragging transition repaints
+    // the thumb with the M3 state-layer overlay.
+    let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll_state,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     let scroll = ScrollNode::from_state(
         scroll_state,
@@ -454,7 +463,14 @@ impl WidgetCore for ListBoxView {
     /// re-runs the view fn against the new offset.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let scroll_state = use_scroll_state(SCROLL_KEY);
-        let scrollbar = ScrollBarExternal::new().attach_state(scroll_state);
+        // R660 §5.45 — shared interaction-state mirror so the view fn
+        // (write-once at register time, read-every-paint after) sees
+        // the live Hover / Dragging transitions the SCXML state
+        // machine drives.
+        let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
+        let scrollbar = ScrollBarExternal::new()
+            .attach_state(scroll_state)
+            .attach_interaction(scrollbar_interaction);
         vec![ExtraExternal::new(SCROLLBAR_TAG, Box::new(scrollbar))]
     }
 

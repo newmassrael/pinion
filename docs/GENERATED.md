@@ -12442,6 +12442,43 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R660 — R660 §5.16 §5.45 §5.49 — debt-clearance: filter Option β walk-back + M3 thumb/segment state-layers + scene/drag substrate + composite_tag 5-of-5.
+
+**Changes**:
+- examples/todomvc/src/main.rs: TodoFilterExternal (~199 LOC bespoke handler) retired; framework RadioGroupExternal(3) registered under FILTER_TAG with seeded selection. FilterRadioStates struct added to Self::State tuple ((TextFieldState, u32, FilterRadioStates)); read_filter_radio_states walks the scene for `state.<i>` and `focused_index`. TodoMvcView::update reducer matches the dotted intent_tag!("todo_filter", "selected") wire form and writes the new FilterMode into the shared Rc<Signal<FilterMode>>. apply_key_filter implements W3C ARIA roving-tabindex: ArrowLeft/Right cycle, Home/End jump, Space/Enter activate; focusable_tags now [TF_TAG, FILTER_TAG]; access_focus_target returns AccessFocus::composite with active-descendant per R51.87 + R51.66.
+- examples/todomvc/src/main.rs: build_filter_row extended with per-radio M3 state-layer overlay (Hover=lerp 0.08 OnSurface; Pressed=lerp 0.12; Disabled/Idle untouched). access_node per-segment AccessState now carries live hovered/pressed/disabled bits derived from the same FilterRadioStates snapshot. R659 r659_filter_external_* test block (~130 LOC) replaced with R660 V::update reducer unit tests (intent dispatch by wire-form tag, out-of-range silent no-op, unrelated-tag isolation).
+- crates/pinion-core/src/widgets/scrollbar.rs: ScrollBarInteractionSignal (Signal<u8> wrapper around ScrollBarState; numeric tag bypasses Forge-generated enum's missing Serialize/DeserializeOwned bound) + use_scrollbar_interaction(tag) Owner::cache hook ([[owner-cache-typed-key]] pattern, mirrors use_text_edit_state). ScrollBar.interaction field + ScrollBar::attach_interaction builder; ScrollBarExternal::attach_interaction delegates via std::mem::take. ScrollBar::send mirrors post-transition state into the signal so view-fn paints repaint on every SCXML state-machine edge.
+- crates/pinion-widget-paint/src/scrollbar.rs: view_vertical_scrollbar gains 4th arg `interaction: ScrollBarState`. thumb_fill_for_state composes M3 thumb state-layer (Idle=Outline; Hover=lerp 0.08 OnSurface; Dragging=lerp 0.16 OnSurface; Disabled=lerp 0.62 toward SurfaceContainerHighest) via Color::lerp linear-space ([[color-lerp-linear-space]]). R660 unit tests pin 4-state tint distinctness across light + dark palettes + use_scrollbar_interaction shared-handle contract.
+- examples/hello-listbox/src/main.rs + examples/todomvc/src/main.rs: both consumers thread the new use_scrollbar_interaction hook through view_vertical_scrollbar (`.get()` auto-subscribe) and create_extra_externals (`.attach_interaction(...)` builder) so hover/drag on the scrollbar thumb repaints in lock-step across the substrate.
+- crates/pinion-rpc/src/dispatch.rs + crates/pinion-shell/src/substrate.rs: DeferredInput::Drag variant + scene/drag RPC method (mutually-exclusive from/from_path and to/to_path endpoint selectors; steps default 8). Shell drain expands Drag into cursor_moved(from) + mouse_pressed + N interpolated cursor_moved + mouse_released so the InputRouter capture lock + receiving widget's pointer_move arc fires identically to a real-mouse drag.
+- tools/rpc_verify.py: drag() Python wrapper around scene/drag matching the existing click/wheel/key shape (path or coordinate selectors; non-negative steps).
+- crates/pinion-core/src/widgets/radio_group.rs + crates/pinion-core/src/widgets/listbox.rs: invoke("send") arm migrated from inline `s.split_once(':')` to crate::composite_tag::parse_send_payload. 5-of-5 substrate maturity (TodoDelete + Toggle + Filter framework composite + RadioGroup + ListBox); composite_tag module doc updated to reflect the Rule-of-Three carry repaid.
+- tools/demos/todomvc_r660.py: 40-assertion end-to-end demo. Covers paint-side filter click (Option β walk-back wire), composite-tag mutual exclusion across the three segments, keyboard cycle (ArrowLeft/Right/Home/End/Space with focus pinned via focus/set on FILTER_TAG), scrollbar drag via the new scene/drag harness (thumb-y delta confirms ScrollBarExternal::pointer_move wrote ScrollState::scroll_to), R655/R656/R657/R658/R659 carry contract regression sweep.
+
+
+
+**Verification**:
+- cargo test --workspace passes — 3303 tests across the workspace, 0 failed (todomvc 67/67, hello-listbox 16/16, pinion-widget-paint 23/23 incl. 6 new R660 thumb-state tests, pinion-core 1285/1285 incl. composite_tag 5-of-5 lift regression, pinion-rpc 734/734, pinion-shell 241/241).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello passes with the workspace.lints baseline (forbid unsafe / deny clippy::pedantic) — no warnings.
+- tools/demos/todomvc_r660.py PASS in 6.57s with 40 assertions; AI-first introspection contract (§2 #2) cleared with new scene/drag axis the prior wheel-only test cover could not reach.
+- manual visual: cargo run -p todomvc — filter buttons respond to Tab + Arrow Left/Right + Home/End + Space; scrollbar thumb shifts colour on hover (lerp 0.08 OnSurface) and during drag (lerp 0.16 OnSurface); paint-side filter click still drives selection through the new RadioGroupExternal substrate.
+- hello-listbox visual regression check — same scrollbar M3 state-layer (substrate 2nd consumer) without any binding-side changes beyond the create_extra_externals interaction-mirror wire.
+
+
+
+**Impact**: §5.16, §5.20, §5.23, §5.38, §5.40, §5.45, §5.49, §5.50
+
+
+**Carry forward**:
+- LOC overshoot honest: net ~+800 LOC across the round vs the seed-prompt target of net-negative (substrate-heavy round; the R660-5 doc-compression pass on todomvc/src/main.rs deferred to R661 carry rather than churned alongside the substantial substrate changes — risk-reward call). Process-maturity carry: a future round dedicated to doc compression (no behaviour change) lands the negative-LOC ratio when the surface is stable.
+- scene/invoke + scene/query v0 primary-only — the new scene/drag inherits the same limitation: it dispatches through the InputRouter under the capture lock so it reaches every External (primary + extra) implicitly, but direct introspect on ExtraExternals (e.g. /external/todo_filter/state.0) still 404s. R690+ path-syntax axis carries this.
+- TUI parity — RadioGroupExternal + new scene/drag substrate are GUI-tested only this round. The TUI backend supports the introspect surface but a TUI-side R660 verify (focusable_tags + apply_key parity, drag has no TUI analogue) is a deliberate carry until the §6 #6 TUI parity cascade gets its own debt-clearance round.
+- Filter group AT navigation — AT-side `Focus` action on a specific filter segment (driving RadioGroup::set_focused_index without activation) reaches the framework via the existing access_child_invoke channel hello-radio-group covers, but the todomvc binding does not override that hook yet — the AT-only divergence path is a carry. Most AT clients drive `Click`/`Default` which already lands on the standard composite-tag wire here.
+- ScrollBarInteractionSignal numeric-tag indirection (Signal<u8> wrapper around the Forge-generated `ScrollBarState`) is a stop-gap for the missing Serialize/Deserialize derives on codegen-emitted enums. A future Forge round that lands canonical serde derives on every SCXML-produced state enum lets the wrapper retire — substrate carry, not a binding bug.
+- R659 Option B walk-back trigger validated: the first-consumer keyboard-nav + M3 state-layer cost of the bespoke handler turned out to be high enough that the framework-composite recycle paid for itself in the next round, per [[r650-widget-tag-walk-back]]. The textbook canonical evaluation tracks user-facing concerns (kbd nav, a11y) as part of substrate ROI rather than premature optimisation.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -526,16 +526,17 @@ impl ExternalIntrospect for RadioGroupExternal {
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Wire format: "<index>:<EventName>" — e.g. "2:PointerUp"
-            // drives a PointerUp on the Radio at index 2. Single-line
-            // string keeps the JSON-RPC envelope simple; structured
-            // args via IntrospectValue::Json is a future extension.
+            // drives a PointerUp on the Radio at index 2. R660 §5.16
+            // routes the parse through [[parse_send_payload]] so the
+            // framework composite shares the 5-of-5 substrate with the
+            // application consumers (TodoDelete / Toggle / Filter) and
+            // ListBoxExternal — the inline `split_once(':')` carry from
+            // R51.43 is now repaid.
             "send" => match args {
                 IntrospectValue::Text(ref s) => {
-                    let (idx_str, event_name) =
-                        s.split_once(':').ok_or(InvokeError::Rejected)?;
-                    let idx: usize = idx_str
-                        .parse()
-                        .map_err(|_| InvokeError::Rejected)?;
+                    let (idx, event_name): (usize, &str) =
+                        crate::composite_tag::parse_send_payload(s)
+                            .ok_or(InvokeError::Rejected)?;
                     if idx >= self.count() {
                         return Err(InvokeError::Rejected);
                     }

@@ -358,6 +358,23 @@ pub enum DeferredInput {
     /// the cursor. Mirrors the winit `WindowEvent::KeyboardInput` arc
     /// (`Escape` / `Tab` stay shell-reserved and are not injectable).
     Key { x: f64, y: f64, key: String },
+    /// R660 §5.49 — `scene/drag` injection. The embedder applies
+    /// `cursor_moved(MOUSE, from_x, from_y)`, then `mouse_pressed(MOUSE)`,
+    /// then `steps` interpolated `cursor_moved` frames marching linearly
+    /// toward `(to_x, to_y)`, then `mouse_released(MOUSE)`. Mirrors the
+    /// real-mouse drag arc winit emits for a `MouseInput::Pressed`
+    /// followed by a sequence of `CursorMoved` and the matching
+    /// `Released`, exercising the `InputRouter`'s R51.34 capture lock
+    /// plus the receiving widget's `pointer_move` fractional dispatch
+    /// — R55.D.3 `ScrollBar` drag math today; future `Slider` drag
+    /// rides the same primitive.
+    Drag {
+        from_x: f64,
+        from_y: f64,
+        to_x: f64,
+        to_y: f64,
+        steps: u32,
+    },
 }
 
 impl<'a> DispatchContext<'a> {
@@ -602,6 +619,22 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
                 handle_scene_click(inbox, producer, last_paint_layout, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/drag" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_drag(inbox, producer, last_paint_layout, request.params.as_ref()),
                 HandlerKind::Mutate,
             )
         }
@@ -996,6 +1029,120 @@ where
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
     inbox.push(DeferredInput::Click { x, y });
     Ok(Value::Null)
+}
+
+/// R660 §5.49 — `scene/drag` handler: enqueue a [`DeferredInput::Drag`]
+/// the embedder drains into the full `cursor_moved + mouse_pressed +
+/// N interpolated cursor_moved + mouse_released` arc. Mirrors the
+/// AI-first introspection contract (§2 #2 invariant) for the
+/// previously-untestable drag axis.
+///
+/// Params shape:
+///
+/// ```json
+/// {
+///   "from": {"x": <f64>, "y": <f64>},   // or "from_path": "<tag>"
+///   "to":   {"x": <f64>, "y": <f64>},   // or "to_path":   "<tag>"
+///   "steps": <u32>                       // optional, default 8
+/// }
+/// ```
+///
+/// `from` / `from_path` are mutually exclusive (mirror of
+/// `scene/click`'s `at` / `path` selector); same for `to` / `to_path`.
+/// `steps` controls how many intermediate `cursor_moved` frames the
+/// substrate generates — 0 collapses to a press / release at `from`
+/// (degenerate but well-defined); the default 8 is a good compromise
+/// for visible drag-axis demos (enough frames for the receiving
+/// widget's state machine to observe the mid-drag values, few enough
+/// to keep the drain cheap).
+fn handle_scene_drag<F>(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    mut paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+
+    #[allow(
+        clippy::option_as_ref_deref,
+        reason = "dyn FnMut is not DerefMut; manual reborrow required so both endpoint resolves \
+                  can share the same producer"
+    )]
+    let producer_for_from = paint_producer.as_mut().map(|p| &mut **p);
+    let from = resolve_drag_endpoint(
+        params,
+        "from",
+        "from_path",
+        producer_for_from,
+        last_paint_layout,
+    )?;
+    #[allow(
+        clippy::option_as_ref_deref,
+        reason = "manual reborrow for the 2nd resolve (same rationale as the 1st)"
+    )]
+    let producer_for_to = paint_producer.as_mut().map(|p| &mut **p);
+    let to = resolve_drag_endpoint(
+        params,
+        "to",
+        "to_path",
+        producer_for_to,
+        last_paint_layout,
+    )?;
+    let steps = match params.get("steps") {
+        Some(v) => v
+            .as_u64()
+            .ok_or_else(|| RpcError::invalid_params("params.steps must be a non-negative integer"))
+            .and_then(|n| {
+                u32::try_from(n).map_err(|_| {
+                    RpcError::invalid_params("params.steps does not fit in u32")
+                })
+            })?,
+        None => 8,
+    };
+    inbox.push(DeferredInput::Drag {
+        from_x: from.0,
+        from_y: from.1,
+        to_x: to.0,
+        to_y: to.1,
+        steps,
+    });
+    Ok(Value::Null)
+}
+
+/// R660 §5.49 — shared endpoint resolver for `scene/drag`. Reads one
+/// of `params.<at_key>` (object with `x`/`y`) or `params.<path_key>`
+/// (paint-scene tag) and returns the resolved `(x, y)` coordinate.
+/// Mirrors [`resolve_at_or_path`] but parameterised over the key
+/// names so a single `drag` call carries both `from` and `to` without
+/// shadowing.
+fn resolve_drag_endpoint<F>(
+    params: &Value,
+    at_key: &str,
+    path_key: &str,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
+) -> Result<(f64, f64), RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let at_param = params.get(at_key);
+    let path_param = params.get(path_key).and_then(Value::as_str);
+    match (at_param, path_param) {
+        (Some(_), Some(_)) => Err(RpcError::invalid_params(format!(
+            "params.{at_key} and params.{path_key} are mutually exclusive — pick one"
+        ))),
+        (None, None) => Err(RpcError::invalid_params(format!(
+            "params requires either `{at_key}: {{x, y}}` or `{path_key}: \"<tag>\"`"
+        ))),
+        (Some(at_value), None) => parse_at_coords(at_value),
+        (None, Some(tag)) => resolve_path_to_center(tag, paint_producer, last_paint_layout),
+    }
 }
 
 /// R51.201 / R51.202 §5.49 — shared `at` vs `path` resolution for

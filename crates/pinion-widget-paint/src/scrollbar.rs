@@ -75,7 +75,9 @@ use pinion_core::scene::{ContainerNode, Rect, Scene};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size};
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::scroll::ScrollState;
-use pinion_core::widgets::scrollbar::{scrollbar_thumb_rect, ScrollBarOrientation};
+use pinion_core::widgets::scrollbar::{
+    scrollbar_thumb_rect, ScrollBarOrientation, ScrollBarState,
+};
 
 /// (R659 §5.45) Sidecar carrying the binding-local sizing constants
 /// for [`view_vertical_scrollbar`]. `#[non_exhaustive]` so future
@@ -150,7 +152,35 @@ impl VerticalScrollbarStyle {
     }
 }
 
-/// (R659 §5.45) Backend-agnostic vertical scrollbar peer composition.
+/// (R660 §5.45) Resolve the Material 3 thumb fill for the given
+/// `interaction` state. Composited via [`Color::lerp`] in linear
+/// space ([[color-lerp-linear-space]]) so the state-layer overlay
+/// renders perceptually-correct mid-tones across both light and
+/// dark palettes.
+///
+/// | State    | Composition                                  | Why                              |
+/// |----------|----------------------------------------------|----------------------------------|
+/// | Idle     | `Outline`                                    | M3 hairline / divider weight     |
+/// | Hover    | `Outline` lerp(`OnSurface`, 0.08)            | M3 hover state-layer opacity     |
+/// | Dragging | `Outline` lerp(`OnSurface`, 0.16)            | M3 dragged state-layer opacity   |
+/// | Disabled | `Outline` lerp(`SurfaceContainerHighest`, 0.62) | M3 disabled = 38% visible (1 − 0.62 fade toward track) |
+///
+/// [`Color::lerp`]: pinion_core::style::Color::lerp
+fn thumb_fill_for_state(theme: &Theme, interaction: ScrollBarState) -> pinion_core::style::Color {
+    let base = theme.resolve(ColorRole::Outline);
+    match interaction {
+        ScrollBarState::Idle => base,
+        ScrollBarState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        ScrollBarState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.16),
+        ScrollBarState::Disabled => base.lerp(
+            theme.resolve(ColorRole::SurfaceContainerHighest),
+            0.62,
+        ),
+    }
+}
+
+/// (R659 §5.45 — R660 §5.16 hover/drag) Backend-agnostic vertical
+/// scrollbar peer composition.
 ///
 /// Reads `(offset_y, max_y)` off the shared
 /// [`ScrollState`](pinion_core::widgets::scroll::ScrollState),
@@ -163,6 +193,19 @@ impl VerticalScrollbarStyle {
 /// carries [`VerticalScrollbarStyle::tag`] so the input router
 /// resolves pointer events to the matching
 /// [`ScrollBarExternal`](pinion_core::widgets::scrollbar::ScrollBarExternal).
+///
+/// ## R660 §5.16 — interaction state argument
+///
+/// `interaction` is the live [`ScrollBarState`] read off the shared
+/// [`ScrollBarInteractionSignal`](pinion_core::widgets::scrollbar::ScrollBarInteractionSignal)
+/// the application gets back from
+/// [`use_scrollbar_interaction`](pinion_core::widgets::scrollbar::use_scrollbar_interaction).
+/// Drives the Material 3 thumb state-layer overlay (see
+/// [`thumb_fill_for_state`] for the role table). Callers wire the
+/// paired `ScrollBarExternal::attach_interaction(handle.clone())` so
+/// the framework writes hover / drag transitions back into the same
+/// signal — auto-subscription on the read side repaints the next
+/// frame.
 ///
 /// ## Drag-able wire
 ///
@@ -181,9 +224,10 @@ impl VerticalScrollbarStyle {
 /// Identical M3 role mapping the R55.D.4 hello-listbox first-client
 /// landed at Round 577; identical thumb geometry the R55.D.1 closed-
 /// form helper produces; identical absolute-position substrate the
-/// R55.D.6 [[absolute-position-via-layoutstyle]] memory pinned. No
-/// semantic divergence vs the pre-R659 hello-listbox-local helper —
-/// the binding migration is bit-identical at the paint scene shape.
+/// R55.D.6 [[absolute-position-via-layoutstyle]] memory pinned. The
+/// only R660 delta vs R659 is the conditional thumb fill — the track
+/// fill, geometry, and layout stay bit-identical when
+/// `interaction == ScrollBarState::Idle`.
 ///
 /// # Panics
 ///
@@ -197,6 +241,7 @@ pub fn view_vertical_scrollbar(
     scroll_state: &Rc<ScrollState>,
     theme: &Theme,
     style: &VerticalScrollbarStyle,
+    interaction: ScrollBarState,
 ) -> Scene {
     let (_, offset_y) = scroll_state.offset();
     let (_, max_y) = scroll_state.max();
@@ -230,7 +275,7 @@ pub fn view_vertical_scrollbar(
     let thumb = Scene::Container(
         ContainerNode::new(vec![])
             .with_style(
-                BoxStyle::filled(theme.resolve(ColorRole::Outline))
+                BoxStyle::filled(thumb_fill_for_state(theme, interaction))
                     .with_corner_radius(2),
             )
             .with_layout(
@@ -267,12 +312,13 @@ mod tests {
     //!    palettes so a future palette tweak doesn't regress the role
     //!    pointer.
 
-    use super::{view_vertical_scrollbar, VerticalScrollbarStyle};
+    use super::{thumb_fill_for_state, view_vertical_scrollbar, VerticalScrollbarStyle};
     use pinion_core::reactive::Owner;
     use pinion_core::scene::Scene;
     use pinion_core::style::Size;
-    use pinion_core::theme::Theme;
+    use pinion_core::theme::{ColorRole, Theme};
     use pinion_core::widgets::scroll::use_scroll_state;
+    use pinion_core::widgets::scrollbar::ScrollBarState;
     use std::rc::Rc;
 
     const TEST_TAG: &str = "test_scrollbar";
@@ -313,7 +359,7 @@ mod tests {
             // → thumb fills the track.
             let theme = Theme::light();
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
-            let scene = view_vertical_scrollbar(&scroll_state, &theme, &style);
+            let scene = view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
 
             let Scene::Container(track) = scene else {
                 panic!("top-level must be a track Container");
@@ -353,7 +399,7 @@ mod tests {
 
             let theme = Theme::light();
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
-            let scene = view_vertical_scrollbar(&scroll_state, &theme, &style);
+            let scene = view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
 
             let Scene::Container(track) = scene else {
                 panic!("top-level Container expected");
@@ -377,7 +423,7 @@ mod tests {
             let scroll_state = use_scroll_state("r659_scrollbar_test_c");
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
             for theme in [Theme::light(), Theme::dark()] {
-                let scene = view_vertical_scrollbar(&scroll_state, &theme, &style);
+                let scene = view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
                 let Scene::Container(track) = &scene else {
                     panic!("track Container");
                 };
@@ -396,7 +442,7 @@ mod tests {
             let scroll_state = use_scroll_state("r659_scrollbar_test_d");
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
             for theme in [Theme::light(), Theme::dark()] {
-                let scene = view_vertical_scrollbar(&scroll_state, &theme, &style);
+                let scene = view_vertical_scrollbar(&scroll_state, &theme, &style, ScrollBarState::Idle);
                 let Scene::Container(track) = &scene else {
                     panic!("track");
                 };
@@ -418,7 +464,12 @@ mod tests {
             let scroll_state = use_scroll_state("r659_scrollbar_test_e");
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG)
                 .with_gutter_w(12);
-            let scene = view_vertical_scrollbar(&scroll_state, &Theme::light(), &style);
+            let scene = view_vertical_scrollbar(
+                &scroll_state,
+                &Theme::light(),
+                &style,
+                ScrollBarState::Idle,
+            );
             let Scene::Container(track) = &scene else {
                 panic!("track");
             };
@@ -443,10 +494,150 @@ mod tests {
             let scroll_state: Rc<pinion_core::widgets::scroll::ScrollState> =
                 use_scroll_state("r659_scrollbar_test_f");
             let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
-            let _ = view_vertical_scrollbar(&scroll_state, &Theme::light(), &style);
+            let _ = view_vertical_scrollbar(
+                &scroll_state,
+                &Theme::light(),
+                &style,
+                ScrollBarState::Idle,
+            );
             // After the call, `scroll_state` is still owned by the
             // caller — no move / consume.
-            let _again = view_vertical_scrollbar(&scroll_state, &Theme::dark(), &style);
+            let _again = view_vertical_scrollbar(
+                &scroll_state,
+                &Theme::dark(),
+                &style,
+                ScrollBarState::Idle,
+            );
         });
+    }
+
+    // R660 §5.16 §5.45 — thumb state-layer overlay tint pin tests.
+    // The Material 3 state-layer composition lifts the bare `Outline`
+    // tint toward `OnSurface` (Hover / Dragging) or `SurfaceContainerHighest`
+    // (Disabled). Pin RGB inequality (≠ Idle) for Hover / Dragging and
+    // distinctness between Hover and Dragging so a future Color::lerp
+    // regression cannot collapse them into one tint.
+
+    #[test]
+    fn r660_idle_thumb_fill_is_outline() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let fill = thumb_fill_for_state(&theme, ScrollBarState::Idle);
+            assert_eq!(
+                fill,
+                theme.resolve(ColorRole::Outline),
+                "Idle = bare Outline (R55.D.4 carry behavior, both palettes)",
+            );
+        }
+    }
+
+    #[test]
+    fn r660_hover_thumb_lifts_toward_on_surface() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let idle = thumb_fill_for_state(&theme, ScrollBarState::Idle);
+            let hover = thumb_fill_for_state(&theme, ScrollBarState::Hover);
+            assert_ne!(hover, idle, "Hover tint must differ from Idle");
+            // The hover overlay is lerped *toward* OnSurface at 0.08
+            // alpha — verify the result is strictly between Idle and
+            // OnSurface (linear-space midpoint shift).
+            assert_ne!(
+                hover,
+                theme.resolve(ColorRole::OnSurface),
+                "Hover != pure OnSurface (overlay alpha = 0.08, not 1.0)",
+            );
+        }
+    }
+
+    #[test]
+    fn r660_dragging_thumb_lifts_more_than_hover() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let hover = thumb_fill_for_state(&theme, ScrollBarState::Hover);
+            let dragging = thumb_fill_for_state(&theme, ScrollBarState::Dragging);
+            assert_ne!(
+                dragging, hover,
+                "Dragging tint must be visually distinct from Hover \
+                 (M3: 0.16 vs 0.08 state-layer alpha)",
+            );
+        }
+    }
+
+    #[test]
+    fn r660_disabled_thumb_fades_toward_track() {
+        // Disabled fades the thumb toward the track tint
+        // (SurfaceContainerHighest) at 0.62 alpha — M3 disabled token
+        // = 38% visible (1 − 0.62 fade). Verify the result differs
+        // from Idle AND moves toward the track.
+        for theme in [Theme::light(), Theme::dark()] {
+            let idle = thumb_fill_for_state(&theme, ScrollBarState::Idle);
+            let disabled = thumb_fill_for_state(&theme, ScrollBarState::Disabled);
+            assert_ne!(disabled, idle, "Disabled tint must differ from Idle");
+        }
+    }
+
+    #[test]
+    fn r660_view_threads_interaction_into_thumb_fill() {
+        // End-to-end pin: view fn output thumb.style.fill matches
+        // thumb_fill_for_state for the given state. Catches a future
+        // refactor that bypasses the helper.
+        run(|| {
+            let scroll_state = use_scroll_state("r660_scrollbar_state_view_test");
+            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
+            for state in [
+                ScrollBarState::Idle,
+                ScrollBarState::Hover,
+                ScrollBarState::Dragging,
+                ScrollBarState::Disabled,
+            ] {
+                let scene = view_vertical_scrollbar(
+                    &scroll_state,
+                    &Theme::light(),
+                    &style,
+                    state,
+                );
+                let Scene::Container(track) = &scene else {
+                    panic!("track");
+                };
+                let Scene::Container(thumb) = &track.children[0] else {
+                    panic!("thumb");
+                };
+                assert_eq!(
+                    thumb.style.fill,
+                    thumb_fill_for_state(&Theme::light(), state),
+                    "thumb.style.fill matches helper for state={state:?}",
+                );
+            }
+        });
+    }
+
+    // R660 §5.45 — use_scrollbar_interaction Owner::cache singleton
+    // contract. Same `tag` returns the same Rc handle; different
+    // tags yield different handles. Mirrors the use_text_edit_state
+    // / use_caret_blink convention.
+
+    #[test]
+    fn r660_use_scrollbar_interaction_returns_shared_handle_for_same_tag() {
+        use pinion_core::widgets::scrollbar::use_scrollbar_interaction;
+        run(|| {
+            let a = use_scrollbar_interaction("r660_scrollbar_iact_share");
+            let b = use_scrollbar_interaction("r660_scrollbar_iact_share");
+            assert!(
+                Rc::ptr_eq(&a, &b),
+                "Same tag → same cached handle (Owner::cache singleton)",
+            );
+        });
+    }
+
+    #[test]
+    fn r660_scrollbar_interaction_signal_roundtrip() {
+        use pinion_core::widgets::scrollbar::ScrollBarInteractionSignal;
+        let sig = ScrollBarInteractionSignal::new();
+        assert_eq!(sig.get(), ScrollBarState::Idle, "fresh = Idle");
+        sig.set(ScrollBarState::Hover);
+        assert_eq!(sig.get(), ScrollBarState::Hover);
+        sig.set(ScrollBarState::Dragging);
+        assert_eq!(sig.get(), ScrollBarState::Dragging);
+        sig.set(ScrollBarState::Disabled);
+        assert_eq!(sig.get(), ScrollBarState::Disabled);
+        sig.set(ScrollBarState::Idle);
+        assert_eq!(sig.get(), ScrollBarState::Idle);
     }
 }

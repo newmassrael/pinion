@@ -822,15 +822,17 @@ impl ExternalIntrospect for ListBoxExternal {
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Wire format: "<index>:<EventName>" — e.g. "2:PointerUp"
-            // drives a PointerUp on the item at index 2. Mirrors
-            // `RadioGroupExternal::invoke "send"`.
+            // drives a PointerUp on the item at index 2. R660 §5.16
+            // routes the parse through [[parse_send_payload]] (the same
+            // substrate the application TodoDelete / Toggle / Filter
+            // composites and `RadioGroupExternal` use); R51.96's inline
+            // `split_once(':')` carry is now repaid (5-of-5 framework
+            // substrate maturity).
             "send" => match args {
                 IntrospectValue::Text(ref s) => {
-                    let (idx_str, event_name) =
-                        s.split_once(':').ok_or(InvokeError::Rejected)?;
-                    let idx: usize = idx_str
-                        .parse()
-                        .map_err(|_| InvokeError::Rejected)?;
+                    let (idx, event_name): (usize, &str) =
+                        crate::composite_tag::parse_send_payload(s)
+                            .ok_or(InvokeError::Rejected)?;
                     if idx >= self.count() {
                         return Err(InvokeError::Rejected);
                     }

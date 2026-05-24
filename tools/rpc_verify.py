@@ -347,6 +347,55 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params = {"path": path}
         self.request("scene/click", params)
 
+    def drag(
+        self,
+        *,
+        from_at: Optional[tuple[float, float]] = None,
+        from_path: Optional[str] = None,
+        to_at: Optional[tuple[float, float]] = None,
+        to_path: Optional[str] = None,
+        steps: int = 8,
+    ) -> None:
+        """`scene/drag` typed wrapper (R660 §5.49).
+
+        Simulates a full real-mouse drag arc — press at `from`, march
+        the cursor through `steps` interpolated frames to `to`, release.
+        The shell substrate forwards every frame to the `InputRouter`
+        under the R51.34 capture lock so the receiving widget's
+        `pointer_move` arc fires exactly as it would for a real mouse
+        (R55.D.3 ScrollBar drag math; future Slider drag reuses the
+        same primitive).
+
+        Endpoint selection mirrors [`click`] — supply exactly one of
+        `from_at = (x, y)` or `from_path = "<tag>"` (and same for
+        `to_at` / `to_path`); the path form walks the paint scene for
+        the first node carrying `tag` and uses its rect centre.
+
+        `steps` defaults to 8 — enough intermediate cursor frames for
+        a receiving widget's state machine to observe mid-drag values
+        without paying for hundreds of redundant samples. Pass `0` for
+        a degenerate press / release at `from_at` (well-defined but
+        usually a test bug).
+        """
+        if (from_at is None) == (from_path is None):
+            raise ValueError("exactly one of `from_at` or `from_path` must be supplied")
+        if (to_at is None) == (to_path is None):
+            raise ValueError("exactly one of `to_at` or `to_path` must be supplied")
+        if steps < 0:
+            raise ValueError("steps must be non-negative")
+        params: dict[str, Any] = {"steps": int(steps)}
+        if from_at is not None:
+            params["from"] = {"x": float(from_at[0]), "y": float(from_at[1])}
+        else:
+            assert from_path is not None
+            params["from_path"] = from_path
+        if to_at is not None:
+            params["to"] = {"x": float(to_at[0]), "y": float(to_at[1])}
+        else:
+            assert to_path is not None
+            params["to_path"] = to_path
+        self.request("scene/drag", params)
+
     def wheel(
         self,
         at: Optional[tuple[float, float]] = None,

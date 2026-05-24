@@ -20,7 +20,7 @@
 //!
 //! ## Architecture
 //!
-//! - State shape: `(TextFieldState, u32)` — interaction state +
+//! - State shape: `(TextFieldState, u32, FilterRadioStates)` — interaction state +
 //!   caret byte offset, inherited verbatim from hello-textfield.
 //!   The textfield reactive text content lives on the
 //!   [`TextEditState`] reached via [`use_text_edit_state`]`(TF_TAG)`,
@@ -113,7 +113,9 @@ use pinion_core::widgets::scroll::use_scroll_state;
 // R659 §5.45 — ScrollBarExternal sibling registered through
 // `create_extra_externals` so the visible scrollbar peer becomes
 // drag-able (4th ExtraExternal after delete + toggle + filter).
-use pinion_core::widgets::scrollbar::ScrollBarExternal;
+use pinion_core::widgets::radio::RadioState;
+use pinion_core::widgets::radio_group::RadioGroupExternal;
+use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExternal};
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
@@ -315,6 +317,19 @@ const FILTER_BUTTON_GAP: u32 = 6;
 /// one store.
 const FILTER_KEY: &str = "todomvc.filter";
 
+/// (R660 §5.16) Full-form composite intent tag the R660
+/// [`RadioGroupExternal`] under [`FILTER_TAG`] emits on every
+/// selection-change activation edge. The R660 [`TodoMvcView::update`]
+/// reducer matches this exact string and writes the new
+/// [`FilterMode`] into the shared `Rc<Signal<FilterMode>>`.
+///
+/// `pinion_core::intent_tag!` does the compile-time concat (the same
+/// substrate the `hello-toggle` / R57.X.toggle reducer uses) so the
+/// constant survives a future widget rename without a string-diff
+/// audit ([[intent-tag-dotted-wire-form]]).
+const TODO_FILTER_SELECTED_INTENT_TAG: &str =
+    pinion_core::intent_tag!("todo_filter", "selected");
+
 /// (R659 §5.16) The three filter modes the `TasteJS` `TodoMVC`
 /// reference canonicalises: show only un-completed items, show only completed
 /// items, or show every item. `#[non_exhaustive]` per the §5.50
@@ -403,6 +418,210 @@ impl FilterMode {
             Self::All => "All",
         }
     }
+}
+
+/// (R660 §5.16) Per-paint snapshot of the R660 [`RadioGroupExternal`]
+/// driving the filter row. Read out of the scene by
+/// [`TodoMvcView::read_state`] so the view fn composes the Material 3
+/// state-layer overlay (Hover / Pressed / Disabled) on each segmented
+/// button without having to re-borrow the framework-owned
+/// [`RadioGroupExternal`].
+///
+/// Mirrors [[m3-surface-tier-expansion]] and the
+/// hello-radio-group composite read-state pattern — every paint cycle
+/// pulls the four-state interaction tag for each of the three radios
+/// plus the optional WAI-ARIA roving-tabindex active-descendant.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct FilterRadioStates {
+    /// Per-radio interaction tag. Index `0 = Active`, `1 = Completed`,
+    /// `2 = All` — matches the canonical [`FilterMode::to_index`]
+    /// numbering the composite-tag wire (`todo_filter#<i>`) and the
+    /// R660 [`RadioGroupExternal`] indexing both follow.
+    pub states: [RadioState; 3],
+    /// AT-side active descendant index ([R51.87 §5.40]). `None`
+    /// until the [`Self::focused`] arrow keys / programmatic
+    /// `Focus` action pins a row; falls back to the currently selected
+    /// index when rendering the active-descendant hint.
+    ///
+    /// [R51.87 §5.40]: pinion_core::widgets::radio_group::RadioGroup::focused_index
+    pub focused: Option<usize>,
+}
+
+impl Default for FilterRadioStates {
+    /// All-`Idle` snapshot returned when the filter group has not
+    /// been registered into the scene yet (first paint before
+    /// [`TodoMvcView::create_extra_externals`] runs). `RadioState`
+    /// itself is Forge-generated and lacks a `Default` impl, so the
+    /// const-array literal carries the seed explicitly.
+    fn default() -> Self {
+        Self {
+            states: [RadioState::Idle; 3],
+            focused: None,
+        }
+    }
+}
+
+/// (R660 §5.16) Parse the R660 [`RadioGroupExternal`] `state.<i>` slot
+/// text back into a typed [`RadioState`]. Mirror of the
+/// hello-radio-group / hello-radio bindings; lifts to a substrate
+/// only after a 3rd consumer (per
+/// [[abstraction-needs-second-consumer]]).
+fn parse_filter_radio_state(name: &str) -> RadioState {
+    match name {
+        "Hover" => RadioState::Hover,
+        "Pressed" => RadioState::Pressed,
+        "Disabled" => RadioState::Disabled,
+        _ => RadioState::Idle,
+    }
+}
+
+/// (R660 §5.16) `apply_key` arm for `focused == TF_TAG`. R655 Enter →
+/// submit + clear; every other key delegates to
+/// [`TextFieldExternal::invoke`]`("key", Text(key))`. Lifted out of
+/// the trait method body so the R660 filter-group nav arm
+/// ([`apply_key_filter`]) can sit alongside it at the same module
+/// level without nesting the two keymaps under one `match` block.
+fn apply_key_textfield(scene: &mut Scene, key: &str) -> bool {
+    if key == "Enter" {
+        // R655 §5.16 — submit current textfield content as a new
+        // todo entry, then clear the field. Trim guard mirrors the
+        // TasteJS TodoMVC spec: blank entries never land.
+        let text_state = use_text_edit_state(TF_TAG);
+        let raw = text_state.text();
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let entry_text = trimmed.to_owned();
+            let id = allocate_todo_id();
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id,
+                    text: entry_text.clone(),
+                    completed: false,
+                });
+                next
+            });
+            text_state.set_text(String::new());
+        }
+        return true;
+    }
+    let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    match intro.invoke("key", IntrospectValue::Text(key.to_owned())) {
+        Ok(IntrospectValue::Bool(handled)) => handled,
+        _ => false,
+    }
+}
+
+/// (R660 §5.16) `apply_key` arm for `focused == FILTER_TAG`. Mirror of
+/// `hello-radio-group`'s composite keymap (W3C ARIA Authoring
+/// Practices "radiogroup" pattern):
+///
+/// * `ArrowLeft` / `ArrowRight` — cycle the addressed radio one step
+///   along the **horizontal** filter row layout (W3C Authoring
+///   Practices: orientation-aware). Arrow keys on a radio-group
+///   activate the new selection immediately — there is no
+///   "navigate-without-commit" mode (that lives on AT `Focus` actions
+///   alone, which reach [`access_child_invoke`] in
+///   `hello-radio-group` and would land on a future todomvc impl).
+/// * `Home` — jump to index 0 (Active).
+/// * `End` — jump to index `count - 1` (All).
+/// * `Space` / `Enter` — activate the currently-addressed radio
+///   (idempotent when the row is already selected, idempotent on
+///   commit per the W3C convention).
+///
+/// Activation runs the full `PointerEnter` / `Down` / `Up` / `Leave`
+/// composite-tag wire so the R660 [`RadioGroupExternal`]'s state
+/// machine fires the same activation edge the `InputRouter` would
+/// produce for a paint-side mouse click — `RadioGroup::send` enforces
+/// mutual exclusion + emits the `"selected"` intent the R660
+/// [`TodoMvcView::update`] reducer catches.
+fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
+    // R660 §5.16 — Pre-read the filter group's current addressed
+    // index so the arrow cycle can derive a new index without
+    // re-borrowing the scene during the activate dispatch below.
+    let current_idx = filter_focused_index(scene).unwrap_or_else(|| {
+        // Fallback when the AT-side `focused_index` is still `None` —
+        // use the currently selected mode so the very first arrow
+        // press cycles around the visible active segment.
+        Owner::current().map_or(0, |_| use_filter().get().to_index())
+    });
+    let count: usize = 3;
+    let target_idx: usize = match key {
+        "ArrowLeft" => current_idx.checked_sub(1).unwrap_or(count - 1),
+        "ArrowRight" => {
+            if current_idx + 1 >= count {
+                0
+            } else {
+                current_idx + 1
+            }
+        }
+        "Home" => 0,
+        "End" => count - 1,
+        "Space" | "Enter" => current_idx,
+        _ => return false,
+    };
+    let Some(node) = scene.find_external_with_tag_mut(FILTER_TAG) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    // ARIA radio-group keyboard activation: full PointerEnter/Down/Up/
+    // Leave cycle against the target index. PointerUp activates
+    // (`Pressed → Hover` edge fires the "selected" intent); the
+    // trailing Leave returns the row's interaction tag to `Idle` so
+    // the visual stays consistent with the keyboard-only path.
+    for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+        let _ = intro.invoke(
+            "send",
+            IntrospectValue::Text(format!("{target_idx}:{ev}")),
+        );
+    }
+    true
+}
+
+/// (R660 §5.16) Read the R660 [`RadioGroupExternal`]'s `focused_index`
+/// slot through the introspect channel. `None` falls back to the
+/// selected index — see [`apply_key_filter`] for the rationale.
+fn filter_focused_index(scene: &Scene) -> Option<usize> {
+    let node = scene.find_external_with_tag(FILTER_TAG)?;
+    let intro = node.handle.introspect()?;
+    match intro.query("focused_index") {
+        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        _ => None,
+    }
+}
+
+/// (R660 §5.16) Walk the multi-External state scene for the
+/// [`RadioGroupExternal`] registered under [`FILTER_TAG`] and pull the
+/// per-radio interaction tags + AT-side `focused_index`. Returns the
+/// default all-`Idle` snapshot when the filter group has not been
+/// registered yet (first paint before [`TodoMvcView::create_extra_externals`]
+/// runs).
+fn read_filter_radio_states(scene: &Scene) -> FilterRadioStates {
+    let Some(node) = scene.find_external_with_tag(FILTER_TAG) else {
+        return FilterRadioStates::default();
+    };
+    let Some(intro) = node.handle.introspect() else {
+        return FilterRadioStates::default();
+    };
+    let mut states = [RadioState::Idle; 3];
+    for (i, slot) in states.iter_mut().enumerate() {
+        if let Some(IntrospectValue::Text(name)) = intro.query(&format!("state.{i}")) {
+            *slot = parse_filter_radio_state(&name);
+        }
+    }
+    let focused = match intro.query("focused_index") {
+        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        _ => None,
+    };
+    FilterRadioStates { states, focused }
 }
 
 /// (R659 §5.16) `Owner::cache`-keyed hook returning the shared
@@ -752,8 +971,8 @@ impl Clipboard for AppClipboard {
     clippy::too_many_lines,
     reason = "view-fn shape mirrors hello-toggle / hello-listbox — one paint cycle, sequential composition"
 )]
-fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
-    let (interaction, caret_byte) = state;
+fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scene {
+    let (interaction, caret_byte, filter_radios) = state;
 
     // R657 §5.16 §5.38 — TextField paint composition lifted to
     // `tf_paint::view_field`. The binding's view fn composes only
@@ -870,7 +1089,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // [`ColorRole::Accent`] fill + [`ColorRole::OnAccent`] label;
     // inactive modes get transparent fill + [`ColorRole::Outline`]
     // border + [`ColorRole::OnSurface`] label.
-    let filter_row = build_filter_row(&theme, filter_mode);
+    let filter_row = build_filter_row(&theme, filter_mode, &filter_radios);
 
     // (R659 §5.16) Filtered-list content + header. `build_todos_list`
     // receives the **visible** subset (post-filter); the header text
@@ -894,8 +1113,17 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // R658 honest-carry payment: pre-R659 the todo list scrolled
     // under wheel only; R659 closes the AT + mouse-drag wire.
     let scrollbar_style = VerticalScrollbarStyle::material(LIST_VIEWPORT_H, SCROLLBAR_TAG);
-    let scrollbar_visual =
-        view_vertical_scrollbar(&scroll_state, &theme, &scrollbar_style);
+    // R660 §5.45 — auto-subscribing read of the shared interaction
+    // mirror so hover / drag transitions repaint the thumb with the
+    // M3 state-layer overlay. Paired write happens in
+    // [`create_extra_externals`] via `.attach_interaction(...)`.
+    let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll_state,
+        &theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
 
     // (R659 §5.45) Scroll region — flex Row laying the list +
     // scrollbar peer side-by-side. Mirrors hello-listbox's
@@ -940,7 +1168,18 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
 /// Single-source-of-truth label text comes from [`FilterMode::label`]
 /// so the screen-reader announcement (via
 /// [`enrich_names_from_scene`]) and the visible text never diverge.
-fn build_filter_row(theme: &Theme, current: FilterMode) -> Scene {
+///
+/// R660 §5.16 — M3 state-layer overlay on inactive segments:
+/// `Hover` lifts the transparent fill toward [`ColorRole::OnSurface`]
+/// at 0.08 alpha; `Pressed` at 0.12 alpha; `Disabled` keeps the
+/// pinion-canonical 0.38 fade. The Idle / active visual stays
+/// bit-identical vs R659 so the substrate change is purely additive
+/// on the chrome.
+fn build_filter_row(
+    theme: &Theme,
+    current: FilterMode,
+    radios: &FilterRadioStates,
+) -> Scene {
     let modes = [FilterMode::Active, FilterMode::Completed, FilterMode::All];
     let on_accent = theme.resolve(ColorRole::OnAccent);
     let accent = theme.resolve(ColorRole::Accent);
@@ -951,11 +1190,32 @@ fn build_filter_row(theme: &Theme, current: FilterMode) -> Scene {
     let buttons: Vec<Scene> = modes
         .iter()
         .map(|&mode| {
+            let idx = mode.to_index();
             let active = mode == current;
-            let (fill, label_color, border) = if active {
+            // R660 §5.16 — per-radio interaction tag pulled from the
+            // R660 [`RadioGroupExternal`] read by [`read_filter_radio_states`].
+            let radio_state = radios.states.get(idx).copied().unwrap_or(RadioState::Idle);
+            let (mut fill, label_color, border) = if active {
                 (accent, on_accent, None)
             } else {
                 (transparent, on_surface, Some(Border::new(outline, 1)))
+            };
+            // R660 §5.16 — Material 3 state-layer overlay: lerp the
+            // base fill toward `OnSurface` at the canonical alpha for
+            // each interaction tag (0.08 Hover, 0.12 Pressed). The
+            // overlay applies to both active and inactive segments;
+            // on the active (accent-filled) segment it deepens the
+            // tint; on the inactive (transparent) segment it lifts
+            // the surface so the cursor's position is legible.
+            //
+            // Disabled is reserved for a future axis (the segmented
+            // filter has no inherent "disabled" interpretation today;
+            // a future "no-todos → only `All` enabled" pass can wire
+            // it through the same hook).
+            fill = match radio_state {
+                RadioState::Hover => fill.lerp(on_surface, 0.08),
+                RadioState::Pressed => fill.lerp(on_surface, 0.12),
+                RadioState::Disabled | RadioState::Idle => fill,
             };
             let mut style = BoxStyle::filled(fill).with_corner_radius(4);
             if let Some(b) = border {
@@ -968,7 +1228,7 @@ fn build_filter_row(theme: &Theme, current: FilterMode) -> Scene {
                     .with_size_px(FILTER_FONT_SIZE_PX)
                     .with_fg(label_color),
             ));
-            let button_tag = format!("{FILTER_TAG_PREFIX}#{}", mode.to_index());
+            let button_tag = format!("{FILTER_TAG_PREFIX}#{idx}");
             Scene::Container(
                 ContainerNode::new(vec![label])
                     .with_tag(button_tag)
@@ -1482,202 +1742,23 @@ impl ExternalIntrospect for TodoToggleExternal {
     }
 }
 
-/// (R659 §5.16) Singleton filter-mode handler. Registered via
-/// [`WidgetCore::create_extra_externals`] as the **3rd** sibling
-/// [`ExtraExternal`] alongside [`TodoDeleteExternal`] and
-/// [`TodoToggleExternal`]. Owns the shared `Rc<Signal<FilterMode>>`
-/// the view fn resolves through [`use_filter`] — every mutation
-/// writes the same store the paint subscribes to, so a button click
-/// (or a direct RPC `invoke("set", Int(<i>))`) re-renders the list
-/// with the new visible subset on the next frame.
-///
-/// Wire format mirrors [`TodoDeleteExternal`] / [`TodoToggleExternal`]:
-///
-/// - Paint emits `Scene::Container { tag: "todo_filter#<i>" }` for
-///   `i ∈ {0, 1, 2}` (one per [`FilterMode`] discriminant).
-/// - [`InputRouter`]'s `dispatch_send` splits on `#` and forwards the
-///   sub-index `<i>` as part of `invoke("send", "<i>:PointerDown")`.
-/// - This External parses the wire form via the lifted
-///   [`parse_send_payload`] helper (R659 3-of-3 consumer), narrows
-///   `<i>` back to [`FilterMode`] via [`FilterMode::from_index`], and
-///   calls [`Signal::set`] on the underlying store.
-///
-/// ## Why a separate External, not the existing
-/// [`TodoDeleteExternal`] / [`TodoToggleExternal`]
-///
-/// The three Externals mutate three different reactive stores
-/// (`Vec<TodoItem>` for delete + toggle; `FilterMode` for filter).
-/// Folding filter into one of the existing handlers would couple
-/// unrelated state, blocking [`Signal::set_with`]'s reactive
-/// equality-skip cascade from suppressing irrelevant re-runs. The
-/// per-store-per-External factoring keeps each mutation's
-/// subscription graph minimal — exactly the pattern hello-listbox's
-/// listbox + scrollbar sibling-External pair established at R55.D.5.
-///
-/// ## Why mutual exclusion is implicit
-///
-/// [`FilterMode`] is a single-valued enum (not a `Vec<bool>` or a
-/// `HashSet<...>`); the type system already encodes "exactly one
-/// filter active at a time". Unlike a [`RadioGroupExternal`]
-/// (which has to enforce the mutex across N independent
-/// [`RadioState`] cells), the filter substrate is one `Signal::set`
-/// per click — the simplest reactive shape that matches the
-/// semantic. The visible "selected button" highlight in the view fn
-/// reads back from the same `Signal<FilterMode>` and lights up the
-/// matching segment without any sibling-deactivation plumbing.
-#[derive(Debug)]
-pub struct TodoFilterExternal {
-    /// Shared reference to the same `Rc<Signal<FilterMode>>` the
-    /// view fn / `access_node` hook resolve via [`use_filter`].
-    /// Mutations go through [`Signal::set`] so the framework's
-    /// reactive equality-skip suppresses a no-op set (e.g. clicking
-    /// the already-active filter button).
-    filter: Rc<Signal<FilterMode>>,
-}
-
-impl TodoFilterExternal {
-    /// Construct a fresh handler bound to the supplied filter
-    /// signal. The caller (typically [`create_extra_externals`])
-    /// resolves the signal via [`use_filter`] inside the framework's
-    /// `root_owner.run` wrap so this `Rc` and the view fn's `Rc` are
-    /// the same instance.
-    #[must_use]
-    pub fn new(filter: Rc<Signal<FilterMode>>) -> Self {
-        Self { filter }
-    }
-
-    /// Set the filter to `mode`. Idempotent (no-op when already
-    /// active — the [`Signal::set`] equality-skip suppresses a
-    /// view-fn re-run).
-    fn set_filter(&self, mode: FilterMode) {
-        self.filter.set(mode);
-    }
-}
-
-impl External for TodoFilterExternal {
-    /// All three backends supported — paint is owned by the view fn
-    /// (the segmented filter buttons), so backend declaration is
-    /// purely about dispatch surface. Mirror of
-    /// [`TodoDeleteExternal::backends`] / [`TodoToggleExternal::backends`].
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(
-            &[Backend::Gui, Backend::Tui, Backend::Rpc],
-            BackendFallback::Skip,
-        )
-    }
-
-    /// Framework drives repaint — mutating the
-    /// `Rc<Signal<FilterMode>>` auto-subscribes the view fn for the
-    /// next paint cycle.
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    /// UI-thread sync — mutations land on the same thread as the
-    /// view-fn / access-node subscribers.
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-}
-
-impl ExternalIntrospect for TodoFilterExternal {
-    /// Read-only counter + the two action surfaces:
-    /// - `mode`: current filter discriminant (0 = Active,
-    ///   1 = Completed, 2 = All) as an `Int` for symmetric typed
-    ///   round-trip with the `set` action below.
-    /// - `mode_name`: current filter human-readable label (
-    ///   `"Active"` / `"Completed"` / `"All"`) for AI scripts that
-    ///   prefer the symbolic form over the integer discriminant.
-    /// - `send`: R51.42 wire form `"<i>:<EventName>"`.
-    /// - `set`: direct typed `Int(i)` → `Int(i)` route. Returns the
-    ///   post-set discriminant so the AI client confirms the new
-    ///   state in one round-trip.
-    fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("mode", "int"),
-            ("mode_name", "string"),
-            ("send", "string"),
-            ("set", "int"),
-        ])
-    }
-
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let mode = self.filter.get();
-        match path {
-            "mode" => Some(IntrospectValue::Int(
-                i64::try_from(mode.to_index()).expect("filter index fits in i64"),
-            )),
-            "mode_name" => Some(IntrospectValue::Text(mode.label().to_owned())),
-            _ => None,
-        }
-    }
-
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
-        match path {
-            "mode" | "mode_name" => Err(InterveneError::ReadOnly),
-            _ => Err(InterveneError::UnknownPath),
-        }
-    }
-
-    fn invoke(
-        &mut self,
-        path: &str,
-        args: IntrospectValue,
-    ) -> Result<IntrospectValue, InvokeError> {
-        match path {
-            // R51.42 §5.35 — InputRouter's `dispatch_send` lands here
-            // with payload `"<i>:PointerDown"` for `i ∈ {0, 1, 2}`.
-            // PointerDown commits the set; PointerUp / Enter / Leave
-            // / Cancel return `Bool(false)` so the dispatch loop sees
-            // "handled, no state change" and never `Rejected`s a
-            // routine paint event.
-            "send" => match args {
-                IntrospectValue::Text(ref payload) => {
-                    let (idx, event_name): (usize, &str) =
-                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
-                    if event_name == "PointerDown" {
-                        let mode = FilterMode::from_index(idx).ok_or(InvokeError::Rejected)?;
-                        self.set_filter(mode);
-                        // R659 — Bool(true) signals "handled and
-                        // mutated"; the AI client typically re-queries
-                        // `mode` to confirm.
-                        Ok(IntrospectValue::Bool(true))
-                    } else {
-                        Ok(IntrospectValue::Bool(false))
-                    }
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            // R659 §5.16 — direct typed set by discriminant. Returns
-            // the post-set discriminant so the caller confirms the
-            // new state without a follow-up `query("mode")`.
-            "set" => match args {
-                IntrospectValue::Int(i) => {
-                    let idx = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
-                    let mode = FilterMode::from_index(idx).ok_or(InvokeError::Rejected)?;
-                    self.set_filter(mode);
-                    Ok(IntrospectValue::Int(
-                        i64::try_from(mode.to_index()).expect("idx fits in i64"),
-                    ))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            _ => Err(InvokeError::UnknownPath),
-        }
-    }
-}
+// R660 §5.16 — R659 `TodoFilterExternal` (199 LOC bespoke handler)
+// retired in favour of the framework [`RadioGroupExternal`] (Option β
+// walk-back). The migration repays the R659 honest carry:
+//
+// * Keyboard navigation (Tab / Arrow Left|Right / Home / End / Space /
+//   Enter) now lives on the shared [`apply_key_filter`] arm + the
+//   roving-tabindex contract `RadioGroup` carries through R51.87 / R51.90.
+// * Per-radio M3 state-layer overlay (Hover / Pressed) reads off the
+//   `RadioGroup::state(i)` channel via [`read_filter_radio_states`]
+//   → [`build_filter_row`].
+// * `"selected"` intent surfaces on the §5.20 channel; the
+//   [`TodoMvcView::update`] reducer threads it into the shared
+//   `Rc<Signal<FilterMode>>` so the view-fn `.get()` subscription
+//   still drives the visible-subset filter.
+//
+// See [[r650-widget-tag-walk-back]] for the canonical walk-back
+// pattern — substrate stays, application binding sheds bespoke code.
 
 /// (R655/R656 §5.16) Build the todo list section `Scene::Container`:
 ///
@@ -1917,7 +1998,7 @@ fn build_todos_list(
 
 /// `WidgetView` binding for the [`TextField`] widget.
 ///
-/// State shape: `(TextFieldState, u32)` — the SCXML interaction state
+/// State shape: `(TextFieldState, u32, FilterRadioStates)` — the SCXML interaction state
 /// plus the caret byte offset. The text content itself is reactive
 /// (`Rc<TextEditState>` via `use_text_edit_state`), so it does not
 /// (and cannot — `String` is not `Copy`) live in `Self::State`. The
@@ -1926,7 +2007,7 @@ fn build_todos_list(
 struct TodoMvcView;
 
 impl WidgetCore for TodoMvcView {
-    type State = (TextFieldState, u32);
+    type State = (TextFieldState, u32, FilterRadioStates);
     type Event = TextFieldEvent;
 
     /// (R56.1.b.1 substrate) `create_external` now runs inside
@@ -1976,20 +2057,31 @@ impl WidgetCore for TodoMvcView {
         let todos = use_todos();
         let filter = use_filter();
         let scroll_state = use_scroll_state(LIST_SCROLL_KEY);
+        // R660 §5.16 — filter group migrated to the framework
+        // [`RadioGroupExternal`] (Option β walk-back of R659's
+        // bespoke `TodoFilterExternal`). The R659 honest carry
+        // ("kbd nav / hover / pressed missing") is repaid by reusing
+        // the framework substrate that already carries (a) mutual
+        // exclusion across N radios, (b) per-radio interaction state
+        // for the M3 state-layer overlay, (c) `focused_index` AT-
+        // side roving-tabindex, (d) the `"selected"` intent the R660
+        // [`TodoMvcView::update`] reducer threads into the shared
+        // `Rc<Signal<FilterMode>>`.
+        //
+        // Seed the group with the persisted-mode default so the
+        // very-first paint shows the engaged segment without
+        // depending on a separate sync pass.
+        let mut filter_group = RadioGroupExternal::new(3);
+        let _ = filter_group.intervene(
+            "selected_index",
+            IntrospectValue::Int(
+                i64::try_from(filter.get().to_index()).expect("filter index fits in i64"),
+            ),
+        );
         // R659 §5.16 §5.45 — four sibling Externals share the same
         // application reactive stores (delete + toggle on
-        // `Rc<Signal<Vec<TodoItem>>>`, filter on
-        // `Rc<Signal<FilterMode>>`, scrollbar on `Rc<ScrollState>`).
-        // The R55.D.5 substrate composes the state-scene root as
-        // `Scene::Container([primary_textfield, todo_delete,
-        // todo_toggle, todo_filter, todo_scrollbar])`; multi-External
-        // lookup walks `Scene::find_external_with_tag` so the
-        // existing read / dispatch sites stay shape-agnostic.
-        // 3rd-consumer of multi-External `create_extra_externals` at
-        // the framework level (`hello-listbox` listbox + scrollbar =
-        // 1st, R658 todomvc delete + toggle = 2nd, R659 todomvc
-        // delete + toggle + filter + scrollbar = 3rd), per
-        // [[multi-external-substrate-extra-externals-pattern]].
+        // `Rc<Signal<Vec<TodoItem>>>`, scrollbar on `Rc<ScrollState>`,
+        // and the R660 filter group on its own internal store).
         vec![
             ExtraExternal::new(
                 DELETE_TAG,
@@ -1999,13 +2091,17 @@ impl WidgetCore for TodoMvcView {
                 TOGGLE_TAG,
                 Box::new(TodoToggleExternal::new(todos)),
             ),
-            ExtraExternal::new(
-                FILTER_TAG,
-                Box::new(TodoFilterExternal::new(filter)),
-            ),
+            ExtraExternal::new(FILTER_TAG, Box::new(filter_group)),
             ExtraExternal::new(
                 SCROLLBAR_TAG,
-                Box::new(ScrollBarExternal::new().attach_state(scroll_state)),
+                Box::new(
+                    ScrollBarExternal::new()
+                        .attach_state(scroll_state)
+                        // R660 §5.45 — interaction mirror so view fn
+                        // sees Hover / Dragging transitions and
+                        // repaints the M3 state-layer overlay.
+                        .attach_interaction(use_scrollbar_interaction(SCROLLBAR_TAG)),
+                ),
             ),
         ]
     }
@@ -2021,15 +2117,23 @@ impl WidgetCore for TodoMvcView {
     /// `Rc<Signal<Vec<TodoItem>>>` (not part of the cached
     /// `Self::State` snapshot, by design — the list is reactive
     /// and re-derives the rendered shape every paint).
-    fn read_state(scene: &Scene) -> (TextFieldState, u32) {
+    fn read_state(scene: &Scene) -> (TextFieldState, u32, FilterRadioStates) {
         // R657 §5.16 §5.38 — delegate to the lifted helper so
         // hello-textfield + todomvc share one read-state seam. The
         // R55.D.5 single-vs-multi External shape is handled
         // transparently by `find_external_with_tag`.
-        tf_paint::read_text_field_state(scene, TF_TAG)
+        let (interaction, caret) = tf_paint::read_text_field_state(scene, TF_TAG);
+        // R660 §5.16 — walk the multi-External scene root to the
+        // `RadioGroupExternal` registered under [`FILTER_TAG`] and
+        // pull per-radio interaction state + AT-side focus index.
+        // Falls back to all-Idle / `focused = None` when the scene
+        // does not carry the filter group yet (first paint before
+        // `create_extra_externals` lands).
+        let filter_radios = read_filter_radio_states(scene);
+        (interaction, caret, filter_radios)
     }
 
-    fn view(state: (TextFieldState, u32), frame: &Frame) -> Scene {
+    fn view(state: (TextFieldState, u32, FilterRadioStates), frame: &Frame) -> Scene {
         view(state, frame)
     }
 
@@ -2051,6 +2155,50 @@ impl WidgetCore for TodoMvcView {
 
     fn title() -> &'static str {
         "pinion todomvc (R655 §5.16) — first composed app"
+    }
+
+    /// R660 §5.16 — two tab stops: the primary text input
+    /// ([`TF_TAG`]) and the R660 segmented filter group
+    /// ([`FILTER_TAG`]). The shell's Tab cycler walks both; the
+    /// per-tag-focused `apply_key` arm picks the right keymap
+    /// (text-input edit keys vs. ARIA radio-group cycle).
+    fn focusable_tags() -> Vec<&'static str> {
+        vec![TF_TAG, FILTER_TAG]
+    }
+
+    /// R660 §5.16 — bridge the R660 [`RadioGroupExternal`]'s
+    /// `"selected"` intent (fires on every selection-change activation
+    /// edge) into the application's `Rc<Signal<FilterMode>>` so the
+    /// view-fn `filter_mode = use_filter().get()` subscription
+    /// re-renders the visible subset.
+    ///
+    /// Intent shape:
+    ///
+    /// * `tag` — composite-prefixed `"todo_filter.selected"`
+    ///   ([[intent-tag-dotted-wire-form]]).
+    /// * `payload` — `IntrospectValue::Int(i)` where `i` is the new
+    ///   `RadioGroup::selected_index()` (matches [`FilterMode::to_index`]).
+    ///
+    /// Side-effect-only reducer ([[scxml-as-model-update-transient]]) —
+    /// the `Vec<Command>` return stays empty; the actual mutation
+    /// rides on the `Signal::set` write. The function is wrapped by
+    /// the framework's `root_owner.run` so [`use_filter`] resolves
+    /// to the same `Rc<Signal<FilterMode>>` the view fn /
+    /// `access_node` already share through `Owner::cache`.
+    fn update(
+        _state: (TextFieldState, u32, FilterRadioStates),
+        intent: &pinion_core::Intent,
+    ) -> Vec<pinion_core::command::Command> {
+        if intent.tag_str() == TODO_FILTER_SELECTED_INTENT_TAG {
+            if let IntrospectValue::Int(i) = intent.payload {
+                if let Ok(idx) = usize::try_from(i) {
+                    if let Some(mode) = FilterMode::from_index(idx) {
+                        use_filter().set(mode);
+                    }
+                }
+            }
+        }
+        Vec::new()
     }
 
     /// Two debugging shortcuts at the binary level: `d` disables the
@@ -2083,67 +2231,14 @@ impl WidgetCore for TodoMvcView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        if focused != Some(TF_TAG) {
-            return false;
-        }
-        // R655 §5.16 — Enter submits the current textfield content as
-        // a new todo entry, then clears the field. The submit path
-        // runs BEFORE delegating to `TextFieldExternal.invoke("key",
-        // ...)` so the textfield's substrate never sees Enter (which
-        // it would otherwise drop on the floor for a single-line
-        // input). Trim guard mirrors the TasteJS TodoMVC spec: blank
-        // entries are never added. Modifiers are ignored — plain
-        // Enter and Shift+Enter both submit, matching the canonical
-        // single-line search-bar / chat-input UX.
-        if key == "Enter" {
-            let text_state = use_text_edit_state(TF_TAG);
-            let raw = text_state.text();
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                let entry_text = trimmed.to_owned();
-                // R656 §5.16 — allocate a fresh stable u64 id from
-                // the monotonic counter BEFORE pushing, so the
-                // resulting `TodoItem` carries an id that no future
-                // delete + re-add cycle can re-use. The id stays
-                // bound to this entry for its entire lifetime in
-                // the list, even if siblings come and go.
-                let id = allocate_todo_id();
-                let todos = use_todos();
-                todos.set_with(|prev| {
-                    let mut next = prev.clone();
-                    // R658 §5.16 — every freshly submitted entry
-                    // starts active (`completed: false`). The user
-                    // toggles to completed via the per-row `☐`/`☑`
-                    // button OR an AI client via the direct
-                    // `invoke("toggle", Int(id))` RPC path.
-                    next.push(TodoItem {
-                        id,
-                        text: entry_text.clone(),
-                        completed: false,
-                    });
-                    next
-                });
-                // `set_text(String::new())` atomically clears
-                // text + caret + selection + preedit via the
-                // R56.1.f `batch` (see `text_edit.rs:360-369`), so
-                // a single call is the textbook reset.
-                text_state.set_text(String::new());
-            }
-            return true;
-        }
-        let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        match intro.invoke("key", IntrospectValue::Text(key.to_owned())) {
-            Ok(IntrospectValue::Bool(handled)) => handled,
-            // `Bool(false)` for unrecognized keys lands here; any
-            // other shape (TypeMismatch / UnknownPath) is a substrate
-            // bug — return false to defer to the shell's fallback
-            // chain so a misconfiguration does not silently consume
-            // the key.
+        match focused {
+            Some(TF_TAG) => apply_key_textfield(scene, key),
+            // R660 §5.16 — W3C ARIA roving-tabindex on the filter
+            // group. The composite owns one tab stop (FILTER_TAG) and
+            // arrow keys cycle the addressed radio + activate it
+            // immediately (W3C Authoring Practices: Arrow on a radio
+            // group activates the new selection on the same edge).
+            Some(FILTER_TAG) => apply_key_filter(scene, key),
             _ => false,
         }
     }
@@ -2257,9 +2352,29 @@ impl WidgetCore for TodoMvcView {
         }
     }
 
-    fn fmt_state_log(state: &(TextFieldState, u32)) -> String {
+    fn fmt_state_log(state: &(TextFieldState, u32, FilterRadioStates)) -> String {
+        let radios = state
+            .2
+            .states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let short = match s {
+                    RadioState::Hover => "H",
+                    RadioState::Pressed => "P",
+                    RadioState::Disabled => "D",
+                    RadioState::Idle => "i",
+                };
+                format!("{i}={short}")
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let focused = match state.2.focused {
+            Some(i) => format!(" focus={i}"),
+            None => String::new(),
+        };
         format!(
-            "{} / caret={}",
+            "{} / caret={} / filter[{radios}]{focused}",
             tf_paint::text_field_state_name(state.0),
             state.1,
         )
@@ -2307,8 +2422,8 @@ impl WidgetA11y for TodoMvcView {
     /// against each container's `aria_label` override (set in
     /// `view` / `build_todos_list`) — the literal labels live in
     /// exactly one place.
-    fn access_node(state: &(TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, _caret) = state;
+    fn access_node(state: &(TextFieldState, u32, FilterRadioStates), focused: Option<&str>) -> Vec<AccessNode> {
+        let (interaction, _caret, filter_radios) = state;
         let text = use_text_edit_state(TF_TAG).text();
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
@@ -2326,12 +2441,23 @@ impl WidgetA11y for TodoMvcView {
 
         // R659 §5.40 — filter group root + 3 RadioButton children
         // (W3C WAI-ARIA "radiogroup" canonical mapping for a
-        // mutually-exclusive single-select segmented control). The
-        // `aria-checked` bit on each segment reflects the current
-        // [`FilterMode`]; the group's `aria-label` ("Filter") gives
-        // screen readers the semantic anchor name.
+        // mutually-exclusive single-select segmented control).
+        //
+        // R660 §5.40 — the per-radio AccessState now carries live
+        // `hovered` / `pressed` / `disabled` bits derived from the
+        // R660 [`RadioGroupExternal`] snapshot ([`filter_radios`]) so
+        // screen readers announce focus / press feedback through the
+        // same channel a sighted user sees via the M3 state-layer.
+        // `focused` follows the group's AT-side active-descendant
+        // ([`R51.87`] `focused_index`) — falls back to the selected
+        // mode when no `Focus` action has pinned a row yet, matching
+        // the [`access_focus_target`] resolution.
         let current_filter = use_filter().get();
         let filter_modes = [FilterMode::Active, FilterMode::Completed, FilterMode::All];
+        let group_focused_here = focused == Some(FILTER_TAG);
+        let active_descendant_idx = filter_radios
+            .focused
+            .unwrap_or_else(|| current_filter.to_index());
         let mut filter_group_node =
             AccessNode::new(FILTER_TAG, AriaRole::RadioGroup).with_name("Filter");
         for mode in &filter_modes {
@@ -2340,13 +2466,19 @@ impl WidgetA11y for TodoMvcView {
         }
         nodes.push(filter_group_node);
         for mode in &filter_modes {
-            let tag = format!("{FILTER_TAG_PREFIX}#{}", mode.to_index());
+            let idx = mode.to_index();
+            let tag = format!("{FILTER_TAG_PREFIX}#{idx}");
+            let radio_state = filter_radios
+                .states
+                .get(idx)
+                .copied()
+                .unwrap_or(RadioState::Idle);
             nodes.push(
                 AccessNode::new(tag, AriaRole::RadioButton).with_state(AccessState {
-                    focused: false,
-                    disabled: false,
-                    hovered: false,
-                    pressed: false,
+                    focused: group_focused_here && idx == active_descendant_idx,
+                    disabled: matches!(radio_state, RadioState::Disabled),
+                    hovered: matches!(radio_state, RadioState::Hover),
+                    pressed: matches!(radio_state, RadioState::Pressed),
                     // W3C-canonical: RadioButton uses `aria-checked`
                     // for the selected-bit (Some(true) = engaged,
                     // Some(false) = inactive).
@@ -2407,6 +2539,34 @@ impl WidgetA11y for TodoMvcView {
 
         nodes
     }
+
+    /// R660 §5.16 §5.40 — composite focus model for the filter group.
+    /// When focus is on [`FILTER_TAG`], emit [`AccessFocus::composite`]
+    /// pointing at the addressed (active-descendant) radio's sub-tag,
+    /// mirroring the hello-radio-group precedent (W3C ARIA Authoring
+    /// Practices roving-tabindex). For any other focused tag, defer
+    /// to the atomic-fallback contract.
+    ///
+    /// The active descendant resolution mirrors
+    /// [`apply_key_filter`]: AT-side `focused_index` wins; on `None`
+    /// fall back to the currently selected mode so the AT cursor
+    /// lands on the visible engaged segment.
+    fn access_focus_target(
+        state: &(TextFieldState, u32, FilterRadioStates),
+        focused: Option<&str>,
+    ) -> Option<pinion_a11y::AccessFocus> {
+        if focused == Some(FILTER_TAG) {
+            let active_idx = state
+                .2
+                .focused
+                .unwrap_or_else(|| use_filter().get().to_index());
+            return Some(pinion_a11y::AccessFocus::composite(
+                FILTER_TAG,
+                format!("{FILTER_TAG_PREFIX}#{active_idx}"),
+            ));
+        }
+        focused.map(pinion_a11y::AccessFocus::atomic)
+    }
 }
 
 impl WidgetView for TodoMvcView {
@@ -2450,14 +2610,14 @@ impl WidgetView for TodoMvcView {
     /// (the same floor the view fn applies for the visible caret
     /// box).
     fn ime_caret_rect(
-        state: &(TextFieldState, u32),
+        state: &(TextFieldState, u32, FilterRadioStates),
         scene: &Scene,
         focused: Option<&str>,
     ) -> Option<CaretRect> {
         if focused != Some(TF_TAG) {
             return None;
         }
-        let (interaction, caret_byte) = *state;
+        let (interaction, caret_byte, _) = *state;
         // R657 §5.16 §5.38 — field rect walk stays binding-side; the
         // caret composition (splice + LayoutCache lookup + window-
         // coord sum) is the lifted helper.
@@ -2507,7 +2667,7 @@ mod tests {
     //! app depends on.
     use super::{
         allocate_todo_id, build_filter_row, build_todos_list, use_filter, use_next_todo_id,
-        use_todos, view, FilterMode, TodoDeleteExternal, TodoFilterExternal, TodoItem,
+        use_todos, view, FilterMode, FilterRadioStates, TodoDeleteExternal, TodoItem,
         TodoMvcView, TodoToggleExternal, DELETE_GLYPH, DELETE_TAG, DELETE_TAG_PREFIX,
         FILTER_TAG, FILTER_TAG_PREFIX, ITEM_TAG_PREFIX, LIST_SCROLL_KEY, LIST_TAG,
         SCROLLBAR_TAG, TF_TAG, TOGGLE_GLYPH_CHECKED, TOGGLE_GLYPH_UNCHECKED, TOGGLE_TAG,
@@ -2581,7 +2741,7 @@ mod tests {
     #[test]
     fn r655_view_carries_tf_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             assert!(
                 scene.contains_tag(TF_TAG),
                 "paint scene must carry the TextField widget tag",
@@ -2592,7 +2752,7 @@ mod tests {
     #[test]
     fn r655_view_carries_list_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             assert!(
                 scene.contains_tag(LIST_TAG),
                 "paint scene must carry the todo-list tag even when empty",
@@ -2606,7 +2766,7 @@ mod tests {
         // calls `V::view` under an `Owner::new()` scope and asserts
         // `Scene::contains_tag(V::tag())`.
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<TodoMvcView>(
-            (TextFieldState::Idle, 0),
+            (TextFieldState::Idle, 0, FilterRadioStates::default()),
             &Frame::default(),
         );
     }
@@ -2620,7 +2780,7 @@ mod tests {
         with_owner(|| {
             // `use_todos()` returns an empty Vec by default
             // (Signal::new(Vec::new()) seed via Owner::cache).
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let children = find_children_for_tag(&scene, LIST_TAG);
             assert_eq!(
                 children.len(),
@@ -2648,7 +2808,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let children = find_children_for_tag(&scene, LIST_TAG);
             // header + 2 item rows
             assert_eq!(
@@ -2680,7 +2840,7 @@ mod tests {
                 }
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             for id in &ids {
                 let needle = format!("{ITEM_TAG_PREFIX}#{id}");
                 assert!(
@@ -2754,7 +2914,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             // The list container holds the header + per-item rows;
             // walk the list region only (not the textfield section)
             // so the textfield's status line text doesn't leak in.
@@ -2945,7 +3105,7 @@ mod tests {
                 next.retain(|item| item.id != 2);
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             // Surviving items keep their ORIGINAL stable ids — no
             // resequencing to {0,1}. This is the R656 invariant.
             assert!(
@@ -3280,7 +3440,7 @@ mod tests {
     fn r656_access_node_emits_list_root_with_no_items() {
         with_owner(|| {
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0),
+                &(TextFieldState::Idle, 0, FilterRadioStates::default()),
                 Some(TF_TAG),
             );
             // R659 §5.40 — order: [textbox, RadioGroup(filter),
@@ -3321,7 +3481,7 @@ mod tests {
                 next
             });
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0),
+                &(TextFieldState::Idle, 0, FilterRadioStates::default()),
                 Some(TF_TAG),
             );
             // R659 §5.40 — order:
@@ -3384,7 +3544,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -3436,7 +3596,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present (inside Scroll)");
@@ -3465,7 +3625,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present (inside Scroll)");
@@ -3499,7 +3659,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             for id in [11_u64, 22] {
                 let needle = format!("{TOGGLE_TAG_PREFIX}#{id}");
                 assert!(
@@ -3535,7 +3695,7 @@ mod tests {
                 });
                 next
             });
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -3827,7 +3987,7 @@ mod tests {
             }
         }
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let scroll =
                 walk(&scene).expect("R659: Scroll wrapping LIST_TAG must exist");
             assert!(
@@ -3847,7 +4007,7 @@ mod tests {
         with_owner(|| {
             // First view call instantiates ScrollState in the Owner
             // cache.
-            let _ = view((TextFieldState::Idle, 0), &Frame::default());
+            let _ = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let scroll_state_a =
                 pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
             let scroll_state_b =
@@ -3862,7 +4022,7 @@ mod tests {
     #[test]
     fn r658_scroll_state_offset_round_trips() {
         with_owner(|| {
-            let _ = view((TextFieldState::Idle, 0), &Frame::default());
+            let _ = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let scroll_state =
                 pinion_core::widgets::scroll::use_scroll_state(LIST_SCROLL_KEY);
             // Declare a max bound + scroll. The view fn's
@@ -3963,134 +4123,87 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // R659 §5.16 — TodoFilterExternal: composite-tag wire + direct
+    // R660 §5.16 — Option β walk-back: V::update reducer bridges the
+    // RadioGroupExternal's "selected" intent into Signal<FilterMode>.
+    // Test the application's observable surface (the Signal write),
+    // not the framework substrate (RadioGroupExternal::send + intent
+    // emission is covered by pinion-core's own unit suite).
     // ─────────────────────────────────────────────────────────────
 
+    use pinion_core::intent::Intent;
+
+    /// Drive the [`TodoMvcView::update`] reducer with the wire-form
+    /// `"todo_filter.selected"` intent the framework
+    /// [`RadioGroupExternal`] emits (after the runtime's
+    /// `intent_queue::drain_one` prefix walk; the bare event name is
+    /// `"selected"`, the wire-form match arm sees the dotted form per
+    /// [[intent-tag-dotted-wire-form]]).
+    fn drive_filter_selected_intent(idx: i64) {
+        let intent = Intent::new_owned(
+            "todo_filter.selected".to_owned(),
+            IntrospectValue::Int(idx),
+        );
+        let _ = TodoMvcView::update(
+            (TextFieldState::Idle, 0, FilterRadioStates::default()),
+            &intent,
+        );
+    }
+
     #[test]
-    fn r659_filter_external_send_pointerdown_sets_active() {
+    fn r660_update_reducer_selected_zero_writes_active() {
         with_owner(|| {
-            let mut handler = TodoFilterExternal::new(use_filter());
-            let result = handler
-                .introspect_mut()
-                .unwrap()
-                .invoke("send", IntrospectValue::Text("0:PointerDown".to_owned()))
-                .unwrap();
-            assert_eq!(result, IntrospectValue::Bool(true));
+            drive_filter_selected_intent(0);
             assert_eq!(use_filter().get(), FilterMode::Active);
         });
     }
 
     #[test]
-    fn r659_filter_external_send_pointerdown_sets_completed() {
+    fn r660_update_reducer_selected_one_writes_completed() {
         with_owner(|| {
-            let mut handler = TodoFilterExternal::new(use_filter());
-            handler
-                .introspect_mut()
-                .unwrap()
-                .invoke("send", IntrospectValue::Text("1:PointerDown".to_owned()))
-                .unwrap();
+            drive_filter_selected_intent(1);
             assert_eq!(use_filter().get(), FilterMode::Completed);
         });
     }
 
     #[test]
-    fn r659_filter_external_send_pointerdown_returns_to_all() {
+    fn r660_update_reducer_selected_two_writes_all() {
         with_owner(|| {
-            let mut handler = TodoFilterExternal::new(use_filter());
-            // Switch to Active first.
-            handler
-                .introspect_mut()
-                .unwrap()
-                .invoke("send", IntrospectValue::Text("0:PointerDown".to_owned()))
-                .unwrap();
-            // Then back to All.
-            handler
-                .introspect_mut()
-                .unwrap()
-                .invoke("send", IntrospectValue::Text("2:PointerDown".to_owned()))
-                .unwrap();
+            use_filter().set(FilterMode::Active);
+            drive_filter_selected_intent(2);
             assert_eq!(use_filter().get(), FilterMode::All);
         });
     }
 
     #[test]
-    fn r659_filter_external_send_pointerup_is_no_op() {
-        with_owner(|| {
-            let mut handler = TodoFilterExternal::new(use_filter());
-            let result = handler
-                .introspect_mut()
-                .unwrap()
-                .invoke("send", IntrospectValue::Text("0:PointerUp".to_owned()))
-                .unwrap();
-            assert_eq!(result, IntrospectValue::Bool(false));
-            // Filter stays at default.
-            assert_eq!(use_filter().get(), FilterMode::All);
-        });
-    }
-
-    #[test]
-    fn r659_filter_external_send_unknown_index_rejected() {
-        with_owner(|| {
-            let mut handler = TodoFilterExternal::new(use_filter());
-            let result = handler
-                .introspect_mut()
-                .unwrap()
-                .invoke("send", IntrospectValue::Text("9:PointerDown".to_owned()));
-            assert!(result.is_err());
-        });
-    }
-
-    #[test]
-    fn r659_filter_external_set_direct_returns_post_index() {
-        // Direct typed set returns the post-set discriminant so the
-        // AI client confirms in one round-trip.
-        with_owner(|| {
-            let mut handler = TodoFilterExternal::new(use_filter());
-            let result = handler
-                .introspect_mut()
-                .unwrap()
-                .invoke("set", IntrospectValue::Int(1))
-                .unwrap();
-            assert_eq!(result, IntrospectValue::Int(1));
-            assert_eq!(use_filter().get(), FilterMode::Completed);
-        });
-    }
-
-    #[test]
-    fn r659_filter_external_set_unknown_index_rejected() {
-        with_owner(|| {
-            let mut handler = TodoFilterExternal::new(use_filter());
-            let result = handler
-                .introspect_mut()
-                .unwrap()
-                .invoke("set", IntrospectValue::Int(99));
-            assert!(result.is_err());
-        });
-    }
-
-    #[test]
-    fn r659_filter_external_query_mode_mirrors_signal() {
+    fn r660_update_reducer_out_of_range_silently_no_ops() {
         with_owner(|| {
             use_filter().set(FilterMode::Completed);
-            let handler = TodoFilterExternal::new(use_filter());
-            let m = handler.introspect().unwrap().query("mode").unwrap();
-            assert_eq!(m, IntrospectValue::Int(1));
-            let name = handler.introspect().unwrap().query("mode_name").unwrap();
-            assert_eq!(name, IntrospectValue::Text("Completed".to_owned()));
+            drive_filter_selected_intent(99);
+            // Out-of-range index falls through the `from_index`
+            // narrowing — the Signal stays at the prior value rather
+            // than panicking, matching the
+            // [[reducer-cascade-discipline]] silent-fall-through
+            // convention.
+            assert_eq!(use_filter().get(), FilterMode::Completed);
         });
     }
 
     #[test]
-    fn r659_filter_external_malformed_send_rejected() {
+    fn r660_update_reducer_ignores_unrelated_intent_tag() {
         with_owner(|| {
-            let mut handler = TodoFilterExternal::new(use_filter());
-            for bad in ["noseparator", "xx:PointerDown", "1:"] {
-                let result = handler
-                    .introspect_mut()
-                    .unwrap()
-                    .invoke("send", IntrospectValue::Text(bad.to_owned()));
-                assert!(result.is_err(), "{bad} must yield Rejected");
-            }
+            use_filter().set(FilterMode::Active);
+            let intent = Intent::new_owned(
+                "todo_scrollbar.scroll_committed".to_owned(),
+                IntrospectValue::Null,
+            );
+            let _ = TodoMvcView::update(
+                (TextFieldState::Idle, 0, FilterRadioStates::default()),
+                &intent,
+            );
+            // Reducer is intent-tag-specific; the
+            // [[intent-tag-dotted-wire-form]] full prefix-match arm
+            // protects unrelated intents from accidental writes.
+            assert_eq!(use_filter().get(), FilterMode::Active);
         });
     }
 
@@ -4101,7 +4214,7 @@ mod tests {
     #[test]
     fn r659_view_carries_filter_tag_and_three_buttons() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             assert!(scene.contains_tag(FILTER_TAG), "filter group root tag present");
             for i in 0..3 {
                 let tag = format!("{FILTER_TAG_PREFIX}#{i}");
@@ -4116,7 +4229,7 @@ mod tests {
     #[test]
     fn r659_view_carries_scrollbar_tag() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             assert!(
                 scene.contains_tag(SCROLLBAR_TAG),
                 "scrollbar peer Container tag must be paint-addressable",
@@ -4149,7 +4262,7 @@ mod tests {
             });
             use_filter().set(FilterMode::Active);
 
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             // Only a + c paint (b is completed → filtered out).
             assert!(scene.contains_tag("todo_item#1"));
             assert!(!scene.contains_tag("todo_item#2"), "completed row hidden under Active filter");
@@ -4177,7 +4290,7 @@ mod tests {
             });
             use_filter().set(FilterMode::Completed);
 
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             assert!(!scene.contains_tag("todo_item#1"), "active row hidden under Completed filter");
             assert!(scene.contains_tag("todo_item#2"));
         });
@@ -4203,7 +4316,7 @@ mod tests {
             });
             use_filter().set(FilterMode::All);
 
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             assert!(scene.contains_tag("todo_item#1"));
             assert!(scene.contains_tag("todo_item#2"));
         });
@@ -4226,7 +4339,7 @@ mod tests {
             });
             use_filter().set(FilterMode::Active);
 
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let mut list_root = None;
             find_tagged_container(&scene, LIST_TAG, &mut list_root);
             let list = list_root.expect("LIST_TAG present");
@@ -4259,7 +4372,7 @@ mod tests {
     #[test]
     fn r659_build_filter_row_emits_all_three_buttons_with_aria_labels() {
         let theme = Theme::light();
-        let scene = build_filter_row(&theme, FilterMode::All);
+        let scene = build_filter_row(&theme, FilterMode::All, &FilterRadioStates::default());
         let Scene::Container(group) = &scene else {
             panic!("filter row must be a Container");
         };
@@ -4281,7 +4394,7 @@ mod tests {
     #[test]
     fn r659_build_filter_row_active_button_uses_accent_fill() {
         let theme = Theme::light();
-        let scene = build_filter_row(&theme, FilterMode::Completed);
+        let scene = build_filter_row(&theme, FilterMode::Completed, &FilterRadioStates::default());
         let Scene::Container(group) = &scene else {
             panic!("group");
         };
@@ -4313,7 +4426,7 @@ mod tests {
         with_owner(|| {
             use_filter().set(FilterMode::Completed);
             let nodes = <TodoMvcView as WidgetA11y>::access_node(
-                &(TextFieldState::Idle, 0),
+                &(TextFieldState::Idle, 0, FilterRadioStates::default()),
                 Some(TF_TAG),
             );
             // Find the RadioGroup with FILTER_TAG.
@@ -4348,7 +4461,7 @@ mod tests {
     #[test]
     fn r659_scroll_region_holds_scroll_plus_scrollbar_side_by_side() {
         with_owner(|| {
-            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let scene = view((TextFieldState::Idle, 0, FilterRadioStates::default()), &Frame::default());
             let Scene::Container(outer) = &scene else {
                 panic!("outer Container");
             };

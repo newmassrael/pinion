@@ -34,11 +34,12 @@
 //! up-front, with `K::Err` collapsed into `None` for the caller's
 //! `.ok_or(InvokeError::Rejected)?` flow.
 //!
-//! Framework-side composites ([`crate::widgets::radio_group::RadioGroupExternal`],
-//! [`crate::widgets::listbox::ListBoxExternal`]) parse the same shape
-//! inline via `s.split_once(':')` today. They could become future
-//! 4th/5th consumers of this helper in a follow-up audit — left as a
-//! deliberate carry rather than expanding the R659 scope.
+//! R660 §5.16 — framework-side composites
+//! ([`crate::widgets::radio_group::RadioGroupExternal`],
+//! [`crate::widgets::listbox::ListBoxExternal`]) now route through this
+//! helper too (5-of-5 framework substrate maturity). The Rule-of-Three
+//! carry from R659 is repaid in the round after surface — every R51.42
+//! composite-tag invoke arm in the workspace shares one parser.
 //!
 //! [`InputRouter`]: pinion_runtime::InputRouter
 
