@@ -12479,6 +12479,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R661 — R661 §5.16 — todomvc doc-compression baseline: process-maturity debt-clearance, -796 LOC net (4496 → 3700), zero behaviour change.
+
+**Changes**:
+- examples/todomvc/src/main.rs: 4496 → 3700 LOC (-796 net, -17.7%) via WHY-keep / WHAT-strip / HOW-strip doc compression across 6 sections (module doc; TodoDeleteExternal + TodoToggleExternal; FilterMode + FilterRadioStates + use_filter; view + build_filter_row + build_todos_list; apply_key + WidgetA11y + ime_caret_rect; WidgetCore impl). Compressed sites: module-level //! (~90 → ~30); TodoDelete/Toggle struct + impl docs (~280 → ~70); R660 walk-back retirement note (~17 → ~3); filter button consts + FilterMode + FilterRadioStates docs (~190 → ~75); view-fn inline narration (~120 → ~25); apply_key + apply_composition + apply_middle_click + access_node + access_focus_target + ime_caret_rect docs (~200 → ~40); WidgetCore::create_external + create_extra_externals + read_state + focusable_tags + update + keybinding docs (~120 → ~35).
+- Preserved load-bearing content per the seed-prompt rule: every `§N.M` spec ref, every `R<NNN>` round anchor, every `[[memory-key]]` link, every `# Panics` section the API contract relies on, the canonical FilterMode discriminant table (0=Active / 1=Completed / 2=All), and every WHY explanation (why-not-Computed, why-PointerDown-commits, why-not-strikethrough, R51.173 Copy-bound rationale, R660 Option β walk-back trigger).
+- Removed: prose narrations of what code already says (`Reading todos.get() subscribes the view fn to the Signal<Vec<TodoItem>>...`), repeated R55.D.5 multi-External mechanism descriptions across 4 Externals, the verbose mapping tables for CompositionEvent variants, the multi-paragraph IME coordinate composition (1)+(2)+(3) narration (kept the one-line summary), the verbose ARIA pattern paragraphs in apply_key (now one line per arm referencing W3C anchor), and dead doc comments referencing the retired TodoFilterExternal.
+
+
+
+**Verification**:
+- cargo test --workspace passes: 3303 tests, 0 failed (todomvc 67/67 — every R655/R656/R657/R658/R659/R660 contract test still pins the same shapes).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello passes with the workspace.lints baseline (forbid unsafe / deny clippy::pedantic / deny clippy::doc_markdown). 11 follow-up backtick fixes (TasteJS / RadioGroupExternal / TF_TAG / OnSurface / etc.) applied during validation to satisfy doc_markdown.
+- tools/demos/todomvc_r660.py PASS in 6.58s — same 40-assertion end-to-end sweep the R660 land verified, bit-identical observable behaviour confirms compression touched docs only.
+- cargo build -p todomvc --release passes; visible binary parity (Tab/Arrow/Home/End/Space filter cycle, M3 thumb hover/drag state-layers, paint-side click → reducer → Signal flow) unchanged.
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- R660 honest LOC overshoot honestly closed: R658 +1051 + R659 +1980 + R660 +800 cumulative was the process-maturity debt; R661 -796 reduces todomvc to 3700 LOC. Future binding rounds (Settings panel R664+, code-review app, markdown editor) inherit the compressed baseline as the doc-density convention.
+- Doc compression as a discrete round (process maturity) — separates substrate work from stylistic rewriting. The trade-off accepted in R660 (-defer doc compression to avoid churning substrate + style simultaneously) is now repaid; future bindings should aim for the R661 doc-density target from the first land.
+- Remaining application-tier carries unchanged: scene/invoke v0 primary-only (R690+ multi-External path), TUI parity (§6 #6 cascade), filter group access_child_invoke (AT Focus action), R662 SCE-004 upstream (Forge codegen serde derives — ScrollBarInteractionSignal u8-wrapper stop-gap), R663 edit-in-place (view_field 3rd consumer ROI), R664 settings panel (2nd composed app).
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

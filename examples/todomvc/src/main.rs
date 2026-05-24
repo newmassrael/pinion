@@ -1,92 +1,32 @@
-//! `todomvc` — R655/R656 §5.16 first composed multi-widget application
+//! `todomvc` §5.16 — first composed multi-widget application
 //! verifying pinion's AI-native composition primitives end-to-end.
 //!
-//! ## Phase-2 application-tier entry
+//! Phase-2 cascade ([[r652-substrate-roi-matrix]]):
+//! R655 scaffold • R656 stable ids + delete + ARIA •
+//! R657 `view_field` lift • R658 toggle + scroll • R659 filter +
+//! scrollbar peer • R660 Option β walk-back (`RadioGroupExternal` +
+//! M3 state-layers + scene/drag) • R661 doc compression •
+//! R662 edit in-place • R663 persistence.
 //!
-//! Every prior `examples/hello-*` binding showcases **one** widget;
-//! this binding is the first that composes **multiple** in a single
-//! `WidgetView`: a [`TextFieldExternal`] input row at top, a
-//! [`TodoDeleteExternal`] singleton handler (R656) registered via
-//! [`WidgetCore::create_extra_externals`], and a dynamic
-//! `Vec<TodoItem>` todo list rendered as a vertical column of
-//! per-item rows (text label + delete X button) below the input.
-//! The `TasteJS` `TodoMVC` spec is the canonical multi-widget
-//! benchmark (CRUD + filter + persistence) — R655 landed the
-//! scaffolding (input + Enter-to-submit + static list); R656 lands
-//! stable per-item IDs + delete + per-item ARIA list/listitem
-//! semantics; R657 hoists the textfield substrate into a renderer
-//! helper; R658 toggle; R659 filter; R660 edit; R661 persistence
-//! ([[r652-substrate-roi-matrix]] Phase-2 cascade plan).
+//! State shape: `(TextFieldState, u32, FilterRadioStates)` — Copy
+//! per R51.173. Non-Copy reactive stores reach the binding through
+//! `Owner::cache` hooks ([`use_todos`] / [`use_filter`] /
+//! [`use_text_edit_state`] / [`use_scroll_state`] /
+//! [`use_scrollbar_interaction`]).
 //!
-//! ## Architecture
+//! Multi-External composition (R55.D.5) — primary `TextField` plus
+//! four `ExtraExternal` siblings: `TodoDeleteExternal` (R656),
+//! `TodoToggleExternal` (R658), `RadioGroupExternal` filter group
+//! (R660), `ScrollBarExternal` (R659). Paint-side composite-tag wire
+//! (`<primary>#<sub>`) routes per-item events to the matching
+//! handler; the handlers share the [`parse_send_payload`] helper
+//! (`composite_tag` 5-of-5 substrate, R660).
 //!
-//! - State shape: `(TextFieldState, u32, FilterRadioStates)` — interaction state +
-//!   caret byte offset, inherited verbatim from hello-textfield.
-//!   The textfield reactive text content lives on the
-//!   [`TextEditState`] reached via [`use_text_edit_state`]`(TF_TAG)`,
-//!   and the **todo list** lives on a separate
-//!   `Signal<Vec<TodoItem>>` reached via [`use_todos`]`(TODOS_KEY)` —
-//!   both reactive primitives are out-of-band from `Self::State`
-//!   (which must be `Copy` per R51.173).
-//! - Composition: the view fn returns a vertical
-//!   [`Scene::Container`] holding `[title, field, status, list]`.
-//!   The list child is itself a `Scene::Container` (tagged
-//!   [`LIST_TAG`]) carrying one row per todo entry, where each row
-//!   is a `Scene::Container` (tagged `todo_item#{id}` — stable u64
-//!   id, NOT array index, per R656) holding `[text_label,
-//!   delete_button]`. The delete button is a sub-`Scene::Container`
-//!   tagged `todo_delete#{id}` whose paint-side hit-test routes
-//!   through the existing R51.42 composite-tag wire (split into
-//!   primary `todo_delete` + sub-index `<id>`) into
-//!   [`TodoDeleteExternal::invoke`]`("send", Text("<id>:PointerDown"))`,
-//!   which retains the [`Signal<Vec<TodoItem>>`] minus the matched
-//!   id. No new framework substrate — R656 reuses the per-radio
-//!   composite-tag pattern [`RadioGroupExternal`] already exercises
-//!   per [[abstraction-needs-second-consumer]].
-//! - Stable identity: each [`TodoItem`] carries a monotonic
-//!   `u64` `id` allocated by the [`use_next_todo_id`] hook
-//!   (`Owner::cache`-keyed `Cell<u64>`). The id survives sibling
-//!   deletes — the surviving items keep their original tags
-//!   `todo_item#7`, `todo_item#42`, `todo_item#88` rather than
-//!   resequencing under a fresh `0`-based array index (which would
-//!   make any in-flight RPC `scene/click {path:"todo_item#1"}`
-//!   target a different logical row after a sibling delete). The
-//!   `R656` AI-side verification script
-//!   `tools/demos/todomvc_r656.py` pins this contract end-to-end.
-//! - Submit wire: [`apply_key`](WidgetCore::apply_key) intercepts
-//!   `"Enter"` BEFORE delegating to
-//!   [`TextFieldExternal::invoke`]`("key", Text)`. On Enter, the
-//!   binding reads `text_state.text()`, trims, allocates a fresh
-//!   id via [`use_next_todo_id`], and (when non-empty) appends the
-//!   resulting [`TodoItem`] to the `Signal<Vec<TodoItem>>` via
-//!   `set_with` + clears the textfield via
-//!   `text_state.set_text(String::new())`. Other keys fall through
-//!   to the textfield's standard W3C key wire.
-//! - Delete wire (mouse + RPC): the per-item delete button is a
-//!   tagged `Scene::Container` (no [`External`]) — clicks land on
-//!   the [`InputRouter`]'s tag hover-target, then `dispatch_send`
-//!   forwards `PointerDown` to the singleton [`TodoDeleteExternal`]
-//!   via the R51.42 composite-tag split. The RPC verification path
-//!   uses `scene/click {path: "todo_delete#<id>"}` (same wire) or
-//!   `scene/invoke {path: "/external/todo_delete", method: "delete",
-//!   args: <id>}` (direct), and both routes converge on the same
-//!   `set_with` mutation. ARIA: list root carries
-//!   [`AriaRole::List`] (R656 §5.40); each item carries
-//!   [`AriaRole::ListItem`] with the entry text as `AccessValue::Text`.
-//!
-//! ## Try it
-//!
-//! ```text
-//! cargo run --release -p todomvc
-//! ```
-//!
-//! Tab into the input → caret appears + blinks. Type "milk" →
-//! `Enter` → "milk" appears in the list (with a red × delete
-//! button on the right), field clears. Type "eggs" → `Enter` →
-//! list has 2 entries. Click the × next to "milk" → only "eggs"
-//! remains, and (per R656 stable-id contract) "eggs" still
-//! carries its original `todo_item#{id}` tag — no resequencing.
-//! Press `d` to disable the field, `e` to re-enable.
+//! `cargo run --release -p todomvc`. Tab cycles textfield ↔ filter
+//! group. Type + Enter to submit; click × to delete; click toggle
+//! glyph to flip completed; arrow / Home / End / Space to drive the
+//! filter via keyboard; drag the scrollbar thumb to scroll. `d` / `e`
+//! toggle the field's Disabled state.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -249,129 +189,41 @@ const TOGGLE_GLYPH_UNCHECKED: &str = "\u{2610}";
 /// asset.
 const TOGGLE_GLYPH_CHECKED: &str = "\u{2611}";
 
-/// (R659 §5.16) Singleton paint + state tag for the filter-mode
-/// handler. Registered via [`WidgetCore::create_extra_externals`]
-/// as the **3rd** sibling [`ExtraExternal`] alongside
-/// [`TodoDeleteExternal`] and [`TodoToggleExternal`]. The state
-/// scene then composes as
-/// `Scene::Container([primary_textfield, todo_delete, todo_toggle,
-/// todo_filter, todo_scrollbar])` per R55.D.5 §5.45 — multi-External
-/// lookup walks [`Scene::find_external_with_tag`] so the read-side
-/// shape-agnostic helpers (R55.D.5 cascade lesson) reach the
-/// primary textfield unchanged.
-///
-/// 3rd consumer of `create_extra_externals` at the framework level
-/// (1st = `hello-listbox` listbox + scrollbar, 2nd = R658 todomvc
-/// delete + toggle, 3rd = R659 todomvc delete + toggle + filter +
-/// scrollbar). The substrate already supports arbitrary
-/// `Vec<ExtraExternal>` so the addition stays substrate-clean.
-///
-/// Wire form mirrors [`DELETE_TAG`] / [`TOGGLE_TAG`]:
-/// - Paint scene emits `Scene::Container { tag: "todo_filter#<i>" }`
-///   for `i ∈ {0, 1, 2}` (one per [`FilterMode`] discriminant).
-/// - [`InputRouter`]'s `dispatch_send` splits the tag on `#` and
-///   forwards the sub-index `<i>` as part of `invoke("send",
-///   "<i>:PointerDown")`.
-/// - The direct RPC route `scene/invoke {path: "/external/todo_filter",
-///   method: "set", args: <i>}` reaches `invoke("set", Int(<i>))`
-///   and produces the same `Signal::set` mutation.
+/// (R659/R660 §5.16) Filter group tags + sizing.
 const FILTER_TAG: &str = "todo_filter";
-
-/// (R659 §5.16) Per-filter button paint tag prefix. Full per-button
-/// tag is `"todo_filter#<i>"`. Mirrors [`DELETE_TAG_PREFIX`] +
-/// [`TOGGLE_TAG_PREFIX`].
 const FILTER_TAG_PREFIX: &str = "todo_filter";
-
-/// (R659 §5.45) Singleton tag for the visible scrollbar peer +
-/// matching [`ScrollBarExternal`]. Registered as the **4th**
-/// `ExtraExternal` so the user can drag the visible thumb to
-/// scroll the todo list (R658 honest carry: pre-R659 wheel-only
-/// scroll). Shares [`LIST_SCROLL_KEY`]'s `Rc<ScrollState>` with
-/// the [`ScrollNode`] so wheel / keyboard / drag all converge on
-/// the same reactive offset.
 const SCROLLBAR_TAG: &str = "todo_scrollbar";
-
-/// (R659 §5.16) Filter button width — sized to comfortably host the
-/// `"Active"` / `"Completed"` / `"All"` labels at the chosen font
-/// size with horizontal padding. The 3 buttons stack flex Row so
-/// the binding-side width plus inter-button gap define the filter
-/// row width; the row sits centred in the textfield column.
 const FILTER_BUTTON_W: u32 = 92;
-/// (R659 §5.16) Filter button height. WCAG 2.5.5 AAA target-size
-/// floor (24×24 px), bumped to 32 px for desktop comfort.
-const FILTER_BUTTON_H: u32 = 32;
-/// (R659 §5.16) Filter button font size — matches the row text size
-/// (14 px) so the chrome reads as a peer of the list content.
+const FILTER_BUTTON_H: u32 = 32; // WCAG 2.5.5 AAA min 24, +8 desktop comfort
 const FILTER_FONT_SIZE_PX: u32 = 13;
-/// (R659 §5.16) Inter-button gap in the filter row, matching
-/// [`LIST_ITEM_GAP`] for visual consistency with the list rows
-/// below.
 const FILTER_BUTTON_GAP: u32 = 6;
-
-/// (R659 §5.16) [`Owner::cache`] key for the reactive
-/// `Rc<Signal<FilterMode>>` carrying the current filter selection.
-/// Symmetric with [`TODOS_KEY`] / [`NEXT_ID_KEY`] / [`LIST_SCROLL_KEY`]
-/// — the [`use_filter`] hook resolves through this key, and
-/// [`TodoFilterExternal`] (R659) constructs with a `clone()` of the
-/// same `Rc` so paint subscriptions and dispatch mutations share
-/// one store.
 const FILTER_KEY: &str = "todomvc.filter";
 
-/// (R660 §5.16) Full-form composite intent tag the R660
-/// [`RadioGroupExternal`] under [`FILTER_TAG`] emits on every
-/// selection-change activation edge. The R660 [`TodoMvcView::update`]
-/// reducer matches this exact string and writes the new
-/// [`FilterMode`] into the shared `Rc<Signal<FilterMode>>`.
-///
-/// `pinion_core::intent_tag!` does the compile-time concat (the same
-/// substrate the `hello-toggle` / R57.X.toggle reducer uses) so the
-/// constant survives a future widget rename without a string-diff
-/// audit ([[intent-tag-dotted-wire-form]]).
+/// (R660 §5.16) Dotted wire-form intent tag the R660 [`RadioGroupExternal`]
+/// emits on every selection-change. [`TodoMvcView::update`] matches
+/// this exact string; [[intent-tag-dotted-wire-form]].
 const TODO_FILTER_SELECTED_INTENT_TAG: &str =
     pinion_core::intent_tag!("todo_filter", "selected");
 
-/// (R659 §5.16) The three filter modes the `TasteJS` `TodoMVC`
-/// reference canonicalises: show only un-completed items, show only completed
-/// items, or show every item. `#[non_exhaustive]` per the §5.50
-/// `[[r590-colorrole-error-tier]]` pattern so future enrichment
-/// (e.g. "Archived", "Starred") stays additive without breaking
-/// `match` arms in downstream RPC clients.
-///
-/// Discriminant assignment is **canonical** — index 0 = Active,
-/// 1 = Completed, 2 = All. This matches the `TasteJS` visual order
-/// (Active / Completed / All — left-to-right in the filter bar)
-/// and the composite-tag wire (`todo_filter#0` selects Active, etc.).
-/// AI-side clients can use either the integer discriminant
-/// (`scene/invoke {method: "set", args: 0}`) or the symbolic name
-/// (`scene/invoke {method: "set-named", args: "Active"}` — R670+
-/// carry; today only integer dispatch is wired).
+/// (R659 §5.16) Canonical `TasteJS` `TodoMVC` filter modes. Discriminants
+/// 0/1/2 match the visual left-to-right order + composite-tag wire
+/// (`todo_filter#<i>`). `#[non_exhaustive]` keeps future additions
+/// (Archived / Starred) additive.
 #[non_exhaustive]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FilterMode {
-    /// Only entries whose `completed` flag is `false`.
     Active,
-    /// Only entries whose `completed` flag is `true`.
     Completed,
-    /// Every entry (filter inactive — default at boot).
     All,
 }
 
 impl FilterMode {
-    /// (R659 §5.16) The default filter on app launch — show
-    /// everything. Mirrors the `TasteJS` `TodoMVC` reference and the
-    /// macOS / iOS Reminders defaults; no entry is hidden until
-    /// the user opts in to filtering.
+    /// Boot default — show everything (`TasteJS` + `macOS` Reminders).
     #[must_use]
     pub const fn default_mode() -> Self {
         Self::All
     }
 
-    /// (R659 §5.16) Resolve the canonical
-    /// `0 → Active / 1 → Completed / 2 → All` mapping the
-    /// composite-tag wire + filter button order both follow.
-    /// Returns `None` for out-of-range indices so the
-    /// `invoke("send", "<i>:PointerDown")` arm collapses unknown
-    /// indices into [`InvokeError::Rejected`] without panic.
     #[must_use]
     pub const fn from_index(idx: usize) -> Option<Self> {
         match idx {
@@ -382,8 +234,6 @@ impl FilterMode {
         }
     }
 
-    /// (R659 §5.16) Inverse of [`Self::from_index`]. Returns the
-    /// canonical discriminant for the wire-form / paint-tag suffix.
     #[must_use]
     pub const fn to_index(self) -> usize {
         match self {
@@ -393,9 +243,7 @@ impl FilterMode {
         }
     }
 
-    /// (R659 §5.16) Predicate: does this filter retain the given
-    /// item? Used by [`build_todos_list`] to derive the visible list
-    /// from the full `Vec<TodoItem>`.
+    /// Predicate driving the visible-list derivation in [`build_todos_list`].
     #[must_use]
     pub const fn matches(self, item: &TodoItem) -> bool {
         match self {
@@ -405,11 +253,7 @@ impl FilterMode {
         }
     }
 
-    /// (R659 §5.16) Human-readable label for the segmented filter
-    /// button — kept on the enum so the paint pass + the a11y
-    /// emitter agree on the exact string the screen reader
-    /// announces. Localisation lift is a future axis; for R659 the
-    /// English literals match the `TasteJS` reference.
+    /// Single-source label — view fn + a11y emitter both read this.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -420,39 +264,22 @@ impl FilterMode {
     }
 }
 
-/// (R660 §5.16) Per-paint snapshot of the R660 [`RadioGroupExternal`]
-/// driving the filter row. Read out of the scene by
-/// [`TodoMvcView::read_state`] so the view fn composes the Material 3
-/// state-layer overlay (Hover / Pressed / Disabled) on each segmented
-/// button without having to re-borrow the framework-owned
-/// [`RadioGroupExternal`].
-///
-/// Mirrors [[m3-surface-tier-expansion]] and the
-/// hello-radio-group composite read-state pattern — every paint cycle
-/// pulls the four-state interaction tag for each of the three radios
-/// plus the optional WAI-ARIA roving-tabindex active-descendant.
+/// (R660 §5.16) Per-paint snapshot of the [`RadioGroupExternal`] driving
+/// the filter row. [`TodoMvcView::read_state`] pulls it through
+/// [`read_filter_radio_states`] so the view fn paints M3 state-layer
+/// overlays without re-borrowing the framework-owned external.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct FilterRadioStates {
-    /// Per-radio interaction tag. Index `0 = Active`, `1 = Completed`,
-    /// `2 = All` — matches the canonical [`FilterMode::to_index`]
-    /// numbering the composite-tag wire (`todo_filter#<i>`) and the
-    /// R660 [`RadioGroupExternal`] indexing both follow.
+    /// Per-radio interaction tag, indexed by [`FilterMode::to_index`].
     pub states: [RadioState; 3],
-    /// AT-side active descendant index ([R51.87 §5.40]). `None`
-    /// until the [`Self::focused`] arrow keys / programmatic
-    /// `Focus` action pins a row; falls back to the currently selected
-    /// index when rendering the active-descendant hint.
-    ///
-    /// [R51.87 §5.40]: pinion_core::widgets::radio_group::RadioGroup::focused_index
+    /// AT-side active descendant (R51.87). `None` falls back to selected.
     pub focused: Option<usize>,
 }
 
 impl Default for FilterRadioStates {
-    /// All-`Idle` snapshot returned when the filter group has not
-    /// been registered into the scene yet (first paint before
-    /// [`TodoMvcView::create_extra_externals`] runs). `RadioState`
-    /// itself is Forge-generated and lacks a `Default` impl, so the
-    /// const-array literal carries the seed explicitly.
+    /// All-`Idle` seed before `create_extra_externals` lands. Forge-
+    /// generated `RadioState` lacks `Default`, so the const-array
+    /// literal carries the seed explicitly.
     fn default() -> Self {
         Self {
             states: [RadioState::Idle; 3],
@@ -461,11 +288,8 @@ impl Default for FilterRadioStates {
     }
 }
 
-/// (R660 §5.16) Parse the R660 [`RadioGroupExternal`] `state.<i>` slot
-/// text back into a typed [`RadioState`]. Mirror of the
-/// hello-radio-group / hello-radio bindings; lifts to a substrate
-/// only after a 3rd consumer (per
-/// [[abstraction-needs-second-consumer]]).
+/// Parse `RadioGroup`'s `state.<i>` slot text back into typed enum.
+/// Mirror of hello-radio-group; substrate lift is the 3rd consumer.
 fn parse_filter_radio_state(name: &str) -> RadioState {
     match name {
         "Hover" => RadioState::Hover,
@@ -475,17 +299,11 @@ fn parse_filter_radio_state(name: &str) -> RadioState {
     }
 }
 
-/// (R660 §5.16) `apply_key` arm for `focused == TF_TAG`. R655 Enter →
-/// submit + clear; every other key delegates to
-/// [`TextFieldExternal::invoke`]`("key", Text(key))`. Lifted out of
-/// the trait method body so the R660 filter-group nav arm
-/// ([`apply_key_filter`]) can sit alongside it at the same module
-/// level without nesting the two keymaps under one `match` block.
+/// `apply_key` `TF_TAG` arm: R655 Enter → submit + clear, else delegate
+/// to [`TextFieldExternal::invoke`]`("key", Text(key))`. Trim guard
+/// per `TasteJS` — blank entries never land.
 fn apply_key_textfield(scene: &mut Scene, key: &str) -> bool {
     if key == "Enter" {
-        // R655 §5.16 — submit current textfield content as a new
-        // todo entry, then clear the field. Trim guard mirrors the
-        // TasteJS TodoMVC spec: blank entries never land.
         let text_state = use_text_edit_state(TF_TAG);
         let raw = text_state.text();
         let trimmed = raw.trim();
@@ -518,37 +336,16 @@ fn apply_key_textfield(scene: &mut Scene, key: &str) -> bool {
     }
 }
 
-/// (R660 §5.16) `apply_key` arm for `focused == FILTER_TAG`. Mirror of
-/// `hello-radio-group`'s composite keymap (W3C ARIA Authoring
-/// Practices "radiogroup" pattern):
-///
-/// * `ArrowLeft` / `ArrowRight` — cycle the addressed radio one step
-///   along the **horizontal** filter row layout (W3C Authoring
-///   Practices: orientation-aware). Arrow keys on a radio-group
-///   activate the new selection immediately — there is no
-///   "navigate-without-commit" mode (that lives on AT `Focus` actions
-///   alone, which reach [`access_child_invoke`] in
-///   `hello-radio-group` and would land on a future todomvc impl).
-/// * `Home` — jump to index 0 (Active).
-/// * `End` — jump to index `count - 1` (All).
-/// * `Space` / `Enter` — activate the currently-addressed radio
-///   (idempotent when the row is already selected, idempotent on
-///   commit per the W3C convention).
-///
-/// Activation runs the full `PointerEnter` / `Down` / `Up` / `Leave`
-/// composite-tag wire so the R660 [`RadioGroupExternal`]'s state
-/// machine fires the same activation edge the `InputRouter` would
-/// produce for a paint-side mouse click — `RadioGroup::send` enforces
-/// mutual exclusion + emits the `"selected"` intent the R660
-/// [`TodoMvcView::update`] reducer catches.
+/// `apply_key` `FILTER_TAG` arm — W3C ARIA Authoring Practices
+/// "radiogroup" pattern. ArrowLeft/Right cycle (activate on every
+/// step — no navigate-without-commit; AT-only `Focus` action lives
+/// on `access_child_invoke`, R660+ carry); Home/End jump to first /
+/// last; Space/Enter activate the addressed row (idempotent).
+/// Activation runs the full PointerEnter/Down/Up/Leave composite-tag
+/// wire so the framework's state machine + intent emission matches
+/// what a paint-side mouse click produces.
 fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
-    // R660 §5.16 — Pre-read the filter group's current addressed
-    // index so the arrow cycle can derive a new index without
-    // re-borrowing the scene during the activate dispatch below.
     let current_idx = filter_focused_index(scene).unwrap_or_else(|| {
-        // Fallback when the AT-side `focused_index` is still `None` —
-        // use the currently selected mode so the very first arrow
-        // press cycles around the visible active segment.
         Owner::current().map_or(0, |_| use_filter().get().to_index())
     });
     let count: usize = 3;
@@ -572,11 +369,6 @@ fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
-    // ARIA radio-group keyboard activation: full PointerEnter/Down/Up/
-    // Leave cycle against the target index. PointerUp activates
-    // (`Pressed → Hover` edge fires the "selected" intent); the
-    // trailing Leave returns the row's interaction tag to `Idle` so
-    // the visual stays consistent with the keyboard-only path.
     for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
         let _ = intro.invoke(
             "send",
@@ -586,9 +378,8 @@ fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
     true
 }
 
-/// (R660 §5.16) Read the R660 [`RadioGroupExternal`]'s `focused_index`
-/// slot through the introspect channel. `None` falls back to the
-/// selected index — see [`apply_key_filter`] for the rationale.
+/// Read the [`RadioGroupExternal`] `focused_index` slot. `None`
+/// falls back to selected index in [`apply_key_filter`].
 fn filter_focused_index(scene: &Scene) -> Option<usize> {
     let node = scene.find_external_with_tag(FILTER_TAG)?;
     let intro = node.handle.introspect()?;
@@ -598,12 +389,8 @@ fn filter_focused_index(scene: &Scene) -> Option<usize> {
     }
 }
 
-/// (R660 §5.16) Walk the multi-External state scene for the
-/// [`RadioGroupExternal`] registered under [`FILTER_TAG`] and pull the
-/// per-radio interaction tags + AT-side `focused_index`. Returns the
-/// default all-`Idle` snapshot when the filter group has not been
-/// registered yet (first paint before [`TodoMvcView::create_extra_externals`]
-/// runs).
+/// Walk the multi-External scene for the filter group + pull per-radio
+/// `state.<i>` slots + `focused_index`. Default snapshot pre-registration.
 fn read_filter_radio_states(scene: &Scene) -> FilterRadioStates {
     let Some(node) = scene.find_external_with_tag(FILTER_TAG) else {
         return FilterRadioStates::default();
@@ -624,23 +411,15 @@ fn read_filter_radio_states(scene: &Scene) -> FilterRadioStates {
     FilterRadioStates { states, focused }
 }
 
-/// (R659 §5.16) `Owner::cache`-keyed hook returning the shared
-/// `Rc<Signal<FilterMode>>` carrying the current filter selection.
-/// Symmetric with [`use_todos`] / [`use_next_todo_id`] — the
-/// `Owner::cache` dedup guarantees one `Rc` across (a) the view
-/// fn (subscribes via `.get()` to re-run paint on filter changes),
-/// (b) [`TodoFilterExternal::new`] (constructs with a clone of this
-/// `Rc` so dispatch mutations land on the same store), and (c)
-/// `access_node` (reads the current mode to emit the right
-/// `aria-checked` flags on the filter radio buttons).
+/// `Owner::cache`-keyed hook returning the shared
+/// `Rc<Signal<FilterMode>>`. One Rc across view fn (auto-subscribe via
+/// `.get()`), `access_node` (reads current mode), and the R660
+/// `TodoMvcView::update` reducer (writes on `"selected"` intent).
 ///
 /// # Panics
 ///
-/// Panics when called outside an `Owner::run(...)` scope. The
-/// substrate's framework `root_owner.run` wrap covers every
-/// runtime invocation site (view fn, `create_extra_externals`,
-/// `access_node`), so this only fires under unit tests that forget
-/// the `with_owner` helper.
+/// Panics outside an `Owner::run(...)` scope. Framework dispatch wraps
+/// every runtime invocation; only test forgetfulness hits this.
 #[must_use]
 pub fn use_filter() -> Rc<Signal<FilterMode>> {
     Owner::current()
@@ -882,26 +661,10 @@ const ROW_GAP: u32 = 16;
 // (private impl detail of `view_field` + `ime_caret_rect_for`).
 
 /// R56.1.e §5.22 / R56.2.b §5.22 — `Owner::cache`-keyed clipboard
-/// hook. Mirrors the [`use_text_edit_state`] / [`use_caret_blink`]
-/// hooks; the cache key dedups so the External's `attach_clipboard`
-/// and any later (carry) view-fn read resolve to the same
-/// `Rc<dyn Clipboard>` instance.
-///
-/// R56.2.b §5.22 — prefers the platform-backed
-/// [`ArboardClipboard`] (Wayland `wl_data_device` + X11 CLIPBOARD +
-/// macOS `NSPasteboard` + Windows `OpenClipboard` via the canonical
-/// Rust ecosystem `arboard` crate) and falls back to the in-memory
-/// impl on init failure (headless CI, sandboxed display-less
-/// container, broken Wayland socket). The fallback keeps the
-/// keyboard-shortcut UX functional (Ctrl/Cmd+C → Ctrl/Cmd+V
-/// round-trip within the running hello-textfield process) at the
-/// cost of cross-process clipboard sharing.
-///
-/// The dispatch is wrapped in [`AppClipboard`] so the
-/// `Owner::cache<V>` slot stores a single `Sized` type regardless of
-/// which inner impl wins; downstream consumers receive the
-/// `Rc<dyn Clipboard>` trait-object shape through the
-/// [`AppClipboard`] `Clipboard` impl's forwarding pair.
+/// hook. Prefers [`ArboardClipboard`] (Wayland / X11 / macOS / Windows
+/// canonical platform backend); falls back to [`InMemoryClipboard`]
+/// on init failure (headless CI, sandboxed). [`AppClipboard`] is the
+/// `Sized` wrapper the `Owner::cache<V>` slot stores.
 fn use_clipboard(key: &'static str) -> Rc<dyn Clipboard> {
     let cb: Rc<AppClipboard> = Owner::current()
         .expect("use_clipboard requires an active Owner scope")
@@ -921,16 +684,9 @@ fn use_clipboard(key: &'static str) -> Rc<dyn Clipboard> {
     cb
 }
 
-/// R56.2.b §5.22 — `Sized` wrapper around `Box<dyn Clipboard>` so
-/// the [`use_clipboard`] hook can park either an
-/// [`ArboardClipboard`] (platform-backed, the common case) or an
-/// [`InMemoryClipboard`] (fallback when the platform clipboard
-/// daemon is unreachable) inside the same `Owner::cache<V>` slot.
-/// The framework `Owner::cache<V>` API requires `V: 'static` and
-/// chooses a concrete `V` per slot; the typed-erased
-/// `Box<dyn Clipboard>` interior here is the single concrete `V`
-/// the hello-textfield binding stores while the dispatch chooses
-/// at runtime which impl backs it.
+/// Sized newtype around `Box<dyn Clipboard>` — `Owner::cache<V>` slot
+/// requires a single concrete `V`, so the runtime impl choice
+/// (arboard vs in-memory) hides inside the box.
 struct AppClipboard(Box<dyn Clipboard>);
 
 impl Clipboard for AppClipboard {
@@ -946,30 +702,17 @@ impl Clipboard for AppClipboard {
 // `pinion_widget_paint::text_field` (private helper used by
 // `view_field` + `ime_caret_rect_for`).
 
-/// view-fn (§6.3): pure-ish sync mapping `(state, frame) -> Scene`.
-/// "Pure-ish" because the reactive [`Signal`](pinion_core::reactive::Signal)
-/// reads inside [`use_text_edit_state`] / [`use_caret_blink`] subscribe
-/// to the corresponding stores — the same `(state, frame)` always
-/// yields the same `Scene` *for the same reactive store state*, which
-/// is the canonical view-fn purity contract the rest of the example
-/// gallery (`hello-listbox` `use_scroll_state`, `hello-radio-group`,
-/// etc.) uses too.
+/// §6.3 view-fn — sync `(state, frame) -> Scene`. Reactive reads
+/// (`use_text_edit_state` / `use_caret_blink` / `use_todos` /
+/// `use_filter` / `use_scroll_state` / `use_scrollbar_interaction`)
+/// auto-subscribe; "purity" holds modulo the shared reactive stores.
 ///
-/// Layout (top-to-bottom, centered):
-/// 1. `"TextField"` title label (18 px white).
-/// 2. The input field: 360×40, `tag = "main_textfield"` for the input
-///    router. Text content flows naturally; a 2 px caret overlay paints
-///    at the cursor byte position via [`LayoutStyle::with_absolute_position`]
-///    (R55.D.6 substrate) when the field is `Focused` / `Editing` AND
-///    the [`CaretBlink`](pinion_core::widgets::caret_blink::CaretBlink)
-///    phase is visible.
-/// 3. Status line (`"<State> | caret=<n> | text=\"...\""`, 12 px
-///    grey) — text-only state mirror so the AI side can verify the
-///    same data the visible field renders via `scene/query`.
+/// Top-to-bottom: title, textfield, status line, segmented filter
+/// row, scroll region (todo list + scrollbar peer side-by-side).
 #[allow(
     clippy::trivially_copy_pass_by_ref,
     clippy::too_many_lines,
-    reason = "view-fn shape mirrors hello-toggle / hello-listbox — one paint cycle, sequential composition"
+    reason = "one paint cycle composing 5 sections"
 )]
 fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scene {
     let (interaction, caret_byte, filter_radios) = state;
@@ -980,10 +723,7 @@ fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scen
     // delete-X) around the lifted field substrate.
     //
     // (R57.X.textfield §5.50) Active palette — `use_theme` auto-
-    // subscribes this view-fn so a `ThemeProvider::set_theme` from
-    // anywhere in the application re-runs the view + repaints the
-    // field + caret + selection band + delete glyphs. R586 §5.50
-    // `theme_animated` opts in to the R57.X.theme-fade cross-fade.
+    // R57.X.theme-fade — auto-subscribed cross-fade palette ([R586 §5.50]).
     let theme = use_theme(THEME_TAG).theme_animated();
 
     let field = tf_paint::view_field(
@@ -995,11 +735,6 @@ fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scen
         "Text input",
     );
 
-    // R657 — status line still reads the reactive TextEditState
-    // directly so the AI side can verify composition lifecycle
-    // through the visible status row. The field paint already
-    // walked it through `tf_paint::view_field`; both subscriptions
-    // land on the same `Rc<TextEditState>` per Owner::cache dedup.
     let text_state = use_text_edit_state(TF_TAG);
     let text = text_state.text();
     let preedit = text_state.preedit();
@@ -1012,10 +747,8 @@ fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scen
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
-    // R56.1.g.3 §5.22 — status line carries the preedit state so the
-    // AI side can verify composition lifecycle through the visible
-    // status row (mirror of the `scene/query` `preedit` slot —
-    // observable both visually and over RPC).
+    // R56.1.g.3 §5.22 — status line mirrors the `scene/query` preedit
+    // slot so IME composition lifecycle is visible + AI-introspectable.
     let preedit_status = match preedit.as_ref() {
         Some(p) => format!(" | preedit=\"{p}\""),
         None => String::new(),
@@ -1035,67 +768,20 @@ fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scen
             .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
 
-    // R655/R656 §5.16 — todo list section: a header label + one
-    // row per submitted entry, packed in a tagged
-    // `Scene::Container` so RPC `scene/query` can address the list
-    // independently from the textfield. Reading `todos.get()`
-    // subscribes the view fn to the `Signal<Vec<TodoItem>>`, so a
-    // `set_with` from the Enter handler OR from
-    // [`TodoDeleteExternal::delete_by_id`] (R656) OR from
-    // [`TodoToggleExternal::toggle_by_id`] (R658) re-runs paint with
-    // the new entries on the next frame. R656 swapped the inner
-    // element type from `String` to [`TodoItem`] so each row carries
-    // a stable u64 id under deletes; R658 added `completed: bool`.
-    //
-    // R658 §5.16 — the list region is wrapped in a [`ScrollNode`]
-    // anchored on the shared `Rc<ScrollState>` (key
-    // [`LIST_SCROLL_KEY`]) so 6+ entries scroll smoothly within the
-    // fixed [`LIST_VIEWPORT_H`] window instead of pushing the outer
-    // window flex past [`WIN_H`]. The substrate (R55.A / R55.B /
-    // R55.G.5 layout pass) writes the `max_y` bound automatically
-    // from the laid-out content — no manual `set_max` plumbing in
-    // the binding. 2nd consumer of the [`use_scroll_state`] hook
-    // beyond `hello-listbox` (R51.190 / R55.G), so per
-    // [[abstraction-needs-second-consumer]] the substrate stays as
-    // is; if a 3rd consumer surfaces a common "list-with-scroll"
-    // shape, the wrapper lifts to a `view_scroll_list` helper.
     let todos = use_todos();
     let entries: Vec<TodoItem> = todos.get();
-
-    // (R659 §5.16) Active filter mode — view fn auto-subscribes via
-    // `Signal::get()` so a [`TodoFilterExternal::set_filter`] from
-    // anywhere (a paint-side button click via the composite-tag wire
-    // OR an AI client `invoke("set", Int(<i>))`) re-runs paint with
-    // the new visible subset on the next frame.
     let filter_mode = use_filter().get();
 
-    // (R659 §5.16) Derived visible list — pure
-    // `entries.into_iter().filter(...)`. No `Computed` / memoization
-    // primitive because (a) the per-paint cost is O(n) over a
-    // typically-small list, and (b) `Computed` would add subscription
-    // bookkeeping for negligible savings. A 1000-entry stress test
-    // is a future axis if performance reports surface a hot path.
+    // Derived visible list — pure O(n) filter. No `Computed` memoization
+    // because the per-paint cost is negligible vs the subscription
+    // bookkeeping; revisit if a 1000-entry stress test surfaces.
     let visible: Vec<TodoItem> = entries
         .iter()
         .filter(|item| filter_mode.matches(item))
         .cloned()
         .collect();
 
-    // (R659 §5.16) Segmented filter button row — Active / Completed /
-    // All in canonical TasteJS TodoMVC left-to-right order. Each
-    // button tagged `todo_filter#<i>` so the R51.42 §5.35 composite-
-    // tag wire routes pointer events into the singleton
-    // [`TodoFilterExternal`] (3rd `ExtraExternal`). Active mode gets
-    // [`ColorRole::Accent`] fill + [`ColorRole::OnAccent`] label;
-    // inactive modes get transparent fill + [`ColorRole::Outline`]
-    // border + [`ColorRole::OnSurface`] label.
     let filter_row = build_filter_row(&theme, filter_mode, &filter_radios);
-
-    // (R659 §5.16) Filtered-list content + header. `build_todos_list`
-    // receives the **visible** subset (post-filter); the header text
-    // reports both the visible count and the total so the user
-    // distinguishes "1 of 3 active" (filter hiding rows) from
-    // "1 of 1 total".
     let todos_list_content = build_todos_list(&theme, &visible, filter_mode, entries.len());
 
     let scroll_state = use_scroll_state(LIST_SCROLL_KEY);
@@ -1105,18 +791,11 @@ fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scen
         todos_list_content,
     ));
 
-    // (R659 §5.45) Visible scrollbar peer — lifted helper composites
-    // an M3 track + thumb from the shared `Rc<ScrollState>`. The
-    // [`SCROLLBAR_TAG`] hits-tests through to [`ScrollBarExternal`]
-    // (4th `ExtraExternal`) so a drag on the visible thumb captures
-    // the pointer and writes `ScrollState::scroll_to` directly.
-    // R658 honest-carry payment: pre-R659 the todo list scrolled
-    // under wheel only; R659 closes the AT + mouse-drag wire.
+    // R659/R660 visible scrollbar peer — auto-subscribes the
+    // interaction-state mirror so hover/drag re-paint the M3 thumb
+    // overlay. Paired write lands in `create_extra_externals` via
+    // `.attach_interaction(...)`.
     let scrollbar_style = VerticalScrollbarStyle::material(LIST_VIEWPORT_H, SCROLLBAR_TAG);
-    // R660 §5.45 — auto-subscribing read of the shared interaction
-    // mirror so hover / drag transitions repaint the thumb with the
-    // M3 state-layer overlay. Paired write happens in
-    // [`create_extra_externals`] via `.attach_interaction(...)`.
     let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
     let scrollbar_visual = view_vertical_scrollbar(
         &scroll_state,
@@ -1125,13 +804,6 @@ fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scen
         scrollbar_interaction.get(),
     );
 
-    // (R659 §5.45) Scroll region — flex Row laying the list +
-    // scrollbar peer side-by-side. Mirrors hello-listbox's
-    // R55.G.17 / R55.D.4 substrate composition. The wrapper carries
-    // [`LIST_TAG`] so paint-side queries that previously addressed
-    // the list container resolve to the same logical region (the
-    // inner Scroll's content carries no tag — the visible-by-tag
-    // shape stays the LIST_TAG container's children).
     let scroll_region = Scene::Container(
         ContainerNode::new(vec![todos_scroll, scrollbar_visual])
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
@@ -1150,31 +822,12 @@ fn view(state: (TextFieldState, u32, FilterRadioStates), _frame: &Frame) -> Scen
     )
 }
 
-/// (R659 §5.16) Build the 3-button segmented filter row. Each button
-/// carries the composite-tag `todo_filter#<i>` (`i` = canonical
-/// [`FilterMode`] discriminant) so the [`InputRouter`]'s R51.42
-/// §5.35 composite-tag wire routes pointer events into the singleton
-/// [`TodoFilterExternal`].
-///
-/// Visual axis (Material-3 segmented button single-select):
-///
-/// * Active segment (`mode == current`): solid
-///   [`ColorRole::Accent`] fill + [`ColorRole::OnAccent`] label,
-///   no border. Reads as "this filter is engaged".
-/// * Inactive segment: transparent fill + 1-px
-///   [`ColorRole::Outline`] border + [`ColorRole::OnSurface`]
-///   label. Reads as "this filter is available but not engaged".
-///
-/// Single-source-of-truth label text comes from [`FilterMode::label`]
-/// so the screen-reader announcement (via
-/// [`enrich_names_from_scene`]) and the visible text never diverge.
-///
-/// R660 §5.16 — M3 state-layer overlay on inactive segments:
-/// `Hover` lifts the transparent fill toward [`ColorRole::OnSurface`]
-/// at 0.08 alpha; `Pressed` at 0.12 alpha; `Disabled` keeps the
-/// pinion-canonical 0.38 fade. The Idle / active visual stays
-/// bit-identical vs R659 so the substrate change is purely additive
-/// on the chrome.
+/// (R659/R660 §5.16) M3 segmented button row (Active / Completed /
+/// All). Active segment = Accent fill; inactive = transparent +
+/// Outline border. R660 state-layer overlay lerps fill toward
+/// `OnSurface` (Hover 0.08, Pressed 0.12) per
+/// [[m3-surface-tier-expansion]]. Single-source labels through
+/// [`FilterMode::label`] keep screen-reader + visible text in sync.
 fn build_filter_row(
     theme: &Theme,
     current: FilterMode,
@@ -1192,26 +845,12 @@ fn build_filter_row(
         .map(|&mode| {
             let idx = mode.to_index();
             let active = mode == current;
-            // R660 §5.16 — per-radio interaction tag pulled from the
-            // R660 [`RadioGroupExternal`] read by [`read_filter_radio_states`].
             let radio_state = radios.states.get(idx).copied().unwrap_or(RadioState::Idle);
             let (mut fill, label_color, border) = if active {
                 (accent, on_accent, None)
             } else {
                 (transparent, on_surface, Some(Border::new(outline, 1)))
             };
-            // R660 §5.16 — Material 3 state-layer overlay: lerp the
-            // base fill toward `OnSurface` at the canonical alpha for
-            // each interaction tag (0.08 Hover, 0.12 Pressed). The
-            // overlay applies to both active and inactive segments;
-            // on the active (accent-filled) segment it deepens the
-            // tint; on the inactive (transparent) segment it lifts
-            // the surface so the cursor's position is legible.
-            //
-            // Disabled is reserved for a future axis (the segmented
-            // filter has no inherent "disabled" interpretation today;
-            // a future "no-todos → only `All` enabled" pass can wire
-            // it through the same hook).
             fill = match radio_state {
                 RadioState::Hover => fill.lerp(on_surface, 0.08),
                 RadioState::Pressed => fill.lerp(on_surface, 0.12),
@@ -1257,74 +896,28 @@ fn build_filter_row(
     )
 }
 
-/// (R656 §5.16) Singleton per-item delete handler. Registered via
-/// [`WidgetCore::create_extra_externals`] under primary tag
-/// [`DELETE_TAG`] (`"todo_delete"`); the substrate composes the
-/// state-scene root as
-/// `Scene::Container([primary_textfield, this_handler])` per R55.D.5
-/// §5.45. Paint-side per-item delete buttons tagged
-/// `"todo_delete#<id>"` rely on the R51.42 §5.35 composite-tag wire:
-/// the [`InputRouter`]'s `dispatch_send` splits the paint tag on
-/// `#`, walks the state scene for an [`External`] whose primary tag
-/// matches `"todo_delete"`, and forwards the sub-index `<id>` as
-/// part of the wire-form `invoke("send", "{id}:{Event}")`. This
-/// External parses the wire, narrows the sub-index back to `u64`,
-/// and calls [`Signal::set_with`] to retain the surviving items.
+/// (R656 §5.16) Per-item delete handler. Registered via
+/// [`WidgetCore::create_extra_externals`] under [`DELETE_TAG`] — the
+/// R51.42 composite-tag wire forwards `"<id>:PointerDown"` payloads
+/// from `todo_delete#<id>` clicks. `delete_by_id` retains the
+/// `Signal<Vec<TodoItem>>` minus the matched id; the framework's
+/// reactive equality-skip suppresses the no-op case (already deleted).
 ///
-/// One instance per binding (no per-item allocation) means
-/// `create_extra_externals` runs exactly once at shell boot, which
-/// is the only lifecycle anchor the R55.D.5 substrate exposes — the
-/// id space is dynamic, but the handler that resolves ids to delete
-/// actions is static, mirroring the
-/// [`RadioGroupExternal`] / [`ListBoxExternal`] pattern where one
-/// External owns N indexed children.
-///
-/// ## Why a separate External, not a [`WidgetCore::update`] reducer?
-///
-/// The R51.166 §5.23 R27 `update` reducer reads the cached
-/// `Self::State` snapshot and returns `Vec<Command>` for async/IO
-/// dispatch; it does NOT have direct access to the application's
-/// `Signal<Vec<TodoItem>>` outside of opaque [`Command`] dispatch
-/// to a registered [`Handler`]. The R656 delete contract is
-/// synchronous-pure: a click on `todo_delete#<id>` must immediately
-/// produce a `Vec<TodoItem>` mutation on the next paint cycle, no
-/// async hop. The composite-tag → External → `set_with` path is the
-/// pinion-canonical synchronous mutation route for paint-side hit
-/// events, exactly the pattern hello-listbox uses for per-row
-/// selection.
-///
-/// Future axes (R658 toggle, R660 edit) extend this same External
-/// with additional `invoke` paths (`"toggle"`, `"edit"`, ...) so the
-/// state scene still has exactly one extra External — keeping the
-/// boot-time allocation footprint flat regardless of how many CRUD
-/// affordances land.
+/// Synchronous-pure delete — bypasses the §5.23 R27 `update` reducer
+/// `Command` channel so the next paint cycle observes the mutation
+/// directly (the standard pinion convention for paint-side hit events,
+/// mirroring hello-listbox's per-row selection wire).
 #[derive(Debug)]
 pub struct TodoDeleteExternal {
-    /// Shared reference to the same `Rc<Signal<Vec<TodoItem>>>`
-    /// the view fn / Enter handler / `access_node` hook resolve via
-    /// [`use_todos`]. Mutations go through [`Signal::set_with`] so
-    /// the framework's reactive equality-skip + view-fn re-run
-    /// cascade fires automatically — no manual repaint plumbing.
     todos: Rc<Signal<Vec<TodoItem>>>,
 }
 
 impl TodoDeleteExternal {
-    /// Construct a fresh handler bound to the supplied todo list
-    /// signal. The caller (typically [`create_extra_externals`])
-    /// resolves the signal via [`use_todos`] inside the framework's
-    /// `root_owner.run` wrap so this `Rc` and the view fn's `Rc`
-    /// are the same instance.
     #[must_use]
     pub fn new(todos: Rc<Signal<Vec<TodoItem>>>) -> Self {
         Self { todos }
     }
 
-    /// Remove the entry whose `id` matches `target_id`. No-op when
-    /// no such entry exists (idempotent: a double-click that
-    /// triggers `PointerDown` then a stale RPC retry both converge on
-    /// the same observed end-state). Uses
-    /// [`Signal::set_with`] so the reactive equality-skip suppresses
-    /// the view-fn re-run when the target id was already absent.
     fn delete_by_id(&self, target_id: u64) {
         self.todos.set_with(|prev| {
             let mut next = prev.clone();
@@ -1332,21 +925,9 @@ impl TodoDeleteExternal {
             next
         });
     }
-
 }
 
 impl External for TodoDeleteExternal {
-    /// All three backends (GUI / TUI / RPC) supported — the External
-    /// itself paints nothing (the view fn owns the delete-button
-    /// glyph rendering), so the backend declaration is purely about
-    /// which dispatch paths can deliver a delete event. The RPC
-    /// path is the primary AI-driving surface; GUI is the mouse-
-    /// click path; TUI is a placeholder for the R680+ TUI carry
-    /// (no `examples/todomvc-tui` binding ships in R656). On
-    /// unsupported backends the substrate skips this External
-    /// rather than rejecting — a delete-less TUI variant is a
-    /// degraded but functioning render, not a fatal scene-rejection
-    /// case.
     fn backends(&self) -> BackendSupport {
         BackendSupport::new(
             &[Backend::Gui, Backend::Tui, Backend::Rpc],
@@ -1354,26 +935,14 @@ impl External for TodoDeleteExternal {
         )
     }
 
-    /// Framework drives repaint — this External produces no paint
-    /// surface of its own; mutations propagate through the
-    /// [`Signal<Vec<TodoItem>>`] subscription, which triggers the
-    /// view fn re-run via the substrate's reactive paint loop.
     fn repaint_ownership(&self) -> RepaintOwner {
         RepaintOwner::Framework
     }
 
-    /// UI-thread synchronous — the delete mutation lands on the same
-    /// thread the [`Signal::set_with`] subscribers (view fn, IME
-    /// caret rect, ARIA enrich) run on, so no cross-thread
-    /// synchronisation is needed.
     fn thread_ownership(&self) -> ThreadOwnership {
         ThreadOwnership::UiThreadSync
     }
 
-    /// Opt in to symbolic introspection so the RPC verify path can
-    /// reach `query("count")` / `query("ids")` / `invoke("delete",
-    /// Int(id))` for direct delete (parallel to the indirect
-    /// `scene/click {path: "todo_delete#<id>"}` route).
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
         Some(self)
     }
@@ -1384,15 +953,10 @@ impl External for TodoDeleteExternal {
 }
 
 impl ExternalIntrospect for TodoDeleteExternal {
-    /// Read-only counters + the action surface. `count` and `ids`
-    /// expose the same shape the view fn paints so AI scripts can
-    /// cross-check the list state without walking the paint scene.
-    /// The `send` slot documents the R51.42 wire form
-    /// (`<id>:<EventName>`); the `delete` slot is the direct-form
-    /// shortcut that takes a typed `Int(id)` and produces a typed
-    /// `Bool(was_present)` return so the RPC verify scripts can
-    /// distinguish "I deleted an existing item" from "no-op
-    /// against an already-deleted id".
+    /// `send` = R51.42 composite-tag wire (`<id>:PointerDown` deletes;
+    /// other phases accepted-as-no-op). `delete` = direct typed-id
+    /// shortcut (RPC AI-driving path); returns `Bool(was_present)`
+    /// so callers distinguish "deleted existing" from "no-op stale id".
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
             ("count", "int"),
@@ -1439,20 +1003,11 @@ impl ExternalIntrospect for TodoDeleteExternal {
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
-            // R51.42 §5.35 — InputRouter's `dispatch_send` lands here
-            // with payload `"<id>:PointerDown"` (or `PointerUp` /
-            // `PointerEnter` / `PointerLeave` / `PointerCancel`).
-            // R656 acts on `PointerDown` only — the X target is small
-            // (24×24 px), drag-off cancel semantics are not needed,
-            // and treating PointerDown as the single-shot delete
-            // edge matches the canonical "destructive icon: press
-            // commits" UX. PointerUp / Leave / Enter / Cancel are
-            // accepted-and-ignored (return `Bool(false)`) so the
-            // framework's substrate dispatch never sees a `Rejected`
-            // for a routine paint cycle.
+            // R656: only PointerDown commits — canonical "destructive
+            // icon: press commits" UX. Non-Down phases return Bool(false)
+            // so the dispatch loop does not re-route to a sibling.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    // R659 §5.16 §5.35 — lifted helper.
                     let (id, event_name): (u64, &str) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "PointerDown" {
@@ -1464,24 +1019,11 @@ impl ExternalIntrospect for TodoDeleteExternal {
                         self.delete_by_id(id);
                         Ok(IntrospectValue::Bool(was_present))
                     } else {
-                        // R51.32 §5.15 — accepted but no-op for the
-                        // non-PointerDown phases. `Bool(false)`
-                        // signals "handled, no state change", which
-                        // the InputRouter's dispatch loop reads as
-                        // "do not re-route to a sibling".
                         Ok(IntrospectValue::Bool(false))
                     }
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
-            // R656 §5.16 — direct delete by id. Skips the R51.42
-            // composite-tag wire so AI scripts can call
-            // `scene/invoke {path: "/external/todo_delete", method:
-            // "delete", args: <id>}` without first having to
-            // construct the `<id>:PointerDown` text payload. Returns
-            // `Bool(was_present)` so the caller can distinguish
-            // "deleted an existing entry" from "no-op against an
-            // already-deleted id".
             "delete" => match args {
                 IntrospectValue::Int(i) => {
                     let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
@@ -1500,71 +1042,23 @@ impl ExternalIntrospect for TodoDeleteExternal {
     }
 }
 
-/// (R658 §5.16) Singleton per-item toggle (completed-flag) handler.
-/// Registered via [`WidgetCore::create_extra_externals`] under
-/// primary tag [`TOGGLE_TAG`] (`"todo_toggle"`) as the **2nd**
-/// sibling [`ExtraExternal`] alongside [`TodoDeleteExternal`]. The
-/// state-scene root composes as
-/// `Scene::Container([primary_textfield, todo_delete, todo_toggle])`
-/// per R55.D.5 §5.45 — multi-External lookup walks
-/// [`Scene::find_external_with_tag`] so primary / extras read-side
-/// stays shape-agnostic.
-///
-/// 2nd consumer of `create_extra_externals` at the framework level
-/// — `hello-listbox` (R55.D.5) registered the listbox + scrollbar
-/// pair as the 1st consumer; the R658 todomvc binding is the 2nd
-/// (`todo_delete` + `todo_toggle` pair). The
-/// [[multi-external-substrate-extra-externals-pattern]] memory
-/// stays valid without any substrate change because the R55.D.5
-/// substrate already supports an arbitrary `Vec<ExtraExternal>`.
-///
-/// Wire form — identical to [`TodoDeleteExternal`]:
-/// - Paint scene emits `Scene::Container { tag: "todo_toggle#<id>" }`
-///   per row (paint-side composite tag).
-/// - [`InputRouter`]'s `dispatch_send` splits the tag on `#` and
-///   forwards the sub-index `<id>` as part of `invoke("send",
-///   "<id>:PointerDown")`.
-/// - The direct RPC route `scene/invoke {path: "/external/todo_toggle",
-///   method: "toggle", args: <id>}` reaches `invoke("toggle",
-///   Int(<id>))` and produces the same `Signal::set_with` mutation.
-///
-/// Mutation contract: `PointerDown` / direct `toggle` invocation
-/// **flips** `completed` (not "set to true") so a 2nd click on a
-/// completed row returns it to active. `PointerUp` / `PointerEnter`
-/// / `PointerLeave` / `PointerCancel` are accepted-as-no-op
-/// (Bool(false)) so the `InputRouter`'s standard dispatch cycle
-/// does not see `Rejected` for routine paint events — same
-/// convention as the destructive [`TodoDeleteExternal::invoke`]
-/// path.
+/// (R658 §5.16) Per-item toggle handler — 2nd `ExtraExternal`. Mirror
+/// of [`TodoDeleteExternal`] over the same shared
+/// `Rc<Signal<Vec<TodoItem>>>`. Wire: paint emits `todo_toggle#<id>`;
+/// `invoke("send", "<id>:PointerDown")` flips `completed` (idempotent
+/// double-click reverts — canonical W3C toggle UX). Direct path:
+/// `invoke("toggle", Int(<id>))`.
 #[derive(Debug)]
 pub struct TodoToggleExternal {
-    /// Shared `Rc<Signal<Vec<TodoItem>>>` — the same instance
-    /// [`TodoDeleteExternal::todos`] holds. Both Externals register
-    /// inside the framework's `root_owner.run(...)` wrap from
-    /// [`create_extra_externals`] so [`use_todos`] dedups against
-    /// the same `Owner::cache` slot.
     todos: Rc<Signal<Vec<TodoItem>>>,
 }
 
 impl TodoToggleExternal {
-    /// Construct a fresh handler bound to the supplied todo list
-    /// signal. Symmetric with [`TodoDeleteExternal::new`].
     #[must_use]
     pub fn new(todos: Rc<Signal<Vec<TodoItem>>>) -> Self {
         Self { todos }
     }
 
-    /// (R658 §5.16) Flip the `completed` flag of the entry whose
-    /// `id` matches `target_id`. No-op when no such entry exists
-    /// (idempotent: a double-click that triggers two `PointerDown`s
-    /// before the next paint cycle redraws the row reverts to the
-    /// pre-click state, exactly the W3C "click toggles" UX
-    /// convention — for a R658 demo this is the textbook minimum;
-    /// if a future round wires up "debounce within frame" the call
-    /// site stays unchanged). Uses [`Signal::set_with`] so the
-    /// reactive equality-skip suppresses the view-fn re-run when
-    /// no entry matched (rare edge case where AI client sends a
-    /// stale id — silent absorbtion is the safe default).
     fn toggle_by_id(&self, target_id: u64) {
         self.todos.set_with(|prev| {
             prev.iter()
@@ -1581,14 +1075,9 @@ impl TodoToggleExternal {
                 .collect()
         });
     }
-
 }
 
 impl External for TodoToggleExternal {
-    /// All three backends supported — paint is owned by the view fn
-    /// (the per-row checkbox glyph), so backend declaration is
-    /// purely about dispatch surface. Mirror of
-    /// [`TodoDeleteExternal::backends`].
     fn backends(&self) -> BackendSupport {
         BackendSupport::new(
             &[Backend::Gui, Backend::Tui, Backend::Rpc],
@@ -1596,15 +1085,10 @@ impl External for TodoToggleExternal {
         )
     }
 
-    /// Framework drives repaint — toggling `completed` mutates the
-    /// shared `Rc<Signal<Vec<TodoItem>>>`, which auto-subscribes the
-    /// view-fn for the next paint cycle.
     fn repaint_ownership(&self) -> RepaintOwner {
         RepaintOwner::Framework
     }
 
-    /// UI-thread sync — mutations land on the same thread as the
-    /// view-fn / IME caret / ARIA enrich subscribers.
     fn thread_ownership(&self) -> ThreadOwnership {
         ThreadOwnership::UiThreadSync
     }
@@ -1619,17 +1103,9 @@ impl External for TodoToggleExternal {
 }
 
 impl ExternalIntrospect for TodoToggleExternal {
-    /// Read-only counters + the toggle action surface:
-    /// - `count`: total entry count (mirror of
-    ///   [`TodoDeleteExternal`]'s `count`).
-    /// - `completed_count`: number of entries whose `completed` flag
-    ///   is `true` — convenience for AI clients verifying derived
-    ///   state without walking the JSON `ids` array.
-    /// - `ids_completed`: JSON array of ids whose `completed` is
-    ///   true.
-    /// - `send`: R51.42 wire form `"<id>:<EventName>"`.
-    /// - `toggle`: direct typed `Int(id)` → `Bool(new_completed)`
-    ///   route, parallel to `delete`'s direct `Int(id)` shape.
+    /// `count` / `completed_count` / `ids_completed` = read-only
+    /// derived state. `send` = composite-tag wire (`PointerDown` flips).
+    /// `toggle` = direct typed-id shortcut; returns `Bool(new_completed)`.
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
             ("count", "int"),
@@ -1683,16 +1159,8 @@ impl ExternalIntrospect for TodoToggleExternal {
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
-            // R51.42 §5.35 — InputRouter's `dispatch_send` lands here
-            // with payload `"<id>:PointerDown"`. PointerDown commits
-            // the toggle (single-shot flip); PointerUp / Enter /
-            // Leave / Cancel return `Bool(false)` so the dispatch
-            // loop sees "handled, no state change" and never
-            // `Rejected`s a routine paint event. Same convention as
-            // [`TodoDeleteExternal::invoke`].
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    // R659 §5.16 §5.35 — lifted helper.
                     let (id, event_name): (u64, &str) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "PointerDown" {
@@ -1702,12 +1170,8 @@ impl ExternalIntrospect for TodoToggleExternal {
                             .iter()
                             .any(|item| item.id == id);
                         self.toggle_by_id(id);
-                        // R658 — Bool(was_present) reports whether
-                        // the toggle observed an existing id (so the
-                        // AI client can distinguish "I flipped an
-                        // existing item" from "no-op against an
-                        // unknown id" without an extra `query`
-                        // round-trip).
+                        // Bool(was_present) lets the AI client tell
+                        // "flipped existing item" from "no-op stale id".
                         Ok(IntrospectValue::Bool(was_present))
                     } else {
                         Ok(IntrospectValue::Bool(false))
@@ -1742,42 +1206,18 @@ impl ExternalIntrospect for TodoToggleExternal {
     }
 }
 
-// R660 §5.16 — R659 `TodoFilterExternal` (199 LOC bespoke handler)
-// retired in favour of the framework [`RadioGroupExternal`] (Option β
-// walk-back). The migration repays the R659 honest carry:
-//
-// * Keyboard navigation (Tab / Arrow Left|Right / Home / End / Space /
-//   Enter) now lives on the shared [`apply_key_filter`] arm + the
-//   roving-tabindex contract `RadioGroup` carries through R51.87 / R51.90.
-// * Per-radio M3 state-layer overlay (Hover / Pressed) reads off the
-//   `RadioGroup::state(i)` channel via [`read_filter_radio_states`]
-//   → [`build_filter_row`].
-// * `"selected"` intent surfaces on the §5.20 channel; the
-//   [`TodoMvcView::update`] reducer threads it into the shared
-//   `Rc<Signal<FilterMode>>` so the view-fn `.get()` subscription
-//   still drives the visible-subset filter.
-//
-// See [[r650-widget-tag-walk-back]] for the canonical walk-back
-// pattern — substrate stays, application binding sheds bespoke code.
+// R660 §5.16 — R659 `TodoFilterExternal` retired for `RadioGroupExternal`
+// (Option β walk-back, [[r650-widget-tag-walk-back]]). Substrate keeps,
+// application sheds 199 LOC of bespoke handler.
 
-/// (R655/R656 §5.16) Build the todo list section `Scene::Container`:
-///
-/// - When `entries` is empty, returns an empty container (still
-///   tagged [`LIST_TAG`] so the RPC introspection path can confirm
-///   the list region exists; otherwise hit-test routing for a
-///   future delete button would lose its anchor).
-/// - When `entries` is non-empty, returns a header
-///   `"Todos (<N>)"` label followed by one `Scene::Text` per entry.
-///
-/// Helper lifted out of the view-fn body so the symbol shows up in
-/// the test surface — the [[r655-todomvc-scaffolding]] regression
-/// battery walks this output to pin item count + ordering. Dynamic
-/// `Vec<T> -> Vec<Scene>` rendering is per-binding right now; if a
-/// 2nd composed application reuses the shape, a `list_view` helper
-/// lifts to substrate per [[abstraction-needs-second-consumer]].
+/// Build the todo list section: tagged `Scene::Container`(`LIST_TAG`)
+/// holding a header label + one row per entry. Empty store renders
+/// the "type and press Enter" hint. Header shape is filter-aware
+/// (three orthogonal cases below). Lifted from view fn so the
+/// [[r655-todomvc-scaffolding]] test battery can pin item ordering.
 #[allow(
     clippy::too_many_lines,
-    reason = "single-purpose list builder — splitting per-row construction into a helper hurts locality without reducing complexity (R658 §5.16 toggle + entry + delete trio composes one row)"
+    reason = "single-purpose list builder — per-row trio (toggle/text/delete) reads better inline than split"
 )]
 fn build_todos_list(
     theme: &Theme,
@@ -1788,15 +1228,9 @@ fn build_todos_list(
     let header_style = TextStyle::new()
         .with_size_px(LIST_TITLE_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
-    // (R658 §5.16) Active vs completed text colour split. The active
-    // ramp lifts the text to `OnSurface` (full contrast — "to do");
-    // the completed ramp drops to `OnSurfaceMuted` so finished
-    // entries visually recede without a strikethrough decoration
-    // (text-decoration substrate is a R663+ candidate per
-    // [[abstraction-needs-second-consumer]] — no 2nd consumer wants
-    // strikethrough yet, so a muted-fade affordance carries the
-    // "done" semantic alone). Both styles are pre-built outside the
-    // loop so per-row construction stays a single `.clone()` call.
+    // R658 — completed text fades to OnSurfaceMuted (strikethrough
+    // text-decoration is R663+ carry per
+    // [[abstraction-needs-second-consumer]]).
     let item_style_active = TextStyle::new()
         .with_size_px(LIST_ITEM_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurface));
@@ -1806,13 +1240,6 @@ fn build_todos_list(
     let delete_style = TextStyle::new()
         .with_size_px(DELETE_FONT_SIZE_PX)
         .with_fg(delete_glyph_color(theme));
-    // (R658 §5.16) Toggle glyph colour ramp — matches the entry
-    // text on the same row so the row reads as a single visual
-    // unit. The W3C ARIA "checkbox" widget convention leaves colour
-    // modulation to CSS; pinion's design-token equivalent is the
-    // `ColorRole` palette, so `OnSurface` vs `OnSurfaceMuted`
-    // parallels the M3 checked vs unchecked tint without inventing
-    // a new role just for this binding.
     let toggle_style_active = TextStyle::new()
         .with_size_px(TOGGLE_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurface));
@@ -1820,24 +1247,8 @@ fn build_todos_list(
         .with_size_px(TOGGLE_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
 
-    // (R658/R659 §5.16) Header text reflects three orthogonal axes
-    // — total entry count, completed count, and whether the filter
-    // is hiding rows. Cases:
-    //
-    // * Empty store (total = 0) → encourage user to type
-    //   ("No todos yet — type and press Enter"). Filter is moot.
-    // * Filtered view hiding nothing (visible = total) → preserve
-    //   the R655/R656/R658 header shape:
-    //     - 0 completed: `"Todos (N)"`
-    //     - ≥1 completed: `"Todos (X of N completed)"`
-    // * Filtered view hiding rows (visible < total) → R659 shape:
-    //   `"<FilterName>: X of N"` so the user sees both the engaged
-    //   filter and the visible/total disparity in one glance.
-    //
-    // The TasteJS reference uses a `<N> items left` footer that lives
-    // separately from the list header; pinion folds both axes into a
-    // single header to keep the chrome scannable without a second
-    // visual line.
+    // Header — three cases: empty store hint, unfiltered count
+    // `Todos (X of N completed)`, or filtered `<Filter>: visible of total`.
     let header_text = if total_count == 0 {
         String::from("No todos yet — type and press Enter")
     } else if entries.len() == total_count {
@@ -1996,38 +1407,20 @@ fn build_todos_list(
     )
 }
 
-/// `WidgetView` binding for the [`TextField`] widget.
-///
-/// State shape: `(TextFieldState, u32, FilterRadioStates)` — the SCXML interaction state
-/// plus the caret byte offset. The text content itself is reactive
-/// (`Rc<TextEditState>` via `use_text_edit_state`), so it does not
-/// (and cannot — `String` is not `Copy`) live in `Self::State`. The
-/// view fn reads text via the same Owner-cache hook the External's
-/// `attach_state` resolves through, so both sides see the same store.
+/// `WidgetView` binding. `Self::State = (TextFieldState, u32, FilterRadioStates)`
+/// stays `Copy` per R51.173; non-Copy reactive stores reach the
+/// binding through `Owner::cache` hooks (see module doc).
 struct TodoMvcView;
 
 impl WidgetCore for TodoMvcView {
     type State = (TextFieldState, u32, FilterRadioStates);
     type Event = TextFieldEvent;
 
-    /// (R56.1.b.1 substrate) `create_external` now runs inside
-    /// `root_owner.run(...)`, so the `use_text_edit_state` /
-    /// `use_caret_blink` hooks resolve against the same Owner the
-    /// view fn will reach later — the External's attached `Rc` and
-    /// the view fn's `Rc` are identical instances. Three builder
-    /// calls is the substrate-incompleteness-signal boilerplate
-    /// budget; staying under the budget signals the substrate
-    /// composes cleanly without per-binding scaffolding.
     fn create_external() -> Box<dyn External> {
+        // R56.1.b.1 — runs inside `root_owner.run(...)` so the hooks
+        // resolve to the same `Owner::cache` slots the view fn sees.
         let text_state = use_text_edit_state(TF_TAG);
         let blink = use_caret_blink(TF_TAG);
-        // R56.1.e §5.22 — in-memory clipboard backing the demo's
-        // Ctrl+C / Ctrl+X / Ctrl+V keystrokes. Shared via
-        // `Owner::cache` so the dispatch path always resolves to
-        // the same `Rc<dyn Clipboard>` across paint cycles
-        // (mirror of the `use_caret_blink` hook shape; the
-        // application surface gets a tag-keyed singleton without
-        // touching `thread_local!`).
         let clipboard = use_clipboard(TF_TAG);
         Box::new(
             TextFieldExternal::new()
@@ -2041,36 +1434,14 @@ impl WidgetCore for TodoMvcView {
         TF_TAG
     }
 
-    /// (R656 §5.16 R55.D.5 §5.45) — register the singleton
-    /// [`TodoDeleteExternal`] handler tagged [`DELETE_TAG`] alongside
-    /// the primary textfield. The substrate wraps the call in
-    /// `root_owner.run(...)` (per [[multi-external-substrate-extra-externals-pattern]])
-    /// so [`use_todos`] resolves to the same
-    /// `Rc<Signal<Vec<TodoItem>>>` the view fn and Enter handler
-    /// later resolve through the same `Owner::cache` key. The
-    /// state-scene root then becomes
-    /// `Scene::Container([External(text_field), External(todo_delete)])`,
-    /// and the existing `find_external_with_tag(TF_TAG)` read site
-    /// stays shape-agnostic (R55.D.5 cascade lesson) — no change to
-    /// [`Self::read_state`] needed.
+    /// R55.D.5 multi-External composition — primary `TextField` + four
+    /// `ExtraExternal`s (delete / toggle / filter group / scrollbar).
+    /// R660 filter group seeded with persisted mode so the first paint
+    /// shows the engaged segment without a separate sync pass.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let todos = use_todos();
         let filter = use_filter();
         let scroll_state = use_scroll_state(LIST_SCROLL_KEY);
-        // R660 §5.16 — filter group migrated to the framework
-        // [`RadioGroupExternal`] (Option β walk-back of R659's
-        // bespoke `TodoFilterExternal`). The R659 honest carry
-        // ("kbd nav / hover / pressed missing") is repaid by reusing
-        // the framework substrate that already carries (a) mutual
-        // exclusion across N radios, (b) per-radio interaction state
-        // for the M3 state-layer overlay, (c) `focused_index` AT-
-        // side roving-tabindex, (d) the `"selected"` intent the R660
-        // [`TodoMvcView::update`] reducer threads into the shared
-        // `Rc<Signal<FilterMode>>`.
-        //
-        // Seed the group with the persisted-mode default so the
-        // very-first paint shows the engaged segment without
-        // depending on a separate sync pass.
         let mut filter_group = RadioGroupExternal::new(3);
         let _ = filter_group.intervene(
             "selected_index",
@@ -2078,10 +1449,6 @@ impl WidgetCore for TodoMvcView {
                 i64::try_from(filter.get().to_index()).expect("filter index fits in i64"),
             ),
         );
-        // R659 §5.16 §5.45 — four sibling Externals share the same
-        // application reactive stores (delete + toggle on
-        // `Rc<Signal<Vec<TodoItem>>>`, scrollbar on `Rc<ScrollState>`,
-        // and the R660 filter group on its own internal store).
         vec![
             ExtraExternal::new(
                 DELETE_TAG,
@@ -2097,38 +1464,14 @@ impl WidgetCore for TodoMvcView {
                 Box::new(
                     ScrollBarExternal::new()
                         .attach_state(scroll_state)
-                        // R660 §5.45 — interaction mirror so view fn
-                        // sees Hover / Dragging transitions and
-                        // repaints the M3 state-layer overlay.
                         .attach_interaction(use_scrollbar_interaction(SCROLLBAR_TAG)),
                 ),
             ),
         ]
     }
 
-    /// (R55.D.5 §5.45) Multi-External binding (R656 adds the
-    /// [`TodoDeleteExternal`] singleton alongside the primary
-    /// textfield via [`Self::create_extra_externals`]).
-    /// `find_external_with_tag` handles both the single-External
-    /// and the multi-External shapes (R55.D.5 cascade lesson), so
-    /// the read site stays shape-agnostic — the textfield's
-    /// cached projection still resolves through `TF_TAG`, and the
-    /// todo-delete handler's state lives entirely behind its own
-    /// `Rc<Signal<Vec<TodoItem>>>` (not part of the cached
-    /// `Self::State` snapshot, by design — the list is reactive
-    /// and re-derives the rendered shape every paint).
     fn read_state(scene: &Scene) -> (TextFieldState, u32, FilterRadioStates) {
-        // R657 §5.16 §5.38 — delegate to the lifted helper so
-        // hello-textfield + todomvc share one read-state seam. The
-        // R55.D.5 single-vs-multi External shape is handled
-        // transparently by `find_external_with_tag`.
         let (interaction, caret) = tf_paint::read_text_field_state(scene, TF_TAG);
-        // R660 §5.16 — walk the multi-External scene root to the
-        // `RadioGroupExternal` registered under [`FILTER_TAG`] and
-        // pull per-radio interaction state + AT-side focus index.
-        // Falls back to all-Idle / `focused = None` when the scene
-        // does not carry the filter group yet (first paint before
-        // `create_extra_externals` lands).
         let filter_radios = read_filter_radio_states(scene);
         (interaction, caret, filter_radios)
     }
@@ -2146,9 +1489,7 @@ impl WidgetCore for TodoMvcView {
             TextFieldEvent::CancelEdit => "CancelEdit",
             TextFieldEvent::Disable => "Disable",
             TextFieldEvent::Enable => "Enable",
-            // SCXML-internal variants (parley-emitted state ping
-            // events that the public surface never accepts) — route
-            // through a sentinel the parser rejects.
+            // SCXML-internal parley state-pings the public surface rejects.
             _ => "__internal__",
         }
     }
@@ -2157,34 +1498,17 @@ impl WidgetCore for TodoMvcView {
         "pinion todomvc (R655 §5.16) — first composed app"
     }
 
-    /// R660 §5.16 — two tab stops: the primary text input
-    /// ([`TF_TAG`]) and the R660 segmented filter group
-    /// ([`FILTER_TAG`]). The shell's Tab cycler walks both; the
-    /// per-tag-focused `apply_key` arm picks the right keymap
-    /// (text-input edit keys vs. ARIA radio-group cycle).
+    /// Two tab stops — `TF_TAG` + `FILTER_TAG`. Per-focus `apply_key` arm
+    /// picks the matching keymap.
     fn focusable_tags() -> Vec<&'static str> {
         vec![TF_TAG, FILTER_TAG]
     }
 
-    /// R660 §5.16 — bridge the R660 [`RadioGroupExternal`]'s
-    /// `"selected"` intent (fires on every selection-change activation
-    /// edge) into the application's `Rc<Signal<FilterMode>>` so the
-    /// view-fn `filter_mode = use_filter().get()` subscription
-    /// re-renders the visible subset.
-    ///
-    /// Intent shape:
-    ///
-    /// * `tag` — composite-prefixed `"todo_filter.selected"`
-    ///   ([[intent-tag-dotted-wire-form]]).
-    /// * `payload` — `IntrospectValue::Int(i)` where `i` is the new
-    ///   `RadioGroup::selected_index()` (matches [`FilterMode::to_index`]).
-    ///
-    /// Side-effect-only reducer ([[scxml-as-model-update-transient]]) —
-    /// the `Vec<Command>` return stays empty; the actual mutation
-    /// rides on the `Signal::set` write. The function is wrapped by
-    /// the framework's `root_owner.run` so [`use_filter`] resolves
-    /// to the same `Rc<Signal<FilterMode>>` the view fn /
-    /// `access_node` already share through `Owner::cache`.
+    /// R660 reducer — bridge `RadioGroupExternal`'s `"selected"` intent
+    /// into `Signal<FilterMode>` so the view-fn `.get()` subscription
+    /// repaints with the new visible subset. Side-effect-only
+    /// ([[scxml-as-model-update-transient]]) — empty `Vec<Command>`
+    /// return; the `Signal::set` write is the mutation.
     fn update(
         _state: (TextFieldState, u32, FilterRadioStates),
         intent: &pinion_core::Intent,
@@ -2201,11 +1525,9 @@ impl WidgetCore for TodoMvcView {
         Vec::new()
     }
 
-    /// Two debugging shortcuts at the binary level: `d` disables the
-    /// field, `e` re-enables it. The text-content keys (single
-    /// printable chars + named edit keys) flow through `apply_key`
-    /// because the framework reserves the `keybinding` channel for
-    /// strongly-typed enum events.
+    /// `d` / `e` toggle the textfield's `Disabled` SCXML state — the
+    /// strongly-typed `keybinding` channel for one-shot enum events
+    /// (separate from the W3C-string `apply_key` channel).
     fn keybinding(key: &str) -> Option<TextFieldEvent> {
         match key {
             "d" => Some(TextFieldEvent::Disable),
@@ -2214,17 +1536,9 @@ impl WidgetCore for TodoMvcView {
         }
     }
 
-    /// R56.1.d §5.38 §5.22 — delegate W3C UI Events keystroke to
-    /// [`TextFieldExternal::invoke`]`("key", Text(key))`. Returns
-    /// `true` when the External reports the key as recognized
-    /// (matches the W3C `defaultPrevented` semantic — the framework
-    /// then swallows the key from the focus / shortcut chain).
-    ///
-    /// The `focused != Some(TF_TAG)` short-circuit mirrors the
-    /// roving-tabindex pattern from `hello-radio-group` /
-    /// `hello-listbox`: keys only flow when this widget owns focus,
-    /// avoiding the broadcast-to-every-widget aliasing that
-    /// pre-R51.x `apply_key` suffered.
+    /// W3C UI Events delegation. R660 splits the keymap per-focus
+    /// (`TF_TAG` → text edit keys; `FILTER_TAG` → ARIA radio-group cycle)
+    /// so each focus owner sees only its own shortcuts.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -2233,47 +1547,21 @@ impl WidgetCore for TodoMvcView {
     ) -> bool {
         match focused {
             Some(TF_TAG) => apply_key_textfield(scene, key),
-            // R660 §5.16 — W3C ARIA roving-tabindex on the filter
-            // group. The composite owns one tab stop (FILTER_TAG) and
-            // arrow keys cycle the addressed radio + activate it
-            // immediately (W3C Authoring Practices: Arrow on a radio
-            // group activates the new selection on the same edge).
             Some(FILTER_TAG) => apply_key_filter(scene, key),
             _ => false,
         }
     }
 
-    /// R56.2.a §5.13 §5.38 — delegate platform IME composition events
-    /// to [`TextFieldExternal::invoke`]`("composition", Json{action,
-    /// data?})`. The pinion-shell `WindowEvent::Ime` arm converts
-    /// winit's cross-platform [`Ime`](winit::event::Ime) enum into
-    /// pinion-native [`pinion_core::CompositionEvent`] (R56.2.a
-    /// substrate) and routes here through `ShellCore::apply_composition`
-    /// → `CoreShell::apply_composition` → `V::apply_composition`.
-    /// This binding's impl reformats the typed enum back to the
-    /// R56.1.g.2 wire-form so the substrate funnel (AI client RPC
-    /// path + platform IME path) lands on the same code.
+    /// R56.2.a §5.13 — winit `Ime` → `CompositionEvent` → JSON wire to
+    /// [`TextFieldExternal::invoke`]`("composition", ...)`. The AI-RPC
+    /// path and the platform IME path funnel through one widget invoke.
     ///
-    /// Mapping table:
-    ///
-    /// | `CompositionEvent` variant | invoke args                                |
-    /// |-----------------------------|--------------------------------------------|
-    /// | `Start`                     | `{"action": "start"}`                      |
-    /// | `Update(text)`              | `{"action": "update", "data": "<text>"}`   |
-    /// | `Commit(text)`              | `{"action": "end",    "data": "<text>"}`   |
-    /// | `Cancel`                    | `{"action": "cancel"}`                     |
-    ///
-    /// The `focused != Some(TF_TAG)` short-circuit mirrors
-    /// [`Self::apply_key`]'s roving-tabindex pattern: composition
-    /// events only flow when this widget owns focus, so an IME event
-    /// arriving while focus rests on a non-text widget is dropped
-    /// without disturbing the `TextField`'s substrate (defensive against
-    /// a future per-focus `set_ime_allowed` regression that briefly
-    /// leaks IME events past the focus boundary).
-    ///
-    /// Returns `true` whenever the invoke channel reports success
-    /// (the R56.1.g.2 path always returns `Ok(Text(<state name>))`
-    /// on a valid Json arg, so any `Ok` is treated as handled).
+    /// | variant         | action key |
+    /// |-----------------|------------|
+    /// | `Start`         | `start`    |
+    /// | `Update(text)`  | `update`   |
+    /// | `Commit(text)`  | `end`      |
+    /// | `Cancel`        | `cancel`   |
     fn apply_composition(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -2309,29 +1597,10 @@ impl WidgetCore for TodoMvcView {
         intro.invoke("composition", args).is_ok()
     }
 
-    /// R56.2.e §5.13 §5.22 — middle-mouse-button paste from PRIMARY.
-    /// The pinion-shell `WindowEvent::MouseInput { Middle, Pressed }`
-    /// arm routes through `ShellCore::middle_click` →
-    /// `CoreShell::apply_middle_click` → here. This binding's impl
-    /// reformats the trait call into the `paste-primary` invoke slot
-    /// the R56.2.e.2 widget exposes — the substrate funnel keeps
-    /// the AI-client RPC path and the platform middle-click path on
-    /// the same code (mirror of `apply_composition` →
-    /// `composition` invoke).
-    ///
-    /// The `focused != Some(TF_TAG)` short-circuit follows
-    /// [`Self::apply_key`]'s roving-tabindex pattern so middle-click
-    /// only pastes into the focused text field. The `_modifiers`
-    /// arg is ignored — plain middle-click is the canonical X11 /
-    /// Wayland PRIMARY paste, and Ctrl / Shift / Alt / Meta +
-    /// middle-click is unspecified across desktops; this binding
-    /// stays on the conservative path.
-    ///
-    /// Returns `true` whenever the invoke channel reports a
-    /// non-empty PRIMARY payload was inserted (the R56.2.e.2 widget
-    /// guards `paste-primary` against missing state / missing
-    /// clipboard / empty PRIMARY internally, so any `Ok(Bool(true))`
-    /// means the paste landed in the reactive text store).
+    /// R56.2.e — X11/Wayland canonical middle-click PRIMARY paste.
+    /// Funnels through the textfield widget's `paste-primary` invoke.
+    /// Modifiers ignored (plain middle-click is the unambiguous
+    /// PRIMARY-paste case across desktops).
     fn apply_middle_click(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -2382,46 +1651,16 @@ impl WidgetCore for TodoMvcView {
 }
 
 impl WidgetA11y for TodoMvcView {
-    /// R56.1.b.1 / R656 §5.40 — multi-node a11y tree:
+    /// R56.1.b.1 §5.40 multi-node tree:
+    /// 1. `TF_TAG` → `AriaRole::TextInput` (R656)
+    /// 2. `FILTER_TAG` → `AriaRole::RadioGroup` + 3 `RadioButton` children
+    ///    with R660 live hovered/pressed/disabled + checked bits
+    /// 3. `LIST_TAG` → `AriaRole::List` + per-item children
+    /// 4. Per-row → `ListItem` + `CheckBox` (R658 toggle, aria-checked) +
+    ///    `Button` (delete)
     ///
-    /// 1. **Text input** (`TF_TAG`, [`AriaRole::TextInput`]): ARIA
-    ///    `textbox` carrying the live text content as
-    ///    [`AccessValue::Text`]. The [`AccessState::focused`] bit
-    ///    tracks the actual focus owner so AT cursor follows the
-    ///    field across Tab and `click_to_focus`.
-    /// 2. **List root** ([`LIST_TAG`], [`AriaRole::List`]): WAI-ARIA
-    ///    1.2 §5.3.5 `list` container. Owns the per-item children
-    ///    via [`AccessNode::with_child`] in declaration order so AT
-    ///    tools announce "item N of M" for the user's screen
-    ///    reader. R656 §5.40 first consumer of the new
-    ///    [`AriaRole::List`] variant.
-    /// 3. **Per-item entry** (`todo_item#<id>`,
-    ///    [`AriaRole::ListItem`]): one node per [`TodoItem`],
-    ///    carrying the entry text as [`AccessValue::Text`] and the
-    ///    stable u64 id as part of the tag. R656 §5.40 first
-    ///    consumer of the new [`AriaRole::ListItem`] variant.
-    /// 4. **Per-item delete button** (`todo_delete#<id>`,
-    ///    [`AriaRole::Button`]): the destructive affordance, named
-    ///    "Delete" via the paint-side `with_aria_label` so screen
-    ///    readers announce "Delete button" + the parent item's
-    ///    text. The button is NOT focusable through
-    ///    [`Self::focusable_tags`] (the focus stays on the
-    ///    textfield so the user can submit more entries) but AT can
-    ///    still address it through the click action — keyboard-
-    ///    only delete + Tab-walk-into-list is a R660+ carry per
-    ///    [[abstraction-needs-second-consumer]].
-    ///
-    /// The (R56.1.b.1 substrate) `root_owner.run` wrap around
-    /// `V::access_node` in `collect_access_emit_inputs` lets this
-    /// hook reach the same `Rc<TextEditState>` and
-    /// `Rc<Signal<Vec<TodoItem>>>` the view fn resolves through
-    /// [`use_text_edit_state`] / [`use_todos`].
-    ///
-    /// The `name` field is populated by
-    /// [`enrich_names_from_scene`](pinion_a11y::enrich_names_from_scene)
-    /// against each container's `aria_label` override (set in
-    /// `view` / `build_todos_list`) — the literal labels live in
-    /// exactly one place.
+    /// Labels come from paint-side `with_aria_label` via
+    /// `enrich_names_from_scene` so literal strings live in one place.
     fn access_node(state: &(TextFieldState, u32, FilterRadioStates), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, _caret, filter_radios) = state;
         let text = use_text_edit_state(TF_TAG).text();
@@ -2540,17 +1779,10 @@ impl WidgetA11y for TodoMvcView {
         nodes
     }
 
-    /// R660 §5.16 §5.40 — composite focus model for the filter group.
-    /// When focus is on [`FILTER_TAG`], emit [`AccessFocus::composite`]
-    /// pointing at the addressed (active-descendant) radio's sub-tag,
-    /// mirroring the hello-radio-group precedent (W3C ARIA Authoring
-    /// Practices roving-tabindex). For any other focused tag, defer
-    /// to the atomic-fallback contract.
-    ///
-    /// The active descendant resolution mirrors
-    /// [`apply_key_filter`]: AT-side `focused_index` wins; on `None`
-    /// fall back to the currently selected mode so the AT cursor
-    /// lands on the visible engaged segment.
+    /// R660 — composite focus for `FILTER_TAG` (roving-tabindex active
+    /// descendant). AT-side `focused_index` wins; falls back to the
+    /// engaged segment so the AT cursor lands on the visible
+    /// selection. Other focused tags use the atomic-fallback shape.
     fn access_focus_target(
         state: &(TextFieldState, u32, FilterRadioStates),
         focused: Option<&str>,
@@ -2576,39 +1808,11 @@ impl WidgetView for TodoMvcView {
         (WIN_W, WIN_H)
     }
 
-    /// R56.2.c §5.13 §5.38 — publish the caret rect to the platform
-    /// IME so the candidate window (ibus-hangul, fcitx5-hangul,
-    /// macOS Hangul, Microsoft IME) positions next to the caret
-    /// rather than at the default screen corner.
-    ///
-    /// Coordinate composition:
-    ///
-    /// 1. **Field rect in window coords** — walked from `scene` via
-    ///    [`pinion_shell::rect_for_tag`]; the post-layout box of the
-    ///    `TF_TAG` container carries the field's window-coord origin
-    ///    (changes when the user resizes or the title text height
-    ///    grows). This avoids hard-coding the field position in a
-    ///    constant that would lie the first time the layout shifts.
-    /// 2. **Text origin within the field** — `FIELD_PAD` on both axes
-    ///    (matches the `with_padding(Rect::new(FIELD_PAD, …))` in
-    ///    [`Self::view`]).
-    /// 3. **Caret rect within the text layout** — same
-    ///    `caret_rect_for_byte_offset` call the view fn runs (cache
-    ///    hit on the `LayoutCache`, no re-shape) using the *visual*
-    ///    caret byte (preedit-end during composition, substrate
-    ///    caret otherwise — same splice the view fn produces so the
-    ///    IME popup tracks the rendered cursor, not the latent
-    ///    substrate cursor).
-    ///
-    /// Sum (1) + (2) + (3) → window-coord caret rect; the shell
-    /// hands it to [`Window::set_ime_cursor_area`].
-    ///
-    /// Width is the caret pixel width (`CARET_WIDTH = 2px`); some
-    /// IMEs use this as the popup anchor width. Height carries the
-    /// `FONT_SIZE_PX` floor so the candidate popup never collapses
-    /// to a sliver when the layout's reported `height` is short
-    /// (the same floor the view fn applies for the visible caret
-    /// box).
+    /// R56.2.c — publish caret rect for platform IME candidate window.
+    /// Composition: field rect (window-coord, via `rect_for_tag`) +
+    /// `FIELD_PAD` text origin + `caret_rect_for_byte_offset` on the
+    /// visual caret byte (preedit-end during composition). Width =
+    /// `CARET_WIDTH`; height carries the `FONT_SIZE_PX` floor.
     fn ime_caret_rect(
         state: &(TextFieldState, u32, FilterRadioStates),
         scene: &Scene,
