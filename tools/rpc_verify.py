@@ -347,6 +347,34 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params = {"path": path}
         self.request("scene/click", params)
 
+    def double_click(
+        self,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+    ) -> None:
+        """`scene/double_click` typed wrapper (R663 §5.49).
+
+        Emits two complete press/release cycles at `(x, y)` without
+        an intervening cursor move so the receiving `InputRouter`
+        arc fires identically to a real-mouse double-click. Mirrors
+        `click()` for selector taxonomy (`at` xor `path`).
+
+        Use when the receiving widget distinguishes single from
+        double activation (e.g. TasteJS TodoMVC double-click-to-edit
+        row text). A widget that only cares about single click sees
+        the double-click as two activations — usually idempotent on
+        toggle / commit-class wires.
+        """
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        if at is not None:
+            params: dict[str, Any] = {"at": {"x": float(at[0]), "y": float(at[1])}}
+        else:
+            assert path is not None
+            params = {"path": path}
+        self.request("scene/double_click", params)
+
     def drag(
         self,
         *,

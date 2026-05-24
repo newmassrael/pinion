@@ -780,6 +780,20 @@ impl<V: WidgetView> ShellCore<V> {
                     self.mouse_pressed(PointerId::MOUSE);
                     self.mouse_released(PointerId::MOUSE);
                 }
+                // R663 §5.49 — `scene/double_click` mirror. Two
+                // complete press/release cycles at the same coordinate
+                // exercise the W3C UIEvent `detail:2` convention the
+                // TasteJS TodoMVC double-click-to-edit UX expects;
+                // widgets that distinguish single from double activate
+                // by counting `mouse_pressed` calls within the same
+                // cursor-frozen window.
+                DeferredInput::DoubleClick { x, y } => {
+                    self.cursor_moved(PointerId::MOUSE, x, y);
+                    self.mouse_pressed(PointerId::MOUSE);
+                    self.mouse_released(PointerId::MOUSE);
+                    self.mouse_pressed(PointerId::MOUSE);
+                    self.mouse_released(PointerId::MOUSE);
+                }
                 DeferredInput::Key { x, y, ref key } => {
                     self.cursor_moved(PointerId::MOUSE, x, y);
                     self.handle_named_key(key);

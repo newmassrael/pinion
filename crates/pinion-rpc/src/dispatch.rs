@@ -358,6 +358,15 @@ pub enum DeferredInput {
     /// the cursor. Mirrors the winit `WindowEvent::KeyboardInput` arc
     /// (`Escape` / `Tab` stay shell-reserved and are not injectable).
     Key { x: f64, y: f64, key: String },
+    /// R663 §5.49 — `scene/double_click` injection. Emits the W3C
+    /// `UIEvent` `detail: 2` convention via two complete press/release
+    /// cycles at `(x, y)` without an intervening cursor move so the
+    /// receiving `InputRouter` arc fires identically to a real-mouse
+    /// double-click. Mirrors [`Click`] for the longer-arc axis the
+    /// `TasteJS` `TodoMVC` "double-click row to edit" UX requires; the
+    /// substrate-canonical entry point for any future widget that
+    /// distinguishes single-click activation from double-click drill-in.
+    DoubleClick { x: f64, y: f64 },
     /// R660 §5.49 — `scene/drag` injection. The embedder applies
     /// `cursor_moved(MOUSE, from_x, from_y)`, then `mouse_pressed(MOUSE)`,
     /// then `steps` interpolated `cursor_moved` frames marching linearly
@@ -619,6 +628,27 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
                 handle_scene_click(inbox, producer, last_paint_layout, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/double_click" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_double_click(
+                    inbox,
+                    producer,
+                    last_paint_layout,
+                    request.params.as_ref(),
+                ),
                 HandlerKind::Mutate,
             )
         }
@@ -1028,6 +1058,29 @@ where
     let params = require_params(params)?;
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
     inbox.push(DeferredInput::Click { x, y });
+    Ok(Value::Null)
+}
+
+/// R663 §5.49 — `scene/double_click` handler: mirror of
+/// [`handle_scene_click`] but enqueues [`DeferredInput::DoubleClick`]
+/// for the W3C `detail:2` `UIEvent` convention. Same `at` / `path`
+/// selector taxonomy (single coordinate; the second click lands at
+/// the same point).
+fn handle_scene_double_click<F>(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
+    inbox.push(DeferredInput::DoubleClick { x, y });
     Ok(Value::Null)
 }
 

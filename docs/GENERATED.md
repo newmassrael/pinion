@@ -12537,6 +12537,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R663 — R663 §5.49 — scene/double_click primitive substrate (DeferredInput::DoubleClick + shell drain + RPC handler + Python harness + end-to-end smoke).
+
+**Changes**:
+- crates/pinion-rpc/src/dispatch.rs: DeferredInput::DoubleClick { x, y } variant added; scene/double_click RPC method (handle_scene_double_click) mirrors scene/click selector taxonomy (at xor path). Shared resolve_at_or_path helper unchanged — substrate cleanly composes the second-cycle on top of the existing single-click resolver.
+- crates/pinion-shell/src/substrate.rs: deferred-input drain arm expands DoubleClick into cursor_moved(MOUSE, x, y) + 2x (mouse_pressed + mouse_released). W3C UIEvent detail:2 convention via two complete press/release cycles at the same coordinate; the receiving InputRouter arc fires identically to a real-mouse double-click (winit MouseInput::Pressed twice within the system double-click window).
+- tools/rpc_verify.py: tf.double_click(at | path) Python wrapper. Mirror of tf.click() selector taxonomy with the same `exactly one of at / path` invariant.
+- tools/demos/double_click_r663.py: substrate smoke demo — drives todomvc's existing TodoToggleExternal as the substrate proof. Single-click flips completed 0→1 (sanity); double-click flips 0→1→0 (substrate proof). Both selector forms (at-coord + path) verified. Mutual-exclusion ValueError pinned.
+- Framework-first ([[r47-class-incident-prevention]]): double-click is industry-precedent input primitive (W3C UIEvent.detail:2, winit MouseInput chain, every desktop toolkit since Smalltalk-80). Lifting it as a substrate before R664 application consumer (todomvc edit-in-place) lands keeps the application-tier strictly substrate-consuming.
+
+
+
+**Verification**:
+- cargo build --workspace passes; cargo test --workspace passes (3303 tests, 0 failed — no regressions across the substrate addition).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello passes with workspace.lints baseline. 3 follow-up doc_markdown fixes applied (UIEvent / TodoMVC / TasteJS backticks).
+- tools/demos/double_click_r663.py PASS in 1.97s — substrate smoke proves the shell drain fires 2 complete press/release cycles end-to-end through the InputRouter and the composite-tag wire reaches TodoToggleExternal twice (post-double-click toggle glyph reverts to ☐, R658 invariant pinned). At-coord + path selector forms both verified; mutual-exclusion validation raised as expected.
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- R664 todomvc edit-in-place — R663 substrate consumer. Per-item double-click on todo_item#<id> text → enter edit mode (use_editing_id Owner::cache + per-item TextEditState via use_text_edit_state(format!("todo_edit#{id}"))); Enter commits new text; Escape cancels. view_field 3rd consumer ROI confirmation (R657 lift validates).
+- winit-side double-click detection (300ms / 5px threshold) — currently the substrate fires DoubleClick only when the AI client explicitly requests scene/double_click. Native paint-side double-click detection (consecutive MouseInput::Pressed events within the OS double-click window) is a follow-up GUI-backend axis (R670+). The RPC primary path (§2 #2) lands today; native paint parity carries until a paint-side widget cares.
+- DoubleClick is symmetric with the existing Click selector taxonomy; future Triple+Click etc. would extend DeferredInput rather than mutate this variant (TasteJS convention covers up to detail:2 for double-activate; triple-click for paragraph-select belongs to future text-edit axis).
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
