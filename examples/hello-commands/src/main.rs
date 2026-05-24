@@ -73,16 +73,16 @@
 
 use std::sync::Arc;
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Command, Frame, Intent, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_derive::widget;
 use pinion_runtime::{Handler, HandlerFuture, HandlerRegistry};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_shell::vello_renderer_impl;
 
 // pinion-forge codegen output — defines `HelloCommandsRenderer` +
 // `HelloCommandsRendererError`. Same emit template as hello-button,
@@ -151,20 +151,34 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     )
 }
 
+/// R654 §5.16 Cat A cascade retrofit (R642 baseline). Single
+/// `ButtonState` enum — no tuple, no value sidecar, no checked
+/// semantic. Macro derives `WidgetCore` / `WidgetA11y` / `WidgetView`
+/// with the standard hovered/pressed/disabled state_flags; only
+/// `update` (R27 reducer that emits `demo.echo` Command on the
+/// `main_btn.click` intent), `apply_key`, `keybinding`, and the
+/// view / read_state / event_name shims stay inherent.
+#[widget(
+    tag = "main_btn",
+    state = ButtonState,
+    event = ButtonEvent,
+    title = "pinion hello-commands (R654 §5.16 #[widget] retrofit)",
+    renderer = HelloCommandsRenderer,
+    initial_size = (WIN_W, WIN_H),
+    external = ButtonExternal::new,
+    role = Button,
+    state_flags(
+        hovered = Hover,
+        pressed = Pressed,
+        disabled = Disabled,
+    ),
+    apply_key,
+    keybinding,
+    update,
+)]
 struct CommandsView;
 
-impl WidgetCore for CommandsView {
-    type State = ButtonState;
-    type Event = ButtonEvent;
-
-    fn create_external() -> Box<dyn External> {
-        Box::new(ButtonExternal::new())
-    }
-
-    fn tag() -> &'static str {
-        "main_btn"
-    }
-
+impl CommandsView {
     fn read_state(scene: &Scene) -> ButtonState {
         if let Scene::External(node) = scene
             && let Some(intro) = node.handle.introspect()
@@ -175,8 +189,8 @@ impl WidgetCore for CommandsView {
         ButtonState::Idle
     }
 
-    fn view(state: ButtonState, frame: &Frame) -> Scene {
-        view(state, frame)
+    fn view(state: ButtonState, frame: Frame) -> Scene {
+        view(state, &frame)
     }
 
     fn event_name(event: ButtonEvent) -> &'static str {
@@ -191,10 +205,6 @@ impl WidgetCore for CommandsView {
         }
     }
 
-    fn title() -> &'static str {
-        "pinion hello-commands (R51.170 §5.23 R27 reducer-driven demo)"
-    }
-
     fn keybinding(key: &str) -> Option<ButtonEvent> {
         match key {
             "d" => Some(ButtonEvent::Disable),
@@ -203,31 +213,30 @@ impl WidgetCore for CommandsView {
         }
     }
 
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
-    fn update(_state: Self::State, intent: &Intent) -> Vec<Command> {
-        // R51.170 §5.23 R27 — reducer-driven dogfood. Match the
-        // SCXML-emitted `main_btn.click` intent and emit a
-        // `demo.echo` Command describing the async work. The
-        // R51.169 handle_tail wiring drives this on every drain,
-        // so a pointer-up release or `Enter`/`Space` activation
-        // triggers the dispatch loop without the pre-R51.170
-        // view-fn one-shot HACK.
-        //
-        // R51.171 §5.22 R26 — `Owner::current()` resolves to the
-        // substrate's root owner because
-        // `CoreShell::route_intent_through_update` wraps this call
-        // in `root_owner.run(...)`. Tagging the Command with the
-        // producing scope id surfaces the right scope to the
-        // `scene/commands` RPC inspector ([[callback-root-owner-wrap]]).
-        //
-        // R51.174 §5.23 R27 — `match` over `intent.tag_str()` is the
-        // Elm/Iced canonical Update reducer shape; each arm maps a
-        // specific intent tag to its declarative side-effect, the
-        // wildcard arm explicitly opts out. Future intents drop in
-        // as new arms without touching the dispatch shape.
+    /// R51.170 §5.23 R27 — reducer-driven dogfood. Match the SCXML-
+    /// emitted `main_btn.click` intent and emit a `demo.echo` Command
+    /// describing the async work. The R51.169 `handle_tail` wiring
+    /// drives this on every drain, so a pointer-up release or
+    /// `Enter`/`Space` activation triggers the dispatch loop without
+    /// the pre-R51.170 view-fn one-shot HACK.
+    ///
+    /// `Owner::current()` resolves to the root owner because
+    /// `CoreShell::route_intent_through_update` wraps this call in
+    /// `root_owner.run(...)` per [[callback-root-owner-wrap]] —
+    /// tagging the Command with the producing scope id surfaces it
+    /// to the `scene/commands` RPC inspector. `match` over
+    /// `intent.tag_str()` is the Elm/Iced canonical reducer shape
+    /// (R51.174 §5.23 R27).
+    fn update(_state: ButtonState, intent: &Intent) -> Vec<Command> {
         match intent.tag_str() {
             CLICK_INTENT_TAG => {
                 let scope_id = pinion_core::Owner::current().map_or(0, |o| o.id());
@@ -239,30 +248,6 @@ impl WidgetCore for CommandsView {
             }
             _ => Vec::new(),
         }
-    }
-}
-
-impl WidgetA11y for CommandsView {
-    fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(state, ButtonState::Disabled),
-            hovered: matches!(state, ButtonState::Hover),
-            pressed: matches!(state, ButtonState::Pressed),
-            checked: None,
-        };
-        vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)
-                .with_state(access_state),
-        ]
-    }
-}
-
-impl WidgetView for CommandsView {
-    type Renderer = HelloCommandsRenderer;
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
     }
 }
 

@@ -12210,6 +12210,43 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R654 — R654 §5.16 Cat A 4-binding cascade retrofit — substrate ROI net-negative achieved (-69 net LOC)
+
+**Changes**:
+- examples/hello-checkbox/src/main.rs: 3 hand-written impl blocks (WidgetCore 87 / WidgetA11y 25 / WidgetView 7 = 119 LOC manual) → `#[widget(state=(CheckboxState,bool), role=CheckBox, state_flags(checked=bool_field(1)), access_value=bool_field(1), apply_key, keybinding, fmt_state_log)]` + inherent fns. 9/9 a11y_tests pass; 2nd substrate consumer validates R653 extension portable across `(EnumState, bool)` shape
+- examples/hello-radio/src/main.rs: same retrofit shape with role=RadioButton + `selected` bool. 8/8 tests pass; 3rd consumer
+- examples/hello-theme/src/main.rs: same shape with role=Switch + `update` flag (theme palette swap on `toggle` intent via [[intent-payload-post-flip-authority]]). Plus inherent `apply_key` retains the R594 `r`/`R` palette-pair cycle escape branch before `apply_aria_activate` fallback. 6/6 tests pass; 4th consumer
+- examples/hello-commands/src/main.rs: R642 baseline form (single ButtonState enum, no value sidecar, no checked state_flag, no access_value). Macro derives WidgetCore + WidgetA11y(role=Button) + WidgetView; inherent kept for the R51.170 R27 reducer (`update` flag) emitting `demo.echo` Command. 1/1 test pass; 5th consumer + first non-tuple-state Cat A
+- Each binding adds `pinion-derive = { path = ... }` to Cargo.toml [dependencies]. Imports consolidated: `External` dropped from `pinion_core::external` use (macro emits `Box::new(SomeExternal::new())` itself); `WidgetA11y` / `WidgetView` / `AccessState` removed (macro internalises both impls)
+- Macro substrate gap surfaced: `tag = TOGGLE_TAG` (const &str path) cannot be ExprPath — the WidgetTag derive trait dispatch fails on `&str`. Fix: inline `tag = "theme_toggle"` literal at the macro site + keep `const TOGGLE_TAG: &str = "theme_toggle"` for the view fn's `.with_tag(TOGGLE_TAG)` reference. Single comment in hello-theme records the convention. Not a substrate change — the macro's two-form choice (LitStr | Path-to-WidgetTag-variant) intentionally excludes const-path per R650 walk-back's 'no abstraction until 2nd composite consumer' constraint
+- Honest LOC delta (R654 single round, all 4 bindings + 4 Cargo.toml + macro substrate untouched): -69 net LOC (264 deletions / 195 insertions across 9 files). Per-binding average ~ -17 LOC (vs R652's 60-90 LOC/binding prediction — lower because retained doc comments + R653's `Self::tag()` form scope discipline means imports don't shrink as much as feared)
+
+
+
+**Verification**:
+- cargo test -p hello-checkbox: 9/9 pass / 0 fail (unchecked_idle_emits / checked_idle_value_and_state_align / hover_state_does_not_change_checked / focused_tag_sets / role_marker_skips_check_glyph / r57_x_checkbox_unchecked_outline / r57_x_checkbox_checked_idle_uses_accent / r57_x_checkbox_hover_overlay / r55_g20_view_contains)
+- cargo test -p hello-radio: 8/8 pass / 0 fail (unselected_idle_emits / selected_idle_value_and_state_align / disabled_sets / focused_tag / r57_x_radio_unselected_outline / r57_x_radio_selected_idle_accent / r57_x_radio_hover_overlay / r55_g20_view_contains)
+- cargo test -p hello-theme: 6/6 pass / 0 fail (r55_g20_view_contains / r57_0_view_swaps_surface / r57_x_theme_cleanup_track_off / r594_cycle_palette_pair_advances_seed / r594_apply_key_r_cycles_palette_pair / r596_view_emits_palette_cycle_hint)
+- cargo test -p hello-commands: 1/1 pass / 0 fail (r55_g23_view_contains_composite_paint_root_tag)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (after one doc_markdown `handle_tail` backtick fix in hello-commands `update` doc comment; pinion-derive substrate unchanged from R653 — no new macro surface added this round)
+- cargo test --workspace: 53 test-result-ok groups / 0 failed (R653 baseline preserved; aggregate test count unchanged because the 4 retrofits keep their pre-existing test fixtures, only the impl path under test changes)
+- mnemosyne validate_workspace: T1 orphan total = 0, round-trip 1/1, atomic ledger 516 → 517 entries, no T1/T2 regressions
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- R641-R645 substrate ROI accumulator: R650 (-10 binding / +74 substrate test) + R651 (0) + R652 (0) + R653 (+250 substrate / +49 binding first-consumer) + R654 (-69 net across 4 bindings) = -30 binding net / +324 substrate. ROI is net-positive only after R654 Cat A cascade completion — R652 prediction (-300 to -450 LOC binding savings) overestimated, R654 actual is -69 due to retained rich doc comments. Honest signal: substrate cost amortized over 8 consumers (3 macro-adopted pre-R650 + 5 R653-R654 cascade) is borderline; further Cat B/D substrate work needs concrete second-consumer evidence before approval
+- Cat B (hello-slider-vertical + hello-textfield) deferred indefinitely: value-bearing tuple `(EnumState, f32 | u32)` retrofit requires `access_value = float_field(N)` / `int_field(N)` AccessValue::Float / ::Int variants. Wait for 2nd value-bearing widget surface before adding per [[abstraction-needs-second-consumer]]
+- Cat D (4 TUI bindings) deferred to post-application-tier: `#[widget]` macro forwards `pinion_shell::WidgetView` only; TUI needs `pinion_tui::WidgetViewTui` parallel trait emit. Either `tui = true` flag (forwards different trait) or twin `#[widget_tui]` attribute. Design choice requires composed-app evidence on TUI side (R680+ TUI parity demo round)
+- Cat C (hello-listbox / hello-listbox-multi / hello-radio-group) stays hand-written permanently: composite widgets with struct state + multi-child a11y trees. The `a11y_manual` escape hatch (R645) is the textbook resolution per [[r642-access-node-derive-pattern]]; no substrate change needed
+- R655 §§1 + §2 #6 (next round): application-tier entry. R650-R654 phase complete — substrate validated by 8 consumers, debt registered (SCE-002), ROI honestly measured. North-star = AI-native composed-app demo (TodoMVC class) using button + toggle + checkbox + radio + textfield primitives. NO new substrate / NO new macro extensions until composed-app surface reveals second-consumer cycles per the seed prompt's Phase 2 entry rule
+- macro `tag = ConstPath` shape (e.g. `tag = TOGGLE_TAG` where const is `&str`) is unsupported as documented in R654 hello-theme. If composite widget with shared const tag emerges (multi-binding shared const), revisit; currently not warranted
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

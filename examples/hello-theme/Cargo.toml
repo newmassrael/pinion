@@ -15,6 +15,8 @@ path = "src/main.rs"
 [dependencies]
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R654 §5.16 — Cat A cascade #[widget] retrofit per [[r653-state-flags-bool-field]].
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 vello = { workspace = true }
 

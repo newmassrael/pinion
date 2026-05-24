@@ -27,7 +27,7 @@
 //! exactly as winit does — §2 invariant #2 holds (RPC headless ==
 //! human cursor for the activation path).
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -35,8 +35,10 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioExternal, RadioState};
 use pinion_core::{Color, Frame, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+#[cfg(test)]
+use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+use pinion_derive::widget;
+use pinion_shell::vello_renderer_impl;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloRadioRenderer, HelloRadioRendererError);
@@ -157,20 +159,34 @@ fn view(state: RadioState, selected: bool, _frame: &Frame) -> Scene {
     )
 }
 
+/// R654 §5.16 Cat A cascade retrofit. AriaRole::RadioButton; tuple
+/// state `(RadioState, bool)` with the `selected` bool in the
+/// second elem. Substrate-derived a11y body via R653-extended
+/// `state_flags(checked = bool_field(1))` + `access_value =
+/// bool_field(1)`. Mirrors hello-checkbox / hello-toggle shape.
+#[widget(
+    tag = "main_radio",
+    state = (RadioState, bool),
+    event = RadioEvent,
+    title = "pinion hello-radio (R654 §5.16 #[widget] retrofit)",
+    renderer = HelloRadioRenderer,
+    initial_size = (WIN_W, WIN_H),
+    external = RadioExternal::new,
+    role = RadioButton,
+    state_flags(
+        hovered = Hover,
+        pressed = Pressed,
+        disabled = Disabled,
+        checked = bool_field(1),
+    ),
+    access_value = bool_field(1),
+    apply_key,
+    keybinding,
+    fmt_state_log,
+)]
 struct RadioView;
 
-impl WidgetCore for RadioView {
-    type State = (RadioState, bool);
-    type Event = RadioEvent;
-
-    fn create_external() -> Box<dyn External> {
-        Box::new(RadioExternal::new())
-    }
-
-    fn tag() -> &'static str {
-        "main_radio"
-    }
-
+impl RadioView {
     fn read_state(scene: &Scene) -> (RadioState, bool) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
@@ -187,8 +203,8 @@ impl WidgetCore for RadioView {
         (RadioState::Idle, false)
     }
 
-    fn view(state: (RadioState, bool), frame: &Frame) -> Scene {
-        view(state.0, state.1, frame)
+    fn view(state: (RadioState, bool), frame: Frame) -> Scene {
+        view(state.0, state.1, &frame)
     }
 
     fn event_name(event: RadioEvent) -> &'static str {
@@ -201,10 +217,6 @@ impl WidgetCore for RadioView {
             RadioEvent::Enable => "Enable",
             _ => "__internal__",
         }
-    }
-
-    fn title() -> &'static str {
-        "pinion hello-radio (R51.33 §5.38 pinion-shell)"
     }
 
     fn keybinding(key: &str) -> Option<RadioEvent> {
@@ -222,7 +234,12 @@ impl WidgetCore for RadioView {
     /// silent (idempotent). The group-context arrow navigation that
     /// also activates the new radio lives in `hello-radio-group`
     /// (composite widget, R51.57 roving tabindex).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         if focused != Some(Self::tag()) {
             return false;
         }
@@ -240,48 +257,12 @@ impl WidgetCore for RadioView {
             .is_ok()
     }
 
-    fn fmt_state_log(state: &(RadioState, bool)) -> String {
+    fn fmt_state_log(state: (RadioState, bool)) -> String {
         format!(
             "{} / {}",
             radio_state_name(state.0),
             if state.1 { "selected" } else { "unselected" },
         )
-    }
-}
-
-impl WidgetA11y for RadioView {
-    /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
-    /// single `AriaRole::RadioButton` node; `value` + `state.checked`
-    /// mirror the boolean selected state. A grouped Radio (R51.66
-    /// composite) attaches under an `AriaRole::RadioGroup` parent;
-    /// the single-radio dogfood case here remains AT-discoverable on
-    /// its own.
-    ///
-    /// R51.69 §5.40 — the accessible name is lifted from the row's
-    /// `"Premium tier"` `TextNode` by `enrich_names_from_scene`
-    /// (WAI-ARIA "name from contents"). No duplicate literal here.
-    fn access_node(state: &(RadioState, bool), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, selected) = (state.0, state.1);
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, RadioState::Disabled),
-            hovered: matches!(interaction, RadioState::Hover),
-            pressed: matches!(interaction, RadioState::Pressed),
-            checked: Some(selected),
-        };
-        vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::RadioButton)
-                .with_value(AccessValue::Bool(selected))
-                .with_state(access_state),
-        ]
-    }
-}
-
-impl WidgetView for RadioView {
-    type Renderer = HelloRadioRenderer;
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
     }
 }
 

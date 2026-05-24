@@ -28,7 +28,7 @@
 //! slice once every widget binding has been audited for theme-
 //! awareness.
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -38,8 +38,8 @@ use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{
     Command, ColorRole, Frame, Scene, Theme, ThemeMode, WidgetCore, use_theme,
 };
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_derive::widget;
+use pinion_shell::vello_renderer_impl;
 
 // R46.5 codegen output — `HelloThemeRenderer` + matching error +
 // async `new` + sync `render` / `resize`. Same pattern as every
@@ -350,23 +350,44 @@ fn outline_divider(theme: Theme) -> Scene {
     )
 }
 
-/// `WidgetView` binding for the theme demo. State shape is the same
-/// `(ToggleState, bool)` pair the Tier-1 `Toggle` widget exposes —
-/// reuse keeps the focus / pointer / a11y pipelines unchanged.
+/// R654 §5.16 Cat A cascade retrofit. Same `(ToggleState, bool)`
+/// shape + AriaRole::Switch + `update` (theme palette swap via
+/// intent.payload authority per [[intent-payload-post-flip-authority]])
+/// as hello-toggle (R653 first consumer). hello-theme adds the
+/// R594 `r`/`R` palette-pair cycle escape that the macro cannot
+/// derive, so the inherent `apply_key` carries the extra branch
+/// before forwarding to `apply_aria_activate`.
+#[widget(
+    // Literal must match `const TOGGLE_TAG` above and the
+    // `.with_tag(TOGGLE_TAG)` call in `view`. The `#[widget]` macro
+    // accepts either `tag = "literal"` (R641) or `tag = Path` to a
+    // `WidgetTag` derive variant (R644); a bare `const` path is not
+    // either form per [[r650-widget-tag-walk-back]], so the literal
+    // lives here and the `const` keeps the duplicate-prevention
+    // pin elsewhere.
+    tag = "theme_toggle",
+    state = (ToggleState, bool),
+    event = ToggleEvent,
+    title = "pinion hello-theme (R654 §5.16 #[widget] retrofit)",
+    renderer = HelloThemeRenderer,
+    initial_size = (WIN_W, WIN_H),
+    external = ToggleExternal::new,
+    role = Switch,
+    state_flags(
+        hovered = Hover,
+        pressed = Pressed,
+        disabled = Disabled,
+        checked = bool_field(1),
+    ),
+    access_value = bool_field(1),
+    apply_key,
+    keybinding,
+    update,
+    fmt_state_log,
+)]
 struct HelloThemeView;
 
-impl WidgetCore for HelloThemeView {
-    type State = (ToggleState, bool);
-    type Event = ToggleEvent;
-
-    fn create_external() -> Box<dyn External> {
-        Box::new(ToggleExternal::new())
-    }
-
-    fn tag() -> &'static str {
-        TOGGLE_TAG
-    }
-
+impl HelloThemeView {
     fn read_state(scene: &Scene) -> (ToggleState, bool) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
@@ -382,8 +403,8 @@ impl WidgetCore for HelloThemeView {
         (ToggleState::Idle, false)
     }
 
-    fn view(state: (ToggleState, bool), frame: &Frame) -> Scene {
-        view(state.0, state.1, frame)
+    fn view(state: (ToggleState, bool), frame: Frame) -> Scene {
+        view(state.0, state.1, &frame)
     }
 
     fn event_name(event: ToggleEvent) -> &'static str {
@@ -396,10 +417,6 @@ impl WidgetCore for HelloThemeView {
             ToggleEvent::Enable => "Enable",
             _ => "__internal__",
         }
-    }
-
-    fn title() -> &'static str {
-        "pinion hello-theme (R57.0 §5.50 ThemeProvider substrate)"
     }
 
     fn keybinding(key: &str) -> Option<ToggleEvent> {
@@ -443,29 +460,13 @@ impl WidgetCore for HelloThemeView {
     ///
     /// **Authority source = `intent.payload`, not `state`.** The
     /// `"toggle"` intent fires from inside the Toggle SCXML's
-    /// `Pressed -> Hover` transition; that transition is in flight
-    /// while [`Self::update`] runs, so [`Self::read_state`] still
-    /// observes the *pre*-flip Off value. The intent payload
-    /// (`IntrospectValue::Bool(new_value)`) carries the canonical
-    /// post-flip on/off bit, mirroring the W3C event-driven contract
-    /// (event detail is authoritative for the action that produced
-    /// the event). The original R57.0 land routed through `state.1`,
-    /// which gated `set_theme(Theme::dark())` on a value the scene
-    /// did not yet hold — the visible defect surfaced by RPC
-    /// snapshotting after a click; this rework is the substrate fix.
-    ///
+    /// `Pressed -> Hover` transition; `read_state` lags by one
+    /// reducer tick (per [[intent-payload-post-flip-authority]]).
     /// `update` runs inside the shell's `root_owner.run` wrap
-    /// ([[callback-root-owner-wrap]] +
-    /// [[callback-root-owner-wrap-create-access]]) so [`use_theme`]
-    /// resolves the same `Rc<ThemeProvider>` the view-fn already
-    /// resolved (typed cache slot keyed by [`THEME_TAG`]).
-    ///
-    /// Signal equality-skip (`Signal::set` short-circuits when the
-    /// new value equals the current) covers the
-    /// [[reducer-incoming-vs-drain-symmetry]] double-fire: incoming
-    /// dispatch and drain both hit this arm, and the second call
-    /// against the now-active palette is a no-op rather than a
-    /// double-paint.
+    /// ([[callback-root-owner-wrap]]) so [`use_theme`] resolves the
+    /// same `Rc<ThemeProvider>` the view-fn already resolved.
+    /// Signal equality-skip (per [[reducer-incoming-vs-drain-symmetry]])
+    /// makes the second call a no-op.
     fn update(_state: (ToggleState, bool), intent: &Intent) -> Vec<Command> {
         if intent.tag.as_ref() == TOGGLE_INTENT_TAG_FULL {
             if let IntrospectValue::Bool(on) = intent.payload {
@@ -476,45 +477,12 @@ impl WidgetCore for HelloThemeView {
         Vec::new()
     }
 
-    fn fmt_state_log(state: &(ToggleState, bool)) -> String {
+    fn fmt_state_log(state: (ToggleState, bool)) -> String {
         format!(
             "{} / {}",
             toggle_state_name(state.0),
             if state.1 { "On" } else { "Off" },
         )
-    }
-}
-
-impl WidgetA11y for HelloThemeView {
-    /// R51.69 §5.40 — single `AriaRole::Switch` node (toggle button
-    /// per WAI-ARIA), exposing the `(ToggleState, bool)` joint
-    /// projection. `value` carries the on/off bool so AT clients
-    /// reading the value see the same boolean `state.checked`
-    /// mirrors. The accessible name "Theme mode" is set on the
-    /// track container's `aria_label` override in `view` so the
-    /// literal lives in exactly one place.
-    fn access_node(state: &(ToggleState, bool), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, on) = (state.0, state.1);
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, ToggleState::Disabled),
-            hovered: matches!(interaction, ToggleState::Hover),
-            pressed: matches!(interaction, ToggleState::Pressed),
-            checked: Some(on),
-        };
-        vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Switch)
-                .with_value(AccessValue::Bool(on))
-                .with_state(access_state),
-        ]
-    }
-}
-
-impl WidgetView for HelloThemeView {
-    type Renderer = HelloThemeRenderer;
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
     }
 }
 

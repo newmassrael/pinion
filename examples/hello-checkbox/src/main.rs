@@ -16,7 +16,7 @@
 //! the shell threads through the shared `LayoutCache` — no
 //! special-case bitmap or SVG path, just Unicode + parley.
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -24,8 +24,10 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::checkbox::{CheckboxEvent, CheckboxExternal, CheckboxState};
 use pinion_core::{Color, Frame, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+#[cfg(test)]
+use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+use pinion_derive::widget;
+use pinion_shell::vello_renderer_impl;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloCheckboxRenderer, HelloCheckboxRendererError);
@@ -158,20 +160,37 @@ fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
     )
 }
 
+/// R654 §5.16 Cat A cascade retrofit. The R653-extended `#[widget]`
+/// derives the mechanical `WidgetCore` / `WidgetA11y` / `WidgetView`
+/// trio (`state_flags(checked = bool_field(1))` + `access_value =
+/// bool_field(1)`); only the binding-specific methods (`view` /
+/// `read_state` / `event_name` / `keybinding` / `apply_key` /
+/// `fmt_state_log`) stay as inherent fns the macro forwards to.
+/// No reducer — Checkbox carries no theme-flip side effect (vs
+/// hello-toggle / hello-theme which do via `update` flag).
+#[widget(
+    tag = "main_checkbox",
+    state = (CheckboxState, bool),
+    event = CheckboxEvent,
+    title = "pinion hello-checkbox (R654 §5.16 #[widget] retrofit)",
+    renderer = HelloCheckboxRenderer,
+    initial_size = (WIN_W, WIN_H),
+    external = CheckboxExternal::new,
+    role = CheckBox,
+    state_flags(
+        hovered = Hover,
+        pressed = Pressed,
+        disabled = Disabled,
+        checked = bool_field(1),
+    ),
+    access_value = bool_field(1),
+    apply_key,
+    keybinding,
+    fmt_state_log,
+)]
 struct CheckboxView;
 
-impl WidgetCore for CheckboxView {
-    type State = (CheckboxState, bool);
-    type Event = CheckboxEvent;
-
-    fn create_external() -> Box<dyn External> {
-        Box::new(CheckboxExternal::new())
-    }
-
-    fn tag() -> &'static str {
-        "main_checkbox"
-    }
-
+impl CheckboxView {
     fn read_state(scene: &Scene) -> (CheckboxState, bool) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
@@ -187,8 +206,8 @@ impl WidgetCore for CheckboxView {
         (CheckboxState::Idle, false)
     }
 
-    fn view(state: (CheckboxState, bool), frame: &Frame) -> Scene {
-        view(state.0, state.1, frame)
+    fn view(state: (CheckboxState, bool), frame: Frame) -> Scene {
+        view(state.0, state.1, &frame)
     }
 
     fn event_name(event: CheckboxEvent) -> &'static str {
@@ -201,10 +220,6 @@ impl WidgetCore for CheckboxView {
             CheckboxEvent::Enable => "Enable",
             _ => "__internal__",
         }
-    }
-
-    fn title() -> &'static str {
-        "pinion hello-checkbox (R51.32 §5.38 pinion-shell)"
     }
 
     fn keybinding(key: &str) -> Option<CheckboxEvent> {
@@ -221,7 +236,12 @@ impl WidgetCore for CheckboxView {
     /// parity with a pointer click. Pure ARIA checkboxes accept
     /// only Space (Enter is reserved for form submit in the broader
     /// ARIA model) — Enter does not reach this hook.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
         if focused != Some(Self::tag()) {
             return false;
         }
@@ -239,47 +259,12 @@ impl WidgetCore for CheckboxView {
             .is_ok()
     }
 
-    fn fmt_state_log(state: &(CheckboxState, bool)) -> String {
+    fn fmt_state_log(state: (CheckboxState, bool)) -> String {
         format!(
             "{} / {}",
             checkbox_state_name(state.0),
             if state.1 { "checked" } else { "unchecked" },
         )
-    }
-}
-
-impl WidgetA11y for CheckboxView {
-    /// R51.64 §5.40 — AccessKit semantic tree contribution. Emits a
-    /// single `AriaRole::CheckBox` node; `value` and `state.checked`
-    /// both carry the boolean checked state (lockstep with the
-    /// introspect schema's `value` key).
-    ///
-    /// R51.81 §5.40 — the accessible name is derived by
-    /// `enrich_names_from_scene` walking the paint scene for the
-    /// first non-presentational `TextNode::content`. The check-glyph
-    /// `TextNode` carries `TextRole::Presentational` so it is skipped;
-    /// the DFS lands on the "Receive newsletter" label naturally. No
-    /// duplicate string literal lives in `access_node`.
-    fn access_node(state: &(CheckboxState, bool), focused: Option<&str>) -> Vec<AccessNode> {
-        let (interaction, checked) = (state.0, state.1);
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, CheckboxState::Disabled),
-            hovered: matches!(interaction, CheckboxState::Hover),
-            pressed: matches!(interaction, CheckboxState::Pressed),
-            checked: Some(checked),
-        };
-        vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::CheckBox)
-            .with_value(AccessValue::Bool(checked))
-            .with_state(access_state)]
-    }
-}
-
-impl WidgetView for CheckboxView {
-    type Renderer = HelloCheckboxRenderer;
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
     }
 }
 
