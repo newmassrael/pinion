@@ -12113,6 +12113,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R651 — R651 §5.16 SCE upstream debt SCE-002 registered: caller-extensible derive hook for sce-build State/Event enum codegen
+
+**Changes**:
+- Memory [[sce-upstream-debts]] (~/.claude/projects/-home-coin-pinion/memory/sce-upstream-debts.md): appended `SCE-002` entry documenting the `sce-build::compile_scxml` codegen gap — raw `State` / `Event` enums emitted without consumer-injectable trait derive hook. Pinion-side workaround = `widget_state_name!` / `widget_event_name!` declarative macros (`crates/pinion-core/src/widget_core.rs:573` + `:610`) re-enumerate every variant per-widget at the SCE-emit consumption site (`widgets/button.rs:35-49`, `widgets/slider.rs:51-..`)
+- Three textbook upstream solution paths enumerated honestly: (A) `compile_scxml_with_options` typed option struct with `state_enum_derives: Vec<String>` — RECOMMENDED, single build.rs touch; (B) Jinja `{% block extra_state_attrs %}` template fragment slot — more flexible, type-unsafe; (C) pinion-side build.rs post-processor that parses `*_sm.rs` and appends `widget_state_name!(...)` invocations — SCE-untouched alternative, zero upstream dependency
+- Zero code change. R651 is a pure process round: register the carry obligation so R643 [[sce-upstream-report-policy]] is satisfied + R645 cascade retrofit count (hello-toggle / checkbox / radio / textfield) makes the cumulative boilerplate burden visible. The pinion-side declarative macro stays land as the workaround per the [[sce-priority-over-pinion]] no-direct-vendor-edit rule
+
+
+
+**Verification**:
+- grep -rn 'widget_state_name\|widget_event_name' crates/pinion-core/ surfaces the workaround sites: `widget_core.rs:529-610` (macro defs) + `widgets/button.rs:35,38` + `widgets/slider.rs:51,54` = 2 currently-adopting widgets, scaling with R645 carry retrofit cascade
+- grep on `vendor/sce/tools/codegen/templates/state_machine.jinja2` confirms the codegen template has no caller-injectable derive list parameter — the gap is structural in SCE's current public surface
+- mnemosyne validate_workspace: T1 orphan total = 0 (new = +0), round-trip 1/1, atomic ledger 513 → 514 entries, no T1/T2 regressions
+- No cargo invocation needed (zero code touch); cargo check / clippy / test inherit R650 green status
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- When R645 cascade retrofit lands (hello-toggle / checkbox / radio / textfield adopting `state_name_derive`), each new widget adds a `widget_state_name!(SomeState, default = X, [variant_1, ... variant_N])` + `widget_event_name!(SomeEvent, [event_1, ... event_M])` re-enumeration site in `crates/pinion-core/src/widgets/{widget}.rs`. Track adoption count growth as the SCE-002 burden metric
+- If SCE upstream merges option (A) `compile_scxml_with_options` derive hook, the R651 cleanup is: replace per-widget `widget_state_name!` / `widget_event_name!` invocations with a single `CompileOptions` field in `crates/pinion-core/build.rs`, then remove the two declarative macros from `widget_core.rs:573+:610`
+- If R652 ROI measurement justifies pinion-side option (C) build.rs post-processor (no SCE PR), pinion-forge or pinion-core build.rs gains a `widgets/*.scxml` → `widget_state_name!(...)` codegen pass; same cleanup target (remove per-widget invocations) without SCE upstream dependency
+- R652 §5.16: substrate ROI measurement remains the next round — quantify all 17 binding retrofit eligibility before committing to keep / freeze / walk-back the R641-R645 substrate cascade
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
