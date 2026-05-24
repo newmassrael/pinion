@@ -16,6 +16,10 @@ path = "src/main.rs"
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R659 §5.45 — view_vertical_scrollbar lifted from this binding's
+# pre-R659 `build_scrollbar_visual` (2nd consumer signal triggered by
+# the R659 todomvc scrollbar peer wire).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

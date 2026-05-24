@@ -1,0 +1,452 @@
+//! R659 §5.16 §5.45 — backend-agnostic vertical scrollbar peer paint
+//! composition.
+//!
+//! ## Why a substrate
+//!
+//! Pre-R659, the only consumer of the visible scrollbar peer was
+//! [`examples/hello-listbox`](https://github.com/anthropics/pinion/tree/main/examples/hello-listbox)
+//! (R55.D.4 first-client landed Round 481). R659 lands the todomvc
+//! filter axis and inherits a R658 honest carry: "visible scrollbar
+//! peer 미연결" — the todo list scrolls under wheel input but the
+//! user has no visible thumb to drag. Wiring a 2nd hand-rolled
+//! `build_scrollbar_visual` in todomvc would duplicate ~65 LOC across
+//! the two bindings; per
+//! [[abstraction-needs-second-consumer]] the **2nd-consumer signal**
+//! fires and the helper lifts here.
+//!
+//! ## API shape
+//!
+//! [`view_vertical_scrollbar`] is the single entry-point. It takes
+//! the shared [`ScrollState`] handle (composition with
+//! [`ScrollBarExternal`](pinion_core::widgets::scrollbar::ScrollBarExternal)
+//! through the same `Rc`), the active [`Theme`], and a
+//! [`VerticalScrollbarStyle`] sidecar carrying the four binding-
+//! local sizing constants (viewport height, gutter width, thumb
+//! floor, paint-side tag for input-router routing). Returns a single
+//! [`Scene::Container`] tagged with the supplied tag so the
+//! [`InputRouter`](pinion_runtime::InputRouter) hit-test routes
+//! pointer events to the matching
+//! [`ScrollBarExternal`](pinion_core::widgets::scrollbar::ScrollBarExternal)
+//! registered through
+//! [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals).
+//!
+//! ## Why the style is a struct, not a free-fn arg list
+//!
+//! Four call-site parameters (`viewport_h` / `gutter_w` / `min_thumb`
+//! / `tag`) is at the edge of "positional arg list still reads
+//! cleanly". A sidecar struct with builders + a sensible default
+//! keeps the call-site terse
+//! (`VerticalScrollbarStyle::material(VIEWPORT_H, TAG)`)
+//! and leaves room for future axes (hover hit-zone width, thumb
+//! corner radius, track corner radius) without breaking the call-
+//! sites that exist today (additive only, behind `#[non_exhaustive]`).
+//!
+//! ## Theme role mapping (M3 canonical)
+//!
+//! | Element | `ColorRole`                  | Why                              |
+//! |---------|------------------------------|----------------------------------|
+//! | Track   | `SurfaceContainerHighest`    | M3 "inactive container" tier     |
+//! | Thumb   | `Outline`                    | M3 hairline / divider weight     |
+//!
+//! Mirrors the role mapping `hello-listbox` already landed at Round
+//! 577 ([[m3-surface-tier-expansion]]) — the helper inherits the
+//! exact same M3 mapping so a palette swap from anywhere in the
+//! application repaints both bindings' scrollbars in lock-step
+//! without diverging RGB values.
+//!
+//! ## Edge case: first-paint `max_y == 0`
+//!
+//! `ScrollState::max` returns `0` on the first paint (the layout pass
+//! writes the real max *after* the first view runs). The
+//! [`scrollbar_thumb_rect`](pinion_core::widgets::scrollbar::scrollbar_thumb_rect)
+//! helper's `content_extent <= viewport_extent` branch then fills
+//! the thumb to the full track — the textbook "nothing to scroll"
+//! rendering. R55.G.24 [[signal-batch-atomic-multi-axis-update]] /
+//! `set_max` Signal-batches, so the next paint re-runs the view fn
+//! with the freshly-written max and the thumb snaps to its correct
+//! size on frame 2. The helper guards against signed-arithmetic
+//! pitfalls via `u32::try_from(max_y.max(0))` so a future
+//! `ScrollState::max` representation change cannot corrupt the
+//! geometry.
+
+use std::rc::Rc;
+
+use pinion_core::scene::{ContainerNode, Rect, Scene};
+use pinion_core::style::{BoxStyle, LayoutStyle, Size};
+use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::scrollbar::{scrollbar_thumb_rect, ScrollBarOrientation};
+
+/// (R659 §5.45) Sidecar carrying the binding-local sizing constants
+/// for [`view_vertical_scrollbar`]. `#[non_exhaustive]` so future
+/// rounds can add axes (e.g. `hover_zone_w`, `thumb_corner_radius`)
+/// behind builders without breaking the constructor surface.
+///
+/// Use [`Self::material`] for the M3-canonical 8-px gutter + 24-px
+/// thumb floor — the default the R55.D.4 hello-listbox first-client
+/// established and the R659 todomvc consumer inherits unchanged.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
+pub struct VerticalScrollbarStyle {
+    /// Vertical viewport extent of the paired
+    /// [`ScrollNode`](pinion_core::scene::ScrollNode) — feeds the
+    /// track height + the thumb-extent ratio derivation in
+    /// [`scrollbar_thumb_rect`].
+    pub viewport_h: u32,
+    /// Track width along the cross axis. Material / web canonical
+    /// is 8 px for desktop-class UIs; touch interfaces may bump to
+    /// 12+ via a future axis.
+    pub gutter_w: u32,
+    /// Minimum thumb extent (Material/UIKit floor convention is
+    /// 24 px). Setting to `0` reverts to strict ratio-of-content
+    /// thumb size, which lets the thumb vanish for very long
+    /// content — useful for unit-test math verification but not
+    /// recommended for production.
+    pub min_thumb: u32,
+    /// Paint-side tag attached to the outer track
+    /// [`Scene::Container`] so the
+    /// [`InputRouter`](pinion_runtime::InputRouter) hit-test routes
+    /// pointer events on the track / thumb to the matching
+    /// [`ScrollBarExternal`](pinion_core::widgets::scrollbar::ScrollBarExternal)
+    /// registered through
+    /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals).
+    /// Must match the tag the application registers the external
+    /// under, or the drag wire stays inert (paint-only mode).
+    pub tag: &'static str,
+}
+
+impl VerticalScrollbarStyle {
+    /// (R659 §5.45) M3-canonical default: 8-px gutter + 24-px thumb
+    /// floor, matching the R55.D.4 hello-listbox first-client. The
+    /// caller supplies the viewport height (binding-local) + the
+    /// paint-side tag (must match the application's
+    /// `create_extra_externals` registration).
+    #[must_use]
+    pub const fn material(viewport_h: u32, tag: &'static str) -> Self {
+        Self {
+            viewport_h,
+            gutter_w: 8,
+            min_thumb: 24,
+            tag,
+        }
+    }
+
+    /// Override the gutter width. Useful for touch-tuned interfaces
+    /// where 8 px is too thin to hit reliably with a finger
+    /// (Material guidance recommends ≥ 12 px on touch surfaces).
+    #[must_use]
+    pub const fn with_gutter_w(mut self, gutter_w: u32) -> Self {
+        self.gutter_w = gutter_w;
+        self
+    }
+
+    /// Override the thumb-floor. Defaults to 24 px (Material /
+    /// `UIKit` grabbable floor). Set to `0` to disable the floor
+    /// (thumb scales linearly with viewport/content ratio).
+    #[must_use]
+    pub const fn with_min_thumb(mut self, min_thumb: u32) -> Self {
+        self.min_thumb = min_thumb;
+        self
+    }
+}
+
+/// (R659 §5.45) Backend-agnostic vertical scrollbar peer composition.
+///
+/// Reads `(offset_y, max_y)` off the shared
+/// [`ScrollState`](pinion_core::widgets::scroll::ScrollState),
+/// derives the thumb rectangle via
+/// [`scrollbar_thumb_rect`](pinion_core::widgets::scrollbar::scrollbar_thumb_rect)
+/// (R55.D.1 closed-form helper), and composites the result as a
+/// single absolute-positioned thumb [`Scene::Container`] inside an
+/// outer track [`Scene::Container`] filled with
+/// [`ColorRole::SurfaceContainerHighest`]. The outer container
+/// carries [`VerticalScrollbarStyle::tag`] so the input router
+/// resolves pointer events to the matching
+/// [`ScrollBarExternal`](pinion_core::widgets::scrollbar::ScrollBarExternal).
+///
+/// ## Drag-able wire
+///
+/// The visible peer is **paint-only**. To make the thumb drag-able
+/// the binding must register a
+/// [`ScrollBarExternal::new().attach_state(scroll_state.clone())`](pinion_core::widgets::scrollbar::ScrollBarExternal)
+/// through [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
+/// tagged with the same [`VerticalScrollbarStyle::tag`]. The shared
+/// [`ScrollState`] handle threads the
+/// [`InputRouter`](pinion_runtime::InputRouter)'s
+/// `ScrollBarExternal::pointer_move` → `ScrollState::scroll_to` →
+/// next-paint cycle.
+///
+/// ## Substrate inheritance
+///
+/// Identical M3 role mapping the R55.D.4 hello-listbox first-client
+/// landed at Round 577; identical thumb geometry the R55.D.1 closed-
+/// form helper produces; identical absolute-position substrate the
+/// R55.D.6 [[absolute-position-via-layoutstyle]] memory pinned. No
+/// semantic divergence vs the pre-R659 hello-listbox-local helper —
+/// the binding migration is bit-identical at the paint scene shape.
+///
+/// # Panics
+///
+/// Never panics: the [`u32::try_from`] guards saturate negative
+/// `max_y` to `0` (matches the "nothing to scroll" branch), and the
+/// [`saturating_add`](u32::saturating_add) prevents content-extent
+/// overflow on pathological 4 GB scroll content (`u32::MAX` viewport
+/// + max).
+#[must_use]
+pub fn view_vertical_scrollbar(
+    scroll_state: &Rc<ScrollState>,
+    theme: &Theme,
+    style: &VerticalScrollbarStyle,
+) -> Scene {
+    let (_, offset_y) = scroll_state.offset();
+    let (_, max_y) = scroll_state.max();
+    let track_rect = Rect::new(0, 0, style.gutter_w, style.viewport_h);
+    // [`ScrollState::max`] returns `content_extent − viewport_extent`,
+    // so `content_extent = viewport_extent + max`. First-frame
+    // `max_y == 0` → thumb fills the track ("nothing to scroll");
+    // R55.G.24 [[signal-batch-atomic-multi-axis-update]] writes the
+    // real max on the next paint, the view fn re-runs, the thumb
+    // snaps to size.
+    let max_y_nonneg = u32::try_from(max_y.max(0)).unwrap_or(0);
+    let content_extent = style.viewport_h.saturating_add(max_y_nonneg);
+    let scroll_offset = u32::try_from(offset_y.max(0)).unwrap_or(0);
+    let geom = scrollbar_thumb_rect(
+        ScrollBarOrientation::Vertical,
+        track_rect,
+        style.viewport_h,
+        content_extent,
+        scroll_offset,
+        style.min_thumb,
+    );
+
+    // `thumb.y - track.y` is the offset of the thumb's top edge from
+    // the track origin. Fed into [`LayoutStyle::with_absolute_position`]
+    // (R55.D.6 [[absolute-position-via-layoutstyle]]) so the thumb
+    // lands at `(0, thumb_y_offset)` inside the track without a flex
+    // helper.
+    let thumb_y_offset = geom.thumb.y.saturating_sub(geom.track.y);
+    let thumb_h = geom.thumb.h;
+
+    let thumb = Scene::Container(
+        ContainerNode::new(vec![])
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::Outline))
+                    .with_corner_radius(2),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(style.gutter_w, thumb_h))
+                    .with_absolute_position(0, thumb_y_offset),
+            ),
+    );
+
+    Scene::Container(
+        ContainerNode::new(vec![thumb])
+            .with_tag(style.tag)
+            .with_style(BoxStyle::filled(
+                theme.resolve(ColorRole::SurfaceContainerHighest),
+            ))
+            .with_layout(LayoutStyle::new().with_size(Size::px(style.gutter_w, style.viewport_h))),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    //! R659 §5.45 — scrollbar lift unit tests. Pin the four invariants
+    //! the hello-listbox + todomvc consumers share through the lifted
+    //! helper:
+    //!
+    //! 1. **Paint shape**: outer track Container carries `tag` + 1
+    //!    child (thumb), thumb has `absolute_position` set.
+    //! 2. **First-frame max == 0**: thumb fills the full track
+    //!    (`absolute_position == (0, 0)` + `size.h == viewport_h`).
+    //! 3. **Mid-scroll max != 0**: thumb partial extent + offset
+    //!    matches the R55.D.1 closed-form derivation.
+    //! 4. **Theme role mapping**: track fill = `SurfaceContainerHighest`;
+    //!    thumb fill = `Outline`. Tested against both Light + Dark
+    //!    palettes so a future palette tweak doesn't regress the role
+    //!    pointer.
+
+    use super::{view_vertical_scrollbar, VerticalScrollbarStyle};
+    use pinion_core::reactive::Owner;
+    use pinion_core::scene::Scene;
+    use pinion_core::style::Size;
+    use pinion_core::theme::Theme;
+    use pinion_core::widgets::scroll::use_scroll_state;
+    use std::rc::Rc;
+
+    const TEST_TAG: &str = "test_scrollbar";
+    const TEST_VIEWPORT_H: u32 = 200;
+
+    fn run<R>(f: impl FnOnce() -> R) -> R {
+        Owner::new().run(f)
+    }
+
+    #[test]
+    fn r659_material_default_sets_8px_gutter_24px_floor() {
+        let s = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
+        assert_eq!(s.viewport_h, TEST_VIEWPORT_H);
+        assert_eq!(s.gutter_w, 8);
+        assert_eq!(s.min_thumb, 24);
+        assert_eq!(s.tag, TEST_TAG);
+    }
+
+    #[test]
+    fn r659_with_gutter_w_overrides() {
+        let s = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG)
+            .with_gutter_w(12);
+        assert_eq!(s.gutter_w, 12);
+    }
+
+    #[test]
+    fn r659_with_min_thumb_overrides() {
+        let s = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG)
+            .with_min_thumb(48);
+        assert_eq!(s.min_thumb, 48);
+    }
+
+    #[test]
+    fn r659_first_frame_thumb_fills_track_when_max_is_zero() {
+        run(|| {
+            let scroll_state = use_scroll_state("r659_scrollbar_test_a");
+            // Fresh state: offset=0 max=0 → "nothing to scroll" branch
+            // → thumb fills the track.
+            let theme = Theme::light();
+            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
+            let scene = view_vertical_scrollbar(&scroll_state, &theme, &style);
+
+            let Scene::Container(track) = scene else {
+                panic!("top-level must be a track Container");
+            };
+            assert_eq!(track.tag.as_deref(), Some(TEST_TAG));
+            assert_eq!(track.children.len(), 1, "track has only the thumb child");
+            assert_eq!(track.layout.size, Size::px(style.gutter_w, style.viewport_h));
+
+            let Scene::Container(thumb) = &track.children[0] else {
+                panic!("thumb must be a Container");
+            };
+            let (left, top) = thumb
+                .layout
+                .absolute_position
+                .expect("thumb declares absolute_position (R55.D.6)");
+            assert_eq!(left, 0, "thumb hugs left edge of track");
+            assert_eq!(top, 0, "max=0 → thumb at track origin");
+            assert_eq!(
+                thumb.layout.size.height,
+                Size::px(style.gutter_w, style.viewport_h).height,
+                "max=0 → thumb extends full track height",
+            );
+        });
+    }
+
+    #[test]
+    fn r659_mid_scroll_thumb_partial_extent() {
+        run(|| {
+            let scroll_state = use_scroll_state("r659_scrollbar_test_b");
+            // Declare a max bound + offset so the thumb shrinks +
+            // shifts. content = viewport + max = 200 + 800 = 1000;
+            // thumb_extent = floor(200 * 200 / 1000) = 40, clamped to
+            // min_thumb = 40 (already >= 24). Offset 200 of 800 →
+            // thumb_pos = (200 - 40) * 200 / 800 = 40.
+            scroll_state.set_max(0, 800);
+            scroll_state.scroll_to(0, 200);
+
+            let theme = Theme::light();
+            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
+            let scene = view_vertical_scrollbar(&scroll_state, &theme, &style);
+
+            let Scene::Container(track) = scene else {
+                panic!("top-level Container expected");
+            };
+            let Scene::Container(thumb) = &track.children[0] else {
+                panic!("thumb Container expected");
+            };
+            let (_, thumb_top) = thumb
+                .layout
+                .absolute_position
+                .expect("thumb absolute_position set");
+            // R659 — closed-form: thumb_extent=40, scroll_max=800,
+            // offset=200 → thumb_top = (200-40) * 200 / 800 = 40
+            assert_eq!(thumb_top, 40, "thumb shifted down to mid-scroll position");
+        });
+    }
+
+    #[test]
+    fn r659_track_fill_uses_surface_container_highest_role() {
+        run(|| {
+            let scroll_state = use_scroll_state("r659_scrollbar_test_c");
+            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
+            for theme in [Theme::light(), Theme::dark()] {
+                let scene = view_vertical_scrollbar(&scroll_state, &theme, &style);
+                let Scene::Container(track) = &scene else {
+                    panic!("track Container");
+                };
+                assert_eq!(
+                    track.style.fill,
+                    theme.surface_container_highest,
+                    "track fill = SurfaceContainerHighest (M3 canonical, both palettes)",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r659_thumb_fill_uses_outline_role() {
+        run(|| {
+            let scroll_state = use_scroll_state("r659_scrollbar_test_d");
+            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
+            for theme in [Theme::light(), Theme::dark()] {
+                let scene = view_vertical_scrollbar(&scroll_state, &theme, &style);
+                let Scene::Container(track) = &scene else {
+                    panic!("track");
+                };
+                let Scene::Container(thumb) = &track.children[0] else {
+                    panic!("thumb");
+                };
+                assert_eq!(
+                    thumb.style.fill,
+                    theme.outline,
+                    "thumb fill = Outline (M3 canonical hairline / divider weight)",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r659_custom_gutter_propagates_to_track_size_and_thumb_width() {
+        run(|| {
+            let scroll_state = use_scroll_state("r659_scrollbar_test_e");
+            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG)
+                .with_gutter_w(12);
+            let scene = view_vertical_scrollbar(&scroll_state, &Theme::light(), &style);
+            let Scene::Container(track) = &scene else {
+                panic!("track");
+            };
+            assert_eq!(track.layout.size, Size::px(12, TEST_VIEWPORT_H));
+            let Scene::Container(thumb) = &track.children[0] else {
+                panic!("thumb");
+            };
+            assert_eq!(
+                thumb.layout.size.width,
+                Size::px(12, 0).width,
+                "thumb width matches custom gutter",
+            );
+        });
+    }
+
+    #[test]
+    fn r659_helper_accepts_rc_scroll_state_by_reference() {
+        // Substrate signature contract: `&Rc<ScrollState>` so callers
+        // can pass a cached state without cloning the Rc just to feed
+        // the helper. Compiles iff signature stays this way.
+        run(|| {
+            let scroll_state: Rc<pinion_core::widgets::scroll::ScrollState> =
+                use_scroll_state("r659_scrollbar_test_f");
+            let style = VerticalScrollbarStyle::material(TEST_VIEWPORT_H, TEST_TAG);
+            let _ = view_vertical_scrollbar(&scroll_state, &Theme::light(), &style);
+            // After the call, `scroll_state` is still owned by the
+            // caller — no move / consume.
+            let _again = view_vertical_scrollbar(&scroll_state, &Theme::dark(), &style);
+        });
+    }
+}

@@ -2,6 +2,7 @@ pub mod animation;
 pub mod app;
 pub mod clipboard;
 pub mod command;
+pub mod composite_tag;
 pub mod event;
 pub mod external;
 pub mod frame;

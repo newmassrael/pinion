@@ -93,6 +93,11 @@ use std::rc::Rc;
 
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
 use pinion_platform_clipboard::ArboardClipboard;
+// R659 §5.16 §5.35 — lifted composite-tag parser shared by every
+// `<key>:<EventName>` send-payload consumer
+// (TodoDeleteExternal / TodoToggleExternal / TodoFilterExternal —
+// 3-of-3 Rule of Three fired per [[abstraction-needs-second-consumer]]).
+use pinion_core::composite_tag::parse_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, IntrospectSchema,
     IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
@@ -100,11 +105,15 @@ use pinion_core::external::{
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::scroll::use_scroll_state;
+// R659 §5.45 — ScrollBarExternal sibling registered through
+// `create_extra_externals` so the visible scrollbar peer becomes
+// drag-able (4th ExtraExternal after delete + toggle + filter).
+use pinion_core::widgets::scrollbar::ScrollBarExternal;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
@@ -116,6 +125,12 @@ use pinion_text::CaretRect;
 // hello-textfield (2nd consumer reached per
 // [[abstraction-needs-second-consumer]]).
 use pinion_widget_paint::text_field as tf_paint;
+// R659 §5.45 — lifted vertical scrollbar peer substrate shared with
+// hello-listbox (2nd consumer reached). One M3 role mapping
+// (SurfaceContainerHighest track + Outline thumb), one closed-form
+// thumb geometry, one absolute-position composition across both
+// bindings.
+use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 
 // pinion-forge codegen output. Defines `pub struct TodoMvcRenderer`
 // + async `new<W: Into<wgpu::SurfaceTarget<'static>>>` + sync
@@ -231,6 +246,188 @@ const TOGGLE_GLYPH_UNCHECKED: &str = "\u{2610}";
 /// parley/swash shaping draws this without needing a custom SVG
 /// asset.
 const TOGGLE_GLYPH_CHECKED: &str = "\u{2611}";
+
+/// (R659 §5.16) Singleton paint + state tag for the filter-mode
+/// handler. Registered via [`WidgetCore::create_extra_externals`]
+/// as the **3rd** sibling [`ExtraExternal`] alongside
+/// [`TodoDeleteExternal`] and [`TodoToggleExternal`]. The state
+/// scene then composes as
+/// `Scene::Container([primary_textfield, todo_delete, todo_toggle,
+/// todo_filter, todo_scrollbar])` per R55.D.5 §5.45 — multi-External
+/// lookup walks [`Scene::find_external_with_tag`] so the read-side
+/// shape-agnostic helpers (R55.D.5 cascade lesson) reach the
+/// primary textfield unchanged.
+///
+/// 3rd consumer of `create_extra_externals` at the framework level
+/// (1st = `hello-listbox` listbox + scrollbar, 2nd = R658 todomvc
+/// delete + toggle, 3rd = R659 todomvc delete + toggle + filter +
+/// scrollbar). The substrate already supports arbitrary
+/// `Vec<ExtraExternal>` so the addition stays substrate-clean.
+///
+/// Wire form mirrors [`DELETE_TAG`] / [`TOGGLE_TAG`]:
+/// - Paint scene emits `Scene::Container { tag: "todo_filter#<i>" }`
+///   for `i ∈ {0, 1, 2}` (one per [`FilterMode`] discriminant).
+/// - [`InputRouter`]'s `dispatch_send` splits the tag on `#` and
+///   forwards the sub-index `<i>` as part of `invoke("send",
+///   "<i>:PointerDown")`.
+/// - The direct RPC route `scene/invoke {path: "/external/todo_filter",
+///   method: "set", args: <i>}` reaches `invoke("set", Int(<i>))`
+///   and produces the same `Signal::set` mutation.
+const FILTER_TAG: &str = "todo_filter";
+
+/// (R659 §5.16) Per-filter button paint tag prefix. Full per-button
+/// tag is `"todo_filter#<i>"`. Mirrors [`DELETE_TAG_PREFIX`] +
+/// [`TOGGLE_TAG_PREFIX`].
+const FILTER_TAG_PREFIX: &str = "todo_filter";
+
+/// (R659 §5.45) Singleton tag for the visible scrollbar peer +
+/// matching [`ScrollBarExternal`]. Registered as the **4th**
+/// `ExtraExternal` so the user can drag the visible thumb to
+/// scroll the todo list (R658 honest carry: pre-R659 wheel-only
+/// scroll). Shares [`LIST_SCROLL_KEY`]'s `Rc<ScrollState>` with
+/// the [`ScrollNode`] so wheel / keyboard / drag all converge on
+/// the same reactive offset.
+const SCROLLBAR_TAG: &str = "todo_scrollbar";
+
+/// (R659 §5.16) Filter button width — sized to comfortably host the
+/// `"Active"` / `"Completed"` / `"All"` labels at the chosen font
+/// size with horizontal padding. The 3 buttons stack flex Row so
+/// the binding-side width plus inter-button gap define the filter
+/// row width; the row sits centred in the textfield column.
+const FILTER_BUTTON_W: u32 = 92;
+/// (R659 §5.16) Filter button height. WCAG 2.5.5 AAA target-size
+/// floor (24×24 px), bumped to 32 px for desktop comfort.
+const FILTER_BUTTON_H: u32 = 32;
+/// (R659 §5.16) Filter button font size — matches the row text size
+/// (14 px) so the chrome reads as a peer of the list content.
+const FILTER_FONT_SIZE_PX: u32 = 13;
+/// (R659 §5.16) Inter-button gap in the filter row, matching
+/// [`LIST_ITEM_GAP`] for visual consistency with the list rows
+/// below.
+const FILTER_BUTTON_GAP: u32 = 6;
+
+/// (R659 §5.16) [`Owner::cache`] key for the reactive
+/// `Rc<Signal<FilterMode>>` carrying the current filter selection.
+/// Symmetric with [`TODOS_KEY`] / [`NEXT_ID_KEY`] / [`LIST_SCROLL_KEY`]
+/// — the [`use_filter`] hook resolves through this key, and
+/// [`TodoFilterExternal`] (R659) constructs with a `clone()` of the
+/// same `Rc` so paint subscriptions and dispatch mutations share
+/// one store.
+const FILTER_KEY: &str = "todomvc.filter";
+
+/// (R659 §5.16) The three filter modes the `TasteJS` `TodoMVC`
+/// reference canonicalises: show only un-completed items, show only completed
+/// items, or show every item. `#[non_exhaustive]` per the §5.50
+/// `[[r590-colorrole-error-tier]]` pattern so future enrichment
+/// (e.g. "Archived", "Starred") stays additive without breaking
+/// `match` arms in downstream RPC clients.
+///
+/// Discriminant assignment is **canonical** — index 0 = Active,
+/// 1 = Completed, 2 = All. This matches the `TasteJS` visual order
+/// (Active / Completed / All — left-to-right in the filter bar)
+/// and the composite-tag wire (`todo_filter#0` selects Active, etc.).
+/// AI-side clients can use either the integer discriminant
+/// (`scene/invoke {method: "set", args: 0}`) or the symbolic name
+/// (`scene/invoke {method: "set-named", args: "Active"}` — R670+
+/// carry; today only integer dispatch is wired).
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FilterMode {
+    /// Only entries whose `completed` flag is `false`.
+    Active,
+    /// Only entries whose `completed` flag is `true`.
+    Completed,
+    /// Every entry (filter inactive — default at boot).
+    All,
+}
+
+impl FilterMode {
+    /// (R659 §5.16) The default filter on app launch — show
+    /// everything. Mirrors the `TasteJS` `TodoMVC` reference and the
+    /// macOS / iOS Reminders defaults; no entry is hidden until
+    /// the user opts in to filtering.
+    #[must_use]
+    pub const fn default_mode() -> Self {
+        Self::All
+    }
+
+    /// (R659 §5.16) Resolve the canonical
+    /// `0 → Active / 1 → Completed / 2 → All` mapping the
+    /// composite-tag wire + filter button order both follow.
+    /// Returns `None` for out-of-range indices so the
+    /// `invoke("send", "<i>:PointerDown")` arm collapses unknown
+    /// indices into [`InvokeError::Rejected`] without panic.
+    #[must_use]
+    pub const fn from_index(idx: usize) -> Option<Self> {
+        match idx {
+            0 => Some(Self::Active),
+            1 => Some(Self::Completed),
+            2 => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    /// (R659 §5.16) Inverse of [`Self::from_index`]. Returns the
+    /// canonical discriminant for the wire-form / paint-tag suffix.
+    #[must_use]
+    pub const fn to_index(self) -> usize {
+        match self {
+            Self::Active => 0,
+            Self::Completed => 1,
+            Self::All => 2,
+        }
+    }
+
+    /// (R659 §5.16) Predicate: does this filter retain the given
+    /// item? Used by [`build_todos_list`] to derive the visible list
+    /// from the full `Vec<TodoItem>`.
+    #[must_use]
+    pub const fn matches(self, item: &TodoItem) -> bool {
+        match self {
+            Self::Active => !item.completed,
+            Self::Completed => item.completed,
+            Self::All => true,
+        }
+    }
+
+    /// (R659 §5.16) Human-readable label for the segmented filter
+    /// button — kept on the enum so the paint pass + the a11y
+    /// emitter agree on the exact string the screen reader
+    /// announces. Localisation lift is a future axis; for R659 the
+    /// English literals match the `TasteJS` reference.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Completed => "Completed",
+            Self::All => "All",
+        }
+    }
+}
+
+/// (R659 §5.16) `Owner::cache`-keyed hook returning the shared
+/// `Rc<Signal<FilterMode>>` carrying the current filter selection.
+/// Symmetric with [`use_todos`] / [`use_next_todo_id`] — the
+/// `Owner::cache` dedup guarantees one `Rc` across (a) the view
+/// fn (subscribes via `.get()` to re-run paint on filter changes),
+/// (b) [`TodoFilterExternal::new`] (constructs with a clone of this
+/// `Rc` so dispatch mutations land on the same store), and (c)
+/// `access_node` (reads the current mode to emit the right
+/// `aria-checked` flags on the filter radio buttons).
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope. The
+/// substrate's framework `root_owner.run` wrap covers every
+/// runtime invocation site (view fn, `create_extra_externals`,
+/// `access_node`), so this only fires under unit tests that forget
+/// the `with_owner` helper.
+#[must_use]
+pub fn use_filter() -> Rc<Signal<FilterMode>> {
+    Owner::current()
+        .expect("use_filter requires an active Owner scope")
+        .cache(FILTER_KEY, || Signal::new(FilterMode::default_mode()))
+}
 
 /// (R658 §5.16) [`Owner::cache`] key for the reactive [`ScrollState`]
 /// owning the todo list's vertical scroll offset + max-y bound.
@@ -645,17 +842,75 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // shape, the wrapper lifts to a `view_scroll_list` helper.
     let todos = use_todos();
     let entries: Vec<TodoItem> = todos.get();
-    let todos_list_content = build_todos_list(&theme, &entries);
+
+    // (R659 §5.16) Active filter mode — view fn auto-subscribes via
+    // `Signal::get()` so a [`TodoFilterExternal::set_filter`] from
+    // anywhere (a paint-side button click via the composite-tag wire
+    // OR an AI client `invoke("set", Int(<i>))`) re-runs paint with
+    // the new visible subset on the next frame.
+    let filter_mode = use_filter().get();
+
+    // (R659 §5.16) Derived visible list — pure
+    // `entries.into_iter().filter(...)`. No `Computed` / memoization
+    // primitive because (a) the per-paint cost is O(n) over a
+    // typically-small list, and (b) `Computed` would add subscription
+    // bookkeeping for negligible savings. A 1000-entry stress test
+    // is a future axis if performance reports surface a hot path.
+    let visible: Vec<TodoItem> = entries
+        .iter()
+        .filter(|item| filter_mode.matches(item))
+        .cloned()
+        .collect();
+
+    // (R659 §5.16) Segmented filter button row — Active / Completed /
+    // All in canonical TasteJS TodoMVC left-to-right order. Each
+    // button tagged `todo_filter#<i>` so the R51.42 §5.35 composite-
+    // tag wire routes pointer events into the singleton
+    // [`TodoFilterExternal`] (3rd `ExtraExternal`). Active mode gets
+    // [`ColorRole::Accent`] fill + [`ColorRole::OnAccent`] label;
+    // inactive modes get transparent fill + [`ColorRole::Outline`]
+    // border + [`ColorRole::OnSurface`] label.
+    let filter_row = build_filter_row(&theme, filter_mode);
+
+    // (R659 §5.16) Filtered-list content + header. `build_todos_list`
+    // receives the **visible** subset (post-filter); the header text
+    // reports both the visible count and the total so the user
+    // distinguishes "1 of 3 active" (filter hiding rows) from
+    // "1 of 1 total".
+    let todos_list_content = build_todos_list(&theme, &visible, filter_mode, entries.len());
 
     let scroll_state = use_scroll_state(LIST_SCROLL_KEY);
     let todos_scroll = Scene::Scroll(ScrollNode::from_state(
-        scroll_state,
+        scroll_state.clone(),
         Rect::new(0, 0, LIST_VIEWPORT_W, LIST_VIEWPORT_H),
         todos_list_content,
     ));
 
+    // (R659 §5.45) Visible scrollbar peer — lifted helper composites
+    // an M3 track + thumb from the shared `Rc<ScrollState>`. The
+    // [`SCROLLBAR_TAG`] hits-tests through to [`ScrollBarExternal`]
+    // (4th `ExtraExternal`) so a drag on the visible thumb captures
+    // the pointer and writes `ScrollState::scroll_to` directly.
+    // R658 honest-carry payment: pre-R659 the todo list scrolled
+    // under wheel only; R659 closes the AT + mouse-drag wire.
+    let scrollbar_style = VerticalScrollbarStyle::material(LIST_VIEWPORT_H, SCROLLBAR_TAG);
+    let scrollbar_visual =
+        view_vertical_scrollbar(&scroll_state, &theme, &scrollbar_style);
+
+    // (R659 §5.45) Scroll region — flex Row laying the list +
+    // scrollbar peer side-by-side. Mirrors hello-listbox's
+    // R55.G.17 / R55.D.4 substrate composition. The wrapper carries
+    // [`LIST_TAG`] so paint-side queries that previously addressed
+    // the list container resolve to the same logical region (the
+    // inner Scroll's content carries no tag — the visible-by-tag
+    // shape stays the LIST_TAG container's children).
+    let scroll_region = Scene::Container(
+        ContainerNode::new(vec![todos_scroll, scrollbar_visual])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+    );
+
     Scene::Container(
-        ContainerNode::new(vec![title, field, status, todos_scroll])
+        ContainerNode::new(vec![title, field, status, filter_row, scroll_region])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
@@ -663,6 +918,81 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
                     .with_justify(JustifyContent::Center)
                     .with_align_items(AlignItems::Center)
                     .with_gap(ROW_GAP),
+            ),
+    )
+}
+
+/// (R659 §5.16) Build the 3-button segmented filter row. Each button
+/// carries the composite-tag `todo_filter#<i>` (`i` = canonical
+/// [`FilterMode`] discriminant) so the [`InputRouter`]'s R51.42
+/// §5.35 composite-tag wire routes pointer events into the singleton
+/// [`TodoFilterExternal`].
+///
+/// Visual axis (Material-3 segmented button single-select):
+///
+/// * Active segment (`mode == current`): solid
+///   [`ColorRole::Accent`] fill + [`ColorRole::OnAccent`] label,
+///   no border. Reads as "this filter is engaged".
+/// * Inactive segment: transparent fill + 1-px
+///   [`ColorRole::Outline`] border + [`ColorRole::OnSurface`]
+///   label. Reads as "this filter is available but not engaged".
+///
+/// Single-source-of-truth label text comes from [`FilterMode::label`]
+/// so the screen-reader announcement (via
+/// [`enrich_names_from_scene`]) and the visible text never diverge.
+fn build_filter_row(theme: &Theme, current: FilterMode) -> Scene {
+    let modes = [FilterMode::Active, FilterMode::Completed, FilterMode::All];
+    let on_accent = theme.resolve(ColorRole::OnAccent);
+    let accent = theme.resolve(ColorRole::Accent);
+    let on_surface = theme.resolve(ColorRole::OnSurface);
+    let outline = theme.resolve(ColorRole::Outline);
+    let transparent = Color::rgba(0, 0, 0, 0);
+
+    let buttons: Vec<Scene> = modes
+        .iter()
+        .map(|&mode| {
+            let active = mode == current;
+            let (fill, label_color, border) = if active {
+                (accent, on_accent, None)
+            } else {
+                (transparent, on_surface, Some(Border::new(outline, 1)))
+            };
+            let mut style = BoxStyle::filled(fill).with_corner_radius(4);
+            if let Some(b) = border {
+                style = style.with_border(b);
+            }
+            let label = Scene::Text(TextNode::styled(
+                mode.label(),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(FILTER_FONT_SIZE_PX)
+                    .with_fg(label_color),
+            ));
+            let button_tag = format!("{FILTER_TAG_PREFIX}#{}", mode.to_index());
+            Scene::Container(
+                ContainerNode::new(vec![label])
+                    .with_tag(button_tag)
+                    .with_style(style)
+                    .with_aria_label(mode.label())
+                    .with_layout(
+                        LayoutStyle::new()
+                            .flex(FlexDirection::Row)
+                            .with_justify(JustifyContent::Center)
+                            .with_align_items(AlignItems::Center)
+                            .with_size(Size::px(FILTER_BUTTON_W, FILTER_BUTTON_H)),
+                    ),
+            )
+        })
+        .collect();
+
+    Scene::Container(
+        ContainerNode::new(buttons)
+            .with_tag(FILTER_TAG)
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(FILTER_BUTTON_GAP),
             ),
     )
 }
@@ -743,23 +1073,6 @@ impl TodoDeleteExternal {
         });
     }
 
-    /// Parse the R51.42 §5.35 composite-tag send payload
-    /// `"<id>:<EventName>"` into `(id, event_name)`. Returns `None`
-    /// when the wire-form is malformed (missing `:`, non-integer
-    /// sub-index, or empty event name) — the dispatcher then yields
-    /// [`InvokeError::Rejected`] to the caller. Matches the
-    /// [`RadioGroupExternal`] R51.43 wire-format convention exactly
-    /// so AI-side scripts that already know the composite-tag idiom
-    /// (e.g. `tools/demos/hello_listbox_row_click.py`) don't need
-    /// to learn a new shape for the R656 delete path.
-    fn parse_send_payload(payload: &str) -> Option<(u64, &str)> {
-        let (id_str, event_name) = payload.split_once(':')?;
-        if event_name.is_empty() {
-            return None;
-        }
-        let id: u64 = id_str.parse().ok()?;
-        Some((id, event_name))
-    }
 }
 
 impl External for TodoDeleteExternal {
@@ -879,8 +1192,9 @@ impl ExternalIntrospect for TodoDeleteExternal {
             // for a routine paint cycle.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name) = Self::parse_send_payload(payload)
-                        .ok_or(InvokeError::Rejected)?;
+                    // R659 §5.16 §5.35 — lifted helper.
+                    let (id, event_name): (u64, &str) =
+                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "PointerDown" {
                         let was_present = self
                             .todos
@@ -1008,21 +1322,6 @@ impl TodoToggleExternal {
         });
     }
 
-    /// Mirror of [`TodoDeleteExternal::parse_send_payload`] — kept as
-    /// a private helper rather than a shared free fn because R658 is
-    /// the **2nd** consumer of the composite-tag parse idiom and
-    /// `[[abstraction-needs-second-consumer]]` reads the substantive
-    /// 5-LOC body as **not yet** a substrate lift candidate (a 3rd
-    /// consumer — R660+ edit / a 4th composed app — would trigger
-    /// the lift into `pinion_core::composite_tag::parse_send_payload`).
-    fn parse_send_payload(payload: &str) -> Option<(u64, &str)> {
-        let (id_str, event_name) = payload.split_once(':')?;
-        if event_name.is_empty() {
-            return None;
-        }
-        let id: u64 = id_str.parse().ok()?;
-        Some((id, event_name))
-    }
 }
 
 impl External for TodoToggleExternal {
@@ -1133,8 +1432,9 @@ impl ExternalIntrospect for TodoToggleExternal {
             // [`TodoDeleteExternal::invoke`].
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name) = Self::parse_send_payload(payload)
-                        .ok_or(InvokeError::Rejected)?;
+                    // R659 §5.16 §5.35 — lifted helper.
+                    let (id, event_name): (u64, &str) =
+                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "PointerDown" {
                         let was_present = self
                             .todos
@@ -1182,6 +1482,203 @@ impl ExternalIntrospect for TodoToggleExternal {
     }
 }
 
+/// (R659 §5.16) Singleton filter-mode handler. Registered via
+/// [`WidgetCore::create_extra_externals`] as the **3rd** sibling
+/// [`ExtraExternal`] alongside [`TodoDeleteExternal`] and
+/// [`TodoToggleExternal`]. Owns the shared `Rc<Signal<FilterMode>>`
+/// the view fn resolves through [`use_filter`] — every mutation
+/// writes the same store the paint subscribes to, so a button click
+/// (or a direct RPC `invoke("set", Int(<i>))`) re-renders the list
+/// with the new visible subset on the next frame.
+///
+/// Wire format mirrors [`TodoDeleteExternal`] / [`TodoToggleExternal`]:
+///
+/// - Paint emits `Scene::Container { tag: "todo_filter#<i>" }` for
+///   `i ∈ {0, 1, 2}` (one per [`FilterMode`] discriminant).
+/// - [`InputRouter`]'s `dispatch_send` splits on `#` and forwards the
+///   sub-index `<i>` as part of `invoke("send", "<i>:PointerDown")`.
+/// - This External parses the wire form via the lifted
+///   [`parse_send_payload`] helper (R659 3-of-3 consumer), narrows
+///   `<i>` back to [`FilterMode`] via [`FilterMode::from_index`], and
+///   calls [`Signal::set`] on the underlying store.
+///
+/// ## Why a separate External, not the existing
+/// [`TodoDeleteExternal`] / [`TodoToggleExternal`]
+///
+/// The three Externals mutate three different reactive stores
+/// (`Vec<TodoItem>` for delete + toggle; `FilterMode` for filter).
+/// Folding filter into one of the existing handlers would couple
+/// unrelated state, blocking [`Signal::set_with`]'s reactive
+/// equality-skip cascade from suppressing irrelevant re-runs. The
+/// per-store-per-External factoring keeps each mutation's
+/// subscription graph minimal — exactly the pattern hello-listbox's
+/// listbox + scrollbar sibling-External pair established at R55.D.5.
+///
+/// ## Why mutual exclusion is implicit
+///
+/// [`FilterMode`] is a single-valued enum (not a `Vec<bool>` or a
+/// `HashSet<...>`); the type system already encodes "exactly one
+/// filter active at a time". Unlike a [`RadioGroupExternal`]
+/// (which has to enforce the mutex across N independent
+/// [`RadioState`] cells), the filter substrate is one `Signal::set`
+/// per click — the simplest reactive shape that matches the
+/// semantic. The visible "selected button" highlight in the view fn
+/// reads back from the same `Signal<FilterMode>` and lights up the
+/// matching segment without any sibling-deactivation plumbing.
+#[derive(Debug)]
+pub struct TodoFilterExternal {
+    /// Shared reference to the same `Rc<Signal<FilterMode>>` the
+    /// view fn / `access_node` hook resolve via [`use_filter`].
+    /// Mutations go through [`Signal::set`] so the framework's
+    /// reactive equality-skip suppresses a no-op set (e.g. clicking
+    /// the already-active filter button).
+    filter: Rc<Signal<FilterMode>>,
+}
+
+impl TodoFilterExternal {
+    /// Construct a fresh handler bound to the supplied filter
+    /// signal. The caller (typically [`create_extra_externals`])
+    /// resolves the signal via [`use_filter`] inside the framework's
+    /// `root_owner.run` wrap so this `Rc` and the view fn's `Rc` are
+    /// the same instance.
+    #[must_use]
+    pub fn new(filter: Rc<Signal<FilterMode>>) -> Self {
+        Self { filter }
+    }
+
+    /// Set the filter to `mode`. Idempotent (no-op when already
+    /// active — the [`Signal::set`] equality-skip suppresses a
+    /// view-fn re-run).
+    fn set_filter(&self, mode: FilterMode) {
+        self.filter.set(mode);
+    }
+}
+
+impl External for TodoFilterExternal {
+    /// All three backends supported — paint is owned by the view fn
+    /// (the segmented filter buttons), so backend declaration is
+    /// purely about dispatch surface. Mirror of
+    /// [`TodoDeleteExternal::backends`] / [`TodoToggleExternal::backends`].
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
+    }
+
+    /// Framework drives repaint — mutating the
+    /// `Rc<Signal<FilterMode>>` auto-subscribes the view fn for the
+    /// next paint cycle.
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    /// UI-thread sync — mutations land on the same thread as the
+    /// view-fn / access-node subscribers.
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for TodoFilterExternal {
+    /// Read-only counter + the two action surfaces:
+    /// - `mode`: current filter discriminant (0 = Active,
+    ///   1 = Completed, 2 = All) as an `Int` for symmetric typed
+    ///   round-trip with the `set` action below.
+    /// - `mode_name`: current filter human-readable label (
+    ///   `"Active"` / `"Completed"` / `"All"`) for AI scripts that
+    ///   prefer the symbolic form over the integer discriminant.
+    /// - `send`: R51.42 wire form `"<i>:<EventName>"`.
+    /// - `set`: direct typed `Int(i)` → `Int(i)` route. Returns the
+    ///   post-set discriminant so the AI client confirms the new
+    ///   state in one round-trip.
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("mode", "int"),
+            ("mode_name", "string"),
+            ("send", "string"),
+            ("set", "int"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        let mode = self.filter.get();
+        match path {
+            "mode" => Some(IntrospectValue::Int(
+                i64::try_from(mode.to_index()).expect("filter index fits in i64"),
+            )),
+            "mode_name" => Some(IntrospectValue::Text(mode.label().to_owned())),
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        match path {
+            "mode" | "mode_name" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // R51.42 §5.35 — InputRouter's `dispatch_send` lands here
+            // with payload `"<i>:PointerDown"` for `i ∈ {0, 1, 2}`.
+            // PointerDown commits the set; PointerUp / Enter / Leave
+            // / Cancel return `Bool(false)` so the dispatch loop sees
+            // "handled, no state change" and never `Rejected`s a
+            // routine paint event.
+            "send" => match args {
+                IntrospectValue::Text(ref payload) => {
+                    let (idx, event_name): (usize, &str) =
+                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                    if event_name == "PointerDown" {
+                        let mode = FilterMode::from_index(idx).ok_or(InvokeError::Rejected)?;
+                        self.set_filter(mode);
+                        // R659 — Bool(true) signals "handled and
+                        // mutated"; the AI client typically re-queries
+                        // `mode` to confirm.
+                        Ok(IntrospectValue::Bool(true))
+                    } else {
+                        Ok(IntrospectValue::Bool(false))
+                    }
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R659 §5.16 — direct typed set by discriminant. Returns
+            // the post-set discriminant so the caller confirms the
+            // new state without a follow-up `query("mode")`.
+            "set" => match args {
+                IntrospectValue::Int(i) => {
+                    let idx = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let mode = FilterMode::from_index(idx).ok_or(InvokeError::Rejected)?;
+                    self.set_filter(mode);
+                    Ok(IntrospectValue::Int(
+                        i64::try_from(mode.to_index()).expect("idx fits in i64"),
+                    ))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
 /// (R655/R656 §5.16) Build the todo list section `Scene::Container`:
 ///
 /// - When `entries` is empty, returns an empty container (still
@@ -1201,7 +1698,12 @@ impl ExternalIntrospect for TodoToggleExternal {
     clippy::too_many_lines,
     reason = "single-purpose list builder — splitting per-row construction into a helper hurts locality without reducing complexity (R658 §5.16 toggle + entry + delete trio composes one row)"
 )]
-fn build_todos_list(theme: &Theme, entries: &[TodoItem]) -> Scene {
+fn build_todos_list(
+    theme: &Theme,
+    entries: &[TodoItem],
+    filter_mode: FilterMode,
+    total_count: usize,
+) -> Scene {
     let header_style = TextStyle::new()
         .with_size_px(LIST_TITLE_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
@@ -1237,24 +1739,43 @@ fn build_todos_list(theme: &Theme, entries: &[TodoItem]) -> Scene {
         .with_size_px(TOGGLE_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
 
-    // (R658 §5.16) Header text reflects the completed count when at
-    // least one entry is completed (mirrors the TasteJS TodoMVC
-    // "<N> items left" footer; we condense to a single line). The
-    // R655/R656 empty-list placeholder + plain-count header
-    // (`Todos (N)`) stay unchanged when nothing is completed.
-    let header_text = if entries.is_empty() {
+    // (R658/R659 §5.16) Header text reflects three orthogonal axes
+    // — total entry count, completed count, and whether the filter
+    // is hiding rows. Cases:
+    //
+    // * Empty store (total = 0) → encourage user to type
+    //   ("No todos yet — type and press Enter"). Filter is moot.
+    // * Filtered view hiding nothing (visible = total) → preserve
+    //   the R655/R656/R658 header shape:
+    //     - 0 completed: `"Todos (N)"`
+    //     - ≥1 completed: `"Todos (X of N completed)"`
+    // * Filtered view hiding rows (visible < total) → R659 shape:
+    //   `"<FilterName>: X of N"` so the user sees both the engaged
+    //   filter and the visible/total disparity in one glance.
+    //
+    // The TasteJS reference uses a `<N> items left` footer that lives
+    // separately from the list header; pinion folds both axes into a
+    // single header to keep the chrome scannable without a second
+    // visual line.
+    let header_text = if total_count == 0 {
         String::from("No todos yet — type and press Enter")
-    } else {
+    } else if entries.len() == total_count {
+        // No filter hiding rows — preserve pre-R659 shape.
         let completed = entries.iter().filter(|i| i.completed).count();
         if completed == 0 {
-            format!("Todos ({})", entries.len())
+            format!("Todos ({total_count})")
         } else {
-            format!(
-                "Todos ({} of {} completed)",
-                completed,
-                entries.len(),
-            )
+            format!("Todos ({completed} of {total_count} completed)")
         }
+    } else {
+        // R659 — filter is hiding rows. Show <FilterName>: visible of
+        // total so the user knows the discrepancy.
+        format!(
+            "{}: {} of {}",
+            filter_mode.label(),
+            entries.len(),
+            total_count,
+        )
     };
     let header = Scene::Text(TextNode::styled(
         header_text,
@@ -1453,15 +1974,21 @@ impl WidgetCore for TodoMvcView {
     /// [`Self::read_state`] needed.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let todos = use_todos();
-        // R658 §5.16 — two sibling Externals share the same
-        // `Rc<Signal<Vec<TodoItem>>>` (delete + toggle). The
-        // R55.D.5 substrate composes the state-scene root as
+        let filter = use_filter();
+        let scroll_state = use_scroll_state(LIST_SCROLL_KEY);
+        // R659 §5.16 §5.45 — four sibling Externals share the same
+        // application reactive stores (delete + toggle on
+        // `Rc<Signal<Vec<TodoItem>>>`, filter on
+        // `Rc<Signal<FilterMode>>`, scrollbar on `Rc<ScrollState>`).
+        // The R55.D.5 substrate composes the state-scene root as
         // `Scene::Container([primary_textfield, todo_delete,
-        // todo_toggle])`; multi-External lookup walks
-        // `Scene::find_external_with_tag` so the existing read /
-        // dispatch sites stay shape-agnostic. 2nd consumer of
-        // multi-External `create_extra_externals` at the framework
-        // level (`hello-listbox` listbox + scrollbar = 1st), per
+        // todo_toggle, todo_filter, todo_scrollbar])`; multi-External
+        // lookup walks `Scene::find_external_with_tag` so the
+        // existing read / dispatch sites stay shape-agnostic.
+        // 3rd-consumer of multi-External `create_extra_externals` at
+        // the framework level (`hello-listbox` listbox + scrollbar =
+        // 1st, R658 todomvc delete + toggle = 2nd, R659 todomvc
+        // delete + toggle + filter + scrollbar = 3rd), per
         // [[multi-external-substrate-extra-externals-pattern]].
         vec![
             ExtraExternal::new(
@@ -1471,6 +1998,14 @@ impl WidgetCore for TodoMvcView {
             ExtraExternal::new(
                 TOGGLE_TAG,
                 Box::new(TodoToggleExternal::new(todos)),
+            ),
+            ExtraExternal::new(
+                FILTER_TAG,
+                Box::new(TodoFilterExternal::new(filter)),
+            ),
+            ExtraExternal::new(
+                SCROLLBAR_TAG,
+                Box::new(ScrollBarExternal::new().attach_state(scroll_state)),
             ),
         ]
     }
@@ -1789,6 +2324,37 @@ impl WidgetA11y for TodoMvcView {
                 .with_state(access_state),
         ];
 
+        // R659 §5.40 — filter group root + 3 RadioButton children
+        // (W3C WAI-ARIA "radiogroup" canonical mapping for a
+        // mutually-exclusive single-select segmented control). The
+        // `aria-checked` bit on each segment reflects the current
+        // [`FilterMode`]; the group's `aria-label` ("Filter") gives
+        // screen readers the semantic anchor name.
+        let current_filter = use_filter().get();
+        let filter_modes = [FilterMode::Active, FilterMode::Completed, FilterMode::All];
+        let mut filter_group_node =
+            AccessNode::new(FILTER_TAG, AriaRole::RadioGroup).with_name("Filter");
+        for mode in &filter_modes {
+            let tag = format!("{FILTER_TAG_PREFIX}#{}", mode.to_index());
+            filter_group_node = filter_group_node.with_child(tag);
+        }
+        nodes.push(filter_group_node);
+        for mode in &filter_modes {
+            let tag = format!("{FILTER_TAG_PREFIX}#{}", mode.to_index());
+            nodes.push(
+                AccessNode::new(tag, AriaRole::RadioButton).with_state(AccessState {
+                    focused: false,
+                    disabled: false,
+                    hovered: false,
+                    pressed: false,
+                    // W3C-canonical: RadioButton uses `aria-checked`
+                    // for the selected-bit (Some(true) = engaged,
+                    // Some(false) = inactive).
+                    checked: Some(*mode == current_filter),
+                }),
+            );
+        }
+
         // R656 §5.40 — list root + items + delete buttons.
         // R658 §5.40 — per-row also emits an AriaRole::CheckBox
         // node for the toggle button with `aria-checked` reflecting
@@ -1940,10 +2506,11 @@ mod tests {
     //! the new entries — the same observable surface the visible
     //! app depends on.
     use super::{
-        allocate_todo_id, build_todos_list, use_next_todo_id, use_todos, view,
-        TodoDeleteExternal, TodoItem, TodoMvcView, TodoToggleExternal, DELETE_GLYPH,
-        DELETE_TAG, DELETE_TAG_PREFIX, ITEM_TAG_PREFIX, LIST_SCROLL_KEY, LIST_TAG,
-        TF_TAG, TOGGLE_GLYPH_CHECKED, TOGGLE_GLYPH_UNCHECKED, TOGGLE_TAG,
+        allocate_todo_id, build_filter_row, build_todos_list, use_filter, use_next_todo_id,
+        use_todos, view, FilterMode, TodoDeleteExternal, TodoFilterExternal, TodoItem,
+        TodoMvcView, TodoToggleExternal, DELETE_GLYPH, DELETE_TAG, DELETE_TAG_PREFIX,
+        FILTER_TAG, FILTER_TAG_PREFIX, ITEM_TAG_PREFIX, LIST_SCROLL_KEY, LIST_TAG,
+        SCROLLBAR_TAG, TF_TAG, TOGGLE_GLYPH_CHECKED, TOGGLE_GLYPH_UNCHECKED, TOGGLE_TAG,
         TOGGLE_TAG_PREFIX,
     };
     use pinion_a11y::{AriaRole, WidgetA11y};
@@ -2291,7 +2858,10 @@ mod tests {
     #[test]
     fn r655_build_todos_list_empty_returns_placeholder_header() {
         let theme = Theme::light();
-        let scene = build_todos_list(&theme, &[]);
+        // R659 — total_count==0 path takes precedence over filter
+        // mode, so passing FilterMode::All gives the empty-store
+        // header.
+        let scene = build_todos_list(&theme, &[], FilterMode::All, 0);
         let texts = collect_text_nodes(&scene);
         assert_eq!(
             texts,
@@ -2303,25 +2873,31 @@ mod tests {
     #[test]
     fn r656_build_todos_list_header_reflects_entry_count() {
         let theme = Theme::light();
+        // R659 — `visible.len() == total_count` path preserves the
+        // R655/R656/R658 header shape: `Todos (N)` when nothing is
+        // completed.
+        let entries = [
+            TodoItem {
+                id: 10,
+                text: "x".to_owned(),
+                completed: false,
+            },
+            TodoItem {
+                id: 20,
+                text: "y".to_owned(),
+                completed: false,
+            },
+            TodoItem {
+                id: 30,
+                text: "z".to_owned(),
+                completed: false,
+            },
+        ];
         let scene = build_todos_list(
             &theme,
-            &[
-                TodoItem {
-                    id: 10,
-                    text: "x".to_owned(),
-                    completed: false,
-                },
-                TodoItem {
-                    id: 20,
-                    text: "y".to_owned(),
-                    completed: false,
-                },
-                TodoItem {
-                    id: 30,
-                    text: "z".to_owned(),
-                    completed: false,
-                },
-            ],
+            &entries,
+            FilterMode::All,
+            entries.len(),
         );
         let texts = collect_text_nodes(&scene);
         assert_eq!(texts.first().map(String::as_str), Some("Todos (3)"));
@@ -2676,23 +3252,23 @@ mod tests {
 
     #[test]
     fn r656_create_extra_externals_registers_todo_delete() {
-        // R658 §5.16 — extras = [TodoDeleteExternal, TodoToggleExternal]
-        // (2 entries). DELETE_TAG still registered, TOGGLE_TAG added
-        // alongside per the R55.D.5 multi-External composition. The
-        // R656 invariant (DELETE_TAG present) survives — the test
-        // now asserts on the tag membership, not on a hard length of
-        // one.
+        // R659 §5.16 — extras = [delete, toggle, filter, scrollbar]
+        // (4 entries). The R656 invariant (DELETE_TAG present)
+        // continues to hold under additive composition — the test
+        // asserts tag membership rather than a hard length.
         with_owner(|| {
             let extras: Vec<ExtraExternal> =
                 <TodoMvcView as WidgetCore>::create_extra_externals();
             assert_eq!(
                 extras.len(),
-                2,
-                "R658: exactly two extras (delete + toggle)",
+                4,
+                "R659: 4 extras (delete + toggle + filter + scrollbar)",
             );
             let tags: Vec<&str> = extras.iter().map(|e| e.tag).collect();
             assert!(tags.contains(&DELETE_TAG), "DELETE_TAG still registered");
             assert!(tags.contains(&TOGGLE_TAG), "R658 TOGGLE_TAG registered");
+            assert!(tags.contains(&FILTER_TAG), "R659 FILTER_TAG registered");
+            assert!(tags.contains(&SCROLLBAR_TAG), "R659 SCROLLBAR_TAG registered");
         });
     }
 
@@ -2707,12 +3283,22 @@ mod tests {
                 &(TextFieldState::Idle, 0),
                 Some(TF_TAG),
             );
-            // [textbox, list]
-            assert_eq!(nodes.len(), 2);
+            // R659 §5.40 — order: [textbox, RadioGroup(filter),
+            // RadioButton×3, List(items)] = 1 + 1 + 3 + 1 = 6 nodes.
+            assert_eq!(nodes.len(), 6, "R659: textbox + filter group + 3 radios + list");
             assert_eq!(nodes[0].role, AriaRole::TextInput);
-            assert_eq!(nodes[1].role, AriaRole::List);
-            assert_eq!(nodes[1].tag, LIST_TAG);
-            assert!(nodes[1].children.is_empty(), "empty list, no children");
+            assert_eq!(nodes[1].role, AriaRole::RadioGroup);
+            assert_eq!(nodes[1].tag, FILTER_TAG);
+            for i in 0..3 {
+                assert_eq!(nodes[2 + i].role, AriaRole::RadioButton);
+                assert_eq!(
+                    nodes[2 + i].tag,
+                    format!("{FILTER_TAG_PREFIX}#{i}"),
+                );
+            }
+            assert_eq!(nodes[5].role, AriaRole::List);
+            assert_eq!(nodes[5].tag, LIST_TAG);
+            assert!(nodes[5].children.is_empty(), "empty list, no children");
         });
     }
 
@@ -2738,40 +3324,44 @@ mod tests {
                 &(TextFieldState::Idle, 0),
                 Some(TF_TAG),
             );
-            // R658 §5.40 — expected order:
-            // [textbox,
-            //  listitem#1, checkbox(toggle#1), button(delete#1),
-            //  listitem#2, checkbox(toggle#2), button(delete#2),
-            //  list_root]
-            // = 1 + 2 * 3 + 1 = 8. R656 was 1 + 2*2 + 1 = 6;
-            // R658 inserts one CheckBox node per row between the
-            // ListItem and its Button (toggle is left of the entry
-            // text in the visible paint order; AT cursor traversal
-            // mirrors visible order).
-            assert_eq!(nodes.len(), 8, "R658: 1 + 2 * 3 + 1 = 8 nodes");
+            // R659 §5.40 — order:
+            //   [textbox,
+            //    RadioGroup(filter), RadioButton×3,
+            //    listitem#1, checkbox(toggle#1), button(delete#1),
+            //    listitem#2, checkbox(toggle#2), button(delete#2),
+            //    list_root]
+            // = 1 + 4 + 6 + 1 = 12 nodes. Index-based assertions
+            // walk the tail after the 4-node filter prefix.
+            assert_eq!(nodes.len(), 12, "R659: 1 + 4 + 2*3 + 1 = 12 nodes");
             assert_eq!(nodes[0].role, AriaRole::TextInput);
-            assert_eq!(nodes[1].role, AriaRole::ListItem);
-            assert_eq!(nodes[1].tag, "todo_item#1");
-            assert_eq!(nodes[2].role, AriaRole::CheckBox);
-            assert_eq!(nodes[2].tag, "todo_toggle#1");
+            assert_eq!(nodes[1].role, AriaRole::RadioGroup);
+            assert_eq!(nodes[1].tag, FILTER_TAG);
+            for i in 0..3 {
+                assert_eq!(nodes[2 + i].role, AriaRole::RadioButton);
+            }
+            // R658 list region after the 4-node filter prefix.
+            assert_eq!(nodes[5].role, AriaRole::ListItem);
+            assert_eq!(nodes[5].tag, "todo_item#1");
+            assert_eq!(nodes[6].role, AriaRole::CheckBox);
+            assert_eq!(nodes[6].tag, "todo_toggle#1");
             assert_eq!(
-                nodes[2].state.checked,
+                nodes[6].state.checked,
                 Some(false),
                 "R658: aria-checked starts false for fresh entries",
             );
-            assert_eq!(nodes[3].role, AriaRole::Button);
-            assert_eq!(nodes[3].tag, "todo_delete#1");
-            assert_eq!(nodes[4].role, AriaRole::ListItem);
-            assert_eq!(nodes[4].tag, "todo_item#2");
-            assert_eq!(nodes[5].role, AriaRole::CheckBox);
-            assert_eq!(nodes[5].tag, "todo_toggle#2");
-            assert_eq!(nodes[5].state.checked, Some(false));
-            assert_eq!(nodes[6].role, AriaRole::Button);
-            assert_eq!(nodes[6].tag, "todo_delete#2");
+            assert_eq!(nodes[7].role, AriaRole::Button);
+            assert_eq!(nodes[7].tag, "todo_delete#1");
+            assert_eq!(nodes[8].role, AriaRole::ListItem);
+            assert_eq!(nodes[8].tag, "todo_item#2");
+            assert_eq!(nodes[9].role, AriaRole::CheckBox);
+            assert_eq!(nodes[9].tag, "todo_toggle#2");
+            assert_eq!(nodes[9].state.checked, Some(false));
+            assert_eq!(nodes[10].role, AriaRole::Button);
+            assert_eq!(nodes[10].tag, "todo_delete#2");
             // list root references both items by tag.
-            assert_eq!(nodes[7].role, AriaRole::List);
+            assert_eq!(nodes[11].role, AriaRole::List);
             assert_eq!(
-                nodes[7].children,
+                nodes[11].children,
                 vec!["todo_item#1".to_owned(), "todo_item#2".to_owned()],
             );
         });
@@ -3225,33 +3815,29 @@ mod tests {
     #[test]
     fn r658_view_wraps_list_in_scroll_node() {
         // R658 — the LIST_TAG container must live inside a
-        // Scene::Scroll wrapper (WIN_H magic cleanup). Walk the
-        // top-level outer Container's children and confirm at least
-        // one Scene::Scroll wraps a container carrying the
-        // LIST_SCROLL_KEY-derived tag.
+        // Scene::Scroll wrapper (WIN_H magic cleanup). R659 wraps
+        // that Scroll + scrollbar peer in a flex Row "scroll
+        // region" Container, so the Scroll is now a grandchild of
+        // the outer Container (not a direct child). Walk recursively.
+        fn walk(scene: &Scene) -> Option<&pinion_core::scene::ScrollNode> {
+            match scene {
+                Scene::Scroll(s) => Some(s),
+                Scene::Container(c) => c.children.iter().find_map(walk),
+                _ => None,
+            }
+        }
         with_owner(|| {
             let scene = view((TextFieldState::Idle, 0), &Frame::default());
-            let mut found_scroll_with_list = false;
-            if let Scene::Container(outer) = &scene {
-                for child in &outer.children {
-                    if let Scene::Scroll(sn) = child {
-                        if sn.content.contains_tag(LIST_TAG) {
-                            found_scroll_with_list = true;
-                            // The Scroll node carries the
-                            // LIST_SCROLL_KEY as its derived tag (via
-                            // ScrollNode::from_state ← ScrollState::tag).
-                            assert_eq!(
-                                sn.tag.as_deref(),
-                                Some(LIST_SCROLL_KEY),
-                                "R658: ScrollNode tag derived from LIST_SCROLL_KEY",
-                            );
-                        }
-                    }
-                }
-            }
+            let scroll =
+                walk(&scene).expect("R659: Scroll wrapping LIST_TAG must exist");
             assert!(
-                found_scroll_with_list,
-                "R658: list region wrapped in Scene::Scroll(...) carrying LIST_TAG inside",
+                scroll.content.contains_tag(LIST_TAG),
+                "R659: Scroll content must contain LIST_TAG",
+            );
+            assert_eq!(
+                scroll.tag.as_deref(),
+                Some(LIST_SCROLL_KEY),
+                "R658: ScrollNode tag derived from LIST_SCROLL_KEY",
             );
         });
     }
@@ -3288,6 +3874,509 @@ mod tests {
                 scroll_state.offset(),
                 (0, 80),
                 "R658: scroll_to round-trips into offset()",
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R659 §5.16 — FilterMode enum + use_filter() hook contracts
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r659_filter_mode_default_is_all() {
+        // Boot default = All (mirrors TasteJS TodoMVC reference + the
+        // macOS/iOS Reminders defaults — no entry hidden until the
+        // user opts in).
+        assert_eq!(FilterMode::default_mode(), FilterMode::All);
+    }
+
+    #[test]
+    fn r659_filter_mode_index_round_trip() {
+        for mode in [FilterMode::Active, FilterMode::Completed, FilterMode::All] {
+            assert_eq!(
+                FilterMode::from_index(mode.to_index()),
+                Some(mode),
+                "round-trip: from_index(to_index({mode:?})) == Some({mode:?})",
+            );
+        }
+        // Out-of-range index → None (no panic).
+        assert_eq!(FilterMode::from_index(3), None);
+        assert_eq!(FilterMode::from_index(usize::MAX), None);
+    }
+
+    #[test]
+    fn r659_filter_mode_canonical_discriminants() {
+        // The wire form depends on these — pin them so a future
+        // accidental re-ordering doesn't silently break AI clients.
+        assert_eq!(FilterMode::Active.to_index(), 0);
+        assert_eq!(FilterMode::Completed.to_index(), 1);
+        assert_eq!(FilterMode::All.to_index(), 2);
+    }
+
+    #[test]
+    fn r659_filter_mode_matches_predicate() {
+        let active = TodoItem {
+            id: 1,
+            text: "a".into(),
+            completed: false,
+        };
+        let done = TodoItem {
+            id: 2,
+            text: "d".into(),
+            completed: true,
+        };
+        assert!(FilterMode::Active.matches(&active));
+        assert!(!FilterMode::Active.matches(&done));
+        assert!(!FilterMode::Completed.matches(&active));
+        assert!(FilterMode::Completed.matches(&done));
+        assert!(FilterMode::All.matches(&active));
+        assert!(FilterMode::All.matches(&done));
+    }
+
+    #[test]
+    fn r659_use_filter_dedups_across_calls() {
+        with_owner(|| {
+            let a = use_filter();
+            let b = use_filter();
+            assert!(
+                std::rc::Rc::ptr_eq(&a, &b),
+                "use_filter() must return the same Rc within an Owner scope",
+            );
+        });
+    }
+
+    #[test]
+    fn r659_use_filter_seeds_to_all() {
+        with_owner(|| {
+            let f = use_filter();
+            assert_eq!(f.get(), FilterMode::All, "fresh Owner seeds to All");
+        });
+    }
+
+    #[test]
+    fn r659_filter_mode_labels_match_taste_js_reference() {
+        // Localisation lift is a future axis; for R659 the English
+        // literals follow the canonical TasteJS TodoMVC reference.
+        assert_eq!(FilterMode::Active.label(), "Active");
+        assert_eq!(FilterMode::Completed.label(), "Completed");
+        assert_eq!(FilterMode::All.label(), "All");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R659 §5.16 — TodoFilterExternal: composite-tag wire + direct
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r659_filter_external_send_pointerdown_sets_active() {
+        with_owner(|| {
+            let mut handler = TodoFilterExternal::new(use_filter());
+            let result = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("0:PointerDown".to_owned()))
+                .unwrap();
+            assert_eq!(result, IntrospectValue::Bool(true));
+            assert_eq!(use_filter().get(), FilterMode::Active);
+        });
+    }
+
+    #[test]
+    fn r659_filter_external_send_pointerdown_sets_completed() {
+        with_owner(|| {
+            let mut handler = TodoFilterExternal::new(use_filter());
+            handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("1:PointerDown".to_owned()))
+                .unwrap();
+            assert_eq!(use_filter().get(), FilterMode::Completed);
+        });
+    }
+
+    #[test]
+    fn r659_filter_external_send_pointerdown_returns_to_all() {
+        with_owner(|| {
+            let mut handler = TodoFilterExternal::new(use_filter());
+            // Switch to Active first.
+            handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("0:PointerDown".to_owned()))
+                .unwrap();
+            // Then back to All.
+            handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("2:PointerDown".to_owned()))
+                .unwrap();
+            assert_eq!(use_filter().get(), FilterMode::All);
+        });
+    }
+
+    #[test]
+    fn r659_filter_external_send_pointerup_is_no_op() {
+        with_owner(|| {
+            let mut handler = TodoFilterExternal::new(use_filter());
+            let result = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("0:PointerUp".to_owned()))
+                .unwrap();
+            assert_eq!(result, IntrospectValue::Bool(false));
+            // Filter stays at default.
+            assert_eq!(use_filter().get(), FilterMode::All);
+        });
+    }
+
+    #[test]
+    fn r659_filter_external_send_unknown_index_rejected() {
+        with_owner(|| {
+            let mut handler = TodoFilterExternal::new(use_filter());
+            let result = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("send", IntrospectValue::Text("9:PointerDown".to_owned()));
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn r659_filter_external_set_direct_returns_post_index() {
+        // Direct typed set returns the post-set discriminant so the
+        // AI client confirms in one round-trip.
+        with_owner(|| {
+            let mut handler = TodoFilterExternal::new(use_filter());
+            let result = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("set", IntrospectValue::Int(1))
+                .unwrap();
+            assert_eq!(result, IntrospectValue::Int(1));
+            assert_eq!(use_filter().get(), FilterMode::Completed);
+        });
+    }
+
+    #[test]
+    fn r659_filter_external_set_unknown_index_rejected() {
+        with_owner(|| {
+            let mut handler = TodoFilterExternal::new(use_filter());
+            let result = handler
+                .introspect_mut()
+                .unwrap()
+                .invoke("set", IntrospectValue::Int(99));
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn r659_filter_external_query_mode_mirrors_signal() {
+        with_owner(|| {
+            use_filter().set(FilterMode::Completed);
+            let handler = TodoFilterExternal::new(use_filter());
+            let m = handler.introspect().unwrap().query("mode").unwrap();
+            assert_eq!(m, IntrospectValue::Int(1));
+            let name = handler.introspect().unwrap().query("mode_name").unwrap();
+            assert_eq!(name, IntrospectValue::Text("Completed".to_owned()));
+        });
+    }
+
+    #[test]
+    fn r659_filter_external_malformed_send_rejected() {
+        with_owner(|| {
+            let mut handler = TodoFilterExternal::new(use_filter());
+            for bad in ["noseparator", "xx:PointerDown", "1:"] {
+                let result = handler
+                    .introspect_mut()
+                    .unwrap()
+                    .invoke("send", IntrospectValue::Text(bad.to_owned()));
+                assert!(result.is_err(), "{bad} must yield Rejected");
+            }
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R659 §5.16 — view fn: filter row presence + filtered list shape
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r659_view_carries_filter_tag_and_three_buttons() {
+        with_owner(|| {
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            assert!(scene.contains_tag(FILTER_TAG), "filter group root tag present");
+            for i in 0..3 {
+                let tag = format!("{FILTER_TAG_PREFIX}#{i}");
+                assert!(
+                    scene.contains_tag(&tag),
+                    "filter button {tag} must be paint-addressable",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r659_view_carries_scrollbar_tag() {
+        with_owner(|| {
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            assert!(
+                scene.contains_tag(SCROLLBAR_TAG),
+                "scrollbar peer Container tag must be paint-addressable",
+            );
+        });
+    }
+
+    #[test]
+    fn r659_filter_active_hides_completed_rows() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "a".into(),
+                    completed: false,
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "b".into(),
+                    completed: true,
+                });
+                next.push(TodoItem {
+                    id: 3,
+                    text: "c".into(),
+                    completed: false,
+                });
+                next
+            });
+            use_filter().set(FilterMode::Active);
+
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            // Only a + c paint (b is completed → filtered out).
+            assert!(scene.contains_tag("todo_item#1"));
+            assert!(!scene.contains_tag("todo_item#2"), "completed row hidden under Active filter");
+            assert!(scene.contains_tag("todo_item#3"));
+        });
+    }
+
+    #[test]
+    fn r659_filter_completed_hides_active_rows() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "a".into(),
+                    completed: false,
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "b".into(),
+                    completed: true,
+                });
+                next
+            });
+            use_filter().set(FilterMode::Completed);
+
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            assert!(!scene.contains_tag("todo_item#1"), "active row hidden under Completed filter");
+            assert!(scene.contains_tag("todo_item#2"));
+        });
+    }
+
+    #[test]
+    fn r659_filter_all_shows_everything() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "a".into(),
+                    completed: false,
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "b".into(),
+                    completed: true,
+                });
+                next
+            });
+            use_filter().set(FilterMode::All);
+
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            assert!(scene.contains_tag("todo_item#1"));
+            assert!(scene.contains_tag("todo_item#2"));
+        });
+    }
+
+    #[test]
+    fn r659_header_under_filter_shows_filtername_visible_of_total() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                for (id, completed) in [(1, false), (2, true), (3, false)] {
+                    next.push(TodoItem {
+                        id,
+                        text: format!("t{id}"),
+                        completed,
+                    });
+                }
+                next
+            });
+            use_filter().set(FilterMode::Active);
+
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let mut list_root = None;
+            find_tagged_container(&scene, LIST_TAG, &mut list_root);
+            let list = list_root.expect("LIST_TAG present");
+            let texts = collect_text_nodes(list);
+            assert_eq!(
+                texts.first().map(String::as_str),
+                Some("Active: 2 of 3"),
+                "R659 header: <FilterName>: visible of total when filter hides rows",
+            );
+        });
+    }
+
+    #[test]
+    fn r659_create_extra_externals_registers_four_siblings() {
+        with_owner(|| {
+            let extras = <TodoMvcView as WidgetCore>::create_extra_externals();
+            assert_eq!(
+                extras.len(),
+                4,
+                "R659: 4 extras (delete + toggle + filter + scrollbar)",
+            );
+            let tags: Vec<&str> = extras.iter().map(|e| e.tag).collect();
+            assert!(tags.contains(&DELETE_TAG));
+            assert!(tags.contains(&TOGGLE_TAG));
+            assert!(tags.contains(&FILTER_TAG));
+            assert!(tags.contains(&SCROLLBAR_TAG));
+        });
+    }
+
+    #[test]
+    fn r659_build_filter_row_emits_all_three_buttons_with_aria_labels() {
+        let theme = Theme::light();
+        let scene = build_filter_row(&theme, FilterMode::All);
+        let Scene::Container(group) = &scene else {
+            panic!("filter row must be a Container");
+        };
+        assert_eq!(group.tag.as_deref(), Some(FILTER_TAG));
+        assert_eq!(group.children.len(), 3, "3 segmented buttons");
+        for (i, child) in group.children.iter().enumerate() {
+            let Scene::Container(btn) = child else {
+                panic!("filter button {i} must be Container");
+            };
+            assert_eq!(btn.tag.as_deref(), Some(format!("{FILTER_TAG_PREFIX}#{i}").as_str()));
+            // aria-label populated for screen reader announcement.
+            assert!(
+                btn.aria_label.is_some(),
+                "filter button {i} carries aria-label",
+            );
+        }
+    }
+
+    #[test]
+    fn r659_build_filter_row_active_button_uses_accent_fill() {
+        let theme = Theme::light();
+        let scene = build_filter_row(&theme, FilterMode::Completed);
+        let Scene::Container(group) = &scene else {
+            panic!("group");
+        };
+        // The Completed button (index 1) must have accent fill;
+        // others get transparent.
+        let Scene::Container(active_btn) = &group.children[1] else {
+            panic!("button 1");
+        };
+        assert_eq!(
+            active_btn.style.fill,
+            theme.resolve(super::ColorRole::Accent),
+            "engaged segment uses Accent fill",
+        );
+        let Scene::Container(other_btn) = &group.children[0] else {
+            panic!("button 0");
+        };
+        assert_ne!(
+            other_btn.style.fill,
+            theme.resolve(super::ColorRole::Accent),
+            "inactive segment does NOT use Accent",
+        );
+    }
+
+    #[test]
+    fn r659_access_node_emits_filter_radiogroup_with_correct_checked() {
+        // R659 §5.40 — filter group contributes 1 RadioGroup parent +
+        // 3 RadioButton children with aria-checked reflecting the
+        // current FilterMode.
+        with_owner(|| {
+            use_filter().set(FilterMode::Completed);
+            let nodes = <TodoMvcView as WidgetA11y>::access_node(
+                &(TextFieldState::Idle, 0),
+                Some(TF_TAG),
+            );
+            // Find the RadioGroup with FILTER_TAG.
+            let rg = nodes
+                .iter()
+                .find(|n| n.role == AriaRole::RadioGroup && n.tag == FILTER_TAG)
+                .expect("RadioGroup with FILTER_TAG present");
+            assert_eq!(rg.children.len(), 3, "RadioGroup claims 3 child radios");
+            assert_eq!(rg.name.as_deref(), Some("Filter"));
+
+            // Pull each per-button RadioButton node.
+            for mode in [FilterMode::Active, FilterMode::Completed, FilterMode::All] {
+                let tag = format!("{FILTER_TAG_PREFIX}#{}", mode.to_index());
+                let node = nodes
+                    .iter()
+                    .find(|n| n.role == AriaRole::RadioButton && n.tag == tag)
+                    .unwrap_or_else(|| panic!("RadioButton {tag} present"));
+                let expect = mode == FilterMode::Completed;
+                assert_eq!(
+                    node.state.checked,
+                    Some(expect),
+                    "{tag} aria-checked must reflect current filter (expect {expect})",
+                );
+            }
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R659 §5.45 — scrollbar peer wire (R658 honest carry payment)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r659_scroll_region_holds_scroll_plus_scrollbar_side_by_side() {
+        with_owner(|| {
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let Scene::Container(outer) = &scene else {
+                panic!("outer Container");
+            };
+            // Find the scroll region wrapper — it's the child that
+            // holds both a Scroll and a Container tagged SCROLLBAR_TAG.
+            let region = outer.children.iter().find_map(|c| match c {
+                Scene::Container(inner) => {
+                    let has_scroll =
+                        inner.children.iter().any(|ch| matches!(ch, Scene::Scroll(_)));
+                    let has_scrollbar =
+                        inner.children.iter().any(|ch| match ch {
+                            Scene::Container(cc) => cc.tag.as_deref() == Some(SCROLLBAR_TAG),
+                            _ => false,
+                        });
+                    if has_scroll && has_scrollbar {
+                        Some(inner)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            });
+            let region = region.expect("scroll_region with Scroll + scrollbar peer present");
+            assert_eq!(region.children.len(), 2, "exactly Scroll + scrollbar peer");
+            assert_eq!(
+                region.layout.flex_direction,
+                super::FlexDirection::Row,
+                "scroll region must be flex Row so the peer sits beside the list",
             );
         });
     }

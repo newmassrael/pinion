@@ -73,11 +73,16 @@ use pinion_core::style::{
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
-use pinion_core::widgets::scrollbar::{
-    scrollbar_thumb_rect, ScrollBarExternal, ScrollBarOrientation,
-};
+use pinion_core::widgets::scroll::use_scroll_state;
+use pinion_core::widgets::scrollbar::ScrollBarExternal;
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+// R659 §5.45 — `build_scrollbar_visual` lifted to
+// `pinion_widget_paint::scrollbar` after the 2nd-consumer signal
+// fired with the R659 todomvc scrollbar peer wire. The local helper
+// + (`SCROLLBAR_W`, `MIN_THUMB`) constants are retired —
+// `VerticalScrollbarStyle::material` carries the M3-canonical
+// defaults the R55.D.4 first-client established.
+use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 #[cfg(test)]
 use pinion_core::theme::ThemeMode;
 use pinion_core::{Frame, Owner, Scene, WidgetCore};
@@ -138,17 +143,11 @@ const ROW_HEIGHT: u32 = 28;
 const ROW_WIDTH: u32 = 220;
 const ROW_GAP: u32 = 6;
 
-/// (R55.D.4 §5.45) Vertical scrollbar reserved width — sits to the
-/// right of the row column, inside the same `PRIMARY_TAG` paint root
-/// so the AT bounds for the listbox cover the visible widget area
-/// (list + scrollbar) the user actually sees. 8 px matches the
-/// Material / web canonical scrollbar gutter for desktop-class UIs.
-const SCROLLBAR_W: u32 = 8;
-/// (R55.D.4 §5.45) Minimum thumb extent enforced by
-/// [`scrollbar_thumb_rect`]. 24 px is the Material / `UIKit`
-/// grabbable-target floor — even on very long content the thumb
-/// stays large enough to read at a glance.
-const MIN_THUMB: u32 = 24;
+// R659 §5.45 — `SCROLLBAR_W` / `MIN_THUMB` retired from the binding;
+// the M3-canonical defaults live on
+// [`VerticalScrollbarStyle::material`] in pinion-widget-paint. Both
+// constants migrated verbatim so the visible scrollbar shape stays
+// bit-identical (8-px gutter + 24-px thumb floor).
 
 /// Cached projection of the list. One `(ListboxItemState, selected)`
 /// pair per option plus the R51.87 §5.40 AT-side active-descendant
@@ -229,13 +228,19 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
         ),
     );
 
-    // R55.D.4 §5.45 — visible scrollbar peer. Built before the
-    // `ScrollNode` so we can snapshot the press-time
-    // (offset, max) pair through the same `Rc<ScrollState>` clone
-    // the `ScrollNode::from_state` consumes below. The peer is a
-    // pure paint visualization; drag input wiring (multi-External
-    // path through `ScrollBarExternal`) lands on the R55.D.5 carry.
-    let scrollbar_visual = build_scrollbar_visual(&scroll_state, &theme);
+    // R659 §5.45 — paint helper lifted to
+    // `pinion_widget_paint::scrollbar::view_vertical_scrollbar`
+    // (2nd-consumer signal fired with the R659 todomvc scrollbar
+    // peer wire). Same M3 role mapping
+    // ([`SurfaceContainerHighest`] track + [`Outline`] thumb), same
+    // R55.D.1 closed-form geometry, same R55.D.6 absolute-position
+    // composition — paint scene bit-identical vs the pre-R659
+    // helper. Built before the `ScrollNode` so the helper snapshots
+    // `(offset, max)` through the same `Rc<ScrollState>` clone
+    // `ScrollNode::from_state` consumes below.
+    let scrollbar_style = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG);
+    let scrollbar_visual =
+        view_vertical_scrollbar(&scroll_state, &theme, &scrollbar_style);
 
     let scroll = ScrollNode::from_state(
         scroll_state,
@@ -273,96 +278,13 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
     )
 }
 
-/// R55.D.4 §5.45 — visible scrollbar peer for the `main_list`
-/// scroll container. Reads the current `(offset_y, max_y)` pair off
-/// the shared `Rc<ScrollState>` and derives the thumb rectangle
-/// through [`scrollbar_thumb_rect`] (R55.D.1 closed-form helper);
-/// composites the result as a single thumb `Container`
-/// absolute-positioned inside the outer track `Container` filled
-/// with [`TRACK_FILL`].
-///
-/// (R55.D.5 §5.45) Drag-able: the `ScrollBarExternal` registered
-/// through [`WidgetCore::create_extra_externals`] shares this
-/// scroll state, so a press on the visible thumb captures the
-/// pointer and `ScrollBarExternal::pointer_move` writes
-/// `ScrollState::scroll_to` directly. Wheel / Arrow keys still
-/// drive the scroll independently — the bar reflects the resulting
-/// offset in both cases.
-///
-/// (R55.D.6 §5.45 §5.21) Thumb positioning uses the new
-/// [`LayoutStyle::with_absolute_position`] substrate (CSS
-/// `position: absolute; top: <thumb_y_offset>`). The pre-R55.D.6
-/// spacer Container that hand-rolled the y-offset through a
-/// `flex Column` is retired — the spacer-flex workaround was the
-/// `[[spacer-flex-absolute-workaround]]` carry the substrate now
-/// closes.
-fn build_scrollbar_visual(scroll_state: &ScrollState, theme: &Theme) -> Scene {
-    let (_, offset_y) = scroll_state.offset();
-    let (_, max_y) = scroll_state.max();
-    let track_rect = Rect::new(0, 0, SCROLLBAR_W, VIEWPORT_H);
-    // [`ScrollState::max`] returns `content_extent − viewport_extent`,
-    // so `content_extent = viewport_extent + max`. The first
-    // `view` invocation of the application's lifetime sees
-    // `max_y == 0` (the runtime layout pass writes the real max
-    // *after* the first view runs); the helper's `content_extent
-    // <= viewport_extent` branch then fills the thumb to the full
-    // track, which is the textbook "nothing to scroll" rendering.
-    // R55.G.24 §5.45 — `set_max` now Signal-batches, so the next
-    // paint re-runs the view fn with the freshly-written max and
-    // the thumb snaps to its correct size on frame 2.
-    let max_y_nonneg = u32::try_from(max_y.max(0)).unwrap_or(0);
-    let content_extent = VIEWPORT_H.saturating_add(max_y_nonneg);
-    let scroll_offset = u32::try_from(offset_y.max(0)).unwrap_or(0);
-    let geom = scrollbar_thumb_rect(
-        ScrollBarOrientation::Vertical,
-        track_rect,
-        VIEWPORT_H,
-        content_extent,
-        scroll_offset,
-        MIN_THUMB,
-    );
-
-    // `thumb.y - track.y` is the offset of the thumb's top edge
-    // from the track origin. (R55.D.6 §5.45) Fed directly into
-    // [`LayoutStyle::with_absolute_position`] so the thumb lands at
-    // `(0, thumb_y_offset)` inside the track without a flex helper.
-    let thumb_y_offset = geom.thumb.y.saturating_sub(geom.track.y);
-    let thumb_h = geom.thumb.h;
-
-    // (R57.X.listbox §5.50) Thumb role = `Outline` — M3 canonical for
-    // scrollbar thumb / divider / hairline strokes that need visible
-    // weight against the track without competing with `Accent`.
-    let thumb = Scene::Container(
-        ContainerNode::new(vec![])
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Outline)).with_corner_radius(2))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_size(Size::px(SCROLLBAR_W, thumb_h))
-                    .with_absolute_position(0, thumb_y_offset),
-            ),
-    );
-
-    // Outer track Container — fills the gutter with the M3
-    // `SurfaceContainerHighest` tone, hosts the absolute-positioned
-    // thumb. The space outside the thumb shows the track tier so the
-    // thumb appears suspended on the inactive-container rail.
-    //
-    // (R55.D.5 §5.45) Tagged with [`SCROLLBAR_TAG`] so the input
-    // router's hit-test routes pointer events on the track / thumb
-    // to the matching `ScrollBarExternal` registered through
-    // [`WidgetCore::create_extra_externals`]. The router walks the
-    // paint scene's hit segments deepest-first and falls back to the
-    // first tagged ancestor — the thumb stays untagged so a click
-    // anywhere inside the bar resolves up to this outer Container's
-    // tag, exactly the rect the `ScrollBarExternal::pointer_move`
-    // mapping expects.
-    Scene::Container(
-        ContainerNode::new(vec![thumb])
-            .with_tag(SCROLLBAR_TAG)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
-            .with_layout(LayoutStyle::new().with_size(Size::px(SCROLLBAR_W, VIEWPORT_H))),
-    )
-}
+// R659 §5.45 — `build_scrollbar_visual` lifted to
+// [`pinion_widget_paint::scrollbar::view_vertical_scrollbar`]. The
+// helper now lives one tier above the per-binding seed so
+// `examples/todomvc` (R659 2nd consumer) reaches the same M3 role
+// mapping + R55.D.1 closed-form geometry + R55.D.6 absolute-position
+// composition without duplicating the ~65-LOC seed. See module docs
+// at `pinion_widget_paint::scrollbar` for the substrate contract.
 
 /// One row of the composite — filled box (focused / selected tint) +
 /// label. Tagged `"main_list#<i>"` so the `InputRouter` R51.42 sub-
@@ -1214,9 +1136,15 @@ mod a11y_tests {
         let Scene::Container(scrollbar) = &listbox_root.children[1] else {
             panic!("second child must be the scrollbar visual Container");
         };
+        // R659 §5.45 — gutter width now sourced from the lifted
+        // `VerticalScrollbarStyle::material(...)` default (8 px,
+        // M3-canonical). The binding still composes the bar through
+        // `view_vertical_scrollbar(viewport_h=VIEWPORT_H)`, so the
+        // expected size stays `(material.gutter_w × VIEWPORT_H)`.
+        let expected_gutter = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG).gutter_w;
         assert_eq!(
             scrollbar.layout.size,
-            Size::px(SCROLLBAR_W, VIEWPORT_H),
+            Size::px(expected_gutter, VIEWPORT_H),
             "scrollbar track size = gutter × viewport height",
         );
         // Listbox root must declare flex Row so the row column and
@@ -1250,10 +1178,13 @@ mod a11y_tests {
         let Scene::Container(thumb) = &scrollbar.children[0] else {
             panic!("thumb must be a Container");
         };
+        // R659 §5.45 — gutter width sourced from the lifted style
+        // default (M3 canonical 8 px). Thumb width matches gutter.
+        let expected_gutter = VerticalScrollbarStyle::material(VIEWPORT_H, SCROLLBAR_TAG).gutter_w;
         assert_eq!(
             thumb.layout.size.width,
-            Size::px(SCROLLBAR_W, 0).width,
-            "thumb width matches SCROLLBAR_W",
+            Size::px(expected_gutter, 0).width,
+            "thumb width matches lifted material gutter (8 px M3 default)",
         );
         assert!(
             thumb.layout.absolute_position.is_some(),
