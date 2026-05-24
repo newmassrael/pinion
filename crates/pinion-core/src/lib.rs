@@ -40,9 +40,9 @@ pub use frame::Frame;
 pub use input::{CompositionEvent, Modifiers};
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
-    Computed, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner, Owner,
-    OwnerSnapshot, Resource, ResourceState, Signal, SignalExternal, SnapshotRestoreError,
-    SnapshotableSignal, batch,
+    is_simulating, Computed, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner,
+    Owner, OwnerSnapshot, Resource, ResourceState, Signal, SignalExternal,
+    SimulationGuard, SnapshotRestoreError, SnapshotableSignal, batch,
 };
 pub use revision::SceneRevision;
 pub use scene::{HitPath, Scene};

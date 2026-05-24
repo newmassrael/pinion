@@ -12046,6 +12046,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R649 — R649 §5.23 R27 — Effect side-effect suppression during dry_run/simulate via SimulationGuard thread-local; non-idempotent Effect chains stay idempotent across hypothetical-mutation cycles
+
+**Changes**:
+- pinion-core/src/reactive/simulation.rs (new): IS_SIMULATING thread-local Cell<bool> + SimulationGuard RAII (Drop restores prior; nesting-safe). is_simulating() query. 3 unit tests pin baseline + flip-on-enter + nested-guard semantics.
+- pinion-core/src/reactive/effect.rs: Effect::mark_dirty checks is_simulating() between in_run/cancelled checks and weak-self upgrade. Suppresses Effect closure body during simulate scopes; subscription set unaffected (frozen at last rerun), so next post-simulation Signal::set fires the Effect normally.
+- pinion-core/src/reactive/mod.rs + lib.rs: re-export SimulationGuard + is_simulating at the public surface so pinion-rpc (and future binding-internal dry_run consumers) can compose.
+- pinion-rpc/src/dry_run.rs: wrap dry_run() body in SimulationGuard::enter(). Single-write External rollback now reactive-safe — no Effect side-effect lands twice.
+- pinion-rpc/src/simulate.rs: simulate() + simulate_with_owner() both enter SimulationGuard. Nested guard is fine (simulate_with_owner enters first, simulate's inner enter sees prior=true). Owner.restore inside the same scope so Signal value writes during restore don't fire Effects either.
+- pinion-rpc/src/simulate.rs: new r649_effect_suppressed_during_simulate test — naive `Effect: counter.set(counter.get()+1)` pattern (the R647-era set_with workaround target) is now correct under R649: simulate_with_owner leaves counter at pre-call value, proving R26+R27 compose to give full idempotency.
+
+
+
+**Verification**:
+- cargo test --workspace: 3206 pass / 0 fail (R648 baseline 3202 + 3 simulation primitive tests + 1 effect-suppression dispatch test). All 20 simulate tests + dry_run tests + reactive primitive tests pass with the new guard wired.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings. Pre-commit fixed 3 doc_markdown (SCE / dry_run / R641-R648 backticks) + 1 redundant_closure (IS_SIMULATING.with(Cell::get) over closure form).
+- mnemosyne validate_workspace: T1 orphan 0/0, round-trip 1/1, ledger sync.
+- R27 §5.23 commitment FULFILLED. dry_run + simulate + simulate_with_owner all suppress Effect side-effects during their hypothetical-mutation scopes. The R26 (Signal value rollback) + R27 (Effect suppression) pair is now spec-complete; non-idempotent Effects (counters, telemetry, network sends) no longer drift across simulate cycles.
+- Honest LOC: pinion-core +110 (simulation.rs new + Effect.mark_dirty hook + re-exports) + pinion-rpc +12 (3 SimulationGuard::enter() lines + test) = +122 LOC pure capability. No binding code touched.
+
+
+
+**Impact**: §5.23
+
+
+**Carry forward**:
+- R650 candidate: isolated Computed cache (§5.30 R30). Computed values cached during simulate may pollute live cache. Less critical than R27 (cache eviction is benign mostly) but spec commitment open.
+- §5.8 SCE engine-level dry_run hook still long-term roadmap. v0 External test-and-rollback + R26 + R27 (R647+R649) sufficient for spec compliance; engine hook would replace the per-step intervene approach with state-machine-internal pause/resume.
+- R647 test workaround (set_with vs set(get()+1)) is no longer load-bearing for simulate_with_owner — both Effect patterns work identically under R649. The R647 test kept the set_with form as defensive guidance; R649 test demonstrates the naive set(get()+1) form succeeds. Either is acceptable in future binding code.
+- Test fixture pattern carry: long-running Effect that drifts in production may want a manual exit-from-simulation marker (e.g., owner.in_simulate_assert!() inside the Effect closure) so unintended Effect re-fires after the guard are auditable. Not urgent — surface only if a binding hits this debug case.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

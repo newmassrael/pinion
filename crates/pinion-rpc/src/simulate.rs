@@ -61,7 +61,7 @@
 use std::collections::BTreeMap;
 
 use pinion_core::external::{InterveneError, IntrospectValue};
-use pinion_core::{Owner, Scene};
+use pinion_core::{Owner, Scene, SimulationGuard};
 
 use crate::dry_run::DryRunError;
 use crate::path::{self, PathError};
@@ -155,6 +155,13 @@ pub fn simulate_with_owner(
     owner: &Owner,
     steps: &[SimulateStep],
 ) -> Result<SnapshotNode, SimulateError> {
+    // R649 §5.23 R27 — Effect suppression wraps both the simulate
+    // body AND the Owner.restore phase. The R647 test workaround
+    // (`set_with` over `set(get()+1)`) was needed because restore
+    // re-fired the Effect; with R27 Effects don't fire during the
+    // guard's scope, so the naive `set(get()+1)` Effect pattern is
+    // now safe under simulate_with_owner.
+    let _sim_guard = SimulationGuard::enter();
     // R26 §5.22: snapshot Signal graph BEFORE any mutation so the
     // restore returns to the pre-call reactive state (External rollback
     // alone misses Signals indirectly mutated by Effect chains).
@@ -191,6 +198,13 @@ pub fn simulate(
     scene: &mut Scene,
     steps: &[SimulateStep],
 ) -> Result<SnapshotNode, SimulateError> {
+    // R649 §5.23 R27 — Effect suppression covers all phases so
+    // Effects observing Signals mutated through External::intervene
+    // don't fire during Phase 2 (apply) or Phase 4 (rollback).
+    // Nested SimulationGuard is safe — simulate_with_owner already
+    // entered the scope; this guard sees `prior = true` and is a
+    // no-op flip on drop.
+    let _sim_guard = SimulationGuard::enter();
     if steps.is_empty() {
         return Err(SimulateError::EmptySteps);
     }
@@ -714,6 +728,57 @@ mod tests {
             // Both paths agree on the original value.
             assert_eq!(signal.get(), 7);
             assert_eq!(query(&scene, "/external/value").unwrap(), IntrospectValue::Int(7));
+        }
+
+        #[test]
+        fn r649_effect_suppressed_during_simulate() {
+            // R27 §5.23 R649 — Effect observing input must NOT fire
+            // while the SimulationGuard is active. We verify by
+            // counting fire events: counter increments inside the
+            // Effect closure, so the count after simulate equals the
+            // pre-call count (zero new fires during the simulate
+            // body) — no longer the +2 (mutation + rollback) of the
+            // pre-R649 behaviour.
+            //
+            // Naive `set(get()+1)` Effect pattern works here BECAUSE
+            // R649 suppresses the Effect entirely; the R647-era
+            // `set_with` workaround stays useful for the bare
+            // `simulate_with_owner` carry-forward but is no longer
+            // load-bearing for this assertion.
+            let owner = Owner::new();
+            let input: Signal<i32> = Signal::new(7);
+            let counter: Signal<i32> = Signal::new(0);
+            owner.track(&input);
+            owner.track(&counter);
+            let input_for_effect = input.clone();
+            let counter_for_effect = counter.clone();
+            let _effect = Effect::new(&owner, move || {
+                let _ = input_for_effect.get();
+                counter_for_effect.set(counter_for_effect.get() + 1);
+            });
+            // Effect ran once on registration.
+            let pre_counter = counter.get();
+            assert_eq!(pre_counter, 1);
+
+            let mut scene = Scene::External(ExternalNode::new(Box::new(
+                SignalExternal::<i32>::new(input.clone()),
+            )));
+            simulate_with_owner(
+                &mut scene,
+                &owner,
+                &[step("/external/value", IntrospectValue::Int(999))],
+            )
+            .unwrap();
+            // Critical: counter unchanged from pre-call. Effect was
+            // suppressed during both mutation (intervene) and
+            // rollback (External + Owner). No double-fire.
+            assert_eq!(
+                counter.get(),
+                pre_counter,
+                "R649 Effect suppression broken — Effect fired during simulate",
+            );
+            // input still restored via External rollback.
+            assert_eq!(input.get(), 7);
         }
 
         #[test]

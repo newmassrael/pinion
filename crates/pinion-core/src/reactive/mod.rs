@@ -10,6 +10,7 @@ pub mod introspect;
 pub mod owner;
 pub mod resource;
 pub mod signal;
+pub mod simulation;
 
 pub use computed::Computed;
 pub use effect::Effect;
@@ -17,3 +18,4 @@ pub use introspect::{IntoIntrospectValue, JsonValue, SignalExternal};
 pub use owner::{Owner, OwnerSnapshot, SnapshotRestoreError, SnapshotableSignal, batch};
 pub use resource::{FetchToken, LocalSpawner, Resource, ResourceState};
 pub use signal::Signal;
+pub use simulation::{is_simulating, SimulationGuard};

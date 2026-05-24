@@ -168,6 +168,16 @@ impl ReactiveNode for EffectInner {
             // here so a self-write inside the closure does not panic.
             return;
         }
+        // R649 §5.23 R27 — skip Effect side-effect during dry_run /
+        // simulate scopes. The subscription set is unaffected (no
+        // rerun → no `source_cleanups` drain → no re-subscribe), so
+        // the next post-simulation `Signal::set` re-fires the
+        // Effect normally with its frozen subscription set. See
+        // [`crate::reactive::simulation`] module docs for the
+        // commitment-vs-impl story.
+        if crate::reactive::is_simulating() {
+            return;
+        }
         // Recover a strong handle so we can call `rerun(self: &Rc<Self>)`.
         // The `weak_self` cell is populated immediately after `Rc::new`, so
         // a `None` here would mean we are being dispatched during the

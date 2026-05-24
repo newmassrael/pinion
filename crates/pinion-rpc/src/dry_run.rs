@@ -19,7 +19,7 @@
 //! invariant violation, not user error.
 
 use pinion_core::external::{InterveneError, IntrospectValue};
-use pinion_core::Scene;
+use pinion_core::{Scene, SimulationGuard};
 
 use crate::path::{self, PathError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
@@ -70,6 +70,13 @@ pub fn dry_run(
     raw_path: &str,
     value: IntrospectValue,
 ) -> Result<SnapshotNode, DryRunError> {
+    // R649 §5.23 R27 — wrap the entire dry_run scope so any Effect
+    // observing Signals indirectly mutated by `intervene` (typically
+    // through `SignalExternal` or binding-internal reactive chains)
+    // skips its closure body for the duration. Owner.snapshot/restore
+    // is NOT called here (single-write, External rollback is symmetric)
+    // — Effect suppression alone keeps side effects from landing twice.
+    let _sim_guard = SimulationGuard::enter();
     let resolved = path::resolve(raw_path)?;
     let _ = resolved.window;
 
