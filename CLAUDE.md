@@ -1,4 +1,4 @@
-# pinion — AI-native cross-platform GUI framework
+# pinion — AI-native GUI framework → game engine substrate → AAA game maker
 
 ## Quick start for AI agents
 
@@ -11,14 +11,30 @@ Reading order when entering this repo:
 
 ## Project identity
 
-pinion synthesizes interactive UIs from:
+pinion synthesizes interactive UIs **and games** from:
 
-- **SCE statechart** (vendored at `vendor/sce`) for widget/screen/gesture state machines
+- **SCE statechart** (vendored at `vendor/sce`) for widget/screen/gesture/game-AI state machines
 - **Structured scene DSL** (Rust view functions, Xilem-style) for AI-introspectable UI
-- **JSON-RPC 2.0 headless API** for AI agent integration (7 typed methods)
+- **JSON-RPC 2.0 headless API** for AI agent integration (7 typed methods, R660/R663 extensions: drag, double_click)
 - **GUI + TUI dual backends** from one canonical scene structure
+- **§2 #4 dual execution**: retained widget tree (idle 30fps) ↔ immediate-mode game loop (60-144fps lockstep) per `Scene::Container` subtree opt-in
 
-§1 vision settled Round 1; spec phase concluded Round 7.
+§1 vision settled Round 1; spec phase concluded Round 7; **R663.5 vision corrected** (4-phase progression made explicit).
+
+### Northern-star (4-phase progression)
+
+| Phase | Target | Current |
+|---|---|---:|
+| **A. Foundation** (§1-§4 spec + first composed multi-widget apps) | "Hello-world apps possible" — todomvc + settings panel | **70%** (R663 land) |
+| **B. Professional GUI** (Qt / Flutter / Compose / React-class) | Multi-window + DCC/IDE/CAD-grade widget catalog + pro-tool performance | **10%** |
+| **C. Game engine substrate** (§2 #4 entry) | Immediate-mode game loop ↔ retained widget tree dual; 3D scene graph; asset pipeline; physics; audio; gamepad; PBR | **0%** |
+| **D. AAA game maker** | Unreal-class editor **self-hosted in pinion**; visual scripting; Nanite/Lumen-class rendering; multiplayer netcode | **0%** |
+
+**True north**: AAA game shippable + Unreal-class editor self-hosted in pinion itself, with AI-introspection 1st-class through every phase.
+
+Current weighted progress against true north: **~6%** (Phase A 70% × 5% phase-weight + Phase B 10% × 25% + Phase C 0% × 35% + Phase D 0% × 35%).
+
+R655-R663 todomvc + R664-R667 cascade = Phase A finalisation. R700+ = Phase B entry (multi-window first). R1000+ = Phase C entry (ImmediateModeNode + game loop). R2500+ = Phase D entry (editor self-hosted dogfood).
 
 ## Hard invariants (never violate)
 
@@ -27,7 +43,7 @@ pinion synthesizes interactive UIs from:
 1. Structured scene mandatory (no opaque paint callbacks)
 2. RPC headless as AI primary path
 3. dry_run primitive (zero-cost scenario exploration via SCE determinism)
-4. Mode toggle immediate vs retained (runtime flag, single binary)
+4. Mode toggle immediate vs retained (runtime flag, single binary) — **Phase C entry**: immediate-mode game loop ↔ retained widget tree dual execution per `Scene::Container` subtree (NOT GUI diff optimisation)
 5. SCE statechart state (hierarchical: root + scoped child SCEs)
 6. GUI/TUI dual (one scene, two render dispatch paths)
 7. Scene-as-data (queryable as text, no pixels in introspection)

@@ -19796,6 +19796,58 @@
         "DoubleClick is symmetric with the existing Click selector taxonomy; future Triple+Click etc. would extend DeferredInput rather than mutate this variant (TasteJS convention covers up to detail:2 for double-activate; triple-click for paragraph-select belongs to future text-edit axis)."
       ]
     },
+    "R663.5": {
+      "decision_summary": "R663.5 §1 §2 — Vision 정정 라운드: pinion northern-star = AAA game shippable + Unreal-class editor self-hosted in pinion itself, 4-phase progression 명시.",
+      "changes_bullets": [
+        "docs/GENERATED.md §1 Vision: set_section_intent 로 4-phase progression (Foundation / Professional GUI / Game engine substrate per §2 #4 dual execution / AAA editor self-hosted) 명시. set_section_rationale 10 bullets — Qt MCU + Unreal market split, AI-introspection 1st-class throughout, Phase A substrate cascades ROI to B-D, editor self-hosted = textbook dogfood 종착.",
+        "docs/GENERATED.md §2 #4 invariant: add_section_caveat 5건 — mode toggle 의 진짜 의미가 GUI diff opt 가 아니라 Phase C entry (immediate-mode game loop 60-144fps ↔ retained widget tree idle 30fps dual execution per Scene::Container subtree). ImmediateModeNode primitive lifts at R1000+ axis.",
+        "CLAUDE.md: H1 'pinion — AI-native cross-platform GUI framework' → 'pinion — AI-native GUI framework → game engine substrate → AAA game maker'. Project identity § 확장: 'interactive UIs' → 'interactive UIs and games'; §2 #4 dual execution 추가; 4-phase 진척 표 (A 70% / B 10% / C 0% / D 0%); 가중 현재 ~6%; R655-R667/R700+/R1000+/R2500+ 라운드 매핑 명시. Hard invariants § #4 elaboration: Phase C entry NOT GUI diff opt.",
+        "memory/true-north-star-phases.md (신규): R663.5 진정한 northern-star 정의 + 4-phase 매핑 + 라운드 추정 + 5-layer 동기화 + R660-R663 lesson (Vision 명시 안 되어 axis 선택 misdirect).",
+        "memory/project_scope_game_engine.md (정정): 'GUI now, game engine later' 기존 framing 보존 + R663.5 정정 섹션 추가 — 'later' = progression target, deferred 가 아님. 단기 룰 (§1 add 권유 ×, 에셋/물리/오디오 spec add 권유 ×) 그대로 유지; northern-star 명시는 axis 선택 anchor 효과만.",
+        "memory/MEMORY.md: index 첫 두 줄 정정 — [[true-north-star-phases]] 추가 + [[project_scope_game_engine]] description 정정."
+      ],
+      "verification_bullets": [
+        "mnemosyne-cli validate-workspace: T1 orphan total=0 (ledger=4, new=+0, resolved=-0), round-trip mandatory=1/1, T3 reject=0. atomic entries 526 → 527 (R663.5 changelog), sections 61 (§1 + §2 mutation only).",
+        "Mnemosyne typed primitive 만 사용 — atomic JSON 직접 편집 0회: set_section_intent (§1 ×1), set_section_rationale (§1 ×1), add_section_caveat (§2 ×5), append_changelog_entry_v2 (R663.5).",
+        "0 code change — process maturity 라운드. cargo test --workspace + cargo clippy 영향 0 (소스 파일 수정 없음); 단 CLAUDE.md / memory 의 northern-star 정의 가시 효과는 다음 세션 prompt 부터 (axis 선택 anchor 재설정)."
+      ],
+      "impact_refs": [
+        "1",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Seed prompt 의 '북극성 명확화' 절 정정 — R663.5 정정 후 첫 다음 세션 prompt 부터 'AAA game + editor self-hosted' 명시; 'R664 2nd composed app = 북극성 도달' 정의 폐기 — R667 = Phase A 종료점일 뿐, 진짜 북극성의 ~5% 도달.",
+        "R664-R667 cascade 의 의의 재정의: Phase A (Foundation) finalisation + Phase B (Professional GUI) 진입 prerequisite. todomvc 완성도 + view_field/scrollbar substrate ROI curve 확정이 Phase B 의 multi-window / DCC widget catalog 진입 전제.",
+        "R700+ Phase B 진입 첫 라운드 = Multi-window substrate (winit 이미 multi-window 지원, pinion-shell::WindowManager + Scene::Window enum). DevTools / Inspector 가 첫 multi-window 자체 consumer 후보.",
+        "R1000+ Phase C 진입 = §2 #4 진짜 구현 — ImmediateModeNode primitive + game-loop infrastructure (60-144fps lockstep + delta time + frame budget cap) + retained↔immediate runtime switch per Scene::Container subtree.",
+        "단기 룰 ([[project_scope_game_engine]]) 그대로 유지: 지금 §1 추가 spec / 에셋 / 물리 / 오디오 spec add 권유 ×. Phase A 완료까지 forward-compatible 설계만 검토. Phase B-D 의 axis 진입은 Phase A 완료 (R667) 후."
+      ],
+      "publishable_decision_summary": "R663.5 §1 §2 — Vision 정정 라운드: pinion northern-star = AAA game shippable + Unreal-class editor self-hosted in pinion itself, 4-phase progression 명시.",
+      "publishable_changes_bullets": [
+        "docs/GENERATED.md §1 Vision: set_section_intent 로 4-phase progression (Foundation / Professional GUI / Game engine substrate per §2 #4 dual execution / AAA editor self-hosted) 명시. set_section_rationale 10 bullets — Qt MCU + Unreal market split, AI-introspection 1st-class throughout, Phase A substrate cascades ROI to B-D, editor self-hosted = textbook dogfood 종착.",
+        "docs/GENERATED.md §2 #4 invariant: add_section_caveat 5건 — mode toggle 의 진짜 의미가 GUI diff opt 가 아니라 Phase C entry (immediate-mode game loop 60-144fps ↔ retained widget tree idle 30fps dual execution per Scene::Container subtree). ImmediateModeNode primitive lifts at R1000+ axis.",
+        "CLAUDE.md: H1 'pinion — AI-native cross-platform GUI framework' → 'pinion — AI-native GUI framework → game engine substrate → AAA game maker'. Project identity § 확장: 'interactive UIs' → 'interactive UIs and games'; §2 #4 dual execution 추가; 4-phase 진척 표 (A 70% / B 10% / C 0% / D 0%); 가중 현재 ~6%; R655-R667/R700+/R1000+/R2500+ 라운드 매핑 명시. Hard invariants § #4 elaboration: Phase C entry NOT GUI diff opt.",
+        "memory/true-north-star-phases.md (신규): R663.5 진정한 northern-star 정의 + 4-phase 매핑 + 라운드 추정 + 5-layer 동기화 + R660-R663 lesson (Vision 명시 안 되어 axis 선택 misdirect).",
+        "memory/project_scope_game_engine.md (정정): 'GUI now, game engine later' 기존 framing 보존 + R663.5 정정 섹션 추가 — 'later' = progression target, deferred 가 아님. 단기 룰 (§1 add 권유 ×, 에셋/물리/오디오 spec add 권유 ×) 그대로 유지; northern-star 명시는 axis 선택 anchor 효과만.",
+        "memory/MEMORY.md: index 첫 두 줄 정정 — [[true-north-star-phases]] 추가 + [[project_scope_game_engine]] description 정정."
+      ],
+      "publishable_verification_bullets": [
+        "mnemosyne-cli validate-workspace: T1 orphan total=0 (ledger=4, new=+0, resolved=-0), round-trip mandatory=1/1, T3 reject=0. atomic entries 526 → 527 (R663.5 changelog), sections 61 (§1 + §2 mutation only).",
+        "Mnemosyne typed primitive 만 사용 — atomic JSON 직접 편집 0회: set_section_intent (§1 ×1), set_section_rationale (§1 ×1), add_section_caveat (§2 ×5), append_changelog_entry_v2 (R663.5).",
+        "0 code change — process maturity 라운드. cargo test --workspace + cargo clippy 영향 0 (소스 파일 수정 없음); 단 CLAUDE.md / memory 의 northern-star 정의 가시 효과는 다음 세션 prompt 부터 (axis 선택 anchor 재설정)."
+      ],
+      "publishable_impact_refs": [
+        "1",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Seed prompt 의 '북극성 명확화' 절 정정 — R663.5 정정 후 첫 다음 세션 prompt 부터 'AAA game + editor self-hosted' 명시; 'R664 2nd composed app = 북극성 도달' 정의 폐기 — R667 = Phase A 종료점일 뿐, 진짜 북극성의 ~5% 도달.",
+        "R664-R667 cascade 의 의의 재정의: Phase A (Foundation) finalisation + Phase B (Professional GUI) 진입 prerequisite. todomvc 완성도 + view_field/scrollbar substrate ROI curve 확정이 Phase B 의 multi-window / DCC widget catalog 진입 전제.",
+        "R700+ Phase B 진입 첫 라운드 = Multi-window substrate (winit 이미 multi-window 지원, pinion-shell::WindowManager + Scene::Window enum). DevTools / Inspector 가 첫 multi-window 자체 consumer 후보.",
+        "R1000+ Phase C 진입 = §2 #4 진짜 구현 — ImmediateModeNode primitive + game-loop infrastructure (60-144fps lockstep + delta time + frame budget cap) + retained↔immediate runtime switch per Scene::Container subtree.",
+        "단기 룰 ([[project_scope_game_engine]]) 그대로 유지: 지금 §1 추가 spec / 에셋 / 물리 / 오디오 spec add 권유 ×. Phase A 완료까지 forward-compatible 설계만 검토. Phase B-D 의 axis 진입은 Phase A 완료 (R667) 후."
+      ]
+    },
     "R664": {
       "decision_summary": "R664 §5.16 §5.38 §5.39 §5.49 — todomvc edit-in-place + R663 paint-side double-click substrate consumer + focus_request mailbox + AT-action coverage",
       "changes_bullets": [
