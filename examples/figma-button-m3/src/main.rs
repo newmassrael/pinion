@@ -103,25 +103,24 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetTag};
+use pinion_core::{Animation, Color, Frame, Owner, Scene};
 #[cfg(test)]
 use pinion_core::WidgetCore;
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
-use pinion_derive::{widget, WidgetTag};
+use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
-/// R644 §5.16 — single-source-of-truth tag identifier (see
-/// [[r644-widget-tag-derive]] memory note). The macro derives
-/// `Tags::FigmaButtonM3.as_tag() == "figma_button_m3"` from the
-/// variant ident via `PascalCase` → `snake_case` conversion, so the
-/// `#[widget(tag = Tags::FigmaButtonM3)]` attribute below and every
-/// other tag-related site (paint-scene `.with_tag(...)`, test
-/// assertions) flow through this enum.
-#[derive(Copy, Clone, Eq, PartialEq, Debug, WidgetTag)]
-enum Tags {
-    FigmaButtonM3,
-}
+// R650 §5.16 — single-tag binding uses the `"figma_button_m3"`
+// literal directly per [[abstraction-needs-second-consumer]]. The
+// R644 `enum Tags { FigmaButtonM3 }` + `#[derive(WidgetTag)]`
+// adoption was a single-consumer rehearsal — the derive's value is
+// at composite-widget scale (multiple coordinated tags in one
+// binary), not for a binding with one tag. The substrate
+// ([`pinion_derive::WidgetTag`] derive + `tag = Path` form of
+// `#[widget]`) stays land for the future composite consumer;
+// substrate-only coverage moved to
+// `crates/pinion-derive/tests/widget_tag_derive.rs`.
 
 // pinion-forge codegen output. Defines `pub struct FigmaButtonM3Renderer`
 // + `pub enum FigmaButtonM3RendererError` plus the Vello-backed
@@ -246,7 +245,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
             // Framework dispatch identifier — matches `WidgetCore::tag()`
             // so the shell's `InputRouter` can hit-test pointer events
             // and dispatch them through the wrapped `ButtonExternal`.
-            .with_tag(Tags::FigmaButtonM3.as_tag())
+            .with_tag("figma_button_m3")
             .with_style(BoxStyle::filled(btn_fill).with_corner_radius(BTN_RADIUS))
             .with_layout(
                 LayoutStyle::new()
@@ -287,7 +286,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
 /// [`read_state`]: pinion_core::WidgetCore::read_state
 /// [`event_name`]: pinion_core::WidgetCore::event_name
 #[widget(
-    tag = Tags::FigmaButtonM3,
+    tag = "figma_button_m3",
     state = ButtonState,
     event = ButtonEvent,
     title = "Figma Material 3 Filled Button (R643 §5.16 #[widget])",
@@ -556,21 +555,19 @@ mod tests {
     }
 
     #[test]
-    fn r644_widget_tag_round_trip() {
-        // R644 §5.16 — single-source-of-truth pin. `Tags::FigmaButtonM3
-        // ↔ "figma_button_m3"` round trip + WidgetCore::tag() body
-        // resolves to the same string. The variant ident's
-        // `PascalCase` → `snake_case` conversion preserves the
-        // digit suffix without inserting an underscore (`M3` not
-        // `_m_3`) — assertion guards the converter's digit-as-
-        // lowercase-letter convention.
-        assert_eq!(Tags::FigmaButtonM3.as_tag(), "figma_button_m3");
-        assert_eq!(Tags::from_tag("figma_button_m3"), Some(Tags::FigmaButtonM3));
-        assert_eq!(Tags::from_tag("nope"), None);
-        assert_eq!(
-            <FigmaButtonView as WidgetCore>::tag(),
-            Tags::FigmaButtonM3.as_tag(),
-        );
+    fn r650_widget_tag_literal_pin() {
+        // R650 §5.16 — pin the binding-side tag literal directly.
+        // R644 routed this through `Tags::FigmaButtonM3.as_tag()`
+        // which was walked back per
+        // [[abstraction-needs-second-consumer]]; the substrate
+        // round-trip (including the `M3` → `m3` no-underscore
+        // digit-as-lowercase-letter convention) now lives at
+        // `crates/pinion-derive/tests/widget_tag_derive.rs`. This pin
+        // guards the binary-local contract: `WidgetCore::tag()` must
+        // resolve to the same `"figma_button_m3"` literal the paint
+        // scene's `.with_tag(...)` emits, otherwise hit-tested events
+        // would never reach the wrapped `ButtonExternal`.
+        assert_eq!(<FigmaButtonView as WidgetCore>::tag(), "figma_button_m3");
     }
 
     #[test]

@@ -18924,6 +18924,64 @@
         "Test fixture pattern carry: long-running Effect that drifts in production may want a manual exit-from-simulation marker (e.g., owner.in_simulate_assert!() inside the Effect closure) so unintended Effect re-fires after the guard are auditable. Not urgent — surface only if a binding hits this debug case."
       ]
     },
+    "R650": {
+      "decision_summary": "R650 §5.16 R644 Tags enum walk-back: single-tag binding boilerplate revert (substrate preserved)",
+      "changes_bullets": [
+        "examples/hello-button/src/main.rs: removed `enum Tags { MainBtn }` + `#[derive(WidgetTag)]` + `use pinion_core::WidgetTag` + `use pinion_derive::WidgetTag` import; restored `tag = \"main_btn\"` attribute literal + `.with_tag(\"main_btn\")` paint literal; replaced `r644_widget_tag_round_trip` test with R650 binary-local literal pin `r650_widget_tag_literal_pin` (asserts `<ButtonView as WidgetCore>::tag() == \"main_btn\"` — hit-test contract guard)",
+        "examples/figma-button-m3/src/main.rs: removed `enum Tags { FigmaButtonM3 }` + same derive/import set; restored `tag = \"figma_button_m3\"` literal in both `#[widget(...)]` and paint scene `.with_tag(...)`; replaced `r644_widget_tag_round_trip` test with `r650_widget_tag_literal_pin`",
+        "examples/hello-button/src/main.rs: rewrote 9-line R644 Tags enum doc block as R650 walk-back rationale comment citing [[abstraction-needs-second-consumer]] and pointing the substrate-coverage reader at `crates/pinion-derive/tests/widget_tag_derive.rs`",
+        "examples/figma-button-m3/src/main.rs: same R650 rationale comment, additionally citing the M3 → m3 digit-as-lowercase-letter convention is now substrate-tested at the canonical home",
+        "crates/pinion-derive/tests/widget_tag_derive.rs NEW: substrate-only integration test (5 fns / 74 LOC). Pins `PascalCase → snake_case` converter (`MainBtn → main_btn`, `ScrollBar → scroll_bar`), the digit-as-lowercase-letter convention (`FigmaButtonM3 → figma_button_m3`, NOT `figma_button_m_3`), round-trip (`from_tag(as_tag()) == Some(variant)` for every variant), and rejection of unknown / wire-form-invalid `PascalCase` input",
+        "pinion-derive substrate (`WidgetTag` trait + `#[derive(WidgetTag)]` + `#[widget(tag = Path::Variant)]` path form) is fully preserved (zero LOC change to `crates/pinion-derive/src/lib.rs` / `crates/pinion-derive/src/widget.rs` / `crates/pinion-core/src/widget_core.rs`). Walk-back is binding-adoption-only — substrate stays land for the future composite-widget consumer",
+        "Honest LOC delta (no rounding): binding side -10 LOC (52 ins / 62 del across 2 files); new substrate test +74 LOC; net workspace +64 LOC. The walk-back's value is NOT LOC reduction (substantial walk-back rationale comments preserve the audit trail) — it is honest scope correction per [[abstraction-needs-second-consumer]]: single-tag binding does not warrant a typed-enum-derived tag indirection"
+      ],
+      "verification_bullets": [
+        "cargo check --workspace: clean (all 20 binary crates + library crates compile)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (workspace.lints baseline preserved — forbid unsafe + deny warnings + clippy::pedantic deny)",
+        "cargo test --workspace: 3211 passed / 0 failed (R649 baseline was 3206; +5 = 5 new substrate fns in `widget_tag_derive.rs`; R644 in-binding round-trip tests removed but their assertions superseded by substrate test + R650 literal pin)",
+        "cargo test -p pinion-derive --test widget_tag_derive: 5 passed / 0 failed (pascal_to_snake_case_basic + pascal_to_snake_case_digit_no_underscore + single_variant_round_trip + from_tag_inverse_for_every_variant + from_tag_rejects_unknown)",
+        "First-pass cargo check surfaced an import-scope bug: I had moved `WidgetCore` to `#[cfg(test)]` use in hello-button, breaking the binary-code call `Self::tag()` at apply_key (line 311). Fixed by restoring `WidgetCore` to the non-cfg use group; figma-button-m3 keeps its existing `#[cfg(test)] use WidgetCore` because that binding does not implement `apply_key`",
+        "mnemosyne validate_workspace: T1 orphan total = 0 (new = +0), round-trip 1/1, atomic ledger 512 → 513 entries, no T1/T2 regressions"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R651 §5.16: register `[[sce-upstream-debts]]` entry for the pinion-side WidgetStateName / WidgetEventName declarative-macro workaround (vendor/sce codegen template should emit those trait derives directly per upstream PR)",
+        "R652 §5.16: substrate ROI measurement across all 17 single-widget bindings — quantify how many would actually adopt the R641-R645 substrate (tuple/composite/value-bearing taxonomy) before either committing to full retrofit, freezing surface, or further walk-back",
+        "R653-R654 (conditional on R652 decision): execute walk-back or freeze policy depending on R652's quantified gain",
+        "Composite widget (e.g. radio-group / listbox / textfield with caret + selection) is the canonical first consumer that should re-adopt `enum Tags { ... }` + `#[derive(WidgetTag)]` — the type-safety value exists at coordinated-multi-tag scale, not single-tag scale",
+        "Memory note `[[r644-widget-tag-derive]]` is now historically correct as written but its closing claim 'adopted in hello-button + figma-button-m3' is superseded by this R650 walk-back; future sessions reading that note should follow the cross-reference to R650"
+      ],
+      "publishable_decision_summary": "R650 §5.16 R644 Tags enum walk-back: single-tag binding boilerplate revert (substrate preserved)",
+      "publishable_changes_bullets": [
+        "examples/hello-button/src/main.rs: removed `enum Tags { MainBtn }` + `#[derive(WidgetTag)]` + `use pinion_core::WidgetTag` + `use pinion_derive::WidgetTag` import; restored `tag = \"main_btn\"` attribute literal + `.with_tag(\"main_btn\")` paint literal; replaced `r644_widget_tag_round_trip` test with R650 binary-local literal pin `r650_widget_tag_literal_pin` (asserts `<ButtonView as WidgetCore>::tag() == \"main_btn\"` — hit-test contract guard)",
+        "examples/figma-button-m3/src/main.rs: removed `enum Tags { FigmaButtonM3 }` + same derive/import set; restored `tag = \"figma_button_m3\"` literal in both `#[widget(...)]` and paint scene `.with_tag(...)`; replaced `r644_widget_tag_round_trip` test with `r650_widget_tag_literal_pin`",
+        "examples/hello-button/src/main.rs: rewrote 9-line R644 Tags enum doc block as R650 walk-back rationale comment citing [[abstraction-needs-second-consumer]] and pointing the substrate-coverage reader at `crates/pinion-derive/tests/widget_tag_derive.rs`",
+        "examples/figma-button-m3/src/main.rs: same R650 rationale comment, additionally citing the M3 → m3 digit-as-lowercase-letter convention is now substrate-tested at the canonical home",
+        "crates/pinion-derive/tests/widget_tag_derive.rs NEW: substrate-only integration test (5 fns / 74 LOC). Pins `PascalCase → snake_case` converter (`MainBtn → main_btn`, `ScrollBar → scroll_bar`), the digit-as-lowercase-letter convention (`FigmaButtonM3 → figma_button_m3`, NOT `figma_button_m_3`), round-trip (`from_tag(as_tag()) == Some(variant)` for every variant), and rejection of unknown / wire-form-invalid `PascalCase` input",
+        "pinion-derive substrate (`WidgetTag` trait + `#[derive(WidgetTag)]` + `#[widget(tag = Path::Variant)]` path form) is fully preserved (zero LOC change to `crates/pinion-derive/src/lib.rs` / `crates/pinion-derive/src/widget.rs` / `crates/pinion-core/src/widget_core.rs`). Walk-back is binding-adoption-only — substrate stays land for the future composite-widget consumer",
+        "Honest LOC delta (no rounding): binding side -10 LOC (52 ins / 62 del across 2 files); new substrate test +74 LOC; net workspace +64 LOC. The walk-back's value is NOT LOC reduction (substantial walk-back rationale comments preserve the audit trail) — it is honest scope correction per [[abstraction-needs-second-consumer]]: single-tag binding does not warrant a typed-enum-derived tag indirection"
+      ],
+      "publishable_verification_bullets": [
+        "cargo check --workspace: clean (all 20 binary crates + library crates compile)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (workspace.lints baseline preserved — forbid unsafe + deny warnings + clippy::pedantic deny)",
+        "cargo test --workspace: 3211 passed / 0 failed (R649 baseline was 3206; +5 = 5 new substrate fns in `widget_tag_derive.rs`; R644 in-binding round-trip tests removed but their assertions superseded by substrate test + R650 literal pin)",
+        "cargo test -p pinion-derive --test widget_tag_derive: 5 passed / 0 failed (pascal_to_snake_case_basic + pascal_to_snake_case_digit_no_underscore + single_variant_round_trip + from_tag_inverse_for_every_variant + from_tag_rejects_unknown)",
+        "First-pass cargo check surfaced an import-scope bug: I had moved `WidgetCore` to `#[cfg(test)]` use in hello-button, breaking the binary-code call `Self::tag()` at apply_key (line 311). Fixed by restoring `WidgetCore` to the non-cfg use group; figma-button-m3 keeps its existing `#[cfg(test)] use WidgetCore` because that binding does not implement `apply_key`",
+        "mnemosyne validate_workspace: T1 orphan total = 0 (new = +0), round-trip 1/1, atomic ledger 512 → 513 entries, no T1/T2 regressions"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R651 §5.16: register `[[sce-upstream-debts]]` entry for the pinion-side WidgetStateName / WidgetEventName declarative-macro workaround (vendor/sce codegen template should emit those trait derives directly per upstream PR)",
+        "R652 §5.16: substrate ROI measurement across all 17 single-widget bindings — quantify how many would actually adopt the R641-R645 substrate (tuple/composite/value-bearing taxonomy) before either committing to full retrofit, freezing surface, or further walk-back",
+        "R653-R654 (conditional on R652 decision): execute walk-back or freeze policy depending on R652's quantified gain",
+        "Composite widget (e.g. radio-group / listbox / textfield with caret + selection) is the canonical first consumer that should re-adopt `enum Tags { ... }` + `#[derive(WidgetTag)]` — the type-safety value exists at coordinated-multi-tag scale, not single-tag scale",
+        "Memory note `[[r644-widget-tag-derive]]` is now historically correct as written but its closing claim 'adopted in hello-button + figma-button-m3' is superseded by this R650 walk-back; future sessions reading that note should follow the cross-reference to R650"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

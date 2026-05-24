@@ -40,25 +40,22 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 #[cfg(test)]
 use pinion_core::theme::ThemeMode;
-use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore, WidgetTag};
+use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
-use pinion_derive::{widget, WidgetTag};
+use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
-/// R644 §5.16 — single-source-of-truth tag identifier. The
-/// `#[derive(WidgetTag)]` macro emits `Tags::MainBtn.as_tag() ==
-/// "main_btn"` (`PascalCase` → `snake_case` at compile time) and
-/// `Tags::from_tag("main_btn") == Some(Tags::MainBtn)` (inverse).
-/// Every reference to the tag inside this binary — the
-/// [`#[widget(tag = Tags::MainBtn)]`](pinion_derive::widget)
-/// attribute, the `.with_tag(Tags::MainBtn.as_tag())` paint-side
-/// call in [`view`], and the test assertions — flows through this
-/// enum so a typo cannot land silently.
-#[derive(Copy, Clone, Eq, PartialEq, Debug, WidgetTag)]
-enum Tags {
-    MainBtn,
-}
+// R650 §5.16 — single-tag binding uses the `"main_btn"` literal
+// directly per [[abstraction-needs-second-consumer]]. The R644
+// `enum Tags { MainBtn }` + `#[derive(WidgetTag)]` adoption was an
+// over-engineered single-consumer rehearsal of a substrate that pays
+// off only at composite-widget scale (multiple coordinated tags in
+// one binary). The substrate itself stays land — the
+// [`pinion_derive::WidgetTag`] derive macro and the
+// `tag = SomeEnum::Variant` path form of `#[widget]` are both
+// preserved for the future composite consumer; the binding-side
+// boilerplate was walked back here.
 
 // pinion-forge codegen output. Defines `pub struct HelloButtonRenderer`
 // + `pub enum HelloButtonRendererError` + async `new<W: Into<wgpu::
@@ -206,7 +203,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
             // routes pointer events to the state scene's
             // ExternalNode("main_btn") — application code never sees
             // the cursor coordinates.
-            .with_tag(Tags::MainBtn.as_tag())
+            .with_tag("main_btn")
             .with_style(BoxStyle::filled(btn_fill))
             .with_layout(
                 LayoutStyle::new()
@@ -252,7 +249,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 /// [`apply_key`]: pinion_core::WidgetCore::apply_key
 /// [`keybinding`]: pinion_core::WidgetCore::keybinding
 #[widget(
-    tag = Tags::MainBtn,
+    tag = "main_btn",
     state = ButtonState,
     event = ButtonEvent,
     title = "pinion hello-button (R643 §5.16 #[widget])",
@@ -420,21 +417,17 @@ mod a11y_tests {
     }
 
     #[test]
-    fn r644_widget_tag_round_trip() {
-        // R644 §5.16 — the `Tags::MainBtn ↔ "main_btn"` round-trip
-        // is the contract every other site (`#[widget(tag = ...)]`
-        // attribute body + `WidgetCore::tag()` return + paint
-        // `.with_tag(...)` argument + AT `focused == Some(...)`
-        // comparison) anchors on. Pin both directions explicitly so
-        // a future macro change to the `PascalCase` → `snake_case`
-        // converter cannot regress the spelling without surfacing
-        // here.
-        assert_eq!(Tags::MainBtn.as_tag(), "main_btn");
-        assert_eq!(Tags::from_tag("main_btn"), Some(Tags::MainBtn));
-        assert_eq!(Tags::from_tag("unknown"), None);
-        // WidgetCore::tag() body resolves through the same trait
-        // method — single source of truth pin.
-        assert_eq!(<ButtonView as WidgetCore>::tag(), Tags::MainBtn.as_tag());
+    fn r650_widget_tag_literal_pin() {
+        // R650 §5.16 — pin the binding-side tag literal directly.
+        // R644 routed this through `Tags::MainBtn.as_tag()` which was
+        // walked back per [[abstraction-needs-second-consumer]]; the
+        // substrate round-trip lives at
+        // `crates/pinion-derive/tests/widget_tag_derive.rs`. This pin
+        // guards the binary-local contract: `WidgetCore::tag()` must
+        // resolve to the same `"main_btn"` literal the paint scene's
+        // `.with_tag(...)` emits, otherwise hit-tested events would
+        // never reach the `External(ButtonExternal)`.
+        assert_eq!(<ButtonView as WidgetCore>::tag(), "main_btn");
     }
 
     // ─────────────────────────────────────────────────────────────
