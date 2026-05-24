@@ -11953,6 +11953,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R646 — R646 §5.12 §2 invariant #3 — scene/simulate RPC method (multi-event scenario exploration); ergonomics-axis pause, AI-native primary-path pivot first round
+
+**Changes**:
+- pinion-rpc/src/simulate.rs (new, 422 LOC): simulate(scene, &[SimulateStep]) core fn implementing R26 dry_run multi-event extension. Phase 0 path resolve → Phase 1 save-per-unique-path → Phase 2 sequential intervene with mid-failure rollback → Phase 3 snapshot → Phase 4 restore-all. Per-unique-path save semantics ensure rollback restores pre-call state even when multiple steps target same path.
+- pinion-rpc/src/simulate.rs: SimulateStep + SimulateError types. EmptySteps variant added (dispatcher rejects empty arrays at the JSON-RPC boundary). From<SimulateError> for DryRunError shim lets single-step callers collapse both error types into one match arm.
+- pinion-rpc/src/dispatch.rs: scene/simulate method router entry + handle_scene_simulate handler + simulate_error_to_rpc variant table. Input {steps: [{path, value}]}, output SnapshotNode reflecting compound state.
+- pinion-rpc/src/lib.rs: pub mod simulate + pub use simulate::{simulate, SimulateError, SimulateStep}.
+- pinion-rpc/src/dispatch_tests.rs: 3 dispatch integration tests (2-step compound snapshot + rollback, empty steps invalid, missing steps param invalid).
+- Axis pivot: R641-R645 ergonomics axis paused after honest evidence accounting (cumulative +571 LOC, abstraction over-extension into tuple/composite/value-bearing). R646+ pivots to AI-native primary-path strengthening (§2 invariant #3 was previously partial: dry_run handled single-write only; simulate covers multi-event branching futures AI needs).
+
+
+
+**Verification**:
+- cargo test --workspace: 3195 pass / 0 fail (R645 baseline 3183 + 9 simulate unit tests + 3 dispatch integration tests). Tests cover: empty rejection, single-step dry_run parity, 2-step compound, mid-failure rollback to pre-call (not intermediate), initial-query failure step-index reporting, path malformed step-index, stub External opt-out, Box root rejection, unsupported path step-index.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings. Pre-commit fixed 5 doc_markdown + 1 trivially_pass_by_value (simulate_error_to_rpc takes &SimulateError) + 1 match_same_arms (EmptySteps + UnsupportedPath collapsed with explanatory comment).
+- mnemosyne validate_workspace: T1 orphan 0/0, round-trip 1/1, atomic ledger sync.
+- Honest LOC: pinion-rpc +422 (simulate.rs new) + 67 (dispatch handler) + 41 (dispatch tests) = +530 LOC. R646 is pure substrate addition with AI-facing capability — not cascade-savings. AI clients can now drive multi-event scenario exploration in 1 round-trip instead of N round-trips (significantly reduces RPC overhead for branching-future queries).
+
+
+
+**Impact**: §5.12
+
+
+**Carry forward**:
+- R647 candidate: bridge Owner::snapshot/restore into simulate. R26 commitment (Signal graph snapshotted via Clone, rollback restores all signals) not yet honored — simulate currently rolls back via External intervene only. Adds reactive-layer snapshot composition.
+- R648 candidate: extend simulate steps beyond intervene to include event dispatch (`{kind: 'send', event: 'PointerDown'}`) + click (`{kind: 'click', tag: 'main_btn'}`). AI scenario 'if I click button 3 times' needs event-driven steps, not just slot mutations.
+- R27 commitment unverified: dry_run skips Effect side-effect; subscription still tracked for memo invalidation. simulate inherits the same gap. Needs Effect::should_execute() hook — R649+ candidate.
+- R30 commitment unverified: dry_run uses isolated cache. simulate inherits live cache pollution risk. R650+ candidate.
+- §5.8 SCE engine-level dry_run hook (ratified, not wired into pinion-runtime). v0 External test-and-rollback sufficient; engine hook deferred to future round (would replace simulate's per-step intervene with engine-level step-intercept).
+- R641-R645 ergonomics substrate stays as-is. Sweet spot confirmed = Button-class single-node widgets. Tuple/composite/value-bearing escape hatches accepted as honest abstraction boundary.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

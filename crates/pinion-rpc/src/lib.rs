@@ -29,6 +29,7 @@ pub mod resize;
 pub mod rewind;
 pub mod screenshot;
 pub mod scroll_state;
+pub mod simulate;
 pub mod snapshot;
 pub mod substrate_introspect;
 pub mod text;
@@ -51,6 +52,7 @@ pub use dispatch::{
     dispatch, DeferredInput, DispatchContext, Request, RequestId, Response, RpcError,
 };
 pub use dry_run::{dry_run, DryRunError};
+pub use simulate::{simulate, SimulateError, SimulateStep};
 pub use focus::{
     focus_get, focus_next, focus_prev, focus_set, FocusError, FocusSetParams, FocusState,
 };

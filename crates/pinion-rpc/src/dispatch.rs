@@ -43,6 +43,7 @@ use crate::animation_state::{animation_state, AnimationStateError, AnimationStat
 use crate::caret_state::{caret_state, CaretStateOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
+use crate::simulate::{simulate, SimulateError, SimulateStep};
 use crate::font::{self, FontError, FontRegistry};
 use crate::intents::{drain_intents, IntentsError};
 use crate::intervene::{intervene, InterveneError};
@@ -621,6 +622,10 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
         }
         "scene/dry_run" => (
             handle_scene_dry_run(scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/simulate" => (
+            handle_scene_simulate(scene, request.params.as_ref()),
             HandlerKind::Read,
         ),
         "scene/waitFor" => (
@@ -2112,6 +2117,68 @@ fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
         DryRunError::Intervene(_) => "Intervene",
         DryRunError::RollbackFailed => "RollbackFailed",
         DryRunError::SnapshotFailed => "SnapshotFailed",
+    };
+    RpcError::invalid_params(variant)
+}
+
+/// R646 §5.12 — `scene/simulate` handler. Accepts
+/// `{ steps: [{path, value}, ...] }` and dispatches into
+/// [`crate::simulate::simulate`] for multi-event scenario
+/// exploration. Returns the [`SnapshotNode`](crate::snapshot::SnapshotNode)
+/// reflecting the compound hypothetical state; rollback is performed
+/// before return so the live scene is unchanged.
+fn handle_scene_simulate(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+    let params = require_params(params)?;
+    let Some(steps_json) = params.get("steps").and_then(Value::as_array) else {
+        return Err(RpcError::invalid_params("params.steps missing or not an array"));
+    };
+    if steps_json.is_empty() {
+        return Err(RpcError::invalid_params(
+            "params.steps empty (use scene/snapshot for the no-op case)",
+        ));
+    }
+    let mut steps: Vec<SimulateStep> = Vec::with_capacity(steps_json.len());
+    for (i, step_json) in steps_json.iter().enumerate() {
+        let Some(obj) = step_json.as_object() else {
+            return Err(RpcError::invalid_params(format!(
+                "params.steps[{i}] not an object",
+            )));
+        };
+        let Some(path) = obj.get("path").and_then(Value::as_str) else {
+            return Err(RpcError::invalid_params(format!(
+                "params.steps[{i}].path missing or not a string",
+            )));
+        };
+        let Some(value_json) = obj.get("value") else {
+            return Err(RpcError::invalid_params(format!(
+                "params.steps[{i}].value missing",
+            )));
+        };
+        let Some(value) = json_to_introspect_value(value_json) else {
+            return Err(RpcError::invalid_params(format!(
+                "params.steps[{i}].value unsupported (v0: null/bool/number/string only)",
+            )));
+        };
+        steps.push(SimulateStep { path: path.to_string(), value });
+    }
+
+    match simulate(scene, &steps) {
+        Ok(snap) => Ok(snapshot_node_to_json(snap)),
+        Err(err) => Err(simulate_error_to_rpc(&err)),
+    }
+}
+
+fn simulate_error_to_rpc(err: &SimulateError) -> RpcError {
+    let variant = match err {
+        SimulateError::Path { .. } => "Path",
+        SimulateError::UnsupportedPath { .. } => "UnsupportedPath",
+        SimulateError::NoExternalAtPath => "NoExternalAtPath",
+        SimulateError::IntrospectionOptedOut => "IntrospectionOptedOut",
+        SimulateError::InitialQueryFailed { .. } => "InitialQueryFailed",
+        SimulateError::Intervene { .. } => "Intervene",
+        SimulateError::RollbackFailed => "RollbackFailed",
+        SimulateError::SnapshotFailed => "SnapshotFailed",
+        SimulateError::EmptySteps => "EmptySteps",
     };
     RpcError::invalid_params(variant)
 }

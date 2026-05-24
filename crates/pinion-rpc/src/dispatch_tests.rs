@@ -1938,6 +1938,47 @@ fn scene_dry_run_missing_value_param_is_invalid() {
 }
 
 #[test]
+fn scene_simulate_two_steps_returns_compound_snapshot_and_rolls_back() {
+    // R646 §5.12 — AI-native "if I do A then B" scenario explorer.
+    // Two steps on the same path; snapshot reflects the LATEST value
+    // (final step in the sequence); rollback restores the pre-call
+    // original (per-unique-path save semantics).
+    let mut scene = counted_scene(5);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/simulate","params":{"steps":[{"path":"/external/count","value":42},{"path":"/external/count","value":999}]},"id":160}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+    let result = resp.result.unwrap();
+    let intro = result.get("introspect").unwrap().as_object().unwrap();
+    assert_eq!(intro.get("count"), Some(&Value::Number(999.into())));
+
+    // Pre-call value (5) restored, not the intermediate (42).
+    let q_req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"path":"/external/count"},"id":161}"#;
+    let q_resp = parse_response(&dispatch_t(&mut scene, q_req).unwrap());
+    assert_eq!(q_resp.result.unwrap(), Value::Number(5.into()));
+}
+
+#[test]
+fn scene_simulate_empty_steps_array_is_invalid() {
+    // EmptySteps surfaces at the JSON-RPC boundary before the
+    // simulate() core ever sees the call; the dispatcher rejects
+    // empty arrays to keep the typed `EmptySteps` error path internal.
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/simulate","params":{"steps":[]},"id":162}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+}
+
+#[test]
+fn scene_simulate_missing_steps_param_is_invalid() {
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/simulate","params":{},"id":163}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+}
+
+#[test]
 fn scene_wait_for_returns_matched_when_target_equals_current() {
     let mut scene = counted_scene(42);
     let req = r#"{"jsonrpc":"2.0","method":"scene/waitFor","params":{"path":"/external/count","target":42,"max_attempts":3},"id":19}"#;
