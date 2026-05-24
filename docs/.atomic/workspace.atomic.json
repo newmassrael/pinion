@@ -18564,6 +18564,58 @@
         "Cascade LOC accounting carry: R641+R642 net = +232 LOC (substrate +201, hello-button -25, figma-button-m3 -33 minus +9 doc + macro attr). R650 measurement round must report cumulative cascade delta + quantitative substrate-per-retrofit ratio."
       ]
     },
+    "R643": {
+      "decision_summary": "R643 §5.16 — WidgetStateName + WidgetEventName traits + widget_state_name!/widget_event_name! declarative macros + #[widget(state_name_derive)] flag; hello-button + figma-button-m3 cascade evidence retrofit",
+      "changes_bullets": [
+        "crates/pinion-core/src/widget_core.rs: add WidgetStateName (as_name + from_name_or_default) + WidgetEventName (as_name) traits + widget_state_name!/widget_event_name! declarative macros (#[macro_export]). Pinion-side substrate that respects [[sce-priority-over-pinion]] — vendor/sce templates untouched, impls wired next to pinion-core/src/widgets/<W>.rs sm re-export.",
+        "crates/pinion-core/src/widgets/button.rs: invoke widget_state_name!(ButtonState, default = Idle, [Idle, Hover, Pressed, Disabled]) + widget_event_name!(ButtonEvent, [ButtonActivate, Disable, Enable, KeyboardActivate, PointerCancel, PointerDown, PointerEnter, PointerLeave, PointerUp, Null]). 10 variants enumerated including the SCXML 3.13 Null sentinel — derived event_name gains canonical names for previously-hidden internal variants.",
+        "crates/pinion-derive/src/widget.rs: add 'state_name_derive' bare flag. When present, emit read_state body using WidgetStateName::from_name_or_default + event_name body using WidgetEventName::as_name; absent keeps R641 forwarding to inherent fn (composite escape hatch unchanged).",
+        "examples/hello-button/src/main.rs: add state_name_derive flag, drop inherent fn read_state + fn event_name + parse_button_state helper. Net -42 LOC (cumulative R642+R643 = -67 LOC).",
+        "examples/figma-button-m3/src/main.rs: add state_name_derive flag, drop inherent fn read_state + fn event_name + parse_button_state helper. Migrate r640_parse_button_state_known_variants test to r643_state_name_derive_known_variants (asserts trait directly). Net -41 LOC (cumulative R642+R643 = -74 LOC).",
+        "hello-toggle deferred from R643 cascade: type State = (ToggleState, bool) tuple + uses R642.A-pruned update/fmt_state_log flags. Tuple-state support is its own substrate round (R645 or later); restoring pruned flags requires evidence per [[abstraction-needs-second-consumer]]."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 3181 pass / 0 fail (identical to R641+R642 baseline). hello-button 12 tests + figma-button-m3 17 tests all pass against the derived read_state + event_name; 2 new r643_state_name_derive_* tests added to figma-button-m3 pinning the WidgetStateName::from_name_or_default round-trip arc.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings (workspace.lints baseline). Pre-audit fixed 2 doc_markdown lints on the new trait doc comments before commit.",
+        "mnemosyne validate_workspace: T1 orphan = 0/0, round-trip 1/1, atomic ledger sync.",
+        "Honest cumulative cascade-LOC accounting through R641+R642+R643: per-binding savings = hello-button -67 LOC + figma-button-m3 -74 LOC = -141 LOC across 2 bindings. Substrate cost = +201 (R641+R642 macro) + +109 (R643 trait + macros) + +24 (R643 button invocations) + +41 (R643 state_name_derive flag emit) = +375 LOC. Cumulative net: +234 LOC. Cascade flips negative at ~8 more single-node retrofits (R644-R650 covers ~6). Reported per the R650 measurement obligation."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R644 candidate: type-safe #[pinion::tag] enum (magic strings 'main_btn' → variant). Binding-independent, doesn't depend on tuple-state or other unresolved axes — textbook next round in ergonomics cascade.",
+        "Tuple-state support (hello-toggle / hello-checkbox / hello-radio / hello-textfield class) blocked behind a substrate round teaching widget_state_name! the field-access form for struct/tuple states OR macro variants that compose multi-axis introspect queries. Pin as R645+ candidate.",
+        "R642.A pruned flags (update / fmt_state_log) need second-consumer evidence before reinstating. hello-toggle is the first consumer that wants them back — wait for second binding signaling the same need before lifting the prune.",
+        "WidgetEventName::as_name produces canonical PascalCase for every variant including SCXML 3.13 Null + internal-only ones the winit handler never produces. Pre-R643 catch-all `__internal__` is gone — every binding's parse_X_event rejected it anyway, but new AI-side observability lets RPC clients drive previously-hidden events by name.",
+        "Other 8 widgets (Toggle / Checkbox / Radio / Listbox / Slider / Scrollbar / TextField / Radio_group) still need widget_state_name!/widget_event_name! invocations in their pinion-core/src/widgets/<W>.rs. Lift each at the round its binding retrofits to state_name_derive."
+      ],
+      "publishable_decision_summary": "R643 §5.16 — WidgetStateName + WidgetEventName traits + widget_state_name!/widget_event_name! declarative macros + #[widget(state_name_derive)] flag; hello-button + figma-button-m3 cascade evidence retrofit",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widget_core.rs: add WidgetStateName (as_name + from_name_or_default) + WidgetEventName (as_name) traits + widget_state_name!/widget_event_name! declarative macros (#[macro_export]). Pinion-side substrate that respects [[sce-priority-over-pinion]] — vendor/sce templates untouched, impls wired next to pinion-core/src/widgets/<W>.rs sm re-export.",
+        "crates/pinion-core/src/widgets/button.rs: invoke widget_state_name!(ButtonState, default = Idle, [Idle, Hover, Pressed, Disabled]) + widget_event_name!(ButtonEvent, [ButtonActivate, Disable, Enable, KeyboardActivate, PointerCancel, PointerDown, PointerEnter, PointerLeave, PointerUp, Null]). 10 variants enumerated including the SCXML 3.13 Null sentinel — derived event_name gains canonical names for previously-hidden internal variants.",
+        "crates/pinion-derive/src/widget.rs: add 'state_name_derive' bare flag. When present, emit read_state body using WidgetStateName::from_name_or_default + event_name body using WidgetEventName::as_name; absent keeps R641 forwarding to inherent fn (composite escape hatch unchanged).",
+        "examples/hello-button/src/main.rs: add state_name_derive flag, drop inherent fn read_state + fn event_name + parse_button_state helper. Net -42 LOC (cumulative R642+R643 = -67 LOC).",
+        "examples/figma-button-m3/src/main.rs: add state_name_derive flag, drop inherent fn read_state + fn event_name + parse_button_state helper. Migrate r640_parse_button_state_known_variants test to r643_state_name_derive_known_variants (asserts trait directly). Net -41 LOC (cumulative R642+R643 = -74 LOC).",
+        "hello-toggle deferred from R643 cascade: type State = (ToggleState, bool) tuple + uses R642.A-pruned update/fmt_state_log flags. Tuple-state support is its own substrate round (R645 or later); restoring pruned flags requires evidence per [[abstraction-needs-second-consumer]]."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 3181 pass / 0 fail (identical to R641+R642 baseline). hello-button 12 tests + figma-button-m3 17 tests all pass against the derived read_state + event_name; 2 new r643_state_name_derive_* tests added to figma-button-m3 pinning the WidgetStateName::from_name_or_default round-trip arc.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings (workspace.lints baseline). Pre-audit fixed 2 doc_markdown lints on the new trait doc comments before commit.",
+        "mnemosyne validate_workspace: T1 orphan = 0/0, round-trip 1/1, atomic ledger sync.",
+        "Honest cumulative cascade-LOC accounting through R641+R642+R643: per-binding savings = hello-button -67 LOC + figma-button-m3 -74 LOC = -141 LOC across 2 bindings. Substrate cost = +201 (R641+R642 macro) + +109 (R643 trait + macros) + +24 (R643 button invocations) + +41 (R643 state_name_derive flag emit) = +375 LOC. Cumulative net: +234 LOC. Cascade flips negative at ~8 more single-node retrofits (R644-R650 covers ~6). Reported per the R650 measurement obligation."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R644 candidate: type-safe #[pinion::tag] enum (magic strings 'main_btn' → variant). Binding-independent, doesn't depend on tuple-state or other unresolved axes — textbook next round in ergonomics cascade.",
+        "Tuple-state support (hello-toggle / hello-checkbox / hello-radio / hello-textfield class) blocked behind a substrate round teaching widget_state_name! the field-access form for struct/tuple states OR macro variants that compose multi-axis introspect queries. Pin as R645+ candidate.",
+        "R642.A pruned flags (update / fmt_state_log) need second-consumer evidence before reinstating. hello-toggle is the first consumer that wants them back — wait for second binding signaling the same need before lifting the prune.",
+        "WidgetEventName::as_name produces canonical PascalCase for every variant including SCXML 3.13 Null + internal-only ones the winit handler never produces. Pre-R643 catch-all `__internal__` is gone — every binding's parse_X_event rejected it anyway, but new AI-side observability lets RPC clients drive previously-hidden events by name.",
+        "Other 8 widgets (Toggle / Checkbox / Radio / Listbox / Slider / Scrollbar / TextField / Radio_group) still need widget_state_name!/widget_event_name! invocations in their pinion-core/src/widgets/<W>.rs. Lift each at the round its binding retrofits to state_name_derive."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

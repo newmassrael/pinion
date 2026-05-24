@@ -98,7 +98,6 @@
 //! ```
 
 use pinion_core::animation::SpringConfig;
-use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -279,7 +278,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
     tag = "figma_button_m3",
     state = ButtonState,
     event = ButtonEvent,
-    title = "Figma Material 3 Filled Button (R642 §5.16 #[widget])",
+    title = "Figma Material 3 Filled Button (R643 §5.16 #[widget])",
     renderer = FigmaButtonM3Renderer,
     initial_size = (WIN_W, WIN_H),
     external = ButtonExternal::new,
@@ -289,6 +288,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
         pressed = Pressed,
         disabled = Disabled,
     ),
+    state_name_derive,
 )]
 struct FigmaButtonView;
 
@@ -299,59 +299,6 @@ impl FigmaButtonView {
     /// this stub is a 1:1 passthrough.
     fn view(state: ButtonState, frame: Frame) -> Scene {
         view(state, frame)
-    }
-
-    /// R640 §5.7 — read live SCXML state via the §5.15 item 8
-    /// introspect channel. Same shape `hello-button` (R51.30 §5.16)
-    /// has carried for over a hundred rounds: walk the scene root,
-    /// expect a single `External` node carrying the `ButtonExternal`,
-    /// query `state` and parse the variant name back. The defensive
-    /// `Idle` fallback covers (a) the first paint before `create_external`
-    /// has run (rare — the shell wires this in `new()`) and (b) any
-    /// future SCXML state name not in the four-variant enum.
-    fn read_state(scene: &Scene) -> ButtonState {
-        if let Scene::External(node) = scene {
-            if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    return parse_button_state(&name);
-                }
-            }
-        }
-        ButtonState::Idle
-    }
-
-    /// R640 §5.7 — map [`ButtonEvent`] variants to their SCXML
-    /// transition names. The seven pointer / lifecycle variants the
-    /// shell's `InputRouter` actually produces all forward through;
-    /// the `KeyboardActivate` arm routes through the same name even
-    /// though keyboard activation is currently inert at this binding
-    /// (the focus-ring deferral noted in the R640 module docs blocks
-    /// the full ARIA Space / Enter arc until `paint_focus_ring`
-    /// respects `corner_radius` — R639 watch-out, R660+ candidate).
-    /// Any future SCXML-internal variant the router never emits falls
-    /// through to `__internal__`, which `parse_button_event` rejects.
-    fn event_name(event: ButtonEvent) -> &'static str {
-        match event {
-            ButtonEvent::PointerEnter => "PointerEnter",
-            ButtonEvent::PointerLeave => "PointerLeave",
-            ButtonEvent::PointerDown => "PointerDown",
-            ButtonEvent::PointerUp => "PointerUp",
-            ButtonEvent::PointerCancel => "PointerCancel",
-            ButtonEvent::KeyboardActivate => "KeyboardActivate",
-            ButtonEvent::Disable => "Disable",
-            ButtonEvent::Enable => "Enable",
-            _ => "__internal__",
-        }
-    }
-}
-
-fn parse_button_state(name: &str) -> ButtonState {
-    match name {
-        "Hover" => ButtonState::Hover,
-        "Pressed" => ButtonState::Pressed,
-        "Disabled" => ButtonState::Disabled,
-        // "Idle" + anything unexpected — defensive default.
-        _ => ButtonState::Idle,
     }
 }
 
@@ -574,17 +521,26 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn r640_parse_button_state_known_variants() {
-        assert_eq!(parse_button_state("Idle"), ButtonState::Idle);
-        assert_eq!(parse_button_state("Hover"), ButtonState::Hover);
-        assert_eq!(parse_button_state("Pressed"), ButtonState::Pressed);
-        assert_eq!(parse_button_state("Disabled"), ButtonState::Disabled);
+    fn r643_state_name_derive_known_variants() {
+        // R643 §5.16 — the parse arc moved from a hand-written
+        // `parse_button_state` helper to the derived
+        // `WidgetStateName::from_name_or_default` impl (wired in
+        // `pinion-core/src/widgets/button.rs` via the
+        // `widget_state_name!` declarative macro). Same defensive-
+        // default semantics; the test pins the four documented
+        // SCXML state ids against the derived parse.
+        use pinion_core::WidgetStateName;
+        assert_eq!(ButtonState::from_name_or_default("Idle"), ButtonState::Idle);
+        assert_eq!(ButtonState::from_name_or_default("Hover"), ButtonState::Hover);
+        assert_eq!(ButtonState::from_name_or_default("Pressed"), ButtonState::Pressed);
+        assert_eq!(ButtonState::from_name_or_default("Disabled"), ButtonState::Disabled);
     }
 
     #[test]
-    fn r640_parse_button_state_unknown_falls_back_to_idle() {
-        assert_eq!(parse_button_state(""), ButtonState::Idle);
-        assert_eq!(parse_button_state("Unknown"), ButtonState::Idle);
+    fn r643_state_name_derive_unknown_falls_back_to_idle() {
+        use pinion_core::WidgetStateName;
+        assert_eq!(ButtonState::from_name_or_default(""), ButtonState::Idle);
+        assert_eq!(ButtonState::from_name_or_default("Unknown"), ButtonState::Idle);
     }
 
     #[test]
@@ -592,6 +548,9 @@ mod tests {
         let scene = Scene::External(pinion_core::scene::ExternalNode::new(Box::new(
             ButtonExternal::new(),
         )));
-        assert_eq!(FigmaButtonView::read_state(&scene), ButtonState::Idle);
+        assert_eq!(
+            <FigmaButtonView as WidgetCore>::read_state(&scene),
+            ButtonState::Idle,
+        );
     }
 }

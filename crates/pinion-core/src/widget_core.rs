@@ -510,6 +510,115 @@ pub trait WidgetCore: 'static {
     }
 }
 
+/// R643 §5.16 — bidirectional `Self ↔ &'static str` mapping for
+/// [`WidgetCore::State`] enums.
+///
+/// Every visual binding hand-wrote two symmetric match arms before
+/// R643 — a `parse_X_state(name: &str) -> XState` helper that the
+/// [`WidgetCore::read_state`] body called after pulling the SCXML
+/// state name through the §5.15 introspect channel, plus the same
+/// `name → variant` table inverted for any other call site. The trait
+/// captures both directions in one impl + one `from_name_or_default`
+/// fallback (defensive default for unknown names — matches the every-
+/// binding "first variant on failure" convention).
+///
+/// vendor/sce templates emit the [`WidgetCore::State`] enum without
+/// any pinion-side derives ([[sce-priority-over-pinion]] keeps
+/// `vendor/sce` untouched), so the impl is wired pinion-side in
+/// `pinion-core/src/widgets/<widget>.rs` via the
+/// [`widget_state_name!`](crate::widget_state_name) declarative macro
+/// next to the `pub use sm::*;` re-export. Authors of new SCE-emitted
+/// state enums add one macro invocation; the bindings then opt into
+/// the derived [`WidgetCore::read_state`] body via the
+/// `state_name_derive` flag on [`#[widget]`](pinion_derive::widget).
+pub trait WidgetStateName: Sized {
+    /// Map `self` to its `PascalCase` SCXML state id (1:1 with the
+    /// `<state id="...">` attribute in the source `.scxml`).
+    fn as_name(&self) -> &'static str;
+
+    /// Parse `name` back to the corresponding variant. Returns the
+    /// default variant when `name` is empty or unknown — matches the
+    /// pre-R643 hand-written defensive fallback (`_ => Self::Idle`
+    /// for every Button-class widget).
+    fn from_name_or_default(name: &str) -> Self;
+}
+
+/// R643 §5.16 — `Self → &'static str` mapping for
+/// [`WidgetCore::Event`] enums.
+///
+/// Mirror of [`WidgetStateName`] for the event side. SCXML events are
+/// fired one-way (no inverse parse needed at this level — the wire
+/// receives the name and SCXML's own event router consumes it), so
+/// the trait carries only the forward direction.
+pub trait WidgetEventName {
+    /// Map `self` to its `PascalCase` SCXML event name (1:1 with the
+    /// `<transition event="...">` attribute in the source `.scxml`).
+    fn as_name(&self) -> &'static str;
+}
+
+/// R643 §5.16 — declarative impl emitter for [`WidgetStateName`].
+///
+/// Invoke once next to each vendor/sce-generated `pub use sm::<State>;`
+/// re-export inside `pinion-core/src/widgets/<widget>.rs`. Variant
+/// list must enumerate every variant emitted by the SCE template (a
+/// missing variant produces a non-exhaustive match compile error at
+/// macro expansion time).
+///
+/// ```rust,ignore
+/// widget_state_name!(ButtonState, default = Idle, [
+///     Idle, Hover, Pressed, Disabled,
+/// ]);
+/// ```
+#[macro_export]
+macro_rules! widget_state_name {
+    ($ty:ident, default = $default:ident, [$($variant:ident),+ $(,)?]) => {
+        impl $crate::WidgetStateName for $ty {
+            fn as_name(&self) -> &'static str {
+                match self {
+                    $($ty::$variant => stringify!($variant),)+
+                }
+            }
+            fn from_name_or_default(name: &str) -> Self {
+                match name {
+                    $(stringify!($variant) => $ty::$variant,)+
+                    _ => $ty::$default,
+                }
+            }
+        }
+    };
+}
+
+/// R643 §5.16 — declarative impl emitter for [`WidgetEventName`].
+///
+/// Invoke once next to each vendor/sce-generated `pub use sm::<Event>;`
+/// re-export inside `pinion-core/src/widgets/<widget>.rs`. Variant
+/// list must enumerate every variant (the macro's match is
+/// exhaustive); the `Null` SCXML 3.13 sentinel + every internal-only
+/// variant are included so derived `event_name` produces canonical
+/// names instead of the pre-R643 `__internal__` catch-all (which
+/// every binding's `parse_X_event` rejected anyway — losing nothing,
+/// gaining AI-side observability for the previously-hidden variants).
+///
+/// ```rust,ignore
+/// widget_event_name!(ButtonEvent, [
+///     ButtonActivate, Disable, Enable, KeyboardActivate,
+///     PointerCancel, PointerDown, PointerEnter, PointerLeave,
+///     PointerUp, Null,
+/// ]);
+/// ```
+#[macro_export]
+macro_rules! widget_event_name {
+    ($ty:ident, [$($variant:ident),+ $(,)?]) => {
+        impl $crate::WidgetEventName for $ty {
+            fn as_name(&self) -> &'static str {
+                match self {
+                    $($ty::$variant => stringify!($variant),)+
+                }
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod r51_166_tests {
     //! R51.166 §5.23 R27 — `WidgetCore::update` reducer substrate

@@ -120,10 +120,14 @@
 //! back to the macro at the round that materialises the second
 //! consumer:
 //!
-//! | Flag         | Trait default (no flag)           | When to opt in                                       |
-//! | ------------ | --------------------------------- | ---------------------------------------------------- |
-//! | `apply_key`  | `false` (no key handled)          | ARIA Space/Enter activation, Arrow keys, custom keys |
-//! | `keybinding` | `None` (no character-key mapping) | Single-char shortcuts mapping to `Self::Event`       |
+//! | Flag                 | Trait default (no flag)               | When to opt in                                                                                                |
+//! | -------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+//! | `apply_key`          | `false` (no key handled)              | ARIA Space/Enter activation, Arrow keys, custom keys                                                          |
+//! | `keybinding`         | `None` (no character-key mapping)     | Single-char shortcuts mapping to `Self::Event`                                                                |
+//! | `state_name_derive`  | forward to inherent `fn read_state` + `fn event_name` (R641) | Enum-shaped `Self::State` + `Self::Event` with [`WidgetStateName`] + [`WidgetEventName`] impls (R643) |
+//!
+//! [`WidgetStateName`]: pinion_core::WidgetStateName
+//! [`WidgetEventName`]: pinion_core::WidgetEventName
 //!
 //! ## Example
 //!
@@ -202,6 +206,42 @@ pub(crate) fn expand(
 
     let optional_forwards = emit_optional_forwards(view_ident, &event, &flags);
     let a11y_impl = emit_a11y_impl(view_ident, &state, role.as_ref(), &state_flags);
+    let derive_state_name = flags.contains("state_name_derive");
+    let read_state_body = if derive_state_name {
+        // R643 §5.16 — derive via WidgetStateName trait. Walks the
+        // same introspect chain every binding hand-wrote pre-R643
+        // (Scene::External → ExternalIntrospect → query("state") →
+        // Text); a missing field at any link falls back to the
+        // default variant (matches the pre-R643 `_ => Self::Idle`
+        // convention via `from_name_or_default("")`).
+        quote! {
+            if let ::pinion_core::Scene::External(node) = scene {
+                if let ::core::option::Option::Some(intro) = node.handle.introspect() {
+                    if let ::core::option::Option::Some(
+                        ::pinion_core::external::IntrospectValue::Text(name)
+                    ) = intro.query("state") {
+                        return <#state as ::pinion_core::WidgetStateName>
+                            ::from_name_or_default(&name);
+                    }
+                }
+            }
+            <#state as ::pinion_core::WidgetStateName>::from_name_or_default("")
+        }
+    } else {
+        quote! { <#view_ident>::read_state(scene) }
+    };
+    let event_name_body = if derive_state_name {
+        // R643 §5.16 — derive via WidgetEventName trait. Every variant
+        // (including the SCXML 3.13 Null sentinel + internal-only
+        // ones the winit handler never produces) gets its canonical
+        // PascalCase name; the pre-R643 `_ => "__internal__"` catch-
+        // all is gone (every binding's `parse_X_event` rejected it
+        // anyway — losing nothing, gaining AI-side observability
+        // for the previously-hidden variants).
+        quote! { <#event as ::pinion_core::WidgetEventName>::as_name(&event) }
+    } else {
+        quote! { <#view_ident>::event_name(event) }
+    };
 
     Ok(quote! {
         #item
@@ -218,11 +258,11 @@ pub(crate) fn expand(
             }
 
             fn read_state(scene: &::pinion_core::Scene) -> #state {
-                <#view_ident>::read_state(scene)
+                #read_state_body
             }
 
             fn event_name(event: #event) -> &'static str {
-                <#view_ident>::event_name(event)
+                #event_name_body
             }
 
             fn view(state: #state, frame: &::pinion_core::Frame) -> ::pinion_core::Scene {
@@ -509,6 +549,7 @@ enum WidgetArg {
 const KNOWN_FLAGS: &[&str] = &[
     "apply_key",
     "keybinding",
+    "state_name_derive",
 ];
 
 impl Parse for WidgetArg {

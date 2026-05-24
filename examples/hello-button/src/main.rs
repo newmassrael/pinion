@@ -32,7 +32,6 @@
 //!     tree into a `vello::Scene` and `HelloButtonRenderer` submits it.
 
 use pinion_core::animation::SpringConfig;
-use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -242,7 +241,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     tag = "main_btn",
     state = ButtonState,
     event = ButtonEvent,
-    title = "pinion hello-button (R642 §5.16 #[widget])",
+    title = "pinion hello-button (R643 §5.16 #[widget])",
     renderer = HelloButtonRenderer,
     initial_size = (WIN_W, WIN_H),
     external = ButtonExternal::new,
@@ -254,6 +253,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     ),
     apply_key,
     keybinding,
+    state_name_derive,
 )]
 struct ButtonView;
 
@@ -268,38 +268,6 @@ impl ButtonView {
         // hover animation predates the macro's by-value bridging);
         // re-borrow here to reuse it without touching the inner body.
         view(state, &frame)
-    }
-
-    /// R641 inherent forward for [`WidgetCore::read_state`]. Reads
-    /// live SCXML state through the §5.15 introspect channel — the
-    /// same path AI clients hit via `scene/query /external/state`.
-    fn read_state(scene: &Scene) -> ButtonState {
-        if let Scene::External(node) = scene {
-            if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    return parse_button_state(&name);
-                }
-            }
-        }
-        ButtonState::Idle
-    }
-
-    /// R641 inherent forward for [`WidgetCore::event_name`]. Maps the
-    /// typed [`ButtonEvent`] back to the SCXML transition name the
-    /// §5.15 `invoke("send", Text(<name>))` channel consumes.
-    fn event_name(event: ButtonEvent) -> &'static str {
-        match event {
-            ButtonEvent::PointerEnter => "PointerEnter",
-            ButtonEvent::PointerLeave => "PointerLeave",
-            ButtonEvent::PointerDown => "PointerDown",
-            ButtonEvent::PointerUp => "PointerUp",
-            ButtonEvent::Disable => "Disable",
-            ButtonEvent::Enable => "Enable",
-            // Internal SCXML variants the winit handler never produces
-            // — route through a sentinel name `parse_button_event`
-            // rejects.
-            _ => "__internal__",
-        }
     }
 
     /// R641 inherent forward for [`WidgetCore::keybinding`]. Maps
@@ -328,16 +296,6 @@ impl ButtonView {
     /// forwarding stub.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
-    }
-}
-
-fn parse_button_state(name: &str) -> ButtonState {
-    match name {
-        "Hover" => ButtonState::Hover,
-        "Pressed" => ButtonState::Pressed,
-        "Disabled" => ButtonState::Disabled,
-        // "Idle" + anything unexpected — defensive default.
-        _ => ButtonState::Idle,
     }
 }
 

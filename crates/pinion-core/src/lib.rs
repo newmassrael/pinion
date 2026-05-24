@@ -35,7 +35,7 @@ pub use command::Command;
 pub use event::Event;
 pub use renderer::WidgetRenderer;
 pub use external::External;
-pub use widget_core::WidgetCore;
+pub use widget_core::{WidgetCore, WidgetEventName, WidgetStateName};
 pub use frame::Frame;
 pub use input::{CompositionEvent, Modifiers};
 pub use intent::{Intent, IntentTag};

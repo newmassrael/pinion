@@ -24,6 +24,30 @@ mod sm {
 pub use sm::{ButtonEvent, ButtonState};
 use sm::ButtonPolicy;
 
+// R643 §5.16 — bidirectional `&'static str` mapping for the
+// sce-build-emitted enums. vendor/sce templates emit no pinion
+// derives ([[sce-priority-over-pinion]]); the pinion-side
+// declarative macros below provide the impls without touching
+// vendor/sce. Each binding then opts into the derived
+// `WidgetCore::read_state` + `WidgetCore::event_name` via the
+// `state_name_derive` flag on `#[pinion_derive::widget]` instead of
+// hand-writing 30+ LOC of `match` arms per binding.
+crate::widget_state_name!(ButtonState, default = Idle, [
+    Idle, Hover, Pressed, Disabled,
+]);
+crate::widget_event_name!(ButtonEvent, [
+    ButtonActivate,
+    Disable,
+    Enable,
+    KeyboardActivate,
+    PointerCancel,
+    PointerDown,
+    PointerEnter,
+    PointerLeave,
+    PointerUp,
+    Null,
+]);
+
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
