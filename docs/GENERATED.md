@@ -12141,6 +12141,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R652 — R652 §5.16 R641-R645 substrate ROI matrix: KEEP + commit to Cat A retrofit cascade (5 bindings)
+
+**Changes**:
+- 17 single-widget binding adoption matrix established. Macro-adopted (3): figma-button-m3 / hello-button (R641-R643, post-R650 walk-back) + hello-slider (R641+R645 tuple + a11y_manual). Hand-written (14): 10 GUI + 4 TUI
+- GUI hand-written taxonomy (10): Cat A immediate retrofit (5) = hello-checkbox `(CheckboxState, bool)` / hello-radio `(RadioState, bool)` / hello-toggle `(ToggleState, bool)` / hello-theme `(ToggleState, bool)` / hello-commands `ButtonState` (single enum). Cat B partial (2) = hello-slider-vertical `(SliderState, f32)` / hello-textfield `(TextFieldState, u32)` value-bearing tuple. Cat C escape-only (3) = hello-listbox `struct ListState` / hello-listbox-multi `struct ListState` / hello-radio-group `struct GroupState` composite
+- TUI binding gap (4) discovered: hello-button-tui / hello-commands-tui / hello-textfield-tui / hello-toggle-tui all use `WidgetViewTui` trait — R641 `#[widget]` macro forward emits only `WidgetView` (GUI). Cat D = `#[widget]` substrate needs `tui` flag (or twin `#[widget_tui]` attribute) before any TUI retrofit. NOT recommended for R653-R654 — better surfaced as substrate gap memory + deferred to post-R655 application-tier cycle when TUI parity demo round lands
+- Per-binding LOC sample: hello-toggle `impl WidgetCore` + `impl WidgetA11y` blocks span lines 267-400 = ~134 LOC of mechanical shim that R641+R642+R643 macro forwards eliminate. Conservative per-Cat-A retrofit estimate: 60-90 LOC savings. 5 retrofits × 60-90 = -300 to -450 LOC binding-side
+- R652 honest deviation from seed prompt's R653-R654 walk-back/freeze framing: substrate ROI measurement reveals neither walk-back nor freeze is textbook — KEEP + COMMIT to Cat A retrofit cascade is the canonical call. Reasoning: (a) substrate already land (sunk cost ±571 LOC) so freeze accepts the loss unilaterally; (b) walk-back R645 tuple extension would orphan hello-slider's existing adoption and block Cat A; (c) Cat A retrofit amortizes substrate to net negative (-300 to -450 LOC) with 8 consumers proven (3 current + 5 retrofit); (d) R655+ application-tier (TodoMVC class) enters with substrate validated by composed-app-relevant widget mix (button/toggle/checkbox/radio/text are TodoMVC primitives anyway)
+- R653-R654 scope revised: R653 = retrofit Cat A part 1 (hello-checkbox + hello-toggle + hello-theme — all `(EnumState, bool)` shape sharing the most retrofit pattern). R654 = retrofit Cat A part 2 (hello-radio + hello-commands — finishes the simple cascade). Cat B / Cat C / Cat D explicitly deferred (memory: Cat B retrofit needs value-sidecar substrate research; Cat C composite a11y_manual is escape-hatch territory by [[r642-access-node-derive-pattern]]; Cat D TUI macro extension is post-application-tier work)
+
+
+
+**Verification**:
+- grep `#[widget(` over `examples/*/src/main.rs`: 3 matches (figma-button-m3 / hello-button / hello-slider), confirms macro-adopted count
+- grep `impl WidgetCore for` over `examples/*/src/main.rs`: 14 hand-written sites including 4 TUI variants — total 17 single-widget bindings matches the seed prompt's count
+- grep `type State =` over 10 GUI hand-written bindings classifies: 5 tuple `(EnumState, bool)` (Cat A x4 + Cat B-style 1 single enum hello-commands) + 2 value-bearing tuple (Cat B) + 3 struct (Cat C). Distribution validated
+- grep `WidgetViewTui` over `crates/pinion-derive/src/widget.rs` returns zero matches — confirms TUI macro extension is a substrate gap, not a binding adoption choice
+- mnemosyne validate_workspace: T1 orphan total = 0, round-trip 1/1, atomic ledger 514 → 515 entries, no T1/T2 regressions
+- Zero code change. R652 is pure decision-record round; R653+ delivers the LOC savings the matrix predicts
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- R653 §5.16: Cat A retrofit part 1 — hello-checkbox + hello-toggle + hello-theme `(EnumState, bool)` tuple-state retrofit via `#[widget(state_flags(checked = checked_field), state_name_derive, ...)]`. Measure actual LOC delta vs R652 60-90 LOC/binding estimate. Single commit with 3 retrofits in lockstep so any substrate gap surfaces all at once
+- R654 §5.16: Cat A retrofit part 2 — hello-radio (same tuple shape as part 1) + hello-commands (single enum baseline, lighter retrofit). Closes Cat A cascade. Honest LOC accumulation report against R652 prediction
+- Cat B deferred (post-application-tier): hello-slider-vertical / hello-textfield retrofit requires value-sidecar substrate research (how does the macro forward `f32` / `u32` payload to read_state without becoming type-specific?). Open question worth deferring until 2nd value-bearing widget surfaces
+- Cat C deferred indefinitely: hello-listbox / hello-listbox-multi / hello-radio-group are escape-hatch composite per [[r642-access-node-derive-pattern]]; `a11y_manual` flag exists precisely for them. No substrate change needed — these will stay hand-written even at full retrofit completion
+- Cat D deferred to post-application-tier: TUI `#[widget]` substrate extension. Either `#[widget(tui = true)]` flag (forwards `WidgetViewTui` instead of `WidgetView`) or twin `#[widget_tui]` attribute. Wait for TUI parity demo (R680+ per seed plan) before designing — second-consumer rule applies
+- R655 §§1 + §2 #6 entry to application-tier (TodoMVC class composed app). Substrate debt cleared, retrofit cascade complete, ROI net-negative on substrate, ready for the AI-native composed-app driving demo the north-star requires
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
