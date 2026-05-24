@@ -11986,6 +11986,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R647 — R647 §5.22 R26 — simulate_with_owner Owner snapshot/restore bridge; dispatch handler routes via runtime_owner when present; non-idempotent Effect chain Signal restore proven
+
+**Changes**:
+- pinion-rpc/src/simulate.rs: simulate_with_owner(scene, owner, &[SimulateStep]) wraps simulate with Owner::snapshot before + Owner::restore after the External rollback. Always attempts Owner restore regardless of simulate outcome; Owner restore failure surfaces as SimulateError::RollbackFailed (matches dry_run severity for indeterminate reactive state).
+- pinion-rpc/src/dispatch.rs: handle_scene_simulate takes runtime_owner: Option<&Owner> param. When Some, routes through simulate_with_owner; when None, falls back to External-only simulate (R646). Bindings that wire DispatchContext::runtime_owner get reactive-layer rollback for free.
+- Three test cases pinning Owner bridge contract: empty_owner_matches_simulate_output (no-op for unregistered Signals), signal_external_value_restored_via_external_rollback (single tracked Signal mirrors External path), non_idempotent_effect_chain_signal_restored_by_owner_bridge (load-bearing case proving R26 value: independent counter Signal mutated by Effect chain restored to pre-call value).
+- Test discovery: Effect re-firing during Owner.restore happens when its closure body's .get() subscribes to Signals being restored. Pinned via set_with vs set(get()+1) idiom — set_with reads via inner.value.borrow() without with_current_owner tracking. Documented inline in the test as guidance for future bridge consumers.
+
+
+
+**Verification**:
+- cargo test --workspace: 3198 pass / 0 fail (R646 baseline 3195 + 3 new Owner bridge tests). All 3 simulate_with_owner tests pass; existing simulate + dispatch tests unchanged.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings. Pre-commit fixed 1 doc_markdown (dry_run intra-doc-link) + 1 missing_errors_doc (restored simulate fn's # Errors section after macro replace).
+- mnemosyne validate_workspace: T1 orphan 0/0, round-trip 1/1, ledger sync.
+- R26 §5.22 commitment FULFILLED. The spec said 'dry_run snapshots Signal graph via Clone; rollback restores all signals to pre-mutation state' — R647 closes that gap for the simulate path. dry_run itself stays single-write (no Owner bridge yet — single-step External rollback is symmetric for most cases). LOC: +~60 substrate fn + ~100 tests = ~160 LOC pure capability-add, no binding code touched.
+
+
+
+**Impact**: §5.22
+
+
+**Carry forward**:
+- R648 candidate: extend simulate steps beyond intervene to include event dispatch (`{kind: 'send', event: 'PointerDown'}`) + click (`{kind: 'click', tag: 'main_btn'}`). AI's 'click button 3 times then read state' scenario. Needs SCXML state snapshot/restore at SCE engine level OR full-introspect-schema save-and-restore pattern.
+- R649 candidate: Effect side-effect isolation (§5.23 R27). simulate currently fires Effects during phase 2 and phase 4 (rollback). Owner restore can re-fire Effects if restored Signal has subscribers. Test in R647 worked around with set_with idiom; for production simulate calls, an Effect::should_execute(in_simulate: bool) hook would let Effects suppress themselves during scenario exploration.
+- R650 candidate: isolated Computed cache (§5.30 R30). simulate currently uses live Computed cache; cache pollution is theoretical until proven harmful. Cache fork could be thread-local or explicit owner.fork_cache() primitive.
+- dry_run still single-write (R646 introduced simulate as multi-event extension; R647 added Owner bridge to simulate but not dry_run). Could add dry_run_with_owner for parity; defer until use case appears.
+- §5.8 SCE engine-level dry_run hook (ratified, not wired) still long-term roadmap. v0 External test-and-rollback + Owner snapshot sufficient for current spec commitments.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

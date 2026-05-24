@@ -43,7 +43,7 @@ use crate::animation_state::{animation_state, AnimationStateError, AnimationStat
 use crate::caret_state::{caret_state, CaretStateOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
-use crate::simulate::{simulate, SimulateError, SimulateStep};
+use crate::simulate::{simulate, simulate_with_owner, SimulateError, SimulateStep};
 use crate::font::{self, FontError, FontRegistry};
 use crate::intents::{drain_intents, IntentsError};
 use crate::intervene::{intervene, InterveneError};
@@ -625,7 +625,7 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
             HandlerKind::Read,
         ),
         "scene/simulate" => (
-            handle_scene_simulate(scene, request.params.as_ref()),
+            handle_scene_simulate(scene, runtime_owner, request.params.as_ref()),
             HandlerKind::Read,
         ),
         "scene/waitFor" => (
@@ -2127,7 +2127,18 @@ fn dry_run_error_to_rpc(err: DryRunError) -> RpcError {
 /// exploration. Returns the [`SnapshotNode`](crate::snapshot::SnapshotNode)
 /// reflecting the compound hypothetical state; rollback is performed
 /// before return so the live scene is unchanged.
-fn handle_scene_simulate(scene: &mut Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+///
+/// R647 §5.22 R26 — when [`DispatchContext::runtime_owner`] is set,
+/// route through [`simulate_with_owner`] so Signal graph state is
+/// also snapshotted + restored. Without the owner the call falls
+/// back to External-only rollback (R646 behaviour) — bindings that
+/// have not registered a substrate owner still get the multi-event
+/// composition shape.
+fn handle_scene_simulate(
+    scene: &mut Scene,
+    runtime_owner: Option<&pinion_core::Owner>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(steps_json) = params.get("steps").and_then(Value::as_array) else {
         return Err(RpcError::invalid_params("params.steps missing or not an array"));
@@ -2162,7 +2173,11 @@ fn handle_scene_simulate(scene: &mut Scene, params: Option<&Value>) -> Result<Va
         steps.push(SimulateStep { path: path.to_string(), value });
     }
 
-    match simulate(scene, &steps) {
+    let outcome = match runtime_owner {
+        Some(owner) => simulate_with_owner(scene, owner, &steps),
+        None => simulate(scene, &steps),
+    };
+    match outcome {
         Ok(snap) => Ok(snapshot_node_to_json(snap)),
         Err(err) => Err(simulate_error_to_rpc(&err)),
     }

@@ -61,7 +61,7 @@
 use std::collections::BTreeMap;
 
 use pinion_core::external::{InterveneError, IntrospectValue};
-use pinion_core::Scene;
+use pinion_core::{Owner, Scene};
 
 use crate::dry_run::DryRunError;
 use crate::path::{self, PathError};
@@ -114,6 +114,59 @@ pub enum SimulateError {
     /// or `dry_run`; the dedicated method surfaces the intent better
     /// than a degenerate `simulate` would.
     EmptySteps,
+}
+
+/// Apply `steps` in order, snapshot the resulting compound state,
+/// then roll every touched path back to its pre-call value. See the
+/// module-level docs for the phase-by-phase contract.
+///
+/// # Errors
+///
+/// See [`SimulateError`] for the failure modes. Every error path
+/// leaves the caller's scene in its pre-call state except
+/// [`SimulateError::RollbackFailed`].
+/// R647 §5.12 §5.22 R26 — [`simulate`] with [`Owner`] snapshot/restore
+/// bridge. Wraps the External-side rollback with reactive-layer state
+/// preservation: `owner.snapshot()` runs before any mutation, and
+/// `owner.restore()` runs after the External rollback regardless of
+/// outcome. Defense in depth — even when External `intervene` rollback
+/// completes successfully, Signal mutations triggered by Effects that
+/// the Externals subscribe to (non-idempotent counters / accumulators /
+/// derived state) leave residue the External-only path cannot clear.
+///
+/// The Owner snapshot captures every [`Signal`](pinion_core::Signal)
+/// owned by `owner` via [`Owner::snapshot`]; restore writes each value
+/// back via [`Owner::restore`]. Effects still fire during simulate
+/// (R27 commitment — Effect suppression — is not yet implemented;
+/// pin as R649 carry-forward); the Owner restore captures the
+/// post-Effect Signal values and overwrites with the pre-call ones.
+///
+/// # Errors
+///
+/// Same failure modes as [`simulate`] plus: if Owner restore returns
+/// any per-signal `TypeMismatch`, the call surfaces
+/// [`SimulateError::RollbackFailed`] regardless of the External-side
+/// outcome — partial Signal restore leaves the reactive graph in an
+/// indeterminate state, matching the [`dry_run`] `RollbackFailed` severity.
+///
+/// [`dry_run`]: crate::dry_run::dry_run
+pub fn simulate_with_owner(
+    scene: &mut Scene,
+    owner: &Owner,
+    steps: &[SimulateStep],
+) -> Result<SnapshotNode, SimulateError> {
+    // R26 §5.22: snapshot Signal graph BEFORE any mutation so the
+    // restore returns to the pre-call reactive state (External rollback
+    // alone misses Signals indirectly mutated by Effect chains).
+    let owner_snapshot = owner.snapshot();
+    let result = simulate(scene, steps);
+    // Always attempt Owner restore — defense in depth. If External-side
+    // succeeded but Owner restore failed, surface RollbackFailed so the
+    // caller knows the reactive graph is indeterminate.
+    if owner.restore(owner_snapshot).is_err() {
+        return Err(SimulateError::RollbackFailed);
+    }
+    result
 }
 
 /// Apply `steps` in order, snapshot the resulting compound state,
@@ -422,5 +475,126 @@ mod tests {
         .unwrap_err();
         assert_eq!(err, SimulateError::UnsupportedPath { step_index: 1 });
         assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(5));
+    }
+
+    // R647 §5.22 R26 — Owner bridge tests.
+    mod owner_bridge {
+        use super::*;
+        use pinion_core::{Effect, Owner, Signal, SignalExternal};
+
+        #[test]
+        fn empty_owner_matches_simulate_output() {
+            // Defense in depth — when no Signals are tracked, the
+            // Owner snapshot is empty and restore is a no-op. Output
+            // matches the External-only simulate path.
+            let owner = Owner::new();
+            let mut scene = counted_scene(11);
+            let snap = simulate_with_owner(
+                &mut scene,
+                &owner,
+                &[step("/external/count", IntrospectValue::Int(42))],
+            )
+            .unwrap();
+            match snap {
+                SnapshotNode::External(ExternalSnapshot { introspect: Some(fields), .. }) => {
+                    assert_eq!(fields[0].1, IntrospectValue::Int(42));
+                }
+                other => panic!("expected External snapshot, got {other:?}"),
+            }
+            assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(11));
+        }
+
+        #[test]
+        fn signal_external_value_restored_via_external_rollback() {
+            // SignalExternal::intervene calls signal.set(); the External
+            // rollback symmetry already restores the Signal. Owner bridge
+            // is redundant for this case (still correct, just not the
+            // case demonstrating its load-bearing value).
+            let owner = Owner::new();
+            let signal: Signal<i32> = Signal::new(7);
+            owner.track(&signal);
+            let mut scene = Scene::External(ExternalNode::new(Box::new(
+                SignalExternal::<i32>::new(signal.clone()),
+            )));
+            let snap = simulate_with_owner(
+                &mut scene,
+                &owner,
+                &[step("/external/value", IntrospectValue::Int(999))],
+            )
+            .unwrap();
+            match snap {
+                SnapshotNode::External(ExternalSnapshot { introspect: Some(fields), .. }) => {
+                    assert_eq!(fields[0].1, IntrospectValue::Int(999));
+                }
+                other => panic!("expected External snapshot, got {other:?}"),
+            }
+            // Both paths agree on the original value.
+            assert_eq!(signal.get(), 7);
+            assert_eq!(query(&scene, "/external/value").unwrap(), IntrospectValue::Int(7));
+        }
+
+        #[test]
+        fn non_idempotent_effect_chain_signal_restored_by_owner_bridge() {
+            // R26 §5.22 load-bearing case — Effect increments an
+            // independent counter on every change to the input Signal.
+            // simulate sets input → counter increments (Effect fires).
+            // External-side rollback sets input back → Effect fires
+            // again → counter increments AGAIN. After simulate without
+            // Owner bridge: counter is +2 (not pre-call value).
+            //
+            // simulate_with_owner snapshots the counter Signal before
+            // simulate, restores after — counter is back to pre-call.
+            //
+            // Owner registers Signals via explicit `track()` (not
+            // auto-track) — only tracked Signals appear in snapshot.
+            let owner = Owner::new();
+            let input: Signal<i32> = Signal::new(7);
+            let counter: Signal<i32> = Signal::new(0);
+            owner.track(&input);
+            owner.track(&counter);
+            let input_for_effect = input.clone();
+            let counter_for_effect = counter.clone();
+            // The Effect must observe `input` to subscribe; Effect::new
+            // takes &Owner explicitly. Note `set_with` rather than
+            // `set(get() + 1)` — the latter's inner `.get()` would
+            // subscribe Effect to counter too, making Owner restore
+            // re-fire the Effect on counter writes (defeats the test
+            // contract). `set_with` borrows the inner value without
+            // touching the with_current_owner tracker.
+            let _effect = Effect::new(&owner, move || {
+                let _ = input_for_effect.get();
+                counter_for_effect.set_with(|prev| *prev + 1);
+            });
+            // Effect ran once on registration (counter = 1).
+            let pre_counter = counter.get();
+            assert_eq!(pre_counter, 1, "Effect fires once on registration");
+
+            let mut scene = Scene::External(ExternalNode::new(Box::new(
+                SignalExternal::<i32>::new(input.clone()),
+            )));
+            let snap = simulate_with_owner(
+                &mut scene,
+                &owner,
+                &[step("/external/value", IntrospectValue::Int(999))],
+            )
+            .unwrap();
+            match snap {
+                SnapshotNode::External(ExternalSnapshot { introspect: Some(fields), .. }) => {
+                    assert_eq!(fields[0].1, IntrospectValue::Int(999));
+                }
+                other => panic!("expected External snapshot, got {other:?}"),
+            }
+
+            // input value restored via either path.
+            assert_eq!(input.get(), 7);
+            // counter restored to pre-call value via Owner bridge —
+            // without it, counter would be pre_counter + 2 (one from
+            // simulate intervene, one from rollback intervene).
+            assert_eq!(
+                counter.get(),
+                pre_counter,
+                "Owner bridge must restore non-idempotent Effect Signal state",
+            );
+        }
     }
 }
