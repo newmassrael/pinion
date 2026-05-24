@@ -42,7 +42,8 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 #[cfg(test)]
 use pinion_core::theme::ThemeMode;
 use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessState, AriaRole};
+#[cfg(test)]
+use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -214,14 +215,15 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     )
 }
 
-/// `WidgetView` binding for the Button widget. R641 §5.16 lifts the
-/// mechanical [`WidgetCore`] / [`WidgetA11y`] / [`WidgetView`]
-/// trait wiring into the [`#[widget]`](pinion_derive::widget)
-/// attribute — `tag` / `title` / associated types / [`create_external`]
-/// factory / [`initial_size`] are now declarative. The widget-specific
-/// methods ([`read_state`] / [`event_name`] / [`view`] / [`access_node`]
-/// / [`apply_key`] / [`keybinding`]) remain as inherent `fn` items the
-/// macro forwards to.
+/// `WidgetView` binding for the Button widget. R641 §5.16 lifted the
+/// mechanical [`WidgetCore`] / [`WidgetA11y`] / [`WidgetView`] trait
+/// wiring into the [`#[widget]`](pinion_derive::widget) attribute;
+/// R642 §5.16 added the declarative `role = Button` +
+/// `state_flags(...)` derive that emits the single-node
+/// [`WidgetA11y::access_node`] body the binding used to spell out by
+/// hand. The widget-specific methods that still need bespoke logic
+/// ([`read_state`] / [`event_name`] / [`view`] / [`apply_key`] /
+/// [`keybinding`]) remain as inherent `fn` items the macro forwards to.
 ///
 /// The unit struct itself still exists solely as the impl carrier —
 /// every emitted trait method is associated (`fn`, not `&self`) so the
@@ -233,17 +235,23 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 /// [`view`]: pinion_core::WidgetCore::view
 /// [`read_state`]: pinion_core::WidgetCore::read_state
 /// [`event_name`]: pinion_core::WidgetCore::event_name
-/// [`access_node`]: pinion_a11y::WidgetA11y::access_node
+/// [`WidgetA11y::access_node`]: pinion_a11y::WidgetA11y::access_node
 /// [`apply_key`]: pinion_core::WidgetCore::apply_key
 /// [`keybinding`]: pinion_core::WidgetCore::keybinding
 #[widget(
     tag = "main_btn",
     state = ButtonState,
     event = ButtonEvent,
-    title = "pinion hello-button (R641 §5.16 #[widget])",
+    title = "pinion hello-button (R642 §5.16 #[widget])",
     renderer = HelloButtonRenderer,
     initial_size = (WIN_W, WIN_H),
     external = ButtonExternal::new,
+    role = Button,
+    state_flags(
+        hovered = Hover,
+        pressed = Pressed,
+        disabled = Disabled,
+    ),
     apply_key,
     keybinding,
 )]
@@ -321,39 +329,6 @@ impl ButtonView {
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
-
-    /// R51.63 §5.40 — AccessKit semantic tree contribution. Emits a
-    /// single `AriaRole::Button` node whose `state_flags` mirror the
-    /// four `ButtonState` variants 1:1 (`Idle` = no flags, `Hover` =
-    /// `hovered`, `Pressed` = `pressed`, `Disabled` = `disabled`).
-    /// `focused` is set when `focused == Some(Self::tag())`; bounds
-    /// are filled by `AppShell::render` via `rect_for_tag` after
-    /// layout.
-    ///
-    /// R51.69 §5.40 — the accessible name is no longer hard-coded
-    /// here. `AppShell` calls `enrich_names_from_scene` with the
-    /// paint scene after `view`, and the WAI-ARIA name-from-contents
-    /// rule lifts the button's label text (`"Click me!"` or
-    /// `"Disabled"`) directly out of the scene's `TextNode`. AT
-    /// clients (Narrator / `VoiceOver` / Orca / `TalkBack`) see the
-    /// same label the visible button shows.
-    ///
-    /// R641 §5.16 — moved to inherent method; the [`WidgetA11y`]
-    /// impl the macro emits forwards into here unconditionally
-    /// (every widget binding contributes at least one [`AccessNode`]).
-    fn access_node(state: ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(state, ButtonState::Disabled),
-            hovered: matches!(state, ButtonState::Hover),
-            pressed: matches!(state, ButtonState::Pressed),
-            checked: None,
-        };
-        vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)
-                .with_state(access_state),
-        ]
-    }
 }
 
 fn parse_button_state(name: &str) -> ButtonState {
@@ -391,7 +366,7 @@ mod a11y_tests {
     fn enriched(state: ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
         let owner = pinion_core::Owner::new();
         let scene = owner.run(|| view(state, &Frame::new()));
-        let mut nodes = ButtonView::access_node(state, focused);
+        let mut nodes = <ButtonView as WidgetA11y>::access_node(&state, focused);
         pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
         nodes
     }
@@ -414,7 +389,7 @@ mod a11y_tests {
 
     #[test]
     fn hover_state_sets_hovered_flag() {
-        let nodes = ButtonView::access_node(ButtonState::Hover, None);
+        let nodes = <ButtonView as WidgetA11y>::access_node(&ButtonState::Hover, None);
         assert!(nodes[0].state.hovered);
         assert!(!nodes[0].state.pressed);
         assert!(!nodes[0].state.disabled);
@@ -422,32 +397,32 @@ mod a11y_tests {
 
     #[test]
     fn pressed_state_sets_pressed_flag() {
-        let nodes = ButtonView::access_node(ButtonState::Pressed, None);
+        let nodes = <ButtonView as WidgetA11y>::access_node(&ButtonState::Pressed, None);
         assert!(nodes[0].state.pressed);
         assert!(!nodes[0].state.hovered);
     }
 
     #[test]
     fn focused_tag_sets_focused_flag() {
-        let nodes = ButtonView::access_node(ButtonState::Idle, Some("main_btn"));
+        let nodes = <ButtonView as WidgetA11y>::access_node(&ButtonState::Idle, Some("main_btn"));
         assert!(nodes[0].state.focused);
     }
 
     #[test]
     fn other_focused_tag_does_not_set_focused() {
-        let nodes = ButtonView::access_node(ButtonState::Idle, Some("other_widget"));
+        let nodes = <ButtonView as WidgetA11y>::access_node(&ButtonState::Idle, Some("other_widget"));
         assert!(!nodes[0].state.focused);
     }
 
     #[test]
     fn checked_is_none_for_button() {
-        let nodes = ButtonView::access_node(ButtonState::Idle, None);
+        let nodes = <ButtonView as WidgetA11y>::access_node(&ButtonState::Idle, None);
         assert_eq!(nodes[0].state.checked, None);
     }
 
     #[test]
     fn bare_access_node_leaves_name_none() {
-        let nodes = ButtonView::access_node(ButtonState::Idle, None);
+        let nodes = <ButtonView as WidgetA11y>::access_node(&ButtonState::Idle, None);
         assert!(
             nodes[0].name.is_none(),
             "name comes from enrich_names_from_scene, not from access_node"

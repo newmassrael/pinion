@@ -18514,6 +18514,56 @@
         "Other 17 example bindings (hello-toggle / hello-textfield / hello-slider / hello-checkbox / hello-radio / hello-listbox / etc.) NOT retrofitted at R641. hello-button is the first-client validation; mass retrofit defers to R650 (ergonomics-axis measurement round) so each binding's specific override surface gets a one-pass review against the macro's opt-in flag table"
       ]
     },
+    "R642": {
+      "decision_summary": "R642 §5.16 — #[widget] role + state_flags declarative WidgetA11y::access_node derive + R642.A 5-flag prune; first ergonomics-axis cascade evidence retrofit (hello-button + figma-button-m3)",
+      "changes_bullets": [
+        "crates/pinion-derive/src/widget.rs: add role = <AriaRole> + state_flags(hovered/pressed/disabled/checked = Variant) attributes; emit_a11y_impl branches on role presence — declarative derive when present (single-node AriaRole::X + AccessState bool-flag matches!), R641 inherent forward otherwise (composite escape hatch).",
+        "crates/pinion-derive/src/widget.rs: R642.A prune 5 zero-consumer optional forward flags per [[abstraction-needs-second-consumer]] — drop apply_composition / apply_middle_click / focusable_tags / fmt_state_log / create_extra_externals from KNOWN_FLAGS + emit_optional_forwards. Keep only apply_key + keybinding (hello-button uses both).",
+        "examples/hello-button/src/main.rs: add role = Button + state_flags(hovered = Hover, pressed = Pressed, disabled = Disabled) to #[widget(...)]; remove inherent fn access_node (now derived). Update a11y test call sites to <ButtonView as WidgetA11y>::access_node(&state, ...). Net -25 LOC.",
+        "examples/figma-button-m3/{Cargo.toml,src/main.rs}: full R641+R642 substrate adoption — add pinion-derive dep; collapse manual WidgetCore/WidgetA11y/WidgetView impls into #[widget(..., role = Button, state_flags(...))]; widget-specific view/read_state/event_name as inherent fns the macro forwards into. Net -33 LOC.",
+        "memory/r642-access-node-derive-pattern.md + MEMORY.md: new memory entry documenting role/state_flags 4-key shape, 80% single-node case vs composite escape hatch, retrofit checklist."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 3181 pass / 0 fail (identical to R641 baseline — no test count regression, no behaviour drift). hello-button 12 a11y tests + figma-button-m3 17 tests all pass against the derived access_node body, including every state/flag/focused combination (bit-exact Vec<AccessNode> output assertion).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings (workspace.lints baseline — forbid unsafe / deny warnings / clippy::pedantic deny). Macro-emitted code passes clippy::pedantic with no allow attributes.",
+        "mnemosyne validate_workspace: T1 orphan=0/0 (no new), round-trip mandatory=1/1, atomic ledger sync — identical to session-start baseline.",
+        "Honest LOC delta accounting (cascade-evidence first round): hello-button 539→514 (-25), figma-button-m3 630→597 (-33), pinion-derive/widget.rs 434→635 (+201, mostly doc comments + emit_a11y_impl branch + StateFlagsConfig parse). Net per-round: +143 LOC. Cascade flips net-negative when ~8 more single-node bindings retrofit (R643-R650 queue). Pinned as the R641 substrate's first cascade evidence — substrate gained 1 retrofit consumer (figma-button-m3) plus 1 derive-path consumer (hello-button)."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R643 candidate: read_state / event_name auto-derive from enum variant ↔ PascalCase name. SCE-generated state types need derive — textbook path is pinion-forge codegen template update (pinion-side, vendor/sce untouched per [[sce-priority-over-pinion]]). Target 3-binding cascade: hello-button + figma-button-m3 + hello-toggle.",
+        "R642 state_flags v0 only handles enum-variant matching (matches!(state, State::Variant)). Multi-field struct state (CheckboxState { checked: bool, ... }) blocked until parser learns checked = field(checked) form. Pin as R643-R645 carry — 4 bindings (hello-checkbox / hello-toggle / hello-radio / hello-textfield) need it before R650 mass retrofit closes the ergonomics axis.",
+        "Composite widgets (RadioGroup / Listbox / hello-listbox-multi) stay on inherent access_node path — single-node AccessState shape cannot express parent + N-child enumeration with active-descendant routing. Not on the R642-R650 cascade — multi-node a11y derive is its own round (R651+ candidate, needs survey of composite shape variation first).",
+        "[[scene-key-character-named-gap]] (R641 carry) still open — orthogonal to ergonomics axis. R660+ candidate.",
+        "Cascade LOC accounting carry: R641+R642 net = +232 LOC (substrate +201, hello-button -25, figma-button-m3 -33 minus +9 doc + macro attr). R650 measurement round must report cumulative cascade delta + quantitative substrate-per-retrofit ratio."
+      ],
+      "publishable_decision_summary": "R642 §5.16 — #[widget] role + state_flags declarative WidgetA11y::access_node derive + R642.A 5-flag prune; first ergonomics-axis cascade evidence retrofit (hello-button + figma-button-m3)",
+      "publishable_changes_bullets": [
+        "crates/pinion-derive/src/widget.rs: add role = <AriaRole> + state_flags(hovered/pressed/disabled/checked = Variant) attributes; emit_a11y_impl branches on role presence — declarative derive when present (single-node AriaRole::X + AccessState bool-flag matches!), R641 inherent forward otherwise (composite escape hatch).",
+        "crates/pinion-derive/src/widget.rs: R642.A prune 5 zero-consumer optional forward flags per [[abstraction-needs-second-consumer]] — drop apply_composition / apply_middle_click / focusable_tags / fmt_state_log / create_extra_externals from KNOWN_FLAGS + emit_optional_forwards. Keep only apply_key + keybinding (hello-button uses both).",
+        "examples/hello-button/src/main.rs: add role = Button + state_flags(hovered = Hover, pressed = Pressed, disabled = Disabled) to #[widget(...)]; remove inherent fn access_node (now derived). Update a11y test call sites to <ButtonView as WidgetA11y>::access_node(&state, ...). Net -25 LOC.",
+        "examples/figma-button-m3/{Cargo.toml,src/main.rs}: full R641+R642 substrate adoption — add pinion-derive dep; collapse manual WidgetCore/WidgetA11y/WidgetView impls into #[widget(..., role = Button, state_flags(...))]; widget-specific view/read_state/event_name as inherent fns the macro forwards into. Net -33 LOC.",
+        "memory/r642-access-node-derive-pattern.md + MEMORY.md: new memory entry documenting role/state_flags 4-key shape, 80% single-node case vs composite escape hatch, retrofit checklist."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 3181 pass / 0 fail (identical to R641 baseline — no test count regression, no behaviour drift). hello-button 12 a11y tests + figma-button-m3 17 tests all pass against the derived access_node body, including every state/flag/focused combination (bit-exact Vec<AccessNode> output assertion).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings (workspace.lints baseline — forbid unsafe / deny warnings / clippy::pedantic deny). Macro-emitted code passes clippy::pedantic with no allow attributes.",
+        "mnemosyne validate_workspace: T1 orphan=0/0 (no new), round-trip mandatory=1/1, atomic ledger sync — identical to session-start baseline.",
+        "Honest LOC delta accounting (cascade-evidence first round): hello-button 539→514 (-25), figma-button-m3 630→597 (-33), pinion-derive/widget.rs 434→635 (+201, mostly doc comments + emit_a11y_impl branch + StateFlagsConfig parse). Net per-round: +143 LOC. Cascade flips net-negative when ~8 more single-node bindings retrofit (R643-R650 queue). Pinned as the R641 substrate's first cascade evidence — substrate gained 1 retrofit consumer (figma-button-m3) plus 1 derive-path consumer (hello-button)."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R643 candidate: read_state / event_name auto-derive from enum variant ↔ PascalCase name. SCE-generated state types need derive — textbook path is pinion-forge codegen template update (pinion-side, vendor/sce untouched per [[sce-priority-over-pinion]]). Target 3-binding cascade: hello-button + figma-button-m3 + hello-toggle.",
+        "R642 state_flags v0 only handles enum-variant matching (matches!(state, State::Variant)). Multi-field struct state (CheckboxState { checked: bool, ... }) blocked until parser learns checked = field(checked) form. Pin as R643-R645 carry — 4 bindings (hello-checkbox / hello-toggle / hello-radio / hello-textfield) need it before R650 mass retrofit closes the ergonomics axis.",
+        "Composite widgets (RadioGroup / Listbox / hello-listbox-multi) stay on inherent access_node path — single-node AccessState shape cannot express parent + N-child enumeration with active-descendant routing. Not on the R642-R650 cascade — multi-node a11y derive is its own round (R651+ candidate, needs survey of composite shape variation first).",
+        "[[scene-key-character-named-gap]] (R641 carry) still open — orthogonal to ergonomics axis. R660+ candidate.",
+        "Cascade LOC accounting carry: R641+R642 net = +232 LOC (substrate +201, hello-button -25, figma-button-m3 -33 minus +9 doc + macro attr). R650 measurement round must report cumulative cascade delta + quantitative substrate-per-retrofit ratio."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

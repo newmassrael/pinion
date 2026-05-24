@@ -98,15 +98,19 @@
 //! ```
 
 use pinion_core::animation::SpringConfig;
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
-use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_core::{Animation, Color, Frame, Owner, Scene};
+#[cfg(test)]
+use pinion_core::WidgetCore;
+#[cfg(test)]
+use pinion_a11y::{AriaRole, WidgetA11y};
+use pinion_derive::widget;
+use pinion_shell::vello_renderer_impl;
 
 // pinion-forge codegen output. Defines `pub struct FigmaButtonM3Renderer`
 // + `pub enum FigmaButtonM3RendererError` plus the Vello-backed
@@ -255,21 +259,46 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
 }
 
 /// Unit struct carrying the `WidgetCore` / `WidgetA11y` / `WidgetView`
-/// impls. Per the R51.30 shell contract every method is associated
-/// (`fn`, not `&self`) so the shell instantiates `AppShell<FigmaButtonView>`
+/// impls. R641 §5.16 + R642 §5.16 collapsed the three manual impl
+/// blocks into the [`#[widget(...)]`](pinion_derive::widget) attribute
+/// — `tag` / `title` / associated types / [`create_external`] factory
+/// / [`initial_size`] / `role` / `state_flags` are now declarative;
+/// the widget-specific methods ([`read_state`] / [`event_name`] /
+/// [`view`]) remain as inherent `fn` items the macro forwards into.
+///
+/// Per the R51.30 shell contract every method is associated (`fn`,
+/// not `&self`) so the shell instantiates `AppShell<FigmaButtonView>`
 /// without holding a value of this type.
+///
+/// [`create_external`]: pinion_core::WidgetCore::create_external
+/// [`initial_size`]: pinion_shell::WidgetView::initial_size
+/// [`view`]: pinion_core::WidgetCore::view
+/// [`read_state`]: pinion_core::WidgetCore::read_state
+/// [`event_name`]: pinion_core::WidgetCore::event_name
+#[widget(
+    tag = "figma_button_m3",
+    state = ButtonState,
+    event = ButtonEvent,
+    title = "Figma Material 3 Filled Button (R642 §5.16 #[widget])",
+    renderer = FigmaButtonM3Renderer,
+    initial_size = (WIN_W, WIN_H),
+    external = ButtonExternal::new,
+    role = Button,
+    state_flags(
+        hovered = Hover,
+        pressed = Pressed,
+        disabled = Disabled,
+    ),
+)]
 struct FigmaButtonView;
 
-impl WidgetCore for FigmaButtonView {
-    type State = ButtonState;
-    type Event = ButtonEvent;
-
-    fn create_external() -> Box<dyn External> {
-        Box::new(ButtonExternal::new())
-    }
-
-    fn tag() -> &'static str {
-        "figma_button_m3"
+impl FigmaButtonView {
+    /// R642 inherent forward for [`WidgetCore::view`]. The macro emits
+    /// the trait method as `<FigmaButtonView>::view(state, *frame)` —
+    /// the free `view(...)` fn below already takes `Frame` by value, so
+    /// this stub is a 1:1 passthrough.
+    fn view(state: ButtonState, frame: Frame) -> Scene {
+        view(state, frame)
     }
 
     /// R640 §5.7 — read live SCXML state via the §5.15 item 8
@@ -291,19 +320,16 @@ impl WidgetCore for FigmaButtonView {
         ButtonState::Idle
     }
 
-    fn view(state: ButtonState, frame: &Frame) -> Scene {
-        view(state, *frame)
-    }
-
     /// R640 §5.7 — map [`ButtonEvent`] variants to their SCXML
     /// transition names. The seven pointer / lifecycle variants the
     /// shell's `InputRouter` actually produces all forward through;
     /// the `KeyboardActivate` arm routes through the same name even
-    /// though [`apply_key`](FigmaButtonView::apply_key) is currently
-    /// inert (see [`apply_key`] doc for the focus-ring deferral
-    /// rationale). Any future SCXML-internal variant the router
-    /// never emits falls through to `__internal__`, which
-    /// `parse_button_event` rejects.
+    /// though keyboard activation is currently inert at this binding
+    /// (the focus-ring deferral noted in the R640 module docs blocks
+    /// the full ARIA Space / Enter arc until `paint_focus_ring`
+    /// respects `corner_radius` — R639 watch-out, R660+ candidate).
+    /// Any future SCXML-internal variant the router never emits falls
+    /// through to `__internal__`, which `parse_button_event` rejects.
     fn event_name(event: ButtonEvent) -> &'static str {
         match event {
             ButtonEvent::PointerEnter => "PointerEnter",
@@ -316,65 +342,6 @@ impl WidgetCore for FigmaButtonView {
             ButtonEvent::Enable => "Enable",
             _ => "__internal__",
         }
-    }
-
-    fn title() -> &'static str {
-        "Figma Material 3 Filled Button (R640 reactive)"
-    }
-
-    fn keybinding(_key: &str) -> Option<ButtonEvent> {
-        None
-    }
-
-    /// R640 §5.7 — keyboard activation deferred. ARIA Space / Enter on
-    /// a focused button would route through `apply_aria_activate` like
-    /// `hello-button` does (R51.54 §5.39), but rendering the focus
-    /// indicator on top of a `corner_radius=100` pill currently paints
-    /// a square ring (the `paint_focus_ring` substrate ignores the
-    /// underlying corner radius — R639 watch-out item). Wiring the
-    /// keyboard arc without the focus ring would be a regression for
-    /// AT users; bundling both is its own sub-task (queued behind
-    /// R660+ Figma axis). For R640 the binding stays pointer-only —
-    /// mouse / touch users get the full reactive surface, keyboard
-    /// users still see the static Idle rendering.
-    fn apply_key(
-        _scene: &mut Scene,
-        _focused: Option<&str>,
-        _key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
-        false
-    }
-}
-
-impl WidgetA11y for FigmaButtonView {
-    /// R640 §5.7 — single `AriaRole::Button` AT node mirroring the
-    /// four `ButtonState` variants. `hovered` / `pressed` / `disabled`
-    /// track the live state (no longer clamped to `false` as R635
-    /// did); `focused` stays at the shell's `focused` argument — the
-    /// keyboard activation arc is deferred (see `apply_key`) but the
-    /// AT contract still surfaces the `focused` bit correctly for
-    /// any future focus integration.
-    fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(state, ButtonState::Disabled),
-            hovered: matches!(state, ButtonState::Hover),
-            pressed: matches!(state, ButtonState::Pressed),
-            checked: None,
-        };
-        vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)
-                .with_state(access_state),
-        ]
-    }
-}
-
-impl WidgetView for FigmaButtonView {
-    type Renderer = FigmaButtonM3Renderer;
-
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
     }
 }
 
