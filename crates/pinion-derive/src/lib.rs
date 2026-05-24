@@ -86,6 +86,108 @@ pub fn widget(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+/// R644 §5.16 — derive [`WidgetTag`](pinion_core::WidgetTag) on a
+/// unit-variant enum.
+///
+/// Emits `as_tag(&self) -> &'static str` (variant ident converted
+/// `PascalCase` → `snake_case` at compile time) and `from_tag(&str)
+/// -> Option<Self>` (inverse lookup). Rejects enums whose variants
+/// have any fields (tuple or struct shape) — tags carry no
+/// payload at the wire level, so the trait insists on the unit
+/// shape rather than silently dropping payload bytes.
+///
+/// ```rust,ignore
+/// use pinion_derive::WidgetTag;
+///
+/// #[derive(Copy, Clone, WidgetTag)]
+/// enum Tags { MainBtn, ScrollBar }
+///
+/// assert_eq!(Tags::MainBtn.as_tag(), "main_btn");
+/// assert_eq!(Tags::ScrollBar.as_tag(), "scroll_bar");
+/// assert_eq!(Tags::from_tag("main_btn"), Some(Tags::MainBtn));
+/// assert_eq!(Tags::from_tag("unknown"), None);
+/// ```
+#[proc_macro_derive(WidgetTag)]
+pub fn derive_widget_tag(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as DeriveInput);
+    match expand_widget_tag(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn expand_widget_tag(input: &DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let Data::Enum(data) = &input.data else {
+        return Err(syn::Error::new(
+            input.span(),
+            "WidgetTag can only be derived on enums",
+        ));
+    };
+    if data.variants.is_empty() {
+        return Err(syn::Error::new(
+            input.span(),
+            "WidgetTag derive requires at least one variant",
+        ));
+    }
+    let mut as_tag_arms: Vec<TokenStream2> = Vec::new();
+    let mut from_tag_arms: Vec<TokenStream2> = Vec::new();
+    for variant in &data.variants {
+        if !matches!(variant.fields, Fields::Unit) {
+            return Err(syn::Error::new(
+                variant.span(),
+                "WidgetTag variants must be unit (tags carry no payload — \
+                 tuple / struct variants would silently drop their fields)",
+            ));
+        }
+        let ident = &variant.ident;
+        let tag_str = pascal_to_snake_case(&ident.to_string());
+        as_tag_arms.push(quote! { Self::#ident => #tag_str });
+        from_tag_arms.push(quote! { #tag_str => ::core::option::Option::Some(Self::#ident) });
+    }
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics ::pinion_core::WidgetTag for #name #ty_generics #where_clause {
+            fn as_tag(&self) -> &'static str {
+                match self {
+                    #(#as_tag_arms,)*
+                }
+            }
+            fn from_tag(tag: &str) -> ::core::option::Option<Self> {
+                match tag {
+                    #(#from_tag_arms,)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+        }
+    })
+}
+
+/// R644 §5.16 — `PascalCase` → `snake_case` converter used by the
+/// [`WidgetTag`] derive macro for variant-ident → tag-string
+/// conversion at compile time. Inserts `_` before every uppercase
+/// ASCII letter after the first character (so `MainBtn` →
+/// `main_btn`, `FigmaButtonM3` → `figma_button_m3`); ASCII digits
+/// are treated as lowercase letters (no `_` before them) per the
+/// pinion tag convention. Non-ASCII input would be a misuse — tag
+/// idents are always ASCII `PascalCase` per
+/// [[non-ascii-literal-named-const-escape]] — so the converter is
+/// ASCII-only.
+fn pascal_to_snake_case(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 fn expand_intent_tag(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 

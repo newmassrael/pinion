@@ -103,13 +103,25 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Animation, Color, Frame, Owner, Scene};
+use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetTag};
 #[cfg(test)]
 use pinion_core::WidgetCore;
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
-use pinion_derive::widget;
+use pinion_derive::{widget, WidgetTag};
 use pinion_shell::vello_renderer_impl;
+
+/// R644 §5.16 — single-source-of-truth tag identifier (see
+/// [[r644-widget-tag-derive]] memory note). The macro derives
+/// `Tags::FigmaButtonM3.as_tag() == "figma_button_m3"` from the
+/// variant ident via `PascalCase` → `snake_case` conversion, so the
+/// `#[widget(tag = Tags::FigmaButtonM3)]` attribute below and every
+/// other tag-related site (paint-scene `.with_tag(...)`, test
+/// assertions) flow through this enum.
+#[derive(Copy, Clone, Eq, PartialEq, Debug, WidgetTag)]
+enum Tags {
+    FigmaButtonM3,
+}
 
 // pinion-forge codegen output. Defines `pub struct FigmaButtonM3Renderer`
 // + `pub enum FigmaButtonM3RendererError` plus the Vello-backed
@@ -234,7 +246,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
             // Framework dispatch identifier — matches `WidgetCore::tag()`
             // so the shell's `InputRouter` can hit-test pointer events
             // and dispatch them through the wrapped `ButtonExternal`.
-            .with_tag("figma_button_m3")
+            .with_tag(Tags::FigmaButtonM3.as_tag())
             .with_style(BoxStyle::filled(btn_fill).with_corner_radius(BTN_RADIUS))
             .with_layout(
                 LayoutStyle::new()
@@ -275,7 +287,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
 /// [`read_state`]: pinion_core::WidgetCore::read_state
 /// [`event_name`]: pinion_core::WidgetCore::event_name
 #[widget(
-    tag = "figma_button_m3",
+    tag = Tags::FigmaButtonM3,
     state = ButtonState,
     event = ButtonEvent,
     title = "Figma Material 3 Filled Button (R643 §5.16 #[widget])",
@@ -541,6 +553,24 @@ mod tests {
         use pinion_core::WidgetStateName;
         assert_eq!(ButtonState::from_name_or_default(""), ButtonState::Idle);
         assert_eq!(ButtonState::from_name_or_default("Unknown"), ButtonState::Idle);
+    }
+
+    #[test]
+    fn r644_widget_tag_round_trip() {
+        // R644 §5.16 — single-source-of-truth pin. `Tags::FigmaButtonM3
+        // ↔ "figma_button_m3"` round trip + WidgetCore::tag() body
+        // resolves to the same string. The variant ident's
+        // `PascalCase` → `snake_case` conversion preserves the
+        // digit suffix without inserting an underscore (`M3` not
+        // `_m_3`) — assertion guards the converter's digit-as-
+        // lowercase-letter convention.
+        assert_eq!(Tags::FigmaButtonM3.as_tag(), "figma_button_m3");
+        assert_eq!(Tags::from_tag("figma_button_m3"), Some(Tags::FigmaButtonM3));
+        assert_eq!(Tags::from_tag("nope"), None);
+        assert_eq!(
+            <FigmaButtonView as WidgetCore>::tag(),
+            Tags::FigmaButtonM3.as_tag(),
+        );
     }
 
     #[test]

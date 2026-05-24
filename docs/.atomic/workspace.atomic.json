@@ -18616,6 +18616,56 @@
         "Other 8 widgets (Toggle / Checkbox / Radio / Listbox / Slider / Scrollbar / TextField / Radio_group) still need widget_state_name!/widget_event_name! invocations in their pinion-core/src/widgets/<W>.rs. Lift each at the round its binding retrofits to state_name_derive."
       ]
     },
+    "R644": {
+      "decision_summary": "R644 §5.16 — WidgetTag trait + #[derive(WidgetTag)] PascalCase→snake_case derive + #[widget(tag = Tags::Variant)] Path form; hello-button + figma-button-m3 single-source-of-truth tag retrofit",
+      "changes_bullets": [
+        "crates/pinion-core/src/widget_core.rs: add WidgetTag trait (as_tag + from_tag). from_tag returns Option<Self> (no default-tag convention — missing tag at runtime is an AI-driven input-routing bug to surface, not silently substitute). Re-exported at crate root.",
+        "crates/pinion-derive/src/lib.rs: add #[derive(WidgetTag)] proc-macro accepting unit-variant enums; emits PascalCase→snake_case conversion via pascal_to_snake_case helper (digits treated as lowercase letters per [[non-ascii-literal-named-const-escape]] ASCII-only convention). Rejects tuple/struct variants (tags carry no payload).",
+        "crates/pinion-derive/src/widget.rs: TagSource enum (Lit | Path) — #[widget(tag = ...)] now accepts both LitStr (R641 form) and ExprPath (R644 form). Path form emits `::pinion_core::WidgetTag::as_tag(&#path)` as WidgetCore::tag body; LitStr form unchanged. WidgetArgs::parse refactored into WidgetArgsBuilder::{absorb, finish} for clippy::too_many_lines (102/100).",
+        "examples/hello-button: declare `enum Tags { MainBtn }` + #[derive(WidgetTag)], switch #[widget(tag = Tags::MainBtn)] + .with_tag(Tags::MainBtn.as_tag()). Single source of truth for the tag string — typo at any site becomes a compile error instead of silent runtime input-routing failure.",
+        "examples/figma-button-m3: same pattern with `enum Tags { FigmaButtonM3 }`. Pins the digit-suffix convention (`M3` → `m3`, not `_m_3`) via the new round-trip test.",
+        "2 new tests (one per binding): r644_widget_tag_round_trip pins enum↔string round-trip + WidgetCore::tag() resolves to the same string."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 3183 pass / 0 fail (R643 baseline 3181 + 2 new r644_widget_tag_round_trip tests). hello-button 13 tests + figma-button-m3 18 tests all green; macro Path-form emit produces identical behaviour to the R641 LitStr form (existing tag-sensitive tests carry over unchanged).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings. Pre-audit fixed (a) doc_markdown on 'PascalCase' in pascal_to_snake_case docstring and (b) too_many_lines on WidgetArgs::parse (split into Builder pattern).",
+        "mnemosyne validate_workspace: T1 orphan = 0/0, round-trip 1/1, atomic ledger sync.",
+        "Honest LOC accounting — R644 is a type-safety substrate round, not a cascade-savings round. Per-binding delta is positive (~+30 LOC: Tags enum declaration + round-trip test) because we ADD type safety, not remove boilerplate (each binding had only 2-3 magic-string sites). Substrate add: trait +42 LOC + derive macro +102 LOC + #[widget] tag attr Path support +42 LOC = +186 LOC. Cumulative R641-R644 net: +234 + ~250 = +484 LOC. Cascade flips negative only via R642 (a11y) + R643 (state-name) future retrofits; R644 type safety is an axis of its own (typo prevention, AI-side observability)."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R645 candidate (per original queue): pinion::app() builder API — pinion::app().widget(MyButton).title(...).run(). Keeps pinion_shell::run::<V>() as backward-compat one-liner. Builder pattern textbook canonical form; binding-independent (substrate-only).",
+        "R644 left .with_tag(Tags::MainBtn.as_tag()) as the per-call-site idiom rather than overloading ContainerNode::with_tag for impl WidgetTag. Per [[abstraction-needs-second-consumer]] — a 2nd polymorphic with_tag caller is needed before lifting that overload. Pin as R650+ candidate.",
+        "R644 left RPC path auto-derive deferred (/widgets/<tag>) — current RPC paths are bare tag strings already, so the derive is a no-op surface today. Re-evaluate when composite widgets need nested paths (R651+).",
+        "Cumulative LOC creep is real — R641-R644 net +484 LOC across 2 bindings. R650 measurement obligation: substrate cost must be amortised by 6+ more single-node retrofits (R643 + R642 axes) OR justified as type-safety value (R644 axis). Track honestly per round."
+      ],
+      "publishable_decision_summary": "R644 §5.16 — WidgetTag trait + #[derive(WidgetTag)] PascalCase→snake_case derive + #[widget(tag = Tags::Variant)] Path form; hello-button + figma-button-m3 single-source-of-truth tag retrofit",
+      "publishable_changes_bullets": [
+        "crates/pinion-core/src/widget_core.rs: add WidgetTag trait (as_tag + from_tag). from_tag returns Option<Self> (no default-tag convention — missing tag at runtime is an AI-driven input-routing bug to surface, not silently substitute). Re-exported at crate root.",
+        "crates/pinion-derive/src/lib.rs: add #[derive(WidgetTag)] proc-macro accepting unit-variant enums; emits PascalCase→snake_case conversion via pascal_to_snake_case helper (digits treated as lowercase letters per [[non-ascii-literal-named-const-escape]] ASCII-only convention). Rejects tuple/struct variants (tags carry no payload).",
+        "crates/pinion-derive/src/widget.rs: TagSource enum (Lit | Path) — #[widget(tag = ...)] now accepts both LitStr (R641 form) and ExprPath (R644 form). Path form emits `::pinion_core::WidgetTag::as_tag(&#path)` as WidgetCore::tag body; LitStr form unchanged. WidgetArgs::parse refactored into WidgetArgsBuilder::{absorb, finish} for clippy::too_many_lines (102/100).",
+        "examples/hello-button: declare `enum Tags { MainBtn }` + #[derive(WidgetTag)], switch #[widget(tag = Tags::MainBtn)] + .with_tag(Tags::MainBtn.as_tag()). Single source of truth for the tag string — typo at any site becomes a compile error instead of silent runtime input-routing failure.",
+        "examples/figma-button-m3: same pattern with `enum Tags { FigmaButtonM3 }`. Pins the digit-suffix convention (`M3` → `m3`, not `_m_3`) via the new round-trip test.",
+        "2 new tests (one per binding): r644_widget_tag_round_trip pins enum↔string round-trip + WidgetCore::tag() resolves to the same string."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 3183 pass / 0 fail (R643 baseline 3181 + 2 new r644_widget_tag_round_trip tests). hello-button 13 tests + figma-button-m3 18 tests all green; macro Path-form emit produces identical behaviour to the R641 LitStr form (existing tag-sensitive tests carry over unchanged).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings. Pre-audit fixed (a) doc_markdown on 'PascalCase' in pascal_to_snake_case docstring and (b) too_many_lines on WidgetArgs::parse (split into Builder pattern).",
+        "mnemosyne validate_workspace: T1 orphan = 0/0, round-trip 1/1, atomic ledger sync.",
+        "Honest LOC accounting — R644 is a type-safety substrate round, not a cascade-savings round. Per-binding delta is positive (~+30 LOC: Tags enum declaration + round-trip test) because we ADD type safety, not remove boilerplate (each binding had only 2-3 magic-string sites). Substrate add: trait +42 LOC + derive macro +102 LOC + #[widget] tag attr Path support +42 LOC = +186 LOC. Cumulative R641-R644 net: +234 + ~250 = +484 LOC. Cascade flips negative only via R642 (a11y) + R643 (state-name) future retrofits; R644 type safety is an axis of its own (typo prevention, AI-side observability)."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R645 candidate (per original queue): pinion::app() builder API — pinion::app().widget(MyButton).title(...).run(). Keeps pinion_shell::run::<V>() as backward-compat one-liner. Builder pattern textbook canonical form; binding-independent (substrate-only).",
+        "R644 left .with_tag(Tags::MainBtn.as_tag()) as the per-call-site idiom rather than overloading ContainerNode::with_tag for impl WidgetTag. Per [[abstraction-needs-second-consumer]] — a 2nd polymorphic with_tag caller is needed before lifting that overload. Pin as R650+ candidate.",
+        "R644 left RPC path auto-derive deferred (/widgets/<tag>) — current RPC paths are bare tag strings already, so the derive is a no-op surface today. Re-evaluate when composite widgets need nested paths (R651+).",
+        "Cumulative LOC creep is real — R641-R644 net +484 LOC across 2 bindings. R650 measurement obligation: substrate cost must be amortised by 6+ more single-node retrofits (R643 + R642 axes) OR justified as type-safety value (R644 axis). Track honestly per round."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -178,8 +178,21 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Expr, Ident, ItemStruct, LitStr, Token, Type,
+    Expr, ExprPath, Ident, ItemStruct, LitStr, Token, Type,
 };
+
+/// R644 §5.16 — source form of the `tag = X` attribute.
+///
+/// `LitStr` keeps the R641 literal form (`tag = "main_btn"`) so
+/// bindings that have not adopted the [`WidgetTag`](pinion_core::WidgetTag)
+/// derive yet compile unchanged. `Path` accepts an enum variant
+/// (`tag = Tags::MainBtn`) and emits `<Path as ::pinion_core::WidgetTag>::as_tag(&Path)`
+/// as the [`WidgetCore::tag`](pinion_core::WidgetCore::tag) body so
+/// every site references the single source of truth.
+enum TagSource {
+    Lit(LitStr),
+    Path(ExprPath),
+}
 
 /// Entry point for [`crate::widget`]. Parses the attribute and the
 /// item, then assembles the three forwarding trait impls.
@@ -203,6 +216,20 @@ pub(crate) fn expand(
         state_flags,
         flags,
     } = args;
+
+    let tag_body = match &tag {
+        TagSource::Lit(lit) => quote! { #lit },
+        TagSource::Path(path) => quote! {
+            // R644 §5.16 — `#path` is an expression position (the
+            // enum variant, e.g. `Tags::MainBtn`), so we cannot use
+            // `<#path as Trait>::method(...)` qualified syntax
+            // (that wants `<#path>` to be a *type* — `MainBtn` is
+            // a variant, not a type). Trait-method-call form lets
+            // the compiler infer the carrier type from the
+            // borrowed instance.
+            ::pinion_core::WidgetTag::as_tag(&#path)
+        },
+    };
 
     let optional_forwards = emit_optional_forwards(view_ident, &event, &flags);
     let a11y_impl = emit_a11y_impl(view_ident, &state, role.as_ref(), &state_flags);
@@ -250,7 +277,7 @@ pub(crate) fn expand(
             type State = #state;
             type Event = #event;
 
-            fn tag() -> &'static str { #tag }
+            fn tag() -> &'static str { #tag_body }
             fn title() -> &'static str { #title }
 
             fn create_external() -> ::std::boxed::Box<dyn ::pinion_core::external::External> {
@@ -401,7 +428,7 @@ struct StateFlagsConfig {
 }
 
 struct WidgetArgs {
-    tag: LitStr,
+    tag: TagSource,
     state: Type,
     event: Type,
     title: LitStr,
@@ -413,114 +440,118 @@ struct WidgetArgs {
     flags: HashSet<String>,
 }
 
-impl Parse for WidgetArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut tag: Option<LitStr> = None;
-        let mut state: Option<Type> = None;
-        let mut event: Option<Type> = None;
-        let mut title: Option<LitStr> = None;
-        let mut renderer: Option<Type> = None;
-        let mut initial_size: Option<(Expr, Expr)> = None;
-        let mut external: Option<Expr> = None;
-        let mut role: Option<Ident> = None;
-        let mut state_flags: Option<StateFlagsConfig> = None;
-        let mut flags: HashSet<String> = HashSet::new();
+/// Mutable accumulator the [`WidgetArgs::parse`] loop fills from the
+/// `WidgetArg` stream; finalisation enforces the cross-field
+/// invariants and the required-attribute set.
+#[derive(Default)]
+struct WidgetArgsBuilder {
+    tag: Option<TagSource>,
+    state: Option<Type>,
+    event: Option<Type>,
+    title: Option<LitStr>,
+    renderer: Option<Type>,
+    initial_size: Option<(Expr, Expr)>,
+    external: Option<Expr>,
+    role: Option<Ident>,
+    state_flags: Option<StateFlagsConfig>,
+    flags: HashSet<String>,
+}
 
-        let items: Punctuated<WidgetArg, Token![,]> = Punctuated::parse_terminated(input)?;
-        for item in items {
-            match item {
-                WidgetArg::Tag(v) => {
-                    if tag.is_some() {
-                        return Err(syn::Error::new(v.span(), "duplicate 'tag' attribute"));
-                    }
-                    tag = Some(v);
+impl WidgetArgsBuilder {
+    fn absorb(&mut self, item: WidgetArg) -> syn::Result<()> {
+        match item {
+            WidgetArg::Tag(v) => assign(&mut self.tag, v, "tag", tag_source_span),
+            WidgetArg::State(v) => assign(&mut self.state, v, "state", Spanned::span),
+            WidgetArg::Event(v) => assign(&mut self.event, v, "event", Spanned::span),
+            WidgetArg::Title(v) => assign(&mut self.title, v, "title", Spanned::span),
+            WidgetArg::Renderer(v) => assign(&mut self.renderer, v, "renderer", Spanned::span),
+            WidgetArg::InitialSize(w, h) => {
+                if self.initial_size.is_some() {
+                    return Err(syn::Error::new(w.span(), "duplicate 'initial_size' attribute"));
                 }
-                WidgetArg::State(v) => {
-                    if state.is_some() {
-                        return Err(syn::Error::new(v.span(), "duplicate 'state' attribute"));
-                    }
-                    state = Some(v);
+                self.initial_size = Some((w, h));
+                Ok(())
+            }
+            WidgetArg::External(v) => assign(&mut self.external, v, "external", Spanned::span),
+            WidgetArg::Role(v) => assign(&mut self.role, v, "role", |i: &Ident| i.span()),
+            WidgetArg::StateFlags(cfg, span) => {
+                if self.state_flags.is_some() {
+                    return Err(syn::Error::new(span, "duplicate 'state_flags' attribute"));
                 }
-                WidgetArg::Event(v) => {
-                    if event.is_some() {
-                        return Err(syn::Error::new(v.span(), "duplicate 'event' attribute"));
-                    }
-                    event = Some(v);
+                self.state_flags = Some(cfg);
+                Ok(())
+            }
+            WidgetArg::Flag(name, span) => {
+                if !self.flags.insert(name.clone()) {
+                    return Err(syn::Error::new(span, format!("duplicate '{name}' flag")));
                 }
-                WidgetArg::Title(v) => {
-                    if title.is_some() {
-                        return Err(syn::Error::new(v.span(), "duplicate 'title' attribute"));
-                    }
-                    title = Some(v);
-                }
-                WidgetArg::Renderer(v) => {
-                    if renderer.is_some() {
-                        return Err(syn::Error::new(v.span(), "duplicate 'renderer' attribute"));
-                    }
-                    renderer = Some(v);
-                }
-                WidgetArg::InitialSize(w, h) => {
-                    if initial_size.is_some() {
-                        return Err(syn::Error::new(w.span(), "duplicate 'initial_size' attribute"));
-                    }
-                    initial_size = Some((w, h));
-                }
-                WidgetArg::External(v) => {
-                    if external.is_some() {
-                        return Err(syn::Error::new(v.span(), "duplicate 'external' attribute"));
-                    }
-                    external = Some(v);
-                }
-                WidgetArg::Role(v) => {
-                    if role.is_some() {
-                        return Err(syn::Error::new(v.span(), "duplicate 'role' attribute"));
-                    }
-                    role = Some(v);
-                }
-                WidgetArg::StateFlags(cfg, span) => {
-                    if state_flags.is_some() {
-                        return Err(syn::Error::new(span, "duplicate 'state_flags' attribute"));
-                    }
-                    state_flags = Some(cfg);
-                }
-                WidgetArg::Flag(name, span) => {
-                    if !flags.insert(name.clone()) {
-                        return Err(syn::Error::new(span, format!("duplicate '{name}' flag")));
-                    }
-                }
+                Ok(())
             }
         }
+    }
 
+    fn finish(self, input_span: proc_macro2::Span) -> syn::Result<WidgetArgs> {
         // R642 §5.16 — `state_flags(...)` only makes sense alongside
         // `role = X` because the derived `access_node` body anchors on
         // both. Bare `state_flags` with no `role` would silently drop
         // the mapping (the inherent-path branch ignores it); we reject
         // at parse time so the author catches the mistake.
-        if let Some(cfg) = &state_flags {
-            if role.is_none() && cfg.has_any() {
+        if let Some(cfg) = &self.state_flags {
+            if self.role.is_none() && cfg.has_any() {
                 return Err(syn::Error::new(
-                    input.span(),
+                    input_span,
                     "'state_flags(...)' requires 'role = <AriaRole>' (the derived \
                      access_node body anchors on both)",
                 ));
             }
         }
-
         let missing = |field: &str| {
-            syn::Error::new(input.span(), format!("missing required 'widget' attribute: {field}"))
+            syn::Error::new(input_span, format!("missing required 'widget' attribute: {field}"))
         };
-        Ok(Self {
-            tag: tag.ok_or_else(|| missing("tag"))?,
-            state: state.ok_or_else(|| missing("state"))?,
-            event: event.ok_or_else(|| missing("event"))?,
-            title: title.ok_or_else(|| missing("title"))?,
-            renderer: renderer.ok_or_else(|| missing("renderer"))?,
-            initial_size: initial_size.ok_or_else(|| missing("initial_size"))?,
-            external: external.ok_or_else(|| missing("external"))?,
-            role,
-            state_flags: state_flags.unwrap_or_default(),
-            flags,
+        Ok(WidgetArgs {
+            tag: self.tag.ok_or_else(|| missing("tag"))?,
+            state: self.state.ok_or_else(|| missing("state"))?,
+            event: self.event.ok_or_else(|| missing("event"))?,
+            title: self.title.ok_or_else(|| missing("title"))?,
+            renderer: self.renderer.ok_or_else(|| missing("renderer"))?,
+            initial_size: self.initial_size.ok_or_else(|| missing("initial_size"))?,
+            external: self.external.ok_or_else(|| missing("external"))?,
+            role: self.role,
+            state_flags: self.state_flags.unwrap_or_default(),
+            flags: self.flags,
         })
+    }
+}
+
+fn tag_source_span(t: &TagSource) -> proc_macro2::Span {
+    match t {
+        TagSource::Lit(lit) => lit.span(),
+        TagSource::Path(path) => path.span(),
+    }
+}
+
+/// Slot writer that rejects duplicates with a span pointing at the
+/// duplicated value. Shared by every singleton [`WidgetArg`] variant
+/// (the multi-value `Flag` + `InitialSize` cases stay inline).
+fn assign<T, F>(slot: &mut Option<T>, value: T, name: &str, span_of: F) -> syn::Result<()>
+where
+    F: FnOnce(&T) -> proc_macro2::Span,
+{
+    if slot.is_some() {
+        return Err(syn::Error::new(span_of(&value), format!("duplicate '{name}' attribute")));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+impl Parse for WidgetArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut builder = WidgetArgsBuilder::default();
+        let items: Punctuated<WidgetArg, Token![,]> = Punctuated::parse_terminated(input)?;
+        for item in items {
+            builder.absorb(item)?;
+        }
+        builder.finish(input.span())
     }
 }
 
@@ -534,7 +565,7 @@ impl StateFlagsConfig {
 }
 
 enum WidgetArg {
-    Tag(LitStr),
+    Tag(TagSource),
     State(Type),
     Event(Type),
     Title(LitStr),
@@ -559,7 +590,18 @@ impl Parse for WidgetArg {
         if input.peek(Token![=]) {
             let _: Token![=] = input.parse()?;
             match key_str.as_str() {
-                "tag" => Ok(Self::Tag(input.parse()?)),
+                "tag" => {
+                    // R644 §5.16 — accept both `tag = "main_btn"`
+                    // (R641 literal form) and `tag = Tags::MainBtn`
+                    // (R644 typed form). Peek for `LitStr` first
+                    // so a bare ident path doesn't get reparsed as
+                    // a string-keyed expression.
+                    if input.peek(LitStr) {
+                        Ok(Self::Tag(TagSource::Lit(input.parse()?)))
+                    } else {
+                        Ok(Self::Tag(TagSource::Path(input.parse()?)))
+                    }
+                }
                 "state" => Ok(Self::State(input.parse()?)),
                 "event" => Ok(Self::Event(input.parse()?)),
                 "title" => Ok(Self::Title(input.parse()?)),

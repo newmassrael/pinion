@@ -619,6 +619,48 @@ macro_rules! widget_event_name {
     };
 }
 
+/// R644 §5.16 — type-safe single-source-of-truth tag identifier.
+///
+/// Pre-R644 every binding spelled its tag as a bare `&'static str`
+/// literal in two or three places — the `#[widget(tag = "main_btn")]`
+/// attribute, every `.with_tag("main_btn")` in the view fn, and
+/// every test assertion against `"main_btn"`. A typo at any site
+/// landed silently and was only surfaced when the input router
+/// failed to hit-test the widget at runtime (or when a test missed
+/// the new spelling).
+///
+/// R644 lifts the tag into a typed unit-variant enum that the
+/// binding declares once + `#[derive(WidgetTag)]` to get
+/// [`Self::as_tag`] (variant → `PascalCase`→`snake_case` string)
+/// and [`Self::from_tag`] (string → variant) automatically. The
+/// `#[widget(tag = Tags::MainBtn)]` form (R644 extension to the R641
+/// attribute) emits `<Tags as WidgetTag>::as_tag(&Tags::MainBtn)` as
+/// the `WidgetCore::tag` body so every site references the same
+/// single source.
+///
+/// The trait carries no default-impl methods to keep the derive
+/// surface narrow; future composite-tag enums (`Tags::MainBtn` +
+/// `Tags::ScrollBar` + …) get the same impl shape for free.
+///
+/// [`Self::as_tag`]: WidgetTag::as_tag
+/// [`Self::from_tag`]: WidgetTag::from_tag
+pub trait WidgetTag: Sized + 'static {
+    /// Map `self` to its canonical `snake_case` string. The
+    /// [`#[derive(WidgetTag)]`](pinion_derive::WidgetTag) macro
+    /// generates this by `PascalCase` → `snake_case` conversion on
+    /// the variant ident (`MainBtn` → `"main_btn"`,
+    /// `FigmaButtonM3` → `"figma_button_m3"`).
+    fn as_tag(&self) -> &'static str;
+
+    /// Parse `tag` back to the corresponding variant. Returns
+    /// `None` when `tag` does not match any variant — unlike
+    /// [`WidgetStateName::from_name_or_default`] there is no
+    /// "default tag" convention (a missing tag at runtime is an
+    /// AI-driven input-routing bug to surface, not silently
+    /// substitute).
+    fn from_tag(tag: &str) -> ::core::option::Option<Self>;
+}
+
 #[cfg(test)]
 mod r51_166_tests {
     //! R51.166 §5.23 R27 — `WidgetCore::update` reducer substrate

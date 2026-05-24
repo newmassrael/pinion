@@ -40,11 +40,25 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 #[cfg(test)]
 use pinion_core::theme::ThemeMode;
-use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
+use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore, WidgetTag};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
-use pinion_derive::widget;
+use pinion_derive::{widget, WidgetTag};
 use pinion_shell::vello_renderer_impl;
+
+/// R644 §5.16 — single-source-of-truth tag identifier. The
+/// `#[derive(WidgetTag)]` macro emits `Tags::MainBtn.as_tag() ==
+/// "main_btn"` (`PascalCase` → `snake_case` at compile time) and
+/// `Tags::from_tag("main_btn") == Some(Tags::MainBtn)` (inverse).
+/// Every reference to the tag inside this binary — the
+/// [`#[widget(tag = Tags::MainBtn)]`](pinion_derive::widget)
+/// attribute, the `.with_tag(Tags::MainBtn.as_tag())` paint-side
+/// call in [`view`], and the test assertions — flows through this
+/// enum so a typo cannot land silently.
+#[derive(Copy, Clone, Eq, PartialEq, Debug, WidgetTag)]
+enum Tags {
+    MainBtn,
+}
 
 // pinion-forge codegen output. Defines `pub struct HelloButtonRenderer`
 // + `pub enum HelloButtonRendererError` + async `new<W: Into<wgpu::
@@ -192,7 +206,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
             // routes pointer events to the state scene's
             // ExternalNode("main_btn") — application code never sees
             // the cursor coordinates.
-            .with_tag("main_btn")
+            .with_tag(Tags::MainBtn.as_tag())
             .with_style(BoxStyle::filled(btn_fill))
             .with_layout(
                 LayoutStyle::new()
@@ -238,7 +252,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
 /// [`apply_key`]: pinion_core::WidgetCore::apply_key
 /// [`keybinding`]: pinion_core::WidgetCore::keybinding
 #[widget(
-    tag = "main_btn",
+    tag = Tags::MainBtn,
     state = ButtonState,
     event = ButtonEvent,
     title = "pinion hello-button (R643 §5.16 #[widget])",
@@ -403,6 +417,24 @@ mod a11y_tests {
             ButtonState::Idle,
             &Frame::new(),
         );
+    }
+
+    #[test]
+    fn r644_widget_tag_round_trip() {
+        // R644 §5.16 — the `Tags::MainBtn ↔ "main_btn"` round-trip
+        // is the contract every other site (`#[widget(tag = ...)]`
+        // attribute body + `WidgetCore::tag()` return + paint
+        // `.with_tag(...)` argument + AT `focused == Some(...)`
+        // comparison) anchors on. Pin both directions explicitly so
+        // a future macro change to the `PascalCase` → `snake_case`
+        // converter cannot regress the spelling without surfacing
+        // here.
+        assert_eq!(Tags::MainBtn.as_tag(), "main_btn");
+        assert_eq!(Tags::from_tag("main_btn"), Some(Tags::MainBtn));
+        assert_eq!(Tags::from_tag("unknown"), None);
+        // WidgetCore::tag() body resolves through the same trait
+        // method — single source of truth pin.
+        assert_eq!(<ButtonView as WidgetCore>::tag(), Tags::MainBtn.as_tag());
     }
 
     // ─────────────────────────────────────────────────────────────
