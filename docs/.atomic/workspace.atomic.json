@@ -19202,6 +19202,84 @@
         "macro `tag = ConstPath` shape (e.g. `tag = TOGGLE_TAG` where const is `&str`) is unsupported as documented in R654 hello-theme. If composite widget with shared const tag emerges (multi-binding shared const), revisit; currently not warranted"
       ]
     },
+    "R655": {
+      "decision_summary": "R655 §5.16 — phase 2 application-tier 진입: `examples/todomvc` 첫 composed multi-widget binding land (TextField 입력 + 동적 Vec<String> 리스트 + Enter 제출).",
+      "changes_bullets": [
+        "examples/todomvc/ 신규 binding 추가 (Cargo.toml + build.rs + app.pinion.xml + src/main.rs); hello-textfield 1416 LOC 베이스에서 cp 후 변형 — TextField 서브 substrate (caret/selection/IME/clipboard) 모두 보존, 위에 R655 composition 50 LOC 추가",
+        "Cargo workspace members 등록 (examples/todomvc 18번째 binding 슬롯)",
+        "use_todos hook (Owner::cache-keyed Signal<Vec<String>>) — TF_TAG / use_text_edit_state 와 대칭. set_with closure 로 append, .get() 으로 view 구독",
+        "view fn — 최종 Scene::Container children 에 todos_list child 추가; build_todos_list 헬퍼 (header + per-item Scene::Text + todo_item#i 태그)",
+        "apply_key — Enter 인터셉트 (focused == TF_TAG 게이트 안). text_state.text().trim() 비어있지 않으면 use_todos.set_with append + text_state.set_text(\"\") batch 클리어; trim 가드는 TasteJS TodoMVC 사양 (공백 입력 무시) 미러",
+        "WIN_H 200 → 480 (리스트 영역 확보), title \"pinion todomvc (R655 §5.16) — first composed app\"",
+        "11개 R655 todomvc-specific test 추가 (composition 태그 / 리스트 자식 카운트 / 인덱스 태그 / set_with append 순서 / use_todos dedup / build_todos_list 헬퍼); 기존 textfield 회귀 11개는 제거 (hello-textfield 자체 테스트로 충분)",
+        "tools/demos/todomvc_r655.py 신규 demo — 21 assertion 으로 focus → type → Enter → snapshot walk 전 사이클 검증 (milk/eggs/whitespace-trim/unicode 시나리오). scene/snapshot source=paint 으로 LIST_TAG subtree 추출 + entry text 추출. AI-first RPC introspection 의무 ([[ai-first-rpc-introspection-obligation]]) 청산"
+      ],
+      "verification_bullets": [
+        "cargo test -p todomvc → 11 passed; 0 failed",
+        "cargo test --workspace → pre-existing 전 suite 통과 + 11 new",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (doc backtick / doc-list-indent / items-after-statements 3 클래스 fix 후)",
+        "python3 tools/demos/todomvc_r655.py → PASS (6.77s, 21 assertion)",
+        "validate_workspace → T1 orphan total=0 ledger=0, round-trip mandatory=1/1, GENERATED.md=sync (R655 entry append 후 재검증 필요)",
+        "honest LOC delta: examples/todomvc 신규 1305 LOC = hello-textfield 1416 base × 0.92 (textfield-only 회귀 테스트 제거) + ~165 LOC TodoMVC 본질 (use_todos hook 13 + build_todos_list 56 + Enter 인터셉트 21 + composition wiring 5 + 신규 11 테스트 ~70) — composition 본질 비용은 ~165 LOC, 나머지는 hello-textfield substrate carry"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.13",
+        "5.22",
+        "5.23",
+        "5.38",
+        "5.45",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "R656: 페어 위젯 추가 — toggle complete per-item (CheckboxExternal recycle?) + edit (double-click in-place) + delete (X button). per-item state isolation + dynamic list mutation efficiency 가 첫 substrate gap 후보. [[abstraction-needs-second-consumer]] 검증",
+        "R657: filter (Active/Completed/All) — radio-group 재사용 + derived/computed signal 가 두 번째 substrate gap 후보 (Signal<Vec<T>>.filter() reactive 파생)",
+        "R658: persistence via External(opaque) — LocalStorageExternal 또는 in-memory; serde round-trip + lazy load on startup",
+        "R659: AI driving demo — 10+ RPC step composite path routing (`/todomvc/item[2]/checkbox` AI 발견 가능 여부 검증)",
+        "R660: simulate / dry_run application-level — branch exploration via Owner snapshot/restore (R26 + R51.X.theme-fade-class 패턴)",
+        "Substrate gap 후보 carry (R655 발견): (a) list_view 헬퍼 — Vec<T> → Vec<Scene> 변환 패턴 단일 site (지금 binding-local) — 2nd consumer 출현 시 lift; (b) common textfield-rendering helper — hello-textfield / todomvc 양쪽 동일 view-fn 700 LOC 복제. 3+ consumer 출현 시 lift",
+        "텍스트 필드 caret blink 의 Focused 진입 시점 동기화는 hello-textfield substrate 가 캐리; todomvc 가 inherit 받음 — 별도 처리 없음",
+        "R655 phase 2 진입 = visible R65x 라운드 시리즈 첫 round. R656-R660 모든 라운드 visible deliverable + tools/demos/*.py 의무"
+      ],
+      "publishable_decision_summary": "R655 §5.16 — phase 2 application-tier 진입: `examples/todomvc` 첫 composed multi-widget binding land (TextField 입력 + 동적 Vec<String> 리스트 + Enter 제출).",
+      "publishable_changes_bullets": [
+        "examples/todomvc/ 신규 binding 추가 (Cargo.toml + build.rs + app.pinion.xml + src/main.rs); hello-textfield 1416 LOC 베이스에서 cp 후 변형 — TextField 서브 substrate (caret/selection/IME/clipboard) 모두 보존, 위에 R655 composition 50 LOC 추가",
+        "Cargo workspace members 등록 (examples/todomvc 18번째 binding 슬롯)",
+        "use_todos hook (Owner::cache-keyed Signal<Vec<String>>) — TF_TAG / use_text_edit_state 와 대칭. set_with closure 로 append, .get() 으로 view 구독",
+        "view fn — 최종 Scene::Container children 에 todos_list child 추가; build_todos_list 헬퍼 (header + per-item Scene::Text + todo_item#i 태그)",
+        "apply_key — Enter 인터셉트 (focused == TF_TAG 게이트 안). text_state.text().trim() 비어있지 않으면 use_todos.set_with append + text_state.set_text(\"\") batch 클리어; trim 가드는 TasteJS TodoMVC 사양 (공백 입력 무시) 미러",
+        "WIN_H 200 → 480 (리스트 영역 확보), title \"pinion todomvc (R655 §5.16) — first composed app\"",
+        "11개 R655 todomvc-specific test 추가 (composition 태그 / 리스트 자식 카운트 / 인덱스 태그 / set_with append 순서 / use_todos dedup / build_todos_list 헬퍼); 기존 textfield 회귀 11개는 제거 (hello-textfield 자체 테스트로 충분)",
+        "tools/demos/todomvc_r655.py 신규 demo — 21 assertion 으로 focus → type → Enter → snapshot walk 전 사이클 검증 (milk/eggs/whitespace-trim/unicode 시나리오). scene/snapshot source=paint 으로 LIST_TAG subtree 추출 + entry text 추출. AI-first RPC introspection 의무 ([[ai-first-rpc-introspection-obligation]]) 청산"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p todomvc → 11 passed; 0 failed",
+        "cargo test --workspace → pre-existing 전 suite 통과 + 11 new",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello → clean (doc backtick / doc-list-indent / items-after-statements 3 클래스 fix 후)",
+        "python3 tools/demos/todomvc_r655.py → PASS (6.77s, 21 assertion)",
+        "validate_workspace → T1 orphan total=0 ledger=0, round-trip mandatory=1/1, GENERATED.md=sync (R655 entry append 후 재검증 필요)",
+        "honest LOC delta: examples/todomvc 신규 1305 LOC = hello-textfield 1416 base × 0.92 (textfield-only 회귀 테스트 제거) + ~165 LOC TodoMVC 본질 (use_todos hook 13 + build_todos_list 56 + Enter 인터셉트 21 + composition wiring 5 + 신규 11 테스트 ~70) — composition 본질 비용은 ~165 LOC, 나머지는 hello-textfield substrate carry"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.13",
+        "5.22",
+        "5.23",
+        "5.38",
+        "5.45",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R656: 페어 위젯 추가 — toggle complete per-item (CheckboxExternal recycle?) + edit (double-click in-place) + delete (X button). per-item state isolation + dynamic list mutation efficiency 가 첫 substrate gap 후보. [[abstraction-needs-second-consumer]] 검증",
+        "R657: filter (Active/Completed/All) — radio-group 재사용 + derived/computed signal 가 두 번째 substrate gap 후보 (Signal<Vec<T>>.filter() reactive 파생)",
+        "R658: persistence via External(opaque) — LocalStorageExternal 또는 in-memory; serde round-trip + lazy load on startup",
+        "R659: AI driving demo — 10+ RPC step composite path routing (`/todomvc/item[2]/checkbox` AI 발견 가능 여부 검증)",
+        "R660: simulate / dry_run application-level — branch exploration via Owner snapshot/restore (R26 + R51.X.theme-fade-class 패턴)",
+        "Substrate gap 후보 carry (R655 발견): (a) list_view 헬퍼 — Vec<T> → Vec<Scene> 변환 패턴 단일 site (지금 binding-local) — 2nd consumer 출현 시 lift; (b) common textfield-rendering helper — hello-textfield / todomvc 양쪽 동일 view-fn 700 LOC 복제. 3+ consumer 출현 시 lift",
+        "텍스트 필드 caret blink 의 Focused 진입 시점 동기화는 hello-textfield substrate 가 캐리; todomvc 가 inherit 받음 — 별도 처리 없음",
+        "R655 phase 2 진입 = visible R65x 라운드 시리즈 첫 round. R656-R660 모든 라운드 visible deliverable + tools/demos/*.py 의무"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

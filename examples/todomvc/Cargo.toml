@@ -1,0 +1,65 @@
+[package]
+name = "todomvc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R655 §5.16 first composed multi-widget application: TextField (R56.1.b.1 §5.38) + dynamic Vec<String> todo list rendered as Scene::Text children, Enter to submit. Phase-2 application-tier entry (TasteJS TodoMVC canonical benchmark) verifying the AI-native framework's composition primitives end-to-end."
+publish = false
+
+[[bin]]
+name = "todomvc"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Tier-1 TextField widget + its `External` adapter; the
+# WidgetView impl wires `TextFieldExternal::attach_state` /
+# `attach_blink` to shared reactive primitives in `create_external`
+# (R56.1.b.1 substrate wrap puts `create_external` inside
+# `root_owner.run`).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+# R56.1.b.1 §5.40 — `AriaRole::TextInput` lowering to `Role::TextInput`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R51.30 paint-side AppShell. Pulls pinion-runtime (vello feature) +
+# pinion-rpc + pinion-text + winit + pollster transitively.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R56.2.b §5.22 — platform clipboard bridge. `ArboardClipboard`
+# wraps the canonical Rust ecosystem `arboard` crate (Wayland
+# `wl_data_device` + X11 CLIPBOARD + macOS `NSPasteboard` +
+# Windows `OpenClipboard`) so Ctrl/Cmd+C/X/V crosses the process
+# boundary (other applications see the same clipboard). Falls back
+# to `InMemoryClipboard` when the platform clipboard daemon is
+# unreachable (headless CI / broken display).
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
+# R56.1.b.2 §5.36 — `caret_rect_for_byte_offset` + `LayoutCache` for
+# the view fn's caret geometry lookup (shape text once per paint,
+# read cursor rect from the cached parley `Layout`).
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+# R46.5 §5.16: the `TodoMvcRenderer` struct emitted by `build.rs`
+# references `::vello::*` and `::vello::wgpu::*` directly
+# (R46.3.3 fully-qualified codegen path); the `vello_renderer_impl!`
+# macro expansion also names `::vello::Scene` and `::vello::peniko::Color`.
+vello = { workspace = true }
+# R56.2.a §5.13 §5.38 — `WidgetView::apply_composition` formats the
+# R56.1.g.2 invoke wire-shape `Json{action, data?}` via the
+# `serde_json::json!` macro so the platform IME path (winit
+# `WindowEvent::Ime` → pinion-shell `apply_composition`) lands on
+# the same substrate funnel the AI client `scene/invoke` route
+# uses. Workspace version pin shared with pinion-rpc (the
+# R56.1.g.2 parser also reads `serde_json::Value`).
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — `pinion_core::test_fixtures::assert_widget_view_carries_tag`
+# regression helper for the [[composite-paint-root-tag-convention]] (R55.G.17).
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `TodoMvcRenderer` Vello
+# wrapper. Identical pattern to hello-toggle / hello-textfield.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R655 §5.16 — pinion-forge renderer manifest for `todomvc`. Emits
+  `TodoMvcRenderer` (Vello-backed RenderContext + RenderSurface +
+  Renderer wrapper). Identical manifest shape to the hello-* gallery
+  renderers — single-source-of-truth emit template, only the struct
+  name diverges. `aa` attribute omitted -> defaults to Area per
+  R46.2.1 (UI-canonical mode).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="TodoMvcRenderer"
+        backend="vello"/>

@@ -4161,6 +4161,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "todomvc"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-platform-clipboard",
+ "pinion-shell",
+ "pinion-text",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "tokio"
 version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

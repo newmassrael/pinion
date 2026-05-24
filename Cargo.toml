@@ -34,6 +34,7 @@ members = [
     "examples/forge-counter",
     "examples/ai-introspect-demo",
     "examples/figma-button-m3",
+    "examples/todomvc",
 ]
 exclude = ["vendor/sce"]
 
