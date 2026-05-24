@@ -58,6 +58,27 @@ pub enum AriaRole {
     /// slice maps to `TextInput`. A future multiline `TextArea` axis
     /// adds the second variant additively.
     TextInput,
+    /// R656 §5.40 — WAI-ARIA 1.2 §5.3.5 `list` role. Container for
+    /// [`Self::ListItem`] children carrying a flat sequence of items.
+    /// Distinct from [`Self::Listbox`]: a `list` is a passive AT
+    /// container with no keyboard model (Tab traversal lands on item
+    /// children, not the list root), while a `listbox` owns the
+    /// roving-tabindex + Arrow/Space activation model. Pinion's
+    /// `todomvc` composed app uses `List` for the user-driven todo
+    /// collection — items are added by Enter on a separate text field
+    /// (not Arrow-key navigation), and the list itself never receives
+    /// focus, matching the WAI-ARIA `list` semantics exactly.
+    List,
+    /// R656 §5.40 — WAI-ARIA 1.2 §5.3.6 `listitem` role. Single child
+    /// of a [`Self::List`] parent. AT presents each item as a
+    /// distinct entry with its own name + (optionally) interactive
+    /// descendants; AT tools (screen readers, `VoiceOver`, Orca)
+    /// announce position-in-list ("item 2 of 3") automatically when
+    /// items are nested under a `List` parent. Distinct from
+    /// [`Self::ListBoxOption`]: a `listitem` does not participate in
+    /// a selection model (no `aria-selected`), while a `listboxoption`
+    /// always carries one.
+    ListItem,
     Generic,
 }
 
@@ -79,6 +100,8 @@ impl AriaRole {
             Self::Listbox => Role::ListBox,
             Self::ListBoxOption => Role::ListBoxOption,
             Self::TextInput => Role::TextInput,
+            Self::List => Role::List,
+            Self::ListItem => Role::ListItem,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -101,6 +124,8 @@ impl AriaRole {
             // role is `textbox` regardless of AccessKit's internal
             // single/multiline split.
             Self::TextInput => "textbox",
+            Self::List => "list",
+            Self::ListItem => "listitem",
             Self::Generic => "generic",
         }
     }
@@ -146,6 +171,8 @@ mod tests {
         assert_eq!(AriaRole::Listbox.aria_name(), "listbox");
         assert_eq!(AriaRole::ListBoxOption.aria_name(), "option");
         assert_eq!(AriaRole::TextInput.aria_name(), "textbox");
+        assert_eq!(AriaRole::List.aria_name(), "list");
+        assert_eq!(AriaRole::ListItem.aria_name(), "listitem");
         assert_eq!(AriaRole::Generic.aria_name(), "generic");
     }
 
@@ -169,5 +196,17 @@ mod tests {
     #[test]
     fn text_input_lowers_to_accesskit_text_input() {
         assert_eq!(AriaRole::TextInput.to_accesskit(), Role::TextInput);
+    }
+
+    // R656 §5.40 — List / ListItem role lowering.
+
+    #[test]
+    fn list_lowers_to_accesskit_list() {
+        assert_eq!(AriaRole::List.to_accesskit(), Role::List);
+    }
+
+    #[test]
+    fn list_item_lowers_to_accesskit_list_item() {
+        assert_eq!(AriaRole::ListItem.to_accesskit(), Role::ListItem);
     }
 }

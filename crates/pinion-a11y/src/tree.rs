@@ -404,7 +404,21 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // `Focus` (move the AT-side cursor to the listbox itself,
         // letting `active_descendant` surface the focused option).
         // Mirrors `RadioGroup`'s container-action set.
-        AriaRole::RadioGroup | AriaRole::Listbox | AriaRole::Generic => {
+        //
+        // R656 §5.40 — `List` and `ListItem` (WAI-ARIA 1.2 §5.3.5 /
+        // §5.3.6) are passive AT containers. They share the `Focus`-
+        // only action set with `Generic` / `RadioGroup` / `Listbox`:
+        // AT cursor can land on the container/item to read its name,
+        // but interactive children (delete buttons, edit handles)
+        // own their own action sets through separate `AccessNode`
+        // entries. This matches the WAI-ARIA authoring guide
+        // recommendation for ungrouped lists (a non-selectable
+        // collection of items, e.g. todomvc).
+        AriaRole::RadioGroup
+        | AriaRole::Listbox
+        | AriaRole::List
+        | AriaRole::ListItem
+        | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }
         // R56.1.b.1 §5.40 — `TextInput` (single-line textbox) accepts

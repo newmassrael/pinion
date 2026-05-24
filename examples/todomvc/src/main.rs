@@ -1,18 +1,22 @@
-//! `todomvc` — R655 §5.16 first composed multi-widget application
+//! `todomvc` — R655/R656 §5.16 first composed multi-widget application
 //! verifying pinion's AI-native composition primitives end-to-end.
 //!
 //! ## Phase-2 application-tier entry
 //!
 //! Every prior `examples/hello-*` binding showcases **one** widget;
-//! this binding is the first that composes **two** in a single
-//! `WidgetView`: a [`TextFieldExternal`] input row at top and a
-//! dynamic `Vec<String>` todo list rendered as a vertical column of
-//! [`Scene::Text`] children below it. The `TasteJS` `TodoMVC` spec
-//! is the canonical multi-widget benchmark (CRUD + filter +
-//! persistence) — R655 lands only the **scaffolding** layer (input
-//! + Enter-to-submit + static list rendering); R656 adds per-item
-//!   toggle / edit / delete, R657 filtering, R658 persistence
-//!   ([[r652-substrate-roi-matrix]] Phase-2 cascade plan).
+//! this binding is the first that composes **multiple** in a single
+//! `WidgetView`: a [`TextFieldExternal`] input row at top, a
+//! [`TodoDeleteExternal`] singleton handler (R656) registered via
+//! [`WidgetCore::create_extra_externals`], and a dynamic
+//! `Vec<TodoItem>` todo list rendered as a vertical column of
+//! per-item rows (text label + delete X button) below the input.
+//! The `TasteJS` `TodoMVC` spec is the canonical multi-widget
+//! benchmark (CRUD + filter + persistence) — R655 landed the
+//! scaffolding (input + Enter-to-submit + static list); R656 lands
+//! stable per-item IDs + delete + per-item ARIA list/listitem
+//! semantics; R657 hoists the textfield substrate into a renderer
+//! helper; R658 toggle; R659 filter; R660 edit; R661 persistence
+//! ([[r652-substrate-roi-matrix]] Phase-2 cascade plan).
 //!
 //! ## Architecture
 //!
@@ -21,24 +25,54 @@
 //!   The textfield reactive text content lives on the
 //!   [`TextEditState`] reached via [`use_text_edit_state`]`(TF_TAG)`,
 //!   and the **todo list** lives on a separate
-//!   `Signal<Vec<String>>` reached via [`use_todos`]`(TODOS_KEY)` —
+//!   `Signal<Vec<TodoItem>>` reached via [`use_todos`]`(TODOS_KEY)` —
 //!   both reactive primitives are out-of-band from `Self::State`
 //!   (which must be `Copy` per R51.173).
 //! - Composition: the view fn returns a vertical
 //!   [`Scene::Container`] holding `[title, field, status, list]`.
 //!   The list child is itself a `Scene::Container` (tagged
-//!   [`LIST_TAG`]) carrying one `Scene::Text` per todo entry, built
-//!   by iterating `todos.get()` — the [[r655-todomvc-scaffolding]]
-//!   pattern: dynamic `Vec<T> -> Vec<Scene>` directly in the view
-//!   fn, no list-renderer substrate yet (deferred until 2nd consumer
-//!   per [[abstraction-needs-second-consumer]]).
+//!   [`LIST_TAG`]) carrying one row per todo entry, where each row
+//!   is a `Scene::Container` (tagged `todo_item#{id}` — stable u64
+//!   id, NOT array index, per R656) holding `[text_label,
+//!   delete_button]`. The delete button is a sub-`Scene::Container`
+//!   tagged `todo_delete#{id}` whose paint-side hit-test routes
+//!   through the existing R51.42 composite-tag wire (split into
+//!   primary `todo_delete` + sub-index `<id>`) into
+//!   [`TodoDeleteExternal::invoke`]`("send", Text("<id>:PointerDown"))`,
+//!   which retains the [`Signal<Vec<TodoItem>>`] minus the matched
+//!   id. No new framework substrate — R656 reuses the per-radio
+//!   composite-tag pattern [`RadioGroupExternal`] already exercises
+//!   per [[abstraction-needs-second-consumer]].
+//! - Stable identity: each [`TodoItem`] carries a monotonic
+//!   `u64` `id` allocated by the [`use_next_todo_id`] hook
+//!   (`Owner::cache`-keyed `Cell<u64>`). The id survives sibling
+//!   deletes — the surviving items keep their original tags
+//!   `todo_item#7`, `todo_item#42`, `todo_item#88` rather than
+//!   resequencing under a fresh `0`-based array index (which would
+//!   make any in-flight RPC `scene/click {path:"todo_item#1"}`
+//!   target a different logical row after a sibling delete). The
+//!   `R656` AI-side verification script
+//!   `tools/demos/todomvc_r656.py` pins this contract end-to-end.
 //! - Submit wire: [`apply_key`](WidgetCore::apply_key) intercepts
 //!   `"Enter"` BEFORE delegating to
 //!   [`TextFieldExternal::invoke`]`("key", Text)`. On Enter, the
-//!   binding reads `text_state.text()`, trims, and (when non-empty)
-//!   appends to the `Signal<Vec<String>>` via `set_with` + clears
-//!   the textfield via `text_state.set_text(String::new())`. Other
-//!   keys fall through to the textfield's standard W3C key wire.
+//!   binding reads `text_state.text()`, trims, allocates a fresh
+//!   id via [`use_next_todo_id`], and (when non-empty) appends the
+//!   resulting [`TodoItem`] to the `Signal<Vec<TodoItem>>` via
+//!   `set_with` + clears the textfield via
+//!   `text_state.set_text(String::new())`. Other keys fall through
+//!   to the textfield's standard W3C key wire.
+//! - Delete wire (mouse + RPC): the per-item delete button is a
+//!   tagged `Scene::Container` (no [`External`]) — clicks land on
+//!   the [`InputRouter`]'s tag hover-target, then `dispatch_send`
+//!   forwards `PointerDown` to the singleton [`TodoDeleteExternal`]
+//!   via the R51.42 composite-tag split. The RPC verification path
+//!   uses `scene/click {path: "todo_delete#<id>"}` (same wire) or
+//!   `scene/invoke {path: "/external/todo_delete", method: "delete",
+//!   args: <id>}` (direct), and both routes converge on the same
+//!   `set_with` mutation. ARIA: list root carries
+//!   [`AriaRole::List`] (R656 §5.40); each item carries
+//!   [`AriaRole::ListItem`] with the entry text as `AccessValue::Text`.
 //!
 //! ## Try it
 //!
@@ -47,21 +81,28 @@
 //! ```
 //!
 //! Tab into the input → caret appears + blinks. Type "milk" →
-//! `Enter` → "milk" appears in the list, field clears. Type
-//! "eggs" → `Enter` → list has 2 entries. Press `d` to disable the
-//! field, `e` to re-enable.
+//! `Enter` → "milk" appears in the list (with a red × delete
+//! button on the right), field clears. Type "eggs" → `Enter` →
+//! list has 2 entries. Click the × next to "milk" → only "eggs"
+//! remains, and (per R656 stable-id contract) "eggs" still
+//! carries its original `todo_item#{id}` tag — no resequencing.
+//! Press `d` to disable the field, `e` to re-enable.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
 use pinion_platform_clipboard::ArboardClipboard;
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, IntrospectSchema,
+    IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
+};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
@@ -94,14 +135,85 @@ const TF_TAG: &str = "main_textfield";
 const LIST_TAG: &str = "todo_list";
 
 /// (R655 §5.16) [`Owner::cache`] key for the reactive
-/// `Signal<Vec<String>>` carrying the todo entries. Symmetric with
+/// `Signal<Vec<TodoItem>>` carrying the todo entries. Symmetric with
 /// the [`TF_TAG`] / [`use_text_edit_state`] convention — the
-/// [`apply_key`] handler and the view fn both resolve through this
-/// key, so the same `Rc<Signal<Vec<String>>>` instance is shared and
-/// reactive subscriptions land in the same store. The Phase-2
-/// cascade (R656 toggle/delete) will swap `Vec<String>` for
-/// `Vec<TodoItem>` while keeping this hook as the substrate seam.
+/// [`apply_key`] handler, the view fn, and [`TodoDeleteExternal`]
+/// (R656) all resolve through this key, so the same
+/// `Rc<Signal<Vec<TodoItem>>>` instance is shared and reactive
+/// subscriptions land in the same store. R656 swapped the inner
+/// element type from `String` to [`TodoItem`] (id + text) for stable
+/// per-item identity under deletes.
 const TODOS_KEY: &str = "todomvc.todos";
+
+/// (R656 §5.16) [`Owner::cache`] key for the monotonic
+/// `Rc<Cell<u64>>` counter that [`use_next_todo_id`] increments to
+/// allocate the `id` field of each fresh [`TodoItem`]. Separate from
+/// [`TODOS_KEY`] so the counter does not subscribe view-fn renders
+/// to its mutations (a `Cell<u64>` is not reactive — only the
+/// `Signal<Vec<TodoItem>>` it feeds is).
+const NEXT_ID_KEY: &str = "todomvc.next_id";
+
+/// (R656 §5.16) Singleton paint + state tag for the per-item delete
+/// button handler. The paint scene emits one
+/// `Scene::Container { tag: "todo_delete#<id>" }` per todo entry,
+/// and the state scene holds exactly one [`TodoDeleteExternal`]
+/// registered via [`create_extra_externals`] under the primary tag
+/// `"todo_delete"`. The R51.42 §5.35 composite-tag wire splits the
+/// paint tag on `#` so the [`InputRouter`] resolves the primary
+/// against the state scene and forwards the sub-index `<id>` to
+/// the External through the `invoke("send", "{id}:{Event}")`
+/// channel — the canonical pinion-native pattern
+/// [`RadioGroupExternal`] established at R51.43 and reused here at
+/// the application tier without any new framework substrate.
+const DELETE_TAG: &str = "todo_delete";
+
+/// (R656 §5.16) Per-item paint tag prefix for the row container.
+/// Full row tag is `"todo_item#<id>"` (stable u64 id, NOT array
+/// index — R656 corrects the R655 index-based tagging that would
+/// alias `todo_item#1` to a different logical row after a sibling
+/// delete). Listed as a constant so RPC verify demos + tests
+/// reference one source of truth.
+const ITEM_TAG_PREFIX: &str = "todo_item";
+
+/// (R656 §5.16) Per-item delete-button paint tag prefix. Full
+/// per-item tag is `"todo_delete#<id>"`; the `#` separator triggers
+/// the R51.42 composite-tag split so the [`InputRouter`] routes the
+/// click into [`TodoDeleteExternal`] (registered under primary tag
+/// [`DELETE_TAG`]).
+const DELETE_TAG_PREFIX: &str = "todo_delete";
+
+/// (R656 §5.16) Width of the per-item delete button in logical
+/// pixels. Sized to comfortably host the `MULTIPLICATION_SIGN` (×,
+/// U+00D7) glyph at [`DELETE_FONT_SIZE_PX`] with a few pixels of
+/// padding on each side; large enough to satisfy the WCAG 2.5.5
+/// "target size (minimum)" 24×24 CSS px recommendation for AAA.
+const DELETE_BUTTON_W: u32 = 24;
+/// (R656 §5.16) Height of the per-item delete button. Matches
+/// [`DELETE_BUTTON_W`] for a square hit target — the most
+/// forgiving shape for touch and mouse alike.
+const DELETE_BUTTON_H: u32 = 24;
+/// (R656 §5.16) Font size for the `×` delete glyph. 18 px gives the
+/// glyph the same visual weight as the entry text below it without
+/// dominating the row.
+const DELETE_FONT_SIZE_PX: u32 = 18;
+
+/// (R656 §5.16) WAI-AA WCAG 1.4.6 contrast-compliant tinting of
+/// the `×` delete glyph. Resolves through [`ColorRole::Error`]
+/// (R590 §5.50) so the destructive affordance reads with the same
+/// hue the rest of the M3 palette reserves for error state — the
+/// glyph is visually identified as "danger / destructive" without
+/// the row needing a separate "are you sure?" confirmation step
+/// (the per-item delete is a single-click destructive action by
+/// `TasteJS` `TodoMVC` convention).
+fn delete_glyph_color(theme: &Theme) -> Color {
+    theme.resolve(ColorRole::Error)
+}
+
+/// (R656 §5.16) The visible `×` glyph itself (Unicode
+/// `MULTIPLICATION_SIGN`, U+00D7). Pulled into a named constant
+/// + `\u{...}` escape per `[[non-ascii-literal-named-const-escape]]`
+///   so the source file stays ASCII-only.
+const DELETE_GLYPH: &str = "\u{00D7}";
 
 const WIN_W: u32 = 480;
 // R655 §5.16 — tall enough to host the textfield section (title +
@@ -118,20 +230,116 @@ const WIN_H: u32 = 480;
 /// host binds them together.
 const THEME_TAG: &str = "app";
 
-/// (R655 §5.16) `Owner::cache`-keyed hook returning the shared
-/// `Rc<Signal<Vec<String>>>` of submitted todo entries. Symmetric
+/// (R656 §5.16) Single todo entry — stable monotonic `id` allocated
+/// by [`use_next_todo_id`] plus the user-typed `text` from the
+/// input field at submit time. `Clone` so [`Signal::set_with`]
+/// closures can construct the next `Vec<TodoItem>` snapshot without
+/// touching the original (the framework's reactive equality-skip
+/// path needs the previous snapshot intact for the cheap-`Eq`
+/// compare). `PartialEq` so the `set_with` equality check ever
+/// fires; `Debug` for the `Vec<TodoItem>` `Debug` chain the
+/// `fmt_state_log` path walks for stderr.
+///
+/// The `id` field is `u64` rather than `usize` so the wire-form
+/// `"todo_item#<id>"` paint tag and the
+/// `invoke("send", "{id}:PointerDown")` payload stay
+/// architecture-independent — every desktop/wasm/embedded backend
+/// agrees on the integer representation. `u64::MAX` is a
+/// practically unbounded id space (an app that adds one todo per
+/// nanosecond for ~580 years would still not exhaust it), so the
+/// counter never needs reuse — every deleted item's id stays
+/// retired, and the AI client / RPC verify scripts can safely
+/// remember per-id state across the lifetime of the process.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TodoItem {
+    /// Stable monotonic identifier — allocated once at submit time
+    /// by [`use_next_todo_id`] and never reused. Survives sibling
+    /// deletes (per R656 stable-id contract): if items
+    /// `[#1, #2, #3]` exist and `#2` is deleted, the surviving
+    /// items keep tags `todo_item#1` + `todo_item#3` (NOT
+    /// resequenced to `#0` + `#1`).
+    pub id: u64,
+    /// User-typed entry text. Trimmed at submit time so
+    /// leading/trailing whitespace doesn't leak into the rendered
+    /// list (the trim guard in `apply_key` also drops blank-only
+    /// submissions per the `TasteJS` `TodoMVC` spec).
+    pub text: String,
+}
+
+/// (R655/R656 §5.16) `Owner::cache`-keyed hook returning the shared
+/// `Rc<Signal<Vec<TodoItem>>>` of submitted todo entries. Symmetric
 /// with [`use_text_edit_state`] / [`use_caret_blink`] hook shape —
 /// the [`Owner::cache`] dedup guarantees one `Rc` across the view fn
-/// (subscribes via `.get()` to re-run paint on submit) and
+/// (subscribes via `.get()` to re-run paint on submit/delete),
 /// [`apply_key`] (mutates via `.set_with(|v| v.push(...))` on
-/// Enter). Single-source-of-truth for the todo list state; the
-/// signal's equality-skip suppresses the re-run when an empty push
-/// would no-op (the Enter handler guards on `!text.trim().is_empty()`
-/// so this rarely triggers in practice).
-fn use_todos() -> Rc<Signal<Vec<String>>> {
+/// Enter), [`create_extra_externals`] (constructs the singleton
+/// [`TodoDeleteExternal`] with a clone of this `Rc`), and the
+/// `access_node` hook (walks the current snapshot to emit one
+/// `AccessNode` per item under the list root). Single-source-of-
+/// truth for the todo list state; the signal's equality-skip
+/// suppresses the re-run when a no-op `set_with` would not change
+/// the snapshot.
+///
+/// R656 §5.16 — element type swapped from `String` to [`TodoItem`]
+/// (id + text) for stable per-item identity under deletes.
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope. Every
+/// runtime invocation site (view fn, `apply_key`,
+/// `create_extra_externals`, `access_node`) is wrapped by the
+/// substrate's `root_owner.run`, so this only fires under unit
+/// tests that forget the `with_owner` helper.
+#[must_use]
+pub fn use_todos() -> Rc<Signal<Vec<TodoItem>>> {
     Owner::current()
         .expect("use_todos requires an active Owner scope")
-        .cache(TODOS_KEY, || Signal::new(Vec::<String>::new()))
+        .cache(TODOS_KEY, || Signal::new(Vec::<TodoItem>::new()))
+}
+
+/// (R656 §5.16) `Owner::cache`-keyed hook returning a monotonic
+/// `Rc<Cell<u64>>` counter. The Enter-key submit handler invokes
+/// [`Cell::get`] + [`Cell::set`] to allocate a fresh id for each
+/// new [`TodoItem`]; the counter starts at `1` so deleted-then-
+/// reused-tag-name confusion is impossible (id `0` is reserved as
+/// a sentinel for "no item" by convention, though no current code
+/// path relies on it — defensive carry).
+///
+/// Returns an `Rc<Cell<u64>>` (not just `u64`) so the call site
+/// can both *read* the current counter (for tests, mostly) and
+/// *advance* it through one shared instance. The hook is not
+/// reactive — `Cell<u64>` does not implement the [`Signal`]
+/// substrate, by design: id allocation is a one-way side effect
+/// of the Enter handler, and view fns must not subscribe to it
+/// (they re-render on `Signal<Vec<TodoItem>>` updates instead,
+/// which already carries the freshly-allocated id inside the new
+/// element).
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope (same
+/// shape as [`use_todos`] — only test paths can trigger).
+#[must_use]
+pub fn use_next_todo_id() -> Rc<Cell<u64>> {
+    Owner::current()
+        .expect("use_next_todo_id requires an active Owner scope")
+        .cache(NEXT_ID_KEY, || Cell::new(1_u64))
+}
+
+/// (R656 §5.16) Allocate and return the next fresh `id`. Convenience
+/// wrapper over [`use_next_todo_id`] — fetches the counter, reads
+/// the current value, advances by 1, and returns the pre-advance
+/// snapshot so the caller can stamp it onto a fresh [`TodoItem`].
+/// Saturating-add at `u64::MAX` is technically a defensive guard
+/// (a single process would have to allocate ~580 years of
+/// nanosecond-spaced ids to hit it) but explicit for textbook
+/// integer-overflow hygiene.
+#[must_use]
+pub fn allocate_todo_id() -> u64 {
+    let counter = use_next_todo_id();
+    let current = counter.get();
+    counter.set(current.saturating_add(1));
+    current
 }
 
 /// (R655 §5.16) Title color for the todo list section header — same
@@ -660,15 +868,18 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
 
-    // R655 §5.16 — todo list section: a header label + one
-    // `Scene::Text` per submitted entry, packed in a tagged
+    // R655/R656 §5.16 — todo list section: a header label + one
+    // row per submitted entry, packed in a tagged
     // `Scene::Container` so RPC `scene/query` can address the list
     // independently from the textfield. Reading `todos.get()`
-    // subscribes the view fn to the `Signal<Vec<String>>`, so a
-    // `set_with` from the Enter handler re-runs paint with the new
-    // entries on the next frame.
+    // subscribes the view fn to the `Signal<Vec<TodoItem>>`, so a
+    // `set_with` from the Enter handler OR from
+    // [`TodoDeleteExternal::delete_by_id`] re-runs paint with the
+    // new entries on the next frame. R656 swapped the inner element
+    // type from `String` to [`TodoItem`] so each row carries a
+    // stable u64 id under deletes.
     let todos = use_todos();
-    let entries: Vec<String> = todos.get();
+    let entries: Vec<TodoItem> = todos.get();
     let todos_list = build_todos_list(&theme, &entries);
 
     Scene::Container(
@@ -684,7 +895,266 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     )
 }
 
-/// (R655 §5.16) Build the todo list section `Scene::Container`:
+/// (R656 §5.16) Singleton per-item delete handler. Registered via
+/// [`WidgetCore::create_extra_externals`] under primary tag
+/// [`DELETE_TAG`] (`"todo_delete"`); the substrate composes the
+/// state-scene root as
+/// `Scene::Container([primary_textfield, this_handler])` per R55.D.5
+/// §5.45. Paint-side per-item delete buttons tagged
+/// `"todo_delete#<id>"` rely on the R51.42 §5.35 composite-tag wire:
+/// the [`InputRouter`]'s `dispatch_send` splits the paint tag on
+/// `#`, walks the state scene for an [`External`] whose primary tag
+/// matches `"todo_delete"`, and forwards the sub-index `<id>` as
+/// part of the wire-form `invoke("send", "{id}:{Event}")`. This
+/// External parses the wire, narrows the sub-index back to `u64`,
+/// and calls [`Signal::set_with`] to retain the surviving items.
+///
+/// One instance per binding (no per-item allocation) means
+/// `create_extra_externals` runs exactly once at shell boot, which
+/// is the only lifecycle anchor the R55.D.5 substrate exposes — the
+/// id space is dynamic, but the handler that resolves ids to delete
+/// actions is static, mirroring the
+/// [`RadioGroupExternal`] / [`ListBoxExternal`] pattern where one
+/// External owns N indexed children.
+///
+/// ## Why a separate External, not a [`WidgetCore::update`] reducer?
+///
+/// The R51.166 §5.23 R27 `update` reducer reads the cached
+/// `Self::State` snapshot and returns `Vec<Command>` for async/IO
+/// dispatch; it does NOT have direct access to the application's
+/// `Signal<Vec<TodoItem>>` outside of opaque [`Command`] dispatch
+/// to a registered [`Handler`]. The R656 delete contract is
+/// synchronous-pure: a click on `todo_delete#<id>` must immediately
+/// produce a `Vec<TodoItem>` mutation on the next paint cycle, no
+/// async hop. The composite-tag → External → `set_with` path is the
+/// pinion-canonical synchronous mutation route for paint-side hit
+/// events, exactly the pattern hello-listbox uses for per-row
+/// selection.
+///
+/// Future axes (R658 toggle, R660 edit) extend this same External
+/// with additional `invoke` paths (`"toggle"`, `"edit"`, ...) so the
+/// state scene still has exactly one extra External — keeping the
+/// boot-time allocation footprint flat regardless of how many CRUD
+/// affordances land.
+#[derive(Debug)]
+pub struct TodoDeleteExternal {
+    /// Shared reference to the same `Rc<Signal<Vec<TodoItem>>>`
+    /// the view fn / Enter handler / `access_node` hook resolve via
+    /// [`use_todos`]. Mutations go through [`Signal::set_with`] so
+    /// the framework's reactive equality-skip + view-fn re-run
+    /// cascade fires automatically — no manual repaint plumbing.
+    todos: Rc<Signal<Vec<TodoItem>>>,
+}
+
+impl TodoDeleteExternal {
+    /// Construct a fresh handler bound to the supplied todo list
+    /// signal. The caller (typically [`create_extra_externals`])
+    /// resolves the signal via [`use_todos`] inside the framework's
+    /// `root_owner.run` wrap so this `Rc` and the view fn's `Rc`
+    /// are the same instance.
+    #[must_use]
+    pub fn new(todos: Rc<Signal<Vec<TodoItem>>>) -> Self {
+        Self { todos }
+    }
+
+    /// Remove the entry whose `id` matches `target_id`. No-op when
+    /// no such entry exists (idempotent: a double-click that
+    /// triggers `PointerDown` then a stale RPC retry both converge on
+    /// the same observed end-state). Uses
+    /// [`Signal::set_with`] so the reactive equality-skip suppresses
+    /// the view-fn re-run when the target id was already absent.
+    fn delete_by_id(&self, target_id: u64) {
+        self.todos.set_with(|prev| {
+            let mut next = prev.clone();
+            next.retain(|item| item.id != target_id);
+            next
+        });
+    }
+
+    /// Parse the R51.42 §5.35 composite-tag send payload
+    /// `"<id>:<EventName>"` into `(id, event_name)`. Returns `None`
+    /// when the wire-form is malformed (missing `:`, non-integer
+    /// sub-index, or empty event name) — the dispatcher then yields
+    /// [`InvokeError::Rejected`] to the caller. Matches the
+    /// [`RadioGroupExternal`] R51.43 wire-format convention exactly
+    /// so AI-side scripts that already know the composite-tag idiom
+    /// (e.g. `tools/demos/hello_listbox_row_click.py`) don't need
+    /// to learn a new shape for the R656 delete path.
+    fn parse_send_payload(payload: &str) -> Option<(u64, &str)> {
+        let (id_str, event_name) = payload.split_once(':')?;
+        if event_name.is_empty() {
+            return None;
+        }
+        let id: u64 = id_str.parse().ok()?;
+        Some((id, event_name))
+    }
+}
+
+impl External for TodoDeleteExternal {
+    /// All three backends (GUI / TUI / RPC) supported — the External
+    /// itself paints nothing (the view fn owns the delete-button
+    /// glyph rendering), so the backend declaration is purely about
+    /// which dispatch paths can deliver a delete event. The RPC
+    /// path is the primary AI-driving surface; GUI is the mouse-
+    /// click path; TUI is a placeholder for the R680+ TUI carry
+    /// (no `examples/todomvc-tui` binding ships in R656). On
+    /// unsupported backends the substrate skips this External
+    /// rather than rejecting — a delete-less TUI variant is a
+    /// degraded but functioning render, not a fatal scene-rejection
+    /// case.
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
+    }
+
+    /// Framework drives repaint — this External produces no paint
+    /// surface of its own; mutations propagate through the
+    /// [`Signal<Vec<TodoItem>>`] subscription, which triggers the
+    /// view fn re-run via the substrate's reactive paint loop.
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    /// UI-thread synchronous — the delete mutation lands on the same
+    /// thread the [`Signal::set_with`] subscribers (view fn, IME
+    /// caret rect, ARIA enrich) run on, so no cross-thread
+    /// synchronisation is needed.
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    /// Opt in to symbolic introspection so the RPC verify path can
+    /// reach `query("count")` / `query("ids")` / `invoke("delete",
+    /// Int(id))` for direct delete (parallel to the indirect
+    /// `scene/click {path: "todo_delete#<id>"}` route).
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for TodoDeleteExternal {
+    /// Read-only counters + the action surface. `count` and `ids`
+    /// expose the same shape the view fn paints so AI scripts can
+    /// cross-check the list state without walking the paint scene.
+    /// The `send` slot documents the R51.42 wire form
+    /// (`<id>:<EventName>`); the `delete` slot is the direct-form
+    /// shortcut that takes a typed `Int(id)` and produces a typed
+    /// `Bool(was_present)` return so the RPC verify scripts can
+    /// distinguish "I deleted an existing item" from "no-op
+    /// against an already-deleted id".
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("count", "int"),
+            ("ids", "json"),
+            ("send", "string"),
+            ("delete", "int"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "count" => {
+                let n = self.todos.get().len();
+                Some(IntrospectValue::Int(
+                    i64::try_from(n).expect("todo count must fit in i64"),
+                ))
+            }
+            "ids" => {
+                let snapshot = self.todos.get();
+                let arr: Vec<serde_json::Value> = snapshot
+                    .iter()
+                    .map(|item| serde_json::Value::from(item.id))
+                    .collect();
+                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+            }
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        match path {
+            "count" | "ids" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // R51.42 §5.35 — InputRouter's `dispatch_send` lands here
+            // with payload `"<id>:PointerDown"` (or `PointerUp` /
+            // `PointerEnter` / `PointerLeave` / `PointerCancel`).
+            // R656 acts on `PointerDown` only — the X target is small
+            // (24×24 px), drag-off cancel semantics are not needed,
+            // and treating PointerDown as the single-shot delete
+            // edge matches the canonical "destructive icon: press
+            // commits" UX. PointerUp / Leave / Enter / Cancel are
+            // accepted-and-ignored (return `Bool(false)`) so the
+            // framework's substrate dispatch never sees a `Rejected`
+            // for a routine paint cycle.
+            "send" => match args {
+                IntrospectValue::Text(ref payload) => {
+                    let (id, event_name) = Self::parse_send_payload(payload)
+                        .ok_or(InvokeError::Rejected)?;
+                    if event_name == "PointerDown" {
+                        let was_present = self
+                            .todos
+                            .get()
+                            .iter()
+                            .any(|item| item.id == id);
+                        self.delete_by_id(id);
+                        Ok(IntrospectValue::Bool(was_present))
+                    } else {
+                        // R51.32 §5.15 — accepted but no-op for the
+                        // non-PointerDown phases. `Bool(false)`
+                        // signals "handled, no state change", which
+                        // the InputRouter's dispatch loop reads as
+                        // "do not re-route to a sibling".
+                        Ok(IntrospectValue::Bool(false))
+                    }
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R656 §5.16 — direct delete by id. Skips the R51.42
+            // composite-tag wire so AI scripts can call
+            // `scene/invoke {path: "/external/todo_delete", method:
+            // "delete", args: <id>}` without first having to
+            // construct the `<id>:PointerDown` text payload. Returns
+            // `Bool(was_present)` so the caller can distinguish
+            // "deleted an existing entry" from "no-op against an
+            // already-deleted id".
+            "delete" => match args {
+                IntrospectValue::Int(i) => {
+                    let id = u64::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    let was_present = self
+                        .todos
+                        .get()
+                        .iter()
+                        .any(|item| item.id == id);
+                    self.delete_by_id(id);
+                    Ok(IntrospectValue::Bool(was_present))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
+/// (R655/R656 §5.16) Build the todo list section `Scene::Container`:
 ///
 /// - When `entries` is empty, returns an empty container (still
 ///   tagged [`LIST_TAG`] so the RPC introspection path can confirm
@@ -699,13 +1169,16 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
 /// `Vec<T> -> Vec<Scene>` rendering is per-binding right now; if a
 /// 2nd composed application reuses the shape, a `list_view` helper
 /// lifts to substrate per [[abstraction-needs-second-consumer]].
-fn build_todos_list(theme: &Theme, entries: &[String]) -> Scene {
+fn build_todos_list(theme: &Theme, entries: &[TodoItem]) -> Scene {
     let header_style = TextStyle::new()
         .with_size_px(LIST_TITLE_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted));
     let item_style = TextStyle::new()
         .with_size_px(LIST_ITEM_FONT_SIZE_PX)
         .with_fg(theme.resolve(ColorRole::OnSurface));
+    let delete_style = TextStyle::new()
+        .with_size_px(DELETE_FONT_SIZE_PX)
+        .with_fg(delete_glyph_color(theme));
 
     let header_text = if entries.is_empty() {
         String::from("No todos yet — type and press Enter")
@@ -718,23 +1191,74 @@ fn build_todos_list(theme: &Theme, entries: &[String]) -> Scene {
         header_style,
     ));
 
-    // Each row tagged `todo_item#<i>` so a future delete / toggle
-    // round (R656) can route hit-tests to the per-item callback.
-    // For R655 scaffolding the items are purely visual — no
-    // interaction yet, no `External` per item — so the substrate
-    // cost stays at zero. The tag-with-index pattern mirrors
-    // `hello-listbox`'s `listbox_row(i, ...)` (R55.G.20 convention).
+    // R656 §5.16 — each row tagged `todo_item#<id>` (stable u64 id,
+    // NOT array index — the R655 index-based tagging would alias
+    // `todo_item#1` to a different logical row after a sibling
+    // delete, breaking any in-flight AI-side reference). The
+    // per-row delete affordance is a sub-`Scene::Container` tagged
+    // `todo_delete#<id>` that hosts the visible `×` glyph; the
+    // R51.42 §5.35 composite-tag wire splits this paint tag at the
+    // `#` so the [`InputRouter`] routes the click into the singleton
+    // [`TodoDeleteExternal`] registered under primary tag
+    // [`DELETE_TAG`] (`"todo_delete"`). Mirrors `hello-listbox`'s
+    // `listbox_row(i, ...)` (R55.G.20) and `RadioGroupExternal`'s
+    // composite-tag pattern (R51.43) — no new framework substrate
+    // needed.
     let mut children: Vec<Scene> = Vec::with_capacity(entries.len() + 1);
     children.push(header);
-    for (idx, entry) in entries.iter().enumerate() {
+    for item in entries {
+        let row_tag = format!("{ITEM_TAG_PREFIX}#{}", item.id);
+        let delete_tag = format!("{DELETE_TAG_PREFIX}#{}", item.id);
+
+        let entry_text = Scene::Text(TextNode::styled(
+            item.text.clone(),
+            Rect::default(),
+            item_style.clone(),
+        ));
+
+        // R656 §5.16 — the delete button is a tagged Container
+        // hosting the `×` glyph centred inside the 24×24 hit-target.
+        // No [`External`] per-item — the singleton
+        // [`TodoDeleteExternal`] resolves the sub-index off the
+        // composite tag at dispatch time. The button is NOT listed
+        // in [`focusable_tags`] so a mouse click does not steal
+        // focus from the text field (the user can press Enter
+        // again immediately to add the next todo without a manual
+        // refocus hop).
+        let delete_glyph = Scene::Text(TextNode::styled(
+            DELETE_GLYPH,
+            Rect::default(),
+            delete_style.clone(),
+        ));
+        let delete_button = Scene::Container(
+            ContainerNode::new(vec![delete_glyph])
+                .with_tag(delete_tag)
+                // R51.69 §5.40 — accessible name carried as
+                // `aria-label` so screen readers announce
+                // "Delete <item text>" instead of just the glyph.
+                // The static "Delete" label is intentional — the
+                // per-item descriptive name lives on the parent
+                // ListItem AccessNode via `enrich_names_from_scene`.
+                .with_aria_label("Delete")
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_justify(JustifyContent::Center)
+                        .with_align_items(AlignItems::Center)
+                        .with_size(Size::px(DELETE_BUTTON_W, DELETE_BUTTON_H)),
+                ),
+        );
+
         let row = Scene::Container(
-            ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                entry.clone(),
-                Rect::default(),
-                item_style.clone(),
-            ))])
-            .with_tag(format!("todo_item#{idx}"))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+            ContainerNode::new(vec![entry_text, delete_button])
+                .with_tag(row_tag)
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_justify(JustifyContent::SpaceBetween)
+                        .with_align_items(AlignItems::Center)
+                        .with_gap(LIST_ITEM_GAP),
+                ),
         );
         children.push(row);
     }
@@ -796,11 +1320,37 @@ impl WidgetCore for TodoMvcView {
         TF_TAG
     }
 
-    /// (R55.D.5 §5.45) Single-External binding — the state scene root
-    /// stays `Scene::External(primary)`. `find_external_with_tag`
-    /// handles both the single-External and the multi-External shapes
-    /// (R55.D.5 cascade lesson), so the read site is shape-agnostic
-    /// even though this binding doesn't use `create_extra_externals`.
+    /// (R656 §5.16 R55.D.5 §5.45) — register the singleton
+    /// [`TodoDeleteExternal`] handler tagged [`DELETE_TAG`] alongside
+    /// the primary textfield. The substrate wraps the call in
+    /// `root_owner.run(...)` (per [[multi-external-substrate-extra-externals-pattern]])
+    /// so [`use_todos`] resolves to the same
+    /// `Rc<Signal<Vec<TodoItem>>>` the view fn and Enter handler
+    /// later resolve through the same `Owner::cache` key. The
+    /// state-scene root then becomes
+    /// `Scene::Container([External(text_field), External(todo_delete)])`,
+    /// and the existing `find_external_with_tag(TF_TAG)` read site
+    /// stays shape-agnostic (R55.D.5 cascade lesson) — no change to
+    /// [`Self::read_state`] needed.
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        let todos = use_todos();
+        vec![ExtraExternal::new(
+            DELETE_TAG,
+            Box::new(TodoDeleteExternal::new(todos)),
+        )]
+    }
+
+    /// (R55.D.5 §5.45) Multi-External binding (R656 adds the
+    /// [`TodoDeleteExternal`] singleton alongside the primary
+    /// textfield via [`Self::create_extra_externals`]).
+    /// `find_external_with_tag` handles both the single-External
+    /// and the multi-External shapes (R55.D.5 cascade lesson), so
+    /// the read site stays shape-agnostic — the textfield's
+    /// cached projection still resolves through `TF_TAG`, and the
+    /// todo-delete handler's state lives entirely behind its own
+    /// `Rc<Signal<Vec<TodoItem>>>` (not part of the cached
+    /// `Self::State` snapshot, by design — the list is reactive
+    /// and re-derives the rendered shape every paint).
     fn read_state(scene: &Scene) -> (TextFieldState, u32) {
         let Some(node) = scene.find_external_with_tag(TF_TAG) else {
             return (TextFieldState::Idle, 0);
@@ -894,11 +1444,21 @@ impl WidgetCore for TodoMvcView {
             let raw = text_state.text();
             let trimmed = raw.trim();
             if !trimmed.is_empty() {
-                let entry = trimmed.to_owned();
+                let entry_text = trimmed.to_owned();
+                // R656 §5.16 — allocate a fresh stable u64 id from
+                // the monotonic counter BEFORE pushing, so the
+                // resulting `TodoItem` carries an id that no future
+                // delete + re-add cycle can re-use. The id stays
+                // bound to this entry for its entire lifetime in
+                // the list, even if siblings come and go.
+                let id = allocate_todo_id();
                 let todos = use_todos();
                 todos.set_with(|prev| {
                     let mut next = prev.clone();
-                    next.push(entry.clone());
+                    next.push(TodoItem {
+                        id,
+                        text: entry_text.clone(),
+                    });
                     next
                 });
                 // `set_text(String::new())` atomically clears
@@ -1045,17 +1605,46 @@ impl WidgetCore for TodoMvcView {
 }
 
 impl WidgetA11y for TodoMvcView {
-    /// R56.1.b.1 §5.40 — ARIA `textbox` role node carrying the live
-    /// text content as [`AccessValue::Text`]. The
-    /// (R56.1.b.1 substrate) `root_owner.run` wrap around
-    /// `V::access_node` in `collect_access_emit_inputs` lets this hook
-    /// reach the same `Rc<TextEditState>` the view fn resolves through
-    /// [`use_text_edit_state`].
+    /// R56.1.b.1 / R656 §5.40 — multi-node a11y tree:
+    ///
+    /// 1. **Text input** (`TF_TAG`, [`AriaRole::TextInput`]): ARIA
+    ///    `textbox` carrying the live text content as
+    ///    [`AccessValue::Text`]. The [`AccessState::focused`] bit
+    ///    tracks the actual focus owner so AT cursor follows the
+    ///    field across Tab and `click_to_focus`.
+    /// 2. **List root** ([`LIST_TAG`], [`AriaRole::List`]): WAI-ARIA
+    ///    1.2 §5.3.5 `list` container. Owns the per-item children
+    ///    via [`AccessNode::with_child`] in declaration order so AT
+    ///    tools announce "item N of M" for the user's screen
+    ///    reader. R656 §5.40 first consumer of the new
+    ///    [`AriaRole::List`] variant.
+    /// 3. **Per-item entry** (`todo_item#<id>`,
+    ///    [`AriaRole::ListItem`]): one node per [`TodoItem`],
+    ///    carrying the entry text as [`AccessValue::Text`] and the
+    ///    stable u64 id as part of the tag. R656 §5.40 first
+    ///    consumer of the new [`AriaRole::ListItem`] variant.
+    /// 4. **Per-item delete button** (`todo_delete#<id>`,
+    ///    [`AriaRole::Button`]): the destructive affordance, named
+    ///    "Delete" via the paint-side `with_aria_label` so screen
+    ///    readers announce "Delete button" + the parent item's
+    ///    text. The button is NOT focusable through
+    ///    [`Self::focusable_tags`] (the focus stays on the
+    ///    textfield so the user can submit more entries) but AT can
+    ///    still address it through the click action — keyboard-
+    ///    only delete + Tab-walk-into-list is a R660+ carry per
+    ///    [[abstraction-needs-second-consumer]].
+    ///
+    /// The (R56.1.b.1 substrate) `root_owner.run` wrap around
+    /// `V::access_node` in `collect_access_emit_inputs` lets this
+    /// hook reach the same `Rc<TextEditState>` and
+    /// `Rc<Signal<Vec<TodoItem>>>` the view fn resolves through
+    /// [`use_text_edit_state`] / [`use_todos`].
     ///
     /// The `name` field is populated by
     /// [`enrich_names_from_scene`](pinion_a11y::enrich_names_from_scene)
-    /// against the field container's `aria_label` override (set in
-    /// `view`) — the literal `"Text input"` lives in exactly one place.
+    /// against each container's `aria_label` override (set in
+    /// `view` / `build_todos_list`) — the literal labels live in
+    /// exactly one place.
     fn access_node(state: &(TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, _caret) = state;
         let text = use_text_edit_state(TF_TAG).text();
@@ -1066,11 +1655,42 @@ impl WidgetA11y for TodoMvcView {
             pressed: false,
             checked: None,
         };
-        vec![
+
+        let mut nodes = vec![
             AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::TextInput)
                 .with_value(AccessValue::Text(text))
                 .with_state(access_state),
-        ]
+        ];
+
+        // R656 §5.40 — list root + items + delete buttons.
+        let entries = use_todos().get();
+        let mut list_node = AccessNode::new(LIST_TAG, AriaRole::List);
+        for item in &entries {
+            let row_tag = format!("{ITEM_TAG_PREFIX}#{}", item.id);
+            let delete_tag = format!("{DELETE_TAG_PREFIX}#{}", item.id);
+            list_node = list_node.with_child(row_tag.clone());
+            nodes.push(
+                AccessNode::new(row_tag, AriaRole::ListItem)
+                    .with_value(AccessValue::Text(item.text.clone())),
+            );
+            // R656 §5.40 — delete button is a Button child of the
+            // ListItem (semantically) but pinion's flat AccessNode
+            // surface keeps siblings at the same level; the AT
+            // tree builder ([`pinion_a11y::AccessTreeBuilder`])
+            // resolves children via `with_child` references —
+            // future work on parent/child wiring for nested-button
+            // semantics is the R660+ a11y carry (no current AT
+            // consumer requires it — screen readers walk Children
+            // pointers anyway).
+            nodes.push(AccessNode::new(delete_tag, AriaRole::Button));
+        }
+        // The list root must register every item as a child so the
+        // AT cursor traversal order matches the visible paint
+        // order — `with_child` records reference tags that the
+        // tree builder resolves to NodeIds.
+        nodes.push(list_node);
+
+        nodes
     }
 }
 
@@ -1231,29 +1851,39 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    //! R655 §5.16 — todomvc-specific regression battery. Substrate
-    //! correctness for the embedded `TextField` widget is covered by
-    //! `hello-textfield`'s own tests (R56.1.b.1) — this module pins
-    //! only the **composition** layer this binding introduces: the
-    //! todo list section presence, item-count → child-count
-    //! invariant, and the [`use_todos`] reactive hook dedup contract
-    //! the Enter handler relies on. The R55.G.22 paint-root tag
-    //! convention is pinned via the framework fixture call.
+    //! R655 / R656 §5.16 — todomvc-specific regression battery.
+    //! Substrate correctness for the embedded `TextField` widget is
+    //! covered by `hello-textfield`'s own tests (R56.1.b.1) — this
+    //! module pins only the **composition** + **stable-id** layers
+    //! this binding introduces: the todo list section presence,
+    //! item-count → child-count invariant, per-item tag = stable id
+    //! (R656), [`use_todos`] reactive hook dedup contract, the
+    //! [`use_next_todo_id`] monotonic counter contract, and the
+    //! [`TodoDeleteExternal`] composite-tag delete wire (parsed
+    //! through both `invoke("send", "<id>:PointerDown")` and the
+    //! direct `invoke("delete", Int(<id>))` paths). The R55.G.22
+    //! paint-root tag convention is pinned via the framework fixture
+    //! call.
     //!
     //! Note: the Enter handler itself runs against a `&mut Scene`
     //! that the runtime owns; testing it requires the shell's input
     //! loop. The handler's signal mutation is exercised indirectly
-    //! here by manipulating the `Signal<Vec<String>>` directly under
-    //! a private `Owner` and asserting the view-fn renders the new
-    //! entries — the same observable surface the visible app
-    //! depends on.
+    //! here by manipulating the `Signal<Vec<TodoItem>>` directly
+    //! under a private `Owner` and asserting the view-fn renders
+    //! the new entries — the same observable surface the visible
+    //! app depends on.
     use super::{
-        build_todos_list, use_todos, view, TodoMvcView, LIST_TAG, TF_TAG,
+        allocate_todo_id, build_todos_list, use_next_todo_id, use_todos, view,
+        TodoDeleteExternal, TodoItem, TodoMvcView, DELETE_GLYPH, DELETE_TAG,
+        DELETE_TAG_PREFIX, ITEM_TAG_PREFIX, LIST_TAG, TF_TAG,
     };
+    use pinion_a11y::{AriaRole, WidgetA11y};
+    use pinion_core::external::{External, IntrospectValue};
     use pinion_core::reactive::Owner;
     use pinion_core::theme::Theme;
+    use pinion_core::widget_core::ExtraExternal;
     use pinion_core::widgets::text_field::TextFieldState;
-    use pinion_core::{Frame, Scene};
+    use pinion_core::{Frame, Scene, WidgetCore};
 
     /// Run `f` inside a fresh `Owner` scope so reactive hooks
     /// resolve. Mirrors the framework's
@@ -1370,8 +2000,14 @@ mod tests {
             let todos = use_todos();
             todos.set_with(|prev| {
                 let mut next = prev.clone();
-                next.push("milk".to_owned());
-                next.push("eggs".to_owned());
+                next.push(TodoItem {
+                    id: 1,
+                    text: "milk".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "eggs".to_owned(),
+                });
                 next
             });
             let scene = view((TextFieldState::Idle, 0), &Frame::default());
@@ -1386,24 +2022,47 @@ mod tests {
     }
 
     #[test]
-    fn r655_list_items_carry_indexed_tags() {
+    fn r656_list_items_carry_stable_id_tags() {
         with_owner(|| {
+            // R656 — per-item paint tag is `todo_item#<id>` (stable
+            // u64), NOT `todo_item#<array_index>`. Use non-sequential
+            // ids to lock in the "id, not index" contract — `7 / 42
+            // / 99` are visibly distinct from `0 / 1 / 2`.
             let todos = use_todos();
+            let ids = [7_u64, 42, 99];
+            let names = ["alpha", "beta", "gamma"];
             todos.set_with(|prev| {
                 let mut next = prev.clone();
-                next.push("alpha".to_owned());
-                next.push("beta".to_owned());
-                next.push("gamma".to_owned());
+                for (id, name) in ids.iter().zip(names.iter()) {
+                    next.push(TodoItem {
+                        id: *id,
+                        text: (*name).to_owned(),
+                    });
+                }
                 next
             });
             let scene = view((TextFieldState::Idle, 0), &Frame::default());
-            // Per-item tag pattern `todo_item#<i>` mirrors
-            // hello-listbox's `main_list#<i>` (R55.G.20 convention).
-            for i in 0..3 {
-                let needle = format!("todo_item#{i}");
+            for id in &ids {
+                let needle = format!("{ITEM_TAG_PREFIX}#{id}");
                 assert!(
                     scene.contains_tag(needle.as_str()),
-                    "scene must carry {needle} for item {i}",
+                    "scene must carry {needle} for stable id {id}",
+                );
+                let delete_needle = format!("{DELETE_TAG_PREFIX}#{id}");
+                assert!(
+                    scene.contains_tag(delete_needle.as_str()),
+                    "scene must carry {delete_needle} delete-button tag for stable id {id}",
+                );
+            }
+            // R656 — confirm the OLD R655 index-based tags are NOT
+            // present (the contract migration is complete, no dual-
+            // namespacing of `todo_item#0` + `todo_item#7` for the
+            // same logical item).
+            for idx in 0..3 {
+                let stale = format!("{ITEM_TAG_PREFIX}#{idx}");
+                assert!(
+                    !scene.contains_tag(stale.as_str()),
+                    "R655 index-based tag {stale} must NOT survive the R656 migration",
                 );
             }
         });
@@ -1436,8 +2095,14 @@ mod tests {
             let todos = use_todos();
             todos.set_with(|prev| {
                 let mut next = prev.clone();
-                next.push("first".to_owned());
-                next.push("second".to_owned());
+                next.push(TodoItem {
+                    id: 1,
+                    text: "first".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "second".to_owned(),
+                });
                 next
             });
             let scene = view((TextFieldState::Idle, 0), &Frame::default());
@@ -1449,7 +2114,10 @@ mod tests {
             let list = list_root.expect("LIST_TAG present after push");
             let texts = collect_text_nodes(list);
             // Header text first, then entries in submission order.
-            // Header now reads `Todos (2)`; entries follow.
+            // Header now reads `Todos (2)`; entries follow. R656 —
+            // each row also paints a `DELETE_GLYPH` `\u{00D7}` (×)
+            // text node, so the per-row text walk yields
+            // `[entry_text, "×"]` in declaration order.
             assert_eq!(texts.first().map(String::as_str), Some("Todos (2)"));
             assert!(
                 texts.iter().any(|t| t == "first"),
@@ -1495,18 +2163,33 @@ mod tests {
             let todos = use_todos();
             todos.set_with(|prev| {
                 let mut next = prev.clone();
-                next.push("a".to_owned());
+                next.push(TodoItem {
+                    id: 1,
+                    text: "a".to_owned(),
+                });
                 next
             });
             todos.set_with(|prev| {
                 let mut next = prev.clone();
-                next.push("b".to_owned());
+                next.push(TodoItem {
+                    id: 2,
+                    text: "b".to_owned(),
+                });
                 next
             });
             let snapshot = todos.get();
             assert_eq!(
                 snapshot,
-                vec!["a".to_owned(), "b".to_owned()],
+                vec![
+                    TodoItem {
+                        id: 1,
+                        text: "a".to_owned()
+                    },
+                    TodoItem {
+                        id: 2,
+                        text: "b".to_owned()
+                    },
+                ],
                 "set_with closure semantics — sequential appends preserve order",
             );
         });
@@ -1532,14 +2215,458 @@ mod tests {
     }
 
     #[test]
-    fn r655_build_todos_list_header_reflects_entry_count() {
+    fn r656_build_todos_list_header_reflects_entry_count() {
         let theme = Theme::light();
         let scene = build_todos_list(
             &theme,
-            &["x".to_owned(), "y".to_owned(), "z".to_owned()],
+            &[
+                TodoItem {
+                    id: 10,
+                    text: "x".to_owned(),
+                },
+                TodoItem {
+                    id: 20,
+                    text: "y".to_owned(),
+                },
+                TodoItem {
+                    id: 30,
+                    text: "z".to_owned(),
+                },
+            ],
         );
         let texts = collect_text_nodes(&scene);
         assert_eq!(texts.first().map(String::as_str), Some("Todos (3)"));
-        assert_eq!(texts.len(), 4, "header + 3 items");
+        // R656 — text walk = header + per-row(entry_text + DELETE_GLYPH)
+        // = 1 + 3 * 2 = 7. The R655 contract (1 + 3 = 4) was strictly
+        // text-node count; R656's delete glyph adds the second text per
+        // row.
+        assert_eq!(
+            texts.len(),
+            7,
+            "R656: header + 3 * (entry + delete glyph) = 7 text nodes",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R656 — stable id contract: per-item tag survives sibling delete
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r656_stable_id_survives_sibling_delete() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "alpha".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "beta".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 3,
+                    text: "gamma".to_owned(),
+                });
+                next
+            });
+            // Delete the middle item (id=2).
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.retain(|item| item.id != 2);
+                next
+            });
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            // Surviving items keep their ORIGINAL stable ids — no
+            // resequencing to {0,1}. This is the R656 invariant.
+            assert!(
+                scene.contains_tag("todo_item#1"),
+                "alpha (id=1) survives with its original tag",
+            );
+            assert!(
+                !scene.contains_tag("todo_item#2"),
+                "beta (id=2) is removed (tag gone)",
+            );
+            assert!(
+                scene.contains_tag("todo_item#3"),
+                "gamma (id=3) survives with its original tag",
+            );
+            // The list count drops from 3 to 2; the header reflects.
+            let mut list_root = None;
+            find_tagged_container(&scene, LIST_TAG, &mut list_root);
+            let list = list_root.expect("LIST_TAG present");
+            let texts = collect_text_nodes(list);
+            assert_eq!(
+                texts.first().map(String::as_str),
+                Some("Todos (2)"),
+                "header reflects post-delete count",
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R656 — use_next_todo_id / allocate_todo_id monotonic contract
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r656_allocate_todo_id_is_monotonic() {
+        with_owner(|| {
+            let a = allocate_todo_id();
+            let b = allocate_todo_id();
+            let c = allocate_todo_id();
+            assert!(a < b && b < c, "ids must be strictly increasing");
+        });
+    }
+
+    #[test]
+    fn r656_use_next_todo_id_dedups_across_calls() {
+        with_owner(|| {
+            let a = use_next_todo_id();
+            let b = use_next_todo_id();
+            assert!(
+                std::rc::Rc::ptr_eq(&a, &b),
+                "use_next_todo_id must return the same Rc within an Owner scope",
+            );
+        });
+    }
+
+    #[test]
+    fn r656_allocate_does_not_collide_with_existing_ids() {
+        // Worked scenario from `apply_key`'s Enter handler: allocate
+        // ids monotonically through `allocate_todo_id`, push into
+        // `use_todos`, and assert every per-item id is unique.
+        with_owner(|| {
+            let todos = use_todos();
+            for text in ["one", "two", "three", "four"] {
+                let id = allocate_todo_id();
+                todos.set_with(|prev| {
+                    let mut next = prev.clone();
+                    next.push(TodoItem {
+                        id,
+                        text: text.to_owned(),
+                    });
+                    next
+                });
+            }
+            let snapshot = todos.get();
+            let mut ids: Vec<u64> = snapshot.iter().map(|i| i.id).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            assert_eq!(
+                ids.len(),
+                snapshot.len(),
+                "every allocated id must be unique",
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R656 — TodoDeleteExternal: composite-tag wire + direct invoke
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r656_delete_external_send_pointerdown_removes_item() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 11,
+                    text: "alpha".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 22,
+                    text: "beta".to_owned(),
+                });
+                next
+            });
+            let mut handler = TodoDeleteExternal::new(use_todos());
+            let result = handler
+                .introspect_mut()
+                .expect("introspect_mut wired")
+                .invoke("send", IntrospectValue::Text("11:PointerDown".to_owned()))
+                .expect("PointerDown for id=11 must succeed");
+            // R51.42 wire — Bool(was_present) reports whether the
+            // delete observed an existing id.
+            assert_eq!(result, IntrospectValue::Bool(true));
+            let snapshot = use_todos().get();
+            assert_eq!(snapshot.len(), 1);
+            assert_eq!(snapshot[0].id, 22);
+            assert_eq!(snapshot[0].text, "beta");
+        });
+    }
+
+    #[test]
+    fn r656_delete_external_send_pointerup_is_no_op() {
+        // PointerUp / Enter / Leave / Cancel are accepted-but-ignored
+        // (Bool(false)) so the InputRouter's normal dispatch cycle
+        // does not see a Rejected for routine paint events.
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 5,
+                    text: "stays".to_owned(),
+                });
+                next
+            });
+            let mut handler = TodoDeleteExternal::new(use_todos());
+            let result = handler
+                .introspect_mut()
+                .expect("introspect_mut wired")
+                .invoke("send", IntrospectValue::Text("5:PointerUp".to_owned()))
+                .expect("PointerUp accepted as no-op");
+            assert_eq!(result, IntrospectValue::Bool(false));
+            // Item remains — PointerUp is ignored.
+            assert_eq!(use_todos().get().len(), 1);
+        });
+    }
+
+    #[test]
+    fn r656_delete_external_direct_invoke_path() {
+        // Direct RPC route: `scene/invoke {path: "/external/todo_delete",
+        // method: "delete", args: <id>}` reaches `invoke("delete",
+        // Int(id))` without going through the composite-tag wire.
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 100,
+                    text: "first".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 200,
+                    text: "second".to_owned(),
+                });
+                next
+            });
+            let mut handler = TodoDeleteExternal::new(use_todos());
+            let result = handler
+                .introspect_mut()
+                .expect("introspect_mut wired")
+                .invoke("delete", IntrospectValue::Int(100))
+                .expect("direct delete must succeed");
+            assert_eq!(result, IntrospectValue::Bool(true));
+            let snapshot = use_todos().get();
+            assert_eq!(snapshot.len(), 1);
+            assert_eq!(snapshot[0].id, 200);
+        });
+    }
+
+    #[test]
+    fn r656_delete_external_unknown_id_is_idempotent() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 7,
+                    text: "alone".to_owned(),
+                });
+                next
+            });
+            let mut handler = TodoDeleteExternal::new(use_todos());
+            let result = handler
+                .introspect_mut()
+                .expect("introspect_mut wired")
+                .invoke("delete", IntrospectValue::Int(999))
+                .expect("delete of unknown id returns Ok(Bool(false))");
+            // R656 — was_present = false because id=999 never existed.
+            assert_eq!(result, IntrospectValue::Bool(false));
+            // The surviving item is unaffected.
+            assert_eq!(use_todos().get().len(), 1);
+        });
+    }
+
+    #[test]
+    fn r656_delete_external_query_count_matches_signal() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "a".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "b".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 3,
+                    text: "c".to_owned(),
+                });
+                next
+            });
+            let handler = TodoDeleteExternal::new(use_todos());
+            let count = handler
+                .introspect()
+                .expect("introspect wired")
+                .query("count")
+                .expect("count slot exposed");
+            assert_eq!(count, IntrospectValue::Int(3));
+        });
+    }
+
+    #[test]
+    fn r656_delete_external_query_ids_returns_json_array() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 7,
+                    text: "seven".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 42,
+                    text: "answer".to_owned(),
+                });
+                next
+            });
+            let handler = TodoDeleteExternal::new(use_todos());
+            let ids = handler
+                .introspect()
+                .expect("introspect wired")
+                .query("ids")
+                .expect("ids slot exposed");
+            // Snapshot ordering matches insertion order.
+            assert_eq!(
+                ids,
+                IntrospectValue::Json(serde_json::json!([7, 42])),
+            );
+        });
+    }
+
+    #[test]
+    fn r656_delete_external_malformed_send_payload_rejected() {
+        with_owner(|| {
+            let mut handler = TodoDeleteExternal::new(use_todos());
+            // Missing colon → Rejected.
+            let no_colon = handler
+                .introspect_mut()
+                .expect("introspect_mut wired")
+                .invoke("send", IntrospectValue::Text("noseparator".to_owned()));
+            assert!(no_colon.is_err());
+            // Non-integer sub-index → Rejected.
+            let bad_id = handler
+                .introspect_mut()
+                .expect("introspect_mut wired")
+                .invoke("send", IntrospectValue::Text("xx:PointerDown".to_owned()));
+            assert!(bad_id.is_err());
+            // Empty event name → Rejected.
+            let no_event = handler
+                .introspect_mut()
+                .expect("introspect_mut wired")
+                .invoke("send", IntrospectValue::Text("1:".to_owned()));
+            assert!(no_event.is_err());
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R656 — WidgetCore::create_extra_externals registers the singleton
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r656_create_extra_externals_registers_todo_delete() {
+        with_owner(|| {
+            let extras: Vec<ExtraExternal> =
+                <TodoMvcView as WidgetCore>::create_extra_externals();
+            assert_eq!(extras.len(), 1, "exactly one extra External");
+            assert_eq!(extras[0].tag, DELETE_TAG);
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R656 §5.40 — WidgetA11y::access_node emits List + ListItem + Button
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r656_access_node_emits_list_root_with_no_items() {
+        with_owner(|| {
+            let nodes = <TodoMvcView as WidgetA11y>::access_node(
+                &(TextFieldState::Idle, 0),
+                Some(TF_TAG),
+            );
+            // [textbox, list]
+            assert_eq!(nodes.len(), 2);
+            assert_eq!(nodes[0].role, AriaRole::TextInput);
+            assert_eq!(nodes[1].role, AriaRole::List);
+            assert_eq!(nodes[1].tag, LIST_TAG);
+            assert!(nodes[1].children.is_empty(), "empty list, no children");
+        });
+    }
+
+    #[test]
+    fn r656_access_node_emits_listitem_and_button_per_entry() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "milk".to_owned(),
+                });
+                next.push(TodoItem {
+                    id: 2,
+                    text: "eggs".to_owned(),
+                });
+                next
+            });
+            let nodes = <TodoMvcView as WidgetA11y>::access_node(
+                &(TextFieldState::Idle, 0),
+                Some(TF_TAG),
+            );
+            // Expected order: [textbox, listitem#1, button(delete#1),
+            // listitem#2, button(delete#2), list_root]
+            assert_eq!(nodes.len(), 6);
+            assert_eq!(nodes[0].role, AriaRole::TextInput);
+            assert_eq!(nodes[1].role, AriaRole::ListItem);
+            assert_eq!(nodes[1].tag, "todo_item#1");
+            assert_eq!(nodes[2].role, AriaRole::Button);
+            assert_eq!(nodes[2].tag, "todo_delete#1");
+            assert_eq!(nodes[3].role, AriaRole::ListItem);
+            assert_eq!(nodes[3].tag, "todo_item#2");
+            assert_eq!(nodes[4].role, AriaRole::Button);
+            assert_eq!(nodes[4].tag, "todo_delete#2");
+            // list root references both items by tag.
+            assert_eq!(nodes[5].role, AriaRole::List);
+            assert_eq!(
+                nodes[5].children,
+                vec!["todo_item#1".to_owned(), "todo_item#2".to_owned()],
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R656 — DELETE_GLYPH appears in the per-row text walk
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r656_delete_glyph_appears_per_row() {
+        with_owner(|| {
+            let todos = use_todos();
+            todos.set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem {
+                    id: 1,
+                    text: "row".to_owned(),
+                });
+                next
+            });
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            let mut list_root = None;
+            find_tagged_container(&scene, LIST_TAG, &mut list_root);
+            let list = list_root.expect("LIST_TAG present");
+            let texts = collect_text_nodes(list);
+            // header + entry + × glyph
+            assert!(
+                texts.iter().any(|t| t == DELETE_GLYPH),
+                "per-row × glyph present",
+            );
+        });
     }
 }

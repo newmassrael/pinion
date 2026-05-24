@@ -4170,6 +4170,7 @@ dependencies = [
  "pinion-platform-clipboard",
  "pinion-shell",
  "pinion-text",
+ "serde",
  "serde_json",
  "vello",
 ]

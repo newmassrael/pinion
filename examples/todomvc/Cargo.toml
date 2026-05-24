@@ -50,6 +50,13 @@ vello = { workspace = true }
 # uses. Workspace version pin shared with pinion-rpc (the
 # R56.1.g.2 parser also reads `serde_json::Value`).
 serde_json = { workspace = true }
+# R656 §5.16 — `Signal<Vec<TodoItem>>` requires `T: Serialize +
+# DeserializeOwned` for the §5.34 `Owner::snapshot` / `restore`
+# substrate (R26 dry_run invariant carrier). Derived on `TodoItem`
+# with `#[derive(serde::Serialize, serde::Deserialize)]`. Workspace
+# pin shared with other examples that wire reactive signals over
+# concrete structs (R57.X theme palette etc.).
+serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 # R55.G.22 §5.49 — `pinion_core::test_fixtures::assert_widget_view_carries_tag`
