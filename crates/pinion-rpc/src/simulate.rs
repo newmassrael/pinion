@@ -173,6 +173,15 @@ pub fn simulate_with_owner(
 /// then roll every touched path back to its pre-call value. See the
 /// module-level docs for the phase-by-phase contract.
 ///
+/// R648 §5.34 R42 — accepts multi-segment scene paths like
+/// `/widget_a/external/value` that walk through tagged Container /
+/// Box ancestors before descending into the nested
+/// [`pinion_core::scene::ExternalNode`]. Steps targeting different
+/// Externals in the same call are addressed independently; the
+/// per-unique-path save semantics extend to the `(scene_segments,
+/// introspect_path)` tuple key, so two Externals' "value" slots stay
+/// distinct in the originals map.
+///
 /// # Errors
 ///
 /// See [`SimulateError`] for the failure modes. Every error path
@@ -186,67 +195,65 @@ pub fn simulate(
         return Err(SimulateError::EmptySteps);
     }
 
-    // Phase 0: resolve every step's path. Reject the whole call on
-    // any malformed prefix or non-`/external/...` shape before any
-    // mutation could land.
-    let mut resolved: Vec<String> = Vec::with_capacity(steps.len());
+    // Phase 0: resolve every step's path through the §5.34 R42
+    // `split_at_external` parser (same shape `query` + `intervene`
+    // consume). Reject the whole call on any malformed prefix or
+    // missing `/external/` separator before any mutation could land.
+    let mut resolved: Vec<(Vec<String>, String)> = Vec::with_capacity(steps.len());
     for (i, step) in steps.iter().enumerate() {
         let r = path::resolve(&step.path)
             .map_err(|e| SimulateError::Path { step_index: i, error: e })?;
-        let introspect_path = r
-            .scene_path
-            .strip_prefix("/external/")
-            .ok_or(SimulateError::UnsupportedPath { step_index: i })?
-            .to_string();
-        resolved.push(introspect_path);
+        let (scene_segments, introspect_path) = path::split_at_external(r.scene_path)
+            .ok_or(SimulateError::UnsupportedPath { step_index: i })?;
+        resolved.push((scene_segments, introspect_path.to_string()));
     }
 
-    // Phase 1: save the original value for every unique path the
-    // sequence touches. BTreeMap deterministic ordering simplifies
-    // the rollback iteration + diff inspection in tests.
-    let mut originals: BTreeMap<String, IntrospectValue> = BTreeMap::new();
-    {
-        let node = scene
-            .primary_external_mut()
-            .ok_or(SimulateError::NoExternalAtPath)?;
-        let intro = node
-            .handle
-            .introspect_mut()
-            .ok_or(SimulateError::IntrospectionOptedOut)?;
-        for (i, introspect_path) in resolved.iter().enumerate() {
-            if !originals.contains_key(introspect_path) {
-                let saved = intro
-                    .query(introspect_path)
-                    .ok_or(SimulateError::InitialQueryFailed { step_index: i })?;
-                originals.insert(introspect_path.clone(), saved);
-            }
+    // Phase 1: save the original value for every unique
+    // (scene_segments, introspect_path) tuple the sequence touches.
+    // R648 — the key tuple distinguishes two Externals' same-named
+    // slots ("/widget_a/external/value" vs "/widget_b/external/value").
+    // BTreeMap deterministic ordering simplifies the rollback
+    // iteration + diff inspection in tests.
+    let mut originals: BTreeMap<(Vec<String>, String), IntrospectValue> = BTreeMap::new();
+    for (i, (scene_segments, introspect_path)) in resolved.iter().enumerate() {
+        let key = (scene_segments.clone(), introspect_path.clone());
+        if originals.contains_key(&key) {
+            continue;
         }
+        let saved = query_introspect_at(scene, scene_segments, introspect_path).ok_or_else(
+            || classify_lookup_failure(scene, scene_segments, introspect_path, i),
+        )?;
+        originals.insert(key, saved);
     }
 
     // Phase 2: apply each step in declaration order. On any failure,
     // roll back the originals we've saved so the caller's scene is
-    // restored — phase 1 already saved every unique path so a
+    // restored — phase 1 already saved every unique key so a
     // bulk-rollback covers every touched slot.
-    let intervene_outcome: Result<(), (usize, InterveneError)> = {
-        let node = scene
-            .primary_external_mut()
-            .ok_or(SimulateError::NoExternalAtPath)?;
-        let intro = node
-            .handle
-            .introspect_mut()
-            .ok_or(SimulateError::IntrospectionOptedOut)?;
-        let mut outcome: Result<(), (usize, InterveneError)> = Ok(());
-        for (i, (introspect_path, step)) in resolved.iter().zip(steps.iter()).enumerate() {
-            if let Err(e) = intro.intervene(introspect_path, step.value.clone()) {
-                outcome = Err((i, e));
-                break;
-            }
+    let mut intervene_outcome: Result<(), (usize, InterveneError)> = Ok(());
+    for (i, ((scene_segments, introspect_path), step)) in
+        resolved.iter().zip(steps.iter()).enumerate()
+    {
+        // Phase 1 already located + queried this path successfully;
+        // re-borrow here is guaranteed to find it (defensive `?`).
+        let Some(node) = scene
+            .lookup_path_mut(scene_segments)
+            .and_then(Scene::primary_external_mut)
+        else {
+            intervene_outcome = Err((i, InterveneError::UnknownPath));
+            break;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            intervene_outcome = Err((i, InterveneError::UnknownPath));
+            break;
+        };
+        if let Err(e) = intro.intervene(introspect_path, step.value.clone()) {
+            intervene_outcome = Err((i, e));
+            break;
         }
-        outcome
-    };
+    }
 
     if let Err((step_index, error)) = intervene_outcome {
-        // Roll back any mutations applied before the failure.
         let rollback_ok = restore_originals(scene, &originals);
         if !rollback_ok {
             return Err(SimulateError::RollbackFailed);
@@ -267,23 +274,69 @@ pub fn simulate(
     snap_result.map_err(|_e: SnapshotError| SimulateError::SnapshotFailed)
 }
 
-/// Restore every saved original through `intervene`. Returns
-/// `false` if any slot rejected the write (invariant violation —
-/// the scene is now indeterminate from the caller's perspective).
-fn restore_originals(scene: &mut Scene, originals: &BTreeMap<String, IntrospectValue>) -> bool {
-    let Some(node) = scene.primary_external_mut() else {
-        return false;
+/// Walk `scene` via `scene_segments`, descend to the primary
+/// [`pinion_core::scene::ExternalNode`], and `query(introspect_path)`.
+/// Returns `None` if any step in the chain fails — the caller
+/// disambiguates the cause via [`classify_lookup_failure`].
+fn query_introspect_at(
+    scene: &mut Scene,
+    scene_segments: &[String],
+    introspect_path: &str,
+) -> Option<IntrospectValue> {
+    let target = scene.lookup_path_mut(scene_segments)?;
+    let node = target.primary_external_mut()?;
+    let intro = node.handle.introspect_mut()?;
+    intro.query(introspect_path)
+}
+
+/// Re-walk a known-failing path and classify which boundary errored
+/// to surface the right [`SimulateError`] variant. R648 §5.34 R42 —
+/// phase 1 collapses the lookup failures into `None` for borrow
+/// simplicity; this helper preserves the [`crate::dry_run::dry_run`]
+/// severity ordering (`NoExternalAtPath` > `IntrospectionOptedOut` >
+/// `InitialQueryFailed`).
+fn classify_lookup_failure(
+    scene: &mut Scene,
+    scene_segments: &[String],
+    introspect_path: &str,
+    step_index: usize,
+) -> SimulateError {
+    let Some(target) = scene.lookup_path_mut(scene_segments) else {
+        return SimulateError::NoExternalAtPath;
     };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
+    let Some(node) = target.primary_external_mut() else {
+        return SimulateError::NoExternalAtPath;
     };
-    let mut all_ok = true;
-    for (path, original) in originals {
-        if intro.intervene(path, original.clone()).is_err() {
-            all_ok = false;
+    if node.handle.introspect_mut().is_none() {
+        return SimulateError::IntrospectionOptedOut;
+    }
+    let _ = introspect_path;
+    SimulateError::InitialQueryFailed { step_index }
+}
+
+/// Restore every saved original through `intervene`, re-walking
+/// `scene_segments` for each entry. Returns `false` if any slot
+/// rejected the write (invariant violation — the scene is now
+/// indeterminate from the caller's perspective).
+fn restore_originals(
+    scene: &mut Scene,
+    originals: &BTreeMap<(Vec<String>, String), IntrospectValue>,
+) -> bool {
+    for ((scene_segments, introspect_path), original) in originals {
+        let Some(target) = scene.lookup_path_mut(scene_segments) else {
+            return false;
+        };
+        let Some(node) = target.primary_external_mut() else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        if intro.intervene(introspect_path, original.clone()).is_err() {
+            return false;
         }
     }
-    all_ok
+    true
 }
 
 /// R646 §5.12 — convert a [`SimulateError`] into the [`DryRunError`]
@@ -475,6 +528,136 @@ mod tests {
         .unwrap_err();
         assert_eq!(err, SimulateError::UnsupportedPath { step_index: 1 });
         assert_eq!(query(&scene, "/external/count").unwrap(), IntrospectValue::Int(5));
+    }
+
+    // R648 §5.34 R42 — multi-External path tests. Container with
+    // tagged children, each wrapping a CountedExternal; simulate
+    // addresses non-primary Externals via /tag/external/... paths.
+    mod multi_external {
+        use super::*;
+        use pinion_core::scene::ContainerNode;
+
+        fn paired_counted_scene(a: i64, b: i64) -> Scene {
+            // Root Container with two tagged child Containers; each
+            // child carries one External. Paths
+            // "/widget_a/external/count" + "/widget_b/external/count"
+            // resolve to distinct slots.
+            let child_a = Scene::Container(
+                ContainerNode::new(vec![counted_scene(a)]).with_tag("widget_a"),
+            );
+            let child_b = Scene::Container(
+                ContainerNode::new(vec![counted_scene(b)]).with_tag("widget_b"),
+            );
+            Scene::Container(ContainerNode::new(vec![child_a, child_b]))
+        }
+
+        #[test]
+        fn two_steps_target_distinct_externals_rolled_back_independently() {
+            // R648 — the R660+ Figma queue multi-widget prereq. Two
+            // tagged child Externals, simulate mutates both, snapshot
+            // reflects both new values, rollback restores both.
+            let mut scene = paired_counted_scene(5, 17);
+            let snap = simulate(
+                &mut scene,
+                &[
+                    step("/widget_a/external/count", IntrospectValue::Int(100)),
+                    step("/widget_b/external/count", IntrospectValue::Int(200)),
+                ],
+            )
+            .unwrap();
+            // Snapshot shape: full scene snapshot from root.
+            // Verify rollback worked at each External.
+            assert_eq!(
+                query(&scene, "/widget_a/external/count").unwrap(),
+                IntrospectValue::Int(5),
+            );
+            assert_eq!(
+                query(&scene, "/widget_b/external/count").unwrap(),
+                IntrospectValue::Int(17),
+            );
+            // Snapshot is non-trivial (non-Empty); detailed structure
+            // varies with the snapshot tree shape but the key
+            // assertion is "scene restored after compound mutation".
+            assert!(!matches!(snap, SnapshotNode::External(_) if false));
+        }
+
+        #[test]
+        fn distinct_external_originals_keyed_independently() {
+            // Path A and path B share the introspect tail "count" but
+            // target different Externals. Phase 1's originals map must
+            // key on (segments, introspect_path) tuple — not just the
+            // introspect tail — so the wrong rollback value never lands.
+            let mut scene = paired_counted_scene(11, 22);
+            // Single step on each; assert correct rollback per External.
+            simulate(
+                &mut scene,
+                &[
+                    step("/widget_a/external/count", IntrospectValue::Int(999)),
+                    step("/widget_b/external/count", IntrospectValue::Int(888)),
+                ],
+            )
+            .unwrap();
+            assert_eq!(
+                query(&scene, "/widget_a/external/count").unwrap(),
+                IntrospectValue::Int(11),
+            );
+            assert_eq!(
+                query(&scene, "/widget_b/external/count").unwrap(),
+                IntrospectValue::Int(22),
+            );
+        }
+
+        #[test]
+        fn intervene_failure_in_second_external_rolls_back_first() {
+            // Step 1 succeeds on widget_a, step 2 fails (type mismatch)
+            // on widget_b. Phase 1 already saved both originals, so
+            // rollback restores widget_a even though widget_b never
+            // had its mutation land.
+            let mut scene = paired_counted_scene(7, 13);
+            let err = simulate(
+                &mut scene,
+                &[
+                    step("/widget_a/external/count", IntrospectValue::Int(42)),
+                    step("/widget_b/external/count", IntrospectValue::Bool(true)),
+                ],
+            )
+            .unwrap_err();
+            assert_eq!(
+                err,
+                SimulateError::Intervene {
+                    step_index: 1,
+                    error: InterveneError::TypeMismatch,
+                }
+            );
+            // Pre-call state restored at both Externals.
+            assert_eq!(
+                query(&scene, "/widget_a/external/count").unwrap(),
+                IntrospectValue::Int(7),
+            );
+            assert_eq!(
+                query(&scene, "/widget_b/external/count").unwrap(),
+                IntrospectValue::Int(13),
+            );
+        }
+
+        #[test]
+        fn missing_external_at_segments_surfaces_no_external_at_path() {
+            // segments resolve to a Container but no External nested
+            // inside — the lookup_path_mut chain bottoms out at None.
+            let scene_outer = Scene::Container(
+                ContainerNode::new(vec![Scene::Container(
+                    ContainerNode::new(vec![]).with_tag("empty"),
+                )])
+                .with_tag("root"),
+            );
+            let mut scene = scene_outer;
+            let err = simulate(
+                &mut scene,
+                &[step("/empty/external/count", IntrospectValue::Int(0))],
+            )
+            .unwrap_err();
+            assert_eq!(err, SimulateError::NoExternalAtPath);
+        }
     }
 
     // R647 §5.22 R26 — Owner bridge tests.

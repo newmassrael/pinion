@@ -12016,6 +12016,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R648 — R648 §5.34 R42 — simulate multi-External path support; split_at_external + lookup_path_mut parity with query/intervene; tuple-key originals for distinct slot disambiguation
+
+**Changes**:
+- pinion-rpc/src/simulate.rs: replace strip_prefix(/external/) with path::split_at_external. Scene addressing now consistent with query.rs + intervene.rs pattern (Phase 0 returns Vec<(scene_segments, introspect_path)> tuples).
+- Originals map key changed from String introspect_path → (Vec<String>, String) tuple. Two Externals' same-named slots (/widget_a/external/count vs /widget_b/external/count) are tracked independently; per-unique-path save semantics now operate per (segments, path) tuple.
+- Phase 2 intervene + Phase 4 rollback re-walk via lookup_path_mut + primary_external_mut per iteration. Each step gets its own borrow scope (NLL-friendly); failure mid-sequence rolls back any previously-applied steps using the same per-(segments, path) lookup.
+- classify_lookup_failure helper preserves dry_run severity ordering (NoExternalAtPath > IntrospectionOptedOut > InitialQueryFailed) since Phase 1 collapses lookup failures into Option<IntrospectValue> for borrow simplicity.
+- 4 new multi_external tests: two distinct Externals rolled back independently / originals keyed by tuple not just introspect tail / mid-sequence failure rolls back first External / missing External at segments surfaces NoExternalAtPath. All single-External tests unchanged + pass.
+
+
+
+**Verification**:
+- cargo test --workspace: 3202 pass / 0 fail (R647 baseline 3198 + 4 new multi_external tests). All 19 simulate tests pass: 9 base + 3 dispatch + 3 owner_bridge + 4 multi_external.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 errors / 0 warnings. Pre-commit fixed 5 doc_markdown lints (tuple notation backticks + dry_run intra-doc link + 3 SimulateError variant backticks).
+- mnemosyne validate_workspace: T1 orphan 0/0, round-trip 1/1, ledger sync.
+- Honest LOC: pinion-rpc/simulate.rs core +~70 LOC (new query_introspect_at + classify_lookup_failure helpers + tuple-key restore_originals + tuple-key originals map) + ~120 LOC tests = +190 LOC. Pure capability extension consistent with query/intervene path parsing. simulate now matches the §5.34 R42 contract that other RPC methods have honored since R42.
+
+
+
+**Impact**: §5.34
+
+
+**Carry forward**:
+- dry_run still uses strip_prefix(/external/) — single-write API symmetric to single-segment use. Could refactor for parity but no consumer evidence yet. R650+ candidate.
+- R649: Effect side-effect isolation (§5.23 R27). simulate Effects still fire during phase 2 + phase 4 + Owner restore; Effect::should_execute(in_simulate: bool) hook would suppress.
+- R650: isolated Computed cache (§5.30 R30). Cache pollution still theoretical.
+- Composed-app prereq is now closer: simulate can drive multi-widget app scenes. Next textbook step toward AI-native primary path = composed app dogfood (TodoMVC-class) which exercises multi-External simulate at scale.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
