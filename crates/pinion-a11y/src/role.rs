@@ -79,6 +79,23 @@ pub enum AriaRole {
     /// a selection model (no `aria-selected`), while a `listboxoption`
     /// always carries one.
     ListItem,
+    /// R673 §5.40 — WAI-ARIA 1.2 §5.3.10 `tree` role. Hierarchical
+    /// container of [`Self::TreeItem`] children. Distinct from
+    /// [`Self::List`]: a `tree` owns the keyboard model (Arrow
+    /// Up/Down navigates, Arrow Right expands, Arrow Left
+    /// collapses, Home/End jump to first/last visible row); a
+    /// `list` is a passive AT container. Pairs with the §5.50
+    /// `pinion_widget_paint::tree_view` substrate (R671) +
+    /// the interactive consumer pattern (R673 `hello-tree-view`).
+    Tree,
+    /// R673 §5.40 — WAI-ARIA 1.2 §5.3.11 `treeitem` role. Single
+    /// child of a [`Self::Tree`] parent. Each row in the flat row
+    /// sequence the `tree_view` substrate emits carries this role.
+    /// AT presents the `aria-level` (depth in the hierarchy),
+    /// `aria-expanded` (true / false / undefined for leaves), and
+    /// `aria-posinset` / `aria-setsize` properties automatically
+    /// when items are nested under a `tree` parent.
+    TreeItem,
     Generic,
 }
 
@@ -102,6 +119,8 @@ impl AriaRole {
             Self::TextInput => Role::TextInput,
             Self::List => Role::List,
             Self::ListItem => Role::ListItem,
+            Self::Tree => Role::Tree,
+            Self::TreeItem => Role::TreeItem,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -126,6 +145,8 @@ impl AriaRole {
             Self::TextInput => "textbox",
             Self::List => "list",
             Self::ListItem => "listitem",
+            Self::Tree => "tree",
+            Self::TreeItem => "treeitem",
             Self::Generic => "generic",
         }
     }

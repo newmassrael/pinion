@@ -391,6 +391,13 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // `RadioButton` only at the role surface; the action set is
         // the same.
         | AriaRole::ListBoxOption
+        // R673 §5.40 — `TreeItem` rows are commit-class atomic at
+        // the AT-action surface (Click to expand/activate, Focus to
+        // move AT cursor). The role identity stays distinct
+        // (`Role::TreeItem` → screen readers announce hierarchy +
+        // level + posinset), but the action set matches Button /
+        // ListBoxOption / etc.
+        | AriaRole::TreeItem
         | AriaRole::Switch => {
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
@@ -414,10 +421,14 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // entries. This matches the WAI-ARIA authoring guide
         // recommendation for ungrouped lists (a non-selectable
         // collection of items, e.g. todomvc).
+        // R673 §5.40 — `Tree` joins the focus-only container set
+        // (parallel to `Listbox` / `RadioGroup` / `List`). Per-row
+        // `TreeItem` AT events land in the commit-class arm above.
         AriaRole::RadioGroup
         | AriaRole::Listbox
         | AriaRole::List
         | AriaRole::ListItem
+        | AriaRole::Tree
         | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }

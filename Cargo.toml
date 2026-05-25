@@ -40,6 +40,7 @@ members = [
     "examples/settings-panel",
     "examples/hello-popover",
     "examples/hello-multi-window",
+    "examples/hello-tree-view",
 ]
 exclude = ["vendor/sce"]
 

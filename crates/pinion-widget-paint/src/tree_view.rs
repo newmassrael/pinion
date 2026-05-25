@@ -48,7 +48,7 @@
 
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::{Color, Scene};
@@ -107,6 +107,26 @@ impl TreeViewStyle {
             glyph_label_gap: 10,
         }
     }
+}
+
+/// R673 §5.16 §5.50 — interactive tree-view paint state.
+///
+/// Holds the optional focused row id (highlighted via M3 state-layer
+/// overlay on the row background) so interactive consumers
+/// (file-tree, property-grid, `DevTools` outliner) can render a
+/// keyboard-driven focus indicator without re-implementing the
+/// state-layer math in every binding.
+///
+/// `None` reverts to the R671 read-only behaviour — every row paints
+/// with a transparent background.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TreeViewFocus<'a> {
+    /// Currently-focused row id (matches one [`TreeItem::id`] in the
+    /// flat depth-first row sequence). When `None`, no row carries
+    /// the focus highlight. When `Some`, the matching row's
+    /// background fills with the M3 `Secondary Container` token at
+    /// the canonical focus state-layer alpha.
+    pub focused_id: Option<&'a str>,
 }
 
 impl Default for TreeViewStyle {
@@ -221,34 +241,62 @@ pub fn view_tree(
     theme: &Theme,
     style: &TreeViewStyle,
 ) -> Scene {
+    view_tree_focused(tag, items, theme, style, &TreeViewFocus::default())
+}
+
+/// R673 §5.16 §5.50 — interactive `view_tree` variant that paints
+/// the focused row's background with the M3 `Secondary Container`
+/// token (the canonical Material 3 keyboard-focus state-layer for
+/// list rows). When `focus.focused_id == None` the output is
+/// identical to [`view_tree`] (every row paints transparent), so
+/// interactive bindings can adopt this entry without breaking the
+/// R671 read-only consumer behaviour.
+#[must_use]
+pub fn view_tree_focused(
+    tag: &'static str,
+    items: &[TreeItem],
+    theme: &Theme,
+    style: &TreeViewStyle,
+    focus: &TreeViewFocus<'_>,
+) -> Scene {
     let mut rows: Vec<Scene> = Vec::new();
     for item in items {
-        append_rows(tag, item, 0, theme, style, &mut rows);
+        append_rows_focused(tag, item, 0, theme, style, focus, &mut rows);
     }
     Scene::Container(
         ContainerNode::new(rows)
             .with_tag(tag)
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    // R673 §5.50 — stretch rows to fill the tree's
+                    // cross-axis (= horizontal width). Pre-R673 the
+                    // outer container's default align_items pushed
+                    // rows to their content width, centering visually
+                    // and hiding the depth-indent column on the left.
+                    .with_align_items(AlignItems::Stretch),
+            ),
     )
 }
 
-/// Recursive depth-first walk that appends one row per visible node.
-/// Hidden descendants (parent `expanded == false`) are skipped
-/// entirely — the row sequence reflects the *visible* tree, not the
-/// model.
-fn append_rows(
+/// R673 §5.16 §5.50 — focus-aware variant of `append_rows`. Each row
+/// receives the current focus state so the `build_row` helper can
+/// decide whether to paint the background highlight.
+fn append_rows_focused(
     tree_tag: &'static str,
     item: &TreeItem,
     depth: u32,
     theme: &Theme,
     style: &TreeViewStyle,
+    focus: &TreeViewFocus<'_>,
     out: &mut Vec<Scene>,
 ) {
-    out.push(build_row(tree_tag, item, depth, theme, style));
+    let is_focused = focus.focused_id == Some(item.id.as_str());
+    out.push(build_row(tree_tag, item, depth, theme, style, is_focused));
     if item.expanded {
         for child in &item.children {
-            append_rows(tree_tag, child, depth + 1, theme, style, out);
+            append_rows_focused(tree_tag, child, depth + 1, theme, style, focus, out);
         }
     }
 }
@@ -260,6 +308,7 @@ fn build_row(
     depth: u32,
     theme: &Theme,
     style: &TreeViewStyle,
+    is_focused: bool,
 ) -> Scene {
     let glyph = if item.children.is_empty() {
         GLYPH_LEAF
@@ -282,7 +331,13 @@ fn build_row(
             ),
         ));
     }
-    row_children.push(Scene::Text(
+    // R673 §5.50 — wrap the expand glyph in a fixed-width container
+    // so leaf rows (NO-BREAK SPACE placeholder, narrow) and branch
+    // rows (BLACK TRIANGLE glyphs, wider) line up label columns
+    // identically. The container's width = style.glyph_size_px;
+    // height = row_height (the glyph is vertically centered by the
+    // row's `AlignItems::Center`).
+    let glyph_node = Scene::Text(
         TextNode::styled(
             glyph,
             Rect::default(),
@@ -293,6 +348,15 @@ fn build_row(
         // R51.81 — presentational so enrich_names_from_scene skips
         // the glyph and lands on the label TextNode.
         .with_role(TextRole::Presentational),
+    );
+    row_children.push(Scene::Container(
+        ContainerNode::new(vec![glyph_node]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center)
+                .with_size(Size::px(style.glyph_size_px, style.row_height)),
+        ),
     ));
     row_children.push(Scene::Text(TextNode::styled(
         item.label.as_str(),
@@ -302,6 +366,15 @@ fn build_row(
             .with_fg(label_color),
     )));
     let row_tag = composite_row_tag(tree_tag, &item.id);
+    // R673 §5.50 — focused row fills with the M3
+    // `SurfaceContainerHighest` tier (the canonical Material 3
+    // list-row focus state-layer). Non-focused rows stay transparent
+    // so the tree's outer Surface fill shows through.
+    let row_bg = if is_focused {
+        theme.resolve(ColorRole::SurfaceContainerHighest)
+    } else {
+        Color::TRANSPARENT
+    };
     Scene::Container(
         ContainerNode::new(row_children)
             .with_tag(row_tag)
@@ -309,8 +382,22 @@ fn build_row(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
+                    .with_justify(JustifyContent::Start)
                     .with_gap(style.glyph_label_gap)
-                    .with_size(Size::px(0, style.row_height))
+                    // R673 §5.50 — fixed row height matches the M3
+                    // Lists row token; width = Auto so the parent
+                    // container's `AlignItems::Stretch` extends the
+                    // row to the cross-axis full width (the focus
+                    // highlight + indent spacer rely on the row
+                    // filling the available width). The `Size` type
+                    // is `#[non_exhaustive]`, so build via default +
+                    // overwrite height — width stays at
+                    // `SizeValue::Auto`.
+                    .with_size({
+                        let mut s = Size::default();
+                        s.height = SizeValue::Px(style.row_height);
+                        s
+                    })
                     .with_padding(Rect::new(
                         style.row_padding,
                         0,
@@ -318,7 +405,7 @@ fn build_row(
                         0,
                     )),
             )
-            .with_style(BoxStyle::filled(Color::TRANSPARENT)),
+            .with_style(BoxStyle::filled(row_bg)),
     )
 }
 
@@ -338,7 +425,6 @@ pub fn composite_row_tag(tree_tag: &str, node_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::style::SizeValue;
 
     fn light_theme() -> Theme {
         Theme::light()
@@ -375,13 +461,22 @@ mod tests {
         }
     }
 
+    /// R673 §5.50 — recursive walk for the row's presentational
+    /// (glyph) `TextNode`. Pre-R673 the glyph was a direct child of
+    /// the row Container; R673 wraps it in a fixed-width Container
+    /// so glyph columns align across leaves + branches. Walk
+    /// descends into nested containers to find the Presentational
+    /// Text wherever it sits.
     fn find_glyph_in_row(row: &Scene) -> Option<String> {
+        if let Scene::Text(t) = row {
+            if matches!(t.role, Some(TextRole::Presentational)) {
+                return Some(t.content.clone());
+            }
+        }
         if let Scene::Container(c) = row {
             for child in &c.children {
-                if let Scene::Text(t) = child {
-                    if matches!(t.role, Some(TextRole::Presentational)) {
-                        return Some(t.content.clone());
-                    }
+                if let Some(found) = find_glyph_in_row(child) {
+                    return Some(found);
                 }
             }
         }
@@ -389,12 +484,15 @@ mod tests {
     }
 
     fn find_label_in_row(row: &Scene) -> Option<String> {
+        if let Scene::Text(t) = row {
+            if !matches!(t.role, Some(TextRole::Presentational)) {
+                return Some(t.content.clone());
+            }
+        }
         if let Scene::Container(c) = row {
             for child in &c.children {
-                if let Scene::Text(t) = child {
-                    if !matches!(t.role, Some(TextRole::Presentational)) {
-                        return Some(t.content.clone());
-                    }
+                if let Some(found) = find_label_in_row(child) {
+                    return Some(found);
                 }
             }
         }
@@ -642,16 +740,26 @@ mod tests {
         assert_eq!(composite_row_tag("inspector", "0/1/2"), "inspector#0/1/2");
     }
 
-    /// Helper: pull the layout width of the first
-    /// [`Scene::Container`] child of `row` (which is the depth indent
-    /// spacer when present). Returns 0 when the first child is a
-    /// `TextNode` (i.e. row at depth 0 with no indent column).
+    /// Helper: pull the layout width of the depth-indent spacer at
+    /// the front of `row`. Depth 0 rows omit the spacer (glyph
+    /// container is the first child); deeper rows carry a leading
+    /// Container whose only purpose is to push the rest of the row
+    /// right by `depth × indent_step` px. The spacer's width is
+    /// always `SizeValue::Px(n)`; the glyph container's width is
+    /// `SizeValue::Px(glyph_size_px)` (24 px at M3 defaults). The
+    /// discriminator: spacer carries zero children, glyph container
+    /// carries one Text child. Returns 0 when the row has no
+    /// leading spacer (depth 0).
     fn count_leading_indent_spacer(row: &Scene) -> u32 {
         let Scene::Container(c) = row else { return 0 };
-        let Some(Scene::Container(spacer)) = c.children.first() else {
+        let Some(Scene::Container(first)) = c.children.first() else {
             return 0;
         };
-        let SizeValue::Px(w) = spacer.layout.size.width else {
+        // Glyph container holds the Text node; spacer is empty.
+        if !first.children.is_empty() {
+            return 0;
+        }
+        let SizeValue::Px(w) = first.layout.size.width else {
             return 0;
         };
         w

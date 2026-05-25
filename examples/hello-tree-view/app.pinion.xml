@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R673 §5.16 §5.50 — hello-tree-view forge manifest. Emits the
+  `HelloTreeViewRenderer` Vello-backed struct via the
+  pinion-forge renderer kind (same shape as hello-button,
+  hello-multi-window, etc.).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloTreeViewRenderer"
+        backend="vello"/>
