@@ -15,6 +15,7 @@ pub mod revision;
 pub mod scene;
 pub mod storage;
 pub mod style;
+pub mod text_scale;
 pub mod theme;
 pub mod topology;
 pub mod widget_core;

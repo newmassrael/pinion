@@ -53,6 +53,17 @@ pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
 # returns a concrete `Vec<AccessNode>` instead of an erased type.
 pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
 
+# R668 §5.41 §5.49 — `DeferredInput` enum the substrate's
+# `drain_deferred_inputs` consumes. RPC ingress wire (stdin reader +
+# response writer + PreviewLedger / SceneRevision / FocusManager
+# field lifts to ShellCoreTui) is a follow-up consumer of the
+# substrate primitive landed here; this dep is the smallest surface
+# that satisfies the §2 #6 GUI/TUI dual invariant for the AI-injected
+# input arc (R666 character-key disc / R663 double-click / R660 drag
+# / R664 focus_request). pinion-rpc has no winit / wgpu transitive,
+# so the TUI binary stays terminal-only.
+pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
+
 # §5.41 R51.109.0 — Rust TUI rendering library. Cell-based scene
 # render target (§2 #6 GUI/TUI dual). Linebender-adjacent maintainer
 # continuity; egui / iced / bubbletea-class adoption baseline. The

@@ -1708,6 +1708,7 @@ dependencies = [
  "pinion-derive",
  "pinion-forge",
  "pinion-shell",
+ "pinion-widget-paint",
  "vello",
 ]
 
@@ -3234,6 +3235,7 @@ dependencies = [
  "crossterm",
  "pinion-a11y",
  "pinion-core",
+ "pinion-rpc",
  "pinion-runtime",
  "pinion-tui",
  "ratatui",

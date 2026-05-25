@@ -370,6 +370,124 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         dispatched || state_changed
     }
 
+    /// R668 §5.41 §5.49 — drain the AI-injected deferred-input inbox
+    /// `pinion_rpc::dispatch` populates. Mirrors the Vello sibling
+    /// (`pinion_shell::ShellCore::drain_deferred_inputs`) so every RPC
+    /// substrate primitive — R660 `scene/drag`, R663
+    /// `scene/double_click`, R666 `scene/key` character-vs-named
+    /// auto-discrimination, the steady-state `scene/click` /
+    /// `scene/wheel` / `scene/key` arcs — replays through the same
+    /// `cursor_moved` / `pointer_down` / `pointer_up` / `wheel` /
+    /// `dispatch_key` entry points crossterm input already uses.
+    ///
+    /// Result: the §2 #6 GUI/TUI dual invariant holds end-to-end —
+    /// an AI client that drives `pinion_rpc::dispatch` against this
+    /// substrate (RPC ingress / response wiring is the
+    /// `[[pinion-tui-rpc-ingress]]` follow-up consumer of this
+    /// primitive) sees the same SCXML statechart transitions the live
+    /// crossterm shell does.
+    ///
+    /// Returns `true` when any drained variant flipped the visible
+    /// cached state — the surface repaints on `true` so the AI-driven
+    /// transition lands on the terminal frame the next paint commit
+    /// resolves.
+    ///
+    /// `Key` and `CharacterKey` both route through [`Self::dispatch_key`]
+    /// because the TUI substrate single-entry-points keyboard dispatch
+    /// (named / character keys are indistinguishable at the
+    /// `V::keybinding` → `V::apply_key` → scroll-key fallback chain).
+    /// Modifiers default to empty — RPC-injected keys carry no
+    /// modifier surface in v1; a follow-up axis lifts the modifier
+    /// argument onto the `Key` / `CharacterKey` variants when the
+    /// first AI-driver use-case (e.g. Shift+Arrow text-selection
+    /// macro) lands.
+    pub fn drain_deferred_inputs(
+        &mut self,
+        inputs: &[pinion_rpc::DeferredInput],
+    ) -> bool {
+        let mut state_changed = false;
+        for input in inputs {
+            match *input {
+                pinion_rpc::DeferredInput::Wheel { x, y, delta } => {
+                    state_changed |= self.cursor_moved(x, y);
+                    state_changed |= self.wheel(delta);
+                }
+                pinion_rpc::DeferredInput::Click { x, y } => {
+                    state_changed |= self.cursor_moved(x, y);
+                    state_changed |= self.pointer_down();
+                    state_changed |= self.pointer_up();
+                }
+                pinion_rpc::DeferredInput::DoubleClick { x, y } => {
+                    // R663 §5.49 — W3C UIEvent `detail:2` mirror: two
+                    // complete press/release cycles at the same
+                    // coordinate without an intervening cursor move,
+                    // so the InputRouter arc fires identically to a
+                    // real-mouse double-click. The Vello sibling pairs
+                    // each press/release on `mouse_pressed` /
+                    // `mouse_released`; the TUI substrate keeps the
+                    // same call sequence through `pointer_down` /
+                    // `pointer_up`.
+                    state_changed |= self.cursor_moved(x, y);
+                    state_changed |= self.pointer_down();
+                    state_changed |= self.pointer_up();
+                    state_changed |= self.pointer_down();
+                    state_changed |= self.pointer_up();
+                }
+                pinion_rpc::DeferredInput::Key { x, y, ref key } => {
+                    state_changed |= self.cursor_moved(x, y);
+                    state_changed |= self.dispatch_key(
+                        key,
+                        pinion_core::Modifiers::default(),
+                    );
+                }
+                pinion_rpc::DeferredInput::CharacterKey {
+                    x,
+                    y,
+                    ref character,
+                } => {
+                    state_changed |= self.cursor_moved(x, y);
+                    state_changed |= self.dispatch_key(
+                        character,
+                        pinion_core::Modifiers::default(),
+                    );
+                }
+                pinion_rpc::DeferredInput::Drag {
+                    from_x,
+                    from_y,
+                    to_x,
+                    to_y,
+                    steps,
+                } => {
+                    // R660 §5.49 — linear cursor march under the
+                    // R51.34 InputRouter capture lock. `steps == 0`
+                    // degenerates to a press/release at `from`
+                    // (well-defined: the RPC client got exactly what
+                    // it asked for); positive steps drive
+                    // `steps` interpolated `cursor_moved` frames
+                    // between `from` and `to` inclusive.
+                    state_changed |= self.cursor_moved(from_x, from_y);
+                    state_changed |= self.pointer_down();
+                    if steps > 0 {
+                        for step in 1..=steps {
+                            let t = f64::from(step) / f64::from(steps);
+                            let x = from_x + (to_x - from_x) * t;
+                            let y = from_y + (to_y - from_y) * t;
+                            state_changed |= self.cursor_moved(x, y);
+                        }
+                    }
+                    state_changed |= self.pointer_up();
+                }
+                // `DeferredInput` is `non_exhaustive`; future variants
+                // (focus_request, IME composition, gesture …) land
+                // silent no-ops here until a follow-up sub-round
+                // extends the match. Mirrors the Vello sibling's
+                // wildcard arm.
+                _ => {}
+            }
+        }
+        state_changed
+    }
+
     /// R51.124 §5.41 — TUI-side post-dispatch bookkeeping for a
     /// [`DispatchTail`] returned by any [`CoreShell`] dispatch
     /// method.
@@ -1296,5 +1414,191 @@ mod tests {
                 "default reducer must not queue commands on drain either",
             );
         }
+    }
+
+    // R668 §5.41 §5.49 — `drain_deferred_inputs` substrate primitive.
+    // The §2 #6 GUI/TUI dual invariant says every AI-injected input
+    // arc available on the Vello shell must reach the TUI substrate
+    // through the same wire shape. Each variant below pins that:
+    // [`Click`](pinion_rpc::DeferredInput::Click) drives the same
+    // Idle → Hover → Pressed → Hover sequence the live crossterm
+    // event loop exercises in `pointer_click_cycle_lands_in_hover`;
+    // [`CharacterKey`](pinion_rpc::DeferredInput::CharacterKey) routes
+    // through `V::keybinding` first, mirroring R666's auto-discriminator
+    // wire (closing [[scene-key-character-named-gap]] on the TUI side);
+    // [`DoubleClick`](pinion_rpc::DeferredInput::DoubleClick) emits two
+    // press/release cycles without intervening cursor moves (R663 wire);
+    // [`Drag`](pinion_rpc::DeferredInput::Drag) interpolates the cursor
+    // under the R51.34 capture lock (R660 wire).
+    //
+    // The integration test ask in the R668 SEED was "pinion-tui crate
+    // 의 신규 integration test (pinion-tui 가 R666 substrate 자동 상속
+    // 증명)" — this block satisfies it without spinning a real
+    // crossterm raw-mode pipe. Production RPC ingress (stdin reader /
+    // stderr response writer / PreviewLedger + SceneRevision +
+    // FocusManager field lifts onto ShellCoreTui) is the
+    // [[pinion-tui-rpc-ingress]] follow-up consumer of the primitive
+    // landed here.
+
+    fn primed_button_core() -> ShellCoreTui<TestButtonView> {
+        // R668 §5.41 — drain dispatch needs a primed paint-scene
+        // snapshot on the router so the first `cursor_moved` can
+        // resolve hit-test targets. Without this prime a `Click` at
+        // (8, 8) would see an empty hover map and miss the button
+        // rect even though the rect is in the unrendered paint scene.
+        let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+        let paint = core.compute_paint_scene();
+        core.update_paint_scene(paint);
+        core
+    }
+
+    #[test]
+    fn r668_drain_empty_inbox_is_no_op() {
+        // Empty inbox → no state change, no panic. The drain method
+        // returns `false` so the surface caller skips the repaint
+        // cycle on idle RPC turns.
+        let mut core = primed_button_core();
+        let state_before = *core.cached_state();
+        let changed = core.drain_deferred_inputs(&[]);
+        assert!(!changed);
+        assert_eq!(*core.cached_state(), state_before);
+    }
+
+    #[test]
+    fn r668_drain_click_drives_hover_pressed_hover() {
+        // R51.196 / R668 — Click variant replays cursor_moved →
+        // pointer_down → pointer_up, landing the substrate in Hover
+        // (the SCXML `Pressed → Hover` arc on release).
+        let mut core = primed_button_core();
+        let inputs = vec![pinion_rpc::DeferredInput::Click { x: 8.0, y: 8.0 }];
+        assert!(core.drain_deferred_inputs(&inputs));
+        assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    #[test]
+    fn r668_drain_double_click_replays_two_press_release_cycles() {
+        // R663 / R668 — DoubleClick fires two press/release pairs.
+        // The terminal state is Hover (same as single Click) because
+        // the SCXML statechart's idempotent `Pressed → Hover` arc
+        // collapses repeated activations. The test pins the no-crash
+        // contract + visible-state correctness.
+        let mut core = primed_button_core();
+        let inputs = vec![pinion_rpc::DeferredInput::DoubleClick { x: 8.0, y: 8.0 }];
+        assert!(core.drain_deferred_inputs(&inputs));
+        assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    #[test]
+    fn r668_drain_character_key_routes_through_keybinding() {
+        // R666 / R668 — CharacterKey "d" hits ButtonFixture::keybinding
+        // → ButtonEvent::Disable → SCXML transition to Disabled. Pin
+        // the auto-discriminator wire on the TUI side: a one-codepoint
+        // character routed through the V::keybinding channel, not the
+        // named-key fallback.
+        let mut core = primed_button_core();
+        let inputs = vec![pinion_rpc::DeferredInput::CharacterKey {
+            x: 8.0,
+            y: 8.0,
+            character: "d".to_string(),
+        }];
+        assert!(core.drain_deferred_inputs(&inputs));
+        assert_eq!(*core.cached_state(), ButtonState::Disabled);
+    }
+
+    #[test]
+    fn r668_drain_named_key_routes_through_apply_key() {
+        // R51.197 / R668 — Named key "Space" routes through
+        // V::apply_key (ButtonFixture::apply_key calls
+        // aria_apply_aria_activate, emitting KeyboardActivate). The
+        // SCXML `Idle → click intent → Idle` arc keeps the cached
+        // state stable across the keyboard event itself — but the
+        // drain dispatches `cursor_moved(8.0, 8.0)` first per the
+        // canonical wire, so the substrate enters Hover before the
+        // key arc runs. The terminal state is Hover, not Idle.
+        //
+        // The R668 wire pins: named keys (multi-char like "Space" /
+        // "Enter" / "ArrowUp") flow through the same `dispatch_key`
+        // entry point as character keys — the TUI substrate single-
+        // entry-points keyboard dispatch. The assertion below covers
+        // the no-crash + correct routing contract; the Hover terminal
+        // state is the cursor_moved side-effect, not the named-key arc.
+        let mut core = primed_button_core();
+        let inputs = vec![pinion_rpc::DeferredInput::Key {
+            x: 8.0,
+            y: 8.0,
+            key: "Space".to_string(),
+        }];
+        let _ = core.drain_deferred_inputs(&inputs);
+        assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    #[test]
+    fn r668_drain_wheel_off_scroll_target_is_silent() {
+        // R51.186 / R668 — Wheel against the ButtonFixture rect (not
+        // a scroll container) returns `false` from `wheel` (no
+        // dispatch); the `cursor_moved` portion may flip Idle→Hover.
+        // Net effect: state may change (Hover), but no panic and no
+        // scroll. Pin both: visible state lands in Hover (the cursor
+        // entered the rect), and the substrate did not crash on a
+        // non-scrollable wheel target.
+        let mut core = primed_button_core();
+        let inputs = vec![pinion_rpc::DeferredInput::Wheel {
+            x: 8.0,
+            y: 8.0,
+            delta: pinion_core::event::WheelDelta::Lines { dx: 0.0, dy: -1.0 },
+        }];
+        let _ = core.drain_deferred_inputs(&inputs);
+        assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    #[test]
+    fn r668_drain_drag_press_steps_release_lands_in_hover() {
+        // R660 / R668 — Drag interpolates the cursor between `from`
+        // and `to` under the R51.34 capture lock. With `from` inside
+        // the ButtonFixture rect (8, 8) and `to` outside (200, 200),
+        // the canonical InputRouter arc: cursor enters → Hover,
+        // pointer_down → Pressed, capture-locked cursor moves outside
+        // the rect keep the widget in Pressed (capture lock), final
+        // pointer_up releases → Hover (capture lock still pins hover
+        // target to the locked widget until the release arc fires).
+        //
+        // Pin the no-crash contract + a sensible terminal state. The
+        // exact intermediate trajectory is the InputRouter's
+        // contract, not the drain's; the drain just replays the
+        // primitive sequence in order.
+        let mut core = primed_button_core();
+        let inputs = vec![pinion_rpc::DeferredInput::Drag {
+            from_x: 8.0,
+            from_y: 8.0,
+            to_x: 200.0,
+            to_y: 200.0,
+            steps: 4,
+        }];
+        let _ = core.drain_deferred_inputs(&inputs);
+        // The drag ends with pointer_up at the final position. The
+        // visible state lands in either Hover or Idle depending on
+        // whether the capture-locked release arc retains hover. Pin
+        // the looser "not still Pressed" assertion — the release
+        // always clears the pressed lock.
+        assert_ne!(*core.cached_state(), ButtonState::Pressed);
+    }
+
+    #[test]
+    fn r668_drain_drag_zero_steps_degenerates_to_click() {
+        // R660 / R668 — `steps == 0` skips the interpolation loop:
+        // cursor → from, pointer_down, pointer_up. Equivalent to
+        // Click at `from`. Pin the well-defined degeneracy so
+        // RPC clients that send `steps: 0` (deliberately or as a
+        // boundary test) get exactly that arc.
+        let mut core = primed_button_core();
+        let inputs = vec![pinion_rpc::DeferredInput::Drag {
+            from_x: 8.0,
+            from_y: 8.0,
+            to_x: 200.0,
+            to_y: 200.0,
+            steps: 0,
+        }];
+        assert!(core.drain_deferred_inputs(&inputs));
+        assert_eq!(*core.cached_state(), ButtonState::Hover);
     }
 }

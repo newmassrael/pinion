@@ -200,6 +200,43 @@ impl Scene {
         }
     }
 
+    /// R668 §5.16 — tight content bounding box, in logical-pixel
+    /// (x+w, y+h) terms, of every visible primitive in this tree.
+    ///
+    /// Defined as `(max_right, max_bottom)` over the post-layout
+    /// rects of every non-[`Scene::Effect`] node reached by a
+    /// depth-first walk:
+    ///
+    /// - [`Scene::Container`] contributes its own rect *and* the
+    ///   union of its children's bbox — a Container with explicit
+    ///   `LayoutStyle` width can fence in its descendants while a
+    ///   Container with default sizing inherits the descendant
+    ///   union;
+    /// - [`Scene::Scroll`] contributes only its `viewport` rect, not
+    ///   the inner content — the visible clip window is what the
+    ///   user sees on screen, the inner content is intentionally
+    ///   bounded by the scrollbar primitive ([[w3c-dom-selection-shape]]
+    ///   `Window.innerWidth/innerHeight` mirror);
+    /// - [`Scene::Effect`] has no geometry of its own (per
+    ///   [`Self::rect`]) and is skipped.
+    ///
+    /// Returns `(0, 0)` for an empty / zero-sized tree.
+    ///
+    /// Consumer: [`pinion_shell::SizeStrategy::IntrinsicAfterFirstPaint`]
+    /// — after the first paint cycle populates per-node rects, the
+    /// shell calls this to compute the window resize target, clamped
+    /// to `[min, max]`, and forwards it to
+    /// [`winit::window::Window::request_inner_size`]. The walk is
+    /// O(N) over scene nodes and runs once per binding lifetime (only
+    /// the first paint), not per frame.
+    #[must_use]
+    pub fn intrinsic_content_size(&self) -> (u32, u32) {
+        let mut max_w: u32 = 0;
+        let mut max_h: u32 = 0;
+        intrinsic_walk(self, &mut max_w, &mut max_h);
+        (max_w, max_h)
+    }
+
     /// (R55.D.5 §5.45) Mutable counterpart to
     /// [`Self::primary_external`]. Used by the RPC invoke / dry-run /
     /// rewind primitives which need to advance the `External`'s state
@@ -633,6 +670,36 @@ fn rect_contains(r: Rect, x: u32, y: u32) -> bool {
     let right = r.x.saturating_add(r.w);
     let bottom = r.y.saturating_add(r.h);
     x >= r.x && y >= r.y && x < right && y < bottom
+}
+
+/// R668 §5.16 — depth-first walker for
+/// [`Scene::intrinsic_content_size`]. Updates the running
+/// `(max_right, max_bottom)` against every reachable rect.
+/// [`Scene::Effect`] has no geometry and is skipped; [`Scene::Scroll`]
+/// contributes only its viewport (the clip window the user sees) and
+/// intentionally does not descend into the inner content.
+fn intrinsic_walk(s: &Scene, max_w: &mut u32, max_h: &mut u32) {
+    match s {
+        Scene::Effect(_) => {}
+        Scene::Container(c) => {
+            let r = c.rect;
+            *max_w = (*max_w).max(r.x.saturating_add(r.w));
+            *max_h = (*max_h).max(r.y.saturating_add(r.h));
+            for child in &c.children {
+                intrinsic_walk(child, max_w, max_h);
+            }
+        }
+        Scene::Box(_)
+        | Scene::Text(_)
+        | Scene::Path(_)
+        | Scene::Image(_)
+        | Scene::External(_)
+        | Scene::Scroll(_) => {
+            let r = s.rect();
+            *max_w = (*max_w).max(r.x.saturating_add(r.w));
+            *max_h = (*max_h).max(r.y.saturating_add(r.h));
+        }
+    }
 }
 
 /// Half-open rectangle intersection: returns `true` when `a` and `b`
@@ -2933,5 +3000,83 @@ mod tests {
         // Mutable borrow lets us reach `introspect_mut` (StubExternal
         // opts out — the call returns `None` but the borrow is valid).
         let _ = node.handle.introspect_mut();
+    }
+
+    // R668 §5.16 — `Scene::intrinsic_content_size` is the
+    // [[abstraction-needs-second-consumer]] candidate but ships with a
+    // single consumer (pinion-shell `IntrinsicAfterFirstPaint`). The
+    // tests pin the contract: empty tree → (0, 0); leaf rect dominates;
+    // Container child rects vote into the union; Scroll viewport caps
+    // the contribution (inner content is intentionally invisible to the
+    // walk).
+
+    #[test]
+    fn r668_intrinsic_content_size_empty_container_is_zero() {
+        let scene = Scene::Container(ContainerNode::new(vec![]));
+        assert_eq!(scene.intrinsic_content_size(), (0, 0));
+    }
+
+    #[test]
+    fn r668_intrinsic_content_size_box_returns_right_bottom() {
+        // Single leaf at (10, 20) sized 160 × 80 → bbox extends to
+        // (170, 100). The walker uses `x + w` / `y + h` (right edge,
+        // bottom edge) rather than the rect width alone.
+        let scene = Scene::Box(BoxNode::filled(Rect::new(10, 20, 160, 80), Color::default()));
+        assert_eq!(scene.intrinsic_content_size(), (170, 100));
+    }
+
+    #[test]
+    fn r668_intrinsic_content_size_container_unions_children() {
+        // Two sibling boxes with non-overlapping rects → bbox is the
+        // union (max right, max bottom), not the sum. Demonstrates the
+        // Container-walk descent.
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(Rect::new(0, 0, 100, 40), Color::default())),
+            Scene::Box(BoxNode::filled(Rect::new(120, 60, 50, 30), Color::default())),
+        ]));
+        // Container.rect defaults to (0,0,0,0) so the children dominate.
+        assert_eq!(scene.intrinsic_content_size(), (170, 90));
+    }
+
+    #[test]
+    fn r668_intrinsic_content_size_scroll_uses_viewport_not_content() {
+        // Scroll's contract: the visible clip window votes, not the
+        // (potentially huge) inner content. Confirms the
+        // `IntrinsicAfterFirstPaint` window-resize hook treats scroll
+        // viewports as fixed-size content even when the inner content
+        // would dominate the union.
+        let inner = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 9999, 9999),
+            Color::default(),
+        ));
+        let scroll = Scene::Scroll(ScrollNode::new(
+            Rect::new(0, 0, 200, 150),
+            inner,
+        ));
+        assert_eq!(scroll.intrinsic_content_size(), (200, 150));
+    }
+
+    #[test]
+    fn r668_intrinsic_content_size_effect_has_no_geometry() {
+        // Effect nodes never carry geometry (per `Scene::rect`), so a
+        // Container that holds only Effect leaves measures as empty.
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Effect(EffectNode::new()),
+            Scene::Effect(EffectNode::new()),
+        ]));
+        assert_eq!(scene.intrinsic_content_size(), (0, 0));
+    }
+
+    #[test]
+    fn r668_intrinsic_content_size_saturates_at_u32_max() {
+        // Overflow-safety guard: a leaf at (u32::MAX, u32::MAX) with
+        // any non-zero size must not panic — `saturating_add` pins the
+        // bbox at u32::MAX rather than wrapping to a tiny value the
+        // clamp pass would then accept as a legal window size.
+        let scene = Scene::Box(BoxNode::filled(
+            Rect::new(u32::MAX, u32::MAX, 16, 16),
+            Color::default(),
+        ));
+        assert_eq!(scene.intrinsic_content_size(), (u32::MAX, u32::MAX));
     }
 }

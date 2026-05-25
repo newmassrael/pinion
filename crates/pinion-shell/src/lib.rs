@@ -262,6 +262,57 @@ macro_rules! vello_renderer_impl {
     };
 }
 
+/// R668 §5.16 — window-creation size policy returned from
+/// [`WidgetView::initial_size_strategy`].
+///
+/// `Fixed` opens the window at the declared logical-pixel size; the
+/// user is still free to resize via the OS chrome and subsequent
+/// `WindowEvent::Resized` events flow into the layout pass unchanged.
+///
+/// `IntrinsicAfterFirstPaint` opens the window at `min`, runs one
+/// paint cycle to populate per-node rects, walks the resulting scene
+/// for the tight content bbox ([`Scene::intrinsic_content_size`]),
+/// clamps to `[min, max]`, and calls
+/// [`winit::window::Window::request_inner_size`] when the clamped
+/// size differs from `min`. Winit emits `WindowEvent::Resized` on
+/// acceptance which feeds the next paint cycle at the new viewport.
+/// `min` is also the lower bound the user-driven OS resize is allowed
+/// to push the window below at the winit `set_min_inner_size` clamp.
+///
+/// The shell never resizes the window again on subsequent paints —
+/// applications that need responsive shrink-wrap-on-state-change
+/// drive that via their view fn + an explicit `scene/resize` RPC, not
+/// this strategy.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SizeStrategy {
+    /// Open the window at exactly `(width, height)` logical pixels.
+    Fixed { width: u32, height: u32 },
+    /// Open at `min`, then request the tight content bbox clamped to
+    /// `[min, max]` after the first paint cycle.
+    IntrinsicAfterFirstPaint {
+        /// Floor: window never opens smaller than this.
+        min: (u32, u32),
+        /// Ceiling: content bbox is clamped to at most this. Use
+        /// `(u32::MAX, u32::MAX)` for "no upper bound" — winit /
+        /// the OS still cap at the monitor work area.
+        max: (u32, u32),
+    },
+}
+
+impl SizeStrategy {
+    /// The logical-pixel size the window is created at. `Fixed`
+    /// returns its declared pair; `IntrinsicAfterFirstPaint` returns
+    /// `min` (the first-paint pass widens up to `max`).
+    #[must_use]
+    pub const fn initial_logical_size(self) -> (u32, u32) {
+        match self {
+            Self::Fixed { width, height } => (width, height),
+            Self::IntrinsicAfterFirstPaint { min, .. } => min,
+        }
+    }
+}
+
 /// R51.121 §5.41 — Vello-specific application-supplied widget binding.
 ///
 /// Each visual binary implements this once on a unit type;
@@ -270,27 +321,37 @@ macro_rules! vello_renderer_impl {
 /// The trait inherits the bulk of its surface via the supertrait
 /// chain [`pinion_a11y::WidgetA11y`] → [`pinion_core::WidgetCore`];
 /// only the Vello-specific [`Renderer`](Self::Renderer) associated
-/// type and the pixel-unit [`initial_size`](Self::initial_size) live
-/// here. The application-side binding therefore declares one impl
-/// block per trait (typical breakdown: 9 methods in `WidgetCore`, 1-3
-/// in `WidgetA11y`, 2 here).
+/// type and the pixel-unit window-creation policy
+/// [`initial_size_strategy`](Self::initial_size_strategy) live here.
+/// The application-side binding therefore declares one impl block per
+/// trait (typical breakdown: 9 methods in `WidgetCore`, 1-3 in
+/// `WidgetA11y`, 2 here).
 ///
 /// The supertrait split lets the ratatui TUI backend
 /// (`pinion_tui::WidgetViewTui`) reuse the same `WidgetCore` +
-/// `WidgetA11y` surface, replacing only the Vello-specific items
-/// here with `Frame = Buffer` and cell-unit `initial_size`.
+/// `WidgetA11y` surface, replacing only the Vello-specific items here
+/// with `Frame = Buffer` and a cell-unit `initial_size` (the TUI
+/// backend has no `IntrinsicAfterFirstPaint` variant — terminal cells
+/// are owned by the host process, not the application).
 pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// Concrete pinion-forge-emitted renderer (`HelloFooRenderer`).
     /// `'static` so [`RenderState`] can store `Box<Self::Renderer>`
     /// across the suspend/resume cycle without lifetime parameters.
     type Renderer: VelloRenderer + 'static;
 
-    /// Default window dimensions in logical pixels. `winit` applies
-    /// the per-monitor DPI scale, so this is "what the user sees" on
-    /// a 1.0× display. The shell honours this exactly on first
-    /// [`resumed`](AppShell::resumed); subsequent resizes go through
-    /// `WindowEvent::Resized`.
-    fn initial_size() -> (u32, u32);
+    /// R668 §5.16 — window-creation size policy. `winit` applies the
+    /// per-monitor DPI scale, so logical pixels are "what the user
+    /// sees" on a 1.0× display. The shell honours this on the first
+    /// [`resumed`](AppShell::resumed); subsequent resizes flow
+    /// through `WindowEvent::Resized` and do not consult the strategy
+    /// again.
+    ///
+    /// Most bindings return [`SizeStrategy::Fixed`]; the
+    /// `#[pinion::widget(initial_size = (W, H))]` derive emits exactly
+    /// that. Bindings whose root content has a content-driven height
+    /// (settings panels with section-dependent layout, popovers,
+    /// dialogs) return [`SizeStrategy::IntrinsicAfterFirstPaint`].
+    fn initial_size_strategy() -> SizeStrategy;
 
     /// R56.2.c §5.13 §5.38 — IME candidate window positioning hint.
     /// Returns the caret rect in **window-local logical-pixel
@@ -356,4 +417,35 @@ pub enum RenderState<R: VelloRenderer> {
     },
     /// GPU released; window may be cached for the next resume.
     Suspended(Option<Arc<Window>>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // R668 §5.16 — [`SizeStrategy`] pins the canonical contract:
+    // `Fixed` rounds-trip width/height through `initial_logical_size`;
+    // `IntrinsicAfterFirstPaint` surfaces `min` (the window-creation
+    // size) regardless of `max` (used only for the post-first-paint
+    // clamp). The pair is `Copy` so callers can read it once on
+    // `resumed` without taking a borrow on `WidgetView`.
+
+    #[test]
+    fn r668_size_strategy_fixed_round_trips_through_initial_logical_size() {
+        let s = SizeStrategy::Fixed { width: 800, height: 600 };
+        assert_eq!(s.initial_logical_size(), (800, 600));
+    }
+
+    #[test]
+    fn r668_size_strategy_intrinsic_returns_min_as_initial_size() {
+        // `IntrinsicAfterFirstPaint` creates the window at `min`; the
+        // first paint then walks the scene for the bbox and clamps
+        // against `max`. The pre-paint hook only needs `min`, so
+        // `initial_logical_size` exposes that explicitly.
+        let s = SizeStrategy::IntrinsicAfterFirstPaint {
+            min: (320, 240),
+            max: (1280, 800),
+        };
+        assert_eq!(s.initial_logical_size(), (320, 240));
+    }
 }

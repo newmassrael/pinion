@@ -75,5 +75,6 @@
 
 #![forbid(unsafe_code)]
 
+pub mod checkbox;
 pub mod scrollbar;
 pub mod text_field;

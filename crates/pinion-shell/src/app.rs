@@ -120,6 +120,20 @@ pub struct AppShell<V: WidgetView> {
     /// popup stays where the user last typed even when focus
     /// shifts to a non-text widget for a moment).
     last_ime_cursor_area: Option<(f32, f32, f32, f32)>,
+    /// R668 §5.16 — pending [`SizeStrategy::IntrinsicAfterFirstPaint`]
+    /// resize. `Some((min, max))` while the shell still needs to walk
+    /// the first painted scene for the intrinsic bbox, clamp to
+    /// `[min, max]`, and forward to
+    /// [`Window::request_inner_size`]. Set on the `Fixed`-strategy
+    /// path means *no* post-first-paint resize is queued — `None` is
+    /// the steady-state value once any resize has been requested (or
+    /// the strategy never asked for one).
+    ///
+    /// `min` is also the lower bound winit's `set_min_inner_size`
+    /// clamp enforces against subsequent user-driven resizes; that
+    /// part of the contract is installed during `resumed` and not
+    /// re-read after the first paint.
+    pending_intrinsic_resize: Option<((u32, u32), (u32, u32))>,
 }
 
 
@@ -149,6 +163,11 @@ impl<V: WidgetView> AppShell<V> {
             // first `V::ime_caret_rect` Some triggers the first
             // `Window::set_ime_cursor_area` call.
             last_ime_cursor_area: None,
+            // R668 §5.16 — populated on `resumed` from the binding's
+            // `initial_size_strategy()` when it returns
+            // `IntrinsicAfterFirstPaint`; consumed once by the first
+            // `render()` after layout.
+            pending_intrinsic_resize: None,
         }
     }
 
@@ -216,6 +235,33 @@ impl<V: WidgetView> AppShell<V> {
         // R51.80 §5.16 §5.36 — ShellCore owns the paint scene
         // pipeline; AppShell only handles the vello/wgpu submit.
         let paint_scene = self.core.compute_paint_scene(w.get(), h.get());
+        // R668 §5.16 — `IntrinsicAfterFirstPaint` post-first-paint
+        // resize hook. The first painted scene now carries layout-
+        // computed rects on every node, so walking the tree
+        // ([`Scene::intrinsic_content_size`]) gives us the tight
+        // (width, height) the content actually wants; clamp to
+        // `[min, max]` and forward to `Window::request_inner_size`.
+        // winit emits a `WindowEvent::Resized` on acceptance which
+        // re-enters the layout pass at the new viewport on the next
+        // paint. The hook drains itself — `Fixed`-strategy paints and
+        // every steady-state paint after the first land on the `None`
+        // branch and skip out.
+        if let Some((min, max)) = self.pending_intrinsic_resize.take() {
+            let (content_w, content_h) = paint_scene.intrinsic_content_size();
+            let target_w = content_w.clamp(min.0, max.0);
+            let target_h = content_h.clamp(min.1, max.1);
+            if (target_w, target_h) != (w.get(), h.get()) {
+                let _ = window.request_inner_size(LogicalSize::new(
+                    f64::from(target_w),
+                    f64::from(target_h),
+                ));
+                // Force-request a redraw so the next event-loop pass
+                // re-enters `render` against the updated inner_size
+                // and paints the final layout immediately rather than
+                // idling on the now-undersized first-paint frame.
+                window.request_redraw();
+            }
+        }
         self.vello_scene.reset();
         let base = paint_adapter::root_background(&paint_scene);
         paint_adapter::to_vello(
@@ -424,13 +470,40 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             RenderState::Suspended(cached) => cached,
             RenderState::Active { .. } => unreachable!("matched as non-Active above"),
         };
-        let (init_w, init_h) = V::initial_size();
+        // R668 §5.16 — read the binding's window-creation policy.
+        // `Fixed` opens at exactly `(width, height)`; `IntrinsicAfterFirstPaint`
+        // opens at `min` and queues a post-first-paint resize request
+        // via `pending_intrinsic_resize`. Either way the renderer
+        // initialises against `window.inner_size()` (winit may already
+        // have clamped to the monitor work area at create time), so
+        // the strategy choice only sets the initial logical-pixel
+        // hint + the post-first-paint resize flag — the rest of
+        // `resumed` is unchanged.
+        let strategy = V::initial_size_strategy();
+        let (init_w, init_h) = strategy.initial_logical_size();
         let window = if let Some(w) = cached {
             w
         } else {
-            let attrs = Window::default_attributes()
+            let mut attrs = Window::default_attributes()
                 .with_title(V::title())
                 .with_inner_size(LogicalSize::new(f64::from(init_w), f64::from(init_h)));
+            // R668 §5.16 — anchor the user-driven OS-resize floor at
+            // `min` so dragging the resize chrome smaller than the
+            // intrinsic floor stops at `min` instead of letting the
+            // window collapse to 0×0. `Fixed` returns `(width, height)`
+            // for `min` (the strategy is "no resize at all" semantically;
+            // winit still honours user resize, but the floor matches the
+            // requested logical-pixel size). winit clamps the floor to
+            // the OS-imposed minimum (usually 100×30 on desktop) which
+            // is fine — pinion never wants a smaller floor than that.
+            let min_floor = match strategy {
+                crate::SizeStrategy::Fixed { width, height } => (width, height),
+                crate::SizeStrategy::IntrinsicAfterFirstPaint { min, .. } => min,
+            };
+            attrs = attrs.with_min_inner_size(LogicalSize::new(
+                f64::from(min_floor.0),
+                f64::from(min_floor.1),
+            ));
             match event_loop.create_window(attrs) {
                 Ok(w) => Arc::new(w),
                 Err(e) => {
@@ -439,6 +512,14 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                     return;
                 }
             }
+        };
+        // R668 §5.16 — queue the intrinsic-resize for the first paint
+        // cycle. `Fixed` clears any prior queue (the second `resumed`
+        // on the Android/Wayland suspend-resume path must not carry a
+        // stale Intrinsic flag from a previous boot).
+        self.pending_intrinsic_resize = match strategy {
+            crate::SizeStrategy::Fixed { .. } => None,
+            crate::SizeStrategy::IntrinsicAfterFirstPaint { min, max } => Some((min, max)),
         };
         // R56.2.a §5.13 §5.38 — opt into the winit IME bridge so
         // `WindowEvent::Ime` events flow into the [`Self::window_event`]
@@ -1241,8 +1322,27 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
         return false;
     };
     let mut core = ShellCore::<V>::new();
-    let (w, h) = V::initial_size();
-    let paint_scene = core.compute_paint_scene(w, h);
+    // R668 §5.16 — `IntrinsicAfterFirstPaint` headless path mirrors
+    // the live shell: render once at the upper bound (so the layout
+    // pass sees enough viewport to lay out the content), walk for
+    // the intrinsic bbox, clamp to `[min, max]`, then re-paint at
+    // the clamped size so the PNG dimensions match the final winit
+    // window size. `Fixed` skips the two-pass and paints directly.
+    let strategy = V::initial_size_strategy();
+    let (w, h, paint_scene) = match strategy {
+        crate::SizeStrategy::Fixed { width, height } => {
+            let scene = core.compute_paint_scene(width, height);
+            (width, height, scene)
+        }
+        crate::SizeStrategy::IntrinsicAfterFirstPaint { min, max } => {
+            let measure = core.compute_paint_scene(max.0.max(1), max.1.max(1));
+            let (cw, ch) = measure.intrinsic_content_size();
+            let target_w = cw.clamp(min.0, max.0).max(1);
+            let target_h = ch.clamp(min.1, max.1).max(1);
+            let scene = core.compute_paint_scene(target_w, target_h);
+            (target_w, target_h, scene)
+        }
+    };
     let base = paint_adapter::root_background(&paint_scene);
     let mut vello_scene = VelloScene::new();
     paint_adapter::to_vello(

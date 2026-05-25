@@ -112,7 +112,7 @@ vello_renderer_impl!(TestRenderer, TestRendererError);
 impl WidgetView for EchoButtonFixture {
     type Renderer = TestRenderer;
 
-    fn initial_size() -> (u32, u32) {
-        (8, 8)
+    fn initial_size_strategy() -> crate::SizeStrategy {
+        crate::SizeStrategy::Fixed { width: 8, height: 8 }
     }
 }

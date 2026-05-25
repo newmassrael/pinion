@@ -568,8 +568,8 @@ impl WidgetA11y for TextFieldView {
 impl WidgetView for TextFieldView {
     type Renderer = HelloTextFieldRenderer;
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
+    fn initial_size_strategy() -> pinion_shell::SizeStrategy {
+        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
     }
 
     /// R56.2.c §5.13 §5.38 — publish the caret rect to the platform

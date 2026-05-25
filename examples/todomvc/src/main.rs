@@ -2674,8 +2674,8 @@ fn per_item_int_action(
 impl WidgetView for TodoMvcView {
     type Renderer = TodoMvcRenderer;
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
+    fn initial_size_strategy() -> pinion_shell::SizeStrategy {
+        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
     }
 
     /// R56.2.c — publish caret rect for platform IME candidate window.

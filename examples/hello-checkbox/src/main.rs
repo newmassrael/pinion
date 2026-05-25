@@ -17,17 +17,17 @@
 //! special-case bitmap or SVG path, just Unicode + parley.
 
 use pinion_core::external::IntrospectValue;
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
-};
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
+use pinion_core::theme::{use_theme, ColorRole};
+#[cfg(test)]
+use pinion_core::theme::Theme;
 use pinion_core::widgets::checkbox::{CheckboxEvent, CheckboxExternal, CheckboxState};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Frame, Scene, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
+use pinion_widget_paint::checkbox::{view_checkbox, CheckboxStyle};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloCheckboxRenderer, HelloCheckboxRendererError);
@@ -37,119 +37,28 @@ const WIN_H: u32 = 180;
 /// (R57.X.checkbox §5.50) [`ThemeProvider`] cache key — matches the
 /// `"app"` convention shared across the example gallery.
 const THEME_TAG: &str = "app";
-const BOX_SIZE: u32 = 24;
-const BOX_RADIUS: u32 = 4;
-const ROW_GAP: u32 = 10;
-
-/// (R57.X.checkbox §5.50) Material 3 Checkbox accent ramp — when
-/// checked, the box fill resolves to `ColorRole::Accent` (idle) and
-/// layers M3 state-layer overlays (hover = 8 %, pressed = 12 %,
-/// disabled = 38 % fade toward `Surface`).
-fn checkbox_accent_for(theme: &Theme, state: CheckboxState) -> Color {
-    let base = theme.resolve(ColorRole::Accent);
-    match state {
-        CheckboxState::Idle => base,
-        CheckboxState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        CheckboxState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        CheckboxState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
-}
-
-/// (R57.X.checkbox §5.50) Border color — anchors on
-/// `ColorRole::Outline` with the same state-layer treatment as the
-/// accent ramp so checked + unchecked share the M3 overlay weights.
-fn checkbox_outline_for(theme: &Theme, state: CheckboxState) -> Color {
-    let base = theme.resolve(ColorRole::Outline);
-    match state {
-        CheckboxState::Idle => base,
-        CheckboxState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        CheckboxState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        CheckboxState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
-}
 
 /// view-fn (§6.3): pure sync mapping `(CheckboxState, bool) -> Scene`.
 ///
-/// Layout: a horizontal row [checkbox-box] [label] centered in the
-/// window. The checkbox visual is a `Container` (not a `Box`) so the
-/// optional `\u{2713}` glyph can render as a centered child when the
-/// `checked` value is true. The container carries the dispatch tag
-/// `main_checkbox` so the shell's `InputRouter` routes pointer
-/// events to the matching `Scene::External("main_checkbox")`.
+/// R668 §5.38 §5.50 — the M3 row composition (box + glyph + label +
+/// state-layer ramps) lifted to
+/// [`pinion_widget_paint::checkbox::view_checkbox`]; the binding now
+/// just resolves the theme + supplies the dispatch tag, the M3 style
+/// defaults, and the label string. The outer container then centers
+/// the row in the window with the binding-owned surface fill.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: CheckboxState, checked: bool, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let box_fill = if checked {
-        checkbox_accent_for(&theme, state)
-    } else {
-        // (R57.X.checkbox §5.50) Unchecked column: transparent fill
-        // so the border + parent surface mark the empty state.
-        Color::TRANSPARENT
-    };
-    let border_color = checkbox_outline_for(&theme, state);
-    let mut children: Vec<Scene> = Vec::new();
-    if checked {
-        let glyph_color = match state {
-            CheckboxState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
-            _ => theme.resolve(ColorRole::OnAccent),
-        };
-        children.push(Scene::Text(
-            // R51.81 §5.40 — the check-glyph is pure decoration
-            // (visual mark for the `checked` state). `Presentational`
-            // tells `enrich_names_from_scene` to skip it so the AT
-            // exposes the linguistic label ("Receive newsletter")
-            // instead of "✓". Replaces the pre-R51.81 `aria_label`
-            // Band-Aid on the outer `ContainerNode`.
-            TextNode::styled(
-                "\u{2713}",
-                Rect::default(),
-                TextStyle::new().with_size_px(18).with_fg(glyph_color),
-            )
-            .with_role(pinion_core::scene::TextRole::Presentational),
-        ));
-    }
-    let box_visual = Scene::Container(
-        ContainerNode::new(children)
-            .with_style(
-                BoxStyle::filled(box_fill)
-                    .with_corner_radius(BOX_RADIUS)
-                    .with_border(Border::new(border_color, 2)),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(BOX_SIZE, BOX_SIZE)),
-            ),
-    );
-    let label_color = match state {
-        CheckboxState::Disabled => theme.resolve(ColorRole::OnSurfaceMuted),
-        _ => theme.resolve(ColorRole::OnSurface),
-    };
-    let label = Scene::Text(TextNode::styled(
+    let row = view_checkbox(
+        "main_checkbox",
+        state,
+        checked,
+        &theme,
+        &CheckboxStyle::m3_filled(),
         "Receive newsletter",
-        Rect::default(),
-        TextStyle::new().with_size_px(16).with_fg(label_color),
-    ));
-    let row = Scene::Container(
-        ContainerNode::new(vec![box_visual, label])
-            .with_tag("main_checkbox")
-            // R51.81 §5.40 — the check-glyph TextNode declares
-            // `TextRole::Presentational`, so `enrich_names_from_scene`
-            // skips past it and lands on the "Receive newsletter"
-            // label naturally. No `aria_label` override needed: the
-            // role marker is the textbook fix for in-scene
-            // decoration glyphs.
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(ROW_GAP),
-            ),
     );
     Scene::Container(
-        ContainerNode::new(vec![row])
+        pinion_core::scene::ContainerNode::new(vec![row])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
@@ -375,9 +284,15 @@ mod a11y_tests {
 
     #[test]
     fn r57_x_checkbox_checked_idle_uses_accent_role() {
+        // R668 §5.38 — the accent ramp helper moved to
+        // `pinion_widget_paint::checkbox`; the binding test now
+        // re-exercises the same contract against the lifted symbol.
         let light = Theme::light();
         assert_eq!(
-            checkbox_accent_for(&light, CheckboxState::Idle),
+            pinion_widget_paint::checkbox::checkbox_accent_for(
+                &light,
+                CheckboxState::Idle,
+            ),
             light.accent,
         );
     }
@@ -386,7 +301,10 @@ mod a11y_tests {
     fn r57_x_checkbox_unchecked_outline_uses_outline_role() {
         let light = Theme::light();
         assert_eq!(
-            checkbox_outline_for(&light, CheckboxState::Idle),
+            pinion_widget_paint::checkbox::checkbox_outline_for(
+                &light,
+                CheckboxState::Idle,
+            ),
             light.outline,
         );
     }
@@ -398,7 +316,10 @@ mod a11y_tests {
             .resolve(ColorRole::Accent)
             .lerp(theme.resolve(ColorRole::OnSurface), 0.08);
         assert_eq!(
-            checkbox_accent_for(&theme, CheckboxState::Hover),
+            pinion_widget_paint::checkbox::checkbox_accent_for(
+                &theme,
+                CheckboxState::Hover,
+            ),
             expected,
         );
     }

@@ -427,8 +427,8 @@ impl WidgetA11y for TestView {
 impl WidgetView for TestView {
     type Renderer = TestRenderer;
 
-    fn initial_size() -> (u32, u32) {
-        (8, 8)
+    fn initial_size_strategy() -> pinion_shell::SizeStrategy {
+        pinion_shell::SizeStrategy::Fixed { width: 8, height: 8 }
     }
 }
 

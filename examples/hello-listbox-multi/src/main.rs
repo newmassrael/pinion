@@ -379,8 +379,8 @@ impl WidgetA11y for ListBoxMultiView {
 impl WidgetView for ListBoxMultiView {
     type Renderer = HelloListboxMultiRenderer;
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
+    fn initial_size_strategy() -> pinion_shell::SizeStrategy {
+        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
     }
 }
 

@@ -345,7 +345,9 @@ pub(crate) fn expand(
 
         impl ::pinion_shell::WidgetView for #view_ident {
             type Renderer = #renderer;
-            fn initial_size() -> (u32, u32) { (#init_w, #init_h) }
+            fn initial_size_strategy() -> ::pinion_shell::SizeStrategy {
+                ::pinion_shell::SizeStrategy::Fixed { width: #init_w, height: #init_h }
+            }
         }
     })
 }

@@ -320,6 +320,15 @@ fn use_settings_persistence() -> Rc<PersistenceBootMarker> {
                             scale.set(state.font_scale);
                             name.set(state.display_name.clone());
                         });
+                        // R668 §5.38 — push the persisted font scale
+                        // into the new text_scale substrate so the
+                        // first paint already reflects the user's
+                        // saved a11y zoom. Mapping mirrors the
+                        // slider-driven path: slider value v →
+                        // text_scale 0.5 + v * 1.5.
+                        let target_scale =
+                            0.5_f32 + state.font_scale.clamp(0.0, 1.0) * 1.5_f32;
+                        pinion_core::text_scale::set_text_scale(target_scale);
                         // Push the hydrated name into the TextField's
                         // edit state so the visible field reflects
                         // the persisted value on first paint. (The
@@ -902,6 +911,16 @@ type RootState = (
 fn view(state: RootState, _frame: &Frame) -> Scene {
     let (field_state, caret_byte, nav, toggle_state, on, slider_state, slider_value) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
+    // R668 §5.38 — subscribe the view fn to the a11y text-scale
+    // signal so dragging the slider live-previews every
+    // `TextStyle::with_size_px` call in the subsequent paint walk.
+    // The `.get()` read enters the reactive scope; the subsequent
+    // `with_size_px` calls (inside both this view fn and the lifted
+    // widget-paint substrate modules) re-read the thread-local
+    // mirror per [[r668-text-scale-multiplier]]. The bound value
+    // itself is intentionally unused — only the subscribe side-
+    // effect matters.
+    let _scale_subscription = pinion_core::text_scale::use_text_scale().get();
     let nav_pane = view_nav_rail(&theme, &nav);
     let detail = view_detail_pane(
         &theme,
@@ -1125,6 +1144,20 @@ impl WidgetCore for SettingsPanelView {
                 )]
                 let v32 = v as f32;
                 use_font_scale().set(v32);
+                // R668 §5.38 — wire the slider into the new
+                // [`pinion_core::text_scale::use_text_scale`] substrate
+                // so dragging the slider live-previews the a11y
+                // text-scale multiplier across every paint site (every
+                // TextStyle::with_size_px call now multiplies by the
+                // thread-local mirror, and view fns subscribed to
+                // use_text_scale().get() re-run on the signal fire).
+                // Mapping: slider in [0.0, 1.0] → text_scale in
+                // [0.5, 2.0] (linear), the M3 a11y range covering
+                // 50 %–200 % zoom — large enough that the live
+                // preview is visually obvious yet still inside the
+                // 0.1..5.0 safety clamp.
+                let target_scale = 0.5_f32 + v32.clamp(0.0, 1.0) * 1.5_f32;
+                pinion_core::text_scale::use_text_scale().set(target_scale);
                 // Re-fire dark mode Signal to flush snapshot (same
                 // trick as nav_index above).
                 let dark = use_dark_mode();
@@ -1196,8 +1229,8 @@ impl WidgetA11y for SettingsPanelView {
 impl WidgetView for SettingsPanelView {
     type Renderer = SettingsPanelRenderer;
 
-    fn initial_size() -> (u32, u32) {
-        (WIN_W, WIN_H)
+    fn initial_size_strategy() -> pinion_shell::SizeStrategy {
+        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
     }
 }
 

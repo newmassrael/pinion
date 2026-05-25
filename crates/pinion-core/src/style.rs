@@ -1422,9 +1422,37 @@ impl TextStyle {
     }
 
     /// Builder: override the font size in CSS pixels.
+    ///
+    /// R668 §5.38 — multiplies `size` by the current
+    /// [`text_scale::current_text_scale`] thread-local so the
+    /// a11y / Material 3 user-driven text-scale setting cascades
+    /// through every paint site automatically (default scale = 1.0
+    /// produces identity multiplication, matching the pre-R668 pure
+    /// builder behaviour). The result is floored at `1` so a scale
+    /// of `0` or rounding down to zero never produces a zero-height
+    /// text the layout pass would reject.
+    ///
+    /// The lookup is non-subscribing — see [`crate::text_scale`] for
+    /// the reactive-subscription channel (`use_text_scale().get()`).
+    /// Bindings that want the view fn to re-run when the scale
+    /// changes call `use_text_scale().get()` once in their view fn;
+    /// the subscribe + this multiplier work together so every
+    /// `with_size_px` call inside the re-run produces the new size.
+    ///
+    /// [`text_scale::current_text_scale`]: crate::text_scale::current_text_scale
     #[must_use]
-    pub const fn with_size_px(mut self, size: u32) -> Self {
-        self.font_size_px = size;
+    pub fn with_size_px(mut self, size: u32) -> Self {
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "u32 font size + small f32 scale → u32 with explicit max(1) floor"
+        )]
+        {
+            let scale = crate::text_scale::current_text_scale();
+            let scaled = (size as f32 * scale).round() as u32;
+            self.font_size_px = scaled.max(1);
+        }
         self
     }
 
