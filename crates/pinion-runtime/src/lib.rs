@@ -40,7 +40,7 @@ pub use command::{
     BlockOnExecutor, BoxFuture, CommandExecutor, CommandTaskHandle, Executor, Handler,
     HandlerFuture, HandlerRegistry, IntentSink, VecSink,
 };
-pub use core_shell::{CoreShell, DispatchTail, StateChange};
+pub use core_shell::{CoreShell, DispatchTail, StateChange, DEFAULT_WINDOW};
 pub use focus::FocusManager;
 pub use frame_pacing::{clamp_frame_dt, MAX_FRAME_DT_SECS};
 pub use input::{rect_for_tag, InputRouter, Modifiers, PointerId, Touch, TouchPhase};

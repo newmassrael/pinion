@@ -12965,6 +12965,47 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R672 — R672 §5.35 §5.41 — per-window InputRouter foundation; closes the R670.B → R671 multi-window single-router race carry.
+
+**Changes**:
+- Atomic (0) substrate — `pinion_runtime::CoreShell.routers: HashMap<String, InputRouter>` keyed by canonical `WindowSpec::id` string replaces the single `router: InputRouter` field. New `pinion_runtime::DEFAULT_WINDOW: &str = "main"` constant marks the single-window / primary slot used by every pre-R672 caller that does not thread a window id. Constructor seeds the [`DEFAULT_WINDOW`] entry so single-window bindings + every existing test exerciser find a router immediately.
+- Atomic (0) per-window CoreShell input methods — `update_paint_scene_for_window` / `cursor_moved_for_window` / `cursor_left_for_window` / `pointer_down_for_window` / `pointer_up_for_window` / `pointer_cancel_for_window` / `touch_event_for_window` / `wheel_for_window` / `scroll_key_for_window` / `hover_target_for_window` / `captured_target_for_window` added (11 method pairs). Each lazy-creates the addressed window's router via `routers.entry(window_id.to_owned()).or_default()` and forwards through the matching `InputRouter` method against the binding-shared `Scene` state tree (only pointer state per-window; scene + cached_state stay binding-wide).
+- Atomic (0) backward-compat wrappers — the pre-R672 methods (`cursor_moved`, `pointer_down`, etc.) remain on `CoreShell` as thin wrappers that forward to `*_for_window(DEFAULT_WINDOW, ...)`. 200+ existing test sites + every single-window binding keep paying the original signatures; only multi-window callers (post-R670.B) thread the per-window variants.
+- Atomic (1) `pinion_shell::ShellCore` per-window method threading — `cursor_moved_for_window` / `cursor_left_for_window` / `mouse_pressed_for_window` / `mouse_released_for_window` / `touch_event_for_window` / `wheel_for_window` / `finalize_frame_for_window` / `drain_deferred_inputs_for_window` / `click_to_focus_for_window` / `handle_touch_for_window` (10 methods). Each forwards to the matching `CoreShell::*_for_window`. The pre-R672 methods are kept as wrappers (or removed when no caller remained — `handle_touch` / `click_to_focus` / `drain_deferred_inputs` private wrappers retired after the dispatch chain switched to `*_for_window`).
+- Atomic (1) `pinion_shell::AppShell::window_event` resolves winit `WindowId` to canonical `WindowSpec::id` via `self.windows.get(&window_id).map_or(DEFAULT_WINDOW, |s| s.spec_id)` + dispatches every pointer event arm through `cursor_moved_for_window` / `cursor_left_for_window` / `mouse_pressed_for_window` / `mouse_released_for_window` / `wheel_for_window` / `touch_event_for_window`. Per-window resolution is O(1) on the existing `windows: HashMap<WindowId, WindowSlot>` lookup.
+- Atomic (1) `AppShell::render_window` routes the finalize hand-off through `finalize_frame_for_window(spec_id, paint_scene, paint_layout)` so each window's per-slot router sees its own paint scene; cross-window paint cycles no longer overwrite each other's `last_paint_scene`. `dispatch_rpc_inner` drains deferred inputs through `drain_deferred_inputs_for_window(window_id.unwrap_or(DEFAULT_WINDOW), &inputs)` so `scene/click {window: "<id>"}` against any window resolves against the named window's last paint scene + pointer state.
+- Atomic (2) `pinion_tui::ShellCoreTui` left unchanged — terminal is structurally single-window, every `CoreShell` call keeps using the pre-R672 default-window wrappers which forward to the `DEFAULT_WINDOW` router. The R670.B / R671 atomic TUI substrate adds no per-window axis; `pinion-tui::shell::run` stdin RPC ingress + `drain_deferred_inputs` stay race-immune at one window.
+- Atomic (3) `tools/demos/hello_multi_window_r670b.py` step (5) reverted from `scene/invoke /external/send PointerEnter` to `scene/click {path: "main_btn"}` — the R671 carry workaround retired because the per-window InputRouter now resolves cross-window clicks deterministically. The demo is deterministic across 5 consecutive runs (no flakiness).
+- Atomic (3) `tools/demos/r672_multi_window_race_free.py` new dedicated demo (≥20 assertion). Section (A) scene/click race-free first verification (state Idle → Hover deterministic). Section (B) scene/click after forced inspector repaint (the canonical pre-R672 failure case — main click after inspector painted last → resolves to main_btn via per-window router). Section (C) `scene/click {window: "inspector"}` smoke (clicks against inspector's text-only scene do not corrupt main's SCXML). Section (D) per-window `scene/layout` distinct (R671 atomic 1 pin). Sections (E)+(F) cross-window structure pins (main carries main_btn, inspector carries inspector_tree, neither leaks).
+- Atomic (4) 12-demo regression sweep PASS — todomvc_r660 / double_click_r663 / todomvc_r664 / todomvc_r665 / todomvc_r666 / settings_panel_r667 / settings_panel_r668 / settings_panel_r669 / r670a_carry_clearance / hello_multi_window_r670b (R670.B scene/click retrofit) / r671_tree_view_inspector / r672_multi_window_race_free (new). All bit-identical / deterministic across consecutive invocations; the multi-window scene/click race documented through R670.B + R671 is structurally closed.
+
+
+
+**Verification**:
+- cargo test --workspace: 3449 passed / 0 failed. Identical count to R671 — substrate refactor is additive (per-window variants), backward-compat wrappers keep every pre-R672 test passing unchanged.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean. Doc-markdown + collapsible_match + or_insert_with → or_default chains fixed inline during the refactor.
+- 12-demo regression sweep PASS bit-identical: todomvc_r660 (6.60s) / double_click_r663 (1.94s) / todomvc_r664 (5.74s) / todomvc_r665 (13.09s) / todomvc_r666 (6.94s) / settings_panel_r667 (2.07s) / settings_panel_r668 (0.87s) / settings_panel_r669 (2.50s) / r670a_carry_clearance (1.53s) / hello_multi_window_r670b (2.57s) / r671_tree_view_inspector (2.48s) / r672_multi_window_race_free (2.93s).
+- Race-free verification — hello_multi_window_r670b.py step (5) uses scene/click {path:'main_btn'} directly (the pre-R672 carry workaround `scene/invoke PointerEnter` is removed); 5/5 PASS in a stress-run (pre-R672 was 0/5 PASS in the same terminal environment under cross-window paint pressure).
+- r672_multi_window_race_free.py section (B) specifically tests the canonical pre-R672 failure case — scene/click {window:'main'} *after* inspector repaints — and PASSes deterministically. 5/5 PASS across consecutive invocations.
+- Honest LOC: ~+600 net. pinion-runtime/src/core_shell.rs (+260 LOC: routers HashMap + 11 _for_window variants + DEFAULT_WINDOW constant); pinion-shell/src/substrate.rs (+180 LOC: 10 ShellCore _for_window variants + drain threading); pinion-shell/src/app.rs (+30 LOC: window_event spec_id resolution + render_window finalize routing); tools/demos/r672_multi_window_race_free.py (+200 LOC new demo).
+
+
+
+**Impact**: §5.35, §5.41, §5.16, §5.49
+
+
+**Carry forward**:
+- R673+ candidate — TreeView keyboard navigation (Arrow Up/Down/Left/Right + Home/End + roving-tabindex active-descendant + Space to toggle expanded). R671's hello-multi-window inspector is read-only; 2nd consumer (file-tree editor, property grid, `DevTools` widget tree) surfaces the substrate-incompleteness signal that lifts kbd nav.
+- R673+ candidate — Phase B widget catalog expansion (Menu / Dialog / Toolbar / Tabs / Table / Dock / Accordion). 30+ widget Phase B mass build-out; current catalog ~12 widgets.
+- R700+ candidate — pinion-native `DevTools` / `Inspector` first dogfood. Multi-window per-spec dispatch is now race-free (R672) + TreeView substrate exists (R671); the remaining Phase B mass is widget catalog + property-grid substrate. First framework self-hosting milestone.
+- R1000+ — Phase C entry: §2 #4 immediate-mode game loop substrate + `ImmediateModeNode` primitive + per-Container subtree retained↔immediate switch.
+- Permanent carry — pinion-tui multi-window unsupported (terminal 1 process = 1 alternate-screen = 1 window). pinion-tui's `WidgetView::view_for_window` stays at default-forward-to-view.
+- Permanent carry — SCE-004 (Forge codegen serde derive) upstream RFC + SCE-002 (consumer-injectable derive list).
+- Permanent carry — vello/wgpu environment dep for headless PINION_SCREENSHOT; Figma API token.
+- Honest carry — R672 per-window InputRouter does *not* yet address per-window animation tick. Multi-window animations share the same `tick_animations` cadence; a real per-spec timing requirement (different refresh rates per monitor, etc.) surfaces a separate substrate axis. Cross-window cursor crossings still go through `CursorLeft` / `CursorEntered` from winit so the per-window cursors map is correctly cleaned up; no carry there.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

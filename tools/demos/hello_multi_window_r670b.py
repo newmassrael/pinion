@@ -128,21 +128,17 @@ def body() -> None:
             "fresh-boot inspector must not yet show Hover"
         )
 
-        # ── (5) Main button state flip → inspector mirrors ──────────
-        # R670.B used `scene/click {path: "main_btn"}` which goes
-        # through the InputRouter — single ShellCore + multi-window
-        # makes that path inherently racy (the last-painted window
-        # owns the InputRouter's `last_paint_scene`, so a click
-        # scoped to a non-last-painted window can miss). R671 swaps
-        # to `scene/invoke /external/send PointerEnter` which
-        # bypasses the InputRouter entirely — the SCXML transition
-        # Idle → Hover fires deterministically. Per-window
-        # InputRouter is the canonical future fix (carry through
-        # R672+ Phase B widget catalog rounds); for now the
-        # `scene/invoke` arc is the race-immune path AI clients
-        # already use in production (the [[ai-first-rpc-introspection-obligation]]
-        # canonical scope).
-        tf.invoke("/external/send", "PointerEnter")
+        # ── (5) Click main button → state flips → inspector mirrors ─
+        # R672 §5.35 §5.41 — per-window InputRouter closes the
+        # multi-window single-router race that made this assertion
+        # flaky in R670.B → R671 (the inspector window's paint cycle
+        # would overwrite the binding-wide `last_paint_scene` and the
+        # `scene/click {window: "main"}` hit-test would miss). With
+        # the per-window routers `dispatch_rpc_for_window` resolves
+        # the addressed window's last paint scene before drain →
+        # hit-test against main's tree → main_btn hit
+        # deterministically.
+        tf.click(path="main_btn")
         # Give the shell a paint cycle to update both windows' caches.
         time.sleep(0.3)
 

@@ -596,6 +596,10 @@ impl<V: WidgetView> AppShell<V> {
         // current widget catalog; the next big consumer is the
         // DevTools/Inspector axis which already buys this cost).
         let paint_layout = pinion_rpc::build_layout_node(&paint_scene, "/0");
+        let spec_id_for_finalize = self
+            .windows
+            .get(&window_id)
+            .map(|s| s.spec_id);
         if let Some(slot) = self.windows.get_mut(&window_id) {
             slot.last_paint_layout = Some(paint_layout.clone());
         }
@@ -604,7 +608,15 @@ impl<V: WidgetView> AppShell<V> {
         // refreshes the input router + intent drain in one method
         // and stores the layout on `ShellCore.last_paint_layout` as
         // the primary mirror.
-        self.core.finalize_frame(paint_scene, paint_layout);
+        //
+        // R672 §5.35 §5.41 — route through `finalize_frame_for_window`
+        // so the addressed window's [`pinion_runtime::InputRouter`]
+        // (not the binding-wide single router pre-R672) sees the
+        // paint scene. Each window's pointer state stays isolated;
+        // cross-window paint cycles no longer flip-flop hover state.
+        let target_window = spec_id_for_finalize.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        self.core
+            .finalize_frame_for_window(target_window, paint_scene, paint_layout);
     }
 
     /// R670.B §5.16 — per-window IME candidate publish helper.
@@ -971,6 +983,19 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // window; forwarding to the wrong adapter would leak winit
         // event coordinates between windows.
         self.forward_to_accesskit(window_id, &event);
+        // R672 §5.35 §5.41 — resolve winit WindowId to canonical
+        // [`crate::WindowSpec::id`] before dispatching pointer events
+        // so each window's [`pinion_runtime::InputRouter`] handles
+        // its own cursor + hover state. Slot lookup is O(1) on the
+        // HashMap; spec_id falls back to
+        // [`pinion_runtime::DEFAULT_WINDOW`] when the WindowId is not
+        // tracked (a Resumed event that has not landed yet — winit
+        // can emit some events between AppShell::resumed creating the
+        // window and the slot being inserted into the map).
+        let spec_id = self
+            .windows
+            .get(&window_id)
+            .map_or(pinion_runtime::DEFAULT_WINDOW, |s| s.spec_id);
         match event {
             WindowEvent::CloseRequested => {
                 eprintln!(
@@ -987,25 +1012,29 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 // R51.38 §5.35 — winit mouse events are single-source
                 // on every desktop platform pinion supports; the
                 // shell threads `PointerId::MOUSE` unconditionally.
-                self.core
-                    .cursor_moved(PointerId::MOUSE, position.x, position.y);
+                self.core.cursor_moved_for_window(
+                    spec_id,
+                    PointerId::MOUSE,
+                    position.x,
+                    position.y,
+                );
             }
             WindowEvent::CursorLeft { .. } => {
-                self.core.cursor_left(PointerId::MOUSE);
+                self.core.cursor_left_for_window(spec_id, PointerId::MOUSE);
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
             } => {
-                self.core.mouse_pressed(PointerId::MOUSE);
+                self.core.mouse_pressed_for_window(spec_id, PointerId::MOUSE);
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
             } => {
-                self.core.mouse_released(PointerId::MOUSE);
+                self.core.mouse_released_for_window(spec_id, PointerId::MOUSE);
             }
             // R56.2.e §5.13 §5.22 — middle-mouse-button press routes
             // to `WidgetView::apply_middle_click` (the canonical
@@ -1037,14 +1066,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // matching pinion-native [`WheelDelta`] and forward.
             WindowEvent::MouseWheel { delta, .. } => {
                 let pinion_delta = winit_wheel_to_pinion(delta);
-                self.core.wheel(PointerId::MOUSE, pinion_delta);
+                self.core
+                    .wheel_for_window(spec_id, PointerId::MOUSE, pinion_delta);
             }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
             // R51.108 §5.41 — convert at the winit boundary so the
             // substrate sees only the abstract `pinion_runtime::Touch`.
             WindowEvent::Touch(touch) => {
-                self.core.touch_event(winit_touch_to_pinion(touch));
+                self.core
+                    .touch_event_for_window(spec_id, winit_touch_to_pinion(touch));
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 // R51.53 §5.39 — winit emits `KeyEvent` without

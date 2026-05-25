@@ -67,6 +67,7 @@
 //! `Fn(state, &Frame) -> Scene` per §6.3 R51.27 `dry_run` invariant.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use pinion_core::event::WheelDelta;
@@ -116,7 +117,28 @@ use crate::intent_queue::{walk_scene_and_drain, IntentQueue};
 pub struct CoreShell<V: WidgetCore> {
     scene: Scene,
     cached_state: V::State,
-    router: InputRouter,
+    /// R672 §5.35 §5.41 — per-window [`InputRouter`] map keyed by
+    /// canonical `WindowSpec::id` string. Single-window bindings only
+    /// ever populate the [`DEFAULT_WINDOW`] entry; multi-window
+    /// bindings create one per spec on first input dispatch.
+    ///
+    /// Pre-R672 the substrate carried one `router: InputRouter` and
+    /// every paint cycle of every window overwrote its
+    /// `last_paint_scene` + fired `refresh_hover` against the
+    /// just-painted tree. With multi-window that produced two
+    /// race-class regressions: (1) cross-window
+    ///   `scene/click {window: "<id>"}` hit-tested against whichever
+    ///   window painted most recently; (2) per-paint
+    ///   `refresh_hover` walked the foreign window's scene at the
+    ///   pointer's last position, flip-flopping `PointerEnter` /
+    ///   `PointerLeave` events across windows. Per-window routers
+    ///   scope all pointer state (`cursors`, `hover_targets`,
+    ///   `captured_targets`, `last_paint_scene`) to one window so
+    ///   neither race exists structurally.
+    ///
+    /// `[[multi-window-input-router-race]]` documents the R670.B →
+    /// R671 carry; R672 closes the foundation.
+    routers: HashMap<String, InputRouter>,
     intent_queue: IntentQueue,
     /// R51.142 §5.28 — root reactive scope for this widget binding.
     ///
@@ -311,6 +333,16 @@ impl<V: WidgetCore> Default for CoreShell<V> {
     }
 }
 
+/// R672 §5.35 §5.41 — canonical single-window / primary
+/// `WindowSpec::id` used by [`CoreShell`] when callers do not supply
+/// an explicit window id. Single-window bindings (every example
+/// before R670.B's `hello-multi-window`) populate exactly this
+/// router slot; multi-window bindings address additional slots by
+/// the secondary `WindowSpec::id` values. Mirrors
+/// `pinion_shell::WindowSpec::main`'s `&'static str` literal so the
+/// surface + the substrate share one canonical name.
+pub const DEFAULT_WINDOW: &str = "main";
+
 impl<V: WidgetCore> CoreShell<V> {
     /// R51.122 §5.41 — construct a fresh substrate around the
     /// binding's [`WidgetCore::create_external`] SCXML widget.
@@ -393,10 +425,16 @@ impl<V: WidgetCore> CoreShell<V> {
             })
         });
 
+        // R672 §5.35 §5.41 — seed the routers map with the
+        // [`DEFAULT_WINDOW`] entry so single-window bindings + every
+        // pre-R672 test exerciser (the routerless-window-id call
+        // surface) find a router immediately without lazy-init.
+        let mut routers: HashMap<String, InputRouter> = HashMap::new();
+        routers.insert(DEFAULT_WINDOW.to_owned(), InputRouter::new());
         Self {
             scene,
             cached_state,
-            router: InputRouter::new(),
+            routers,
             intent_queue: IntentQueue::new(),
             root_owner,
             frame_signal,
@@ -674,8 +712,35 @@ impl<V: WidgetCore> CoreShell<V> {
     /// [`InputRouter`] so the next pointer event resolves against the
     /// visible layout. Both backends call this once per paint commit
     /// (initial + post-state-change + resize repaint).
+    ///
+    /// R672 §5.35 §5.41 — single-window wrapper around
+    /// [`Self::update_paint_scene_for_window`]. Single-window
+    /// bindings + every pre-R672 test surface (single
+    /// [`InputRouter`] held the binding-wide last-paint-scene)
+    /// keep paying this entry; multi-window bindings dispatch to
+    /// [`Self::update_paint_scene_for_window`] with the addressed
+    /// `WindowSpec::id`.
     pub fn update_paint_scene(&mut self, paint_scene: Scene) {
-        self.router.update_paint_scene(paint_scene, &mut self.scene);
+        self.update_paint_scene_for_window(DEFAULT_WINDOW, paint_scene);
+    }
+
+    /// R672 §5.35 §5.41 — per-window paint-scene hand-off. Looks
+    /// up (or lazy-creates) the addressed window's [`InputRouter`]
+    /// and forwards through [`InputRouter::update_paint_scene`] so
+    /// only that window's pointer state walks `refresh_hover`
+    /// against the new scene. Foreign windows' pointer state stays
+    /// pinned to their own last-paint scenes — no cross-window
+    /// flip-flop.
+    pub fn update_paint_scene_for_window(
+        &mut self,
+        window_id: &str,
+        paint_scene: Scene,
+    ) {
+        let Self { scene, routers, .. } = self;
+        let router = routers
+            .entry(window_id.to_owned())
+            .or_default();
+        router.update_paint_scene(paint_scene, scene);
     }
 
     /// R51.122 §5.41 — read-only proxy to the underlying
@@ -684,9 +749,27 @@ impl<V: WidgetCore> CoreShell<V> {
     /// (the Vello shell's W3C HTML-style "press on focusable widget
     /// focuses it; press on background blurs" rule), without
     /// exposing the router's mutable interior.
+    ///
+    /// R672 §5.35 §5.41 — single-window wrapper that reads the
+    /// [`DEFAULT_WINDOW`] router. Multi-window callers use
+    /// [`Self::hover_target_for_window`].
     #[must_use]
     pub fn hover_target(&self, pid: PointerId) -> Option<&str> {
-        self.router.hover_target(pid)
+        self.hover_target_for_window(DEFAULT_WINDOW, pid)
+    }
+
+    /// R672 §5.35 §5.41 — per-window read of the
+    /// [`InputRouter::hover_target`] for the named window. Returns
+    /// `None` when the window has never been painted (no router
+    /// entry yet) — single-window default callers can use
+    /// [`Self::hover_target`] unchanged.
+    #[must_use]
+    pub fn hover_target_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<&str> {
+        self.routers.get(window_id).and_then(|r| r.hover_target(pid))
     }
 
     /// R51.122 §5.41 — drain the post-dispatch bookkeeping artifacts
@@ -860,21 +943,59 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `winit` → pixel conversion happens at the backend boundary).
     /// Forwards through the [`InputRouter`] then drains the dispatch
     /// tail.
+    ///
+    /// R672 §5.35 §5.41 — single-window wrapper that dispatches via
+    /// the [`DEFAULT_WINDOW`] router. Multi-window callers use
+    /// [`Self::cursor_moved_for_window`].
     pub fn cursor_moved(
         &mut self,
         pid: PointerId,
         x: f64,
         y: f64,
     ) -> DispatchTail<V::State> {
-        self.router.cursor_moved(pid, x, y, &mut self.scene);
+        self.cursor_moved_for_window(DEFAULT_WINDOW, pid, x, y)
+    }
+
+    /// R672 §5.35 §5.41 — per-window pointer cursor-move dispatch.
+    /// Looks up (or lazy-creates) the addressed window's router and
+    /// forwards through [`InputRouter::cursor_moved`]; only that
+    /// router's `hover_target` / `cursors` maps mutate.
+    pub fn cursor_moved_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        x: f64,
+        y: f64,
+    ) -> DispatchTail<V::State> {
+        let Self { scene, routers, .. } = self;
+        let router = routers
+            .entry(window_id.to_owned())
+            .or_default();
+        router.cursor_moved(pid, x, y, scene);
         self.tail()
     }
 
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's
     /// `CursorLeft`). Drops the cursor + rolls back any in-flight
     /// `Hover`.
+    ///
+    /// R672 §5.35 §5.41 — single-window wrapper around
+    /// [`Self::cursor_left_for_window`].
     pub fn cursor_left(&mut self, pid: PointerId) -> DispatchTail<V::State> {
-        self.router.cursor_left(pid, &mut self.scene);
+        self.cursor_left_for_window(DEFAULT_WINDOW, pid)
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::cursor_left`].
+    pub fn cursor_left_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> DispatchTail<V::State> {
+        let Self { scene, routers, .. } = self;
+        let router = routers
+            .entry(window_id.to_owned())
+            .or_default();
+        router.cursor_left(pid, scene);
         self.tail()
     }
 
@@ -882,16 +1003,48 @@ impl<V: WidgetCore> CoreShell<V> {
     /// start). Dispatches `PointerDown` to the current hover target
     /// then drains the dispatch tail. The Vello shell follows up with
     /// its `click_to_focus` step; the substrate stays focus-agnostic.
+    ///
+    /// R672 §5.35 §5.41 — single-window wrapper around
+    /// [`Self::pointer_down_for_window`].
     pub fn pointer_down(&mut self, pid: PointerId) -> DispatchTail<V::State> {
-        self.router.pointer_down(pid, &mut self.scene);
+        self.pointer_down_for_window(DEFAULT_WINDOW, pid)
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::pointer_down`].
+    pub fn pointer_down_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> DispatchTail<V::State> {
+        let Self { scene, routers, .. } = self;
+        let router = routers
+            .entry(window_id.to_owned())
+            .or_default();
+        router.pointer_down(pid, scene);
         self.tail()
     }
 
     /// R51.122 §5.41 — pointer release (mouse left button up / touch
     /// end). Dispatches `PointerUp` to the current hover target then
     /// drains the dispatch tail.
+    ///
+    /// R672 §5.35 §5.41 — single-window wrapper around
+    /// [`Self::pointer_up_for_window`].
     pub fn pointer_up(&mut self, pid: PointerId) -> DispatchTail<V::State> {
-        self.router.pointer_up(pid, &mut self.scene);
+        self.pointer_up_for_window(DEFAULT_WINDOW, pid)
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::pointer_up`].
+    pub fn pointer_up_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> DispatchTail<V::State> {
+        let Self { scene, routers, .. } = self;
+        let router = routers
+            .entry(window_id.to_owned())
+            .or_default();
+        router.pointer_up(pid, scene);
         self.tail()
     }
 
@@ -900,8 +1053,24 @@ impl<V: WidgetCore> CoreShell<V> {
     /// Dispatches `PointerCancel` (not `PointerUp`) so the widget
     /// statechart routes `Pressed → Idle` without raising the
     /// activate event; then drains the dispatch tail.
+    ///
+    /// R672 §5.35 §5.41 — single-window wrapper around
+    /// [`Self::pointer_cancel_for_window`].
     pub fn pointer_cancel(&mut self, pid: PointerId) -> DispatchTail<V::State> {
-        self.router.pointer_cancel(pid, &mut self.scene);
+        self.pointer_cancel_for_window(DEFAULT_WINDOW, pid)
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::pointer_cancel`].
+    pub fn pointer_cancel_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> DispatchTail<V::State> {
+        let Self { scene, routers, .. } = self;
+        let router = routers
+            .entry(window_id.to_owned())
+            .or_default();
+        router.pointer_cancel(pid, scene);
         self.tail()
     }
 
@@ -933,22 +1102,38 @@ impl<V: WidgetCore> CoreShell<V> {
     /// explicit. Cross-crate consumers wrap [`Touch`] in their own
     /// adapters that fall through unknown phases as no-ops.
     pub fn touch_event(&mut self, touch: Touch) -> DispatchTail<V::State> {
+        self.touch_event_for_window(DEFAULT_WINDOW, touch)
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::touch_event`].
+    /// All four phase arms route through the addressed window's
+    /// router so multi-touch on a secondary window does not bleed
+    /// into the primary's pointer state.
+    pub fn touch_event_for_window(
+        &mut self,
+        window_id: &str,
+        touch: Touch,
+    ) -> DispatchTail<V::State> {
         let pid = PointerId::touch(touch.id);
+        let Self { scene, routers, .. } = self;
+        let router = routers
+            .entry(window_id.to_owned())
+            .or_default();
         match touch.phase {
             TouchPhase::Started => {
-                self.router.cursor_moved(pid, touch.x, touch.y, &mut self.scene);
-                self.router.pointer_down(pid, &mut self.scene);
+                router.cursor_moved(pid, touch.x, touch.y, scene);
+                router.pointer_down(pid, scene);
             }
             TouchPhase::Moved => {
-                self.router.cursor_moved(pid, touch.x, touch.y, &mut self.scene);
+                router.cursor_moved(pid, touch.x, touch.y, scene);
             }
             TouchPhase::Ended => {
-                self.router.pointer_up(pid, &mut self.scene);
-                self.router.cursor_left(pid, &mut self.scene);
+                router.pointer_up(pid, scene);
+                router.cursor_left(pid, scene);
             }
             TouchPhase::Cancelled => {
-                self.router.pointer_cancel(pid, &mut self.scene);
-                self.router.cursor_left(pid, &mut self.scene);
+                router.pointer_cancel(pid, scene);
+                router.cursor_left(pid, scene);
             }
         }
         self.tail()
@@ -981,7 +1166,21 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
         delta: WheelDelta,
     ) -> (DispatchTail<V::State>, bool) {
-        let dispatched = self.router.wheel(pid, delta);
+        self.wheel_for_window(DEFAULT_WINDOW, pid, delta)
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::wheel`].
+    pub fn wheel_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        delta: WheelDelta,
+    ) -> (DispatchTail<V::State>, bool) {
+        let router = self
+            .routers
+            .entry(window_id.to_owned())
+            .or_default();
+        let dispatched = router.wheel(pid, delta);
         (self.tail(), dispatched)
     }
 
@@ -1009,7 +1208,21 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
         key: &str,
     ) -> (DispatchTail<V::State>, bool) {
-        let dispatched = self.router.scroll_key(pid, key);
+        self.scroll_key_for_window(DEFAULT_WINDOW, pid, key)
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::scroll_key`].
+    pub fn scroll_key_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        key: &str,
+    ) -> (DispatchTail<V::State>, bool) {
+        let router = self
+            .routers
+            .entry(window_id.to_owned())
+            .or_default();
+        let dispatched = router.scroll_key(pid, key);
         (self.tail(), dispatched)
     }
 }

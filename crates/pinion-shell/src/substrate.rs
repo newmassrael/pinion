@@ -473,12 +473,17 @@ impl<V: WidgetView> ShellCore<V> {
     /// the Vello-only `click_to_focus` follow-up for the press phase
     /// (`Started`) so a tap on a tagged focusable widget aliases
     /// `FocusManager::focus_set`.
-    fn handle_touch(&mut self, touch: Touch) -> DispatchTail<V::State> {
+    /// R672 §5.35 §5.41 — per-window touch handler.
+    fn handle_touch_for_window(
+        &mut self,
+        window_id: &str,
+        touch: Touch,
+    ) -> DispatchTail<V::State> {
         let phase = touch.phase;
         let pid = PointerId::touch(touch.id);
-        let tail = self.core.touch_event(touch);
+        let tail = self.core.touch_event_for_window(window_id, touch);
         if matches!(phase, TouchPhase::Started) {
-            self.click_to_focus(pid);
+            self.click_to_focus_for_window(window_id, pid);
         }
         tail
     }
@@ -691,15 +696,41 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`CoreShell::cursor_moved`] (which performs the router walk +
     /// post-dispatch tail), then routes the tail through
     /// [`Self::handle_tail`].
+    ///
+    /// R672 §5.35 — single-window wrapper around
+    /// [`Self::cursor_moved_for_window`].
     pub fn cursor_moved(&mut self, pid: PointerId, x: f64, y: f64) {
-        let tail = self.core.cursor_moved(pid, x, y);
+        self.cursor_moved_for_window(pinion_runtime::DEFAULT_WINDOW, pid, x, y);
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::cursor_moved`].
+    /// `AppShell::window_event` dispatches winit `CursorMoved` here
+    /// with the resolved [`crate::WindowSpec::id`] so the addressed
+    /// window's [`pinion_runtime::InputRouter`] handles the
+    /// cursor + `refresh_hover` walk independently of other windows.
+    pub fn cursor_moved_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        x: f64,
+        y: f64,
+    ) {
+        let tail = self.core.cursor_moved_for_window(window_id, pid, x, y);
         self.handle_tail(&tail);
     }
 
     /// R51.80 §5.35 — winit `CursorLeft` dispatch decoupled from
     /// winit at the [`ShellCore`] surface.
+    ///
+    /// R672 §5.35 — single-window wrapper around
+    /// [`Self::cursor_left_for_window`].
     pub fn cursor_left(&mut self, pid: PointerId) {
-        let tail = self.core.cursor_left(pid);
+        self.cursor_left_for_window(pinion_runtime::DEFAULT_WINDOW, pid);
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::cursor_left`].
+    pub fn cursor_left_for_window(&mut self, window_id: &str, pid: PointerId) {
+        let tail = self.core.cursor_left_for_window(window_id, pid);
         self.handle_tail(&tail);
     }
 
@@ -707,15 +738,36 @@ impl<V: WidgetView> ShellCore<V> {
     /// Combines [`CoreShell::pointer_down`] with the §5.39
     /// click-to-focus rule (the same path
     /// [`TouchPhase::Started`] runs after a synthetic cursor move).
+    ///
+    /// R672 §5.35 — single-window wrapper around
+    /// [`Self::mouse_pressed_for_window`].
     pub fn mouse_pressed(&mut self, pid: PointerId) {
-        let tail = self.core.pointer_down(pid);
-        self.click_to_focus(pid);
+        self.mouse_pressed_for_window(pinion_runtime::DEFAULT_WINDOW, pid);
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::mouse_pressed`].
+    /// `click_to_focus_for_window` reads the addressed window's
+    /// `hover_target` so focus targets the right widget on the right
+    /// window — multi-window bindings without this fix would focus
+    /// the *binding-wide* hover target (whichever window the cursor
+    /// last hovered).
+    pub fn mouse_pressed_for_window(&mut self, window_id: &str, pid: PointerId) {
+        let tail = self.core.pointer_down_for_window(window_id, pid);
+        self.click_to_focus_for_window(window_id, pid);
         self.handle_tail(&tail);
     }
 
     /// R51.80 §5.35 — winit `MouseInput { Released, Left }` dispatch.
+    ///
+    /// R672 §5.35 — single-window wrapper around
+    /// [`Self::mouse_released_for_window`].
     pub fn mouse_released(&mut self, pid: PointerId) {
-        let tail = self.core.pointer_up(pid);
+        self.mouse_released_for_window(pinion_runtime::DEFAULT_WINDOW, pid);
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::mouse_released`].
+    pub fn mouse_released_for_window(&mut self, window_id: &str, pid: PointerId) {
+        let tail = self.core.pointer_up_for_window(window_id, pid);
         self.handle_tail(&tail);
     }
 
@@ -727,8 +779,16 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`Self::handle_touch`] (which calls [`CoreShell::touch_event`]
     /// plus the Vello-only `click_to_focus` follow-up on the press
     /// phase) then routes the dispatch tail.
+    ///
+    /// R672 §5.35 — single-window wrapper around
+    /// [`Self::touch_event_for_window`].
     pub fn touch_event(&mut self, touch: Touch) {
-        let tail = self.handle_touch(touch);
+        self.touch_event_for_window(pinion_runtime::DEFAULT_WINDOW, touch);
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::touch_event`].
+    pub fn touch_event_for_window(&mut self, window_id: &str, touch: Touch) {
+        let tail = self.handle_touch_for_window(window_id, touch);
         self.handle_tail(&tail);
     }
 
@@ -751,7 +811,17 @@ impl<V: WidgetView> ShellCore<V> {
     /// wheel event over a non-scrollable region cannot regress the
     /// idle-frame-skipping the R51.147 substrate guarantees.
     pub fn wheel(&mut self, pid: PointerId, delta: WheelDelta) {
-        let (tail, dispatched) = self.core.wheel(pid, delta);
+        self.wheel_for_window(pinion_runtime::DEFAULT_WINDOW, pid, delta);
+    }
+
+    /// R672 §5.35 §5.41 — per-window variant of [`Self::wheel`].
+    pub fn wheel_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        delta: WheelDelta,
+    ) {
+        let (tail, dispatched) = self.core.wheel_for_window(window_id, pid, delta);
         if dispatched {
             self.request_redraw();
         }
@@ -765,7 +835,19 @@ impl<V: WidgetView> ShellCore<V> {
     /// fires under its normal post-frame redraw rules. Called once
     /// per `dispatch_rpc` after the dispatcher's `&mut scene` borrow
     /// releases.
-    fn drain_deferred_inputs(&mut self, inputs: &[DeferredInput]) {
+    /// R672 §5.35 §5.41 §5.49 — per-window deferred-input drain.
+    /// Routes every replayed input
+    /// through the addressed window's [`pinion_runtime::InputRouter`]
+    /// so `scene/click {window: "<id>"}` against any window resolves
+    /// against the *named* window's last paint scene + pointer
+    /// state. Pre-R672 every drained replay went through the
+    /// binding-wide router → `scene/click` against a non-last-painted
+    /// window had a race condition on `last_paint_scene`.
+    fn drain_deferred_inputs_for_window(
+        &mut self,
+        window_id: &str,
+        inputs: &[DeferredInput],
+    ) {
         // `DeferredInput` is `non_exhaustive`; the wildcard arm
         // covers future variants (key, cursor_only, etc.) silently
         // no-op against this drain until a follow-up round extends
@@ -773,13 +855,13 @@ impl<V: WidgetView> ShellCore<V> {
         for input in inputs {
             match *input {
                 DeferredInput::Wheel { x, y, delta } => {
-                    self.cursor_moved(PointerId::MOUSE, x, y);
-                    self.wheel(PointerId::MOUSE, delta);
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.wheel_for_window(window_id, PointerId::MOUSE, delta);
                 }
                 DeferredInput::Click { x, y } => {
-                    self.cursor_moved(PointerId::MOUSE, x, y);
-                    self.mouse_pressed(PointerId::MOUSE);
-                    self.mouse_released(PointerId::MOUSE);
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
+                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
                 }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate
@@ -789,14 +871,14 @@ impl<V: WidgetView> ShellCore<V> {
                 // by counting `mouse_pressed` calls within the same
                 // cursor-frozen window.
                 DeferredInput::DoubleClick { x, y } => {
-                    self.cursor_moved(PointerId::MOUSE, x, y);
-                    self.mouse_pressed(PointerId::MOUSE);
-                    self.mouse_released(PointerId::MOUSE);
-                    self.mouse_pressed(PointerId::MOUSE);
-                    self.mouse_released(PointerId::MOUSE);
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
+                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
+                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
                 }
                 DeferredInput::Key { x, y, ref key } => {
-                    self.cursor_moved(PointerId::MOUSE, x, y);
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.handle_named_key(key);
                 }
                 // R666 §5.37 — `scene/key` single-codepoint arc. The
@@ -812,7 +894,7 @@ impl<V: WidgetView> ShellCore<V> {
                     y,
                     ref character,
                 } => {
-                    self.cursor_moved(PointerId::MOUSE, x, y);
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.handle_character_key(character);
                 }
                 // R660 §5.49 — `scene/drag` mirror: press at `from`,
@@ -831,17 +913,17 @@ impl<V: WidgetView> ShellCore<V> {
                     to_y,
                     steps,
                 } => {
-                    self.cursor_moved(PointerId::MOUSE, from_x, from_y);
-                    self.mouse_pressed(PointerId::MOUSE);
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, from_x, from_y);
+                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
                     if steps > 0 {
                         for step in 1..=steps {
                             let t = f64::from(step) / f64::from(steps);
                             let x = from_x + (to_x - from_x) * t;
                             let y = from_y + (to_y - from_y) * t;
-                            self.cursor_moved(PointerId::MOUSE, x, y);
+                            self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                         }
                     }
-                    self.mouse_released(PointerId::MOUSE);
+                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
                 }
                 _ => {}
             }
@@ -1090,8 +1172,30 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`Self::dispatch_rpc_for_window`] callers thread the per-slot
     /// layout instead.
     pub fn finalize_frame(&mut self, paint_scene: Scene, paint_layout: LayoutNode) {
+        self.finalize_frame_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            paint_scene,
+            paint_layout,
+        );
+    }
+
+    /// R672 §5.12 §5.35 §5.41 — per-window variant of
+    /// [`Self::finalize_frame`]. `AppShell::render_window` calls this
+    /// with the resolved [`crate::WindowSpec::id`] so the addressed
+    /// window's per-slot [`pinion_runtime::InputRouter`] sees the
+    /// paint scene (cross-window paint never overwrites another
+    /// window's `last_paint_scene`). The substrate's
+    /// `last_paint_layout` mirror is updated regardless — it is the
+    /// primary fallback for single-window dispatch paths that do not
+    /// thread a window id (preserved for backward compat).
+    pub fn finalize_frame_for_window(
+        &mut self,
+        window_id: &str,
+        paint_scene: Scene,
+        paint_layout: LayoutNode,
+    ) {
         self.last_paint_layout = Some(paint_layout);
-        self.core.update_paint_scene(paint_scene);
+        self.core.update_paint_scene_for_window(window_id, paint_scene);
         let tail = self.core.tail();
         self.handle_tail(&tail);
     }
@@ -1112,9 +1216,19 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`External::on_focus_change`]. The `TextField` statechart
     /// (R56.1.a) consumes this hook to drive its Focus / Blur SCXML
     /// events and sync the [`CaretBlink`] enabled gate (R56.1.c).
-    fn click_to_focus(&mut self, pid: PointerId) {
+    /// R672 §5.35 §5.41 — per-window click-to-focus.
+    /// Reads the addressed window's `hover_target` so focus targets
+    /// the right widget — pre-R672 the binding-wide
+    /// [`CoreShell::hover_target`] returned whichever window was
+    /// last-painted's hover target, making multi-window
+    /// click-to-focus pick the wrong widget across windows.
+    fn click_to_focus_for_window(&mut self, window_id: &str, pid: PointerId) {
         let focus_before = self.focus.focused().map(str::to_owned);
-        if let Some(target) = self.core.hover_target(pid).map(str::to_owned) {
+        if let Some(target) = self
+            .core
+            .hover_target_for_window(window_id, pid)
+            .map(str::to_owned)
+        {
             if !self.focus.focus_set(&target) {
                 // Tagged but non-focusable (decoration) — leave focus
                 // unchanged. The W3C HTML convention says only
@@ -1371,7 +1485,17 @@ impl<V: WidgetView> ShellCore<V> {
         // R51.195 §5.49 §5.45 — drain the deferred-input inbox.
         // `&mut scene` is released here, so calling back into
         // `ShellCore` is legal again.
-        self.drain_deferred_inputs(&deferred_inputs);
+        //
+        // R672 §5.35 §5.41 §5.49 — when the dispatch is scoped to a
+        // specific window (`dispatch_rpc_for_window` callers), the
+        // drain routes through the addressed window's
+        // [`pinion_runtime::InputRouter`] so `scene/click` hit-tests
+        // against the named window's last paint scene. The single-
+        // window path passes `None` + falls back to the
+        // [`pinion_runtime::DEFAULT_WINDOW`] router exactly like
+        // pre-R672 callers.
+        let drain_window = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        self.drain_deferred_inputs_for_window(drain_window, &deferred_inputs);
         let tail = self.core.tail();
         self.handle_tail(&tail);
         // R51.73 §5.40 — `focus/set` from the AI client must trigger
