@@ -20167,6 +20167,70 @@
         "WIN_H magic 영구 carry 계속 — flex_grow primitive 자체는 R55.G.4 시점부터 존재; '진짜' 청산은 winit window-auto-size axis (R668 candidate d 영구 carry 진짜 해결책)"
       ]
     },
+    "R668": {
+      "decision_summary": "Phase A close substrate — SizeStrategy / TUI DeferredInput drain / widget-paint checkbox lift / text_scale a11y multiplier (4 of 6 atomics; atomic 4 ladder + persistence schema v2 = R669 carry)",
+      "changes_bullets": [
+        "pinion-shell::SizeStrategy enum (Fixed / IntrinsicAfterFirstPaint) supersedes WidgetView::initial_size; #[widget(initial_size=(W,H))] derive emits Fixed sugar; 15 binding migration (8 derived = no code change, 7 manual = inline); winit with_min_inner_size floor + post-first-paint Scene::intrinsic_content_size walker → request_inner_size; headless screenshot two-pass for IntrinsicAfterFirstPaint",
+        "pinion-tui depends on pinion-rpc (no winit transitive); ShellCoreTui::drain_deferred_inputs mirrors pinion-shell::ShellCore for all 6 DeferredInput variants (Wheel/Click/DoubleClick/Key/CharacterKey/Drag) → §2 #6 GUI/TUI dual invariant restored at substrate level; full stdin RPC ingress = follow-up consumer",
+        "pinion-widget-paint::checkbox new module — CheckboxStyle::m3_filled + view_checkbox + accent/outline state-layer ramps (mirrors text_field pattern); hello-checkbox is 1st consumer (~120 LOC → ~50 LOC); 2nd application consumer (settings-panel Notifications) = R669 carry",
+        "pinion-core::text_scale new module — current_text_scale thread-local + use_text_scale Owner::cache hook + TextScale wrapper (get subscribing / peek non-subscribing / set atomic); TextStyle::with_size_px multiplies size * current_text_scale() with max(1) floor; clamp [0.1, 5.0] + NaN guard",
+        "settings-panel font slider value_changing intent → use_text_scale.set(0.5 + v * 1.5) maps slider [0.0, 1.0] → text_scale [0.5, 2.0] (M3 a11y range); view fn subscribes via use_text_scale().get(); persistence hydrate pushes scale through set_text_scale; full 6-channel Notifications + schema v2 migrator + 4th ScrollBarExternal consumer = R669 carry"
+      ],
+      "verification_bullets": [
+        "8 new unit tests for SizeStrategy + intrinsic_content_size (r668_intrinsic_* × 6 + r668_size_strategy_* × 2); 15 example binding compile + clippy clean; existing test_fixtures + dispatch_core + smoke tests migrated to initial_size_strategy without behavioral drift",
+        "8 new pinion-tui integration tests for drain_deferred_inputs (r668_drain_* × 8 covering empty / Click / DoubleClick / character key / named key / wheel / drag / drag zero steps); pin no-crash + SCXML statechart parity with the live crossterm event-loop path",
+        "8 new pinion-widget-paint::checkbox unit tests (r668_checkbox_* covering m3_filled defaults / unchecked = 1 text / checked = 2 text / dispatch tag carry / disabled-glyph muted / accent + outline ramp parity); 9 hello-checkbox a11y tests pass after migration to lifted symbols",
+        "9 new text_scale unit tests (r668_text_scale_* covering default = 1.0 / set updates thread-local / clamp negative + huge / NaN defaults to 1.0 / unchecked bypass / cache-shared handle / set updates both thread-local + signal / with_size_px multiplies)",
+        "tools/demos/settings_panel_r668.py (12 assertions covering atomic 0 / 3 / 4-partial; 0.87s PASS); 6-demo regression sweep PASS (todomvc_r660 / r664 / r665 / r666 + settings_panel_r667 + double_click_r663 all PASS bit-identical — zero R668 substrate regression); 3415 workspace tests pass (+26 R668 new); cargo clippy --workspace --all-targets --features pinion-runtime/vello clean"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.38",
+        "5.41",
+        "5.49",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "Full atomic 4: settings-panel Notifications 6-channel CheckboxExternal cluster (composite-tag notif#0..notif#5) — 2nd application consumer of pinion-widget-paint::checkbox; estimated +500-700 LOC; R669 target",
+        "SettingsPersistedState schema v1→v2 migrator (notifications: [bool; 6] field added) — R665 schema migrator carry first implementation; R669 target",
+        "4th ScrollBarExternal consumer (notifications viewport overflow) — R669 target (settings-panel current detail panes naturally fit; notifications section pushes past viewport)",
+        "Settings-panel opt-in to SizeStrategy::IntrinsicAfterFirstPaint — substrate exists, no first application consumer yet; potential R669 wiring if notifications section's auto-resize UX is requested",
+        "[[pinion-tui-rpc-ingress]] follow-up axis: full stdin RPC ingress for pinion-tui (PreviewLedger / SceneRevision / FocusManager field lifts onto ShellCoreTui + stdin reader thread + stderr response writer); substrate primitive (drain_deferred_inputs) already in place from R668 atomic 1",
+        "SizeStrategy::IntrinsicAfterFirstPaint first paint-rerun delay (1 extra paint cycle to settle to intrinsic size) — observable in headless screenshot two-pass; documented but not measured against pre-R668 baseline",
+        "with_size_px thread-local read overhead per text-rendering call — negligible but real; never measured against pre-R668 const-fn baseline"
+      ],
+      "publishable_decision_summary": "Phase A close substrate — SizeStrategy / TUI DeferredInput drain / widget-paint checkbox lift / text_scale a11y multiplier (4 of 6 atomics; atomic 4 ladder + persistence schema v2 = R669 carry)",
+      "publishable_changes_bullets": [
+        "pinion-shell::SizeStrategy enum (Fixed / IntrinsicAfterFirstPaint) supersedes WidgetView::initial_size; #[widget(initial_size=(W,H))] derive emits Fixed sugar; 15 binding migration (8 derived = no code change, 7 manual = inline); winit with_min_inner_size floor + post-first-paint Scene::intrinsic_content_size walker → request_inner_size; headless screenshot two-pass for IntrinsicAfterFirstPaint",
+        "pinion-tui depends on pinion-rpc (no winit transitive); ShellCoreTui::drain_deferred_inputs mirrors pinion-shell::ShellCore for all 6 DeferredInput variants (Wheel/Click/DoubleClick/Key/CharacterKey/Drag) → §2 #6 GUI/TUI dual invariant restored at substrate level; full stdin RPC ingress = follow-up consumer",
+        "pinion-widget-paint::checkbox new module — CheckboxStyle::m3_filled + view_checkbox + accent/outline state-layer ramps (mirrors text_field pattern); hello-checkbox is 1st consumer (~120 LOC → ~50 LOC); 2nd application consumer (settings-panel Notifications) = R669 carry",
+        "pinion-core::text_scale new module — current_text_scale thread-local + use_text_scale Owner::cache hook + TextScale wrapper (get subscribing / peek non-subscribing / set atomic); TextStyle::with_size_px multiplies size * current_text_scale() with max(1) floor; clamp [0.1, 5.0] + NaN guard",
+        "settings-panel font slider value_changing intent → use_text_scale.set(0.5 + v * 1.5) maps slider [0.0, 1.0] → text_scale [0.5, 2.0] (M3 a11y range); view fn subscribes via use_text_scale().get(); persistence hydrate pushes scale through set_text_scale; full 6-channel Notifications + schema v2 migrator + 4th ScrollBarExternal consumer = R669 carry"
+      ],
+      "publishable_verification_bullets": [
+        "8 new unit tests for SizeStrategy + intrinsic_content_size (r668_intrinsic_* × 6 + r668_size_strategy_* × 2); 15 example binding compile + clippy clean; existing test_fixtures + dispatch_core + smoke tests migrated to initial_size_strategy without behavioral drift",
+        "8 new pinion-tui integration tests for drain_deferred_inputs (r668_drain_* × 8 covering empty / Click / DoubleClick / character key / named key / wheel / drag / drag zero steps); pin no-crash + SCXML statechart parity with the live crossterm event-loop path",
+        "8 new pinion-widget-paint::checkbox unit tests (r668_checkbox_* covering m3_filled defaults / unchecked = 1 text / checked = 2 text / dispatch tag carry / disabled-glyph muted / accent + outline ramp parity); 9 hello-checkbox a11y tests pass after migration to lifted symbols",
+        "9 new text_scale unit tests (r668_text_scale_* covering default = 1.0 / set updates thread-local / clamp negative + huge / NaN defaults to 1.0 / unchecked bypass / cache-shared handle / set updates both thread-local + signal / with_size_px multiplies)",
+        "tools/demos/settings_panel_r668.py (12 assertions covering atomic 0 / 3 / 4-partial; 0.87s PASS); 6-demo regression sweep PASS (todomvc_r660 / r664 / r665 / r666 + settings_panel_r667 + double_click_r663 all PASS bit-identical — zero R668 substrate regression); 3415 workspace tests pass (+26 R668 new); cargo clippy --workspace --all-targets --features pinion-runtime/vello clean"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.38",
+        "5.41",
+        "5.49",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Full atomic 4: settings-panel Notifications 6-channel CheckboxExternal cluster (composite-tag notif#0..notif#5) — 2nd application consumer of pinion-widget-paint::checkbox; estimated +500-700 LOC; R669 target",
+        "SettingsPersistedState schema v1→v2 migrator (notifications: [bool; 6] field added) — R665 schema migrator carry first implementation; R669 target",
+        "4th ScrollBarExternal consumer (notifications viewport overflow) — R669 target (settings-panel current detail panes naturally fit; notifications section pushes past viewport)",
+        "Settings-panel opt-in to SizeStrategy::IntrinsicAfterFirstPaint — substrate exists, no first application consumer yet; potential R669 wiring if notifications section's auto-resize UX is requested",
+        "[[pinion-tui-rpc-ingress]] follow-up axis: full stdin RPC ingress for pinion-tui (PreviewLedger / SceneRevision / FocusManager field lifts onto ShellCoreTui + stdin reader thread + stderr response writer); substrate primitive (drain_deferred_inputs) already in place from R668 atomic 1",
+        "SizeStrategy::IntrinsicAfterFirstPaint first paint-rerun delay (1 extra paint cycle to settle to intrinsic size) — observable in headless screenshot two-pass; documented but not measured against pre-R668 baseline",
+        "with_size_px thread-local read overhead per text-rendering call — negligible but real; never measured against pre-R668 const-fn baseline"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
