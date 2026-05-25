@@ -55,8 +55,13 @@ use std::time::Instant;
 
 use pinion_core::event::WheelDelta;
 use pinion_core::intent::Intent;
-use pinion_core::{Frame, Owner, Scene};
-use pinion_runtime::{clamp_frame_dt, CommandExecutor, CoreShell, DispatchTail, PointerId};
+use pinion_core::{Frame, Owner, Scene, SceneRevision};
+use pinion_rpc::{
+    build_layout_node, dispatch, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
+};
+use pinion_runtime::{
+    clamp_frame_dt, CommandExecutor, CoreShell, DispatchTail, FocusManager, PointerId,
+};
 
 use crate::WidgetViewTui;
 
@@ -82,6 +87,47 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// `scene` + `cached_state` + `router` + `intent_queue`
     /// plumbing.
     core: CoreShell<V>,
+    /// R670 §5.41 §5.40 §5.34 — preview lifecycle ledger, mirror of
+    /// `pinion_shell::ShellCore::previews`. Plumbed into the
+    /// `pinion_rpc::DispatchContext` by [`Self::dispatch_rpc`] so the
+    /// `propose_change` / `apply_preview` / `cancel_preview` /
+    /// `list_previews` lifecycle methods see the same wire shape on
+    /// the TUI side as on the Vello side. **The §2 #6 GUI/TUI dual
+    /// invariant requires identical RPC surface across both
+    /// backends**, so an AI client driving `pinion_rpc::dispatch`
+    /// against this substrate observes the same preview semantics.
+    previews: PreviewLedger,
+    /// R670 §5.41 §5.34 — §5.34 R40.4 OCC revision token, mirror of
+    /// `pinion_shell::ShellCore::revision`. `dispatch` auto-bumps on
+    /// mutating RPC methods; programmatic-focus mutation also bumps
+    /// explicitly through [`Self::drain_focus_request`].
+    revision: SceneRevision,
+    /// R670 §5.41 §5.39 — framework-side focus state owner, mirror of
+    /// `pinion_shell::ShellCore::focus`. Seeded at construction from
+    /// `V::focusable_tags()` so the default single-widget binding
+    /// has a tab stop at boot; multi-focus TUI bindings (future
+    /// `hello-multi-window-tui` and friends) override via the same
+    /// `WidgetCore::focusable_tags` channel the Vello side uses.
+    ///
+    /// Reachable through [`Self::focus`] / [`Self::dispatch_rpc`]
+    /// only — TUI input dispatch today still hands `Some(V::tag())`
+    /// to [`CoreShell::apply_key`] unconditionally (no Tab traversal
+    /// in TUI crossterm path), but the RPC `focus/set` / `focus/get`
+    /// / `focus/next` / `focus/prev` methods drive the manager
+    /// directly so an AI client can already exercise focus arcs
+    /// through the wire even before the crossterm Tab arm lands.
+    focus: FocusManager,
+    /// R670 §5.41 §5.12 — most recent painted scene projected to a
+    /// [`LayoutNode`] tree (mirror of
+    /// `pinion_shell::ShellCore::last_paint_layout`). Refreshed at the
+    /// end of every [`Self::finalize_paint_snapshot`] call so
+    /// `scene/layout {viewport: null}` returns the actual frame the
+    /// crossterm shell just painted. `None` until the first paint
+    /// runs — the RPC method errors with `NoLastPaintLayout` in that
+    /// window. TUI paint scenes carry the view-fn's container rects
+    /// directly (no parley shaping pass), so the snapshot is the
+    /// view-fn's geometry projected to the AI-introspection wire.
+    last_paint_layout: Option<LayoutNode>,
     /// R51.120 §5.41 — optional diagnostic sink for intent / state
     /// trace lines.
     ///
@@ -142,11 +188,59 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// to a separate writer.
     #[must_use]
     pub fn new() -> Self {
+        // R670 §5.41 §5.39 — seed FocusManager with the binding's
+        // `focusable_tags()` enumeration so RPC-driven `focus/set`
+        // succeeds on the default tab stop even before the TUI Tab
+        // arm lands. Mirrors `pinion_shell::ShellCore::new` exactly.
+        let mut focus = FocusManager::new();
+        let tags: Vec<String> = V::focusable_tags()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        focus.update_focusable_tags(tags);
         Self {
             core: CoreShell::new(),
+            previews: PreviewLedger::default(),
+            revision: SceneRevision::default(),
+            focus,
+            last_paint_layout: None,
             log_sink: None,
             last_paint_instant: Cell::new(None),
         }
+    }
+
+    /// R670 §5.41 §5.34 — current §5.34 R40.4 OCC revision counter
+    /// (loaded with `Acquire` ordering). Mutating RPC dispatches bump
+    /// it through the dispatcher's own bookkeeping; tests assert the
+    /// before/after delta when verifying that a dispatch path actually
+    /// committed. Mirror of `pinion_shell::ShellCore::revision`.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision.current()
+    }
+
+    /// R670 §5.41 §5.39 — borrow the focus manager. Tests + RPC
+    /// substrate paths reach the focused tag through this accessor.
+    /// Mirror of `pinion_shell::ShellCore::focus`.
+    #[must_use]
+    pub fn focus(&self) -> &FocusManager {
+        &self.focus
+    }
+
+    /// R670 §5.41 §5.12 — refresh the [`LayoutNode`] snapshot from a
+    /// freshly-painted scene so `scene/layout {viewport: null}`
+    /// returns the geometry the just-rendered frame committed.
+    ///
+    /// The crossterm surface calls this from [`crate::shell::commit_paint`]
+    /// after every successful paint commit so the next RPC dispatch
+    /// (which the event loop drains on the same tick) sees the
+    /// post-paint snapshot. The mirror of
+    /// `pinion_shell::ShellCore::finalize_frame`'s snapshot refresh —
+    /// TUI side skips the AccessKit emit + router `update_paint_scene`
+    /// because [`Self::update_paint_scene`] already covers the
+    /// router half and the TUI a11y substrate has no AT consumer yet.
+    pub fn finalize_paint_snapshot(&mut self, paint_scene: &Scene) {
+        self.last_paint_layout = Some(build_layout_node(paint_scene, ""));
     }
 
     /// R51.120 §5.41 — install a diagnostic sink for intent / state
@@ -535,7 +629,179 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         for cmd in self.core.dispatch_pending_commands() {
             self.log_unhandled_command(&cmd);
         }
-        state_changed
+        // R670 §5.41 §5.39 — drain the programmatic focus-request
+        // mailbox a widget body (`External::invoke`, reducer,
+        // `Effect`) may have populated during this dispatch. Mirror
+        // of `pinion_shell::ShellCore::handle_tail`'s drain call so
+        // both backends close the R664 focus-request arc identically.
+        // Returns `true` when a focus mutation actually committed —
+        // we OR it into the visible-state-change return so the
+        // crossterm surface repaints to refresh the focus ring +
+        // any focus-gated reactive subscriptions.
+        let focus_changed = self.drain_focus_request();
+        state_changed || focus_changed
+    }
+
+    /// R670 §5.41 §5.39 — fire [`External::on_focus_change`] on the
+    /// blur side (old focused tag) and the focus side (new focused
+    /// tag) when [`Self::focus`] just transitioned.
+    ///
+    /// Mirror of `pinion_shell::ShellCore::notify_focus_change` —
+    /// both backends drive the same observer-fan-out so a TUI
+    /// `External` (`TextField` IME bridge, `CaretBlink` enable gate,
+    /// any binding wired to `on_focus_change`) sees the same
+    /// blur-before-focus sequence the Vello path produces.
+    ///
+    /// `focus_before` is the pre-dispatch focused tag snapshot
+    /// (`None` when nothing was focused). The current focused tag is
+    /// read straight off [`Self::focus`]. No-op on identity (same
+    /// tag both sides — saves one scene walk per quiescent tick).
+    fn notify_focus_change(&mut self, focus_before: Option<&str>) {
+        let focus_after_owned = self.focus.focused().map(str::to_owned);
+        if focus_before == focus_after_owned.as_deref() {
+            return;
+        }
+        let scene = self.core.scene_mut();
+        if let Some(tag) = focus_before {
+            if let Some(node) = scene.find_external_with_tag_mut(tag) {
+                node.handle.on_focus_change(false);
+            }
+        }
+        if let Some(tag) = focus_after_owned.as_deref() {
+            if let Some(node) = scene.find_external_with_tag_mut(tag) {
+                node.handle.on_focus_change(true);
+            }
+        }
+    }
+
+    /// R670 §5.41 §5.39 — pop one pending
+    /// [`pinion_core::focus_request`] entry and apply it via
+    /// [`FocusManager::focus_set`] + [`Self::notify_focus_change`].
+    /// No-op on empty mailbox (the zero-cost steady state). Bumps the
+    /// §5.34 revision on a real focus mutation so an in-flight
+    /// preview's `base_revision` can detect the concurrent focus
+    /// change.
+    ///
+    /// Mirror of `pinion_shell::ShellCore::drain_focus_request`.
+    /// Returns `true` when a focus mutation actually committed so
+    /// [`Self::handle_tail`] can OR it into the visible-state-change
+    /// flag the crossterm surface repaints on.
+    fn drain_focus_request(&mut self) -> bool {
+        let Some(tag) = pinion_core::focus_request::drain() else {
+            return false;
+        };
+        let focus_before = self.focus.focused().map(str::to_owned);
+        if !self.focus.focus_set(&tag) {
+            // Unknown / non-focusable tag — silent no-op (matches the
+            // pinion-shell `click_to_focus` rejection arm). The
+            // widget body requested focus on a tag the binding never
+            // enumerated in `focusable_tags()` or the focus is
+            // already there.
+            return false;
+        }
+        self.notify_focus_change(focus_before.as_deref());
+        self.revision.bump();
+        true
+    }
+
+    /// R670 §5.41 §5.40 — dispatch one JSON-RPC 2.0 frame against the
+    /// LIVE state scene. Mirror of
+    /// `pinion_shell::ShellCore::dispatch_rpc`.
+    ///
+    /// The §2 #6 GUI/TUI dual invariant requires that an AI client
+    /// driving `pinion_rpc::dispatch` against this substrate observes
+    /// the same wire-form responses (scene/snapshot / scene/click /
+    /// scene/key / scene/invoke / focus/set / `propose_change` / …) the
+    /// Vello path produces. The disjoint-field borrow split here is
+    /// the same shape `pinion_shell::ShellCore::dispatch_rpc` uses;
+    /// see that method's doc comment for the rationale behind
+    /// `&mut dyn FnMut` (avoids per-callsite monomorphisation of the
+    /// entire dispatch body).
+    ///
+    /// TUI side has no `resize_request` plumbing — terminal resize is
+    /// a user-driven event the shell observes through
+    /// [`crossterm::event::Event::Resize`], not a programmatic
+    /// `Window::request_inner_size` call. `scene/resize` therefore
+    /// fails with `resize unavailable` on the TUI path.
+    ///
+    /// Returns the optional JSON-RPC 2.0 response frame; the caller
+    /// owns the IO surface (production writes to **stderr** because
+    /// the alternate-screen + raw-mode terminal holds stdout — see
+    /// [`crate::shell::run`] for the response-writer wiring rationale).
+    pub fn dispatch_rpc(&mut self, request: &str) -> Option<String> {
+        // R670 §5.41 §5.39 — sample focus before dispatch so we can
+        // detect `focus/set` (or any other focus-mutating method)
+        // and fire the `External::on_focus_change` notification on
+        // the affected widgets.
+        let focus_before = self.focus.focused().map(str::to_owned);
+        let resp_pair = {
+            // Disjoint-field split mutable borrows. Mirror of the
+            // pinion-shell substrate's `dispatch_rpc` borrow split.
+            let cached_state = *self.core.cached_state();
+            let root_owner = self.core.root_owner().clone();
+            let executor_for_rpc: Option<Arc<CommandExecutor>> =
+                self.core.executor().cloned();
+            let scene_ptr = self.core.scene_mut();
+            let previews = &self.previews;
+            let revision = &self.revision;
+            let focus_ptr = &mut self.focus;
+            let last_paint = self.last_paint_layout.as_ref();
+            // R670 §5.41 §5.12 — TUI paint scene producer. The
+            // view-fn already sets every container rect (no parley
+            // shaping pass), so the produced scene carries the
+            // geometry an AI client expects from `scene/layout`. The
+            // `(w, h)` arguments are unused — TUI scenes are
+            // cell-based and their internal coordinates come from
+            // the view fn, not a hypothetical viewport. `root_owner`
+            // clone above wraps the view fn so `Owner::current()`
+            // inside the synthetic-paint path resolves to this
+            // binding's reactive scope (mirrors the Vello side).
+            let mut produce = |_w: u32, _h: u32| -> Scene {
+                let frame = Frame::new();
+                root_owner.run(|| V::view(cached_state, &frame))
+            };
+            let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
+                .with_paint_producer(&mut produce)
+                .with_focus_manager(focus_ptr);
+            if let Some(snapshot) = last_paint {
+                ctx = ctx.with_last_paint_layout(snapshot);
+            }
+            // R670 §5.41 §5.23 — surface the root Owner handle so
+            // `scene/commands` (pending queue) + `scene/theme_tokens`
+            // (cached ThemeProvider) work on the TUI path without
+            // draining. Read-only borrow.
+            ctx = ctx.with_runtime_owner(&root_owner);
+            if let Some(exec_arc) = executor_for_rpc.as_ref() {
+                ctx = ctx.with_commands_executor(exec_arc.as_ref());
+            }
+            // R670 §5.41 §5.49 — wire the deferred-input inbox so
+            // `scene/wheel` / `scene/click` / `scene/key` /
+            // `scene/double_click` / `scene/drag` can enqueue events
+            // for post-dispatch drain through
+            // [`Self::drain_deferred_inputs`] (R668 substrate).
+            let mut deferred_inputs: Vec<DeferredInput> = Vec::new();
+            ctx = ctx.with_deferred_inputs(&mut deferred_inputs);
+            let resp = dispatch(&mut ctx, request);
+            (resp, deferred_inputs)
+        };
+        let (resp, deferred_inputs) = resp_pair;
+        // R670 §5.41 §5.49 — drain the deferred-input inbox now that
+        // the dispatcher's `&mut scene` borrow has released; each
+        // entry replays through [`Self::drain_deferred_inputs`] (the
+        // R668 substrate primitive) so the InputRouter fires under
+        // its normal post-frame redraw rules.
+        let _ = self.drain_deferred_inputs(&deferred_inputs);
+        let tail = self.core.tail();
+        let _ = self.handle_tail(&tail);
+        // R670 §5.41 §5.39 §5.38 — `focus/set` from the AI client
+        // fires the `External::on_focus_change` notification on the
+        // old + new tags so the focus arc reaches every observer
+        // (TextField IME bridge, CaretBlink enable gate, …) on a
+        // single dispatch tick. Mirror of the pinion-shell side.
+        if self.focus.focused().map(str::to_owned) != focus_before {
+            self.notify_focus_change(focus_before.as_deref());
+        }
+        resp
     }
 
     /// R51.120 §5.41 — write one intent trace line to the

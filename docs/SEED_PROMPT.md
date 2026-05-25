@@ -1,8 +1,23 @@
 # pinion seed prompt — 매 세션 첫 입력
 
-> R670.0 (2026-05-25) 갱신. R663.5 canonical baseline 유지 + R664-R669 land + **R670 atomic plan lock-in**. **R670 = Phase B (R700+) 진입 substrate Round 1 + R668/R669 carry inline 청산**. Phase A 진척 ~98% → R670 종료 후 **~100%** (Phase B substrate first slice 가 Phase A close 의 자연스러운 polish; multi-window substrate 자체가 Phase B entry point). 북극성 가중 ~7.7% → R670 후 **~8.5%** (Phase B 25% weight × first-slice ~3%).
+> **R670.A land (2026-05-25)** — R668/R669 carry 100% 청산 + Phase B trait foundation. **R670.B is the next round** — AppShell multi-window refactor + RPC window param + `hello-multi-window` first consumer + demo + Mnemosyne. R663.5 canonical baseline 유지.
 >
-> **User directive (2026-05-25, R669 종료 시 재확인)**: 비용 무관 + 북극성 anchor + 장기 textbook-canonical 결정 + 부채 즉시 상환 + 한 라운드에 모든 atomic land. R670 = **Phase B 진입 substrate first cut + 모든 R668/R669 carry inline 청산**: (a) `pinion-tui` 풀 RPC ingress (R668 carry #2 청산); (b) `IntrinsicAfterFirstPaint` first real application consumer = `hello-popover` 신규 example (R668 carry #1 + R669 carry #1 청산); (c) `WidgetView::windows()` trait extension + `pinion-shell::AppShell` multi-window refactor (Phase B substrate Round 1); (d) RPC `{window: "<id>"}` param 추가 (Phase B substrate Round 2); (e) `hello-multi-window` first consumer (Phase B 첫 application); (f) demo + commit + Mnemosyne. **single commit = 1 round 원칙 유지; session budget 80% 초과 시 honest stop + R670.A partial commit allowed; 매 atomic 종료 시 cargo test + clippy + 기존 demo regression sweep 검증 후 다음 atomic 진입**.
+> R670.A 가중 진척: Phase A 95% (R668/R669 carry 청산 완료) + Phase B 25% × ~1% (trait foundation only — `WidgetView::windows()` default impl, AppShell still single-window) = 북극성 가중 **~7.5%**. R670.B 종료 후 ~7.7-8.0% (AppShell refactor + first multi-window consumer).
+>
+> **User directive (2026-05-25, R670.A close 시 재확인)**: 비용 무관 + 북극성 anchor + 장기 textbook-canonical 결정 + 부채 즉시 상환 + 한 라운드에 모든 atomic land. R670 original plan 은 6 atomic; session budget honesty 로 R670.A (atomics 0+1+2 = R668/R669 carry clearance + Phase B trait foundation) 우선 land, R670.B (atomics 3+4+5 = AppShell multi-window refactor + RPC window param + `hello-multi-window` + demo + Mnemosyne) 별도 round. **single commit = 1 round 원칙 유지; 매 atomic 종료 시 cargo test + clippy + 기존 demo regression sweep 검증 후 다음 atomic 진입**.
+>
+> **R670.A landed atomics**:
+> - **Atomic (0) ✓** — `pinion-tui` full RPC ingress (R668 carry #2 영구 청산). `ShellCoreTui::dispatch_rpc` + `previews: PreviewLedger` + `revision: SceneRevision` + `focus: FocusManager` + `last_paint_layout: Option<LayoutNode>` field lifts; `spawn_stdin_rpc_reader_tui` stdin reader thread + mpsc::Sender<String>; `pinion-tui::shell::run` event-loop integration with **stderr response writer** (alternate-screen + raw-mode terminal owns stdout); `drain_rpc_into_substrate` + `drain_intents_into_substrate` + `commit_and_finalize` 3 helper extracts to keep `run_impl` under 100-line ceiling; `finalize_paint_snapshot(&Scene)` substrate method refreshes `last_paint_layout` on every paint commit so `scene/layout {viewport: null}` resolves through the same wire shape as pinion-shell. **9 integration tests** (`crates/pinion-tui/tests/rpc_ingress.rs`): scene/snapshot, scene/click drain to Hover, scene/key named Space, scene/key character 'd' → Disabled, scene/invoke /external/send Disable, focus/get fresh = null, focus/set targets tag, scene/click bumps OCC revision, malformed JSON-RPC error envelope. handle_tail return OR'd with focus_change so notify_focus_change fires on RPC-driven focus mutation (mirror of pinion-shell `External::on_focus_change` arc).
+> - **Atomic (1) ✓** — `hello-popover` binding = first real `SizeStrategy::IntrinsicAfterFirstPaint` consumer (R668 carry #1 + R669 carry #1 영구 청산). New `examples/hello-popover` (16th example), `examples/hello-popover/src/main.rs` ~470 LOC with header + 3 body text rows + Button trigger laid out vertically. No root-size lock (the substrate test pins `LayoutStyle::size.width == Auto && height == Auto`). `initial_size_strategy()` overrides the macro's default `Fixed { ... }` emit with `IntrinsicAfterFirstPaint { min: (240, 100), max: (480, 400) }`. **New `pinion-derive` macro flag `initial_size_strategy`** (single-line `const KNOWN_FLAGS` extension + body selector) opts the binding into forwarding to the inherent fn instead of the auto-emitted Fixed variant — surgical surface change, zero impact on the 15+ existing bindings. 5 unit tests (`r670_intrinsic_first_paint_tests`): strategy declaration pin, root-size lock absence pin, ARIA Button role pin, widget tag literal pin, painted-scene non-zero intrinsic bbox pin. **R670.A scope clarification — IntrinsicAfterFirstPaint is one-shot per binding lifetime**; dynamic shrink-wrap-on-state-change ("click button → window expands") is a separate substrate axis that would require either explicit `scene/resize` RPC calls from the binding or a substrate extension lifting the one-shot guard. R670.A binding demonstrates the one-shot capability honestly; click-driven dynamic resize is deferred to a future round where a real use case (collapsible dialog "more options" section, etc.) surfaces the substrate-incompleteness-signal.
+> - **Atomic (2) ✓** — `WindowSpec` + `WidgetView::windows()` trait extension (Phase B substrate foundation, +110 LOC). `pinion_shell::WindowSpec { id: &'static str, title: String, strategy: SizeStrategy }` with `WindowSpec::main(title, strategy)` (canonical primary `id = "main"`) + `WindowSpec::new(id, title, strategy)` (secondary windows). `WidgetView::windows() -> Vec<WindowSpec>` trait method with backward-compat default `vec![WindowSpec::main(Self::title(), Self::initial_size_strategy())]` — every existing single-window binding (15+ in the example gallery) keeps its lifecycle bit-identical. 2 unit tests pin `id = "main"` for the canonical primary + arbitrary `id` for `WindowSpec::new`. **AppShell still reads only the first spec (the default single-window primary)** — multi-window dispatch lands in R670.B when `AppShell::resumed` walks the full `Vec<WindowSpec>` and creates one winit Window + RenderState + accesskit_winit::Adapter per spec.
+>
+> R670.A verification: **3431 workspace tests** (was 3415 at R669 → +16 R670.A: +9 pinion-tui RPC ingress + +5 hello-popover + +2 WindowSpec pin), clippy clean, **8-demo regression sweep PASS** (R660/R663/R664/R665/R666/R667/R668/R669 all bit-identical — zero regression from R670.A substrate changes), R670.A demo PASS (`tools/demos/r670a_carry_clearance.py` — IntrinsicAfterFirstPaint window-size verify post-first-paint).
+>
+> **R670.B plan** (next round entry — single commit, 4 atomic):
+> - **(0)** `pinion-shell::AppShell` multi-window refactor (~600-900 LOC churn). `render: RenderState<V::Renderer>` → `renders: HashMap<WindowId, RenderState<V::Renderer>>`; `resumed()` walks `V::windows()` list and creates one winit Window + RenderState + accesskit_winit::Adapter per spec; `window_event(window_id, event)` dispatches to per-window slot; `pending_intrinsic_resize` + `ime_was_composing` + `last_ime_cursor_area` lift to per-window fields. Single `ShellCore` (Approach A — same binding state, different views per window); multi-binding (different ShellCore per window) is R750+ widget catalog territory.
+> - **(1)** RPC `{window: "<id>"}` param + `pinion-rpc::DispatchContext` per-window scope. Default `window = "main"` (single-window binding compat); `scene/snapshot {window: "inspector"}` / `scene/click {window: "main", at: …}` / `scene/key {window: "inspector", at: …}` all carry the new param. `WidgetView::view_for_window(window_id, state)` trait method (default forwards to `view`).
+> - **(2)** `hello-multi-window` first consumer binding (~500-800 LOC). Main window (button widget) + inspector window (debug Text node showing `format!("{:?}", state)` of main's button state). Phase B first dogfood — DevTools / Inspector substrate-first.
+> - **(3)** demo (≥ 30 assertion verifying main+inspector mirror) + 8-demo regression sweep (R660/R663/R664/R665/R666/R667/R668/R669) PASS verify + commit + Mnemosyne R670.B entry.
 
 ---
 
@@ -58,7 +73,17 @@
 
 【직전 5 세션 결과 — honest 누적 평가】
 
-land 완료 (6 commits, daf2a99 → 2d262ad → d8e6810 → bde04f7 → 501f304 → bf23117 + R666 신규):
+land 완료 (R670.A → R669 → R668 → R667 → R666 → R665 → R664 → R663.5 → R663 → R662 → R661 cumulative):
+
+- **R670.A** (R668/R669 carry 100% clearance + Phase B trait foundation — atomics 0+1+2; atomics 3+4+5 → R670.B) `<commit-hash>`:
+  - **Atomic (0) ✓** — `pinion-tui` full RPC ingress (R668 carry #2 영구 청산). 5 substrate field lifts onto `ShellCoreTui` (`previews: PreviewLedger` + `revision: SceneRevision` + `focus: FocusManager` + `last_paint_layout: Option<LayoutNode>`); `ShellCoreTui::dispatch_rpc(request: &str) -> Option<String>` mirrors `pinion_shell::ShellCore::dispatch_rpc` (disjoint-field borrow split + paint-producer closure + deferred-input drain + focus_before/after notify); `finalize_paint_snapshot(&Scene)` refreshes `last_paint_layout` so `scene/layout {viewport: null}` returns the geometry the crossterm shell just painted; `spawn_stdin_rpc_reader_tui` background thread reads JSON-RPC lines via `BufRead::lines` + forwards through mpsc::Sender; `pinion-tui::shell::run` event-loop integration with **stderr response writer** (alternate-screen + raw-mode terminal owns stdout, so RPC response wire lives on stderr per the canonical Unix diagnostic-stream convention); 3 helper extracts (`commit_and_finalize` / `drain_intents_into_substrate` / `drain_rpc_into_substrate`) keep `run_impl` under the workspace `clippy::too_many_lines = 100` ceiling. `handle_tail` return OR'd with focus_change so `notify_focus_change` fires on RPC-driven focus mutation (mirror of pinion-shell `External::on_focus_change` arc). **9 integration tests** (`crates/pinion-tui/tests/rpc_ingress.rs`): scene/snapshot, scene/click drains to Hover, scene/key named Space, scene/key character 'd' → Disabled, scene/invoke /external/send Disable, focus/get fresh = null, focus/set targets tag, scene/click bumps OCC revision, malformed JSON-RPC error envelope.
+  - **Atomic (1) ✓** — `examples/hello-popover` first real `SizeStrategy::IntrinsicAfterFirstPaint` consumer (R668 carry #1 + R669 carry #1 영구 청산). 16th example crate; ~470 LOC binding (`examples/hello-popover/src/main.rs`) + `app.pinion.xml` + `build.rs`. Header text + 3 body status rows + Button dismiss trigger laid out vertically with no root-size lock — the substrate test pins `LayoutStyle::size.width == Auto && height == Auto` so a regression that adds a fixed-size lock surfaces immediately. `initial_size_strategy()` declares `IntrinsicAfterFirstPaint { min: (240, 100), max: (480, 400) }`; **new `pinion-derive` macro flag `initial_size_strategy`** (one-line `KNOWN_FLAGS` extension + body selector) opts the binding into forwarding to the inherent fn instead of the auto-emitted `Fixed { width, height }` — surgical macro change, zero impact on 15+ existing bindings. 5 unit tests (`r670_intrinsic_first_paint_tests`): strategy declaration pin, root-size lock absence pin, ARIA Button role pin, widget tag literal pin, painted-scene non-zero intrinsic bbox pin via `pinion_runtime::compute_layout`. **R670.A scope clarification — `IntrinsicAfterFirstPaint` is one-shot per binding lifetime**; the binding demonstrates the one-shot capability honestly. Dynamic shrink-wrap-on-state-change ("click button → window expands") would require either explicit `scene/resize` RPC calls from the binding or a substrate extension lifting the one-shot guard — deferred to a future round once a real use case (collapsible dialog "more options" section, etc.) surfaces the substrate-incompleteness signal.
+  - **Atomic (2) ✓** — `pinion_shell::WindowSpec` + `WidgetView::windows()` trait extension (Phase B substrate foundation, +110 net LOC in pinion-shell). `WindowSpec { id: &'static str, title: String, strategy: SizeStrategy }` with `WindowSpec::main(title, strategy)` (canonical primary `id = "main"`) + `WindowSpec::new(id, title, strategy)` (secondary windows). `WidgetView::windows() -> Vec<WindowSpec>` trait method with backward-compat default `vec![WindowSpec::main(Self::title(), Self::initial_size_strategy())]` — every existing single-window binding (15+ in the example gallery) keeps its lifecycle bit-identical. 2 unit tests pin `id = "main"` for the canonical primary + arbitrary `id` for `WindowSpec::new`. **`AppShell::resumed` still reads only `Self::title()` + `Self::initial_size_strategy()` directly** (i.e., the default single-window path) — multi-window dispatch (walking the full `Vec<WindowSpec>` and creating per-spec winit Window + RenderState + accesskit_winit::Adapter) is R670.B work. Atomic (2) is a forward-compat foundation: the trait surface exists, no consumer breaks, but nothing actively reads the new `windows()` method yet.
+  - **R670.A verification**: **3431 workspace tests** (was 3415 at R669 → +16 R670.A; +9 pinion-tui rpc_ingress.rs + +5 hello-popover + +2 pinion-shell WindowSpec), clippy clean, **8-demo regression sweep PASS** (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669 all bit-identical — zero regression), R670.A demo PASS (`tools/demos/r670a_carry_clearance.py` — IntrinsicAfterFirstPaint window-size verify post-first-paint: root rect h > 100 floor confirms substrate walked content bbox vs clamping at min).
+  - **honest LOC 실측**: ~+1340 net (+613 substrate diff: pinion-tui substrate +280 + shell +110 + tests +280 + pinion-shell WindowSpec +110 + pinion-derive macro flag +30; +470 hello-popover binding + ~150 demo + ~+150 SEED). Lower than seed total 2500-4200 because atomics 3+4+5 (AppShell multi-window refactor + RPC window param + hello-multi-window + heavy demo) deferred to R670.B.
+  - **honest 부채 surface (R670.B mandatory)**: (a) `AppShell::resumed` does not yet walk `V::windows()` — single-window binding compat is preserved by the default trait impl but multi-window actually needs the AppShell refactor; (b) RPC `{window: "<id>"}` param is not yet wired — all dispatch frames implicitly target the (only) `"main"` window; (c) `hello-multi-window` first consumer waits on (a)+(b); (d) `pinion-tui::shell::run` stdin RPC path is enabled in all TUI bindings now — any binding running under a non-TTY stdin (CI pipe) will get raw-mode-enable rejection per crossterm's contract, so the demo's atomic (0) smoke is skipped on non-TTY; substrate-level RPC ingress is covered by the 9 integration tests directly. None of these are external-dependency carries — they are all R670.B in-scope work.
+
+- **R669** (R668 atomic 4 carry 청산 — 5 of 6 atomic land + R670 IntrinsicAfterFirstPaint application carry honest) `474c7e7` + `01239bc`:
 
 - **R661** (process maturity) `daf2a99`:
   - todomvc/src/main.rs 4496 → 3700 LOC (-796 net, -17.7%)
@@ -200,67 +225,55 @@ R668+ Phase A 잔여 부채 (scrollbar 4th consumer, WIN_H magic 등) 청산이 
 
 (g) **R2500+ = Phase D 진입** — Editor self-hosted in pinion itself. Unreal-class IDE 작성 시작. 진짜 northern-star 의 본격 진입
 
-【다음 텍스트북 캐논 — R670 = Phase B (R700+) 진입 substrate Round 1 + R668/R669 carry 전부 inline 청산】
+【다음 텍스트북 캐논 — R670.B = Phase B (R700+) 진입 substrate Round 2-3 + first multi-window application】
 
-> **User directive (2026-05-25, R669 종료 시 재확인)**: 비용 무관 + 북극성 anchor + 장기 textbook-canonical 결정. 부채 즉시 상환. 한 라운드에 6 atomic 모두 land. R670 = R668/R669 의 모든 honest carry 청산 + Phase B 진입 first cut.
+> **R670.A land + user-confirmed split**: R670 original plan 의 6 atomic 중 (0)+(1)+(2) = R670.A 로 land 완료 (R668/R669 carry 100% 청산 + Phase B trait foundation). 남은 (3)+(4)+(5) = R670.B 별도 round. R670.B = **AppShell multi-window refactor + RPC window param + `hello-multi-window` first consumer + 30+ assertion demo + Mnemosyne**. R670.A 의 trait foundation (`WidgetView::windows()` + `WindowSpec`) 위에서 진행.
 
-R670 = **Phase A 100% real-close + Phase B (R700+) 진입 substrate first slice**. R670 후 northern-star 가중 ~7.7% → **~8.5%** (Phase A 5%×100% + Phase B 25%×first-slice~3%), 그 다음 R671+ = **Phase B widget catalog 본격 (Menu / Dialog / Toolbar / DevTools / TreeView / Table — R750+ 진입 단계)**.
+R670.B 진척: R670.A 가중 ~7.5% → R670.B 후 **~7.7-8.0%** (Phase B 25% × first-consumer ~2%). R671+ = **Phase B widget catalog 본격 (Menu / Dialog / Toolbar / DevTools / TreeView / Table — R750+ 진입 단계)**.
 
-R670 atomic 6개 (carry-clearance-first + substrate-first 순서; northern-star 정렬):
+R670.B atomic 3개 (R670.A trait foundation 위에서; substrate-first 순서):
 
-(0) **`pinion-tui` 풀 RPC ingress** (R668 carry #2 즉시 청산 — substrate 완성도 90% → 100%)
-   - `ShellCoreTui` 에 `previews: PreviewLedger` + `revision: SceneRevision` + `focus: FocusManager` + `text_cache: LayoutCache` field lifts (mirror pinion-shell::ShellCore 의 extras)
-   - `ShellCoreTui::dispatch_rpc(request: &str) -> Option<String>` 신규 method — `DispatchContext::new(scene_mut, &previews, &revision).with_paint_producer(closure).with_focus_manager(focus).with_deferred_inputs(inbox)` 구축 + `pinion_rpc::dispatch` 호출 + `drain_deferred_inputs` 후처리. mirror pinion-shell pattern
-   - `pinion-tui::shell::spawn_stdin_rpc_reader` 신규 helper — mpsc::Sender<String> + stdin reader thread (mirror pinion-shell::spawn_stdin_rpc_reader)
-   - `pinion-tui::shell::run` event loop integration — `try_recv` on every tick (이미 intent_rx drain 과 같은 pattern) + dispatch_rpc 호출 + **stderr writer** for JSON-RPC response (alternate-screen 가 stdout 가져감; stderr 가 retained terminal — canonical Unix convention for diagnostic streams)
-   - 신규 integration test: `pinion-tui` crate 의 `tests/rpc_ingress.rs` — 합성 JSON-RPC request 를 ShellCoreTui::dispatch_rpc 에 직접 dispatch + state mutation 검증
-   - Estimated LOC: substrate field lifts +200-300 / dispatch_rpc method +250-400 / stdin reader + shell wire +200 / test +150 = +800-1050 net
-   - **R668 carry #2 영구 청산 + [[pinion-tui-rpc-ingress]] 메모리 마무리**
-
-(1) **`SizeStrategy::IntrinsicAfterFirstPaint` first real application consumer** (R668 carry #1 + R669 carry #1 즉시 청산)
-   - 신규 `examples/hello-popover` binding — 최소 root container (no `with_size(WIN_W, WIN_H)` lock); content 는 button + optional 추가 text rows
-   - `WidgetView::initial_size_strategy()` returns `IntrinsicAfterFirstPaint { min: (240, 100), max: (480, 400) }`
-   - View fn: button click → state Signal flip → content expands (추가 text rows 추가) → 다음 paint 가 intrinsic_content_size 계산 → window 자동 resize
-   - 검증: demo verifies pre-click window size (minimal) ≠ post-click window size (expanded) via scene/layout viewport=None + rect.h comparison
-   - Estimated LOC: substrate 0 (이미 R668 atomic 0 에서 land) / hello-popover binding +400-600 / build.rs forge codegen +50 = +450-650 net
-   - **R668 carry #1 + R669 carry #1 영구 청산 — IntrinsicAfterFirstPaint substrate 정통화 (substrate 1-of-1 + 첫 application consumer = textbook ROI 정당화)**
-
-(2) **`WidgetView::windows()` trait extension** (Phase B substrate Round 1 — multi-window foundation)
-   - 신규 `pinion-shell::WindowSpec { id: &'static str, title: String, strategy: SizeStrategy }` type
-   - `WidgetView::windows() -> Vec<WindowSpec>` trait method, default `vec![WindowSpec::main(Self::title(), Self::initial_size_strategy())]` so existing 15 binding 자동 single-window
-   - Multi-window 원하는 binding 만 override (R670 atomic (4) 가 첫 override)
-   - Estimated LOC: substrate type +50 / trait method +50 / docs +50 = +150 net
-   - **Forward-compat foundation — Phase B widget catalog (R750+) 의 모든 multi-window UI 가 ride**
-
-(3) **`pinion-shell::AppShell` multi-window refactor** (Phase B substrate Round 2 — Approach A: single binding state, multiple views per window)
-   - `AppShell` field: `render: HashMap<WindowId, RenderState<V::Renderer>>` (단일 RenderState → multi-window hashmap)
-   - `resumed(event_loop)` walks `V::windows()` list, creates per-spec winit `Window` + RenderState + accesskit_winit::Adapter, stores in hashmap keyed by WindowId
-   - `window_event(window_id, event)` dispatches to per-window slot — paint cycle / IME / resize / focus 모두 per-window
+(0) **`pinion-shell::AppShell` multi-window refactor** (Phase B substrate Round 2 — Approach A: single binding state, multiple views per window). R670.A 의 `WidgetView::windows() -> Vec<WindowSpec>` trait foundation 위에서.
+   - `AppShell` field: `render: RenderState<V::Renderer>` → `renders: HashMap<WindowId, RenderState<V::Renderer>>` (winit `WindowId` keyed)
+   - `accesskit: Option<accesskit_winit::Adapter>` → `accesskits: HashMap<WindowId, accesskit_winit::Adapter>` (per-window AT adapter)
+   - `pending_intrinsic_resize: Option<((u32,u32),(u32,u32))>` → `HashMap<WindowId, ...>` (per-window first-paint resize queue)
+   - `ime_was_composing: bool` + `last_ime_cursor_area: Option<...>` → per-window (per `Self::WindowSlot` struct grouping renders + accesskit + ime + intrinsic_resize)
+   - 신규 `Self::WindowSlot { render, accesskit, ime_was_composing, last_ime_cursor_area, pending_intrinsic_resize, spec_id }` struct — per-window field cluster lifted out
+   - `AppShell::windows: HashMap<WindowId, Self::WindowSlot>` 단일 hashmap (cluster lift 가 disjoint-field borrow 문제 회피)
+   - `resumed(event_loop)` walks `V::windows()` list, creates one winit `Window` + RenderState + accesskit_winit::Adapter per spec, stores in `windows` hashmap keyed by WindowId; spec id → WindowId mapping cached on Self for RPC scope resolution
+   - `window_event(window_id, event)` looks up `windows[&window_id]` and dispatches to per-window slot — paint cycle / IME / resize / focus 모두 per-window
+   - `render()` becomes `render_window(&mut self, window_id: WindowId)` — splits the giant fn so per-window paint stays disjoint from per-window IME publish + per-window AT emit
    - 단일 `ShellCore` (binding state) — 모든 window 가 같은 state 의 different views; multi-binding (different ShellCores per window) 은 R750+ widget catalog 단계 (Approach B)
-   - 기존 single-window 경로는 default `V::windows()` 가 보장 — 8-demo regression sweep PASS 검증 mandatory
-   - Estimated LOC: AppShell hashmap refactor +400-600 / per-window paint + IME + accesskit wire +200-300 = +600-900 net
+   - 기존 single-window 경로는 R670.A 의 default `V::windows()` 가 보장 (`vec![WindowSpec::main(...)]`) — 8-demo regression sweep PASS 검증 mandatory
+   - Estimated LOC: AppShell hashmap refactor +400-600 / per-window paint + IME + accesskit wire +200-300 / `WindowSlot` lift +100 = +700-1000 net churn (~half is field-cluster lift, ~half is per-window dispatch)
 
-(4) **RPC `{window: "<id>"}` param + `hello-multi-window` first consumer** (Phase B substrate Round 3 + first application)
-   - `pinion-rpc::DispatchContext` per-window scope 추가 — `scene/snapshot {window: "main"}` / `scene/layout {window: "inspector"}` / `scene/click {window: "main", path: "..."}`
-   - Default window="main" (single-window binding 호환)
-   - 신규 `examples/hello-multi-window` example binding — main window (button widget) + inspector window (debug Text node showing `format!("{:?}", state)` of main's button state)
-   - `WidgetView::windows()` returns `vec![WindowSpec::main("Hello Multi-Window", IntrinsicAfterFirstPaint{..}), WindowSpec::new("inspector", "Inspector", Fixed{300, 200})]`
-   - `WidgetView::view_for_window(window_id, state)` 신규 method (default = view; multi-window override)
-   - Phase B 의 first 진짜 dogfood — DevTools / Inspector 의 substrate-first 시연
-   - Estimated LOC: pinion-rpc window param +150-250 / hello-multi-window binding +300-500 / build.rs forge +50 = +500-800 net
+(1) **RPC `{window: "<id>"}` param + `WidgetView::view_for_window` hook + `pinion-rpc::DispatchContext` per-window scope**
+   - `pinion-rpc::DispatchContext` gains `window_id: Option<&'a str>` field + `with_window(id: &'a str)` builder — when present, the dispatcher's scene snapshot/click/key/wheel/invoke arms address the per-window scene; when absent, default to the primary (first `WindowSpec` in `V::windows()`)
+   - `pinion-shell::AppShell::dispatch_rpc` reads `params.window` from the JSON-RPC frame + threads it into `with_window(...)` before calling `pinion_rpc::dispatch`; default "main" preserves single-window binding compat
+   - 신규 `WidgetView::view_for_window(window_id: &str, state: V::State, frame: &Frame) -> Scene` trait method — default forwards to `Self::view(state, frame)` so single-window bindings unaffected; multi-window bindings override to return per-window scenes
+   - `AppShell::render_window` calls `V::view_for_window(window_spec.id, cached_state, &frame)` instead of bare `V::view` so each window's paint scene reflects its own spec id
+   - Estimated LOC: pinion-rpc window param +150-250 / pinion-shell dispatch_rpc wire +100-150 / WidgetView::view_for_window default impl +50 = +300-450 net
 
-(5) **demo `hello_multi_window_r670.py` (≥ 30 assertion) + commit + Mnemosyne R670 entry**
-   - main window scene/snapshot + inspector window scene/snapshot 분리; button state in main window changes → inspector window text mirrors
-   - hello-popover IntrinsicAfterFirstPaint round-trip (pre/post-click window size differ verify)
-   - pinion-tui RPC ingress smoke (cat request.json | hello-button-tui produces stderr response)
-   - existing 8-demo regression sweep PASS 검증 mandatory (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669)
-   - Commit `feat(<scope>): R670 §5.16 §5.41 §5.12 Phase B entry + carry clearance`
-   - Mnemosyne `append_changelog_entry_v2 entry_id=R670` + impact_refs [5.16, 5.41, 5.12] + carry_forward (R671+ Phase B widget catalog axes)
-   - Estimated LOC: demo +400-600 / SEED + Mnemosyne entry +50
+(2) **`hello-multi-window` first consumer binding + demo + 8-demo regression sweep + commit + Mnemosyne R670.B entry**
+   - 신규 `examples/hello-multi-window` example binding — main window (Button widget) + inspector window (Text node displaying `format!("{:?}", state)` of main's ButtonState — read-only mirror)
+   - `WidgetView::windows()` returns `vec![WindowSpec::main("Hello Multi-Window — Main", Fixed{320, 240}), WindowSpec::new("inspector", "Hello Multi-Window — Inspector", Fixed{280, 160})]`
+   - `WidgetView::view_for_window` switches: `"main"` → Button view; `"inspector"` → state-debug text
+   - 신규 `tools/demos/hello_multi_window_r670b.py` (≥ 30 assertion): scene/snapshot {window:"main"} ↔ scene/snapshot {window:"inspector"} 분리; scene/click {window:"main", at:...} 이 main button state 를 flip → inspector window 의 scene/snapshot 이 자동 mirror; 8-demo regression sweep PASS 검증 mandatory (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669 + R670.A carry clearance demo)
+   - Commit `feat(<scope>): R670.B §5.16 §5.40 §5.12 Phase B multi-window first cut`
+   - Mnemosyne `append_changelog_entry_v2 entry_id=R670.B` + impact_refs [5.16, 5.40, 5.12] + carry_forward (R671+ Phase B widget catalog axes)
+   - Estimated LOC: hello-multi-window binding +400-700 / build.rs forge +50 / app.pinion.xml +20 / demo +400-600 / SEED + Mnemosyne entry +100 = +1000-1500 net
 
-**Honest total LOC 예측: +2500-4200 net** (multi-substrate axis 동시 land). R669 실측 ~+750의 ~3-5× (R670 = R668-scale substrate + 2 신규 example + Phase B refactor).
+**Honest total LOC 예측: R670.B = +2000-3000 net** (substrate refactor + first consumer + demo). R670.A 실측 ~+1340의 ~1.5-2×.
 
-**R670 후 진척**: Phase A 100% close + Phase B 25% × first-slice ~3% = 북극성 가중 ~7.7% → **~8.5%**. R671+ = **Phase B widget catalog 본격 시작 (R750+ → Menu / Dialog / Toolbar / TreeView / Table / DevTools / Inspector first dogfood)**.
+**R670.B 후 진척**: R670.A 7.5% + Phase B 25% × first-consumer ~2% = **북극성 가중 ~7.7-8.0%**. R671+ = **Phase B widget catalog 본격 시작 (R750+ → Menu / Dialog / Toolbar / TreeView / Table / DevTools / Inspector first dogfood)**.
+
+R670.A 의미 = **R668/R669 carry 100% 청산 + Phase B trait foundation 확보** (atomics 0+1+2 land). R670.B 가 actual multi-window dispatch + first application consumer 추가; R670 total = R670.A + R670.B 두 commit 으로 split.
+
+R670.B 사전 watch out (R670.A 종료 시 surface 된 부채):
+- `AppShell::resumed` 의 default-spec-only path 가 multi-window 진입 시 잠재 race — V::windows() 가 빈 Vec 반환하면 panic 잘 (assertion + 명시 error message 필수)
+- per-window `pending_intrinsic_resize` 가 hashmap 으로 lift 되면 `IntrinsicAfterFirstPaint` 의 one-shot 보장이 per-window 단위로 유지되는지 검증 mandatory (한 window 이 intrinsic, 다른 window 이 fixed = mixed strategy 케이스)
+- `accesskit_winit::Adapter` 가 per-window — AT client 가 main window 만 attach 하면 inspector window 의 a11y 트리는 emit 안 됨; 의도된 동작인지 vs 모든 window 가 한 트리에 합쳐져야 하는지 (AccessKit canonical: 1 adapter = 1 window, multi-window 는 multi-adapter — pinion 도 따름)
+- `pinion-tui` 는 multi-window 미지원 영구 carry (terminal 1 process = 1 alternate-screen = 1 window 본질적 한계) — R670.B 도 GUI-only refactor; TUI binding 은 `windows()` default 만 사용
 
 R667 의미 = **Phase A 종료 + Phase B (R700+) 진입 자격 획득**:
 
@@ -357,15 +370,24 @@ R1000+ Phase C 진입 = §2 #4 진짜 구현 — game-loop substrate:
 - ✓ R668 청산: `pinion-shell::SizeStrategy` enum (Fixed / IntrinsicAfterFirstPaint) + `Scene::intrinsic_content_size` walker + winit `with_min_inner_size` floor + post-first-paint `request_inner_size` wire + 15 binding migration; `pinion-tui::ShellCoreTui::drain_deferred_inputs` substrate (mirrors pinion-shell pattern, all 6 DeferredInput variants — §2 #6 GUI/TUI dual invariant restored at substrate level); `pinion-widget-paint::checkbox::view_checkbox` lift (hello-checkbox 1st consumer; ~120 LOC → ~50 LOC); `pinion_core::text_scale::use_text_scale` + `TextStyle::with_size_px` thread-local multiplier (a11y substrate, clamp [0.1, 5.0] + NaN guard); settings-panel font_slider → use_text_scale wire (atomic 3 application consumer)
 - ✓ R669 청산: `SettingsPersistedState` schema v1→v2 migrator (R665 schema migrator carry **first implementation** — textbook canonical for all future bumps); 6× `CheckboxExternal` composite-tag cluster `notifications#0..#5` (R55.D.5 substrate at N=6); `view_notifications_section` rewrite + `read_notification_states` + `read_notification_checked` Owner-scope-free walkers; 4th `ScrollBarExternal` consumer (notifications viewport overflow); `pinion-widget-paint::checkbox` 2nd application consumer (settings-panel notifications — Rule of Three 정통화)
 
-R668 carry (R669 진입 전 평가 / 미래 inline 청산 candidate):
+R668 carry (R670.A 종료 시 평가):
 - ✓ R669 청산: settings-panel Notifications 6-channel CheckboxExternal cluster (atomic 4 ladder); SettingsPersistedState schema v1→v2 migrator (R665 carry first impl); 4th ScrollBarExternal consumer
-- ❌ R670 청산 mandatory: `[[pinion-tui-rpc-ingress]]` 풀 wire (PreviewLedger / SceneRevision / FocusManager / LayoutCache field lifts onto ShellCoreTui + stdin reader thread + stderr response writer + ShellCoreTui::dispatch_rpc) — substrate primitive (drain_deferred_inputs) 이미 R668 land; ingress wire 만 follow-up
-- ❌ R670 청산 mandatory: `SizeStrategy::IntrinsicAfterFirstPaint` first real application consumer (substrate from R668 atomic 0 in place; settings-panel root locks WIN_W × WIN_H so cannot demo; 신규 `examples/hello-popover` binding with content-driven height = 첫 진짜 consumer)
+- ✓ R670.A 청산: `[[pinion-tui-rpc-ingress]]` 풀 wire — `ShellCoreTui::dispatch_rpc` + previews/revision/focus/last_paint_layout field lifts + spawn_stdin_rpc_reader_tui + pinion-tui::shell::run stdin drain with stderr response writer + 9 integration tests
+- ✓ R670.A 청산: `SizeStrategy::IntrinsicAfterFirstPaint` first real application consumer — `examples/hello-popover` binding + `pinion-derive` `initial_size_strategy` macro flag + 5 unit tests + demo verify
 
-R669 carry (R670 진입 전 평가):
-- ✓ R670 청산 (위 R668 carry 와 같은 item — IntrinsicAfterFirstPaint application consumer)
-- ❌ R670 inline 청산 candidate: `read_composite_tag_value_slots` substrate helper — R669 의 read_notification_* 가 6 composite tags 순회; 2nd composite-tag-cluster consumer 등장 시 lift (현재 1-of-1, premature)
-- ❌ R670 진입 substrate: Phase B (R700+) multi-window — `pinion-shell::WindowManager` + `WidgetView::windows()` trait extension + Scene::Window variant; first consumer = R670 atomic (4) `hello-multi-window` binding
+R669 carry (R670.A 종료 시 평가):
+- ✓ R670.A 청산: IntrinsicAfterFirstPaint application consumer (same item as R668 carry above)
+- ❌ R670.B inline 청산 candidate: `read_composite_tag_value_slots` substrate helper — R669 의 read_notification_* 가 6 composite tags 순회; 2nd composite-tag-cluster consumer 등장 시 lift (현재 1-of-1, premature)
+- 🔄 R670.B 진행 중 substrate: Phase B (R700+) multi-window — R670.A 의 `WindowSpec` + `WidgetView::windows()` trait foundation 위에서 AppShell multi-window refactor + RPC `{window: "<id>"}` param + `hello-multi-window` first consumer
+
+R670.A carry (R670.B 진입 전 평가):
+- ❌ R670.B 청산 mandatory: `AppShell::resumed` 가 `V::windows()` 전체 list 를 walk + per-spec winit Window 생성 (현재는 default-spec-only 의 first-element 만 사용; multi-window 미지원)
+- ❌ R670.B 청산 mandatory: RPC `{window: "<id>"}` param + `pinion-rpc::DispatchContext::with_window` builder + `pinion-shell::AppShell::dispatch_rpc` 가 frame.params.window 를 읽어 threading
+- ❌ R670.B 청산 mandatory: `hello-multi-window` first consumer binding + ≥ 30 assertion demo
+- ❌ R670.B 진입 substrate: `WidgetView::view_for_window(window_id, state, frame) -> Scene` trait method (default = view; multi-window override)
+- 영구 carry: `pinion-tui` multi-window 미지원 (terminal 1 process = 1 alternate-screen = 1 window 본질 한계)
+- 영구 carry: `pinion-tui::shell::run` 의 stdin RPC 가 비-TTY (CI pipe) 환경에서 raw-mode-enable 실패 — substrate-level RPC ingress 는 9 integration tests 가 직접 cover; production smoke 는 TTY 환경에서만 verify
+- 영구 carry: `SizeStrategy::IntrinsicAfterFirstPaint` 의 one-shot semantics (post-first-paint single resize; dynamic shrink-wrap-on-state-change 별도 axis)
 
 영구 carry (외부 의존):
 - SCE-004 (Forge codegen serde derive) — vendor/sce upstream RFC
@@ -417,47 +439,40 @@ R669 carry (R670 진입 전 평가):
 
 【시작 명령】
 
-R670 = **Phase B (R700+) 진입 substrate Round 1 + R668/R669 carry 전부 inline 청산**. 6 atomic land (정확한 순서 — substrate-first, northern-star 정렬).
+R670.B = **R670.A trait foundation 위에서 AppShell multi-window refactor + RPC window param + `hello-multi-window` first consumer**. 3 atomic land (정확한 순서 — substrate-first).
 
-**진입 시 즉시 진행 (load 명령 / `R670 진행` 입력 시 자동 시작)**:
+**진입 시 즉시 진행 (load 명령 / `R670.B 진행` 입력 시 자동 시작)**:
 - 모든 atomic은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지
 - 각 substrate atomic 종료 시 cargo test + clippy + 해당 mini-demo 검증 후 다음 atomic 진입
-- 마지막 atomic (5) 에서 demo + commit + Mnemosyne entry 한꺼번에
+- 마지막 atomic (2) 에서 demo + commit + Mnemosyne entry 한꺼번에
 - 라운드 중간 commit 금지 (1 commit = 1 round 원칙) — WIP는 stash 또는 sequence keep
-- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R670.A) — but 우선 6 atomic 모두 한 라운드 land 시도
+- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R670.B.A) — but 우선 3 atomic 모두 한 라운드 land 시도
 - 매 라운드 끝 push 권한 명시 동의 필요 (CLAUDE.md 영구 원칙)
 
-**R670 atomic land 순서** (substrate-first + carry-clearance-first, northern-star 정렬):
+**R670.B atomic land 순서** (R670.A trait foundation 위에서; substrate-first):
 
-(0) **`pinion-tui` 풀 RPC ingress** (R668 carry #2 즉시 청산 — substrate 완성도) — `PreviewLedger` + `SceneRevision` + `FocusManager` + `LayoutCache` field lifts onto `ShellCoreTui`; `ShellCoreTui::dispatch_rpc(request: &str) -> Option<String>` mirror of `pinion-shell::ShellCore::dispatch_rpc` (DispatchContext 구축 + `pinion_rpc::dispatch` 호출 + `drain_deferred_inputs` 후처리); `spawn_stdin_rpc_reader_tui` 헬퍼 (mpsc::Sender<String> via stdin reader thread, mirror pinion-shell pattern); `pinion-tui::shell::run` event loop integration with stderr response writer (alternate-screen aware — stdout는 ratatui buffer 가 가져감); 신규 integration test verifying RPC scene/click + scene/key + scene/invoke 모두 TUI 에서 동작. R668 carry 영구 청산.
+(0) **`pinion-shell::AppShell` multi-window refactor** (Phase B substrate Round 2) — Approach A (single ShellCore + per-window winit Window / RenderState / accesskit_winit::Adapter / IME state / pending_intrinsic_resize). 신규 `Self::WindowSlot` struct group; `AppShell::windows: HashMap<WindowId, WindowSlot>` cluster lift; `resumed(event_loop)` walks `V::windows()` list; `window_event(window_id, event)` dispatches to per-window slot; `render()` → `render_window(window_id)` split. 기존 single-window 경로는 R670.A 의 default `V::windows()` 가 보장.
 
-(1) **`SizeStrategy::IntrinsicAfterFirstPaint` first real application consumer** (R668 carry #1 + R669 carry #1 즉시 청산) — 신규 `examples/hello-popover` binding: 작은 root container with content-driven height (no `with_size(WIN_W, WIN_H)` lock); `WidgetView::initial_size_strategy()` returns `IntrinsicAfterFirstPaint { min: (240, 100), max: (480, 400) }`; demo가 content 변경 시 (button click 으로 expand/collapse) window 가 auto-resize 하는 것 검증. `hello-popover` 가 IntrinsicAfterFirstPaint 의 첫 진짜 consumer = R668 atomic 0 substrate 정통화.
+(1) **RPC `{window: "<id>"}` param + `WidgetView::view_for_window` hook** — `pinion-rpc::DispatchContext::with_window` builder; `AppShell::dispatch_rpc` reads `params.window` + threads through; 신규 `WidgetView::view_for_window(window_id, state, frame) -> Scene` trait method (default forwards to `view`). Default "main" preserves single-window binding compat.
 
-(2) **`WidgetView::windows()` trait extension** (Phase B substrate Round 1) — 신규 `pinion-shell::WindowSpec { id: &'static str, title: String, strategy: SizeStrategy }` type; `WidgetView::windows() -> Vec<WindowSpec>` trait method with backward-compat default `vec![WindowSpec::main(Self::title(), Self::initial_size_strategy())]` so existing 15 binding 자동 single-window; multi-window 원하는 binding 만 override. Forward-compat foundation — Phase B widget catalog (R750+) 의 모든 multi-window UI 가 ride.
+(2) **`hello-multi-window` first consumer binding + demo + commit + Mnemosyne** — `examples/hello-multi-window` main window (Button) + inspector window (state-debug Text). `tools/demos/hello_multi_window_r670b.py` (≥ 30 assertion: main scene/snapshot ↔ inspector scene/snapshot 분리, main click → inspector mirror). 9-demo regression sweep PASS (R660/R663/R664/R665/R666/R667/R668/R669 + R670.A). Commit + Mnemosyne `append_changelog_entry_v2 entry_id=R670.B`.
 
-(3) **`pinion-shell::AppShell` multi-window refactor** (Phase B substrate Round 2) — `AppShell::render` per-WindowId hashmap; `resumed()` walks `V::windows()` list, creates one winit `Window` + `RenderState` + `accesskit_winit::Adapter` per spec; `window_event(window_id, event)` dispatches to the right per-window slot. **단일 ShellCore + 다중 Window** (Approach A — same binding state, different views per window; Approach B 의 multi-binding 은 R750+ widget catalog 단계). 기존 single-window 경로는 default V::windows() 가 보장.
+visible (R670.B land 후):
+- `./target/release/hello-multi-window` 신규 — 2 windows (main + inspector); main state change → inspector window 자동 mirror via shared ShellCore
+- `python3 tools/demos/hello_multi_window_r670b.py` (≥ 30 assertion, Phase B first multi-window dispatch 검증)
+- 기존 9-demo regression sweep PASS (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669 + R670.A)
 
-(4) **RPC `{window: "<id>"}` param + `hello-multi-window` first consumer** (Phase B substrate Round 3 + first application) — `pinion-rpc::DispatchContext` per-window scope; `scene/snapshot {window: "main"}` default; 신규 `examples/hello-multi-window` example: main window (hello-button-like) + inspector window (live state debug text — `format!("{:?}", state)` Text node). Inspector window 가 main window 의 state 를 read-only mirror. `WidgetView::windows()` returns 2 specs. Phase B 의 first 진짜 dogfood — DevTools / Inspector 의 substrate-first 시연.
+honest LOC 예측: **R670.B = +2000-3000 net** — (0) AppShell multi-window refactor +700-1000 / (1) RPC window param + view_for_window hook +300-450 / (2) hello-multi-window binding +400-700 + demo +400-600 + SEED + Mnemosyne +100. R670.A 실측 ~+1340의 ~1.5-2×.
 
-(5) **demo `hello_multi_window_r670.py` (≥ 30 assertion) + commit + Mnemosyne entry** — main window scene/snapshot + inspector window scene/snapshot 분리; state change in main → inspector 자동 mirror; hello-popover IntrinsicAfterFirstPaint 검증 (window auto-resize 시연); pinion-tui RPC ingress integration test 실행; existing 8-demo regression sweep PASS 검증. Commit `feat(<scope>): R670 §5.16 §5.41 §5.12 Phase B entry + carry clearance` + Mnemosyne `append_changelog_entry_v2 entry_id=R670`.
-
-visible (R670 land 후):
-- `./target/release/hello-multi-window` 신규 — 2 windows (main + inspector); main state change → inspector 자동 mirror
-- `./target/release/hello-popover` 신규 — IntrinsicAfterFirstPaint 실시연 (content change → window auto-resize)
-- `./target/release/<every hello-*-tui>` (R668 atomic 1 substrate consumer) — stdin RPC 가 동작 (cat request.json | hello-button-tui)
-- `python3 tools/demos/hello_multi_window_r670.py` (30+ assertion, Phase B substrate 검증)
-- 기존 8-demo regression sweep PASS (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669)
-
-honest LOC 예측: **+2000-3500 net** — (0) pinion-tui RPC ingress 700-1200 / (1) hello-popover binding +400-600 / (2) windows() trait +100-150 / (3) AppShell multi-window refactor 600-1000 / (4) RPC window param + hello-multi-window binding 400-700 / (5) demo +300-500. R668 ~+1810 net의 ~1.5-2× (다중 substrate axis 동시 land).
-
-**R670 진행 lessons audit 의무** (라운드 끝):
-- pinion-tui RPC ingress 의 stderr-for-response 가 production 에서 작동 verify (alternate-screen 와 stderr 충돌 0)
-- multi-window AppShell refactor 가 기존 single-window binding 모두 회귀 0 (8-demo sweep PASS)
+**R670.B 진행 lessons audit 의무** (라운드 끝):
+- multi-window AppShell refactor 가 기존 9-demo (R660-R669 + R670.A) 모두 회귀 0 (8-demo sweep PASS + R670.A carry clearance demo PASS)
+- per-window `pending_intrinsic_resize` hashmap lift 가 IntrinsicAfterFirstPaint one-shot 보장 per-window 단위 유지 검증 (mixed strategy 케이스 — main: Fixed, inspector: IntrinsicAfterFirstPaint)
+- `accesskit_winit::Adapter` per-window 가 AccessKit canonical 1-adapter-per-window 룰 준수 (multi-window = multi-adapter, 자동 합쳐지지 않음 — 의도된 동작)
 - Phase B first consumer (hello-multi-window) 가 inspector window 에서 main state 를 read-only mirror — 진짜 multi-window pattern 실증
-- R668/R669 carry 전부 청산 honest verify — `IntrinsicAfterFirstPaint application` + `pinion-tui RPC ingress` 둘 다 first consumer 등장
 - 부채 surface 정직 받아들임 — multi-window refactor 도중 등장한 새 substrate gap 은 R671 carry
+- `pinion-tui` multi-window 미지원 영구 carry (terminal 1 process = 1 alternate-screen 본질 한계)
 
-**R670 후 진척**: Phase A 100% close + Phase B (25% weight) × first-slice ~3% = 북극성 가중 ~7.7% → **~8.5%**. **R671+ = Phase B widget catalog 본격 (Menu / Dialog / Toolbar / DevTools / TreeView / Table 등 R750+ 진입)**.
+**R670.B 후 진척**: R670.A 7.5% + Phase B 25% × first-consumer ~2% = 북극성 가중 **~7.7-8.0%**. **R671+ = Phase B widget catalog 본격 (Menu / Dialog / Toolbar / DevTools / TreeView / Table 등 R750+ 진입)**.
 
 ---
 

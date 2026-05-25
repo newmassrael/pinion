@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R670 §5.16 — pinion-forge codegen manifest for hello-popover. Emits
+  a `HelloPopoverRenderer` Vello-backed struct (RenderContext +
+  RenderSurface + Renderer wrapper) on the same template the other
+  hello-* bindings use. The binding is a first-time consumer of
+  `pinion_shell::SizeStrategy::IntrinsicAfterFirstPaint` — the
+  renderer wire is unchanged from the canonical template; only the
+  binding's `initial_size_strategy()` differs.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloPopoverRenderer"
+        backend="vello"/>

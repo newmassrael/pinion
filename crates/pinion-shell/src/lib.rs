@@ -313,6 +313,91 @@ impl SizeStrategy {
     }
 }
 
+/// R670 §5.16 §5.41 — Phase B (R700+) multi-window foundation.
+///
+/// One [`WindowSpec`] describes a single OS window the binding wants
+/// the shell to create at boot — the canonical building block for
+/// every multi-window UI Phase B will surface (`DevTools` / Inspector
+/// floating against a main editor canvas, Settings dialog as a
+/// secondary modal, popover-class overlays, …).
+///
+/// The triple `(id, title, strategy)` is intentionally minimal: no
+/// position, no decorations, no parent-window relationship,
+/// no transparency hint. Every extra knob can be added behind a
+/// follow-up builder method as a concrete Phase B widget catalog
+/// binding surfaces the substrate-incompleteness signal — this round
+/// only lands what multi-window dispatch + RPC `{window: "<id>"}`
+/// scoping needs.
+///
+/// `id` is the AI-facing scene/RPC handle (`scene/snapshot {window:
+/// "main"}` / `scene/click {window: "inspector", at: …}`). The
+/// single-window convention is `"main"`; secondary windows pick
+/// non-conflicting names per the embedder's taxonomy.
+///
+/// `title` is the OS window title (the string winit
+/// `set_title`-forwards to the platform's window decoration). The
+/// shell does not pin the title to `WidgetView::title()` because a
+/// multi-window binding (e.g. main + inspector) naturally carries
+/// different titles per window.
+///
+/// `strategy` follows the same [`SizeStrategy`] taxonomy
+/// single-window bindings already use. `Fixed` opens the per-spec
+/// window at the declared logical size; `IntrinsicAfterFirstPaint`
+/// runs the same post-first-paint walker but scoped to the per-spec
+/// window's painted scene.
+#[derive(Debug, Clone)]
+pub struct WindowSpec {
+    /// AI-facing handle. RPC `{window: "<id>"}` scoping resolves a
+    /// dispatch against the window whose `id` matches. The default
+    /// single-window binding uses `"main"`; secondary windows pick
+    /// any non-empty non-conflicting string. The shell does not
+    /// auto-generate IDs — explicit naming keeps the AI-side wire
+    /// stable across binding releases.
+    pub id: &'static str,
+    /// OS window title — `winit::window::Window::set_title` forwards
+    /// this string to the platform window decoration.
+    pub title: String,
+    /// Window-creation policy. See [`SizeStrategy`] for the canonical
+    /// contract; multi-window bindings can mix strategies per spec
+    /// (main: `Fixed`, inspector: `IntrinsicAfterFirstPaint`, …).
+    pub strategy: SizeStrategy,
+}
+
+impl WindowSpec {
+    /// (R670 §5.16) Canonical single-window primary spec — the same
+    /// shape [`WidgetView::windows`]'s default impl returns so the
+    /// 15+ existing single-window bindings keep their pre-R670
+    /// behaviour bit-identical (one window, `id = "main"`, title +
+    /// strategy from the binding's own [`WidgetView::title`] +
+    /// [`WidgetView::initial_size_strategy`]).
+    #[must_use]
+    pub fn main(title: impl Into<String>, strategy: SizeStrategy) -> Self {
+        Self {
+            id: "main",
+            title: title.into(),
+            strategy,
+        }
+    }
+
+    /// (R670 §5.16) Build a non-primary window spec — the path
+    /// multi-window bindings take when adding inspector / dialog /
+    /// floating panel windows alongside the main one. `id` must be a
+    /// stable `&'static str` (RPC clients address the window by this
+    /// literal); `title` is the OS window decoration.
+    #[must_use]
+    pub fn new(
+        id: &'static str,
+        title: impl Into<String>,
+        strategy: SizeStrategy,
+    ) -> Self {
+        Self {
+            id,
+            title: title.into(),
+            strategy,
+        }
+    }
+}
+
 /// R51.121 §5.41 — Vello-specific application-supplied widget binding.
 ///
 /// Each visual binary implements this once on a unit type;
@@ -396,6 +481,40 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     ) -> Option<pinion_text::CaretRect> {
         None
     }
+
+    /// R670 §5.16 §5.41 — Phase B (R700+) multi-window foundation.
+    ///
+    /// Returns the [`WindowSpec`] list the shell creates per binding
+    /// at boot. The default impl returns exactly one spec —
+    /// `WindowSpec::main(Self::title(), Self::initial_size_strategy())`
+    /// — so every existing single-window binding (R670 has 15+ in
+    /// the example gallery) keeps its pre-R670 lifecycle bit-
+    /// identical without touching any trait method.
+    ///
+    /// Multi-window bindings override this to enumerate every window
+    /// they want. The order is significant: the **first** spec is
+    /// the primary window — the first to receive
+    /// [`AppShell::resumed`] focus + the default scope for RPC
+    /// frames that omit `{window: "..."}`. Secondary windows follow
+    /// in declaration order.
+    ///
+    /// The per-window paint pipeline runs the same `WidgetView::view`
+    /// fn for every spec by default; Phase B widget catalog rounds
+    /// (R750+) lift a `view_for_window(window_id, state) -> Scene`
+    /// hook so multi-window bindings can render different scenes
+    /// per window (main view in the primary, inspector tree in the
+    /// secondary, …) once the second-consumer trigger surfaces.
+    /// Today's single-binding-state / one-view-per-window model
+    /// suffices for the first dogfood (R670 atomic 4
+    /// `hello-multi-window`).
+    ///
+    /// Returns `Vec<WindowSpec>` (not `&[WindowSpec]`) because the
+    /// shell needs an owned list for its per-window storage map; the
+    /// allocation cost is amortised once at boot.
+    #[must_use]
+    fn windows() -> Vec<WindowSpec> {
+        vec![WindowSpec::main(Self::title(), Self::initial_size_strategy())]
+    }
 }
 
 /// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.6
@@ -447,5 +566,42 @@ mod tests {
             max: (1280, 800),
         };
         assert_eq!(s.initial_logical_size(), (320, 240));
+    }
+
+    // R670 §5.16 §5.41 — [`WindowSpec`] + [`WidgetView::windows`]
+    // pin the Phase B multi-window foundation. The single-window
+    // default must reproduce the pre-R670 shape bit-identical so
+    // every existing binding's lifecycle is unaffected.
+
+    #[test]
+    fn r670_window_spec_main_carries_id_main_literal() {
+        // The `"main"` literal is the RPC `{window: "..."}` default
+        // scope. AI clients that omit the field address the primary
+        // window — that addressing only works if the canonical
+        // primary spec's `id` is exactly `"main"`.
+        let spec = WindowSpec::main(
+            "Test Title",
+            SizeStrategy::Fixed { width: 320, height: 200 },
+        );
+        assert_eq!(spec.id, "main");
+        assert_eq!(spec.title, "Test Title");
+        assert!(matches!(
+            spec.strategy,
+            SizeStrategy::Fixed { width: 320, height: 200 }
+        ));
+    }
+
+    #[test]
+    fn r670_window_spec_new_accepts_arbitrary_id() {
+        // Multi-window bindings address secondary windows via stable
+        // `&'static str` ids — the RPC wire shape `{window:
+        // "inspector"}` resolves to whichever spec carries that id.
+        let spec = WindowSpec::new(
+            "inspector",
+            String::from("Inspector"),
+            SizeStrategy::Fixed { width: 280, height: 360 },
+        );
+        assert_eq!(spec.id, "inspector");
+        assert_eq!(spec.title, "Inspector");
     }
 }

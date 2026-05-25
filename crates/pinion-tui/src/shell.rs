@@ -83,8 +83,9 @@
 
 use std::env;
 use std::fs::OpenOptions;
-use std::io::{self, Stdout, stdout};
+use std::io::{self, BufRead, Stdout, Write, stderr, stdout};
 use std::sync::{mpsc, Arc};
+use std::thread;
 use std::time::Duration;
 
 use pinion_core::event::WheelDelta;
@@ -257,14 +258,26 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
         None
     };
 
+    // R670 §5.41 §5.40 — JSON-RPC stdin ingress, mirror of
+    // `pinion_shell::spawn_stdin_rpc_reader`. A background thread
+    // reads `BufRead::lines` off stdin and forwards each non-blank
+    // frame through an `mpsc::Sender<String>`; the event loop drains
+    // the matching `mpsc::Receiver<String>` on every tick with
+    // `try_recv` so AI-injected RPC frames reach the substrate
+    // alongside live crossterm events. The §2 #6 GUI/TUI dual
+    // invariant requires identical RPC ingress shape on both
+    // backends — see [`crate::ShellCoreTui::dispatch_rpc`] for the
+    // dispatch path the drained frames feed into.
+    let (rpc_tx, rpc_rx) = mpsc::channel::<String>();
+    spawn_stdin_rpc_reader_tui(rpc_tx);
+
     let (mut cols, mut rows) = V::initial_size();
 
     // Initial paint. The returned paint scene seeds the router's
     // hit-test snapshot before the first mouse event reaches the
     // event loop — without this prime, a `Down(Left)` before any
     // `Moved` would see an empty hover map and miss the widget.
-    let initial_paint = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
-    core.update_paint_scene(initial_paint);
+    commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
 
     // Event loop. See module-level [`IDLE_POLL_MS`] / [`ACTIVE_POLL_MS`]
     // / [`REST_EPSILON`] for the R51.148 §5.28 adaptive-poll rationale.
@@ -275,17 +288,19 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
         // skip the inner loop entirely. Each dispatched intent
         // routes through the SCXML `send` channel; on visible state
         // change we commit a fresh paint before the next event poll.
-        if let Some(rx) = &intent_rx {
-            let mut commit_after_drain = false;
-            while let Ok(intent) = rx.try_recv() {
-                if core.dispatch_intent(&intent) {
-                    commit_after_drain = true;
-                }
-            }
-            if commit_after_drain {
-                let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
-                core.update_paint_scene(paint_scene);
-            }
+        if let Some(rx) = &intent_rx
+            && drain_intents_into_substrate(&mut core, rx)
+        {
+            commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
+        }
+        // R670 §5.41 §5.40 — drain any JSON-RPC frames the stdin
+        // reader thread has buffered since the previous tick. See
+        // [`drain_rpc_into_substrate`] for the stderr-response
+        // rationale (alternate-screen + raw-mode terminal owns
+        // stdout, so the response wire lives on stderr per the
+        // canonical Unix diagnostic-stream convention).
+        if drain_rpc_into_substrate(&mut core, &rpc_rx) {
+            commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
         }
 
         let poll_timeout = if core.any_animation_active(REST_EPSILON) {
@@ -299,8 +314,7 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
             // user observes the spring transition; otherwise stay
             // idle until the next event arrives.
             if core.any_animation_active(REST_EPSILON) {
-                let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
-                core.update_paint_scene(paint_scene);
+                commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
             }
             continue;
         }
@@ -342,8 +356,7 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
                 // `true` so the new SCXML projection lands on
                 // screen.
                 if core.dispatch_key(&key_str, modifiers) {
-                    let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
-                    core.update_paint_scene(paint_scene);
+                    commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
                 }
             }
             crossterm::event::Event::Mouse(me) => {
@@ -361,15 +374,13 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
                 // visible state transition; the surface repaints
                 // on `true`.
                 if dispatch_mouse(&mut core, me.kind, x, y) {
-                    let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
-                    core.update_paint_scene(paint_scene);
+                    commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
                 }
             }
             crossterm::event::Event::Resize(new_cols, new_rows) => {
                 cols = new_cols;
                 rows = new_rows;
-                let paint_scene = commit_paint::<V>(&core, cols, rows, &mut renderer)?;
-                core.update_paint_scene(paint_scene);
+                commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
             }
             _ => {
                 // Paste / focus events — ignored this round.
@@ -482,4 +493,117 @@ fn commit_paint<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>
     crate::paint::to_buffer(&paint_scene, &mut buf);
     renderer.render(&buf, TuiContext::default())?;
     Ok(paint_scene)
+}
+
+/// R670 §5.41 — paint commit + last-paint-layout snapshot in one
+/// step. The substrate's `finalize_paint_snapshot` must observe the
+/// freshly-painted scene before `update_paint_scene` consumes it so
+/// an RPC `scene/layout {viewport: null}` on the next dispatch tick
+/// sees the post-paint geometry. Collapses the three-line
+/// "commit / finalize / handoff" sequence event-loop arms repeat at
+/// every redraw site into one helper call, keeping `run_impl` under
+/// the workspace `clippy::too_many_lines` ceiling without splitting
+/// the substrate's snapshot wire across two layers.
+fn commit_and_finalize<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
+    core: &mut ShellCoreTui<V>,
+    cols: u16,
+    rows: u16,
+    renderer: &mut TuiRenderer<CrosstermBackend<Stdout>>,
+) -> io::Result<()> {
+    let paint_scene = commit_paint::<V>(core, cols, rows, renderer)?;
+    core.finalize_paint_snapshot(&paint_scene);
+    core.update_paint_scene(paint_scene);
+    Ok(())
+}
+
+/// R51.160 §5.23 — drain every [`Intent`] the
+/// [`CommandExecutor`](pinion_runtime::CommandExecutor) worker thread
+/// has buffered since the previous tick. Returns `true` when any
+/// drained intent flipped the substrate's cached state, so the
+/// caller knows to commit a fresh paint before the next event poll.
+/// Non-blocking; an empty queue returns `false` immediately.
+fn drain_intents_into_substrate<V: WidgetViewTui>(
+    core: &mut ShellCoreTui<V>,
+    rx: &mpsc::Receiver<Intent>,
+) -> bool {
+    let mut state_changed = false;
+    while let Ok(intent) = rx.try_recv() {
+        if core.dispatch_intent(&intent) {
+            state_changed = true;
+        }
+    }
+    state_changed
+}
+
+/// R670 §5.41 §5.40 — drain every JSON-RPC frame the stdin reader
+/// thread has buffered since the previous tick, dispatch each
+/// through [`ShellCoreTui::dispatch_rpc`], and emit the optional
+/// response to **stderr**.
+///
+/// The alternate-screen + raw-mode terminal owns stdout (ratatui
+/// commits cells through that fd; any byte written from the
+/// substrate side would corrupt the visible frame). The canonical
+/// Unix convention for diagnostic / out-of-band streams pairs the
+/// JSON-RPC response wire with the audit trace already routed to
+/// `PINION_TUI_LOG` (which itself lives on stderr-or-file for the
+/// same reason). A broken-pipe write silently skips so a downstream
+/// consumer that disconnects mid-session does not abort the TUI
+/// loop.
+///
+/// Returns `true` when at least one frame was drained (regardless of
+/// whether the dispatch mutated cached state — RPC handlers run
+/// outside the event poll so the caller must commit a fresh paint to
+/// surface any AI-driven transition before the next user event).
+fn drain_rpc_into_substrate<V: WidgetViewTui>(
+    core: &mut ShellCoreTui<V>,
+    rx: &mpsc::Receiver<String>,
+) -> bool {
+    let mut any_frame = false;
+    while let Ok(request) = rx.try_recv() {
+        if let Some(response) = core.dispatch_rpc(&request) {
+            let mut err = stderr().lock();
+            // Silently swallow broken-pipe errors — downstream
+            // consumer gone, the TUI loop keeps running.
+            let _ = writeln!(err, "{response}");
+        }
+        any_frame = true;
+    }
+    any_frame
+}
+
+/// R670 §5.41 §5.40 — JSON-RPC stdin reader thread for the TUI
+/// shell. Background-spawned mirror of
+/// `pinion_shell::spawn_stdin_rpc_reader` — reads line-delimited
+/// JSON-RPC 2.0 frames off stdin and forwards each non-blank line
+/// through the supplied `mpsc::Sender<String>` so the crossterm
+/// event loop drains them on every tick. Blank lines are skipped
+/// (so a trailing newline in a piped JSON file does not enqueue an
+/// empty frame); EOF or any read error terminates the thread
+/// quietly (the TUI loop keeps running so a finite RPC scenario
+/// stops sending frames without forcing the binary to exit). The
+/// `mpsc::Sender::send` call fails only after the receiver has
+/// dropped, in which case the thread also exits.
+///
+/// The reader uses `stdin().lock()` so the entire stdin handle
+/// belongs to this thread for its lifetime — there is no other
+/// stdin consumer in the TUI shell (alternate-screen + raw-mode
+/// crossterm does not read stdin itself; mouse / keyboard events
+/// arrive through the kernel's terminal driver routed by
+/// `crossterm::event::poll`/`read`).
+fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<String>) {
+    thread::spawn(move || {
+        let stdin = std::io::stdin();
+        let handle = stdin.lock();
+        for line in handle.lines() {
+            let Ok(text) = line else {
+                break;
+            };
+            if text.trim().is_empty() {
+                continue;
+            }
+            if tx.send(text).is_err() {
+                break;
+            }
+        }
+    });
 }

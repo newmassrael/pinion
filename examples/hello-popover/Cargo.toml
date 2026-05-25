@@ -1,0 +1,49 @@
+[package]
+name = "hello-popover"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R670 §5.16 first real consumer of SizeStrategy::IntrinsicAfterFirstPaint — popover-class binding that opens its window at the natural content bbox instead of a fixed WIN_W × WIN_H lock. The single-window equivalent of a tooltip / inline popover panel whose natural size is dictated by its painted content, not a designer-chosen frame."
+publish = false
+
+[[bin]]
+name = "hello-popover"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Tier-1 Button widget + its `External` adapter — the popover
+# carries a single Button trigger underneath the static status rows.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.63 §5.40 — `AccessNode` / `AriaRole` types for the test module.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R641 §5.16 — `#[widget(...)]` attribute macro (WidgetCore +
+# WidgetA11y + WidgetView forwarding trio).
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell + SizeStrategy. The R668 substrate
+# (`SizeStrategy::IntrinsicAfterFirstPaint` + `Scene::intrinsic_content_size`
+# walker + post-first-paint `request_inner_size` wire) lives entirely
+# in this crate; the binding only declares the strategy.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the codegen renderer emitted by build.rs references
+# `::vello::*` and `::vello::wgpu::*` directly. The macro expansion
+# also names `::vello::Scene` and `::vello::peniko::Color`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R670 §5.16 — `pinion_runtime::compute_layout` + `pinion_text::LayoutCache`
+# drive the natural-bbox sanity test through the same layout pipeline
+# the production shell runs, so the post-layout rect tree the
+# intrinsic walker measures matches what `AppShell::render` would see
+# at boot.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the popover's Vello renderer.
+# `build.rs` calls `compile_file` on `app.pinion.xml`.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

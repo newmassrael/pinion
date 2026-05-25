@@ -306,6 +306,31 @@ pub(crate) fn expand(
     } else {
         quote! { <#view_ident>::event_name(event) }
     };
+    // R670 §5.16 — `initial_size_strategy` body selector. The default
+    // emit is `SizeStrategy::Fixed { width, height }` from the
+    // `initial_size = (W, H)` attribute pair (the policy every R668
+    // binding migrated to). The `initial_size_strategy` flag opts
+    // into forwarding to the binding's inherent fn instead, used by
+    // `hello-popover` (and any future binding) that needs
+    // `SizeStrategy::IntrinsicAfterFirstPaint` or a custom variant
+    // the macro doesn't know how to emit declaratively.
+    //
+    // The `initial_size = (W, H)` attribute remains mandatory even
+    // when the strategy is overridden — the values feed
+    // `WidgetView::initial_size` (the cell-unit fallback the TUI
+    // sibling and headless screenshot path both still consult) and
+    // anchor winit's `set_min_inner_size` clamp at the same floor
+    // the strategy's `min` declares.
+    let initial_size_strategy_body = if flags.contains("initial_size_strategy") {
+        quote! { <#view_ident>::initial_size_strategy() }
+    } else {
+        quote! {
+            ::pinion_shell::SizeStrategy::Fixed {
+                width: #init_w,
+                height: #init_h,
+            }
+        }
+    };
 
     Ok(quote! {
         #item
@@ -346,7 +371,7 @@ pub(crate) fn expand(
         impl ::pinion_shell::WidgetView for #view_ident {
             type Renderer = #renderer;
             fn initial_size_strategy() -> ::pinion_shell::SizeStrategy {
-                ::pinion_shell::SizeStrategy::Fixed { width: #init_w, height: #init_h }
+                #initial_size_strategy_body
             }
         }
     })
@@ -783,6 +808,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "fmt_state_log",      // R645 restore (2nd consumer: Slider)
     "a11y_manual",        // R645: opt out of WidgetA11y emit (binding provides custom impl)
     "update",             // R653: forward WidgetCore::update (R27 reducer side effects)
+    "initial_size_strategy", // R670: forward WidgetView::initial_size_strategy to inherent fn (IntrinsicAfterFirstPaint first consumer)
 ];
 
 impl Parse for WidgetArg {
