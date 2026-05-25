@@ -1,6 +1,8 @@
 # pinion seed prompt — 매 세션 첫 입력
 
-> R667 (2026-05-25) 갱신. R663.5 canonical baseline 유지 + R664-R667 land 반영. **Phase A 종료 land 완료** — 2nd composed app (settings-panel) + resolve_external 6-file substrate lift 한 commit으로 land. R664+ 각 라운드 종료 시 "직전 세션 결과" + "다음 텍스트북 캐논" + "watch out" + "lessons" 절 갱신.
+> R667.1 (2026-05-25) 갱신. R663.5 canonical baseline 유지 + R664-R667 land 반영 + **R668 atomic plan lock-in**. **Phase A 표면 종료 land 완료** — 2nd composed app (settings-panel) + resolve_external 6-file substrate lift 한 commit으로 land; R668 = Phase A 100% real-close (모든 부채 한 commit 청산). R664+ 각 라운드 종료 시 "직전 세션 결과" + "다음 텍스트북 캐논" + "watch out" + "lessons" 절 갱신.
+>
+> **User directive (2026-05-25, R667 종료 시)**: 비용 무관 + 북극성 anchor + 장기 textbook-canonical 결정 + 부채 즉시 상환 + 한 라운드에 모든 atomic land. R668 6 atomic 모두 한 commit 청산 (MVP / shortcut 금지). 매 라운드 진입 시 본 directive 영구 적용.
 
 ---
 
@@ -178,18 +180,54 @@ R668+ Phase A 잔여 부채 (scrollbar 4th consumer, WIN_H magic 등) 청산이 
 
 (g) **R2500+ = Phase D 진입** — Editor self-hosted in pinion itself. Unreal-class IDE 작성 시작. 진짜 northern-star 의 본격 진입
 
-【다음 텍스트북 캐논 — R668 (Phase A 잔여 부채 청산 + Phase B 진입 준비)】
+【다음 텍스트북 캐논 — R668 = Phase A 100% real-close (모든 부채 한 commit 청산)】
 
-R668 candidate axis:
-- (a) **view_vertical_scrollbar 4th consumer** — settings-panel 의 Notifications 섹션을 10+ 채널로 확장 + ScrollBarExternal wire (R667 carry 청산)
-- (b) **checkbox paint widget lift** — settings-panel + hello-checkbox = 2-consumer; `pinion-widget-paint::checkbox` 신규 모듈 (R667 inline composed-paint 패턴 retire)
-- (c) **font_scale → TextStyle 실제 wire** — 현재 settings-panel font_scale 은 persist 만; pinion-text 의 font_size_px 와 wire 미연결
-- (d) **WIN_H magic 진짜 청산** — winit window-auto-size axis (winit ResizeDirection / inner_size_request); 영구 carry 의 진짜 해결책
-- (e) **Phase B 진입 첫 step (R700+ multi-window substrate forward-compatible 점검)** — 단순 Scene 구조 audit; 변경 0 + spec review
+> **User directive (2026-05-25)**: 비용 무관 + 북극성 anchor + 장기 textbook-canonical 결정. 부채 즉시 상환. 한 라운드에 6 atomic 모두 land. R667 audit (2026-05-25) 결과 hidden carry 0; 알려진 6 부채 모두 R668 inline 청산 mandatory.
 
-(a)+(b)+(c) = Phase A 100% 도달; (d) = framework windowing axis; (e) = Phase B forward-compat. R668 1 atomic 선택 권장 (a) 우선, 나머지는 R669+ 분리.
+R668 가 **Phase A 100% 진짜 종료** = R667 가 ~97% 표면 종료였음을 honest 정정. R668 후 northern-star 가중 ~7.35% → ~7.5%, 그 다음 R669+ = **Phase B 진입 (R700+ multi-window substrate)** — 진짜 framework 도약 단계.
 
-> 이 절은 4-phase context 와 진짜 northern-star anchor 만 명시. R668 atomic 의 concrete scope + 순서 + signature 는 다음 세션의 SEED 갱신에서 확정 (single source of truth, DRY 원칙).
+R668 atomic 6개 (substrate-first 순서; northern-star 정렬 — Phase B/C/D 기반 우선):
+
+(0) **`pinion-shell` window-auto-size substrate** (Phase B 다중 윈도우 + Phase C 게임 뷰포트 기반 — 최고 leverage)
+   - WidgetView trait 의 `initial_size()` → `initial_size_strategy() -> SizeStrategy` enum 으로 확장
+   - `SizeStrategy::Fixed(w, h)` (현재 default, 모든 hello-* + todomvc + settings-panel 즉시 호환) + `SizeStrategy::IntrinsicAfterFirstPaint { min: (w, h), max: (w, h) }` (신규 변종)
+   - winit `Window::request_inner_size` wire — 첫 paint 후 layout intrinsic size 계산 → window resize 요청 (winit `WindowEvent::Resized` callback 으로 다시 layout)
+   - WIN_W / WIN_H 영구 carry **진짜 청산** (모든 example binding hardcoded 상수 제거 또는 SizeStrategy::Fixed 명시)
+   - Estimated LOC: substrate +500-700 / binding migration +20 × 15 binding = +800-1000 net
+
+(1) **`pinion-tui` DeferredInput drain integration** (§2 #6 GUI/TUI dual invariant 복원 — 2nd 최고 leverage)
+   - `pinion-tui::TuiShell` 의 event loop 가 `DeferredInput` inbox 를 drain (현재는 `ShellCore` 직접 호출)
+   - R666 character-key auto-discrimination + R660 drag + R663 double-click + R664 focus_request 등 모든 RPC substrate 가 TUI 에서도 자동 동작
+   - 검증: pinion-tui crate 의 신규 integration test (pinion-tui 가 R666 substrate 자동 상속 증명)
+   - Estimated LOC: pinion-tui restructure +400-600 / test +200 net
+
+(2) **`pinion-widget-paint::checkbox` substrate lift** (Rule of Three 2-consumer 만족 — hello-checkbox + settings-panel)
+   - `view_checkbox(tag, state, checked, theme, style: &CheckboxStyle, aria_label) -> Scene` (text_field.rs mirror 패턴)
+   - `CheckboxStyle::m3_filled()` defaults (BOX_SIZE=24, BOX_RADIUS=4, ROW_GAP=10, font_size_px=16)
+   - hello-checkbox inline retire (~120 LOC) + settings-panel notifications 섹션이 1st consumer
+   - pinion-widget-paint::checkbox 신규 모듈 + 8+ unit test (state × checked 4×2 matrix + theme swap)
+   - Estimated LOC: substrate +250 / hello-checkbox -120 / test +80 = +210 net
+
+(3) **`use_text_scale()` + TextStyle multiplier wire** (a11y + Phase B M3 readiness)
+   - 신규 `pinion_core::use_text_scale() -> Rc<Signal<f32>>` 캐시 hook (settings-panel 의 font_scale 이 통합)
+   - `TextStyle::with_size_px(px)` 가 thread-local `current_text_scale().get()` 와 곱셈 — 모든 paint 가 자동 scale
+   - 기본값 1.0 — caller migration 불필요; settings-panel slider 가 0.0..2.0 범위로 widget paint 실시간 미리보기
+   - 검증: scene/snapshot 으로 동일 caller 의 같은 px 값이 scale 변경 시 다른 painted size 보여주는 RPC 검증
+   - Estimated LOC: substrate +200 / settings-panel wire +50 / test +60 = +310 net
+
+(4) **settings-panel Notifications 섹션 확장 — 6-channel CheckboxExternal + ScrollBarExternal** (consumer of (2) + 4th scrollbar)
+   - 6 채널: email / push / marketing / digest / security / feedback (각각 `CheckboxExternal` 인스턴스 + composite-tag `notif#0`..`notif#5`)
+   - 섹션 viewport ~200px / row ~48px = 6 row 가 viewport 초과 → ScrollBarExternal 자동 4th consumer
+   - SettingsPersistedState schema v1 → v2: `notifications: [bool; 6]` 추가 + 마이그레이터 (R665 carry 첫 실증 청산: breaking change 발생 시 PERSISTED_SCHEMA_VERSION bump + 자동 default fallback)
+   - Estimated LOC: settings-panel +500-700 / persistence migrator +100 = +600-800 net
+
+(5) **demo `settings_panel_r668.py` + commit + Mnemosyne R668 entry** (≥ 60 assertion)
+   - 모든 R668 substrate 의 application-side 검증: window auto-size (scene/snapshot rect 변화 verify) + TUI parity (pinion-tui-launch sub-process side-by-side) + checkbox lift (paint snapshot bit-identical pre/post lift) + font_scale live preview (TextStyle multiplier read-back) + 6-channel persistence cycle
+   - Estimated LOC: demo +600-800 / SEED + Mnemosyne entry +50
+
+**Honest total LOC 예측: +2670-3700 net** (composed-app + substrate density 가산). R667 실측 ~+1760 의 1.5-2× 예상.
+
+**Phase A 100% 도달 후**: R669+ = **Phase B (R700+) 진입 사전 작업** — `Scene::Window` enum variant proposal + `pinion-shell::WindowManager` substrate 첫 RFC (spec-only, 0 code change) → R700 multi-window 첫 실제 round.
 
 R667 의미 = **Phase A 종료 + Phase B (R700+) 진입 자격 획득**:
 
@@ -336,11 +374,45 @@ R666 carry (R667 진입 전 평가 / 미래 inline 청산 candidate):
 
 【시작 명령】
 
-> R667 land 완료 — 본 절은 R668 axis 결정 시 갱신. 아래는 R667 atomic 원본 (historical reference).
->
-> R668 새 axis (위 R668 candidate 절 참조) → 다음 세션 SEED 갱신 시 본 절 재작성.
+R668 = **Phase A 100% real-close** (모든 부채 한 commit 청산). 6 atomic land (정확한 순서 — substrate-first, northern-star 정렬).
 
-R667 = **2nd composed app (settings panel) = Phase A 종료 라운드** (✓ land). 6개 atomic land (정확한 순서 — substrate-first):
+**진입 시 즉시 진행 (load 명령 / `R668 진행` 입력 시 자동 시작)**:
+- 모든 atomic은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지
+- 각 substrate atomic 종료 시 cargo test + clippy + 해당 mini-demo 검증 후 다음 atomic 진입
+- 마지막 atomic (5) 에서 demo + commit + Mnemosyne entry 한꺼번에
+- 라운드 중간 commit 금지 (1 commit = 1 round 원칙) — WIP는 stash 또는 sequence keep
+- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R668.A) — but 우선 6 atomic 모두 한 라운드 land 시도
+
+**R668 atomic land 순서** (substrate-first, 위 【다음 텍스트북 캐논】 절의 6 atomic 그대로):
+
+(0) `pinion-shell` window-auto-size substrate — WidgetView::initial_size_strategy + winit request_inner_size wire + 15 binding migration
+(1) `pinion-tui` DeferredInput drain integration — §2 #6 invariant 복원
+(2) `pinion-widget-paint::checkbox` substrate lift — view_checkbox + CheckboxStyle, hello-checkbox retire
+(3) `use_text_scale()` + TextStyle multiplier wire — a11y substrate
+(4) settings-panel Notifications 6-channel CheckboxExternal + ScrollBarExternal — (2) consumer + 4th scrollbar + persistence schema v1→v2 migrator
+(5) demo settings_panel_r668.py (≥ 60 assertion) + commit `feat(<scope>): R668 §<refs> Phase A real-close` + Mnemosyne append_changelog_entry_v2 entry_id=R668
+
+visible (R668 land 후):
+- `./target/release/settings-panel` — 6-channel scrollable notifications + live font_scale 미리보기 + window 가 content 에 맞춰 auto-size
+- `./target/release/<every hello-*>` — SizeStrategy::Fixed 명시 (WIN_W/WIN_H magic 제거)
+- `./target/release/<pinion-tui-launch>` (신규? 또는 hello-textfield-tui 등 기존) — R666 character-key disc 가 TUI 에서도 동작
+- `python3 tools/demos/settings_panel_r668.py` (60+ assertion, R668 substrate 종합 검증)
+
+honest LOC 예측: +2670-3700 net (R667 ~+1760 의 1.5-2×).
+
+**R668 진행 lessons audit 의무** (라운드 끝):
+- 각 atomic 의 실제 LOC vs 예측 (2× overshoot 확인 시 R669+ estimate 재보정)
+- substrate 결정 중 "MVP / shortcut 으로 후퇴한 결정" 0 건 verify
+- 부채 surface 0 건 (양파 청산 시 새 surface 정직 받아들임)
+- Phase A 100% 달성 honest verify — 추가 hidden carry 없음 재confirm
+
+**R668 후 진척**: northern-star 가중 ~7.35% → **~7.5%** (Phase A 5% × 100%). **Phase B (R700+) 진입 권리 획득**.
+
+---
+
+> 아래는 R667 atomic 원본 (historical reference, land 완료):
+
+R667 = **2nd composed app (settings panel) = Phase A 표면 종료 라운드** (✓ land). 6개 atomic land (정확한 순서 — substrate-first):
 
 (0) **`pinion-rpc::resolve_external_mut` substrate lift** (R666 carry #1 즉시 상환) — 현재 invoke/intervene/dry_run/query/rewind/simulate 6 file 에 8+ inline duplication (split_at_external + lookup_path_mut + primary_external_mut). 신규 helper:
    ```rust
