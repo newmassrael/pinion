@@ -572,6 +572,103 @@ fn scene_key_missing_key_is_invalid() {
     assert!(data.contains("key"), "data: {data:?}");
 }
 
+// ---- R666 §5.37 — scene/key character vs named discriminator ----
+
+#[test]
+fn r666_scene_key_single_codepoint_routes_as_character_key() {
+    // R666 §5.37: single-char `key` ("a") → CharacterKey variant so
+    // the shell drain dispatches `handle_character_key` →
+    // `V::keybinding` (typed-event channel) before falling through
+    // to `apply_key`. Closes [[scene-key-character-named-gap]].
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":10.0,"y":20.0},"key":"a"},"id":400}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::CharacterKey { x, y, ref character } = inbox[0] else {
+        panic!("expected CharacterKey, got {:?}", inbox[0]);
+    };
+    assert!((x - 10.0).abs() < f64::EPSILON);
+    assert!((y - 20.0).abs() < f64::EPSILON);
+    assert_eq!(character, "a");
+}
+
+#[test]
+fn r666_scene_key_space_codepoint_routes_as_character_key() {
+    // U+0020 SPACE is a single codepoint and arrives as
+    // `Key::Character(" ")` on every real keyboard surface (winit /
+    // crossterm). The Toggle Space arc reaches it via
+    // `handle_named_key("Space")` separately, so the character " "
+    // *must* go through the character path.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0},"key":" "},"id":401}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::CharacterKey { ref character, .. } = inbox[0] else {
+        panic!("expected CharacterKey for U+0020 space, got {:?}", inbox[0]);
+    };
+    assert_eq!(character, " ");
+}
+
+#[test]
+fn r666_scene_key_precomposed_cjk_codepoint_routes_as_character_key() {
+    // R56.1.g carry: a single pre-composed CJK syllable like "안"
+    // (U+C548) is exactly one codepoint, so the chars().count()
+    // discriminator routes it as Character. Multi-syllable IME
+    // composition output (e.g. "안녕") has >1 codepoint and routes
+    // as Named, where TextField's `is_printable_key` rejects it and
+    // the preedit buffer substrate takes over.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":0.0,"y":0.0},"key":"안"},"id":402}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::CharacterKey { ref character, .. } = inbox[0] else {
+        panic!("expected CharacterKey, got {:?}", inbox[0]);
+    };
+    assert_eq!(character, "안");
+}
+
+#[test]
+fn r666_scene_key_multi_codepoint_named_string_still_routes_as_named() {
+    // Named keys ("ArrowDown", "Enter", "PageUp", "F1", "Space")
+    // are always ≥ 2 chars per pinion-shell::named_key_str so the
+    // discriminator keeps the v0 backwards-compat path intact.
+    for named in ["ArrowDown", "Enter", "PageUp", "Space", "Home", "End"] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        {
+            let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+                .with_deferred_inputs(&mut inbox);
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","method":"scene/key","params":{{"at":{{"x":0.0,"y":0.0}},"key":"{named}"}},"id":403}}"#
+            );
+            let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+            assert!(resp.error.is_none(), "{:?}", resp.error);
+        }
+        let DeferredInput::Key { ref key, .. } = inbox[0] else {
+            panic!("expected Key (named) for {named}, got {:?}", inbox[0]);
+        };
+        assert_eq!(key, named);
+    }
+}
+
 // ---- R51.196 §5.49 — scene/click v1 (DeferredInput::Click) ----
 
 #[test]

@@ -852,11 +852,30 @@ impl Owner {
         // (R56.1.b.1 §5.22) Typed cache key — `(TypeId::of::<V>(), key)`
         // so the same string addresses a distinct slot per type.
         let typed_key = (TypeId::of::<V>(), key);
-        // First-call vs reuse decision under a single borrow. The
-        // `or_insert_with` arm fires `factory()` exactly once on miss;
-        // the returned `Rc<dyn Any>` is shared across every call site.
+        // R666 §5.22 — nested-factory guard. The cache `RefCell` is
+        // held with `borrow_mut` across the `or_insert_with` arm, so
+        // a factory that re-entered `Owner::cache` (any V, any key)
+        // tripped the cryptic default `BorrowMutError` panic from
+        // `RefCell`. R665 surfaced this through the
+        // `use_persistence_boot` slot whose factory pre-resolved
+        // dependent slots inline — `[[owner-cache-no-nested-factory]]`
+        // codifies the rule (pre-resolve dependent slots, then enter
+        // the outer cache).
+        //
+        // `try_borrow_mut` upgrades the cryptic message to an
+        // actionable one without changing any other call-site
+        // semantics — the only failure mode of `borrow_mut` on a
+        // per-Owner `RefCell` is "currently borrowed", which in this
+        // code path is unambiguously the nested-factory case.
         let any_rc: Rc<dyn Any> = {
-            let mut cache = self.inner.cache.borrow_mut();
+            let mut cache = self.inner.cache.try_borrow_mut().unwrap_or_else(|_| {
+                panic!(
+                    "Owner::cache factory closures must not call \
+                     Owner::cache; pre-resolve dependent slots first \
+                     (see [[owner-cache-no-nested-factory]] in \
+                     memory). Re-entering on key={key:?}",
+                )
+            });
             Rc::clone(
                 cache
                     .entry(typed_key)
@@ -1239,6 +1258,86 @@ mod tests {
             .cache_get_by_str("abc")
             .expect("middle-of-walk slot must resolve");
         assert_eq!(hit.0, 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R666 §5.22 — Owner::cache nested-factory guard
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r666_owner_cache_panics_with_actionable_message_on_nested_factory() {
+        use std::panic::AssertUnwindSafe;
+        // Re-entering `Owner::cache` from inside a factory closure
+        // tripped a cryptic `RefCell::borrow_mut` panic pre-R666;
+        // the substrate now upgrades the message to name the rule
+        // and tell the caller how to fix it. The pre-resolution
+        // pattern (resolve dependent slots before entering the outer
+        // cache) is the canonical workaround — codified by
+        // `[[owner-cache-no-nested-factory]]`.
+        let owner = Owner::new();
+        let owner_inside = owner.clone();
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            owner.cache::<CacheProbe, _>("outer", || {
+                // BAD: nested factory call on the same Owner. The
+                // outer `borrow_mut` is still live.
+                let _inner = owner_inside.cache::<OtherProbe, _>("inner", || OtherProbe("x"));
+                CacheProbe(0)
+            });
+        }));
+        let payload = result.expect_err("nested factory call must panic");
+        let msg = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&'static str>().copied())
+            .expect("panic payload is a string");
+        assert!(
+            msg.contains("Owner::cache factory closures must not call Owner::cache"),
+            "panic message must name the rule: {msg}",
+        );
+        assert!(
+            msg.contains("pre-resolve dependent slots first"),
+            "panic message must point to the workaround: {msg}",
+        );
+        assert!(
+            msg.contains("owner-cache-no-nested-factory"),
+            "panic message must reference the memory key: {msg}",
+        );
+    }
+
+    #[test]
+    fn r666_owner_cache_pre_resolved_dependent_slots_succeed() {
+        // The canonical fix: resolve dependent slots first, capture
+        // their `Rc<T>` handles, then enter the outer cache call. No
+        // re-entry, no panic.
+        let owner = Owner::new();
+        let dep = owner.cache::<OtherProbe, _>("dep", || OtherProbe("ready"));
+        let outer = owner.cache::<CacheProbe, _>("outer", {
+            let dep = Rc::clone(&dep);
+            move || {
+                // Factory uses the already-resolved handle; no
+                // recursive cache call.
+                assert_eq!(dep.0, "ready");
+                CacheProbe(7)
+            }
+        });
+        assert_eq!(outer.0, 7);
+        // Sanity — both slots populated.
+        assert!(owner.cache_contains::<OtherProbe>("dep"));
+        assert!(owner.cache_contains::<CacheProbe>("outer"));
+    }
+
+    #[test]
+    fn r666_owner_cache_nested_on_distinct_owner_ok() {
+        // The guard is per-Owner: nesting against a *different*
+        // Owner is fine (each has its own `RefCell`). This is the
+        // common case for sibling sub-trees and must not panic.
+        let outer = Owner::new();
+        let inner = Owner::new();
+        let val = outer.cache::<CacheProbe, _>("outer", || {
+            let p = inner.cache::<OtherProbe, _>("inner", || OtherProbe("ok"));
+            CacheProbe(p.0.len().try_into().unwrap())
+        });
+        assert_eq!(val.0, 2);
     }
 
     #[test]

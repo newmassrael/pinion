@@ -12712,6 +12712,42 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R666 — R666 §5.34 §5.37 §5.22 — scene/invoke v1 multi-External path syntax + scene/key character-vs-named discriminator + Owner::cache nested-factory guard + 12+ step AI-driven E2E demo (55 assertions) + todomvc R655-R664 demo storage-isolation retrofit. AI-first §2 #2 invariant first production stress test; Phase A 진척 ~80%→~85%.
+
+**Changes**:
+- pinion-rpc::invoke/intervene/dry_run R42 mirror migration (rewind.rs canonical) — `path::split_at_external` + `Scene::lookup_path_mut` + `Scene::primary_external_mut`; v1 path `/{tag}/external/{action}` addresses any ExtraExternal singleton by base tag (composite-tag wire stays paint-side). +12 R666 tests (composite-tag DFS + window prefix + unknown segment + non-External target).
+- pinion-core::reactive::Owner::cache nested-factory guard — `try_borrow_mut` upgrades cryptic `BorrowMutError` to actionable panic message naming the rule + pre-resolution workaround + memory key. +3 R666 tests (panic message content + pre-resolved path + distinct-Owner nesting allowed).
+- pinion-rpc::DeferredInput::CharacterKey new variant; `handle_scene_key` auto-discriminates `key.chars().count() == 1` → CharacterKey (handle_character_key → V::keybinding intercept); pinion-shell drain CharacterKey arm. Closes pre-R666 `[[scene-key-character-named-gap]]` carry. +4 R666 tests (single ascii, U+0020 space, pre-composed CJK syllable, multi-char W3C named).
+- examples/todomvc — removed inherited `'d'/'e'` letter-key `V::keybinding` intercept (R655 scaffolding copy-paste from hello-textfield; broke typing 'eggs'/'delete' after R666 #3 closed the gap).
+- tools/demos/todomvc_r666.py — 12+ step E2E (cycle 1 boot+type+toggle+filter+edit+commit; cycle 2 relaunch+verify+add+toggle-off+delete; cycle 3 second relaunch+verify all persists). 55 assertions, scene/invoke v1 path used 5× (toggle/begin/toggle/delete×2), scene/key character arc used for every typed char.
+- tools/rpc_verify.py — `isolated_storage_dir(prefix)` context manager helper + `tf.text(body, path)` typing convenience. R666 inline retrofit: todomvc_r655/r656/r658/r659/r660/r663/r664 wrapped with `isolated_storage_dir` so sequential demo runs no longer pollute `$XDG_DATA_HOME/pinion-todomvc/`.
+- tools/rpc_verify.py::tf.key — doc updated to describe R666 auto-discrimination semantics.
+- docs/SEED_PROMPT.md — 시작 명령 (4)/(5) optional 표시 폐지 (부채 즉시 상환 framing 일치).
+
+
+
+**Verification**:
+- cargo test --workspace: 3369 passing (R665 baseline 3352 + 17 R666 new = 14 RPC + 3 Owner::cache).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (no new warnings).
+- 9-demo sequential regression sweep from clean `$XDG_DATA_HOME/pinion-todomvc/`: todomvc_r655/r656/r658/r659/r660/double_click_r663/r664/r665/r666 all PASS in order; second run with leftover data also PASS (per-demo tempdir isolation).
+- todomvc_r666.py — 55 assertions, 7.10s wall, all PASS. scene/invoke v1 path covers TodoToggleExternal (toggle action), TodoEditExternal (begin action), TodoDeleteExternal (delete action with idempotency check). scene/key character arc covers all body typing + Backspace (named) + Enter (named).
+- Owner::cache nested-factory guard test: `r666_owner_cache_panics_with_actionable_message_on_nested_factory` asserts panic message contains rule name + workaround + memory-key reference. Distinct-Owner nesting test confirms the guard is per-Owner (not global).
+
+
+
+**Impact**: §5.34, §5.37, §5.22, §5.15, §5.49
+
+
+**Carry forward**:
+- scene/invoke v1 path resolver duplication across 5 sites (invoke/intervene/dry_run/query/rewind) — `pinion-rpc::resolve_external` helper lift candidate when a 6th consumer arrives (Rule of Three: currently 5-of-5 but each carries distinct error enum; lift after R667 settings panel's first consumer touches the path), [[abstraction-needs-second-consumer]].
+- DeferredInput::CharacterKey explicit-kind override — current auto-discrimination by `chars().count()` covers the common case; a future caller wanting to force named-key dispatch for a single-char string (rare) would add a `kind` param. YAGNI carry until 2nd consumer.
+- schema_version breaking-change migrator — R665 carry, still YAGNI (no breaking change has landed).
+- scene/key path resolution returns NoExternalAtPath for composite-tag `/todo_toggle#5/external/toggle` against todomvc's actual scene shape (singleton ExtraExternals are tagged without #id); R666 demo + memory clarify the distinction. Future per-id ExtraExternal binding pattern would naturally exercise the composite path.
+- SCE-004 (Forge codegen serde derive) — vendor/sce upstream RFC, R662 inherited.
+- TUI parity for scene/invoke v1 path syntax — pinion-tui drain does not consume DeferredInput today (uses ShellCore primitives directly); when TUI grows RPC drain it inherits the same patterns.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

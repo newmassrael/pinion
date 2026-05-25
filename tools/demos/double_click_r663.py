@@ -27,7 +27,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo
 
 TF_TAG = "main_textfield"
 
@@ -78,6 +78,15 @@ def first_item_id(tf: RpcSubprocess) -> int:
 
 
 def body() -> None:
+    # R666 cleanup — R663 predates R665 persistence. Run inside a
+    # `PINION_STORAGE_DIR` tempdir so this demo's typed row does not
+    # bleed into the developer's real `$XDG_DATA_HOME/pinion-todomvc/`
+    # blob and break later runs.
+    with isolated_storage_dir("pinion-double_click-r663-"):
+        _body_impl()
+
+
+def _body_impl() -> None:
     with RpcSubprocess("todomvc") as tf:
         # ── (0) Boot ────────────────────────────────────────────────
         assert_eq(tf.query("/external/state"), "Idle", "boot state Idle")

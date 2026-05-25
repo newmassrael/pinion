@@ -17,6 +17,13 @@
 //! implementations). Rollback failure at step 4 surfaces as
 //! [`DryRunError::RollbackFailed`] — that path indicates an External
 //! invariant violation, not user error.
+//!
+//! R666 §5.34 — scene-path syntax mirrors [`crate::invoke`] /
+//! [`crate::rewind`]: `/external/<slot>` for the primary External
+//! (v0), `/<tag>/external/<slot>` for tagged scene-tree walk (R42),
+//! composite tags (`todo_toggle#1`) pass through verbatim so R55.D.5
+//! `create_extra_externals` siblings can be dry-run-probed without
+//! per-binding RPC plumbing.
 
 use pinion_core::external::{InterveneError, IntrospectValue};
 use pinion_core::{Scene, SimulationGuard};
@@ -80,21 +87,25 @@ pub fn dry_run(
     let resolved = path::resolve(raw_path)?;
     let _ = resolved.window;
 
-    let introspect_path = resolved
-        .scene_path
-        .strip_prefix("/external/")
-        .ok_or(DryRunError::UnsupportedPath)?
-        .to_string();
+    // R666 §5.34 — split at the `/external/` separator (mirror of
+    // [`crate::rewind`] / [`crate::invoke`]). Scene segments + owned
+    // introspect path so the two mutable borrows below can each open
+    // a fresh `lookup_path_mut` walk.
+    let (scene_segments, introspect_path) = path::split_at_external(resolved.scene_path)
+        .map(|(segs, intro)| (segs, intro.to_string()))
+        .ok_or(DryRunError::UnsupportedPath)?;
 
     // Phase 1: save the current value and apply the hypothetical write.
     // Constrained to a scope so the &mut borrow on `scene` ends before
     // the snapshot phase needs a shared borrow.
     let saved = {
-        // (R55.D.5 §5.45) Descend to the substrate's primary External
-        // — single-widget binding returns `self` immediately, multi-
-        // widget binding (`create_extra_externals` non-empty) descends
-        // through the wrapper `Container` to the first child External.
-        let node = scene
+        // R666 §5.34 — walk by tag/index then descend to the
+        // addressed scene's primary External (R55.D.5 multi-widget
+        // shape).
+        let target = scene
+            .lookup_path_mut(&scene_segments)
+            .ok_or(DryRunError::NoExternalAtPath)?;
+        let node = target
             .primary_external_mut()
             .ok_or(DryRunError::NoExternalAtPath)?;
         let intro = node
@@ -118,10 +129,13 @@ pub fn dry_run(
     // Phase 3: roll back to the saved value regardless of snapshot
     // outcome, so the caller's scene is never left mutated.
     let rollback_result = {
-        // (R55.D.5 §5.45) Same primary-External descent as phase 1.
-        // Unreachable error: phase 1 already located the External and
-        // we did not swap the scene out from under us.
-        let node = scene
+        // Same walk as phase 1 — phase 1 already validated the path,
+        // so the `ok_or` arms are unreachable unless the External
+        // mutated its own scene topology mid-flight.
+        let target = scene
+            .lookup_path_mut(&scene_segments)
+            .ok_or(DryRunError::NoExternalAtPath)?;
+        let node = target
             .primary_external_mut()
             .ok_or(DryRunError::NoExternalAtPath)?;
         let intro = node
@@ -238,5 +252,90 @@ mod tests {
         let mut scene = counted_scene(0);
         let err = dry_run(&mut scene, "/some/other", IntrospectValue::Int(0)).unwrap_err();
         assert_eq!(err, DryRunError::UnsupportedPath);
+    }
+
+    // ---- R666 §5.34 v1: multi-External addressing ----
+
+    fn container_with_two_counted_siblings(
+        primary_tag: &'static str,
+        primary_count: i64,
+        extra_tag: &'static str,
+        extra_count: i64,
+    ) -> Scene {
+        use pinion_core::scene::{ContainerNode, Rect};
+        let primary = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(primary_count))).with_tag(primary_tag),
+        );
+        let extra = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(extra_count))).with_tag(extra_tag),
+        );
+        let mut c = ContainerNode::new(vec![primary, extra]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn r666_dry_run_extra_external_by_composite_tag_rolls_back() {
+        // Hypothetical write on the composite-tagged extra sibling;
+        // post-call, both siblings retain their original values.
+        let mut scene = container_with_two_counted_siblings(
+            "todo_list", 100, "todo_toggle#1", 0,
+        );
+        let snap = dry_run(
+            &mut scene,
+            "/todo_toggle#1/external/count",
+            IntrospectValue::Int(999),
+        )
+        .unwrap();
+
+        // Snapshot captures the hypothetical 999 on the extra.
+        match snap {
+            SnapshotNode::Container(ref c) => {
+                // The container snapshot holds both siblings; the
+                // extra (second child) should show the hypothetical
+                // value, the primary (first) keeps its original.
+                let extra = c.children.get(1).expect("extra child present");
+                if let SnapshotNode::External(ExternalSnapshot {
+                    introspect: Some(fields),
+                    ..
+                }) = extra
+                {
+                    assert_eq!(fields[0].1, IntrospectValue::Int(999));
+                } else {
+                    panic!("expected External snapshot for extra, got {extra:?}");
+                }
+            }
+            other => panic!("expected Container snapshot, got {other:?}"),
+        }
+
+        // Post-call: original values preserved (rollback).
+        let primary = scene
+            .find_external_with_tag("todo_list")
+            .expect("primary present");
+        let extra = scene
+            .find_external_with_tag("todo_toggle#1")
+            .expect("extra present");
+        assert_eq!(
+            primary.handle.introspect().unwrap().query("count"),
+            Some(IntrospectValue::Int(100)),
+        );
+        assert_eq!(
+            extra.handle.introspect().unwrap().query("count"),
+            Some(IntrospectValue::Int(0)),
+        );
+    }
+
+    #[test]
+    fn r666_dry_run_unknown_segment_is_no_external() {
+        let mut scene = container_with_two_counted_siblings(
+            "primary", 0, "extra", 0,
+        );
+        let err = dry_run(
+            &mut scene,
+            "/ghost/external/count",
+            IntrospectValue::Int(0),
+        )
+        .unwrap_err();
+        assert_eq!(err, DryRunError::NoExternalAtPath);
     }
 }

@@ -7,17 +7,21 @@
 //!
 //!   1. **§5.18 path resolution** — `/[window[id]/]<scene_path>`
 //!      with single-window short-circuit.
-//!   2. **§5.2 scene tree walk** — v0 only the root is considered;
-//!      `Scene::primary_external_mut` descends through the R55.D.5
-//!      multi-External container shape.
-//!   3. **§5.15 item 7 intervene dispatch** — when the path resolves
-//!      to a `Scene::External`, the call descends through
-//!      [`External::introspect_mut`] and consults the
+//!   2. **§5.2 scene tree walk** — R666 §5.34 v1 multi-External
+//!      addressing via `path::split_at_external` +
+//!      [`Scene::lookup_path_mut`] + [`Scene::primary_external_mut`].
+//!   3. **§5.15 item 7 intervene dispatch** — descend through
+//!      [`External::introspect_mut`] and consult the
 //!      [`ExternalIntrospect::intervene`] write channel.
 //!
-//! v0 scene-path syntax accepted today: `/external/<state_path>`
-//! (optionally preceded by `/window[id]/`). Other shapes return
-//! [`InterveneError::UnsupportedPath`].
+//! v1 scene-path syntax accepted (mirror of [`crate::invoke`]):
+//!
+//!   * `/external/<state>` — primary External at root (v0 retained).
+//!   * `/<tag>/external/<state>` — DFS lookup by `ExternalNode` tag,
+//!     composite tags (`todo_toggle#1`) pass through verbatim.
+//!   * `/<seg>/.../<tag>/external/<state>` — nested Container walk.
+//!
+//! Other shapes return [`InterveneError::UnsupportedPath`].
 //!
 //! Where [`crate::invoke`] is the "call an action and get a value
 //! back" surface (W3C `RPC.call`-mirror), [`intervene`] is the
@@ -116,18 +120,27 @@ pub fn intervene(
     let resolved = path::resolve(raw_path)?;
     let _ = resolved.window;
 
-    let state_path = resolved
-        .scene_path
-        .strip_prefix("/external/")
+    // R666 §5.34 — split at the `/external/` separator (mirror of
+    // [`crate::rewind`] / [`crate::invoke`]). Empty scene segments =
+    // root-External (v0 shape); non-empty = walk Container/Scroll by
+    // tag/index. `state_path` is owned so the &mut borrow on `scene`
+    // can outlive `resolved.scene_path`'s lifetime.
+    let (scene_segments, state_path) = path::split_at_external(resolved.scene_path)
+        .map(|(segs, intro)| (segs, intro.to_string()))
         .ok_or(InterveneError::UnsupportedPath)?;
 
-    // (R55.D.5 §5.45) Descend to the substrate's primary External so
-    // both the single-widget shape (`Scene::External`) and the
-    // multi-widget shape (`Scene::Container([primary, ...extras])`)
-    // route `external/<state>` here without per-binding
-    // disambiguation. See `Scene::primary_external_mut` for the DFS
-    // convention.
-    let node = scene
+    let target = scene
+        .lookup_path_mut(&scene_segments)
+        .ok_or(InterveneError::NoExternalAtPath)?;
+
+    // (R55.D.5 §5.45) Descend to the addressed scene's primary
+    // External — both single-widget and R55.D.5 multi-widget shapes
+    // collapse to a single ExternalNode through this DFS pre-order
+    // walk. When the path tagged an extra sibling explicitly
+    // (`/todo_delete#5/external/...`), `lookup_path_mut` already
+    // landed on `Scene::External(extra)` and `primary_external_mut`
+    // returns `Some(self)`.
+    let node = target
         .primary_external_mut()
         .ok_or(InterveneError::NoExternalAtPath)?;
 
@@ -136,7 +149,7 @@ pub fn intervene(
         .introspect_mut()
         .ok_or(InterveneError::IntrospectionOptedOut)?;
 
-    intro.intervene(state_path, value).map_err(Into::into)
+    intro.intervene(&state_path, value).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -214,5 +227,79 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, InterveneError::UnknownIntervenePath);
+    }
+
+    // ---- R666 §5.34 v1: multi-External addressing ----
+
+    fn container_with_two_counted_siblings(
+        primary_tag: &'static str,
+        primary_count: i64,
+        extra_tag: &'static str,
+        extra_count: i64,
+    ) -> Scene {
+        use pinion_core::scene::{ContainerNode, Rect};
+        let primary = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(primary_count))).with_tag(primary_tag),
+        );
+        let extra = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(extra_count))).with_tag(extra_tag),
+        );
+        let mut c = ContainerNode::new(vec![primary, extra]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    fn read_count(scene: &Scene, tag: &str) -> i64 {
+        let node = scene
+            .find_external_with_tag(tag)
+            .unwrap_or_else(|| panic!("no External tagged {tag}"));
+        let intro = node.handle.introspect().expect("counted introspects");
+        match intro.query("count").expect("count slot") {
+            IntrospectValue::Int(n) => n,
+            other => panic!("expected Int, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r666_intervene_extra_external_by_composite_tag() {
+        // Write only to the composite-tagged extra sibling; primary
+        // untouched.
+        let mut scene = container_with_two_counted_siblings(
+            "todo_list", 100, "todo_toggle#1", 0,
+        );
+        intervene(
+            &mut scene,
+            "/todo_toggle#1/external/count",
+            IntrospectValue::Int(42),
+        )
+        .unwrap();
+        assert_eq!(read_count(&scene, "todo_toggle#1"), 42);
+        assert_eq!(read_count(&scene, "todo_list"), 100);
+    }
+
+    #[test]
+    fn r666_intervene_extra_external_with_window_prefix() {
+        let mut scene = container_with_two_counted_siblings(
+            "primary", 0, "todo_delete#7", 0,
+        );
+        intervene(
+            &mut scene,
+            "/window[main]/todo_delete#7/external/count",
+            IntrospectValue::Int(11),
+        )
+        .unwrap();
+        assert_eq!(read_count(&scene, "todo_delete#7"), 11);
+    }
+
+    #[test]
+    fn r666_intervene_unknown_segment_is_no_external() {
+        let mut scene = container_with_two_counted_siblings("a", 0, "b", 0);
+        let err = intervene(
+            &mut scene,
+            "/ghost/external/count",
+            IntrospectValue::Int(0),
+        )
+        .unwrap_err();
+        assert_eq!(err, InterveneError::NoExternalAtPath);
     }
 }

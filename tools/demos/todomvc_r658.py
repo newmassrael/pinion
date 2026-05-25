@@ -64,7 +64,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo
 
 TF_TAG = "main_textfield"
 LIST_TAG = "todo_list"
@@ -219,6 +219,13 @@ def list_header_text(tf: RpcSubprocess) -> str:
 
 
 def body() -> None:
+    # R666 — isolate from `$XDG_DATA_HOME/pinion-todomvc/` so the
+    # demo's typed rows do not bleed into later runs (R665 persistence).
+    with isolated_storage_dir("pinion-todomvc-r658-"):
+        _body_impl()
+
+
+def _body_impl() -> None:
     with RpcSubprocess("todomvc") as tf:
         # ── (0) Initial posture ───────────────────────────────────
         assert_eq(tf.query("/external/state"), "Idle", "initial state")

@@ -348,16 +348,38 @@ pub enum DeferredInput {
     /// Replaces the R51.193-era probe-only path that only consulted
     /// `External::handles_event` policy.
     Click { x: f64, y: f64 },
-    /// R51.197 §5.49 §5.45 — `scene/key` injection. The embedder
-    /// applies `cursor_moved(MOUSE, x, y)` then `handle_named_key(key)`
-    /// so the substrate first hands the W3C `KeyboardEvent.key` string
-    /// to `V::apply_key` (focused widget shortcuts: Slider arrows,
-    /// Toggle Space, Button Enter, …); on `None` return the R51.187
-    /// scroll-key fallback fires for `ArrowUp/Down/Left/Right`,
-    /// `PageUp/Down`, `Home`, `End` against the `ScrollNode` under
-    /// the cursor. Mirrors the winit `WindowEvent::KeyboardInput` arc
-    /// (`Escape` / `Tab` stay shell-reserved and are not injectable).
+    /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
+    /// embedder applies `cursor_moved(MOUSE, x, y)` then
+    /// `handle_named_key(key)` so the substrate first hands the W3C
+    /// `KeyboardEvent.key` string to `V::apply_key` (focused widget
+    /// shortcuts: Slider arrows, Toggle Space, Button Enter, …); on
+    /// `None` return the R51.187 scroll-key fallback fires for
+    /// `ArrowUp/Down/Left/Right`, `PageUp/Down`, `Home`, `End`
+    /// against the `ScrollNode` under the cursor. Mirrors the winit
+    /// `WindowEvent::KeyboardInput` arc with `Key::Named` — `Escape`
+    /// / `Tab` stay shell-reserved and are not injectable.
+    ///
+    /// R666 §5.37 — `scene/key` auto-discriminates by
+    /// `key.chars().count()`: single-codepoint strings (`"a"`,
+    /// `" "`, `"漢"`) route as [`CharacterKey`](Self::CharacterKey)
+    /// (the `Key::Character` arc); multi-char W3C named strings
+    /// (`"Enter"`, `"ArrowUp"`, `"PageDown"`) land here.
     Key { x: f64, y: f64, key: String },
+    /// R666 §5.37 §5.49 — `scene/key` character-key injection. The
+    /// embedder applies `cursor_moved(MOUSE, x, y)` then
+    /// `handle_character_key(character)` so the substrate first
+    /// consults `WidgetView::keybinding` (the typed-event channel —
+    /// hello-counter `+ / -`, hello-button menu mnemonics, vim-style
+    /// `j / k`); on `None` falls through to `V::apply_key` with the
+    /// same character string (`TextField` printable-insert, listbox
+    /// typeahead). Mirrors the winit `WindowEvent::KeyboardInput` arc
+    /// with `Key::Character`.
+    ///
+    /// Pre-R666 `scene/key` collapsed all input through `Key` →
+    /// `handle_named_key` so single-character `V::keybinding`
+    /// intercepts were invisible to RPC drivers
+    /// (`[[scene-key-character-named-gap]]`). R666 closes the gap.
+    CharacterKey { x: f64, y: f64, character: String },
     /// R663 §5.49 — `scene/double_click` injection. Emits the W3C
     /// `UIEvent` `detail: 2` convention via two complete press/release
     /// cycles at `(x, y)` without an intervening cursor move so the
@@ -1728,13 +1750,27 @@ where
 ///
 /// Params: `{at: {x: f64, y: f64}, key: <W3C KeyboardEvent.key string>}`.
 ///
-/// Enqueues a single [`DeferredInput::Key`] entry on the dispatcher's
-/// inbox. The embedder drains the inbox after `dispatch` returns and
-/// applies `cursor_moved(x, y)` followed by `handle_named_key(key)`,
-/// so the substrate first offers the key to the focused widget's
-/// `V::apply_key` (Slider arrows, Toggle Space, Button Enter, …),
-/// then falls through to the §5.45 R55.C.3 scroll arc for unhandled
-/// arrow / page / Home / End over a scroll container.
+/// Enqueues a [`DeferredInput`] entry on the dispatcher's inbox. The
+/// embedder drains the inbox after `dispatch` returns and applies
+/// `cursor_moved(x, y)` followed by the appropriate substrate key
+/// dispatch.
+///
+/// R666 §5.37 — auto-discriminates between W3C `Key::Named`
+/// (multi-char strings: `"Enter"`, `"ArrowDown"`, `"PageUp"`, …) and
+/// `Key::Character` (single-codepoint strings: `"a"`, `" "`, `"$"`,
+/// `"漢"`) by `key.chars().count()`. Named keys flow through
+/// [`DeferredInput::Key`] → `handle_named_key` (focused-widget
+/// shortcuts then scroll fallback); character keys flow through
+/// [`DeferredInput::CharacterKey`] → `handle_character_key`
+/// (`V::keybinding` typed-event intercept then `apply_key` fallback).
+///
+/// Pre-R666 every `scene/key` request collapsed to
+/// `handle_named_key`, so single-character `V::keybinding` overrides
+/// were invisible to RPC drivers
+/// (`[[scene-key-character-named-gap]]`). The single-codepoint
+/// disambiguator matches the W3C convention — every named key in the
+/// pinion shell maps to a ≥ 2-char string per
+/// `pinion-shell::named_key_str`, so the boundary is unambiguous.
 fn handle_scene_key<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
     paint_producer: Option<&mut F>,
@@ -1759,11 +1795,29 @@ where
     // coordinate or a tag lookup via the paint scene, mirroring
     // `scene/click`'s shape.
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
-    inbox.push(DeferredInput::Key {
-        x,
-        y,
-        key: key.to_owned(),
-    });
+    // R666 §5.37 — single-codepoint vs multi-codepoint discriminator.
+    // `chars().count()` is the Unicode-scalar-value count, so
+    // pre-composed CJK syllables like `"안"` (one codepoint) still
+    // route as Character; multi-syllable IME composition output
+    // like `"안녕"` (two codepoints) routes as Named and gets
+    // rejected by `apply_key`'s `is_printable_key` predicate, which
+    // is the correct fall-through to the R56.1.g preedit substrate.
+    let mut chars = key.chars();
+    let first = chars.next();
+    let single_codepoint = first.is_some() && chars.next().is_none();
+    if single_codepoint {
+        inbox.push(DeferredInput::CharacterKey {
+            x,
+            y,
+            character: key.to_owned(),
+        });
+    } else {
+        inbox.push(DeferredInput::Key {
+            x,
+            y,
+            key: key.to_owned(),
+        });
+    }
     Ok(Value::Null)
 }
 

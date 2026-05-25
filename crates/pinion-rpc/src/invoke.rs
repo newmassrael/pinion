@@ -1,19 +1,32 @@
 //! `scene/invoke` RPC method dispatch — R17 bidirectional RPC spec
 //! round, eighth typed handler extending the §5.12 set from 7 to 8.
 //!
-//! Wires the same three pieces as [`crate::query`]:
+//! Wires the same three pieces as [`crate::query`] / [`crate::rewind`]:
 //!
 //!   1. **§5.18 path resolution** — `/[window[id]/]<scene_path>`
 //!      with single-window short-circuit.
-//!   2. **§5.2 scene tree walk** — v0 only the root is considered.
-//!   3. **§5.15 item 8 invoke dispatch** — when the path resolves to
-//!      a `Scene::External` root, the call descends through
-//!      [`External::introspect_mut`] and consults the
+//!   2. **§5.2 scene tree walk** — R666 §5.34 v1 multi-External
+//!      addressing: `path::split_at_external` returns scene segments +
+//!      introspect path; [`Scene::lookup_path_mut`] walks Container /
+//!      Scroll by tag/index until it reaches the addressed
+//!      [`ExternalNode`]; [`Scene::primary_external_mut`] then descends
+//!      the R55.D.5 multi-widget container shape to the substrate's
+//!      first External.
+//!   3. **§5.15 item 8 invoke dispatch** — descend through
+//!      [`External::introspect_mut`] and consult the
 //!      [`ExternalIntrospect::invoke`] action channel.
 //!
-//! v0 scene-path syntax accepted today: `/external/<action_path>`
-//! (optionally preceded by `/window[id]/`). Other shapes return
-//! [`InvokeError::UnsupportedPath`].
+//! v1 scene-path syntax accepted:
+//!
+//!   * `/external/<action>` — primary External at root (v0 retained).
+//!   * `/<tag>/external/<action>` — DFS lookup by `ExternalNode` tag.
+//!     Composite tags (`todo_toggle#1`) pass through verbatim, so
+//!     R55.D.5 `create_extra_externals` siblings are addressable
+//!     without per-binding RPC plumbing.
+//!   * `/<seg>/.../<tag>/external/<action>` — nested Container walk
+//!     followed by tagged child match (mirror of [`crate::query`]).
+//!
+//! Other shapes return [`InvokeError::UnsupportedPath`].
 //!
 //! Transport (JSON-RPC 2.0 framing per §5.7) is handled by
 //! [`crate::dispatch`]; this module exposes the typed dispatcher
@@ -85,18 +98,29 @@ pub fn invoke(
     let resolved = path::resolve(raw_path)?;
     let _ = resolved.window;
 
-    let action_path = resolved
-        .scene_path
-        .strip_prefix("/external/")
+    // R666 §5.34 — split at the `/external/` separator (mirror of
+    // [`crate::rewind`]). Empty scene segments = root-External (v0
+    // shape); non-empty = walk Container/Scroll by tag/index through
+    // [`Scene::lookup_path_mut`] to reach the addressed ExternalNode
+    // before invoking. `action_path` is owned so the mutable borrow of
+    // `scene` below can outlive `resolved.scene_path`'s lifetime.
+    let (scene_segments, action_path) = path::split_at_external(resolved.scene_path)
+        .map(|(segs, intro)| (segs, intro.to_string()))
         .ok_or(InvokeError::UnsupportedPath)?;
 
-    // (R55.D.5 §5.45) Descend to the substrate's primary External so
-    // both the single-widget shape (`Scene::External`) and the
-    // multi-widget shape (`Scene::Container([primary, ...extras])`)
-    // route `external/<action>` here without per-binding
-    // disambiguation. See `Scene::primary_external_mut` for the DFS
-    // convention.
-    let node = scene
+    let target = scene
+        .lookup_path_mut(&scene_segments)
+        .ok_or(InvokeError::NoExternalAtPath)?;
+
+    // (R55.D.5 §5.45) Descend to the addressed scene's primary
+    // External — for the single-widget shape (`Scene::External`) this
+    // is `self`; for the multi-widget shape
+    // (`Scene::Container([primary, ...extras])`) this is the first
+    // child External in DFS pre-order. When the path explicitly
+    // tagged an extra sibling (`/todo_toggle#1/external/...`),
+    // `lookup_path_mut` already landed on `Scene::External(extra)`
+    // and `primary_external_mut` returns `Some(self)`.
+    let node = target
         .primary_external_mut()
         .ok_or(InvokeError::NoExternalAtPath)?;
 
@@ -105,7 +129,7 @@ pub fn invoke(
         .introspect_mut()
         .ok_or(InvokeError::IntrospectionOptedOut)?;
 
-    intro.invoke(action_path, args).map_err(Into::into)
+    intro.invoke(&action_path, args).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -213,5 +237,118 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, InvokeError::Path(PathError::MalformedPrefix));
+    }
+
+    // ---- R666 §5.34 v1: multi-External addressing ----
+
+    fn container_with_nested_counted(tag: &'static str, count: i64) -> Scene {
+        use pinion_core::scene::{ContainerNode, Rect};
+        let ext = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(count))).with_tag(tag),
+        );
+        let mut c = ContainerNode::new(vec![ext]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    fn container_with_two_counted_siblings(
+        primary_tag: &'static str,
+        primary_count: i64,
+        extra_tag: &'static str,
+        extra_count: i64,
+    ) -> Scene {
+        use pinion_core::scene::{ContainerNode, Rect};
+        let primary = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(primary_count))).with_tag(primary_tag),
+        );
+        let extra = Scene::External(
+            ExternalNode::new(Box::new(CountedExternal::new(extra_count))).with_tag(extra_tag),
+        );
+        let mut c = ContainerNode::new(vec![primary, extra]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        Scene::Container(c)
+    }
+
+    #[test]
+    fn r666_invoke_nested_external_by_tag() {
+        // /counter/external/increment walks Container.children by tag,
+        // finds the External with that tag, calls increment on it.
+        let mut scene = container_with_nested_counted("counter", 0);
+        let result = invoke(
+            &mut scene,
+            "/counter/external/increment",
+            IntrospectValue::Int(5),
+        )
+        .unwrap();
+        assert_eq!(result, IntrospectValue::Int(5));
+    }
+
+    #[test]
+    fn r666_invoke_extra_external_by_composite_tag() {
+        // R55.D.5 multi-External shape: the extra sibling carries a
+        // composite tag (`todo_toggle#1` convention). v1 path syntax
+        // addresses it directly without disturbing the primary.
+        let mut scene = container_with_two_counted_siblings(
+            "todo_list", 100, "todo_toggle#1", 0,
+        );
+        let result = invoke(
+            &mut scene,
+            "/todo_toggle#1/external/increment",
+            IntrospectValue::Int(3),
+        )
+        .unwrap();
+        assert_eq!(result, IntrospectValue::Int(3));
+        // Primary untouched — v0 fallback still resolves to it.
+        let primary_via_v0 = invoke(
+            &mut scene,
+            "/external/increment",
+            IntrospectValue::Int(0),
+        )
+        .unwrap();
+        assert_eq!(primary_via_v0, IntrospectValue::Int(100));
+    }
+
+    #[test]
+    fn r666_invoke_extra_external_with_window_prefix() {
+        let mut scene = container_with_two_counted_siblings(
+            "primary", 0, "todo_delete#7", 0,
+        );
+        let result = invoke(
+            &mut scene,
+            "/window[main]/todo_delete#7/external/increment",
+            IntrospectValue::Int(11),
+        )
+        .unwrap();
+        assert_eq!(result, IntrospectValue::Int(11));
+    }
+
+    #[test]
+    fn r666_invoke_unknown_segment_is_no_external() {
+        let mut scene = container_with_nested_counted("counter", 0);
+        let err = invoke(
+            &mut scene,
+            "/ghost/external/increment",
+            IntrospectValue::Int(0),
+        )
+        .unwrap_err();
+        assert_eq!(err, InvokeError::NoExternalAtPath);
+    }
+
+    #[test]
+    fn r666_invoke_non_external_target_is_no_external() {
+        use pinion_core::scene::{BoxNode as BNode, ContainerNode, Rect};
+        let child = Scene::Box(
+            BNode::filled(Rect::default(), Color::default()).with_tag("info"),
+        );
+        let mut c = ContainerNode::new(vec![child]);
+        c.rect = Rect::new(0, 0, 100, 100);
+        let mut scene = Scene::Container(c);
+        let err = invoke(
+            &mut scene,
+            "/info/external/increment",
+            IntrospectValue::Int(0),
+        )
+        .unwrap_err();
+        assert_eq!(err, InvokeError::NoExternalAtPath);
     }
 }

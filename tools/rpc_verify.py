@@ -36,13 +36,45 @@ import sys
 import threading
 import time
 import zlib
-from contextlib import AbstractContextManager
+import os
+import shutil
+import tempfile
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+
+
+@contextmanager
+def isolated_storage_dir(prefix: str) -> Iterator[Path]:
+    """R666 §3 §5.15 — per-demo `PINION_STORAGE_DIR` isolation.
+
+    Sets the env var to a fresh tempdir for the duration of the
+    context, restoring (or unsetting) the previous value on exit and
+    `shutil.rmtree`-ing the dir. Use to keep any todomvc demo from
+    bleeding its typed rows into the developer's real
+    `$XDG_DATA_HOME/pinion-todomvc/` blob (R665 introduced
+    persistence-by-default, so R655-R664 demos predated and would
+    contaminate each other without isolation).
+
+    The yielded `Path` is the tempdir root; callers usually do not
+    need it (the env var is the wire), but it's handy for asserting
+    against the on-disk blob inside the demo body.
+    """
+    storage_dir = Path(tempfile.mkdtemp(prefix=prefix))
+    prev = os.environ.get("PINION_STORAGE_DIR")
+    os.environ["PINION_STORAGE_DIR"] = str(storage_dir)
+    try:
+        yield storage_dir
+    finally:
+        if prev is None:
+            os.environ.pop("PINION_STORAGE_DIR", None)
+        else:
+            os.environ["PINION_STORAGE_DIR"] = prev
+        shutil.rmtree(storage_dir, ignore_errors=True)
 
 
 class RpcError(Exception):
@@ -296,12 +328,16 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             Eliminates the snapshot/lookup boilerplate.
 
         Inject a W3C `KeyboardEvent.key` string at the resolved
-        cursor location. The shell drains the deferred-input inbox
-        after this returns, applying `cursor_moved` then
-        `handle_named_key`, so the substrate first offers the key
-        to `V::apply_key` (focused widget shortcut) and falls
-        through to the §5.45 R55.C.3 scroll arc for unhandled
-        arrow / page / Home / End over a `Scene::Scroll`.
+        cursor location. R666 §5.37 — the dispatcher
+        auto-discriminates by `name.chars().count()`: single-codepoint
+        strings ("a", " ", "漢") route through `handle_character_key`
+        (V::keybinding typed-event channel first, then apply_key
+        fallback); multi-codepoint W3C named strings ("Enter",
+        "ArrowDown", "PageUp") route through `handle_named_key`
+        (focused-widget shortcut then scroll fallback). Closes the
+        pre-R666 [[scene-key-character-named-gap]] — single-character
+        V::keybinding intercepts were previously invisible to RPC
+        drivers because every scene/key request was treated as named.
         """
         if not name:
             raise ValueError("key name must not be empty")
@@ -314,6 +350,27 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             assert path is not None
             params["path"] = path
         self.request("scene/key", params)
+
+    def text(
+        self,
+        body: str,
+        *,
+        path: Optional[str] = None,
+        at: Optional[tuple[float, float]] = None,
+    ) -> None:
+        """R666 §5.37 — convenience wrapper for typing a multi-char
+        string into a focused TextField. Iterates one character at a
+        time so each keystroke flows through `scene/key`'s
+        character-key arc (R666 #3), matching the per-keystroke
+        cadence of a real keyboard. `path` / `at` reach the field the
+        same way `.key()` does; pre-resolving a single coordinate is
+        usually fine for typing since the text field rect stays put
+        across single-keystroke mutations.
+        """
+        if not body:
+            return
+        for ch in body:
+            self.key(at=at, path=path, name=ch)
 
     def click(
         self,

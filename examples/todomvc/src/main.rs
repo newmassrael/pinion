@@ -2259,15 +2259,19 @@ impl WidgetCore for TodoMvcView {
         Vec::new()
     }
 
-    /// `d` / `e` toggle the textfield's `Disabled` SCXML state — the
-    /// strongly-typed `keybinding` channel for one-shot enum events
-    /// (separate from the W3C-string `apply_key` channel).
-    fn keybinding(key: &str) -> Option<TextFieldEvent> {
-        match key {
-            "d" => Some(TextFieldEvent::Disable),
-            "e" => Some(TextFieldEvent::Enable),
-            _ => None,
-        }
+    /// R666 §5.37 — no letter-key bindings. The R655 scaffolding
+    /// copy-pasted `"d" → Disable / "e" → Enable` from
+    /// `hello-textfield`, where letter-key intercepts make sense as
+    /// a smoke-test affordance. todomvc has no UX requirement to
+    /// disable the input from the keyboard, and once R666 #3 closed
+    /// `[[scene-key-character-named-gap]]` the intercept actively
+    /// broke typing — every "delete" / "edit" / "send" attempt
+    /// disabled the field on the second character. The `Disable` /
+    /// `Enable` transitions remain reachable through SCXML direct
+    /// dispatch when a future round wires a real UX (toolbar button,
+    /// menu item) to them.
+    fn keybinding(_key: &str) -> Option<TextFieldEvent> {
+        None
     }
 
     /// W3C UI Events delegation. R660 splits the keymap per-focus

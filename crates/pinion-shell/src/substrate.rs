@@ -798,6 +798,22 @@ impl<V: WidgetView> ShellCore<V> {
                     self.cursor_moved(PointerId::MOUSE, x, y);
                     self.handle_named_key(key);
                 }
+                // R666 §5.37 — `scene/key` single-codepoint arc. The
+                // dispatcher auto-detects character vs named keys by
+                // `key.chars().count()`; single-codepoint strings
+                // ("a", " ", "漢") arrive here so `V::keybinding`
+                // (typed-event channel — hello-counter `+`/`-`,
+                // listbox typeahead, vim-style chords) gets first
+                // crack before the `apply_key` fallback. Closes
+                // [[scene-key-character-named-gap]].
+                DeferredInput::CharacterKey {
+                    x,
+                    y,
+                    ref character,
+                } => {
+                    self.cursor_moved(PointerId::MOUSE, x, y);
+                    self.handle_character_key(character);
+                }
                 // R660 §5.49 — `scene/drag` mirror: press at `from`,
                 // march cursor linearly to `to` across `steps` frames
                 // (each one forwarded to `InputRouter::cursor_moved`
