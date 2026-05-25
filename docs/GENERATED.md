@@ -12748,6 +12748,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R667 — Phase A finalisation — settings-panel 2nd composed app + pinion-rpc::resolve_external_introspect_mut 6-file substrate lift (R666 carry #1 즉시 상환).
+
+**Changes**:
+- pinion-rpc::resolve 신규 모듈 — ResolveExternalError + resolve_external_path + introspect_mut_at + introspect_at + composite resolve_external_introspect_mut / _introspect; invoke/intervene/dry_run/rewind/query 5 site + simulate 4 internal site 모두 helper 경유로 단일화
+- examples/settings-panel 신규 binding — Phase A 의 2nd composed app (M3 Settings + 5-section nav rail RadioGroup + Toggle 다크모드 + Slider 폰트 스케일 + TextField 디스플레이 네임)
+- SettingsPersistedState schema_v1 + use_settings_persistence — R665 use_persistence_boot mirror; Storage 2nd application consumer 도달 (R665 substrate ROI 정통 정당화)
+- tools/demos/settings_panel_r667.py — 2-cycle launch-kill-relaunch persistence demo (45 assertion, 2.11s)
+
+
+
+**Verification**:
+- workspace 0 test failure (3389+ tests); pinion-rpc tests +20 (12 resolve unit + 8 site-refactor maintained)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello 0 warnings
+- tools/demos/todomvc_r666.py PASS 7.12s — 6-file lift 회귀 0; settings_panel_r667.py PASS 2.11s 45/45 assertion
+- honest LOC ~+1760 net (seed estimate 1700-2700 의 lower bound; 6-file -94 + resolve.rs +314 = +220 substrate / settings-panel +1275 / demo +265)
+
+
+
+**Impact**: §5.16, §5.34, §5.22, §5.15, §3
+
+
+**Carry forward**:
+- scrollbar 4th consumer 미달성 — settings panel 자연 짧음 (≤480px); R668 candidate (a) notifications 섹션 10+ 채널 확장 + ScrollBarExternal wire
+- checkbox paint widget lift — settings-panel + hello-checkbox = 2-consumer; pinion-widget-paint::checkbox 신규 모듈 R668 candidate (b)
+- font_scale → TextStyle 실제 wire — 현재 persist 만; pinion-text font_size_px 와 wire 미연결 R668 candidate (c)
+- WIN_H magic 영구 carry 계속 — flex_grow primitive 자체는 R55.G.4 시점부터 존재; '진짜' 청산은 winit window-auto-size axis (R668 candidate d 영구 carry 진짜 해결책)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -14,7 +14,8 @@
 use pinion_core::external::{InterveneError, IntrospectValue};
 use pinion_core::Scene;
 
-use crate::path::{self, PathError};
+use crate::path::PathError;
+use crate::resolve::{resolve_external_introspect_mut, ResolveExternalError};
 
 /// Reasons [`rewind`] can fail.
 #[non_exhaustive]
@@ -40,6 +41,17 @@ impl From<PathError> for RewindError {
     }
 }
 
+impl From<ResolveExternalError> for RewindError {
+    fn from(err: ResolveExternalError) -> Self {
+        match err {
+            ResolveExternalError::Path(e) => RewindError::Path(e),
+            ResolveExternalError::UnsupportedPath => RewindError::UnsupportedPath,
+            ResolveExternalError::NoExternalAtPath => RewindError::NoExternalAtPath,
+            ResolveExternalError::IntrospectionOptedOut => RewindError::IntrospectionOptedOut,
+        }
+    }
+}
+
 /// Write `value` to the slot addressed by `raw_path`.
 ///
 /// # Errors
@@ -52,35 +64,10 @@ pub fn rewind(
     raw_path: &str,
     value: IntrospectValue,
 ) -> Result<(), RewindError> {
-    let resolved = path::resolve(raw_path)?;
-    let _ = resolved.window;
-
-    // R42: split at the `/external/` separator. Empty scene segments
-    // = root-External (v0 shape); non-empty = walk Container/Box
-    // chain through `lookup_path_mut` to reach the nested
-    // ExternalNode before intervening. introspect_path owned because
-    // the &mut borrow of scene below would otherwise outlive the
-    // resolved.scene_path borrow.
-    let (scene_segments, introspect_path) = path::split_at_external(resolved.scene_path)
-        .map(|(segs, intro)| (segs, intro.to_string()))
-        .ok_or(RewindError::UnsupportedPath)?;
-
-    let target = scene
-        .lookup_path_mut(&scene_segments)
-        .ok_or(RewindError::NoExternalAtPath)?;
-
-    // (R55.D.5 §5.45) Descend to the substrate's primary External so
-    // both the single-widget and multi-widget state-scene shapes
-    // route here. See `Scene::primary_external_mut`.
-    let node = target
-        .primary_external_mut()
-        .ok_or(RewindError::NoExternalAtPath)?;
-
-    let intro = node
-        .handle
-        .introspect_mut()
-        .ok_or(RewindError::IntrospectionOptedOut)?;
-
+    // R667 §5.34 — `/window[id]/<segs>/external/<intro>` parse +
+    // Container/Scroll walk + multi-widget primary descent + §5.15
+    // introspect-mut lookup lifted into [`resolve_external_introspect_mut`].
+    let (intro, introspect_path) = resolve_external_introspect_mut(scene, raw_path)?;
     intro
         .intervene(&introspect_path, value)
         .map_err(RewindError::Intervene)

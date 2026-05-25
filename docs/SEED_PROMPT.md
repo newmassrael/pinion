@@ -1,6 +1,6 @@
 # pinion seed prompt — 매 세션 첫 입력
 
-> R666 (2026-05-25) 갱신. R663.5 canonical baseline 유지 + R664-R666 land 반영. R664+ 각 라운드 종료 시 "직전 세션 결과" + "다음 텍스트북 캐논" + "watch out" + "lessons" 절 갱신.
+> R667 (2026-05-25) 갱신. R663.5 canonical baseline 유지 + R664-R667 land 반영. **Phase A 종료 land 완료** — 2nd composed app (settings-panel) + resolve_external 6-file substrate lift 한 commit으로 land. R664+ 각 라운드 종료 시 "직전 세션 결과" + "다음 텍스트북 캐논" + "watch out" + "lessons" 절 갱신.
 
 ---
 
@@ -98,6 +98,18 @@ land 완료 (6 commits, daf2a99 → 2d262ad → d8e6810 → bde04f7 → 501f304 
   - 3352 workspace tests + clippy clean
   - **R663-R664 honest 부채 6개 청산 ✓** (R664 inline mandatory list 전부 처리)
 
+- **R667** (Phase A 종료 — 2nd composed app + resolve substrate lift) `<pending commit>`:
+  - pinion-rpc::resolve_external_introspect_mut substrate lift — invoke/intervene/dry_run/rewind/query/simulate 6-file inline duplication (split_at_external + lookup_path_mut + primary_external_mut + introspect_mut) 청산. 5 helper public API + ResolveExternalError 단일 source. simulate.rs 4-internal-site (query_introspect_at + classify_lookup_failure + Phase 2 apply + restore_originals) 도 introspect_mut_at 으로 단일화. R666 carry #1 즉시 상환 ✓
+  - examples/settings-panel 신규 binding — 2nd composed multi-widget application (M3 Settings: 좌측 RadioGroupExternal nav rail × 5 sections + 우측 detail pane). Primary TextField (display_name) + 3 ExtraExternal (RadioGroup nav, Toggle dark mode, Slider font scale). 1206 LOC main.rs
+  - Storage 2nd application consumer — SettingsPersistedState (schema_v1: nav_index + dark_mode + font_scale + display_name) + use_settings_persistence (R665 use_persistence_boot mirror — pre-resolved cache slots, batched hydrate, Effect-retention). R665 substrate ROI 정통 정당화
+  - view_field 4th consumer ✓ (Profile section); view_vertical_scrollbar 4th consumer — settings panel naturally short content (≤480px), R668 carry
+  - settings_panel_r667.py demo — 45 assertion (2-cycle launch-kill-relaunch persistence; nav-cycle × 5 + theme toggle + slider 3-value intervene + TextField type + storage blob verify). PASS 2.11s
+  - WIN_H magic — settings-panel + todomvc 모두 WIN_H 고정. flex_grow primitive 자체는 R55.G.4 시점부터 존재 (`.with_flex_grow(1.0)` 사용 중). "WIN_H magic 청산" 영구 carry **계속** (실질 청산은 winit-side window-auto-size axis 필요)
+  - workspace 0 test failure (3389+ tests) + clippy clean + R666 demo PASS 회귀 0
+  - **honest LOC 실측**: ~+1760 net (resolve lift +220 = 6-file -94 + new resolve.rs +314; settings-panel binding +1275; demo +265; -trivial Cargo/build/xml). 1700-2700 seed estimate 의 lower bound ✓ (composed-app + demo density predictable)
+  - **honest 부채 1개 surface** (scrollbar 4th consumer 청산 못함 — settings panel 자연 짧음 → R668 carry; 인위적 long content 강제 위배)
+  - **3 substrate gap 청산 0개 — settings-panel 부터는 substrate consumer round, gap surface 적음**
+
 - **R666** (AI-first §2 #2 첫 production stress — Phase A ~80%→~85%) `6e41659`:
   - pinion-rpc::invoke / intervene / dry_run R42 mirror migration (rewind.rs canonical) — v1 path `/{tag}/external/{action}` 으로 모든 ExtraExternal singleton 을 base tag 로 addressing. composite-tag (`{tag}#{id}`) 는 paint-side router artefact 임을 명문화. +12 R666 tests (composite-tag DFS, window prefix, unknown segment, non-External target)
   - pinion-core::reactive::Owner::cache nested-factory guard — `try_borrow_mut` 가 cryptic `BorrowMutError` → actionable panic message ("Owner::cache factory closures must not call Owner::cache; pre-resolve dependent slots first") 업그레이드. R665 의 use_persistence_boot 첫 실증 청산 + framework-side guard land. +3 R666 tests (panic 메시지 검증, pre-resolved path 정통, distinct-Owner nesting 허용)
@@ -126,26 +138,27 @@ carry honest (외부 의존, R666 미청산):
 - Figma API token (영구)
 - WIN_H 480 magic (flex-grow primitive 누락; R667 settings panel 첫 consumer 후보)
 
-진척도 (R666 후) — **진짜 northern-star 대비**:
+진척도 (R667 후 — **Phase A 종료**) — **진짜 northern-star 대비**:
 
 | Phase | 비중 | 현재 |
 |---|---:|---:|
-| A. Foundation (§1-§4 + 첫 composed apps) | 5% | ~85% |
+| A. Foundation (§1-§4 + 첫 composed apps) | 5% | ~97% |
 | B. Professional GUI (Qt/Flutter/Compose-class + multi-window) | 25% | 10% |
 | C. Game engine substrate (§2 #4 dual execution + 3D + ...) | 35% | 0% |
 | D. AAA editor self-hosted | 35% | 0% |
 
-**가중 진척 = 5%×85% + 25%×10% + 35%×0% + 35%×0% = ~6.75%**
+**가중 진척 = 5%×97% + 25%×10% + 35%×0% + 35%×0% = ~7.35%**
 
-R667 cascade 후 Phase A 95-100% → ~7.5%. Phase B 진입 (R700+) 이 진짜 northern-star 의 +5% 가속. Phase C/D 가 진짜 mass (35%+35% = 70% of work).
+R668+ Phase A 잔여 부채 (scrollbar 4th consumer, WIN_H magic 등) 청산이 +0.15%. R700+ Phase B 진입이 진짜 northern-star 의 +5% 가속. Phase C/D 가 진짜 mass (35%+35% = 70% of work).
 
 가시 결과:
+- `./target/release/settings-panel` (신규 R667) — M3 좌측 nav rail 5-section (Theme/Appearance/Profile/Notifications/Actions) + 우측 detail pane; theme toggle + font slider + display-name TextField; 모든 변경 즉시 영구화 + exit/relaunch 시 4-field 복원
 - `./target/release/todomvc` — Tab/Arrow/Home/End/Space filter cycle + M3 hover/press layers + scrollbar drag + 더블클릭 inline 편집 + Enter/Esc commit/cancel + strikethrough on completed + exit + relaunch 시 state 영구 복원 (R665) + AI 가 scene/invoke v1 path 로 모든 ExtraExternal singleton 을 직접 조작 가능 (R666)
-- `python3 tools/demos/todomvc_r666.py` (55 assertion, 7.10s — 12+ step E2E + scene/invoke v1 path × 5 + scene/key character arc + 3-cycle launch-kill-relaunch)
+- `python3 tools/demos/settings_panel_r667.py` (45 assertion, 2.11s — 2-cycle launch-kill-relaunch + nav × 5 + theme + slider 3-value + TextField type + storage blob verify)
+- `python3 tools/demos/todomvc_r666.py` (55 assertion, 7.12s — 12+ step E2E + scene/invoke v1 path × 5 + scene/key character arc + 3-cycle launch-kill-relaunch) — R667 lift 회귀 0
 - `python3 tools/demos/todomvc_r665.py` (46 assertion, 13.47s — launch-kill-relaunch persistence cycle)
 - `python3 tools/demos/todomvc_r664.py` (34 assertion, 5.83s)
 - `python3 tools/demos/todomvc_r660.py` (40 assertion, 6.89s)
-- 9-demo sequential regression sweep: PASS 9/9 from clean baseline + PASS 9/9 second run (per-demo tempdir isolation via R666 `isolated_storage_dir` helper)
 
 【북극성 명확화 — Phase A finalisation (R664-R667) 의미】
 
@@ -165,9 +178,18 @@ R667 cascade 후 Phase A 95-100% → ~7.5%. Phase B 진입 (R700+) 이 진짜 no
 
 (g) **R2500+ = Phase D 진입** — Editor self-hosted in pinion itself. Unreal-class IDE 작성 시작. 진짜 northern-star 의 본격 진입
 
-【다음 텍스트북 캐논 — R667 (2nd composed app = settings panel; Phase A 종료)】
+【다음 텍스트북 캐논 — R668 (Phase A 잔여 부채 청산 + Phase B 진입 준비)】
 
-> 이 절은 4-phase context 와 진짜 northern-star anchor 만 명시. R667 atomic 6개의 concrete scope + 순서 + signature 는 본 파일 하단 **【시작 명령】** 절이 single source of truth (DRY 원칙).
+R668 candidate axis:
+- (a) **view_vertical_scrollbar 4th consumer** — settings-panel 의 Notifications 섹션을 10+ 채널로 확장 + ScrollBarExternal wire (R667 carry 청산)
+- (b) **checkbox paint widget lift** — settings-panel + hello-checkbox = 2-consumer; `pinion-widget-paint::checkbox` 신규 모듈 (R667 inline composed-paint 패턴 retire)
+- (c) **font_scale → TextStyle 실제 wire** — 현재 settings-panel font_scale 은 persist 만; pinion-text 의 font_size_px 와 wire 미연결
+- (d) **WIN_H magic 진짜 청산** — winit window-auto-size axis (winit ResizeDirection / inner_size_request); 영구 carry 의 진짜 해결책
+- (e) **Phase B 진입 첫 step (R700+ multi-window substrate forward-compatible 점검)** — 단순 Scene 구조 audit; 변경 0 + spec review
+
+(a)+(b)+(c) = Phase A 100% 도달; (d) = framework windowing axis; (e) = Phase B forward-compat. R668 1 atomic 선택 권장 (a) 우선, 나머지는 R669+ 분리.
+
+> 이 절은 4-phase context 와 진짜 northern-star anchor 만 명시. R668 atomic 의 concrete scope + 순서 + signature 는 다음 세션의 SEED 갱신에서 확정 (single source of truth, DRY 원칙).
 
 R667 의미 = **Phase A 종료 + Phase B (R700+) 진입 자격 획득**:
 
@@ -314,7 +336,11 @@ R666 carry (R667 진입 전 평가 / 미래 inline 청산 candidate):
 
 【시작 명령】
 
-R667 = **2nd composed app (settings panel) = Phase A 종료 라운드**. 6개 atomic land (정확한 순서 — substrate-first):
+> R667 land 완료 — 본 절은 R668 axis 결정 시 갱신. 아래는 R667 atomic 원본 (historical reference).
+>
+> R668 새 axis (위 R668 candidate 절 참조) → 다음 세션 SEED 갱신 시 본 절 재작성.
+
+R667 = **2nd composed app (settings panel) = Phase A 종료 라운드** (✓ land). 6개 atomic land (정확한 순서 — substrate-first):
 
 (0) **`pinion-rpc::resolve_external_mut` substrate lift** (R666 carry #1 즉시 상환) — 현재 invoke/intervene/dry_run/query/rewind/simulate 6 file 에 8+ inline duplication (split_at_external + lookup_path_mut + primary_external_mut). 신규 helper:
    ```rust

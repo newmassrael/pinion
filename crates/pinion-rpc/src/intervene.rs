@@ -36,12 +36,11 @@
 //! Transport (JSON-RPC 2.0 framing per §5.7) is handled by
 //! [`crate::dispatch`]; this module exposes the typed dispatcher only.
 
-use pinion_core::external::{
-    ExternalIntrospect, InterveneError as TraitInterveneError, IntrospectValue,
-};
+use pinion_core::external::{InterveneError as TraitInterveneError, IntrospectValue};
 use pinion_core::Scene;
 
-use crate::path::{self, PathError};
+use crate::path::PathError;
+use crate::resolve::{resolve_external_introspect_mut, ResolveExternalError};
 
 /// Reasons the typed [`intervene`] dispatcher can fail.
 #[non_exhaustive]
@@ -76,6 +75,17 @@ pub enum InterveneError {
 impl From<PathError> for InterveneError {
     fn from(err: PathError) -> Self {
         InterveneError::Path(err)
+    }
+}
+
+impl From<ResolveExternalError> for InterveneError {
+    fn from(err: ResolveExternalError) -> Self {
+        match err {
+            ResolveExternalError::Path(e) => InterveneError::Path(e),
+            ResolveExternalError::UnsupportedPath => InterveneError::UnsupportedPath,
+            ResolveExternalError::NoExternalAtPath => InterveneError::NoExternalAtPath,
+            ResolveExternalError::IntrospectionOptedOut => InterveneError::IntrospectionOptedOut,
+        }
     }
 }
 
@@ -117,38 +127,10 @@ pub fn intervene(
     raw_path: &str,
     value: IntrospectValue,
 ) -> Result<(), InterveneError> {
-    let resolved = path::resolve(raw_path)?;
-    let _ = resolved.window;
-
-    // R666 §5.34 — split at the `/external/` separator (mirror of
-    // [`crate::rewind`] / [`crate::invoke`]). Empty scene segments =
-    // root-External (v0 shape); non-empty = walk Container/Scroll by
-    // tag/index. `state_path` is owned so the &mut borrow on `scene`
-    // can outlive `resolved.scene_path`'s lifetime.
-    let (scene_segments, state_path) = path::split_at_external(resolved.scene_path)
-        .map(|(segs, intro)| (segs, intro.to_string()))
-        .ok_or(InterveneError::UnsupportedPath)?;
-
-    let target = scene
-        .lookup_path_mut(&scene_segments)
-        .ok_or(InterveneError::NoExternalAtPath)?;
-
-    // (R55.D.5 §5.45) Descend to the addressed scene's primary
-    // External — both single-widget and R55.D.5 multi-widget shapes
-    // collapse to a single ExternalNode through this DFS pre-order
-    // walk. When the path tagged an extra sibling explicitly
-    // (`/todo_delete#5/external/...`), `lookup_path_mut` already
-    // landed on `Scene::External(extra)` and `primary_external_mut`
-    // returns `Some(self)`.
-    let node = target
-        .primary_external_mut()
-        .ok_or(InterveneError::NoExternalAtPath)?;
-
-    let intro: &mut dyn ExternalIntrospect = node
-        .handle
-        .introspect_mut()
-        .ok_or(InterveneError::IntrospectionOptedOut)?;
-
+    // R667 §5.34 — `/window[id]/<segs>/external/<state>` parse +
+    // Container/Scroll walk + multi-widget primary descent + §5.15
+    // introspect-mut lookup lifted into [`resolve_external_introspect_mut`].
+    let (intro, state_path) = resolve_external_introspect_mut(scene, raw_path)?;
     intro.intervene(&state_path, value).map_err(Into::into)
 }
 

@@ -3847,6 +3847,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings-panel"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-platform-clipboard",
+ "pinion-platform-storage",
+ "pinion-shell",
+ "pinion-text",
+ "pinion-widget-paint",
+ "serde",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

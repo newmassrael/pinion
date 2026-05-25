@@ -1,0 +1,31 @@
+[package]
+name = "settings-panel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R667 §5.16 Phase A finalisation: 2nd composed multi-widget application (Material 3 Settings — NavigationRail-style RadioGroup + 5 detail sections (theme / appearance / profile / notifications / actions) with immediate Storage persistence). Closes Phase A by proving the substrate ROI curve on 4th TextField + 4th vertical scrollbar + 2nd Storage consumers."
+publish = false
+
+[[bin]]
+name = "settings-panel"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
+pinion-platform-storage = { path = "../../crates/pinion-platform-storage", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

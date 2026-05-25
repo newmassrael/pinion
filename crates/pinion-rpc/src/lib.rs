@@ -26,6 +26,7 @@ pub mod path;
 pub mod preview;
 pub mod query;
 pub mod resize;
+pub mod resolve;
 pub mod rewind;
 pub mod screenshot;
 pub mod scroll_state;
@@ -87,6 +88,10 @@ pub use preview::{
 };
 pub use query::{query, QueryError};
 pub use resize::{resize, ResizeError, ResizeOutcome, ResizeParams};
+pub use resolve::{
+    introspect_at, introspect_mut_at, resolve_external_introspect,
+    resolve_external_introspect_mut, resolve_external_path, ResolveExternalError,
+};
 pub use rewind::{rewind, RewindError};
 pub use screenshot::{screenshot, Screenshot, ScreenshotError};
 pub use scroll_state::{

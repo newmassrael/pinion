@@ -22,10 +22,11 @@
 //! Transport (JSON-RPC 2.0 framing per §5.7) is a separate slice — this
 //! module exposes the typed dispatcher only.
 
-use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+use pinion_core::external::IntrospectValue;
 use pinion_core::Scene;
 
-use crate::path::{self, PathError};
+use crate::path::PathError;
+use crate::resolve::{resolve_external_introspect, ResolveExternalError};
 
 /// Reasons the typed [`query`] dispatcher can fail.
 #[non_exhaustive]
@@ -50,6 +51,17 @@ impl From<PathError> for QueryError {
     }
 }
 
+impl From<ResolveExternalError> for QueryError {
+    fn from(err: ResolveExternalError) -> Self {
+        match err {
+            ResolveExternalError::Path(e) => QueryError::Path(e),
+            ResolveExternalError::UnsupportedPath => QueryError::UnsupportedPath,
+            ResolveExternalError::NoExternalAtPath => QueryError::NoExternalAtPath,
+            ResolveExternalError::IntrospectionOptedOut => QueryError::IntrospectionOptedOut,
+        }
+    }
+}
+
 /// Resolve `raw_path` against `scene` and return the queried value.
 ///
 /// See module docs for the v0 path syntax. The `scene` reference is
@@ -61,40 +73,12 @@ impl From<PathError> for QueryError {
 /// does not match the path shape, or the underlying `External` rejects
 /// the introspect path.
 pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryError> {
-    let resolved = path::resolve(raw_path)?;
-    // §5.17 §5.18: `resolved.window` is the routed window. Multi-window
-    // scene addressing lands in a later slice; today the scene argument
-    // *is* the resolved window's root, so we ignore the WindowId here.
-    let _ = resolved.window;
-
-    // R42: split at the `/external/` separator. Empty scene segments
-    // = root-External (v0 shape); non-empty = walk Container/Box
-    // chain to find a nested ExternalNode before introspecting.
-    let (scene_segments, introspect_path) =
-        path::split_at_external(resolved.scene_path).ok_or(QueryError::UnsupportedPath)?;
-
-    let target = scene
-        .lookup_path_ref(&scene_segments)
-        .ok_or(QueryError::NoExternalAtPath)?;
-
-    // (R55.D.5 §5.45) `target` is the substrate's state-scene root —
-    // either `Scene::External(primary)` (single-widget shape) or
-    // `Scene::Container([primary, ...extras])` when the binding
-    // overrides `create_extra_externals`. `primary_external` descends
-    // to the first `ExternalNode` in DFS pre-order so an
-    // `external/<action>` path against either shape resolves to the
-    // primary widget without per-binding disambiguation.
-    let node = target
-        .primary_external()
-        .ok_or(QueryError::NoExternalAtPath)?;
-
-    let intro: &dyn ExternalIntrospect = node
-        .handle
-        .introspect()
-        .ok_or(QueryError::IntrospectionOptedOut)?;
-
+    // R667 §5.34 — `/window[id]/<segs>/external/<intro>` parse +
+    // Container/Scroll walk + multi-widget primary descent + §5.15
+    // introspect lookup lifted into [`resolve_external_introspect`].
+    let (intro, introspect_path) = resolve_external_introspect(scene, raw_path)?;
     intro
-        .query(introspect_path)
+        .query(&introspect_path)
         .ok_or(QueryError::UnknownIntrospectPath)
 }
 

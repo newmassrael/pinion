@@ -28,7 +28,8 @@
 use pinion_core::external::{InterveneError, IntrospectValue};
 use pinion_core::{Scene, SimulationGuard};
 
-use crate::path::{self, PathError};
+use crate::path::PathError;
+use crate::resolve::{resolve_external_introspect_mut, ResolveExternalError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 
 /// Reasons [`dry_run`] can fail.
@@ -65,6 +66,17 @@ impl From<PathError> for DryRunError {
     }
 }
 
+impl From<ResolveExternalError> for DryRunError {
+    fn from(err: ResolveExternalError) -> Self {
+        match err {
+            ResolveExternalError::Path(e) => DryRunError::Path(e),
+            ResolveExternalError::UnsupportedPath => DryRunError::UnsupportedPath,
+            ResolveExternalError::NoExternalAtPath => DryRunError::NoExternalAtPath,
+            ResolveExternalError::IntrospectionOptedOut => DryRunError::IntrospectionOptedOut,
+        }
+    }
+}
+
 /// Hypothetically write `value` at the addressed slot, snapshot the
 /// scene, then roll back. The returned snapshot reflects the state as
 /// it *would* be after the write.
@@ -84,64 +96,32 @@ pub fn dry_run(
     // is NOT called here (single-write, External rollback is symmetric)
     // — Effect suppression alone keeps side effects from landing twice.
     let _sim_guard = SimulationGuard::enter();
-    let resolved = path::resolve(raw_path)?;
-    let _ = resolved.window;
 
-    // R666 §5.34 — split at the `/external/` separator (mirror of
-    // [`crate::rewind`] / [`crate::invoke`]). Scene segments + owned
-    // introspect path so the two mutable borrows below can each open
-    // a fresh `lookup_path_mut` walk.
-    let (scene_segments, introspect_path) = path::split_at_external(resolved.scene_path)
-        .map(|(segs, intro)| (segs, intro.to_string()))
-        .ok_or(DryRunError::UnsupportedPath)?;
-
-    // Phase 1: save the current value and apply the hypothetical write.
-    // Constrained to a scope so the &mut borrow on `scene` ends before
-    // the snapshot phase needs a shared borrow.
-    let saved = {
-        // R666 §5.34 — walk by tag/index then descend to the
-        // addressed scene's primary External (R55.D.5 multi-widget
-        // shape).
-        let target = scene
-            .lookup_path_mut(&scene_segments)
-            .ok_or(DryRunError::NoExternalAtPath)?;
-        let node = target
-            .primary_external_mut()
-            .ok_or(DryRunError::NoExternalAtPath)?;
-        let intro = node
-            .handle
-            .introspect_mut()
-            .ok_or(DryRunError::IntrospectionOptedOut)?;
-
+    // R667 §5.34 — phase 1: save current value, apply hypothetical
+    // write. Each `resolve_external_introspect_mut` call opens its own
+    // mutable scene borrow, so the rollback phase can re-walk after
+    // the snapshot phase's shared borrow drops. `introspect_path` is
+    // captured here so phase 3 can address the same slot (phase 1
+    // already validated it; rollback's `?` arms are unreachable
+    // unless the External mutated its own scene topology mid-flight).
+    let (saved, introspect_path) = {
+        let (intro, introspect_path) = resolve_external_introspect_mut(scene, raw_path)?;
         let saved = intro
             .query(&introspect_path)
             .ok_or(DryRunError::InitialQueryFailed)?;
-
         intro
             .intervene(&introspect_path, value)
             .map_err(DryRunError::Intervene)?;
-        saved
+        (saved, introspect_path)
     };
 
     // Phase 2: capture the snapshot of the hypothetical state.
     let snap_result = snapshot(scene, "");
 
-    // Phase 3: roll back to the saved value regardless of snapshot
-    // outcome, so the caller's scene is never left mutated.
+    // Phase 3: roll back regardless of snapshot outcome so the
+    // caller's scene is never left mutated.
     let rollback_result = {
-        // Same walk as phase 1 — phase 1 already validated the path,
-        // so the `ok_or` arms are unreachable unless the External
-        // mutated its own scene topology mid-flight.
-        let target = scene
-            .lookup_path_mut(&scene_segments)
-            .ok_or(DryRunError::NoExternalAtPath)?;
-        let node = target
-            .primary_external_mut()
-            .ok_or(DryRunError::NoExternalAtPath)?;
-        let intro = node
-            .handle
-            .introspect_mut()
-            .ok_or(DryRunError::IntrospectionOptedOut)?;
+        let (intro, _) = resolve_external_introspect_mut(scene, raw_path)?;
         intro.intervene(&introspect_path, saved)
     };
 

@@ -32,10 +32,11 @@
 //! [`crate::dispatch`]; this module exposes the typed dispatcher
 //! only.
 
-use pinion_core::external::{ExternalIntrospect, IntrospectValue, InvokeError as TraitInvokeError};
+use pinion_core::external::{IntrospectValue, InvokeError as TraitInvokeError};
 use pinion_core::Scene;
 
-use crate::path::{self, PathError};
+use crate::path::PathError;
+use crate::resolve::{resolve_external_introspect_mut, ResolveExternalError};
 
 /// Reasons the typed [`invoke`] dispatcher can fail.
 #[non_exhaustive]
@@ -62,6 +63,17 @@ pub enum InvokeError {
 impl From<PathError> for InvokeError {
     fn from(err: PathError) -> Self {
         InvokeError::Path(err)
+    }
+}
+
+impl From<ResolveExternalError> for InvokeError {
+    fn from(err: ResolveExternalError) -> Self {
+        match err {
+            ResolveExternalError::Path(e) => InvokeError::Path(e),
+            ResolveExternalError::UnsupportedPath => InvokeError::UnsupportedPath,
+            ResolveExternalError::NoExternalAtPath => InvokeError::NoExternalAtPath,
+            ResolveExternalError::IntrospectionOptedOut => InvokeError::IntrospectionOptedOut,
+        }
     }
 }
 
@@ -95,40 +107,12 @@ pub fn invoke(
     raw_path: &str,
     args: IntrospectValue,
 ) -> Result<IntrospectValue, InvokeError> {
-    let resolved = path::resolve(raw_path)?;
-    let _ = resolved.window;
-
-    // R666 §5.34 — split at the `/external/` separator (mirror of
-    // [`crate::rewind`]). Empty scene segments = root-External (v0
-    // shape); non-empty = walk Container/Scroll by tag/index through
-    // [`Scene::lookup_path_mut`] to reach the addressed ExternalNode
-    // before invoking. `action_path` is owned so the mutable borrow of
-    // `scene` below can outlive `resolved.scene_path`'s lifetime.
-    let (scene_segments, action_path) = path::split_at_external(resolved.scene_path)
-        .map(|(segs, intro)| (segs, intro.to_string()))
-        .ok_or(InvokeError::UnsupportedPath)?;
-
-    let target = scene
-        .lookup_path_mut(&scene_segments)
-        .ok_or(InvokeError::NoExternalAtPath)?;
-
-    // (R55.D.5 §5.45) Descend to the addressed scene's primary
-    // External — for the single-widget shape (`Scene::External`) this
-    // is `self`; for the multi-widget shape
-    // (`Scene::Container([primary, ...extras])`) this is the first
-    // child External in DFS pre-order. When the path explicitly
-    // tagged an extra sibling (`/todo_toggle#1/external/...`),
-    // `lookup_path_mut` already landed on `Scene::External(extra)`
-    // and `primary_external_mut` returns `Some(self)`.
-    let node = target
-        .primary_external_mut()
-        .ok_or(InvokeError::NoExternalAtPath)?;
-
-    let intro: &mut dyn ExternalIntrospect = node
-        .handle
-        .introspect_mut()
-        .ok_or(InvokeError::IntrospectionOptedOut)?;
-
+    // R667 §5.34 — `/window[id]/<segs>/external/<action>` parse +
+    // Container/Scroll walk + multi-widget primary descent + §5.15
+    // introspect-mut lookup lifted into [`resolve_external_introspect_mut`].
+    // `action_path` is owned (String) so the `&mut dyn ExternalIntrospect`
+    // borrow on `scene` can outlive `raw_path`'s lifetime.
+    let (intro, action_path) = resolve_external_introspect_mut(scene, raw_path)?;
     intro.invoke(&action_path, args).map_err(Into::into)
 }
 

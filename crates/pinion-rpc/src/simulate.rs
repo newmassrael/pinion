@@ -64,7 +64,8 @@ use pinion_core::external::{InterveneError, IntrospectValue};
 use pinion_core::{Owner, Scene, SimulationGuard};
 
 use crate::dry_run::DryRunError;
-use crate::path::{self, PathError};
+use crate::path::PathError;
+use crate::resolve::{introspect_mut_at, resolve_external_path, ResolveExternalError};
 use crate::snapshot::{snapshot, SnapshotError, SnapshotNode};
 
 /// One step in a [`simulate`] sequence — an `(path, value)` pair
@@ -209,55 +210,65 @@ pub fn simulate(
         return Err(SimulateError::EmptySteps);
     }
 
-    // Phase 0: resolve every step's path through the §5.34 R42
-    // `split_at_external` parser (same shape `query` + `intervene`
-    // consume). Reject the whole call on any malformed prefix or
-    // missing `/external/` separator before any mutation could land.
+    // Phase 0: R667 §5.34 — resolve every step's path through the
+    // lifted [`resolve_external_path`] (string-only parse). Reject
+    // the whole call on any malformed prefix or missing `/external/`
+    // separator before any mutation could land. Per-step error
+    // variants carry the offending step's index.
     let mut resolved: Vec<(Vec<String>, String)> = Vec::with_capacity(steps.len());
     for (i, step) in steps.iter().enumerate() {
-        let r = path::resolve(&step.path)
-            .map_err(|e| SimulateError::Path { step_index: i, error: e })?;
-        let (scene_segments, introspect_path) = path::split_at_external(r.scene_path)
-            .ok_or(SimulateError::UnsupportedPath { step_index: i })?;
-        resolved.push((scene_segments, introspect_path.to_string()));
+        resolved.push(resolve_external_path(&step.path).map_err(|e| match e {
+            ResolveExternalError::Path(error) => SimulateError::Path { step_index: i, error },
+            // `resolve_external_path` is string-only — `NoExternalAtPath`
+            // / `IntrospectionOptedOut` cannot fire here. Collapse
+            // exhaustively because `ResolveExternalError` is non_exhaustive.
+            ResolveExternalError::UnsupportedPath
+            | ResolveExternalError::NoExternalAtPath
+            | ResolveExternalError::IntrospectionOptedOut => {
+                SimulateError::UnsupportedPath { step_index: i }
+            }
+        })?);
     }
 
-    // Phase 1: save the original value for every unique
+    // Phase 1: R667 §5.34 — save the original value for every unique
     // (scene_segments, introspect_path) tuple the sequence touches.
     // R648 — the key tuple distinguishes two Externals' same-named
     // slots ("/widget_a/external/value" vs "/widget_b/external/value").
     // BTreeMap deterministic ordering simplifies the rollback
-    // iteration + diff inspection in tests.
+    // iteration + diff inspection in tests. Walk + introspect lookup
+    // collapses through [`introspect_mut_at`] so the former
+    // `query_introspect_at` + `classify_lookup_failure` two-pass
+    // disambiguation flattens into one map_err.
     let mut originals: BTreeMap<(Vec<String>, String), IntrospectValue> = BTreeMap::new();
     for (i, (scene_segments, introspect_path)) in resolved.iter().enumerate() {
         let key = (scene_segments.clone(), introspect_path.clone());
         if originals.contains_key(&key) {
             continue;
         }
-        let saved = query_introspect_at(scene, scene_segments, introspect_path).ok_or_else(
-            || classify_lookup_failure(scene, scene_segments, introspect_path, i),
-        )?;
+        let intro = introspect_mut_at(scene, scene_segments).map_err(|e| match e {
+            ResolveExternalError::NoExternalAtPath => SimulateError::NoExternalAtPath,
+            ResolveExternalError::IntrospectionOptedOut => SimulateError::IntrospectionOptedOut,
+            // String-parse variants unreachable here (phase 0 validated).
+            ResolveExternalError::Path(_) | ResolveExternalError::UnsupportedPath => {
+                SimulateError::NoExternalAtPath
+            }
+        })?;
+        let saved = intro
+            .query(introspect_path)
+            .ok_or(SimulateError::InitialQueryFailed { step_index: i })?;
         originals.insert(key, saved);
     }
 
-    // Phase 2: apply each step in declaration order. On any failure,
-    // roll back the originals we've saved so the caller's scene is
-    // restored — phase 1 already saved every unique key so a
-    // bulk-rollback covers every touched slot.
+    // Phase 2: R667 §5.34 — apply each step in declaration order via
+    // [`introspect_mut_at`]. Phase 1 already located + queried every
+    // path successfully; reaching `Err` here means the External
+    // mutated its own scene topology mid-flight, classified as
+    // `InterveneError::UnknownPath` to preserve the prior wire shape.
     let mut intervene_outcome: Result<(), (usize, InterveneError)> = Ok(());
     for (i, ((scene_segments, introspect_path), step)) in
         resolved.iter().zip(steps.iter()).enumerate()
     {
-        // Phase 1 already located + queried this path successfully;
-        // re-borrow here is guaranteed to find it (defensive `?`).
-        let Some(node) = scene
-            .lookup_path_mut(scene_segments)
-            .and_then(Scene::primary_external_mut)
-        else {
-            intervene_outcome = Err((i, InterveneError::UnknownPath));
-            break;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
+        let Ok(intro) = introspect_mut_at(scene, scene_segments) else {
             intervene_outcome = Err((i, InterveneError::UnknownPath));
             break;
         };
@@ -288,62 +299,17 @@ pub fn simulate(
     snap_result.map_err(|_e: SnapshotError| SimulateError::SnapshotFailed)
 }
 
-/// Walk `scene` via `scene_segments`, descend to the primary
-/// [`pinion_core::scene::ExternalNode`], and `query(introspect_path)`.
-/// Returns `None` if any step in the chain fails — the caller
-/// disambiguates the cause via [`classify_lookup_failure`].
-fn query_introspect_at(
-    scene: &mut Scene,
-    scene_segments: &[String],
-    introspect_path: &str,
-) -> Option<IntrospectValue> {
-    let target = scene.lookup_path_mut(scene_segments)?;
-    let node = target.primary_external_mut()?;
-    let intro = node.handle.introspect_mut()?;
-    intro.query(introspect_path)
-}
-
-/// Re-walk a known-failing path and classify which boundary errored
-/// to surface the right [`SimulateError`] variant. R648 §5.34 R42 —
-/// phase 1 collapses the lookup failures into `None` for borrow
-/// simplicity; this helper preserves the [`crate::dry_run::dry_run`]
-/// severity ordering (`NoExternalAtPath` > `IntrospectionOptedOut` >
-/// `InitialQueryFailed`).
-fn classify_lookup_failure(
-    scene: &mut Scene,
-    scene_segments: &[String],
-    introspect_path: &str,
-    step_index: usize,
-) -> SimulateError {
-    let Some(target) = scene.lookup_path_mut(scene_segments) else {
-        return SimulateError::NoExternalAtPath;
-    };
-    let Some(node) = target.primary_external_mut() else {
-        return SimulateError::NoExternalAtPath;
-    };
-    if node.handle.introspect_mut().is_none() {
-        return SimulateError::IntrospectionOptedOut;
-    }
-    let _ = introspect_path;
-    SimulateError::InitialQueryFailed { step_index }
-}
-
 /// Restore every saved original through `intervene`, re-walking
-/// `scene_segments` for each entry. Returns `false` if any slot
-/// rejected the write (invariant violation — the scene is now
-/// indeterminate from the caller's perspective).
+/// `scene_segments` for each entry via [`introspect_mut_at`].
+/// Returns `false` if any slot rejected the write (invariant
+/// violation — the scene is now indeterminate from the caller's
+/// perspective).
 fn restore_originals(
     scene: &mut Scene,
     originals: &BTreeMap<(Vec<String>, String), IntrospectValue>,
 ) -> bool {
     for ((scene_segments, introspect_path), original) in originals {
-        let Some(target) = scene.lookup_path_mut(scene_segments) else {
-            return false;
-        };
-        let Some(node) = target.primary_external_mut() else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
+        let Ok(intro) = introspect_mut_at(scene, scene_segments) else {
             return false;
         };
         if intro.intervene(introspect_path, original.clone()).is_err() {

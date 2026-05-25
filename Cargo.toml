@@ -37,6 +37,7 @@ members = [
     "examples/ai-introspect-demo",
     "examples/figma-button-m3",
     "examples/todomvc",
+    "examples/settings-panel",
 ]
 exclude = ["vendor/sce"]
 
