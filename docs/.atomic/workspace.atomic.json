@@ -20231,6 +20231,66 @@
         "with_size_px thread-local read overhead per text-rendering call — negligible but real; never measured against pre-R668 const-fn baseline"
       ]
     },
+    "R669": {
+      "decision_summary": "R668 atomic 4 carry 청산 — settings-panel notifications 6-channel CheckboxExternal cluster + persistence schema v1→v2 migrator + 4th ScrollBarExternal consumer (5 of 6 atomic land; IntrinsicAfterFirstPaint application opt-in deferred to R670, substrate from R668 already in place)",
+      "changes_bullets": [
+        "SettingsPersistedState schema v1→v2 migrator: PERSISTED_SCHEMA_VERSION 1→2, new `notifications: [bool; NOTIFICATION_COUNT]` field; SettingsPersistedStateV1 explicit decoder + migrate_v1_to_v2 back-fills NOTIFICATION_DEFAULTS so v1-on-disk records survive upgrade without losing nav_index / dark_mode / font_scale / display_name; hydrate path tries v2-decode first, falls back to v1+migrate on missing-field reject",
+        "6× CheckboxExternal composite-tag cluster (R55.D.5 substrate at N=6): NOTIFICATION_COUNT=6, NOTIF_INSTANCE_TAGS static array (notifications#0..notifications#5), use_notification_channels() Owner::cache hook holds 6 Rc<Signal<bool>> mirrors; create_extra_externals registers each CheckboxExternal as ExtraExternal seeded from hydrated Signal value; V::update parses composite-tag intent (`notifications#i.checked`) and mutates Signal mirror",
+        "view_notifications_section rewrite — 6 view_checkbox rows (pinion-widget-paint::checkbox 2nd application consumer, satisfying [[abstraction-needs-second-consumer]] Rule of Three) wrapped in Scene::Scroll viewport; read_notification_states + read_notification_checked walkers walk per-channel External state slot + value slot, Owner-scope-free per canonical read_state contract; RootState tuple expanded 7→9 slots",
+        "4th ScrollBarExternal consumer: notifications_scrollbar tag + use_notif_scrollbar() delegates to canonical pinion_core::widgets::scroll::use_scroll_state hook; viewport 480×280 with 6×48px row content guarantees overflow exercising visible scrollbar paint + drag arc; view_vertical_scrollbar paint + ScrollBarExternal::new().attach_state().attach_interaction() mirrors todomvc pattern",
+        "tools/demos/settings_panel_r669.py 20 assertions: cycle 1 fresh-boot v2 schema_version + 6 notifications defaults; cycle 2 v1→v2 migrator preserves v1 fields + back-fills defaults; cycle 3 6 composite-tag instances in state scene + paint scene + scrollbar External present",
+        "tools/demos/settings_panel_r667.py updated to accept schema_version ∈ {1, 2} so pre-R669 demo passes against post-R669 binding (the v1→21 migrator transparently handles both)"
+      ],
+      "verification_bullets": [
+        "3415 workspace tests pass (no new substrate tests in R669 — atomic 0-3 are application-layer wiring; substrate primitives validated in R668)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (R669 lint fixes: trivially_copy_pass_by_ref [CheckboxState; 6] / [bool; 6] passed by value; needless_range_loop → .iter().enumerate(); doc_markdown backticks)",
+        "8-demo regression sweep PASS (todomvc_r660 / todomvc_r664 / todomvc_r665 / todomvc_r666 / settings_panel_r667 / settings_panel_r668 / double_click_r663 / settings_panel_r669 all PASS) — zero R669 regression",
+        "settings_panel_r669.py 20 assertions PASS in 2.50s (atomic 0 = 11 / atomic 1 = 6 / atomic 2 = 2 / atomic 3 = 1)",
+        "v1-on-disk migrator round-trip verified: write v1 blob to storage, relaunch, observe v2 blob on disk with v1 fields preserved (dark_mode / font_scale / display_name) + notifications back-filled to NOTIFICATION_DEFAULTS"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.16",
+        "5.45",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "SizeStrategy::IntrinsicAfterFirstPaint first real application consumer — substrate from R668 atomic 0 in place; first consumer waits for a binding that naturally benefits (popover / dialog / tooltip without a fixed root size); settings-panel today locks with_size(Size::px(WIN_W, WIN_H)) so the intrinsic-bbox walker measures identity (no resize fires) — a layout redesign needed to demonstrate",
+        "Persistence schema v2→v3 migrator pattern is now textbook canonical (R669 implemented v1→v2 as the first realisation of the R665 schema-migrator carry); future schema bumps follow `try-current → fallback-prev → migrate` shape inside the hydrate path",
+        "read_notification_states / read_notification_checked walk 6 composite tags per read_state pass — O(N=6) negligible today; a 2nd composite-tag-cluster consumer (R670+ candidate) would surface the need for a substrate-side read_composite_tag_value_slots helper to amortise the walk across consumers",
+        "Phase B (R700+) multi-window substrate — pinion-shell::WindowManager + Scene::Window variant first RFC; DevTools / Inspector first consumer; the R668 SizeStrategy enum is forward-compatible (each Window's root view fn declares its own SizeStrategy)",
+        "[[pinion-tui-rpc-ingress]] follow-up (carry from R668): full stdin RPC ingress for pinion-tui; substrate primitive (drain_deferred_inputs) already in place"
+      ],
+      "publishable_decision_summary": "R668 atomic 4 carry 청산 — settings-panel notifications 6-channel CheckboxExternal cluster + persistence schema v1→v2 migrator + 4th ScrollBarExternal consumer (5 of 6 atomic land; IntrinsicAfterFirstPaint application opt-in deferred to R670, substrate from R668 already in place)",
+      "publishable_changes_bullets": [
+        "SettingsPersistedState schema v1→v2 migrator: PERSISTED_SCHEMA_VERSION 1→2, new `notifications: [bool; NOTIFICATION_COUNT]` field; SettingsPersistedStateV1 explicit decoder + migrate_v1_to_v2 back-fills NOTIFICATION_DEFAULTS so v1-on-disk records survive upgrade without losing nav_index / dark_mode / font_scale / display_name; hydrate path tries v2-decode first, falls back to v1+migrate on missing-field reject",
+        "6× CheckboxExternal composite-tag cluster (R55.D.5 substrate at N=6): NOTIFICATION_COUNT=6, NOTIF_INSTANCE_TAGS static array (notifications#0..notifications#5), use_notification_channels() Owner::cache hook holds 6 Rc<Signal<bool>> mirrors; create_extra_externals registers each CheckboxExternal as ExtraExternal seeded from hydrated Signal value; V::update parses composite-tag intent (`notifications#i.checked`) and mutates Signal mirror",
+        "view_notifications_section rewrite — 6 view_checkbox rows (pinion-widget-paint::checkbox 2nd application consumer, satisfying [[abstraction-needs-second-consumer]] Rule of Three) wrapped in Scene::Scroll viewport; read_notification_states + read_notification_checked walkers walk per-channel External state slot + value slot, Owner-scope-free per canonical read_state contract; RootState tuple expanded 7→9 slots",
+        "4th ScrollBarExternal consumer: notifications_scrollbar tag + use_notif_scrollbar() delegates to canonical pinion_core::widgets::scroll::use_scroll_state hook; viewport 480×280 with 6×48px row content guarantees overflow exercising visible scrollbar paint + drag arc; view_vertical_scrollbar paint + ScrollBarExternal::new().attach_state().attach_interaction() mirrors todomvc pattern",
+        "tools/demos/settings_panel_r669.py 20 assertions: cycle 1 fresh-boot v2 schema_version + 6 notifications defaults; cycle 2 v1→v2 migrator preserves v1 fields + back-fills defaults; cycle 3 6 composite-tag instances in state scene + paint scene + scrollbar External present",
+        "tools/demos/settings_panel_r667.py updated to accept schema_version ∈ {1, 2} so pre-R669 demo passes against post-R669 binding (the v1→21 migrator transparently handles both)"
+      ],
+      "publishable_verification_bullets": [
+        "3415 workspace tests pass (no new substrate tests in R669 — atomic 0-3 are application-layer wiring; substrate primitives validated in R668)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (R669 lint fixes: trivially_copy_pass_by_ref [CheckboxState; 6] / [bool; 6] passed by value; needless_range_loop → .iter().enumerate(); doc_markdown backticks)",
+        "8-demo regression sweep PASS (todomvc_r660 / todomvc_r664 / todomvc_r665 / todomvc_r666 / settings_panel_r667 / settings_panel_r668 / double_click_r663 / settings_panel_r669 all PASS) — zero R669 regression",
+        "settings_panel_r669.py 20 assertions PASS in 2.50s (atomic 0 = 11 / atomic 1 = 6 / atomic 2 = 2 / atomic 3 = 1)",
+        "v1-on-disk migrator round-trip verified: write v1 blob to storage, relaunch, observe v2 blob on disk with v1 fields preserved (dark_mode / font_scale / display_name) + notifications back-filled to NOTIFICATION_DEFAULTS"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.16",
+        "5.45",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SizeStrategy::IntrinsicAfterFirstPaint first real application consumer — substrate from R668 atomic 0 in place; first consumer waits for a binding that naturally benefits (popover / dialog / tooltip without a fixed root size); settings-panel today locks with_size(Size::px(WIN_W, WIN_H)) so the intrinsic-bbox walker measures identity (no resize fires) — a layout redesign needed to demonstrate",
+        "Persistence schema v2→v3 migrator pattern is now textbook canonical (R669 implemented v1→v2 as the first realisation of the R665 schema-migrator carry); future schema bumps follow `try-current → fallback-prev → migrate` shape inside the hydrate path",
+        "read_notification_states / read_notification_checked walk 6 composite tags per read_state pass — O(N=6) negligible today; a 2nd composite-tag-cluster consumer (R670+ candidate) would surface the need for a substrate-side read_composite_tag_value_slots helper to amortise the walk across consumers",
+        "Phase B (R700+) multi-window substrate — pinion-shell::WindowManager + Scene::Window variant first RFC; DevTools / Inspector first consumer; the R668 SizeStrategy enum is forward-compatible (each Window's root view fn declares its own SizeStrategy)",
+        "[[pinion-tui-rpc-ingress]] follow-up (carry from R668): full stdin RPC ingress for pinion-tui; substrate primitive (drain_deferred_inputs) already in place"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
