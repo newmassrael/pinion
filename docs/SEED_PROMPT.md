@@ -13,8 +13,23 @@
 - 1 commit = 1 round = 1 atomic Mnemosyne entry
 - 사용자 명시 동의 없으면 git push 금지 (CLAUDE.md 영구 원칙). "진행" / "continue" / "go" 는 push 권한 아님
 
+【다음 세션 진입 (single-command entry)】
+
+새 세션 첫 입력으로 다음 중 하나 — 결과 동일 (SEED self-contained):
+- `load` (Serena MCP session-loading skill — pinion 프로젝트 활성화 시 SEED + memory 자동 hydrate)
+- `@docs/SEED_PROMPT.md 읽고 R<현재 라운드> 자동 진행`
+- 단순 `R<현재 라운드> 진행` (CLAUDE.md Reading order step 1 이 SEED 로 가리킴)
+
+이 SEED 가 self-contained 보증:
+- 불변 운영 원칙 (첫 7줄) — 매 세션 동일
+- 직전 5+ 세션 honest 결과 — 누락 없는 land 추적
+- 다음 텍스트북 캐논 (현재 라운드 atomic list) — concrete + scope-bounded
+- watch out + lessons — 영구 + 누적
+
+세션 진입 시 위 3+1 절 읽고 atomic list 의 첫 atomic 부터 자동 진행. 이전 세션의 commit / 변경 사항은 git log + GENERATED.md 가 source of truth (SEED 의 "직전 세션 결과" 가 human-readable mirror).
+
 【진입 시 필독 순서】
-1. `docs/SEED_PROMPT.md` (이 파일 — R666+ matters 의 baseline)
+1. `docs/SEED_PROMPT.md` (이 파일 — R667+ matters 의 baseline; single-command entry point)
 2. `docs/GENERATED.md` §1 Vision (R663.5 정정: 4-phase) + §2 invariants (R663.5 #4 elaboration) + §3 capability boundaries (R665 External(opaque) escape hatch 첫 실증) + §5.15 8-point contract
 3. `mnemosyne://concepts/overview` + anti-patterns + atomic-store + frozen-ledger
 4. `CLAUDE.md` (R663.5 H1 + Project identity + #4 elaboration)
@@ -83,7 +98,7 @@ land 완료 (6 commits, daf2a99 → 2d262ad → d8e6810 → bde04f7 → 501f304 
   - 3352 workspace tests + clippy clean
   - **R663-R664 honest 부채 6개 청산 ✓** (R664 inline mandatory list 전부 처리)
 
-- **R666** (AI-first §2 #2 첫 production stress — Phase A ~80%→~85%) 신규:
+- **R666** (AI-first §2 #2 첫 production stress — Phase A ~80%→~85%) `6e41659`:
   - pinion-rpc::invoke / intervene / dry_run R42 mirror migration (rewind.rs canonical) — v1 path `/{tag}/external/{action}` 으로 모든 ExtraExternal singleton 을 base tag 로 addressing. composite-tag (`{tag}#{id}`) 는 paint-side router artefact 임을 명문화. +12 R666 tests (composite-tag DFS, window prefix, unknown segment, non-External target)
   - pinion-core::reactive::Owner::cache nested-factory guard — `try_borrow_mut` 가 cryptic `BorrowMutError` → actionable panic message ("Owner::cache factory closures must not call Owner::cache; pre-resolve dependent slots first") 업그레이드. R665 의 use_persistence_boot 첫 실증 청산 + framework-side guard land. +3 R666 tests (panic 메시지 검증, pre-resolved path 정통, distinct-Owner nesting 허용)
   - pinion-rpc::DeferredInput::CharacterKey 신규 variant + handle_scene_key 가 `key.chars().count() == 1` 자동 판별 → CharacterKey (handle_character_key → V::keybinding intercept); 그 외 → Key (handle_named_key). pinion-shell drain CharacterKey arm. 사전 R666 carry `[[scene-key-character-named-gap]]` 청산. +4 R666 tests (single ascii, U+0020 space, 사전조립 CJK 음절, multi-char W3C named)
@@ -92,6 +107,7 @@ land 완료 (6 commits, daf2a99 → 2d262ad → d8e6810 → bde04f7 → 501f304 
   - tools/rpc_verify.py — `isolated_storage_dir(prefix)` context manager helper + `tf.text(body, path)` typing convenience. R666 inline retrofit: todomvc_r655/r656/r658/r659/r660/double_click_r663/r664 모두 `isolated_storage_dir` 으로 wrap → 순차 실행 시 `$XDG_DATA_HOME/pinion-todomvc/` 오염 없음. R665 carry 청산
   - 3369 workspace tests + clippy clean
   - **9-demo sequential regression sweep PASS** (todomvc_r655→r666 + double_click_r663; 두번째 run 도 PASS — per-demo tempdir 격리 검증)
+  - honest LOC 실측: **~+1391 net** (20 files: substrate ~+50 / migration + tests ~+250 / demo +563 / harness ~+70 / 7 demo retrofit ~+70 / docs ~+388). estimate 500-800 보다 2× 였음 — composed-app + demo + docs density 정직 carry. R667 estimate (1700-2700) 도 같은 density factor 적용 권장
 
 honest 평가 누적 — R666 inline 청산 = R665 부채 #4 (PersistenceBootMarker, code-side guard 추가로 framework lift 후보 우선순위 명확화) + framework substrate completeness 부채 (Owner::cache nested 룰 code + memory 청산) + 사전 R660+ carry `[[scene-key-character-named-gap]]` + R665 carry todomvc demos pollution (`PINION_STORAGE_DIR` 미설정).
 
@@ -149,39 +165,20 @@ R667 cascade 후 Phase A 95-100% → ~7.5%. Phase B 진입 (R700+) 이 진짜 no
 
 (g) **R2500+ = Phase D 진입** — Editor self-hosted in pinion itself. Unreal-class IDE 작성 시작. 진짜 northern-star 의 본격 진입
 
-【다음 텍스트북 캐논 — R667 atomic 청산 (2nd composed app = settings panel; Phase A 종료)】
+【다음 텍스트북 캐논 — R667 (2nd composed app = settings panel; Phase A 종료)】
 
-R667 = **settings panel = 2nd composed application** = Phase A 종료 라운드
+> 이 절은 4-phase context 와 진짜 northern-star anchor 만 명시. R667 atomic 6개의 concrete scope + 순서 + signature 는 본 파일 하단 **【시작 명령】** 절이 single source of truth (DRY 원칙).
 
-핵심 청산 항목:
+R667 의미 = **Phase A 종료 + Phase B (R700+) 진입 자격 획득**:
 
-(1) **examples/settings-panel 신규 binding** — Phase A 의 2nd composed app. 최소 형상:
-- 좌측 nav rail (List + selection state) + 우측 detail pane
-- detail 안 multiple sections: theme toggle + slider (font scale) + textfield (display name) + checkbox group (notification prefs) + button (apply / cancel)
-- 모든 변경 R665 Storage 로 persistence 영구화 — Storage 2nd application consumer = R665 substrate ROI 확정
-- view_vertical_scrollbar 4th consumer (detail pane 가 viewport 넘으면 scroll)
-- view_field 4th consumer (display name textfield)
+- Phase A 의 substrate 결정들 (R657 widget-paint lift / R659 composite_tag + scrollbar paint lift / R665 Storage) 모두 2nd application consumer 달성 = 정통 lift 정당화. Phase A 의 substrate 결정들이 textbook-canonical 임을 증명
+- R666 의 framework primitive (scene/invoke v1 path + scene/key character disc + Owner::cache guard) 도 2nd application consumer 등장 = 정통 substrate maturity
+- R666 carry #1 (resolve_external lift) 즉시 상환 = settings-panel 등장 전 substrate-first ordering ([[r47-class-incident-prevention]]) 정통
+- WIN_H 480 magic 영구 carry 청산 = flex-grow primitive 첫 등장으로 Phase A 의 layout 부채 정통 청산
 
-(2) **flex-grow primitive 첫 등장** — WIN_H 480 magic 영구 carry 청산 candidate. settings panel 의 detail pane 가 window 높이 가득 채워야 하는 첫 비-todomvc 케이스. `LayoutStyle::flex_grow` (CSS-mirror) 신규 + Container 분배 계산. todomvc 가 2nd consumer 로 migrate
+진척도 변화: ~6.75% → ~7.5-7.75% (진짜 northern-star 대비; Phase A 5%×85% → 5%×95-100%)
 
-(3) **substrate ROI curve 확정** — R657 (widget-paint lift) / R659 (composite_tag + scrollbar paint lift) / R665 (Storage) 모두 2nd application consumer 달성 = 정통 lift 정당화. Phase A 의 substrate 결정들이 textbook-canonical 임을 증명
-
-(4) **R666 carry 평가 시점** — 신규 path resolver 사용처가 settings panel 에서 등장 시 `pinion-rpc::resolve_external` helper lift 결정 (현재 5-of-5 inline 패턴 → 6-of-6 시 lift 또는 5-of-5 sublinear 비용 시 carry)
-
-(5) **PersistenceBootMarker 2nd consumer** — settings panel 도 PersistedState (persisted theme + nav selection 등) → use_settings_persistence 두 번째 Effect-retain 응용 등장 시 `framework::OwnedEffect` lift candidate
-
-R667 visible deliverable:
-- `cargo run -p settings-panel` — nav rail 클릭 시 detail 전환 + 모든 입력 영구화 (exit + relaunch 시 복원)
-- `python3 tools/demos/settings_panel_r667.py` — nav cycle + detail mutate + persistence cycle, ≥ 40 assertion
-
-honest LOC 예측: ~+1500-2500 LOC net (composed-app heavy)
-- (1) settings-panel binding: +1200-1800 LOC (todomvc baseline 의 절반 + view-fn 복제)
-- (2) flex-grow primitive: +200-400 LOC (pinion-core::layout)
-- (3) settings_panel_r667.py: +400-600 LOC
-
-실측 후 honest 정정 의무. **R667 = Phase A 종료 라운드** — 진짜 northern-star 의 ~7-8% 도달, Phase B (R700+ multi-window) 진입 권리 획득
-
-진척도 +0.75-1%p 예상 (~6.75% → ~7.5-7.75% 진짜 northern-star 대비)
+honest LOC 예측 + scope detail: 본 파일 【시작 명령】 절 참조.
 
 【R667 Phase A 완성 cascade】
 
@@ -202,11 +199,14 @@ R666 (✓ land) — AI-first §2 #2 첫 production stress + 3 substrate gap 청�
 - 9-demo sequential regression PASS 9/9
 
 R667 — 2nd composed app (settings panel) — Phase A 종료
-- view_vertical_scrollbar 4th consumer
-- view_field 4th consumer
-- Storage 2nd application consumer (R665 substrate ROI 확정)
-- flex-grow primitive (LayoutStyle::flex_grow) — WIN_H 480 magic 청산 candidate
-- R657/R659/R660/R665 substrate ROI curve fully positive
+- (0) pinion-rpc::resolve_external_mut substrate lift (R666 carry #1 즉시 상환; 6-of-6 → 7-of-7 시 lift 정통)
+- (1) examples/settings-panel M3 Settings binding (nav rail + detail pane)
+- (2) Storage 2nd application consumer (SettingsPersistedState + use_settings_persistence)
+- (3) view_vertical_scrollbar 4th consumer + view_field 4th consumer
+- (4) settings_panel_r667.py demo (≥40 assertion + persistence cycle)
+- (5) LayoutStyle::flex_grow primitive (CSS-mirror; WIN_H 480 magic 영구 carry **청산**)
+- R657/R659/R660/R665/R666 substrate ROI curve fully positive 확정
+- Phase A 완료 = 진짜 northern-star ~7.5% 도달 + Phase B (R700+) 진입 자격
 - Phase A 완료 = 진짜 northern-star ~7.5% 도달
 
 【R700+ Phase B 진입 — 진짜 framework 도약】
@@ -314,20 +314,57 @@ R666 carry (R667 진입 전 평가 / 미래 inline 청산 candidate):
 
 【시작 명령】
 
-R667 = **2nd composed app (settings panel) = Phase A 종료 라운드**. 5개 atomic land:
+R667 = **2nd composed app (settings panel) = Phase A 종료 라운드**. 6개 atomic land (정확한 순서 — substrate-first):
 
-(1) `examples/settings-panel` 신규 binding — 좌측 nav rail (List + selection) + 우측 detail pane (multiple sections: theme + slider + textfield + checkbox group + button). flex-grow 첫 consumer. WIN_H 480 magic 청산 candidate
-(2) Storage 2nd application consumer — settings persistence (theme + nav selection + section state). R665 substrate ROI 정통 정당화. PersistenceBootMarker 2nd consumer 등장 시 `framework::OwnedEffect` lift 결정점
-(3) view_vertical_scrollbar 4th consumer + view_field 4th consumer — R657/R659 substrate ROI curve fully positive 검증
-(4) `tools/demos/settings_panel_r667.py` — nav cycle + detail mutate + persistence cycle, ≥ 40 assertion. scene/invoke v1 path (R666 substrate) + scene/key character arc (R666 substrate) 두 번째 application 활용
-(5) flex-grow primitive (`LayoutStyle::flex_grow` CSS-mirror) — settings panel detail pane fill axis. todomvc 가 2nd consumer 로 migrate, WIN_H 480 magic 청산
+(0) **`pinion-rpc::resolve_external_mut` substrate lift** (R666 carry #1 즉시 상환) — 현재 invoke/intervene/dry_run/query/rewind/simulate 6 file 에 8+ inline duplication (split_at_external + lookup_path_mut + primary_external_mut). 신규 helper:
+   ```rust
+   pub enum ResolveExternalError {
+       Path(PathError), UnsupportedPath, NoExternalAtPath, IntrospectionOptedOut
+   }
+   pub fn resolve_external_mut<'s>(scene: &'s mut Scene, raw_path: &str)
+       -> Result<(&'s mut ExternalNode, String), ResolveExternalError>;
+   pub fn resolve_external<'s>(scene: &'s Scene, raw_path: &str)
+       -> Result<(&'s ExternalNode, String), ResolveExternalError>;
+   ```
+   각 site error enum 의 `From<ResolveExternalError>` 변환 + `?` operator. ~-200 LOC net (inline 제거 > helper LOC). Settings-panel 의 새 RPC consumer 가 7th-of-7 site 로 자연 합류. Rule of Three + [[r47-class-incident-prevention]] 정통.
+
+(1) **`examples/settings-panel` 신규 binding** — Phase A 의 2nd composed app. canonical reference:
+   - **M3 Settings pattern + 좌측 nav rail (M3 NavigationRail) + 우측 detail pane**
+   - macOS System Settings 와 navigation 패턴 동일 (single-level nav rail + section detail; 중첩 nav 금지)
+   - 5+ sections: theme (light/dark toggle) + appearance (font scale slider) + profile (display name TextField) + notifications (checkbox group) + actions (Apply + Cancel buttons)
+   - 모든 변경 즉시 Storage 영구화 (Apply 버튼은 UX-only; 데이터는 즉시 commit)
+
+(2) **Storage 2nd application consumer** — `SettingsPersistedState { theme: ThemeMode, nav_index: u32, font_scale: f32, display_name: String, notifications: NotificationPrefs }` 단일 blob. `use_settings_persistence` Effect-retention pattern (R665 use_persistence_boot mirror). R665 substrate ROI 정통 정당화 + PersistenceBootMarker 2nd consumer = `framework::OwnedEffect` lift 결정점.
+
+(3) **view_vertical_scrollbar 4th consumer + view_field 4th consumer** — detail pane viewport 넘으면 scroll (4th scrollbar consumer); display name 입력 (4th TextField consumer). R657/R659 substrate ROI curve fully positive 확정.
+
+(4) **`tools/demos/settings_panel_r667.py`** — nav cycle (ArrowDown/Up + Enter activate) + 각 section mutate (theme toggle, slider drag, textfield type, checkbox toggle, button click) + persistence cycle (kill → relaunch → assert restored), ≥ 40 assertion. scene/invoke v1 path + scene/key character arc (R666 substrate) 2nd application 활용.
+
+(5) **`LayoutStyle::flex_grow` primitive** (CSS-mirror) — settings panel detail pane 가 window 높이 가득 채워야 함. Container layout 분배 알고리즘에 flex_grow weight 추가. todomvc 가 2nd consumer 로 동시 migrate, WIN_H 480 magic 청산 (영구 carry 첫 청산).
 
 visible:
-- `cargo run -p settings-panel` 신규 가시 결과 (nav rail 클릭 → detail 전환 + 모든 입력 영구화 + exit + relaunch 시 복원)
+- `cargo run -p settings-panel` 신규 가시 결과 — M3 nav rail + detail pane; 모든 입력 영구화; exit + relaunch 시 복원
 - `python3 tools/demos/settings_panel_r667.py` ≥ 40 assertion
+- `cargo run -p todomvc` 변화 없음 (flex-grow migrate = visual identity 보존)
 
-honest LOC 예측: ~+1500-2500 net (composed-app heavy). 실측 후 honest 정정 의무.
+honest LOC 예측: ~+1700-2700 net
+- (0) resolve_external lift: -200 (inline 제거) + helper +100 = -100 net
+- (1) settings-panel binding: +1500-1800
+- (2) Storage 2nd consumer + persistence: +200-300
+- (3) substrate consumer wiring: +100-200
+- (4) settings_panel_r667.py: +500-700
+- (5) flex-grow primitive + todomvc migrate: +200-400
 
-**R667 = Phase A 종료** — 진척 ~7.5% 진짜 northern-star 대비. Phase B (R700+ multi-window) 진입 권리 획득.
+실측 후 honest 정정 의무 (R666 estimate 500-800 vs 실측 ~1391 net — composed-app + demo + docs density 2× over).
 
-R666 carry 1-5 (`pinion-rpc::resolve_external` / DeferredInput kind override / PersistenceBootMarker 2nd consumer / next_id lift / migrator) 는 모두 premature 또는 외부 의존 — R667 진입 자연 trigger, R666 inline 추가 작업 없음.
+**R667 = Phase A 종료** — 진척 ~7.5% 진짜 northern-star 대비. Phase B (R700+ multi-window — `pinion-shell::WindowManager` + `Scene::Window` variant + DevTools 첫 multi-window consumer) 진입 권리 획득.
+
+R666 carry honest 평가 (R667 atomic 진입 후):
+- (0) carry #1 (resolve_external lift) → **R667 atomic (0) 즉시 상환** ✓ (Rule of Three + 6 site duplication = textbook lift 정통, 더 이상 premature 아님)
+- carry #2 (DeferredInput kind override) — YAGNI 정통 carry
+- carry #3 (PersistenceBootMarker 2nd consumer) — R667 atomic (2) 가 자연 2nd consumer → **R667 진행 중 lift 결정점**
+- carry #4 (next_id Cell lift) — settings-panel 의 2nd writer 등장 안 함 → 정통 carry
+- carry #5 (schema migrator) — breaking change 미발생 → 정통 carry
+
+영구 carry 청산 후보 (R667 inline):
+- WIN_H 480 magic → R667 atomic (5) flex-grow primitive 로 청산 ✓
