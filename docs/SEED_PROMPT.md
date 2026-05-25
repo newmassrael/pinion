@@ -1,6 +1,8 @@
 # pinion seed prompt — 매 세션 첫 입력
 
-> **R670.B land (2026-05-25)** — R670.A + AppShell multi-window refactor + RPC window param + `hello-multi-window` first consumer. Phase B (R700+) first real dogfood. **R671 is the next round** — TBD per user-confirmed northern-star anchor. R663.5 canonical baseline 유지.
+> **R670.B land (2026-05-25, commit `9c34251`)** — R670.A + AppShell multi-window refactor + RPC window param + `hello-multi-window` first consumer. Phase B (R700+) first real dogfood. **R671 is the next round** — user-anchored: **R670.B carry inline 청산 (carry #1, #4, #5) + Phase B widget catalog 첫 진입 (TreeView)**. R663.5 canonical baseline 유지.
+>
+> **다음 세션 진입**: `load` 단독 입력. SEED 의 【시작 명령】 절 (R671 atomic list) 자동 진행. 모든 atomic 은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지. 매 atomic 종료 시 cargo test + clippy + 11-demo regression sweep 검증 후 다음 atomic 진입.
 >
 > R670.A 가중 진척: Phase A 95% (R668/R669 carry 청산 완료) + Phase B 25% × ~1% (trait foundation only — `WidgetView::windows()` default impl, AppShell still single-window) = 북극성 가중 **~7.5%**. R670.B 종료 후 ~7.7-8.0% (AppShell refactor + first multi-window consumer).
 >
@@ -233,14 +235,75 @@ R668+ Phase A 잔여 부채 (scrollbar 4th consumer, WIN_H magic 등) 청산이 
 
 (g) **R2500+ = Phase D 진입** — Editor self-hosted in pinion itself. Unreal-class IDE 작성 시작. 진짜 northern-star 의 본격 진입
 
-【다음 텍스트북 캐논 — R671 = Phase B widget catalog 진입 OR Phase C immediate-mode game loop primitive (TBD by user anchor)】
+【다음 텍스트북 캐논 — R671 = R670.B carry inline 청산 (3개) + Phase B widget catalog 첫 진입 (TreeView)】
 
-> **R670.A + R670.B land**: Phase B substrate Round 1-3 완료 (WindowSpec trait + AppShell multi-window refactor + RPC window param + first multi-window consumer). 북극성 가중 ~7.5% → ~8.0%. R671 axis 선택은 northern-star anchor 기반 user-confirmed로 진행.
+> **User directive (2026-05-25, R670.B 종료 시 재확인)**: 비용 무관 + 북극성 anchor + 부채 즉시 상환 + 다음 세션 `load` 자동 진행. R671 axis 는 northern-star anchor 기반으로 **R670.B carry 청산 + Phase B widget catalog 첫 진입 (TreeView)** 결합.
+>
+> **Northern-star 정통 정렬 이유**:
+> - **TreeView** 는 Phase D editor self-hosted (~35% northern-star mass) 의 가장 직접적인 prerequisite (DevTools scene-tree inspector + property-grid + file-tree 전부 TreeView)
+> - hello-multi-window 의 inspector single-Text mirror 가 자연스럽게 TreeView 로 upgrade — DevTools 의 첫 진짜 prototype
+> - Phase B widget catalog (Qt QTreeView / Flutter ExpansionTile / macOS NSOutlineView) 의 가장 정통한 entry
+> - R670.B carry 3개 (parity unify + per-window last_paint_layout + single-parse) 가 TreeView 의 substrate prerequisite 와 자연 align — 모두 inline 청산
+>
+> **R670.B carry inline 청산 (3개 mandatory)**:
+> - **Carry #5** (`compute_paint_scene_*` parity) — substrate refactor: `compute_paint_scene_internal(window_id: Option<&str>, w, h)` single fn 으로 unify; `compute_paint_scene(w, h)` = `internal(None, w, h)`; `compute_paint_scene_for_window(id, w, h)` = `internal(Some(id), w, h)`. R670.B mid-refactor regression 패턴 영구 청산. [[r670b-paint-scene-producer-parity]] 의 'long-term unify' 부채 정통 청산.
+> - **Carry #1** (per-window `last_paint_layout`) — substrate refactor: `WindowSlot.last_paint_layout: Option<LayoutNode>` field 추가; `render_window` 가 `finalize_frame` 후 slot.last_paint_layout update; `scene/layout {viewport: null}` 가 RPC dispatch 의 `window_id` 사용해서 해당 slot 의 last_paint_layout 반환. ShellCore 의 single last_paint_layout 은 primary slot 의 mirror 로 유지 (backward-compat). hello-multi-window 가 첫 consumer (`scene/layout {window: "inspector"}` 가 inspector 의 layout 반환).
+> - **Carry #4** (`parse_rpc_window_id` single-parse) — substrate refactor: `pinion_rpc::dispatch` API 가 pre-parsed `serde_json::Value` 를 받는 variant 추가 (또는 dispatch 가 parse 결과를 반환하도록 wire 변경); `AppShell::dispatch_rpc` 가 single-parse 하고 둘 다 같은 Value 를 사용. 미세 perf + single-source-of-truth.
 
-**R671 candidate axes (textbook canonical, northern-star ordered)**:
-- **Phase B widget catalog (R750+ entry)**: Menu / Dialog / Toolbar / TreeView / Table / Tabs / TooltipPopover / DatePicker — DCC widget catalog 본격 (Qt/Flutter parity). hello-multi-window 의 inspector 가 DevTools 본격 catalog 의 일부.
-- **Phase C §2 #4 dual execution substrate (R1000+ early prep)**: `Scene::ImmediateModeNode` primitive + game-loop infrastructure (60-144fps lockstep + delta time + frame budget cap) + per-Container subtree runtime switch (retained ↔ immediate). 진짜 northern-star 의 mass (Phase C 35% + Phase D 35% = 70% of northern-star).
-- **Phase D editor self-hosted prep (R2500+ early thinking)**: DevTools / Inspector first proper widget (TreeView for Scene tree + per-tag-detail panel). hello-multi-window 의 inspector 는 single-Text proof-of-concept; 진짜 DevTools 는 TreeView + property-grid + paint-overlay.
+R671 atomic 5개 (substrate-first 순서, northern-star 정렬):
+
+(0) **`ShellCore::compute_paint_scene_internal` unify** (R670.B carry #5 즉시 청산)
+   - 신규 private `compute_paint_scene_internal(&mut self, window_id: Option<&str>, w: u32, h: u32) -> Scene` 메서드
+   - body = R670.B 두 fn 의 공통 body + match 분기 (`window_id.map_or(V::view(state, &frame), |id| V::view_for_window(id, state, &frame))`)
+   - `compute_paint_scene(w, h) = self.compute_paint_scene_internal(None, w, h)`
+   - `compute_paint_scene_for_window(id, w, h) = self.compute_paint_scene_internal(Some(id), w, h)`
+   - 결과: 미래 paint-pipeline 확장 (theme reactivity, hot-reload, post-paint cleanup) 은 internal fn single update; parity drift 영구 불가능
+   - Estimated LOC: -80 (두 fn 의 ~80 LOC 중복 제거) + 100 (internal fn) = +20 net
+
+(1) **`WindowSlot::last_paint_layout` per-window lift** (R670.B carry #1 즉시 청산)
+   - `WindowSlot` 에 `last_paint_layout: Option<LayoutNode>` field 추가
+   - `AppShell::render_window` 가 `self.core.finalize_frame(paint_scene)` 호출 후 `build_layout_node(&paint_scene, "/0")` 를 slot.last_paint_layout 에 저장
+   - `ShellCore::dispatch_rpc_for_window` 가 `last_paint` 를 spec id 기반으로 lookup (caller 가 slot.last_paint_layout 을 borrow 로 전달); ShellCore 의 single last_paint_layout 은 primary slot 의 mirror 로 유지 (backward-compat for `dispatch_rpc(window_id=None)` 경로)
+   - hello-multi-window 가 첫 consumer — demo verify: `scene/layout {window: "inspector"}` 가 inspector 의 layout (280×140 root) 반환, `scene/layout {window: "main"}` 가 main 의 layout (320×200 root) 반환, 둘 다 다름
+   - Estimated LOC: WindowSlot field +20 / render_window snapshot lift +30 / dispatch_rpc wire +100 / hello-multi-window demo extension +50 = +200 net
+
+(2) **`pinion_rpc::dispatch` single-parse refactor** (R670.B carry #4 즉시 청산)
+   - `pinion_rpc::dispatch` 가 `request_json: &str` 대신 `request: &PreparsedRequest` 를 받는 variant 추가, OR `parse_request` 헬퍼 export 하고 AppShell 이 결과를 dispatch + parse_rpc_window_id 양쪽에 사용
+   - `AppShell::dispatch_rpc` 가 `serde_json::from_str(request)` 한 번만 호출하고 결과를 dispatch + window_id 추출에 공유
+   - Estimated LOC: pinion_rpc API surface +50 / AppShell 단일 parse +30 / parse_rpc_window_id deprecation -20 = +60 net
+
+(3) **`pinion_widget_paint::tree_view` 신규 module** (Phase B widget catalog 첫 진입)
+   - 새 module `crates/pinion-widget-paint/src/tree_view.rs`
+   - `TreeViewStyle::m3_default()` (M3 Lists 카논: 48px row height, 16px indent step, 24px expand-glyph)
+   - `TreeItem { id: String, label: String, depth: u32, expanded: bool, children: Vec<TreeItem> }` (Box<TreeItem> 으로 재귀 회피)
+   - `view_tree(tag: &str, items: &[TreeItem], theme: &Theme, style: &TreeViewStyle) -> Scene` — depth-first flat row paint + ARIA tree/treeitem role + Material 3 state-layer overlays
+   - Composite tag `{tag}#{node_id}` per row (R55.D.5 substrate consumer)
+   - Keyboard navigation 은 substrate-incompleteness signal 이 등장하는 시점 (2nd consumer) 까지 carry (hello-multi-window 의 inspector 는 read-only)
+   - 8 unit tests (`r671_tree_view_*`): empty list / single item / nested children / depth indent / expanded glyph / collapsed glyph / M3 row height / composite tag emission
+   - Estimated LOC: tree_view.rs 모듈 +350 / tests +200 = +550 net
+
+(4) **`hello-multi-window` inspector 업그레이드 — TreeView 첫 consumer + R671 demo + 11-demo sweep + commit + Mnemosyne**
+   - hello-multi-window inspector window 의 single-Text mirror 를 TreeView 로 교체
+   - main window 의 `scene/snapshot {window: "main", from: "paint"}` 결과를 TreeItem 트리로 변환 (`fn snapshot_to_tree_items(snapshot: &SnapshotNode) -> Vec<TreeItem>`)
+   - 이 변환은 inspector window 가 Effect 또는 reactive 정기 (every paint cycle) 로 갱신 — 단순 polling: 매 inspector paint 마다 main 의 paint scene 을 walk 해서 트리 build
+   - 신규 `tools/demos/r671_tree_view_inspector.py` (≥ 30 assertion): main paint scene 의 변화가 inspector tree 에 mirror, expand/collapse 상태, TreeItem 의 id 가 main paint scene 의 path 와 일치
+   - 11-demo sweep PASS (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669 + R670.A carry clearance + R670.B hello-multi-window + R671)
+   - Commit `feat(<scope>): R671 §5.16 §5.40 §5.45 TreeView + R670.B carry`
+   - Mnemosyne `append_changelog_entry_v2 entry_id=R671` + impact_refs [5.16, 5.40, 5.45, 5.50] + carry_forward (R672 candidate axes — Menu / Dialog / Table / TreeView 2nd consumer)
+   - Estimated LOC: hello-multi-window inspector view fn rewrite +200 / snapshot_to_tree_items +100 / demo +400 / SEED + Mnemosyne entry +200 = +900 net
+
+**Honest total LOC 예측: R671 = +1700-2500 net** (carry refactors + TreeView substrate + first consumer rewrite + demo).
+
+**R671 후 진척**: 북극성 가중 ~8.0% → **~8.7-9.0%** (Phase B widget catalog 첫 진입 = Phase B 25% × ~3% + Phase D prerequisite 시작 = Phase D 35% × ~0.5%). R672+ = **Phase B widget catalog cascade — Menu / Dialog / Toolbar / Table (R750+ 본격 진입)**.
+
+**R671 verification mandatory** (라운드 끝):
+- 11-demo regression sweep PASS bit-identical (R660 - R670.B 전부)
+- `compute_paint_scene_internal` unify 후 `compute_paint_scene` + `compute_paint_scene_for_window` 의 행동 정확히 동일 (todomvc + hello-multi-window 둘 다 동일 paint scene 생성)
+- `scene/layout {window: "inspector"}` ≠ `scene/layout {window: "main"}` (per-window last_paint_layout 작동 검증)
+- inspector TreeView 가 main 의 paint scene 변화를 reflect (main click → main paint scene 변경 → inspector TreeView 의 트리 노드 expand/property 변경 → next inspector paint 가 변화 반영)
+- 부채 surface 정직 받아들임 — TreeView keyboard navigation 은 substrate-incompleteness signal 등장 시까지 carry
+
+---
 
 이전 R670 (현재 land 완료):
 
@@ -395,14 +458,23 @@ R669 carry (R670.A 종료 시 평가):
 - ❌ R670.B inline 청산 candidate: `read_composite_tag_value_slots` substrate helper — R669 의 read_notification_* 가 6 composite tags 순회; 2nd composite-tag-cluster consumer 등장 시 lift (현재 1-of-1, premature)
 - 🔄 R670.B 진행 중 substrate: Phase B (R700+) multi-window — R670.A 의 `WindowSpec` + `WidgetView::windows()` trait foundation 위에서 AppShell multi-window refactor + RPC `{window: "<id>"}` param + `hello-multi-window` first consumer
 
-R670.A carry (R670.B 진입 전 평가):
-- ❌ R670.B 청산 mandatory: `AppShell::resumed` 가 `V::windows()` 전체 list 를 walk + per-spec winit Window 생성 (현재는 default-spec-only 의 first-element 만 사용; multi-window 미지원)
-- ❌ R670.B 청산 mandatory: RPC `{window: "<id>"}` param + `pinion-rpc::DispatchContext::with_window` builder + `pinion-shell::AppShell::dispatch_rpc` 가 frame.params.window 를 읽어 threading
-- ❌ R670.B 청산 mandatory: `hello-multi-window` first consumer binding + ≥ 30 assertion demo
-- ❌ R670.B 진입 substrate: `WidgetView::view_for_window(window_id, state, frame) -> Scene` trait method (default = view; multi-window override)
+R670.A carry (R670.B 종료 시 평가):
+- ✓ R670.B 청산: AppShell multi-window refactor (WindowSlot cluster lift + resume_spec per-spec creation + window_event per-window dispatch + render_window split)
+- ✓ R670.B 청산: RPC `{window: "<id>"}` param + DispatchContext.window_id + with_window builder + AppShell::dispatch_rpc parse_rpc_window_id wire
+- ✓ R670.B 청산: hello-multi-window first consumer binding + 12-assertion demo + 6 unit tests
+- ✓ R670.B 청산: WidgetView::view_for_window trait method (default forwards to Self::view)
 - 영구 carry: `pinion-tui` multi-window 미지원 (terminal 1 process = 1 alternate-screen = 1 window 본질 한계)
 - 영구 carry: `pinion-tui::shell::run` 의 stdin RPC 가 비-TTY (CI pipe) 환경에서 raw-mode-enable 실패 — substrate-level RPC ingress 는 9 integration tests 가 직접 cover; production smoke 는 TTY 환경에서만 verify
 - 영구 carry: `SizeStrategy::IntrinsicAfterFirstPaint` 의 one-shot semantics (post-first-paint single resize; dynamic shrink-wrap-on-state-change 별도 axis)
+
+R670.B carry (R671 진입 전 평가):
+- ❌ R671 atomic (0) 청산 mandatory: `ShellCore::compute_paint_scene` + `compute_paint_scene_for_window` parity unify — 두 fn 을 `compute_paint_scene_internal(window_id: Option<&str>, w, h)` single private fn 으로 unify; R670.B mid-refactor regression 패턴 (todomvc_r665 의 animation-loop heartbeat 누락) 영구 청산. [[r670b-paint-scene-producer-parity]] memory 의 long-term unify 부채.
+- ❌ R671 atomic (1) 청산 mandatory: per-`WindowSlot::last_paint_layout` field 추가 — 현재 single ShellCore.last_paint_layout 은 마지막 paint 한 window 의 mirror; multi-window 의 `scene/layout {window: "inspector"}` 가 inspector 의 layout 반환하려면 per-window snapshot 필요. hello-multi-window 가 첫 consumer.
+- ❌ R671 atomic (2) 청산 mandatory: `parse_rpc_window_id` double-parse 제거 — pinion_rpc::dispatch 가 pre-parsed serde_json::Value variant 받도록 wire 변경; AppShell single-parse + 결과 공유.
+- 영구 carry: Animation tick share across windows (one tick per ShellCore-frame; multi-window paints 가 같은 event-loop iteration 안에서 tick compound) — animations-free multi-window 에서 invisible (R670.B hello-multi-window 그대로); 진짜 per-spec animation timing 요구 등장 시 별도 substrate axis
+- 영구 carry: `pinion-tui` view_for_window 미지원 (terminal 1 process = 1 alternate-screen = 1 window 본질 한계 — view_for_window 의 default forward-to-view 가 TUI 의 영원한 정통 path)
+- ❌ R672+ candidate: TreeView keyboard navigation (Arrow Up/Down/Left/Right + Home/End + roving-tabindex active-descendant) — R671 의 TreeView 는 read-only inspector; 2nd consumer (예: file-tree editor) 등장 시 keyboard navigation lift
+- ❌ R672+ candidate: TreeView virtualization (large-tree N>1000 row 의 LazyVStack 패턴) — Phase D editor 가 scene-graph 전체 트리 표시할 때 substrate-incompleteness signal 등장 예상
 
 영구 carry (외부 의존):
 - SCE-004 (Forge codegen serde derive) — vendor/sce upstream RFC
@@ -454,19 +526,52 @@ R670.A carry (R670.B 진입 전 평가):
 
 【시작 명령】
 
-R670.B = **R670.A trait foundation 위에서 AppShell multi-window refactor + RPC window param + `hello-multi-window` first consumer**. 3 atomic land (정확한 순서 — substrate-first).
+R671 = **R670.B carry inline 청산 (3개) + Phase B widget catalog 첫 진입 (TreeView)**. 5 atomic land (정확한 순서 — substrate-first, carry-clearance-first).
 
-**진입 시 즉시 진행 (load 명령 / `R670.B 진행` 입력 시 자동 시작)**:
+**진입 시 즉시 진행 (load 명령 / `R671 진행` 입력 시 자동 시작)**:
 - 모든 atomic은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지
-- 각 substrate atomic 종료 시 cargo test + clippy + 해당 mini-demo 검증 후 다음 atomic 진입
-- 마지막 atomic (2) 에서 demo + commit + Mnemosyne entry 한꺼번에
+- 각 substrate atomic 종료 시 cargo test + clippy + 11-demo regression sweep PASS 검증 후 다음 atomic 진입
+- 마지막 atomic (4) 에서 demo + commit + Mnemosyne entry 한꺼번에
 - 라운드 중간 commit 금지 (1 commit = 1 round 원칙) — WIP는 stash 또는 sequence keep
-- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R670.B.A) — but 우선 3 atomic 모두 한 라운드 land 시도
+- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R671.A) — but 우선 5 atomic 모두 한 라운드 land 시도
 - 매 라운드 끝 push 권한 명시 동의 필요 (CLAUDE.md 영구 원칙)
 
-**R670.B atomic land 순서** (R670.A trait foundation 위에서; substrate-first):
+**R671 atomic land 순서** (carry-clearance-first + substrate-first, northern-star 정렬):
 
-(0) **`pinion-shell::AppShell` multi-window refactor** (Phase B substrate Round 2) — Approach A (single ShellCore + per-window winit Window / RenderState / accesskit_winit::Adapter / IME state / pending_intrinsic_resize). 신규 `Self::WindowSlot` struct group; `AppShell::windows: HashMap<WindowId, WindowSlot>` cluster lift; `resumed(event_loop)` walks `V::windows()` list; `window_event(window_id, event)` dispatches to per-window slot; `render()` → `render_window(window_id)` split. 기존 single-window 경로는 R670.A 의 default `V::windows()` 가 보장.
+(0) **`ShellCore::compute_paint_scene_internal` unify** (R670.B carry #5 청산) — 새 private `compute_paint_scene_internal(&mut self, window_id: Option<&str>, w: u32, h: u32) -> Scene`; 두 기존 fn 이 wrapper 가 됨. R670.B mid-refactor parity-drift regression 패턴 영구 청산. [[r670b-paint-scene-producer-parity]] memory entry 의 'long-term unify' 부채 청산. todomvc + hello-multi-window 둘 다 동일 paint scene 생성 검증.
+
+(1) **`WindowSlot::last_paint_layout` per-window lift** (R670.B carry #1 청산) — `WindowSlot` 에 `last_paint_layout: Option<LayoutNode>` field 추가; render_window 가 paint 후 slot.last_paint_layout 갱신; dispatch_rpc_for_window 가 spec id 기반으로 slot.last_paint_layout borrow 전달. hello-multi-window 가 첫 consumer (scene/layout {window: "inspector"} ≠ scene/layout {window: "main"}).
+
+(2) **`pinion_rpc::dispatch` single-parse refactor** (R670.B carry #4 청산) — pinion_rpc::dispatch API 가 pre-parsed `serde_json::Value` 받는 variant 추가 OR parse_request 헬퍼 export; AppShell 이 single-parse 결과를 dispatch + window_id 추출 양쪽에 공유. parse_rpc_window_id 의 redundant parse 제거.
+
+(3) **`pinion_widget_paint::tree_view` substrate** (Phase B widget catalog 첫 진입) — 새 module + `TreeViewStyle::m3_default()` + `TreeItem` recursive type + `view_tree(tag, items, theme, style) -> Scene` (depth-first flat row paint, M3 state-layer, composite tag {tag}#{node_id} per row, ARIA tree/treeitem role). 8 unit tests. Keyboard navigation 은 2nd consumer 등장 시까지 carry.
+
+(4) **hello-multi-window inspector TreeView 업그레이드 + demo + 11-demo sweep + commit + Mnemosyne** — inspector 의 single-Text mirror 를 view_tree 로 교체; snapshot_to_tree_items 변환 fn; tools/demos/r671_tree_view_inspector.py (≥30 assertion). 11-demo regression sweep PASS verify mandatory. Commit `feat(<scope>): R671 §5.16 §5.40 §5.45 TreeView + R670.B carry`. Mnemosyne entry R671.
+
+visible (R671 land 후):
+- `cargo run -p hello-multi-window` 변화 — inspector window 가 single-Text 대신 TreeView 로 main 의 paint scene 트리 표시
+- `python3 tools/demos/r671_tree_view_inspector.py` (≥30 assertion, Phase B widget catalog 첫 substrate 검증)
+- `python3 tools/demos/hello_multi_window_r670b.py` PASS (R670.B sweep 회귀 0)
+- 기존 10-demo regression sweep PASS (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669 + R670.A + R670.B)
+
+honest LOC 예측: **+1700-2500 net** — (0) compute_paint_scene unify +20 / (1) per-window last_paint_layout lift +200 / (2) single-parse refactor +60 / (3) tree_view substrate +550 / (4) inspector rewrite + demo + Mnemosyne +900. R670.B ~+1300 net의 ~1.3-1.9× (3 carry refactor + 1 new widget + 1 binding rewrite).
+
+**R671 진행 lessons audit 의무** (라운드 끝):
+- compute_paint_scene unify 후 두 wrapper fn 의 behavior 정확히 동일 (todomvc + hello-multi-window 둘 다 회귀 0)
+- per-window last_paint_layout lift 가 single-window 경로 (15+ 기존 binding) 회귀 0
+- pinion_rpc single-parse refactor 가 모든 9 RPC method 회귀 0 (rpc_ingress.rs + dispatch_tests*.rs 모두 PASS)
+- TreeView ARIA semantics (role=tree + role=treeitem + level + posinset + setsize) 정확
+- 부채 surface 정직 받아들임 — TreeView keyboard navigation, virtualization, multi-select, drag-drop 등은 2nd consumer 등장 시까지 carry
+
+**R671 후 진척**: 북극성 가중 ~8.0% → **~8.7-9.0%** (Phase B 25% × widget catalog first ~3% + Phase D 35% × prerequisite first ~0.5%). **R672+ = Phase B widget catalog cascade — Menu / Dialog / Toolbar / Table / Tabs (R750+ 본격 진입 단계)**.
+
+---
+
+> 아래는 R670.B atomic 원본 (historical reference, land 완료):
+
+R670.B = **R670.A trait foundation 위에서 AppShell multi-window refactor + RPC window param + `hello-multi-window` first consumer** (✓ land `9c34251`). 3 atomic.
+
+(0) **`pinion-shell::AppShell` multi-window refactor** — Approach A (single ShellCore + per-window winit Window / RenderState / accesskit_winit::Adapter / IME state / pending_intrinsic_resize). 신규 `Self::WindowSlot` struct group; `AppShell::windows: HashMap<WindowId, WindowSlot>` cluster lift; `resumed(event_loop)` walks `V::windows()` list; `window_event(window_id, event)` dispatches to per-window slot; `render()` → `render_window(window_id)` split.
 
 (1) **RPC `{window: "<id>"}` param + `WidgetView::view_for_window` hook** — `pinion-rpc::DispatchContext::with_window` builder; `AppShell::dispatch_rpc` reads `params.window` + threads through; 신규 `WidgetView::view_for_window(window_id, state, frame) -> Scene` trait method (default forwards to `view`). Default "main" preserves single-window binding compat.
 
