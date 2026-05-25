@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R670.B §5.16 §5.41 — pinion-forge codegen manifest for
+  hello-multi-window. The renderer surface is shared across windows
+  (one HelloMultiWindowRenderer struct; per-window AppShell creates
+  one instance per WindowSpec via Self::new).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloMultiWindowRenderer"
+        backend="vello"/>

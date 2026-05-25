@@ -320,6 +320,23 @@ pub struct DispatchContext<'a> {
     /// at the start of each dispatch and consume the queue after
     /// `dispatch` returns.
     pub deferred_inputs: Option<&'a mut Vec<DeferredInput>>,
+
+    /// R670.B §5.16 — multi-window scope hint. RPC frames carrying
+    /// `{window: "<id>"}` resolve here to the AI-supplied window id
+    /// from the JSON-RPC params; the embedder reads it (after
+    /// `dispatch` returns) to decide which window's paint scene the
+    /// dispatch should observe / mutate. `None` means the frame
+    /// omitted the field — embedder defaults to the primary spec.
+    ///
+    /// First wired for `scene/snapshot` / `scene/layout` / paint-
+    /// producer scope; subsequent extensions (`scene/click` /
+    /// `scene/key` per-window) ride the same wire shape.
+    ///
+    /// `None` is the steady-state for single-window bindings —
+    /// every existing dispatch path defaults to the primary window
+    /// (R670.A `WindowSpec::main`, id = "main") so legacy bindings see
+    /// bit-identical behaviour.
+    pub window_id: Option<&'a str>,
 }
 
 /// R51.195 §5.49 §5.45 — single deferred-input entry. One per
@@ -431,6 +448,7 @@ impl<'a> DispatchContext<'a> {
             runtime_owner: None,
             commands_executor: None,
             deferred_inputs: None,
+            window_id: None,
         }
     }
 
@@ -534,6 +552,27 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_deferred_inputs(mut self, inbox: &'a mut Vec<DeferredInput>) -> Self {
         self.deferred_inputs = Some(inbox);
+        self
+    }
+
+    /// R670.B §5.16 — builder: attach the multi-window scope hint.
+    /// `id` is the `&'static str` (or `&'a str` from a JSON params
+    /// borrow) the AI client supplied as `{window: "<id>"}` on the
+    /// RPC frame. Single-window bindings (or RPC frames that omit
+    /// the field) pass `None` and dispatchers default to the primary
+    /// spec.
+    ///
+    /// The dispatcher proper does not consume `window_id` today —
+    /// it's surfaced for the embedder to read after `dispatch`
+    /// returns + to thread into the per-window paint producer
+    /// inside `DispatchContext::with_paint_producer` (the embedder
+    /// closes over `window_id` to call
+    /// `ShellCore::compute_paint_scene_for_window` instead of the
+    /// single-window variant). The field is `pub` for direct read
+    /// access; the builder mirrors the rest of the typed surface.
+    #[must_use]
+    pub fn with_window(mut self, id: &'a str) -> Self {
+        self.window_id = Some(id);
         self
     }
 }

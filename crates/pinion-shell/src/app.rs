@@ -21,6 +21,7 @@
 //!
 //! See `claim-accuracy-self-audit` and `substrate-incompleteness-signal`.
 
+use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::thread;
@@ -39,7 +40,82 @@ use winit::window::{Window, WindowId};
 
 use crate::executor::build_executor_and_sink;
 use crate::substrate::ShellCore;
-use crate::{AppEvent, RenderState, VelloContext, VelloRenderer, WidgetRenderer, WidgetView};
+use crate::{AppEvent, RenderState, SizeStrategy, VelloContext, VelloRenderer, WidgetRenderer, WidgetView, WindowSpec};
+
+/// R670.B §5.16 §5.41 — per-window state cluster.
+///
+/// Lifts the 5 single-window `AppShell` fields (`render` +
+/// `vello_scene` + `accesskit` + IME state + `pending_intrinsic_resize`)
+/// into one struct so [`AppShell`] can hold
+/// `HashMap<WindowId, WindowSlot<R>>` and stay disjoint across
+/// multi-window dispatch. R670.A landed the
+/// `WidgetView::windows() -> Vec<WindowSpec>` trait foundation; this
+/// struct is the runtime side that the foundation enables — each
+/// `WindowSpec` in the binding's list owns one `WindowSlot` once
+/// [`AppShell::resumed`] creates the winit `Window` + GPU renderer +
+/// AccessKit adapter for that spec.
+///
+/// The pre-R670.B single-window `AppShell` carried these fields
+/// directly on the struct. R670.B preserves bit-identical
+/// single-window lifecycle by anchoring the canonical primary spec
+/// (`WindowSpec::main(...)` from R670.A default impl) as the only
+/// window the 15+ existing bindings ever create — the `HashMap`
+/// holds exactly one entry for single-window bindings and the
+/// per-window dispatch code paths are no-op-per-spec for the missing
+/// secondaries.
+struct WindowSlot<R: VelloRenderer> {
+    /// R46.5 §5.16 suspend / resume lifecycle (R46.3.4 pattern).
+    /// Lifted from the single-window `AppShell` field of the same name.
+    render: RenderState<R>,
+    /// Reusable Vello scene buffer — reset at the start of each
+    /// frame rather than reallocated. Vello's Scene API expects this
+    /// pattern (Linebender Vello examples / Xilem). Per-window because
+    /// multi-window paint would otherwise serialise the same buffer
+    /// across windows (race on `reset` between secondary + primary
+    /// paint cycles).
+    vello_scene: VelloScene,
+    /// R51.62 §5.40 — per-window `accesskit_winit::Adapter`. `None`
+    /// while the window is `Suspended`; populated once the winit
+    /// `Window` exists. AccessKit canonical: 1 adapter = 1 window
+    /// (multi-window = multi-adapter, NOT auto-merged), mirroring
+    /// macOS `NSAccessibility` / GTK Atk semantics.
+    accesskit: Option<accesskit_winit::Adapter>,
+    /// R56.2.a §5.13 §5.38 — per-window IME composition state.
+    /// Per-window because the IME session belongs to the focused
+    /// window (Wayland `text-input-v3` / X11 XIM / macOS
+    /// `NSTextInputContext` all scope by window); a multi-window
+    /// binding's main + inspector windows could each carry their
+    /// own composition session if both contained text-input widgets.
+    ime_was_composing: bool,
+    /// R56.2.c §5.13 §5.38 — per-window last
+    /// `Window::set_ime_cursor_area` rect. Per-window so dedup against
+    /// winit boundary calls works correctly when different windows
+    /// publish different caret positions.
+    last_ime_cursor_area: Option<(f32, f32, f32, f32)>,
+    /// R668 §5.16 — per-window pending
+    /// [`SizeStrategy::IntrinsicAfterFirstPaint`] resize. Per-window
+    /// because the `IntrinsicAfterFirstPaint` contract is one-shot
+    /// per-window-lifetime (not per-binding); mixed-strategy bindings
+    /// (main: `Fixed` + inspector: `IntrinsicAfterFirstPaint`) need
+    /// independent resize queues.
+    pending_intrinsic_resize: Option<((u32, u32), (u32, u32))>,
+    /// R670.B §5.16 — spec id (the canonical `&'static str` AI
+    /// clients address the window by). Cached here so per-window
+    /// dispatch code (RPC scope resolution, paint scene producer,
+    /// future `view_for_window` plumbing) can resolve the spec id from
+    /// the winit `WindowId` without re-walking
+    /// [`AppShell::spec_id_to_window_id`]. Canonical primary spec is
+    /// `"main"`; secondary specs pick their own non-conflicting
+    /// names.
+    ///
+    /// `#[allow(dead_code)]` — R670.B atomic 0 lands the field; the
+    /// read sites come in atomic 1 (`view_for_window(spec_id, state)`
+    /// trait dispatch + RPC scope resolution). Keeping the field land
+    /// in atomic 0 lets atomic 1's wire change be a single read
+    /// addition rather than a coupled write+read change.
+    #[allow(dead_code, reason = "R670.B atomic 1 reads spec_id for view_for_window dispatch")]
+    spec_id: &'static str,
+}
 
 /// The framework-side shell. Generic over a widget binding
 /// [`WidgetView`]; concrete examples instantiate via `run::<V>()`.
@@ -65,75 +141,46 @@ pub struct AppShell<V: WidgetView> {
     ///
     /// R51.92.1 §5.40 — module-private. Even `lib.rs` (the entry
     /// crate root) cannot touch this field directly.
+    ///
+    /// R670.B §5.16 — single `ShellCore` + multi-window (Approach A):
+    /// the binding's state lives here once; every window's view fn
+    /// reads the same `cached_state`. Multi-binding (different
+    /// `ShellCore` per window) is R750+ widget catalog territory
+    /// (Approach B).
     core: ShellCore<V>,
-    /// R46.5 §5.16 suspend / resume lifecycle (R46.3.4 pattern).
-    render: RenderState<V::Renderer>,
-    /// Reusable Vello scene buffer — reset at the start of each frame
-    /// rather than reallocated. Vello's Scene API expects this pattern
-    /// (Linebender Vello examples / Xilem).
-    vello_scene: VelloScene,
+    /// R670.B §5.16 §5.41 — per-window state cluster, keyed by winit
+    /// `WindowId`. R670.A landed `WidgetView::windows() -> Vec<WindowSpec>`
+    /// with default `vec![WindowSpec::main(...)]`; R670.B walks the
+    /// list in `resumed()` + creates one `WindowSlot` per spec.
+    ///
+    /// Pre-R670.B this struct carried 5 single-window fields
+    /// directly (`render` + `vello_scene` + `accesskit` + IME +
+    /// intrinsic resize). The cluster lift preserves bit-identical
+    /// single-window behaviour by anchoring the canonical primary
+    /// spec (`WindowSpec::main`) as the only window the 15+ existing
+    /// bindings ever create — the hashmap holds exactly one entry
+    /// for them.
+    windows: HashMap<WindowId, WindowSlot<V::Renderer>>,
+    /// R670.B §5.16 — spec-id → `WindowId` reverse lookup for RPC
+    /// `{window: "<id>"}` scope resolution (R670.B atomic 1). AI
+    /// clients address windows by the `&'static str` id declared in
+    /// `WindowSpec::new(id, ..)`; the dispatcher resolves the id to a
+    /// winit `WindowId` here before looking up the per-window slot
+    /// in [`Self::windows`]. Default single-window bindings carry
+    /// exactly `"main" → primary_id`.
+    spec_id_to_window_id: HashMap<&'static str, WindowId>,
+    /// R670.B §5.16 — primary window's [`WindowId`]. The first spec
+    /// in `V::windows()` (canonically `WindowSpec::main(..)`); RPC
+    /// frames that omit `{window: "..."}` default-scope to this id.
+    /// `None` until `resumed()` creates the first window; populated
+    /// once per binding lifetime + never cleared by `suspended`
+    /// (which keeps the windows cached for the next `resumed`).
+    primary_window_id: Option<WindowId>,
     /// R51.62 §5.40 — winit [`EventLoopProxy`] cached so the shell
     /// can construct the per-window `accesskit_winit::Adapter` on
     /// `resumed` (the constructor requires both the active event
     /// loop and a proxy that produces `Adapter`-routed user events).
     proxy: EventLoopProxy<AppEvent>,
-    /// R51.62 §5.40 — per-window `accesskit_winit::Adapter`. `None`
-    /// while the window is `Suspended`; populated by `resumed` once
-    /// the winit `Window` exists. The adapter relays winit events
-    /// (`Moved`, `Resized`, `Focused`) into AccessKit's internal
-    /// state and delivers AT-side requests (`InitialTreeRequested`,
-    /// `ActionRequested`, `AccessibilityDeactivated`) through
-    /// [`AppEvent::AccessKit`].
-    accesskit: Option<accesskit_winit::Adapter>,
-    /// R56.2.a §5.13 §5.38 — IME composition state machine. winit
-    /// 0.30's [`WindowEvent::Ime`] surface carries four variants
-    /// (`Enabled` / `Preedit` / `Commit` / `Disabled`) but the
-    /// W3C-aligned [`CompositionEvent`](pinion_core::CompositionEvent)
-    /// the substrate consumes has explicit phase boundaries
-    /// (`Start` / `Update` / `Commit` / `Cancel`). Bridging the two
-    /// requires the shell to track whether the current sequence is
-    /// "in a session" so:
-    ///
-    /// - the first non-empty `Ime::Preedit` triggers
-    ///   `CompositionEvent::Start` (in addition to `Update`);
-    /// - a stand-alone `Ime::Commit` (no prior `Preedit`, as macOS
-    ///   dead-key sequences emit) gets a synthetic `Start` so the
-    ///   `TextFieldExternal::apply_composition_commit` path lands
-    ///   the text at the caret with the `was_composing` gate satisfied;
-    /// - `Ime::Disabled` mid-session dispatches `Cancel`.
-    ///
-    /// The `was_composing` boolean lives at the shell layer (rather
-    /// than the widget layer) because the mapping has to survive a
-    /// `Preedit("", None)` "synthetic clear" event winit injects
-    /// before every `Commit` — see the [`winit_ime_to_composition`]
-    /// helper's doc-comment for the full mapping table.
-    ime_was_composing: bool,
-    /// R56.2.c §5.13 §5.38 — last `Window::set_ime_cursor_area` rect
-    /// the shell pushed to the platform IME. Stored as a tuple of
-    /// the four `pinion_text::CaretRect` fields (bit-equal `f32`
-    /// comparison) so the per-frame redraw skips the `winit` round-
-    /// trip when the caret has not moved. `None` until the first
-    /// `V::ime_caret_rect` returns `Some`; reset to `None` is
-    /// intentionally avoided — winit retains the previous IME
-    /// cursor area when the application stops reporting, which
-    /// matches the canonical platform behaviour (the candidate
-    /// popup stays where the user last typed even when focus
-    /// shifts to a non-text widget for a moment).
-    last_ime_cursor_area: Option<(f32, f32, f32, f32)>,
-    /// R668 §5.16 — pending [`SizeStrategy::IntrinsicAfterFirstPaint`]
-    /// resize. `Some((min, max))` while the shell still needs to walk
-    /// the first painted scene for the intrinsic bbox, clamp to
-    /// `[min, max]`, and forward to
-    /// [`Window::request_inner_size`]. Set on the `Fixed`-strategy
-    /// path means *no* post-first-paint resize is queued — `None` is
-    /// the steady-state value once any resize has been requested (or
-    /// the strategy never asked for one).
-    ///
-    /// `min` is also the lower bound winit's `set_min_inner_size`
-    /// clamp enforces against subsequent user-driven resizes; that
-    /// part of the contract is installed during `resumed` and not
-    /// re-read after the first paint.
-    pending_intrinsic_resize: Option<((u32, u32), (u32, u32))>,
 }
 
 
@@ -153,38 +200,70 @@ impl<V: WidgetView> AppShell<V> {
     pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
         Self {
             core: ShellCore::new(),
-            render: RenderState::Suspended(None),
-            vello_scene: VelloScene::new(),
+            windows: HashMap::new(),
+            spec_id_to_window_id: HashMap::new(),
+            primary_window_id: None,
             proxy,
-            accesskit: None,
-            // R56.2.a §5.13 §5.38 — empty composition session at boot.
-            ime_was_composing: false,
-            // R56.2.c §5.13 §5.38 — no IME cursor area pushed yet;
-            // first `V::ime_caret_rect` Some triggers the first
-            // `Window::set_ime_cursor_area` call.
-            last_ime_cursor_area: None,
-            // R668 §5.16 — populated on `resumed` from the binding's
-            // `initial_size_strategy()` when it returns
-            // `IntrinsicAfterFirstPaint`; consumed once by the first
-            // `render()` after layout.
-            pending_intrinsic_resize: None,
+        }
+    }
+
+    /// R670.B §5.16 — borrow the primary window's slot, if any.
+    /// `None` until `resumed()` has created the primary window. The
+    /// primary spec is `V::windows()[0]` (canonically
+    /// `WindowSpec::main`); RPC scope default + single-window legacy
+    /// paths reach the window through this accessor.
+    fn primary_slot(&self) -> Option<&WindowSlot<V::Renderer>> {
+        self.primary_window_id.and_then(|id| self.windows.get(&id))
+    }
+
+    /// R670.B §5.16 — mut borrow of the primary slot. See
+    /// [`Self::primary_slot`] for the lifecycle contract.
+    ///
+    /// `#[allow(dead_code)]` — R670.B atomic 1 wires the
+    /// `WidgetView::view_for_window` paint producer through here so
+    /// per-window scenes can mutate slot-local state (`vello_scene`
+    /// reset, accesskit cache invalidation). Atomic 0 lands the
+    /// helper; atomic 1 adds the call site.
+    #[allow(dead_code, reason = "R670.B atomic 1 calls this for view_for_window paint")]
+    fn primary_slot_mut(&mut self) -> Option<&mut WindowSlot<V::Renderer>> {
+        let id = self.primary_window_id?;
+        self.windows.get_mut(&id)
+    }
+
+    /// R670.B §5.16 §5.41 — pull the `RenderState` Window arc out of
+    /// a slot (active or suspended-with-cached-window). Both render
+    /// state variants may carry a `Window` arc; this helper
+    /// canonicalises the lookup so callers don't repeat the match.
+    fn slot_window(slot: &WindowSlot<V::Renderer>) -> Option<&Arc<Window>> {
+        match &slot.render {
+            RenderState::Active { window, .. } => Some(window),
+            RenderState::Suspended(maybe) => maybe.as_ref(),
         }
     }
 
     /// R51.76 §5.40 — drain the [`ShellCore::redraw_requested`] flag
-    /// and forward to the live winit `Window` (if attached).
+    /// and forward to every live winit `Window`.
+    ///
+    /// R670.B §5.16 — pre-R670.B forwarded to the single window only;
+    /// post-R670.B forwards to every active window slot so a
+    /// multi-window binding gets all windows repainted on a single
+    /// state change (the canonical "main button click → inspector
+    /// state mirror updates" arc requires this). Steady-state
+    /// single-window bindings are unaffected (one window in the
+    /// hashmap = one `request_redraw` call).
     ///
     /// Called at the end of every `window_event` / `user_event`
     /// `ApplicationHandler` arm so all redraw requests collapse into a
-    /// single `Window::request_redraw` call (the winit idiom: winit
-    /// itself coalesces back-to-back redraw requests, but the
-    /// AppShell-level coalesce avoids the round-trip when no window
-    /// is attached yet).
+    /// single `Window::request_redraw` per window per
+    /// event-loop iteration.
     fn drain_redraw_to_winit(&mut self) {
-        if self.core.take_redraw_request()
-            && let RenderState::Active { window, .. } = &self.render
-        {
-            window.request_redraw();
+        if !self.core.take_redraw_request() {
+            return;
+        }
+        for slot in self.windows.values() {
+            if let RenderState::Active { window, .. } = &slot.render {
+                window.request_redraw();
+            }
         }
     }
 
@@ -194,25 +273,140 @@ impl<V: WidgetView> AppShell<V> {
     /// stdout. Headless tests call `ShellCore::dispatch_rpc` directly
     /// with a no-op closure.
     fn dispatch_rpc(&mut self, request: &str) {
-        let render_ref = &self.render;
+        // R670.B §5.16 — per-window RPC scope. The substrate side
+        // (`ShellCore::dispatch_rpc`) already plumbs a paint producer
+        // closure; R670.B threads a `window_id` choice into that
+        // closure so multi-window bindings can answer `scene/snapshot
+        // {window: "inspector"}` against the inspector window's view
+        // fn (not the primary's). The id is parsed off the JSON-RPC
+        // params here (the substrate stays winit-free; reading the
+        // window scope is a surface-side responsibility).
+        //
+        // Pre-extract the id from the JSON-RPC envelope so we don't
+        // re-parse inside the producer closure. JSON parse failure
+        // falls through to the substrate which reports the wire-level
+        // error.
+        let window_id_choice = parse_rpc_window_id(request)
+            .unwrap_or_else(|| String::from("main"));
+        let resolved_spec_id = self.resolve_spec_id(&window_id_choice);
+        // R670.B §5.16 — primary-window-scoped `scene/resize` (the
+        // resize closure still targets the primary window; per-window
+        // `scene/resize` is a follow-up axis once a real consumer
+        // surfaces — typical multi-window app resizes the main
+        // window, not the inspector). Holding the Arc<Window> across
+        // the substrate call keeps the closure's `&Arc<Window>`
+        // borrow alive without re-borrowing `self.windows` from
+        // inside the closure.
+        let primary_window_arc: Option<Arc<Window>> = self
+            .primary_slot()
+            .and_then(Self::slot_window)
+            .cloned();
         let mut resize_req = |w: u32, h: u32| {
             // R47.7.4.2 — `scene/resize` reaches winit through this
             // closure: `request_inner_size` queues a size change that
             // winit emits as a `Resized` event on the next loop pass,
             // and the explicit `request_redraw` shortens the gap to
             // the new paint scene observation.
-            if let RenderState::Active { window, .. } = render_ref {
+            if let Some(window) = &primary_window_arc {
                 let _ = window.request_inner_size(LogicalSize::new(w, h));
                 window.request_redraw();
             }
         };
-        let resp = self.core.dispatch_rpc(request, &mut resize_req);
+        let resp = self.core.dispatch_rpc_for_window(
+            request,
+            &resolved_spec_id,
+            &mut resize_req,
+        );
         if let Some(resp) = resp {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {
                 // stdout closed (downstream consumer gone) — silently
                 // skip; do not abort the GUI loop on a broken pipe.
             }
+        }
+    }
+
+    /// R670.B §5.16 — per-window AccessKit emit helper. Extracted
+    /// from `render_window` so the parent fn stays under the
+    /// workspace `clippy::too_many_lines = 100` ceiling after the
+    /// per-window cluster lift R670.B added. The body is unchanged
+    /// from the pre-R670.B inline version; only the slot lookup +
+    /// disjoint-borrow split (slot.accesskit, slot vs self.core)
+    /// differ.
+    fn emit_accesskit_for_window(
+        &mut self,
+        window_id: WindowId,
+        paint_scene: &pinion_core::Scene,
+        size_w: u32,
+        size_h: u32,
+    ) {
+        let Some(slot) = self.windows.get_mut(&window_id) else { return };
+        if slot.accesskit.is_none() {
+            return;
+        }
+        let (nodes, at_focus) = self.core.collect_access_emit_inputs(paint_scene);
+        let window_bounds = pinion_core::scene::Rect::new(0, 0, size_w, size_h);
+        let decision = self.core.plan_access_emit(&nodes, at_focus.as_ref());
+        // Re-acquire the slot mutable borrow now that the substrate
+        // borrows released (collect_access_emit_inputs +
+        // plan_access_emit take `&mut self.core`).
+        let Some(slot) = self.windows.get_mut(&window_id) else { return };
+        if decision.should_emit
+            && let Some(adapter) = slot.accesskit.as_mut()
+        {
+            let initial = decision.initial;
+            let dirty = decision.dirty;
+            let at_focus_ref = at_focus.as_ref();
+            let nodes_ref = &nodes;
+            adapter.update_if_active(|| {
+                let mut builder = AccessTreeBuilder::new();
+                if !initial {
+                    builder.initial(false);
+                }
+                for node in nodes_ref {
+                    builder.add(node);
+                }
+                if !initial {
+                    builder.dirty_tags(dirty);
+                }
+                if let Some(f) = at_focus_ref {
+                    builder.focused(Some(&f.focus_tag));
+                    if let Some(child) = &f.active_descendant {
+                        builder.active_descendant(&f.focus_tag, child);
+                    }
+                } else {
+                    builder.focused(None);
+                }
+                builder.build(Some(window_bounds))
+            });
+        }
+        // R51.77 / R51.79 §5.40 — commit step. By-value Vec move
+        // into the cache; nodes consumed here. Idempotent on
+        // !should_emit so the next frame's plan diffs against the
+        // post-emit baseline.
+        self.core.commit_access_emit(nodes, at_focus.as_ref());
+    }
+
+    /// R670.B §5.16 — resolve the supplied window id to a known
+    /// spec id. Falls back to the primary spec id when the supplied
+    /// id is missing or unknown (AI clients targeting a window that
+    /// doesn't exist see the primary's scene rather than a hard
+    /// error — single-window bindings always have a primary; multi-
+    /// window bindings can detect the fallback by comparing the
+    /// returned id against the supplied id).
+    ///
+    /// Returns an owned `String` so the borrow on `self.windows`
+    /// releases before the caller threads the id into the substrate's
+    /// producer closure (which takes its own `&mut self.core`).
+    fn resolve_spec_id(&self, supplied: &str) -> String {
+        if self.spec_id_to_window_id.contains_key(supplied) {
+            return supplied.to_string();
+        }
+        // Fall back to the primary spec id (the first spec, by
+        // construction always present in `windows` after `resumed`).
+        match self.primary_slot() {
+            Some(slot) => slot.spec_id.to_string(),
+            None => "main".to_string(),
         }
     }
 
@@ -225,28 +419,76 @@ impl<V: WidgetView> AppShell<V> {
     /// [`ShellCore::compute_access_emit`] so the same diff logic is
     /// exercised by headless tests; the AppShell-side responsibility
     /// is just to feed the plan to `Adapter::update_if_active`.
-    fn render(&mut self) {
-        let RenderState::Active { window, renderer } = &mut self.render else {
-            return;
+    /// R670.B §5.16 §5.41 — render one window's paint scene.
+    ///
+    /// Pre-R670.B was the single-window `fn render(&mut self)`; the
+    /// body is unchanged structurally — only the field accesses now
+    /// resolve through `self.windows[&window_id]` instead of
+    /// `self.render` / `self.accesskit` / `self.vello_scene` /
+    /// `self.last_ime_cursor_area` / `self.pending_intrinsic_resize`.
+    /// The §5.16 §5.36 substrate ownership of the paint scene
+    /// pipeline (`ShellCore::compute_paint_scene`) is unchanged — the
+    /// surface still only handles the vello/wgpu submit per window.
+    ///
+    /// No-op when the slot is missing (window already dropped) or
+    /// when its [`RenderState`] is `Suspended` (GPU released, mobile
+    /// platform cycle). Mirrors the pre-R670.B `let RenderState::
+    /// Active { .. } = &mut self.render else { return; }` guard.
+    fn render_window(&mut self, window_id: WindowId) {
+        // R670.B §5.16 — read the slot's spec id + inner size first
+        // without holding a long-lived `&mut self.windows` borrow,
+        // so the subsequent `self.core.compute_paint_scene_for_window`
+        // call (which takes `&mut self.core`) does not conflict with
+        // the slot borrow needed to call back into vello_scene /
+        // accesskit / last_ime_cursor_area / pending_intrinsic_resize
+        // after the paint scene is computed.
+        let (spec_id, w, h) = {
+            let Some(slot) = self.windows.get(&window_id) else {
+                return;
+            };
+            let RenderState::Active { window, .. } = &slot.render else {
+                return;
+            };
+            let size = window.inner_size();
+            let Some(w) = core::num::NonZeroU32::new(size.width) else { return };
+            let Some(h) = core::num::NonZeroU32::new(size.height) else { return };
+            (slot.spec_id, w, h)
         };
-        let size = window.inner_size();
-        let Some(w) = core::num::NonZeroU32::new(size.width) else { return };
-        let Some(h) = core::num::NonZeroU32::new(size.height) else { return };
         // R51.80 §5.16 §5.36 — ShellCore owns the paint scene
         // pipeline; AppShell only handles the vello/wgpu submit.
-        let paint_scene = self.core.compute_paint_scene(w.get(), h.get());
+        // R670.B §5.16 — `compute_paint_scene_for_window` is the
+        // per-window variant that routes through
+        // `V::view_for_window(spec_id, state, frame)`; default impl
+        // forwards to `V::view` so single-window bindings remain
+        // bit-identical.
+        let paint_scene = self
+            .core
+            .compute_paint_scene_for_window(spec_id, w.get(), h.get());
+        // Re-acquire the slot mutable borrow now that the substrate
+        // borrow released, then bind window + renderer for the
+        // intrinsic-resize hook + vello submit. Scope the borrow
+        // so it drops before the post-paint helpers
+        // (emit_accesskit_for_window, publish_ime_for_window) which
+        // take `&mut self`.
+        let size = {
+            let Some(slot) = self.windows.get_mut(&window_id) else { return };
+            let RenderState::Active { window, renderer } = &mut slot.render else {
+                return;
+            };
+            let size = window.inner_size();
         // R668 §5.16 — `IntrinsicAfterFirstPaint` post-first-paint
-        // resize hook. The first painted scene now carries layout-
-        // computed rects on every node, so walking the tree
-        // ([`Scene::intrinsic_content_size`]) gives us the tight
-        // (width, height) the content actually wants; clamp to
-        // `[min, max]` and forward to `Window::request_inner_size`.
-        // winit emits a `WindowEvent::Resized` on acceptance which
-        // re-enters the layout pass at the new viewport on the next
-        // paint. The hook drains itself — `Fixed`-strategy paints and
-        // every steady-state paint after the first land on the `None`
+        // resize hook (per-window since R670.B). The first painted
+        // scene now carries layout-computed rects on every node, so
+        // walking the tree ([`Scene::intrinsic_content_size`]) gives
+        // us the tight (width, height) the content actually wants;
+        // clamp to `[min, max]` and forward to
+        // `Window::request_inner_size`. winit emits a
+        // `WindowEvent::Resized` on acceptance which re-enters the
+        // layout pass at the new viewport on the next paint. The
+        // hook drains itself — `Fixed`-strategy paints and every
+        // steady-state paint after the first land on the `None`
         // branch and skip out.
-        if let Some((min, max)) = self.pending_intrinsic_resize.take() {
+        if let Some((min, max)) = slot.pending_intrinsic_resize.take() {
             let (content_w, content_h) = paint_scene.intrinsic_content_size();
             let target_w = content_w.clamp(min.0, max.0);
             let target_h = content_h.clamp(min.1, max.1);
@@ -262,13 +504,13 @@ impl<V: WidgetView> AppShell<V> {
                 window.request_redraw();
             }
         }
-        self.vello_scene.reset();
+        slot.vello_scene.reset();
         let base = paint_adapter::root_background(&paint_scene);
         paint_adapter::to_vello(
             &paint_scene,
             &|_b: &BoxNode| None,
             self.core.text_cache_mut(),
-            &mut self.vello_scene,
+            &mut slot.vello_scene,
         );
         // R51.58 §5.39 — paint the ARIA focus ring on top of the
         // widget visual. Runs after `to_vello` so the ring overlays
@@ -277,7 +519,7 @@ impl<V: WidgetView> AppShell<V> {
         paint_adapter::paint_focus_ring(
             &paint_scene,
             self.core.focus().focused(),
-            &mut self.vello_scene,
+            &mut slot.vello_scene,
         );
         // R51.109.1 §5.41 — call through the backend-agnostic
         // `WidgetRenderer` trait. `VelloContext::base_color` carries
@@ -286,96 +528,69 @@ impl<V: WidgetView> AppShell<V> {
         // forwards to the inherent `<R>::render(frame, base_color)`.
         // `renderer.render` auto-derefs through `Box<R>` because the
         // `WidgetRenderer` trait is in scope.
-        if let Err(e) = renderer.render(&self.vello_scene, VelloContext { base_color: base }) {
+        if let Err(e) = renderer.render(&slot.vello_scene, VelloContext { base_color: base }) {
             eprintln!("shell: vello render: {e}");
         }
-        // R51.62 / R51.80 §5.40 — AccessKit emit. The substrate
-        // assembles the nodes + focus inputs; the surface plans +
-        // optionally emits + commits. No accesskit-side work when
-        // no AT client is attached (`update_if_active` is a no-op).
-        if self.accesskit.is_some() {
-            let (nodes, at_focus) =
-                self.core.collect_access_emit_inputs(&paint_scene);
-            let window_bounds =
-                pinion_core::scene::Rect::new(0, 0, size.width, size.height);
-            let decision =
-                self.core.plan_access_emit(&nodes, at_focus.as_ref());
-            if decision.should_emit
-                && let Some(adapter) = self.accesskit.as_mut()
-            {
-                let initial = decision.initial;
-                let dirty = decision.dirty;
-                let at_focus_ref = at_focus.as_ref();
-                let nodes_ref = &nodes;
-                adapter.update_if_active(|| {
-                    let mut builder = AccessTreeBuilder::new();
-                    if !initial {
-                        builder.initial(false);
-                    }
-                    for node in nodes_ref {
-                        builder.add(node);
-                    }
-                    if !initial {
-                        builder.dirty_tags(dirty);
-                    }
-                    if let Some(f) = at_focus_ref {
-                        builder.focused(Some(&f.focus_tag));
-                        if let Some(child) = &f.active_descendant {
-                            // R51.71 §5.40 — roving-tabindex active
-                            // descendant.
-                            builder.active_descendant(&f.focus_tag, child);
-                        }
-                    } else {
-                        builder.focused(None);
-                    }
-                    builder.build(Some(window_bounds))
-                });
-            }
-            // R51.77 / R51.79 §5.40 — commit step. By-value Vec move
-            // into the cache; nodes consumed here. Idempotent on
-            // !should_emit so the next frame's plan diffs against
-            // the post-emit baseline.
-            self.core.commit_access_emit(nodes, at_focus.as_ref());
-        }
+            size
+        };
+        // The post-paint helpers (`emit_accesskit_for_window`,
+        // `publish_ime_for_window`) each re-acquire their own slot
+        // borrow internally and take `&mut self.core` — the scope
+        // above released the long-held slot borrow so this is safe.
+        self.emit_accesskit_for_window(
+            window_id,
+            &paint_scene,
+            size.width,
+            size.height,
+        );
         // R56.2.c §5.13 §5.38 — push IME candidate window position
-        // to the platform IME. Run after paint (so `LayoutCache` is
-        // populated for the application's `ime_caret_rect` impl to
-        // resolve via a cache hit) and before `finalize_frame`
-        // (which moves `paint_scene` into the substrate). The
-        // `root_owner.run` wrap mirrors the `apply_key` / `view` /
-        // `apply_composition` paths so application hooks
-        // (`use_text_edit_state(tag)` / `use_layout_cache(key)`)
-        // resolve through `Owner::current()` inside the trait call.
-        //
-        // Dedup against `self.last_ime_cursor_area` so an unchanged
-        // caret (which is most frames — caret moves only on key
-        // press or text mutation) skips the `winit` boundary call.
-        // The `f32` tuple comparison is bit-equal which is what
-        // pinion wants (sub-pixel jitter would force redundant IME
-        // updates and on some platforms the candidate popup
-        // flickers on every `set_ime_cursor_area` call).
-        let cached_state = *self.core.cached_state();
-        let focused_owned = self.core.focus().focused().map(str::to_owned);
-        let owner = self.core.root_owner().clone();
-        let ime_rect = owner.run(|| {
-            V::ime_caret_rect(&cached_state, &paint_scene, focused_owned.as_deref())
-        });
-        if let Some(rect) = ime_rect {
-            let rect_tuple = (rect.x, rect.y, rect.width, rect.height);
-            if self.last_ime_cursor_area != Some(rect_tuple) {
-                let pos = LogicalPosition::new(f64::from(rect.x), f64::from(rect.y));
-                let size = LogicalSize::new(
-                    f64::from(rect.width.max(1.0)),
-                    f64::from(rect.height.max(1.0)),
-                );
-                window.set_ime_cursor_area(pos, size);
-                self.last_ime_cursor_area = Some(rect_tuple);
-            }
-        }
+        // to the platform IME (per-window since R670.B).
+        self.publish_ime_for_window(window_id, &paint_scene);
         // R51.80 §5.12 §5.35 — snapshot the rendered scene + hand it
         // to the input router + refresh state + drain intents in one
         // method.
         self.core.finalize_frame(paint_scene);
+    }
+
+    /// R670.B §5.16 — per-window IME candidate publish helper.
+    /// Extracted from `render_window` so the parent fn stays under
+    /// the workspace `clippy::too_many_lines = 100` ceiling after
+    /// the per-window cluster lift R670.B added.
+    ///
+    /// Runs `V::ime_caret_rect` inside the substrate's root-owner
+    /// scope so application hooks (`use_text_edit_state(tag)` /
+    /// `use_layout_cache(key)`) resolve through `Owner::current()`
+    /// inside the trait call. Dedups against the slot's
+    /// `last_ime_cursor_area` so an unchanged caret (most frames —
+    /// caret moves only on key press or text mutation) skips the
+    /// `winit` boundary call.
+    fn publish_ime_for_window(
+        &mut self,
+        window_id: WindowId,
+        paint_scene: &pinion_core::Scene,
+    ) {
+        let cached_state = *self.core.cached_state();
+        let focused_owned = self.core.focus().focused().map(str::to_owned);
+        let owner = self.core.root_owner().clone();
+        let ime_rect = owner.run(|| {
+            V::ime_caret_rect(&cached_state, paint_scene, focused_owned.as_deref())
+        });
+        let Some(rect) = ime_rect else { return };
+        let rect_tuple = (rect.x, rect.y, rect.width, rect.height);
+        let Some(slot) = self.windows.get_mut(&window_id) else { return };
+        if slot.last_ime_cursor_area == Some(rect_tuple) {
+            return;
+        }
+        let RenderState::Active { window, .. } = &slot.render else {
+            return;
+        };
+        let pos = LogicalPosition::new(f64::from(rect.x), f64::from(rect.y));
+        let size = LogicalSize::new(
+            f64::from(rect.width.max(1.0)),
+            f64::from(rect.height.max(1.0)),
+        );
+        window.set_ime_cursor_area(pos, size);
+        slot.last_ime_cursor_area = Some(rect_tuple);
     }
 
     /// R51.78 §5.39 — pressed-key routing surface. Translates the
@@ -419,9 +634,17 @@ impl<V: WidgetView> AppShell<V> {
     /// `Resized` / `Focused` internally (`set_root_window_bounds` +
     /// `update_window_focus_state`) and ignores everything else, so
     /// the relay is unconditional.
-    fn forward_to_accesskit(&mut self, event: &WindowEvent) {
-        if let (Some(adapter), RenderState::Active { window, .. }) =
-            (self.accesskit.as_mut(), &self.render)
+    /// R670.B §5.16 — per-window accesskit relay. Looks up the
+    /// `WindowSlot` by `window_id` and forwards the event to that
+    /// slot's adapter if attached. AccessKit canonical: 1 adapter
+    /// per window (multi-window = multi-adapter, NOT auto-merged) so
+    /// the event MUST reach the same window's adapter that the
+    /// dispatch is targeting; routing through the primary's adapter
+    /// would leak winit coordinates between windows.
+    fn forward_to_accesskit(&mut self, window_id: WindowId, event: &WindowEvent) {
+        if let Some(slot) = self.windows.get_mut(&window_id)
+            && let (Some(adapter), RenderState::Active { window, .. }) =
+                (slot.accesskit.as_mut(), &slot.render)
         {
             adapter.process_event(window, event);
         }
@@ -454,51 +677,58 @@ impl<V: WidgetView> AppShell<V> {
             }
         }
     }
-}
 
-impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
-    /// R46.3.4 — winit may fire `resumed` more than once on platforms
-    /// that suspend (Android, Wayland-compositor focus changes). The
-    /// Vello canonical pattern caches the previous `Window` across
-    /// the drop-and-recreate cycle so the OS-side handle survives,
-    /// while the GPU renderer is freshly constructed each time.
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if matches!(self.render, RenderState::Active { .. }) {
-            return;
-        }
-        let cached = match core::mem::replace(&mut self.render, RenderState::Suspended(None)) {
-            RenderState::Suspended(cached) => cached,
-            RenderState::Active { .. } => unreachable!("matched as non-Active above"),
-        };
-        // R668 §5.16 — read the binding's window-creation policy.
-        // `Fixed` opens at exactly `(width, height)`; `IntrinsicAfterFirstPaint`
-        // opens at `min` and queues a post-first-paint resize request
-        // via `pending_intrinsic_resize`. Either way the renderer
-        // initialises against `window.inner_size()` (winit may already
-        // have clamped to the monitor work area at create time), so
-        // the strategy choice only sets the initial logical-pixel
-        // hint + the post-first-paint resize flag — the rest of
-        // `resumed` is unchanged.
-        let strategy = V::initial_size_strategy();
+    /// R670.B §5.16 — create one window+renderer+accesskit slot for
+    /// the given [`WindowSpec`]. Extracted from `resumed()` because
+    /// the single-resumed→N-windows fan-out would otherwise blow the
+    /// `clippy::too_many_lines` (100) ceiling on the parent fn. Each
+    /// spec gets its own winit `Window`, GPU renderer,
+    /// `IntrinsicAfterFirstPaint` queue, and
+    /// `accesskit_winit::Adapter`.
+    ///
+    /// `cached_window_id` is the `WindowId` from a prior suspend
+    /// cycle if any (mobile platform suspend / resume reuse path).
+    /// `make_primary` is `true` for the very first spec only — that
+    /// spec's `WindowId` is recorded as `primary_window_id` so RPC
+    /// frames omitting `{window: "..."}` default to it (R670.B
+    /// atomic 1 wire).
+    fn resume_spec(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        spec: &WindowSpec,
+        cached_window_id: Option<WindowId>,
+        make_primary: bool,
+    ) {
+        // Pull the cached window arc if any (suspend-resume reuse).
+        let cached_window = cached_window_id
+            .and_then(|id| self.windows.remove(&id))
+            .and_then(|slot| match slot.render {
+                RenderState::Active { window, .. } | RenderState::Suspended(Some(window)) => {
+                    Some(window)
+                }
+                RenderState::Suspended(None) => None,
+            });
+        // R668 §5.16 — read the spec's window-creation policy.
+        // `Fixed` opens at exactly `(width, height)`;
+        // `IntrinsicAfterFirstPaint` opens at `min` and queues a
+        // post-first-paint resize request via
+        // `pending_intrinsic_resize`. Either way the renderer
+        // initialises against `window.inner_size()`.
+        let strategy = spec.strategy;
         let (init_w, init_h) = strategy.initial_logical_size();
-        let window = if let Some(w) = cached {
+        let window = if let Some(w) = cached_window {
             w
         } else {
             let mut attrs = Window::default_attributes()
-                .with_title(V::title())
+                .with_title(spec.title.clone())
                 .with_inner_size(LogicalSize::new(f64::from(init_w), f64::from(init_h)));
             // R668 §5.16 — anchor the user-driven OS-resize floor at
             // `min` so dragging the resize chrome smaller than the
-            // intrinsic floor stops at `min` instead of letting the
-            // window collapse to 0×0. `Fixed` returns `(width, height)`
-            // for `min` (the strategy is "no resize at all" semantically;
-            // winit still honours user resize, but the floor matches the
-            // requested logical-pixel size). winit clamps the floor to
-            // the OS-imposed minimum (usually 100×30 on desktop) which
-            // is fine — pinion never wants a smaller floor than that.
+            // intrinsic floor stops at `min`. winit clamps the floor
+            // to the OS-imposed minimum (~100×30 desktop) anyway.
             let min_floor = match strategy {
-                crate::SizeStrategy::Fixed { width, height } => (width, height),
-                crate::SizeStrategy::IntrinsicAfterFirstPaint { min, .. } => min,
+                SizeStrategy::Fixed { width, height } => (width, height),
+                SizeStrategy::IntrinsicAfterFirstPaint { min, .. } => min,
             };
             attrs = attrs.with_min_inner_size(LogicalSize::new(
                 f64::from(min_floor.0),
@@ -507,53 +737,27 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             match event_loop.create_window(attrs) {
                 Ok(w) => Arc::new(w),
                 Err(e) => {
-                    eprintln!("shell: window create failed: {e}");
+                    eprintln!("shell: window create ({}) failed: {e}", spec.id);
                     event_loop.exit();
                     return;
                 }
             }
         };
-        // R668 §5.16 — queue the intrinsic-resize for the first paint
-        // cycle. `Fixed` clears any prior queue (the second `resumed`
-        // on the Android/Wayland suspend-resume path must not carry a
-        // stale Intrinsic flag from a previous boot).
-        self.pending_intrinsic_resize = match strategy {
-            crate::SizeStrategy::Fixed { .. } => None,
-            crate::SizeStrategy::IntrinsicAfterFirstPaint { min, max } => Some((min, max)),
+        let pending_intrinsic_resize = match strategy {
+            SizeStrategy::Fixed { .. } => None,
+            SizeStrategy::IntrinsicAfterFirstPaint { min, max } => Some((min, max)),
         };
-        // R56.2.a §5.13 §5.38 — opt into the winit IME bridge so
-        // `WindowEvent::Ime` events flow into the [`Self::window_event`]
-        // arm and through `ShellCore::apply_composition` →
-        // `WidgetCore::apply_composition`. Default winit state is
-        // `set_ime_allowed(false)` (no IME events emitted, no
-        // candidate window even when a Korean / Chinese / Japanese
-        // keyboard layout is active); enabling it unblocks the
-        // R56.1.g composition substrate for real platform IME input.
-        //
-        // This is a shell-wide toggle (not per-widget) for the first
-        // slice — pinion's catalogue today carries one focusable
-        // text-input widget (TextField), and non-text widgets simply
-        // do not invoke the IME (the user never switches their input
-        // method state into IME mode while focused on a Button or
-        // Slider). A future sub-round can wire per-focus toggling
-        // through `notify_focus_change` if a non-text widget ever
-        // needs IME suppressed (the canonical place: gate on the
-        // focused widget's `WidgetCore::apply_composition` default
-        // override, set_ime_allowed(false) when the widget doesn't
-        // override).
+        // R56.2.a §5.13 §5.38 — opt into the winit IME bridge per
+        // window so `WindowEvent::Ime` events flow into
+        // `Self::window_event` and reach `ShellCore::apply_composition`
+        // → `WidgetCore::apply_composition`. Per-window because IME
+        // sessions are window-scoped on every platform.
         window.set_ime_allowed(true);
         // R57.1 §5.50 — push the initial OS `prefers-color-scheme`
-        // reading into the global signal so the first paint already
-        // reflects the user's OS dark-mode setting. winit's
-        // `WindowEvent::ThemeChanged` fires only on *changes*, never
-        // at startup, so a missing initial readout would leave the
-        // signal at [`SystemColorScheme::NoPreference`] until the
-        // user toggles their OS theme. `Window::theme()` is
-        // `Option<_>` because not every platform / window setup
-        // surfaces the signal (Wayland without `org.freedesktop.appearance`,
-        // headless test runners) — leave the signal at the default
-        // when `None`, applications running on those configurations
-        // see the light palette per W3C fallback.
+        // reading into the global signal (only needed on the primary
+        // window; the signal is process-global). Secondary window
+        // re-pushes are idempotent so the gate is omitted for
+        // simplicity.
         if let Some(theme) = window.theme() {
             pinion_core::set_system_color_scheme(winit_theme_to_pinion_scheme(theme));
         }
@@ -566,63 +770,150 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         let renderer = match renderer {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("shell: renderer init: {e}");
-                // Keep the window cached so a subsequent `resumed` can
-                // retry — only the renderer creation failed.
-                self.render = RenderState::Suspended(Some(window));
+                eprintln!("shell: renderer init ({}) failed: {e}", spec.id);
+                // Cache the window for a subsequent retry; renderer
+                // init failed but the OS window survives.
+                let window_id = window.id();
+                self.windows.insert(
+                    window_id,
+                    WindowSlot {
+                        render: RenderState::Suspended(Some(window)),
+                        vello_scene: VelloScene::new(),
+                        accesskit: None,
+                        ime_was_composing: false,
+                        last_ime_cursor_area: None,
+                        pending_intrinsic_resize,
+                        spec_id: spec.id,
+                    },
+                );
+                self.spec_id_to_window_id.insert(spec.id, window_id);
                 event_loop.exit();
                 return;
             }
         };
         // R51.62 §5.40 — construct the per-window accesskit_winit
-        // Adapter once renderer init succeeds. Skipped if an adapter
-        // already exists (cached-window resume path). The proxy is
-        // cloned because Adapter consumes one internally for each of
-        // its three handler hooks (activation / action / deactivation).
-        if self.accesskit.is_none() {
-            let adapter = accesskit_winit::Adapter::with_event_loop_proxy(
-                event_loop,
-                &window,
-                self.proxy.clone(),
-            );
-            self.accesskit = Some(adapter);
-        }
-        self.render = RenderState::Active {
-            window,
-            renderer: Box::new(renderer),
+        // Adapter. AccessKit canonical: 1 adapter = 1 window. The
+        // proxy is cloned because Adapter consumes one internally
+        // for each of its three handler hooks (activation / action /
+        // deactivation).
+        let adapter = accesskit_winit::Adapter::with_event_loop_proxy(
+            event_loop,
+            &window,
+            self.proxy.clone(),
+        );
+        let window_id = window.id();
+        let slot = WindowSlot {
+            render: RenderState::Active {
+                window,
+                renderer: Box::new(renderer),
+            },
+            vello_scene: VelloScene::new(),
+            accesskit: Some(adapter),
+            ime_was_composing: false,
+            last_ime_cursor_area: None,
+            pending_intrinsic_resize,
+            spec_id: spec.id,
         };
+        self.windows.insert(window_id, slot);
+        self.spec_id_to_window_id.insert(spec.id, window_id);
+        if make_primary {
+            self.primary_window_id = Some(window_id);
+        }
+        eprintln!(
+            "shell: {} resumed (window {}; initial size {}x{})",
+            spec.title, spec.id, init_w, init_h,
+        );
+    }
+}
+
+impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
+    /// R46.3.4 — winit may fire `resumed` more than once on platforms
+    /// that suspend (Android, Wayland-compositor focus changes). The
+    /// Vello canonical pattern caches the previous `Window` across
+    /// the drop-and-recreate cycle so the OS-side handle survives,
+    /// while the GPU renderer is freshly constructed each time.
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // R670.B §5.16 — single-window legacy behaviour was "skip if
+        // already Active". Multi-window equivalent: skip if every
+        // declared spec has already been created. We resume per-spec
+        // (suspended slots keep their cached `Window` Arc) so the
+        // mobile suspend-resume lifecycle still works per slot.
+        let specs = V::windows();
+        if specs.is_empty() {
+            eprintln!(
+                "shell: V::windows() returned empty list; nothing to create",
+            );
+            event_loop.exit();
+            return;
+        }
+        let mut primary_assigned = false;
+        for spec in specs {
+            // Resolve any cached window from a prior suspend cycle
+            // (look up by spec id). The first `resumed()` after boot
+            // never has cached entries; subsequent post-suspended
+            // resumes can re-attach the cached `Window` to a fresh
+            // GPU renderer.
+            let cached_window_id = self
+                .spec_id_to_window_id
+                .get(spec.id)
+                .copied();
+            // Skip specs that already have an Active slot. A spec is
+            // either fully Active or fully Suspended (no mid-state).
+            if let Some(window_id) = cached_window_id
+                && let Some(slot) = self.windows.get(&window_id)
+                && matches!(slot.render, RenderState::Active { .. })
+            {
+                if !primary_assigned {
+                    self.primary_window_id = Some(window_id);
+                    primary_assigned = true;
+                }
+                continue;
+            }
+            self.resume_spec(event_loop, &spec, cached_window_id, !primary_assigned);
+            if !primary_assigned && self.spec_id_to_window_id.contains_key(spec.id) {
+                primary_assigned = true;
+            }
+        }
         // R47.7.5 — winit does not auto-emit `RedrawRequested` on
         // `resumed` (platform-dependent). Explicitly request the
-        // first redraw so `last_paint_layout` populates before the
-        // first AI client `scene/layout {viewport: null}` lands.
+        // first redraw so every active window's first paint commits
+        // before the first AI client `scene/layout {viewport: null}`
+        // lands. drain_redraw_to_winit walks all windows.
         self.core.request_redraw();
         self.drain_redraw_to_winit();
-        eprintln!(
-            "shell: {} resumed (initial size {}x{}); keys handled by V::keybinding + Esc=quit; pipe JSON-RPC 2.0 frames on stdin",
-            V::title(),
-            init_w,
-            init_h,
-        );
     }
 
     /// R46.3.4 — release the GPU-side renderer on suspend so the OS
     /// can reclaim the wgpu surface. The winit window itself is
-    /// cached for the next `resumed` so its handle / OS state survives.
+    /// cached for the next `resumed` so its handle / OS state
+    /// survives.
+    ///
+    /// R670.B §5.16 — per-window suspend. Walks every `WindowSlot` +
+    /// drops its GPU renderer + keeps the `Window` Arc cached. The
+    /// `accesskit_winit::Adapter` stays attached so AT-side state
+    /// survives the suspend (the adapter only forwards events; the
+    /// GPU surface is what mobile platforms reclaim).
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        if let RenderState::Active { window, .. } =
-            core::mem::replace(&mut self.render, RenderState::Suspended(None))
-        {
-            self.render = RenderState::Suspended(Some(window));
+        for slot in self.windows.values_mut() {
+            if let RenderState::Active { window, .. } =
+                core::mem::replace(&mut slot.render, RenderState::Suspended(None))
+            {
+                slot.render = RenderState::Suspended(Some(window));
+            }
         }
     }
 
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
-        self.forward_to_accesskit(&event);
+        // R670.B §5.16 — route the AccessKit relay to the matching
+        // window's adapter. AccessKit canonical: 1 adapter = 1
+        // window; forwarding to the wrong adapter would leak winit
+        // event coordinates between windows.
+        self.forward_to_accesskit(window_id, &event);
         match event {
             WindowEvent::CloseRequested => {
                 eprintln!(
@@ -733,15 +1024,27 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // `Start + Update`); see [`winit_ime_to_composition`]
             // for the mapping table.
             WindowEvent::Ime(ime) => {
-                let (events, next_state) =
-                    winit_ime_to_composition(&ime, self.ime_was_composing);
-                self.ime_was_composing = next_state;
-                for event in events {
-                    self.core.apply_composition(&event);
+                // R670.B §5.16 — per-window IME state machine. The
+                // composition session belongs to the focused window;
+                // tracking `was_composing` per-window means a
+                // multi-window binding's main + inspector can each
+                // carry an independent composition session.
+                if let Some(slot) = self.windows.get_mut(&window_id) {
+                    let (events, next_state) =
+                        winit_ime_to_composition(&ime, slot.ime_was_composing);
+                    slot.ime_was_composing = next_state;
+                    for event in events {
+                        self.core.apply_composition(&event);
+                    }
                 }
             }
             WindowEvent::Resized(size) => {
-                if let RenderState::Active { renderer, .. } = &mut self.render {
+                // R670.B §5.16 — per-window resize. The matching slot
+                // holds the live GPU renderer the wgpu surface
+                // resize-event must reach.
+                if let Some(slot) = self.windows.get_mut(&window_id)
+                    && let RenderState::Active { renderer, .. } = &mut slot.render
+                {
                     renderer.resize(size.width.max(1), size.height.max(1));
                 }
             }
@@ -756,7 +1059,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             WindowEvent::ThemeChanged(theme) => {
                 pinion_core::set_system_color_scheme(winit_theme_to_pinion_scheme(theme));
             }
-            WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::RedrawRequested => self.render_window(window_id),
             _ => {}
         }
         self.drain_redraw_to_winit();
@@ -805,6 +1108,26 @@ fn named_key_str(named: NamedKey) -> Option<&'static str> {
         NamedKey::Space => Some("Space"),
         _ => None,
     }
+}
+
+/// R670.B §5.16 — extract `{window: "<id>"}` from a JSON-RPC frame's
+/// params, if present. Returns `Some(id)` when the frame parses as
+/// JSON, has a `params` object, and that object carries a
+/// string-valued `window` key. Any other shape (no params, params
+/// not an object, missing window, non-string window) returns `None`
+/// + the embedder defaults to the primary spec.
+///
+/// Uses `serde_json` lazily — JSON parse failure here falls through
+/// to the substrate's own `dispatch` parse + error report, so the
+/// AI client still sees the canonical "invalid JSON-RPC frame"
+/// envelope.
+fn parse_rpc_window_id(request: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(request).ok()?;
+    value
+        .get("params")?
+        .get("window")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// Background thread: read JSON-RPC 2.0 lines from stdin and forward

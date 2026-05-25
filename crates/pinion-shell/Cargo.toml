@@ -55,6 +55,13 @@ accesskit_winit = { workspace = true }
 # tests. We pin the default-features off `tokio` (no need for net/fs
 # at this round) but enable everything via `enable_all` per-runtime.
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+# R670.B §5.16 — JSON-RPC frame `{window: "<id>"}` sniffer needs to
+# parse the frame just enough to extract the window scope before
+# threading it into the substrate paint producer. `serde_json` is
+# already a transitive dep (pinion-rpc pulls it for the dispatch
+# parse); promoted to direct here for the `parse_rpc_window_id`
+# helper in app.rs.
+serde_json = { workspace = true }
 # R637 §5.16 §5.7 — PNG encoder for `headless_screenshot::HeadlessScreenshot::render_to_png`.
 # `png` crate is the encode-only path (decode + diff lives in
 # pinion-cli R638+); the dep is single-purpose so this crate stays

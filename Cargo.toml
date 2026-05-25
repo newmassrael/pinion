@@ -39,6 +39,7 @@ members = [
     "examples/todomvc",
     "examples/settings-panel",
     "examples/hello-popover",
+    "examples/hello-multi-window",
 ]
 exclude = ["vendor/sce"]
 

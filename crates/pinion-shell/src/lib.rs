@@ -498,22 +498,46 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// frames that omit `{window: "..."}`. Secondary windows follow
     /// in declaration order.
     ///
-    /// The per-window paint pipeline runs the same `WidgetView::view`
-    /// fn for every spec by default; Phase B widget catalog rounds
-    /// (R750+) lift a `view_for_window(window_id, state) -> Scene`
-    /// hook so multi-window bindings can render different scenes
-    /// per window (main view in the primary, inspector tree in the
-    /// secondary, …) once the second-consumer trigger surfaces.
-    /// Today's single-binding-state / one-view-per-window model
-    /// suffices for the first dogfood (R670 atomic 4
-    /// `hello-multi-window`).
-    ///
     /// Returns `Vec<WindowSpec>` (not `&[WindowSpec]`) because the
     /// shell needs an owned list for its per-window storage map; the
     /// allocation cost is amortised once at boot.
     #[must_use]
     fn windows() -> Vec<WindowSpec> {
         vec![WindowSpec::main(Self::title(), Self::initial_size_strategy())]
+    }
+
+    /// R670.B §5.16 — per-window paint scene hook. Returns the
+    /// painted scene for the given `window_id`; default forwards to
+    /// [`Self::view`] so every existing single-window binding (R670
+    /// has 15+ in the example gallery) keeps its lifecycle
+    /// bit-identical.
+    ///
+    /// Multi-window bindings override this to render different
+    /// scenes per window (main view in the primary; inspector tree
+    /// in the secondary; `DevTools` / debug overlay in tertiary;
+    /// …). The `window_id` argument is the `&'static str` declared
+    /// in the binding's [`Self::windows`] list — typically a
+    /// 2-or-3-arm match.
+    ///
+    /// Identical signature to [`Self::view`] modulo the
+    /// `window_id` lead: pure sync per §6.3, same `&Frame`
+    /// contract, same `dry_run` purity guarantee per binding
+    /// state slot. The substrate runs the function inside the
+    /// same `root_owner.run(|| ...)` wrap [`Self::view`] uses
+    /// so `Owner::current()` resolves to the shell's reactive
+    /// scope from inside the per-window body.
+    #[allow(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "view-fn signature contract: &Frame per §6.3 even for ZST today",
+    )]
+    #[must_use]
+    fn view_for_window(
+        window_id: &str,
+        state: <Self as WidgetCore>::State,
+        frame: &pinion_core::Frame,
+    ) -> Scene {
+        let _ = window_id;
+        Self::view(state, frame)
     }
 }
 

@@ -907,6 +907,71 @@ impl<V: WidgetView> ShellCore<V> {
     /// to drive the pipeline. Pure with respect to substrate state
     /// modulo the timing field + `text_cache` LRU + the root owner's
     /// animation queue — every mutation is documented + tested.
+    /// R670.B §5.16 — per-window paint scene producer. Same pipeline
+    /// as [`Self::compute_paint_scene`] but routes through
+    /// [`WidgetView::view_for_window`](crate::WidgetView::view_for_window)
+    /// instead of `V::view` so multi-window bindings can render
+    /// different scenes per window (main view in the primary;
+    /// inspector tree in the secondary; …).
+    ///
+    /// `window_id` is the canonical `&'static str` from the
+    /// binding's [`WindowSpec`](crate::WindowSpec) declaration —
+    /// typically `"main"` for the primary, application-defined names
+    /// for secondaries. Single-window bindings keep paying
+    /// [`Self::compute_paint_scene`] (forwards to `V::view` directly);
+    /// multi-window bindings + the [`AppShell::render_window`]
+    /// per-window dispatch go through here.
+    ///
+    /// Animation tick is shared with [`Self::compute_paint_scene`]
+    /// (one tick per ShellCore-instance per frame conceptually);
+    /// multi-window paints in the same event-loop iteration compound
+    /// the tick — a known carry to be addressed when a real
+    /// per-spec animation timing requirement surfaces. Today's first
+    /// dogfood (R670.B atomic 2 `hello-multi-window`) carries no
+    /// animations so the compounding is invisible.
+    pub fn compute_paint_scene_for_window(
+        &mut self,
+        window_id: &str,
+        w: u32,
+        h: u32,
+    ) -> Scene {
+        let now = Instant::now();
+        let raw_dt = self
+            .last_paint_instant
+            .map_or(0.0_f32, |prev| now.duration_since(prev).as_secs_f32());
+        self.last_paint_instant = Some(now);
+        let dt = clamp_frame_dt(raw_dt);
+        self.core.tick_animations(dt);
+        let frame = Frame::with_dt(dt);
+        let cached_state = *self.core.cached_state();
+        let mut paint_scene = self
+            .core
+            .root_owner()
+            .run(|| V::view_for_window(window_id, cached_state, &frame));
+        let scroll_dirty =
+            compute_layout_with_scroll_dirty(&mut paint_scene, &mut self.text_cache, w, h);
+        if scroll_dirty {
+            paint_scene = self
+                .core
+                .root_owner()
+                .run(|| V::view_for_window(window_id, cached_state, &frame));
+            compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        }
+        // R51.147 §5.28 — keep painting while any animation registered
+        // on the binding is still moving (mirror of
+        // [`Self::compute_paint_scene`] — both variants must observe
+        // the same animation-loop heartbeat). Without this, mid-
+        // animation frames would idle the surface until the next
+        // input event, which freezes spring transitions.
+        if self
+            .core
+            .any_animation_active(pinion_core::DEFAULT_REST_EPSILON)
+        {
+            self.redraw_requested = true;
+        }
+        paint_scene
+    }
+
     pub fn compute_paint_scene(&mut self, w: u32, h: u32) -> Scene {
         let now = Instant::now();
         let raw_dt = self
@@ -1125,9 +1190,40 @@ impl<V: WidgetView> ShellCore<V> {
     /// per-callsite monomorphisation of the entire dispatch body
     /// (production callsite vs test no-op closure would otherwise
     /// duplicate ~1 KiB of code).
+    /// R670.B §5.16 — per-window variant of [`Self::dispatch_rpc`].
+    /// Same dispatch shape but the paint producer closure routes
+    /// through [`Self::compute_paint_scene_for_window`] using the
+    /// supplied `window_id` (the spec id from
+    /// [`crate::WindowSpec::id`]). Multi-window bindings reach this
+    /// path through [`crate::AppShell::dispatch_rpc`], which parses
+    /// the `{window: "<id>"}` JSON-RPC frame param + resolves it
+    /// against the per-window slot map before calling here.
+    ///
+    /// Forwards to [`Self::dispatch_rpc`] semantically when the
+    /// `window_id` matches the binding's primary spec — the only
+    /// behavioural delta is which `WidgetView::view_for_window`
+    /// branch the paint producer runs.
+    pub fn dispatch_rpc_for_window(
+        &mut self,
+        request: &str,
+        window_id: &str,
+        resize_request: &mut dyn FnMut(u32, u32),
+    ) -> Option<String> {
+        self.dispatch_rpc_inner(request, Some(window_id), resize_request)
+    }
+
     pub fn dispatch_rpc(
         &mut self,
         request: &str,
+        resize_request: &mut dyn FnMut(u32, u32),
+    ) -> Option<String> {
+        self.dispatch_rpc_inner(request, None, resize_request)
+    }
+
+    fn dispatch_rpc_inner(
+        &mut self,
+        request: &str,
+        window_id: Option<&str>,
         resize_request: &mut dyn FnMut(u32, u32),
     ) -> Option<String> {
         // R51.73 §5.40 — sample focus before dispatch so we can
@@ -1164,20 +1260,29 @@ impl<V: WidgetView> ShellCore<V> {
             let focus_ptr = &mut self.focus;
             let text_cache_ptr = &mut self.text_cache;
             let last_paint = self.last_paint_layout.as_ref();
+            // R670.B §5.16 — per-window view fn dispatch. Single-
+            // window paths (`window_id == None`) keep using `V::view`
+            // exactly as before for bit-identical legacy behaviour;
+            // multi-window paths (`Some(spec_id)`) route through
+            // `V::view_for_window(spec_id, state, frame)` so the
+            // dispatched window's paint scene reflects the right
+            // view branch.
+            let producer_window_id = window_id.map(str::to_owned);
             let mut produce = |w: u32, h: u32| -> Scene {
                 let frame = Frame::new();
-                let mut paint = root_owner.run(|| V::view(cached_state, &frame));
+                let mut paint = root_owner.run(|| match producer_window_id.as_deref() {
+                    Some(id) => V::view_for_window(id, cached_state, &frame),
+                    None => V::view(cached_state, &frame),
+                });
                 // R57.X.scrollbar §5.45 — same first-paint warmup as
-                // [`Self::compute_paint_scene`]. The RPC paint
-                // producer feeds `scene/snapshot from: paint` and the
-                // `scene/click {path}` hit-test resolution; an AI
-                // client that calls `scene/snapshot` immediately
-                // after launching the binary must see the same
-                // first-paint-correct scrollbar that the live shell
-                // surfaces. Idempotent on steady-state — Signal
-                // equality-skip floors the dirty bit at false.
+                // [`Self::compute_paint_scene`]. Idempotent on
+                // steady-state — Signal equality-skip floors the
+                // dirty bit at false.
                 if compute_layout_with_scroll_dirty(&mut paint, text_cache_ptr, w, h) {
-                    paint = root_owner.run(|| V::view(cached_state, &frame));
+                    paint = root_owner.run(|| match producer_window_id.as_deref() {
+                        Some(id) => V::view_for_window(id, cached_state, &frame),
+                        None => V::view(cached_state, &frame),
+                    });
                     compute_layout(&mut paint, text_cache_ptr, w, h);
                 }
                 paint
@@ -1192,6 +1297,11 @@ impl<V: WidgetView> ShellCore<V> {
                 .with_focus_manager(focus_ptr);
             if let Some(snapshot) = last_paint {
                 ctx = ctx.with_last_paint_layout(snapshot);
+            }
+            // R670.B §5.16 — surface the resolved window id so future
+            // RPC consumers can read it through `DispatchContext`.
+            if let Some(id) = window_id {
+                ctx = ctx.with_window(id);
             }
             // R51.161 §5.23 — surface the root [`Owner`] handle so
             // RPC methods that read reactive substrate state can do
