@@ -150,5 +150,6 @@ Historical (R7 → R8 spec-exit dogfood sequencing — all done by R51+):
 - `pinion-runtime`: SCE hierarchical embedding per §5.4 §5.14
 - First dogfood sequencing per §4
 
-Current live carry (R666 → R667): see `docs/SEED_PROMPT.md` 【watch out】 +
-"R666 carry" subsections. R667 atomic list is the authoritative entry plan.
+Current live carry (R673 → R674): see `docs/SEED_PROMPT.md` 【watch out】 +
+"R673 carry" subsections. R674 atomic list is the authoritative entry plan
+(TreeView click-to-expand + per-row TreeItem AccessNodes).
