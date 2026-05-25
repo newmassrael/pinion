@@ -32,7 +32,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
+use pinion_core::storage::{InMemoryStorage, Storage};
 use pinion_platform_clipboard::ArboardClipboard;
+use pinion_platform_storage::{open_app_storage, FileStorage};
 // R659 §5.16 §5.35 — lifted composite-tag parser shared by every
 // `<key>:<EventName>` send-payload consumer
 // (TodoDeleteExternal / TodoToggleExternal / TodoFilterExternal —
@@ -42,7 +44,7 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, IntrospectSchema,
     IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use pinion_core::reactive::{Owner, Signal};
+use pinion_core::reactive::{Effect, Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -237,6 +239,43 @@ const ITEM_TAG: &str = "todo_item";
 /// suppresses no-op writes (a `set(Some(7))` while already editing
 /// row 7 does not re-render).
 const EDITING_ID_KEY: &str = "todomvc.editing_id";
+
+/// (R665 §3 §5.15) Per-application directory name for
+/// [`pinion_platform_storage::open_app_storage`]. Resolves to:
+///
+/// - Linux: `$XDG_DATA_HOME/pinion-todomvc/` (defaults to
+///   `~/.local/share/pinion-todomvc/`);
+/// - macOS: `~/Library/Application Support/pinion-todomvc/`;
+/// - Windows: `%APPDATA%\pinion-todomvc\`.
+///
+/// The `PINION_STORAGE_DIR` env var overrides this resolution
+/// wholesale — useful for the R665 RPC verify demo which points
+/// persistence at a tempdir to keep the developer's real data
+/// directory pristine across runs.
+const STORAGE_APP_NAME: &str = "pinion-todomvc";
+
+/// (R665 §3 §5.15) Storage key under which the dehydrated
+/// [`PersistedState`] (todos + filter + next id) is written. Single
+/// blob (vs three keys) so the atomic rename invariant covers the
+/// entire persistence transaction — a partially-restored read where
+/// `todos` survived but `next_id` got reset would re-allocate
+/// retired ids, breaking the R656 stable-id contract.
+const STORAGE_STATE_KEY: &str = "todomvc.state";
+
+/// (R665 §3 §5.15) Env var override for the persistence root
+/// directory. When set, [`build_app_storage`] uses the value as-is
+/// (creating intermediate directories) instead of consulting
+/// `dirs::data_dir()`. Used by the R665 RPC verify demo so the
+/// host's real data dir stays out of the test cycle.
+const STORAGE_DIR_ENV: &str = "PINION_STORAGE_DIR";
+
+/// (R665 §3 §5.15) Schema version stamped onto every
+/// [`PersistedState`] blob. Bump on every breaking field-shape
+/// change; the load path treats mismatched versions as "start
+/// fresh" (silent fall-through, no migration today — additive
+/// schema changes can land as `serde(default)` on new fields
+/// without bumping the version).
+const PERSISTED_SCHEMA_VERSION: u32 = 1;
 
 /// (R659 §5.16) Canonical `TasteJS` `TodoMVC` filter modes. Discriminants
 /// 0/1/2 match the visual left-to-right order + composite-tag wire
@@ -860,6 +899,230 @@ impl Clipboard for AppClipboard {
     fn paste(&self) -> Option<String> {
         self.0.paste()
     }
+}
+
+/// (R665 §3 §5.15) Sized newtype around `Box<dyn Storage>` — the
+/// `Owner::cache<V>` slot requires a single concrete `V`, so the
+/// runtime impl choice (`FileStorage` / [`InMemoryStorage`]) hides inside
+/// the box. Mirror of [`AppClipboard`] (R56.1.e §5.22 / R56.2.b §5.22)
+/// — the boxed-dyn newtype pattern is the canonical
+/// [[owner-cache-typed-key]] shape for platform substrate hooks.
+struct AppStorage(Box<dyn Storage>);
+
+impl Storage for AppStorage {
+    fn load(&self, key: &str) -> Option<Vec<u8>> {
+        self.0.load(key)
+    }
+    fn save(&self, key: &str, bytes: &[u8]) {
+        self.0.save(key, bytes);
+    }
+    fn remove(&self, key: &str) {
+        self.0.remove(key);
+    }
+}
+
+/// (R665 §3 §5.15) Build the platform storage handle once per
+/// process. Priority:
+///
+/// 1. [`STORAGE_DIR_ENV`] env var, if set — points at a custom root
+///    (used by the R665 RPC verify demo's tempdir). Creates the dir
+///    via [`FileStorage::try_new`] (idempotent).
+/// 2. [`pinion_platform_storage::open_app_storage`] under
+///    [`STORAGE_APP_NAME`] — the canonical per-OS data dir.
+/// 3. [`InMemoryStorage`] fall-back so headless CI / sandboxed
+///    containers still wire up (persistence becomes session-local,
+///    every other code path is unchanged).
+fn build_app_storage() -> Box<dyn Storage> {
+    if let Ok(custom_dir) = std::env::var(STORAGE_DIR_ENV) {
+        match FileStorage::try_new(std::path::PathBuf::from(&custom_dir)) {
+            Ok(file) => return Box::new(file) as Box<dyn Storage>,
+            Err(e) => eprintln!(
+                "todomvc: FileStorage init at {custom_dir:?} via {STORAGE_DIR_ENV} failed \
+                 ({e}); falling back to default app data dir",
+            ),
+        }
+    }
+    match open_app_storage(STORAGE_APP_NAME) {
+        Ok(file) => Box::new(file) as Box<dyn Storage>,
+        Err(e) => {
+            eprintln!(
+                "todomvc: open_app_storage({STORAGE_APP_NAME:?}) failed ({e}); \
+                 persistence will be in-memory only (state lost on exit)",
+            );
+            Box::new(InMemoryStorage::new()) as Box<dyn Storage>
+        }
+    }
+}
+
+/// (R665 §3 §5.15) `Owner::cache`-keyed storage hook. First call
+/// allocates the platform handle via [`build_app_storage`]; every
+/// subsequent call returns the same `Rc<AppStorage>` so the entire
+/// binding shares one storage instance (atomic-write contract holds
+/// across consumers).
+fn use_storage() -> Rc<AppStorage> {
+    Owner::current()
+        .expect("use_storage requires an active Owner scope")
+        .cache("todomvc.storage", || AppStorage(build_app_storage()))
+}
+
+/// (R665 §3 §5.15) Dehydrated todomvc state. Single blob written to
+/// [`STORAGE_STATE_KEY`] so the [`FileStorage`] tempfile + rename
+/// guarantees cover the whole persistence transaction (no torn read
+/// where `todos` survived but `next_id` reverted).
+///
+/// `schema_version` is checked on load — mismatches start fresh
+/// (silent fall-through to defaults). Additive field changes can
+/// land via `#[serde(default)]` without bumping the version;
+/// removal / type changes bump [`PERSISTED_SCHEMA_VERSION`].
+///
+/// `editing_id` is intentionally **not** persisted. Per the
+/// `TasteJS` `TodoMVC` reference, edit mode is transient UI state
+/// scoped to a single user session — relaunching with a row still
+/// "in edit mode" would be surprising. Same rationale as why
+/// `next_id` is persisted but the current text in the new-todo
+/// `TextField` is not.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+struct PersistedState {
+    schema_version: u32,
+    todos: Vec<TodoItem>,
+    filter: FilterMode,
+    next_id: u64,
+}
+
+impl PersistedState {
+    /// Snapshot the current reactive store into a serializable blob.
+    /// Called by the save Effect on every observed `todos` / `filter`
+    /// change. The `next_id` read is non-reactive but always happens
+    /// *after* a `todos.set_with` in [`allocate_todo_id`] +
+    /// `push` — so the Effect's `todos.get()` subscription guarantees
+    /// the snapshot sees the freshest next-id alongside the todos.
+    fn snapshot(
+        todos: &Signal<Vec<TodoItem>>,
+        filter: &Signal<FilterMode>,
+        next_id: &Cell<u64>,
+    ) -> Self {
+        Self {
+            schema_version: PERSISTED_SCHEMA_VERSION,
+            todos: todos.get(),
+            filter: filter.get(),
+            next_id: next_id.get(),
+        }
+    }
+}
+
+/// (R665 §3 §5.15) Owns the persistence save [`Effect`] for the
+/// application's lifetime. `Owner::cache` returns `Rc<Self>` so the
+/// Effect handle is retained inside the cached slot — the Effect's
+/// `Rc<EffectInner>` is the only strong reference (the `Owner`
+/// cleanup queue holds only a `Weak`, R37.5 #2 leak fix), so
+/// dropping the handle on factory exit would GC the Effect and
+/// silently stop save fires. Caching this struct around the handle
+/// pins the Effect for as long as the framework's `root_owner`
+/// holds the cache slot.
+struct PersistenceBootMarker {
+    /// The save Effect — subscribes to `use_todos` + `use_filter` +
+    /// reads `use_next_todo_id` (non-reactive Cell, follows the
+    /// todos sub on every push). Underscore-prefixed because the
+    /// field is never read directly; its lifetime is the value.
+    _save_effect: Effect,
+}
+
+/// (R665 §3 §5.15) Run the persistence boot pass exactly once per
+/// `Owner`. First call:
+///
+/// 1. resolves the storage handle via [`use_storage`];
+/// 2. attempts to load [`STORAGE_STATE_KEY`] — on a hit the
+///    [`PersistedState`] is deserialized and used to seed the
+///    `Signal<Vec<TodoItem>>` / `Signal<FilterMode>` / `Cell<u64>`
+///    reactive stores (in that order — Signals first so the save
+///    Effect's eager initial pass sees the hydrated values);
+/// 3. installs an [`Effect`] that subscribes to the two Signals and
+///    writes a freshly-serialized [`PersistedState`] back to storage
+///    on every change. The Effect's owner is the framework's
+///    `root_owner`, so the Effect stays alive for the entire
+///    application lifetime (no manual cancellation needed).
+///
+/// Subsequent calls (e.g. a unit test that re-enters the same
+/// `Owner`) are no-ops — the cache dedup guarantees one boot pass
+/// per `Owner::cache` slot.
+///
+/// # Panics
+///
+/// Panics outside an `Owner::run(...)` scope (same shape as
+/// [`use_todos`]).
+fn use_persistence_boot() -> Rc<PersistenceBootMarker> {
+    // Resolve all dependent `Owner::cache` slots BEFORE entering the
+    // boot slot. `Owner::cache` holds a `RefCell` mutable borrow on
+    // its inner map for the duration of the factory closure; nested
+    // `Owner::cache` calls (e.g. `use_storage` inside the factory)
+    // would re-enter `borrow_mut` and panic. Pre-resolving here puts
+    // every dependent cache hit ahead of the outer borrow.
+    let storage = use_storage();
+    let todos = use_todos();
+    let filter = use_filter();
+    let next_id_cell = use_next_todo_id();
+    let owner = Owner::current().expect("use_persistence_boot requires an active Owner scope");
+    let owner_for_effect = owner.clone();
+
+    owner
+        .cache("todomvc.persistence.boot", move || {
+            // (1) Hydrate from disk. Load misses + schema mismatches
+            // silently fall through to defaults (the Signals stay at
+            // their `Owner::cache` factory seeds).
+            if let Some(bytes) = storage.load(STORAGE_STATE_KEY) {
+                match serde_json::from_slice::<PersistedState>(&bytes) {
+                    Ok(state) if state.schema_version == PERSISTED_SCHEMA_VERSION => {
+                        // Seed in single batch so Effect subscribers
+                        // observe one atomic update instead of three
+                        // partial writes ([[signal-batch-atomic-multi-axis-update]]).
+                        // The Effect itself is installed AFTER this
+                        // hydration block so the batch is observable
+                        // only by *future* Effects (currently none).
+                        pinion_core::reactive::batch(|| {
+                            todos.set(state.todos);
+                            filter.set(state.filter);
+                            next_id_cell.set(state.next_id);
+                        });
+                    }
+                    Ok(state) => {
+                        eprintln!(
+                            "todomvc: persisted schema {} ≠ supported {} \
+                             — starting fresh (saved state will be overwritten)",
+                            state.schema_version, PERSISTED_SCHEMA_VERSION,
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "todomvc: persisted state at {STORAGE_STATE_KEY:?} \
+                             failed to deserialize ({e}) — starting fresh",
+                        );
+                    }
+                }
+            }
+
+            // (2) Install the save Effect. Eager initial run also
+            // writes — idempotent on a freshly-hydrated state (the
+            // written bytes equal the loaded bytes), so one extra
+            // fsync at boot is the entire cost. The Effect's owner
+            // is `Owner::current()` (the framework's root_owner) so
+            // the Effect stays alive for the application lifetime.
+            let storage_e = storage.clone();
+            let todos_e = todos.clone();
+            let filter_e = filter.clone();
+            let next_id_e = next_id_cell.clone();
+            let save_effect = Effect::new(&owner_for_effect, move || {
+                let snapshot = PersistedState::snapshot(&todos_e, &filter_e, &next_id_e);
+                match serde_json::to_vec(&snapshot) {
+                    Ok(bytes) => storage_e.save(STORAGE_STATE_KEY, &bytes),
+                    Err(e) => eprintln!(
+                        "todomvc: persistence serialize failed ({e}); \
+                         this write was skipped",
+                    ),
+                }
+            });
+
+            PersistenceBootMarker { _save_effect: save_effect }
+        })
 }
 
 // R657 §5.16 §5.38 — saturating_f32_to_u32 lifted to
@@ -1873,6 +2136,16 @@ impl WidgetCore for TodoMvcView {
     ///   keep independent text + caret + clipboard state across the
     ///   focus transitions.
     fn create_extra_externals() -> Vec<ExtraExternal> {
+        // (R665 §3 §5.15) Persistence boot — runs ONCE per `Owner`.
+        // Hydrates `use_todos` / `use_filter` / `use_next_todo_id`
+        // from disk before any other hook resolves their cache slot,
+        // then installs a save Effect that fires on every subsequent
+        // change. Placed FIRST so the seeded Signals propagate into
+        // the rest of `create_extra_externals` (e.g. the filter
+        // group's initial selected index reads from the hydrated
+        // `use_filter()` snapshot).
+        let _persistence = use_persistence_boot();
+
         let todos = use_todos();
         let filter = use_filter();
         let scroll_state = use_scroll_state(LIST_SCROLL_KEY);

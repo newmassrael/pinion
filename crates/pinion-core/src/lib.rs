@@ -13,6 +13,7 @@ pub mod reactive;
 pub mod renderer;
 pub mod revision;
 pub mod scene;
+pub mod storage;
 pub mod style;
 pub mod theme;
 pub mod topology;
@@ -48,6 +49,7 @@ pub use reactive::{
 };
 pub use revision::SceneRevision;
 pub use scene::{HitPath, Scene};
+pub use storage::{InMemoryStorage, Storage};
 pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, Display, Fit, FlexDirection, FontStyle,
     FontWeight, ImageStyle, JustifyContent, LayoutStyle, LineHeight, PathStyle, Size, SizeValue,

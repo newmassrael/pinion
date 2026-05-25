@@ -14,6 +14,7 @@ members = [
     "crates/pinion-text-unicode",
     "crates/pinion-shell",
     "crates/pinion-platform-clipboard",
+    "crates/pinion-platform-storage",
     "crates/pinion-tui",
     "crates/pinion-widget-paint",
     "examples/hello-button",

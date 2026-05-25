@@ -127,6 +127,10 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+**Implementations**:
+- crates/pinion-platform-storage/src/lib.rs
+
+
 
 ### §4. First dogfood: target application requirements
 
@@ -598,6 +602,10 @@ Source: `docs/.atomic/workspace.atomic.json`
 - crates/pinion-core/src/external.rs:External::pointer_move
 - crates/pinion-core/src/external.rs:IntrospectValue::as_f32
 - crates/pinion-core/src/external.rs:IntrospectValue::as_i32
+- crates/pinion-core/src/storage.rs:Storage
+- crates/pinion-core/src/storage.rs:InMemoryStorage
+- crates/pinion-platform-storage/src/lib.rs:FileStorage
+- crates/pinion-platform-storage/src/lib.rs:open_app_storage
 
 
 
@@ -12665,6 +12673,42 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - EDIT_TF_TAG is unconditionally in focusable_tags so the programmatic focus_request succeeds; Tab order visits a ghost stop when no row is editing. Dynamic focusable_tags (per-paint refresh) is a substrate axis deferred until a 2nd consumer of conditional focus-stops surfaces per [[abstraction-needs-second-consumer]].
 - Per-item TextEditState multi-instance (dynamic Owner::cache key) deferred — single-slot reuse satisfies TasteJS canonical (one row editable at a time). Lift when a 2nd consumer of multi-row simultaneous edit surfaces.
 - SCE-004 (vendor/sce Forge codegen serde derive) honest carry — external dependency, R664 cannot land directly.
+
+
+
+### R665 — R665 §3 §5.15 — Storage substrate + pinion-platform-storage FileStorage + todomvc External(opaque) persistence cycle (Phase A advance 70%→~80%)
+
+**Changes**:
+- pinion-core::storage — new module. `Storage` trait (load/save/remove, total surface, bytes-only) + `InMemoryStorage` default impl (`RefCell<BTreeMap<String, Vec<u8>>>`). Mirror of `Clipboard` / `InMemoryClipboard` (R56.1.e §5.22) substrate-shape: trait + headless default in pinion-core, platform impl in a sibling crate. Re-exported through pinion_core::lib root (`Storage`, `InMemoryStorage`). 9 unit tests cover fresh-default / round-trip / overwrite / empty-bytes / remove / multi-key isolation / dyn polymorphism / binary payloads.
+- pinion-platform-storage — new workspace crate (16th). `FileStorage::try_new(root)` opens a per-app directory (idempotent `create_dir_all`); `Storage` impl writes via tempfile + flush + sync_all + atomic rename so POSIX `rename(2)` / Windows `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` covers the whole transaction (no torn half-writes). Strict key sanitization (`[A-Za-z0-9._-]` 1..=200) so the on-disk filename is a verbatim copy of the key — portable across OSes without escape encoding. `open_app_storage(name)` convenience wrapper composes `dirs::data_dir()` + `try_new` (Linux `$XDG_DATA_HOME/<name>/`, macOS `~/Library/Application Support/<name>/`, Windows `%APPDATA%\<name>\`). 15 unit tests cover round-trip / reopen persistence / atomic-write-no-leftover-tmp / list_keys exclude tempfiles / invalid-key rejection (traversal + separators + null + non-ASCII + whitespace + empty + oversize) / key validator + path helpers / dyn polymorphism / default_app_dir / open_app_storage end-to-end.
+- examples/todomvc — first consumer of the §3 External(opaque) escape hatch as persistence. `PersistedState { schema_version: u32, todos: Vec<TodoItem>, filter: FilterMode, next_id: u64 }` single-blob shape (atomic-write covers the whole transaction). `use_storage()` Owner::cache hook with `AppStorage(Box<dyn Storage>)` sized newtype (mirror of `AppClipboard`). `use_persistence_boot()` runs ONCE per Owner: (1) pre-resolves all dependent `Owner::cache` slots BEFORE entering the boot slot factory to avoid nested `RefCell::borrow_mut` panic; (2) loads `todomvc.state` from disk + deserializes via serde_json + schema-version-checks + seeds Signals via `pinion_core::reactive::batch`; (3) installs a save `Effect` retained in `PersistenceBootMarker { _save_effect: Effect }` — Effect's Rc<EffectInner> must be held because Owner cleanup queue stores only Weak (R37.5 #2 leak fix), dropping the handle silently GCs the Effect. `PINION_STORAGE_DIR` env var override path for test isolation; default = `pinion-todomvc` app dir. Fallback chain: env-override → app-dir → `InMemoryStorage` (headless CI / sandboxed containers wire up unchanged).
+- examples/todomvc::Cargo.toml — new dep `pinion-platform-storage`. Workspace Cargo.toml gains `crates/pinion-platform-storage` member entry; transitive `dirs = 5` cargo dep.
+- tools/demos/todomvc_r665.py — 46-assertion AI-first persistence cycle demo: boot-1 empty storage → 3 rows + toggle + filter cycle → on-disk blob shape validated (schema_version=1, todos array typed, filter='Active', next_id > max id) → atomic write contract (no `.tmp` leftovers) → relaunch process → persisted blob restores ids/text/completion via blob-read (filter-independent, paint tree is filter-dependent) → next_id resumes from persisted value (NOT max+1) → `editing_id` confirmed NOT persisted (transient UI state) → schema mismatch (v999) → defaults restored + blob rewritten → corrupted bytes → defaults restored → delete persistence cycle → filter mode (All/Active/Completed) cycles across relaunches → `PINION_STORAGE_DIR` env override path honoured end-to-end. Uses `tempfile.mkdtemp` for isolation; per-cycle subprocess spawn via `make_subprocess(storage_dir)` env-var injection.
+- docs/SEED_PROMPT.md — R665 land summary refresh: 직전 5 세션 = R661 → R665 (R660 falls out); 다음 텍스트북 캐논 = R666 (AI-first 12+ step E2E composite path + scene/invoke v1 multi-External addressing) instead of R664; honest 부채 carry update (text-decoration strikethrough R664 청산 ✓ / AT-action wire R664 청산 ✓ / native paint double-click R664 청산 ✓); R665 lessons added (Effect handle retention substrate quirk + nested Owner::cache panic + filter-dependent paint vs blob-read source-of-truth distinction); R666 Phase A 진척 ~85% → ~90% framing.
+
+
+
+**Verification**:
+- Workspace: PINION_STORAGE_DIR=/tmp/pinion-r665-test-isolation cargo test --workspace = 3352 passed / 0 failed (R664 baseline 3328 + 24 new — 9 pinion-core::storage + 15 pinion-platform-storage). Env override required because the default app-dir resolves to the developer's real `$XDG_DATA_HOME/pinion-todomvc/`.
+- Workspace: cargo clippy --workspace --all-targets --features pinion-runtime/vello = clean (pedantic deny baseline preserved across the new pinion-platform-storage crate + the todomvc persistence wiring).
+- Visible: cargo run --release -p todomvc — exit + relaunch preserves rows + completion flags + filter mode. First launch creates `$XDG_DATA_HOME/pinion-todomvc/todomvc.state` (or `PINION_STORAGE_DIR/todomvc.state`); subsequent launches restore from it.
+- AI-first verify: python3 tools/demos/todomvc_r665.py = PASS in 13.46s (46 assertions covering hydrate / save Effect / atomic write / schema-version mismatch / corrupted-bytes recovery / delete cycles / filter cycles / env-override).
+- Regression: R664 demo + R660 demo both PASS unchanged with PINION_STORAGE_DIR set (persistence transparent to upstream demos that don't observe storage).
+- Effect handle retention bug fixed inline: Owner::cleanup queue stores Weak<EffectInner> (R37.5 #2 leak fix), so the Effect handle returned from `Effect::new(&owner, ...)` MUST be held by the application — dropping it silently GCs the EffectInner and Signal subscriber lists' `Weak<dyn ReactiveNode>` becomes dangling, killing save fires. PersistenceBootMarker retains `Effect` field; cached via Owner::cache so the Effect lives as long as the framework's root_owner.
+- Nested Owner::cache panic fixed inline: Owner::cache holds `RefCell::borrow_mut` on its inner HashMap for the factory closure's duration; nested `Owner::cache` calls (use_storage / use_todos / etc. inside the boot factory) would re-enter `borrow_mut` and panic. Pre-resolution pattern: all dependent slots resolved BEFORE entering the outer boot slot factory. Generalizable substrate constraint, candidate new memory entry [[owner-cache-no-nested-factory]].
+
+
+
+**Impact**: §3, §5.15, §5.16, §5.23
+
+
+**Carry forward**:
+- R666 — AI driving 12+ step end-to-end composite-path workflow. `scene/invoke v0` is primary-External-only; multi-External path syntax (R690+ carry) is the inline-청산 candidate. 12+ step demo: add → toggle → filter → edit → commit → persist → cycle process → reload → verify across composite paths.
+- R667 — 2nd composed app (settings panel). 4th consumer of view_field + 4th consumer of view_vertical_scrollbar — substrate ROI curve fully positive confirmation. Phase A 종료 = 진짜 northern-star ~5-7% 도달.
+- Phase B entry (R700+) — Multi-window substrate. `pinion-shell::WindowManager` + `Scene::Window {id, content}` enum variant (or Window as Scene root wrapper). winit already multi-window-capable; DevTools / Inspector becomes the first consumer. R750+ widget catalog expansion (Menu/Dialog/Toolbar/Dock/TreeView/Table/RichText/Tabs/...) toward Qt/Flutter/Compose parity.
+- PersistenceBootMarker Effect-retention pattern — Rule of Three candidate. Any future Owner::cache slot installing an Effect for application-lifetime side-effects (R56.1.h CaretBlink? R51.150 future driver hooks?) faces the same Weak-vs-Strong owner cleanup queue trap. 2nd consumer would trigger lift to a `framework::OwnedEffect` helper that internalizes the retention discipline.
+- next_id Cell non-reactive read inside Effect — works because `allocate_todo_id` mutates Cell BEFORE the `todos.set_with` that fires the Effect subscription. If a future axis mutates `next_id` independently of `todos`, the save Effect won't fire and the persisted next_id drifts. Defensive guard: convert `use_next_todo_id` to `Signal<u64>` once a 2nd writer surfaces.
+- Schema migration path (additive vs breaking) — R665 lands schema_version=1. Future axes that add fields land additive via `#[serde(default)]` (no version bump). Type changes / field removal bump `PERSISTED_SCHEMA_VERSION` and the load path falls through to defaults (current behaviour — no real migrator). A proper migrator with field-mapping table lands when the first breaking-change axis demands it (YAGNI honest).
 
 
 

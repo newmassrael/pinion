@@ -1,0 +1,29 @@
+[package]
+name = "pinion-platform-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R665 §3 §5.15 — platform filesystem bridge for the pinion-core Storage trait. FileStorage routes the bytes-only key/value surface to a `$XDG_DATA_HOME` / `~/.local/share` (Linux) / `~/Library/Application Support` (macOS) / `%APPDATA%` (Windows) per-application directory, with atomic write-via-tempfile-and-rename + strict key sanitization."
+
+[dependencies]
+# R665 §3 §5.15 — `pinion_core::Storage` trait that this crate's
+# `FileStorage` second-consumer impl satisfies. Pinion's in-memory
+# first impl (`InMemoryStorage`) stays the headless / CI default;
+# this crate adds the platform-backed impl so todomvc + future
+# composed apps persist user state across launches.
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+
+# R665 §3 §5.15 — `dirs` is the canonical Rust crate for resolving
+# XDG / Apple / Windows known-folder paths (`data_dir()` returns
+# `$XDG_DATA_HOME` on Linux, `~/Library/Application Support` on
+# macOS, `%APPDATA%` on Windows). egui, iced, alacritty, helix all
+# consume it — same textbook decision as `arboard` for the
+# R56.2.b clipboard bridge ([[arboard-canonical-platform-clipboard]]
+# memory). `default-features` is already lean (no transitive
+# baggage) so no feature-trim needed.
+dirs = "5"
+
+[lints]
+workspace = true

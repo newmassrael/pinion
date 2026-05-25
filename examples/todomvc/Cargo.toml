@@ -33,6 +33,16 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # to `InMemoryClipboard` when the platform clipboard daemon is
 # unreachable (headless CI / broken display).
 pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
+# R665 §3 §5.15 — platform filesystem bridge for the `Storage`
+# trait. `FileStorage` writes the dehydrated `PersistedState`
+# (todos + filter mode + next id) to a per-app data directory
+# under `$XDG_DATA_HOME/pinion-todomvc/` (Linux) / equivalent on
+# macOS / Windows. Falls back to `InMemoryStorage` when the
+# platform data dir is unreachable (headless CI / sandbox) so
+# the rest of the binding wires up unchanged. `PINION_STORAGE_DIR`
+# env var overrides the per-app default — used by the R665 RPC
+# verify demo to point persistence at a tempdir.
+pinion-platform-storage = { path = "../../crates/pinion-platform-storage", version = "0.0.1" }
 # R56.1.b.2 §5.36 — `caret_rect_for_byte_offset` + `LayoutCache` for
 # the view fn's caret geometry lookup (shape text once per paint,
 # read cursor rect from the cached parley `Layout`).
