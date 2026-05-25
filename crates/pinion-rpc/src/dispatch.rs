@@ -602,11 +602,69 @@ impl<'a> DispatchContext<'a> {
 /// for notifications. Parse errors return a `Some(json)` carrying
 /// id=null per the spec.
 #[must_use]
+pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
+    // R671 §5.7 — `dispatch` parses the JSON-RPC envelope then forwards
+    // to [`dispatch_parsed`]. Pre-R671 the body was inline + every
+    // caller paid one parse cost; R671 splits the parse step out so
+    // surface-side AppShell code can parse once + extract
+    // out-of-band params (`{window: "<id>"}` per-window scope) +
+    // hand the same [`Request`] to the dispatcher (no double-parse).
+    // [`pinion_tui::ShellCoreTui::dispatch_rpc`] + tests + any other
+    // caller without an out-of-band parse keep going through this
+    // entry; the substrate refactor is opt-in.
+    let request = match parse_request(request_json) {
+        Ok(r) => r,
+        Err(resp) => return Some(resp),
+    };
+    dispatch_parsed(ctx, request)
+}
+
+/// R671 §5.7 — parse a JSON-RPC 2.0 envelope into a [`Request`].
+///
+/// Returns the parsed envelope on success. On parse failure returns
+/// the canonical JSON-RPC 2.0 `Parse error` (-32700) response body
+/// (id=null per the spec) ready to write back to the AI client. The
+/// `Err` payload is the serialized response string — callers either
+/// forward it as-is (the dispatcher path) or wrap it as the
+/// transport-level frame.
+///
+/// Sole public extract from [`dispatch`] for the R671 single-parse
+/// refactor: `AppShell` now parses the envelope once + extracts
+/// out-of-band `{window: "<id>"}` per-window scope from the parsed
+/// `Request.params` + hands the same `Request` to
+/// [`dispatch_parsed`].
+///
+/// # Errors
+///
+/// Returns `Err(serialized_response)` carrying the canonical
+/// JSON-RPC 2.0 `Parse error` (-32700) frame when `request_json` is
+/// not valid JSON or does not match the [`Request`] schema. The
+/// frame is ready to write back to the AI client.
+pub fn parse_request(request_json: &str) -> Result<Request, String> {
+    let parsed: Result<Request, _> = serde_json::from_str(request_json);
+    match parsed {
+        Ok(r) => Ok(r),
+        Err(e) => Err(serialize(&error_response(
+            None,
+            -32700,
+            "Parse error",
+            Some(Value::String(e.to_string())),
+        ))),
+    }
+}
+
+/// R671 §5.7 — dispatch a pre-parsed [`Request`] against the live
+/// context. Identical method routing as [`dispatch`] but skips the
+/// envelope parse step so callers that have already parsed the
+/// request (typically to extract out-of-band scope params like
+/// `{window: "<id>"}`) hand the same object through without paying
+/// a second parse.
+#[must_use]
 #[allow(
     clippy::too_many_lines,
     reason = "the routing match is the single source of truth for method names — growing with each method addition is the textbook canonical evolution path (currently 22 scene/* + 11 font/* + 1 text/* + 4 focus/*)"
 )]
-pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<String> {
+pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Option<String> {
     let scene: &mut Scene = &mut *ctx.scene;
     let previews: &PreviewLedger = ctx.previews;
     let revision: &SceneRevision = ctx.revision;
@@ -640,19 +698,6 @@ pub fn dispatch(ctx: &mut DispatchContext<'_>, request_json: &str) -> Option<Str
     // shell drains after the call returns so the InputRouter fires
     // outside the dispatcher's `&mut scene` borrow.
     let mut deferred_inputs = ctx.deferred_inputs.take();
-    let parsed: Result<Request, _> = serde_json::from_str(request_json);
-    let request = match parsed {
-        Ok(r) => r,
-        Err(e) => {
-            // Parse errors must respond with id=null per JSON-RPC 2.0.
-            return Some(serialize(&error_response(
-                None,
-                -32700,
-                "Parse error",
-                Some(Value::String(e.to_string())),
-            )));
-        }
-    };
 
     if request.jsonrpc != JSONRPC_V2 {
         return Some(serialize(&error_response(

@@ -50,7 +50,8 @@ pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
 };
 pub use dispatch::{
-    dispatch, DeferredInput, DispatchContext, Request, RequestId, Response, RpcError,
+    dispatch, dispatch_parsed, parse_request, DeferredInput, DispatchContext, Request, RequestId,
+    Response, RpcError,
 };
 pub use dry_run::{dry_run, DryRunError};
 pub use simulate::{simulate, SimulateError, SimulateStep};

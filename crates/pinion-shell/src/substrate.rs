@@ -43,7 +43,8 @@ use pinion_a11y::{
 use pinion_core::event::WheelDelta;
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
-    build_layout_node, dispatch, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
+    dispatch_parsed, parse_request, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
+    Request,
 };
 use pinion_runtime::{
     clamp_frame_dt, compute_layout, compute_layout_with_scroll_dirty, rect_for_tag,
@@ -907,72 +908,27 @@ impl<V: WidgetView> ShellCore<V> {
     /// to drive the pipeline. Pure with respect to substrate state
     /// modulo the timing field + `text_cache` LRU + the root owner's
     /// animation queue — every mutation is documented + tested.
-    /// R670.B §5.16 — per-window paint scene producer. Same pipeline
-    /// as [`Self::compute_paint_scene`] but routes through
-    /// [`WidgetView::view_for_window`](crate::WidgetView::view_for_window)
-    /// instead of `V::view` so multi-window bindings can render
-    /// different scenes per window (main view in the primary;
-    /// inspector tree in the secondary; …).
+    /// R671 §5.16 — single internal paint-scene producer used by both
+    /// [`Self::compute_paint_scene`] (single-window / primary path)
+    /// and [`Self::compute_paint_scene_for_window`] (multi-window
+    /// dispatch). `window_id == None` routes through `V::view`;
+    /// `Some(id)` routes through [`WidgetView::view_for_window`].
     ///
-    /// `window_id` is the canonical `&'static str` from the
-    /// binding's [`WindowSpec`](crate::WindowSpec) declaration —
-    /// typically `"main"` for the primary, application-defined names
-    /// for secondaries. Single-window bindings keep paying
-    /// [`Self::compute_paint_scene`] (forwards to `V::view` directly);
-    /// multi-window bindings + the [`AppShell::render_window`]
-    /// per-window dispatch go through here.
-    ///
-    /// Animation tick is shared with [`Self::compute_paint_scene`]
-    /// (one tick per ShellCore-instance per frame conceptually);
-    /// multi-window paints in the same event-loop iteration compound
-    /// the tick — a known carry to be addressed when a real
-    /// per-spec animation timing requirement surfaces. Today's first
-    /// dogfood (R670.B atomic 2 `hello-multi-window`) carries no
-    /// animations so the compounding is invisible.
-    pub fn compute_paint_scene_for_window(
+    /// Unifying the two producers permanently rules out parity drift:
+    /// every paint-pipeline side effect (tick, view, scroll-dirty
+    /// re-run, animation-loop heartbeat) is written in exactly one
+    /// place so future extensions (theme reactivity hooks, hot-reload
+    /// triggers, post-paint owner cleanup) can not be applied to one
+    /// variant only. R670.B mid-refactor regression (`todomvc_r665`
+    /// animation heartbeat) was the canonical signal; see
+    /// [[r670b-paint-scene-producer-parity]] for the long-form
+    /// post-mortem.
+    fn compute_paint_scene_internal(
         &mut self,
-        window_id: &str,
+        window_id: Option<&str>,
         w: u32,
         h: u32,
     ) -> Scene {
-        let now = Instant::now();
-        let raw_dt = self
-            .last_paint_instant
-            .map_or(0.0_f32, |prev| now.duration_since(prev).as_secs_f32());
-        self.last_paint_instant = Some(now);
-        let dt = clamp_frame_dt(raw_dt);
-        self.core.tick_animations(dt);
-        let frame = Frame::with_dt(dt);
-        let cached_state = *self.core.cached_state();
-        let mut paint_scene = self
-            .core
-            .root_owner()
-            .run(|| V::view_for_window(window_id, cached_state, &frame));
-        let scroll_dirty =
-            compute_layout_with_scroll_dirty(&mut paint_scene, &mut self.text_cache, w, h);
-        if scroll_dirty {
-            paint_scene = self
-                .core
-                .root_owner()
-                .run(|| V::view_for_window(window_id, cached_state, &frame));
-            compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
-        }
-        // R51.147 §5.28 — keep painting while any animation registered
-        // on the binding is still moving (mirror of
-        // [`Self::compute_paint_scene`] — both variants must observe
-        // the same animation-loop heartbeat). Without this, mid-
-        // animation frames would idle the surface until the next
-        // input event, which freezes spring transitions.
-        if self
-            .core
-            .any_animation_active(pinion_core::DEFAULT_REST_EPSILON)
-        {
-            self.redraw_requested = true;
-        }
-        paint_scene
-    }
-
-    pub fn compute_paint_scene(&mut self, w: u32, h: u32) -> Scene {
         let now = Instant::now();
         let raw_dt = self
             .last_paint_instant
@@ -989,15 +945,14 @@ impl<V: WidgetView> ShellCore<V> {
         let cached_state = *self.core.cached_state();
         // R51.146 §5.22 — wrap the view fn in `root_owner().run(...)`
         // so [`pinion_core::Owner::current`] resolves to this
-        // binding's root reactive scope from inside `V::view`.
-        // Animations / Effects / Commands created without an explicit
-        // [`Owner`] argument land on the framework-owned scope, dropping
-        // together with this shell. The wrap is the textbook Signal /
-        // Effect thread-local stack pattern; examples stay unchanged.
-        let mut paint_scene = self
-            .core
-            .root_owner()
-            .run(|| V::view(cached_state, &frame));
+        // binding's root reactive scope from inside `V::view` /
+        // `V::view_for_window`. Animations / Effects / Commands
+        // created without an explicit [`Owner`] argument land on the
+        // framework-owned scope, dropping together with this shell.
+        let mut paint_scene = self.core.root_owner().run(|| match window_id {
+            Some(id) => V::view_for_window(id, cached_state, &frame),
+            None => V::view(cached_state, &frame),
+        });
         let scroll_dirty =
             compute_layout_with_scroll_dirty(&mut paint_scene, &mut self.text_cache, w, h);
         // R57.X.scrollbar §5.45 — first-paint chicken-and-egg fix.
@@ -1015,10 +970,10 @@ impl<V: WidgetView> ShellCore<V> {
         // steady-state frames — Signal equality-skip floors
         // `scroll_dirty` at `false` and the guard short-circuits.
         if scroll_dirty {
-            paint_scene = self
-                .core
-                .root_owner()
-                .run(|| V::view(cached_state, &frame));
+            paint_scene = self.core.root_owner().run(|| match window_id {
+                Some(id) => V::view_for_window(id, cached_state, &frame),
+                None => V::view(cached_state, &frame),
+            });
             compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
         }
         // R51.147 §5.28 — keep painting while any animation registered
@@ -1036,6 +991,38 @@ impl<V: WidgetView> ShellCore<V> {
             self.redraw_requested = true;
         }
         paint_scene
+    }
+
+    /// R670.B §5.16 — per-window paint scene producer. Same pipeline
+    /// as [`Self::compute_paint_scene`] but routes through
+    /// [`WidgetView::view_for_window`](crate::WidgetView::view_for_window)
+    /// instead of `V::view` so multi-window bindings can render
+    /// different scenes per window (main view in the primary;
+    /// inspector tree in the secondary; …).
+    ///
+    /// `window_id` is the canonical `&'static str` from the
+    /// binding's [`WindowSpec`](crate::WindowSpec) declaration —
+    /// typically `"main"` for the primary, application-defined names
+    /// for secondaries.
+    ///
+    /// R671 §5.16: thin wrapper around
+    /// [`Self::compute_paint_scene_internal`]; the parity carry from
+    /// R670.B is permanently cleared by the unified producer.
+    pub fn compute_paint_scene_for_window(
+        &mut self,
+        window_id: &str,
+        w: u32,
+        h: u32,
+    ) -> Scene {
+        self.compute_paint_scene_internal(Some(window_id), w, h)
+    }
+
+    /// R671 §5.16 — primary / single-window paint scene producer. Thin
+    /// wrapper around [`Self::compute_paint_scene_internal`] with
+    /// `window_id == None`, which routes through `V::view` exactly
+    /// like the pre-R670.B implementation.
+    pub fn compute_paint_scene(&mut self, w: u32, h: u32) -> Scene {
+        self.compute_paint_scene_internal(None, w, h)
     }
 
     /// R51.80 §5.40 — build the inputs to
@@ -1083,15 +1070,27 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R51.80 §5.12 §5.35 — post-render bookkeeping.
     ///
-    /// Snapshots the just-rendered paint scene into the §5.12
-    /// `last_paint_layout` so an AI client's
-    /// `scene/layout {viewport: null}` reaches the actual frame; hands
-    /// the same scene to the [`InputRouter`] so the next pointer
-    /// event hit-tests against current geometry; refreshes cached
-    /// state and drains pending intents (winit input bypasses the
-    /// dispatcher, so the substrate has to close the loop here).
-    pub fn finalize_frame(&mut self, paint_scene: Scene) {
-        self.last_paint_layout = Some(build_layout_node(&paint_scene, "/0"));
+    /// Hands the rendered scene to the [`InputRouter`] so the next
+    /// pointer event hit-tests against current geometry; refreshes
+    /// cached state and drains pending intents (winit input bypasses
+    /// the dispatcher, so the substrate has to close the loop here).
+    /// The caller supplies the pre-built [`LayoutNode`] snapshot —
+    /// stored on `ShellCore.last_paint_layout` as the §5.12 primary
+    /// mirror for the [`Self::dispatch_rpc`] (no window scope) path.
+    ///
+    /// R671 §5.12 — pre-built `paint_layout` parameter. Pre-R671 this
+    /// method built the layout node itself by walking `paint_scene`.
+    /// R671 lifts the build to the caller ([`crate::AppShell::render_window`])
+    /// because that caller now also stores the same snapshot on the
+    /// per-window [`crate::WindowSlot::last_paint_layout`] field —
+    /// passing a pre-built [`LayoutNode`] avoids walking the paint
+    /// scene twice per frame. The `ShellCore` primary mirror is kept
+    /// for backward-compatible single-window `dispatch_rpc(...)`
+    /// (no window scope) callers; multi-window
+    /// [`Self::dispatch_rpc_for_window`] callers thread the per-slot
+    /// layout instead.
+    pub fn finalize_frame(&mut self, paint_scene: Scene, paint_layout: LayoutNode) {
+        self.last_paint_layout = Some(paint_layout);
         self.core.update_paint_scene(paint_scene);
         let tail = self.core.tail();
         self.handle_tail(&tail);
@@ -1199,31 +1198,65 @@ impl<V: WidgetView> ShellCore<V> {
     /// the `{window: "<id>"}` JSON-RPC frame param + resolves it
     /// against the per-window slot map before calling here.
     ///
+    /// R671 §5.12 — `slot_paint_layout` threads the per-window
+    /// last-painted [`LayoutNode`] snapshot through to the
+    /// dispatcher so `scene/layout {viewport: null, window: "<id>"}`
+    /// returns the layout that the *named* window last painted —
+    /// not the binding-wide primary mirror. `None` falls back to
+    /// `ShellCore.last_paint_layout` for backward compatibility with
+    /// single-binding callers that don't yet thread per-window
+    /// snapshots. The caller is [`crate::AppShell::dispatch_rpc`],
+    /// which holds `slot.last_paint_layout.as_ref()` from the
+    /// resolved [`crate::WindowSlot`].
+    ///
     /// Forwards to [`Self::dispatch_rpc`] semantically when the
-    /// `window_id` matches the binding's primary spec — the only
-    /// behavioural delta is which `WidgetView::view_for_window`
-    /// branch the paint producer runs.
+    /// `window_id` matches the binding's primary spec + `slot_paint_layout`
+    /// is `None` — the only behavioural delta is which
+    /// `WidgetView::view_for_window` branch the paint producer runs.
+    /// R671 §5.7 — per-window dispatch entry that accepts a
+    /// pre-parsed [`Request`]. `AppShell` parses the JSON-RPC envelope
+    /// once at the surface boundary + extracts out-of-band scope
+    /// (`{window: "<id>"}` per-window) from `request.params` + hands
+    /// the same `Request` here, eliminating the pre-R671 double-parse
+    /// (one parse for `params.window` sniffing, another inside
+    /// `pinion_rpc::dispatch`).
     pub fn dispatch_rpc_for_window(
         &mut self,
-        request: &str,
+        request: Request,
         window_id: &str,
+        slot_paint_layout: Option<&LayoutNode>,
         resize_request: &mut dyn FnMut(u32, u32),
     ) -> Option<String> {
-        self.dispatch_rpc_inner(request, Some(window_id), resize_request)
+        self.dispatch_rpc_inner(request, Some(window_id), slot_paint_layout, resize_request)
     }
 
+    /// R670.B §5.7 — single-window dispatch entry. Accepts the raw
+    /// JSON-RPC envelope; parses internally then forwards to
+    /// [`Self::dispatch_rpc_inner`]. Used by single-window bindings
+    /// (every non-multi-window example + the in-crate test harness)
+    /// that do not need out-of-band scope extraction; multi-window
+    /// callers should use [`Self::dispatch_rpc_for_window`] which
+    /// accepts a pre-parsed [`Request`] (R671 single-parse refactor).
     pub fn dispatch_rpc(
         &mut self,
         request: &str,
         resize_request: &mut dyn FnMut(u32, u32),
     ) -> Option<String> {
-        self.dispatch_rpc_inner(request, None, resize_request)
+        let parsed = match parse_request(request) {
+            Ok(r) => r,
+            // R51.83 §5.7 — parse-error frames carry id=null per the
+            // JSON-RPC 2.0 spec; the helper has already built the
+            // serialized response, so we just return it.
+            Err(err_resp) => return Some(err_resp),
+        };
+        self.dispatch_rpc_inner(parsed, None, None, resize_request)
     }
 
     fn dispatch_rpc_inner(
         &mut self,
-        request: &str,
+        request: Request,
         window_id: Option<&str>,
+        slot_paint_layout: Option<&LayoutNode>,
         resize_request: &mut dyn FnMut(u32, u32),
     ) -> Option<String> {
         // R51.73 §5.40 — sample focus before dispatch so we can
@@ -1259,7 +1292,13 @@ impl<V: WidgetView> ShellCore<V> {
             let revision = &self.revision;
             let focus_ptr = &mut self.focus;
             let text_cache_ptr = &mut self.text_cache;
-            let last_paint = self.last_paint_layout.as_ref();
+            // R671 §5.12 — per-window slot snapshot overrides the
+            // primary mirror. `dispatch_rpc_for_window` callers thread
+            // the [`crate::WindowSlot::last_paint_layout`] borrow in;
+            // the [`Self::dispatch_rpc`] (single-window) entry passes
+            // `None` and falls through to the binding-wide
+            // `ShellCore.last_paint_layout` exactly as pre-R671.
+            let last_paint = slot_paint_layout.or(self.last_paint_layout.as_ref());
             // R670.B §5.16 — per-window view fn dispatch. Single-
             // window paths (`window_id == None`) keep using `V::view`
             // exactly as before for bit-identical legacy behaviour;
@@ -1325,7 +1364,7 @@ impl<V: WidgetView> ShellCore<V> {
             // outside the dispatcher's `&mut scene` borrow.
             let mut deferred_inputs: Vec<pinion_rpc::DeferredInput> = Vec::new();
             ctx = ctx.with_deferred_inputs(&mut deferred_inputs);
-            let resp = dispatch(&mut ctx, request);
+            let resp = dispatch_parsed(&mut ctx, request);
             (resp, deferred_inputs)
         };
         let (resp, deferred_inputs) = resp;

@@ -53,6 +53,7 @@ use pinion_core::{Color, Frame, Scene, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::WidgetA11y;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
+use pinion_widget_paint::tree_view::{view_tree, TreeItem, TreeViewStyle};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
@@ -70,9 +71,6 @@ const INSPECTOR_H: u32 = 140;
 const BTN_W: u32 = 160;
 const BTN_H: u32 = 64;
 const LABEL_FONT_PX: u32 = 18;
-const HEADER_FONT_PX: u32 = 14;
-const VALUE_FONT_PX: u32 = 16;
-const ROW_GAP: u32 = 12;
 
 /// Shared `ThemeProvider` cache tag — main + inspector share one
 /// palette so a theme swap (e.g. an RPC `scene/theme_tokens`
@@ -84,10 +82,12 @@ const THEME_TAG: &str = "app";
 /// the scene root.
 const MAIN_BTN_TAG: &str = "main_btn";
 
-/// Tag the inspector window's state-debug text node carries. RPC
-/// clients can read the live state via
-/// `scene/snapshot {window: "inspector"}` and walk for this tag.
-const INSPECTOR_TEXT_TAG: &str = "inspector_state_text";
+/// R671 §5.16 §5.50 — root tag of the inspector window's `TreeView`.
+/// Composite-row tags are the form `inspector_tree#{path}` per the
+/// [[multi-external-substrate-extra-externals-pattern]] convention.
+/// `scene/snapshot {window: "inspector"}` walks down to per-row
+/// containers via this prefix.
+const INSPECTOR_TREE_TAG: &str = "inspector_tree";
 
 /// Main window paint — Button widget centred in the window. Mirrors
 /// `hello-button`'s view fn shape exactly (label + filled box +
@@ -143,59 +143,97 @@ fn view_main(state: ButtonState) -> Scene {
     )
 }
 
-/// Inspector window paint — header label ("Main button state:") +
-/// value text rendered from `format!("{:?}", state)`. Same
-/// `ShellCore` underlies both windows so the value text always
-/// matches whatever the main window painted on the most recent
-/// cycle (cached_state is read once per render_window via
-/// `compute_paint_scene_for_window`).
+/// R671 §5.16 §5.50 — `Inspector` window paint upgraded from a single
+/// state-debug `TextNode` to a `TreeView` mirror of the main window's
+/// live paint scene. Builds `view_main(state)` internally each paint
+/// cycle, walks the resulting `Scene` tree into a [`TreeItem`] model,
+/// and renders through [`view_tree`]. Same `ShellCore` underlies both
+/// windows so the inspector's tree refreshes whenever the main
+/// window's state changes (the next inspector paint observes the
+/// updated `cached_state` and rebuilds the tree).
+///
+/// First consumer of `pinion_widget_paint::tree_view` — proves the
+/// substrate against the AI-introspect-first northern-star (`DevTools`
+/// / `Inspector` is the canonical Phase B → Phase D bridge).
 fn view_inspector(state: ButtonState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let surface = theme.resolve(ColorRole::Surface);
-    let on_surface = theme.resolve(ColorRole::OnSurface);
-    let on_surface_muted = theme.resolve(ColorRole::OnSurfaceMuted);
-
-    let header = Scene::Text(TextNode::styled(
-        "Main button state:",
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(HEADER_FONT_PX)
-            .with_fg(on_surface_muted),
-    ));
-    let value = Scene::Text(TextNode::styled(
-        format!("{state:?}"),
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(VALUE_FONT_PX)
-            .with_fg(on_surface),
-    ));
-    // Wrap the value text in a Container so it carries a paint-side
-    // tag the RPC scene/snapshot walker can locate. Static text
-    // nodes without a tag are still readable through the JSON-RPC
-    // snapshot but tag-anchored lookup is the canonical AI-first
-    // path (mirrors every other binding's structural-element tag
-    // convention).
-    let value_with_tag = Scene::Container(
-        ContainerNode::new(vec![value])
-            .with_tag(INSPECTOR_TEXT_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center),
-            ),
-    );
-    Scene::Container(
-        ContainerNode::new(vec![header, value_with_tag])
-            .with_style(BoxStyle::filled(surface))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(ROW_GAP),
-            ),
+    let main_scene = view_main(state);
+    // R671 §5.50 — surface the live `ButtonState` variant as a
+    // dedicated leaf at the top of the tree so AI clients can read
+    // it through `scene/snapshot {window: "inspector"}` text-walk
+    // without having to parse the deeper button-rect / fill-colour
+    // structure. The composite-row tag this produces
+    // (`inspector_tree#state`) is the canonical RPC entry point for
+    // state introspection; the main scene tree underneath the
+    // `main` row carries the same information structurally.
+    let tree_items = vec![
+        TreeItem::leaf("state", format!("State: {state:?}")),
+        TreeItem::branch(
+            "main",
+            "main window scene",
+            true,
+            vec![scene_to_tree_item(&main_scene, "0")],
+        ),
+    ];
+    view_tree(
+        INSPECTOR_TREE_TAG,
+        &tree_items,
+        &theme,
+        &TreeViewStyle::m3_default(),
     )
+}
+
+/// R671 §5.16 — walk one `Scene` node into a [`TreeItem`]. Containers
+/// become branches whose `label` shows the variant + tag (when
+/// tagged); text nodes become leaves carrying the rendered content;
+/// every other variant carries a minimal "variant name" leaf.
+///
+/// `id` carries the path through the parent tree (`"0"` at root, then
+/// `"0/0"`, `"0/0/1"` etc. per the JSON-Pointer-style convention RPC
+/// `scene/snapshot` uses). All branches default to `expanded = true`
+/// so the inspector shows the full main scene tree the moment it
+/// boots; collapse + multi-select are 2nd-consumer carries
+/// per [[abstraction-needs-second-consumer]].
+fn scene_to_tree_item(scene: &Scene, id: &str) -> TreeItem {
+    match scene {
+        Scene::Container(c) => {
+            let tag_segment = c
+                .tag
+                .as_deref()
+                .map_or(String::new(), |t| format!(" [{t}]"));
+            let label = format!("Container{tag_segment}");
+            let children: Vec<TreeItem> = c
+                .children
+                .iter()
+                .enumerate()
+                .map(|(idx, child)| {
+                    let child_id = format!("{id}/{idx}");
+                    scene_to_tree_item(child, &child_id)
+                })
+                .collect();
+            TreeItem::branch(id.to_owned(), label, true, children)
+        }
+        Scene::Text(t) => {
+            let label = format!("Text: {:?}", t.content);
+            TreeItem::leaf(id.to_owned(), label)
+        }
+        Scene::External(e) => {
+            let tag_segment = e
+                .tag
+                .as_deref()
+                .map_or(String::new(), |t| format!(" [{t}]"));
+            TreeItem::leaf(id.to_owned(), format!("External{tag_segment}"))
+        }
+        Scene::Box(_) => TreeItem::leaf(id.to_owned(), "Box"),
+        Scene::Path(_) => TreeItem::leaf(id.to_owned(), "Path"),
+        Scene::Image(_) => TreeItem::leaf(id.to_owned(), "Image"),
+        Scene::Effect(_) => TreeItem::leaf(id.to_owned(), "Effect"),
+        Scene::Scroll(_) => TreeItem::leaf(id.to_owned(), "Scroll"),
+        // `pinion_core::Scene` is `#[non_exhaustive]`; any future
+        // variant lands here as an opaque leaf so the inspector
+        // never panics on an unknown node.
+        _ => TreeItem::leaf(id.to_owned(), "(unknown variant)"),
+    }
 }
 
 /// Binding carrier. `MultiWindowView` carries no fields — every
@@ -377,14 +415,19 @@ mod r670_b_multi_window_tests {
     }
 
     #[test]
-    fn r670_b_view_for_window_inspector_contains_state_text_tag() {
+    fn r671_view_for_window_inspector_carries_tree_root_tag() {
+        // R671 §5.16 — inspector window upgraded from the single
+        // [`Container`] tagged `inspector_state_text` to a
+        // [`pinion_widget_paint::tree_view::view_tree`] root tagged
+        // [`INSPECTOR_TREE_TAG`]. Pin the new tag so a regression
+        // that drops the TreeView wiring surfaces immediately.
         let owner = pinion_core::Owner::new();
         let scene = owner.run(|| {
             MultiWindowView::view_for_window("inspector", ButtonState::Hover, &Frame::new())
         });
         assert!(
-            scene.contains_tag(INSPECTOR_TEXT_TAG),
-            "inspector view must carry the {INSPECTOR_TEXT_TAG:?} tag for RPC scene/snapshot",
+            scene.contains_tag(INSPECTOR_TREE_TAG),
+            "inspector view must carry the {INSPECTOR_TREE_TAG:?} tag for RPC scene/snapshot",
         );
     }
 

@@ -115,6 +115,20 @@ struct WindowSlot<R: VelloRenderer> {
     /// addition rather than a coupled write+read change.
     #[allow(dead_code, reason = "R670.B atomic 1 reads spec_id for view_for_window dispatch")]
     spec_id: &'static str,
+    /// R671 §5.12 §5.16 — per-window last-painted [`LayoutNode`]
+    /// snapshot. R670.B's single `ShellCore.last_paint_layout` was
+    /// binding-wide (the last window to paint wrote into it), which
+    /// made `scene/layout {viewport: null, window: "<id>"}` return
+    /// whichever window painted most recently rather than the
+    /// addressed window. R671 lifts the snapshot per-slot so each
+    /// window keeps its own last-painted layout independently;
+    /// `AppShell::render_window` writes here after each paint cycle,
+    /// and `AppShell::dispatch_rpc` reads here when resolving the
+    /// `{window: "<id>"}` JSON-RPC param. The substrate's
+    /// `ShellCore.last_paint_layout` is kept as the primary mirror
+    /// for backward-compatible single-window callers
+    /// (`ShellCore::dispatch_rpc` without a window scope).
+    last_paint_layout: Option<pinion_rpc::LayoutNode>,
 }
 
 /// The framework-side shell. Generic over a widget binding
@@ -273,21 +287,29 @@ impl<V: WidgetView> AppShell<V> {
     /// stdout. Headless tests call `ShellCore::dispatch_rpc` directly
     /// with a no-op closure.
     fn dispatch_rpc(&mut self, request: &str) {
-        // R670.B §5.16 — per-window RPC scope. The substrate side
-        // (`ShellCore::dispatch_rpc`) already plumbs a paint producer
-        // closure; R670.B threads a `window_id` choice into that
-        // closure so multi-window bindings can answer `scene/snapshot
-        // {window: "inspector"}` against the inspector window's view
-        // fn (not the primary's). The id is parsed off the JSON-RPC
-        // params here (the substrate stays winit-free; reading the
-        // window scope is a surface-side responsibility).
-        //
-        // Pre-extract the id from the JSON-RPC envelope so we don't
-        // re-parse inside the producer closure. JSON parse failure
-        // falls through to the substrate which reports the wire-level
-        // error.
-        let window_id_choice = parse_rpc_window_id(request)
-            .unwrap_or_else(|| String::from("main"));
+        // R671 §5.7 §5.16 — single-parse per-window RPC dispatch.
+        // Pre-R671 (R670.B) AppShell parsed the JSON-RPC envelope
+        // *twice*: once to sniff `params.window` (the per-window
+        // scope) + once inside `pinion_rpc::dispatch` for actual
+        // routing. R671 parses once via `pinion_rpc::parse_request`
+        // + extracts the window scope from `Request.params` + hands
+        // the same `Request` to the substrate which forwards to
+        // `pinion_rpc::dispatch_parsed`. Parse errors short-circuit
+        // here + we write the canonical -32700 frame to stdout.
+        let parsed_request = match pinion_rpc::parse_request(request) {
+            Ok(r) => r,
+            Err(err_resp) => {
+                let mut out = std::io::stdout().lock();
+                let _ = writeln!(out, "{err_resp}");
+                return;
+            }
+        };
+        let window_id_choice = parsed_request
+            .params
+            .as_ref()
+            .and_then(|p| p.get("window"))
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| String::from("main"), str::to_owned);
         let resolved_spec_id = self.resolve_spec_id(&window_id_choice);
         // R670.B §5.16 — primary-window-scoped `scene/resize` (the
         // resize closure still targets the primary window; per-window
@@ -312,9 +334,25 @@ impl<V: WidgetView> AppShell<V> {
                 window.request_redraw();
             }
         };
+        // R671 §5.12 — resolve the addressed window's
+        // [`WindowSlot::last_paint_layout`] so the substrate's
+        // dispatcher answers `scene/layout {viewport: null}` against
+        // the *named* window's last paint (not the binding-wide
+        // primary mirror). The lookup walks `spec_id_to_window_id`
+        // first (resolved_spec_id is a canonical spec id; the slot
+        // map is keyed by winit `WindowId`); fallback `None` leaves
+        // the substrate reading its primary mirror exactly as
+        // pre-R671 / single-window callers.
+        let slot_layout_owned: Option<pinion_rpc::LayoutNode> = self
+            .spec_id_to_window_id
+            .iter()
+            .find(|(id, _)| **id == resolved_spec_id.as_str())
+            .and_then(|(_, win_id)| self.windows.get(win_id))
+            .and_then(|slot| slot.last_paint_layout.clone());
         let resp = self.core.dispatch_rpc_for_window(
-            request,
+            parsed_request,
             &resolved_spec_id,
+            slot_layout_owned.as_ref(),
             &mut resize_req,
         );
         if let Some(resp) = resp {
@@ -546,10 +584,27 @@ impl<V: WidgetView> AppShell<V> {
         // R56.2.c §5.13 §5.38 — push IME candidate window position
         // to the platform IME (per-window since R670.B).
         self.publish_ime_for_window(window_id, &paint_scene);
-        // R51.80 §5.12 §5.35 — snapshot the rendered scene + hand it
-        // to the input router + refresh state + drain intents in one
-        // method.
-        self.core.finalize_frame(paint_scene);
+        // R671 §5.12 §5.16 — build the per-window layout snapshot
+        // exactly once, before `finalize_frame` consumes the paint
+        // scene. The single build feeds both the per-slot
+        // `last_paint_layout` (multi-window `scene/layout {window:
+        // "<id>"}` reads from here through `AppShell::dispatch_rpc`)
+        // and the `ShellCore.last_paint_layout` primary mirror that
+        // backs single-window `dispatch_rpc(...)` callers. The slot
+        // gets a clone — `LayoutNode` is `Clone` and the cost is
+        // proportional to the painted tree size (small for the
+        // current widget catalog; the next big consumer is the
+        // DevTools/Inspector axis which already buys this cost).
+        let paint_layout = pinion_rpc::build_layout_node(&paint_scene, "/0");
+        if let Some(slot) = self.windows.get_mut(&window_id) {
+            slot.last_paint_layout = Some(paint_layout.clone());
+        }
+        // R51.80 §5.12 §5.35 — hand the rendered scene + the pre-
+        // built layout snapshot to the substrate. `finalize_frame`
+        // refreshes the input router + intent drain in one method
+        // and stores the layout on `ShellCore.last_paint_layout` as
+        // the primary mirror.
+        self.core.finalize_frame(paint_scene, paint_layout);
     }
 
     /// R670.B §5.16 — per-window IME candidate publish helper.
@@ -784,6 +839,7 @@ impl<V: WidgetView> AppShell<V> {
                         last_ime_cursor_area: None,
                         pending_intrinsic_resize,
                         spec_id: spec.id,
+                        last_paint_layout: None,
                     },
                 );
                 self.spec_id_to_window_id.insert(spec.id, window_id);
@@ -813,6 +869,7 @@ impl<V: WidgetView> AppShell<V> {
             last_ime_cursor_area: None,
             pending_intrinsic_resize,
             spec_id: spec.id,
+            last_paint_layout: None,
         };
         self.windows.insert(window_id, slot);
         self.spec_id_to_window_id.insert(spec.id, window_id);
@@ -1108,26 +1165,6 @@ fn named_key_str(named: NamedKey) -> Option<&'static str> {
         NamedKey::Space => Some("Space"),
         _ => None,
     }
-}
-
-/// R670.B §5.16 — extract `{window: "<id>"}` from a JSON-RPC frame's
-/// params, if present. Returns `Some(id)` when the frame parses as
-/// JSON, has a `params` object, and that object carries a
-/// string-valued `window` key. Any other shape (no params, params
-/// not an object, missing window, non-string window) returns `None`
-/// + the embedder defaults to the primary spec.
-///
-/// Uses `serde_json` lazily — JSON parse failure here falls through
-/// to the substrate's own `dispatch` parse + error report, so the
-/// AI client still sees the canonical "invalid JSON-RPC frame"
-/// envelope.
-fn parse_rpc_window_id(request: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(request).ok()?;
-    value
-        .get("params")?
-        .get("window")?
-        .as_str()
-        .map(str::to_owned)
 }
 
 /// Background thread: read JSON-RPC 2.0 lines from stdin and forward

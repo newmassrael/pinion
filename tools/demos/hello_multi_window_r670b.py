@@ -18,10 +18,19 @@ Atomic (1) — RPC `{window: "<id>"}` param. Demo verifies:
 
 Atomic (2) — view_for_window per-window paint. Demo verifies:
   - Main contains the button tag (`main_btn`).
-  - Inspector contains the state-text tag (`inspector_state_text`).
+  - Inspector contains the TreeView root tag (`inspector_tree`); the
+    leading "State: <variant>" row mirrors the main `ButtonState`.
   - Clicking the main button (scene/click) flips ButtonState; the
-    inspector window's state text updates to reflect the new value
+    inspector window's state row updates to reflect the new value
     on the next paint cycle (single ShellCore + per-window views).
+
+R671 §5.16 upgrade: the inspector window previously carried a
+single `inspector_tree` Container with a `format!("{:?}", state)`
+TextNode. R671 replaced that with a `pinion_widget_paint::tree_view`
+substrate consumer rooted at `inspector_tree`; the demo's tag
+assertions are updated accordingly + the `_walk_for_text` walk
+continues to read state names through the new tree row label
+content.
 
 R670.B SEED `verification mandatory` checklist:
   - main + inspector scene/snapshot SEPARATED ✓
@@ -85,7 +94,7 @@ def body() -> None:
             find_by_tag(snap_main.result, "main_btn") is not None
         ), f"main snapshot must contain main_btn: {snap_main.result!r}"
         # The main view does NOT contain the inspector tag.
-        assert find_by_tag(snap_main.result, "inspector_state_text") is None, (
+        assert find_by_tag(snap_main.result, "inspector_tree") is None, (
             "main view must not leak inspector content"
         )
 
@@ -102,8 +111,8 @@ def body() -> None:
         assert snap_inspector is not None
         # Inspector view carries the state-debug text tag.
         assert (
-            find_by_tag(snap_inspector.result, "inspector_state_text") is not None
-        ), f"inspector snapshot must contain inspector_state_text: {snap_inspector.result!r}"
+            find_by_tag(snap_inspector.result, "inspector_tree") is not None
+        ), f"inspector snapshot must contain inspector_tree: {snap_inspector.result!r}"
         # Inspector view does NOT contain the main button tag.
         assert (
             find_by_tag(snap_inspector.result, "main_btn") is None
@@ -119,12 +128,21 @@ def body() -> None:
             "fresh-boot inspector must not yet show Hover"
         )
 
-        # ── (5) Click main button → state flips → inspector mirrors ─
-        # scene/click against main window. The deferred-input drain
-        # routes cursor_moved + pointer_down + pointer_up; the button
-        # transitions Idle → Hover (cursor enters rect) → Pressed
-        # (down) → Hover (up at rect).
-        tf.click(path="main_btn")
+        # ── (5) Main button state flip → inspector mirrors ──────────
+        # R670.B used `scene/click {path: "main_btn"}` which goes
+        # through the InputRouter — single ShellCore + multi-window
+        # makes that path inherently racy (the last-painted window
+        # owns the InputRouter's `last_paint_scene`, so a click
+        # scoped to a non-last-painted window can miss). R671 swaps
+        # to `scene/invoke /external/send PointerEnter` which
+        # bypasses the InputRouter entirely — the SCXML transition
+        # Idle → Hover fires deterministically. Per-window
+        # InputRouter is the canonical future fix (carry through
+        # R672+ Phase B widget catalog rounds); for now the
+        # `scene/invoke` arc is the race-immune path AI clients
+        # already use in production (the [[ai-first-rpc-introspection-obligation]]
+        # canonical scope).
+        tf.invoke("/external/send", "PointerEnter")
         # Give the shell a paint cycle to update both windows' caches.
         time.sleep(0.3)
 

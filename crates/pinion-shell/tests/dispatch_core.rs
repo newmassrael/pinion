@@ -1045,7 +1045,12 @@ fn r51_80_finalize_frame_snapshots_layout() {
 
     let mut core = ShellCore::<TestView>::new();
     let scene = core.compute_paint_scene(64, 32);
-    core.finalize_frame(scene);
+    // R671 §5.12 — caller now supplies the pre-built layout (the
+    // build moved out of `finalize_frame` to avoid a redundant scene
+    // walk per paint cycle; production callers build once + reuse
+    // for the per-window slot snapshot too).
+    let layout = pinion_rpc::build_layout_node(&scene, "/0");
+    core.finalize_frame(scene, layout);
 
     // The §5.12 last-paint snapshot drives RPC `scene/layout
     // {viewport: null}` — finalize must populate it so the AI client
@@ -1056,7 +1061,8 @@ fn r51_80_finalize_frame_snapshots_layout() {
     // indirect — re-running finalize_frame again must remain safe
     // and idempotent.)
     let scene2 = core.compute_paint_scene(64, 32);
-    core.finalize_frame(scene2);
+    let layout2 = pinion_rpc::build_layout_node(&scene2, "/0");
+    core.finalize_frame(scene2, layout2);
 }
 
 #[test]
