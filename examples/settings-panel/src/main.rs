@@ -43,14 +43,17 @@ use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{batch, Effect, Owner, Signal};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::storage::{InMemoryStorage, Storage};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme, ThemeMode};
 use pinion_core::widgets::caret_blink::CaretBlink;
+use pinion_core::widgets::checkbox::{CheckboxExternal, CheckboxState};
 use pinion_core::widgets::radio::RadioState;
+use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExternal};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::widgets::slider::{SliderExternal, SliderState};
 use pinion_core::widgets::text_edit::TextEditState;
@@ -62,6 +65,8 @@ use pinion_core::{
 use pinion_core::InMemoryClipboard;
 use pinion_platform_storage::open_app_storage;
 use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_widget_paint::checkbox::{view_checkbox, CheckboxStyle};
+use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::text_field as tf_paint;
 use pinion_widget_paint::text_field::TextFieldStyle;
 
@@ -135,6 +140,36 @@ const NAV_TAG: &str = "nav_rail";
 const THEME_TOGGLE_TAG: &str = "theme_toggle";
 /// Font scale slider `ExtraExternal` tag.
 const FONT_SLIDER_TAG: &str = "font_slider";
+/// (R669) Notifications-section `CheckboxExternal` base tag — each
+/// of the [`NOTIFICATION_COUNT`] channels uses one of the
+/// [`NOTIF_INSTANCE_TAGS`] entries (composite-tag substrate per
+/// R55.D.5) for its instance. The base tag itself is reserved for
+/// the section's root container so `Scene::contains_tag` /
+/// `rect_for_tag` queries find the cluster as a whole.
+const NOTIF_TAG_BASE: &str = "notifications";
+
+/// (R669) Per-channel composite-tag instances. Static `&'static str`
+/// array so [`ExtraExternal::new`] can carry the slot without
+/// runtime allocation — `format!("{NOTIF_TAG_BASE}#{i}")` would
+/// produce a `String` whose lifetime cannot satisfy the trait's
+/// `&'static str` argument without a `Box::leak`. Tying the tag
+/// inventory to a const array also pins it in one place for the
+/// composite-tag substrate's [[composite-tag-parse_send_payload]]
+/// consumer to keep the index ordering aligned with
+/// [`NOTIFICATION_LABELS`].
+const NOTIF_INSTANCE_TAGS: [&str; NOTIFICATION_COUNT] = [
+    "notifications#0",
+    "notifications#1",
+    "notifications#2",
+    "notifications#3",
+    "notifications#4",
+    "notifications#5",
+];
+/// (R669) Notifications-section `ScrollBarExternal` tag — the 4th
+/// `pinion-widget-paint::scrollbar` consumer (hello-listbox = 1st,
+/// todomvc = 2nd, settings-panel detail pane is potential 3rd,
+/// notifications cluster is the realised 4th).
+const NOTIF_SCROLLBAR_TAG: &str = "notifications_scrollbar";
 
 /// Root owner cache key for the [`ThemeProvider`]. `"app"` matches
 /// the convention shared with `hello-toggle` / `hello-theme` /
@@ -142,10 +177,16 @@ const FONT_SLIDER_TAG: &str = "font_slider";
 /// the example gallery.
 const THEME_TAG: &str = "app";
 
-/// Persistence schema bump (R665 mirror). v1 because the schema has
-/// not shipped before; subsequent breaking edits must bump this and
-/// implement a migrator (carry until first breaking change).
-const PERSISTED_SCHEMA_VERSION: u32 = 1;
+/// Persistence schema bump (R665 mirror). R669 raised v1 → v2 to
+/// add the `notifications: [bool; 6]` field for the 6-channel
+/// `CheckboxExternal` cluster ([`view_notifications_section`]). The
+/// hydrate path's [`migrate_v1_to_v2`] back-fills the missing
+/// `notifications` field on v1 saves so existing users do not lose
+/// their nav-index / dark-mode / font-scale / display-name on
+/// upgrade — the migrator is the R665 schema-migrator carry's first
+/// implementation, the textbook canonical pattern for every future
+/// breaking-change axis.
+const PERSISTED_SCHEMA_VERSION: u32 = 2;
 const STORAGE_APP_NAME: &str = "pinion-settings-panel";
 const STORAGE_STATE_KEY: &str = "state.json";
 
@@ -153,12 +194,54 @@ const STORAGE_STATE_KEY: &str = "state.json";
 /// the first paint reads visually centred.
 const DEFAULT_FONT_SCALE: f32 = 0.5;
 
+/// (R669 §5.15) — number of `CheckboxExternal` slots in the
+/// Notifications section. Named so the `NotificationChannel`
+/// labels, the `composite-tag` indices (`notif#0`..`notif#5`), and
+/// the `notifications: [bool; NOTIFICATION_COUNT]` persistence slot
+/// all derive from one source.
+const NOTIFICATION_COUNT: usize = 6;
+
+/// (R669) — Notifications channel labels. Order matches the persisted
+/// `notifications: [bool; NOTIFICATION_COUNT]` array index; reordering
+/// or renaming is a breaking schema change (would need v2 → v3 bump
+/// + a migrator that walks the previous-order array).
+const NOTIFICATION_LABELS: [&str; NOTIFICATION_COUNT] = [
+    "Email — transactional",
+    "Push — mobile alerts",
+    "Marketing — newsletter",
+    "Digest — weekly roll-up",
+    "Security — sign-in alerts",
+    "Feedback — user research invites",
+];
+
+/// (R669) — first-install / v1-upgrade defaults for the 6 channels.
+/// Transactional + security default on (canonical platform defaults);
+/// marketing + digest default off. Mirrors Apple Mail / Gmail default
+/// per Material 3 a11y "least surprise on first install".
+const NOTIFICATION_DEFAULTS: [bool; NOTIFICATION_COUNT] = [
+    true,  // Email — transactional
+    true,  // Push — mobile alerts
+    false, // Marketing — newsletter
+    false, // Digest — weekly roll-up
+    true,  // Security — sign-in alerts
+    false, // Feedback — user research invites
+];
+
 // ─── persistence state ────────────────────────────────────────────
 
 /// Serializable snapshot of every persisted setting. Single-blob
 /// schema (R665 [[r665-storage-substrate]] convention) — atomic
 /// load + save through one `Storage::save` call keeps the on-disk
 /// state consistent across crashes.
+///
+/// R669 §5.15 — `notifications` field added at schema v2. Existing
+/// v1 saves on disk skip the field (serde rejects strict
+/// missing-field decode); the hydrate path explicitly tries the v2
+/// shape first, then falls back to [`SettingsPersistedStateV1`] +
+/// [`migrate_v1_to_v2`] when v1 is on disk. The migrator pattern is
+/// the R665 schema-migrator carry's first implementation; every
+/// future schema bump follows the same `try-current → fallback-prev
+/// → migrate` shape.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SettingsPersistedState {
     schema_version: u32,
@@ -166,6 +249,40 @@ struct SettingsPersistedState {
     dark_mode: bool,
     font_scale: f32,
     display_name: String,
+    /// (R669) per-channel on/off flags. Array index follows
+    /// [`NOTIFICATION_LABELS`] ordering — reordering or renaming
+    /// labels is a breaking change that bumps to v3 + ships a
+    /// shape-preserving v2 → v3 migrator.
+    notifications: [bool; NOTIFICATION_COUNT],
+}
+
+/// R669 §5.15 — explicit shape of v1-on-disk records (`notifications`
+/// field missing). Only used inside the hydrate fallback path; never
+/// serialised again (the next save writes the v2 shape).
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+struct SettingsPersistedStateV1 {
+    schema_version: u32,
+    nav_index: u32,
+    dark_mode: bool,
+    font_scale: f32,
+    display_name: String,
+}
+
+/// R669 §5.15 — back-fill the v1-shape record with the
+/// [`NOTIFICATION_DEFAULTS`] so the v2 codepath does not need
+/// branched-shape handling beyond this single boundary. The
+/// returned [`SettingsPersistedState`] carries the bumped
+/// `schema_version` so the next `save` round-trips through the v2
+/// serialiser cleanly (no double-bump risk on subsequent reads).
+fn migrate_v1_to_v2(v1: SettingsPersistedStateV1) -> SettingsPersistedState {
+    SettingsPersistedState {
+        schema_version: PERSISTED_SCHEMA_VERSION,
+        nav_index: v1.nav_index,
+        dark_mode: v1.dark_mode,
+        font_scale: v1.font_scale,
+        display_name: v1.display_name,
+        notifications: NOTIFICATION_DEFAULTS,
+    }
 }
 
 impl SettingsPersistedState {
@@ -174,13 +291,23 @@ impl SettingsPersistedState {
         dark: &Signal<bool>,
         scale: &Cell<f32>,
         name: &Signal<String>,
+        notifications: &[Rc<Signal<bool>>; NOTIFICATION_COUNT],
     ) -> Self {
+        // R669 — materialise the [bool; N] array from the 6 signal
+        // handles. `Signal::get` subscribes the calling Effect, so
+        // any channel flip triggers the save Effect to re-fire and
+        // persist the new array.
+        let mut bits = [false; NOTIFICATION_COUNT];
+        for (i, sig) in notifications.iter().enumerate() {
+            bits[i] = sig.get();
+        }
         Self {
             schema_version: PERSISTED_SCHEMA_VERSION,
             nav_index: nav.get(),
             dark_mode: dark.get(),
             font_scale: scale.get(),
             display_name: name.get(),
+            notifications: bits,
         }
     }
 }
@@ -278,6 +405,50 @@ fn use_display_name() -> Rc<Signal<String>> {
     owner.cache("settings_panel.display_name", || Signal::new(String::new()))
 }
 
+/// (R669 §5.15) — per-channel `Signal<bool>` slot for the
+/// Notifications cluster. Wrapped in a Rust newtype so
+/// [`Owner::cache`] gets a single concrete `V` (per
+/// [[owner-cache-typed-key]]) instead of an array of `Rc`s that the
+/// cache slot would type-erase.
+struct NotificationChannels {
+    signals: [Rc<Signal<bool>>; NOTIFICATION_COUNT],
+}
+
+impl NotificationChannels {
+    fn new() -> Self {
+        // R669 — initial values are [`NOTIFICATION_DEFAULTS`]; the
+        // persistence hydrate path overrides via `set` once the v2
+        // record reads back (or via the v1→v2 migrator's bit-array
+        // fallback for first-install / upgrade boots).
+        Self {
+            signals: std::array::from_fn(|i| {
+                Rc::new(Signal::new(NOTIFICATION_DEFAULTS[i]))
+            }),
+        }
+    }
+}
+
+#[must_use]
+fn use_notification_channels() -> Rc<NotificationChannels> {
+    let owner = Owner::current().expect(
+        "use_notification_channels requires an active Owner scope",
+    );
+    owner.cache("settings_panel.notifications", NotificationChannels::new)
+}
+
+/// (R669 §5.45) — per-notifications-section `ScrollState` slot. 4th
+/// `ScrollBarExternal` consumer; hosts the
+/// [[scrollbar-interaction-signal-substrate]] tracking the
+/// scrollbar interaction state (idle / hover / dragging) the M3
+/// state-layer ramp reads. Delegates to the canonical framework
+/// hook so cache-key collisions across consumers are impossible
+/// (the framework hook prefixes its slot with the per-tag
+/// namespace).
+#[must_use]
+fn use_notif_scrollbar() -> Rc<ScrollState> {
+    pinion_core::widgets::scroll::use_scroll_state(NOTIF_SCROLLBAR_TAG)
+}
+
 #[must_use]
 fn use_text_edit_state(tag: &'static str) -> Rc<TextEditState> {
     let owner = Owner::current().expect("use_text_edit_state requires an active Owner scope");
@@ -306,61 +477,96 @@ fn use_settings_persistence() -> Rc<PersistenceBootMarker> {
     let dark = use_dark_mode();
     let scale = use_font_scale();
     let name = use_display_name();
+    let notif = use_notification_channels();
     let display_name_text_state = use_text_edit_state(PROFILE_TF_TAG);
     let owner = Owner::current().expect("use_settings_persistence requires an active Owner scope");
     let owner_for_effect = owner.clone();
     owner.cache("settings_panel.persistence.boot", move || {
-            // (1) Hydrate.
+            // (1) Hydrate. R669 §5.15 — try the current v2 shape
+            // first; on `serde` reject (missing `notifications`
+            // field) fall back to the explicit v1 shape and run
+            // [`migrate_v1_to_v2`]. Either path lands a fully-
+            // populated [`SettingsPersistedState`]. Schema-version
+            // mismatch beyond the v1→v2 chain (future v3+) takes
+            // the "start fresh" arm so the user does not get
+            // partial-state corruption.
             if let Some(bytes) = storage.load(STORAGE_STATE_KEY) {
-                match serde_json::from_slice::<SettingsPersistedState>(&bytes) {
-                    Ok(state) if state.schema_version == PERSISTED_SCHEMA_VERSION => {
-                        batch(|| {
-                            nav.set(state.nav_index);
-                            dark.set(state.dark_mode);
-                            scale.set(state.font_scale);
-                            name.set(state.display_name.clone());
-                        });
-                        // R668 §5.38 — push the persisted font scale
-                        // into the new text_scale substrate so the
-                        // first paint already reflects the user's
-                        // saved a11y zoom. Mapping mirrors the
-                        // slider-driven path: slider value v →
-                        // text_scale 0.5 + v * 1.5.
-                        let target_scale =
-                            0.5_f32 + state.font_scale.clamp(0.0, 1.0) * 1.5_f32;
-                        pinion_core::text_scale::set_text_scale(target_scale);
-                        // Push the hydrated name into the TextField's
-                        // edit state so the visible field reflects
-                        // the persisted value on first paint. (The
-                        // Signal carries the canonical string; the
-                        // TextEditState owns the caret + selection.)
-                        display_name_text_state.set_text(state.display_name);
-                    }
-                    Ok(state) => {
-                        eprintln!(
-                            "settings-panel: persisted schema {} ≠ supported {} \
-                             — starting fresh (saved state will be overwritten)",
-                            state.schema_version, PERSISTED_SCHEMA_VERSION,
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "settings-panel: persisted state at {STORAGE_STATE_KEY:?} \
-                             failed to deserialize ({e}) — starting fresh",
-                        );
-                    }
+                let state_opt: Option<SettingsPersistedState> =
+                    match serde_json::from_slice::<SettingsPersistedState>(&bytes) {
+                        Ok(state)
+                            if state.schema_version == PERSISTED_SCHEMA_VERSION =>
+                        {
+                            Some(state)
+                        }
+                        Ok(state) => {
+                            eprintln!(
+                                "settings-panel: persisted schema {} \u{2260} supported {} \
+                                 \u{2014} starting fresh (saved state will be overwritten)",
+                                state.schema_version, PERSISTED_SCHEMA_VERSION,
+                            );
+                            None
+                        }
+                        Err(_) => {
+                            // R669 — v2 decode failed; try v1 +
+                            // migrate before declaring corruption.
+                            match serde_json::from_slice::<SettingsPersistedStateV1>(&bytes) {
+                                Ok(v1) if v1.schema_version == 1 => {
+                                    Some(migrate_v1_to_v2(v1))
+                                }
+                                Ok(v1) => {
+                                    eprintln!(
+                                        "settings-panel: v1-shape record carries unexpected \
+                                         schema_version {}; starting fresh",
+                                        v1.schema_version,
+                                    );
+                                    None
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "settings-panel: persisted state at \
+                                         {STORAGE_STATE_KEY:?} failed to deserialize as \
+                                         v2 or v1 ({e}) \u{2014} starting fresh",
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                    };
+                if let Some(state) = state_opt {
+                    let display_text = state.display_name.clone();
+                    let notif_bits = state.notifications;
+                    batch(|| {
+                        nav.set(state.nav_index);
+                        dark.set(state.dark_mode);
+                        scale.set(state.font_scale);
+                        name.set(state.display_name);
+                        for (i, sig) in notif.signals.iter().enumerate() {
+                            sig.set(notif_bits[i]);
+                        }
+                    });
+                    // R668 §5.38 — push persisted font scale into
+                    // the text_scale substrate.
+                    let target_scale =
+                        0.5_f32 + state.font_scale.clamp(0.0, 1.0) * 1.5_f32;
+                    pinion_core::text_scale::set_text_scale(target_scale);
+                    display_name_text_state.set_text(display_text);
                 }
             }
-            // (2) Install save Effect — subscribes to dark + name
-            // Signals (Cells aren't reactive; the Signal subscribers
-            // observe their snapshot through the Effect closure).
+            // (2) Install save Effect. Subscribes to dark + name +
+            // each notification Signal so any flip triggers a re-
+            // serialise. font_scale Cell + nav_index Cell stay
+            // outside the reactive graph; the dark / name re-fire
+            // tricks in `update` flush them through this Effect.
             let storage_e = storage.clone();
             let nav_e = nav.clone();
             let dark_e = dark.clone();
             let scale_e = scale.clone();
             let name_e = name.clone();
+            let notif_e = notif.clone();
             let save_effect = Effect::new(&owner_for_effect, move || {
-                let snap = SettingsPersistedState::snapshot(&nav_e, &dark_e, &scale_e, &name_e);
+                let snap = SettingsPersistedState::snapshot(
+                    &nav_e, &dark_e, &scale_e, &name_e, &notif_e.signals,
+                );
                 match serde_json::to_vec(&snap) {
                     Ok(bytes) => storage_e.save(STORAGE_STATE_KEY, &bytes),
                     Err(e) => eprintln!(
@@ -781,7 +987,26 @@ fn view_profile_section(
     )
 }
 
-fn view_notifications_section(theme: &Theme) -> Scene {
+/// (R669 §5.15 §5.45 §5.50) — 6-channel Notifications section. Pins
+/// the M3 a11y "Notifications" pattern (Apple HIG / Material 3 list-
+/// of-switches), composing one [`view_checkbox`] row per channel
+/// inside a [`Scene::Scroll`] viewport so an arbitrary channel
+/// count is supported without breaking the detail-pane layout. The
+/// 4th [`ScrollBarExternal`] consumer rides this section's viewport.
+///
+/// `interactions` carries each channel's SCXML statechart projection
+/// (Idle / Hover / Pressed / Disabled) freshly walked from the
+/// state scene by [`read_notification_states`]; `checked_bits`
+/// carries the per-channel `bool` from the channel's
+/// `use_notification_channels().signals[i]` (the reactive ground
+/// truth — the External's `value` slot mirrors it via the seed in
+/// [`SettingsPanelView::create_extra_externals`] + the `value_changing`
+/// reducer in [`SettingsPanelView::update`]).
+fn view_notifications_section(
+    theme: &Theme,
+    interactions: [CheckboxState; NOTIFICATION_COUNT],
+    checked_bits: [bool; NOTIFICATION_COUNT],
+) -> Scene {
     let title = Scene::Text(TextNode::styled(
         "Notifications",
         Rect::default(),
@@ -789,36 +1014,134 @@ fn view_notifications_section(theme: &Theme) -> Scene {
             .with_size_px(TITLE_FONT_PX)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
-    let body_label = |text: &'static str| {
-        Scene::Text(TextNode::styled(
-            text,
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(LABEL_FONT_PX)
-                .with_fg(theme.resolve(ColorRole::OnSurface)),
-        ))
-    };
-    let rows: Vec<Scene> = vec![
-        title,
-        body_label("Email: enabled"),
-        body_label("Push: enabled"),
-        body_label("Marketing: disabled"),
-        Scene::Text(TextNode::styled(
-            "Interactive toggles carry to R668 (Phase A => B transition).",
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(STATUS_FONT_PX)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        )),
-    ];
-    Scene::Container(
+    let checkbox_style = CheckboxStyle::m3_filled();
+    let rows: Vec<Scene> = NOTIF_INSTANCE_TAGS
+        .iter()
+        .enumerate()
+        .map(|(i, tag)| {
+            view_checkbox(
+                tag,
+                interactions[i],
+                checked_bits[i],
+                theme,
+                &checkbox_style,
+                NOTIFICATION_LABELS[i],
+            )
+        })
+        .collect();
+    let list = Scene::Container(
         ContainerNode::new(rows).with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Column)
                 .with_align_items(AlignItems::Start)
-                .with_gap(ROW_GAP),
+                .with_gap(NOTIF_ROW_GAP),
         ),
+    );
+    let scroll_state = use_notif_scrollbar();
+    let viewport = Scene::Scroll(ScrollNode::from_state(
+        scroll_state.clone(),
+        Rect::new(0, 0, NOTIF_VIEWPORT_W, NOTIF_VIEWPORT_H),
+        list,
+    ));
+    let scrollbar_interaction = use_scrollbar_interaction(NOTIF_SCROLLBAR_TAG);
+    let scrollbar_style =
+        VerticalScrollbarStyle::material(NOTIF_VIEWPORT_H, NOTIF_SCROLLBAR_TAG);
+    let scrollbar_visual = view_vertical_scrollbar(
+        &scroll_state,
+        theme,
+        &scrollbar_style,
+        scrollbar_interaction.get(),
+    );
+    let scroll_region = Scene::Container(
+        ContainerNode::new(vec![viewport, scrollbar_visual])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![title, scroll_region])
+            .with_tag(NOTIF_TAG_BASE)
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Start)
+                    .with_gap(ROW_GAP),
+            ),
     )
+}
+
+/// (R669) M3-defined viewport dimensions for the notifications
+/// scrollable list. 6 channels × (~48 px row + 8 px gap) ≈ 336 px;
+/// viewport at 280 px guarantees overflow on every Phase A render
+/// so the 4th [`ScrollBarExternal`] consumer is exercised.
+const NOTIF_VIEWPORT_W: u32 = 480;
+const NOTIF_VIEWPORT_H: u32 = 280;
+/// Gap between notifications rows in logical pixels. Tighter than
+/// the section-level [`ROW_GAP`] because the rows themselves carry
+/// the M3 checkbox row's internal padding.
+const NOTIF_ROW_GAP: u32 = 8;
+
+/// (R669 §5.15) — read the per-channel SCXML state for the 6
+/// `CheckboxExternal`s from the live state scene. The composite-tag
+/// substrate stores each channel under its composite path
+/// ([`NOTIF_INSTANCE_TAGS`]); [`Scene::find_external_with_tag`]
+/// resolves the per-channel handle and the standard introspect
+/// "state" slot carries the SCXML projection.
+///
+/// Returns `Idle` for channels whose External is not yet wired
+/// (during the create-then-paint window) or whose introspect channel
+/// is opted out. The bool sidecar lives in the
+/// [`use_notification_channels`] Signal handles — view fn reads it
+/// from there, not from the external — so this walker only carries
+/// the interaction-state half.
+fn read_notification_states(
+    scene: &Scene,
+) -> [CheckboxState; NOTIFICATION_COUNT] {
+    let mut out = [CheckboxState::Idle; NOTIFICATION_COUNT];
+    for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
+        if let Some(node) = scene.find_external_with_tag(tag) {
+            if let Some(intro) = node.handle.introspect() {
+                if let Some(IntrospectValue::Text(s)) = intro.query("state") {
+                    out[i] = parse_checkbox_state(&s);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// (R669 §5.15) — read the per-channel `checked` value sidecar
+/// directly from each [`CheckboxExternal`]'s `value` slot. The
+/// SCXML statechart is the post-click source of truth (the
+/// statechart's `Click` arc flips the slot internally); the
+/// reactive [`use_notification_channels`] Signal handles mirror it
+/// via [`SettingsPanelView::update`] only after the intent fires.
+/// Reading from the External in [`SettingsPanelView::read_state`]
+/// keeps the path Owner-scope-free (mirrors
+/// [`read_notification_states`]) since the framework does not wrap
+/// `read_state` in `root_owner.run` per the canonical
+/// non-reactive-snapshot contract.
+fn read_notification_checked(
+    scene: &Scene,
+) -> [bool; NOTIFICATION_COUNT] {
+    let mut out = [false; NOTIFICATION_COUNT];
+    for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
+        if let Some(node) = scene.find_external_with_tag(tag) {
+            if let Some(intro) = node.handle.introspect() {
+                if let Some(IntrospectValue::Bool(v)) = intro.query("value") {
+                    out[i] = v;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn parse_checkbox_state(name: &str) -> CheckboxState {
+    match name {
+        "Hover" => CheckboxState::Hover,
+        "Pressed" => CheckboxState::Pressed,
+        "Disabled" => CheckboxState::Disabled,
+        _ => CheckboxState::Idle,
+    }
 }
 
 fn view_actions_section(theme: &Theme) -> Scene {
@@ -855,7 +1178,7 @@ fn view_actions_section(theme: &Theme) -> Scene {
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "8 state slots match the root tuple — see RootState"
+    reason = "10 state slots match the root tuple — see RootState"
 )]
 fn view_detail_pane(
     theme: &Theme,
@@ -866,12 +1189,14 @@ fn view_detail_pane(
     slider_value: f32,
     field_state: TextFieldState,
     caret_byte: u32,
+    notif_states: [CheckboxState; NOTIFICATION_COUNT],
+    notif_checked: [bool; NOTIFICATION_COUNT],
 ) -> Scene {
     let body = match nav_index {
         0 => view_theme_section(theme, toggle_state, on),
         1 => view_appearance_section(theme, slider_state, slider_value),
         2 => view_profile_section(theme, field_state, caret_byte),
-        3 => view_notifications_section(theme),
+        3 => view_notifications_section(theme, notif_states, notif_checked),
         // The nav `RadioGroup` snaps to a valid index; the `_` arm
         // covers section index 4 (Actions) plus `u32::MAX` overflow.
         _ => view_actions_section(theme),
@@ -905,11 +1230,26 @@ type RootState = (
     bool,
     SliderState,
     f32,
+    // R669 §5.15 — per-channel notifications projection. SCXML state
+    // array walked from the live state scene; bool array snapshot
+    // from the [`use_notification_channels`] Signal handles.
+    [CheckboxState; NOTIFICATION_COUNT],
+    [bool; NOTIFICATION_COUNT],
 );
 
 #[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_arguments)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
-    let (field_state, caret_byte, nav, toggle_state, on, slider_state, slider_value) = state;
+    let (
+        field_state,
+        caret_byte,
+        nav,
+        toggle_state,
+        on,
+        slider_state,
+        slider_value,
+        notif_states,
+        notif_checked,
+    ) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     // R668 §5.38 — subscribe the view fn to the a11y text-scale
     // signal so dragging the slider live-previews every
@@ -931,6 +1271,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         slider_value,
         field_state,
         caret_byte,
+        notif_states,
+        notif_checked,
     );
     Scene::Container(
         ContainerNode::new(vec![nav_pane, detail])
@@ -1028,6 +1370,7 @@ impl WidgetCore for SettingsPanelView {
         let nav_idx = use_nav_index();
         let dark = use_dark_mode();
         let scale = use_font_scale();
+        let notif = use_notification_channels();
 
         // Seed the nav RadioGroup with the persisted index so the
         // first paint highlights the right section.
@@ -1054,11 +1397,54 @@ impl WidgetCore for SettingsPanelView {
             IntrospectValue::Float(f64::from(scale.get().clamp(0.0, 1.0))),
         );
 
-        vec![
+        // R669 §5.15 — 6 CheckboxExternal instances, one per
+        // notifications channel. composite-tag `notifications#0`..
+        // `notifications#5` so the input router dispatches per
+        // channel independently while the section's root container
+        // still carries the cluster's collective `notifications`
+        // tag for scrollbar viewport hit-tests.
+        //
+        // Each external seeded with the hydrated Signal value so the
+        // first paint paints the right state (checked vs unchecked)
+        // even before any user interaction. CheckboxExternal
+        // canonical `value` slot mirrors the bool sidecar; the
+        // R654 [[r653-state-flags-bool-field]] retrofit makes this
+        // the single-source-of-truth path.
+        let mut notif_externals: Vec<ExtraExternal> =
+            Vec::with_capacity(NOTIFICATION_COUNT);
+        for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
+            let mut ext = CheckboxExternal::new();
+            let _ = ext.intervene(
+                "value",
+                IntrospectValue::Bool(notif.signals[i].get()),
+            );
+            // R55.D.5 composite-tag: shell paint router walks the
+            // base tag + parses the suffix per-row; the const
+            // `&'static str` slot satisfies `ExtraExternal::new`
+            // without a runtime allocation.
+            notif_externals.push(ExtraExternal::new(tag, Box::new(ext)));
+        }
+
+        // R669 §5.45 — 4th `ScrollBarExternal` consumer (notifications
+        // viewport overflow). attach_state binds the same
+        // `ScrollState` the section's `view_vertical_scrollbar` paint
+        // walker reads, so drag interactions on the visible thumb
+        // mutate the shared `ScrollState::offset` slot and the next
+        // paint walks the new offset. attach_interaction wires the
+        // M3 thumb state-layer ramp (idle → hover → dragging).
+        let notif_scroll_state = use_notif_scrollbar();
+        let notif_scrollbar = ScrollBarExternal::new()
+            .attach_state(notif_scroll_state)
+            .attach_interaction(use_scrollbar_interaction(NOTIF_SCROLLBAR_TAG));
+
+        let mut all = vec![
             ExtraExternal::new(NAV_TAG, Box::new(nav_group)),
             ExtraExternal::new(THEME_TOGGLE_TAG, Box::new(theme_toggle)),
             ExtraExternal::new(FONT_SLIDER_TAG, Box::new(font_slider)),
-        ]
+            ExtraExternal::new(NOTIF_SCROLLBAR_TAG, Box::new(notif_scrollbar)),
+        ];
+        all.append(&mut notif_externals);
+        all
     }
 
     fn read_state(scene: &Scene) -> RootState {
@@ -1066,6 +1452,15 @@ impl WidgetCore for SettingsPanelView {
         let nav = read_nav_radio_states(scene);
         let (toggle_state, on) = read_theme_toggle(scene);
         let (slider_state, slider_value) = read_font_slider(scene);
+        // R669 — both halves walked from the live state scene:
+        // SCXML interaction state via `read_notification_states`,
+        // checked sidecar via `read_notification_checked`. The
+        // reactive Signal handles are mirrors that V::update keeps
+        // in sync with the External (canonical post-click flip
+        // authority); reading from the External here keeps
+        // read_state Owner-scope-free per the framework contract.
+        let notif_states = read_notification_states(scene);
+        let notif_checked = read_notification_checked(scene);
         (
             field_state,
             caret,
@@ -1074,6 +1469,8 @@ impl WidgetCore for SettingsPanelView {
             on,
             slider_state,
             slider_value,
+            notif_states,
+            notif_checked,
         )
     }
 
@@ -1162,6 +1559,29 @@ impl WidgetCore for SettingsPanelView {
                 // trick as nav_index above).
                 let dark = use_dark_mode();
                 dark.set(dark.get());
+            }
+        }
+        // R669 §5.15 — Notifications channel toggle. CheckboxExternal
+        // canonical `checked` intent fires on PointerUp /
+        // KeyboardActivate inside the SCXML statechart; the payload
+        // carries the post-flip bool ([[intent-payload-post-flip-authority]]).
+        // The intent tag has the composite-tag shape
+        // `notifications#{i}.checked` per
+        // [[composite-tag-parse_send_payload]].
+        for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
+            // The intent_tag! macro requires `&'static str` literals
+            // so we build the composite tag at runtime + compare.
+            // O(NOTIFICATION_COUNT) per intent dispatch — N=6, no
+            // measurable overhead. `(*tag)` deref + format! holds the
+            // composite shape `notifications#{i}.checked` matching
+            // [[composite-tag-parse_send_payload]].
+            let expected = format!("{tag}.checked");
+            if intent.tag.as_ref() == expected {
+                if let IntrospectValue::Bool(checked) = intent.payload {
+                    let notif = use_notification_channels();
+                    notif.signals[i].set(checked);
+                }
+                break;
             }
         }
         Vec::new()

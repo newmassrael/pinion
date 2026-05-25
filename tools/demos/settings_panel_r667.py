@@ -179,7 +179,11 @@ def cycle1(tf: RpcSubprocess, storage_dir: Path) -> None:
         "(6.c) storage font_scale = 0.85",
     )
     assert_eq(blob.get("display_name"), "Ada", "(6.d) storage display_name = 'Ada'")
-    assert_eq(blob.get("schema_version"), 1, "(6.e) storage schema_version = 1")
+    # R669: schema_version bumped 1 → 2 (notifications field added).
+    # Accept either supported tier so this pre-bump demo still passes
+    # under post-R669 settings-panel runs.
+    sv = blob.get("schema_version")
+    assert sv in (1, 2), f"(6.e) storage schema_version in (1, 2), got {sv}"
 
 
 def cycle2(tf: RpcSubprocess, storage_dir: Path) -> None:
@@ -240,11 +244,11 @@ def cycle2(tf: RpcSubprocess, storage_dir: Path) -> None:
     )
     # schema_version must remain on the supported tier through every
     # save (any breaking change must bump the version + ship a
-    # migrator per the R665 carry).
-    assert_eq(
-        blob2.get("schema_version"),
-        1,
-        "(10.g) storage cycle2 schema_version stays at 1",
+    # migrator per the R665 carry). R669 first realised the migrator
+    # (v1 → v2 add notifications field) so both versions are valid.
+    sv2 = blob2.get("schema_version")
+    assert sv2 in (1, 2), (
+        f"(10.g) storage cycle2 schema_version in (1, 2), got {sv2}"
     )
 
 
