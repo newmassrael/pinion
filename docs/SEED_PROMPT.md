@@ -2,7 +2,7 @@
 
 > **R675 land (2026-05-26, commit `e1d8817`)** — TreeRowClickExternal substrate lift (R674 binding-level `FileTreeRowExternal` → `pinion_widget_paint::tree_view::TreeRowClickExternal`) + DevTools/SceneInspector first interactive dogfood. [[abstraction-needs-second-consumer]] Rule-of-Three gate fired: hello-multi-window inspector is 2nd consumer (hello-tree-view = 1st), substrate now homes the External next to view_tree / view_tree_focused. Cross-window state-sync via shared `Signal<Option<String>>` selected_path (use_selected_path() Owner::cache hook); inspector click → V::update reducer mirrors into Signal → main window paints "Selected: {path}" banner; inspector tree row paints M3 focus state-layer on selected row. First **Phase D editor dogfood** structurally complete — AI driving cross-window state via `/inspector_tree/external/click` typed shortcut produces same observable result as human click. 17 R674 binding tests migrated to substrate behavior-identity preserved. **R676 is the next round** — DevTools cascade continuation (highlight overlay in main window + property pane / hover bridge / bidirectional select). R663.5 canonical baseline 유지.
 >
-> **다음 세션 진입**: `load` 단독 입력. SEED 의 【시작 명령】 절 (R676 atomic list — DevTools highlight-overlay + property pane) 자동 진행. 모든 atomic 은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지. 매 atomic 종료 시 cargo test + clippy + 16-demo regression sweep 검증 후 다음 atomic 진입.
+> **다음 세션 진입**: `load` 단독 입력. SEED 의 【시작 명령】 절 (R676 atomic list — path-stable indexing 부채 청산 + DevTools highlight-overlay 1st cut) 자동 진행. 모든 atomic 은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지. 매 atomic 종료 시 cargo test + clippy + 16-demo regression sweep 검증 후 다음 atomic 진입.
 >
 > R675 가중 진척: Phase A 97% + Phase B 25% × ~20% (TreeRowClickExternal substrate maturity + 14 widgets in catalog) + Phase D 35% × ~1% (first cross-window state-sync dogfood = editor outliner→viewport bridge prerequisite) = 북극성 가중 **~12.5-13%**. R676+ DevTools cascade (highlight overlay + property pane + hover bridge + bidirectional select) targets ~13-14%.
 >
@@ -602,58 +602,99 @@ R673 carry (R674 진입 전 평가):
 
 【시작 명령】
 
-R674 = **R673 carry inline 청산 (click-to-expand + per-row TreeItem AccessNodes) + Phase B widget catalog substrate maturity**. 4 atomic land (정확한 순서 — substrate-first, carry-clearance-first).
+R676 = **R675 architectural 부채 즉시 청산 (path-stable indexing scheme) + DevTools highlight-overlay 1st cut**. 4 atomic land — debt-clearance-first + substrate-first 정통 ordering. R675 가 surface한 진짜 부채를 inline 청산한 다음에 highlight overlay가 textbook canonical하게 동작.
 
-**진입 시 즉시 진행 (load 명령 / `R674 진행` 입력 시 자동 시작)**:
+**R675 honest 부채 surface (R676 inline 청산 mandatory)**:
+- `scene_to_tree_item`의 path scheme `"0/2/1"`은 sibling-index 기반이라 banner 등장/소실 시 path shift (selection 등장 → banner 추가 → button index 0→1로 shift, 동일 path `"0/0"`이 다른 element 가리킴). highlight overlay / property pane / hover bridge 모두 stable path 없이는 brittle. **이 부채를 R676 (0)에서 청산하지 않으면 모든 후속 DevTools 작업이 fragile하게 빌드됨** — [[r47-class-incident-prevention]] textbook 원칙 적용.
+
+**진입 시 즉시 진행 (load 명령 / `R676 진행` 입력 시 자동 시작)**:
 - 모든 atomic은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지
-- 각 substrate atomic 종료 시 cargo test + clippy + 14-demo regression sweep PASS 검증 후 다음 atomic 진입
+- 각 substrate atomic 종료 시 cargo test + clippy + 16-demo regression sweep PASS 검증 후 다음 atomic 진입
 - 마지막 atomic (3) 에서 demo + commit + Mnemosyne entry 한꺼번에
 - 라운드 중간 commit 금지 (1 commit = 1 round 원칙) — WIP는 stash 또는 sequence keep
-- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R674.A) — but 우선 4 atomic 모두 한 라운드 land 시도
+- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R676.A) — but 우선 4 atomic 모두 한 라운드 land 시도
 - 매 라운드 끝 push 권한 명시 동의 필요 (CLAUDE.md 영구 원칙)
 
-**R674 atomic land 순서** (carry-clearance-first + substrate-first, northern-star 정렬):
+**R676 atomic land 순서** (debt-clearance-first + substrate-first, northern-star Phase D 정렬):
 
-(0) **TreeView row click-to-toggle External substrate** (R673 carry 1순위 청산) — 새 External widget that listens on a tag prefix (`file_tree` 등) + 어디까지나 composite tag suffix를 SCXML event payload로 전달. 후보 선택:
-   - 안: 새 `pinion_core::widgets::tree_row_router::TreeRowRouterExternal` (SCXML state machine: Idle → Pressed → Idle + click intent). 1st consumer hello-tree-view 의 paint scene에 ExtraExternal로 mount. composite_tag::parse_send_payload 6번째 substrate consumer (todomvc 5-of-5 위에서 +1) → substrate maturity tier 정통 입성
-   - 또는: TodoDeleteExternal 패턴을 따라 binding-level `FileTreeRowExternal` 1st-consumer로 시작, 2nd-consumer 등장 시 lift ([[abstraction-needs-second-consumer]]) — 더 보수적 substrate-first 선택
-   - **권장**: binding-level FileTreeRowExternal (R674 1st-consumer), pinion_widget_paint 로의 lift는 R675+ 시점 자연스럽게 (lift 비용 inline 청산 가능). 단, R674 끝에 honest carry로 명시: "FileTreeRowExternal의 generic TreeRowRouterExternal lift는 2nd-consumer 등장 시"
-   - 8-12 unit tests (SCXML Idle→Pressed→Idle 전이, click 이후 payload suffix verify, composite_tag::parse_send_payload 라운드트립)
-   - Estimated LOC: +250-400
+(0) **path-stable indexing scheme migration** (R675 부채 즉시 청산) — `examples/hello-multi-window/src/main.rs`의 `scene_to_tree_item` walker가 path id 생성 시 다음 원칙 따름:
+   - Container/External에 tag가 있으면 path segment = `"{Type}[{tag}]"` (예: `"Container[main_btn]"`)
+   - tag가 없으면 path segment = `"{Type}[{idx}]"` (예: `"Container[0]"` — sibling 중 같은 Type 의 idx)
+   - 중첩은 `/`로 연결 (예: `"Container/Container[main_btn]/Text[0]"`)
+   - **Browser DevTools canonical (CSS-selector mirror)** — tag가 stable element id 역할, idx는 unnamed siblings에 대한 ordinal fallback. banner 등장으로 sibling 순서 shift해도 tagged element (`main_btn`)는 path 안 바뀜.
+   - Inspector tree의 row paths가 자동으로 stable해짐 — `selected_path` Signal의 value가 paint cycle 간 일관됨.
+   - 8-12 unit tests in hello-multi-window (`r676_path_stable_indexing_tests` module):
+     - tagged node → tag-form path
+     - untagged node → type+idx form
+     - banner-on vs banner-off 시 button path 동일
+     - 중첩 path round-trip (build path from scene → find node by path)
+     - leaf vs container path discriminator
+   - Estimated LOC: +200-300
 
-(1) **hello-tree-view click-to-expand wiring** (R673 carry 1순위 완결) — `V::create_extra_externals` 추가하여 FileTreeRowExternal 을 primary tag `file_tree` 로 mount; `V::update` reducer 추가: intent `file_tree.click(<id>)` 시 reactive batch 안에서 nodes Signal 의 매칭 FileNode 의 `expanded` flag toggle. 키보드 path (R673 apply_key) 와 click path가 같은 reactive 상태 갱신을 거치므로 결과 bit-identical. 기존 r673 데모는 그대로 동작 (회귀 0). hello-tree-view 시각화에서 click도 verified 가능.
+(1) **`find_main_node_at_path(scene, path) -> Option<&Scene>` inverse walker** (R676 (0)의 짝) — given a stable path string from (0), walk view_main's scene to find the matching `&Scene` node. Pure helper inline in hello-multi-window:
+   - Parse path segments split by `/`
+   - For each segment, find the matching child (by tag if present, by Type+idx fallback)
+   - Returns `None` for unresolvable paths (e.g., inspector-only paths like `"state"`)
+   - 6-10 unit tests (`r676_find_node_at_path_tests` module):
+     - find tagged node (`main_btn`)
+     - find by type+idx
+     - find nested 2-deep
+     - return None for unknown path
+     - return None for "state" leaf (inspector-only, not in main scene)
+     - banner-on/off 둘 다 같은 tagged path 가 같은 node 반환
+   - Estimated LOC: +150-250
 
-(2) **per-row `AriaRole::TreeItem` AccessNodes** (R673 carry 2순위 청산) — WidgetA11y::access_node 가 FileNode tree 를 walk + 각 visible 행에 대해 하나의 AccessNode 생성 (role: TreeItem, name: label, parent_tag 정통 매핑). AccessKit canonical: TreeItem 이 level / posinset / setsize 를 announce (NVDA / VoiceOver / Orca 가 자동 처리). AccessNode 에 `aria_level: u32`, `aria_posinset: u32`, `aria_setsize: u32` 필드 미존재 시 substrate extension (mirror Listbox option pattern). 6-10 unit tests (depth=0 / depth=1 / depth=2 행의 AccessNode emission + level/posinset/setsize + collapsed 행은 자식 hidden).
+(2) **highlight overlay paint composition** (DevTools 시각 feedback 1st cut) — `view_main`이 `use_selected_path()`를 읽어서 path가 Some이고 `find_main_node_at_path` 가 매칭 node를 반환하면, view_main이 그 위치에 highlight border 추가:
+   - 후보 1: 새 `pinion_widget_paint::overlay` module (M3 Tertiary or Error color 2px stroked border) — 그러나 1st consumer만 있으므로 [[abstraction-needs-second-consumer]] 위배.
+   - 후보 2 (권장): inline in hello-multi-window — `wrap_with_highlight(node: Scene, theme: &Theme) -> Scene` helper가 node를 `Container` with `BoxStyle::stroked(2px, theme.resolve(ColorRole::Error))`로 wrap.
+   - 구현 옵션:
+     - (2a) **path-stable rebuild**: view_main이 scene을 build하면서 매칭 path의 node를 wrap (rebuild 가장 simple, ref 문제 회피)
+     - (2b) post-hoc rewrap: view_main이 scene을 일단 build 후 walk + replace
+     - **권장 (2a)** — view_main이 처음부터 selected_path를 알고 build (단일 패스, ref 문제 없음, refactor 비용 적음)
+   - View_main 진입 시 selected_path resolve → matching node가 어디인지 알면, 그 node를 만드는 코드 경로에서 wrap. 매칭 안 되면 (path가 "state" 같은 inspector-only) wrap 안 함, banner는 여전히 표시 (R675 동작 유지).
+   - 6-10 unit tests in hello-multi-window (`r676_highlight_overlay_tests`):
+     - selected_path Some + tagged path "Container[main_btn]" → button container has stroked BoxStyle
+     - selected_path None → no stroked BoxStyle anywhere
+     - selected_path Some "state" (inspector-only) → no stroked BoxStyle, banner still present
+     - banner 등장 후 button selection 유지 → highlight 여전히 button에 (path-stable 증명)
+   - Estimated LOC: +200-400
 
-(3) **r674 demo + 14-demo sweep + commit + Mnemosyne** — `tools/demos/r674_tree_view_clickable.py` (≥30 assertion):
-   - scene/click {path: "file_tree#widgets"} → widgets 행이 expand → src/widgets/mod.rs 가 visible 행에 추가됨
-   - 다시 click → collapse → 자식 행이 사라짐
-   - leaf 행 (src/main.rs 등) click 은 no-op (expand 상태 변화 없음)
-   - 키보드와 click 혼합 시 일관 동작 (Space toggle + click toggle 동일 state mutation)
-   - scene/snapshot 또는 access_node introspect 에서 TreeItem AccessNode 가 가시화 (role / level / posinset / setsize / name 검증)
-   - 14-demo regression sweep PASS (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669 / R670a / R670b / R671 / R672 / R673 / R674)
-   - Commit `feat(<scope>): R674 §5.16 §5.40 §5.50 TreeView click-to-expand + per-row a11y`
-   - Mnemosyne `append_changelog_entry_v2 entry_id=R674` + impact_refs [5.16, 5.40, 5.50] + carry_forward (Menu/Dialog/Tabs Phase B catalog cascade R675+)
+(3) **r676 demo + 16-demo sweep + commit + Mnemosyne** — `tools/demos/r676_devtools_highlight.py` (≥30 assertion):
+   - (A) substrate path-stable 검증: select before banner → main_btn path = `"Container[main_btn]"`; select after banner → 동일 path (path-stable proof)
+   - (B) inspector click main_btn row → main window button paints with stroked border (red/error color BoxStyle::stroked)
+   - (C) select different row (`state` leaf) → banner shows "Selected: state" but no border anywhere in main (path doesn't resolve)
+   - (D) select Container root → root-level border wraps whole content area
+   - (E) hover/Pointer state changes on main button don't disrupt highlight (button click → Hover → Pressed, highlight border persists)
+   - (F) AI-driven selection via `/inspector_tree/external/click` typed shortcut also paints highlight (same wire as human)
+   - (G) selection survives ButtonState mutations (b/d/e keypress disables button, highlight stays)
+   - 16-demo regression sweep PASS (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669 / R670a / R670b / R671 / R672 / R673 / R674 / R675 / R676)
+   - Commit `feat(<scope>): R676 §5.16 §5.49 DevTools highlight + path-stable indexing`
+   - Mnemosyne `append_changelog_entry_v2 entry_id=R676` + impact_refs [5.16, 5.49, 5.50] + carry_forward (highlight overlay LIFT to substrate on R677+ 2nd consumer; property pane / hover bridge / bidirectional select cascade R677/R678/R679; Phase B Menu/Dialog catalog deferred)
 
-visible (R674 land 후):
-- `cargo run -p hello-tree-view` 변화 — 트리 행을 마우스로 클릭하여 expand/collapse (R673 키보드와 동일 결과)
-- `python3 tools/demos/r674_tree_view_clickable.py` (≥30 assertion, click-to-expand + a11y)
-- `python3 tools/demos/r673_tree_view_interactive.py` PASS (회귀 0)
-- 기존 13-demo regression sweep PASS
+visible (R676 land 후):
+- `cargo run -p hello-multi-window` 변화 — inspector에서 main_btn row 클릭 → main 윈도우의 버튼에 빨간색 stroked 테두리. 클릭한 row가 바뀌면 highlight 위치도 따라감. 키보드 b/d/e로 button state 바꿔도 highlight 유지.
+- `python3 tools/demos/r676_devtools_highlight.py` (≥30 assertion, path-stable + highlight overlay)
+- 기존 15-demo regression sweep PASS
 
-honest LOC 예측: **R674 = +1100-1500 net** — (0) FileTreeRowExternal SCXML + introspect + tests +250-400 / (1) hello-tree-view create_extra_externals + V::update reducer +150-200 / (2) per-row access_node + AccessNode field extension +100-150 / (3) demo +400-500 + SEED + Mnemosyne entry +200.
+honest LOC 예측: **R676 = +900-1300 net** — (0) path-stable indexing migration in scene_to_tree_item +200-300 / (1) find_main_node_at_path inverse walker +150-250 / (2) wrap_with_highlight inline + view_main wiring +200-400 / (3) demo +400-500 + SEED + Mnemosyne entry +150-200.
 
-**R674 진행 lessons audit 의무** (라운드 끝):
-- click-to-expand 와 키보드 (R673 Space) toggle 결과 bit-identical (같은 Signal mutation)
-- composite_tag::parse_send_payload 6-of-6 정통 maturity 검증 (todomvc 5-of-5 → hello-tree-view 6-of-6)
-- AccessKit Tree+TreeItem emit이 scene/snapshot 또는 별도 a11y introspect 에서 가시화
-- 부채 surface 정직 받아들임 — TreeView multi-select / drag-drop / virtualization / generic TreeRowRouterExternal lift 는 2nd-consumer 등장 시까지 carry
+**R676 verification mandatory** (라운드 끝):
+- 16-demo regression sweep PASS deterministic (R660-R675 + R676)
+- path-stable proof — tagged element path 가 banner 등장/소실에 관계없이 동일
+- find_main_node_at_path 가 build/inverse 라운드트립 (build path → resolve back to same node)
+- highlight overlay가 main window paint scene 의 정확한 위치에 paint (scene/snapshot으로 stroked BoxStyle 검증)
+- AI-driven selection이 human selection과 bit-identical (`/inspector_tree/external/click` typed shortcut으로 동일 highlight 도달)
+- 부채 surface 정직 받아들임 — highlight overlay LIFT to substrate (R677+ 2nd consumer), property pane (R677+), hover bridge (R678+), bidirectional bridge (R679+)
 
-**R674 후 진척**: 북극성 가중 ~10-11% → **~11-13%** (Phase B 25% × widget catalog maturity ~17% + composite_tag 6-of-6 + a11y per-row 1st consumer). **R675+ = Phase B widget catalog cascade 본격 진입 — Menu / Dialog / Tabs / Toolbar / Table (R750+ 단계)**.
+**R676 후 진척**: 북극성 가중 ~12.5-13% → **~13.5-14.5%** (Phase D 35% × ~2% — first visible Phase D editor outliner-viewport bridge complete; path-stable indexing은 모든 후속 DevTools work의 foundation). **R677+ = DevTools cascade 본격 — highlight LIFT substrate / property pane / hover / bidirectional**.
 
 ---
 
-> 아래는 R670.B → R673 atomic 원본 (historical reference, land 완료):
+> 아래는 R670.B → R675 atomic 원본 (historical reference, land 완료):
+
+R675 = **TreeRowClickExternal substrate lift + DevTools first cross-window state-sync** (✓ land `e1d8817`). 4 atomic land. 15-demo sweep PASS. R675.1 SEED hash fixup `526a50a`.
+
+R674 = **R673 carry inline 청산 (click-to-expand + per-row TreeItem AccessNodes) + AccessNode hierarchical axes substrate** (✓ land `f905488`). 4 atomic land. 14-demo sweep PASS. R674.1 SEED hash fixup `2930a14`.
 
 R673 = **TreeView 2nd consumer (hello-tree-view) + R671 layout fix + AriaRole Tree/TreeItem + WAI-ARIA tree keyboard model** (✓ land `4a5a694`). 4 atomic. 13-demo sweep PASS.
 
