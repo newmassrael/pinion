@@ -46,6 +46,12 @@
 //!   this axis.
 //! - **Multi-select / drag-drop / inline rename**. Not in R671 scope.
 
+use pinion_core::composite_tag::parse_send_payload;
+use pinion_core::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+};
+use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
@@ -422,6 +428,231 @@ pub fn composite_row_tag(tree_tag: &str, node_id: &str) -> String {
     format!("{tree_tag}#{node_id}")
 }
 
+/// R675 §5.16 §5.20 §5.50 — bare event name [`TreeRowClickExternal`]
+/// emits on a completed Down/Up click cycle on a tree row.
+///
+/// The runtime intent-queue walker prefixes this with the producing
+/// `Scene::External` node's tag (the tree's primary tag — typically
+/// the same string passed as `tag` to [`view_tree`]) to form the
+/// dotted wire form `{tree_tag}.click` that
+/// [`pinion_core::WidgetCore::update`] reducers match against (per
+/// [[intent-tag-dotted-wire-form]]).
+///
+/// Bindings compose the literal via
+/// `pinion_core::intent_tag!("<tree_tag>", TREE_ROW_CLICK_EVENT)` —
+/// the macro is `literal`-only at the stable-Rust layer so the tree
+/// tag has to be a literal at the call site (matches the
+/// `intent_tag!` contract used everywhere else).
+pub const TREE_ROW_CLICK_EVENT: &str = "click";
+
+/// R675 §5.16 §5.20 §5.50 — tree-row click router External.
+///
+/// Lifted at R675 from the R674 binding-level `FileTreeRowExternal`
+/// in `examples/hello-tree-view`. The 2nd consumer
+/// (`examples/hello-multi-window` inspector window) fired the
+/// [[abstraction-needs-second-consumer]] Rule-of-Three gate, so the
+/// substrate moves into `pinion_widget_paint::tree_view` next to
+/// [`view_tree`] / [`view_tree_focused`] — every future tree
+/// consumer (`DevTools` outliner, file-tree editor, property-grid
+/// expander, scene-graph inspector) registers one of these alongside
+/// its [`view_tree`] paint output.
+///
+/// ## State machine (`Idle` ↔ `Pressed`)
+///
+/// One internal slot — `pressed_id: Option<String>`:
+///
+/// * `Idle` (`pressed_id = None`) + `PointerDown(id)` →
+///   `Pressed(id)` (`pressed_id = Some(id)`).
+/// * `Pressed(id)` + `PointerUp(same id)` → emit `click` intent
+///   carrying `Text(id)`, transition to `Idle`.
+/// * `Pressed(id_a)` + `PointerUp(id_b ≠ id_a)` → silent abort
+///   (W3C canonical "drag-off cancels click"), transition to `Idle`.
+/// * `Pressed(id)` + `PointerLeave(id)` or `PointerCancel(id)` →
+///   silent abort, transition to `Idle`.
+/// * `PointerEnter` and other phases → no state change.
+///
+/// `Down`-on-A then `Down`-on-B (multi-touch with one primary
+/// pointer) overwrites the pressed slot to B; the subsequent Up-on-B
+/// emits. Pinion follows the single-primary-pointer convention every
+/// other composite uses today; multi-touch concurrent row presses
+/// are a future axis once a real consumer surfaces the need.
+///
+/// ## Why intent + reducer instead of direct Signal mutation
+///
+/// The [`pinion_core::widgets::TodoDeleteExternal`]-class fast path
+/// owns a `Rc<Signal<T>>` and mutates inside its invoke handler.
+/// `TreeRowClickExternal` instead funnels through the §5.23 R27
+/// reducer because tree consumers vary in their state model (one
+/// holds `Vec<FileNode>`, another holds `Vec<Box<SceneTreeItem>>`,
+/// another holds an interior-mutable scene-graph node by-id table);
+/// owning the model state would tie this substrate to one concrete
+/// shape. The intent + reducer pattern keeps the External
+/// model-agnostic — the binding's reducer decides what to do with
+/// the row id payload.
+///
+/// ## Schema slots
+///
+/// * `pressed_id` — currently held row id (or `Null` when Idle); AI
+///   clients can read mid-press without triggering input.
+/// * `send` — R51.42 §5.35 composite-tag wire format
+///   (`"<id>:<EventName>"`); the canonical input path the
+///   [`InputRouter`] composite walker forwards through.
+/// * `click` — typed shortcut for AI-driven single-shot commit
+///   (`invoke("click", Text(<id>))` synthesises a full Down + Up
+///   cycle on the same id and emits the intent in one call); mirrors
+///   [`pinion_core::widgets::TodoDeleteExternal`]'s `"delete"`
+///   shortcut.
+#[derive(Debug, Default)]
+pub struct TreeRowClickExternal {
+    pressed_id: Option<String>,
+    pending: Vec<Intent>,
+}
+
+impl TreeRowClickExternal {
+    /// Construct a fresh router with no pressed row and an empty
+    /// intent buffer. Substrate calls this once at
+    /// [`pinion_core::WidgetCore::create_extra_externals`] time.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// R675 §5.20 — enqueue the `click` intent for `id` on the §5.20
+    /// channel. `drain_intents` ships the payload across the boundary
+    /// on the next substrate drain pass.
+    fn emit_click(&mut self, id: String) {
+        self.pending.push(Intent::new_static(
+            TREE_ROW_CLICK_EVENT,
+            IntrospectValue::Text(id),
+        ));
+    }
+}
+
+impl External for TreeRowClickExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        for intent in self.pending.drain(..) {
+            sink(intent);
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        !self.pending.is_empty()
+    }
+}
+
+impl ExternalIntrospect for TreeRowClickExternal {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("pressed_id", "string"),
+            ("send", "string"),
+            ("click", "string"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "pressed_id" => Some(match &self.pressed_id {
+                Some(id) => IntrospectValue::Text(id.clone()),
+                None => IntrospectValue::Null,
+            }),
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        match path {
+            "pressed_id" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "send" => match args {
+                IntrospectValue::Text(ref payload) => {
+                    // R659 §5.16 — shared composite-tag parser
+                    // (R675: 7th substrate consumer — 6-of-6 framework
+                    // at R674 plus this substrate lift takes it to
+                    // framework-level Rule-of-Three maturity).
+                    let (id, event_name): (String, &str) =
+                        parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
+                    match event_name {
+                        "PointerDown" => {
+                            self.pressed_id = Some(id);
+                            Ok(IntrospectValue::Bool(true))
+                        }
+                        "PointerUp" => {
+                            let armed = self
+                                .pressed_id
+                                .as_ref()
+                                .is_some_and(|p| p == &id);
+                            self.pressed_id = None;
+                            if armed {
+                                self.emit_click(id);
+                                Ok(IntrospectValue::Bool(true))
+                            } else {
+                                Ok(IntrospectValue::Bool(false))
+                            }
+                        }
+                        "PointerCancel" | "PointerLeave" => {
+                            if self
+                                .pressed_id
+                                .as_ref()
+                                .is_some_and(|p| p == &id)
+                            {
+                                self.pressed_id = None;
+                            }
+                            Ok(IntrospectValue::Bool(false))
+                        }
+                        _ => Ok(IntrospectValue::Bool(false)),
+                    }
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "click" => match args {
+                IntrospectValue::Text(id) => {
+                    self.pressed_id = None;
+                    self.emit_click(id);
+                    Ok(IntrospectValue::Bool(true))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,5 +994,237 @@ mod tests {
             return 0;
         };
         w
+    }
+}
+
+#[cfg(test)]
+mod r675_tree_row_click_external_tests {
+    //! R675 §5.16 §5.20 §5.50 — [`TreeRowClickExternal`] substrate
+    //! state-machine + intent-emission contract. Lifted from the R674
+    //! `examples/hello-tree-view::r674_file_tree_row_external_tests`
+    //! module — same behaviours, now pinned at the substrate layer
+    //! where every future tree consumer inherits coverage.
+
+    use super::{TreeRowClickExternal, TREE_ROW_CLICK_EVENT};
+    use pinion_core::external::{
+        External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+    };
+    use pinion_core::intent::Intent;
+
+    fn send(handler: &mut TreeRowClickExternal, payload: &str) -> IntrospectValue {
+        handler
+            .invoke("send", IntrospectValue::Text(payload.to_string()))
+            .expect("`send` invoke must accept well-formed payload")
+    }
+
+    fn drain(handler: &mut TreeRowClickExternal) -> Vec<Intent> {
+        let mut out = Vec::new();
+        handler.drain_intents(&mut |i| out.push(i));
+        out
+    }
+
+    #[test]
+    fn r675_new_external_has_no_pressed_id_and_is_clean() {
+        let handler = TreeRowClickExternal::new();
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Null,
+            "fresh external must report no pressed row"
+        );
+        assert!(
+            !handler.is_dirty(),
+            "fresh external must not have queued intents"
+        );
+    }
+
+    #[test]
+    fn r675_pointer_down_records_pressed_id() {
+        let mut handler = TreeRowClickExternal::new();
+        let out = send(&mut handler, "src:PointerDown");
+        assert_eq!(out, IntrospectValue::Bool(true));
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+        );
+        assert!(
+            !handler.is_dirty(),
+            "PointerDown alone must not queue an intent"
+        );
+    }
+
+    #[test]
+    fn r675_matched_down_up_emits_click_intent_with_text_id() {
+        let mut handler = TreeRowClickExternal::new();
+        send(&mut handler, "tests:PointerDown");
+        let up_out = send(&mut handler, "tests:PointerUp");
+        assert_eq!(up_out, IntrospectValue::Bool(true));
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Null,
+            "PointerUp must release the pressed slot",
+        );
+        let harvested = drain(&mut handler);
+        assert_eq!(harvested.len(), 1, "matched Down→Up emits exactly one intent");
+        assert_eq!(harvested[0].tag_str(), TREE_ROW_CLICK_EVENT);
+        assert_eq!(
+            harvested[0].payload,
+            IntrospectValue::Text("tests".to_string()),
+        );
+    }
+
+    #[test]
+    fn r675_pointer_up_without_prior_down_is_silent() {
+        let mut handler = TreeRowClickExternal::new();
+        let out = send(&mut handler, "src:PointerUp");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert!(
+            drain(&mut handler).is_empty(),
+            "Up without armed press is W3C canonical no-op",
+        );
+    }
+
+    #[test]
+    fn r675_mismatched_up_aborts_silently() {
+        let mut handler = TreeRowClickExternal::new();
+        send(&mut handler, "src:PointerDown");
+        let up_out = send(&mut handler, "tests:PointerUp");
+        assert_eq!(up_out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Null,
+            "mismatched Up still releases the pressed slot",
+        );
+        assert!(
+            drain(&mut handler).is_empty(),
+            "drag-off must not emit a click intent",
+        );
+    }
+
+    #[test]
+    fn r675_pointer_cancel_on_pressed_row_aborts() {
+        let mut handler = TreeRowClickExternal::new();
+        send(&mut handler, "src:PointerDown");
+        let out = send(&mut handler, "src:PointerCancel");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Null,
+        );
+        assert!(drain(&mut handler).is_empty());
+    }
+
+    #[test]
+    fn r675_pointer_leave_on_pressed_row_aborts() {
+        let mut handler = TreeRowClickExternal::new();
+        send(&mut handler, "src:PointerDown");
+        let out = send(&mut handler, "src:PointerLeave");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Null,
+        );
+        assert!(drain(&mut handler).is_empty());
+    }
+
+    #[test]
+    fn r675_unrelated_leave_does_not_disturb_active_press() {
+        let mut handler = TreeRowClickExternal::new();
+        send(&mut handler, "src:PointerDown");
+        let leave_out = send(&mut handler, "tests:PointerLeave");
+        assert_eq!(leave_out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+            "unrelated Leave must not clear an active press",
+        );
+        let up_out = send(&mut handler, "src:PointerUp");
+        assert_eq!(up_out, IntrospectValue::Bool(true));
+        assert_eq!(drain(&mut handler).len(), 1);
+    }
+
+    #[test]
+    fn r675_pointer_enter_is_silent_no_op() {
+        let mut handler = TreeRowClickExternal::new();
+        let out = send(&mut handler, "src:PointerEnter");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Null,
+        );
+        assert!(drain(&mut handler).is_empty());
+    }
+
+    #[test]
+    fn r675_malformed_payload_missing_separator_rejected() {
+        let mut handler = TreeRowClickExternal::new();
+        let result =
+            handler.invoke("send", IntrospectValue::Text("PointerDown".to_string()));
+        assert_eq!(result, Err(InvokeError::Rejected));
+    }
+
+    #[test]
+    fn r675_empty_event_name_rejected() {
+        let mut handler = TreeRowClickExternal::new();
+        let result = handler.invoke("send", IntrospectValue::Text("src:".to_string()));
+        assert_eq!(result, Err(InvokeError::Rejected));
+    }
+
+    #[test]
+    fn r675_send_non_text_args_type_mismatch() {
+        let mut handler = TreeRowClickExternal::new();
+        let result = handler.invoke("send", IntrospectValue::Int(7));
+        assert_eq!(result, Err(InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn r675_direct_click_shortcut_emits_intent_without_press_cycle() {
+        let mut handler = TreeRowClickExternal::new();
+        let out = handler
+            .invoke("click", IntrospectValue::Text("docs".to_string()))
+            .expect("`click` shortcut must accept Text id");
+        assert_eq!(out, IntrospectValue::Bool(true));
+        let harvested = drain(&mut handler);
+        assert_eq!(harvested.len(), 1);
+        assert_eq!(
+            harvested[0].payload,
+            IntrospectValue::Text("docs".to_string()),
+        );
+    }
+
+    #[test]
+    fn r675_drain_intents_clears_buffer_idempotent() {
+        let mut handler = TreeRowClickExternal::new();
+        send(&mut handler, "src:PointerDown");
+        send(&mut handler, "src:PointerUp");
+        assert!(handler.is_dirty());
+        let first = drain(&mut handler);
+        assert_eq!(first.len(), 1);
+        assert!(!handler.is_dirty(), "drain must clear the buffer");
+        let second = drain(&mut handler);
+        assert!(second.is_empty(), "second drain on cleared buffer is no-op");
+    }
+
+    #[test]
+    fn r675_intervene_pressed_id_is_read_only() {
+        let mut handler = TreeRowClickExternal::new();
+        let result = handler
+            .intervene("pressed_id", IntrospectValue::Text("forged".to_string()));
+        assert_eq!(result, Err(InterveneError::ReadOnly));
+    }
+
+    #[test]
+    fn r675_invoke_unknown_path_rejected() {
+        let mut handler = TreeRowClickExternal::new();
+        let result = handler.invoke("ghost", IntrospectValue::Null);
+        assert_eq!(result, Err(InvokeError::UnknownPath));
+    }
+
+    #[test]
+    fn r675_event_name_constant_is_canonical_click() {
+        // Pin the substrate constant so a future rename to e.g.
+        // "activate" surfaces the lockstep break immediately. Tree
+        // consumer reducers compose the dotted form via
+        // intent_tag!(MY_TREE_TAG, TREE_ROW_CLICK_EVENT) literally.
+        assert_eq!(TREE_ROW_CLICK_EVENT, "click");
     }
 }

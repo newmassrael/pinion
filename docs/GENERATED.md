@@ -13085,6 +13085,43 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R675 — R675 — TreeRowClickExternal substrate lift (R674 binding-level → pinion_widget_paint::tree_view) + DevTools/SceneInspector first interactive dogfood (cross-window selection bridge: inspector click → shared Signal<Option<String>> → main-window banner mirror). [[abstraction-needs-second-consumer]] Rule-of-Three gate fired by hello-multi-window inspector becoming the 2nd TreeView click consumer; substrate now homes the External next to view_tree / view_tree_focused so every future tree consumer (DevTools outliner, file-tree editor, property-grid expander, scene-graph inspector) inherits one wire.
+
+**Changes**:
+- crates/pinion-widget-paint/src/tree_view.rs: new TreeRowClickExternal substrate — lifted from R674 binding-level FileTreeRowExternal. Generic over tree tag (no file_tree assumption); pressed_id: Option<String> + pending: Vec<Intent>; introspect schema {pressed_id, send, click}; PointerDown arms, PointerUp matching id emits Intent::new_static(TREE_ROW_CLICK_EVENT="click", Text(id)) and clears; PointerLeave/Cancel on pressed id silently aborts; drag-off (Up on different id) silently aborts; click typed-shortcut bypasses Down/Up for AI driving. Exports: TreeRowClickExternal + TREE_ROW_CLICK_EVENT const.
+- crates/pinion-widget-paint/src/tree_view.rs: 17 new substrate tests in r675_tree_row_click_external_tests module — lifted from R674 hello-tree-view binding tests, renamed r675_*, generalized prose. Covers state machine transitions + payload round-trip + read-only intervene + unknown path + drag-off + cancel + leave + unrelated leave + idempotent drain.
+- examples/hello-tree-view/src/main.rs: migrate from binding-level FileTreeRowExternal to substrate TreeRowClickExternal import; create_extra_externals returns Box::new(TreeRowClickExternal::new()); FILE_TREE_CLICK_INTENT_TAG retained as binding-side dotted form composed via intent_tag!("file_tree", "click") matching substrate TREE_ROW_CLICK_EVENT; entire FileTreeRowExternal struct + impls + r674_file_tree_row_external_tests module removed (covered by substrate-side tests); one r675_substrate_dotted_wire_test lockstep pin retained so a substrate rename surfaces here.
+- examples/hello-multi-window/src/main.rs: 2nd consumer of TreeRowClickExternal substrate — register at INSPECTOR_TREE_TAG via create_extra_externals. New use_selected_path() Owner::cache hook returns Rc<Signal<Option<String>>> shared between main + inspector windows. INSPECTOR_CLICK_INTENT_TAG = intent_tag!("inspector_tree", "click") matches dotted form. WidgetCore::update reducer matches the intent + mirrors payload into use_selected_path().set(Some(path)). view_main reads use_selected_path().get() and prepends a "Selected: {path}" banner Text above the button when Some. view_inspector switches view_tree → view_tree_focused passing selected_path as focused_id (M3 SurfaceContainerHighest highlight on selected row). read_state migrates from Scene::External pattern-match to find_external_with_tag(MAIN_BTN_TAG) per R55.D.5 (state scene root is now Container).
+- examples/hello-multi-window/src/main.rs: 7 new R675 unit tests pin the wiring — create_extra_externals length+tag, dotted intent tag lockstep with substrate, view_main banner absent without selection, view_main banner text matches signal value, view_main still carries MAIN_BTN_TAG alongside banner, V::update reducer mirrors intent payload into selected_path Signal, V::update ignores unrelated intents.
+- tools/demos/r675_devtools_select.py: new 31-assertion demo covering A) substrate reachability at /inspector_tree/external/pressed_id, B) baseline no banner / no focus highlight, C) AI typed shortcut click “state” → banner + highlight propagate cross-window, D) inspector focus highlight on selected row via SurfaceContainerHighest fill detection, E) selection change via composite-tag Down/Up wire (atomic replacement), F) drag-off cancels click (W3C canonical), G) PointerCancel mid-press aborts cleanly, H) main button click still works (R670.B baseline preserved), I) inspector “State: …” leaf reflects main button state changes (R670.B + R671 baseline), J) selection persists across unrelated button clicks, K) read-only intervene on pressed_id rejected, L) deep-path selection (0/0) propagates to banner, M) substrate slot intact post-demo-sweep, N) idempotent click stabilises, O) selection persists across forced repeated paint cycles.
+
+
+
+**Verification**:
+- cargo test --workspace: 3487 passed / 0 failed (R674 baseline 3479 → +8 net: 17 R674 binding tests migrated to substrate where +17 new substrate tests landed, -16 from hello-tree-view (FileTreeRowExternal struct + tests removed), +1 lockstep pin in hello-tree-view, +7 R675 wiring tests in hello-multi-window). Substrate maturity proven through behaviour-identity: every R674 test passes verbatim at the new module path.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (one doc_markdown lint on the DevTools backtick wrap fixed before sweep).
+- 15-demo regression sweep PASS deterministic: todomvc_r660 / double_click_r663 / todomvc_r664 / todomvc_r665 / todomvc_r666 / settings_panel_r667 / settings_panel_r668 / settings_panel_r669 / r670a_carry_clearance / hello_multi_window_r670b / r671_tree_view_inspector / r672_multi_window_race_free / r673_tree_view_interactive / r674_tree_view_clickable / r675_devtools_select — zero regression from the substrate lift + cross-window state-sync wire.
+- tools/demos/r675_devtools_select.py PASS 3.51s with 31 distinct assert statements covering A-O sections; demonstrates AI-driven cross-window state sync working symmetrically with human-driven composite-tag wire.
+- [[abstraction-needs-second-consumer]] Rule-of-Three maturity gate fired — R674 (FileTreeRowExternal in hello-tree-view) + R675 (TreeRowClickExternal in hello-multi-window inspector) = 2-of-2 consumers triggered the textbook substrate lift; the binding-level shape served exactly the 2-round period [[r47-class-incident-prevention]] mandates.
+- First Phase D editor dogfood structurally complete — hello-multi-window inspector now drives the main window's visible state through a shared reactive Signal, proving the AI-first northern-star: AI agents reach the same selection mirror as the human via /inspector_tree/external/click typed shortcut, with both observers (human paint + AI scene/snapshot) reading the same source of truth.
+
+
+
+**Impact**: §5.16, §5.20, §5.45, §5.49, §5.50
+
+
+**Carry forward**:
+- R676+ candidate: highlight-overlay in main window — visible rect around the Scene element the selected_path points at (current R675 banner is a text-only proof; the next round paints a border around the selected paint-side element so the user sees the geometric correspondence). Requires path-to-node resolver in view_main (walks the same scene_to_tree_item id scheme).
+- R676+ candidate: inspector property-pane below the tree — selected node's tag / role / bounds / style fields surfaced as a property-grid below the TreeView. Phase D editor Inspector primitive; PropertyGrid widget is a composition over TextField / Checkbox / ColorPicker per-row.
+- R676+ candidate: hover-to-highlight bridge — hovering an inspector row paints a ghost overlay on the main window (without committing the persistent selection). Requires a separate hovered_path Signal alongside selected_path + DeferredInput::Hover wire 2nd consumer.
+- R676+ candidate: bidirectional bridge — clicking a paint-side element in the main window selects the corresponding inspector row + scrolls it into view. Closes the Editor / Outliner duality (UE Outliner click → viewport gizmo ↔ viewport click → Outliner row).
+- R700+ candidate: Phase B Menu / Dialog / Tooltip widget catalog cascade per SEED R675+ original directive — deferred while R675-R677 DevTools dogfood cascade fleshes out Phase D entry signal.
+- R750+ candidate: DevTools as standalone binding example/devtools/src/main.rs that hosts the scene tree from any external pinion process via RPC connection (vs current hello-multi-window which is a single-process two-window demo).
+- Persistent: SCE-004 (Forge codegen serde derive) upstream RFC; SCE-002 consumer-injectable derive list — vendor/sce dependencies untouched per [[sce-priority-over-pinion]].
+- Persistent: vello/wgpu environment dependency for PINION_SCREENSHOT headless paint capture.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

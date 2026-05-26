@@ -43,17 +43,25 @@
 //! immediately rather than waiting for the first real DevTools
 //! consumer.
 
+use std::rc::Rc;
+
+use pinion_core::external::IntrospectValue;
+use pinion_core::intent::Intent;
+use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::WidgetA11y;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
-use pinion_widget_paint::tree_view::{view_tree, TreeItem, TreeViewStyle};
+use pinion_widget_paint::tree_view::{
+    view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
+};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
@@ -89,10 +97,56 @@ const MAIN_BTN_TAG: &str = "main_btn";
 /// containers via this prefix.
 const INSPECTOR_TREE_TAG: &str = "inspector_tree";
 
+/// R675 §5.16 §5.20 — dotted-form intent tag the
+/// [`TreeRowClickExternal`] (substrate at
+/// [`pinion_widget_paint::tree_view::TreeRowClickExternal`]) registered
+/// under [`INSPECTOR_TREE_TAG`] emits on a completed row click. The
+/// runtime intent-queue walker prefixes the substrate's bare
+/// [`pinion_widget_paint::tree_view::TREE_ROW_CLICK_EVENT`] = `"click"`
+/// with the producing External's tag = [`INSPECTOR_TREE_TAG`], so the
+/// reducer matches `"inspector_tree.click"` literally per
+/// [[intent-tag-dotted-wire-form]]. (`intent_tag!` macro is
+/// `literal`-only at the stable-Rust layer so the tree tag has to
+/// be a literal at the call site.)
+const INSPECTOR_CLICK_INTENT_TAG: &str = intent_tag!("inspector_tree", "click");
+
+/// R675 §5.16 §5.49 — cross-window shared selection slot.
+///
+/// Both windows reach the same `Rc<Signal<Option<String>>>` through
+/// the single `ShellCore`'s `Owner::cache`. The inspector window's
+/// click reducer writes the just-clicked tree row's path id here;
+/// `view_inspector` reads the slot through `TreeViewFocus` to paint
+/// the M3 focus state-layer on the selected row; `view_main` reads
+/// the same slot to paint a "Selected: …" banner above the button.
+/// The result is the first **cross-window reactive state-sync**
+/// demonstration in pinion — both windows observe the same Signal,
+/// both repaint on Signal mutation (the substrate's reactive
+/// any-animation-active wire schedules the redraw), AI clients
+/// observing through `scene/snapshot {window: …}` see the
+/// synchronised projection.
+///
+/// `None` = no row selected; `Some(path)` = the inspector row tagged
+/// `{INSPECTOR_TREE_TAG}#{path}` is selected.
+fn use_selected_path() -> Rc<Signal<Option<String>>> {
+    Owner::current()
+        .expect("hello-multi-window: view fn runs inside the substrate root owner scope")
+        .cache("hello_multi_window_selected_path", || {
+            Signal::new(None::<String>)
+        })
+}
+
 /// Main window paint — Button widget centred in the window. Mirrors
 /// `hello-button`'s view fn shape exactly (label + filled box +
 /// state-based fill colour) so the inspector mirror has familiar
 /// `ButtonState` values to display.
+///
+/// R675 §5.16 §5.49 — when the inspector window has a selected
+/// tree row ([`use_selected_path`] returns `Some`), a small banner
+/// prepends above the button reading "Selected: {path}". This is
+/// the first **visible cross-window state-sync** in pinion: click
+/// in inspector → main window's banner updates next paint cycle
+/// because both windows read the same `Rc<Signal<Option<String>>>`
+/// off the shared `ShellCore`'s `Owner::cache`.
 fn view_main(state: ButtonState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let surface = theme.resolve(ColorRole::Surface);
@@ -131,14 +185,39 @@ fn view_main(state: ButtonState) -> Scene {
                     .with_size(Size::px(BTN_W, BTN_H)),
             ),
     );
+
+    // R675 §5.16 §5.49 — cross-window selection banner. The
+    // `selected_path` Signal is shared with the inspector window
+    // through `Owner::cache`; reading `.get()` subscribes this
+    // view fn so the next paint observes the new selection
+    // automatically when inspector clicks mutate the Signal.
+    let selected = use_selected_path().get();
+    let mut main_children: Vec<Scene> = Vec::with_capacity(2);
+    if let Some(path) = selected.as_deref() {
+        // Banner tag MAIN_SELECTED_BANNER_TAG would let RPC
+        // clients pin its presence; the demo introspects via the
+        // selected_path query slot instead so the visible-only
+        // banner stays presentational.
+        let banner_label = format!("Selected: {path}");
+        main_children.push(Scene::Text(TextNode::styled(
+            banner_label,
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(LABEL_FONT_PX)
+                .with_fg(on_surface_muted),
+        )));
+    }
+    main_children.push(button);
+
     Scene::Container(
-        ContainerNode::new(vec![button])
+        ContainerNode::new(main_children)
             .with_style(BoxStyle::filled(surface))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center),
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(8),
             ),
     )
 }
@@ -175,11 +254,22 @@ fn view_inspector(state: ButtonState) -> Scene {
             vec![scene_to_tree_item(&main_scene, "0")],
         ),
     ];
-    view_tree(
+    // R675 §5.16 §5.50 — paint the focus state-layer on the row
+    // matching the cross-window-shared `selected_path` Signal so
+    // the user sees which row they just clicked. The substrate's
+    // `view_tree_focused` collapses to plain `view_tree` behaviour
+    // when `focused_id` is `None`, so this opt-in change preserves
+    // the R671 read-only baseline pre-selection.
+    let selected = use_selected_path().get();
+    let focus = TreeViewFocus {
+        focused_id: selected.as_deref(),
+    };
+    view_tree_focused(
         INSPECTOR_TREE_TAG,
         &tree_items,
         &theme,
         &TreeViewStyle::m3_default(),
+        &focus,
     )
 }
 
@@ -261,21 +351,65 @@ impl WidgetCore for MultiWindowView {
         Box::new(ButtonExternal::new())
     }
 
+    /// R675 §5.45 — register a substrate
+    /// [`TreeRowClickExternal`] sibling under
+    /// [`INSPECTOR_TREE_TAG`]. Inspector tree rows tagged
+    /// `inspector_tree#{path}` route their composite-tag clicks
+    /// through this External, which emits the dotted
+    /// [`INSPECTOR_CLICK_INTENT_TAG`] = `"inspector_tree.click"`
+    /// the [`WidgetCore::update`] reducer matches below.
+    ///
+    /// This is the **2nd consumer** of
+    /// [`pinion_widget_paint::tree_view::TreeRowClickExternal`]
+    /// after `examples/hello-tree-view` (1st), firing the
+    /// [[abstraction-needs-second-consumer]] Rule-of-Three gate
+    /// that drove the R674 → R675 binding-to-substrate lift.
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        vec![ExtraExternal::new(
+            INSPECTOR_TREE_TAG,
+            Box::new(TreeRowClickExternal::new()),
+        )]
+    }
+
     fn read_state(scene: &Scene) -> Self::State {
         // ButtonState reads from the SCXML state slot via the
         // standard `query("state")` introspect — same as
         // hello-button. Default Idle when introspect is missing
         // (single-widget binding, no composite state to merge).
-        if let Scene::External(node) = scene
+        //
+        // R675 §5.45 — `create_extra_externals` is now non-empty
+        // (inspector TreeRowClickExternal), so the state scene
+        // root is `Scene::Container([primary, extra])` per R55.D.5.
+        // Locate the primary `ButtonExternal` by its tag rather
+        // than pattern-matching `Scene::External` at the root.
+        if let Some(node) = scene.find_external_with_tag(MAIN_BTN_TAG)
             && let Some(intro) = node.handle.introspect()
-            && let Some(pinion_core::external::IntrospectValue::Text(name)) =
-                intro.query("state")
+            && let Some(IntrospectValue::Text(name)) = intro.query("state")
         {
             return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(
                 &name,
             );
         }
         ButtonState::Idle
+    }
+
+    /// R675 §5.23 R27 — bridge the inspector
+    /// [`TreeRowClickExternal`]'s `click` intent into the shared
+    /// [`use_selected_path`] signal. Side-effect-only — empty
+    /// `Vec<Command>` return; the `Signal::set` write is the
+    /// mutation. Both windows' view fns observe the Signal change
+    /// on their next paint cycle (per the substrate's reactive
+    /// any-animation-active redraw wire).
+    fn update(
+        _state: Self::State,
+        intent: &Intent,
+    ) -> Vec<pinion_core::command::Command> {
+        if intent.tag_str() == INSPECTOR_CLICK_INTENT_TAG
+            && let IntrospectValue::Text(path) = &intent.payload
+        {
+            use_selected_path().set(Some(path.clone()));
+        }
+        Vec::new()
     }
 
     fn event_name(event: Self::Event) -> &'static str {
@@ -487,5 +621,154 @@ mod r670_b_multi_window_tests {
     fn r670_b_default_access_node_is_empty() {
         let nodes = <MultiWindowView as WidgetA11y>::access_node(&ButtonState::Idle, None);
         assert!(nodes.is_empty(), "default WidgetA11y impl returns no nodes");
+    }
+
+    // R675 §5.16 §5.20 §5.45 §5.49 — cross-window selection bridge
+    // regression suite. Pins the substrate plumbing (selected_path
+    // shared Signal, click intent dotted form lockstep, banner
+    // appears in main view only when path is Some) so a future
+    // regression that drops one wire surfaces at unit-test time.
+
+    #[test]
+    fn r675_create_extra_externals_registers_tree_row_click_at_inspector_tag() {
+        // The single ExtraExternal entry routes inspector composite-
+        // tag clicks through the substrate router. Pin both the
+        // length (no accidental extras) and the tag.
+        let extras = <MultiWindowView as WidgetCore>::create_extra_externals();
+        assert_eq!(extras.len(), 1, "exactly one tree-row click router");
+        assert_eq!(extras[0].tag, INSPECTOR_TREE_TAG);
+    }
+
+    #[test]
+    fn r675_inspector_click_intent_tag_matches_runtime_dotted_form() {
+        // [[intent-tag-dotted-wire-form]] — the compile-time
+        // INSPECTOR_CLICK_INTENT_TAG literal must match the runtime
+        // walker's `format!("{prefix}.{event}", ...)` shape exactly
+        // so the V::update reducer arm matches. The substrate's
+        // bare event name ("click") is the canonical
+        // pinion_widget_paint::tree_view::TREE_ROW_CLICK_EVENT.
+        assert_eq!(
+            INSPECTOR_CLICK_INTENT_TAG,
+            format!(
+                "{INSPECTOR_TREE_TAG}.{}",
+                pinion_widget_paint::tree_view::TREE_ROW_CLICK_EVENT
+            ),
+        );
+    }
+
+    /// Recursive helper: pull the text content of the first
+    /// `Scene::Text` node whose content contains `needle`. Used by
+    /// the banner-presence tests below.
+    fn first_text_containing<'s>(scene: &'s Scene, needle: &str) -> Option<&'s str> {
+        match scene {
+            Scene::Text(t) => {
+                if t.content.contains(needle) {
+                    Some(t.content.as_str())
+                } else {
+                    None
+                }
+            }
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .find_map(|ch| first_text_containing(ch, needle)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r675_view_main_without_selection_has_no_selected_banner() {
+        // Fresh Owner → use_selected_path() returns Signal(None) →
+        // view_main must not render a "Selected: …" banner.
+        let owner = Owner::new();
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new())
+        });
+        assert!(
+            first_text_containing(&scene, "Selected:").is_none(),
+            "fresh boot must not render the cross-window selection banner",
+        );
+    }
+
+    #[test]
+    fn r675_view_main_with_selection_renders_banner_text() {
+        // Seed the cross-window selection signal, then verify
+        // view_main projects it into the banner.
+        let owner = Owner::new();
+        owner.run(|| {
+            use_selected_path().set(Some("state".to_string()));
+        });
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new())
+        });
+        assert_eq!(
+            first_text_containing(&scene, "Selected:"),
+            Some("Selected: state"),
+            "main view must render the banner reflecting the shared signal",
+        );
+    }
+
+    #[test]
+    fn r675_view_main_still_carries_button_tag_when_banner_present() {
+        // Sanity: banner addition must not displace the button —
+        // the input router still needs to hit-test MAIN_BTN_TAG.
+        let owner = Owner::new();
+        owner.run(|| {
+            use_selected_path().set(Some("main/0".to_string()));
+        });
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new())
+        });
+        assert!(
+            scene.contains_tag(MAIN_BTN_TAG),
+            "main view must continue to carry {MAIN_BTN_TAG:?} alongside the banner",
+        );
+    }
+
+    #[test]
+    fn r675_update_reducer_routes_inspector_click_to_selected_path_signal() {
+        // Synthesise the dotted intent the runtime would deliver
+        // after a TreeRowClickExternal commit + walker prefix; the
+        // reducer must mirror the payload into the shared signal.
+        let owner = Owner::new();
+        owner.run(|| {
+            assert!(
+                use_selected_path().get().is_none(),
+                "baseline: selection slot empty",
+            );
+            let intent = Intent::new_static(
+                INSPECTOR_CLICK_INTENT_TAG,
+                IntrospectValue::Text("main/0/3".to_string()),
+            );
+            let commands = <MultiWindowView as WidgetCore>::update(
+                ButtonState::Idle,
+                &intent,
+            );
+            assert!(
+                commands.is_empty(),
+                "side-effect-only reducer returns no commands",
+            );
+            assert_eq!(
+                use_selected_path().get().as_deref(),
+                Some("main/0/3"),
+                "reducer must mirror intent payload into the shared selection signal",
+            );
+        });
+    }
+
+    #[test]
+    fn r675_update_reducer_ignores_unrelated_intent_tags() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let foreign = Intent::new_static(
+                "main_btn.click",
+                IntrospectValue::Null,
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &foreign);
+            assert!(
+                use_selected_path().get().is_none(),
+                "non-inspector intents must not mutate the selection slot",
+            );
+        });
     }
 }
