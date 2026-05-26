@@ -91,10 +91,25 @@ pub enum AriaRole {
     /// R673 §5.40 — WAI-ARIA 1.2 §5.3.11 `treeitem` role. Single
     /// child of a [`Self::Tree`] parent. Each row in the flat row
     /// sequence the `tree_view` substrate emits carries this role.
-    /// AT presents the `aria-level` (depth in the hierarchy),
-    /// `aria-expanded` (true / false / undefined for leaves), and
-    /// `aria-posinset` / `aria-setsize` properties automatically
-    /// when items are nested under a `tree` parent.
+    ///
+    /// **Authoring requirement** (R674 §5.40 correction): per
+    /// WAI-ARIA 1.2 §6.6.8 / §6.6.9 / §6.6.10, `aria-level` /
+    /// `aria-posinset` / `aria-setsize` are *required* on custom
+    /// widget roles — AT does **not** infer them from DOM nesting
+    /// for `role="treeitem"`. Pinion paint scenes are flat row
+    /// sequences (the substrate stamps composite tags per row), so
+    /// the binding's `access_node` walker is the sole source of
+    /// truth for these values. Provide them via
+    /// [`AccessNode::with_level`] / [`AccessNode::with_position_in_set`] /
+    /// [`AccessNode::with_size_of_set`] when emitting per-row
+    /// descriptors. `aria-expanded` is carried by [`AccessState`] on
+    /// future axes; today branches encode the expanded glyph in the
+    /// paint scene rather than the a11y state.
+    ///
+    /// [`AccessNode::with_level`]: crate::AccessNode::with_level
+    /// [`AccessNode::with_position_in_set`]: crate::AccessNode::with_position_in_set
+    /// [`AccessNode::with_size_of_set`]: crate::AccessNode::with_size_of_set
+    /// [`AccessState`]: crate::node::AccessState
     TreeItem,
     Generic,
 }

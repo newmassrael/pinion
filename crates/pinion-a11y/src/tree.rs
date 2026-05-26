@@ -372,6 +372,32 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_bounds(rect_to_accesskit(bounds));
     }
 
+    // R674 §5.40 — WAI-ARIA hierarchical axes (`aria-level` /
+    // `aria-posinset` / `aria-setsize`). AccessKit's attribute names
+    // collapse `aria-level` to bare `level`; the per-attribute
+    // setters mirror the WAI-ARIA literals 1:1 otherwise. Custom-
+    // widget roles (`role="treeitem"`, etc.) require these from the
+    // author per WAI-ARIA 1.2 §6.6.8/§6.6.9/§6.6.10 — AT does NOT
+    // infer them from DOM nesting on `non-native` roles. Pinion's
+    // paint scenes are flat row sequences (composite-tag stamped per
+    // row), so the binding is the sole source of truth.
+    // AccessKit's `set_level` / `set_position_in_set` /
+    // `set_size_of_set` take `usize` natively (the lib treats these
+    // axes as platform-word-sized indices). `u32` widens losslessly
+    // on every supported target (32-bit pointer + 64-bit pointer
+    // both satisfy `u32 ≤ usize`); the saturating `try_from` keeps
+    // the conversion explicit and survives a hypothetical
+    // 16-bit-pointer target without panic.
+    if let Some(level) = access.level {
+        node.set_level(usize::try_from(level).unwrap_or(usize::MAX));
+    }
+    if let Some(pos) = access.position_in_set {
+        node.set_position_in_set(usize::try_from(pos).unwrap_or(usize::MAX));
+    }
+    if let Some(size) = access.size_of_set {
+        node.set_size_of_set(usize::try_from(size).unwrap_or(usize::MAX));
+    }
+
     for child_tag in &access.children {
         node.push_child(tag_to_node_id(child_tag));
     }

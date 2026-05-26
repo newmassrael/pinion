@@ -82,6 +82,42 @@ pub struct AccessNode {
     /// container roles that own a selection set (`Listbox`,
     /// future `Grid`/`Tree`/`TabList`); atomic roles ignore the flag.
     pub multiselectable: bool,
+    /// R674 §5.40 — WAI-ARIA `aria-level` per WAI-ARIA 1.2 §6.6.8.
+    /// One-based depth in the hierarchy. Required on per-item
+    /// descriptors inside roles that own a hierarchical structure
+    /// ([`AriaRole::TreeItem`] today; future `Heading` / `ListItem`
+    /// nested under a `List`). The root of the hierarchy is
+    /// `Some(1)`; each level of nesting adds one. `None` omits the
+    /// attribute (the default for roles without a hierarchical
+    /// semantic).
+    ///
+    /// **Authoring requirement** (WAI-ARIA 1.2 §6.6.8): for
+    /// custom-widget roles without implicit native semantics
+    /// (`role="treeitem"`, etc.) AT does **not** infer hierarchical
+    /// depth from DOM nesting. Pinion paint scenes are flat row
+    /// sequences (the substrate stamps composite tags per row), so
+    /// the binding is the sole source of truth for the depth value.
+    pub level: Option<u32>,
+    /// R674 §5.40 — WAI-ARIA `aria-posinset` per WAI-ARIA 1.2
+    /// §6.6.9. One-based position of this item within the parent's
+    /// (visible) set. Pairs with [`Self::size_of_set`] so the AT
+    /// can announce "item N of M".
+    ///
+    /// **Authoring requirement**: like [`Self::level`], the binding
+    /// is the sole source of truth for custom-widget roles.
+    /// `Some(1)` is the first sibling, `Some(2)` the second, etc.;
+    /// `None` omits the attribute.
+    pub position_in_set: Option<u32>,
+    /// R674 §5.40 — WAI-ARIA `aria-setsize` per WAI-ARIA 1.2
+    /// §6.6.10. Total count of (visible) items in this item's
+    /// parent set. Pairs with [`Self::position_in_set`].
+    ///
+    /// **Authoring requirement**: when a tree / list owns a virtual
+    /// or expandable set whose total count is unknown to the AT
+    /// (collapsed branches, lazy-loaded children), the binding
+    /// provides the visible-or-known total here. `None` omits the
+    /// attribute.
+    pub size_of_set: Option<u32>,
 }
 
 impl AccessNode {
@@ -100,6 +136,9 @@ impl AccessNode {
             children: Vec::new(),
             selected: None,
             multiselectable: false,
+            level: None,
+            position_in_set: None,
+            size_of_set: None,
         }
     }
 
@@ -159,6 +198,31 @@ impl AccessNode {
         self.multiselectable = true;
         self
     }
+
+    /// R674 §5.40 — set the WAI-ARIA `aria-level` attribute. See
+    /// [`Self::level`] for the semantic axis and authoring contract.
+    /// One-based: the root of the hierarchy is `1`.
+    #[must_use]
+    pub fn with_level(mut self, level: u32) -> Self {
+        self.level = Some(level);
+        self
+    }
+
+    /// R674 §5.40 — set the WAI-ARIA `aria-posinset` attribute. See
+    /// [`Self::position_in_set`] for the semantic axis. One-based.
+    #[must_use]
+    pub fn with_position_in_set(mut self, position: u32) -> Self {
+        self.position_in_set = Some(position);
+        self
+    }
+
+    /// R674 §5.40 — set the WAI-ARIA `aria-setsize` attribute. See
+    /// [`Self::size_of_set`] for the semantic axis.
+    #[must_use]
+    pub fn with_size_of_set(mut self, size: u32) -> Self {
+        self.size_of_set = Some(size);
+        self
+    }
 }
 
 /// Interaction-state flags exposed to AT.
@@ -213,6 +277,11 @@ mod tests {
         assert!(n.bounds.is_none());
         assert!(n.children.is_empty());
         assert_eq!(n.state, AccessState::default());
+        // R674 §5.40 — hierarchical axes default to absent so non-
+        // tree/list roles continue to omit the attributes.
+        assert!(n.level.is_none());
+        assert!(n.position_in_set.is_none());
+        assert!(n.size_of_set.is_none());
     }
 
     #[test]
@@ -300,5 +369,44 @@ mod tests {
     fn r51_98_with_multiselectable_marks_container() {
         let n = AccessNode::new("list", AriaRole::Listbox).with_multiselectable();
         assert!(n.multiselectable);
+    }
+
+    // R674 §5.40 — WAI-ARIA hierarchical axes (level / posinset /
+    // setsize) builder + default-omission regression tests.
+
+    #[test]
+    fn r674_with_level_sets_aria_level() {
+        let n = AccessNode::new("row", AriaRole::TreeItem).with_level(1);
+        assert_eq!(n.level, Some(1));
+        let n2 = AccessNode::new("row", AriaRole::TreeItem).with_level(3);
+        assert_eq!(n2.level, Some(3));
+    }
+
+    #[test]
+    fn r674_with_position_in_set_sets_aria_posinset() {
+        let n = AccessNode::new("row", AriaRole::TreeItem)
+            .with_position_in_set(2);
+        assert_eq!(n.position_in_set, Some(2));
+    }
+
+    #[test]
+    fn r674_with_size_of_set_sets_aria_setsize() {
+        let n = AccessNode::new("row", AriaRole::TreeItem)
+            .with_size_of_set(5);
+        assert_eq!(n.size_of_set, Some(5));
+    }
+
+    #[test]
+    fn r674_hierarchical_axes_compose() {
+        // A treeitem typically carries all three axes together —
+        // the canonical "item N of M at depth D" announcement
+        // requires every value present.
+        let n = AccessNode::new("row", AriaRole::TreeItem)
+            .with_level(2)
+            .with_position_in_set(3)
+            .with_size_of_set(7);
+        assert_eq!(n.level, Some(2));
+        assert_eq!(n.position_in_set, Some(3));
+        assert_eq!(n.size_of_set, Some(7));
     }
 }
