@@ -32,28 +32,37 @@
 >
 > **R673 land (2026-05-26, commit `4a5a694`)** — Phase B widget catalog substrate maturity (TreeView 2nd application consumer). `AriaRole::Tree` + `TreeItem` (WAI-ARIA 1.2 §5.3.10/§5.3.11) + `TreeViewFocus` + `view_tree_focused` interactive entry + M3 SurfaceContainerHighest focus state-layer overlay. view_tree 레이아웃 정통 정정 — `AlignItems::Stretch` + 고정 너비 glyph column (NBSP leaf ↔ ▶/▼ branch 컬럼 정렬). `examples/hello-tree-view` 18번째 example, sample 파일 트리 모델 + WAI-ARIA tree keyboard model (Arrow Up/Down/Left/Right + Home/End + Space). 13-demo sweep PASS.
 
-【R680 plan】 next round entry — single commit, 4 atomic. DevTools cascade continuation — Rule-of-Three substrate lift gate (MainWindowClickRouter pattern reaches 2nd binding consumer):
+【R680 plan】 next round entry — **4-axis paint pipeline rewrite series Round 1 of 4** (axis 3 substrate: per-window Owner scope + tick_animations decoupling + per-window redraw flag). single commit, 6 atomic.
 
-(0) **2nd DevTools binding consumer (new `examples/hello-devtools-todomvc` OR DevTools-on-existing-binding)** — pick one of two options at scope time:
-   - **Option A**: new `examples/hello-devtools-todomvc` binding wrapping the R655-R666 todomvc app with an inspector second window mirroring its scene + bidirectional select bridge identical to hello-multi-window's. Forces real-app stress of the MainWindowClickRouter pattern (todomvc has rich nested scene structure — list rows, scrollbar, filter buttons; selection-set diff visibility).
-   - **Option B**: lighter — `examples/settings-panel` (R667 binding) gains an inspector window using the same scaffolding. Less LOC, less stress, but adequate Rule-of-Three trigger.
-   The 2nd consumer rewires the same 4-piece pattern verbatim (2nd ExtraExternal + router.click reducer arm + primary_widget.click reducer arm + static path constant) — copy-pasted boilerplate is the signal. Estimated LOC: Option A ~+800-1200 binding, Option B ~+400-600 binding.
+> **User directive (2026-05-27, R679.2 audit close 시)**: R679 closure 후 system-architect audit가 4-axis (dock/undock 1, selective rendering 2, per-window independence 3, dirty tracking 4) 모두 MISSING/PARTIAL을 확인. **4-axis는 분리된 roadmap items가 아니라 하나의 통합된 paint-cycle + window-lifecycle 재설계**. Prerequisite chain: axis 3 → axis 2/4 (subtree paint은 per-window scope 분리 후만 의미); axis 2 ↔ axis 4 = sibling pair (둘 다 같이만 의미); axis 1 = axis 3 위에 얹는 consumer. 비용 무관 + 북극성 정합 우선 원칙 적용 → R680-R683 단일 series로 묶어서 4-axis 전부 textbook canonical 청산.
+>
+> R679 cascade closure carry (2nd DevTools binding consumer + MainWindowClickRouter substrate lift)는 R683 dock series 안에서 자연 land — dock-able 2nd consumer가 substrate lift 의 자연 진정 consumer.
 
-(1) **`pinion_widget_paint::devtools::MainWindowClickRouter` substrate lift + `BUTTON_RAW_PATH` const into substrate** — once the 2nd consumer is up, lift the External + reducer-arm helper into the substrate next to `path_for_paint_hit`. Each consumer binding now imports the lifted External + a per-binding static path constant (the substrate test pins the path against the binding's view fn). Substrate gains the 4-piece-pattern helper: a `devtools_click_router_arm(intent, signal_handle)` style fn (or trait method) that reducers call from their `V::update` match arms — abstracts the Text/Null routing logic. Estimated LOC: +200-300 substrate.
+R680 atomic 6개 (axis 3 substrate-first 순서, prerequisite chain mandatory):
 
-(2) **Consumer migration** — hello-multi-window + the new 2nd consumer both switch to the lifted substrate. Per-binding boilerplate drops to ~10 LOC (just the static path constant + reducer arm call + register). Estimated LOC: -100 binding (substrate lift gain).
+(0) **`pinion-runtime::Owner` per-window scope substrate** — `Owner::current()` 가 thread-local stack 으로 동작 (R51.146 view-fn-owner-current-thread-local). R680 은 binding의 root_owner 위에 per-window child Owner scope를 carve. `pinion-runtime::core_shell::CoreShell` 에 `window_owners: HashMap<String, Rc<Owner>>` 필드 추가 (key = `WindowSpec::id`, value = child of `root_owner`). `compute_paint_scene_internal(window_id, w, h)` 가 paint cycle 시작 시 `window_owner.run(|| { ... root_owner.run(...) ... })` 대신 `window_owner.run(|| { V::view_for_window(window_id, state, frame) })` — view fn이 per-window owner 아래에서 실행되어 Owner::cache 슬롯이 per-window 분리됨. backward-compat: 단일 윈도우 binding은 primary window owner == ShellCore-wide owner (Phase A 회귀 0). 12-15 unit tests pin per-window Owner::cache 격리 + parent-child Owner cleanup 정합 (Owner drop 시 child scope drain).
 
-(3) **r680 demo + 20-demo regression sweep + commit + Mnemosyne** — `tools/demos/r680_devtools_substrate_lift.py` (≥30 assertion) covering both consumers exhibiting bidirectional bridge behaviour through the lifted substrate; 20-demo regression sweep PASS deterministic (R660-R679 + R680). Commit `feat(widget-paint): R680 §5.16 §5.49 §5.50 DevTools substrate lift`. Mnemosyne entry_id=R680 + impact_refs [5.16, 5.49, 5.50] + carry (R681 pinion-devtools crate skeleton split / R682+ multi-select model / R683+ DevTools breakpoint-marker overlay).
+(1) **`Owner::tick_animations` per-WindowSlot 분리** — `pinion-shell::WindowSlot` 에 `last_paint_instant: Option<Instant>` + `owner_scope: Rc<Owner>` 필드 추가. `AppShell::render_window(window_id)` 가 `tick_animations(slot.last_paint_instant, current_instant)` 를 호출하되 **slot.owner_scope 만 walk** (`Owner::tick_animations_recursive` 의 per-Owner variant). 두 윈도우 동시 페인트 시 N배 compound 청산 (R670.B carry honest 청산 — 9 round 미해결 부채). 6-8 unit tests: 두 윈도우 가 별도 spring `Tickable` 보유 시 cross-window state corruption 0 (R51.150 owner-cache substrate 의 per-window 변종 검증), animation dt clamp 가 per-slot 적용.
 
-honest LOC 예측: **R680 = +1200-2000 net** depending on Option A vs B for the 2nd consumer.
+(2) **`pinion-shell::WindowSlot.redraw_requested: AtomicBool` per-window flag** — 현재 `ShellCore::request_redraw` 가 binding-wide `redraw_requested` flag 1개 (`drain_redraw_to_winit` 가 모든 슬롯에 fan-out: `app.rs:273-282`). R680 은 flag를 per-WindowSlot 으로 lift; `ShellCore::request_redraw_for_window(window_id)` API 신설 (default `request_redraw()` = primary window 만). `Signal::set` → `Effect::mark_dirty` → `any_animation_active` 체인이 **변경된 window scope 만** request_redraw 발화 (Effect 의 owning Owner scope를 통해 어느 window 인지 해결). Cross-window propagation은 explicit `request_redraw_for_window("inspector")` 또는 shared signal subscription 으로만 가능. 8-10 unit tests pin selective redraw + 회귀 0 (hello-multi-window 의 inspector mirror arc는 shared owner 위에 살아있어 자연 redraw — explicit cross-window subscription 처리).
 
-R680 후 가중 진척: ~17-18% → **~19-20%** (Phase B 25% × ~26% + Phase D 35% × ~7-8% — Rule-of-Three substrate maturity at the DevTools layer; `pinion_widget_paint::devtools` becomes the canonical home for DevTools widgets shared across consumers; this is the prerequisite for R681's pinion-devtools crate skeleton).
+(3) **`pinion-rpc::DispatchContext.window_id` per-window owner resolution** — RPC dispatch 가 invoke / query / intervene 시 target window의 owner scope 안에서 실행되어야 (Effect 가 올바른 window 의 redraw 발화). `pinion-shell::ShellCore::dispatch_rpc_for_window(window_id)` 가 `window_owner.run(|| dispatch_inner(...))` wrap 추가. RPC introspect 결과는 동일 (paint 결과만 per-window scoped). 4-6 unit tests + 19-demo sweep 회귀 0 검증.
+
+(4) **`hello-multi-window` per-window tick isolation 검증 atomic** — R680 demo `tools/demos/r680_per_window_owner_scope.py` (≥30 assertion): (A) 두 윈도우 paint 동시 시 spring animation step count 1배 (compound 0); (B) 한 윈도우의 Signal 변경이 다른 윈도우 redraw 발화 안 함 (explicit shared subscription 제외); (C) per-window Owner::cache 슬롯이 격리 — main window의 `use_selected_path()` 와 inspector의 `use_hovered_path()` 가 서로 다른 owner scope; (D) parent-child Owner cleanup 정합; (E) RPC `scene/invoke {window: "inspector", ...}` 가 inspector owner scope에서 실행 → inspector만 redraw; (F) backward-compat — 단일 윈도우 binding (hello-button / todomvc / settings-panel) 동일 행동 bit-identical.
+
+(5) **20-demo regression sweep + commit + Mnemosyne** — 20-demo sweep PASS deterministic 3 consecutive runs (R660-R679 + R680). Commit `feat(runtime): R680 §5.16 §5.41 axis 3 per-window Owner scope`. Mnemosyne `entry_id=R680` + impact_refs [5.16, 5.41, 5.45] + carry (R681 axis 2 immediate-mode primitive / R682 axis 4 dirty subtree cache / R683 axis 1 dynamic dock + R679 DevTools 2nd consumer 자연 land).
+
+honest LOC 예측: **R680 = +1500-2300 net** (substrate refactor + per-window Owner field + tick decouple + redraw flag + RPC threading + demo + tests). 핵심 substrate change → 1.5-2× R670.B (1300 net).
+
+R680 후 가중 진척: ~17-18% → **~19-20%** (Phase B 25% × ~27% — multi-window 진짜 independence 도달; per-window animation tick + selective redraw = pro-tool authoring의 정통 기반; R681-R683 prerequisite). Phase C entry (R&lt;700-800 range&gt;)이 paint-pipeline rewrite series 완료 후 자연 도래.
 
 **R680 verification mandatory** (라운드 끝):
-- 20-demo regression sweep PASS deterministic (R660-R679 + R680)
-- 2nd binding's bidirectional bridge behaviour bit-identical to hello-multi-window's (RPC introspect output for click→focus state-layer paint matches)
-- Substrate lift preserves view_inspector cross-arc verification surface (both consumers' tests pass against the lifted helpers)
-- 부채 surface 정직 받아들임 — pinion-devtools crate skeleton R681, multi-select model R682+
+- 20-demo regression sweep PASS deterministic 3 consecutive runs (R660-R679 + R680)
+- 두 윈도우 동시 spring animation 시 tick compound 0 (R670.B carry 9-round 부채 청산)
+- per-window Owner::cache 슬롯 격리 확인 (cross-window state corruption 0)
+- Selective redraw — 한 윈도우 Signal mutation 이 다른 윈도우 redraw 발화 안 함 (explicit shared subscription 제외)
+- backward-compat — 단일 윈도우 binding 18개 회귀 0
+- 부채 surface 정직 받아들임 — R681 axis 2 / R682 axis 4 / R683 axis 1 + R679 DevTools 2nd consumer carry
 
 **R679 verification (라운드 끝, completed)**:
 - ✓ 19-demo regression sweep PASS deterministic (R660-R678 + R679; 3 consecutive sweeps)
@@ -61,7 +70,70 @@ R680 후 가중 진척: ~17-18% → **~19-20%** (Phase B 25% × ~26% + Phase D 3
 - ✓ Bidirectional sync invariant pinned at binding level (`r679_bidirectional_alternation_preserves_invariant`) + RPC level (demo section F)
 - ✓ Background-click design decision pinned (no-op for user-mouse; AI-Null available for deselect)
 - ✓ R675 demo section (J) banner assertion relaxed to accept R679's bridge enrichment
-- ✓ 부채 surface 정직 받아들임 — R680 2nd DevTools binding + substrate lift / R681 pinion-devtools crate skeleton / Scroll content non-descent v1 carry / button-payload-with-coordinates substrate
+- ✓ 부채 surface 정직 받아들임 — 4-axis paint pipeline rewrite series (R680-R683) carry below + Scroll content non-descent v1 carry + button-payload-with-coordinates substrate carry
+
+【4-axis paint pipeline rewrite series carry (R680 → R683 sequence, R679.2 audit 시 등록)】
+
+R679 closure 후 system-architect audit (2026-05-27) 가 4-axis 모두 MISSING/PARTIAL 확인. 분리 land = anti-textbook (prerequisite chain 위배 + 매 라운드 retroactive substrate 재설계 부채). 단일 series로 묶어 paint-pipeline + window-lifecycle 통합 재설계.
+
+**Prerequisite chain** (분리 불가):
+```
+              Axis 3 (per-window Owner scope, tick decoupling)
+              │   ╲
+              │    ╲ (subtree paint은 per-window scope 분리 후만 의미;
+              │     ╲ 글로벌 redraw fan-out 위에 immediate-mode 얹으면
+              │      ╲ Signal::set 1번에 모든 윈도우 60Hz burn)
+              │       ╲
+   Axis 1 ←──┘        Axis 2 (Scene::ImmediateModeNode, immediate-mode
+   (dynamic dock        │     subtree opt-in primitive)
+   on Signal<Vec<       │
+   WindowSpec>>;        │ sibling pair (둘 다 함께만 의미; immediate
+   tear-off ; dock-     │ without dirty = 144Hz로 retained tree 재encode
+   able panel UX)       │ burn; dirty without immediate = retained 위
+                        │ fragment caching 최적화에 그침)
+                        │
+                       Axis 4 (Vello Scene::append subtree cache,
+                              structural-hash key per Scene::Container,
+                              damage rect propagation)
+```
+
+**R680 — axis 3 substrate (per-window Owner scope + tick decoupling + selective redraw)**. 위 R680 plan 절 참조. **Phase B → C 전환의 첫 필수 prerequisite**. R670.B carry (animation tick global compound) 9-round honest 청산.
+
+**R681 — axis 2 substrate (Scene::ImmediateModeNode + immediate-mode subtree opt-in primitive)**. atomic 7-9개 예상:
+   - (0) `Scene::ImmediateModeNode { tick: Rc<dyn ImmediateMode>, viewport: Rect, last_dt: Cell<Duration> }` 변종 추가 (pinion-core/src/scene.rs). `ImmediateMode` trait: `fn tick(&mut self, frame: &mut ImmediateFrame, dt: Duration)`.
+   - (1) `pinion-shell::AppShell::render_window` 가 ImmediateModeNode 발견 시 `Scene::Container` retained walk 분리 — ImmediateModeNode 의 paint 책임은 trait impl 가 직접 vello::Scene 에 그림 (paint_adapter 가 retained subtree 만 encode).
+   - (2) **per-window `ControlFlow::Poll`** — `WindowSlot` 안에 immediate-mode subtree 1개 이상 있을 때 winit ControlFlow를 Poll 로 (그 외 Wait). winit 0.30 글로벌 control-flow 한계 → self-paced redraw timer (per-window `Instant::now() + frame_budget_target` 비교, axis 3 의 per-window `last_paint_instant` 활용).
+   - (3) `pinion-runtime::frame_pacing` 확장 — `target_fps: HashMap<WindowId, u32>` + per-window frame budget cap (default 60fps for immediate-mode, idle Wait otherwise).
+   - (4) 첫 ImmediateMode consumer — `examples/hello-immediate-mode-canvas` 또는 hello-multi-window inspector 의 fps-counter overlay (작은 stress test, retained + immediate 공존 검증).
+   - (5) R681 demo + 21-demo sweep + Mnemosyne entry.
+   - **honest LOC 예측 ~+2000-3000 net** (Scene variant + AppShell branch + frame_pacing 확장 + 첫 consumer + demo).
+
+**R682 — axis 4 substrate (dirty subtree cache + Vello Scene::append + structural-hash key + damage rect)**. atomic 6-8개 예상:
+   - (0) `pinion-core::scene::Container` 에 `paint_hash: Cell<Option<u64>>` field — paint pass 시 자신의 box + children hash 계산 캐시. Hash 변경 시만 dirty.
+   - (1) `pinion-shell::paint_adapter` rewrite — vello::Scene 을 reset 안 하고 per-Scene::Container subtree 별 `vello::Scene` fragment cache (`HashMap<u64, vello::Scene>` 구조 해시 키 기반). `Scene::append` 으로 unchanged subtree 추가 (재encode 0). 변경 subtree 만 fresh encode.
+   - (2) Damage rect propagation — `compute_layout` 결과의 rect 변화도 감지 (paint_hash 가 layout-rect 도 포함). 이전 paint 의 rect 와 새 rect 의 union = damage region. (Vello는 현재 damage rect 무관하게 전체 buffer 재submit 함 — 추후 wgpu surface invalidation 활용은 R&lt;X+1&gt; carry).
+   - (3) Signal-mutation → subtree paint wire — `Effect::mark_dirty` 가 자신의 owning Owner scope 안 Scene::Container subtree 들의 paint_hash 무효화 (subtree scope 기반 invalidation). 글로벌 V::view 재실행은 유지 (contract 안 깸); 단 fragment cache hit 률이 90%+ 라 비용 사실상 0.
+   - (4) 첫 dirty-cache consumer — todomvc 의 100-row long list (filter 변경 시 변경된 row 만 재encode 검증).
+   - (5) R682 demo (cache hit rate + frame time profiling assertion) + 22-demo sweep + Mnemosyne.
+   - **honest LOC 예측 ~+2500-3500 net** (paint_adapter rewrite는 R&lt;X&gt; 핵심 refactor + 첫 consumer profiling).
+
+**R683 — axis 1 substrate (runtime window lifecycle + Splitter widget + dock UX)**. atomic 8-10개 예상:
+   - (0) `WidgetView::windows() -> Vec<WindowSpec>` compile-time 을 `Signal<Vec<WindowSpec>>` runtime 으로 lift. `WindowSpec::main(...)` / `WindowSpec::new(...)` API 유지, declaration 만 reactive.
+   - (1) `pinion-shell::AppShell::reconcile_windows` Effect — Signal 구독, diff 계산, 새 spec → `resume_spec` 호출, 사라진 spec → winit `window.close()` + `WindowSlot` drop. axis 3의 per-window Owner scope cleanup 정합.
+   - (2) `pinion-widget-paint::splitter::Splitter` widget — `Scene::Container` 안 draggable handle child + `Signal<f32>` ratio + LayoutStyle flex-grow 와이어. R660 의 DeferredInput::Drag 정통 consumer.
+   - (3) `pinion-widget-paint::dock::DockSurface` widget — N개 child panel을 dock layout(좌/우/상/하/center) 으로 배치. tear-off drag 감지 → 새 WindowSpec push (axis 1+3 통합).
+   - (4) `examples/hello-dock-panels` 첫 dock consumer — DevTools의 inspector tree + property pane + viewport를 dock 으로 배치, drag로 tear-off → 새 윈도우.
+   - (5) **R679 DevTools cascade carry 자연 청산** — 2nd DevTools binding consumer가 hello-dock-panels 안 inspector dock-panel 로 등장 (Phase D editor self-hosted 의 정통 진입 dogfood). MainWindowClickRouter substrate lift 도 Rule-of-Three 자연 trigger.
+   - (6) R683 demo (dock split-pane drag, tear-off, dock-back) + 23-demo sweep + Mnemosyne.
+   - **honest LOC 예측 ~+3000-4500 net** (가장 큰 round — Splitter + DockSurface + tear-off UX + first dock consumer 동시 land).
+
+**R680-R683 series 종료 후 가중 진척**: 현재 ~17-18% → **~28-32%** (Phase B 25% × ~60% — multi-window pro-tool authoring 정통 ground + Phase C 35% × ~20% — paint pipeline ready for game-engine substrate). Phase C entry (game-loop, 3D scene graph, asset pipeline, physics, audio, PBR)가 R&lt;700-900 range&gt;에서 자연 도래 — R683 이후 즉시 진입 가능.
+
+**R680-R683 series rationale (textbook anchor)**:
+- 비용 무관 + 북극성 정합 우선 + 부채 즉시 상환 (User directive 2026-05-25 + 2026-05-27 audit close). 4-axis 분리 land = retroactive R900-class paint pipeline 재설계 부채 누적; series 통합 land = textbook canonical.
+- [[substrate-incompleteness-signal]] — R670.B carry (animation tick global compound) 가 9-round 미해결. R680 axis 3 청산.
+- [[abstraction-needs-second-consumer]] — R679 cascade closure (2nd DevTools consumer) 는 R683 dock series 안에서 자연 trigger (R&lt;X&gt;.D dock-able DevTools 가 2nd consumer 의 textbook 정통 형태).
+- [[textbook-long-term-correct]] — "lifetime project + 비용 무시" 원칙 직접 적용. 4-axis가 진짜 northern-star (§2 #4 dual execution = Phase C entry = AAA + editor self-hosted enabler).
 
 **R678 verification (라운드 끝, completed)**:
 - ✓ 18-demo regression sweep PASS deterministic (R660 - R678 + double_click_r663)
