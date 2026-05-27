@@ -1,10 +1,12 @@
 # pinion seed prompt — 매 세션 첫 입력
 
-> **R675 land (2026-05-26, commit `e1d8817`)** — TreeRowClickExternal substrate lift (R674 binding-level `FileTreeRowExternal` → `pinion_widget_paint::tree_view::TreeRowClickExternal`) + DevTools/SceneInspector first interactive dogfood. [[abstraction-needs-second-consumer]] Rule-of-Three gate fired: hello-multi-window inspector is 2nd consumer (hello-tree-view = 1st), substrate now homes the External next to view_tree / view_tree_focused. Cross-window state-sync via shared `Signal<Option<String>>` selected_path (use_selected_path() Owner::cache hook); inspector click → V::update reducer mirrors into Signal → main window paints "Selected: {path}" banner; inspector tree row paints M3 focus state-layer on selected row. First **Phase D editor dogfood** structurally complete — AI driving cross-window state via `/inspector_tree/external/click` typed shortcut produces same observable result as human click. 17 R674 binding tests migrated to substrate behavior-identity preserved. **R676 is the next round** — DevTools cascade continuation (highlight overlay in main window + property pane / hover bridge / bidirectional select). R663.5 canonical baseline 유지.
+> **R676 land (2026-05-27, commit `cf3d134`)** — R675 architectural 부채 즉시 청산 (path-stable indexing scheme) + DevTools highlight overlay 1st cut. `scene_to_tree_item` walker rewritten to Browser-DevTools-canonical CSS-selector form `Type[tag-or-nth-of-type]` — tagged Container/External use `Container[main_btn]` form, untagged use `Type[nth-of-type]` form (`Text[0]`); root segment is bare type for untagged singletons. Tagged paths are now invariant to untagged-sibling churn (the R675 banner-on/off issue where Container[main_btn] shifted from sibling-idx 0 to 1 is closed at source). `find_main_node_at_path` + `parse_path_segment` + `find_child_in_container` inverse walker pair lands as soft-signal resolver (returns Option<&Scene>, None for inspector-only ids / stale paths / malformed segments). DevTools highlight overlay = `wrap_with_highlight(scene, ColorRole::Error 2px Border)` non-destructive composition + `rebuild_with_highlight_at_path` by-value walker (std::mem::replace swap+transform pattern). `view_main` two-pass: build raw via new `view_main_raw` (inspector mirrors this — DevTools-style separation between underlying tree and overlay paint, mirroring Chrome / Firefox / Safari inspector architecture) → rebuild with wrap. 38 new R676 unit tests + tools/demos/r676_devtools_highlight.py (42+ assertions); 15-demo regression sweep PASS deterministic (R660 / R664 / R665 / R666 / R667 / R668 / R669 / R670a / R670b / R671 / R672 / R673 / R674 / R675 + R676). 3526 workspace tests pass (+28 net from R675's 3498), clippy clean. R663.5 canonical baseline 유지. **R677 is the next round** — DevTools cascade continuation (property pane / hover bridge / bidirectional select / highlight overlay substrate lift on 2nd consumer surface).
 >
-> **다음 세션 진입**: `load` 단독 입력. SEED 의 【시작 명령】 절 (R676 atomic list — path-stable indexing 부채 청산 + DevTools highlight-overlay 1st cut) 자동 진행. 모든 atomic 은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지. 매 atomic 종료 시 cargo test + clippy + 16-demo regression sweep 검증 후 다음 atomic 진입.
+> **다음 세션 진입**: `load` 단독 입력. SEED 의 【시작 명령】 절 (R677 atomic list — DevTools property pane consumer + selected-node field render) 자동 진행. 모든 atomic 은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지. 매 atomic 종료 시 cargo test + clippy + 16-demo regression sweep 검증 후 다음 atomic 진입.
 >
-> R675 가중 진척: Phase A 97% + Phase B 25% × ~20% (TreeRowClickExternal substrate maturity + 14 widgets in catalog) + Phase D 35% × ~1% (first cross-window state-sync dogfood = editor outliner→viewport bridge prerequisite) = 북극성 가중 **~12.5-13%**. R676+ DevTools cascade (highlight overlay + property pane + hover bridge + bidirectional select) targets ~13-14%.
+> R676 가중 진척: Phase A 97% + Phase B 25% × ~20% (path-stable indexing 부채 청산 + DevTools 1st visual feedback complete) + Phase D 35% × ~2% (first visible Phase D editor outliner→viewport bridge complete; path-stable indexing은 모든 후속 DevTools work의 foundation) = 북극성 가중 **~13-14%**. R677+ DevTools cascade (property pane → hover bridge → bidirectional select) targets ~14-15%.
+>
+> **R675 land (2026-05-26, commit `e1d8817`)** — TreeRowClickExternal substrate lift (R674 binding-level `FileTreeRowExternal` → `pinion_widget_paint::tree_view::TreeRowClickExternal`) + DevTools/SceneInspector first interactive dogfood. [[abstraction-needs-second-consumer]] Rule-of-Three gate fired: hello-multi-window inspector is 2nd consumer (hello-tree-view = 1st), substrate now homes the External next to view_tree / view_tree_focused. Cross-window state-sync via shared `Signal<Option<String>>` selected_path (use_selected_path() Owner::cache hook); inspector click → V::update reducer mirrors into Signal → main window paints "Selected: {path}" banner; inspector tree row paints M3 focus state-layer on selected row. First **Phase D editor dogfood** structurally complete — AI driving cross-window state via `/inspector_tree/external/click` typed shortcut produces same observable result as human click. 17 R674 binding tests migrated to substrate behavior-identity preserved. **R676 carry inline 청산 ✓** (path-stable indexing + DevTools highlight overlay — see R676 land summary above).
 >
 > **R674 land (2026-05-26, commit `f905488`)** — R673 carry 100% inline 청산: (a) TreeView click-to-expand via new binding-level `FileTreeRowExternal` (SCXML Idle↔Pressed + composite_tag::parse_send_payload 6th substrate consumer + V::update reducer bridge sharing `toggle_expanded_in_signal` sink with the keyboard Space/Enter path so kbd and click routes produce bit-identical Signal mutations); (b) per-row `AriaRole::TreeItem` AccessNodes emitted via new `walk_access_rows` helper with WAI-ARIA 1.2 hierarchical axes (level / position_in_set / size_of_set). AccessNode substrate extension lands 3 `Option<u32>` fields + builder methods + AccessKit `set_level` / `set_position_in_set` / `set_size_of_set` lowering. `role.rs::TreeItem` doc correction (WAI-ARIA spec requires authors to provide hierarchical axes on custom widget roles; AT does NOT auto-compute). **R675 carry inline 청산 ✓** (FileTreeRowExternal lifted to substrate via R675 — see R675 land summary above).
 >
@@ -16,26 +18,26 @@
 >
 > **R673 land (2026-05-26, commit `4a5a694`)** — Phase B widget catalog substrate maturity (TreeView 2nd application consumer). `AriaRole::Tree` + `TreeItem` (WAI-ARIA 1.2 §5.3.10/§5.3.11) + `TreeViewFocus` + `view_tree_focused` interactive entry + M3 SurfaceContainerHighest focus state-layer overlay. view_tree 레이아웃 정통 정정 — `AlignItems::Stretch` + 고정 너비 glyph column (NBSP leaf ↔ ▶/▼ branch 컬럼 정렬). `examples/hello-tree-view` 18번째 example, sample 파일 트리 모델 + WAI-ARIA tree keyboard model (Arrow Up/Down/Left/Right + Home/End + Space). 13-demo sweep PASS.
 
-【R674 plan】 next round entry — single commit, 4 atomic. carry-clearance-first + substrate-first 순서:
+【R677 plan】 next round entry — single commit, 4 atomic. substrate-first + Rule-of-Three deferral 정통:
 
-(0) **`pinion_core::widgets::tree_row` 또는 `pinion_widget_paint::tree_view::TreeRowClickExternal` substrate** — TreeView row click-to-toggle external. R673 carry 1순위 (click-to-expand) 즉시 청산. SCXML state machine: Idle / Pressed. On PointerUp (after PointerDown on a `{tree_tag}#{node_id}` composite tag), raises intent `{tree_tag}.click` with payload = node_id suffix (composite_tag::parse_send_payload 6-of-6 substrate consumer). Compose with existing composite-tag input dispatch (todomvc TodoDeleteExternal pattern). 8-12 unit tests. Estimated LOC: +250-350.
+(0) **DevTools property pane — view_inspector layout split** — `view_inspector` 가 현재 single `view_tree_focused` (single-column tree). R677 atomic 0 splits into 2 panes: left = the existing tree, right = the property pane (selected node's field render). Uses LayoutStyle::flex grow (R667 substrate) to allocate widths. Initial property pane = `Text` rendering `format!("{:?}", selected_path)` + the resolved node's `scene_type_name` + (when Container) tag + children count. Soft-fail when no path resolves: pane renders "(no selection)" placeholder. Estimated LOC: +200-300 substrate.
 
-(1) **hello-tree-view click-to-expand wiring** — V::create_extra_externals returns TreeRowClickExternal with prefix `file_tree`. V::update reducer: on intent `file_tree.click(<id>)`, toggle `expanded` flag on the matching FileNode in the tree state Signal. Keyboard model (R673)와 click model 둘 다 같은 reactive 상태 갱신을 통해 일관 동작. Demo r673_tree_view_interactive.py 에 click 단계 추가 (scene/click {path: "file_tree#widgets"} → expand verify).
+(1) **Property pane field walker — selected node introspection** — `property_pane_rows(scene: &Scene) -> Vec<TextNode>` helper walks the resolved `&Scene` (from `find_main_node_at_path`) and emits one row per field: `type:`, `tag:`, `style.fill:`, `style.border:`, `layout.size:`, `children:` count. Mirrors Chrome DevTools' Computed pane. Reuses `find_main_node_at_path` from R676 atomic (1) — second consumer ⇒ no substrate lift yet ([[abstraction-needs-second-consumer]] threshold not met until 3rd consumer). Estimated LOC: +150-250.
 
-(2) **per-row `AriaRole::TreeItem` AccessNodes** — R673 carry 2순위 (a11y maturity). WidgetA11y::access_node walks the FileNode tree + emits one AccessNode per visible row with `role: TreeItem`, `name: label`, `parent_tag: file_tree` (or composite). AT clients (AccessKit → NVDA / VoiceOver / Orca) announce hierarchy + position + expand-state. Add `aria_level` / `aria_posinset` / `aria_setsize` fields to AccessNode if 미존재 (substrate extension; mirror Listbox option pattern).
+(2) **Inspector window resize for 2-pane layout** — inspector currently 280×140; expand to 480×320 to host the property pane. `windows()` spec update + demo viewport adjust. No substrate change — pure spec config. Estimated LOC: +30 (spec + tests).
 
-(3) **r674 demo + 14-demo sweep + commit + Mnemosyne entry** — `tools/demos/r674_tree_view_clickable.py` (≥30 assertion): click-to-expand on branches, click-no-op on leaves, click + kbd nav 혼합 시 일관 동작, AccessNode TreeItem emission via scene/snapshot 검증. 14-demo regression sweep PASS (R660-R672 + R673 + R674). Commit `feat(<scope>): R674 §5.16 §5.50 §5.40 TreeView click-to-expand + per-row a11y`. Mnemosyne entry_id=R674 + impact_refs [5.16, 5.40, 5.50] + carry (Menu/Dialog/Tabs Phase B catalog cascade R675+).
+(3) **r677 demo + 16-demo sweep + commit + Mnemosyne** — `tools/demos/r677_devtools_property_pane.py` (≥30 assertion): property pane visible at boot ("(no selection)" placeholder); inspector tree click → property pane shows type/tag/children for the selected node; root selection → property pane shows root Container fields; inspector-only id `state` → property pane shows "(no selection)" (path doesn't resolve in main scene); AI-driven selection bit-identical to human; pane updates atomically on selection change. 16-demo regression sweep PASS (R660-R676 + R677). Commit `feat(examples): R677 §5.16 §5.49 DevTools property pane`. Mnemosyne entry_id=R677 + impact_refs [5.16, 5.49, 5.50] + carry (highlight overlay substrate lift on R678 hover bridge as 2nd consumer; bidirectional select R679).
 
-honest LOC 예측: **R674 = +1100-1500 net** — substrate +250-400 (TreeRowClickExternal SCXML + introspect + tests) / hello-tree-view extension +150-200 (V::create_extra_externals + V::update reducer + access_node tree walk) / demo +400-500 / SEED + Mnemosyne ≈+200.
+honest LOC 예측: **R677 = +900-1300 net** — (0) layout split +200-300 / (1) field walker +150-250 / (2) window resize +30 / (3) demo +400-500 + SEED + Mnemosyne entry +120-220.
 
-R674 후 가중 진척: ~10-11% → **~11-13%** (Phase B 25% × widget catalog maturity ~17%, composite_tag substrate 6-of-6, a11y per-row 1st consumer).
+R677 후 가중 진척: ~13-14% → **~14-15%** (Phase D 35% × ~3% — second visible Phase D editor feature = property pane / Computed-tab analog).
 
-**R674 verification mandatory** (라운드 끝):
-- 14-demo regression sweep PASS deterministic (R671-R673 + R674)
-- click-to-expand 와 키보드 toggle 결과 bit-identical (같은 SCXML state mutation)
-- composite_tag::parse_send_payload 6-of-6 정통 maturity 검증
-- AccessKit Tree+TreeItem emit이 scene/snapshot 또는 access_node 호출에서 가시화
-- 부채 surface 정직 받아들임 — TreeView multi-select / drag-drop / virtualization 등은 2nd-consumer 등장 시까지 carry
+**R677 verification mandatory** (라운드 끝):
+- 16-demo regression sweep PASS deterministic (R660-R676 + R677)
+- property pane reflects the selected scene's fields end-to-end (scene/snapshot {window: "inspector"} carries the field rows)
+- find_main_node_at_path 2nd consumer 정통화 — substrate gap closure 검증
+- soft-fail UX — inspector-only ids show "(no selection)" without breaking layout
+- 부채 surface 정직 받아들임 — hover bridge (R678+), bidirectional select (R679+), highlight overlay substrate lift (R678+ on 2nd consumer)
 >
 > **User directive (2026-05-25, R670.A close 시 재확인)**: 비용 무관 + 북극성 anchor + 장기 textbook-canonical 결정 + 부채 즉시 상환 + 한 라운드에 모든 atomic land. R670 original plan 은 6 atomic; session budget honesty 로 R670.A (atomics 0+1+2 = R668/R669 carry clearance + Phase B trait foundation) 우선 land, R670.B (atomics 3+4+5 = AppShell multi-window refactor + RPC window param + `hello-multi-window` + demo + Mnemosyne) 별도 round. **single commit = 1 round 원칙 유지; 매 atomic 종료 시 cargo test + clippy + 기존 demo regression sweep 검증 후 다음 atomic 진입**.
 >
@@ -602,95 +604,92 @@ R673 carry (R674 진입 전 평가):
 
 【시작 명령】
 
-R676 = **R675 architectural 부채 즉시 청산 (path-stable indexing scheme) + DevTools highlight-overlay 1st cut**. 4 atomic land — debt-clearance-first + substrate-first 정통 ordering. R675 가 surface한 진짜 부채를 inline 청산한 다음에 highlight overlay가 textbook canonical하게 동작.
+R677 = **DevTools cascade continuation — property pane (Computed-tab analog) on the path-stable foundation R676 laid**. 4 atomic land — substrate-consumer-first ordering. R676 substrate (find_main_node_at_path inverse walker) gets its 2nd consumer via the property pane field walker; [[abstraction-needs-second-consumer]] Rule-of-Three threshold tracks but does NOT yet fire for the highlight overlay lift (still 1st consumer at hello-multi-window — R678+ hover bridge or bidirectional select will be the 2nd consumer that triggers the pinion_widget_paint::overlay substrate lift).
 
-**R675 honest 부채 surface (R676 inline 청산 mandatory)**:
-- `scene_to_tree_item`의 path scheme `"0/2/1"`은 sibling-index 기반이라 banner 등장/소실 시 path shift (selection 등장 → banner 추가 → button index 0→1로 shift, 동일 path `"0/0"`이 다른 element 가리킴). highlight overlay / property pane / hover bridge 모두 stable path 없이는 brittle. **이 부채를 R676 (0)에서 청산하지 않으면 모든 후속 DevTools 작업이 fragile하게 빌드됨** — [[r47-class-incident-prevention]] textbook 원칙 적용.
+**R676 honest 부채 surface (R677 inline 청산 mandatory)**:
+- `find_main_node_at_path` 가 R676에서 1st consumer (view_main의 pre-resolve gate)만 가짐. 2nd consumer (property pane field walker) 가 R677 atomic (1)에서 자연 합류 → [[abstraction-needs-second-consumer]] Rule-of-Three threshold approach (3rd consumer 등장 시 pinion_widget_paint::overlay 또는 pinion_runtime::scene_path substrate lift).
+- 현재 inspector window 280×140 이 single-column tree 만 호스팅. R677 atomic (2)에서 480×320 으로 확장 (2-pane layout) — `windows()` spec config 변경만.
 
-**진입 시 즉시 진행 (load 명령 / `R676 진행` 입력 시 자동 시작)**:
+**진입 시 즉시 진행 (load 명령 / `R677 진행` 입력 시 자동 시작)**:
 - 모든 atomic은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지
 - 각 substrate atomic 종료 시 cargo test + clippy + 16-demo regression sweep PASS 검증 후 다음 atomic 진입
 - 마지막 atomic (3) 에서 demo + commit + Mnemosyne entry 한꺼번에
 - 라운드 중간 commit 금지 (1 commit = 1 round 원칙) — WIP는 stash 또는 sequence keep
-- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R676.A) — but 우선 4 atomic 모두 한 라운드 land 시도
+- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R677.A) — but 우선 4 atomic 모두 한 라운드 land 시도
 - 매 라운드 끝 push 권한 명시 동의 필요 (CLAUDE.md 영구 원칙)
 
-**R676 atomic land 순서** (debt-clearance-first + substrate-first, northern-star Phase D 정렬):
+**R677 atomic land 순서** (substrate-consumer-first, northern-star Phase D 정렬):
 
-(0) **path-stable indexing scheme migration** (R675 부채 즉시 청산) — `examples/hello-multi-window/src/main.rs`의 `scene_to_tree_item` walker가 path id 생성 시 다음 원칙 따름:
-   - Container/External에 tag가 있으면 path segment = `"{Type}[{tag}]"` (예: `"Container[main_btn]"`)
-   - tag가 없으면 path segment = `"{Type}[{idx}]"` (예: `"Container[0]"` — sibling 중 같은 Type 의 idx)
-   - 중첩은 `/`로 연결 (예: `"Container/Container[main_btn]/Text[0]"`)
-   - **Browser DevTools canonical (CSS-selector mirror)** — tag가 stable element id 역할, idx는 unnamed siblings에 대한 ordinal fallback. banner 등장으로 sibling 순서 shift해도 tagged element (`main_btn`)는 path 안 바뀜.
-   - Inspector tree의 row paths가 자동으로 stable해짐 — `selected_path` Signal의 value가 paint cycle 간 일관됨.
-   - 8-12 unit tests in hello-multi-window (`r676_path_stable_indexing_tests` module):
-     - tagged node → tag-form path
-     - untagged node → type+idx form
-     - banner-on vs banner-off 시 button path 동일
-     - 중첩 path round-trip (build path from scene → find node by path)
-     - leaf vs container path discriminator
+(0) **DevTools property pane — view_inspector 2-pane layout split** — `view_inspector` 현재 single `view_tree_focused` (single-column). R677 atomic 0 splits into Row[left=tree, right=property pane]:
+   - LayoutStyle::flex 으로 좌우 폭 배분 (R667 flex_grow primitive 2nd application consumer)
+   - 우측 pane = 초기엔 placeholder Text ("(no selection)") — 비어있을 때 graceful default
+   - 좌측 pane = 기존 view_tree_focused 그대로 — 회귀 0
+   - 5-8 unit tests (`r677_property_pane_layout_tests` module):
+     - inspector view returns Container with FlexDirection::Row
+     - tree branch는 좌측에 존재 (find_by_tag(inspector_tree))
+     - property pane branch는 우측에 존재 (find_by_tag(property_pane))
+     - "(no selection)" placeholder visible when selected_path is None
+     - tree pane 폭 + property pane 폭 = inspector window 폭 (flex distribution sanity)
    - Estimated LOC: +200-300
 
-(1) **`find_main_node_at_path(scene, path) -> Option<&Scene>` inverse walker** (R676 (0)의 짝) — given a stable path string from (0), walk view_main's scene to find the matching `&Scene` node. Pure helper inline in hello-multi-window:
-   - Parse path segments split by `/`
-   - For each segment, find the matching child (by tag if present, by Type+idx fallback)
-   - Returns `None` for unresolvable paths (e.g., inspector-only paths like `"state"`)
-   - 6-10 unit tests (`r676_find_node_at_path_tests` module):
-     - find tagged node (`main_btn`)
-     - find by type+idx
-     - find nested 2-deep
-     - return None for unknown path
-     - return None for "state" leaf (inspector-only, not in main scene)
-     - banner-on/off 둘 다 같은 tagged path 가 같은 node 반환
+(1) **`property_pane_rows(scene: &Scene) -> Vec<TextNode>` field walker** — R676 atomic (1) find_main_node_at_path 2nd consumer. selected_path resolve → 매칭 node 의 fields 를 row 별 Text 로 emit:
+   - `type: <Container|Text|External|...>` — scene_type_name (R676 helper) 재사용
+   - `tag: <tag-or-—>` — scene_tag (R676 helper) 재사용
+   - `style.fill: rgb(R,G,B,A)` — Container/Box fill colour
+   - `style.border: <none|width@color>` — Container/Box border (R676 highlight overlay 도 같은 axis)
+   - `layout.size: <Auto|Fixed(WxH)|...>` — LayoutStyle::size
+   - `children: <count>` — Container children.len()
+   - Chrome DevTools Computed pane 미러 — 한 row = 한 field, 라벨 + 값
+   - 8-12 unit tests (`r677_field_walker_tests` module):
+     - selected = button path → rows include "type: Container", "tag: main_btn", "children: 1"
+     - selected = label path → rows include "type: Text"
+     - selected = root path → rows include "type: Container", "children: 1 or 2" (banner-dependent)
+     - selected_path None → empty Vec
+     - find_main_node_at_path returns None ("state" 등) → empty Vec
    - Estimated LOC: +150-250
 
-(2) **highlight overlay paint composition** (DevTools 시각 feedback 1st cut) — `view_main`이 `use_selected_path()`를 읽어서 path가 Some이고 `find_main_node_at_path` 가 매칭 node를 반환하면, view_main이 그 위치에 highlight border 추가:
-   - 후보 1: 새 `pinion_widget_paint::overlay` module (M3 Tertiary or Error color 2px stroked border) — 그러나 1st consumer만 있으므로 [[abstraction-needs-second-consumer]] 위배.
-   - 후보 2 (권장): inline in hello-multi-window — `wrap_with_highlight(node: Scene, theme: &Theme) -> Scene` helper가 node를 `Container` with `BoxStyle::stroked(2px, theme.resolve(ColorRole::Error))`로 wrap.
-   - 구현 옵션:
-     - (2a) **path-stable rebuild**: view_main이 scene을 build하면서 매칭 path의 node를 wrap (rebuild 가장 simple, ref 문제 회피)
-     - (2b) post-hoc rewrap: view_main이 scene을 일단 build 후 walk + replace
-     - **권장 (2a)** — view_main이 처음부터 selected_path를 알고 build (단일 패스, ref 문제 없음, refactor 비용 적음)
-   - View_main 진입 시 selected_path resolve → matching node가 어디인지 알면, 그 node를 만드는 코드 경로에서 wrap. 매칭 안 되면 (path가 "state" 같은 inspector-only) wrap 안 함, banner는 여전히 표시 (R675 동작 유지).
-   - 6-10 unit tests in hello-multi-window (`r676_highlight_overlay_tests`):
-     - selected_path Some + tagged path "Container[main_btn]" → button container has stroked BoxStyle
-     - selected_path None → no stroked BoxStyle anywhere
-     - selected_path Some "state" (inspector-only) → no stroked BoxStyle, banner still present
-     - banner 등장 후 button selection 유지 → highlight 여전히 button에 (path-stable 증명)
-   - Estimated LOC: +200-400
+(2) **Inspector window resize + windows() spec update** — inspector 280×140 → 480×320 (2-pane layout 호스팅):
+   - `WindowSpec::new("inspector", "...", SizeStrategy::Fixed { width: 480, height: 320 })`
+   - 4-demo (R670b, R671, R672, R673, R674, R675, R676) viewport 갱신 필요? — NO: 모든 demo가 자기 viewport 만 명시적으로 보냄 (snapshot {viewport: {w: 280, h: 140}}). R677 demo만 새 viewport 사용.
+   - R670b/R671/R672/R673/R674/R675 demos 가 보내는 `viewport: {w: 280, h: 140}` 그대로 동작 (substrate가 window의 실제 size 와 무관하게 paint scene 을 viewport 에 맞춰 생성) — 회귀 0
+   - 1 unit test (`r677_inspector_window_dimensions`)
+   - Estimated LOC: +30 (spec + test)
 
-(3) **r676 demo + 16-demo sweep + commit + Mnemosyne** — `tools/demos/r676_devtools_highlight.py` (≥30 assertion):
-   - (A) substrate path-stable 검증: select before banner → main_btn path = `"Container[main_btn]"`; select after banner → 동일 path (path-stable proof)
-   - (B) inspector click main_btn row → main window button paints with stroked border (red/error color BoxStyle::stroked)
-   - (C) select different row (`state` leaf) → banner shows "Selected: state" but no border anywhere in main (path doesn't resolve)
-   - (D) select Container root → root-level border wraps whole content area
-   - (E) hover/Pointer state changes on main button don't disrupt highlight (button click → Hover → Pressed, highlight border persists)
-   - (F) AI-driven selection via `/inspector_tree/external/click` typed shortcut also paints highlight (same wire as human)
-   - (G) selection survives ButtonState mutations (b/d/e keypress disables button, highlight stays)
-   - 16-demo regression sweep PASS (R660 / R663 / R664 / R665 / R666 / R667 / R668 / R669 / R670a / R670b / R671 / R672 / R673 / R674 / R675 / R676)
-   - Commit `feat(<scope>): R676 §5.16 §5.49 DevTools highlight + path-stable indexing`
-   - Mnemosyne `append_changelog_entry_v2 entry_id=R676` + impact_refs [5.16, 5.49, 5.50] + carry_forward (highlight overlay LIFT to substrate on R677+ 2nd consumer; property pane / hover bridge / bidirectional select cascade R677/R678/R679; Phase B Menu/Dialog catalog deferred)
+(3) **r677 demo + 16-demo sweep + commit + Mnemosyne** — `tools/demos/r677_devtools_property_pane.py` (≥30 assertion):
+   - (A) inspector window 482×320 — `windows()` spec verify
+   - (B) property pane visible at boot ("(no selection)" placeholder)
+   - (C) inspector tree click button row → property pane shows "type: Container", "tag: main_btn", "children: 1"
+   - (D) inspector tree click label row → property pane shows "type: Text"
+   - (E) inspector tree click root → property pane shows "type: Container", "children: 1 or 2"
+   - (F) inspector-only id "state" → property pane shows "(no selection)" (path doesn't resolve)
+   - (G) AI-driven selection bit-identical to human (via /inspector_tree/external/click)
+   - (H) pane updates atomically on selection change (no stale field rows)
+   - (I) selection survives ButtonState mutations (d/e keypress) — property pane field rows unchanged
+   - 16-demo regression sweep PASS (R660 / R664 / R665 / R666 / R667 / R668 / R669 / R670a / R670b / R671 / R672 / R673 / R674 / R675 / R676 / R677)
+   - Commit `feat(examples): R677 §5.16 §5.49 DevTools property pane`
+   - Mnemosyne `append_changelog_entry_v2 entry_id=R677` + impact_refs [5.16, 5.49, 5.50] + carry_forward (highlight overlay LIFT to substrate on R678+ 2nd consumer; hover bridge R678+; bidirectional select R679+; Phase B Menu/Dialog catalog R680+)
 
-visible (R676 land 후):
-- `cargo run -p hello-multi-window` 변화 — inspector에서 main_btn row 클릭 → main 윈도우의 버튼에 빨간색 stroked 테두리. 클릭한 row가 바뀌면 highlight 위치도 따라감. 키보드 b/d/e로 button state 바꿔도 highlight 유지.
-- `python3 tools/demos/r676_devtools_highlight.py` (≥30 assertion, path-stable + highlight overlay)
+visible (R677 land 후):
+- `cargo run -p hello-multi-window` 변화 — inspector window가 480×320 으로 확대; 우측 property pane이 selected node의 field rows 표시. tree row 클릭 → property pane 자동 갱신.
+- `python3 tools/demos/r677_devtools_property_pane.py` (≥30 assertion, property pane field walker + AI-driven selection)
 - 기존 15-demo regression sweep PASS
 
-honest LOC 예측: **R676 = +900-1300 net** — (0) path-stable indexing migration in scene_to_tree_item +200-300 / (1) find_main_node_at_path inverse walker +150-250 / (2) wrap_with_highlight inline + view_main wiring +200-400 / (3) demo +400-500 + SEED + Mnemosyne entry +150-200.
+honest LOC 예측: **R677 = +900-1300 net** — (0) layout split +200-300 / (1) field walker +150-250 / (2) window resize +30 / (3) demo +400-500 + SEED + Mnemosyne entry +120-220.
 
-**R676 verification mandatory** (라운드 끝):
-- 16-demo regression sweep PASS deterministic (R660-R675 + R676)
-- path-stable proof — tagged element path 가 banner 등장/소실에 관계없이 동일
-- find_main_node_at_path 가 build/inverse 라운드트립 (build path → resolve back to same node)
-- highlight overlay가 main window paint scene 의 정확한 위치에 paint (scene/snapshot으로 stroked BoxStyle 검증)
-- AI-driven selection이 human selection과 bit-identical (`/inspector_tree/external/click` typed shortcut으로 동일 highlight 도달)
-- 부채 surface 정직 받아들임 — highlight overlay LIFT to substrate (R677+ 2nd consumer), property pane (R677+), hover bridge (R678+), bidirectional bridge (R679+)
+**R677 verification mandatory** (라운드 끝):
+- 16-demo regression sweep PASS deterministic (R660-R676 + R677)
+- property pane reflects the selected scene's fields end-to-end (scene/snapshot {window: "inspector"} carries the field rows)
+- find_main_node_at_path 2nd consumer 정통화 검증 ([[abstraction-needs-second-consumer]] Rule-of-Three approach tracking)
+- soft-fail UX — inspector-only ids show "(no selection)" without breaking 2-pane layout
+- 부채 surface 정직 받아들임 — hover bridge (R678+), bidirectional select (R679+), highlight overlay substrate lift (R678+ on 2nd consumer when hover bridge or bidirectional select land)
 
-**R676 후 진척**: 북극성 가중 ~12.5-13% → **~13.5-14.5%** (Phase D 35% × ~2% — first visible Phase D editor outliner-viewport bridge complete; path-stable indexing은 모든 후속 DevTools work의 foundation). **R677+ = DevTools cascade 본격 — highlight LIFT substrate / property pane / hover / bidirectional**.
+**R677 후 진척**: 북극성 가중 ~13-14% → **~14-15%** (Phase D 35% × ~3% — second visible Phase D editor feature; find_main_node_at_path 2nd consumer 도달, substrate maturity tracking [[abstraction-needs-second-consumer]] Rule-of-Three threshold). **R678+ = DevTools cascade hover bridge → bidirectional → substrate LIFT cascade**.
 
 ---
 
-> 아래는 R670.B → R675 atomic 원본 (historical reference, land 완료):
+> 아래는 R670.B → R676 atomic 원본 (historical reference, land 완료):
+
+R676 = **R675 architectural 부채 청산 (path-stable indexing) + DevTools highlight overlay 1st cut** (✓ land `cf3d134`). 4 atomic land. 15-demo sweep PASS. CSS-selector Type[tag-or-nth-of-type] scheme + find_main_node_at_path inverse walker + view_main_raw split + 2px Error-role wrap + 38 unit tests.
 
 R675 = **TreeRowClickExternal substrate lift + DevTools first cross-window state-sync** (✓ land `e1d8817`). 4 atomic land. 15-demo sweep PASS. R675.1 SEED hash fixup `526a50a`.
 
