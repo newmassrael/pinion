@@ -425,6 +425,44 @@ impl Owner {
         child
     }
 
+    /// R683 §5.22 §5.28 — detach a child scope from this parent.
+    ///
+    /// Walks the parent's children list, finds the entry whose
+    /// [`Self::id`] matches `child_id`, and removes it. Returns
+    /// `true` on actual removal, `false` when no matching child
+    /// exists.
+    ///
+    /// **Use case**: the
+    /// [`pinion_runtime::CoreShell::remove_window`] / R683
+    /// dock-tear-off drop pass needs to release the last strong
+    /// reference to a per-window child scope so the scope's
+    /// cleanup queue actually fires. Without this method the
+    /// parent's `children: Vec<Owner>` field permanently retains
+    /// every secondary scope (R680 axis 3 cascade-drop on
+    /// substrate destruction is the only release path), which
+    /// means animations / commands / cache slots registered on a
+    /// torn-down per-window scope would survive across reconcile
+    /// passes until the entire binding shuts down.
+    ///
+    /// **Idempotency**: calling `detach_child_by_id` twice with the
+    /// same id returns `true` then `false` — once removed, the
+    /// entry is gone from the children list.
+    ///
+    /// **Cascade**: the removal drops the parent's strong ref to
+    /// the child `Owner`. If no other `Owner` clone of the same
+    /// child exists, the child's [`OwnerInner`] drops, triggering
+    /// the cleanup queue + draining every registered animation /
+    /// command. Any sibling `Owner` clones still alive keep the
+    /// child scope alive — the detach is "release the parent's
+    /// strong ref", not "force-drop the scope".
+    #[must_use = "the bool reports whether a matching child was actually detached; if you don't care, bind to `_`"]
+    pub fn detach_child_by_id(&self, child_id: u64) -> bool {
+        let mut children = self.inner.children.borrow_mut();
+        let before = children.len();
+        children.retain(|c| c.id() != child_id);
+        children.len() < before
+    }
+
     /// Push this owner as the current scope, run `f`, pop. Signal reads
     /// during `f` auto-subscribe to this owner. The stack pop is RAII —
     /// even if `f` panics, the stack is restored before the unwind continues.

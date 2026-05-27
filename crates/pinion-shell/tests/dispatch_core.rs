@@ -3165,3 +3165,131 @@ mod r682b_cache_stats_rpc {
         assert!((hr - 1.0).abs() < 1e-6);
     }
 }
+
+// ─────────────────────────────────────────────────────────────
+// R683 §5.16 §5.41 — `ShellCore::remove_window` per-window state
+// drain pin. The shell-side wrapper around
+// `pinion_runtime::CoreShell::remove_window` cleans the four
+// per-window HashMaps lifted onto `ShellCore` since R680 + R681 +
+// R682:
+//
+//   - `redraw_requested_per_window`
+//   - `last_paint_instants`
+//   - `target_fps_per_window`
+//   - `fragment_cache_stats_per_window`
+//
+// + forwards into the runtime substrate which drains `routers`
+// + `window_owners`. The reconcile-windows Effect's drop pass
+// (R683 atomic 1) calls this for every spec id that disappeared
+// from the binding's `Signal<Vec<WindowSpec>>`.
+// ─────────────────────────────────────────────────────────────
+
+mod r683_remove_window_shell_side {
+    use pinion_shell::{FragmentCacheStats, ShellCore};
+
+    use super::TestView;
+    use super::TEST_LOCK;
+
+    #[test]
+    fn r683_remove_window_refuses_default_window_at_shell_level() {
+        // The shell-side wrapper enforces the same primary-protection
+        // contract as the runtime substrate. Even after publishing
+        // per-window state into all four HashMaps, removing
+        // DEFAULT_WINDOW must report `false` + the state must
+        // survive.
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.request_redraw_for_window("main");
+        core.set_target_fps_for_window("main", 60);
+        core.publish_fragment_cache_stats(
+            "main",
+            FragmentCacheStats {
+                hits: 1,
+                misses: 0,
+                paint_count: 1,
+                entries: 1,
+                last_damage_region: None,
+            },
+        );
+        let removed = core.remove_window("main");
+        assert!(!removed, "DEFAULT_WINDOW is primary-protected at shell level too");
+        // Per-window state survives.
+        assert!(core.redraw_requested_for_window("main"));
+        assert_eq!(core.target_fps_for_window("main"), Some(60));
+        assert!(core.fragment_cache_stats_for_window("main").is_some());
+    }
+
+    #[test]
+    fn r683_remove_window_drains_all_four_per_window_maps() {
+        // Publish a secondary entry into every per-window map +
+        // remove. Every getter then reports the empty / None default.
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.request_redraw_for_window("inspector");
+        core.set_target_fps_for_window("inspector", 30);
+        core.publish_fragment_cache_stats(
+            "inspector",
+            FragmentCacheStats {
+                hits: 2,
+                misses: 1,
+                paint_count: 3,
+                entries: 2,
+                last_damage_region: None,
+            },
+        );
+        // Pre-state pin.
+        assert!(core.redraw_requested_for_window("inspector"));
+        assert_eq!(core.target_fps_for_window("inspector"), Some(30));
+        assert!(core.fragment_cache_stats_for_window("inspector").is_some());
+        // Removal.
+        let removed = core.remove_window("inspector");
+        assert!(removed, "secondary window with published state reports `true`");
+        // Post-state — every map drained.
+        assert!(
+            !core.redraw_requested_for_window("inspector"),
+            "redraw_requested_per_window cleared",
+        );
+        assert_eq!(
+            core.target_fps_for_window("inspector"),
+            None,
+            "target_fps_per_window cleared",
+        );
+        assert!(
+            core.fragment_cache_stats_for_window("inspector").is_none(),
+            "fragment_cache_stats_per_window cleared",
+        );
+    }
+
+    #[test]
+    fn r683_remove_window_unknown_id_no_op() {
+        // Defensive — the reconcile-windows drop pass may call
+        // remove_window for an id that disappeared from the signal
+        // before any per-window state was ever published (a
+        // degenerate corner case during binding boot). Must not
+        // panic + reports `false`.
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let removed = core.remove_window("never-touched");
+        assert!(!removed);
+    }
+
+    #[test]
+    fn r683_remove_window_isolates_to_target_id() {
+        // Sibling secondary scopes survive a remove targeting one of
+        // them. Pins the per-id keying contract — the map removal
+        // does not cascade across keys.
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.request_redraw_for_window("inspector");
+        core.request_redraw_for_window("palette");
+        core.set_target_fps_for_window("inspector", 30);
+        core.set_target_fps_for_window("palette", 144);
+        assert!(core.remove_window("inspector"));
+        // Palette intact.
+        assert!(core.redraw_requested_for_window("palette"));
+        assert_eq!(core.target_fps_for_window("palette"), Some(144));
+        // Inspector gone.
+        assert!(!core.redraw_requested_for_window("inspector"));
+        assert_eq!(core.target_fps_for_window("inspector"), None);
+    }
+}

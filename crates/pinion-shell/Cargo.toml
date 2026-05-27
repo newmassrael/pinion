@@ -62,6 +62,15 @@ tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-t
 # parse); promoted to direct here for the `parse_rpc_window_id`
 # helper in app.rs.
 serde_json = { workspace = true }
+# R683 §5.16 §5.41 — `WindowSpec` / `SizeStrategy` derive
+# `Serialize + Deserialize` so `Signal<Vec<WindowSpec>>` (the runtime
+# window-list lift the dock + tear-off arc R683 introduces) satisfies
+# the `pinion_core::Signal<T>` trait bound
+# `T: Clone + PartialEq + Serialize + DeserializeOwned + 'static`.
+# Direct dep (not just transitive through pinion-core) so the
+# `#[derive]` macros expand against `serde::Serialize` /
+# `serde::Deserialize` at this crate's import scope.
+serde = { workspace = true }
 # R637 §5.16 §5.7 — PNG encoder for `headless_screenshot::HeadlessScreenshot::render_to_png`.
 # `png` crate is the encode-only path (decode + diff lives in
 # pinion-cli R638+); the dep is single-purpose so this crate stays

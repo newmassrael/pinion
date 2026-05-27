@@ -807,6 +807,54 @@ impl<V: WidgetCore> CoreShell<V> {
         self.window_owners.keys().map(String::as_str)
     }
 
+    /// R683 §5.16 §5.41 §5.28 — drop a secondary window's per-window
+    /// substrate state.
+    ///
+    /// Walks every `HashMap` keyed by `window_id` and removes the
+    /// entry: the `routers` map (R672 `InputRouter`), the
+    /// `window_owners` map (R680 per-window `Owner` child scope),
+    /// dropping the `Owner` triggers a cleanup-queue cascade that
+    /// releases every animation / command / cache slot registered on
+    /// that scope.
+    ///
+    /// Refuses to remove [`DEFAULT_WINDOW`]: the primary scope is
+    /// aliased to `root_owner` so removing it would orphan the
+    /// binding's reactive substrate. Returns `true` on actual
+    /// removal, `false` for unknown / [`DEFAULT_WINDOW`] ids —
+    /// callers can use the boolean to detect "primary protected" vs
+    /// "no-op" cases without separate getters.
+    ///
+    /// Designed for the R683 `AppShell::reconcile_windows` Effect's
+    /// drop pass after a dock tear-off / dock-back arc resolves —
+    /// the matching `WindowSlot` drop on the `AppShell` side releases
+    /// the OS window + `accesskit_winit::Adapter`; this method
+    /// closes the matching substrate-side loop.
+    pub fn remove_window(&mut self, window_id: &str) -> bool {
+        if window_id == DEFAULT_WINDOW {
+            return false;
+        }
+        // The two `_for_window` HashMaps + the per-window Owner map
+        // share the same `window_id` keying contract; drop them all
+        // in one pass so the substrate has no stale per-window
+        // entries when the next paint cycle skips the dropped slot.
+        // Returns `true` only if at least one of the three maps had
+        // an entry — defensive against a caller that fires
+        // remove_window before the substrate ever saw the id.
+        let router_removed = self.routers.remove(window_id).is_some();
+        let dropped_owner = self.window_owners.remove(window_id);
+        // R683 §5.28 — `Owner::new_child` pushed the secondary scope
+        // onto `root_owner.children` (R680 cascade-drop discipline).
+        // Removing the `window_owners` entry alone only releases one
+        // strong ref; the parent's children list still holds the
+        // other. Detach by `Owner::id` so the child's last strong
+        // ref drops + the cleanup queue actually fires (animations /
+        // commands / cache slots registered on that scope release).
+        if let Some(owner) = dropped_owner.as_ref() {
+            let _ = self.root_owner.detach_child_by_id(owner.id());
+        }
+        router_removed || dropped_owner.is_some()
+    }
+
     /// R51.142 §5.28 — advance every animation registered on the
     /// [`root_owner`](Self::root_owner) by `dt` seconds.
     ///
@@ -3287,5 +3335,139 @@ mod tests {
             flag.get(),
             "secondary scope cache slot must drop with the substrate",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R683 §5.16 §5.41 §5.28 — `CoreShell::remove_window` pin:
+    //
+    // - Refuses [`DEFAULT_WINDOW`] (the primary scope is a
+    //   `root_owner` alias; removing it would orphan the binding's
+    //   reactive substrate).
+    // - Drops the `routers` entry + the `window_owners` entry for
+    //   secondary `window_id`s in one call.
+    // - Dropping the `window_owners` entry releases the per-window
+    //   `Owner` scope → cleanup queue drains → every animation /
+    //   command / cache slot on that scope drops.
+    // - Returns `true` on actual removal, `false` for
+    //   `DEFAULT_WINDOW` + unknown ids — callers can distinguish
+    //   "primary protected" / "no-op" without separate probes.
+    // - Idempotent: second `remove_window` call on the same id is a
+    //   no-op (the substrate has no entry to drop).
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r683_remove_window_refuses_default_window() {
+        // The primary scope alias (DEFAULT_WINDOW → root_owner) must
+        // survive every `remove_window` call. Returning `false`
+        // signals "not removed" without aborting — callers can log
+        // / introspect the protection without paying for a separate
+        // primary-id check.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        // Pre-state: DEFAULT_WINDOW is seeded in `new()` so the
+        // owner + router exist.
+        assert!(core.window_owner_existing(DEFAULT_WINDOW).is_some());
+        let removed = core.remove_window(DEFAULT_WINDOW);
+        assert!(!removed, "DEFAULT_WINDOW must be primary-protected");
+        // Post-state unchanged.
+        assert!(core.window_owner_existing(DEFAULT_WINDOW).is_some());
+        // Root owner alias still intact.
+        assert_eq!(
+            core.window_owner(DEFAULT_WINDOW).id(),
+            core.root_owner().id(),
+        );
+    }
+
+    #[test]
+    fn r683_remove_window_drops_secondary_owner_scope() {
+        // Lazy-create a secondary scope, then `remove_window`. The
+        // scope drops, the read-only probe returns None.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let inspector_id = core.window_owner("inspector").id();
+        assert!(core.window_owner_existing("inspector").is_some());
+        let removed = core.remove_window("inspector");
+        assert!(removed, "secondary scope must report `true` on removal");
+        assert!(
+            core.window_owner_existing("inspector").is_none(),
+            "secondary scope must be gone from the window_owners map after remove",
+        );
+        // Lazy re-create after removal mints a NEW scope (fresh
+        // Owner::id) — the substrate did not retain a soft handle to
+        // the dropped scope.
+        let new_id = core.window_owner("inspector").id();
+        assert_ne!(
+            new_id, inspector_id,
+            "post-remove lazy-create must produce a fresh scope",
+        );
+    }
+
+    #[test]
+    fn r683_remove_window_returns_false_for_unknown_id() {
+        // An id that was never lazy-created has no entries in the
+        // window_owners or routers maps; `remove_window` returns
+        // `false` without panicking — the dock + tear-off arc's
+        // drop pass calls this for every spec id that disappeared
+        // from the signal, including ones that never had a winit
+        // window of their own (defensive race-condition guard).
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let removed = core.remove_window("never-touched");
+        assert!(
+            !removed,
+            "remove_window on an untouched id must report `false`",
+        );
+    }
+
+    #[test]
+    fn r683_remove_window_drops_per_window_animations() {
+        // R683 — the `Owner` drop triggered by `remove_window`
+        // cascades through the cleanup queue, releasing every
+        // animation registered on that scope.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let recorder = Rc::new(TickRecorder::new());
+        core.window_owner("inspector")
+            .register_animation(recorder.clone());
+        // Substrate + recorder = 2 strong refs.
+        assert!(Rc::strong_count(&recorder) >= 2);
+        let removed = core.remove_window("inspector");
+        assert!(removed);
+        // Post-remove the substrate drops its strong ref → recorder
+        // refcount falls back to 1 (only the local binding holds it).
+        assert_eq!(
+            Rc::strong_count(&recorder),
+            1,
+            "remove_window must drop the secondary scope's registered animations",
+        );
+    }
+
+    #[test]
+    fn r683_remove_window_idempotent_on_double_call() {
+        // Second `remove_window` call on the same id is a no-op:
+        // returns `false` because no entry exists in either map.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let _ = core.window_owner("inspector");
+        assert!(core.remove_window("inspector"));
+        assert!(
+            !core.remove_window("inspector"),
+            "second remove on the same id must be a no-op",
+        );
+    }
+
+    #[test]
+    fn r683_remove_window_does_not_affect_sibling_secondary_scope() {
+        // Distinct secondary ids are addressed independently; the
+        // remove pass for one must not touch any sibling.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let inspector_id = core.window_owner("inspector").id();
+        let palette_id = core.window_owner("palette").id();
+        assert!(core.remove_window("inspector"));
+        // Palette survives + retains its Owner::id.
+        assert!(core.window_owner_existing("palette").is_some());
+        assert_eq!(
+            core.window_owner_existing("palette").unwrap().id(),
+            palette_id,
+        );
+        // Inspector is gone.
+        assert!(core.window_owner_existing("inspector").is_none());
+        // Re-creating inspector mints a fresh scope.
+        assert_ne!(core.window_owner("inspector").id(), inspector_id);
     }
 }

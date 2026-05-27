@@ -655,6 +655,48 @@ impl<V: WidgetView> ShellCore<V> {
             .insert(window_id.to_owned(), stats);
     }
 
+    /// R683 §5.16 §5.41 — drop every shell-side per-window state
+    /// entry for `window_id`.
+    ///
+    /// Walks the four per-window `HashMap`s lifted onto `ShellCore`
+    /// since R680 atomic 2 / R681 atomic 3 / R682 atomic 3
+    /// (`redraw_requested_per_window`, `last_paint_instants`,
+    /// `target_fps_per_window`, `fragment_cache_stats_per_window`)
+    /// and drops the entry keyed by `window_id`. Then forwards into
+    /// [`pinion_runtime::CoreShell::remove_window`] which drains the
+    /// runtime-side per-window state (`routers`, `window_owners`).
+    ///
+    /// Refuses to remove the [`pinion_runtime::DEFAULT_WINDOW`]
+    /// primary id — the substrate's primary scope is aliased to
+    /// `root_owner` so removing it would orphan the binding's
+    /// reactive state. Returns `true` when at least one map carried
+    /// an entry, `false` for `DEFAULT_WINDOW` and for unknown ids.
+    ///
+    /// Designed for the R683 [`crate::AppShell::reconcile_windows`]
+    /// Effect drop pass after a dock tear-off / dock-back arc
+    /// resolves.
+    pub fn remove_window(&mut self, window_id: &str) -> bool {
+        if window_id == pinion_runtime::DEFAULT_WINDOW {
+            return false;
+        }
+        let shell_side = self
+            .redraw_requested_per_window
+            .remove(window_id)
+            .is_some()
+            | self.last_paint_instants.remove(window_id).is_some()
+            | self.target_fps_per_window.remove(window_id).is_some()
+            | self
+                .fragment_cache_stats_per_window
+                .remove(window_id)
+                .is_some();
+        // CoreShell::remove_window returns true on at least one
+        // runtime-side removal; the OR with shell_side surfaces "any
+        // per-window state existed" so the AppShell-side reconcile
+        // can log / introspect cleanup actually happened.
+        let runtime_side = self.core.remove_window(window_id);
+        shell_side || runtime_side
+    }
+
     /// R682 §5.16 atomic 3 — read the most-recent
     /// [`FragmentCacheStats`] snapshot for the given window.
     ///

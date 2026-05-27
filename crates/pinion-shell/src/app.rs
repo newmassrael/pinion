@@ -21,11 +21,16 @@
 //!
 //! See `claim-accuracy-self-audit` and `substrate-incompleteness-signal`.
 
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
+
+use pinion_core::reactive::{Effect, Signal};
 
 use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
@@ -114,8 +119,15 @@ struct WindowSlot<R: VelloRenderer> {
     /// trait dispatch + RPC scope resolution). Keeping the field land
     /// in atomic 0 lets atomic 1's wire change be a single read
     /// addition rather than a coupled write+read change.
+    ///
+    /// R683 §5.16 — `Cow<'static, str>` so dock + tear-off can mint
+    /// runtime ids (`Cow::Owned(format!("torn-panel-{n}"))`)
+    /// alongside the canonical static literals
+    /// (`Cow::Borrowed("main")` / `Cow::Borrowed("inspector")`). All
+    /// downstream `spec_id: &str` parameter sites stay unchanged —
+    /// Cow's `Deref<Target = str>` covers the read API.
     #[allow(dead_code, reason = "R670.B atomic 1 reads spec_id for view_for_window dispatch")]
-    spec_id: &'static str,
+    spec_id: Cow<'static, str>,
     /// R671 §5.12 §5.16 — per-window last-painted [`LayoutNode`]
     /// snapshot. R670.B's single `ShellCore.last_paint_layout` was
     /// binding-wide (the last window to paint wrote into it), which
@@ -175,7 +187,7 @@ impl<R: VelloRenderer> WindowSlot<R> {
     fn build(
         render: RenderState<R>,
         accesskit: Option<accesskit_winit::Adapter>,
-        spec_id: &'static str,
+        spec_id: Cow<'static, str>,
         pending_intrinsic_resize: Option<((u32, u32), (u32, u32))>,
     ) -> Self {
         Self {
@@ -244,7 +256,7 @@ pub struct AppShell<V: WidgetView> {
     /// winit `WindowId` here before looking up the per-window slot
     /// in [`Self::windows`]. Default single-window bindings carry
     /// exactly `"main" → primary_id`.
-    spec_id_to_window_id: HashMap<&'static str, WindowId>,
+    spec_id_to_window_id: HashMap<Cow<'static, str>, WindowId>,
     /// R670.B §5.16 — primary window's [`WindowId`]. The first spec
     /// in `V::windows()` (canonically `WindowSpec::main(..)`); RPC
     /// frames that omit `{window: "..."}` default-scope to this id.
@@ -257,6 +269,56 @@ pub struct AppShell<V: WidgetView> {
     /// `resumed` (the constructor requires both the active event
     /// loop and a proxy that produces `Adapter`-routed user events).
     proxy: EventLoopProxy<AppEvent>,
+    /// R683 §5.16 §5.41 — runtime window-list reactive lift.
+    ///
+    /// Populated on the first [`Self::resumed`] when the binding's
+    /// [`WidgetView::windows_signal`] returns `Some(..)`. Kept here so
+    /// [`Self::reconcile_windows`] (the
+    /// [`AppEvent::WindowsDirty`] handler) can re-read the latest
+    /// `Signal<Vec<WindowSpec>>` snapshot without going back through
+    /// the trait (which would re-evaluate the binding's
+    /// `Owner::cache` factory each call — the trait impl pattern
+    /// memoises but the shell-side cache makes the contract
+    /// explicit).
+    ///
+    /// `None` for every pre-R683 single + multi-window binding —
+    /// they inherit the default `fn windows_signal() -> None` and the
+    /// reconcile Effect is never installed.
+    windows_signal: Option<Rc<Signal<Vec<WindowSpec>>>>,
+    /// R683 §5.16 §5.41 — lifetime anchor for the reconcile Effect.
+    ///
+    /// The Effect is registered against `self.core.root_owner()` so
+    /// its cleanup queue holds a strong reference for the binding's
+    /// lifetime — but the AppShell-side `Option<Effect>` keeps the
+    /// handle live + accessible for diagnostics (test asserts the
+    /// Effect was actually installed). `None` when
+    /// `WidgetView::windows_signal()` returned `None` (no opt-in,
+    /// no Effect, no reactive subscription).
+    ///
+    /// The handle is read in [`Self::resumed`] (the
+    /// `self.reconcile_effect.is_none()` install gate) and never
+    /// otherwise — its real job is to extend the [`Effect`]'s
+    /// lifetime past the install scope so the Effect closure stays
+    /// alive across event-loop iterations. The Owner cleanup queue
+    /// also holds a `Weak<EffectInner>` so the cleanup-on-shutdown
+    /// path is correct independent of this handle.
+    reconcile_effect: Option<Effect>,
+    /// R683 §5.16 §5.41 — last spec list snapshot the reconcile
+    /// Effect observed, used to compute the add/drop diff.
+    ///
+    /// Initialised to `V::windows_signal().get()` on the first
+    /// `resumed()` when the Effect is installed; updated to the
+    /// freshly-emitted `Signal::get()` snapshot at the end of each
+    /// `reconcile_windows` call. Wrapped in `Rc<RefCell<..>>`
+    /// because the Effect closure cannot capture `&mut self` (it
+    /// lives past the `AppShell` constructor scope); the `AppShell`
+    /// + the closure share the same `Rc<RefCell<..>>` handle.
+    ///
+    /// An empty `Vec` sentinel for the pre-install state — when
+    /// [`AppEvent::WindowsDirty`] fires before the install completes
+    /// (a degenerate corner case) the diff fires "no adds, no drops"
+    /// against the empty baseline.
+    last_known_specs: Rc<RefCell<Vec<WindowSpec>>>,
 }
 
 
@@ -280,6 +342,9 @@ impl<V: WidgetView> AppShell<V> {
             spec_id_to_window_id: HashMap::new(),
             primary_window_id: None,
             proxy,
+            windows_signal: None,
+            reconcile_effect: None,
+            last_known_specs: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -353,12 +418,18 @@ impl<V: WidgetView> AppShell<V> {
         // hold a `&self.windows` borrow across the
         // `self.core.take_redraw_request_for_window` `&mut self.core`
         // mutation.
-        let active: Vec<(&'static str, std::sync::Arc<Window>)> = self
+        //
+        // R683 §5.16 — `spec_id: Cow<'static, str>` because the dock
+        // + tear-off arc can mint runtime-generated ids alongside
+        // static literals; the `.clone()` is `Rc`-cheap for
+        // `Cow::Borrowed` (no heap alloc) and a `String::clone` for
+        // `Cow::Owned`.
+        let active: Vec<(Cow<'static, str>, std::sync::Arc<Window>)> = self
             .windows
             .values()
             .filter_map(|slot| {
                 if let RenderState::Active { window, .. } = &slot.render {
-                    Some((slot.spec_id, std::sync::Arc::clone(window)))
+                    Some((slot.spec_id.clone(), std::sync::Arc::clone(window)))
                 } else {
                     None
                 }
@@ -367,7 +438,7 @@ impl<V: WidgetView> AppShell<V> {
         for (spec_id, window) in active {
             // Always drain the per-window flag so a stale `true`
             // does not survive a binding-wide fan-out drain.
-            let per_window = self.core.take_redraw_request_for_window(spec_id);
+            let per_window = self.core.take_redraw_request_for_window(&spec_id);
             if fan_out || per_window {
                 window.request_redraw();
             }
@@ -530,6 +601,10 @@ impl<V: WidgetView> AppShell<V> {
     /// releases before the caller threads the id into the substrate's
     /// producer closure (which takes its own `&mut self.core`).
     fn resolve_spec_id(&self, supplied: &str) -> String {
+        // R683 §5.16 — `spec_id_to_window_id` is keyed by
+        // `Cow<'static, str>`; `HashMap::contains_key` takes
+        // `&Q where K: Borrow<Q>` and `Cow<'static, str>:
+        // Borrow<str>`, so the plain `&str` lookup still works.
         if self.spec_id_to_window_id.contains_key(supplied) {
             return supplied.to_string();
         }
@@ -573,6 +648,12 @@ impl<V: WidgetView> AppShell<V> {
         // the slot borrow needed to call back into vello_scene /
         // accesskit / last_ime_cursor_area / pending_intrinsic_resize
         // after the paint scene is computed.
+        // R683 §5.16 — `spec_id: Cow<'static, str>` so the dock +
+        // tear-off arc can mint runtime ids; `.clone()` here is
+        // `Cow`-cheap for `Borrowed` (no heap alloc) and a
+        // `String::clone` for `Owned`. The clone detaches from the
+        // `&slot` borrow so the substrate's `&mut self.core` call
+        // below does not conflict.
         let (spec_id, w, h) = {
             let Some(slot) = self.windows.get(&window_id) else {
                 return;
@@ -583,7 +664,7 @@ impl<V: WidgetView> AppShell<V> {
             let size = window.inner_size();
             let Some(w) = core::num::NonZeroU32::new(size.width) else { return };
             let Some(h) = core::num::NonZeroU32::new(size.height) else { return };
-            (slot.spec_id, w, h)
+            (slot.spec_id.clone(), w, h)
         };
         // R51.80 §5.16 §5.36 — ShellCore owns the paint scene
         // pipeline; AppShell only handles the vello/wgpu submit.
@@ -592,9 +673,13 @@ impl<V: WidgetView> AppShell<V> {
         // `V::view_for_window(spec_id, state, frame)`; default impl
         // forwards to `V::view` so single-window bindings remain
         // bit-identical.
+        // R683 §5.16 — `&spec_id` auto-derefs from
+        // `&Cow<'static, str>` to `&str` through `Cow`'s `Deref`
+        // impl, so the substrate signature (which takes `&str`)
+        // stays unchanged.
         let paint_scene = self
             .core
-            .compute_paint_scene_for_window(spec_id, w.get(), h.get());
+            .compute_paint_scene_for_window(&spec_id, w.get(), h.get());
         // Re-acquire the slot mutable borrow now that the substrate
         // borrow released, then bind window + renderer for the
         // intrinsic-resize hook + vello submit. Scope the borrow
@@ -700,10 +785,14 @@ impl<V: WidgetView> AppShell<V> {
         // current widget catalog; the next big consumer is the
         // DevTools/Inspector axis which already buys this cost).
         let paint_layout = pinion_rpc::build_layout_node(&paint_scene, "/0");
+        // R683 §5.16 — `spec_id` is `Cow<'static, str>`; clone for
+        // the post-borrow `finalize_frame_for_window` call (clones
+        // are `Cow`-cheap for `Borrowed`, `String::clone` for
+        // `Owned`).
         let spec_id_for_finalize = self
             .windows
             .get(&window_id)
-            .map(|s| s.spec_id);
+            .map(|s| s.spec_id.clone());
         // R682 §5.16 atomic 3 — capture the post-paint cache
         // snapshot before publishing. `to_vello_cached` brackets its
         // walk with begin_paint / end_paint internally, so the
@@ -735,8 +824,19 @@ impl<V: WidgetView> AppShell<V> {
         // vello::Scene-bearing FragmentCache directly. Skip when the
         // spec_id is unknown (defensive — the slot borrow above
         // would have already returned in that case).
-        if let (Some(stats), Some(sid)) = (cache_stats, spec_id_for_finalize) {
-            self.core.publish_fragment_cache_stats(sid, stats);
+        //
+        // R683 §5.16 — `spec_id_for_finalize` is now
+        // `Option<Cow<'static, str>>`; `as_deref()` projects to
+        // `Option<&str>` so both substrate signatures (which take
+        // `&str`) consume the same borrow shape they had under the
+        // pre-R683 `&'static str` field type. `unwrap_or` returns
+        // `&str` directly because `pinion_runtime::DEFAULT_WINDOW`
+        // is still a `&'static str`.
+        let target_window: &str = spec_id_for_finalize
+            .as_deref()
+            .unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        if let Some(stats) = cache_stats {
+            self.core.publish_fragment_cache_stats(target_window, stats);
         }
         // R51.80 §5.12 §5.35 — hand the rendered scene + the pre-
         // built layout snapshot to the substrate. `finalize_frame`
@@ -749,7 +849,6 @@ impl<V: WidgetView> AppShell<V> {
         // (not the binding-wide single router pre-R672) sees the
         // paint scene. Each window's pointer state stays isolated;
         // cross-window paint cycles no longer flip-flop hover state.
-        let target_window = spec_id_for_finalize.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
         self.core
             .finalize_frame_for_window(target_window, paint_scene, paint_layout);
     }
@@ -894,6 +993,191 @@ impl<V: WidgetView> AppShell<V> {
     /// spec's `WindowId` is recorded as `primary_window_id` so RPC
     /// frames omitting `{window: "..."}` default to it (R670.B
     /// atomic 1 wire).
+    /// R683 §5.16 §5.41 — install the reconcile [`Effect`] that
+    /// subscribes the binding's
+    /// [`WidgetView::windows_signal`] `Signal<Vec<WindowSpec>>` and
+    /// wakes the shell via [`AppEvent::WindowsDirty`] on every
+    /// value-changing emit.
+    ///
+    /// Idempotent: never installs a second Effect on the same
+    /// [`AppShell`] (gated by `self.reconcile_effect.is_some()` at
+    /// the call site in [`Self::resumed`]). The shell only installs
+    /// the
+    /// Effect the very first time `resumed()` sees a non-`None`
+    /// `windows_signal()`; subsequent suspend / resume cycles reuse
+    /// the existing Effect because the same signal handle is
+    /// memoised on the binding side via [`Owner::cache`].
+    ///
+    /// The Effect closure captures three values by move:
+    ///
+    /// 1. `Rc<Signal<Vec<WindowSpec>>>` — `.get()` on every rerun
+    ///    establishes the dependency on the signal so future
+    ///    mutations fire `rerun` again. The closure does NOT use
+    ///    the snapshot — diff happens in
+    ///    [`Self::reconcile_windows`] where `&mut self` +
+    ///    [`ActiveEventLoop`](winit::event_loop::ActiveEventLoop)
+    ///    are available.
+    /// 2. `EventLoopProxy<AppEvent>` — sends
+    ///    [`AppEvent::WindowsDirty`] to wake the shell from any
+    ///    blocking wait state. The proxy clone is `'static` and
+    ///    survives the closure's lifetime (winit guarantees the
+    ///    proxy is valid as long as the event loop is running).
+    /// 3. `Rc<RefCell<Vec<WindowSpec>>>` — not currently captured;
+    ///    reserved for a follow-up where the closure pre-computes
+    ///    add/drop diffs to avoid wake / re-read costs on identical
+    ///    re-emits. v1 keeps the closure minimal so the wake-up cost
+    ///    is just `signal.get()` + `proxy.send_event(..)`.
+    ///
+    /// `send_event` failure (the event loop already exited) is
+    /// silently ignored — the Effect closure has no recovery path
+    /// at that point.
+    ///
+    /// The Effect's eager initial run fires `WindowsDirty` once
+    /// immediately; the subsequent `reconcile_windows` call no-ops
+    /// because [`Self::last_known_specs`] is initialised to the
+    /// same snapshot the Effect just observed.
+    fn install_reconcile_effect(&mut self, signal: Rc<Signal<Vec<WindowSpec>>>) {
+        let signal_for_closure = Rc::clone(&signal);
+        let proxy = self.proxy.clone();
+        let effect = self.core.root_owner().run(|| {
+            let owner = pinion_core::Owner::current()
+                .expect("install_reconcile_effect runs inside root_owner.run wrap");
+            Effect::new(&owner, move || {
+                // Subscribe by reading the signal value — the Effect
+                // re-runs whenever a `Signal::set` actually changes
+                // the inner `Vec<WindowSpec>` (R26 equality-skip).
+                let _ = signal_for_closure.get();
+                // Wake the shell so the user_event handler can call
+                // `reconcile_windows` with `&mut self` + the active
+                // event loop. Failure means winit already exited;
+                // the closure has no recovery path at that point.
+                let _ = proxy.send_event(AppEvent::WindowsDirty);
+            })
+        });
+        self.windows_signal = Some(signal);
+        self.reconcile_effect = Some(effect);
+    }
+
+    /// R683 §5.16 §5.41 — diff the freshly-emitted
+    /// `Signal<Vec<WindowSpec>>` snapshot against
+    /// [`Self::last_known_specs`] and reconcile.
+    ///
+    /// **Add pass**: every spec id in the new snapshot that is not
+    /// in the last-known cache resumes via the existing
+    /// [`Self::resume_spec`] helper (one winit `Window` + GPU
+    /// renderer + `accesskit_winit::Adapter` per spec, plus the
+    /// per-window `WindowSlot` cluster + `spec_id_to_window_id`
+    /// reverse-map entry).
+    ///
+    /// **Drop pass**: every spec id in the last-known cache that is
+    /// not in the new snapshot drops the matching `WindowSlot` (the
+    /// `RenderState::Active`'s `Arc<Window>` releases; winit closes
+    /// the OS window when the last ref drops). The shell-side
+    /// [`crate::ShellCore::remove_window`] call drains every
+    /// per-window substrate state map
+    /// (`redraw_requested_per_window` / `last_paint_instants` /
+    /// `target_fps_per_window` / `fragment_cache_stats_per_window`),
+    /// then forwards into the runtime-side
+    /// [`pinion_runtime::CoreShell::remove_window`] which drops the
+    /// `routers` + `window_owners` entries (the per-window `Owner`
+    /// drop fires the cleanup queue for every animation / command /
+    /// cache slot registered on that scope).
+    ///
+    /// **Idempotency**: returns immediately when
+    /// `new_specs == old_specs` (`Vec` element-wise `PartialEq`); the
+    /// Effect's eager initial run lands here on the very first
+    /// install and the snapshot equality short-circuit keeps the
+    /// no-op path cheap.
+    ///
+    /// **Primary protection**: the canonical primary spec
+    /// (`WindowSpec::main`, id `"main"`) is the binding's reactive
+    /// substrate anchor; the shell-side substrate refuses to remove
+    /// it (`ShellCore::remove_window` returns `false` for
+    /// `DEFAULT_WINDOW`). A binding that drops `"main"` from its
+    /// `windows_signal()` list will see the AppShell-side
+    /// `WindowSlot` drop but the substrate state survives —
+    /// canonical behaviour for the dock + tear-off arc (the main
+    /// dock surface stays alive as the "host" for every torn-off
+    /// panel).
+    fn reconcile_windows(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(signal) = self.windows_signal.as_ref() else {
+            // No opt-in, no reconcile — defensive against a
+            // WindowsDirty arriving before install (degenerate corner
+            // case).
+            return;
+        };
+        let new_specs = signal.get();
+        let old_specs: Vec<WindowSpec> = self.last_known_specs.borrow().clone();
+        if new_specs == old_specs {
+            // Idempotent fast-path — identical re-emit, no add / drop
+            // work to do. The Effect's eager initial run lands here
+            // because `install_reconcile_effect` seeds
+            // `last_known_specs` from the same snapshot.
+            return;
+        }
+        // Build the id sets once so the difference walks below are
+        // O(N) instead of O(N²). `HashSet<&str>` so the lookups are
+        // alloc-free (Cow derefs to str through the iterator).
+        let new_ids: HashSet<&str> = new_specs.iter().map(|s| s.id.as_ref()).collect();
+        let old_ids: HashSet<&str> = old_specs.iter().map(|s| s.id.as_ref()).collect();
+        // Drop pass: in old, not in new. Materialise the to-drop
+        // list as owned `String`s so the subsequent
+        // `&mut self.windows` mutation does not conflict with the
+        // `&self.last_known_specs` borrow chain above.
+        let to_drop: Vec<String> = old_ids
+            .difference(&new_ids)
+            .map(|s| (*s).to_owned())
+            .collect();
+        for spec_id in to_drop {
+            // Look up + remove the spec_id → WindowId reverse-map
+            // entry. The Cow<str> key resolves through `&str` via
+            // `Borrow<str>` for an alloc-free lookup.
+            if let Some(window_id) = self.spec_id_to_window_id.remove(spec_id.as_str()) {
+                // Drop the WindowSlot — the OS window closes when
+                // the last `Arc<Window>` ref drops (the slot's
+                // RenderState::Active::window + the
+                // accesskit_winit::Adapter both held strong refs;
+                // dropping the slot releases the AppShell-side ref,
+                // and the adapter drops with the slot since it's a
+                // field of the slot).
+                self.windows.remove(&window_id);
+                if self.primary_window_id == Some(window_id) {
+                    self.primary_window_id = None;
+                }
+                // Drain the per-window substrate state.
+                // `ShellCore::remove_window` refuses DEFAULT_WINDOW
+                // — the primary scope stays alive even if the
+                // binding drops `"main"` from the signal (the
+                // primary's reactive substrate is the
+                // binding-wide anchor and tearing it down would
+                // orphan every `Owner::cache` slot on root_owner).
+                let _ = self.core.remove_window(&spec_id);
+                eprintln!("shell: closed window {spec_id}");
+            }
+        }
+        // Add pass: in new, not in old. `resume_spec` creates one
+        // winit Window + GPU renderer + accesskit_winit::Adapter
+        // per spec and inserts the matching `WindowSlot` +
+        // `spec_id_to_window_id` entry.
+        for spec in &new_specs {
+            if !old_ids.contains(spec.id.as_ref()) {
+                // `make_primary == false` — the primary was assigned
+                // during the initial `resumed()` and survives
+                // reconcile passes; runtime-added windows are always
+                // secondary.
+                self.resume_spec(event_loop, spec, None, false);
+            }
+        }
+        // Update the cache so the next `reconcile_windows` call
+        // diffs against the snapshot the shell just acted on.
+        *self.last_known_specs.borrow_mut() = new_specs;
+        // Re-request paint on every active window so the next event
+        // loop iteration renders the new topology. drain dispatches
+        // a Window::request_redraw per active slot.
+        self.core.request_redraw();
+        self.drain_redraw_to_winit();
+    }
+
     fn resume_spec(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -939,7 +1223,7 @@ impl<V: WidgetView> AppShell<V> {
             match event_loop.create_window(attrs) {
                 Ok(w) => Arc::new(w),
                 Err(e) => {
-                    eprintln!("shell: window create ({}) failed: {e}", spec.id);
+                    eprintln!("shell: window create ({}) failed: {e}", &spec.id);
                     event_loop.exit();
                     return;
                 }
@@ -972,20 +1256,25 @@ impl<V: WidgetView> AppShell<V> {
         let renderer = match renderer {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("shell: renderer init ({}) failed: {e}", spec.id);
+                eprintln!("shell: renderer init ({}) failed: {e}", &spec.id);
                 // Cache the window for a subsequent retry; renderer
                 // init failed but the OS window survives.
                 let window_id = window.id();
+                // R683 §5.16 — `spec.id` is `Cow<'static, str>` so
+                // `.clone()` produces a fresh owned handle for the
+                // per-slot copy + the spec_id_to_window_id map key.
+                // `Cow::Borrowed` clones are pointer-cheap; runtime
+                // ids (`Cow::Owned`) pay one `String::clone`.
                 self.windows.insert(
                     window_id,
                     WindowSlot::build(
                         RenderState::Suspended(Some(window)),
                         None,
-                        spec.id,
+                        spec.id.clone(),
                         pending_intrinsic_resize,
                     ),
                 );
-                self.spec_id_to_window_id.insert(spec.id, window_id);
+                self.spec_id_to_window_id.insert(spec.id.clone(), window_id);
                 event_loop.exit();
                 return;
             }
@@ -1007,17 +1296,17 @@ impl<V: WidgetView> AppShell<V> {
                 renderer: Box::new(renderer),
             },
             Some(adapter),
-            spec.id,
+            spec.id.clone(),
             pending_intrinsic_resize,
         );
         self.windows.insert(window_id, slot);
-        self.spec_id_to_window_id.insert(spec.id, window_id);
+        self.spec_id_to_window_id.insert(spec.id.clone(), window_id);
         if make_primary {
             self.primary_window_id = Some(window_id);
         }
         eprintln!(
             "shell: {} resumed (window {}; initial size {}x{})",
-            spec.title, spec.id, init_w, init_h,
+            spec.title, &spec.id, init_w, init_h,
         );
     }
 }
@@ -1034,7 +1323,29 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // declared spec has already been created. We resume per-spec
         // (suspended slots keep their cached `Window` Arc) so the
         // mobile suspend-resume lifecycle still works per slot.
-        let specs = V::windows();
+        //
+        // R683 §5.16 §5.41 — read the binding's optional
+        // [`WidgetView::windows_signal`] first. When `Some(signal)`,
+        // the signal's snapshot replaces `V::windows()` as the
+        // initial spec list AND the reconcile Effect will subscribe
+        // to subsequent mutations (dock tear-off / dock-back). When
+        // `None` (the pre-R683 default for every single + multi-
+        // window binding) the compile-time `V::windows()` list is
+        // the source of truth + window topology is frozen for the
+        // binding's lifetime — bit-identical to the pre-R683
+        // contract.
+        //
+        // The trait call is wrapped in `root_owner.run(..)` so the
+        // binding impl can reach `Owner::current()` + use
+        // `Owner::cache` to memoise the returned signal across
+        // shell-side re-entries (suspend / resume cycles read the
+        // same memoised `Rc<Signal<..>>` so the Effect install gate
+        // below sees the same handle).
+        let opt_signal = self.core.root_owner().run(V::windows_signal);
+        let specs: Vec<WindowSpec> = match opt_signal.as_ref() {
+            Some(signal) => signal.get(),
+            None => V::windows(),
+        };
         if specs.is_empty() {
             eprintln!(
                 "shell: V::windows() returned empty list; nothing to create",
@@ -1043,15 +1354,20 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             return;
         }
         let mut primary_assigned = false;
-        for spec in specs {
+        for spec in &specs {
             // Resolve any cached window from a prior suspend cycle
             // (look up by spec id). The first `resumed()` after boot
             // never has cached entries; subsequent post-suspended
             // resumes can re-attach the cached `Window` to a fresh
             // GPU renderer.
+            //
+            // R683 §5.16 — `spec.id` is `Cow<'static, str>`; the
+            // HashMap `.get(K: Borrow<Q>)` resolves through Cow's
+            // `Borrow<str>` impl, so the `.get(&*spec.id)` form
+            // passes a plain `&str` and avoids cloning the Cow.
             let cached_window_id = self
                 .spec_id_to_window_id
-                .get(spec.id)
+                .get(&*spec.id)
                 .copied();
             // Skip specs that already have an Active slot. A spec is
             // either fully Active or fully Suspended (no mid-state).
@@ -1065,8 +1381,8 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 }
                 continue;
             }
-            self.resume_spec(event_loop, &spec, cached_window_id, !primary_assigned);
-            if !primary_assigned && self.spec_id_to_window_id.contains_key(spec.id) {
+            self.resume_spec(event_loop, spec, cached_window_id, !primary_assigned);
+            if !primary_assigned && self.spec_id_to_window_id.contains_key(&*spec.id) {
                 primary_assigned = true;
             }
         }
@@ -1077,6 +1393,22 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // lands. drain_redraw_to_winit walks all windows.
         self.core.request_redraw();
         self.drain_redraw_to_winit();
+        // R683 §5.16 §5.41 — install the reconcile Effect after the
+        // initial spec resume completes. Gated by
+        // `self.reconcile_effect.is_none()` so subsequent
+        // `resumed()` calls (mobile suspend / resume cycles) do not
+        // install a second Effect on top of the existing
+        // subscription.
+        if let Some(signal) = opt_signal
+            && self.reconcile_effect.is_none()
+        {
+            // Seed `last_known_specs` to the same snapshot the
+            // Effect's eager initial run will observe — the diff
+            // short-circuits to a no-op on the first
+            // [`AppEvent::WindowsDirty`] arrival.
+            *self.last_known_specs.borrow_mut() = specs;
+            self.install_reconcile_effect(signal);
+        }
     }
 
     /// R46.3.4 — release the GPU-side renderer on suspend so the OS
@@ -1119,10 +1451,14 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         // tracked (a Resumed event that has not landed yet — winit
         // can emit some events between AppShell::resumed creating the
         // window and the slot being inserted into the map).
-        let spec_id = self
+        // R683 §5.16 — `s.spec_id` is `Cow<'static, str>`; `&*s.spec_id`
+        // re-borrows as `&str` so the downstream substrate signatures
+        // (which take `&str`) stay unchanged. The `&'static str`
+        // fallback (`DEFAULT_WINDOW`) coerces to `&str` trivially.
+        let spec_id: &str = self
             .windows
             .get(&window_id)
-            .map_or(pinion_runtime::DEFAULT_WINDOW, |s| s.spec_id);
+            .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id);
         match event {
             WindowEvent::CloseRequested => {
                 eprintln!(
@@ -1280,7 +1616,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         self.drain_redraw_to_winit();
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
             AppEvent::RpcRequest(json) => self.dispatch_rpc(&json),
             AppEvent::AccessKit(ak) => self.handle_accesskit_event(ak),
@@ -1289,6 +1625,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // `ShellCore::dispatch_intent`. The closing step of the
             // §5.23 R27 dispatch loop.
             AppEvent::IntentArrived(intent) => self.core.dispatch_intent(&intent),
+            // R683 §5.16 §5.41 — the reconcile Effect (installed in
+            // [`Self::resumed`] when `WidgetView::windows_signal()`
+            // returned `Some(..)`) fired this user-event on every
+            // value-changing emit of the binding's
+            // `Signal<Vec<WindowSpec>>`. The handler re-reads the
+            // signal snapshot + diffs against the cached last-known
+            // spec list + resumes added specs + drops removed specs.
+            // Idempotent on identical re-emits (Vec PartialEq
+            // short-circuit inside `reconcile_windows`).
+            AppEvent::WindowsDirty => self.reconcile_windows(event_loop),
         }
         self.drain_redraw_to_winit();
     }
@@ -1331,7 +1677,12 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
         let mut earliest_deadline: Option<Instant> = None;
-        let mut immediate_slot_ids: Vec<&'static str> = Vec::new();
+        // R683 §5.16 — `slot.spec_id` is `Cow<'static, str>` which
+        // can wrap a runtime-generated id (`Cow::Owned`) for the dock
+        // tear-off arc. The per-iteration `slot_ids` buffer carries
+        // owned `Cow`s so the substrate calls below survive the
+        // `self.windows.values()` borrow release.
+        let mut immediate_slot_ids: Vec<Cow<'static, str>> = Vec::new();
         for slot in self.windows.values() {
             if !matches!(slot.render, RenderState::Active { .. }) {
                 continue;
@@ -1343,16 +1694,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // budget means "this slot does not contribute a
             // deadline" (idle policy, the default for retained-tree
             // windows).
-            let override_fps = self.core.target_fps_for_window(slot.spec_id);
+            let override_fps = self.core.target_fps_for_window(&slot.spec_id);
             let budget = pinion_runtime::frame_pacing::frame_budget_for_window(
                 slot.has_immediate_mode_subtree,
                 override_fps,
             );
             let Some(budget) = budget else { continue };
-            immediate_slot_ids.push(slot.spec_id);
+            immediate_slot_ids.push(slot.spec_id.clone());
             let deadline = match self
                 .core
-                .last_paint_instant_for_window(slot.spec_id)
+                .last_paint_instant_for_window(&slot.spec_id)
             {
                 Some(prev) => prev + budget,
                 // No prior paint — schedule ASAP (now + 0). winit
@@ -1370,7 +1721,7 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // `drain_redraw_to_winit` dispatches the per-window
             // `Window::request_redraw`. Idempotent: only one redraw
             // per drain regardless of how many times we set the flag.
-            self.core.request_redraw_for_window(spec_id);
+            self.core.request_redraw_for_window(&spec_id);
         }
         match earliest_deadline {
             Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),

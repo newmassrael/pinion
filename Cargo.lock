@@ -3254,6 +3254,7 @@ dependencies = [
  "pinion-text",
  "png 0.17.16",
  "pollster",
+ "serde",
  "serde_json",
  "tokio",
  "vello",
