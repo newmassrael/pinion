@@ -76,6 +76,7 @@
 #![forbid(unsafe_code)]
 
 pub mod checkbox;
+pub mod devtools;
 pub mod scrollbar;
 pub mod text_field;
 pub mod tree_view;

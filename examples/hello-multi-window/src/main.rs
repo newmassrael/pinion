@@ -43,7 +43,6 @@
 //! immediately rather than waiting for the first real DevTools
 //! consumer.
 
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use pinion_core::external::IntrospectValue;
@@ -51,7 +50,7 @@ use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
@@ -60,6 +59,19 @@ use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::WidgetA11y;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
+// R678 §5.16 §5.49 — `DevTools` substrate (path addressing + highlight
+// overlay composition) consumer; lifted from this binding at R678
+// atomic (2) per [[abstraction-needs-second-consumer]] Rule-of-Three
+// after the selection wrap (R676) + hover wrap (R678 atomic 1)
+// surfaced as 2 consumers in `view_main`. The `_for_tree` aliases
+// below preserve the binding's local call-site names where they still
+// read more clearly in context (e.g. `find_main_node_at_path` named
+// for its main-window scope) while the substrate names stay
+// binding-agnostic per the substrate's contract.
+use pinion_widget_paint::devtools::{
+    find_node_at_path as find_main_node_at_path, rebuild_with_highlight_at_path,
+    scene_root_path_segment, scene_to_tree_item, scene_type_name,
+};
 use pinion_widget_paint::tree_view::{
     view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
 };
@@ -116,16 +128,23 @@ const INSPECTOR_TREE_TAG: &str = "inspector_tree";
 /// be a literal at the call site.)
 const INSPECTOR_CLICK_INTENT_TAG: &str = intent_tag!("inspector_tree", "click");
 
-/// R676 §5.16 §5.49 — DevTools highlight overlay border width in
-/// logical pixels. M3 / Material You spec is silent on
-/// inspector/overlay strokes (they sit outside the system token
-/// vocabulary); 2 px is the conventional Browser-DevTools selection
-/// border width across Chrome / Firefox / Safari inspectors so the
-/// affordance reads as "selected element" without disturbing the
-/// underlying paint. Constant rather than inline so a future
-/// substrate lift (R677+ when the 2nd consumer surfaces) inherits
-/// one canonical value.
-const HIGHLIGHT_BORDER_WIDTH: u32 = 2;
+/// R678 §5.16 §5.20 §5.49 — dotted-form intent tag the same
+/// [`TreeRowClickExternal`] under [`INSPECTOR_TREE_TAG`] emits on a
+/// hover-state transition (`PointerEnter` or `PointerLeave` on a
+/// row). The runtime intent-queue walker prefixes the substrate's
+/// bare [`pinion_widget_paint::tree_view::TREE_ROW_HOVER_EVENT`] =
+/// `"hover"` with the External's tag, so the reducer matches
+/// `"inspector_tree.hover"` literally per
+/// [[intent-tag-dotted-wire-form]] — same shape as the click intent
+/// arc, distinct event name so the reducer can dispatch each axis
+/// independently.
+///
+/// Payload semantics (per the substrate's
+/// [`pinion_widget_paint::tree_view::TREE_ROW_HOVER_EVENT`] contract):
+/// `IntrospectValue::Text(path)` on Enter (mirror into the
+/// [`use_hovered_path`] Signal as `Some(path)`),
+/// `IntrospectValue::Null` on Leave (mirror as `None`).
+const INSPECTOR_HOVER_INTENT_TAG: &str = intent_tag!("inspector_tree", "hover");
 
 /// R677 §5.16 §5.49 — root tag of the inspector window's **property
 /// pane** (right-hand pane in the new 2-pane DevTools layout). The
@@ -179,6 +198,38 @@ fn use_selected_path() -> Rc<Signal<Option<String>>> {
     Owner::current()
         .expect("hello-multi-window: view fn runs inside the substrate root owner scope")
         .cache("hello_multi_window_selected_path", || {
+            Signal::new(None::<String>)
+        })
+}
+
+/// R678 §5.16 §5.49 — cross-window shared hover slot.
+///
+/// Parallel to [`use_selected_path`] — same `Owner::cache` mechanism,
+/// distinct slot key, so the two signals stay decoupled. The
+/// inspector window's hover reducer writes the currently-hovered tree
+/// row's path id here on `PointerEnter` and clears it on
+/// `PointerLeave`; `view_main` reads the slot through the DevTools
+/// highlight-overlay walker to paint a *transient* hover wrap on the
+/// matching main-window node (M3 `SurfaceContainerHighest` 2 px
+/// Border, distinct from the Error red selection wrap). The hover
+/// wrap is **layered under the selection wrap** — selection wins on
+/// the same node.
+///
+/// AI clients observe the slot through `scene/snapshot {window: …}`
+/// at both the source side (`hovered_id` query on the
+/// `inspector_tree` External) and the projected side (the new
+/// SurfaceContainerHighest-bordered ancestor on the hovered
+/// main-window node) — the cross-window hover-highlight bridge is
+/// the **2nd visible Phase D editor feature** (R676 selection wrap
+/// = 1st) and a verifiable RPC introspect signal per
+/// [[ai-first-rpc-introspection-obligation]].
+///
+/// `None` = no row hovered; `Some(path)` = the inspector row tagged
+/// `{INSPECTOR_TREE_TAG}#{path}` is currently under the pointer.
+fn use_hovered_path() -> Rc<Signal<Option<String>>> {
+    Owner::current()
+        .expect("hello-multi-window: view fn runs inside the substrate root owner scope")
+        .cache("hello_multi_window_hovered_path", || {
             Signal::new(None::<String>)
         })
 }
@@ -298,15 +349,67 @@ fn view_main_raw(state: ButtonState) -> Scene {
 /// signal per [[ai-first-rpc-introspection-obligation]].
 fn view_main(state: ButtonState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let highlight_color = theme.resolve(ColorRole::Error);
+    let selection_color = theme.resolve(ColorRole::Error);
+    let hover_color = theme.resolve(ColorRole::SurfaceContainerHighest);
     let raw_scene = view_main_raw(state);
     let selected = use_selected_path().get();
-    match selected.as_deref() {
-        Some(path) if find_main_node_at_path(&raw_scene, path).is_some() => {
-            rebuild_with_highlight_at_path(raw_scene, path, highlight_color)
-        }
-        _ => raw_scene,
+    let hovered = use_hovered_path().get();
+
+    // Pre-resolve both paths against the *raw* scene (before any
+    // wrap is applied). The find walker takes a borrowed scene and
+    // walks read-only; passing `&raw_scene` to both lookups gives a
+    // single fixed source of truth — wrapping later (which inserts
+    // an ancestor Container at the wrapped path) does not interfere
+    // with the post-resolution descent.
+    let selected_resolves = selected
+        .as_deref()
+        .filter(|p| find_main_node_at_path(&raw_scene, p).is_some());
+    let hovered_resolves = hovered
+        .as_deref()
+        .filter(|p| find_main_node_at_path(&raw_scene, p).is_some())
+        // R678 — selection wins on the same node. When both signals
+        // point at the same path, the hover wrap is suppressed so the
+        // Error red selection wrap reads cleanly (no duplicate nested
+        // borders).
+        .filter(|p| selected_resolves != Some(*p));
+
+    // Apply the **deeper** wrap first (path with more `/`-separated
+    // segments = nearer to the leaves), then the shallower wrap on
+    // top. Each `rebuild_with_highlight_at_path` call inserts an
+    // anonymous Container ancestor at the matched path; applying
+    // the shallower (ancestor) path first would invalidate the
+    // deeper (descendant) path's lookup on the second pass. Sort
+    // by depth so disjoint cases trivially work either order while
+    // nested cases (hover on root + selection on a descendant, or
+    // vice versa) preserve both wraps.
+    let mut wraps: Vec<(&str, Color)> = Vec::with_capacity(2);
+    if let Some(hpath) = hovered_resolves {
+        wraps.push((hpath, hover_color));
     }
+    if let Some(spath) = selected_resolves {
+        wraps.push((spath, selection_color));
+    }
+    // Stable sort by `depth desc` so equal-depth ties preserve the
+    // insertion order (hover first, then selection — the visual
+    // layering convention: selection always paints on top when both
+    // sit at the same depth).
+    wraps.sort_by(|a, b| path_depth(b.0).cmp(&path_depth(a.0)));
+    let mut scene = raw_scene;
+    for (path, color) in wraps {
+        scene = rebuild_with_highlight_at_path(scene, path, color);
+    }
+    scene
+}
+
+/// R678 §5.16 §5.49 — depth of a path string (count of `/`
+/// separators). Hoisted out of [`view_main`] so
+/// `clippy::items_after_statements` stays clean. The
+/// double-highlight stacking order in `view_main` is sorted by
+/// this depth descending so the deeper wrap (closer to the leaves)
+/// applies first — the shallower wrap's anonymous-ancestor
+/// insertion then preserves the deeper wrap's path lookup.
+fn path_depth(p: &str) -> usize {
+    p.matches('/').count()
 }
 
 /// R671 §5.16 §5.50 — `Inspector` window paint upgraded from a single
@@ -554,412 +657,6 @@ fn format_size_value(value: pinion_core::style::SizeValue) -> String {
     }
 }
 
-/// R676 §5.16 §5.49 — Browser-DevTools-canonical type name for a
-/// [`Scene`] variant. Returned strings are short literal identifiers
-/// that participate in path segments (e.g. `Container[main_btn]`,
-/// `Text[0]`). The mapping is exhaustive over the known
-/// `#[non_exhaustive]` variants of `pinion_core::Scene`; unknown
-/// future variants collapse to `"Unknown"` so the path scheme stays
-/// total.
-fn scene_type_name(scene: &Scene) -> &'static str {
-    match scene {
-        Scene::Container(_) => "Container",
-        Scene::Text(_) => "Text",
-        Scene::External(_) => "External",
-        Scene::Box(_) => "Box",
-        Scene::Path(_) => "Path",
-        Scene::Image(_) => "Image",
-        Scene::Effect(_) => "Effect",
-        Scene::Scroll(_) => "Scroll",
-        _ => "Unknown",
-    }
-}
-
-/// R676 §5.16 §5.49 — tag of a [`Scene`] node when the variant carries
-/// one. Only `Container` and `External` are tag-bearing; every other
-/// variant returns `None` and uses the nth-of-type index form in path
-/// segments.
-fn scene_tag(scene: &Scene) -> Option<&str> {
-    match scene {
-        Scene::Container(c) => c.tag.as_deref(),
-        Scene::External(e) => e.tag.as_deref(),
-        _ => None,
-    }
-}
-
-/// R676 §5.16 §5.49 — root-level path segment for a [`Scene`] node.
-///
-/// The root has no siblings to disambiguate against, so the
-/// nth-of-type index is omitted. Tagged roots keep their tag bracket
-/// (`Container[main_btn]`); untagged roots collapse to the bare type
-/// name (`Container`). Mirrors the leading segment of the canonical
-/// `"Container/Container[main_btn]/Text[0]"` shape.
-fn scene_root_path_segment(scene: &Scene) -> String {
-    let ty = scene_type_name(scene);
-    match scene_tag(scene) {
-        Some(tag) => format!("{ty}[{tag}]"),
-        None => ty.to_owned(),
-    }
-}
-
-/// R676 §5.16 §5.49 — non-root path segment for a [`Scene`] node
-/// given its **nth-of-type** sibling index (0-based, counted only
-/// against siblings of the same `Scene` variant — `Text[0]` and
-/// `Container[0]` coexist at the same parent level).
-///
-/// Tagged Container/External use the tag form
-/// (`Container[main_btn]`, `External[grid]`); untagged or non-
-/// tag-bearing variants use the index form (`Text[0]`, `Box[2]`).
-/// CSS-selector mirror: stable element ids (tags) take priority,
-/// nth-of-type is the ordinal fallback for anonymous siblings.
-fn scene_child_path_segment(scene: &Scene, nth_of_type: usize) -> String {
-    let ty = scene_type_name(scene);
-    match scene_tag(scene) {
-        Some(tag) => format!("{ty}[{tag}]"),
-        None => format!("{ty}[{nth_of_type}]"),
-    }
-}
-
-/// R676 §5.16 §5.49 — disambiguator portion of a non-root path
-/// segment. Tag form (`Container[main_btn]`) carries the borrowed tag
-/// string; nth-of-type form (`Text[0]`) carries the parsed index.
-///
-/// Numeric strings inside the bracket are always interpreted as
-/// nth-of-type indices — tags in pinion are identifier-shaped (never
-/// pure numerics in the canonical paint code), so the parser
-/// disambiguates by `usize::from_str` success. This matches the
-/// CSS-selector mirror convention: `:nth-of-type(N)` for ordinal
-/// access, `#tag` for id access.
-///
-#[derive(Debug, PartialEq, Eq)]
-enum PathDisambiguator<'p> {
-    Tag(&'p str),
-    NthOfType(usize),
-}
-
-/// R676 §5.16 §5.49 — parse one `/`-separated path segment into a
-/// `(type_name, disambiguator)` pair. Returns `None` only when the
-/// bracket form is malformed (`Container[` without closing `]`).
-///
-/// Three shapes:
-///
-/// * `"Container"` — bare type, root-only. `disambiguator = None`.
-/// * `"Container[main_btn]"` — tag form. `disambiguator =
-///   Some(Tag("main_btn"))`.
-/// * `"Text[0]"` — nth-of-type form. `disambiguator =
-///   Some(NthOfType(0))`.
-fn parse_path_segment(segment: &str) -> Option<(&str, Option<PathDisambiguator<'_>>)> {
-    if let Some((ty, rest)) = segment.split_once('[') {
-        let disambiguator_str = rest.strip_suffix(']')?;
-        let disambiguator = match disambiguator_str.parse::<usize>() {
-            Ok(idx) => PathDisambiguator::NthOfType(idx),
-            Err(_) => PathDisambiguator::Tag(disambiguator_str),
-        };
-        Some((ty, Some(disambiguator)))
-    } else {
-        // Bare type — valid only at the root segment.
-        Some((segment, None))
-    }
-}
-
-/// R676 §5.16 §5.49 — find the child of `container` matching the
-/// `(type, disambiguator)` shape carried by a single non-root path
-/// segment.
-///
-/// For tag-form disambiguators, returns the first child of the
-/// requested Scene variant whose tag equals the requested tag. For
-/// nth-of-type-form, returns the child at the requested index among
-/// all siblings of the requested variant (tagged or untagged — the
-/// counting exactly mirrors the forward walker's
-/// `scene_to_tree_item`).
-fn find_child_in_container<'s>(
-    container: &'s ContainerNode,
-    ty: &str,
-    disambiguator: &PathDisambiguator<'_>,
-) -> Option<&'s Scene> {
-    match disambiguator {
-        PathDisambiguator::Tag(tag) => container.children.iter().find(|child| {
-            scene_type_name(child) == ty && scene_tag(child) == Some(*tag)
-        }),
-        PathDisambiguator::NthOfType(idx) => container
-            .children
-            .iter()
-            .filter(|child| scene_type_name(child) == ty)
-            .nth(*idx),
-    }
-}
-
-/// R676 §5.16 §5.49 — **the inverse walker.** Given a path string
-/// produced by [`scene_to_tree_item`] (or
-/// [`scene_root_path_segment`] for the root), descend `root` to
-/// return the matching `&Scene` borrow.
-///
-/// Returns `None` when the path cannot be resolved against the
-/// current scene shape — for example:
-///
-/// * inspector-only TreeItem ids (`"state"`, `"main"`) that were
-///   never produced by [`scene_to_tree_item`];
-/// * paths into untagged Containers whose sibling shape has churned
-///   (a tagged element's path stays stable, but a `Text[2]`-form path
-///   can shift if untagged sibling counts change between paint
-///   cycles);
-/// * paths that bottom out at a non-Container variant before all
-///   segments are consumed (e.g. trying to descend `Container/Text[0]/Foo`
-///   when `Text[0]` is a leaf);
-/// * malformed segments (`Container[` with no closing `]`).
-///
-/// `None` is a soft signal — the caller (R676 atomic 2's highlight
-/// overlay) treats it as "no match, do not wrap" and continues the
-/// paint normally. This is the **textbook canonical contract** for
-/// DevTools-style selection bridges: selection state may carry
-/// stale or inspector-only ids; the renderer's job is to gracefully
-/// skip highlight when the id no longer resolves.
-fn find_main_node_at_path<'s>(root: &'s Scene, path: &str) -> Option<&'s Scene> {
-    let mut segments = path.split('/');
-    let root_seg = segments.next()?;
-    let (root_ty, root_disambiguator) = parse_path_segment(root_seg)?;
-
-    if scene_type_name(root) != root_ty {
-        return None;
-    }
-    // The root may carry a tag disambiguator (rare but supported);
-    // an nth-of-type disambiguator at the root is malformed because
-    // the root has no siblings. Reject both mismatches as None per
-    // the soft-signal contract documented above.
-    if let Some(disambiguator) = &root_disambiguator {
-        match disambiguator {
-            PathDisambiguator::Tag(tag) => {
-                if scene_tag(root) != Some(*tag) {
-                    return None;
-                }
-            }
-            PathDisambiguator::NthOfType(_) => return None,
-        }
-    }
-
-    let mut current = root;
-    for segment in segments {
-        let (ty, disambiguator) = parse_path_segment(segment)?;
-        // Non-root segments must carry a disambiguator (the forward
-        // walker always emits the bracket form for non-root nodes).
-        // A bare-type non-root segment is malformed; treat as None.
-        let disambiguator = disambiguator?;
-        let Scene::Container(c) = current else {
-            return None;
-        };
-        current = find_child_in_container(c, ty, &disambiguator)?;
-    }
-    Some(current)
-}
-
-/// R676 §5.16 §5.49 — wrap `scene` in a transparent
-/// [`Scene::Container`] carrying a stroked border in `color`. The
-/// inner scene paints normally; the outer wrapper contributes only the
-/// 2 px border outline that flags the node as "selected" in the
-/// DevTools selection bridge.
-///
-/// **Why a wrapper container and not a [`BoxStyle`] mutation on the
-/// node itself?** The selection overlay must be non-destructive: a
-/// future round may want to highlight a `Scene::Text` leaf, or a
-/// `Scene::External` whose `BoxStyle` is owned by the External
-/// (immutable from the binding). Wrapping is the canonical
-/// non-destructive composition path — the underlying node keeps its
-/// paint exactly, the wrapper only adds the border outline + an
-/// auto-sized layout sidecar inheriting from the child.
-///
-/// The wrapper uses `Default` `LayoutStyle` so it does not force any
-/// flex / size constraints onto the child; the child's own layout
-/// drives the final size, and the wrapper's `Rect` is computed by
-/// `pinion-runtime`'s layout pass to fit the child's bounding box.
-fn wrap_with_highlight(scene: Scene, color: Color) -> Scene {
-    Scene::Container(ContainerNode::new(vec![scene]).with_style(
-        BoxStyle::default().with_border(Border::new(color, HIGHLIGHT_BORDER_WIDTH)),
-    ))
-}
-
-/// R676 §5.16 §5.49 — **the path-stable rebuild walker.** Given a
-/// scene root and a path string produced by [`scene_to_tree_item`] /
-/// [`scene_root_path_segment`], descend the scene by-value and wrap
-/// the matching node with [`wrap_with_highlight`].
-///
-/// Returns the scene unchanged when the path does not resolve (see
-/// [`find_main_node_at_path`] for the matching `&Scene`-borrow inverse
-/// walker — both helpers share the soft-signal contract). Mirrors the
-/// CSS-selector descent semantics of `find_main_node_at_path`: root
-/// segment may be bare type or tag form; non-root segments must
-/// carry a disambiguator.
-///
-/// The walker takes `scene` by value rather than by `&mut Scene`
-/// because the matching subtree is **moved** into the wrapper and
-/// replaced with the wrapper at the original child slot; mutating
-/// `&mut Scene` in place would require `mem::replace` ceremony for a
-/// transient placeholder. By-value descent + per-step ownership
-/// transfer is the cleaner Rust idiom for tree rewrites of this
-/// shape.
-fn rebuild_with_highlight_at_path(scene: Scene, path: &str, color: Color) -> Scene {
-    let mut segments = path.split('/');
-    let Some(root_seg) = segments.next() else {
-        return scene;
-    };
-    let Some((root_ty, root_disambiguator)) = parse_path_segment(root_seg) else {
-        return scene;
-    };
-    if scene_type_name(&scene) != root_ty {
-        return scene;
-    }
-    if let Some(disambiguator) = &root_disambiguator {
-        match disambiguator {
-            PathDisambiguator::Tag(tag) => {
-                if scene_tag(&scene) != Some(*tag) {
-                    return scene;
-                }
-            }
-            // Root nth-of-type is malformed (root has no siblings);
-            // match `find_main_node_at_path`'s rejection so the two
-            // helpers carry the same soft-signal semantics.
-            PathDisambiguator::NthOfType(_) => return scene,
-        }
-    }
-    let remaining: Vec<&str> = segments.collect();
-    if remaining.is_empty() {
-        return wrap_with_highlight(scene, color);
-    }
-    descend_and_wrap(scene, &remaining, color)
-}
-
-/// R676 §5.16 §5.49 — recursive descent helper for
-/// [`rebuild_with_highlight_at_path`]. Walks `segments` one step at a
-/// time, descending into the matching child by-value and rebuilding
-/// the container with the rewritten child slot. Returns the scene
-/// unchanged on any soft-fail (non-Container current node, malformed
-/// segment, child not found).
-///
-/// The nth-of-type counting **exactly mirrors** the forward walker's
-/// per-type increment so a path produced by [`scene_to_tree_item`]
-/// resolves to the same node on rebuild as it does on
-/// [`find_main_node_at_path`] lookup.
-fn descend_and_wrap(scene: Scene, segments: &[&str], color: Color) -> Scene {
-    let Scene::Container(mut c) = scene else {
-        // Non-Container variants are leaves — can't descend into
-        // them. Return the original variant unchanged so the rest of
-        // the scene paints normally (the selection path is stale).
-        return scene;
-    };
-    let Some(first_segment) = segments.first() else {
-        // Defensive — the caller guarantees segments.len() >= 1
-        // before invoking this helper. Empty slice = no-op.
-        return Scene::Container(c);
-    };
-    let Some((ty, Some(disambiguator))) = parse_path_segment(first_segment) else {
-        // Malformed non-root segment (bare type or unparseable
-        // bracket) → no match → return container unchanged.
-        return Scene::Container(c);
-    };
-    let matching_idx: Option<usize> = match &disambiguator {
-        PathDisambiguator::Tag(tag) => c.children.iter().position(|child| {
-            scene_type_name(child) == ty && scene_tag(child) == Some(*tag)
-        }),
-        PathDisambiguator::NthOfType(idx) => {
-            let mut count = 0_usize;
-            c.children.iter().position(|child| {
-                if scene_type_name(child) == ty {
-                    if count == *idx {
-                        return true;
-                    }
-                    count += 1;
-                }
-                false
-            })
-        }
-    };
-    if let Some(child_idx) = matching_idx {
-        // `mem::replace` swaps the matching child out for a transient
-        // empty Container, transforms the extracted child, then puts
-        // the (now-wrapped) result back at the same slot. This is the
-        // canonical Rust idiom for owning-mutating a `Vec` entry
-        // through a `&mut Container` reference.
-        let extracted = std::mem::replace(
-            &mut c.children[child_idx],
-            Scene::Container(ContainerNode::new(vec![])),
-        );
-        c.children[child_idx] = if segments.len() == 1 {
-            wrap_with_highlight(extracted, color)
-        } else {
-            descend_and_wrap(extracted, &segments[1..], color)
-        };
-    }
-    Scene::Container(c)
-}
-
-/// R671 §5.16 / R676 §5.16 §5.49 — walk one `Scene` node into a
-/// [`TreeItem`] carrying a **path-stable** id. Containers become
-/// branches whose `label` shows the variant + tag (when tagged); text
-/// nodes become leaves carrying the rendered content; every other
-/// variant carries a minimal "variant name" leaf.
-///
-/// `path` is the accumulated path string identifying this node within
-/// the parent tree. The root caller passes [`scene_root_path_segment`]
-/// of the scene (`"Container"` for an untagged root); recursive calls
-/// append `/{Type[disambiguator]}` per child, where the disambiguator
-/// is the child's tag when tag-bearing, or its nth-of-type sibling
-/// index otherwise. The path scheme mirrors Browser DevTools' Elements
-/// panel canonical (CSS-selector tag-or-nth-of-type) so a single
-/// tagged element (like `main_btn`) keeps the same path regardless of
-/// untagged sibling shape changes around it (e.g. R675's
-/// banner-on/off case where adding a `Text` sibling above the button
-/// previously shifted the button's sibling index from `0` to `1` and
-/// corrupted the [`use_selected_path`] Signal across paint cycles).
-///
-/// All branches default to `expanded = true` so the inspector shows
-/// the full main scene tree the moment it boots; collapse + multi-
-/// select are 2nd-consumer carries
-/// per [[abstraction-needs-second-consumer]].
-fn scene_to_tree_item(scene: &Scene, path: &str) -> TreeItem {
-    match scene {
-        Scene::Container(c) => {
-            let tag_segment = c
-                .tag
-                .as_deref()
-                .map_or(String::new(), |t| format!(" [{t}]"));
-            let label = format!("Container{tag_segment}");
-            let mut type_counts: HashMap<&'static str, usize> = HashMap::new();
-            let children: Vec<TreeItem> = c
-                .children
-                .iter()
-                .map(|child| {
-                    let ty = scene_type_name(child);
-                    let nth_ref = type_counts.entry(ty).or_insert(0);
-                    let nth = *nth_ref;
-                    *nth_ref += 1;
-                    let segment = scene_child_path_segment(child, nth);
-                    let child_path = format!("{path}/{segment}");
-                    scene_to_tree_item(child, &child_path)
-                })
-                .collect();
-            TreeItem::branch(path.to_owned(), label, true, children)
-        }
-        Scene::Text(t) => {
-            let label = format!("Text: {:?}", t.content);
-            TreeItem::leaf(path.to_owned(), label)
-        }
-        Scene::External(e) => {
-            let tag_segment = e
-                .tag
-                .as_deref()
-                .map_or(String::new(), |t| format!(" [{t}]"));
-            TreeItem::leaf(path.to_owned(), format!("External{tag_segment}"))
-        }
-        Scene::Box(_) => TreeItem::leaf(path.to_owned(), "Box"),
-        Scene::Path(_) => TreeItem::leaf(path.to_owned(), "Path"),
-        Scene::Image(_) => TreeItem::leaf(path.to_owned(), "Image"),
-        Scene::Effect(_) => TreeItem::leaf(path.to_owned(), "Effect"),
-        Scene::Scroll(_) => TreeItem::leaf(path.to_owned(), "Scroll"),
-        // `pinion_core::Scene` is `#[non_exhaustive]`; any future
-        // variant lands here as an opaque leaf so the inspector
-        // never panics on an unknown node.
-        _ => TreeItem::leaf(path.to_owned(), "(unknown variant)"),
-    }
-}
 
 /// Binding carrier. `MultiWindowView` carries no fields — every
 /// trait method is associated so AppShell instantiates the binding
@@ -1030,19 +727,44 @@ impl WidgetCore for MultiWindowView {
 
     /// R675 §5.23 R27 — bridge the inspector
     /// [`TreeRowClickExternal`]'s `click` intent into the shared
-    /// [`use_selected_path`] signal. Side-effect-only — empty
-    /// `Vec<Command>` return; the `Signal::set` write is the
-    /// mutation. Both windows' view fns observe the Signal change
-    /// on their next paint cycle (per the substrate's reactive
-    /// any-animation-active redraw wire).
+    /// [`use_selected_path`] signal.
+    ///
+    /// R678 §5.23 R27 extension — also bridge the same External's
+    /// `hover` intent into the parallel [`use_hovered_path`] signal.
+    /// `Text(path)` payload (PointerEnter) writes `Some(path)`;
+    /// `Null` payload (PointerLeave) clears the slot to `None`.
+    ///
+    /// Side-effect-only — empty `Vec<Command>` return; the
+    /// `Signal::set` writes are the mutation. Both windows' view fns
+    /// observe each Signal change on their next paint cycle (per the
+    /// substrate's reactive any-animation-active redraw wire).
     fn update(
         _state: Self::State,
         intent: &Intent,
     ) -> Vec<pinion_core::command::Command> {
-        if intent.tag_str() == INSPECTOR_CLICK_INTENT_TAG
-            && let IntrospectValue::Text(path) = &intent.payload
-        {
-            use_selected_path().set(Some(path.clone()));
+        match intent.tag_str() {
+            tag if tag == INSPECTOR_CLICK_INTENT_TAG => {
+                if let IntrospectValue::Text(path) = &intent.payload {
+                    use_selected_path().set(Some(path.clone()));
+                }
+            }
+            tag if tag == INSPECTOR_HOVER_INTENT_TAG => {
+                match &intent.payload {
+                    IntrospectValue::Text(path) => {
+                        use_hovered_path().set(Some(path.clone()));
+                    }
+                    IntrospectValue::Null => {
+                        use_hovered_path().set(None);
+                    }
+                    // Unknown payload variant — silent no-op rather
+                    // than panic; defensive against a future substrate
+                    // axis (richer hover payload, mouse-button mask,
+                    // pointer-id discriminator) being introduced
+                    // without lockstep binding update.
+                    _ => {}
+                }
+            }
+            _ => {}
         }
         Vec::new()
     }
@@ -1429,602 +1151,6 @@ mod r670_b_multi_window_tests {
     }
 }
 
-#[cfg(test)]
-mod r676_path_stable_indexing_tests {
-    //! R676 §5.16 §5.49 — path-stable indexing migration regression
-    //! suite. The pre-R676 [`scene_to_tree_item`] walker built TreeItem
-    //! ids by appending the raw sibling index (`"0/2/1"`); R675's
-    //! banner-on/off case (selection → banner appears → button's
-    //! sibling index shifts from 0 to 1 → `"0/0"` now points to the
-    //! banner instead of the button) corrupted [`use_selected_path`]
-    //! across paint cycles. R676 rewrites the walker to the
-    //! Browser-DevTools-canonical CSS-selector form
-    //! `Type[tag-or-nth-of-type]` so tagged elements (`main_btn`) keep
-    //! the same path regardless of untagged-sibling churn. These tests
-    //! pin (a) the helper functions' shapes and (b) the full-walk
-    //! invariant that the button path is stable across banner toggle.
-    use super::*;
-    use pinion_core::external::StubExternal;
-    use pinion_core::scene::{ContainerNode, ExternalNode, Rect, TextNode};
-    use pinion_core::style::TextStyle;
-
-    /// R676 helper — minimal tagged External fixture for path-scheme
-    /// tests. `StubExternal` is the canonical no-op `External` from
-    /// `pinion_core::external` (Gui backend, framework-driven repaint,
-    /// UI-thread sync) — picked here because it implements `External`
-    /// without dragging in widget-specific state.
-    fn stub_external_with_tag(tag: &'static str) -> Scene {
-        Scene::External(
-            ExternalNode::new(Box::new(StubExternal::new())).with_tag(tag),
-        )
-    }
-
-    /// R676 helper — minimal untagged External fixture for the
-    /// nth-of-type fallback test.
-    fn stub_external_untagged() -> Scene {
-        Scene::External(ExternalNode::new(Box::new(StubExternal::new())))
-    }
-
-    /// (R676) Root segment for an untagged Container is the bare type
-    /// name (no bracket) — root has no siblings to disambiguate
-    /// against, so the nth-of-type fallback is omitted.
-    #[test]
-    fn r676_root_segment_for_untagged_container_is_bare_type_name() {
-        let scene = Scene::Container(ContainerNode::new(vec![]));
-        assert_eq!(scene_root_path_segment(&scene), "Container");
-    }
-
-    /// (R676) Root segment for a tagged Container carries the tag
-    /// bracket — even the root keeps stable element-id semantics when
-    /// it carries one.
-    #[test]
-    fn r676_root_segment_for_tagged_container_uses_tag_form() {
-        let scene =
-            Scene::Container(ContainerNode::new(vec![]).with_tag(MAIN_BTN_TAG));
-        assert_eq!(
-            scene_root_path_segment(&scene),
-            format!("Container[{MAIN_BTN_TAG}]"),
-        );
-    }
-
-    /// (R676) Child segment for a tagged Container uses the tag form
-    /// regardless of the nth-of-type index (tags take priority).
-    #[test]
-    fn r676_child_segment_for_tagged_container_ignores_nth_of_type() {
-        let scene =
-            Scene::Container(ContainerNode::new(vec![]).with_tag(MAIN_BTN_TAG));
-        // nth = 7 is intentionally arbitrary — tags take priority so
-        // the bracket carries the tag regardless of sibling order.
-        assert_eq!(
-            scene_child_path_segment(&scene, 7),
-            format!("Container[{MAIN_BTN_TAG}]"),
-        );
-    }
-
-    /// (R676) Child segment for an untagged Text uses the
-    /// `Text[<nth-of-type>]` form. The nth index counts Text siblings
-    /// only (not all siblings) — see
-    /// `r676_mixed_type_siblings_have_per_type_idx` for the cross-type
-    /// counting case.
-    #[test]
-    fn r676_child_segment_for_untagged_text_uses_type_idx_form() {
-        let text = Scene::Text(TextNode::styled(
-            "x",
-            Rect::default(),
-            TextStyle::new(),
-        ));
-        assert_eq!(scene_child_path_segment(&text, 0), "Text[0]");
-        assert_eq!(scene_child_path_segment(&text, 3), "Text[3]");
-    }
-
-    /// (R676) **The R675 architectural fix.** With banner off, the
-    /// button is the root Container's first (and only) child; with
-    /// banner on, a `Selected: …` Text precedes the button. The pre-
-    /// R676 walker produced `"0/0"` for the button when the banner
-    /// was off and `"0/1"` for the same button when the banner was on
-    /// (sibling-index drift). The R676 walker produces the same
-    /// `"Container/Container[main_btn]"` in both cases because the
-    /// path keys off the tag, not the sibling index.
-    #[test]
-    fn r676_button_path_stable_across_banner_toggle() {
-        let owner = Owner::new();
-        // Banner off — fresh Owner, selection slot empty.
-        let scene_no_banner =
-            owner.run(|| view_main(ButtonState::Idle));
-        let root_path_no_banner = scene_root_path_segment(&scene_no_banner);
-        let tree_no_banner =
-            scene_to_tree_item(&scene_no_banner, &root_path_no_banner);
-        let button_path_no_banner =
-            find_first_tree_item_with_tag(&tree_no_banner, MAIN_BTN_TAG)
-                .expect("banner-off tree must include the button row");
-
-        // Banner on — seed the selection signal.
-        owner.run(|| {
-            use_selected_path().set(Some("seed".to_string()));
-        });
-        let scene_with_banner = owner.run(|| view_main(ButtonState::Idle));
-        let root_path_with_banner =
-            scene_root_path_segment(&scene_with_banner);
-        let tree_with_banner =
-            scene_to_tree_item(&scene_with_banner, &root_path_with_banner);
-        let button_path_with_banner =
-            find_first_tree_item_with_tag(&tree_with_banner, MAIN_BTN_TAG)
-                .expect("banner-on tree must still include the button row");
-
-        assert_eq!(
-            button_path_no_banner, button_path_with_banner,
-            "button path must be stable across banner toggle — R675 \
-             architectural debt fix; pre-R676 produced \"0/0\" vs \"0/1\"",
-        );
-        // And the actual textbook canonical shape — tag-form path
-        // joined to the bare root segment by `/`.
-        assert!(
-            button_path_with_banner
-                .ends_with(&format!("Container[{MAIN_BTN_TAG}]")),
-            "button path must end with the tagged form Container[{MAIN_BTN_TAG}]; \
-             got: {button_path_with_banner:?}",
-        );
-    }
-
-    /// (R676) Multiple Text siblings get distinct nth-of-type indices
-    /// (`Text[0]`, `Text[1]`, `Text[2]`) — the canonical CSS-selector
-    /// disambiguation for anonymous repeated children.
-    #[test]
-    fn r676_sibling_text_nodes_get_distinct_nth_of_type_idx() {
-        let scene = Scene::Container(ContainerNode::new(vec![
-            Scene::Text(TextNode::styled("a", Rect::default(), TextStyle::new())),
-            Scene::Text(TextNode::styled("b", Rect::default(), TextStyle::new())),
-            Scene::Text(TextNode::styled("c", Rect::default(), TextStyle::new())),
-        ]));
-        let root_path = scene_root_path_segment(&scene);
-        let tree = scene_to_tree_item(&scene, &root_path);
-        let TreeItem { children, .. } = tree;
-        assert_eq!(children.len(), 3);
-        assert_eq!(children[0].id, "Container/Text[0]");
-        assert_eq!(children[1].id, "Container/Text[1]");
-        assert_eq!(children[2].id, "Container/Text[2]");
-    }
-
-    /// (R676) **The cross-type nth-of-type counting case.** A parent
-    /// with mixed-type children — `[Text, Container[main_btn], Text,
-    /// External[grid]]` — assigns `Text[0]` and `Text[1]` (not
-    /// `Text[0]` and `Text[2]`) because the index counts siblings of
-    /// the same Scene variant only. Tagged children use the tag form
-    /// regardless of how many other tagged children sit beside them.
-    #[test]
-    fn r676_mixed_type_siblings_have_per_type_idx() {
-        let scene = Scene::Container(ContainerNode::new(vec![
-            Scene::Text(TextNode::styled("a", Rect::default(), TextStyle::new())),
-            Scene::Container(ContainerNode::new(vec![]).with_tag(MAIN_BTN_TAG)),
-            Scene::Text(TextNode::styled("b", Rect::default(), TextStyle::new())),
-            stub_external_with_tag("grid"),
-        ]));
-        let root_path = scene_root_path_segment(&scene);
-        let tree = scene_to_tree_item(&scene, &root_path);
-        let TreeItem { children, .. } = tree;
-        assert_eq!(children.len(), 4);
-        assert_eq!(children[0].id, "Container/Text[0]");
-        assert_eq!(
-            children[1].id,
-            format!("Container/Container[{MAIN_BTN_TAG}]"),
-        );
-        assert_eq!(
-            children[2].id, "Container/Text[1]",
-            "second Text gets nth-of-type idx 1 — Container[main_btn] in \
-             between does not consume the Text counter",
-        );
-        assert_eq!(children[3].id, "Container/External[grid]");
-    }
-
-    /// (R676) Nested 3-level path round-trip — the canonical example
-    /// from the seed prompt: `Container/Container[main_btn]/Text[0]`
-    /// for a labelled button inside an untagged outer Container.
-    #[test]
-    fn r676_nested_path_three_levels_matches_seed_example() {
-        let label_text = Scene::Text(TextNode::styled(
-            "Click me!",
-            Rect::default(),
-            TextStyle::new(),
-        ));
-        let button = Scene::Container(
-            ContainerNode::new(vec![label_text]).with_tag(MAIN_BTN_TAG),
-        );
-        let root = Scene::Container(ContainerNode::new(vec![button]));
-        let root_path = scene_root_path_segment(&root);
-        let tree = scene_to_tree_item(&root, &root_path);
-
-        // Walk down — root → button → label.
-        let TreeItem {
-            id: root_id,
-            children: root_children,
-            ..
-        } = tree;
-        assert_eq!(root_id, "Container");
-        assert_eq!(root_children.len(), 1);
-        let TreeItem {
-            id: button_id,
-            children: button_children,
-            ..
-        } = &root_children[0];
-        assert_eq!(button_id, &format!("Container/Container[{MAIN_BTN_TAG}]"));
-        assert_eq!(button_children.len(), 1);
-        assert_eq!(
-            button_children[0].id,
-            format!("Container/Container[{MAIN_BTN_TAG}]/Text[0]"),
-            "deepest label path must match the seed-prompt canonical example",
-        );
-    }
-
-    /// (R676) Tagged External uses the tag form (`External[grid]`)
-    /// not the nth-of-type form. Mirrors the Container tagged-path
-    /// branch; pins the `scene_tag` helper covers both tag-bearing
-    /// variants.
-    #[test]
-    fn r676_tagged_external_path_uses_tag_form() {
-        let scene = Scene::Container(ContainerNode::new(vec![
-            stub_external_with_tag("grid"),
-        ]));
-        let root_path = scene_root_path_segment(&scene);
-        let tree = scene_to_tree_item(&scene, &root_path);
-        assert_eq!(tree.children.len(), 1);
-        assert_eq!(tree.children[0].id, "Container/External[grid]");
-    }
-
-    /// (R676) Untagged External falls back to the nth-of-type form
-    /// (`External[0]`) — symmetric with Container.
-    #[test]
-    fn r676_untagged_external_path_uses_type_idx_form() {
-        let scene = Scene::Container(ContainerNode::new(vec![
-            stub_external_untagged(),
-        ]));
-        let root_path = scene_root_path_segment(&scene);
-        let tree = scene_to_tree_item(&scene, &root_path);
-        assert_eq!(tree.children.len(), 1);
-        assert_eq!(tree.children[0].id, "Container/External[0]");
-    }
-
-    /// (R676) `scene_type_name` returns the exhaustive set of literal
-    /// type names that appear in path segments. Pins the mapping so a
-    /// future variant addition to `pinion_core::Scene` surfaces a
-    /// compile-time path-scheme decision (the `_ => "Unknown"` arm
-    /// quietly catches the new variant; this test flags that a real
-    /// type-name should be picked instead).
-    #[test]
-    fn r676_scene_type_name_covers_known_variants() {
-        assert_eq!(
-            scene_type_name(&Scene::Container(ContainerNode::new(vec![]))),
-            "Container",
-        );
-        assert_eq!(
-            scene_type_name(&Scene::Text(TextNode::styled(
-                "x",
-                Rect::default(),
-                TextStyle::new(),
-            ))),
-            "Text",
-        );
-        assert_eq!(
-            scene_type_name(&stub_external_untagged()),
-            "External",
-        );
-    }
-
-    /// R676 helper — depth-first scan for the first `TreeItem` whose
-    /// id ends with `Container[<tag>]` (the canonical tag-form
-    /// suffix). Returns the full path string of the matching node, or
-    /// `None`. Test-only utility (kept in this module rather than the
-    /// production code) — production paths go through the R676
-    /// atomic (1) `find_main_node_at_path` instead.
-    fn find_first_tree_item_with_tag(
-        item: &TreeItem,
-        tag: &str,
-    ) -> Option<String> {
-        let suffix = format!("Container[{tag}]");
-        if item.id.ends_with(&suffix) {
-            return Some(item.id.clone());
-        }
-        item.children
-            .iter()
-            .find_map(|child| find_first_tree_item_with_tag(child, tag))
-    }
-}
-
-#[cfg(test)]
-mod r676_find_node_at_path_tests {
-    //! R676 §5.16 §5.49 — inverse-walker regression suite. Atomic (1)
-    //! pairs with the atomic (0) forward walker: given a path string
-    //! produced by [`scene_to_tree_item`], [`find_main_node_at_path`]
-    //! returns the matching `&Scene` borrow (or `None` for paths that
-    //! cannot resolve against the current scene shape). Tests pin
-    //! both the happy path (tagged + nth-of-type + nested) and the
-    //! soft-signal `None` returns (inspector-only ids, stale
-    //! disambiguators, malformed segments) so the upcoming atomic (2)
-    //! highlight overlay can rely on graceful no-match behaviour.
-    use super::*;
-    use pinion_core::scene::{ContainerNode, Rect, TextNode};
-    use pinion_core::style::TextStyle;
-
-    /// (R676) `parse_path_segment` returns the bare-type form for
-    /// segments without brackets — only valid at the root.
-    #[test]
-    fn r676_parse_segment_bare_type_returns_disambiguator_none() {
-        let (ty, disambiguator) = parse_path_segment("Container").unwrap();
-        assert_eq!(ty, "Container");
-        assert!(disambiguator.is_none());
-    }
-
-    /// (R676) `parse_path_segment` returns the tag form when the
-    /// disambiguator string fails `usize::from_str`. Tags are
-    /// identifier-shaped in pinion's paint code (never pure digits) so
-    /// the from_str fallback is reliable.
-    #[test]
-    fn r676_parse_segment_tag_form_returns_tag_disambiguator() {
-        let (ty, disambiguator) = parse_path_segment("Container[main_btn]").unwrap();
-        assert_eq!(ty, "Container");
-        assert_eq!(
-            disambiguator,
-            Some(PathDisambiguator::Tag("main_btn")),
-        );
-    }
-
-    /// (R676) `parse_path_segment` returns the nth-of-type form when
-    /// the disambiguator string is numeric. Mirrors the forward
-    /// walker's index-based fallback for untagged siblings.
-    #[test]
-    fn r676_parse_segment_nth_of_type_form_returns_idx_disambiguator() {
-        let (ty, disambiguator) = parse_path_segment("Text[0]").unwrap();
-        assert_eq!(ty, "Text");
-        assert_eq!(disambiguator, Some(PathDisambiguator::NthOfType(0)));
-        let (ty, disambiguator) = parse_path_segment("Text[42]").unwrap();
-        assert_eq!(ty, "Text");
-        assert_eq!(disambiguator, Some(PathDisambiguator::NthOfType(42)));
-    }
-
-    /// (R676) `parse_path_segment` returns None for a malformed open
-    /// bracket without a closing `]`. The inverse walker propagates
-    /// the None as a soft-signal "do not resolve".
-    #[test]
-    fn r676_parse_segment_malformed_open_bracket_returns_none() {
-        assert!(parse_path_segment("Container[").is_none());
-        assert!(parse_path_segment("Container[main_btn").is_none());
-    }
-
-    /// (R676) Single-segment resolution: bare-type root resolves to
-    /// the root scene itself (no descent).
-    #[test]
-    fn r676_find_root_with_bare_type_segment_returns_root() {
-        let scene = Scene::Container(ContainerNode::new(vec![]));
-        let found = find_main_node_at_path(&scene, "Container").unwrap();
-        // Pointer equality through the variant — both should be the
-        // same `Scene::Container` instance.
-        assert!(matches!(found, Scene::Container(_)));
-    }
-
-    /// (R676) Single-segment root resolution with a tagged root —
-    /// `Container[some_tag]` matches an untagged root → None per the
-    /// soft-signal contract.
-    #[test]
-    fn r676_find_tagged_root_segment_against_untagged_root_returns_none() {
-        let scene = Scene::Container(ContainerNode::new(vec![]));
-        assert!(find_main_node_at_path(&scene, "Container[main_btn]").is_none());
-    }
-
-    /// (R676) Root with nth-of-type disambiguator is malformed
-    /// (root has no siblings) — returns None.
-    #[test]
-    fn r676_find_root_with_nth_of_type_disambiguator_returns_none() {
-        let scene = Scene::Container(ContainerNode::new(vec![]));
-        assert!(find_main_node_at_path(&scene, "Container[0]").is_none());
-    }
-
-    /// (R676) Type mismatch at root — looking for a `Text` root in a
-    /// `Container` root returns None.
-    #[test]
-    fn r676_find_root_type_mismatch_returns_none() {
-        let scene = Scene::Container(ContainerNode::new(vec![]));
-        assert!(find_main_node_at_path(&scene, "Text").is_none());
-    }
-
-    /// (R676) Find tagged child two levels deep — the canonical
-    /// happy path. Mirrors the R675 banner-on selection flow:
-    /// inspector emits the tagged path `Container/Container[main_btn]`,
-    /// the highlight overlay (atomic 2) resolves it back to the
-    /// button container.
-    #[test]
-    fn r676_find_tagged_child_returns_matching_scene() {
-        let button = Scene::Container(
-            ContainerNode::new(vec![]).with_tag(MAIN_BTN_TAG),
-        );
-        let scene = Scene::Container(ContainerNode::new(vec![button]));
-        let found = find_main_node_at_path(
-            &scene,
-            &format!("Container/Container[{MAIN_BTN_TAG}]"),
-        )
-        .expect("tagged-form child path must resolve");
-        match found {
-            Scene::Container(c) => assert_eq!(c.tag.as_deref(), Some(MAIN_BTN_TAG)),
-            _ => panic!("expected Scene::Container at the resolved path"),
-        }
-    }
-
-    /// (R676) Find untagged child by nth-of-type — pins the
-    /// alternative resolution path (when no tag is present).
-    #[test]
-    fn r676_find_untagged_child_by_nth_of_type_returns_matching_scene() {
-        let text_a = Scene::Text(TextNode::styled("a", Rect::default(), TextStyle::new()));
-        let text_b = Scene::Text(TextNode::styled("b", Rect::default(), TextStyle::new()));
-        let scene =
-            Scene::Container(ContainerNode::new(vec![text_a, text_b]));
-        let first = find_main_node_at_path(&scene, "Container/Text[0]")
-            .expect("Text[0] must resolve to first text child");
-        let second = find_main_node_at_path(&scene, "Container/Text[1]")
-            .expect("Text[1] must resolve to second text child");
-        match first {
-            Scene::Text(t) => assert_eq!(t.content, "a"),
-            _ => panic!("expected Scene::Text at Text[0]"),
-        }
-        match second {
-            Scene::Text(t) => assert_eq!(t.content, "b"),
-            _ => panic!("expected Scene::Text at Text[1]"),
-        }
-    }
-
-    /// (R676) Find nested 3-deep — the canonical seed-prompt example
-    /// `Container/Container[main_btn]/Text[0]` resolves to the button
-    /// label.
-    #[test]
-    fn r676_find_nested_three_deep_returns_label_text() {
-        let label = Scene::Text(TextNode::styled(
-            "Click me!",
-            Rect::default(),
-            TextStyle::new(),
-        ));
-        let button = Scene::Container(
-            ContainerNode::new(vec![label]).with_tag(MAIN_BTN_TAG),
-        );
-        let scene = Scene::Container(ContainerNode::new(vec![button]));
-        let found = find_main_node_at_path(
-            &scene,
-            &format!("Container/Container[{MAIN_BTN_TAG}]/Text[0]"),
-        )
-        .expect("3-deep tagged-then-text path must resolve");
-        match found {
-            Scene::Text(t) => assert_eq!(t.content, "Click me!"),
-            _ => panic!("expected Scene::Text at the deepest segment"),
-        }
-    }
-
-    /// (R676) Unknown tag returns None — the soft-signal contract.
-    #[test]
-    fn r676_find_unknown_tag_returns_none() {
-        let button = Scene::Container(
-            ContainerNode::new(vec![]).with_tag(MAIN_BTN_TAG),
-        );
-        let scene = Scene::Container(ContainerNode::new(vec![button]));
-        assert!(
-            find_main_node_at_path(&scene, "Container/Container[ghost]").is_none(),
-            "unknown tag in path must return None, not panic",
-        );
-    }
-
-    /// (R676) Out-of-range nth-of-type returns None.
-    #[test]
-    fn r676_find_nth_of_type_out_of_range_returns_none() {
-        let scene = Scene::Container(ContainerNode::new(vec![Scene::Text(
-            TextNode::styled("x", Rect::default(), TextStyle::new()),
-        )]));
-        assert!(
-            find_main_node_at_path(&scene, "Container/Text[99]").is_none(),
-            "out-of-range nth-of-type idx must return None",
-        );
-    }
-
-    /// (R676) **The inspector-only TreeItem id case.** The
-    /// inspector's `TreeItem::leaf("state", …)` produces composite
-    /// row tag `inspector_tree#state`; clicks emit selected_path =
-    /// `"state"`. That string starts with the "Type" position but
-    /// `state` is not a Scene-variant type name → `scene_type_name`
-    /// of the root is `"Container"` ≠ `"state"` → None. The atomic
-    /// (2) highlight overlay reads this None as "no main-window node
-    /// to wrap" and paints the banner only.
-    #[test]
-    fn r676_find_inspector_only_id_state_returns_none() {
-        let scene = Scene::Container(ContainerNode::new(vec![]));
-        assert!(
-            find_main_node_at_path(&scene, "state").is_none(),
-            "inspector-only TreeItem id must not resolve in main scene",
-        );
-        assert!(
-            find_main_node_at_path(&scene, "main").is_none(),
-            "inspector branch id must not resolve in main scene",
-        );
-    }
-
-    /// (R676) Bare-type non-root segment is malformed (forward walker
-    /// never emits one) → None.
-    #[test]
-    fn r676_find_bare_type_non_root_segment_returns_none() {
-        let inner = Scene::Container(ContainerNode::new(vec![]));
-        let scene = Scene::Container(ContainerNode::new(vec![inner]));
-        assert!(
-            find_main_node_at_path(&scene, "Container/Container").is_none(),
-            "non-root segment without bracket disambiguator must return None",
-        );
-    }
-
-    /// (R676) Descending into a leaf variant returns None — `Text`
-    /// has no children, so a path requesting `Container/Text[0]/Foo`
-    /// can't continue.
-    #[test]
-    fn r676_find_descend_into_leaf_returns_none() {
-        let scene = Scene::Container(ContainerNode::new(vec![Scene::Text(
-            TextNode::styled("x", Rect::default(), TextStyle::new()),
-        )]));
-        assert!(
-            find_main_node_at_path(&scene, "Container/Text[0]/Container[x]").is_none(),
-            "descending into a non-Container leaf must return None",
-        );
-    }
-
-    /// (R676) **Build / resolve round-trip — the R675 architectural
-    /// fix proof.** Build a path from view_main(banner=off) via the
-    /// forward walker; resolve the same path against
-    /// view_main(banner=on) via the inverse walker; both must point
-    /// to the button Container. Cross-paint-cycle path stability is
-    /// what unlocks the atomic (2) highlight overlay being robust to
-    /// state mutations.
-    #[test]
-    fn r676_build_then_resolve_button_stable_across_banner_toggle() {
-        let owner = Owner::new();
-        // Banner off — derive button path via the forward walker.
-        let scene_no_banner = owner.run(|| view_main(ButtonState::Idle));
-        let root_path = scene_root_path_segment(&scene_no_banner);
-        let button_path = walk_for_button_path(
-            &scene_to_tree_item(&scene_no_banner, &root_path),
-        )
-        .expect("forward walker must produce a button path on banner-off");
-
-        // Banner on — selection slot triggers banner. Same button
-        // path must still resolve to the button container.
-        owner.run(|| {
-            use_selected_path().set(Some("seed".to_string()));
-        });
-        let scene_with_banner = owner.run(|| view_main(ButtonState::Idle));
-        let found = find_main_node_at_path(&scene_with_banner, &button_path)
-            .expect("same path must resolve in banner-on scene — R675 fix");
-        match found {
-            Scene::Container(c) => assert_eq!(c.tag.as_deref(), Some(MAIN_BTN_TAG)),
-            _ => panic!("resolved node must be the button container"),
-        }
-
-        // And banner off again — symmetric back-resolution.
-        owner.run(|| {
-            use_selected_path().set(None);
-        });
-        let scene_again = owner.run(|| view_main(ButtonState::Idle));
-        let found_again = find_main_node_at_path(&scene_again, &button_path)
-            .expect("banner-off → on → off cycle preserves path resolution");
-        match found_again {
-            Scene::Container(c) => assert_eq!(c.tag.as_deref(), Some(MAIN_BTN_TAG)),
-            _ => panic!("resolved node must remain the button container"),
-        }
-    }
-
-    /// Test-only helper — depth-first walk for the first TreeItem
-    /// whose id ends with the tagged-form path for `MAIN_BTN_TAG`.
-    /// Mirrors the helper in `r676_path_stable_indexing_tests` but
-    /// scoped to this module to keep the inverse-walker tests
-    /// self-contained.
-    fn walk_for_button_path(item: &TreeItem) -> Option<String> {
-        let suffix = format!("Container[{MAIN_BTN_TAG}]");
-        if item.id.ends_with(&suffix) {
-            return Some(item.id.clone());
-        }
-        item.children
-            .iter()
-            .find_map(walk_for_button_path)
-    }
-}
 
 #[cfg(test)]
 mod r676_highlight_overlay_tests {
@@ -2866,5 +1992,373 @@ mod r677_field_walker_tests {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod r678_hover_bridge_tests {
+    //! R678 §5.16 §5.49 — DevTools cross-window hover-overlay
+    //! regression suite. Atomic (1) wires the inspector
+    //! [`TreeRowClickExternal`]'s new `hover` axis into a parallel
+    //! cross-window [`use_hovered_path`] signal; `view_main` then
+    //! reads BOTH `use_selected_path` and `use_hovered_path` and
+    //! paints two distinct wraps — Error red for selection, M3
+    //! `SurfaceContainerHighest` for hover, selection winning on the
+    //! same node, both visible on different nodes.
+    use super::*;
+    use pinion_core::theme::Theme;
+
+    /// Walk a scene depth-first and return every stroked-border color
+    /// in declaration order. The hover-bridge tests assert on the
+    /// **set** of border colors to verify which wraps painted (no
+    /// false-positive count from the selection wrap when both should
+    /// fire).
+    fn collect_border_colors(scene: &Scene) -> Vec<Color> {
+        fn walk(scene: &Scene, out: &mut Vec<Color>) {
+            if let Scene::Container(c) = scene {
+                if let Some(border) = c.style.border {
+                    if border.width > 0 {
+                        out.push(border.color);
+                    }
+                }
+                for child in &c.children {
+                    walk(child, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(scene, &mut out);
+        out
+    }
+
+    /// (R678) `INSPECTOR_HOVER_INTENT_TAG` is the canonical dotted
+    /// composition of the External tag and the substrate's hover
+    /// event name. Pinned so a rename on either side surfaces here.
+    #[test]
+    fn r678_inspector_hover_intent_tag_is_canonical() {
+        assert_eq!(INSPECTOR_HOVER_INTENT_TAG, "inspector_tree.hover");
+    }
+
+    /// (R678) `use_hovered_path()` returns a fresh Signal initialised
+    /// to `None` (no row hovered at boot). Pinned so a regression
+    /// that pre-seeds the slot surfaces immediately — the demo's
+    /// section (A) cycle 1 verification rides on the boot-clean
+    /// invariant.
+    #[test]
+    fn r678_use_hovered_path_initial_value_is_none() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let signal = use_hovered_path();
+            assert!(
+                signal.get().is_none(),
+                "fresh Owner.cache slot for hovered_path must hold None",
+            );
+        });
+    }
+
+    /// (R678) `use_hovered_path()` is **per-Owner cached** — repeated
+    /// calls within the same Owner scope return the same `Rc` handle.
+    /// Same contract as `use_selected_path` — both arcs share the
+    /// `Owner::cache` + `&'static str` slot-key convention.
+    #[test]
+    fn r678_use_hovered_path_is_owner_cached_singleton() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let a = use_hovered_path();
+            let b = use_hovered_path();
+            assert!(
+                Rc::ptr_eq(&a, &b),
+                "use_hovered_path must return the same Rc<Signal> on every call",
+            );
+        });
+    }
+
+    /// (R678) `use_hovered_path()` and `use_selected_path()` are
+    /// independent slots — mutating one does NOT mutate the other.
+    /// The cross-axis decoupling is a R678 design pin: bindings
+    /// reduce hover and selection on separate Signal arcs so the
+    /// wrap precedence (selection-wins-on-same-node) can be computed
+    /// from both reads at paint time.
+    #[test]
+    fn r678_hovered_and_selected_signals_are_independent() {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_hovered_path().set(Some("path-a".to_string()));
+            use_selected_path().set(Some("path-b".to_string()));
+            assert_eq!(
+                use_hovered_path().get().as_deref(),
+                Some("path-a"),
+                "hovered slot stays under hover mutation",
+            );
+            assert_eq!(
+                use_selected_path().get().as_deref(),
+                Some("path-b"),
+                "selected slot stays under selection mutation",
+            );
+        });
+    }
+
+    /// (R678) Reducer routes `inspector_tree.hover` with `Text(path)`
+    /// payload into `use_hovered_path()` as `Some(path)`. The
+    /// PointerEnter arc.
+    #[test]
+    fn r678_update_reducer_routes_hover_text_intent_to_signal() {
+        let owner = Owner::new();
+        owner.run(|| {
+            assert!(use_hovered_path().get().is_none(), "boot-clean precondition");
+            let intent = Intent::new_static(
+                INSPECTOR_HOVER_INTENT_TAG,
+                IntrospectValue::Text("Container/Container[main_btn]".to_string()),
+            );
+            let cmds = MultiWindowView::update(ButtonState::Idle, &intent);
+            assert!(cmds.is_empty(), "hover reducer is side-effect-only");
+            assert_eq!(
+                use_hovered_path().get().as_deref(),
+                Some("Container/Container[main_btn]"),
+                "Text(path) hover intent must write Some(path)",
+            );
+        });
+    }
+
+    /// (R678) Reducer routes `inspector_tree.hover` with `Null`
+    /// payload into `use_hovered_path()` as `None`. The PointerLeave
+    /// arc.
+    #[test]
+    fn r678_update_reducer_routes_hover_null_intent_clears_signal() {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_hovered_path().set(Some("pre-existing".to_string()));
+            let intent = Intent::new_static(
+                INSPECTOR_HOVER_INTENT_TAG,
+                IntrospectValue::Null,
+            );
+            let _ = MultiWindowView::update(ButtonState::Idle, &intent);
+            assert!(
+                use_hovered_path().get().is_none(),
+                "Null hover intent must clear the slot to None",
+            );
+        });
+    }
+
+    /// (R678) Hover intent does NOT disturb the selection slot — the
+    /// two arcs are routed by tag prefix, so a hover intent should
+    /// be a no-op on `use_selected_path`. Defensive pin against a
+    /// future reducer refactor accidentally cross-wiring the slots.
+    #[test]
+    fn r678_hover_intent_does_not_disturb_selected_path_signal() {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_selected_path().set(Some("selected-only".to_string()));
+            let intent = Intent::new_static(
+                INSPECTOR_HOVER_INTENT_TAG,
+                IntrospectValue::Text("hover-only".to_string()),
+            );
+            let _ = MultiWindowView::update(ButtonState::Idle, &intent);
+            assert_eq!(
+                use_selected_path().get().as_deref(),
+                Some("selected-only"),
+                "hover intent must not write into the selected_path slot",
+            );
+            assert_eq!(
+                use_hovered_path().get().as_deref(),
+                Some("hover-only"),
+            );
+        });
+    }
+
+    /// (R678) Hover intent with non-Text/non-Null payload is a silent
+    /// no-op — defensive against a future substrate hover-axis
+    /// expansion (mouse-button mask, pointer-id discriminator) being
+    /// introduced without lockstep binding update.
+    #[test]
+    fn r678_hover_intent_with_unknown_payload_variant_silent() {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_hovered_path().set(Some("pre-existing".to_string()));
+            let intent = Intent::new_static(
+                INSPECTOR_HOVER_INTENT_TAG,
+                IntrospectValue::Int(42),
+            );
+            let _ = MultiWindowView::update(ButtonState::Idle, &intent);
+            assert_eq!(
+                use_hovered_path().get().as_deref(),
+                Some("pre-existing"),
+                "unknown payload variant must preserve the slot",
+            );
+        });
+    }
+
+    /// (R678) `view_main` baseline — no hover signal set ⇒ no
+    /// stroked-Border anywhere. Same shape as the R676 selection-
+    /// absent baseline, kept as a separate R678 pin so a regression
+    /// that crosses the axes is caught at the hover-empty case.
+    #[test]
+    fn r678_view_main_no_hover_no_extra_border() {
+        let owner = Owner::new();
+        let scene = owner.run(|| view_main(ButtonState::Idle));
+        let colors = collect_border_colors(&scene);
+        assert!(
+            colors.is_empty(),
+            "no-hover, no-selection scene must paint without any stroked Border",
+        );
+    }
+
+    /// (R678) `view_main` with hover path resolving against the
+    /// button ⇒ a stroked Border whose color is M3
+    /// `SurfaceContainerHighest` (the canonical hover overlay color
+    /// per the R678 atomic-1 design). The path resolves through
+    /// `find_main_node_at_path` (R676 helper, now also driving the
+    /// hover walker).
+    #[test]
+    fn r678_view_main_paints_hover_wrap_in_surface_container_highest() {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_hovered_path().set(Some(format!(
+                "Container/Container[{MAIN_BTN_TAG}]",
+            )));
+        });
+        let scene = owner.run(|| view_main(ButtonState::Idle));
+        let colors = collect_border_colors(&scene);
+        assert_eq!(
+            colors.len(),
+            1,
+            "exactly one hover wrap when only the hover signal is set",
+        );
+        // Compare the color against the live theme — the theme system
+        // owns the actual rgba value (light vs dark palette), so we
+        // dereference through Theme rather than hardcoding the rgba.
+        let expected = Theme::light().resolve(ColorRole::SurfaceContainerHighest);
+        assert_eq!(
+            colors[0], expected,
+            "hover wrap must paint with M3 SurfaceContainerHighest",
+        );
+    }
+
+    /// (R678) `view_main` with selection and hover on **different**
+    /// paths ⇒ both wraps paint, with distinct colors. The demo's
+    /// primary "AI-introspectable both-visible" assertion.
+    #[test]
+    fn r678_view_main_paints_both_wraps_on_different_paths() {
+        let owner = Owner::new();
+        let theme = Theme::light();
+        let selection_color = theme.resolve(ColorRole::Error);
+        let hover_color = theme.resolve(ColorRole::SurfaceContainerHighest);
+        owner.run(|| {
+            // Selection on the root Container; hover on the button.
+            use_selected_path().set(Some("Container".to_string()));
+            use_hovered_path().set(Some(format!(
+                "Container/Container[{MAIN_BTN_TAG}]",
+            )));
+        });
+        let scene = owner.run(|| view_main(ButtonState::Idle));
+        let colors = collect_border_colors(&scene);
+        assert_eq!(
+            colors.len(),
+            2,
+            "selection + hover on different nodes ⇒ two stroked Borders",
+        );
+        assert!(
+            colors.contains(&selection_color),
+            "selection wrap (Error red) must paint",
+        );
+        assert!(
+            colors.contains(&hover_color),
+            "hover wrap (SurfaceContainerHighest) must paint",
+        );
+    }
+
+    /// (R678) `view_main` with selection and hover on the **same**
+    /// path ⇒ only the selection wrap paints. The "selection wins"
+    /// rule the design canon explicitly calls out — duplicate nested
+    /// borders on the same node would be visually noisy.
+    #[test]
+    fn r678_view_main_selection_wins_when_both_target_same_node() {
+        let owner = Owner::new();
+        let selection_color = Theme::light().resolve(ColorRole::Error);
+        let path = format!("Container/Container[{MAIN_BTN_TAG}]");
+        owner.run(|| {
+            use_selected_path().set(Some(path.clone()));
+            use_hovered_path().set(Some(path.clone()));
+        });
+        let scene = owner.run(|| view_main(ButtonState::Idle));
+        let colors = collect_border_colors(&scene);
+        assert_eq!(
+            colors.len(),
+            1,
+            "same-node selection+hover ⇒ exactly one wrap (selection)",
+        );
+        assert_eq!(
+            colors[0], selection_color,
+            "the surviving wrap must be the Error red selection color",
+        );
+    }
+
+    /// (R678) `view_main` soft-fails on inspector-only ids (`state`,
+    /// `main`) in the hover slot — the find walker returns `None`,
+    /// so no hover wrap paints. Same soft-fail contract as the
+    /// selection wrap (R676), now extended to the hover axis.
+    #[test]
+    fn r678_view_main_hover_on_inspector_only_id_paints_no_wrap() {
+        let owner = Owner::new();
+        for stale in &["state", "main"] {
+            owner.run(|| {
+                use_hovered_path().set(Some((*stale).to_string()));
+            });
+            let scene = owner.run(|| view_main(ButtonState::Idle));
+            assert!(
+                collect_border_colors(&scene).is_empty(),
+                "hover on inspector-only id {stale:?} must not paint a wrap",
+            );
+        }
+    }
+
+    /// (R678) `view_main` soft-fails on stale hover paths — when the
+    /// path doesn't resolve against the current scene (e.g., a path
+    /// from a prior scene shape), no hover wrap paints. The post-
+    /// soft-fail behaviour matches the selection-wrap soft-fail.
+    #[test]
+    fn r678_view_main_hover_on_stale_path_paints_no_wrap() {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_hovered_path().set(Some(
+                "Container/Container[ghost_tag_never_existed]".to_string(),
+            ));
+        });
+        let scene = owner.run(|| view_main(ButtonState::Idle));
+        assert!(
+            collect_border_colors(&scene).is_empty(),
+            "stale hover path must not paint a wrap",
+        );
+    }
+
+    /// Recursive walker — does any Text node in `scene` start with
+    /// the literal "Selected:" prefix the selection banner uses?
+    /// Hoisted to module scope so `clippy::items_after_statements`
+    /// stays clean inside the test fn that consumes it.
+    fn has_selected_banner(scene: &Scene) -> bool {
+        match scene {
+            Scene::Text(t) => t.content.starts_with("Selected:"),
+            Scene::Container(c) => c.children.iter().any(has_selected_banner),
+            _ => false,
+        }
+    }
+
+    /// (R678) `view_main` with hover-only (selection None) paints
+    /// the hover wrap without disturbing the no-selection banner
+    /// invariant (no "Selected:" banner). The hover axis is
+    /// presentational-only — it does NOT set a banner.
+    #[test]
+    fn r678_view_main_hover_alone_paints_no_banner() {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_hovered_path().set(Some(format!(
+                "Container/Container[{MAIN_BTN_TAG}]",
+            )));
+        });
+        let scene = owner.run(|| view_main(ButtonState::Idle));
+        assert!(
+            !has_selected_banner(&scene),
+            "hover-only must NOT introduce a 'Selected:' banner",
+        );
     }
 }

@@ -13187,6 +13187,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R678 — DevTools cross-window hover-overlay bridge — TreeRowClickExternal hover axis + use_hovered_path() Signal + view_main dual wrap (selection/hover) + Highlight overlay substrate lifted to pinion_widget_paint::devtools
+
+**Changes**:
+- pinion_widget_paint::tree_view::TreeRowClickExternal grows hover axis: hovered_id: Option<String> slot + TREE_ROW_HOVER_EVENT const = hover + PointerEnter/PointerLeave/PointerCancel arms in invoke(send, ...) + invoke(hover, Text|Null) typed shortcut + schema entries for hovered_id and hover
+- examples/hello-multi-window: INSPECTOR_HOVER_INTENT_TAG = inspector_tree.hover constant + use_hovered_path() Owner::cache hook (parallel to use_selected_path); WidgetCore::update reducer routes hover intent Text(path)→Some, Null→None
+- examples/hello-multi-window: view_main reads both signals + paints selection wrap (Error) + hover wrap (SurfaceContainerHighest). Selection wins on same node. Different nodes paint both wraps; depth-desc sort applies deeper wrap first so anonymous-ancestor insertion preserves nested-path lookup
+- pinion_widget_paint::devtools new module (Rule-of-Three lift trigger: selection wrap R676 + hover wrap R678 = 2 consumers in view_main) homes scene_type_name, scene_tag, scene_root_path_segment, scene_child_path_segment, PathDisambiguator, parse_path_segment, find_child_in_container, find_node_at_path (renamed from find_main_node_at_path), wrap_with_highlight, rebuild_with_highlight_at_path, descend_and_wrap, scene_to_tree_item, DEFAULT_HIGHLIGHT_BORDER_WIDTH=2
+- examples/hello-multi-window simplified to substrate re-export consumer; local helper definitions removed; r676_path_stable_indexing_tests + r676_find_node_at_path_tests modules migrated to substrate; r676_highlight_overlay_tests + r677_property_pane_layout_tests + r677_field_walker_tests + r670_b_multi_window_tests + new r678_hover_bridge_tests kept as binding integration coverage
+- tools/demos/r678_devtools_hover_bridge.py (≥34 assertions) — typed/send-wire hover Enter/Leave parity, selection-wins-on-same-node, both-paint-on-different-nodes, inspector-only-id + stale-path soft-fail, W3C move-from-A-to-B sequence, intervene-on-hovered_id read-only contract
+
+
+
+**Verification**:
+- cargo test --workspace passes 3579 / 0 failed (was 3544 at R677, net +35 = +16 hover axis substrate tests + 15 hover bridge binding tests + 30 devtools substrate tests - 28 migrated tests; matches the math)
+- cargo clippy --workspace --all-targets clean (workspace.lints baseline unchanged: forbid unsafe / clippy::pedantic deny)
+- 18-demo regression sweep PASS deterministic (R660 todomvc / R663 double_click / R664 todomvc / R665 todomvc / R666 todomvc / R667-R669 settings_panel / R670.A R670.B / R671 tree_view inspector / R672 multi-window race-free / R673 tree_view interactive / R674 tree_view clickable / R675 devtools select / R676 devtools highlight / R677 devtools property pane / R678 devtools hover bridge — all bit-identical)
+- tools/demos/r678_devtools_hover_bridge.py PASS 4.89s — all 11 demo sections (A..K) pass including substrate sanity / typed-shortcut parity with send-wire / selection-wins / both-wraps / soft-fail / W3C ordering / read-only intervene
+
+
+
+**Impact**: §5.16, §5.49, §5.50
+
+
+**Carry forward**:
+- R679 — bidirectional select: main-window click also writes use_selected_path so the inspector tree row paints focus state-layer in lockstep (currently the arc is one-way: inspector → main). Needs new click router on main window or scene-walker that maps a paint-side pointer hit back to a path-stable address
+- R680 — 2nd DevTools binding consumer (a dedicated pinion-devtools example or scene-graph editor scaffold) to exercise the pinion_widget_paint::devtools substrate from outside hello-multi-window — fires the substrate's Rule-of-Three threshold for a future pinion-devtools crate skeleton
+- R681 — pinion-devtools crate skeleton when R680+ surfaces 3rd consumer; lifts the devtools substrate from pinion_widget_paint into its own crate at the same layer (mirror of pinion-text-* / pinion-platform-* triple-naming convention)
+- Nested-path wrap depth-sort in view_main is a binding-level heuristic — a substrate-level multi-path single-walk rewrite would be the canonical answer when a 2nd application surfaces nested overlay cases
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

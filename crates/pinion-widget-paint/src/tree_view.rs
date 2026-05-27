@@ -445,7 +445,28 @@ pub fn composite_row_tag(tree_tag: &str, node_id: &str) -> String {
 /// `intent_tag!` contract used everywhere else).
 pub const TREE_ROW_CLICK_EVENT: &str = "click";
 
-/// R675 §5.16 §5.20 §5.50 — tree-row click router External.
+/// R678 §5.16 §5.20 §5.50 — bare event name [`TreeRowClickExternal`]
+/// emits on a hover-state transition (`PointerEnter` or `PointerLeave`
+/// on a row). The payload distinguishes Enter from Leave:
+///
+/// * `IntrospectValue::Text(id)` — pointer entered row `id` (the new
+///   `hovered_id`). Fires once per enter; idempotent re-Enter on the
+///   same id is silent.
+/// * `IntrospectValue::Null` — pointer left the previously-hovered
+///   row (`hovered_id` is now `None`). Fires once per leave.
+///
+/// W3C canonical Leave-before-Enter ordering when the cursor crosses
+/// directly from one row to another: the `InputRouter` dispatches
+/// `PointerLeave` on the old tag first, then `PointerEnter` on the
+/// new tag — the consumer sees two `hover` intents (`Null` then
+/// `Text(new_id)`) in that order.
+///
+/// Mirrors [`TREE_ROW_CLICK_EVENT`]'s compose-via-`intent_tag!`
+/// contract — `pinion_core::intent_tag!("<tree_tag>", TREE_ROW_HOVER_EVENT)`
+/// at the binding's reducer match arm.
+pub const TREE_ROW_HOVER_EVENT: &str = "hover";
+
+/// R675 §5.16 §5.20 §5.50 — tree-row click + hover router External.
 ///
 /// Lifted at R675 from the R674 binding-level `FileTreeRowExternal`
 /// in `examples/hello-tree-view`. The 2nd consumer
@@ -457,7 +478,16 @@ pub const TREE_ROW_CLICK_EVENT: &str = "click";
 /// expander, scene-graph inspector) registers one of these alongside
 /// its [`view_tree`] paint output.
 ///
-/// ## State machine (`Idle` ↔ `Pressed`)
+/// R678 §5.16 §5.49 §5.50 grew the External into a two-axis router
+/// — press state (R675 contract) and hover state (R678 axis). The
+/// two slots are independent (W3C canonical: a row can be hovered
+/// while pressed — the normal click target). Each axis has its own
+/// intent stream (`click` / `hover`) so consumers reduce them
+/// independently. The `DevTools` cross-window hover-highlight overlay
+/// (the 2nd visible Phase D editor feature) is the first consumer of
+/// the hover axis.
+///
+/// ## State machine — press axis (`Idle` ↔ `Pressed`)
 ///
 /// One internal slot — `pressed_id: Option<String>`:
 ///
@@ -469,13 +499,38 @@ pub const TREE_ROW_CLICK_EVENT: &str = "click";
 ///   (W3C canonical "drag-off cancels click"), transition to `Idle`.
 /// * `Pressed(id)` + `PointerLeave(id)` or `PointerCancel(id)` →
 ///   silent abort, transition to `Idle`.
-/// * `PointerEnter` and other phases → no state change.
 ///
 /// `Down`-on-A then `Down`-on-B (multi-touch with one primary
 /// pointer) overwrites the pressed slot to B; the subsequent Up-on-B
 /// emits. Pinion follows the single-primary-pointer convention every
 /// other composite uses today; multi-touch concurrent row presses
 /// are a future axis once a real consumer surfaces the need.
+///
+/// ## State machine — hover axis (`NotHovered` ↔ `Hovered`)
+///
+/// One internal slot — `hovered_id: Option<String>`:
+///
+/// * `NotHovered` (`hovered_id = None`) + `PointerEnter(id)` →
+///   `Hovered(id)` (`hovered_id = Some(id)`), emit `hover` intent
+///   carrying `Text(id)`.
+/// * `Hovered(id)` + `PointerEnter(id)` (re-Enter on same row) →
+///   silent no-op (idempotent — guards against `InputRouter`
+///   double-dispatch).
+/// * `Hovered(id_a)` + `PointerEnter(id_b ≠ id_a)` →
+///   `Hovered(id_b)`, emit `hover` intent carrying `Text(id_b)`.
+///   The `InputRouter` dispatches `PointerLeave(id_a)` before
+///   `PointerEnter(id_b)` (W3C canonical Leave-before-Enter), so
+///   consumers normally see `Null` then `Text(id_b)`; the direct
+///   A-to-B path here covers the case where Leave is swallowed
+///   (defensive).
+/// * `Hovered(id)` + `PointerLeave(id)` → `NotHovered`, emit
+///   `hover` intent carrying `Null`.
+/// * `Hovered(id_a)` + `PointerLeave(id_b ≠ id_a)` → silent no-op
+///   (unrelated leave does not disturb the hover slot).
+/// * `Hovered(id)` + `PointerCancel(id)` → `NotHovered`, emit
+///   `hover` intent carrying `Null` (cancel = same hover-clear
+///   semantics as leave; the press axis aborts silently per
+///   pre-R678 contract).
 ///
 /// ## Why intent + reducer instead of direct Signal mutation
 ///
@@ -494,17 +549,29 @@ pub const TREE_ROW_CLICK_EVENT: &str = "click";
 ///
 /// * `pressed_id` — currently held row id (or `Null` when Idle); AI
 ///   clients can read mid-press without triggering input.
+/// * `hovered_id` — currently hovered row id (or `Null` when
+///   `NotHovered`); read-only mirror, mid-hover AI query is safe.
 /// * `send` — R51.42 §5.35 composite-tag wire format
 ///   (`"<id>:<EventName>"`); the canonical input path the
-///   [`InputRouter`] composite walker forwards through.
+///   [`InputRouter`] composite walker forwards through. Handles
+///   `PointerDown` / `PointerUp` / `PointerLeave` / `PointerCancel`
+///   (press axis) and `PointerEnter` / `PointerLeave` /
+///   `PointerCancel` (hover axis) — `PointerLeave` /
+///   `PointerCancel` are shared input gates that touch both slots.
 /// * `click` — typed shortcut for AI-driven single-shot commit
 ///   (`invoke("click", Text(<id>))` synthesises a full Down + Up
 ///   cycle on the same id and emits the intent in one call); mirrors
 ///   [`pinion_core::widgets::TodoDeleteExternal`]'s `"delete"`
 ///   shortcut.
+/// * `hover` — typed shortcut for AI-driven hover synthesis
+///   (`invoke("hover", Text(<id>))` enters row `id`,
+///   `invoke("hover", Null)` leaves the currently-hovered row). Each
+///   call emits exactly one `hover` intent. Mirror of `click` for
+///   the hover axis.
 #[derive(Debug, Default)]
 pub struct TreeRowClickExternal {
     pressed_id: Option<String>,
+    hovered_id: Option<String>,
     pending: Vec<Intent>,
 }
 
@@ -525,6 +592,14 @@ impl TreeRowClickExternal {
             TREE_ROW_CLICK_EVENT,
             IntrospectValue::Text(id),
         ));
+    }
+
+    /// R678 §5.20 — enqueue the `hover` intent on the §5.20 channel
+    /// with the supplied payload (`Text(id)` for Enter, `Null` for
+    /// Leave). `drain_intents` ships the payload across the boundary
+    /// on the next substrate drain pass.
+    fn emit_hover(&mut self, payload: IntrospectValue) {
+        self.pending.push(Intent::new_static(TREE_ROW_HOVER_EVENT, payload));
     }
 }
 
@@ -567,14 +642,20 @@ impl ExternalIntrospect for TreeRowClickExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
             ("pressed_id", "string"),
+            ("hovered_id", "string"),
             ("send", "string"),
             ("click", "string"),
+            ("hover", "string"),
         ])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "pressed_id" => Some(match &self.pressed_id {
+                Some(id) => IntrospectValue::Text(id.clone()),
+                None => IntrospectValue::Null,
+            }),
+            "hovered_id" => Some(match &self.hovered_id {
                 Some(id) => IntrospectValue::Text(id.clone()),
                 None => IntrospectValue::Null,
             }),
@@ -588,7 +669,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
         _value: IntrospectValue,
     ) -> Result<(), InterveneError> {
         match path {
-            "pressed_id" => Err(InterveneError::ReadOnly),
+            "pressed_id" | "hovered_id" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -625,7 +706,35 @@ impl ExternalIntrospect for TreeRowClickExternal {
                                 Ok(IntrospectValue::Bool(false))
                             }
                         }
+                        "PointerEnter" => {
+                            // R678 hover axis: set hovered_id and emit
+                            // a `hover` intent carrying `Text(id)`.
+                            // Idempotent re-Enter on the same id is
+                            // silent (no state change, no intent).
+                            if self.hovered_id.as_deref() == Some(id.as_str()) {
+                                Ok(IntrospectValue::Bool(false))
+                            } else {
+                                self.hovered_id = Some(id.clone());
+                                self.emit_hover(IntrospectValue::Text(id));
+                                Ok(IntrospectValue::Bool(true))
+                            }
+                        }
                         "PointerCancel" | "PointerLeave" => {
+                            // R678 hover axis: clearing the hover slot
+                            // matches the W3C "left/cancel = no longer
+                            // hovering" semantics. Emit a `hover`
+                            // intent carrying `Null` so consumers see
+                            // a deterministic Enter/Leave round trip.
+                            // Unrelated leaves (different id from the
+                            // currently-hovered row) are silent.
+                            if self.hovered_id.as_deref() == Some(id.as_str()) {
+                                self.hovered_id = None;
+                                self.emit_hover(IntrospectValue::Null);
+                            }
+                            // Press axis (pre-R678 behaviour
+                            // preserved): drop the pressed slot if
+                            // the leave/cancel id matches the press,
+                            // silently aborting the in-flight click.
                             if self
                                 .pressed_id
                                 .as_ref()
@@ -633,6 +742,12 @@ impl ExternalIntrospect for TreeRowClickExternal {
                             {
                                 self.pressed_id = None;
                             }
+                            // Pre-R678 contract: leave/cancel returns
+                            // Bool(false) regardless of slot effects.
+                            // The behavioural contract is the emitted
+                            // intent stream; the Bool return is
+                            // informational only and stays compatible
+                            // with R675 test expectations.
                             Ok(IntrospectValue::Bool(false))
                         }
                         _ => Ok(IntrospectValue::Bool(false)),
@@ -645,6 +760,30 @@ impl ExternalIntrospect for TreeRowClickExternal {
                     self.pressed_id = None;
                     self.emit_click(id);
                     Ok(IntrospectValue::Bool(true))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "hover" => match args {
+                // R678 typed hover shortcut: `Text(id)` enters row
+                // `id` (idempotent on the currently-hovered row),
+                // `Null` leaves whatever row is hovered (no-op if
+                // none). Each call emits at most one `hover` intent.
+                IntrospectValue::Text(id) => {
+                    if self.hovered_id.as_deref() == Some(id.as_str()) {
+                        Ok(IntrospectValue::Bool(false))
+                    } else {
+                        self.hovered_id = Some(id.clone());
+                        self.emit_hover(IntrospectValue::Text(id));
+                        Ok(IntrospectValue::Bool(true))
+                    }
+                }
+                IntrospectValue::Null => {
+                    if self.hovered_id.take().is_some() {
+                        self.emit_hover(IntrospectValue::Null);
+                        Ok(IntrospectValue::Bool(true))
+                    } else {
+                        Ok(IntrospectValue::Bool(false))
+                    }
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1143,15 +1282,18 @@ mod r675_tree_row_click_external_tests {
     }
 
     #[test]
-    fn r675_pointer_enter_is_silent_no_op() {
+    fn r678_pointer_enter_does_not_disturb_pressed_id() {
+        // R678: PointerEnter used to be a no-op on every slot — now it
+        // touches the hover slot but must still leave the press slot
+        // alone. Pre-R678 behaviour for the press axis is preserved
+        // here so reducers that only care about clicks keep working.
         let mut handler = TreeRowClickExternal::new();
-        let out = send(&mut handler, "src:PointerEnter");
-        assert_eq!(out, IntrospectValue::Bool(false));
+        let _ = send(&mut handler, "src:PointerEnter");
         assert_eq!(
             handler.query("pressed_id").unwrap(),
             IntrospectValue::Null,
+            "PointerEnter must never set pressed_id",
         );
-        assert!(drain(&mut handler).is_empty());
     }
 
     #[test]
@@ -1226,5 +1368,347 @@ mod r675_tree_row_click_external_tests {
         // consumer reducers compose the dotted form via
         // intent_tag!(MY_TREE_TAG, TREE_ROW_CLICK_EVENT) literally.
         assert_eq!(TREE_ROW_CLICK_EVENT, "click");
+    }
+}
+
+#[cfg(test)]
+mod r678_tree_row_hover_external_tests {
+    //! R678 §5.16 §5.20 §5.49 §5.50 — [`TreeRowClickExternal`] hover
+    //! axis (new at R678; press axis test contract lives in the
+    //! sibling `r675_tree_row_click_external_tests` module and is
+    //! unchanged). The hover axis owns one slot — `hovered_id:
+    //! Option<String>` — and emits one intent name —
+    //! [`TREE_ROW_HOVER_EVENT`]. The `DevTools` cross-window
+    //! hover-highlight overlay in `examples/hello-multi-window` is
+    //! the first consumer.
+
+    use super::{TreeRowClickExternal, TREE_ROW_CLICK_EVENT, TREE_ROW_HOVER_EVENT};
+    use pinion_core::external::{
+        External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
+        InvokeError,
+    };
+    use pinion_core::intent::Intent;
+
+    fn send(handler: &mut TreeRowClickExternal, payload: &str) -> IntrospectValue {
+        handler
+            .invoke("send", IntrospectValue::Text(payload.to_string()))
+            .expect("`send` invoke must accept well-formed payload")
+    }
+
+    fn drain(handler: &mut TreeRowClickExternal) -> Vec<Intent> {
+        let mut out = Vec::new();
+        handler.drain_intents(&mut |i| out.push(i));
+        out
+    }
+
+    #[test]
+    fn r678_new_external_has_no_hovered_id_and_query_returns_null() {
+        let handler = TreeRowClickExternal::new();
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Null,
+            "fresh external must report no hover slot",
+        );
+    }
+
+    #[test]
+    fn r678_pointer_enter_records_hovered_id_and_emits_hover_intent() {
+        let mut handler = TreeRowClickExternal::new();
+        let out = send(&mut handler, "src:PointerEnter");
+        assert_eq!(out, IntrospectValue::Bool(true));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+            "PointerEnter must set hovered_id",
+        );
+        let intents = drain(&mut handler);
+        assert_eq!(intents.len(), 1, "Enter emits exactly one hover intent");
+        assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
+        assert_eq!(
+            intents[0].payload,
+            IntrospectValue::Text("src".to_string()),
+            "Enter payload carries the new hovered_id",
+        );
+    }
+
+    #[test]
+    fn r678_pointer_leave_clears_hovered_id_and_emits_null_hover_intent() {
+        let mut handler = TreeRowClickExternal::new();
+        let _ = send(&mut handler, "src:PointerEnter");
+        let _ = drain(&mut handler);
+        let out = send(&mut handler, "src:PointerLeave");
+        // Pre-R678 contract: Leave returns Bool(false). The hover
+        // axis effect is conveyed via the emitted intent stream.
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Null,
+            "PointerLeave on hovered row must clear the slot",
+        );
+        let intents = drain(&mut handler);
+        assert_eq!(intents.len(), 1, "Leave emits exactly one hover intent");
+        assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
+        assert_eq!(
+            intents[0].payload,
+            IntrospectValue::Null,
+            "Leave payload signals 'no row hovered' with Null",
+        );
+    }
+
+    #[test]
+    fn r678_pointer_enter_idempotent_on_already_hovered_row() {
+        let mut handler = TreeRowClickExternal::new();
+        let _ = send(&mut handler, "src:PointerEnter");
+        let _ = drain(&mut handler);
+        // Same id re-Enter — defensive against InputRouter
+        // double-dispatch on stationary cursor + paint-cycle hover
+        // refresh. Must be silent (no slot change, no intent).
+        let out = send(&mut handler, "src:PointerEnter");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+        );
+        assert!(
+            drain(&mut handler).is_empty(),
+            "idempotent re-Enter must not queue a second hover intent",
+        );
+    }
+
+    #[test]
+    fn r678_pointer_leave_unrelated_row_silent() {
+        let mut handler = TreeRowClickExternal::new();
+        let _ = send(&mut handler, "src:PointerEnter");
+        let _ = drain(&mut handler);
+        // Leave fires for a different id (defensive — the InputRouter
+        // never normally sends this combination, but if a backend
+        // synthesises it the substrate must not corrupt the live
+        // hover slot).
+        let out = send(&mut handler, "tests:PointerLeave");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+            "unrelated Leave must not disturb the active hover slot",
+        );
+        assert!(
+            drain(&mut handler).is_empty(),
+            "unrelated Leave must not emit a hover intent",
+        );
+    }
+
+    #[test]
+    fn r678_pointer_leave_without_prior_enter_silent() {
+        let mut handler = TreeRowClickExternal::new();
+        let out = send(&mut handler, "src:PointerLeave");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Null,
+        );
+        assert!(drain(&mut handler).is_empty());
+    }
+
+    #[test]
+    fn r678_pointer_cancel_clears_hover_and_emits_null_intent() {
+        let mut handler = TreeRowClickExternal::new();
+        let _ = send(&mut handler, "src:PointerEnter");
+        let _ = drain(&mut handler);
+        let out = send(&mut handler, "src:PointerCancel");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Null,
+            "PointerCancel on hovered row clears the slot",
+        );
+        let intents = drain(&mut handler);
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
+        assert_eq!(intents[0].payload, IntrospectValue::Null);
+    }
+
+    #[test]
+    fn r678_w3c_leave_before_enter_emits_two_hover_intents() {
+        // W3C canonical move-from-A-to-B: InputRouter dispatches
+        // PointerLeave(A) then PointerEnter(B). The substrate must
+        // emit two hover intents (Null then Text(B)) in that order.
+        let mut handler = TreeRowClickExternal::new();
+        let _ = send(&mut handler, "src:PointerEnter");
+        let _ = drain(&mut handler);
+        let _ = send(&mut handler, "src:PointerLeave");
+        let _ = send(&mut handler, "docs:PointerEnter");
+        let intents = drain(&mut handler);
+        assert_eq!(intents.len(), 2, "Leave→Enter emits two ordered intents");
+        assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
+        assert_eq!(intents[0].payload, IntrospectValue::Null);
+        assert_eq!(intents[1].tag_str(), TREE_ROW_HOVER_EVENT);
+        assert_eq!(intents[1].payload, IntrospectValue::Text("docs".to_string()));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Text("docs".to_string()),
+            "post-W3C-transition hover_id is the new target",
+        );
+    }
+
+    #[test]
+    fn r678_direct_enter_to_different_row_swaps_hover_slot() {
+        // Defensive — when Leave is swallowed (backend bug, dropped
+        // event), an Enter on a *different* id must still update the
+        // slot. Emits one hover intent carrying the new id.
+        let mut handler = TreeRowClickExternal::new();
+        let _ = send(&mut handler, "src:PointerEnter");
+        let _ = drain(&mut handler);
+        let out = send(&mut handler, "docs:PointerEnter");
+        assert_eq!(out, IntrospectValue::Bool(true));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Text("docs".to_string()),
+        );
+        let intents = drain(&mut handler);
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].payload, IntrospectValue::Text("docs".to_string()));
+    }
+
+    #[test]
+    fn r678_hover_axis_and_press_axis_independent() {
+        // Hover during a press: Enter while pressed_id is set must
+        // not disturb the press slot, and vice versa. The canonical
+        // "click target" state — pointer hovering over the row being
+        // clicked.
+        let mut handler = TreeRowClickExternal::new();
+        let _ = send(&mut handler, "src:PointerDown");
+        let _ = send(&mut handler, "src:PointerEnter");
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+            "Enter during press preserves press slot",
+        );
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+            "Enter during press records hover slot",
+        );
+        // PointerUp on the same row should still fire a click and
+        // leave the hover slot intact.
+        let _ = send(&mut handler, "src:PointerUp");
+        assert_eq!(
+            handler.query("pressed_id").unwrap(),
+            IntrospectValue::Null,
+            "Up releases the press slot",
+        );
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+            "Up leaves the hover slot untouched (pointer is still over the row)",
+        );
+        let intents = drain(&mut handler);
+        // 2 intents: 1 hover Enter + 1 click Up.
+        assert_eq!(intents.len(), 2);
+        assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
+        assert_eq!(intents[0].payload, IntrospectValue::Text("src".to_string()));
+        assert_eq!(intents[1].tag_str(), TREE_ROW_CLICK_EVENT);
+        assert_eq!(intents[1].payload, IntrospectValue::Text("src".to_string()));
+    }
+
+    #[test]
+    fn r678_pointer_leave_on_pressed_and_hovered_row_clears_both_slots() {
+        // PointerLeave on a row that is both pressed and hovered
+        // must clear both slots; the hover axis emits a Null intent
+        // (the press axis aborts silently per pre-R678 contract).
+        let mut handler = TreeRowClickExternal::new();
+        let _ = send(&mut handler, "src:PointerEnter");
+        let _ = send(&mut handler, "src:PointerDown");
+        let _ = drain(&mut handler);
+        let out = send(&mut handler, "src:PointerLeave");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert_eq!(handler.query("pressed_id").unwrap(), IntrospectValue::Null);
+        assert_eq!(handler.query("hovered_id").unwrap(), IntrospectValue::Null);
+        let intents = drain(&mut handler);
+        assert_eq!(intents.len(), 1, "only the hover axis emits on combined leave");
+        assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
+        assert_eq!(intents[0].payload, IntrospectValue::Null);
+    }
+
+    #[test]
+    fn r678_direct_hover_shortcut_emits_intent_without_send_cycle() {
+        let mut handler = TreeRowClickExternal::new();
+        let out = handler
+            .invoke("hover", IntrospectValue::Text("src".to_string()))
+            .expect("`hover` shortcut must accept Text id");
+        assert_eq!(out, IntrospectValue::Bool(true));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Text("src".to_string()),
+        );
+        let intents = drain(&mut handler);
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].tag_str(), TREE_ROW_HOVER_EVENT);
+        assert_eq!(intents[0].payload, IntrospectValue::Text("src".to_string()));
+    }
+
+    #[test]
+    fn r678_direct_hover_shortcut_null_leaves_currently_hovered_row() {
+        let mut handler = TreeRowClickExternal::new();
+        let _ = handler.invoke("hover", IntrospectValue::Text("src".to_string()));
+        let _ = drain(&mut handler);
+        let out = handler
+            .invoke("hover", IntrospectValue::Null)
+            .expect("`hover` Null must clear the slot");
+        assert_eq!(out, IntrospectValue::Bool(true));
+        assert_eq!(
+            handler.query("hovered_id").unwrap(),
+            IntrospectValue::Null,
+        );
+        let intents = drain(&mut handler);
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].payload, IntrospectValue::Null);
+    }
+
+    #[test]
+    fn r678_direct_hover_shortcut_null_when_not_hovering_is_silent() {
+        let mut handler = TreeRowClickExternal::new();
+        let out = handler
+            .invoke("hover", IntrospectValue::Null)
+            .expect("Null on idle slot is a no-op");
+        assert_eq!(out, IntrospectValue::Bool(false));
+        assert!(drain(&mut handler).is_empty());
+    }
+
+    #[test]
+    fn r678_direct_hover_shortcut_non_text_non_null_type_mismatch() {
+        let mut handler = TreeRowClickExternal::new();
+        let result = handler.invoke("hover", IntrospectValue::Int(7));
+        assert_eq!(result, Err(InvokeError::TypeMismatch));
+    }
+
+    #[test]
+    fn r678_intervene_hovered_id_is_read_only() {
+        let mut handler = TreeRowClickExternal::new();
+        let result = handler
+            .intervene("hovered_id", IntrospectValue::Text("forged".to_string()));
+        assert_eq!(result, Err(InterveneError::ReadOnly));
+    }
+
+    #[test]
+    fn r678_schema_includes_hover_axis_slots() {
+        let handler = TreeRowClickExternal::new();
+        let schema: IntrospectSchema = handler.schema();
+        let names: Vec<&str> = schema.fields.iter().map(|(name, _)| *name).collect();
+        // Press axis (pre-R678).
+        assert!(names.contains(&"pressed_id"));
+        assert!(names.contains(&"send"));
+        assert!(names.contains(&"click"));
+        // Hover axis (R678 additions).
+        assert!(names.contains(&"hovered_id"), "schema must expose hovered_id slot");
+        assert!(names.contains(&"hover"), "schema must expose hover invoke channel");
+    }
+
+    #[test]
+    fn r678_hover_event_constant_is_canonical_hover() {
+        // Pin the substrate constant so a future rename surfaces the
+        // lockstep break against every consumer. Bindings compose
+        // the dotted intent name via
+        // intent_tag!(MY_TREE_TAG, TREE_ROW_HOVER_EVENT) literally.
+        assert_eq!(TREE_ROW_HOVER_EVENT, "hover");
     }
 }
