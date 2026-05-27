@@ -56,7 +56,22 @@ Pinion specific scopes:
 - Reference SCE upstream via 8-char commit SHA when relevant
 
 ### 4. Style
-- **No emojis** (typographic symbols §, →, –, • are explicitly allowed)
+- **English only** — subject and body must be written in English so the
+  log stays accessible to every collaborator. ASCII printable (U+0020 to
+  U+007E) plus the whitelist of typographic symbols below are the only
+  permitted code points; any character outside this set (Hangul, Kana,
+  CJK ideographs, Cyrillic, Greek, etc.) is rejected by the commit-msg
+  hook.
+  - Typographic whitelist: `§` (U+00A7), `–` (en-dash U+2013), `—`
+    (em-dash U+2014), `•` (bullet U+2022), `…` (ellipsis U+2026), `→`
+    (rightwards arrow U+2192). These are the only non-ASCII code points
+    the hook lets through.
+  - Round summaries / progress notes that need Korean phrasing belong
+    in `docs/SEED_PROMPT.md` (a regular file edit) or auto-memory under
+    `memory/`, never in the commit message.
+- **No emojis** (Unicode pictograph ranges U+1F300-U+1FAFF and
+  U+1F1E6-U+1F1FF are rejected; the typographic symbols above are
+  explicitly allowed)
 - **No "Generated with Claude Code"**
 - **No "Co-Authored-By" tags**
 - Professional and technical tone
