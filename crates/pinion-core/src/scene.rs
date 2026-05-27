@@ -305,6 +305,141 @@ impl Scene {
         }
     }
 
+    /// R682 §5.16 — paint-affecting structural hash for the §5.16
+    /// paint-fragment cache (axis 4 of the 4-axis paint-pipeline
+    /// rewrite series).
+    ///
+    /// Returns the same `u64` for two scenes that produce
+    /// observationally identical Vello fragments at the same root
+    /// `(x, y)` (the R682 first-cut hashes absolute coords; a
+    /// follow-up round may switch to container-local coords for
+    /// translation-invariant cache hits across reflows). The
+    /// shell-side fragment cache (R682 atomic 1) keys off this
+    /// value.
+    ///
+    /// Variants that carry opaque paint side-effects the cache
+    /// cannot prove identical between frames return the fixed
+    /// sentinel [`PAINT_HASH_UNCACHEABLE`]:
+    ///
+    /// - [`Scene::External`] — `Box<dyn External>` paint is opaque;
+    ///   currently a no-op in [`pinion_runtime::paint_adapter::to_vello`],
+    ///   but the sentinel keeps the contract honest for future
+    ///   paint impls that wire the §5.15 surface bridge.
+    /// - [`Scene::ImmediateModeNode`] — driver state advances every
+    ///   tick; cached encoded paint is stale by definition (§2 #4
+    ///   immediate-mode game-loop semantics).
+    ///
+    /// The fragment cache layer consults
+    /// [`Self::is_cacheable_for_paint`] in addition to this hash —
+    /// a [`Scene::Container`] whose hash sub-includes an uncacheable
+    /// descendant has a deterministic hash but the cacheability
+    /// predicate still rejects it (a sentinel-bearing hash alone
+    /// would let two different uncacheable scenes hash-collide and
+    /// reuse each other's stale fragments).
+    ///
+    /// [`Scene::Effect`] paints nothing (no geometry per
+    /// [`Self::rect`]), so its hash is a stable zero-payload value —
+    /// distinct from [`PAINT_HASH_UNCACHEABLE`] so the cache can
+    /// treat consecutive Effect leaves as identical and reuse a
+    /// no-op fragment.
+    #[must_use]
+    pub fn paint_hash(&self) -> u64 {
+        use core::hash::{Hash, Hasher};
+        match self {
+            Scene::Container(c) => c.paint_hash(),
+            Scene::Box(b) => {
+                let mut h = std::hash::DefaultHasher::new();
+                b"pinion.scene.Box".hash(&mut h);
+                b.rect.hash(&mut h);
+                b.style.hash(&mut h);
+                b.layout.hash(&mut h);
+                h.finish()
+            }
+            Scene::Text(t) => {
+                let mut h = std::hash::DefaultHasher::new();
+                b"pinion.scene.Text".hash(&mut h);
+                t.content.hash(&mut h);
+                t.rect.hash(&mut h);
+                t.style.hash(&mut h);
+                t.layout.hash(&mut h);
+                t.line_count.hash(&mut h);
+                h.finish()
+            }
+            Scene::Path(p) => {
+                let mut h = std::hash::DefaultHasher::new();
+                b"pinion.scene.Path".hash(&mut h);
+                p.rect.hash(&mut h);
+                p.style.hash(&mut h);
+                p.layout.hash(&mut h);
+                (p.commands.len() as u64).hash(&mut h);
+                for cmd in &p.commands {
+                    hash_path_command_into(cmd, &mut h);
+                }
+                h.finish()
+            }
+            Scene::Image(i) => {
+                let mut h = std::hash::DefaultHasher::new();
+                b"pinion.scene.Image".hash(&mut h);
+                i.source.hash(&mut h);
+                i.rect.hash(&mut h);
+                i.style.hash(&mut h);
+                i.layout.hash(&mut h);
+                h.finish()
+            }
+            Scene::Scroll(s) => {
+                let mut h = std::hash::DefaultHasher::new();
+                b"pinion.scene.Scroll".hash(&mut h);
+                s.viewport.hash(&mut h);
+                s.offset_x.hash(&mut h);
+                s.offset_y.hash(&mut h);
+                s.layout.hash(&mut h);
+                s.content.paint_hash().hash(&mut h);
+                h.finish()
+            }
+            Scene::Effect(_) => PAINT_HASH_EFFECT_SENTINEL,
+            Scene::External(_) | Scene::ImmediateModeNode(_) => PAINT_HASH_UNCACHEABLE,
+        }
+    }
+
+    /// R682 §5.16 — `true` iff every paint side-effect this subtree
+    /// produces is fully captured by [`Self::paint_hash`] (so a
+    /// cache hit safely substitutes a previously encoded
+    /// `vello::Scene` fragment without losing pixel fidelity).
+    ///
+    /// The §5.16 cache layer is conservative — only known-pure
+    /// retained-tree primitives are cacheable. A subtree with any
+    /// uncacheable descendant rejects the cache wholesale at the
+    /// first ancestor [`Scene::Container`]; that container's
+    /// children encode fresh every frame so the immediate-mode
+    /// driver / opaque external surface paints at live cadence.
+    ///
+    /// Uncacheable variants (must always paint fresh):
+    /// - [`Scene::ImmediateModeNode`] — driver state per-tick.
+    /// - [`Scene::External`] — opaque §3 escape; even a no-op paint
+    ///   today is one new-paint-impl PR away from being live.
+    ///
+    /// Cacheable leaves: [`Scene::Box`], [`Scene::Text`],
+    /// [`Scene::Path`], [`Scene::Image`], [`Scene::Effect`] (no-op
+    /// paint — caching a no-op fragment is a stable no-op).
+    ///
+    /// Container / Scroll recurse: cacheable iff all descendants
+    /// are.
+    #[must_use]
+    pub fn is_cacheable_for_paint(&self) -> bool {
+        match self {
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_) => true,
+            Scene::Container(c) => {
+                c.children.iter().all(Self::is_cacheable_for_paint)
+            }
+            Scene::Scroll(s) => s.content.is_cacheable_for_paint(),
+            Scene::External(_) | Scene::ImmediateModeNode(_) => false,
+        }
+    }
+
     /// R668 §5.16 — tight content bounding box, in logical-pixel
     /// (x+w, y+h) terms, of every visible primitive in this tree.
     ///
@@ -772,6 +907,66 @@ pub struct HitPath {
     pub bbox: Rect,
 }
 
+/// R682 §5.16 — sentinel paint hash returned by [`Scene::Effect`].
+/// A stable distinct value (not zero, not the uncacheable sentinel)
+/// so two adjacent Effect leaves cache-collide intentionally (the
+/// underlying paint is a no-op; reusing the encoded no-op fragment
+/// is safe).
+///
+/// The exact bit pattern is irrelevant — any value distinct from
+/// [`PAINT_HASH_UNCACHEABLE`] and from any plausible structural-hash
+/// collision works. Encoded as a magic constant so a hash dump
+/// inspector can spot Effect leaves without re-running the hasher.
+pub const PAINT_HASH_EFFECT_SENTINEL: u64 = 0xEFFE_C700_EFFE_C700;
+
+/// R682 §5.16 — sentinel paint hash returned by uncacheable
+/// variants ([`Scene::External`], [`Scene::ImmediateModeNode`]).
+/// Distinct from any plausible structural-hash payload AND distinct
+/// from [`PAINT_HASH_EFFECT_SENTINEL`] so a hash-dump inspector can
+/// distinguish "cache-poison leaf" from "no-op cacheable leaf".
+///
+/// The §5.16 fragment cache layer never inserts under this hash
+/// (the [`Scene::is_cacheable_for_paint`] predicate gates insertion
+/// at the enclosing Container boundary), so a collision here cannot
+/// resurrect a stale fragment.
+pub const PAINT_HASH_UNCACHEABLE: u64 = 0xDEAD_CAFE_DEAD_CAFE;
+
+/// R682 §5.16 — hash a [`PathCommand`] into the supplied hasher
+/// state. Manual rather than `#[derive(Hash)]` because
+/// [`PathPoint`] carries `f32` fields ([`Hash`] not implemented for
+/// `f32` per std docs); we widen to the bit pattern via
+/// [`f32::to_bits`] so identical points hash identically and `NaN`
+/// payloads stay deterministically distinct (a cache miss on a
+/// `NaN` path is the conservative response — `NaN` in geometry is
+/// a path-builder bug anyway).
+fn hash_path_command_into<H: core::hash::Hasher>(cmd: &PathCommand, hasher: &mut H) {
+    use core::hash::Hash;
+    match cmd {
+        PathCommand::MoveTo(p) => {
+            b"MoveTo".hash(hasher);
+            p.x.to_bits().hash(hasher);
+            p.y.to_bits().hash(hasher);
+        }
+        PathCommand::LineTo(p) => {
+            b"LineTo".hash(hasher);
+            p.x.to_bits().hash(hasher);
+            p.y.to_bits().hash(hasher);
+        }
+        PathCommand::CurveTo { c1, c2, end } => {
+            b"CurveTo".hash(hasher);
+            c1.x.to_bits().hash(hasher);
+            c1.y.to_bits().hash(hasher);
+            c2.x.to_bits().hash(hasher);
+            c2.y.to_bits().hash(hasher);
+            end.x.to_bits().hash(hasher);
+            end.y.to_bits().hash(hasher);
+        }
+        PathCommand::Close => {
+            b"Close".hash(hasher);
+        }
+    }
+}
+
 /// Half-open containment check: `(x, y)` lies inside `r` when both
 /// coordinates fall in `[r.x, r.x + r.w)` × `[r.y, r.y + r.h)`. Uses
 /// saturating add so zero-area rects (`w == 0` or `h == 0`) never
@@ -897,8 +1092,12 @@ impl Modifier {
 /// excluded from this minimal schema — taffy-driven flexbox/grid
 /// (§5.11 decision) supersedes absolute geometry as that surface
 /// lands.
+///
+/// (R682 §5.16) `Hash` participates in the §5.16 paint-fragment cache
+/// key derivation — see [`ContainerNode::paint_hash`]. All four fields
+/// are `u32` so the derive is direct (no float bit-pattern detour).
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Rect {
     pub x: u32,
     pub y: u32,
@@ -910,6 +1109,48 @@ impl Rect {
     #[must_use]
     pub const fn new(x: u32, y: u32, w: u32, h: u32) -> Self {
         Self { x, y, w, h }
+    }
+
+    /// R682 §5.16 — smallest axis-aligned rectangle that contains
+    /// both `self` and `other`. Used by the §5.16 fragment cache
+    /// (R682 atomic 2) to compute the per-paint damage region as the
+    /// union of every cache-miss Container's rect.
+    ///
+    /// Zero-area rects (`w == 0` or `h == 0`) are treated as empty
+    /// sets — the union of a zero-area rect with a non-zero rect
+    /// returns the non-zero rect verbatim (a zero-area rect
+    /// contributes no pixels, so it cannot extend the damage
+    /// region). The union of two zero-area rects returns a zero-area
+    /// rect at `(min(x), min(y))`.
+    #[must_use]
+    pub fn union(self, other: Rect) -> Rect {
+        // Empty-set short-circuits (consistent with `rects_intersect`
+        // and the half-open `rect_contains` semantics elsewhere).
+        let self_empty = self.w == 0 || self.h == 0;
+        let other_empty = other.w == 0 || other.h == 0;
+        match (self_empty, other_empty) {
+            (true, true) => Rect::new(
+                self.x.min(other.x),
+                self.y.min(other.y),
+                0,
+                0,
+            ),
+            (true, false) => other,
+            (false, true) => self,
+            (false, false) => {
+                let lx = self.x.min(other.x);
+                let ty = self.y.min(other.y);
+                let rx = self
+                    .x
+                    .saturating_add(self.w)
+                    .max(other.x.saturating_add(other.w));
+                let by = self
+                    .y
+                    .saturating_add(self.h)
+                    .max(other.y.saturating_add(other.h));
+                Rect::new(lx, ty, rx.saturating_sub(lx), by.saturating_sub(ty))
+            }
+        }
     }
 }
 
@@ -1324,6 +1565,32 @@ pub struct ContainerNode {
     /// accessible name is a per-node attribute in WAI-ARIA (1.2 §5.2),
     /// not a layout/transform adjustment.
     pub aria_label: Option<Cow<'static, str>>,
+    /// R682 §5.16 — within-paint-pass memoised structural hash for
+    /// the §5.16 paint-fragment cache (axis 4 of the 4-axis
+    /// paint-pipeline rewrite series).
+    ///
+    /// Computed lazily by [`Self::paint_hash`] the first time the
+    /// paint adapter walks this container; subsequent calls inside
+    /// the same paint pass hit the [`Cell`]. The next paint pass
+    /// works on a fresh container (`V::view` rebuilds the scene tree
+    /// from scratch each frame per R26) which defaults the field
+    /// back to [`None`] — the hash is per-paint-pass memoisation,
+    /// not cross-frame state.
+    ///
+    /// The fragment cache itself (R682 atomic 1) lives in
+    /// `pinion-shell` per-window-slot and is keyed off the value
+    /// this method returns. A repeated paint of structurally
+    /// identical content keeps the same hash → fragment cache hit →
+    /// `vello::Scene::append` reuse instead of fresh encode (the
+    /// §2 #4 immediate-mode coexistence enabler — the retained
+    /// widget tree does NOT re-encode every frame when only an
+    /// immediate-mode sibling is animating).
+    ///
+    /// Excluded from `Debug` formatting because the inner [`Cell`]
+    /// state is paint-pass transient — including it would render
+    /// scene dumps differ depending on whether they were taken
+    /// before / after a paint walk.
+    pub paint_hash: Cell<Option<u64>>,
 }
 
 impl ContainerNode {
@@ -1336,6 +1603,7 @@ impl ContainerNode {
             layout: LayoutStyle::new(),
             tag: None,
             aria_label: None,
+            paint_hash: Cell::new(None),
         }
     }
 
@@ -1383,6 +1651,62 @@ impl ContainerNode {
     pub fn with_aria_label(mut self, label: impl Into<Cow<'static, str>>) -> Self {
         self.aria_label = Some(label.into());
         self
+    }
+
+    /// R682 §5.16 — paint-affecting structural hash of this
+    /// container, memoised inside the inner [`Cell`] for the duration
+    /// of one paint pass.
+    ///
+    /// Combines (in fixed declaration order):
+    ///
+    /// - A type-tag byte string (so a `ContainerNode` with all-zero
+    ///   fields never collides with a `BoxNode` of all-zero fields).
+    /// - [`Self::rect`] — post-layout absolute bounds (R682 first-cut
+    ///   uses absolute coords; a follow-up round may move the cache
+    ///   key to container-local coords for shift-invariant hits).
+    /// - [`Self::style`] — fill / border / corner radius (every paint
+    ///   side-effect at the container's own paint step).
+    /// - [`Self::layout`] — declared `LayoutStyle` (taffy reads this
+    ///   on the next pass; a change here can shift descendants which
+    ///   are already covered by descendant rects, but the layout
+    ///   itself affects nothing painted FOR this container if rect
+    ///   matches — still hashed for paranoia and to keep the
+    ///   "any paint-side-effect input" invariant).
+    /// - Child count + every child's [`Scene::paint_hash`] in
+    ///   declaration order (so reordering siblings or inserting /
+    ///   deleting a child invalidates the cache).
+    ///
+    /// Deliberately EXCLUDED (no paint side-effect at this layer):
+    ///
+    /// - [`Self::tag`] — pure §5.20 input router / a11y identifier;
+    ///   the focus ring is painted by
+    ///   `pinion-runtime::paint_adapter::paint_focus_ring` AFTER
+    ///   `to_vello`, so a tag change does not invalidate the cached
+    ///   fragment.
+    /// - [`Self::aria_label`] — R51.69 a11y override; does not reach
+    ///   the paint adapter.
+    ///
+    /// Uses [`std::hash::DefaultHasher`] (`SipHash` 1-3, deterministic
+    /// across process runs — no `RandomState` seed) so two paint
+    /// passes of structurally identical scenes produce the same hash
+    /// → fragment cache hit.
+    pub fn paint_hash(&self) -> u64 {
+        use core::hash::{Hash, Hasher};
+        if let Some(h) = self.paint_hash.get() {
+            return h;
+        }
+        let mut hasher = std::hash::DefaultHasher::new();
+        b"pinion.scene.Container".hash(&mut hasher);
+        self.rect.hash(&mut hasher);
+        self.style.hash(&mut hasher);
+        self.layout.hash(&mut hasher);
+        (self.children.len() as u64).hash(&mut hasher);
+        for child in &self.children {
+            child.paint_hash().hash(&mut hasher);
+        }
+        let value = hasher.finish();
+        self.paint_hash.set(Some(value));
+        value
     }
 }
 
@@ -4274,5 +4598,279 @@ mod tests {
         // ImmediatePainter, so reaching here without a panic confirms
         // the cross-dyn dispatch works.
         let _ = driver_ref;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R682 §5.16 — paint_hash + is_cacheable_for_paint substrate
+    // (atomic 0 of the axis 4 dirty-subtree-cache series)
+    // ─────────────────────────────────────────────────────────────
+
+    fn rect_a() -> Rect {
+        Rect::new(10, 20, 100, 80)
+    }
+
+    fn rect_b() -> Rect {
+        Rect::new(11, 20, 100, 80)
+    }
+
+    fn box_a() -> Scene {
+        Scene::Box(BoxNode::filled(rect_a(), Color::rgb(0x10, 0x20, 0x30)))
+    }
+
+    fn box_b() -> Scene {
+        Scene::Box(BoxNode::filled(rect_b(), Color::rgb(0x10, 0x20, 0x30)))
+    }
+
+    #[test]
+    fn r682_paint_hash_is_deterministic_for_identical_box_leaves() {
+        // Two structurally identical Box leaves built independently
+        // must hash to the same value — that's the entire cache
+        // contract.
+        assert_eq!(box_a().paint_hash(), box_a().paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_changes_when_box_rect_changes() {
+        // Any paint-affecting field churn must change the hash.
+        // The Vello fragment encodes absolute rect coordinates, so a
+        // 1-pixel shift means the cached fragment is no longer
+        // pixel-equivalent — cache MUST miss.
+        assert_ne!(box_a().paint_hash(), box_b().paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_changes_when_box_fill_changes() {
+        let a = Scene::Box(BoxNode::filled(rect_a(), Color::rgb(0, 0, 0)));
+        let b = Scene::Box(BoxNode::filled(rect_a(), Color::rgb(1, 0, 0)));
+        assert_ne!(a.paint_hash(), b.paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_changes_when_text_content_changes() {
+        let a = Scene::Text(TextNode::new("hello", rect_a()));
+        let b = Scene::Text(TextNode::new("world", rect_a()));
+        assert_ne!(a.paint_hash(), b.paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_changes_when_text_style_changes() {
+        let a = Scene::Text(TextNode::new("x", rect_a()));
+        let b = Scene::Text(TextNode::styled(
+            "x",
+            rect_a(),
+            TextStyle::new().with_fg(Color::rgb(1, 2, 3)),
+        ));
+        assert_ne!(a.paint_hash(), b.paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_changes_when_container_child_added() {
+        let empty = Scene::Container(ContainerNode::new(vec![]));
+        let one = Scene::Container(ContainerNode::new(vec![box_a()]));
+        assert_ne!(empty.paint_hash(), one.paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_changes_when_container_child_reordered() {
+        // Children are paint-ordered — siblings drawn back-to-front
+        // by declaration order. A swap means a different z-stack →
+        // possibly different pixels → cache miss.
+        let ab = Scene::Container(ContainerNode::new(vec![box_a(), box_b()]));
+        let ba = Scene::Container(ContainerNode::new(vec![box_b(), box_a()]));
+        assert_ne!(ab.paint_hash(), ba.paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_changes_when_descendant_changes() {
+        // Recursive propagation: a deep child Box swap must surface
+        // at every ancestor Container's hash.
+        let inner_a = Scene::Container(ContainerNode::new(vec![box_a()]));
+        let inner_b = Scene::Container(ContainerNode::new(vec![box_b()]));
+        let outer_a = Scene::Container(ContainerNode::new(vec![inner_a]));
+        let outer_b = Scene::Container(ContainerNode::new(vec![inner_b]));
+        assert_ne!(outer_a.paint_hash(), outer_b.paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_unchanged_when_only_tag_changes() {
+        // §5.20 tag is input-router-only; not painted (the focus
+        // ring goes through a separate paint pass overlay). A tag
+        // edit must NOT invalidate the cache.
+        let a = Scene::Container(ContainerNode::new(vec![]).with_tag("alpha"));
+        let b = Scene::Container(ContainerNode::new(vec![]).with_tag("bravo"));
+        assert_eq!(a.paint_hash(), b.paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_unchanged_when_only_aria_label_changes() {
+        // R51.69 aria_label feeds the access tree, not the paint
+        // adapter. Cache must hit.
+        let a = Scene::Container(
+            ContainerNode::new(vec![]).with_aria_label("Save"),
+        );
+        let b = Scene::Container(
+            ContainerNode::new(vec![]).with_aria_label("Cancel"),
+        );
+        assert_eq!(a.paint_hash(), b.paint_hash());
+    }
+
+    #[test]
+    fn r682_paint_hash_memoizes_within_paint_pass() {
+        // The Cell<Option<u64>> memoisation: first call computes and
+        // stores; subsequent calls inside the same paint pass return
+        // the stored value (Cell::set side-effect observable by
+        // checking the field is `Some(_)` after the call).
+        let c = ContainerNode::new(vec![box_a(), box_b()]);
+        assert!(c.paint_hash.get().is_none(), "fresh container has no memoised hash");
+        let h1 = c.paint_hash();
+        assert_eq!(c.paint_hash.get(), Some(h1), "first call stores into Cell");
+        let h2 = c.paint_hash();
+        assert_eq!(h1, h2, "second call returns memoised value");
+    }
+
+    #[test]
+    fn r682_paint_hash_effect_is_stable_sentinel() {
+        let a = Scene::Effect(EffectNode::new());
+        let b = Scene::Effect(EffectNode::new());
+        assert_eq!(a.paint_hash(), b.paint_hash());
+        assert_eq!(a.paint_hash(), PAINT_HASH_EFFECT_SENTINEL);
+    }
+
+    #[test]
+    fn r682_paint_hash_external_is_uncacheable_sentinel() {
+        let a = Scene::External(ExternalNode::new(stub_handle()));
+        let b = Scene::External(ExternalNode::new(stub_handle()));
+        assert_eq!(a.paint_hash(), PAINT_HASH_UNCACHEABLE);
+        assert_eq!(b.paint_hash(), PAINT_HASH_UNCACHEABLE);
+    }
+
+    #[test]
+    fn r682_paint_hash_immediate_mode_is_uncacheable_sentinel() {
+        let n = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 50, 50),
+        ));
+        assert_eq!(n.paint_hash(), PAINT_HASH_UNCACHEABLE);
+    }
+
+    #[test]
+    fn r682_paint_hash_uncacheable_and_effect_sentinels_are_distinct() {
+        // The two sentinel values MUST stay distinct so a hash-dump
+        // inspector (and the cache layer) can tell them apart.
+        assert_ne!(PAINT_HASH_EFFECT_SENTINEL, PAINT_HASH_UNCACHEABLE);
+    }
+
+    #[test]
+    fn r682_paint_hash_scroll_includes_viewport_offset_and_content() {
+        let content_a = box_a();
+        let content_b = box_b();
+        let scroll_a = Scene::Scroll(ScrollNode::new(rect_a(), content_a));
+        let scroll_b = Scene::Scroll(ScrollNode::new(rect_a(), content_b));
+        // Content swap surfaces at Scroll's hash.
+        assert_ne!(scroll_a.paint_hash(), scroll_b.paint_hash());
+
+        // Offset shift surfaces at Scroll's hash (content scrolled
+        // to a different position → different painted pixels).
+        let shifted = Scene::Scroll(
+            ScrollNode::new(rect_a(), box_a()).with_offset(5, 7),
+        );
+        let pristine = Scene::Scroll(ScrollNode::new(rect_a(), box_a()));
+        assert_ne!(shifted.paint_hash(), pristine.paint_hash());
+    }
+
+    #[test]
+    fn r682_is_cacheable_for_paint_leaves() {
+        assert!(box_a().is_cacheable_for_paint());
+        assert!(Scene::Text(TextNode::new("x", rect_a())).is_cacheable_for_paint());
+        assert!(Scene::Path(PathNode::empty(rect_a())).is_cacheable_for_paint());
+        assert!(Scene::Image(ImageNode::new("u", rect_a())).is_cacheable_for_paint());
+        assert!(Scene::Effect(EffectNode::new()).is_cacheable_for_paint());
+    }
+
+    #[test]
+    fn r682_is_cacheable_for_paint_rejects_external_leaf() {
+        let s = Scene::External(ExternalNode::new(stub_handle()));
+        assert!(!s.is_cacheable_for_paint());
+    }
+
+    #[test]
+    fn r682_is_cacheable_for_paint_rejects_immediate_mode_leaf() {
+        let s = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 50, 50),
+        ));
+        assert!(!s.is_cacheable_for_paint());
+    }
+
+    #[test]
+    fn r682_is_cacheable_for_paint_container_recurses_negative() {
+        // Container with ImmediateMode descendant rejects the cache.
+        // This is the §2 #4 immediate-mode coexistence guard: the
+        // parent retained-tree subtree cannot be encoded into a
+        // long-lived fragment because the immediate descendant's
+        // paint changes every frame.
+        let s = Scene::Container(ContainerNode::new(vec![
+            box_a(),
+            Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+                StubImmediateMode::new(),
+                Rect::new(0, 0, 50, 50),
+            )),
+        ]));
+        assert!(!s.is_cacheable_for_paint());
+    }
+
+    #[test]
+    fn r682_is_cacheable_for_paint_container_recurses_positive() {
+        // Container with only cacheable leaves is cacheable.
+        let s = Scene::Container(ContainerNode::new(vec![
+            box_a(),
+            Scene::Text(TextNode::new("hi", rect_a())),
+            Scene::Effect(EffectNode::new()),
+        ]));
+        assert!(s.is_cacheable_for_paint());
+    }
+
+    #[test]
+    fn r682_is_cacheable_for_paint_recurses_through_scroll() {
+        // Scroll is path-transparent for paint cacheability: a
+        // Scroll wrapping an uncacheable leaf is uncacheable.
+        let inner = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 50, 50),
+        ));
+        let scroll = Scene::Scroll(ScrollNode::new(rect_a(), inner));
+        assert!(!scroll.is_cacheable_for_paint());
+
+        // And cacheable when the inner is cacheable.
+        let scroll_pure = Scene::Scroll(ScrollNode::new(rect_a(), box_a()));
+        assert!(scroll_pure.is_cacheable_for_paint());
+    }
+
+    #[test]
+    fn r682_paint_hash_path_includes_commands() {
+        // Path commands carry f32 control points; the hasher widens
+        // via to_bits() to participate. Two different command lists
+        // must hash distinctly.
+        let path_a = PathNode::new(
+            rect_a(),
+            vec![
+                PathCommand::MoveTo(PathPoint::new(0.0, 0.0)),
+                PathCommand::LineTo(PathPoint::new(10.0, 0.0)),
+                PathCommand::Close,
+            ],
+            PathStyle::default(),
+        );
+        let path_b = PathNode::new(
+            rect_a(),
+            vec![
+                PathCommand::MoveTo(PathPoint::new(0.0, 0.0)),
+                PathCommand::LineTo(PathPoint::new(20.0, 0.0)),
+                PathCommand::Close,
+            ],
+            PathStyle::default(),
+        );
+        let a = Scene::Path(path_a);
+        let b = Scene::Path(path_b);
+        assert_ne!(a.paint_hash(), b.paint_hash());
     }
 }

@@ -1750,8 +1750,16 @@ pub enum AlignItems {
 /// `Auto` defers to taffy's intrinsic sizing (e.g. text measures its
 /// own rasterized width); `Px(n)` pins a pixel size; `Percent(n)`
 /// expresses a fraction of the parent container (0–100).
+///
+/// (R682 §5.16) `Eq + Hash` participate in the §5.16 paint-fragment
+/// cache key derivation: a `Container`'s structural hash includes its
+/// `LayoutStyle.size`, which decomposes into [`SizeValue`] per axis.
+/// Two scenes whose every primitive matches field-by-field hash
+/// identical so the cache lookup succeeds. Pre-R682 the type carried
+/// `PartialEq` only — `Eq` adds nothing (no `NaN` floats inside) and
+/// `Hash` derives directly from the variant payloads (all u32 / u8).
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SizeValue {
     #[default]
     Auto,
@@ -1760,8 +1768,11 @@ pub enum SizeValue {
 }
 
 /// Width / height pair per §5.21.
+///
+/// (R682 §5.16) `Eq + Hash` for paint-fragment cache key derivation
+/// — see [`SizeValue`] for the rationale.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Size {
     pub width: SizeValue,
     pub height: SizeValue,
@@ -1922,6 +1933,36 @@ impl LayoutStyle {
     pub const fn with_flex_grow(mut self, grow: f32) -> Self {
         self.flex_grow = grow;
         self
+    }
+}
+
+/// (R682 §5.16) Manual `Hash` impl over every paint-affecting
+/// `LayoutStyle` field. Derive does not apply because `flex_grow`
+/// is `f32` (no [`Hash`] implementation per the [`f32` partial-order
+/// caveat](https://doc.rust-lang.org/std/primitive.f32.html#impl-Hash)).
+/// `f32::to_bits()` widens to a `u32` bit pattern that hashes
+/// stably: identical `f32` values map to identical patterns, NaN is
+/// preserved verbatim (multiple NaN bit patterns hash distinctly,
+/// which matches the cache contract — a `NaN` `flex_grow` is a layout
+/// bug; a cache miss is the conservative response).
+///
+/// Equally `PartialEq`-only on the source type stays — the `f32`
+/// field is the holdout for `Eq` too. The cache only needs a
+/// deterministic byte image (which `Hash` already provides); `Eq`
+/// would require the same bit-image discipline and is not consumed
+/// by the cache key.
+impl core::hash::Hash for LayoutStyle {
+    fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
+        self.display.hash(hasher);
+        self.flex_direction.hash(hasher);
+        self.justify_content.hash(hasher);
+        self.align_items.hash(hasher);
+        self.gap.hash(hasher);
+        self.size.hash(hasher);
+        self.flex_grow.to_bits().hash(hasher);
+        self.padding.hash(hasher);
+        self.margin.hash(hasher);
+        self.absolute_position.hash(hasher);
     }
 }
 

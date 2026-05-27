@@ -2883,3 +2883,156 @@ mod r681_immediate_mode_paint_cycle {
         reset_state();
     }
 }
+
+// ─────────────────────────────────────────────────────────────
+// R682 §5.16 atomic 3 — FragmentCacheStats publish/getter substrate
+// ─────────────────────────────────────────────────────────────
+
+mod r682_fragment_cache_stats_substrate {
+    use pinion_core::scene::Rect;
+    use pinion_shell::{FragmentCacheStats, ShellCore};
+
+    use super::TestView;
+
+    #[test]
+    fn r682_stats_for_unknown_window_returns_none() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+        let core: ShellCore<TestView> = ShellCore::new();
+        assert!(core.fragment_cache_stats_for_window("main").is_none());
+        assert!(core.fragment_cache_stats_for_window("inspector").is_none());
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+    }
+
+    #[test]
+    fn r682_publish_round_trips_typed_snapshot() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let stats = FragmentCacheStats {
+            hits: 42,
+            misses: 7,
+            paint_count: 49,
+            entries: 12,
+            last_damage_region: Some(Rect::new(10, 20, 100, 50)),
+        };
+        core.publish_fragment_cache_stats("main", stats);
+        let got = core
+            .fragment_cache_stats_for_window("main")
+            .expect("published");
+        assert_eq!(got, stats);
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+    }
+
+    #[test]
+    fn r682_publish_per_window_independent() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let main_stats = FragmentCacheStats {
+            hits: 5,
+            misses: 1,
+            paint_count: 6,
+            entries: 2,
+            last_damage_region: None,
+        };
+        let inspector_stats = FragmentCacheStats {
+            hits: 0,
+            misses: 3,
+            paint_count: 3,
+            entries: 3,
+            last_damage_region: Some(Rect::new(0, 0, 480, 320)),
+        };
+        core.publish_fragment_cache_stats("main", main_stats);
+        core.publish_fragment_cache_stats("inspector", inspector_stats);
+        assert_eq!(
+            core.fragment_cache_stats_for_window("main"),
+            Some(main_stats)
+        );
+        assert_eq!(
+            core.fragment_cache_stats_for_window("inspector"),
+            Some(inspector_stats)
+        );
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+    }
+
+    #[test]
+    fn r682_publish_overwrites_latest_wins() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.publish_fragment_cache_stats(
+            "main",
+            FragmentCacheStats { hits: 1, ..Default::default() },
+        );
+        core.publish_fragment_cache_stats(
+            "main",
+            FragmentCacheStats { hits: 99, ..Default::default() },
+        );
+        let got = core.fragment_cache_stats_for_window("main").unwrap();
+        assert_eq!(got.hits, 99);
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+    }
+
+    #[test]
+    fn r682_stat_windows_iterates_published_keys() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let stats = FragmentCacheStats::default();
+        core.publish_fragment_cache_stats("main", stats);
+        core.publish_fragment_cache_stats("inspector", stats);
+        let mut keys: Vec<_> = core.fragment_cache_stat_windows().collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["inspector", "main"]);
+        // (No reset_state — R682 stats tests do not touch the
+        // R681 immediate-mode SHARED_DRIVER / EMIT_IMMEDIATE globals;
+        // they only exercise typed substrate accessors.)
+    }
+
+    #[test]
+    fn r682_stats_hit_rate_zero_when_no_lookups() {
+        let stats = FragmentCacheStats::default();
+        assert!((stats.hit_rate() - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r682_stats_hit_rate_matches_hits_over_total() {
+        let stats = FragmentCacheStats {
+            hits: 7,
+            misses: 3,
+            paint_count: 10,
+            entries: 5,
+            last_damage_region: None,
+        };
+        assert!((stats.hit_rate() - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r682_stats_default_is_empty() {
+        let stats = FragmentCacheStats::default();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.paint_count, 0);
+        assert_eq!(stats.entries, 0);
+        assert_eq!(stats.last_damage_region, None);
+    }
+}

@@ -79,7 +79,7 @@ pub mod test_fixtures;
 pub use app::{run, run_with_handlers, AppShell};
 pub use executor::{build_executor_and_sink, ProxyIntentSink, TokioExecutor};
 pub use headless_screenshot::{HeadlessScreenshot, HeadlessScreenshotError};
-pub use substrate::{AccessEmitDecision, ShellCore};
+pub use substrate::{AccessEmitDecision, FragmentCacheStats, ShellCore};
 
 /// Winit user-event variants that reach the UI thread out-of-band.
 ///

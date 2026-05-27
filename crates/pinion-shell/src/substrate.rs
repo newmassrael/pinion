@@ -315,6 +315,70 @@ pub struct ShellCore<V: WidgetView> {
     /// [`pinion_runtime::frame_pacing::default_window_frame_policy`]
     /// derived from the slot's `has_immediate_mode_subtree` signal.
     target_fps_per_window: HashMap<String, u32>,
+    /// R682 §5.16 atomic 3 — per-window fragment cache observability
+    /// snapshot. The surface-side `AppShell::render_window` calls
+    /// [`Self::publish_fragment_cache_stats`] after each paint cycle
+    /// to publish hits / misses / damage-region read off the
+    /// per-`WindowSlot` `paint_adapter::FragmentCache`. AI-first RPC
+    /// consumers, R682 demo assertions, and the upcoming `pinion-tui`
+    /// test harness read via
+    /// [`Self::fragment_cache_stats_for_window`] without crossing the
+    /// substrate ↔ vello boundary (the stats struct is GUI-agnostic).
+    fragment_cache_stats_per_window: HashMap<String, FragmentCacheStats>,
+}
+
+/// R682 §5.16 atomic 3 — GUI-agnostic snapshot of one window's
+/// [`paint_adapter::FragmentCache`] state after the most recent paint
+/// cycle.
+///
+/// Published by the surface-side `AppShell::render_window` into
+/// [`ShellCore::fragment_cache_stats_per_window`] after each
+/// [`FragmentCache::end_paint`]; consumed by tests, the §5.49 R682
+/// demo (cache-hit-rate / frame-time profiling assertions), and the
+/// future RPC `cache/stats` surface (out of scope for atomic 3 — wire
+/// lands when the first RPC consumer materialises per
+/// [[abstraction-needs-second-consumer]]).
+///
+/// `Copy` + `Hash`-friendly fields only (no `vello::Scene` references)
+/// so consumers in non-vello build profiles (TUI / headless tests)
+/// can hold the type without dragging in the GPU stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FragmentCacheStats {
+    /// Cumulative cache hits across the cache's lifetime.
+    pub hits: u64,
+    /// Cumulative cache misses across the cache's lifetime.
+    pub misses: u64,
+    /// Cumulative paint passes (== [`FragmentCache::end_paint`]
+    /// invocations) across the cache's lifetime.
+    pub paint_count: u64,
+    /// Number of cached fragments currently held — after the
+    /// mark-and-sweep eviction at the end of the publishing paint,
+    /// this matches the live cacheable Container set painted this
+    /// frame.
+    pub entries: usize,
+    /// Damage region from the most recently completed paint pass.
+    /// `None` when the paint was 100% cache-hit. See
+    /// [`FragmentCache::last_damage_region`] for the contract.
+    pub last_damage_region: Option<pinion_core::scene::Rect>,
+}
+
+impl FragmentCacheStats {
+    /// `hits / (hits + misses)`. Returns `0.0` when no lookup has
+    /// happened yet.
+    #[must_use]
+    pub fn hit_rate(&self) -> f32 {
+        let total = self.hits.saturating_add(self.misses);
+        if total == 0 {
+            return 0.0;
+        }
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "telemetry ratio; numeric pipeline does not consume"
+        )]
+        {
+            self.hits as f32 / total as f32
+        }
+    }
 }
 
 /// R51.77 §5.40 — pure decision returned by
@@ -405,6 +469,7 @@ impl<V: WidgetView> ShellCore<V> {
             redraw_requested_per_window: HashMap::new(),
             last_paint_instants: HashMap::new(),
             target_fps_per_window: HashMap::new(),
+            fragment_cache_stats_per_window: HashMap::new(),
         }
     }
 
@@ -616,6 +681,57 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn target_fps_for_window(&self, window_id: &str) -> Option<u32> {
         self.target_fps_per_window.get(window_id).copied()
+    }
+
+    /// R682 §5.16 atomic 3 — publish a [`FragmentCacheStats`]
+    /// snapshot for the given window. Surface-side
+    /// `AppShell::render_window` calls this after each paint cycle so
+    /// the GUI-agnostic substrate can surface cache observability to
+    /// RPC / tests without exposing `vello::Scene` references.
+    pub fn publish_fragment_cache_stats(
+        &mut self,
+        window_id: &str,
+        stats: FragmentCacheStats,
+    ) {
+        self.fragment_cache_stats_per_window
+            .insert(window_id.to_owned(), stats);
+    }
+
+    /// R682 §5.16 atomic 3 — read the most-recent
+    /// [`FragmentCacheStats`] snapshot for the given window.
+    ///
+    /// `None` for windows that have not yet painted (no snapshot
+    /// published yet) — bootstrap state for the first-paint frame.
+    /// `Some(stats)` after every per-window paint cycle; the
+    /// snapshot reflects the cache state at the moment
+    /// [`pinion_runtime::paint_adapter::FragmentCache::end_paint`]
+    /// completed (so the mark-and-sweep + damage publish are already
+    /// applied).
+    ///
+    /// AI-first design note ([[ai-first-rpc-introspection-obligation]]):
+    /// the R682 demo's cache-hit-rate / damage-region assertions
+    /// derive from this getter, not from observing the painted
+    /// pixels — `cargo test` + `tools/demos/*.py` both verify the
+    /// substrate via this typed surface, not via screenshot diffing
+    /// or human visual review.
+    #[must_use]
+    pub fn fragment_cache_stats_for_window(
+        &self,
+        window_id: &str,
+    ) -> Option<FragmentCacheStats> {
+        self.fragment_cache_stats_per_window
+            .get(window_id)
+            .copied()
+    }
+
+    /// R682 §5.16 atomic 3 — iterator over every window key that has
+    /// a published [`FragmentCacheStats`] snapshot. Demo + test
+    /// harness consume this to verify per-window publish wiring
+    /// without invoking `WidgetView::windows()`.
+    pub fn fragment_cache_stat_windows(&self) -> impl Iterator<Item = &str> + '_ {
+        self.fragment_cache_stats_per_window
+            .keys()
+            .map(String::as_str)
     }
 
     /// R51.83 §5.40 — mutable borrow of the §5.36 [`LayoutCache`] for

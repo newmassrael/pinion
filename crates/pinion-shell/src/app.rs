@@ -142,6 +142,55 @@ struct WindowSlot<R: VelloRenderer> {
     /// subtree, the flag falls back to `false` on the next paint and
     /// the slot returns to input-driven pacing.
     has_immediate_mode_subtree: bool,
+    /// R682 §5.16 atomic 1 — per-window paint-fragment cache. Lives
+    /// per `WindowSlot` because the cached `vello::Scene` fragments
+    /// reference the same backend coordinate space as
+    /// [`Self::vello_scene`]; sharing a cache across windows would
+    /// require encoding fragments with explicit transform metadata
+    /// for cross-window replay, which is out of scope for the
+    /// 4-axis paint-pipeline rewrite series.
+    ///
+    /// The cache is consulted by [`paint_adapter::to_vello_cached`]
+    /// (R682 atomic 1) at every cacheable [`Scene::Container`]
+    /// boundary the encoder reaches with [`Affine::IDENTITY`]
+    /// accumulated transform. A cache hit appends the previously
+    /// encoded fragment via [`vello::Scene::append`] without
+    /// re-walking the subtree; a miss encodes the subtree fresh,
+    /// installs the fragment, and replays from the install slot.
+    ///
+    /// Mark-and-sweep eviction (handled inside
+    /// [`FragmentCache::end_paint`]) keeps the cache bounded to the
+    /// set of cacheable Containers actually painted in the most
+    /// recent frame — no fixed-cap LRU; no manual reset between
+    /// frames.
+    fragment_cache: paint_adapter::FragmentCache,
+}
+
+impl<R: VelloRenderer> WindowSlot<R> {
+    /// R682 §5.16 — collapse the per-slot field defaults that the
+    /// `resume_spec` code path repeats at both the suspended-init and
+    /// active-init sites. Only `render`, `accesskit`, `spec_id`, and
+    /// `pending_intrinsic_resize` vary between the two sites; every
+    /// other field starts at its canonical empty-state value.
+    fn build(
+        render: RenderState<R>,
+        accesskit: Option<accesskit_winit::Adapter>,
+        spec_id: &'static str,
+        pending_intrinsic_resize: Option<((u32, u32), (u32, u32))>,
+    ) -> Self {
+        Self {
+            render,
+            vello_scene: VelloScene::new(),
+            accesskit,
+            ime_was_composing: false,
+            last_ime_cursor_area: None,
+            pending_intrinsic_resize,
+            spec_id,
+            last_paint_layout: None,
+            has_immediate_mode_subtree: false,
+            fragment_cache: paint_adapter::FragmentCache::new(),
+        }
+    }
 }
 
 /// The framework-side shell. Generic over a widget binding
@@ -588,10 +637,21 @@ impl<V: WidgetView> AppShell<V> {
         }
         slot.vello_scene.reset();
         let base = paint_adapter::root_background(&paint_scene);
-        paint_adapter::to_vello(
+        // R682 §5.16 atomic 1 — cached path. The per-window
+        // `FragmentCache` skips re-encoding cacheable Container
+        // subtrees whose `paint_hash` matches the previous frame
+        // (the §2 #4 immediate-mode coexistence enabler: a sibling
+        // `ImmediateModeNode` triggers `V::view` re-runs every paint,
+        // but retained widget subtrees with stable structure replay
+        // their encoded `vello::Scene` via `append` instead of fresh
+        // walk). `&|_b| None` is the canonical no-override fill hook
+        // every production shell call site passes — the cache's
+        // structurally-derived contract holds trivially.
+        paint_adapter::to_vello_cached(
             &paint_scene,
             &|_b: &BoxNode| None,
             self.core.text_cache_mut(),
+            &mut slot.fragment_cache,
             &mut slot.vello_scene,
         );
         // R51.58 §5.39 — paint the ARIA focus ring on top of the
@@ -644,6 +704,23 @@ impl<V: WidgetView> AppShell<V> {
             .windows
             .get(&window_id)
             .map(|s| s.spec_id);
+        // R682 §5.16 atomic 3 — capture the post-paint cache
+        // snapshot before publishing. `to_vello_cached` brackets its
+        // walk with begin_paint / end_paint internally, so the
+        // counters / damage region read here are the post-sweep
+        // publishable snapshot. Computed before the optional slot
+        // borrow below + the publish call so neither the slot
+        // borrow nor the `&mut self.core` publish call conflict.
+        let cache_stats = self
+            .windows
+            .get(&window_id)
+            .map(|slot| crate::FragmentCacheStats {
+                hits: slot.fragment_cache.hits(),
+                misses: slot.fragment_cache.misses(),
+                paint_count: slot.fragment_cache.paint_count(),
+                entries: slot.fragment_cache.entries(),
+                last_damage_region: slot.fragment_cache.last_damage_region(),
+            });
         if let Some(slot) = self.windows.get_mut(&window_id) {
             slot.last_paint_layout = Some(paint_layout.clone());
             // R681 §2 #4 atomic 2 — sticky per-window flag for the
@@ -657,6 +734,15 @@ impl<V: WidgetView> AppShell<V> {
             // single-shot redraw-flag drain.
             slot.has_immediate_mode_subtree =
                 paint_scene.has_immediate_mode_subtree();
+        }
+        // R682 §5.16 atomic 3 — publish the snapshot into the
+        // GUI-agnostic substrate so RPC + tests can introspect cache
+        // observability without depending on the
+        // vello::Scene-bearing FragmentCache directly. Skip when the
+        // spec_id is unknown (defensive — the slot borrow above
+        // would have already returned in that case).
+        if let (Some(stats), Some(sid)) = (cache_stats, spec_id_for_finalize) {
+            self.core.publish_fragment_cache_stats(sid, stats);
         }
         // R51.80 §5.12 §5.35 — hand the rendered scene + the pre-
         // built layout snapshot to the substrate. `finalize_frame`
@@ -898,17 +984,12 @@ impl<V: WidgetView> AppShell<V> {
                 let window_id = window.id();
                 self.windows.insert(
                     window_id,
-                    WindowSlot {
-                        render: RenderState::Suspended(Some(window)),
-                        vello_scene: VelloScene::new(),
-                        accesskit: None,
-                        ime_was_composing: false,
-                        last_ime_cursor_area: None,
+                    WindowSlot::build(
+                        RenderState::Suspended(Some(window)),
+                        None,
+                        spec.id,
                         pending_intrinsic_resize,
-                        spec_id: spec.id,
-                        last_paint_layout: None,
-                        has_immediate_mode_subtree: false,
-                    },
+                    ),
                 );
                 self.spec_id_to_window_id.insert(spec.id, window_id);
                 event_loop.exit();
@@ -926,20 +1007,15 @@ impl<V: WidgetView> AppShell<V> {
             self.proxy.clone(),
         );
         let window_id = window.id();
-        let slot = WindowSlot {
-            render: RenderState::Active {
+        let slot = WindowSlot::build(
+            RenderState::Active {
                 window,
                 renderer: Box::new(renderer),
             },
-            vello_scene: VelloScene::new(),
-            accesskit: Some(adapter),
-            ime_was_composing: false,
-            last_ime_cursor_area: None,
+            Some(adapter),
+            spec.id,
             pending_intrinsic_resize,
-            spec_id: spec.id,
-            last_paint_layout: None,
-            has_immediate_mode_subtree: false,
-        };
+        );
         self.windows.insert(window_id, slot);
         self.spec_id_to_window_id.insert(spec.id, window_id);
         if make_primary {

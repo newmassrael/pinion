@@ -36,6 +36,8 @@
 //! (headless / TUI / future paint backends) compile without wgpu
 //! transitively.
 
+use std::collections::{HashMap, HashSet};
+
 use pinion_core::Scene;
 use pinion_core::scene::{
     BoxNode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
@@ -166,6 +168,467 @@ fn to_vello_inner<F>(
         }
         // External / Effect / Path / Image: no-op. Path + Image paint
         // primitives attach in follow-up rounds.
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// R682 §5.16 atomic 1 — paint-fragment cache (axis 4 of the 4-axis
+// paint-pipeline rewrite series).
+//
+// `FragmentCache` is a per-window-slot cache of encoded `vello::Scene`
+// fragments keyed off `Scene::Container::paint_hash` (atomic 0). The
+// shell's per-window paint cycle calls `to_vello_cached` instead of
+// `to_vello`; cacheable Container subtrees skip fresh encode when their
+// structural hash hits a previously stored fragment. The §2 #4
+// immediate-mode coexistence enabler: an `ImmediateModeNode` sibling
+// that ticks every paint frame triggers a global `V::view` re-run, but
+// the retained Container subtrees keep paint-hash identical so the
+// `vello::Scene::append`-from-cache path replays their encoded paint
+// without re-walking every primitive.
+// ---------------------------------------------------------------------------
+
+/// R682 §5.16 — per-window paint-fragment cache for the §5.16
+/// dirty-subtree-cache substrate (axis 4 of the 4-axis paint-pipeline
+/// rewrite series).
+///
+/// Stores encoded [`VelloScene`] fragments keyed off the
+/// [`pinion_core::scene::ContainerNode::paint_hash`] structural hash.
+/// The cache is consulted by [`to_vello_cached`] at every cacheable
+/// [`Scene::Container`] boundary encountered with [`Affine::IDENTITY`]
+/// accumulated transform:
+///
+/// - **Hit** — copy the cached fragment via
+///   [`VelloScene::append`] into the destination scene with no
+///   transform pre-multiplication (the cached fragment already encodes
+///   absolute coords because it was built under `IDENTITY`). The
+///   recursive walk into the container's children is skipped entirely:
+///   the cache replay covers them.
+/// - **Miss** — encode this container's contribution into a fresh
+///   sub-scene under `IDENTITY`, recursively encode children (which
+///   may themselves hit the cache for nested Containers), append the
+///   sub-scene to the destination, and insert it into the cache under
+///   the container's hash.
+///
+/// ## Eviction (mark-and-sweep)
+///
+/// Each [`to_vello_cached`] invocation brackets the encoder walk with
+/// [`Self::begin_paint`] / [`Self::end_paint`]; the begin clears the
+/// per-paint "seen" set, every hit / insert marks the hash, and the
+/// end drops entries the walker did not consult this paint. Memory
+/// bounds itself to the set of cacheable Containers actually painted
+/// in the most recent frame — no LRU heuristic, no fixed cap.
+///
+/// ## Cache-key non-axes (atomic 1 first-cut)
+///
+/// The cache key is the container's `paint_hash` ALONE. The inherited
+/// `transform` is constrained to [`Affine::IDENTITY`] at the cache
+/// boundary so two different transform chains never alias the same
+/// key. Practical consequence: cacheable subtrees inside a
+/// [`Scene::Scroll`] (whose content carries a non-identity scroll
+/// translation) skip the cache because their inherited transform is
+/// never identity. A follow-up round (R682+1 carry) can lift this by
+/// either hashing the transform into the cache key or encoding
+/// fragments in container-local coordinates and re-applying the
+/// inherited transform on append.
+///
+/// ## Cache-poisoning guards
+///
+/// - [`Scene::is_cacheable_for_paint`] rejects subtrees containing
+///   [`Scene::ImmediateModeNode`] or [`Scene::External`] descendants
+///   — their paint changes every frame / is opaque, so a cached
+///   fragment would be stale.
+/// - The `fill_hook` parameter to [`to_vello_cached`] MUST be
+///   structurally derived (a function of `BoxNode` fields only, not
+///   of external state). All production shell call sites pass
+///   `&|_| None` which trivially satisfies this contract. Bindings
+///   that need state-dependent fills should encode them into
+///   `BoxStyle::fill` directly (which participates in `paint_hash`)
+///   or use [`to_vello`] (non-cached) for the debug-introspect path.
+#[derive(Default)]
+pub struct FragmentCache {
+    /// Encoded `vello::Scene` fragments keyed by container paint hash.
+    fragments: HashMap<u64, VelloScene>,
+    /// Hashes consulted (hit or inserted) during the current paint
+    /// pass — populated between [`Self::begin_paint`] and
+    /// [`Self::end_paint`], swept at end.
+    seen_this_paint: HashSet<u64>,
+    /// R682 §5.16 atomic 2 — damage region accumulator for the
+    /// current paint pass. Each cache-miss container's rect unions
+    /// in; ends as the per-paint [`Self::last_damage_region`] published
+    /// at [`Self::end_paint`].
+    ///
+    /// `None` while no miss has happened yet during the paint;
+    /// `Some(_)` after the first miss. The empty-rect short-circuit
+    /// inside [`Rect::union`] keeps zero-area cache entries from
+    /// extending the region beyond their actual painted footprint.
+    damage_acc_this_paint: Option<pinion_core::scene::Rect>,
+    /// R682 §5.16 atomic 2 — most-recent-paint damage region. The
+    /// union of every cache-miss Container's `rect` during the last
+    /// completed paint pass. `None` when the last paint was 100%
+    /// cache-hit (no visual delta from the previous frame).
+    ///
+    /// The current pinion-shell paint cycle resets the entire
+    /// `vello::Scene` and submits a full surface every frame, so
+    /// this value is observability-only — a future round that wires
+    /// `wgpu::SurfaceTexture` partial-blit / `winit` damage-rect
+    /// `WindowEvent::RedrawRequested` interaction consumes it as
+    /// the actual GPU upload bounds.
+    last_damage_region: Option<pinion_core::scene::Rect>,
+    /// Observability counters — cumulative across the cache lifetime
+    /// (per-window). Exposed via [`Self::hits`] / [`Self::misses`] /
+    /// [`Self::hit_rate`] for the R682 demo / future RPC stats wire.
+    hits: u64,
+    /// See [`Self::hits`].
+    misses: u64,
+    /// Number of [`Self::end_paint`] calls — the per-window paint
+    /// pass counter for `hit_rate` denominator interpretation.
+    paint_count: u64,
+}
+
+/// (R682 §5.16) Manual `Debug` because [`vello::Scene`] does not
+/// implement it (encoded GPU command streams have no canonical
+/// human-readable form). Surfaces the lifetime counters + entry
+/// count, which is what cache observability actually needs.
+impl core::fmt::Debug for FragmentCache {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // `finish_non_exhaustive` covers the per-paint
+        // `damage_acc_this_paint` accumulator (intentionally elided —
+        // the public observable is `last_damage_region`, published at
+        // `end_paint` from the accumulator).
+        f.debug_struct("FragmentCache")
+            .field("entries", &self.fragments.len())
+            .field("seen_this_paint", &self.seen_this_paint.len())
+            .field("hits", &self.hits)
+            .field("misses", &self.misses)
+            .field("paint_count", &self.paint_count)
+            .field("last_damage_region", &self.last_damage_region)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FragmentCache {
+    /// Construct an empty cache with zero counters.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Open a new paint pass. Clears the per-paint "seen" set so
+    /// [`Self::end_paint`] can sweep unreferenced entries afterwards,
+    /// and resets the per-paint damage accumulator
+    /// ([`Self::last_damage_region`] is published at
+    /// [`Self::end_paint`] from this accumulator).
+    pub fn begin_paint(&mut self) {
+        self.seen_this_paint.clear();
+        self.damage_acc_this_paint = None;
+    }
+
+    /// Close the current paint pass. Drops cache entries whose hashes
+    /// were not consulted between the matching [`Self::begin_paint`]
+    /// and this call; increments the paint counter; publishes the
+    /// per-paint damage accumulator into [`Self::last_damage_region`].
+    pub fn end_paint(&mut self) {
+        let seen = &self.seen_this_paint;
+        self.fragments.retain(|hash, _| seen.contains(hash));
+        self.paint_count = self.paint_count.saturating_add(1);
+        self.last_damage_region = self.damage_acc_this_paint;
+    }
+
+    /// R682 §5.16 atomic 2 — damage region from the most recent
+    /// completed paint pass. The bounding rect of every
+    /// [`Scene::Container`] that cache-missed (== whose paint output
+    /// MAY differ from the previous paint's same-position output).
+    ///
+    /// `None` when the last paint was 100% cache-hit (no visual
+    /// delta from the previous frame; the surface texture is
+    /// pixel-identical to the previous submit).
+    ///
+    /// Current consumers: tests + R682 demo + future RPC stats
+    /// wire. Production GPU consumer (`wgpu::SurfaceTexture`
+    /// partial-blit / `winit` damage-rect coordination) is a
+    /// follow-up round carry — the current per-window paint cycle
+    /// resets the entire `vello::Scene` and submits a full surface
+    /// every frame regardless.
+    #[must_use]
+    pub fn last_damage_region(&self) -> Option<pinion_core::scene::Rect> {
+        self.last_damage_region
+    }
+
+    /// Cumulative cache hits across this cache's lifetime.
+    #[must_use]
+    pub fn hits(&self) -> u64 {
+        self.hits
+    }
+
+    /// Cumulative cache misses across this cache's lifetime.
+    #[must_use]
+    pub fn misses(&self) -> u64 {
+        self.misses
+    }
+
+    /// Cumulative paint passes (== [`Self::end_paint`] invocations)
+    /// across this cache's lifetime.
+    #[must_use]
+    pub fn paint_count(&self) -> u64 {
+        self.paint_count
+    }
+
+    /// `hits / (hits + misses)`. Returns `0.0` when no lookup has
+    /// happened yet (avoids `0/0` `NaN`).
+    #[must_use]
+    pub fn hit_rate(&self) -> f32 {
+        let total = self.hits.saturating_add(self.misses);
+        if total == 0 {
+            return 0.0;
+        }
+        // The conversion is lossy past 2^24, but for our counters
+        // (paint counts; even a 144-fps day saturates well below
+        // that) the ratio is faithful well into the noise.
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "hit_rate is a debug telemetry ratio, not numeric pipeline input"
+        )]
+        {
+            self.hits as f32 / total as f32
+        }
+    }
+
+    /// Number of cached fragments currently held. The mark-and-sweep
+    /// eviction strategy bounds this to the cacheable Container set
+    /// painted in the most recent frame, so the count == "live
+    /// cacheable Container tree node count" after the first sweep.
+    #[must_use]
+    pub fn entries(&self) -> usize {
+        self.fragments.len()
+    }
+
+    /// Reset every lifetime counter + drop every cached fragment.
+    /// Used by tests / future RPC `cache/reset` to set a clean
+    /// baseline.
+    pub fn clear(&mut self) {
+        self.fragments.clear();
+        self.seen_this_paint.clear();
+        self.damage_acc_this_paint = None;
+        self.last_damage_region = None;
+        self.hits = 0;
+        self.misses = 0;
+        self.paint_count = 0;
+    }
+
+    /// Probe + replay path. When `hash` is in the cache, append the
+    /// stored fragment into `out` (without pre-multiplication: the
+    /// cached fragment is already encoded under [`Affine::IDENTITY`]
+    /// because the encoder only caches at identity-transform
+    /// boundaries) and mark the hash as seen.
+    ///
+    /// Returns `true` on hit, `false` on miss. Bumps the hit counter
+    /// on hit; the miss counter is bumped by [`Self::insert_miss`]
+    /// to keep the increment paired with the actual cache install.
+    fn try_hit(&mut self, hash: u64, out: &mut VelloScene) -> bool {
+        if let Some(fragment) = self.fragments.get(&hash) {
+            out.append(fragment, None);
+            self.seen_this_paint.insert(hash);
+            self.hits = self.hits.saturating_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Install a freshly encoded fragment under `hash` and mark it as
+    /// seen this paint. The miss counter is bumped here (paired with
+    /// the actual encode, not just a probe). The container's `rect`
+    /// contributes to the per-paint damage accumulator (R682 atomic 2):
+    /// a missed Container's bounds is where the painted output may
+    /// differ from the previous frame.
+    fn insert_miss(
+        &mut self,
+        hash: u64,
+        fragment: VelloScene,
+        rect: pinion_core::scene::Rect,
+    ) {
+        self.fragments.insert(hash, fragment);
+        self.seen_this_paint.insert(hash);
+        self.misses = self.misses.saturating_add(1);
+        self.damage_acc_this_paint = Some(match self.damage_acc_this_paint {
+            Some(acc) => acc.union(rect),
+            None => rect,
+        });
+    }
+}
+
+/// R682 §5.16 — cached counterpart to [`to_vello`].
+///
+/// Walks the [`Scene`] tree like [`to_vello`] but consults the
+/// supplied [`FragmentCache`] at every cacheable
+/// [`Scene::Container`] boundary it reaches with [`Affine::IDENTITY`]
+/// accumulated transform — a cache hit appends the previously encoded
+/// `vello::Scene` fragment into `out` and skips the recursive walk
+/// into children; a miss encodes the subtree fresh into a sub-scene,
+/// appends it to `out`, and stores it in the cache for the next
+/// paint.
+///
+/// Brackets the encoder walk with [`FragmentCache::begin_paint`] /
+/// [`FragmentCache::end_paint`] so unreached cache entries are
+/// evicted at the end of the call. Callers do NOT need to manage
+/// begin/end themselves; this is the single-call API for the shell's
+/// per-window paint cycle.
+///
+/// `fill_hook` is honoured for [`Scene::Box`] leaves (matching
+/// [`to_vello`]'s contract). For the cache to remain correct, the
+/// hook MUST be structurally derived (a function of the
+/// [`BoxNode`] fields only, not external state) — see
+/// [`FragmentCache`] for the rationale.
+pub fn to_vello_cached<F>(
+    scene: &Scene,
+    fill_hook: &F,
+    text_cache: &mut LayoutCache,
+    fragment_cache: &mut FragmentCache,
+    out: &mut VelloScene,
+) where
+    F: Fn(&BoxNode) -> Option<Color>,
+{
+    fragment_cache.begin_paint();
+    to_vello_cached_inner(
+        scene,
+        fill_hook,
+        text_cache,
+        fragment_cache,
+        out,
+        Affine::IDENTITY,
+    );
+    fragment_cache.end_paint();
+}
+
+/// Transform-carrying recursive walker for [`to_vello_cached`].
+///
+/// Mirrors [`to_vello_inner`]'s match shape but adds a cache check
+/// at the top of the [`Scene::Container`] arm: when the accumulated
+/// transform is [`Affine::IDENTITY`] AND the subtree is cacheable
+/// per [`Scene::is_cacheable_for_paint`], probe the cache first.
+/// Hit → append fragment, return. Miss → encode the entire subtree
+/// into a fresh `VelloScene`, append it to `out`, install in cache.
+///
+/// Non-cacheable Containers (and all Containers reached under a
+/// non-identity transform) take the direct encode path: paint the
+/// container's own fill into `out`, recurse into children with the
+/// same transform. Recursion stays inside this function so that
+/// cacheable descendant Containers (e.g. a stable widget subtree
+/// sitting next to an `ImmediateModeNode` sibling — the §2 #4
+/// killer case) can hit the cache even though their non-cacheable
+/// parent missed.
+///
+/// Leaves ([`Scene::Box`], [`Scene::Text`], [`Scene::Effect`],
+/// [`Scene::External`], [`Scene::Path`], [`Scene::Image`],
+/// [`Scene::ImmediateModeNode`]) share their paint logic with
+/// [`to_vello_inner`] — same `fill_rect` / `paint_text` /
+/// `paint_immediate_mode_node` helpers. [`Scene::Scroll`] threads
+/// the inherited transform exactly like [`to_vello_inner`]; the
+/// recursion into `content` is via this function so the eventual
+/// `IDENTITY`-resumed descendant Containers (extremely rare — would
+/// require a parent that itself cancels the scroll translation) can
+/// participate in caching.
+#[allow(clippy::too_many_arguments)]
+fn to_vello_cached_inner<F>(
+    scene: &Scene,
+    fill_hook: &F,
+    text_cache: &mut LayoutCache,
+    fragment_cache: &mut FragmentCache,
+    out: &mut VelloScene,
+    transform: Affine,
+) where
+    F: Fn(&BoxNode) -> Option<Color>,
+{
+    // Container cache check — only at identity transform AND when
+    // the subtree contains no immediate-mode / external descendants.
+    if let Scene::Container(c) = scene
+        && transform == Affine::IDENTITY
+        && scene.is_cacheable_for_paint()
+    {
+        let hash = c.paint_hash();
+        if fragment_cache.try_hit(hash, out) {
+            return;
+        }
+        // Cache miss: encode the entire subtree into a fresh
+        // sub-scene under IDENTITY transform, then append + cache.
+        let mut sub = VelloScene::new();
+        fill_rect(
+            &mut sub,
+            c.rect,
+            c.style.fill,
+            c.style.corner_radius,
+            Affine::IDENTITY,
+        );
+        for child in &c.children {
+            to_vello_cached_inner(
+                child,
+                fill_hook,
+                text_cache,
+                fragment_cache,
+                &mut sub,
+                Affine::IDENTITY,
+            );
+        }
+        out.append(&sub, None);
+        fragment_cache.insert_miss(hash, sub, c.rect);
+        return;
+    }
+
+    // Non-cached path: mirror to_vello_inner's match shape but
+    // recurse via this function so nested cacheable subtrees can
+    // still hit the cache.
+    match scene {
+        Scene::Container(c) => {
+            // Non-cacheable container (either non-identity transform
+            // or contains immediate-mode / external descendant).
+            // Paint own fill, recurse into children directly.
+            fill_rect(out, c.rect, c.style.fill, c.style.corner_radius, transform);
+            for child in &c.children {
+                to_vello_cached_inner(
+                    child,
+                    fill_hook,
+                    text_cache,
+                    fragment_cache,
+                    out,
+                    transform,
+                );
+            }
+        }
+        Scene::Box(b) => {
+            let fill = fill_hook(b).unwrap_or(b.style.fill);
+            fill_rect(out, b.rect, fill, b.style.corner_radius, transform);
+            if let Some(border) = b.style.border {
+                stroke_rect(out, b.rect, border, transform);
+            }
+        }
+        Scene::Text(t) => paint_text(out, t, text_cache, transform),
+        Scene::Scroll(s) => {
+            let viewport_clip = KurboRect::new(
+                f64::from(s.viewport.x),
+                f64::from(s.viewport.y),
+                f64::from(s.viewport.x.saturating_add(s.viewport.w)),
+                f64::from(s.viewport.y.saturating_add(s.viewport.h)),
+            );
+            out.push_clip_layer(transform, &viewport_clip);
+            let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
+            let dy = f64::from(s.viewport.y) - f64::from(s.offset_y);
+            let child_transform = transform * Affine::translate((dx, dy));
+            to_vello_cached_inner(
+                &s.content,
+                fill_hook,
+                text_cache,
+                fragment_cache,
+                out,
+                child_transform,
+            );
+            out.pop_layer();
+        }
+        Scene::ImmediateModeNode(node) => {
+            paint_immediate_mode_node(out, node, transform);
+        }
+        // External / Effect / Path / Image: no-op (matches
+        // to_vello_inner's `_ => {}` arm).
         _ => {}
     }
 }
@@ -1168,5 +1631,553 @@ mod tests {
         let mut vello = VelloScene::new();
         let mut cache = LayoutCache::new();
         to_vello(&scene, &|_| None, &mut cache, &mut vello);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R682 §5.16 atomic 1 — FragmentCache + to_vello_cached
+    // ─────────────────────────────────────────────────────────────
+
+    use pinion_core::scene::{
+        EffectNode, ExternalNode, ImmediateMode, ImmediateModeNode, Scene,
+    };
+
+    fn null_hook<'a>() -> &'a (dyn Fn(&BoxNode) -> Option<Color> + 'a) {
+        &|_b: &BoxNode| None
+    }
+
+    fn simple_container() -> Scene {
+        Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Box(BoxNode::filled(
+                    Rect::new(10, 10, 100, 50),
+                    Color::rgb(0xff, 0, 0),
+                )),
+                Scene::Text(TextNode::new("hi", Rect::new(10, 70, 100, 20))),
+            ]),
+        )
+    }
+
+    fn mutated_container() -> Scene {
+        Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Box(BoxNode::filled(
+                    Rect::new(10, 10, 100, 50),
+                    // Color differs from `simple_container`.
+                    Color::rgb(0, 0xff, 0),
+                )),
+                Scene::Text(TextNode::new("hi", Rect::new(10, 70, 100, 20))),
+            ]),
+        )
+    }
+
+    #[test]
+    fn r682_fragment_cache_starts_empty() {
+        let cache = FragmentCache::new();
+        assert_eq!(cache.entries(), 0);
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.misses(), 0);
+        assert_eq!(cache.paint_count(), 0);
+        assert!((cache.hit_rate() - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r682_first_paint_is_a_cache_miss() {
+        let scene = simple_container();
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut vello);
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.entries(), 1, "miss installs the fragment");
+        assert_eq!(cache.paint_count(), 1);
+    }
+
+    #[test]
+    fn r682_second_identical_paint_is_a_cache_hit() {
+        // Two paints of structurally identical scenes hit the cache
+        // on the second call — the killer property of the §5.16
+        // dirty-subtree-cache substrate. The shell-side V::view
+        // re-runs every frame (R26 contract) but `paint_hash`
+        // matches, so the encoded fragment replays without fresh
+        // walk.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+
+        let mut vello1 = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut vello1,
+        );
+        let mut vello2 = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut vello2,
+        );
+
+        assert_eq!(cache.hits(), 1, "second paint hits");
+        assert_eq!(cache.misses(), 1, "first paint missed");
+        assert_eq!(cache.paint_count(), 2);
+        // Hit rate after 1 hit + 1 miss = 50%.
+        assert!((cache.hit_rate() - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r682_mutated_scene_is_a_cache_miss() {
+        // A field change anywhere in the cacheable subtree changes
+        // the structural hash, so the second paint must miss.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+
+        let mut vello1 = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut vello1,
+        );
+        let mut vello2 = VelloScene::new();
+        to_vello_cached(
+            &mutated_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut vello2,
+        );
+
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.misses(), 2);
+        // Sweep at end of paint 2 evicts the unreached paint-1
+        // fragment, so only the paint-2 fragment remains.
+        assert_eq!(cache.entries(), 1);
+    }
+
+    #[test]
+    fn r682_mark_and_sweep_evicts_unreached_entries() {
+        // Paint scene A (installs fragment A), then paint scene B
+        // (installs B and evicts A because A's hash was not consulted
+        // during paint 2). Verify the cache holds only B's fragment
+        // after paint 2.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert_eq!(cache.entries(), 1);
+
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &mutated_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        // Only mutated_container's fragment survives — simple_container's
+        // entry was not consulted this paint, sweep dropped it.
+        assert_eq!(cache.entries(), 1);
+    }
+
+    /// Immediate-mode driver stub for cacheability tests.
+    #[derive(Debug, Default)]
+    struct InertImmediate;
+
+    impl ImmediateMode for InertImmediate {}
+
+    #[test]
+    fn r682_immediate_mode_subtree_is_not_cached() {
+        // §2 #4 substrate contract: a Container containing an
+        // ImmediateModeNode is not cacheable — its paint changes per
+        // tick. The cache must not install a fragment for the parent.
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 50, 50),
+                Color::rgb(0, 0, 0xff),
+            )),
+            Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+                InertImmediate,
+                Rect::new(0, 50, 50, 50),
+            )),
+        ]));
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        let mut v = VelloScene::new();
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut v);
+        // No miss → no install. Cache stays empty.
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.misses(), 0);
+        assert_eq!(cache.entries(), 0);
+    }
+
+    #[test]
+    fn r682_external_subtree_is_not_cached() {
+        // §3 opaque-escape: a Container with an External child is
+        // not cacheable — the embedded handle's paint is opaque to
+        // the cache.
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(Rect::new(0, 0, 50, 50), Color::default())),
+            Scene::External(ExternalNode::new(Box::new(
+                pinion_core::external::StubExternal::new(),
+            ))),
+        ]));
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        let mut v = VelloScene::new();
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut v);
+        assert_eq!(cache.entries(), 0);
+    }
+
+    #[test]
+    fn r682_nested_cacheable_subtree_caches_under_uncacheable_parent() {
+        // §2 #4 killer use case: parent Container holds an
+        // ImmediateModeNode (uncacheable) AND a child Container that
+        // is itself cacheable (only Box / Text inside). The child's
+        // subtree MUST install in the cache so the next paint hits.
+        // This is the immediate-mode coexistence promise: the live
+        // animation paints fresh while the static retained subtree
+        // skips re-encoding.
+        let make_scene = || {
+            Scene::Container(ContainerNode::new(vec![
+                Scene::Container(
+                    ContainerNode::new(vec![Scene::Text(TextNode::new(
+                        "header",
+                        Rect::new(0, 0, 200, 24),
+                    ))])
+                    .with_tag("retained_header"),
+                ),
+                Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+                    InertImmediate,
+                    Rect::new(0, 30, 200, 100),
+                )),
+            ]))
+        };
+
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+
+        let mut v = VelloScene::new();
+        to_vello_cached(&make_scene(), &null_hook(), &mut text, &mut cache, &mut v);
+        // First paint: header Container missed (installed) — root
+        // Container is uncacheable so it didn't probe; ImmediateMode
+        // doesn't probe.
+        assert_eq!(cache.misses(), 1, "header Container installed");
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.entries(), 1);
+
+        let mut v = VelloScene::new();
+        to_vello_cached(&make_scene(), &null_hook(), &mut text, &mut cache, &mut v);
+        // Second paint: header hits.
+        assert_eq!(cache.hits(), 1);
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.entries(), 1);
+    }
+
+    #[test]
+    fn r682_cache_clear_resets_counters_and_entries() {
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert!(cache.entries() > 0);
+
+        cache.clear();
+        assert_eq!(cache.entries(), 0);
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.misses(), 0);
+        assert_eq!(cache.paint_count(), 0);
+    }
+
+    #[test]
+    fn r682_uncached_path_still_paints_same_output() {
+        // Encoding identical scenes through to_vello (no cache) and
+        // to_vello_cached (with cache) produces the same `vello::Scene`
+        // payload — the cache is a perf substrate, not a behaviour
+        // change. We can't compare VelloScene contents directly
+        // (no PartialEq), but we can sanity-check that neither path
+        // panics and both reach the same paint count.
+        let scene = simple_container();
+        let mut text = LayoutCache::new();
+
+        let mut uncached = VelloScene::new();
+        to_vello(&scene, &null_hook(), &mut text, &mut uncached);
+
+        let mut cache = FragmentCache::new();
+        let mut cached = VelloScene::new();
+        to_vello_cached(
+            &scene,
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut cached,
+        );
+
+        // Both produced a valid VelloScene; the cached version
+        // installed exactly one fragment (the root Container).
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.entries(), 1);
+    }
+
+    #[test]
+    fn r682_root_effect_or_external_does_not_install_fragment() {
+        // The top-level scene is not always a Container.
+        // Effect / External roots: no Container boundary to probe at,
+        // cache stays empty.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &Scene::Effect(EffectNode::new()),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert_eq!(cache.entries(), 0);
+
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &Scene::External(ExternalNode::new(Box::new(
+                pinion_core::external::StubExternal::new(),
+            ))),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert_eq!(cache.entries(), 0);
+    }
+
+    #[test]
+    fn r682_three_paint_steady_state_hit_rate_approaches_one() {
+        // After warmup (first paint misses + installs), every
+        // subsequent identical paint is a hit. After N paints,
+        // hit_rate → (N-1)/N.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        for _ in 0..5 {
+            let mut v = VelloScene::new();
+            to_vello_cached(
+                &simple_container(),
+                &null_hook(),
+                &mut text,
+                &mut cache,
+                &mut v,
+            );
+        }
+        assert_eq!(cache.hits(), 4);
+        assert_eq!(cache.misses(), 1);
+        // 4/5 = 0.8.
+        assert!((cache.hit_rate() - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r682_fragment_cache_debug_format_does_not_panic() {
+        // Debug impl bypasses VelloScene (which is not Debug) and
+        // surfaces just the counters.
+        let cache = FragmentCache::new();
+        let s = format!("{cache:?}");
+        assert!(s.contains("FragmentCache"));
+        assert!(s.contains("entries"));
+        assert!(s.contains("hits"));
+        assert!(s.contains("misses"));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R682 §5.16 atomic 2 — damage region tracking
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r682_rect_union_of_disjoint_rects_covers_both() {
+        let a = Rect::new(0, 0, 50, 50);
+        let b = Rect::new(100, 100, 50, 50);
+        let u = a.union(b);
+        assert_eq!(u, Rect::new(0, 0, 150, 150));
+    }
+
+    #[test]
+    fn r682_rect_union_of_overlapping_rects_takes_outer_bounds() {
+        let a = Rect::new(0, 0, 100, 100);
+        let b = Rect::new(50, 50, 100, 100);
+        let u = a.union(b);
+        assert_eq!(u, Rect::new(0, 0, 150, 150));
+    }
+
+    #[test]
+    fn r682_rect_union_of_nested_rect_returns_outer() {
+        let outer = Rect::new(0, 0, 200, 200);
+        let inner = Rect::new(20, 30, 50, 50);
+        assert_eq!(outer.union(inner), outer);
+        assert_eq!(inner.union(outer), outer);
+    }
+
+    #[test]
+    fn r682_rect_union_with_zero_area_returns_other() {
+        let a = Rect::new(10, 20, 30, 40);
+        let zero = Rect::new(0, 0, 0, 0);
+        assert_eq!(a.union(zero), a);
+        assert_eq!(zero.union(a), a);
+    }
+
+    #[test]
+    fn r682_damage_region_starts_none() {
+        let cache = FragmentCache::new();
+        assert!(cache.last_damage_region().is_none());
+    }
+
+    #[test]
+    fn r682_damage_region_is_miss_rect_after_first_paint() {
+        let scene = simple_container();
+        // simple_container's root rect is Rect::default = (0,0,0,0).
+        // The miss installs a fragment with that root rect; the union
+        // accumulator captures it. Match against the root container's
+        // actual rect (zero rect contributes the zero-rect-at-(0,0)
+        // shape per Rect::union semantics — `Some(Rect(0,0,0,0))`).
+        let Scene::Container(ref c) = scene else { unreachable!() };
+        let expected_rect = c.rect;
+
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        let mut v = VelloScene::new();
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut v);
+
+        let dmg = cache.last_damage_region().expect("first paint = damage");
+        assert_eq!(dmg, expected_rect);
+    }
+
+    #[test]
+    fn r682_damage_region_is_none_after_full_cache_hit_paint() {
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        // First paint: miss.
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert!(cache.last_damage_region().is_some(), "first paint dirtied");
+        // Second paint: same scene → cache hit → no damage published.
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert!(
+            cache.last_damage_region().is_none(),
+            "100% cache-hit paint = no damage region"
+        );
+    }
+
+    #[test]
+    fn r682_damage_region_unions_multiple_misses() {
+        // Two sibling cacheable Container children with different
+        // non-zero rects: both miss on first paint, damage region is
+        // their union.
+        let mut first = ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+            Rect::new(10, 10, 40, 20),
+            Color::default(),
+        ))]);
+        first.rect = Rect::new(10, 10, 40, 20);
+
+        let mut second = ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+            Rect::new(200, 200, 50, 50),
+            Color::default(),
+        ))]);
+        second.rect = Rect::new(200, 200, 50, 50);
+
+        // Root is uncacheable so children miss individually instead
+        // of getting absorbed into a root fragment. Use a fixed-rect
+        // root wrapping the children via an ImmediateMode sentinel
+        // that prevents root caching but doesn't itself miss-publish.
+        let root_uncacheable = Scene::Container(ContainerNode::new(vec![
+            Scene::Container(first),
+            Scene::Container(second),
+            Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+                InertImmediate,
+                Rect::new(0, 0, 1, 1),
+            )),
+        ]));
+
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &root_uncacheable,
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+
+        assert_eq!(cache.misses(), 2, "both children miss");
+        let dmg = cache.last_damage_region().expect("two misses = damage");
+        // Union of (10,10,40,20) and (200,200,50,50) =
+        // (10, 10, 240, 240) — bounding box covers both.
+        assert_eq!(dmg, Rect::new(10, 10, 240, 240));
+    }
+
+    #[test]
+    fn r682_damage_region_resets_between_paints() {
+        // First paint accumulates damage; second paint (all hits)
+        // publishes None.
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert!(cache.last_damage_region().is_some());
+
+        // Second identical paint: all hits, damage publishes None
+        // (not the previous paint's damage).
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &simple_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert!(cache.last_damage_region().is_none());
+
+        // Third paint with mutated scene: miss, damage republishes.
+        let mut v = VelloScene::new();
+        to_vello_cached(
+            &mutated_container(),
+            &null_hook(),
+            &mut text,
+            &mut cache,
+            &mut v,
+        );
+        assert!(cache.last_damage_region().is_some());
     }
 }
