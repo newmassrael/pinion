@@ -154,11 +154,15 @@ def body() -> None:
         )
 
         # (A15) Tree styling — rows render through the substrate's
-        # m3_default; the inspector root container is the TreeView
-        # root (tag matches).
-        root_node = result
-        assert root_node.get("tag") == "inspector_tree", (
-            f"inspector root must be tagged 'inspector_tree': {root_node!r}"
+        # m3_default; the `inspector_tree` Container is reachable in
+        # the inspector window scene. R677 §5.16 §5.49 introduced the
+        # 2-pane DevTools layout (Row[tree, property_pane]) so the
+        # tree container is now a child of the outer Row rather than
+        # the snapshot root; (A1) above already verified its presence
+        # via depth-first `find_by_tag`. Keep this comment as the
+        # canonical anchor for the layout-evolution decision.
+        assert find_by_tag(result, "inspector_tree") is not None, (
+            "inspector_tree container must be reachable in the inspector view"
         )
 
         # ── (B) per-window last_paint_layout (R671 atomic 1) ───────
@@ -186,13 +190,15 @@ def body() -> None:
         )
 
         # (B2) Inspector's last paint is at the inspector window's
-        # declared SizeStrategy::Fixed { 280, 140 }.
+        # declared SizeStrategy::Fixed { 480, 320 } — R677 §5.16 §5.49
+        # widened the inspector to host the new 2-pane DevTools
+        # layout (tree pane + property pane side-by-side).
         ins_rect = layout_inspector.result.get("rect") or {}
-        assert int(ins_rect.get("w") or 0) == 280, (
-            f"inspector scene/layout width must be 280: {layout_inspector.result!r}"
+        assert int(ins_rect.get("w") or 0) == 480, (
+            f"inspector scene/layout width must be 480 (R677): {layout_inspector.result!r}"
         )
-        assert int(ins_rect.get("h") or 0) == 140, (
-            f"inspector scene/layout height must be 140: {layout_inspector.result!r}"
+        assert int(ins_rect.get("h") or 0) == 320, (
+            f"inspector scene/layout height must be 320 (R677): {layout_inspector.result!r}"
         )
 
         # (B3) Pre-R671, both calls would have returned the same

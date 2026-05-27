@@ -207,8 +207,10 @@ def body() -> None:
         ins_rect = layout_inspector.result.get("rect") or {}
         assert int(main_rect.get("w") or 0) == 320
         assert int(main_rect.get("h") or 0) == 200
-        assert int(ins_rect.get("w") or 0) == 280
-        assert int(ins_rect.get("h") or 0) == 140
+        # R677 §5.16 §5.49 — inspector widened to 480×320 for the
+        # 2-pane DevTools layout (tree + property pane).
+        assert int(ins_rect.get("w") or 0) == 480
+        assert int(ins_rect.get("h") or 0) == 320
         assert main_rect != ins_rect, (
             "per-window last_paint_layout still distinct post-R672"
         )

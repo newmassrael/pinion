@@ -53,7 +53,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
@@ -72,10 +72,15 @@ vello_renderer_impl!(HelloMultiWindowRenderer, HelloMultiWindowRendererError);
 /// click target + the "Click me!" label.
 const MAIN_W: u32 = 320;
 const MAIN_H: u32 = 200;
-/// Inspector window dimensions — narrower + shorter than main since
-/// the only content is a 2-line state-debug text.
-const INSPECTOR_W: u32 = 280;
-const INSPECTOR_H: u32 = 140;
+/// R677 §5.16 §5.49 — inspector window dimensions sized for the new
+/// 2-pane DevTools layout (tree pane + property pane side-by-side).
+/// Width: 480 px hosts the tree column (~260 px paint width) plus a
+/// ~220 px property pane that fits the Computed-pane field rows
+/// without horizontal scroll. Height: 320 px clears 5+ tree rows
+/// stacked (5×48 = 240 plus header room) so the full mirrored main
+/// scene tree fits at one glance.
+const INSPECTOR_W: u32 = 480;
+const INSPECTOR_H: u32 = 320;
 
 const BTN_W: u32 = 160;
 const BTN_H: u32 = 64;
@@ -121,6 +126,37 @@ const INSPECTOR_CLICK_INTENT_TAG: &str = intent_tag!("inspector_tree", "click");
 /// substrate lift (R677+ when the 2nd consumer surfaces) inherits
 /// one canonical value.
 const HIGHLIGHT_BORDER_WIDTH: u32 = 2;
+
+/// R677 §5.16 §5.49 — root tag of the inspector window's **property
+/// pane** (right-hand pane in the new 2-pane DevTools layout). The
+/// pane renders one [`TextNode`] per field of the
+/// [`use_selected_path`]-resolved scene node — type, tag,
+/// style.fill, style.border, layout.size, children count — mirroring
+/// Chrome DevTools' Computed pane.
+///
+/// `scene/snapshot {window: "inspector"}` walks down to the pane
+/// container via this tag; the demo introspects field rows by
+/// scanning the pane's `Scene::Text` children.
+const PROPERTY_PANE_TAG: &str = "property_pane";
+
+/// R677 §5.16 §5.49 — placeholder text shown in the property pane
+/// when [`use_selected_path`] returns `None` (no row selected) or
+/// when [`find_main_node_at_path`] returns `None` (inspector-only id
+/// like "state" / "main" or stale path). Kept short so the pane
+/// reads as "I'm here, but nothing's selected" rather than blank.
+const PROPERTY_PANE_NO_SELECTION_TEXT: &str = "(no selection)";
+
+/// R677 §5.16 §5.49 — font size for property pane rows in logical
+/// pixels. Matches M3 Body Medium (16 px) so the pane reads as a
+/// dense field listing without crowding — the same scale the tree
+/// pane uses for row labels.
+const PROPERTY_PANE_FONT_PX: u32 = 16;
+
+/// R677 §5.16 §5.49 — vertical gap between property pane rows in
+/// logical pixels. M3 Density 0 lists use 4 px row spacing; the
+/// property pane is closer to a dense data table so 4 px reads as
+/// cohesive without crowding.
+const PROPERTY_PANE_ROW_GAP_PX: u32 = 4;
 
 /// R675 §5.16 §5.49 — cross-window shared selection slot.
 ///
@@ -320,13 +356,202 @@ fn view_inspector(state: ButtonState) -> Scene {
     let focus = TreeViewFocus {
         focused_id: selected.as_deref(),
     };
-    view_tree_focused(
+    let tree_pane = view_tree_focused(
         INSPECTOR_TREE_TAG,
         &tree_items,
         &theme,
         &TreeViewStyle::m3_default(),
         &focus,
+    );
+
+    // R677 §5.16 §5.49 — the right-hand property pane. Resolves the
+    // shared `selected_path` Signal against the live `main_scene`
+    // through `find_main_node_at_path` (R676 helper, 2nd consumer —
+    // tracking the [[abstraction-needs-second-consumer]] Rule-of-
+    // Three threshold). Field rows are produced by
+    // `property_pane_rows` per R677 atomic (1); atomic (0) gives the
+    // pane its structural shape with the no-selection placeholder.
+    let pane = property_pane(&main_scene, selected.as_deref(), &theme);
+
+    // 2-pane Row layout — tree on the left, property pane on the
+    // right. Both panes use `flex_grow = 1.0` so a future inspector
+    // window resize splits the panes evenly; the substrate's flexbox
+    // engine handles cross-axis stretch. R667 §5.34 `flex_grow`
+    // primitive 2nd application consumer (settings-panel = 1st).
+    let surface = theme.resolve(ColorRole::Surface);
+    Scene::Container(
+        ContainerNode::new(vec![tree_pane, pane])
+            .with_style(BoxStyle::filled(surface))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Stretch),
+            ),
     )
+}
+
+/// R677 §5.16 §5.49 — property pane container (right side of the
+/// inspector's 2-pane layout). Renders one [`TextNode`] per field of
+/// the [`use_selected_path`]-resolved scene node. When no path
+/// resolves (`use_selected_path()` is `None`, or
+/// [`find_main_node_at_path`] returns `None`), shows the
+/// [`PROPERTY_PANE_NO_SELECTION_TEXT`] placeholder.
+///
+/// Atomic (0) lands the structural shape: tagged container,
+/// flex_grow = 1.0 (right pane fills available width), Surface fill,
+/// placeholder Text body. Atomic (1) replaces the placeholder body
+/// with the real `property_pane_rows` field walker.
+fn property_pane(main_scene: &Scene, selected: Option<&str>, theme: &Theme) -> Scene {
+    let on_surface = theme.resolve(ColorRole::OnSurface);
+    let on_surface_muted = theme.resolve(ColorRole::OnSurfaceMuted);
+    let surface = theme.resolve(ColorRole::Surface);
+
+    let resolved = selected.and_then(|path| find_main_node_at_path(main_scene, path));
+
+    let body: Vec<Scene> = match resolved {
+        Some(node) => property_pane_rows(node)
+            .into_iter()
+            .map(|text| {
+                Scene::Text(TextNode::styled(
+                    text,
+                    Rect::default(),
+                    TextStyle::new()
+                        .with_size_px(PROPERTY_PANE_FONT_PX)
+                        .with_fg(on_surface),
+                ))
+            })
+            .collect(),
+        None => vec![Scene::Text(TextNode::styled(
+            PROPERTY_PANE_NO_SELECTION_TEXT,
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(PROPERTY_PANE_FONT_PX)
+                .with_fg(on_surface_muted),
+        ))],
+    };
+
+    Scene::Container(
+        ContainerNode::new(body)
+            .with_tag(PROPERTY_PANE_TAG)
+            .with_style(BoxStyle::filled(surface))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_justify(JustifyContent::Start)
+                    .with_align_items(AlignItems::Start)
+                    .with_gap(PROPERTY_PANE_ROW_GAP_PX)
+                    .with_flex_grow(1.0),
+            ),
+    )
+}
+
+/// R677 §5.16 §5.49 — field walker for the property pane. Returns
+/// one rendered row per scene-node field. Mirrors Chrome DevTools'
+/// Computed pane: each row is a `field: value` line.
+///
+/// Universal rows: `type:` (the Scene variant name from
+/// [`scene_type_name`]) is always first. Variant-specific rows
+/// follow:
+///
+/// * **Container** — `tag:`, `style.fill:`, `style.border:`,
+///   `layout.size:`, `children:`
+/// * **Text** — `content:`, `style.font_size:`, `style.fg:`
+/// * **External** — `tag:`
+/// * other variants — `type:` only (atomic 1 scope keeps the row
+///   set small; Box/Path/Image/Effect/Scroll field shapes are
+///   future-axis when a real consumer needs them)
+///
+/// Format choices follow Chrome DevTools' convention: colour as
+/// `rgba(R,G,B,A)`, border as `<width>px @ rgba(...)` or `none`,
+/// size as `<W> × <H>` (using SizeValue's display form). Strings
+/// stay short so a 240 px-wide pane reads without horizontal scroll.
+fn property_pane_rows(scene: &Scene) -> Vec<String> {
+    let mut rows = Vec::new();
+    rows.push(format!("type: {}", scene_type_name(scene)));
+
+    match scene {
+        Scene::Container(c) => {
+            rows.push(format!("tag: {}", format_optional_tag(c.tag.as_deref())));
+            rows.push(format!("style.fill: {}", format_color(c.style.fill)));
+            rows.push(format!(
+                "style.border: {}",
+                format_border(c.style.border),
+            ));
+            rows.push(format!("layout.size: {}", format_size(c.layout.size)));
+            rows.push(format!("children: {}", c.children.len()));
+        }
+        Scene::Text(t) => {
+            rows.push(format!("content: {:?}", t.content));
+            rows.push(format!("style.font_size: {}px", t.style.font_size_px));
+            rows.push(format!("style.fg: {}", format_color(t.style.fg_color)));
+        }
+        Scene::External(e) => {
+            rows.push(format!("tag: {}", format_optional_tag(e.tag.as_deref())));
+        }
+        // Box/Path/Image/Effect/Scroll/unknown — `type:` row only.
+        // Future-axis: add per-variant field rows when a real consumer
+        // (R678+ hover bridge, R679+ bidirectional select) drives the
+        // need.
+        _ => {}
+    }
+    rows
+}
+
+/// R677 §5.16 §5.49 — format an `Option<&str>` tag as either the tag
+/// itself or `"—"` (em dash) for absent tags. The em dash is the
+/// canonical typographic stand-in for "no value" in property listings
+/// (Chrome DevTools / Firefox Inspector both use it).
+fn format_optional_tag(tag: Option<&str>) -> String {
+    match tag {
+        Some(t) => t.to_owned(),
+        None => "—".to_owned(),
+    }
+}
+
+/// R677 §5.16 §5.49 — format a [`Color`] as `rgba(R,G,B,A)`. CSS
+/// canonical form; AI clients parse it the same way they parse CSS
+/// colour literals. Alpha at 255 still emits `,A` for consistency
+/// (a future "omit alpha when fully opaque" pass is a UI polish
+/// concern, not a substrate concern).
+fn format_color(color: Color) -> String {
+    format!("rgba({},{},{},{})", color.r, color.g, color.b, color.a)
+}
+
+/// R677 §5.16 §5.49 — format a [`BoxStyle::border`] sidecar as
+/// `<width>px @ rgba(...)` when present, or `"none"` when absent.
+/// Mirrors CSS border shorthand without the line-style word
+/// (pinion's `Border` does not carry a line-style enum — it's always
+/// solid for the v1 spec scope).
+fn format_border(border: Option<pinion_core::style::Border>) -> String {
+    match border {
+        Some(b) if b.width > 0 => format!("{}px @ {}", b.width, format_color(b.color)),
+        _ => "none".to_owned(),
+    }
+}
+
+/// R677 §5.16 §5.49 — format a [`Size`] (width × height pair) as
+/// `<width> × <height>`. Each axis renders via [`format_size_value`]
+/// so `Auto`, `Px(n)`, `Percent(n)` all read naturally.
+fn format_size(size: pinion_core::style::Size) -> String {
+    format!(
+        "{} × {}",
+        format_size_value(size.width),
+        format_size_value(size.height),
+    )
+}
+
+/// R677 §5.16 §5.49 — format a [`SizeValue`] as a short CSS-mirror
+/// string: `Auto` → `"auto"`, `Px(n)` → `"<n>px"`, `Percent(n)` →
+/// `"<n>%"`. Mirrors CSS shorthand exactly — readers familiar with
+/// CSS read the value at a glance.
+fn format_size_value(value: pinion_core::style::SizeValue) -> String {
+    use pinion_core::style::SizeValue;
+    match value {
+        SizeValue::Auto => "auto".to_owned(),
+        SizeValue::Px(n) => format!("{n}px"),
+        SizeValue::Percent(n) => format!("{n}%"),
+        _ => "unknown".to_owned(),
+    }
 }
 
 /// R676 §5.16 §5.49 — Browser-DevTools-canonical type name for a
@@ -942,6 +1167,27 @@ mod r670_b_multi_window_tests {
         assert_eq!(specs.len(), 2, "main + inspector");
         assert_eq!(specs[0].id, "main");
         assert_eq!(specs[1].id, "inspector");
+    }
+
+    /// (R677 §5.16 §5.49) Inspector window resized to 480×320 to
+    /// host the new 2-pane DevTools layout (tree + property pane).
+    /// Pin the dimensions so a future tweak surfaces immediately —
+    /// the demo's section (A) verifies the same shape through
+    /// `windows()` RPC introspection.
+    #[test]
+    fn r677_inspector_window_dimensions_480x320() {
+        let specs = <MultiWindowView as WidgetView>::windows();
+        let inspector_spec = specs
+            .iter()
+            .find(|s| s.id == "inspector")
+            .expect("inspector spec must exist");
+        match inspector_spec.strategy {
+            SizeStrategy::Fixed { width, height } => {
+                assert_eq!(width, 480, "R677 widened inspector to 480 px");
+                assert_eq!(height, 320, "R677 tallened inspector to 320 px");
+            }
+            other => panic!("inspector must use Fixed strategy; got: {other:?}"),
+        }
     }
 
     /// (R670.B §5.16) `view_for_window` switches by window_id; main
@@ -2180,5 +2426,445 @@ mod r676_highlight_overlay_tests {
         // Silence the unused-helper warning when only one test
         // module touches the import in some build configurations.
         let _ = find_stroked_container_tag(&scene);
+    }
+}
+
+#[cfg(test)]
+mod r677_property_pane_layout_tests {
+    //! R677 §5.16 §5.49 — inspector window 2-pane layout regression
+    //! suite. Atomic (0) restructures `view_inspector` from the
+    //! R675/R676 single-column `view_tree_focused` paint into a Row
+    //! container with two children: tree pane (left, the existing
+    //! TreeView) and property pane (right, new — atomic 1 populates
+    //! the field rows). Tests pin the layout shape, both panes'
+    //! presence, and the no-selection placeholder behaviour.
+    use super::*;
+
+    /// (R677) The inspector view's outermost Container uses
+    /// `FlexDirection::Row` — the substrate's flexbox engine
+    /// horizontally stacks the tree pane and the property pane.
+    #[test]
+    fn r677_inspector_outer_layout_is_row() {
+        let owner = Owner::new();
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        match &scene {
+            Scene::Container(c) => assert_eq!(
+                c.layout.flex_direction,
+                FlexDirection::Row,
+                "inspector outer container must be a Row to host left+right panes",
+            ),
+            _ => panic!("inspector view must return a Scene::Container at the root"),
+        }
+    }
+
+    /// (R677) Both panes are present at the inspector's first child
+    /// level — left pane tagged `INSPECTOR_TREE_TAG`, right pane
+    /// tagged `PROPERTY_PANE_TAG`.
+    #[test]
+    fn r677_inspector_carries_both_panes_at_top_level() {
+        let owner = Owner::new();
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        let Scene::Container(c) = &scene else {
+            panic!("inspector view must be a Container");
+        };
+        // First-level children list contains the two panes (in
+        // left-to-right order: tree, then property pane).
+        let pane_tags: Vec<Option<&str>> = c
+            .children
+            .iter()
+            .map(|child| match child {
+                Scene::Container(cc) => cc.tag.as_deref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pane_tags.len(), 2, "inspector must carry exactly 2 panes");
+        assert_eq!(
+            pane_tags[0],
+            Some(INSPECTOR_TREE_TAG),
+            "left pane must be the inspector tree",
+        );
+        assert_eq!(
+            pane_tags[1],
+            Some(PROPERTY_PANE_TAG),
+            "right pane must be the property pane",
+        );
+    }
+
+    /// (R677) The property pane's `LayoutStyle` carries `flex_grow =
+    /// 1.0` so it fills available horizontal space when the
+    /// inspector window resizes (atomic 2 expands the window to
+    /// 480×320 to host the wider pane).
+    #[test]
+    fn r677_property_pane_flex_grow_one() {
+        let owner = Owner::new();
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        let pane = find_pane_by_tag(&scene, PROPERTY_PANE_TAG)
+            .expect("property pane must exist in the inspector view");
+        assert!(
+            (pane.layout.flex_grow - 1.0).abs() < f32::EPSILON,
+            "property pane must declare flex_grow=1.0; got: {}",
+            pane.layout.flex_grow,
+        );
+    }
+
+    /// (R677) **No-selection baseline** — when `use_selected_path()`
+    /// returns `None`, the property pane renders the
+    /// `PROPERTY_PANE_NO_SELECTION_TEXT` placeholder. Pins the
+    /// soft-fail default behaviour that the demo's section (B)
+    /// verifies through scene/snapshot.
+    #[test]
+    fn r677_property_pane_renders_placeholder_when_no_selection() {
+        let owner = Owner::new();
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        let pane = find_pane_by_tag(&scene, PROPERTY_PANE_TAG)
+            .expect("property pane must exist");
+        let text_contents: Vec<&str> = pane
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                Scene::Text(t) => Some(t.content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            text_contents,
+            vec![PROPERTY_PANE_NO_SELECTION_TEXT],
+            "no-selection pane must contain exactly the placeholder line",
+        );
+    }
+
+    /// (R677) **Inspector-only id soft-fail** — selecting `"state"`
+    /// (an inspector-only TreeItem id, not a Scene-type path)
+    /// resolves to None through `find_main_node_at_path`; the pane
+    /// renders the placeholder, NOT field rows. Demo section (F)
+    /// verifies this.
+    #[test]
+    fn r677_property_pane_placeholder_for_inspector_only_id() {
+        let owner = Owner::new();
+        owner.run(|| {
+            use_selected_path().set(Some("state".to_string()));
+        });
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        let pane = find_pane_by_tag(&scene, PROPERTY_PANE_TAG)
+            .expect("property pane must exist");
+        let has_placeholder = pane.children.iter().any(|child| match child {
+            Scene::Text(t) => t.content == PROPERTY_PANE_NO_SELECTION_TEXT,
+            _ => false,
+        });
+        assert!(
+            has_placeholder,
+            "inspector-only id 'state' must resolve to placeholder, not field rows",
+        );
+    }
+
+    /// (R677) Tree pane is preserved bit-identical — the R671→R676
+    /// tree paint surface is unaffected by the atomic (0)
+    /// restructure. Pin the tree pane's outer tag + the
+    /// inspector_tree row tag presence (the tree rows themselves
+    /// live deeper).
+    #[test]
+    fn r677_tree_pane_unaffected_by_layout_split() {
+        let owner = Owner::new();
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        // Tree pane is the first child of the outer Row.
+        let tree_pane = find_pane_by_tag(&scene, INSPECTOR_TREE_TAG)
+            .expect("inspector_tree pane must persist");
+        assert!(
+            !tree_pane.children.is_empty(),
+            "tree pane must carry its row children (TreeView paint)",
+        );
+    }
+
+    /// (R677) `property_pane_rows` atomic (1) — minimum guarantee:
+    /// every scene gets at least the `type:` row. Pre-atomic-(1)
+    /// stub returned empty Vec; this test was rewritten to reflect
+    /// the atomic (1) contract.
+    #[test]
+    fn r677_property_pane_rows_always_emits_type_row() {
+        let scene = Scene::Container(
+            pinion_core::scene::ContainerNode::new(vec![]).with_tag(MAIN_BTN_TAG),
+        );
+        let rows = property_pane_rows(&scene);
+        assert!(
+            !rows.is_empty(),
+            "atomic (1) always emits at least the type: row",
+        );
+        assert!(
+            rows[0].starts_with("type: "),
+            "first row must be 'type: <Variant>'; got: {:?}",
+            rows[0],
+        );
+    }
+
+    /// Test-only helper — depth-first walk for the first
+    /// `ContainerNode` with the requested tag.
+    fn find_pane_by_tag<'s>(scene: &'s Scene, tag: &str) -> Option<&'s ContainerNode> {
+        match scene {
+            Scene::Container(c) => {
+                if c.tag.as_deref() == Some(tag) {
+                    return Some(c);
+                }
+                c.children.iter().find_map(|child| find_pane_by_tag(child, tag))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod r677_field_walker_tests {
+    //! R677 §5.16 §5.49 — property_pane_rows field walker
+    //! regression suite. Atomic (1) replaces the atomic (0) empty
+    //! stub with the real walker: emits `type:` plus variant-
+    //! specific field rows. Tests pin (a) the universal `type:` row,
+    //! (b) Container's full field set, (c) Text's content / font /
+    //! fg rows, (d) External's tag row, (e) untagged Container shows
+    //! `tag: —` em-dash placeholder, (f) format helpers' shape.
+    use super::*;
+    use pinion_core::external::StubExternal;
+    use pinion_core::scene::{ContainerNode, ExternalNode, Rect, TextNode};
+    use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
+
+    /// (R677) Container rows include type + tag + style.fill +
+    /// style.border + layout.size + children. Tagged container
+    /// shows the tag itself, not the em-dash placeholder.
+    #[test]
+    fn r677_container_field_rows_full_set() {
+        let scene = Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                "x",
+                Rect::default(),
+                TextStyle::new(),
+            ))])
+            .with_tag(MAIN_BTN_TAG)
+            .with_style(BoxStyle::filled(Color::rgba(255, 0, 0, 255)))
+            .with_layout(LayoutStyle::new().with_size(Size::px(160, 64))),
+        );
+        let rows = property_pane_rows(&scene);
+        // 6 rows: type, tag, style.fill, style.border, layout.size, children
+        assert_eq!(
+            rows.len(),
+            6,
+            "tagged Container produces 6 rows; got: {rows:?}",
+        );
+        assert_eq!(rows[0], "type: Container");
+        assert_eq!(rows[1], format!("tag: {MAIN_BTN_TAG}"));
+        assert_eq!(rows[2], "style.fill: rgba(255,0,0,255)");
+        assert_eq!(rows[3], "style.border: none");
+        assert_eq!(rows[4], "layout.size: 160px × 64px");
+        assert_eq!(rows[5], "children: 1");
+    }
+
+    /// (R677) Untagged Container surfaces the em-dash placeholder
+    /// in the tag row — canonical "no value" typographic convention
+    /// used by Chrome / Firefox DevTools.
+    #[test]
+    fn r677_untagged_container_tag_row_is_em_dash() {
+        let scene = Scene::Container(ContainerNode::new(vec![]));
+        let rows = property_pane_rows(&scene);
+        assert!(
+            rows.iter().any(|r| r == "tag: —"),
+            "untagged container must show em-dash placeholder; rows: {rows:?}",
+        );
+    }
+
+    /// (R677) Container with `Auto × Auto` layout emits the auto
+    /// CSS-mirror form (not zero-px). Pin the `format_size_value`
+    /// helper's `Auto` branch via the integration shape.
+    #[test]
+    fn r677_container_size_auto_renders_as_css_auto() {
+        let scene = Scene::Container(ContainerNode::new(vec![]));
+        let rows = property_pane_rows(&scene);
+        assert!(
+            rows.iter().any(|r| r == "layout.size: auto × auto"),
+            "default LayoutStyle::size = Auto×Auto renders as 'auto × auto'; rows: {rows:?}",
+        );
+    }
+
+    /// (R677) Text node rows — content, font_size, fg. The variant
+    /// has no children / layout / fill, so the row set is text-
+    /// specific (no Container fields appear).
+    #[test]
+    fn r677_text_field_rows_content_font_fg() {
+        let scene = Scene::Text(TextNode::styled(
+            "Click me!",
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(18)
+                .with_fg(Color::rgba(26, 26, 26, 255)),
+        ));
+        let rows = property_pane_rows(&scene);
+        // type + content + font_size + fg = 4 rows
+        assert_eq!(
+            rows.len(),
+            4,
+            "Text emits type + content + font_size + fg = 4 rows; got: {rows:?}",
+        );
+        assert_eq!(rows[0], "type: Text");
+        assert_eq!(rows[1], r#"content: "Click me!""#);
+        assert_eq!(rows[2], "style.font_size: 18px");
+        assert_eq!(rows[3], "style.fg: rgba(26,26,26,255)");
+    }
+
+    /// (R677) External row set — just type + tag (the variant has
+    /// no introspectable style/layout from the binding side; the
+    /// External itself owns those internally).
+    #[test]
+    fn r677_external_field_rows_type_and_tag() {
+        let scene = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("grid"),
+        );
+        let rows = property_pane_rows(&scene);
+        assert_eq!(rows.len(), 2, "External emits 2 rows; got: {rows:?}");
+        assert_eq!(rows[0], "type: External");
+        assert_eq!(rows[1], "tag: grid");
+    }
+
+    /// (R677) Container with a stroked border emits the
+    /// `<width>px @ rgba(...)` shape via `format_border`.
+    #[test]
+    fn r677_container_border_row_renders_width_at_color() {
+        let scene = Scene::Container(
+            ContainerNode::new(vec![]).with_style(
+                BoxStyle::default().with_border(pinion_core::style::Border::new(
+                    Color::rgba(186, 26, 26, 255),
+                    2,
+                )),
+            ),
+        );
+        let rows = property_pane_rows(&scene);
+        assert!(
+            rows.iter().any(|r| r == "style.border: 2px @ rgba(186,26,26,255)"),
+            "stroked Container border row must format as '<W>px @ rgba(...)'; rows: {rows:?}",
+        );
+    }
+
+    /// (R677) Nested-children-count row reflects the actual length
+    /// of `ContainerNode::children` (not a recursive descendant
+    /// count). Mirrors Chrome DevTools' Elements panel children
+    /// count.
+    #[test]
+    fn r677_container_children_count_is_direct_not_recursive() {
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Text(TextNode::styled("a", Rect::default(), TextStyle::new())),
+            Scene::Container(ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                "deep",
+                Rect::default(),
+                TextStyle::new(),
+            ))])),
+        ]));
+        let rows = property_pane_rows(&scene);
+        // Direct children = 2 (Text + nested Container); the nested
+        // Text inside the Container is NOT counted.
+        assert!(
+            rows.iter().any(|r| r == "children: 2"),
+            "children count must be direct-only; rows: {rows:?}",
+        );
+    }
+
+    /// (R677) **Percent SizeValue path** — `format_size_value`
+    /// handles `Percent(N)` as `<N>%`. Direct unit test of the
+    /// format helper for clarity (the integration path goes
+    /// through `format_size`).
+    #[test]
+    fn r677_format_size_value_percent_path() {
+        use pinion_core::style::SizeValue;
+        assert_eq!(format_size_value(SizeValue::Auto), "auto");
+        assert_eq!(format_size_value(SizeValue::Px(160)), "160px");
+        assert_eq!(format_size_value(SizeValue::Percent(50)), "50%");
+    }
+
+    /// (R677) `format_color` produces the `rgba(R,G,B,A)` CSS
+    /// canonical literal even at full opacity (alpha 255 still
+    /// emits — consistent with the `format_color` doc contract).
+    #[test]
+    fn r677_format_color_includes_alpha_at_full_opacity() {
+        assert_eq!(
+            format_color(Color::rgba(0, 128, 255, 255)),
+            "rgba(0,128,255,255)",
+        );
+        assert_eq!(
+            format_color(Color::rgba(0, 0, 0, 0)),
+            "rgba(0,0,0,0)",
+        );
+    }
+
+    /// (R677) Integration: end-to-end inspector view with a
+    /// selected button path → the property pane carries the
+    /// expected field rows from `property_pane_rows` for the
+    /// resolved Container node.
+    #[test]
+    fn r677_inspector_view_property_pane_carries_resolved_button_rows() {
+        let owner = Owner::new();
+        let button_path = format!("Container/Container[{MAIN_BTN_TAG}]");
+        owner.run(|| {
+            use_selected_path().set(Some(button_path.clone()));
+        });
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        let pane = find_pane_by_tag_in_scene(&scene, PROPERTY_PANE_TAG)
+            .expect("property pane must exist");
+        let text_contents: Vec<&str> = pane
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                Scene::Text(t) => Some(t.content.as_str()),
+                _ => None,
+            })
+            .collect();
+        // The selected node is the main_btn Container. Pin the
+        // canonical rows. (Exact fill / size values depend on the
+        // theme; pin only the stable shape rows.)
+        assert!(
+            text_contents.contains(&"type: Container"),
+            "pane must include 'type: Container' for the resolved button; got: {text_contents:?}",
+        );
+        let expected_tag_row = format!("tag: {MAIN_BTN_TAG}");
+        assert!(
+            text_contents.contains(&expected_tag_row.as_str()),
+            "pane must include 'tag: main_btn' for the resolved button; got: {text_contents:?}",
+        );
+        assert!(
+            text_contents.iter().any(|s| s.starts_with("style.fill: ")),
+            "pane must include 'style.fill: rgba(...)' row; got: {text_contents:?}",
+        );
+        assert!(
+            text_contents.iter().any(|s| s.starts_with("layout.size: ")),
+            "pane must include 'layout.size: ...' row; got: {text_contents:?}",
+        );
+        assert!(
+            text_contents.contains(&"children: 1"),
+            "button container holds 1 child (the label Text); got: {text_contents:?}",
+        );
+    }
+
+    /// Test-only helper — module-local duplicate of
+    /// `r677_property_pane_layout_tests::find_pane_by_tag` (Rust's
+    /// mod-private helpers don't cross test-module boundaries).
+    fn find_pane_by_tag_in_scene<'s>(scene: &'s Scene, tag: &str) -> Option<&'s ContainerNode> {
+        match scene {
+            Scene::Container(c) => {
+                if c.tag.as_deref() == Some(tag) {
+                    return Some(c);
+                }
+                c.children
+                    .iter()
+                    .find_map(|child| find_pane_by_tag_in_scene(child, tag))
+            }
+            _ => None,
+        }
     }
 }
