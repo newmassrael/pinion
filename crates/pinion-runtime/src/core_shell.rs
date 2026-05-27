@@ -211,20 +211,23 @@ pub struct CoreShell<V: WidgetCore> {
     /// in some future call path. Strictly an implementation detail.
     next_frame_count: Cell<u64>,
 
-    /// R51.149 §5.28 — reactive animation driver Effect, anchored to
-    /// [`Self::root_owner`] and subscribed to [`Self::frame_signal`].
+    /// R680 §5.16 §5.28 — observer-anchor Effect, subscribed to
+    /// [`Self::frame_signal`] but with a no-op body.
     ///
-    /// Held as a field to keep the underlying `Rc<EffectInner>` alive
-    /// for the substrate's lifetime; [`Effect::new`](pinion_core::reactive::Effect)
-    /// registers an owner-tied `on_cleanup` that cancels the Effect
-    /// when [`Self::root_owner`] drops, so the field naturally
-    /// evaporates at shutdown.
+    /// **R680 atomic 1** replaced the R51.149 Effect-routed animation
+    /// dispatch (the body used to call `root_owner.tick_animations(dt)`
+    /// cascade) with direct per-window dispatch inside
+    /// [`Self::tick_animations_for_window`]. The Effect itself stays
+    /// for backward compatibility with application-side reactive
+    /// subscribers that observe [`Self::frame_signal`] indirectly
+    /// (they expect at least one Effect to anchor the signal's
+    /// observer list so the eager-init reactive eval matches the
+    /// pre-R680 evaluation count). A no-op body anchors the
+    /// subscription without doing any work that would now double up
+    /// with the direct dispatch.
     ///
     /// The `_` prefix matches Rust convention for "value held for its
-    /// side effects, never read directly". Reads happen exclusively
-    /// through the reactive cascade
-    /// ([`Signal::set`](pinion_core::reactive::Signal::set) on
-    /// [`Self::frame_signal`]).
+    /// side effects, never read directly".
     _animation_driver: Effect,
 
     /// R51.157 §5.23 — optional [`CommandExecutor`] the substrate
@@ -254,6 +257,65 @@ pub struct CoreShell<V: WidgetCore> {
     /// added `Arc` only widens the bound on this particular field, not
     /// on `CoreShell` as a whole.
     executor: Option<Arc<CommandExecutor>>,
+
+    /// R680 §5.16 §5.41 §5.28 — per-window reactive scope map.
+    ///
+    /// First atomic of the 4-axis paint-pipeline rewrite series
+    /// (R680-R683). Keyed by canonical [`WindowSpec::id`] string;
+    /// each value is an [`Owner`] handle (cheap `Rc`-internal clone).
+    ///
+    /// ## Scope topology
+    ///
+    /// - `window_owners[DEFAULT_WINDOW]` is seeded in [`Self::new`]
+    ///   as a `clone` of [`Self::root_owner`]. Same `Rc<OwnerInner>`
+    ///   internals — registrations on either handle reach the same
+    ///   scope. This is the canonical
+    ///   `primary window owner == ShellCore-wide owner` mapping the
+    ///   R680 plan calls out: every single-window binding (Phase A,
+    ///   15+ examples) keeps its [`Owner::cache`] slots + animation
+    ///   registry + command queue bit-identical to pre-R680 because
+    ///   the active scope under `compute_paint_scene_internal`'s view
+    ///   fn wrap reads through the same `Rc` either way.
+    ///
+    /// - Secondary entries (`"inspector"`, future dock-panel tear-off
+    ///   ids, etc.) lazy-create through [`Self::window_owner`] via
+    ///   [`Owner::new_child`]`(&root_owner)`. The new child appears
+    ///   on `root_owner`'s children list (one strong ref) AND in this
+    ///   map (one strong ref). Substrate drop releases the map first
+    ///   (declaration order; this field is declared after
+    ///   `root_owner`) then `root_owner` itself, whose cascade walks
+    ///   `children` and releases the last strong ref → child
+    ///   `OwnerInner` destroys.
+    ///
+    /// ## What R680 atomic (0) does NOT yet wire
+    ///
+    /// The view fn wrap in
+    /// `pinion_shell::ShellCore::compute_paint_scene_internal` still
+    /// reads `self.core.root_owner().run(...)`; switching to
+    /// `window_owner(window_id).run(...)` is deferred to R680 atomic
+    /// (1) so the animation-tick decoupling lift (the load-bearing
+    /// behaviour change) lands together with the wrap shift instead
+    /// of in two churn-only commits. Until then, secondary
+    /// `window_owners["inspector"]` entries exist + can host their
+    /// own [`Owner::cache`] slots / animation registrations
+    /// (registered by callers reaching for the per-window scope
+    /// explicitly), but the substrate's automatic view-fn-side
+    /// registrations still land on `root_owner`. Atomic (1) flips
+    /// the wrap to make per-window registration the default.
+    ///
+    /// ## Field choice rationale
+    ///
+    /// `HashMap<String, Owner>` mirrors the existing
+    /// [`Self::routers`] field shape — same `WindowSpec::id` key,
+    /// same `String::to_owned` allocation profile on lazy create,
+    /// same hot-path `HashMap::get` lookup on every paint cycle. The
+    /// alternative `HashMap<&'static str, _>` would require
+    /// `WindowSpec::id` lifetimes to round-trip through the
+    /// substrate's storage; the current `WindowSpec::id: &'static str`
+    /// convention does support that but the runtime-window-spec
+    /// lift planned for R683 (atomic 1: `Signal<Vec<WindowSpec>>`)
+    /// will need owned ids, so `String` ahead.
+    window_owners: HashMap<String, Owner>,
 }
 
 /// R51.122 §5.41 — post-dispatch bookkeeping artifact returned by
@@ -400,28 +462,37 @@ impl<V: WidgetCore> CoreShell<V> {
         let frame_signal = Signal::new(0_u64);
         let last_dt: std::rc::Rc<Cell<f32>> = std::rc::Rc::new(Cell::new(0.0_f32));
 
-        // R51.149 §5.28 — build the framework AnimationDriver as a
-        // reactive `Effect` subscribing to `frame_signal`. Each
-        // [`Self::tick_animations`] call stores the new `dt` into
-        // [`Self::last_dt`] then increments the frame counter,
-        // firing this Effect; the closure reads back the `dt` and
-        // dispatches into `Owner::tick_animations(dt)`. Eager
-        // initial run executes against the construction baseline
-        // (`dt = 0.0`, empty animation registry) — a deliberate
-        // no-op that primes the subscription so the first real
-        // tick fires.
+        // R680 §5.16 §5.28 — observer-anchor Effect. The pre-R680
+        // body dispatched `owner_for_closure.tick_animations(dt)` as
+        // the framework AnimationDriver (R51.149); R680 atomic 1
+        // moved tick dispatch into direct per-window calls inside
+        // [`Self::tick_animations_for_window`] so each window's
+        // paint cycle advances only its own scope (the R670.B
+        // 9-round honest carry on multi-window animation compound
+        // is closed structurally).
+        //
+        // Keeping the Effect anchored (with a no-op body that still
+        // subscribes via `signal_for_driver.get()`) preserves the
+        // pre-R680 invariant that [`Self::frame_signal`]'s observer
+        // list contains at least one Effect at construction —
+        // application-side `Effect::new(&owner, || { … })` closures
+        // that subscribe to the signal still see the same eager-
+        // initial-run sequencing because they are appended after
+        // the anchor.
         let owner_for_driver = root_owner.clone();
-        let owner_for_closure = root_owner.clone();
         let signal_for_driver = frame_signal.clone();
-        let dt_for_closure = std::rc::Rc::clone(&last_dt);
+        // `_dt_unused` mirrors the pre-R680 closure capture so the
+        // `Rc<Cell<f32>>` clone discipline is unchanged in shape;
+        // the closure body itself does not read `dt` anymore.
+        let _dt_unused = std::rc::Rc::clone(&last_dt);
         let animation_driver = root_owner.run(|| {
             Effect::new(&owner_for_driver, move || {
-                // `get()` subscribes to the counter on the eager
-                // initial run; subsequent re-runs trigger off
-                // `Signal::set` in `tick_animations`.
+                // Subscribe to the counter on the eager initial run +
+                // re-fire on every [`Self::tick_animations_for_window`]
+                // bump. The dispatch happens in `tick_animations_for_window`
+                // directly; this Effect is just the subscription
+                // anchor.
                 let _frame = signal_for_driver.get();
-                let dt = dt_for_closure.get();
-                owner_for_closure.tick_animations(dt);
             })
         });
 
@@ -431,6 +502,21 @@ impl<V: WidgetCore> CoreShell<V> {
         // surface) find a router immediately without lazy-init.
         let mut routers: HashMap<String, InputRouter> = HashMap::new();
         routers.insert(DEFAULT_WINDOW.to_owned(), InputRouter::new());
+
+        // R680 §5.16 §5.41 §5.28 — seed `window_owners` with the
+        // canonical primary slot mapped to a clone of `root_owner`.
+        // The clone shares the same `Rc<OwnerInner>` internals so
+        // `window_owner(DEFAULT_WINDOW)` and `root_owner()` resolve
+        // through the same scope: single-window bindings see zero
+        // behaviour change (`Owner::cache` slots, animation
+        // registrations, and command queues stay co-located with
+        // `root_owner`). Secondary windows lazy-create through
+        // [`Self::window_owner`] using [`Owner::new_child`]`(&root_owner)`
+        // so the new scope cascades on root drop without any explicit
+        // cleanup wiring.
+        let mut window_owners: HashMap<String, Owner> = HashMap::new();
+        window_owners.insert(DEFAULT_WINDOW.to_owned(), root_owner.clone());
+
         Self {
             scene,
             cached_state,
@@ -442,6 +528,7 @@ impl<V: WidgetCore> CoreShell<V> {
             next_frame_count: Cell::new(1_u64),
             _animation_driver: animation_driver,
             executor: None,
+            window_owners,
         }
     }
 
@@ -632,6 +719,94 @@ impl<V: WidgetCore> CoreShell<V> {
         &self.root_owner
     }
 
+    /// R680 §5.16 §5.41 §5.28 — resolve (or lazy-create) the
+    /// per-window reactive scope keyed by `window_id`.
+    ///
+    /// Returns an owned [`Owner`] handle (a cheap `Rc`-internal
+    /// clone). Two calls with the same `window_id` always return
+    /// handles wrapping the same `Rc<OwnerInner>`; registrations on
+    /// either handle reach the same scope.
+    ///
+    /// ## Mapping
+    ///
+    /// - `window_id == ` [`DEFAULT_WINDOW`] (`"main"`) — returns a
+    ///   clone of [`Self::root_owner`]. Seeded in [`Self::new`]; the
+    ///   primary-window owner is the binding-wide root scope so
+    ///   single-window callers (every Phase A binding) observe
+    ///   bit-identical behaviour through this accessor as through
+    ///   [`Self::root_owner`].
+    /// - Any other `window_id` — first call lazy-creates an
+    ///   [`Owner::new_child`]`(&root_owner)` and stores it in the
+    ///   map; subsequent calls return the cached child. The new
+    ///   child is parented to `root_owner` so cascade drop fires
+    ///   when this [`CoreShell`] drops (animations, effects, and
+    ///   commands registered on the secondary scope evaporate
+    ///   together with the substrate).
+    ///
+    /// ## Why `&mut self`
+    ///
+    /// Lazy insert mutates the underlying map. Callers that need a
+    /// read-only probe (RPC introspection, telemetry that must not
+    /// create a fresh scope) reach for
+    /// [`Self::window_owner_existing`] instead. The map's hot-path
+    /// readers (R680 atomic 1's per-window `tick_animations`,
+    /// R680 atomic 2's `redraw_requested` per-window flag, R680
+    /// atomic 3's RPC dispatch wrap) all hold `&mut self` already so
+    /// the mutability requirement does not propagate up the call
+    /// stack.
+    ///
+    /// ## Allocation profile
+    ///
+    /// First call per `window_id` allocates the String key (via
+    /// `to_owned`) and a fresh `OwnerInner` (one heap alloc inside
+    /// `Owner::new_child`). Subsequent calls hash-lookup the
+    /// existing entry without touching the allocator beyond the Rc
+    /// bump. Identical profile to the existing
+    /// [`Self::routers`] map.
+    pub fn window_owner(&mut self, window_id: &str) -> Owner {
+        if let Some(owner) = self.window_owners.get(window_id) {
+            return owner.clone();
+        }
+        // R680 §5.28 — fresh secondary scope is a child of the
+        // binding-wide `root_owner` so cascade-drop on substrate
+        // destruction releases the child's animations / commands /
+        // cache slots without an explicit teardown call.
+        let child = Owner::new_child(&self.root_owner);
+        self.window_owners.insert(window_id.to_owned(), child.clone());
+        child
+    }
+
+    /// R680 §5.16 §5.41 §5.28 — read-only probe for a per-window
+    /// scope. Returns `Some(owner_clone)` when an entry already
+    /// exists; `None` for unknown ids. Never creates a fresh scope.
+    ///
+    /// Designed for RPC introspection paths (`scene/commands`
+    /// per-window scoping in R680 atomic 3, future telemetry
+    /// surfaces) where instantiating a new scope as a side effect
+    /// of "does this window have any registered work?" would be a
+    /// contract violation.
+    ///
+    /// The returned [`Owner`] is a clone of the stored handle, so
+    /// callers can hand it to [`Owner::tick_animations`] /
+    /// [`Owner::pending_commands`] / etc. without taking a borrow on
+    /// the substrate.
+    #[must_use]
+    pub fn window_owner_existing(&self, window_id: &str) -> Option<Owner> {
+        self.window_owners.get(window_id).cloned()
+    }
+
+    /// R680 §5.16 §5.41 §5.28 — iterator over every known per-window
+    /// scope id. Used by tests + multi-window backends that need to
+    /// walk every active window (e.g. the R683 dock-panel
+    /// `reconcile_windows` Effect's drop pass after a tear-off
+    /// dock-back). Order follows
+    /// [`HashMap`](std::collections::HashMap) iteration semantics
+    /// (unstable across rebuilds; callers needing deterministic
+    /// order sort downstream).
+    pub fn window_owner_ids(&self) -> impl Iterator<Item = &str> {
+        self.window_owners.keys().map(String::as_str)
+    }
+
     /// R51.142 §5.28 — advance every animation registered on the
     /// [`root_owner`](Self::root_owner) by `dt` seconds.
     ///
@@ -648,21 +823,95 @@ impl<V: WidgetCore> CoreShell<V> {
     /// inside their tick callback do not break the sweep — the new
     /// registrations pick up on the next frame instead.
     pub fn tick_animations(&self, dt: f32) {
-        // R51.149 §5.28 — store the new dt into the shared
-        // `Rc<Cell>` then bump the monotonic frame counter. The
-        // counter bump fires the `_animation_driver` Effect
-        // synchronously (outside any active batch); the Effect body
-        // reads back the stored `dt` and dispatches into
-        // `Owner::tick_animations(dt)` against `root_owner` so every
-        // registered spring advances by exactly one tick. Same
-        // observable behaviour as the pre-R51.149 direct call, with
-        // the spec-canonical reactive routing (R51.137 Effect /
-        // §5.28 R33).
+        // R680 §5.16 §5.28 — single-window / primary-window legacy
+        // entry. Routes through the per-window dispatch using
+        // [`DEFAULT_WINDOW`] so single-window bindings (the entire
+        // Phase A example catalogue) see bit-identical behaviour:
+        // `window_owners[DEFAULT_WINDOW]` is seeded as a clone of
+        // `root_owner` in [`Self::new`], so the local-only walk
+        // (`Owner::tick_animations_local` rather than the cascade
+        // `tick_animations`) over root's own animation list reaches
+        // every single-window-registered animation (there are no
+        // root children outside of secondary windows pre-R680
+        // atomic 1).
         //
-        // `next_frame_count` is read without subscribing — the
-        // monotonic step lives in a `Cell` outside the reactive
-        // graph; only `frame_signal.set` enters the cascade.
+        // Multi-window backends call [`Self::tick_animations_for_window`]
+        // directly per paint cycle with their slot's `window_id` +
+        // measured `dt`; the legacy `tick_animations` alias keeps
+        // every pre-R680 caller (test fixtures, headless screenshot
+        // pipeline, hello-listbox single-window pump) working
+        // without API churn.
+        self.tick_animations_for_window(DEFAULT_WINDOW, dt);
+    }
+
+    /// R680 §5.16 §5.28 §5.41 — per-window animation tick dispatch.
+    ///
+    /// Advances **only** the animations registered against the
+    /// `window_id`'s scope (looked up through
+    /// [`Self::window_owner_existing`]). Each paint cycle of each
+    /// window calls this once with the measured frame delta against
+    /// THAT window's own paint clock (`pinion-shell::ShellCore`
+    /// owns the per-window `last_paint_instants` map; pinion-tui
+    /// + headless backends follow the same convention).
+    ///
+    /// ## What the call does
+    ///
+    /// 1. Records `dt` into the substrate's `last_dt` cell (read by
+    ///    application observers that resolve the most-recent frame
+    ///    delta from outside a reactive context).
+    /// 2. Resolves the window's [`Owner`] scope via
+    ///    [`Self::window_owner_existing`]. `None` (unknown id, never
+    ///    painted yet) → no animation walk runs; the call falls
+    ///    through to the `frame_signal` bump so application observers
+    ///    of [`Self::frame_signal`] still see the cascade. The
+    ///    no-walk path matters because R680 atomic 1 should not
+    ///    silently lazy-create a scope just because a tick was
+    ///    requested against an unknown id; only paint cycles +
+    ///    explicit [`Self::window_owner`] calls instantiate the
+    ///    secondary scope.
+    /// 3. Calls
+    ///    [`Owner::tick_animations_local`](pinion_core::reactive::Owner::tick_animations_local)
+    ///    on the resolved scope — the **local** variant skips the
+    ///    child-scope cascade. For `window_id == DEFAULT_WINDOW`
+    ///    the scope is `root_owner` (via the seeded alias), and
+    ///    every single-window-registered animation lives directly
+    ///    on root's own animation list, so the local walk reaches
+    ///    them all. For a secondary `window_id` the scope is the
+    ///    lazy-created child; its `owned_animations` list holds
+    ///    only what the secondary window's view fn + RPC dispatch
+    ///    registered there, so foreign windows' animations are
+    ///    structurally invisible.
+    /// 4. Bumps the monotonic frame counter + writes through
+    ///    [`Self::frame_signal`] so application Effects subscribed
+    ///    to the paint clock re-run. The bump fires every tick
+    ///    (`u64` wrap counter pattern from R51.149) regardless of
+    ///    whether the walk in step 3 ran, so observers that just
+    ///    want to react to "a paint happened" still see the cascade
+    ///    on every call.
+    ///
+    /// ## Backward compatibility
+    ///
+    /// Single-window backends (every Phase A binding) call
+    /// [`Self::tick_animations`] (the legacy entry) which forwards
+    /// here with `window_id = DEFAULT_WINDOW`. Multi-window backends
+    /// (Phase B+) call this directly per window. The R670.B 9-round
+    /// honest carry on multi-window animation tick compound is
+    /// closed at this entry: two windows painting in the same
+    /// event-loop turn each call this with their own `dt`, walking
+    /// only their own scope. The pre-R680 cascade-tick path no
+    /// longer fires from the substrate — `Owner::tick_animations`
+    /// (the cascade variant) is still available as a primitive for
+    /// pinion-rpc's `animate_advance` headless dispatcher, but the
+    /// substrate's own paint cycle uses the local walk.
+    pub fn tick_animations_for_window(&self, window_id: &str, dt: f32) {
         self.last_dt.set(dt);
+        if let Some(owner) = self.window_owner_existing(window_id) {
+            owner.tick_animations_local(dt);
+        }
+        // R51.149 §5.28 — bump the monotonic counter every tick so
+        // application observers of `frame_signal` re-fire on each
+        // paint cycle (sidesteps `Signal::set`'s equality-skip even
+        // when two ticks pass the same `dt`).
         let next = self.next_frame_count.get();
         self.next_frame_count.set(next.wrapping_add(1));
         self.frame_signal.set(next);
@@ -706,6 +955,35 @@ impl<V: WidgetCore> CoreShell<V> {
     #[must_use]
     pub fn any_animation_active(&self, epsilon: f32) -> bool {
         self.root_owner.any_animation_active(epsilon)
+    }
+
+    /// R680 §5.16 §5.28 §5.41 — per-window animation-active probe.
+    ///
+    /// Returns `true` when any animation registered **directly on
+    /// the addressed window's scope** is still moving above
+    /// `epsilon`. Mirrors [`Self::any_animation_active`] but reads
+    /// only the addressed window's own animation list (via
+    /// [`Owner::any_animation_active_local`](pinion_core::reactive::Owner::any_animation_active_local)),
+    /// so multi-window backends can decide per-window redraw without
+    /// taking foreign windows' activity into account.
+    ///
+    /// Returns `false` when:
+    ///
+    /// - The `window_id` has never been instantiated (no entry in
+    ///   `window_owners`) — symmetric with
+    ///   [`Self::tick_animations_for_window`]'s no-lazy-create
+    ///   contract.
+    /// - The scope exists but every registered animation reports
+    ///   `is_at_rest(epsilon) == true`.
+    /// - The scope holds no animations.
+    ///
+    /// Backends that want the binding-wide "any window still
+    /// animating?" answer keep calling [`Self::any_animation_active`]
+    /// (cascade walk via `root_owner`).
+    #[must_use]
+    pub fn any_animation_active_for_window(&self, window_id: &str, epsilon: f32) -> bool {
+        self.window_owner_existing(window_id)
+            .is_some_and(|owner| owner.any_animation_active_local(epsilon))
     }
 
     /// R51.122 §5.41 — hand a freshly-painted scene to the
@@ -2484,4 +2762,530 @@ mod tests {
         assert_eq!(state.offset_y(), 50, "release does not snap back");
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // R680 §5.16 §5.41 §5.28 — per-window Owner scope substrate.
+    //
+    // First atomic of the 4-axis paint-pipeline rewrite series
+    // (R680-R683 axis 3). The tests below pin the load-bearing
+    // invariants of `window_owners` + `window_owner` /
+    // `window_owner_existing` / `window_owner_ids`:
+    //
+    // - Default `"main"` slot is seeded as a clone of `root_owner`
+    //   (single-window binding zero-regression contract).
+    // - Lazy create of a secondary id parents the new scope to
+    //   `root_owner` so cascade drop reaches it.
+    // - Repeat calls for the same id return handles with identical
+    //   `Owner::id`.
+    // - Secondary scopes do NOT alias each other.
+    // - `Owner::cache` slots are isolated per scope; a slot landed
+    //   in the secondary owner is invisible to the root owner cache.
+    // - Animations registered against a secondary scope still tick
+    //   through `root_owner.tick_animations` (parent walks children
+    //   per R51.138 cascade), but a direct
+    //   `secondary.tick_animations` walks only the secondary scope.
+    // - On substrate drop, both `window_owners` map drop and
+    //   `root_owner` cascade release the secondary scope's last Rc
+    //   refs, draining every registered animation / cleanup.
+    // - `window_owner_existing` is a read-only probe (NO lazy create).
+    // - `window_owner_ids` enumerates every seeded + lazily-created
+    //   slot.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r680_default_window_seeded_as_root_owner_clone() {
+        // R680 §5.16 §5.41 §5.28 — `new()` seeds the
+        // [`DEFAULT_WINDOW`] slot with a clone of `root_owner`. Same
+        // `Rc<OwnerInner>` internals → same `Owner::id`. Single-
+        // window bindings (every Phase A example) read through
+        // either accessor and reach the same scope.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let main_owner = core.window_owner(DEFAULT_WINDOW);
+        assert_eq!(
+            main_owner.id(),
+            core.root_owner().id(),
+            "DEFAULT_WINDOW slot must alias root_owner so Phase A bindings stay bit-identical",
+        );
+    }
+
+    #[test]
+    fn r680_window_owner_main_alias_persists_across_calls() {
+        // R680 — repeated `window_owner("main")` calls return the
+        // same `Owner::id` (the seeded `root_owner` clone is cached;
+        // the lazy-create path is never entered for the canonical
+        // primary).
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let first = core.window_owner(DEFAULT_WINDOW).id();
+        let second = core.window_owner(DEFAULT_WINDOW).id();
+        let third = core.window_owner(DEFAULT_WINDOW).id();
+        assert_eq!(first, second);
+        assert_eq!(second, third);
+        assert_eq!(first, core.root_owner().id());
+    }
+
+    #[test]
+    fn r680_secondary_window_creates_distinct_child_of_root() {
+        // R680 — lazy-create on first lookup: the secondary owner
+        // has a fresh `Owner::id` that is NOT the root owner's id,
+        // so the two scopes are addressable independently.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let root_id = core.root_owner().id();
+        let inspector = core.window_owner("inspector");
+        assert_ne!(
+            inspector.id(),
+            root_id,
+            "secondary window owner must be a fresh scope, not a root clone",
+        );
+    }
+
+    #[test]
+    fn r680_secondary_window_idempotent_across_calls() {
+        // R680 — second lookup for the same secondary id returns the
+        // cached entry; a third lookup also returns the cached entry.
+        // The lazy-create branch fires exactly once per `window_id`.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let a = core.window_owner("inspector").id();
+        let b = core.window_owner("inspector").id();
+        let c = core.window_owner("inspector").id();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn r680_two_secondary_windows_do_not_alias() {
+        // R680 — distinct secondary ids → distinct scopes. The map
+        // keys are the canonical `WindowSpec::id` strings and the
+        // lookup never collapses unrelated ids.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let inspector = core.window_owner("inspector").id();
+        let palette = core.window_owner("palette").id();
+        let outliner = core.window_owner("outliner").id();
+        assert_ne!(inspector, palette);
+        assert_ne!(palette, outliner);
+        assert_ne!(inspector, outliner);
+    }
+
+    #[test]
+    fn r680_window_owner_existing_returns_seeded_main() {
+        // R680 — `window_owner_existing` is read-only, but the
+        // canonical primary is seeded at construction so it is
+        // observable without first calling the lazy-create accessor.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let main_probe = core
+            .window_owner_existing(DEFAULT_WINDOW)
+            .expect("primary window owner must be seeded by `new()`");
+        assert_eq!(main_probe.id(), core.root_owner().id());
+    }
+
+    #[test]
+    fn r680_window_owner_existing_returns_none_for_unknown_id() {
+        // R680 — the read-only probe never lazy-creates; `None` is
+        // the contract for an id that has not yet been touched.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        assert!(core.window_owner_existing("inspector").is_none());
+        assert!(core.window_owner_existing("never-touched").is_none());
+    }
+
+    #[test]
+    fn r680_window_owner_existing_returns_some_after_lazy_create() {
+        // R680 — after `window_owner("inspector")` lazy-creates the
+        // scope, the read-only probe observes it. The probe returns
+        // a handle with the same `Owner::id` as the original.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let created = core.window_owner("inspector").id();
+        let probed = core
+            .window_owner_existing("inspector")
+            .expect("lazy-created secondary must be observable through the read-only probe");
+        assert_eq!(created, probed.id());
+    }
+
+    #[test]
+    fn r680_window_owner_ids_includes_seeded_main_at_construction() {
+        // R680 — fresh substrate's id iterator contains the canonical
+        // primary slot. Order is HashMap-unstable; the test sorts
+        // before asserting to stay deterministic.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let mut ids: Vec<&str> = core.window_owner_ids().collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![DEFAULT_WINDOW]);
+    }
+
+    #[test]
+    fn r680_window_owner_ids_grows_with_lazy_creation() {
+        // R680 — every lazy create through `window_owner` adds an
+        // entry observable through the id iterator.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let _ = core.window_owner("inspector");
+        let _ = core.window_owner("palette");
+        let mut ids: Vec<&str> = core.window_owner_ids().collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["inspector", DEFAULT_WINDOW, "palette"]);
+    }
+
+    #[test]
+    fn r680_secondary_scope_owner_cache_isolated_from_root() {
+        // R680 §5.28 — `Owner::cache` slots are per-`OwnerInner`. A
+        // slot keyed `"shared"` landed in the secondary scope does
+        // NOT appear in the root scope's cache (separate
+        // `RefCell<HashMap>` backing). The test confirms the
+        // isolation by writing on the secondary and probing on the
+        // root.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let inspector = core.window_owner("inspector");
+        // Land a slot on the secondary scope.
+        let _: Rc<u32> = inspector.run(|| {
+            pinion_core::Owner::current()
+                .expect("Owner::current resolves inside Owner::run")
+                .cache("r680_isolation_probe", || 42_u32)
+        });
+        // The root scope's cache does not contain the key.
+        assert!(
+            !core
+                .root_owner()
+                .cache_contains::<u32>("r680_isolation_probe"),
+            "secondary-scope cache slot must NOT leak into the root scope",
+        );
+    }
+
+    #[test]
+    fn r680_two_secondary_scopes_have_isolated_owner_cache() {
+        // R680 §5.28 — two distinct secondary scopes also do not
+        // share cache slots. Write on `"inspector"`, probe on
+        // `"palette"` for the same key.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let inspector = core.window_owner("inspector");
+        let _: Rc<u32> = inspector.run(|| {
+            pinion_core::Owner::current()
+                .unwrap()
+                .cache("r680_cross_secondary_probe", || 7_u32)
+        });
+        let palette = core.window_owner("palette");
+        assert!(
+            !palette.cache_contains::<u32>("r680_cross_secondary_probe"),
+            "two secondary scopes must not share `Owner::cache` slots",
+        );
+    }
+
+    #[test]
+    fn r680_substrate_tick_does_not_cascade_into_secondary_scopes() {
+        // R680 atomic 1 §5.16 §5.28 — `CoreShell::tick_animations`
+        // routes through [`Self::tick_animations_for_window`] with
+        // `DEFAULT_WINDOW`, which calls
+        // [`Owner::tick_animations_local`] (NOT the cascade
+        // `tick_animations`) on the resolved window scope. A
+        // `Tickable` registered on a secondary scope is therefore
+        // structurally invisible to a primary-window tick — the
+        // foundation for the R670.B 9-round honest carry on
+        // multi-window animation compound elimination.
+        //
+        // The companion test
+        // `r680_per_window_tick_walks_only_addressed_scope` exercises
+        // the multi-window dispatch: ticking the secondary scope
+        // walks only IT (not root + not other secondaries), so each
+        // window's paint cycle advances its own animations exactly
+        // once.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let secondary = core.window_owner("inspector");
+        let recorder = Rc::new(TickRecorder::new());
+        secondary.register_animation(recorder.clone());
+        // Substrate-level tick uses the local walk on the primary
+        // scope (root_owner clone). Secondary scopes are NOT
+        // descended into.
+        core.tick_animations(0.016);
+        assert_eq!(
+            recorder.ticks.get(),
+            0,
+            "substrate tick must NOT cascade into secondary scopes (R680 axis 3 multi-window compound elimination)",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R680 atomic 1 §5.16 §5.28 §5.41 — per-window animation tick
+    // decoupling. Tests pin the load-bearing invariants:
+    //
+    // - `tick_animations_for_window(window_id, dt)` walks only that
+    //   window's scope (no cascade, no compound on multi-window).
+    // - Single-window backward compat — `tick_animations(dt)` routes
+    //   through DEFAULT_WINDOW and reaches every root-registered
+    //   animation (because DEFAULT_WINDOW is a root_owner alias).
+    // - Unknown window_id → no-op walk + frame_signal still bumps.
+    // - `any_animation_active_for_window` mirrors the local walk.
+    // - Two windows can paint independently with different `dt`
+    //   values and each window's animation advances exactly once.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r680_per_window_tick_walks_only_addressed_scope() {
+        // R680 atomic 1 — register a Tickable on each of root +
+        // secondary "inspector" + secondary "palette". Ticking
+        // "inspector" advances only the inspector recorder; root +
+        // palette remain at 0 ticks.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let root_recorder = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(root_recorder.clone());
+        let inspector_recorder = Rc::new(TickRecorder::new());
+        core.window_owner("inspector")
+            .register_animation(inspector_recorder.clone());
+        let palette_recorder = Rc::new(TickRecorder::new());
+        core.window_owner("palette")
+            .register_animation(palette_recorder.clone());
+
+        core.tick_animations_for_window("inspector", 0.025);
+
+        assert_eq!(inspector_recorder.ticks.get(), 1);
+        assert_eq!(
+            inspector_recorder.last_dt.get().to_bits(),
+            0.025_f32.to_bits(),
+            "inspector dt forwarded verbatim",
+        );
+        assert_eq!(
+            root_recorder.ticks.get(),
+            0,
+            "primary scope is invisible to a secondary-window tick",
+        );
+        assert_eq!(
+            palette_recorder.ticks.get(),
+            0,
+            "sibling secondary scope is invisible to a foreign tick",
+        );
+    }
+
+    #[test]
+    fn r680_two_secondary_windows_tick_with_independent_dt() {
+        // R680 atomic 1 — true per-window animation pump: two
+        // secondary windows paint in the same event-loop turn with
+        // distinct `dt` values; each window's recorder records its
+        // own delta, no compound.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let inspector_recorder = Rc::new(TickRecorder::new());
+        core.window_owner("inspector")
+            .register_animation(inspector_recorder.clone());
+        let palette_recorder = Rc::new(TickRecorder::new());
+        core.window_owner("palette")
+            .register_animation(palette_recorder.clone());
+
+        core.tick_animations_for_window("inspector", 0.020);
+        core.tick_animations_for_window("palette", 0.040);
+
+        assert_eq!(inspector_recorder.ticks.get(), 1);
+        assert_eq!(
+            inspector_recorder.last_dt.get().to_bits(),
+            0.020_f32.to_bits(),
+        );
+        assert_eq!(palette_recorder.ticks.get(), 1);
+        assert_eq!(
+            palette_recorder.last_dt.get().to_bits(),
+            0.040_f32.to_bits(),
+        );
+    }
+
+    #[test]
+    fn r680_tick_for_unknown_window_id_is_noop_but_still_bumps_frame_signal() {
+        // R680 atomic 1 — `tick_animations_for_window("never-created", _)`
+        // is a no-op on the animation walk (no scope to walk) but
+        // still bumps the monotonic frame counter so application
+        // observers of `frame_signal` see the cascade. The
+        // no-lazy-create contract is symmetric with
+        // `any_animation_active_for_window`.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let baseline = core.frame_signal().get();
+        core.tick_animations_for_window("never-created", 0.016);
+        assert_eq!(
+            core.frame_signal().get(),
+            baseline + 1,
+            "unknown window_id must still bump frame_signal for application observers",
+        );
+        // No window_owner entry was created as a side effect — the
+        // probe still returns None.
+        assert!(core.window_owner_existing("never-created").is_none());
+    }
+
+    #[test]
+    fn r680_tick_default_window_walks_root_local_only() {
+        // R680 atomic 1 — single-window backward compat: a Tickable
+        // registered on root_owner via the canonical path (Phase A
+        // bindings) is reached by the substrate's `tick_animations`
+        // alias because DEFAULT_WINDOW is a root_owner clone.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let root_recorder = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(root_recorder.clone());
+        for _ in 0..3 {
+            core.tick_animations(0.016);
+        }
+        assert_eq!(
+            root_recorder.ticks.get(),
+            3,
+            "single-window legacy tick path must still reach root-registered animations bit-identical to pre-R680",
+        );
+    }
+
+    #[test]
+    fn r680_any_animation_active_for_window_reads_local_only() {
+        // R680 atomic 1 — the active-probe variant of the local
+        // walk: a moving animation on secondary "inspector" is
+        // observable through
+        // `any_animation_active_for_window("inspector", eps)` but
+        // NOT through the same probe targeted at root or at a
+        // sibling secondary.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let recorder = Rc::new(TickRecorder::new());  // is_at_rest = false (always moving)
+        core.window_owner("inspector").register_animation(recorder);
+        // Also create a sibling secondary with NO registered
+        // animations so the cross-secondary probe targets a real
+        // (empty) scope.
+        let _palette = core.window_owner("palette");
+
+        assert!(
+            core.any_animation_active_for_window("inspector", 0.01),
+            "secondary scope with a non-resting Tickable reports active",
+        );
+        assert!(
+            !core.any_animation_active_for_window("palette", 0.01),
+            "sibling secondary with no registrations reports inactive",
+        );
+        assert!(
+            !core.any_animation_active_for_window(DEFAULT_WINDOW, 0.01),
+            "primary scope (root) carries no animations in this fixture",
+        );
+        // The binding-wide cascade variant still observes the
+        // inspector's animation (root walks children).
+        assert!(
+            core.any_animation_active(0.01),
+            "binding-wide cascade still sees the secondary's active animation",
+        );
+    }
+
+    #[test]
+    fn r680_any_animation_active_for_unknown_window_is_false() {
+        // R680 atomic 1 — `any_animation_active_for_window` returns
+        // `false` for never-created scopes without lazy-creating an
+        // entry, mirroring `tick_animations_for_window`.
+        let core: CoreShell<TestButton> = CoreShell::new();
+        assert!(!core.any_animation_active_for_window("never-touched", 0.01));
+        assert!(core.window_owner_existing("never-touched").is_none());
+    }
+
+    #[test]
+    fn r680_tick_for_window_records_last_dt_for_observers() {
+        // R680 atomic 1 — `tick_animations_for_window` writes the
+        // most-recent `dt` into the substrate's shared `last_dt`
+        // cell (used by observers that resolve the most-recent
+        // frame delta from outside a reactive context).
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        let _ = core.window_owner("inspector");
+        core.tick_animations_for_window("inspector", 0.033);
+        assert_eq!(
+            core.last_dt.get().to_bits(),
+            0.033_f32.to_bits(),
+            "last_dt mirrors the value the substrate just dispatched",
+        );
+        core.tick_animations_for_window("inspector", 0.050);
+        assert_eq!(
+            core.last_dt.get().to_bits(),
+            0.050_f32.to_bits(),
+            "successive ticks overwrite last_dt",
+        );
+    }
+
+    #[test]
+    fn r680_secondary_scope_direct_tick_walks_only_own_scope() {
+        // R680 §5.28 — calling `tick_animations` directly on a
+        // secondary scope walks the secondary's own children + self
+        // ONLY. A `Tickable` registered on the root is NOT ticked
+        // when the secondary scope's `tick_animations` is invoked.
+        //
+        // This is the load-bearing invariant for atomic (1): if a
+        // backend calls `inspector_owner.tick_animations(dt)` while
+        // skipping `root_owner.tick_animations`, the inspector's own
+        // animations advance once and the rest of the binding does
+        // not. Two windows can therefore tick independently without
+        // compounding each other's spring solvers (closes the
+        // R670.B 9-round carry on `[[multi-window-input-router-race]]`-
+        // adjacent compound).
+        let core: CoreShell<TestButton> = CoreShell::new();
+        let root_recorder = Rc::new(TickRecorder::new());
+        core.root_owner().register_animation(root_recorder.clone());
+        // Build a secondary directly via `Owner::new_child` so the
+        // test exercises the same shape `window_owner` uses but
+        // without needing `&mut self`.
+        let secondary = Owner::new_child(core.root_owner());
+        let secondary_recorder = Rc::new(TickRecorder::new());
+        secondary.register_animation(secondary_recorder.clone());
+
+        secondary.tick_animations(0.016);
+
+        assert_eq!(
+            secondary_recorder.ticks.get(),
+            1,
+            "secondary tick must advance its own animations",
+        );
+        assert_eq!(
+            root_recorder.ticks.get(),
+            0,
+            "secondary tick must NOT walk up into the root scope",
+        );
+    }
+
+    #[test]
+    fn r680_secondary_scope_drops_with_substrate() {
+        // R680 §5.28 — when the substrate goes out of scope, the
+        // `window_owners` map drops first (declaration order; the
+        // field is declared after `root_owner`), then `root_owner`
+        // cascade walks its children list and releases the
+        // secondary scope's last strong Rc. Every `Tickable`
+        // registered on the secondary scope is therefore dropped.
+        //
+        // Verified via `Rc::strong_count`: the test owns one strong
+        // ref to a `TickRecorder` while the secondary owner holds
+        // another. After the substrate drops, only the test's local
+        // strong ref remains.
+        let recorder = Rc::new(TickRecorder::new());
+        {
+            let mut core: CoreShell<TestButton> = CoreShell::new();
+            let inspector = core.window_owner("inspector");
+            inspector.register_animation(recorder.clone());
+            assert!(Rc::strong_count(&recorder) >= 2);
+        }
+        assert_eq!(
+            Rc::strong_count(&recorder),
+            1,
+            "substrate drop must cascade through window_owners → root_owner.children → secondary scope teardown",
+        );
+    }
+
+    #[test]
+    fn r680_secondary_scope_drops_with_substrate_owner_cache_too() {
+        // R680 §5.28 — `Owner::cache` slots on the secondary scope
+        // also drop when the substrate drops. The cache map is a
+        // `RefCell<HashMap<_, Rc<dyn Any>>>` on the `OwnerInner`;
+        // releasing the last `OwnerInner` strong ref drops the
+        // HashMap and decrements every cached `Rc`.
+        struct Sentinel {
+            flag: Rc<Cell<bool>>,
+        }
+        impl Drop for Sentinel {
+            fn drop(&mut self) {
+                self.flag.set(true);
+            }
+        }
+        let flag = Rc::new(Cell::new(false));
+        {
+            let mut core: CoreShell<TestButton> = CoreShell::new();
+            let inspector = core.window_owner("inspector");
+            let flag_clone = Rc::clone(&flag);
+            let _: Rc<Sentinel> = inspector.run(|| {
+                pinion_core::Owner::current().unwrap().cache(
+                    "r680_drop_sentinel",
+                    move || Sentinel { flag: flag_clone },
+                )
+            });
+            assert!(
+                !flag.get(),
+                "sentinel must still be alive while substrate lives",
+            );
+        }
+        assert!(
+            flag.get(),
+            "secondary scope cache slot must drop with the substrate",
+        );
+    }
 }

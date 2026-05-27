@@ -584,6 +584,50 @@ impl Owner {
         });
     }
 
+    /// R680 §5.16 §5.28 — tick **only** this owner's own registered
+    /// animations. Skips the [`Self::tick_animations`] depth-first
+    /// descent into child scopes.
+    ///
+    /// Mirrors [`Self::tick_animations`]'s borrow + batch discipline
+    /// (snapshot the `owned_animations` `Vec` via `Rc::clone` before
+    /// releasing the `RefCell`, then `batch`-wrap the dispatch) so
+    /// animations that (re)register sibling animations during their
+    /// own `tick` callback do not trigger a `BorrowMutError` mid-walk.
+    ///
+    /// ## Why this exists
+    ///
+    /// Phase B multi-window per-paint animation tick (R680 atomic 1
+    /// of the 4-axis paint-pipeline rewrite series) needs each
+    /// window's paint cycle to advance ONLY that window's own
+    /// animations. The pre-R680 `tick_animations` cascade walks every
+    /// descendant scope, so two windows painting in the same
+    /// event-loop turn end up double-ticking each window's scope
+    /// (the R670.B 9-round honest carry on multi-window animation
+    /// compound). The framework's per-window dispatch now calls
+    /// [`Self::tick_animations_local`] against each window's
+    /// secondary scope so the spring solvers advance at exactly one
+    /// step per paint cycle of THIS window.
+    ///
+    /// Application code calling `Owner::tick_animations` directly on
+    /// a root owner — the canonical headless / RPC dispatch entry
+    /// (`pinion-rpc::animate_control`'s `animate_advance` /
+    /// `animate_settle`) — keeps its cascade semantic; only the
+    /// substrate's per-window dispatch swap to this variant.
+    pub fn tick_animations_local(&self, dt: f32) {
+        let anims: Vec<Rc<dyn crate::animation::Tickable>> = self
+            .inner
+            .owned_animations
+            .borrow()
+            .iter()
+            .map(Rc::clone)
+            .collect();
+        batch(|| {
+            for anim in &anims {
+                anim.tick(dt);
+            }
+        });
+    }
+
     #[cfg(test)]
     pub(crate) fn registered_animation_count(&self) -> usize {
         self.inner.owned_animations.borrow().len()
@@ -636,6 +680,34 @@ impl Owner {
             }
         }
         false
+    }
+
+    /// R680 §5.16 §5.28 — `true` when any animation registered
+    /// **directly on this owner** (NOT a descendant scope) reports
+    /// [`Tickable::is_at_rest(epsilon)`](crate::animation::Tickable::is_at_rest)
+    /// as `false`.
+    ///
+    /// Local counterpart to [`Self::any_animation_active`]; the
+    /// R680 atomic 1 multi-window animation-loop pump uses this to
+    /// decide per-window redraw without taking foreign windows'
+    /// activity into account. Each window's redraw loop polls only
+    /// its own scope.
+    ///
+    /// Backends that want the binding-wide "any window still
+    /// animating?" answer keep calling [`Self::any_animation_active`]
+    /// on the root owner; the cascade walk reaches every per-window
+    /// scope (each is a child of root via [`Self::new_child`]) so the
+    /// "tick all" semantic is preserved for callers that want it.
+    #[must_use]
+    pub fn any_animation_active_local(&self, epsilon: f32) -> bool {
+        let anims: Vec<Rc<dyn crate::animation::Tickable>> = self
+            .inner
+            .owned_animations
+            .borrow()
+            .iter()
+            .map(Rc::clone)
+            .collect();
+        anims.iter().any(|anim| !anim.is_at_rest(epsilon))
     }
 
     /// R629 §5.28 — bulk-call

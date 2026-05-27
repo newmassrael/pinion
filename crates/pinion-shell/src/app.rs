@@ -271,11 +271,42 @@ impl<V: WidgetView> AppShell<V> {
     /// single `Window::request_redraw` per window per
     /// event-loop iteration.
     fn drain_redraw_to_winit(&mut self) {
-        if !self.core.take_redraw_request() {
-            return;
-        }
-        for slot in self.windows.values() {
-            if let RenderState::Active { window, .. } = &slot.render {
+        // R680 atomic 2 §5.16 §5.41 — two-tier redraw drain:
+        // - Binding-wide [`ShellCore::redraw_requested`] flag fans
+        //   out to every active window slot (the pre-R680 contract,
+        //   safe default for state mutations that cannot reliably
+        //   attribute themselves to a single window).
+        // - Per-window [`ShellCore::redraw_requested_per_window`]
+        //   flags target individual slots (R680 atomic 3+ RPC
+        //   dispatch follow-ups, R681 immediate-mode subtree
+        //   polling, R683 dock-panel local layout reactions). The
+        //   binding-wide drain takes priority — if the fan-out
+        //   flag was set, every slot's per-window flag is also
+        //   considered "satisfied" by the same `request_redraw`
+        //   call, so we drain (clear) the per-window flag too to
+        //   avoid a spurious follow-up wake-up in the next
+        //   event-loop iteration.
+        let fan_out = self.core.take_redraw_request();
+        // Collect spec_ids first so the per-window drain doesn't
+        // hold a `&self.windows` borrow across the
+        // `self.core.take_redraw_request_for_window` `&mut self.core`
+        // mutation.
+        let active: Vec<(&'static str, std::sync::Arc<Window>)> = self
+            .windows
+            .values()
+            .filter_map(|slot| {
+                if let RenderState::Active { window, .. } = &slot.render {
+                    Some((slot.spec_id, std::sync::Arc::clone(window)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (spec_id, window) in active {
+            // Always drain the per-window flag so a stale `true`
+            // does not survive a binding-wide fan-out drain.
+            let per_window = self.core.take_redraw_request_for_window(spec_id);
+            if fan_out || per_window {
                 window.request_redraw();
             }
         }

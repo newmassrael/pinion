@@ -217,25 +217,91 @@ pub struct ShellCore<V: WidgetView> {
     /// [`Self::request_redraw`].
     redraw_requested: bool,
 
-    /// R51.143 §5.28 — wall-clock timestamp of the previous
-    /// [`Self::compute_paint_scene`] entry. `None` until the first
-    /// paint runs; the next paint measures `now - prev` to feed both
-    /// the [`Frame::with_dt`](pinion_core::Frame::with_dt) view-fn
-    /// input and the
-    /// [`CoreShell::tick_animations`](pinion_runtime::CoreShell::tick_animations)
-    /// driver call.
+    /// R680 atomic 2 §5.16 §5.41 — per-window redraw flag map.
+    ///
+    /// Keyed by canonical `WindowSpec::id`; an entry of `true` means
+    /// "paint the next event-loop iteration for THIS window only".
+    /// Set via [`Self::request_redraw_for_window`]; drained via
+    /// [`Self::take_redraw_request_for_window`]. [`crate::AppShell`]
+    /// drains EACH window's flag during
+    /// [`crate::AppShell::drain_redraw_to_winit`] and calls
+    /// `Window::request_redraw` only on the slots whose flag was
+    /// set.
+    ///
+    /// ## Coexistence with `redraw_requested`
+    ///
+    /// The pre-R680 binding-wide [`Self::redraw_requested`] flag
+    /// keeps the canonical "fan out to every window" semantic
+    /// because most current state mutations (`Signal::set` in
+    /// `V::update`, the `any_animation_active` check after a
+    /// per-window tick) cannot reliably attribute themselves to a
+    /// single window: the `Signal` might be read by view fns from
+    /// multiple windows; an animation registered on `root_owner`
+    /// could appear in any window's paint. The fan-out is the
+    /// safe default.
+    ///
+    /// The per-window flag is the OPT-IN surface for callers that
+    /// know exactly which window a wake-up should target —
+    /// future R680 atomic 3 RPC dispatch context (per-window
+    /// scoped `scene/invoke` follow-up redraws), R681 immediate-
+    /// mode game-loop nodes (only the window holding the immediate
+    /// subtree should poll at frame rate), R683 dock-panel
+    /// resize / tear-off (only the active dock panel's window
+    /// reacts to layout change). Pre-R680 callers continue using
+    /// `request_redraw()` + bit-identical fan-out behaviour.
+    ///
+    /// ## Allocation profile
+    ///
+    /// Lazy-creates entries on first `request_redraw_for_window`
+    /// call per `window_id` (one String allocation per first
+    /// touch). Hot-path drains read the existing entry without
+    /// reallocation. Mirrors the
+    /// [`Self::last_paint_instants`] field shape so the two
+    /// per-window state stores share the same `&str → owned key`
+    /// convention.
+    redraw_requested_per_window: HashMap<String, bool>,
+
+    /// R51.143 §5.28 §5.16 §5.41 — per-window paint-clock store.
+    ///
+    /// Keyed by canonical `WindowSpec::id` (`"main"` for the primary
+    /// window; secondary windows pick their own non-conflicting
+    /// names). Each entry records the wall-clock timestamp of the
+    /// previous [`Self::compute_paint_scene_internal`] call for THAT
+    /// window. Missing entry (never painted) → next paint feeds
+    /// `dt = 0.0`, which leaves at-rest animations untouched and
+    /// starts each spring solver from its construction baseline —
+    /// same shape any synthetic flush hits, so no special-case
+    /// branching is needed elsewhere.
+    ///
+    /// ## Why `HashMap` (R680 atomic 1)
+    ///
+    /// Pre-R680 this was a single `Option<Instant>` field. Multi-
+    /// window paint cycles (R670.B `hello-multi-window` + R672
+    /// per-window `InputRouter` foundation + R675-R679 `DevTools`
+    /// cascade) all wrote into one slot — whichever window painted
+    /// most recently set the next paint's "prev" timestamp, so
+    /// window A's dt was measured against window B's last paint
+    /// when the two windows alternated. The compounding made spring
+    /// solvers tick by ~2× their per-window paint rate (the R670.B
+    /// honest 9-round carry).
+    ///
+    /// R680 atomic 1 lifts the field per-window: each entry tracks
+    /// only ITS window's paint cadence. Two windows painting in the
+    /// same event-loop turn each measure `dt` against their own
+    /// previous paint, never each other's, so the spring solver
+    /// receives exactly one tick per per-window paint cycle.
+    /// [`CoreShell::tick_animations_for_window`](pinion_runtime::CoreShell::tick_animations_for_window)
+    /// then walks ONLY that window's owner scope (R680 atomic 0
+    /// `window_owners` substrate) so the per-window owner's
+    /// `owned_animations` list advances exactly once.
     ///
     /// Per §5.28 R33 the spring solver is deterministic given
     /// `(current, velocity, target, dt, config)` — driving it from a
     /// real measured delta is what turns the synthetic substrate
     /// (which always passed `dt=0`) into a real per-frame animation
-    /// pump.
-    ///
-    /// On the very first paint `dt = 0.0`, which leaves at-rest
-    /// animations untouched and starts the spring solver from its
-    /// construction baseline — the same shape any synthetic flush
-    /// hits, so no special-case branching is needed elsewhere.
-    last_paint_instant: Option<Instant>,
+    /// pump. Per-window storage is what makes that real delta
+    /// per-window instead of binding-wide.
+    last_paint_instants: HashMap<String, Instant>,
 }
 
 /// R51.77 §5.40 — pure decision returned by
@@ -323,7 +389,8 @@ impl<V: WidgetView> ShellCore<V> {
             access_emit_initial: true,
             last_access_focus: None,
             redraw_requested: false,
-            last_paint_instant: None,
+            redraw_requested_per_window: HashMap::new(),
+            last_paint_instants: HashMap::new(),
         }
     }
 
@@ -429,8 +496,69 @@ impl<V: WidgetView> ShellCore<V> {
     /// iteration, so multiple `request_redraw` calls within one
     /// dispatch collapse to a single `Window::request_redraw` call
     /// (the textbook winit idiom: redraws are coalesced).
+    ///
+    /// R680 atomic 2 §5.16 §5.41 — this is the binding-wide
+    /// "fan out to every window" wake-up. For wake-ups that should
+    /// target a specific window only (R680 atomic 3 RPC dispatch
+    /// follow-ups, R681 immediate-mode game-loop polling, R683
+    /// dock-panel local layout reactions) use
+    /// [`Self::request_redraw_for_window`] instead.
     pub fn request_redraw(&mut self) {
         self.redraw_requested = true;
+    }
+
+    /// R680 atomic 2 §5.16 §5.41 — per-window redraw wake-up.
+    ///
+    /// Sets the per-window flag in
+    /// [`Self::redraw_requested_per_window`] for the named
+    /// `window_id`. [`crate::AppShell::drain_redraw_to_winit`]
+    /// drains the flag and calls
+    /// `Window::request_redraw` on ONLY that window's slot.
+    ///
+    /// Use when the caller knows exactly which window a wake-up
+    /// should target — RPC dispatch follow-ups, R681 immediate-
+    /// mode subtree polling, R683 dock-panel layout reactions.
+    /// For binding-wide wake-ups (`Signal::set` whose subscribers
+    /// span multiple windows, post-tick `any_animation_active`
+    /// check) keep using [`Self::request_redraw`] which fans out.
+    ///
+    /// Lazy-creates the map entry on first call per `window_id`.
+    /// Multiple calls between drains collapse to a single
+    /// `Window::request_redraw` per drain (idempotent on the
+    /// `bool` field).
+    pub fn request_redraw_for_window(&mut self, window_id: &str) {
+        self.redraw_requested_per_window
+            .insert(window_id.to_owned(), true);
+    }
+
+    /// R680 atomic 2 §5.16 §5.41 — drain a single window's redraw
+    /// flag. Returns `true` once for each
+    /// [`Self::request_redraw_for_window`] call between drains;
+    /// resets the flag to `false` so the next event-loop iteration
+    /// sees a clean state. Unknown `window_id` (never requested)
+    /// returns `false` without allocating.
+    ///
+    /// [`crate::AppShell::drain_redraw_to_winit`] calls this for
+    /// every active window slot to determine the per-window
+    /// `Window::request_redraw` dispatch.
+    pub fn take_redraw_request_for_window(&mut self, window_id: &str) -> bool {
+        self.redraw_requested_per_window
+            .get_mut(window_id)
+            .is_some_and(std::mem::take)
+    }
+
+    /// R680 atomic 2 §5.16 §5.41 — peek-only probe for the
+    /// per-window redraw flag. Returns `true` when
+    /// [`Self::request_redraw_for_window`] has set the flag since
+    /// the last [`Self::take_redraw_request_for_window`] drain.
+    /// Used by tests + debug logging that want to assert "yes the
+    /// caller targeted window X" without consuming the signal.
+    #[must_use]
+    pub fn redraw_requested_for_window(&self, window_id: &str) -> bool {
+        self.redraw_requested_per_window
+            .get(window_id)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// R51.83 §5.40 — mutable borrow of the §5.36 [`LayoutCache`] for
@@ -1011,26 +1139,74 @@ impl<V: WidgetView> ShellCore<V> {
         w: u32,
         h: u32,
     ) -> Scene {
+        // R680 atomic 1 §5.16 §5.28 §5.41 — resolve the canonical
+        // window key. `None` (single-window legacy paint entry)
+        // maps to `DEFAULT_WINDOW` so the per-window last-paint
+        // map + per-window animation tick both target the primary
+        // slot. Single-window bindings observe bit-identical
+        // behaviour because [`CoreShell::window_owner`]'s
+        // `DEFAULT_WINDOW` entry is a `root_owner` clone (R680
+        // atomic 0 seeding).
+        let window_key = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
         let now = Instant::now();
         let raw_dt = self
-            .last_paint_instant
-            .map_or(0.0_f32, |prev| now.duration_since(prev).as_secs_f32());
-        self.last_paint_instant = Some(now);
+            .last_paint_instants
+            .get(window_key)
+            .map_or(0.0_f32, |prev| now.duration_since(*prev).as_secs_f32());
+        self.last_paint_instants.insert(window_key.to_owned(), now);
         // R51.145 §5.28 — clamp before reaching the spring solver +
         // the view fn so background-resume / debugger-pause does not
         // destabilize the semi-implicit Euler integrator. Healthy
         // 60fps frames pass through unchanged; only paused / blocked
         // resumes get capped.
         let dt = clamp_frame_dt(raw_dt);
-        self.core.tick_animations(dt);
+        // R680 atomic 1 §5.16 §5.28 — per-window animation tick.
+        // Walks only `window_owners[window_key]`'s own animation
+        // list (NOT the binding-wide cascade); two windows painting
+        // in the same event-loop turn each call this for their own
+        // key, and each one's animations advance exactly once. The
+        // R670.B 9-round honest carry on multi-window animation
+        // compound is closed structurally here.
+        self.core.tick_animations_for_window(window_key, dt);
         let frame = Frame::with_dt(dt);
         let cached_state = *self.core.cached_state();
-        // R51.146 §5.22 — wrap the view fn in `root_owner().run(...)`
-        // so [`pinion_core::Owner::current`] resolves to this
-        // binding's root reactive scope from inside `V::view` /
-        // `V::view_for_window`. Animations / Effects / Commands
-        // created without an explicit [`Owner`] argument land on the
-        // framework-owned scope, dropping together with this shell.
+        // R51.146 §5.22 §5.16 — wrap the view fn in `root_owner.run(...)`.
+        //
+        // R680 atomic 1 design decision: view fns continue to run
+        // under the binding-wide [`CoreShell::root_owner`] scope, NOT
+        // the per-window child scope. The per-window
+        // [`CoreShell::window_owners`] map exists for animation tick
+        // decoupling + future per-window scope cleanup (R683 dock-
+        // panel tear-off lifecycle), but the view-fn wrap stays on
+        // root so:
+        //
+        // 1. Cross-window state sharing via [`Owner::cache`] keeps
+        //    working without binding-level adjustment — hello-
+        //    multi-window's `use_selected_path` /
+        //    `use_hovered_path` slots resolve through root regardless
+        //    of which window is painting, matching the RPC paint
+        //    path (`dispatch_rpc`'s produce closure) which also
+        //    wraps in root. Live winit-driven paint and synthetic
+        //    RPC-driven paint stay observationally identical
+        //    (§2 #2 + §2 #7 invariant preservation).
+        // 2. Phase A bindings (the entire single-window example
+        //    catalogue) observe bit-identical behaviour — same
+        //    `Owner::current()` resolution from inside `V::view`,
+        //    same cache slot semantics, same animation registration
+        //    target.
+        //
+        // The compound-tick elimination (R670.B 9-round honest
+        // carry) is achieved through the [`Self::tick_animations_for_window`]
+        // local-walk dispatch above: ticking `DEFAULT_WINDOW` walks
+        // root's own animation list once per primary paint; ticking
+        // a secondary `window_id` walks ONLY that secondary's
+        // child-scope animations (typically empty for current
+        // bindings — all animations live on root). Two windows
+        // painting in the same event-loop turn each call
+        // `tick_animations_for_window(THEIR_id, …)`; the secondary's
+        // walk is a no-op for root-registered animations, so
+        // animations advance once per primary paint regardless of
+        // how many secondary paints fire in the same turn.
         let mut paint_scene = self.core.root_owner().run(|| match window_id {
             Some(id) => V::view_for_window(id, cached_state, &frame),
             None => V::view(cached_state, &frame),

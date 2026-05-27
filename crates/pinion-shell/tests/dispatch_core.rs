@@ -2457,4 +2457,121 @@ mod r56_2_c_ime_caret_rect_default {
             );
         }
     }
+
+}
+
+mod r680_per_window_redraw_wakeup {
+    //! R680 atomic 2 §5.16 §5.41 — per-window redraw wake-up API.
+    //!
+    //! Tests pin the load-bearing invariants:
+    //!
+    //! - `request_redraw_for_window(id)` sets ONLY that slot's flag;
+    //!   sibling slots stay false.
+    //! - `take_redraw_request_for_window(id)` drains the addressed
+    //!   flag (returns true once, then false).
+    //! - `redraw_requested_for_window(id)` is a peek-only probe;
+    //!   does not drain.
+    //! - `request_redraw()` and the binding-wide
+    //!   `take_redraw_request()` keep their pre-R680 semantics
+    //!   (fan out to every window); per-window flags coexist
+    //!   independently.
+    //! - Unknown `window_id` never-touched returns false on probe +
+    //!   drain without allocating.
+
+    use super::TestView;
+    use super::TEST_LOCK;
+    use pinion_shell::ShellCore;
+
+    #[test]
+    fn r680_request_redraw_for_window_targets_only_addressed_slot() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.request_redraw_for_window("inspector");
+        assert!(core.redraw_requested_for_window("inspector"));
+        assert!(
+            !core.redraw_requested_for_window("main"),
+            "sibling slot must stay false on a targeted wake-up",
+        );
+        assert!(
+            !core.redraw_requested_for_window("palette"),
+            "never-touched slot reads false without allocating",
+        );
+    }
+
+    #[test]
+    fn r680_take_redraw_request_for_window_drains_once() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.request_redraw_for_window("inspector");
+        assert!(core.take_redraw_request_for_window("inspector"));
+        assert!(
+            !core.take_redraw_request_for_window("inspector"),
+            "drain yields false on the second call (flag reset)",
+        );
+        assert!(!core.redraw_requested_for_window("inspector"));
+    }
+
+    #[test]
+    fn r680_take_redraw_request_for_unknown_window_returns_false() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        assert!(!core.take_redraw_request_for_window("never-touched"));
+        assert!(!core.redraw_requested_for_window("never-touched"));
+    }
+
+    #[test]
+    fn r680_request_redraw_for_window_idempotent_between_drains() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        // Three calls in one event-loop iteration → one drain yields
+        // true; the next drain yields false.
+        core.request_redraw_for_window("inspector");
+        core.request_redraw_for_window("inspector");
+        core.request_redraw_for_window("inspector");
+        assert!(core.take_redraw_request_for_window("inspector"));
+        assert!(!core.take_redraw_request_for_window("inspector"));
+    }
+
+    #[test]
+    fn r680_binding_wide_and_per_window_coexist_independently() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        // Binding-wide flag fans out (the pre-R680 contract).
+        core.request_redraw();
+        // Per-window flag targets one slot.
+        core.request_redraw_for_window("inspector");
+
+        assert!(core.redraw_requested(), "binding-wide flag observable");
+        assert!(core.redraw_requested_for_window("inspector"));
+        assert!(!core.redraw_requested_for_window("palette"));
+
+        // Drains are independent.
+        assert!(core.take_redraw_request());
+        assert!(
+            !core.redraw_requested(),
+            "binding-wide drain resets the binding-wide flag only",
+        );
+        assert!(
+            core.redraw_requested_for_window("inspector"),
+            "per-window flag survives an unrelated binding-wide drain",
+        );
+        assert!(core.take_redraw_request_for_window("inspector"));
+    }
+
+    #[test]
+    fn r680_two_distinct_window_ids_drain_independently() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.request_redraw_for_window("inspector");
+        core.request_redraw_for_window("palette");
+        // Each drain consumes only its own slot.
+        assert!(core.take_redraw_request_for_window("inspector"));
+        assert!(
+            core.redraw_requested_for_window("palette"),
+            "inspector drain must leave palette untouched",
+        );
+        assert!(core.take_redraw_request_for_window("palette"));
+        assert!(!core.redraw_requested_for_window("inspector"));
+        assert!(!core.redraw_requested_for_window("palette"));
+    }
 }
