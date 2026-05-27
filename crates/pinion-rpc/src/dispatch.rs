@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
+use crate::cache_stats::{cache_stats, CacheStatsError, CacheStatsOutcome};
 use crate::caret_state::{caret_state, CaretStateOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
@@ -337,6 +338,23 @@ pub struct DispatchContext<'a> {
     /// (R670.A `WindowSpec::main`, id = "main") so legacy bindings see
     /// bit-identical behaviour.
     pub window_id: Option<&'a str>,
+
+    /// R682.B §5.16 — per-window paint-fragment cache observability
+    /// snapshot. Resolved by the embedder before dispatch
+    /// (`pinion-shell::ShellCore::dispatch_rpc_for_window` reads the
+    /// `window_id` slot and looks up
+    /// `ShellCore::fragment_cache_stats_for_window`). Consumed by
+    /// `scene/cache_stats` to surface hit/miss counters + damage
+    /// region without giving RPC clients access to the
+    /// `vello::Scene`-bearing `paint_adapter::FragmentCache` itself.
+    ///
+    /// `None` indicates either (a) the window has not painted yet
+    /// (bootstrap frame), or (b) the embedder opted out of cache
+    /// observability for this dispatch (headless test fixtures).
+    /// `scene/cache_stats` surfaces `CacheStatsUnavailable` in both
+    /// cases so the AI client can distinguish "no data yet" from
+    /// "all zeros".
+    pub fragment_cache_stats: Option<pinion_runtime::FragmentCacheStats>,
 }
 
 /// R51.195 §5.49 §5.45 — single deferred-input entry. One per
@@ -449,6 +467,7 @@ impl<'a> DispatchContext<'a> {
             commands_executor: None,
             deferred_inputs: None,
             window_id: None,
+            fragment_cache_stats: None,
         }
     }
 
@@ -575,6 +594,21 @@ impl<'a> DispatchContext<'a> {
         self.window_id = Some(id);
         self
     }
+
+    /// R682.B §5.16 — builder: attach the per-window paint-fragment
+    /// cache observability snapshot the embedder pre-resolved from
+    /// `pinion-shell::ShellCore::fragment_cache_stats_for_window`.
+    /// `scene/cache_stats` reads the slot; non-cache methods ignore
+    /// it. `None` (the default) causes `scene/cache_stats` to surface
+    /// `CacheStatsUnavailable`.
+    #[must_use]
+    pub fn with_fragment_cache_stats(
+        mut self,
+        stats: pinion_runtime::FragmentCacheStats,
+    ) -> Self {
+        self.fragment_cache_stats = Some(stats);
+        self
+    }
 }
 
 /// Dispatch one JSON-RPC 2.0 frame against `ctx`.
@@ -689,6 +723,12 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let runtime_owner = ctx.runtime_owner;
     // R51.162 §5.23 — executor borrow for in-flight projection.
     let commands_executor = ctx.commands_executor;
+    // R682.B §5.16 — per-window paint-fragment cache observability
+    // snapshot the embedder pre-resolved from
+    // `ShellCore::fragment_cache_stats_for_window`. Copy out of the
+    // context for the dispatch lifetime; `scene/cache_stats` reads
+    // the value, every other arm ignores it.
+    let fragment_cache_stats = ctx.fragment_cache_stats;
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
     // copy the optional reference out for the dispatch lifetime so
     // the registry slot itself is not consumed.
@@ -832,6 +872,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
         ),
         "scene/animation_state" => (
             handle_scene_animation_state(runtime_owner, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
+        "scene/cache_stats" => (
+            handle_scene_cache_stats(fragment_cache_stats),
             HandlerKind::Read,
         ),
         "scene/animate_settle" => (
@@ -2986,6 +3030,40 @@ fn animation_state_error_to_rpc(err: &AnimationStateError) -> RpcError {
                 "params.epsilon {value} must be finite and >= 0",
             ))
             .with_data_string("InvalidEpsilon")
+        }
+    }
+}
+
+/// R682.B §5.16 — `scene/cache_stats` typed handler. Reads the
+/// per-window [`pinion_runtime::paint_adapter::FragmentCacheStats`]
+/// snapshot the embedder pre-resolved on
+/// [`DispatchContext::fragment_cache_stats`] and emits the wire
+/// [`CacheStatsOutcome`] shape.
+///
+/// Read-only — `HandlerKind::Read` upstream skips the
+/// [`SceneRevision`] bump.
+fn handle_scene_cache_stats(
+    stats: Option<pinion_runtime::FragmentCacheStats>,
+) -> Result<Value, RpcError> {
+    match cache_stats(stats) {
+        Ok(outcome) => cache_stats_outcome_to_json(outcome),
+        Err(err) => Err(cache_stats_error_to_rpc(&err)),
+    }
+}
+
+fn cache_stats_outcome_to_json(out: CacheStatsOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/cache_stats: failed to serialize outcome: {e}",
+        ))
+    })
+}
+
+fn cache_stats_error_to_rpc(err: &CacheStatsError) -> RpcError {
+    match err {
+        CacheStatsError::CacheStatsUnavailable => {
+            RpcError::invalid_params("fragment cache stats unavailable for this window")
+                .with_data_string("CacheStatsUnavailable")
         }
     }
 }

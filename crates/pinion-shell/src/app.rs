@@ -714,13 +714,7 @@ impl<V: WidgetView> AppShell<V> {
         let cache_stats = self
             .windows
             .get(&window_id)
-            .map(|slot| crate::FragmentCacheStats {
-                hits: slot.fragment_cache.hits(),
-                misses: slot.fragment_cache.misses(),
-                paint_count: slot.fragment_cache.paint_count(),
-                entries: slot.fragment_cache.entries(),
-                last_damage_region: slot.fragment_cache.last_damage_region(),
-            });
+            .map(|slot| slot.fragment_cache.stats());
         if let Some(slot) = self.windows.get_mut(&window_id) {
             slot.last_paint_layout = Some(paint_layout.clone());
             // R681 §2 #4 atomic 2 — sticky per-window flag for the

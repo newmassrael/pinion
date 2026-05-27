@@ -327,59 +327,17 @@ pub struct ShellCore<V: WidgetView> {
     fragment_cache_stats_per_window: HashMap<String, FragmentCacheStats>,
 }
 
-/// R682 §5.16 atomic 3 — GUI-agnostic snapshot of one window's
-/// [`paint_adapter::FragmentCache`] state after the most recent paint
-/// cycle.
-///
-/// Published by the surface-side `AppShell::render_window` into
-/// [`ShellCore::fragment_cache_stats_per_window`] after each
-/// [`FragmentCache::end_paint`]; consumed by tests, the §5.49 R682
-/// demo (cache-hit-rate / frame-time profiling assertions), and the
-/// future RPC `cache/stats` surface (out of scope for atomic 3 — wire
-/// lands when the first RPC consumer materialises per
-/// [[abstraction-needs-second-consumer]]).
-///
-/// `Copy` + `Hash`-friendly fields only (no `vello::Scene` references)
-/// so consumers in non-vello build profiles (TUI / headless tests)
-/// can hold the type without dragging in the GPU stack.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct FragmentCacheStats {
-    /// Cumulative cache hits across the cache's lifetime.
-    pub hits: u64,
-    /// Cumulative cache misses across the cache's lifetime.
-    pub misses: u64,
-    /// Cumulative paint passes (== [`FragmentCache::end_paint`]
-    /// invocations) across the cache's lifetime.
-    pub paint_count: u64,
-    /// Number of cached fragments currently held — after the
-    /// mark-and-sweep eviction at the end of the publishing paint,
-    /// this matches the live cacheable Container set painted this
-    /// frame.
-    pub entries: usize,
-    /// Damage region from the most recently completed paint pass.
-    /// `None` when the paint was 100% cache-hit. See
-    /// [`FragmentCache::last_damage_region`] for the contract.
-    pub last_damage_region: Option<pinion_core::scene::Rect>,
-}
-
-impl FragmentCacheStats {
-    /// `hits / (hits + misses)`. Returns `0.0` when no lookup has
-    /// happened yet.
-    #[must_use]
-    pub fn hit_rate(&self) -> f32 {
-        let total = self.hits.saturating_add(self.misses);
-        if total == 0 {
-            return 0.0;
-        }
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "telemetry ratio; numeric pipeline does not consume"
-        )]
-        {
-            self.hits as f32 / total as f32
-        }
-    }
-}
+/// R682.B §5.16 — re-export of the GUI-agnostic
+/// [`FragmentCacheStats`] snapshot that lives in
+/// [`pinion_runtime::paint_cache_stats`] (non-vello-gated submodule,
+/// so peer crates without GPU support can hold the type). Pre-R682.B
+/// this struct was defined locally on `ShellCore` so the
+/// `pinion-rpc` peer crate could not import it without depending on
+/// `pinion-shell` (cyclic). The lift puts the stats type next to its
+/// source contract in the runtime crate; the re-export here
+/// preserves the existing `pinion_shell::FragmentCacheStats` import
+/// path used by `tests/dispatch_core.rs` and out-of-tree consumers.
+pub use pinion_runtime::FragmentCacheStats;
 
 /// R51.77 §5.40 — pure decision returned by
 /// [`ShellCore::plan_access_emit`].
@@ -1750,6 +1708,15 @@ impl<V: WidgetView> ShellCore<V> {
         // detect `focus/set` (or any other focus-mutating method)
         // and trigger a redraw to refresh the focus ring.
         let focus_before = self.focus.focused().map(str::to_owned);
+        // R682.B §5.16 — pre-resolve the per-window paint-fragment
+        // cache observability snapshot before the split-borrow block.
+        // `scene/cache_stats` reads it off the dispatch context.
+        // Defaults to `DEFAULT_WINDOW` when single-window callers
+        // pass `None`; an unknown window id yields `None` here too,
+        // surfacing as `CacheStatsUnavailable` to the AI client.
+        let cache_stats_for_window = self.fragment_cache_stats_for_window(
+            window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW),
+        );
         let resp = {
             // Disjoint-field split mutable borrows. R51.123 §5.41 —
             // `scene` + `cached_state` live behind
@@ -1851,6 +1818,14 @@ impl<V: WidgetView> ShellCore<V> {
             // outside the dispatcher's `&mut scene` borrow.
             let mut deferred_inputs: Vec<pinion_rpc::DeferredInput> = Vec::new();
             ctx = ctx.with_deferred_inputs(&mut deferred_inputs);
+            // R682.B §5.16 — install the pre-resolved per-window
+            // paint-fragment cache observability snapshot so
+            // `scene/cache_stats` can read counters + damage region
+            // without ever crossing the `vello::Scene`-bearing
+            // `paint_adapter::FragmentCache` boundary.
+            if let Some(stats) = cache_stats_for_window {
+                ctx = ctx.with_fragment_cache_stats(stats);
+            }
             let resp = dispatch_parsed(&mut ctx, request);
             (resp, deferred_inputs)
         };

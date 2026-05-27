@@ -3036,3 +3036,132 @@ mod r682_fragment_cache_stats_substrate {
         assert_eq!(stats.last_damage_region, None);
     }
 }
+
+// ─────────────────────────────────────────────────────────────
+// R682.B §5.16 — scene/cache_stats RPC dispatch wire
+// ─────────────────────────────────────────────────────────────
+
+mod r682b_cache_stats_rpc {
+    use pinion_core::scene::Rect;
+    use pinion_shell::{FragmentCacheStats, ShellCore};
+
+    use super::TestView;
+
+    /// Helper: build the JSON-RPC `scene/cache_stats` request frame.
+    fn cache_stats_request(id: u64) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/cache_stats","params":{{}},"id":{id}}}"#,
+        )
+    }
+
+    fn parse_response(json: &str) -> serde_json::Value {
+        serde_json::from_str(json).expect("response is JSON")
+    }
+
+    #[test]
+    fn r682b_rpc_returns_unavailable_when_no_publish() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let resp = core
+            .dispatch_rpc(&cache_stats_request(1), &mut no_resize)
+            .expect("response carries id");
+        let body = parse_response(&resp);
+        let err = body.get("error").expect("dispatch surfaces error");
+        let data = err.get("data").expect("error.data tags the variant");
+        assert_eq!(data, "CacheStatsUnavailable");
+    }
+
+    #[test]
+    fn r682b_rpc_returns_published_counters() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.publish_fragment_cache_stats(
+            "main",
+            FragmentCacheStats {
+                hits: 240,
+                misses: 12,
+                paint_count: 5,
+                entries: 12,
+                last_damage_region: None,
+            },
+        );
+        let mut no_resize = |_: u32, _: u32| {};
+        let resp = core
+            .dispatch_rpc(&cache_stats_request(2), &mut no_resize)
+            .expect("response");
+        let body = parse_response(&resp);
+        let result = body.get("result").expect("dispatch ok");
+        assert_eq!(result.get("hits").and_then(serde_json::Value::as_u64), Some(240));
+        assert_eq!(result.get("misses").and_then(serde_json::Value::as_u64), Some(12));
+        assert_eq!(result.get("paint_count").and_then(serde_json::Value::as_u64), Some(5));
+        assert_eq!(result.get("entries").and_then(serde_json::Value::as_u64), Some(12));
+        // hit_rate ≈ 240 / 252.
+        let hit_rate = result.get("hit_rate").and_then(serde_json::Value::as_f64).unwrap();
+        let expected = 240.0 / 252.0;
+        assert!((hit_rate - expected).abs() < 1e-5);
+        // last_damage_region absent (skip_serializing_if).
+        assert!(result.get("last_damage_region").is_none());
+    }
+
+    #[test]
+    fn r682b_rpc_emits_damage_region_when_present() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.publish_fragment_cache_stats(
+            "main",
+            FragmentCacheStats {
+                hits: 0,
+                misses: 1,
+                paint_count: 1,
+                entries: 1,
+                last_damage_region: Some(Rect::new(8, 16, 320, 200)),
+            },
+        );
+        let mut no_resize = |_: u32, _: u32| {};
+        let resp = core
+            .dispatch_rpc(&cache_stats_request(3), &mut no_resize)
+            .expect("response");
+        let body = parse_response(&resp);
+        let result = body.get("result").expect("dispatch ok");
+        let dmg = result
+            .get("last_damage_region")
+            .expect("damage region emitted");
+        assert_eq!(dmg.get("x").and_then(serde_json::Value::as_u64), Some(8));
+        assert_eq!(dmg.get("y").and_then(serde_json::Value::as_u64), Some(16));
+        assert_eq!(dmg.get("w").and_then(serde_json::Value::as_u64), Some(320));
+        assert_eq!(dmg.get("h").and_then(serde_json::Value::as_u64), Some(200));
+    }
+
+    #[test]
+    fn r682b_rpc_default_window_resolves_to_main() {
+        // `scene/cache_stats` with no window param falls back to
+        // `DEFAULT_WINDOW = "main"`. Publish under "main", dispatch
+        // without window → finds the stats.
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.publish_fragment_cache_stats(
+            "main",
+            FragmentCacheStats {
+                hits: 1,
+                misses: 0,
+                paint_count: 1,
+                entries: 1,
+                last_damage_region: None,
+            },
+        );
+        let mut no_resize = |_: u32, _: u32| {};
+        let resp = core
+            .dispatch_rpc(&cache_stats_request(4), &mut no_resize)
+            .expect("response");
+        let body = parse_response(&resp);
+        assert!(body.get("result").is_some(), "default window resolves to main");
+        // hit_rate at hits=1/misses=0 = 1.0.
+        let hr = body
+            .get("result")
+            .and_then(|r| r.get("hit_rate"))
+            .and_then(serde_json::Value::as_f64)
+            .unwrap();
+        assert!((hr - 1.0).abs() < 1e-6);
+    }
+}

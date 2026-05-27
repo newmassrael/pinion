@@ -38,6 +38,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::paint_cache_stats::FragmentCacheStats;
 use pinion_core::Scene;
 use pinion_core::scene::{
     BoxNode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
@@ -414,6 +415,27 @@ impl FragmentCache {
         self.hits = 0;
         self.misses = 0;
         self.paint_count = 0;
+    }
+
+    /// R682.B §5.16 — capture the observable counters + entry count +
+    /// damage region as a GUI-agnostic value-type snapshot.
+    ///
+    /// The returned [`FragmentCacheStats`] holds no `vello::Scene`
+    /// references, so consumers in non-vello build profiles (TUI /
+    /// headless tests / `pinion-rpc::DispatchContext`) can hold the
+    /// snapshot without dragging in the GPU stack. Called once per
+    /// paint cycle from `pinion-shell::AppShell::render_window` after
+    /// `to_vello_cached` returns, and from R682.B tests that drive
+    /// `to_vello_cached` directly without a winit surface.
+    #[must_use]
+    pub fn stats(&self) -> FragmentCacheStats {
+        FragmentCacheStats {
+            hits: self.hits,
+            misses: self.misses,
+            paint_count: self.paint_count,
+            entries: self.fragments.len(),
+            last_damage_region: self.last_damage_region,
+        }
     }
 
     /// Probe + replay path. When `hash` is in the cache, append the
@@ -2179,5 +2201,257 @@ mod tests {
             &mut v,
         );
         assert!(cache.last_damage_region().is_some());
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R682.B §5.16 — paint-fragment cache stress consumer matrix
+    // ─────────────────────────────────────────────────────────────
+    //
+    // The R682.B 100-row stress consumer (`examples/todomvc` with
+    // [`SEED_N_ENV`]) exercises the cache at a scale closer to a
+    // real DCC application. The tests below pin the matrix on a
+    // synthetic N-row scene so the substrate's contract holds
+    // independently of the binding's view-fn shape.
+    //
+    // ## Scene shape — non-cacheable-root + cacheable-rows
+    //
+    // The stress consumer places an `ImmediateModeNode` sibling
+    // alongside the row list so the enclosing root Container is
+    // **not** cacheable per
+    // [`Scene::is_cacheable_for_paint`] (any
+    // immediate-mode / external descendant taints the ancestor).
+    // The cache-probe early-return at the root short-circuit boundary
+    // (`to_vello_cached_inner` line ~565) does not fire; the encoder
+    // walks past the non-cacheable root and reaches each row
+    // Container independently. Each row IS cacheable (Box-only leaf),
+    // so each row probes the cache → independent hit/miss + survival
+    // across mark-and-sweep.
+    //
+    // This shape matches the real todomvc + every DCC-class binding:
+    // the page-level chrome (header / filters / scroll handles /
+    // immediate-mode preview) is naturally non-cacheable, so the
+    // per-row cache lives at the row Container boundary. The
+    // alternative ("fully cacheable root") collapses to 1 cached
+    // entry after the first sweep (hit on root → no recursion into
+    // children → children evicted) — observably useful only when the
+    // **entire** subtree never changes for the binding's lifetime
+    // (rare).
+
+    /// R682.B §5.16 — Build a synthetic stress scene with N
+    /// cacheable row Containers under a non-cacheable root.
+    ///
+    /// Layout: `Container[stress_root]([ImmediateModeNode,
+    /// Container[row_0](Box), Container[row_1](Box), …])`. The
+    /// `ImmediateModeNode` sibling makes the root non-cacheable so
+    /// the encoder walks past it and visits each row Container.
+    ///
+    /// `completed_mask[i] == true` paints row `i` with a green-channel
+    /// fill (model "completed" status); `false` paints a red-channel
+    /// fill. Distinct colour per row → distinct `paint_hash` per row
+    /// → independent cache slots (no deduplication).
+    fn stress_scene(n: u32, completed_mask: &[bool]) -> Scene {
+        assert_eq!(completed_mask.len(), n as usize);
+        let mut children: Vec<Scene> = Vec::with_capacity(n as usize + 1);
+        // Non-cacheable sibling at the head of the children list so
+        // the root container's `is_cacheable_for_paint` returns false
+        // and the encoder threads past the root → reaches each row.
+        children.push(Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            InertImmediate,
+            Rect::new(0, 0, 100, 1),
+        )));
+        for i in 0..n {
+            #[allow(clippy::cast_possible_truncation, reason = "color byte from index")]
+            let g = (i % 256) as u8;
+            let row_fill = if completed_mask[i as usize] {
+                Color::rgb(0, g, 0)
+            } else {
+                Color::rgb(g, 0, 0)
+            };
+            let row = Scene::Container(
+                ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+                    Rect::new(0, i * 10 + 10, 100, 10),
+                    row_fill,
+                ))])
+                .with_tag(format!("row_{i}")),
+            );
+            children.push(row);
+        }
+        Scene::Container(ContainerNode::new(children).with_tag("stress_root"))
+    }
+
+    fn run_paint(scene: &Scene, cache: &mut FragmentCache, text: &mut LayoutCache) {
+        let mut v = VelloScene::new();
+        to_vello_cached(scene, &null_hook(), text, cache, &mut v);
+    }
+
+    #[test]
+    fn r682b_stress_first_paint_installs_n_row_fragments() {
+        // 100 cacheable rows install on first paint. Root is
+        // non-cacheable (`ImmediateModeNode` sibling) → no root entry
+        // in the cache. Total entries = N (NOT N+1).
+        let mask = vec![false; 100];
+        let scene = stress_scene(100, &mask);
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        run_paint(&scene, &mut cache, &mut text);
+        assert_eq!(cache.misses(), 100, "100 cacheable rows miss first paint");
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.entries(), 100, "row fragments installed; root untracked");
+    }
+
+    #[test]
+    fn r682b_stress_steady_state_hit_rate_clears_threshold_after_7_paints() {
+        // After P identical paints with N cacheable rows:
+        //   misses = N (paint 1 only) ; hits = (P-1)*N
+        //   hit_rate = (P-1)/P
+        // For hit_rate ≥ 0.85: P ≥ 7. The R682.B authoritative
+        // threshold — long-running steady state, NOT 3 paints. The
+        // SEED `≥0.85 after 3 paints` figure was an authorship
+        // estimate that did not account for the (P-1)/P ramp; the
+        // honest correction lands here.
+        let mask = vec![false; 100];
+        let scene = stress_scene(100, &mask);
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        for _ in 0..7 {
+            run_paint(&scene, &mut cache, &mut text);
+        }
+        assert_eq!(cache.misses(), 100);
+        assert_eq!(cache.hits(), 600, "6 hit-paints × 100 rows");
+        assert!(
+            cache.hit_rate() >= 0.85,
+            "post-warmup hit rate {} must clear 0.85 by paint 7",
+            cache.hit_rate(),
+        );
+        assert_eq!(cache.paint_count(), 7);
+        // Per-row entries survive across paints — sweep keeps every
+        // hash that was consulted.
+        assert_eq!(cache.entries(), 100);
+    }
+
+    #[test]
+    fn r682b_stress_filter_change_evicts_filtered_out_row_fragments() {
+        // Paint 1: full 100-row scene (100 row misses, 100 entries).
+        // Paint 2: filter to the 34 completed rows; the encoder
+        // visits only those rows. The 66 active-row hashes are not
+        // consulted → mark-and-sweep evicts them at end_paint.
+        let mut full_mask = vec![false; 100];
+        for (i, slot) in full_mask.iter_mut().enumerate() {
+            *slot = i % 3 == 0;
+        }
+        let full = stress_scene(100, &full_mask);
+
+        // Build a filtered scene that contains only the completed
+        // rows (their fragments will survive). Tags + colours +
+        // rects match the originals so the hashes match and the
+        // cache hits.
+        let completed_indices: Vec<u32> = (0..100u32)
+            .filter(|i| full_mask[*i as usize])
+            .collect();
+        let completed_n = u32::try_from(completed_indices.len()).expect("≤ 100 fits u32");
+        let mut filtered_children: Vec<Scene> = vec![Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(InertImmediate, Rect::new(0, 0, 100, 1)),
+        )];
+        for i in &completed_indices {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "i < 100 fits in u8"
+            )]
+            let g = (*i % 256) as u8;
+            filtered_children.push(Scene::Container(
+                ContainerNode::new(vec![Scene::Box(BoxNode::filled(
+                    Rect::new(0, i * 10 + 10, 100, 10),
+                    Color::rgb(0, g, 0),
+                ))])
+                .with_tag(format!("row_{i}")),
+            ));
+        }
+        let filtered = Scene::Container(
+            ContainerNode::new(filtered_children).with_tag("stress_root"),
+        );
+
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+
+        run_paint(&full, &mut cache, &mut text);
+        assert_eq!(cache.entries(), 100, "warmup populates 100 row entries");
+
+        run_paint(&filtered, &mut cache, &mut text);
+        // After paint 2:
+        // - 34 surviving completed-row entries (consulted via hits).
+        // - 66 active-row entries evicted (not consulted).
+        assert_eq!(
+            cache.entries(),
+            completed_n as usize,
+            "filter change evicts dropped-row fragments; only survivors remain",
+        );
+        // Hits on the 34 surviving completed rows.
+        assert_eq!(
+            cache.hits(),
+            u64::from(completed_n),
+            "every still-visible row hits the previously installed fragment",
+        );
+        // No new row misses on paint 2 (every visible row was
+        // installed during warmup).
+        assert_eq!(cache.misses(), 100);
+    }
+
+    #[test]
+    fn r682b_stress_full_hit_paint_publishes_no_damage_region() {
+        // First paint dirties every row (N misses); second identical
+        // paint hits every row (no miss) → no damage rect
+        // accumulator entries → `last_damage_region == None`.
+        let mask = vec![false; 50];
+        let scene = stress_scene(50, &mask);
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        run_paint(&scene, &mut cache, &mut text);
+        assert!(
+            cache.last_damage_region().is_some(),
+            "first paint dirties every row",
+        );
+        run_paint(&scene, &mut cache, &mut text);
+        assert!(
+            cache.last_damage_region().is_none(),
+            "100% hit paint publishes no damage",
+        );
+    }
+
+    #[test]
+    fn r682b_stress_stats_snapshot_reflects_live_counters() {
+        // Exercise the GUI-agnostic snapshot path consumers (RPC +
+        // tests) actually use: `FragmentCache::stats()`. The
+        // counters surfaced through the value-type
+        // [`FragmentCacheStats`] must match the direct getters.
+        let mask = vec![false; 100];
+        let scene = stress_scene(100, &mask);
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        for _ in 0..3 {
+            run_paint(&scene, &mut cache, &mut text);
+        }
+        let stats = cache.stats();
+        assert_eq!(stats.hits, cache.hits());
+        assert_eq!(stats.misses, cache.misses());
+        assert_eq!(stats.paint_count, cache.paint_count());
+        assert_eq!(stats.entries, cache.entries());
+        // last_damage_region: third stable paint must be all-hit →
+        // None.
+        assert!(stats.last_damage_region.is_none());
+        assert!((stats.hit_rate() - cache.hit_rate()).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r682b_stress_paint_count_advances_monotonically() {
+        // Each `to_vello_cached` invocation increments paint_count by
+        // exactly one. R682 demo asserts this against the RPC
+        // surface; here we pin the substrate-level contract.
+        let scene = stress_scene(10, &[false; 10]);
+        let mut cache = FragmentCache::new();
+        let mut text = LayoutCache::new();
+        for expected_count in 1u64..=5 {
+            run_paint(&scene, &mut cache, &mut text);
+            assert_eq!(cache.paint_count(), expected_count);
+        }
     }
 }

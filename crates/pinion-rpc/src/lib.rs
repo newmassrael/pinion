@@ -11,6 +11,7 @@
 
 pub mod animate_control;
 pub mod animation_state;
+pub mod cache_stats;
 pub mod caret_state;
 pub mod commands;
 pub mod dispatch;
@@ -45,6 +46,7 @@ pub use animate_control::{
     animate_cancel, animate_settle, AnimateControlError, AnimateControlOutcome,
 };
 pub use animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
+pub use cache_stats::{cache_stats, CacheStatsError, CacheStatsOutcome, CacheStatsRect};
 pub use caret_state::{caret_state, CaretStateError, CaretStateOutcome};
 pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,

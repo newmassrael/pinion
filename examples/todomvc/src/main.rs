@@ -269,6 +269,38 @@ const STORAGE_STATE_KEY: &str = "todomvc.state";
 /// host's real data dir stays out of the test cycle.
 const STORAGE_DIR_ENV: &str = "PINION_STORAGE_DIR";
 
+/// (R682.B §5.16) Env var that, when present + parseable as a
+/// non-negative integer ≤ [`SEED_N_MAX`], seeds the freshly-booted
+/// binding with N synthetic [`TodoItem`] rows during
+/// [`use_persistence_boot`]. The seed only fires when the `todos`
+/// signal is empty after hydration (so persisted user data is never
+/// clobbered); subsequent boots from the same on-disk state skip the
+/// seed because the hydrated list is non-empty.
+///
+/// Used by the R682.B `tools/demos/r682_dirty_subtree_cache.py` demo
+/// to drive the 100-row stress consumer that exercises the §5.16
+/// paint-fragment cache substrate (per-Container `paint_hash` keyed
+/// fragment storage + mark-and-sweep eviction + damage region
+/// propagation). The 2nd-consumer trigger per
+/// [[abstraction-needs-second-consumer]] ratifies the
+/// [`pinion_runtime::FragmentCacheStats`] observability surface
+/// landed in R682.A.
+const SEED_N_ENV: &str = "PINION_TODOMVC_SEED_N";
+
+/// Hard upper bound on the seed env var so a typo (`100000000`) does
+/// not lock the binding boot for minutes. Reasonable maximum for a
+/// dirty-cache stress consumer; the demo uses 100 by default. R682.B
+/// authoritative — bump only on the next round that genuinely needs a
+/// higher stress size.
+const SEED_N_MAX: u32 = 10_000;
+
+/// Completion split for the seeded rows: every 3rd entry is born
+/// completed (i % 3 == 0). Deterministic so the R682.B demo can
+/// assert the filter-driven cache eviction count without enumerating
+/// the seed list. With `N=100` the split is 34 completed / 66 active
+/// (the 0-indexed positions 0, 3, 6, …, 99 are completed).
+const SEED_COMPLETION_STRIDE: u64 = 3;
+
 /// (R665 §3 §5.15) Schema version stamped onto every
 /// [`PersistedState`] blob. Bump on every breaking field-shape
 /// change; the load path treats mismatched versions as "start
@@ -1050,6 +1082,59 @@ struct PersistenceBootMarker {
 ///
 /// Panics outside an `Owner::run(...)` scope (same shape as
 /// [`use_todos`]).
+/// R682.B §5.16 — parse [`SEED_N_ENV`] into the requested seed
+/// count. Returns `Some(n)` only when the env var is present, parses
+/// as a non-negative integer, and falls within `[1, SEED_N_MAX]`.
+/// Returns `None` for unset / empty / `"0"` / non-numeric / out-of-
+/// range values so the seed block is a strict no-op when no stress
+/// scenario was requested.
+///
+/// Public-via-`pub(crate)` so the R682.B test module can drive the
+/// parser without invoking the full `use_persistence_boot` arc.
+pub(crate) fn parse_seed_n_env(value: Option<&str>) -> Option<u32> {
+    let raw = value?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parsed: u32 = trimmed.parse().ok()?;
+    if parsed == 0 || parsed > SEED_N_MAX {
+        return None;
+    }
+    Some(parsed)
+}
+
+/// R682.B §5.16 — pure builder for the seed row at index `i`.
+///
+/// `next_id` is the stable id allocated for this row (the caller
+/// advances `next_id` by `n` after `seed_rows(n)` so the existing
+/// monotonic-counter contract holds). Completion is deterministic
+/// (`i % SEED_COMPLETION_STRIDE == 0`) so demo assertions on the
+/// filter-driven cache eviction count are stable.
+///
+/// `pub(crate)` so the R682.B test module can pin the deterministic
+/// completion pattern without re-implementing it.
+pub(crate) fn seed_todo_row(i: u32, next_id: u64) -> TodoItem {
+    let completed = (u64::from(i) % SEED_COMPLETION_STRIDE) == 0;
+    TodoItem {
+        id: next_id,
+        text: format!("Seed task {}", i + 1),
+        completed,
+    }
+}
+
+/// R682.B §5.16 — build a `Vec<TodoItem>` of the requested length
+/// using [`seed_todo_row`]. Ids start at `start_id` and run
+/// monotonically (`start_id`, `start_id+1`, … `start_id+n-1`); the
+/// caller then advances [`use_next_todo_id`] by `n` so subsequent
+/// row inserts pick up where the seed left off.
+///
+/// `pub(crate)` so tests can verify the row count + id range +
+/// completion split without going through `use_persistence_boot`.
+pub(crate) fn build_seed_rows(n: u32, start_id: u64) -> Vec<TodoItem> {
+    (0..n).map(|i| seed_todo_row(i, start_id + u64::from(i))).collect()
+}
+
 fn use_persistence_boot() -> Rc<PersistenceBootMarker> {
     // Resolve all dependent `Owner::cache` slots BEFORE entering the
     // boot slot. `Owner::cache` holds a `RefCell` mutable borrow on
@@ -1097,6 +1182,32 @@ fn use_persistence_boot() -> Rc<PersistenceBootMarker> {
                              failed to deserialize ({e}) — starting fresh",
                         );
                     }
+                }
+            }
+
+            // (1.5) R682.B §5.16 — paint-fragment cache stress seed.
+            // When [`SEED_N_ENV`] is set + parses + `todos` is still
+            // empty post-hydration, seed N synthetic TodoItem rows
+            // through the same batch arc the hydration path uses so
+            // a single atomic Signal mutation lands. The
+            // `todos.get().is_empty()` gate guarantees the seed
+            // never clobbers user data: real persisted state always
+            // hydrates non-empty, so the seed becomes a no-op as
+            // soon as the binding has been used once. The 2nd
+            // consumer of [`pinion_runtime::FragmentCacheStats`]
+            // per [[abstraction-needs-second-consumer]].
+            //
+            // env-var check fires first so the steady-state (no
+            // env) path never reads the signal during boot.
+            if let Some(n) = parse_seed_n_env(std::env::var(SEED_N_ENV).ok().as_deref()) {
+                if todos.get().is_empty() {
+                    let start_id = next_id_cell.get();
+                    let rows = build_seed_rows(n, start_id);
+                    let new_next_id = start_id + u64::from(n);
+                    pinion_core::reactive::batch(|| {
+                        todos.set(rows);
+                        next_id_cell.set(new_next_id);
+                    });
                 }
             }
 
@@ -5064,5 +5175,168 @@ mod tests {
                 .with_tag(ITEM_TAG),
         );
         Scene::Container(super::ContainerNode::new(vec![delete, toggle, item]))
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R682.B §5.16 — paint-fragment cache stress seed
+    // ─────────────────────────────────────────────────────────────
+    //
+    // The seed env var ([`super::SEED_N_ENV`]) feeds N synthetic
+    // [`super::TodoItem`] rows into the freshly-booted binding so
+    // the §5.16 paint-fragment cache (R682.A FragmentCache +
+    // per-Container `paint_hash` keying + mark-and-sweep eviction)
+    // can be exercised under load. These tests pin the pure pieces
+    // (env parse / row builder / completion stride) and the
+    // view-fn-level pin that N seeded rows produce N rows in the
+    // painted scene. Cross-paint cache hit/miss behaviour is
+    // exercised in `pinion-runtime::paint_adapter::tests` against a
+    // synthetic 100-Container scene + verified end-to-end through
+    // the `scene/cache_stats` RPC method by
+    // `tools/demos/r682_dirty_subtree_cache.py`.
+
+    use super::{build_seed_rows, parse_seed_n_env, seed_todo_row, SEED_N_MAX};
+
+    #[test]
+    fn r682b_parse_seed_n_env_accepts_in_range() {
+        assert_eq!(parse_seed_n_env(Some("1")), Some(1));
+        assert_eq!(parse_seed_n_env(Some("100")), Some(100));
+        assert_eq!(parse_seed_n_env(Some("10000")), Some(SEED_N_MAX));
+    }
+
+    #[test]
+    fn r682b_parse_seed_n_env_rejects_zero_and_overflow() {
+        assert!(parse_seed_n_env(Some("0")).is_none());
+        assert!(parse_seed_n_env(Some("10001")).is_none());
+        assert!(parse_seed_n_env(Some("4294967296")).is_none()); // > u32::MAX
+    }
+
+    #[test]
+    fn r682b_parse_seed_n_env_rejects_malformed() {
+        assert!(parse_seed_n_env(None).is_none());
+        assert!(parse_seed_n_env(Some("")).is_none());
+        assert!(parse_seed_n_env(Some("abc")).is_none());
+        assert!(parse_seed_n_env(Some("-5")).is_none());
+        assert!(parse_seed_n_env(Some("3.14")).is_none());
+    }
+
+    #[test]
+    fn r682b_parse_seed_n_env_handles_whitespace() {
+        assert_eq!(parse_seed_n_env(Some("  100  ")), Some(100));
+        assert_eq!(parse_seed_n_env(Some("\t50\n")), Some(50));
+    }
+
+    #[test]
+    fn r682b_build_seed_rows_returns_n_items_with_contiguous_ids() {
+        let rows = build_seed_rows(5, 42);
+        assert_eq!(rows.len(), 5);
+        for (idx, row) in rows.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation, reason = "idx < 5")]
+            let expected_id = 42 + idx as u64;
+            assert_eq!(row.id, expected_id);
+        }
+    }
+
+    #[test]
+    fn r682b_build_seed_rows_completion_pattern_is_third_indices() {
+        let rows = build_seed_rows(10, 0);
+        // indices 0, 3, 6, 9 completed; 1, 2, 4, 5, 7, 8 active.
+        let completed: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.completed)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(completed, vec![0, 3, 6, 9]);
+    }
+
+    #[test]
+    fn r682b_build_seed_rows_text_carries_one_indexed_position() {
+        let rows = build_seed_rows(3, 1);
+        assert_eq!(rows[0].text, "Seed task 1");
+        assert_eq!(rows[1].text, "Seed task 2");
+        assert_eq!(rows[2].text, "Seed task 3");
+    }
+
+    #[test]
+    fn r682b_seed_todo_row_completion_alternates_on_stride() {
+        // SEED_COMPLETION_STRIDE = 3 — row 0 completed, 1 active,
+        // 2 active, 3 completed, 4 active, 5 active, …
+        assert!(seed_todo_row(0, 0).completed);
+        assert!(!seed_todo_row(1, 0).completed);
+        assert!(!seed_todo_row(2, 0).completed);
+        assert!(seed_todo_row(3, 0).completed);
+        assert!(!seed_todo_row(4, 0).completed);
+        assert!(!seed_todo_row(5, 0).completed);
+        assert!(seed_todo_row(6, 0).completed);
+    }
+
+    #[test]
+    fn r682b_view_fn_paints_one_item_container_per_seeded_row() {
+        with_owner(|| {
+            // Seed `use_todos` with N=12 rows via the helper.
+            let rows = build_seed_rows(12, 100);
+            use_todos().set(rows);
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
+            // Every seeded id should produce exactly one
+            // `Container[item#<id>]` child under [`LIST_TAG`].
+            let list_children = find_children_for_tag(&scene, LIST_TAG);
+            // The list container holds the per-row item Containers
+            // plus the header row; 12 seeded → at least 12 item
+            // children plus the header.
+            let item_count = list_children
+                .iter()
+                .filter(|c| match c {
+                    Scene::Container(inner) => inner
+                        .tag
+                        .as_deref()
+                        .is_some_and(|t| t.starts_with(ITEM_TAG_PREFIX)),
+                    _ => false,
+                })
+                .count();
+            assert_eq!(item_count, 12, "12 seeded rows → 12 item Containers");
+        });
+    }
+
+    #[test]
+    fn r682b_view_fn_seeded_row_carries_strikethrough_on_completed() {
+        with_owner(|| {
+            // Seed 3 rows so indices 0 + ¬1 + ¬2 land — only
+            // index 0 should paint strikethrough.
+            let rows = build_seed_rows(3, 1);
+            assert!(rows[0].completed);
+            assert!(!rows[1].completed);
+            assert!(!rows[2].completed);
+            use_todos().set(rows);
+            let scene = view(
+                (
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                &Frame::default(),
+            );
+            let styles = collect_text_styles(&scene);
+            // At least one paint emitted a strikethrough — the
+            // completed-row text decoration. Smoke-pin only (full
+            // strikethrough audit is covered by R664 tests above).
+            let has_strikethrough = styles
+                .iter()
+                .any(|s| s.decoration == pinion_core::style::TextDecoration::strikethrough());
+            assert!(
+                has_strikethrough,
+                "completed seed row must paint strikethrough",
+            );
+        });
     }
 }
