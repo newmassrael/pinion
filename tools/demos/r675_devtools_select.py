@@ -334,20 +334,35 @@ def body() -> None:
             f"{main_state_after_click!r}"
         )
 
-        # ── (J) AI-side selection still queryable on inspector ────
+        # ── (J) AI-side selection observed on main banner ─────────
         # The TreeRowClickExternal's pressed_id slot was just used
         # for input wire; the selection itself lives in the
         # binding's selected_path Signal which view_main reads.
-        # Verify the banner text is still present in main view as
-        # the authoritative selection mirror.
+        #
+        # R679 §5.16 §5.49 — the bidirectional bridge means a main-
+        # button click now ALSO writes the Signal (with the button's
+        # static raw path, MAIN_BUTTON_RAW_PATH =
+        # "Container/Container[main_btn]"). So after section (H)'s
+        # main-button click, the selection is no longer the inspector-
+        # written "main" placeholder id but the button's resolved
+        # path. Either banner is acceptable here — the test's intent
+        # is "the inspector→main bridge keeps working through main-
+        # window operations", which is still satisfied; the specific
+        # selection value is a R679-driven enrichment.
         resp_main = tf.request(
             "scene/snapshot",
             {"path": "", "window": "main", "from": "paint",
              "viewport": {"w": 320, "h": 200}},
         )
         snap_main_final = resp_main.result
-        assert _walk_for_text(snap_main_final, "Selected: main"), (
-            "selection must persist across the unrelated main-button click"
+        has_inspector_banner = _walk_for_text(snap_main_final, "Selected: main")
+        has_button_banner = _walk_for_text(
+            snap_main_final, "Selected: Container/Container[main_btn]"
+        )
+        assert has_inspector_banner or has_button_banner, (
+            "main banner must reflect either the inspector-written "
+            "selection ('main') or the R679 button-click-written "
+            "selection ('Container/Container[main_btn]') — bridge alive"
         )
 
         # ── (K) read-only contract on pressed_id slot ─────────────

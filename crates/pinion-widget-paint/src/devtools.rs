@@ -419,6 +419,116 @@ pub fn descend_and_wrap(scene: Scene, segments: &[&str], color: Color) -> Scene 
     Scene::Container(c)
 }
 
+/// R679 §5.16 §5.49 — **the paint-side hit-test inverse walker.**
+/// Given a painted scene and a hit coordinate `(x, y)`, walk the
+/// scene tree following the same topmost-last (declaration-order
+/// reverse iteration) descent semantics as [`Scene::hit_test`] and
+/// return the [`scene_to_tree_item`]-canonical path of the **deepest
+/// tagged ancestor** at that hit.
+///
+/// Returns `None` when:
+///
+/// * `(x, y)` lies outside the scene's outermost rect (no hit at all);
+/// * the descent finds a hit but no node along the chain carries a
+///   tag (every ancestor is anonymous — typical for an untagged
+///   wrapper Container plus untagged Text leaves; the canonical
+///   `DevTools` selection semantics interpret this as "nothing
+///   actionable here", i.e. background-click → deselect on the
+///   binding side).
+///
+/// ## Why deepest-**tagged** ancestor (not deepest node)?
+///
+/// Mirrors the runtime [`crate::tree_view`] hit-target convention +
+/// the `InputRouter`'s `resolve_hover_tag` deepest-tagged-ancestor
+/// semantics so a single (x, y) → path map is consistent across
+/// every paint-side input arc. DevTools-style "click anywhere →
+/// highlight that widget" reads naturally as "the widget under the
+/// pointer" — tagged elements are the widgets the binding cares
+/// about; untagged decoration (label Text inside the button, the
+/// flexbox wrapper around content) is paint-implementation detail
+/// the selection bridge should walk past.
+///
+/// The returned path is always **resolvable** through
+/// [`find_node_at_path`] — this is the substrate's load-bearing
+/// invariant. Every successful hit returns a path string that
+/// round-trips: `find_node_at_path(scene,
+/// path_for_paint_hit(scene, x, y).unwrap()).is_some()`. Unit tests
+/// pin the round-trip explicitly.
+///
+/// ## Scroll containers (v1 carry)
+///
+/// The walker does **not** descend into [`Scene::Scroll`] content —
+/// the Scroll variant returns the path **up to** the Scroll node
+/// itself (deepest tagged ancestor is the closest tagged container
+/// above the Scroll, if any). This is honest carry for R679: the
+/// first DevTools-on-Scroll consumer (R680+) will lift the Scroll
+/// descent into the substrate with offset translation matching
+/// [`Scene::hit_test`]'s. hello-multi-window's main paint carries no
+/// Scroll today, so the v1 carry does not affect the bidirectional
+/// select demo.
+#[must_use]
+pub fn path_for_paint_hit(scene: &Scene, x: u32, y: u32) -> Option<String> {
+    // Gate: outside the scene's outermost rect → no hit. Reuses
+    // `Scene::hit_test` so the gate logic stays in lockstep with the
+    // canonical pinion-core hit semantics (rect_contains gate +
+    // Effect skip + zero-area rejection are all centralised there).
+    scene.hit_test(x, y)?;
+    let mut current = scene;
+    let mut current_path = scene_root_path_segment(scene);
+    let mut deepest_tagged_path: Option<String> = if scene_tag(scene).is_some() {
+        Some(current_path.clone())
+    } else {
+        None
+    };
+    loop {
+        // Match the visual nesting: topmost (last-drawn) sibling wins
+        // on overlap, exactly mirroring `Scene::hit_test`'s reverse
+        // iteration. Compute per-type nth-of-type indices in a forward
+        // pass first so the matched index carries the same
+        // disambiguator the forward walker (`scene_to_tree_item`)
+        // would emit — the load-bearing round-trip invariant.
+        let Scene::Container(c) = current else {
+            // Non-Container variants (Text / Box / Path / Image /
+            // External / Scroll / Effect) are leaves for the descent
+            // — no children to walk into. The current
+            // `deepest_tagged_path` is the answer.
+            //
+            // For `Scene::Scroll`, this stops the walk at the Scroll
+            // node itself rather than descending into `content` with
+            // offset translation; documented as the v1 carry above.
+            break;
+        };
+        let mut type_counts: HashMap<&'static str, usize> = HashMap::new();
+        let mut child_path_segments: Vec<String> = Vec::with_capacity(c.children.len());
+        for child in &c.children {
+            let ty = scene_type_name(child);
+            let nth_ref = type_counts.entry(ty).or_insert(0);
+            let nth = *nth_ref;
+            *nth_ref += 1;
+            child_path_segments.push(scene_child_path_segment(child, nth));
+        }
+        let hit_idx = c
+            .children
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, child)| child.hit_test(x, y).map(|_| i));
+        let Some(idx) = hit_idx else {
+            // Container itself is the deepest hit — no descendant
+            // contains the point. Walk terminates here.
+            break;
+        };
+        current_path.push('/');
+        current_path.push_str(&child_path_segments[idx]);
+        let child_scene = &c.children[idx];
+        if scene_tag(child_scene).is_some() {
+            deepest_tagged_path = Some(current_path.clone());
+        }
+        current = child_scene;
+    }
+    deepest_tagged_path
+}
+
 /// R678 §5.16 §5.49 — walk one `Scene` node into a [`TreeItem`]
 /// carrying a **path-stable** id. Containers become branches whose
 /// `label` shows the variant + tag (when tagged); text nodes become
@@ -807,6 +917,332 @@ mod tests {
         let path = "Container/Container[btn]";
         assert!(find_node_at_path(&before, path).is_some());
         assert!(find_node_at_path(&after, path).is_some());
+    }
+
+    // ---------- path_for_paint_hit ----------
+    //
+    // R679 §5.16 §5.49 — paint-side hit-test inverse walker. The
+    // load-bearing invariant: every successful hit returns a path
+    // that `find_node_at_path` resolves on the same scene
+    // (round-trip). The walker tracks the *deepest tagged ancestor*
+    // along the hit chain so untagged decoration (label Text inside
+    // a tagged button, flex wrappers) is walked past — mirroring
+    // the runtime `InputRouter::resolve_hover_tag` semantics so the
+    // (x, y) → path map is consistent across every paint-side input
+    // arc.
+
+    use pinion_core::scene::{BoxNode, ScrollNode};
+
+    /// Build a `Scene::Box` with a concrete rect — Box variants
+    /// carry their own rect inline so hit-test grids resolve
+    /// without a layout pass.
+    fn tagged_box(tag: &'static str, x: u32, y: u32, w: u32, h: u32) -> Scene {
+        Scene::Box(BoxNode::filled(Rect::new(x, y, w, h), Color::default()).with_tag(tag))
+    }
+
+    fn untagged_box(x: u32, y: u32, w: u32, h: u32) -> Scene {
+        Scene::Box(BoxNode::filled(Rect::new(x, y, w, h), Color::default()))
+    }
+
+    /// Wrap children in a Container with an explicitly assigned
+    /// rect. `ContainerNode::new()` leaves `rect = Rect::default()`
+    /// (zero); the layout pass at paint time normally fills it.
+    /// Substrate tests run **without** the layout pass — locate.rs
+    /// uses the same `node.rect = ...` direct assignment pattern.
+    fn tagged_container_with_children(
+        tag: &'static str,
+        rect: Rect,
+        children: Vec<Scene>,
+    ) -> Scene {
+        let mut node = ContainerNode::new(children).with_tag(tag);
+        node.rect = rect;
+        Scene::Container(node)
+    }
+
+    fn untagged_container_with_children(rect: Rect, children: Vec<Scene>) -> Scene {
+        let mut node = ContainerNode::new(children);
+        node.rect = rect;
+        Scene::Container(node)
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_outside_scene_returns_none() {
+        // No tagged ancestor anywhere on a hit OUTSIDE the scene →
+        // None.
+        let scene = untagged_container_with_children(
+            Rect::new(0, 0, 100, 100),
+            vec![tagged_box("btn", 10, 10, 40, 40)],
+        );
+        // Point at (500, 500) is outside the container → no hit.
+        assert!(path_for_paint_hit(&scene, 500, 500).is_none());
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_on_untagged_only_scene_returns_none() {
+        // Hit lands inside an untagged Box inside an untagged
+        // Container — no tagged ancestor along the chain.
+        let scene = untagged_container_with_children(
+            Rect::new(0, 0, 100, 100),
+            vec![untagged_box(0, 0, 50, 50)],
+        );
+        // (10, 10) lands on the untagged box.
+        assert!(path_for_paint_hit(&scene, 10, 10).is_none());
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_on_tagged_container_returns_container_path() {
+        // Root untagged Container holds a tagged Container holding
+        // geometry. Hit on the tagged Container → path =
+        // "Container/Container[btn]".
+        //
+        // Note: only Container + External are tag-bearing in the
+        // devtools path scheme (per R678 docs on `scene_tag`).
+        // Tagged Box/Text/etc. are NOT recognised as
+        // deepest-tagged-ancestor candidates here; the per-type
+        // nth-of-type form is used instead.
+        let scene = untagged_container_with_children(
+            Rect::new(0, 0, 100, 100),
+            vec![tagged_container_with_children(
+                "btn",
+                Rect::new(0, 0, 40, 40),
+                vec![untagged_box(0, 0, 40, 40)],
+            )],
+        );
+        let path = path_for_paint_hit(&scene, 10, 10).expect("must hit tagged container");
+        assert_eq!(path, "Container/Container[btn]");
+        // Round-trip invariant.
+        assert!(
+            find_node_at_path(&scene, &path).is_some(),
+            "path_for_paint_hit output must resolve via find_node_at_path",
+        );
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_tagged_box_not_recognised_as_tagged_ancestor() {
+        // Per R678 `scene_tag` contract, only Container + External
+        // are tag-bearing. A tagged Box at the top of the hit
+        // chain does not contribute a tagged ancestor — the
+        // walker walks past it (treating it as an anonymous
+        // sibling) and looks for tagged Container/External
+        // ancestors instead. If there are none, returns None.
+        let scene = untagged_container_with_children(
+            Rect::new(0, 0, 100, 100),
+            vec![tagged_box("box_tag_ignored", 0, 0, 40, 40)],
+        );
+        assert!(
+            path_for_paint_hit(&scene, 10, 10).is_none(),
+            "tagged Box is not a devtools-path-scheme tag",
+        );
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_walks_past_untagged_leaf_to_tagged_ancestor() {
+        // Tagged Container wraps a tagged Box (inner). Hit on the
+        // box → returns the inner Box path; if we replace the Box
+        // with an untagged Text, the walker should walk back to
+        // the outer tagged Container. We pin both flavours below.
+        let scene = untagged_container_with_children(
+            Rect::new(0, 0, 100, 100),
+            vec![tagged_container_with_children(
+                "btn",
+                Rect::new(0, 0, 50, 50),
+                vec![Scene::Text(TextNode::styled(
+                    "Click me!",
+                    Rect::new(5, 5, 30, 20),
+                    TextStyle::new(),
+                ))],
+            )],
+        );
+        // Hit on (10, 10): the Text rect contains it. Text is
+        // untagged so the deepest tagged is the parent Container.
+        let path = path_for_paint_hit(&scene, 10, 10).expect("must hit");
+        assert_eq!(path, "Container/Container[btn]");
+        assert!(find_node_at_path(&scene, &path).is_some());
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_returns_deepest_tagged_when_nested() {
+        // Two nested tagged Containers — hit on the inner one
+        // returns the inner path (deepest tagged ancestor closer
+        // to the leaf wins).
+        let scene = tagged_container_with_children(
+            "outer",
+            Rect::new(0, 0, 100, 100),
+            vec![tagged_container_with_children(
+                "inner",
+                Rect::new(0, 0, 50, 50),
+                vec![untagged_box(0, 0, 30, 30)],
+            )],
+        );
+        let path = path_for_paint_hit(&scene, 10, 10).expect("must hit");
+        assert_eq!(
+            path,
+            "Container[outer]/Container[inner]",
+            "deepest tagged ancestor at hit point wins",
+        );
+        assert!(find_node_at_path(&scene, &path).is_some());
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_overlapping_siblings_topmost_wins() {
+        // Two tagged Containers overlap. Reverse-iteration in
+        // `path_for_paint_hit` matches `Scene::hit_test` —
+        // declaration-order-last sibling drawn on top wins.
+        let scene = untagged_container_with_children(
+            Rect::new(0, 0, 100, 100),
+            vec![
+                tagged_container_with_children(
+                    "lower",
+                    Rect::new(0, 0, 50, 50),
+                    vec![untagged_box(0, 0, 50, 50)],
+                ),
+                tagged_container_with_children(
+                    "upper",
+                    Rect::new(10, 10, 50, 50),
+                    vec![untagged_box(10, 10, 50, 50)],
+                ),
+            ],
+        );
+        // (20, 20) is inside both; topmost (upper, declared 2nd)
+        // wins.
+        let path = path_for_paint_hit(&scene, 20, 20).expect("must hit");
+        assert_eq!(path, "Container/Container[upper]");
+        assert!(find_node_at_path(&scene, &path).is_some());
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_per_type_idx_among_untagged_siblings() {
+        // Three untagged Boxes inside a tagged Container —
+        // per-type idx for non-tagged children matches the forward
+        // walker's `Type[nth-of-type]` form. Hit on the 2nd box
+        // walks back to the tagged parent (the deepest tagged
+        // ancestor) — the untagged box itself has no tag so it
+        // does not contribute a tagged path.
+        let scene = tagged_container_with_children(
+            "root",
+            Rect::new(0, 0, 100, 100),
+            vec![
+                untagged_box(0, 0, 20, 20),
+                untagged_box(30, 0, 20, 20),
+                untagged_box(60, 0, 20, 20),
+            ],
+        );
+        // Hit on the 2nd untagged box (declaration idx 1) → no
+        // tagged descendant → deepest tagged is the root.
+        let path = path_for_paint_hit(&scene, 35, 5).expect("must hit");
+        assert_eq!(path, "Container[root]");
+        assert!(find_node_at_path(&scene, &path).is_some());
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_mixed_type_siblings_use_per_type_idx() {
+        // Tagged Container holds a Box, a tagged inner Container,
+        // and another Box. The inner tagged Container's path uses
+        // its tag form (priority over nth-of-type).
+        let scene = tagged_container_with_children(
+            "root",
+            Rect::new(0, 0, 100, 100),
+            vec![
+                untagged_box(0, 0, 20, 20),
+                tagged_container_with_children(
+                    "mid",
+                    Rect::new(20, 20, 30, 30),
+                    vec![untagged_box(20, 20, 20, 20)],
+                ),
+                untagged_box(60, 0, 20, 20),
+            ],
+        );
+        // Hit (25, 25) lands on the inner box inside `mid`. The
+        // deepest tagged is `mid`.
+        let path = path_for_paint_hit(&scene, 25, 25).expect("must hit");
+        assert_eq!(path, "Container[root]/Container[mid]");
+        assert!(find_node_at_path(&scene, &path).is_some());
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_root_tag_alone_when_root_hit() {
+        // Tagged root Container with an untagged Text child. Hit
+        // inside the Text → walks back to root (deepest tagged
+        // ancestor = root itself).
+        let scene = tagged_container_with_children(
+            "root",
+            Rect::new(0, 0, 50, 50),
+            vec![Scene::Text(TextNode::styled(
+                "x",
+                Rect::new(0, 0, 10, 10),
+                TextStyle::new(),
+            ))],
+        );
+        let path = path_for_paint_hit(&scene, 0, 0).expect("must hit");
+        assert_eq!(path, "Container[root]");
+        assert!(find_node_at_path(&scene, &path).is_some());
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_scroll_does_not_descend_into_content_v1_carry() {
+        // V1 carry: `Scene::Scroll` walks down to the Scroll node
+        // itself but does not descend into `content` with offset
+        // translation. A Scroll inside an untagged tree returns
+        // None even when the content holds a tagged descendant.
+        // Documented as the substrate carry — R680+ DevTools-on-
+        // Scroll consumer will land the offset-translation
+        // descent matching `Scene::hit_test`.
+        let scene = untagged_container_with_children(
+            Rect::new(0, 0, 100, 100),
+            vec![Scene::Scroll(ScrollNode::new(
+                Rect::new(0, 0, 100, 100),
+                tagged_box("inside_scroll", 0, 0, 50, 50),
+            ))],
+        );
+        // Hit inside the scroll viewport (0,0)..(100,100). Content
+        // holds a tagged Box but the walker doesn't descend.
+        let result = path_for_paint_hit(&scene, 10, 10);
+        // Scroll content's tag is not reached; no tagged ancestor
+        // above the Scroll either → None.
+        assert!(
+            result.is_none(),
+            "v1 carry: Scroll content descent not yet implemented",
+        );
+    }
+
+    #[test]
+    fn r679_path_for_paint_hit_round_trip_for_every_position_in_tagged_grid() {
+        // Stress test: a 3x3 grid of tagged Containers (9 tagged
+        // children). For every (x, y) inside the grid, the
+        // returned path must round-trip through find_node_at_path.
+        let mut children: Vec<Scene> = Vec::with_capacity(9);
+        for col in 0..3_u32 {
+            for row in 0..3_u32 {
+                let tag: &'static str = match (col, row) {
+                    (0, 0) => "c00",
+                    (1, 0) => "c10",
+                    (2, 0) => "c20",
+                    (0, 1) => "c01",
+                    (1, 1) => "c11",
+                    (2, 1) => "c21",
+                    (0, 2) => "c02",
+                    (1, 2) => "c12",
+                    (2, 2) => "c22",
+                    _ => unreachable!(),
+                };
+                children.push(tagged_container_with_children(
+                    tag,
+                    Rect::new(col * 20, row * 20, 20, 20),
+                    vec![untagged_box(col * 20, row * 20, 20, 20)],
+                ));
+            }
+        }
+        let scene = untagged_container_with_children(Rect::new(0, 0, 60, 60), children);
+        for x in [5_u32, 25, 45] {
+            for y in [5_u32, 25, 45] {
+                let path = path_for_paint_hit(&scene, x, y)
+                    .unwrap_or_else(|| panic!("hit at ({x}, {y}) must resolve"));
+                assert!(
+                    find_node_at_path(&scene, &path).is_some(),
+                    "round-trip failed at ({x}, {y}): path={path:?}",
+                );
+            }
+        }
     }
 
     /// Test-only stub `External` for the path scheme tests — we

@@ -45,7 +45,10 @@
 
 use std::rc::Rc;
 
-use pinion_core::external::IntrospectValue;
+use pinion_core::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -145,6 +148,86 @@ const INSPECTOR_CLICK_INTENT_TAG: &str = intent_tag!("inspector_tree", "click");
 /// [`use_hovered_path`] Signal as `Some(path)`),
 /// `IntrospectValue::Null` on Leave (mirror as `None`).
 const INSPECTOR_HOVER_INTENT_TAG: &str = intent_tag!("inspector_tree", "hover");
+
+/// R679 §5.16 §5.49 — paint-side tag of the main window's
+/// [`MainWindowClickRouter`] External. Registered as a 2nd
+/// `ExtraExternal` next to the inspector window's
+/// [`TreeRowClickExternal`]. The state scene now carries three
+/// `ExternalNode` slots (ButtonExternal at [`MAIN_BTN_TAG`],
+/// TreeRowClickExternal at [`INSPECTOR_TREE_TAG`],
+/// MainWindowClickRouter at this tag) — per R55.D.5 multi-External
+/// substrate the runtime composes them as a `Scene::Container`
+/// holding all three so dispatchers walk DFS to resolve targets.
+///
+/// The router itself is **AI-invoke-only** in R679 — it has no
+/// `send` paint-side handler. A `scene/invoke
+/// /main_click_router/external/click` call writes the supplied
+/// path into the cross-window [`use_selected_path`] Signal so the
+/// inspector tree row paints the focus state-layer in lockstep.
+/// The user-mouse path is closed independently by the
+/// [`MAIN_BTN_CLICK_INTENT_TAG`] reducer arm below — when the
+/// user clicks the main button, ButtonExternal fires the canonical
+/// `click` intent and the reducer mirrors the button's known raw
+/// path into the Signal. Background-click (user mouse on
+/// non-button area) is **no-op** in R679; deselect is reachable
+/// via AI invoke with a `Null` payload — pinned design decision
+/// per the R679 atomic 1 scope note.
+const MAIN_CLICK_ROUTER_TAG: &str = "main_click_router";
+
+/// R679 §5.16 §5.20 §5.49 — dotted-form intent tag the
+/// [`MainWindowClickRouter`] under [`MAIN_CLICK_ROUTER_TAG`] emits
+/// when AI invokes the typed `click` shortcut. The runtime
+/// intent-queue walker prefixes the substrate's bare event name
+/// (`"click"`) with the producing External's tag, so the reducer
+/// matches `"main_click_router.click"` literally per
+/// [[intent-tag-dotted-wire-form]].
+///
+/// Payload semantics: `IntrospectValue::Text(path)` mirrors into
+/// [`use_selected_path`] as `Some(path)` (AI-driven select);
+/// `IntrospectValue::Null` mirrors as `None` (AI-driven
+/// deselect). Symmetric with the
+/// [[w3c-dom-selection-shape]] anchor/collapse pair — `Text` =
+/// non-empty selection, `Null` = empty selection.
+const MAIN_CLICK_ROUTER_INTENT_TAG: &str = intent_tag!("main_click_router", "click");
+
+/// R679 §5.16 §5.20 §5.49 — dotted-form intent tag the
+/// [`ButtonExternal`] under [`MAIN_BTN_TAG`] emits on each
+/// completed `Pressed → Hover` cycle (the canonical button click
+/// per [`pinion_core::widgets::button::Button`]'s SCXML transition
+/// contract). The button's intent payload is always
+/// [`IntrospectValue::Null`] — Button has no semantic value to
+/// carry, the kind alone is the signal.
+///
+/// R679 grew an `update` reducer arm matching this tag to bridge
+/// user-mouse-driven button presses into
+/// [`use_selected_path`]. The known raw path the arm writes is
+/// [`MAIN_BUTTON_RAW_PATH`].
+const MAIN_BTN_CLICK_INTENT_TAG: &str = intent_tag!("main_btn", "click");
+
+/// R679 §5.16 §5.49 — the **raw-scene** path identifying the
+/// `Container[main_btn]` node inside the unwrapped
+/// [`view_main_raw`] paint. Hard-coded because the binding's view
+/// shape is stable (root untagged Container with the optional
+/// banner Text + the tagged button Container; the button's tag-
+/// form path takes priority over nth-of-type so it stays
+/// `Container/Container[main_btn]` whether or not the banner sits
+/// in front).
+///
+/// Why hard-coded vs. dynamic
+/// [`pinion_widget_paint::devtools::path_for_paint_hit`] resolve?
+/// The reducer arm fires on a `Null`-payload button-click intent
+/// (per [`pinion_core::widgets::button::Button`]'s SCXML emit
+/// contract) — the intent carries no coordinate to feed
+/// `path_for_paint_hit`. A future-axis substrate that propagates
+/// the originating cursor position into the button intent payload
+/// would let the reducer resolve dynamically; for R679 the static
+/// shape suffices because the binding tree is stable. The R679
+/// atomic 0 substrate test
+/// (`r679_path_for_paint_hit_on_tagged_container_returns_container_path`)
+/// pins this exact path shape so a future refactor that drifts
+/// the raw scene structure surfaces immediately at the substrate
+/// level too.
+const MAIN_BUTTON_RAW_PATH: &str = "Container/Container[main_btn]";
 
 /// R677 §5.16 §5.49 — root tag of the inspector window's **property
 /// pane** (right-hand pane in the new 2-pane DevTools layout). The
@@ -658,6 +741,156 @@ fn format_size_value(value: pinion_core::style::SizeValue) -> String {
 }
 
 
+/// R679 §5.16 §5.20 §5.49 — `DevTools` bidirectional select router
+/// for the **main** window. AI-invoke-only entry point: a
+/// `scene/invoke /main_click_router/external/click {Text(path)}`
+/// (or `{Null}`) writes the supplied path into the shared
+/// [`use_selected_path`] Signal via the
+/// [`MAIN_CLICK_ROUTER_INTENT_TAG`] reducer arm. Closes the
+/// bidirectional select arc: inspector tree row click writes
+/// [`use_selected_path`] via the R675 arc; main router invoke (or
+/// user mouse click on the main button via the
+/// [`MAIN_BTN_CLICK_INTENT_TAG`] arm) writes the same Signal from
+/// the **main** side.
+///
+/// Why a separate External rather than a reducer-only Signal
+/// mutation:
+///
+/// * **Symbolic introspection** — AI clients query the
+///   `last_clicked` slot via `scene/query` to verify the last
+///   invoke landed without having to scrape the cross-window
+///   banner / focus state-layer from `scene/snapshot`. The slot
+///   is the source-of-truth mirror of the Signal at the AI plane.
+/// * **§5.20 intent stream** — the External enqueues a `click`
+///   intent on the canonical §5.20 channel; the reducer dispatches
+///   off the intent rather than off a direct mutation, keeping
+///   the V::update single-entry-point invariant.
+/// * **Carry to R680+** — the next round adds a 2nd
+///   `DevTools` binding (or the `pinion-devtools` crate skeleton)
+///   that reuses this router shape verbatim. Stamping the External
+///   here today maps the substrate consumer surface for the
+///   substrate lift cycle.
+///
+/// ## Schema slots
+///
+/// * `last_clicked` — last path written via `invoke("click",
+///   Text(path))`, or `Null` after a `Null`-payload invoke. AI-
+///   readable through `scene/query`.
+/// * `click` — the typed invoke shortcut. Accepts `Text(path)`
+///   (select that path) or `Null` (deselect). Each call emits
+///   exactly one `click` intent with the same payload. `Bool(true)`
+///   return on accepted invokes, no `Bool(false)` no-op case in
+///   R679 (every call mutates state + emits intent).
+#[derive(Debug, Default)]
+struct MainWindowClickRouter {
+    /// Mirror of the last `invoke("click", _)` arg. `Some(path)`
+    /// after a select invoke, `None` after a deselect invoke or
+    /// before the first invoke.
+    last_clicked: Option<String>,
+    /// §5.20 intent buffer. `drain_intents` ships the payload
+    /// across the boundary on the next substrate drain pass.
+    pending: Vec<Intent>,
+}
+
+impl MainWindowClickRouter {
+    /// Construct a fresh router with no recorded click and an
+    /// empty intent buffer. Substrate calls this once at
+    /// `WidgetCore::create_extra_externals` time.
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl External for MainWindowClickRouter {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        for intent in self.pending.drain(..) {
+            sink(intent);
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        !self.pending.is_empty()
+    }
+}
+
+impl ExternalIntrospect for MainWindowClickRouter {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("last_clicked", "string"),
+            ("click", "string"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "last_clicked" => Some(match &self.last_clicked {
+                Some(p) => IntrospectValue::Text(p.clone()),
+                None => IntrospectValue::Null,
+            }),
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        match path {
+            "last_clicked" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "click" => match args {
+                IntrospectValue::Text(p) => {
+                    self.last_clicked = Some(p.clone());
+                    self.pending
+                        .push(Intent::new_static("click", IntrospectValue::Text(p)));
+                    Ok(IntrospectValue::Bool(true))
+                }
+                IntrospectValue::Null => {
+                    self.last_clicked = None;
+                    self.pending
+                        .push(Intent::new_static("click", IntrospectValue::Null));
+                    Ok(IntrospectValue::Bool(true))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
 /// Binding carrier. `MultiWindowView` carries no fields — every
 /// trait method is associated so AppShell instantiates the binding
 /// without holding a value.
@@ -697,10 +930,30 @@ impl WidgetCore for MultiWindowView {
     /// [[abstraction-needs-second-consumer]] Rule-of-Three gate
     /// that drove the R674 → R675 binding-to-substrate lift.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(
-            INSPECTOR_TREE_TAG,
-            Box::new(TreeRowClickExternal::new()),
-        )]
+        vec![
+            ExtraExternal::new(
+                INSPECTOR_TREE_TAG,
+                Box::new(TreeRowClickExternal::new()),
+            ),
+            // R679 §5.16 §5.49 — second `ExtraExternal` registering
+            // the `DevTools` bidirectional-select router for the
+            // main window. AI clients write a path via
+            // `scene/invoke /main_click_router/external/click`;
+            // the reducer arm below mirrors it into the cross-
+            // window [`use_selected_path`] Signal so the inspector
+            // tree row paints focus state-layer + the main window
+            // banner appears in lockstep.
+            //
+            // The `ButtonExternal` (primary) + `TreeRowClickExternal`
+            // + this router are the 3 External slots the state scene
+            // now carries (R55.D.5 multi-External composition wraps
+            // them into a Container holding the primary plus
+            // extras).
+            ExtraExternal::new(
+                MAIN_CLICK_ROUTER_TAG,
+                Box::new(MainWindowClickRouter::new()),
+            ),
+        ]
     }
 
     fn read_state(scene: &Scene) -> Self::State {
@@ -763,6 +1016,51 @@ impl WidgetCore for MultiWindowView {
                     // without lockstep binding update.
                     _ => {}
                 }
+            }
+            tag if tag == MAIN_CLICK_ROUTER_INTENT_TAG => {
+                // R679 §5.16 §5.49 — `DevTools` bidirectional select
+                // arc from the main window. AI invokes the typed
+                // `click` shortcut on the router External; this arm
+                // mirrors the supplied payload into the cross-window
+                // [`use_selected_path`] Signal. `Text(path)` → select
+                // the matching node; `Null` → deselect.
+                match &intent.payload {
+                    IntrospectValue::Text(path) => {
+                        use_selected_path().set(Some(path.clone()));
+                    }
+                    IntrospectValue::Null => {
+                        use_selected_path().set(None);
+                    }
+                    _ => {}
+                }
+            }
+            tag if tag == MAIN_BTN_CLICK_INTENT_TAG => {
+                // R679 §5.16 §5.49 — user-mouse-driven bidirectional
+                // select. The InputRouter routes a user mouse click
+                // on the main button to ButtonExternal; its
+                // `Pressed → Hover` SCXML transition emits a
+                // `Null`-payload `click` intent (the canonical button
+                // intent per
+                // [`pinion_core::widgets::button::Button`]). This
+                // arm mirrors the button's static raw path into
+                // [`use_selected_path`] so the inspector tree row
+                // paints focus state-layer in lockstep — closing
+                // the user-mouse half of the bidirectional select
+                // arc without needing shell-level hit-test hooks.
+                //
+                // Why a static path: the button's intent payload is
+                // `Null` (Button carries no semantic value), so the
+                // reducer cannot derive the path from the intent
+                // itself. A future-axis substrate that propagates
+                // cursor coordinates into the button intent payload
+                // would let the reducer call
+                // `pinion_widget_paint::devtools::path_for_paint_hit`
+                // dynamically; for R679 the static path suffices
+                // because the binding's raw scene shape is stable
+                // (R678 substrate test
+                // `r679_path_for_paint_hit_on_tagged_container_returns_container_path`
+                // pins this exact path shape).
+                use_selected_path().set(Some(MAIN_BUTTON_RAW_PATH.to_owned()));
             }
             _ => {}
         }
@@ -1008,13 +1306,18 @@ mod r670_b_multi_window_tests {
     // regression that drops one wire surfaces at unit-test time.
 
     #[test]
-    fn r675_create_extra_externals_registers_tree_row_click_at_inspector_tag() {
-        // The single ExtraExternal entry routes inspector composite-
-        // tag clicks through the substrate router. Pin both the
-        // length (no accidental extras) and the tag.
+    fn r679_create_extra_externals_registers_tree_row_click_and_main_click_router() {
+        // R679 §5.16 §5.49 — the binding now declares 2 extra
+        // Externals: the R675 TreeRowClickExternal at
+        // `inspector_tree` + the R679 MainWindowClickRouter at
+        // `main_click_router`. Pin both the length AND the
+        // declaration order (the router is the 2nd entry so a
+        // future round adding a 3rd extra surfaces if it gets
+        // wedged in front of the existing pair).
         let extras = <MultiWindowView as WidgetCore>::create_extra_externals();
-        assert_eq!(extras.len(), 1, "exactly one tree-row click router");
+        assert_eq!(extras.len(), 2, "tree-row click router + main click router");
         assert_eq!(extras[0].tag, INSPECTOR_TREE_TAG);
+        assert_eq!(extras[1].tag, MAIN_CLICK_ROUTER_TAG);
     }
 
     #[test]
@@ -1135,19 +1438,343 @@ mod r670_b_multi_window_tests {
     }
 
     #[test]
-    fn r675_update_reducer_ignores_unrelated_intent_tags() {
+    fn r675_update_reducer_ignores_truly_unrelated_intent_tags() {
+        // R679 grew the reducer to handle `main_btn.click` (user-
+        // mouse-driven bidirectional select). Pick a tag the
+        // reducer still ignores — `disable.click` is a synthetic
+        // shape that no External in this binding emits, so it
+        // proves the reducer's `_ => {}` fallthrough still works.
         let owner = Owner::new();
         owner.run(|| {
             let foreign = Intent::new_static(
-                "main_btn.click",
+                "disable.click",
                 IntrospectValue::Null,
             );
             let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &foreign);
             assert!(
                 use_selected_path().get().is_none(),
-                "non-inspector intents must not mutate the selection slot",
+                "truly unrelated intent tags must not mutate the selection slot",
             );
         });
+    }
+
+    // R679 §5.16 §5.20 §5.49 — bidirectional select reducer
+    // regression suite. Pins the new `main_click_router.click`
+    // (AI-invoke-driven) + `main_btn.click` (user-mouse-driven)
+    // reducer arms so a future regression that drops one wire
+    // surfaces at unit-test time. The R675 inspector→main arc is
+    // covered above; these tests cover the main→inspector arc
+    // (the R679 closure of the bidirectional bridge).
+
+    #[test]
+    fn r679_main_click_router_intent_tag_matches_runtime_dotted_form() {
+        // [[intent-tag-dotted-wire-form]] — the compile-time
+        // MAIN_CLICK_ROUTER_INTENT_TAG literal must match the
+        // runtime walker's `format!("{prefix}.{event}", ...)`
+        // shape exactly so the V::update reducer arm matches.
+        // The bare event name is hard-coded `"click"` to mirror
+        // the substrate's
+        // pinion_widget_paint::tree_view::TREE_ROW_CLICK_EVENT
+        // convention (every R27 router emits `"click"` as its
+        // bare canonical event name).
+        assert_eq!(
+            MAIN_CLICK_ROUTER_INTENT_TAG,
+            format!("{MAIN_CLICK_ROUTER_TAG}.click"),
+        );
+    }
+
+    #[test]
+    fn r679_main_btn_click_intent_tag_matches_button_external_dotted_form() {
+        // ButtonExternal's intent stream emits `"click"` on the
+        // Pressed→Hover SCXML transition (canonical per
+        // `pinion_core::widgets::button::Button`'s
+        // WidgetTransition::detect). Runtime prefixes with the
+        // External's tag → `main_btn.click`.
+        assert_eq!(
+            MAIN_BTN_CLICK_INTENT_TAG,
+            format!("{MAIN_BTN_TAG}.click"),
+        );
+    }
+
+    #[test]
+    fn r679_update_reducer_routes_main_router_text_payload_to_selected_path_signal() {
+        // AI-invoke-driven select: a Text payload from the main
+        // click router writes the supplied path into the shared
+        // selection Signal — the main→inspector half of the
+        // bidirectional bridge.
+        let owner = Owner::new();
+        owner.run(|| {
+            assert!(use_selected_path().get().is_none(), "baseline empty");
+            let intent = Intent::new_static(
+                MAIN_CLICK_ROUTER_INTENT_TAG,
+                IntrospectValue::Text("Container/Container[main_btn]".to_string()),
+            );
+            let commands = <MultiWindowView as WidgetCore>::update(
+                ButtonState::Idle,
+                &intent,
+            );
+            assert!(commands.is_empty(), "side-effect-only reducer");
+            assert_eq!(
+                use_selected_path().get().as_deref(),
+                Some("Container/Container[main_btn]"),
+                "main router Text payload must mirror into selected_path",
+            );
+        });
+    }
+
+    #[test]
+    fn r679_update_reducer_routes_main_router_null_payload_to_deselect() {
+        // AI-invoke-driven deselect: a Null payload from the main
+        // click router clears the selection Signal.
+        let owner = Owner::new();
+        owner.run(|| {
+            use_selected_path().set(Some("Container/Container[main_btn]".to_string()));
+            let intent = Intent::new_static(
+                MAIN_CLICK_ROUTER_INTENT_TAG,
+                IntrospectValue::Null,
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(
+                use_selected_path().get().is_none(),
+                "main router Null payload must clear selected_path",
+            );
+        });
+    }
+
+    #[test]
+    fn r679_update_reducer_routes_button_click_intent_to_button_raw_path() {
+        // User-mouse-driven bidirectional select: a `main_btn.click`
+        // intent (emitted by ButtonExternal's SCXML Pressed→Hover
+        // transition on a real user click) writes the button's
+        // static raw path into the Signal. The intent payload is
+        // Null per Button's WidgetTransition::detect contract;
+        // the reducer derives the path from the static
+        // MAIN_BUTTON_RAW_PATH constant.
+        let owner = Owner::new();
+        owner.run(|| {
+            assert!(use_selected_path().get().is_none(), "baseline empty");
+            let intent = Intent::new_static(
+                MAIN_BTN_CLICK_INTENT_TAG,
+                IntrospectValue::Null,
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert_eq!(
+                use_selected_path().get().as_deref(),
+                Some(MAIN_BUTTON_RAW_PATH),
+                "button click must mirror MAIN_BUTTON_RAW_PATH into selected_path",
+            );
+        });
+    }
+
+    #[test]
+    fn r679_button_raw_path_matches_view_main_raw_button_position() {
+        // The hard-coded MAIN_BUTTON_RAW_PATH must resolve against
+        // the raw scene (the inspector mirrors). Verifies the
+        // substrate's `find_node_at_path` round-trips the path
+        // against an actual view_main_raw output.
+        use pinion_widget_paint::devtools::find_node_at_path;
+        let owner = Owner::new();
+        let raw_scene = owner.run(|| {
+            // Use view_main directly because view_main_raw is
+            // private; view_main returns the wrapped scene only
+            // when a selection is present. With no selection, the
+            // raw and wrapped scenes are identical so view_main
+            // works as the test surface.
+            MultiWindowView::view_for_window("main", ButtonState::Idle, &Frame::new())
+        });
+        assert!(
+            find_node_at_path(&raw_scene, MAIN_BUTTON_RAW_PATH).is_some(),
+            "static MAIN_BUTTON_RAW_PATH must resolve in the raw scene",
+        );
+    }
+
+    #[test]
+    fn r679_bidirectional_alternation_preserves_invariant() {
+        // Stress test for the bidirectional bridge: alternating
+        // inspector→main + main→inspector mutations all settle
+        // the Signal to the latest written value (latest-write-
+        // wins, no oscillation).
+        let owner = Owner::new();
+        owner.run(|| {
+            // Inspector click writes path X.
+            let i1 = Intent::new_static(
+                INSPECTOR_CLICK_INTENT_TAG,
+                IntrospectValue::Text("X".to_string()),
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &i1);
+            assert_eq!(use_selected_path().get().as_deref(), Some("X"));
+
+            // Main router writes path Y.
+            let i2 = Intent::new_static(
+                MAIN_CLICK_ROUTER_INTENT_TAG,
+                IntrospectValue::Text("Y".to_string()),
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &i2);
+            assert_eq!(use_selected_path().get().as_deref(), Some("Y"));
+
+            // Inspector click writes path Z.
+            let i3 = Intent::new_static(
+                INSPECTOR_CLICK_INTENT_TAG,
+                IntrospectValue::Text("Z".to_string()),
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &i3);
+            assert_eq!(use_selected_path().get().as_deref(), Some("Z"));
+
+            // Main router deselect (Null).
+            let i4 = Intent::new_static(
+                MAIN_CLICK_ROUTER_INTENT_TAG,
+                IntrospectValue::Null,
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &i4);
+            assert!(use_selected_path().get().is_none(), "deselect wins last");
+        });
+    }
+
+    // R679 §5.16 §5.50 — main→inspector cross-arc lockstep
+    // verification. The view_inspector consumer of TreeViewFocus
+    // landed at R675 (atomic 2). R679 atomic 2 verifies that
+    // *writing* selected_path via the *main* arc (router invoke
+    // OR button click) ends up reflecting in the inspector's
+    // focus state-layer paint at the matching tree row tag —
+    // closing the bidirectional verification at the view level.
+
+    /// Walk `scene` depth-first for a `Scene::Container` whose
+    /// tag equals `target`. Returns the matched container's fill
+    /// colour so the test can assert focus state-layer presence.
+    fn find_container_fill_by_tag(
+        scene: &Scene,
+        target: &str,
+    ) -> Option<pinion_core::Color> {
+        match scene {
+            Scene::Container(c) => {
+                if c.tag.as_deref() == Some(target) {
+                    return Some(c.style.fill);
+                }
+                c.children
+                    .iter()
+                    .find_map(|child| find_container_fill_by_tag(child, target))
+            }
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r679_inspector_paints_focus_state_layer_after_main_router_invoke() {
+        // Bidirectional bridge end-to-end: write the button's raw
+        // path via the main router's reducer arm (mirrors what
+        // `scene/invoke /main_click_router/external/click
+        // {Text(path)}` would produce in production). Render
+        // view_inspector. The tree row tagged
+        // `inspector_tree#<path>` must paint with a non-transparent
+        // fill (the M3 SurfaceContainerHighest focus state-layer
+        // per pinion_widget_paint::tree_view::view_tree_focused).
+        let owner = Owner::new();
+        owner.run(|| {
+            // Step 1: trigger the main router reducer (simulating
+            // an AI invoke).
+            let intent = Intent::new_static(
+                MAIN_CLICK_ROUTER_INTENT_TAG,
+                IntrospectValue::Text(MAIN_BUTTON_RAW_PATH.to_string()),
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert_eq!(
+                use_selected_path().get().as_deref(),
+                Some(MAIN_BUTTON_RAW_PATH),
+                "precondition: selected_path written via main arc",
+            );
+        });
+        // Step 2: render inspector view. The Signal mutation from
+        // step 1 is observed via use_selected_path().get() inside
+        // view_inspector.
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        // Step 3: walk to the matching row. The composite tag
+        // mirrors `pinion_widget_paint::tree_view::composite_row_tag`:
+        // `{INSPECTOR_TREE_TAG}#{path}`.
+        let row_tag = format!("{INSPECTOR_TREE_TAG}#{MAIN_BUTTON_RAW_PATH}");
+        let fill = find_container_fill_by_tag(&scene, &row_tag).unwrap_or_else(|| {
+            panic!(
+                "inspector view must carry a row Container tagged {row_tag:?}",
+            )
+        });
+        // SurfaceContainerHighest is non-transparent in both
+        // light and dark M3 palettes; comparing against
+        // Color::TRANSPARENT (the non-focused row default) is the
+        // cleanest assertion that the focus state-layer fired.
+        assert_ne!(
+            fill,
+            pinion_core::Color::TRANSPARENT,
+            "main router invoke must paint focus state-layer on \
+             matching inspector row (M3 SurfaceContainerHighest)",
+        );
+    }
+
+    #[test]
+    fn r679_inspector_paints_focus_state_layer_after_button_click_intent() {
+        // User-mouse-driven half of the bidirectional bridge:
+        // simulate a button.click intent (what ButtonExternal
+        // emits on a real mouse click). Inspector tree row at
+        // MAIN_BUTTON_RAW_PATH paints the focus state-layer.
+        let owner = Owner::new();
+        owner.run(|| {
+            let intent =
+                Intent::new_static(MAIN_BTN_CLICK_INTENT_TAG, IntrospectValue::Null);
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert_eq!(
+                use_selected_path().get().as_deref(),
+                Some(MAIN_BUTTON_RAW_PATH),
+                "precondition: button click wrote MAIN_BUTTON_RAW_PATH",
+            );
+        });
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        let row_tag = format!("{INSPECTOR_TREE_TAG}#{MAIN_BUTTON_RAW_PATH}");
+        let fill = find_container_fill_by_tag(&scene, &row_tag).unwrap_or_else(|| {
+            panic!("inspector view must carry row tagged {row_tag:?}")
+        });
+        assert_ne!(
+            fill,
+            pinion_core::Color::TRANSPARENT,
+            "button click must paint focus state-layer on \
+             inspector's matching row",
+        );
+    }
+
+    #[test]
+    fn r679_inspector_no_focus_state_layer_after_main_router_null_deselect() {
+        // Round-trip the bridge: select then deselect. After the
+        // Null-payload main router invoke, the inspector tree row
+        // paints transparent (focus state-layer cleared).
+        let owner = Owner::new();
+        owner.run(|| {
+            // Select first.
+            let select = Intent::new_static(
+                MAIN_CLICK_ROUTER_INTENT_TAG,
+                IntrospectValue::Text(MAIN_BUTTON_RAW_PATH.to_string()),
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &select);
+            // Then deselect via Null.
+            let deselect = Intent::new_static(
+                MAIN_CLICK_ROUTER_INTENT_TAG,
+                IntrospectValue::Null,
+            );
+            let _ = <MultiWindowView as WidgetCore>::update(ButtonState::Idle, &deselect);
+            assert!(use_selected_path().get().is_none(), "precondition: deselected");
+        });
+        let scene = owner.run(|| {
+            MultiWindowView::view_for_window("inspector", ButtonState::Idle, &Frame::new())
+        });
+        let row_tag = format!("{INSPECTOR_TREE_TAG}#{MAIN_BUTTON_RAW_PATH}");
+        let fill = find_container_fill_by_tag(&scene, &row_tag).unwrap_or_else(|| {
+            panic!("inspector row tagged {row_tag:?} must still exist after deselect")
+        });
+        assert_eq!(
+            fill,
+            pinion_core::Color::TRANSPARENT,
+            "deselect via main router Null must clear focus state-layer",
+        );
     }
 }
 
