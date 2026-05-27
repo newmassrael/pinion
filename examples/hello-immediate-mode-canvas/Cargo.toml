@@ -1,0 +1,46 @@
+[package]
+name = "hello-immediate-mode-canvas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R681 §2 #4 first real consumer of Scene::ImmediateModeNode + ImmediateMode trait. Retained widget tree (header + Button trigger) hosting one ImmediateModeNode that paints a rotating triangle through the backend-agnostic ImmediatePainter surface, advancing dt-driven angle on every per-window paint cycle (~60 fps via the WindowFramePolicy::Polled pacing wire)."
+publish = false
+
+[[bin]]
+name = "hello-immediate-mode-canvas"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Tier-1 Button widget + the binding's required External adapter.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.63 §5.40 — `AccessNode` / `AriaRole` types for the test module.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R641 §5.16 — `#[widget(...)]` attribute macro (WidgetCore +
+# WidgetA11y + WidgetView forwarding trio).
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell + SizeStrategy. R681 atomic 2 also
+# brings the `ControlFlow::WaitUntil` per-window pacing wire that
+# this binding's `ImmediateModeNode` arms.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the codegen renderer emitted by build.rs references
+# `::vello::*` and `::vello::wgpu::*` directly. The macro expansion
+# also names `::vello::Scene` and `::vello::peniko::Color`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R681 §2 #4 — `pinion_runtime::compute_layout` lets the test module
+# exercise the same layout pipeline production renders against so
+# the post-layout viewport assertion the substrate consumer test
+# performs mirrors what the shell sees at boot.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the canvas binding's Vello
+# renderer. `build.rs` calls `compile_file` on `app.pinion.xml`.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

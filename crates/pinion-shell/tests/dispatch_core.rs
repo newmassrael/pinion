@@ -2575,3 +2575,311 @@ mod r680_per_window_redraw_wakeup {
         assert!(!core.redraw_requested_for_window("palette"));
     }
 }
+
+#[cfg(test)]
+mod r681_immediate_mode_paint_cycle {
+    //! R681 §2 #4 atomic 1 — per-window immediate-mode tick + paint
+    //! dispatch through [`ShellCore::compute_paint_scene_for_window`].
+    //!
+    //! Tests pin the load-bearing wiring invariants:
+    //!
+    //! - The substrate walks the paint scene returned by the view fn
+    //!   for [`Scene::ImmediateModeNode`]s and invokes
+    //!   `handle.borrow_mut().tick(dt)` exactly once per node per
+    //!   per-window paint cycle, with `dt` matched to the per-window
+    //!   delta the substrate already used for the animation tick.
+    //! - The same `dt` lands in
+    //!   [`pinion_core::scene::ImmediateModeNode::last_dt`] for AI
+    //!   introspection.
+    //! - A scene with at least one immediate-mode node arms BOTH the
+    //!   binding-wide `redraw_requested` flag AND the per-window
+    //!   `redraw_requested_for_window(window_id)` flag, so the next
+    //!   frame fires from the per-window paint clock without input.
+    //! - A scene with zero immediate-mode nodes does not arm those
+    //!   redraw flags via the immediate-mode wire (other paths may
+    //!   still set them — animation tick / scroll-dirty / explicit
+    //!   `request_redraw`).
+    //! - Each per-window paint cycle ticks the drivers for that
+    //!   window independently; calling
+    //!   `compute_paint_scene_for_window("inspector", …)` does not
+    //!   tick a driver that only appears in the primary window's
+    //!   view (and vice-versa).
+    //!
+    //! Pixel correctness of `paint_immediate_mode_node` (the Vello-side
+    //! encode) is the paint adapter's contract, exercised by its own
+    //! integration tests; this module covers the dispatch wiring.
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::time::Duration;
+
+    use pinion_core::scene::{
+        ContainerNode, ImmediateMode, ImmediateModeNode, Rect, Scene, StubImmediateMode,
+    };
+    use pinion_core::{Frame, WidgetCore};
+    use pinion_shell::{ShellCore, WidgetView};
+
+    use super::{TestExternal, TestRenderer};
+
+    // R681 atomic 1 — the shared driver is stored in a `thread_local!`
+    // because `Rc<RefCell<...>>` is not `Sync` (so it cannot live in
+    // a `static OnceLock`). The shell-side dispatch runs on the test
+    // thread inside `TEST_LOCK`, so the thread-local matches the
+    // dispatch site without crossing thread boundaries. Each test
+    // resets the slot to `None` on entry + exit.
+    thread_local! {
+        static SHARED_DRIVER: RefCell<Option<Rc<RefCell<StubImmediateMode>>>> =
+            const { RefCell::new(None) };
+    }
+
+    fn install_driver() -> Rc<RefCell<StubImmediateMode>> {
+        let driver = Rc::new(RefCell::new(StubImmediateMode::new()));
+        SHARED_DRIVER.with(|slot| *slot.borrow_mut() = Some(driver.clone()));
+        driver
+    }
+
+    fn clear_driver() {
+        SHARED_DRIVER.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    fn driver_clone() -> Option<Rc<RefCell<StubImmediateMode>>> {
+        SHARED_DRIVER.with(|slot| slot.borrow().clone())
+    }
+
+    /// Static toggle: when `true`, `R681View::view` emits a scene
+    /// containing one [`Scene::ImmediateModeNode`] wrapping the
+    /// shared driver; when `false`, returns a baseline Container.
+    /// Reset between tests via `set_emit_immediate(false)`.
+    static EMIT_IMMEDIATE: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    fn set_emit_immediate(emit: bool) {
+        EMIT_IMMEDIATE.store(emit, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    struct R681View;
+
+    impl pinion_a11y::WidgetA11y for R681View {}
+
+    impl WidgetCore for R681View {
+        type State = i32;
+        type Event = ();
+        fn create_external() -> Box<dyn pinion_core::External> {
+            Box::new(TestExternal::default())
+        }
+        fn tag() -> &'static str {
+            "r681_test"
+        }
+        fn read_state(_scene: &Scene) -> Self::State {
+            0
+        }
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            if EMIT_IMMEDIATE.load(std::sync::atomic::Ordering::SeqCst) {
+                let handle: Rc<RefCell<dyn ImmediateMode>> =
+                    driver_clone().expect("install_driver before view");
+                Scene::Container(
+                    ContainerNode::new(vec![Scene::ImmediateModeNode(
+                        ImmediateModeNode::new(handle, Rect::new(0, 0, 100, 100))
+                            .with_tag("canvas"),
+                    )])
+                    .with_tag("r681_test"),
+                )
+            } else {
+                Scene::Container(ContainerNode::new(vec![]).with_tag("r681_test"))
+            }
+        }
+        fn event_name(_event: Self::Event) -> &'static str {
+            ""
+        }
+        fn title() -> &'static str {
+            "R681View"
+        }
+    }
+
+    impl WidgetView for R681View {
+        type Renderer = TestRenderer;
+
+        fn initial_size_strategy() -> pinion_shell::SizeStrategy {
+            pinion_shell::SizeStrategy::Fixed { width: 200, height: 200 }
+        }
+    }
+
+    fn reset_state() {
+        set_emit_immediate(false);
+        clear_driver();
+    }
+
+    #[test]
+    fn r681_view_with_immediate_node_ticks_driver_and_arms_per_window_redraw() {
+        let _guard = super::TEST_LOCK.lock().unwrap();
+        reset_state();
+        let driver = install_driver();
+        set_emit_immediate(true);
+        let mut core: ShellCore<R681View> = ShellCore::new();
+        // First paint — driver tick fires with dt=0.0 (no prior
+        // paint instant on the per-window clock).
+        let scene = core.compute_paint_scene_for_window("main", 200, 200);
+        // The paint scene contains the ImmediateModeNode the view
+        // fn emitted.
+        assert!(scene.has_immediate_mode_subtree());
+        assert_eq!(driver.borrow().tick_count, 1, "one tick per paint cycle");
+        assert_eq!(
+            driver.borrow().last_observed_dt,
+            Duration::ZERO,
+            "first paint sees dt=0 (no prior paint instant)",
+        );
+        // Per-window + binding-wide redraw flags both armed.
+        assert!(
+            core.redraw_requested(),
+            "immediate-mode arms binding-wide redraw_requested",
+        );
+        assert!(
+            core.redraw_requested_for_window("main"),
+            "immediate-mode arms per-window redraw flag for the painted window",
+        );
+        reset_state();
+    }
+
+    #[test]
+    fn r681_two_paints_accumulate_two_ticks_on_driver() {
+        let _guard = super::TEST_LOCK.lock().unwrap();
+        reset_state();
+        let driver = install_driver();
+        set_emit_immediate(true);
+        let mut core: ShellCore<R681View> = ShellCore::new();
+        // First paint: tick 1, dt=0.
+        let _ = core.compute_paint_scene_for_window("main", 200, 200);
+        // Force a measurable dt between paints so the
+        // `Duration::from_secs_f32` conversion is non-zero on the
+        // second paint.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let _ = core.compute_paint_scene_for_window("main", 200, 200);
+        assert_eq!(driver.borrow().tick_count, 2, "two paints → two ticks");
+        assert!(
+            driver.borrow().last_observed_dt > Duration::ZERO,
+            "second paint sees a positive dt",
+        );
+        reset_state();
+    }
+
+    #[test]
+    fn r681_view_without_immediate_node_does_not_arm_per_window_redraw() {
+        let _guard = super::TEST_LOCK.lock().unwrap();
+        reset_state();
+        // No driver installed; `EMIT_IMMEDIATE` stays false → view
+        // returns a baseline Container with no ImmediateModeNode.
+        let mut core: ShellCore<R681View> = ShellCore::new();
+        let scene = core.compute_paint_scene_for_window("main", 200, 200);
+        assert!(!scene.has_immediate_mode_subtree());
+        // The R681 immediate-mode wire did NOT arm the per-window
+        // flag. Other paths (e.g. an active animation, scroll-dirty,
+        // explicit request_redraw) may still arm it — we assert the
+        // immediate-mode wire stays inert by checking neither flag
+        // is set on this fresh ShellCore that has no other reason
+        // to request a redraw.
+        assert!(
+            !core.redraw_requested_for_window("main"),
+            "no immediate node → no per-window flag from R681 wire",
+        );
+        reset_state();
+    }
+
+    #[test]
+    fn r681_per_window_immediate_targets_only_painted_window_slot() {
+        let _guard = super::TEST_LOCK.lock().unwrap();
+        reset_state();
+        let _driver = install_driver();
+        set_emit_immediate(true);
+        let mut core: ShellCore<R681View> = ShellCore::new();
+        // Paint only the inspector window — the per-window flag
+        // should target "inspector", not "main".
+        let _ = core.compute_paint_scene_for_window("inspector", 200, 200);
+        assert!(core.redraw_requested_for_window("inspector"));
+        assert!(
+            !core.redraw_requested_for_window("main"),
+            "paint of inspector window must not arm main's per-window flag",
+        );
+        reset_state();
+    }
+
+    #[test]
+    fn r681_last_paint_instant_for_window_populated_after_paint() {
+        // R681 atomic 2 — `about_to_wait` reads this to compute the
+        // per-window next-paint deadline for `ControlFlow::WaitUntil`.
+        let _guard = super::TEST_LOCK.lock().unwrap();
+        reset_state();
+        let mut core: ShellCore<R681View> = ShellCore::new();
+        assert!(
+            core.last_paint_instant_for_window("main").is_none(),
+            "pre-paint: no Instant recorded",
+        );
+        let _ = core.compute_paint_scene_for_window("main", 200, 200);
+        let first = core.last_paint_instant_for_window("main");
+        assert!(first.is_some(), "post-paint: Instant recorded for window");
+        // Second paint moves the Instant forward.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let _ = core.compute_paint_scene_for_window("main", 200, 200);
+        let second = core
+            .last_paint_instant_for_window("main")
+            .expect("second paint recorded");
+        assert!(second >= first.unwrap(), "Instant monotonically forward");
+        // Unrelated window still None.
+        assert!(
+            core.last_paint_instant_for_window("inspector").is_none(),
+            "other windows untouched",
+        );
+        reset_state();
+    }
+
+    #[test]
+    fn r681_last_dt_sidecar_published_on_painted_node() {
+        let _guard = super::TEST_LOCK.lock().unwrap();
+        reset_state();
+        let _driver = install_driver();
+        set_emit_immediate(true);
+        let mut core: ShellCore<R681View> = ShellCore::new();
+        // First paint sees dt=0 (sentinel-like; valid first frame).
+        let scene_1 = core.compute_paint_scene_for_window("main", 200, 200);
+        if let Some(node) = walk_first_immediate(&scene_1) {
+            assert_eq!(node.last_dt(), Duration::ZERO);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let scene_2 = core.compute_paint_scene_for_window("main", 200, 200);
+        if let Some(node) = walk_first_immediate(&scene_2) {
+            assert!(node.last_dt() > Duration::ZERO);
+        }
+        reset_state();
+    }
+
+    fn walk_first_immediate(scene: &Scene) -> Option<&ImmediateModeNode> {
+        match scene {
+            Scene::ImmediateModeNode(n) => Some(n),
+            Scene::Container(c) => c.children.iter().find_map(walk_first_immediate),
+            Scene::Scroll(s) => walk_first_immediate(&s.content),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r681_set_target_fps_for_window_round_trips_through_substrate() {
+        let _guard = super::TEST_LOCK.lock().unwrap();
+        reset_state();
+        let mut core: ShellCore<R681View> = ShellCore::new();
+        // Default (no override): None means "use derived default
+        // policy — 60fps when immediate, idle otherwise".
+        assert!(core.target_fps_for_window("main").is_none());
+        // Setter persists through reader.
+        core.set_target_fps_for_window("main", 120);
+        assert_eq!(core.target_fps_for_window("main"), Some(120));
+        // Setting another window does not perturb the first.
+        core.set_target_fps_for_window("inspector", 30);
+        assert_eq!(core.target_fps_for_window("inspector"), Some(30));
+        assert_eq!(core.target_fps_for_window("main"), Some(120));
+        // Re-set overwrites (latest wins).
+        core.set_target_fps_for_window("main", 144);
+        assert_eq!(core.target_fps_for_window("main"), Some(144));
+        // Sentinel: fps = 0 round-trips (caller's "paused polled" signal).
+        core.set_target_fps_for_window("main", 0);
+        assert_eq!(core.target_fps_for_window("main"), Some(0));
+        reset_state();
+    }
+}

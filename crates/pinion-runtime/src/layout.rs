@@ -428,6 +428,14 @@ fn layout_style_of(scene: &Scene) -> &LayoutStyle {
         // / `margin` / parent-flex participation chain
         // `with_layout(...)`.
         Scene::Scroll(n) => &n.layout,
+        // R681 §2 #4 atomic 1 — immediate-mode subtree participates
+        // in the §5.21 taffy flex pass via its layout sidecar (parent
+        // flex / box parent can size the viewport via `with_size` /
+        // `flex_grow` / `padding` / etc.). The post-layout rect feeds
+        // back into `ImmediateModeNode::viewport` via `assign_rect`
+        // below, which the per-window paint cycle then hands to the
+        // Vello backend bridge as the immediate-mode paint area.
+        Scene::ImmediateModeNode(n) => &n.layout,
         // Effect + future non-exhaustive variants default to identity
         // layout (block, auto sizing). They participate in the flex
         // tree as zero-size leaves until a follow-up slice opts them
@@ -460,6 +468,15 @@ fn assign_rect(scene: &mut Scene, rect: Rect) -> bool {
         }
         Scene::Scroll(s) => {
             s.viewport = rect;
+            true
+        }
+        // R681 §2 #4 atomic 1 — the taffy-computed rect lands in
+        // `ImmediateModeNode::viewport`; the per-window paint cycle
+        // hands this rect to the backend bridge as the
+        // viewport-local origin + extent the immediate-mode driver
+        // paints into.
+        Scene::ImmediateModeNode(n) => {
+            n.viewport = rect;
             true
         }
         _ => false,

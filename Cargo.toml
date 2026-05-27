@@ -41,6 +41,7 @@ members = [
     "examples/hello-popover",
     "examples/hello-multi-window",
     "examples/hello-tree-view",
+    "examples/hello-immediate-mode-canvas",
 ]
 exclude = ["vendor/sce"]
 

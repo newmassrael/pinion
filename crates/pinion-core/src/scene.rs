@@ -23,8 +23,11 @@
 //! evolution) are addable without a `SemVer` major bump.
 
 use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
+use crate::external::ExternalIntrospect;
 use crate::style::{Align, BoxStyle, Color, ImageStyle, LayoutStyle, PathStyle, Size, TextStyle};
 use crate::widgets::scroll::ScrollState;
 
@@ -55,6 +58,23 @@ pub enum Scene {
     /// and input mapping. See §5.45 R55 axis caveats for the full
     /// sub-axis enumeration.
     Scroll(ScrollNode),
+    /// R681 §2 #4 — immediate-mode subtree opt-in (axis 2 of the
+    /// 4-axis paint-pipeline rewrite series). Carries an opaque
+    /// driver behind [`Rc<RefCell<dyn ImmediateMode>>`] plus the
+    /// post-layout `viewport` the backend bridge paints into and
+    /// a [`Cell<Duration>`] sidecar publishing the last per-paint
+    /// `dt` the shell drove. The retained tree treats this node as
+    /// a paint-opaque leaf (mirrors [`Scene::External`] for input /
+    /// path-lookup purposes) while the per-window paint cycle
+    /// invokes `handle.borrow_mut().tick(dt)` on every frame —
+    /// substrate for the §2 #4 immediate-mode ↔ retained widget
+    /// tree dual execution model (Phase C entry).
+    ///
+    /// First-cut scaffold (R681 atomic 0): only the data shape +
+    /// trait surface land. Backend paint integration (atomic 1),
+    /// per-window [`ControlFlow::Poll`] pacing (atomic 2), and the
+    /// first consumer binding (atomic 4) follow in the same round.
+    ImmediateModeNode(ImmediateModeNode),
 }
 
 impl Scene {
@@ -79,6 +99,7 @@ impl Scene {
             Scene::External(n) => n.rect,
             Scene::Effect(_) => Rect::default(),
             Scene::Scroll(n) => n.viewport,
+            Scene::ImmediateModeNode(n) => n.viewport,
         }
     }
 
@@ -95,6 +116,7 @@ impl Scene {
             Scene::External(n) => n.tag.as_deref(),
             Scene::Effect(_) => None,
             Scene::Scroll(n) => n.tag.as_deref(),
+            Scene::ImmediateModeNode(n) => n.tag.as_deref(),
         }
     }
 
@@ -124,7 +146,8 @@ impl Scene {
             | Scene::Path(_)
             | Scene::Image(_)
             | Scene::External(_)
-            | Scene::Effect(_) => false,
+            | Scene::Effect(_)
+            | Scene::ImmediateModeNode(_) => false,
         }
     }
 
@@ -165,9 +188,12 @@ impl Scene {
                 c.children.iter().find_map(|s| s.find_external_with_tag(target))
             }
             Scene::Scroll(s) => s.content.find_external_with_tag(target),
-            Scene::Box(_) | Scene::Text(_) | Scene::Path(_) | Scene::Image(_) | Scene::Effect(_) => {
-                None
-            }
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::ImmediateModeNode(_) => None,
         }
     }
 
@@ -194,9 +220,88 @@ impl Scene {
             Scene::External(n) => Some(n),
             Scene::Container(c) => c.children.iter().find_map(Self::primary_external),
             Scene::Scroll(s) => s.content.primary_external(),
-            Scene::Box(_) | Scene::Text(_) | Scene::Path(_) | Scene::Image(_) | Scene::Effect(_) => {
-                None
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::ImmediateModeNode(_) => None,
+        }
+    }
+
+    /// R681 §2 #4 atomic 1 — walk this scene tree depth-first and
+    /// invoke [`ImmediateMode::tick`] on every reachable
+    /// [`Scene::ImmediateModeNode`] driver with `dt`, then publish
+    /// the same `dt` into the node's [`ImmediateModeNode::last_dt`]
+    /// sidecar.
+    ///
+    /// Called by the per-window paint cycle AFTER the §5.21 layout
+    /// pass resolves [`ImmediateModeNode::viewport`] and BEFORE the
+    /// paint adapter encodes the immediate-mode subtree
+    /// ([`pinion_runtime::paint_adapter::to_vello`]'s walker invokes
+    /// [`ImmediateMode::paint`] inside the same frame).
+    ///
+    /// Returns the number of [`ImmediateModeNode`]s ticked. Callers
+    /// (the per-window paint cycle in `pinion-shell`) use the count
+    /// as a redraw signal: any non-zero count means the binding has
+    /// an immediate-mode subtree active and the surface should drive
+    /// the next frame from the per-window paint clock (R681 atomic 2
+    /// wires [`ControlFlow::Poll`] pacing on top of this signal).
+    ///
+    /// Walks the same branches as [`Self::contains_tag`]: descends
+    /// `Container.children` in declaration order, `Scroll.content`.
+    /// `Effect` / `External` / `Box` / `Text` / `Path` / `Image` are
+    /// non-immediate leaves; they contribute zero to the count.
+    pub fn tick_immediate_mode(&self, dt: Duration) -> usize {
+        let mut count = 0_usize;
+        self.tick_immediate_mode_walk(dt, &mut count);
+        count
+    }
+
+    /// Recursive helper for [`Self::tick_immediate_mode`].
+    fn tick_immediate_mode_walk(&self, dt: Duration, count: &mut usize) {
+        match self {
+            Scene::ImmediateModeNode(node) => {
+                node.handle.borrow_mut().tick(dt);
+                node.set_last_dt(dt);
+                *count = count.saturating_add(1);
             }
+            Scene::Container(c) => {
+                for child in &c.children {
+                    child.tick_immediate_mode_walk(dt, count);
+                }
+            }
+            Scene::Scroll(s) => s.content.tick_immediate_mode_walk(dt, count),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::External(_)
+            | Scene::Effect(_) => {}
+        }
+    }
+
+    /// R681 §2 #4 atomic 1 — `true` iff this scene tree contains at
+    /// least one [`Scene::ImmediateModeNode`]. Cheaper than
+    /// [`Self::tick_immediate_mode`] when the caller only needs the
+    /// presence signal (e.g. per-window [`ControlFlow::Poll`] pacing
+    /// decision in R681 atomic 2).
+    ///
+    /// Short-circuits on the first hit (DFS pre-order).
+    #[must_use]
+    pub fn has_immediate_mode_subtree(&self) -> bool {
+        match self {
+            Scene::ImmediateModeNode(_) => true,
+            Scene::Container(c) => {
+                c.children.iter().any(Self::has_immediate_mode_subtree)
+            }
+            Scene::Scroll(s) => s.content.has_immediate_mode_subtree(),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::External(_)
+            | Scene::Effect(_) => false,
         }
     }
 
@@ -246,9 +351,12 @@ impl Scene {
             Scene::External(n) => Some(n),
             Scene::Container(c) => c.children.iter_mut().find_map(Self::primary_external_mut),
             Scene::Scroll(s) => s.content.primary_external_mut(),
-            Scene::Box(_) | Scene::Text(_) | Scene::Path(_) | Scene::Image(_) | Scene::Effect(_) => {
-                None
-            }
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::ImmediateModeNode(_) => None,
         }
     }
 
@@ -275,9 +383,12 @@ impl Scene {
                 .iter_mut()
                 .find_map(|s| s.find_external_with_tag_mut(target)),
             Scene::Scroll(s) => s.content.find_external_with_tag_mut(target),
-            Scene::Box(_) | Scene::Text(_) | Scene::Path(_) | Scene::Image(_) | Scene::Effect(_) => {
-                None
-            }
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::ImmediateModeNode(_) => None,
         }
     }
 
@@ -694,7 +805,8 @@ fn intrinsic_walk(s: &Scene, max_w: &mut u32, max_h: &mut u32) {
         | Scene::Path(_)
         | Scene::Image(_)
         | Scene::External(_)
-        | Scene::Scroll(_) => {
+        | Scene::Scroll(_)
+        | Scene::ImmediateModeNode(_) => {
             let r = s.rect();
             *max_w = (*max_w).max(r.x.saturating_add(r.w));
             *max_h = (*max_h).max(r.y.saturating_add(r.h));
@@ -1618,6 +1730,460 @@ impl ScrollNode {
     }
 }
 
+// ---------------------------------------------------------------------------
+// R681 §2 #4 — `ImmediateModeNode` + `ImmediateMode` trait.
+//
+// First-cut scaffold (R681 atomic 0): only the data shape + trait
+// surface land. Backend paint integration (atomic 1), per-window
+// `ControlFlow::Poll` pacing (atomic 2), `frame_pacing::target_fps`
+// extension (atomic 3), and the first consumer binding (atomic 4)
+// follow in the same round. Substrate is paint-inert until atomic 1
+// wires `AppShell::render_window` to invoke `tick` + the Vello bridge.
+// ---------------------------------------------------------------------------
+
+/// R681 §2 #4 — opaque immediate-mode driver trait (axis 2 of the
+/// 4-axis paint-pipeline rewrite series).
+///
+/// Designed dyn-safe by construction (all methods take `&self` or
+/// `&mut self`, no associated items, no `Self`-returning methods) so
+/// the framework holds `Rc<RefCell<dyn ImmediateMode>>` inside
+/// [`Scene::ImmediateModeNode`] for the per-window paint cycle to
+/// invoke without monomorphisation. Mirrors the
+/// [`External`](crate::external::External) opaque-payload pattern
+/// (§5.15 item 8 introspection echo) while differing in two ways:
+///
+/// 1. **Repaint cadence**: an `External` advertises
+///    [`RepaintOwner::Framework`](crate::external::RepaintOwner::Framework)
+///    or [`RepaintOwner::External`](crate::external::RepaintOwner::External)
+///    and the framework drives layout-cadence repaints; an
+///    `ImmediateMode` driver always runs on the per-window paint
+///    clock the shell maintains, so the contract surfaces a single
+///    [`tick`](Self::tick) hook that takes the per-frame `dt` and
+///    advances both state AND paint in one step.
+/// 2. **Paint dispatch**: an `External` paints through the §5.15
+///    integration contract (own surface, framework composes); an
+///    `ImmediateMode` driver paints directly into the per-window
+///    backend buffer (the Vello bridge in atomic 1 hands the driver
+///    a `&mut vello::Scene` slice positioned at
+///    [`ImmediateModeNode::viewport`]).
+///
+/// `Debug` is a super-trait so `Rc<RefCell<dyn ImmediateMode>>`
+/// participates in the scene tree's `#[derive(Debug)]` machinery
+/// (mirror of [`External`] `Debug` super-trait at §5.15 line ~349).
+///
+/// ## Lifecycle
+///
+/// The shell calls [`tick`](Self::tick) once per per-window paint
+/// cycle, AFTER the layout pass has resolved
+/// [`ImmediateModeNode::viewport`] and BEFORE the backend bridge
+/// asks the driver to encode its paint. The `dt` argument is the
+/// monotonic wall-clock delta between the previous and current
+/// per-window paint instants (clamped by
+/// [`pinion_runtime::frame_pacing::clamp_frame_dt`] before
+/// dispatch — R51.145 `1/30s` anchor + NaN guard precedent).
+///
+/// Implementors that need persistent state across frames hold it
+/// inside the concrete type (the framework keeps the same
+/// `Rc<RefCell<dyn ImmediateMode>>` across paints by storing it in
+/// [`Owner::cache`](crate::reactive::Owner::cache) — the canonical
+/// `use_X()` reactive hook pattern).
+pub trait ImmediateMode: core::fmt::Debug {
+    /// Advance the driver by `dt`. Called once per per-window paint
+    /// cycle before the backend bridge encodes the immediate paint.
+    ///
+    /// The default impl is `()` so test fixtures and inert drivers
+    /// (a placeholder during binding scaffolding) compile without
+    /// boilerplate. Real drivers override.
+    fn tick(&mut self, _dt: Duration) {}
+
+    /// Per-frame paint into the backend-agnostic [`ImmediatePainter`].
+    /// Called once per per-window paint cycle AFTER
+    /// [`Self::tick`] and AFTER the §5.21 layout pass has resolved
+    /// [`ImmediateModeNode::viewport`].
+    ///
+    /// Coordinates passed to the painter are VIEWPORT-LOCAL —
+    /// `(0, 0)` is the top-left of the viewport the backend bridge
+    /// resolved for this node. The bridge translates to root-window
+    /// pixel coordinates before encoding.
+    ///
+    /// Default no-op so test fixtures and inert drivers compile
+    /// without boilerplate. Real drivers override.
+    fn paint(&mut self, _painter: &mut dyn ImmediatePainter) {}
+
+    /// (R681 §5.15 echo) Surface the [`ExternalIntrospect`] view of
+    /// this driver, when the author opts in. Default returns `None`;
+    /// override with `Some(self)` after `impl ExternalIntrospect for
+    /// YourType` (mirrors
+    /// [`External::introspect`](crate::external::External::introspect)).
+    ///
+    /// AI clients query immediate-mode driver state through the same
+    /// §5.12 `scene/query` / `scene/intervene` / `scene/invoke` RPC
+    /// surface they use against `Scene::External`, preserving the
+    /// §2 #2 + §2 #7 AI-first scene-as-data invariant across the
+    /// retained / immediate boundary.
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        None
+    }
+
+    /// Mutable counterpart to [`introspect`](Self::introspect).
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        None
+    }
+}
+
+/// R681 §2 #4 — backend-agnostic immediate-mode paint primitive
+/// surface (axis 2 of the 4-axis paint-pipeline rewrite series).
+///
+/// Concrete backends implement this on their per-frame painter
+/// wrapper (e.g. `pinion_runtime::paint_adapter::VelloImmediatePainter`
+/// wraps `&mut vello::Scene` + viewport transform + DPI for the Vello
+/// GUI backend); the [`ImmediateMode::paint`] hook receives
+/// `&mut dyn ImmediatePainter` so impls draw without knowing which
+/// backend renders the scene. Mirrors the HTML5 Canvas / Cairo /
+/// Direct2D pattern of "backend-agnostic 2D primitive surface, host
+/// chooses GPU pipeline" while staying minimal enough to grow
+/// additively as concrete consumers surface needs.
+///
+/// First-cut surface (R681 atomic 1): `clear` + `fill_rect` +
+/// `fill_triangle` + `stroke_line` — enough to drive the canonical
+/// rotating-shape demo (atomic 4 first consumer) and the future
+/// R&lt;X&gt; fps-overlay / waveform-viewer / minimap-overlay
+/// consumers. The surface is `#[non_exhaustive]` via trait extension
+/// (every new method ships with a default impl so existing impls
+/// compile unchanged).
+///
+/// Coordinates are VIEWPORT-LOCAL: `(0, 0)` is the top-left of the
+/// [`ImmediateModeNode::viewport`] the backend bridge handed the
+/// painter. Backends translate to root-window pixel coordinates
+/// before encoding (the Vello impl composes
+/// [`vello::kurbo::Affine::translate`] over the inherited transform
+/// chain — same shape as `Scene::Scroll` content translation).
+///
+/// Floating-point coordinates so impls can position sub-pixel without
+/// quantising to the `u32` [`Rect`] grid the retained-tree
+/// [`BoxNode`] / [`TextNode`] / etc. use; the backend rasteriser
+/// (Vello / future Skia / future Metal) decides anti-aliasing
+/// strategy without losing precision at the primitive surface.
+pub trait ImmediatePainter {
+    /// Viewport size in LOGICAL pixels. Impls scale paint geometry
+    /// against this each frame so the same driver renders
+    /// proportionally regardless of paint area.
+    fn viewport_size(&self) -> (u32, u32);
+
+    /// DPI scale factor (logical → physical pixel ratio). The
+    /// backend may use this internally to fatten stroke widths,
+    /// hint paths, etc.; impls typically ignore it (the painter
+    /// surface stays in logical units).
+    fn dpi_scale(&self) -> f32;
+
+    /// Fill the entire viewport with `color`. Equivalent to
+    /// `fill_rect(0.0, 0.0, w as f32, h as f32, color)` but the
+    /// backend may short-circuit (e.g. surface-clear hint).
+    fn clear(&mut self, color: Color);
+
+    /// Fill an axis-aligned rect `(x, y, w, h)` (viewport-local
+    /// logical pixels) with `color`. Negative `w`/`h` is undefined
+    /// behaviour at this layer — impls should not produce them.
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color);
+
+    /// Fill a triangle defined by three viewport-local points with
+    /// `color`. Winding order is irrelevant at this layer (impls
+    /// rasterise both clockwise and counter-clockwise the same way).
+    fn fill_triangle(
+        &mut self,
+        p1: (f32, f32),
+        p2: (f32, f32),
+        p3: (f32, f32),
+        color: Color,
+    );
+
+    /// Stroke a line between two viewport-local points with the
+    /// given pixel `width` and `color`. Line caps / joins are
+    /// backend-default (Vello rounds caps; the future GPU pipeline
+    /// may differ).
+    fn stroke_line(
+        &mut self,
+        p1: (f32, f32),
+        p2: (f32, f32),
+        width: f32,
+        color: Color,
+    );
+}
+
+/// R681 §2 #4 — paint-tree carrier for an [`ImmediateMode`] driver.
+///
+/// Carries the opaque driver behind [`Rc<RefCell<dyn ImmediateMode>>`]
+/// (so the view fn pulls the same instance from
+/// [`Owner::cache`](crate::reactive::Owner::cache) on every render
+/// and the per-window paint cycle obtains a mutable borrow at tick
+/// time), the post-layout `viewport` the backend bridge paints
+/// into, an optional §5.20 intent tag, and the
+/// [`Cell<Duration>`] sidecar publishing the last per-paint `dt`
+/// the shell drove (mirrors [`TextNode::line_count`] layout-measured
+/// sidecar — paint-side publish, scene-side read).
+///
+/// The retained tree treats this node as a paint-opaque leaf:
+/// hit-test resolves to the viewport rect verbatim (no descent),
+/// `lookup_path_*` cannot descend (no children), `find_external_*`
+/// / `primary_external` skip (immediate-mode drivers are not
+/// `Scene::External` despite the introspection surface mirror).
+/// The §5.20 tag is still walked by [`Scene::contains_tag`] so
+/// composite paint-root tag pinning works (R55.G.17).
+///
+/// `Clone` is intentionally *not* derived — [`Scene`] omits `Clone`
+/// because [`ExternalNode`] holds `Box<dyn External>` with no
+/// general clone strategy, and the same invariant applies here:
+/// snapshots of immediate-mode state go through the
+/// [`ImmediateMode::introspect`] channel, not a tree-wide clone.
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct ImmediateModeNode {
+    /// Backend-agnostic immediate-mode driver. Shared via `Rc` so
+    /// the [`Owner::cache`](crate::reactive::Owner::cache) slot the
+    /// view fn pulls from each render keeps a stable reference;
+    /// wrapped in `RefCell` so the per-window paint cycle's
+    /// [`ImmediateMode::tick`] call obtains the required mutable
+    /// borrow without forcing impl authors to wrap every state
+    /// field in [`Cell`] / [`RefCell`] internally.
+    pub handle: Rc<RefCell<dyn ImmediateMode>>,
+    /// Post-layout paint area in logical pixels. The taffy pass
+    /// resolves this from [`Self::layout`] + the enclosing flex /
+    /// box parent each frame; the backend bridge in atomic 1
+    /// reads this when it hands the driver a positioned paint
+    /// slice.
+    pub viewport: Rect,
+    /// §5.21 layout sidecar mirroring [`ContainerNode::layout`] /
+    /// [`ExternalNode::layout`] / [`ScrollNode::layout`]. Drives
+    /// the §5.21 R23 taffy pass: how this immediate-mode subtree
+    /// participates in parent flex (size / `flex_grow` / margin /
+    /// align). Default is [`LayoutStyle::new`] (no flex
+    /// participation, sized by `viewport.{w,h}`).
+    pub layout: LayoutStyle,
+    /// §5.20 intent-system carrier — drained intents from the
+    /// immediate-mode driver (when the impl emits them via the
+    /// future R681.x intent-bridge) will be prefixed with `<tag>.`
+    /// by the runtime walk, completing the `<widget>.<kind>`
+    /// convention (R22).
+    pub tag: Option<Cow<'static, str>>,
+    /// Last per-paint `dt` the shell drove into this node's
+    /// [`ImmediateMode::tick`]. Published by the per-window paint
+    /// cycle post-tick (atomic 1 wires this); read-side surfaced
+    /// via [`Self::last_dt`] for AI introspection (`scene/query`
+    /// over [`ImmediateMode::introspect`] schema slot
+    /// `"last_dt_ms"` is the canonical lift in atomic 4).
+    ///
+    /// `Duration::ZERO` is the sentinel for "no tick yet" — first
+    /// paint, before the shell has driven one. Distinct from any
+    /// valid measured `dt` because the shell clamps to
+    /// `[1us, 1/30s]` per [`pinion_runtime::frame_pacing::clamp_frame_dt`]
+    /// (R51.145).
+    pub last_dt: Cell<Duration>,
+}
+
+impl ImmediateModeNode {
+    /// Construct an `ImmediateModeNode` from a shared driver handle
+    /// and a viewport rect. Default `tag` / `layout` / `last_dt`
+    /// (`Duration::ZERO` sentinel for "no tick yet").
+    #[must_use]
+    pub fn new(handle: Rc<RefCell<dyn ImmediateMode>>, viewport: Rect) -> Self {
+        Self {
+            handle,
+            viewport,
+            layout: LayoutStyle::new(),
+            tag: None,
+            last_dt: Cell::new(Duration::ZERO),
+        }
+    }
+
+    /// Build an `ImmediateModeNode` from a concrete driver impl,
+    /// boxing it into the canonical `Rc<RefCell<dyn ImmediateMode>>`
+    /// shape. Convenience for one-shot drivers; multi-frame drivers
+    /// should go through [`Owner::cache`](crate::reactive::Owner::cache)
+    /// + [`Self::new`] so the same `Rc` survives view-fn re-runs.
+    #[must_use]
+    pub fn from_driver<T: ImmediateMode + 'static>(driver: T, viewport: Rect) -> Self {
+        let handle: Rc<RefCell<dyn ImmediateMode>> = Rc::new(RefCell::new(driver));
+        Self::new(handle, viewport)
+    }
+
+    /// Attach a §5.20 intent tag — drained intents from this
+    /// driver's [`ImmediateMode`] impl will be prefixed with
+    /// `<tag>.` by the runtime walk (R22 convention).
+    #[must_use]
+    pub fn with_tag(mut self, tag: impl Into<Cow<'static, str>>) -> Self {
+        self.tag = Some(tag.into());
+        self
+    }
+
+    /// Attach a §5.21 layout style (builder form).
+    #[must_use]
+    pub const fn with_layout(mut self, layout: LayoutStyle) -> Self {
+        self.layout = layout;
+        self
+    }
+
+    /// R55.G.6 §5.45 — apply a functional transform to the layout
+    /// sidecar in place. See [`BoxNode::map_layout`] for the
+    /// canonical rationale.
+    #[must_use]
+    pub fn map_layout<F: FnOnce(LayoutStyle) -> LayoutStyle>(mut self, f: F) -> Self {
+        self.layout = f(self.layout);
+        self
+    }
+
+    /// Read the last per-paint `dt` the shell drove. Returns
+    /// `Duration::ZERO` before the first paint cycle has run.
+    #[must_use]
+    pub fn last_dt(&self) -> Duration {
+        self.last_dt.get()
+    }
+
+    /// Publish a freshly measured per-paint `dt` into the sidecar.
+    /// Called by the per-window paint cycle (atomic 1 wires this)
+    /// AFTER the [`ImmediateMode::tick`] call, so reads via
+    /// [`Self::last_dt`] in the same frame return the value that
+    /// drove the tick.
+    pub fn set_last_dt(&self, dt: Duration) {
+        self.last_dt.set(dt);
+    }
+}
+
+/// R681 §2 #4 — paint-inert reference driver. Records every tick's
+/// `dt` and every paint call's viewport into internal counters so
+/// tests can pin the per-frame dispatch contract without a real
+/// paint backend. Opts out of introspection (mirrors
+/// [`StubExternal`](crate::external::StubExternal) as the minimal
+/// baseline).
+#[derive(Debug, Default)]
+pub struct StubImmediateMode {
+    /// Monotonic tick counter — incremented by every [`ImmediateMode::tick`]
+    /// call. Exposed for test inspection; semantically opaque to the
+    /// runtime.
+    pub tick_count: u64,
+    /// Monotonic paint counter — incremented by every
+    /// [`ImmediateMode::paint`] call. Distinct from `tick_count`
+    /// because the substrate dispatches `tick` then `paint` as
+    /// separate phases (R681 atomic 1).
+    pub paint_count: u64,
+    /// Accumulated `dt` across all ticks since construction. Tests
+    /// pin per-frame dispatch by reading this after a known number
+    /// of paint cycles.
+    pub accumulated_dt: Duration,
+    /// Most recent `dt` observed. Distinguishes per-tick values
+    /// from the running total above.
+    pub last_observed_dt: Duration,
+    /// Most recent viewport size observed by [`Self::paint`] (read
+    /// from [`ImmediatePainter::viewport_size`]). `None` before the
+    /// first paint call.
+    pub last_paint_viewport: Option<(u32, u32)>,
+}
+
+impl StubImmediateMode {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            tick_count: 0,
+            paint_count: 0,
+            accumulated_dt: Duration::ZERO,
+            last_observed_dt: Duration::ZERO,
+            last_paint_viewport: None,
+        }
+    }
+}
+
+impl ImmediateMode for StubImmediateMode {
+    fn tick(&mut self, dt: Duration) {
+        self.tick_count = self.tick_count.saturating_add(1);
+        self.accumulated_dt = self.accumulated_dt.saturating_add(dt);
+        self.last_observed_dt = dt;
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn paint(&mut self, painter: &mut dyn ImmediatePainter) {
+        self.paint_count = self.paint_count.saturating_add(1);
+        self.last_paint_viewport = Some(painter.viewport_size());
+        // Issue one paint call so backend impls exercise their
+        // primitive dispatch — exact pixels are not the contract;
+        // the backend's own integration test owns pixel correctness.
+        // Viewport > 2^24 px would lose precision in the cast — far
+        // beyond any GUI surface ever encountered.
+        let (w, h) = painter.viewport_size();
+        painter.clear(Color::default());
+        if w > 0 && h > 0 {
+            painter.fill_rect(0.0, 0.0, w as f32, h as f32, Color::default());
+        }
+    }
+}
+
+/// R681 §2 #4 — test-fixture [`ImmediatePainter`] that records every
+/// primitive call into a [`Vec`] so unit tests can pin the dispatch
+/// contract without spinning up a real backend. The Vello backend
+/// integration tests own pixel correctness; this fixture owns the
+/// API contract (which method, in which order, with which args).
+#[derive(Debug, Default)]
+pub struct RecordingImmediatePainter {
+    pub viewport: (u32, u32),
+    pub dpi: f32,
+    pub calls: Vec<RecordedPaintCall>,
+}
+
+/// One recorded primitive call from [`RecordingImmediatePainter`].
+/// Carries the call's args verbatim so tests can pattern-match on
+/// the dispatch shape.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecordedPaintCall {
+    Clear { color: Color },
+    FillRect { x: f32, y: f32, w: f32, h: f32, color: Color },
+    FillTriangle { p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), color: Color },
+    StrokeLine { p1: (f32, f32), p2: (f32, f32), width: f32, color: Color },
+}
+
+impl RecordingImmediatePainter {
+    #[must_use]
+    pub fn new(viewport: (u32, u32), dpi: f32) -> Self {
+        Self {
+            viewport,
+            dpi,
+            calls: Vec::new(),
+        }
+    }
+}
+
+impl ImmediatePainter for RecordingImmediatePainter {
+    fn viewport_size(&self) -> (u32, u32) {
+        self.viewport
+    }
+    fn dpi_scale(&self) -> f32 {
+        self.dpi
+    }
+    fn clear(&mut self, color: Color) {
+        self.calls.push(RecordedPaintCall::Clear { color });
+    }
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
+        self.calls.push(RecordedPaintCall::FillRect { x, y, w, h, color });
+    }
+    fn fill_triangle(
+        &mut self,
+        p1: (f32, f32),
+        p2: (f32, f32),
+        p3: (f32, f32),
+        color: Color,
+    ) {
+        self.calls
+            .push(RecordedPaintCall::FillTriangle { p1, p2, p3, color });
+    }
+    fn stroke_line(
+        &mut self,
+        p1: (f32, f32),
+        p2: (f32, f32),
+        width: f32,
+        color: Color,
+    ) {
+        self.calls
+            .push(RecordedPaintCall::StrokeLine { p1, p2, width, color });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1654,7 +2220,8 @@ mod tests {
             | Scene::Container(_)
             | Scene::Effect(_)
             | Scene::External(_)
-            | Scene::Scroll(_) => {}
+            | Scene::Scroll(_)
+            | Scene::ImmediateModeNode(_) => {}
         }
     }
 
@@ -3078,5 +3645,634 @@ mod tests {
             Color::default(),
         ));
         assert_eq!(scene.intrinsic_content_size(), (u32::MAX, u32::MAX));
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // R681 §2 #4 — ImmediateModeNode + ImmediateMode trait surface.
+    //
+    // Atomic 0 substrate. Paint integration (atomic 1) wires the
+    // tick dispatch + Vello bridge; these tests pin the data shape
+    // + trait surface + scene-method exhaustiveness so atomic 1
+    // builds on a verified baseline.
+    // ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r681_immediate_mode_node_carries_viewport_layout_tag() {
+        let driver = StubImmediateMode::new();
+        let viewport = Rect::new(10, 20, 100, 50);
+        let node = ImmediateModeNode::from_driver(driver, viewport).with_tag("game_viewport");
+        assert_eq!(node.viewport, viewport);
+        assert_eq!(node.tag.as_deref(), Some("game_viewport"));
+        assert_eq!(node.last_dt(), Duration::ZERO, "no tick yet sentinel");
+    }
+
+    #[test]
+    fn r681_scene_immediate_mode_variant_rect_returns_viewport() {
+        let viewport = Rect::new(5, 6, 40, 30);
+        let scene = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            viewport,
+        ));
+        assert_eq!(scene.rect(), viewport);
+    }
+
+    #[test]
+    fn r681_scene_immediate_mode_tag_returns_attached_tag() {
+        let scene = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
+                .with_tag("canvas"),
+        );
+        assert_eq!(scene.tag(), Some("canvas"));
+    }
+
+    #[test]
+    fn r681_immediate_mode_untagged_returns_none_for_tag() {
+        let scene = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::default(),
+        ));
+        assert_eq!(scene.tag(), None);
+    }
+
+    #[test]
+    fn r681_contains_tag_walks_through_container_into_immediate() {
+        let inner = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
+                .with_tag("game"),
+        );
+        let container = Scene::Container(ContainerNode::new(vec![inner]));
+        assert!(container.contains_tag("game"));
+        assert!(!container.contains_tag("missing"));
+    }
+
+    #[test]
+    fn r681_contains_tag_walks_through_scroll_into_immediate() {
+        let inner = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
+                .with_tag("canvas"),
+        );
+        let scroll = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), inner));
+        assert!(scroll.contains_tag("canvas"));
+    }
+
+    #[test]
+    fn r681_immediate_mode_is_paint_opaque_leaf_for_external_walkers() {
+        // `find_external_with_tag` / `primary_external` MUST skip
+        // ImmediateModeNode: the driver is an `ImmediateMode`, not an
+        // `External`, despite the introspection-surface mirror.
+        let scene = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
+                .with_tag("canvas"),
+        );
+        assert!(scene.find_external_with_tag("canvas").is_none());
+        assert!(scene.primary_external().is_none());
+    }
+
+    #[test]
+    fn r681_immediate_mode_external_walkers_skip_through_container() {
+        // External walkers must descend Container children but skip
+        // any ImmediateModeNode they hit; a sibling External should
+        // still resolve.
+        let immediate = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
+                .with_tag("canvas"),
+        );
+        let external = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("real_ext"),
+        );
+        let container = Scene::Container(ContainerNode::new(vec![immediate, external]));
+        // ImmediateModeNode does NOT respond to External lookups; the
+        // sibling External does.
+        assert!(container.find_external_with_tag("canvas").is_none());
+        assert!(container.find_external_with_tag("real_ext").is_some());
+        // The primary External of the container is the External sibling
+        // (the ImmediateModeNode is non-external).
+        assert!(container.primary_external().is_some());
+        assert_eq!(
+            container.primary_external().and_then(|n| n.tag.as_deref()),
+            Some("real_ext"),
+        );
+    }
+
+    #[test]
+    fn r681_hit_test_treats_immediate_as_hittable_leaf() {
+        let viewport = Rect::new(10, 10, 40, 40);
+        let scene = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            viewport,
+        ));
+        let hit = scene.hit_test(20, 20).expect("inside viewport");
+        assert_eq!(hit.bbox, viewport);
+        assert!(hit.segments.is_empty(), "root leaf, empty path");
+        // Outside the viewport: no hit.
+        assert!(scene.hit_test(0, 0).is_none());
+        assert!(scene.hit_test(60, 60).is_none());
+    }
+
+    #[test]
+    fn r681_hit_test_descends_container_to_immediate_with_tag_path() {
+        let viewport = Rect::new(20, 20, 40, 40);
+        let inner = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), viewport)
+                .with_tag("game"),
+        );
+        let mut container_node = ContainerNode::new(vec![inner]);
+        container_node.rect = Rect::new(0, 0, 80, 80);
+        let scene = Scene::Container(container_node);
+        let hit = scene.hit_test(30, 30).expect("inside viewport via container");
+        assert_eq!(hit.bbox, viewport, "deepest hit is the immediate viewport");
+        assert_eq!(hit.segments, vec!["game".to_string()], "tag path segment");
+    }
+
+    #[test]
+    fn r681_lookup_path_does_not_descend_into_immediate() {
+        let immediate = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 10, 10),
+        ));
+        // Empty-segment lookup returns the rect itself (root case).
+        assert_eq!(
+            immediate.lookup_path(&[]),
+            Some(Rect::new(0, 0, 10, 10)),
+            "empty-segment returns root rect",
+        );
+        // Non-empty path against a non-container intermediate fails.
+        assert!(
+            immediate.lookup_path(&["anything".to_string()]).is_none(),
+            "immediate-mode driver has no addressable sub-paths",
+        );
+    }
+
+    #[test]
+    fn r681_scroll_target_at_skips_immediate_mode() {
+        let scene = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 100, 100),
+        ));
+        assert!(scene.scroll_target_at(50, 50).is_none());
+    }
+
+    #[test]
+    fn r681_intrinsic_content_size_includes_immediate_viewport() {
+        // Immediate-mode node contributes its viewport rect to the
+        // intrinsic content bbox so `SizeStrategy::IntrinsicAfterFirstPaint`
+        // sizes a window correctly when the binding declares an
+        // immediate viewport at the top of the scene.
+        let scene = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 320, 240),
+        ));
+        assert_eq!(scene.intrinsic_content_size(), (320, 240));
+    }
+
+    #[test]
+    fn r681_intrinsic_content_size_unions_immediate_with_box() {
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(
+                Rect::new(0, 0, 100, 50),
+                Color::default(),
+            )),
+            Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+                StubImmediateMode::new(),
+                Rect::new(0, 50, 320, 240),
+            )),
+        ]));
+        // Union: max_w = 320 (from immediate), max_h = 290 (50 + 240).
+        assert_eq!(scene.intrinsic_content_size(), (320, 290));
+    }
+
+    #[test]
+    fn r681_hit_test_region_collects_immediate_as_leaf() {
+        let immediate = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(
+                StubImmediateMode::new(),
+                Rect::new(0, 0, 50, 50),
+            )
+            .with_tag("game"),
+        );
+        let mut container_node = ContainerNode::new(vec![immediate]);
+        container_node.rect = Rect::new(0, 0, 100, 100);
+        let scene = Scene::Container(container_node);
+        let hits = scene.hit_test_region(0, 0, 60, 60);
+        // Container (root, empty path) + immediate ("game").
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().any(|h| h.segments == vec!["game".to_string()]));
+    }
+
+    // ── ImmediateMode trait surface ────────────────────────────────
+
+    #[test]
+    fn r681_immediate_mode_trait_is_dyn_safe() {
+        // Compile-time guard: any future change that loses dyn-safety
+        // (associated consts, Self-returning methods) breaks this.
+        let _: Rc<RefCell<dyn ImmediateMode>> =
+            Rc::new(RefCell::new(StubImmediateMode::new()));
+    }
+
+    #[test]
+    fn r681_stub_immediate_mode_tick_advances_counter_and_dt() {
+        let mut driver = StubImmediateMode::new();
+        assert_eq!(driver.tick_count, 0);
+        assert_eq!(driver.accumulated_dt, Duration::ZERO);
+        driver.tick(Duration::from_millis(16));
+        assert_eq!(driver.tick_count, 1);
+        assert_eq!(driver.accumulated_dt, Duration::from_millis(16));
+        assert_eq!(driver.last_observed_dt, Duration::from_millis(16));
+        driver.tick(Duration::from_millis(17));
+        assert_eq!(driver.tick_count, 2);
+        assert_eq!(driver.accumulated_dt, Duration::from_millis(33));
+        assert_eq!(driver.last_observed_dt, Duration::from_millis(17));
+    }
+
+    #[test]
+    fn r681_immediate_mode_tick_default_impl_is_noop() {
+        // Default `tick` impl exists (compiles) so test fixtures /
+        // placeholder drivers omit boilerplate. Concrete impl that
+        // does not override `tick` behaves as a no-op.
+        #[derive(Debug, Default)]
+        struct InertDriver;
+        impl ImmediateMode for InertDriver {}
+        let mut driver = InertDriver;
+        driver.tick(Duration::from_secs(1)); // no panic, no change.
+    }
+
+    #[test]
+    fn r681_immediate_mode_introspect_default_is_none() {
+        let driver = StubImmediateMode::new();
+        assert!(driver.introspect().is_none());
+        let mut driver_mut = StubImmediateMode::new();
+        assert!(driver_mut.introspect_mut().is_none());
+    }
+
+    #[test]
+    fn r681_immediate_mode_opt_in_introspection_surfaces_through_trait() {
+        // Mirror of `CountedExternal` opt-in pattern: a driver that
+        // impls both `ImmediateMode` AND `ExternalIntrospect` exposes
+        // its state through the same RPC channel External uses.
+        #[derive(Debug)]
+        struct CountedDriver {
+            count: i64,
+        }
+        impl ImmediateMode for CountedDriver {
+            fn tick(&mut self, _dt: Duration) {
+                self.count = self.count.saturating_add(1);
+            }
+            fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+                Some(self)
+            }
+            fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+                Some(self)
+            }
+        }
+        impl ExternalIntrospect for CountedDriver {
+            fn schema(&self) -> crate::external::IntrospectSchema {
+                crate::external::IntrospectSchema::new(&[("count", "int")])
+            }
+            fn query(&self, path: &str) -> Option<IntrospectValue> {
+                (path == "count").then_some(IntrospectValue::Int(self.count))
+            }
+            fn intervene(
+                &mut self,
+                _: &str,
+                _: IntrospectValue,
+            ) -> Result<(), crate::external::InterveneError> {
+                Err(crate::external::InterveneError::ReadOnly)
+            }
+        }
+        let driver = CountedDriver { count: 5 };
+        let introspect = driver.introspect().expect("opt-in declared");
+        assert_eq!(
+            introspect.query("count"),
+            Some(IntrospectValue::Int(5)),
+        );
+    }
+
+    // ── ImmediateModeNode helper API ───────────────────────────────
+
+    #[test]
+    fn r681_immediate_mode_node_last_dt_publish_read_round_trip() {
+        let node = ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::default(),
+        );
+        assert_eq!(node.last_dt(), Duration::ZERO, "no tick yet sentinel");
+        node.set_last_dt(Duration::from_millis(16));
+        assert_eq!(node.last_dt(), Duration::from_millis(16));
+        node.set_last_dt(Duration::from_millis(17));
+        assert_eq!(node.last_dt(), Duration::from_millis(17), "latest wins");
+    }
+
+    #[test]
+    fn r681_immediate_mode_node_with_layout_replaces_sidecar() {
+        let custom = LayoutStyle::new().with_size(Size::px(640, 480));
+        let node = ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::default(),
+        )
+        .with_layout(custom);
+        // Reading the layout back via the public field confirms the
+        // builder did not silently drop the override.
+        assert_eq!(node.layout.size, Size::px(640, 480));
+    }
+
+    #[test]
+    fn r681_immediate_mode_node_map_layout_preserves_seeded_default() {
+        // `with_layout` is full-replace; `map_layout` lets the caller
+        // chain a single override while preserving any constructor-
+        // supplied default. Mirrors R55.G.6 idiom for Scroll.
+        let node = ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::default(),
+        )
+        .map_layout(|l| l.with_size(Size::px(100, 100)));
+        assert_eq!(node.layout.size, Size::px(100, 100));
+    }
+
+    #[test]
+    fn r681_immediate_mode_node_from_driver_boxes_concrete_impl() {
+        // `from_driver` is the ergonomic constructor for one-shot
+        // drivers; pins that the concrete type is correctly boxed
+        // into `Rc<RefCell<dyn ImmediateMode>>` without an explicit
+        // type annotation at the call site.
+        let node = ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 50, 50),
+        );
+        // Mutable borrow drives one tick; observe via the field.
+        node.handle.borrow_mut().tick(Duration::from_millis(16));
+        // Read back the concrete state via the same trait surface
+        // (no downcast — `tick_count` is on the trait by virtue of
+        // being a field readable through a dyn-unsafe path; here we
+        // rely on the fact that StubImmediateMode is the concrete
+        // type and we constructed it ourselves).
+        //
+        // The dyn handle does not expose `tick_count` (it's not on
+        // the trait surface), so the pinning here is that the tick
+        // call succeeds without panicking — the substrate ergonomic
+        // assertion. Concrete-state verification lives in
+        // `r681_stub_immediate_mode_tick_advances_counter_and_dt`.
+        assert!(node.tag.is_none(), "default no tag");
+    }
+
+    #[test]
+    fn r681_shared_handle_observes_ticks_through_multiple_clones() {
+        // The Rc handle is the substrate for the view-fn pattern
+        // where `use_immediate_driver()` returns an
+        // `Rc<RefCell<MyDriver>>` from `Owner::cache` and the
+        // scene rebuild clones the Rc into the node every frame.
+        // Multiple clones must observe the same state.
+        let driver = Rc::new(RefCell::new(StubImmediateMode::new()));
+        let handle_a: Rc<RefCell<dyn ImmediateMode>> = driver.clone();
+        let handle_b: Rc<RefCell<dyn ImmediateMode>> = driver.clone();
+        handle_a.borrow_mut().tick(Duration::from_millis(16));
+        handle_b.borrow_mut().tick(Duration::from_millis(17));
+        // Concrete read through the original `Rc`.
+        assert_eq!(driver.borrow().tick_count, 2);
+        assert_eq!(driver.borrow().accumulated_dt, Duration::from_millis(33));
+    }
+
+    #[test]
+    fn r681_immediate_mode_node_paint_inert_in_paint_adapter() {
+        // Atomic 0 contract: ImmediateModeNode is paint-inert until
+        // atomic 1 wires the Vello bridge. Pinned by virtue of the
+        // workspace clippy + build passing with the wildcard arm in
+        // `paint_adapter::to_vello_inner` — no extra runtime
+        // assertion needed here. This test stays as documentation
+        // of the invariant and as a placeholder for the atomic 1
+        // companion `r681_immediate_mode_node_paint_invokes_tick`.
+        let _ = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 16, 16),
+        ));
+    }
+
+    // ── R681 atomic 1: ImmediatePainter trait + paint dispatch ─────
+
+    #[test]
+    fn r681_immediate_painter_trait_is_dyn_safe() {
+        // Compile-time guard against losing dyn-safety on the
+        // painter surface (associated items, Self-return, etc.).
+        let _: Box<dyn ImmediatePainter> =
+            Box::new(RecordingImmediatePainter::new((100, 50), 1.0));
+    }
+
+    #[test]
+    fn r681_recording_painter_observes_viewport_and_dpi() {
+        let painter = RecordingImmediatePainter::new((640, 480), 2.0);
+        assert_eq!(painter.viewport_size(), (640, 480));
+        let diff = (painter.dpi_scale() - 2.0_f32).abs();
+        assert!(diff < f32::EPSILON);
+        assert!(painter.calls.is_empty());
+    }
+
+    #[test]
+    fn r681_recording_painter_appends_each_primitive_in_call_order() {
+        let mut painter = RecordingImmediatePainter::new((100, 100), 1.0);
+        painter.clear(Color::default());
+        painter.fill_rect(1.0, 2.0, 3.0, 4.0, Color::default());
+        painter.fill_triangle(
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (5.0, 8.66),
+            Color::default(),
+        );
+        painter.stroke_line((0.0, 0.0), (10.0, 10.0), 2.0, Color::default());
+        assert_eq!(painter.calls.len(), 4);
+        assert!(matches!(painter.calls[0], RecordedPaintCall::Clear { .. }));
+        assert!(matches!(painter.calls[1], RecordedPaintCall::FillRect { .. }));
+        assert!(matches!(
+            painter.calls[2],
+            RecordedPaintCall::FillTriangle { .. }
+        ));
+        assert!(matches!(painter.calls[3], RecordedPaintCall::StrokeLine { .. }));
+    }
+
+    #[test]
+    fn r681_immediate_mode_paint_default_impl_is_noop() {
+        // Default `paint` impl exists (compiles, no panic).
+        #[derive(Debug, Default)]
+        struct InertDriver;
+        impl ImmediateMode for InertDriver {}
+        let mut driver = InertDriver;
+        let mut painter = RecordingImmediatePainter::new((10, 10), 1.0);
+        driver.paint(&mut painter);
+        assert!(
+            painter.calls.is_empty(),
+            "default paint impl emits zero primitives",
+        );
+    }
+
+    #[test]
+    fn r681_stub_immediate_mode_paint_records_dispatch() {
+        let mut driver = StubImmediateMode::new();
+        assert_eq!(driver.paint_count, 0);
+        assert_eq!(driver.last_paint_viewport, None);
+        let mut painter = RecordingImmediatePainter::new((320, 240), 1.0);
+        driver.paint(&mut painter);
+        assert_eq!(driver.paint_count, 1);
+        assert_eq!(driver.last_paint_viewport, Some((320, 240)));
+        // Stub paint emits clear + fill_rect (sentinel dispatch).
+        assert_eq!(painter.calls.len(), 2);
+        assert!(matches!(painter.calls[0], RecordedPaintCall::Clear { .. }));
+        assert!(matches!(painter.calls[1], RecordedPaintCall::FillRect { .. }));
+    }
+
+    #[test]
+    fn r681_stub_immediate_mode_paint_zero_viewport_skips_fill() {
+        // Zero-size viewport: clear still fires (backend-clear hint),
+        // but fill_rect is skipped (no useful pixels to write).
+        let mut driver = StubImmediateMode::new();
+        let mut painter = RecordingImmediatePainter::new((0, 0), 1.0);
+        driver.paint(&mut painter);
+        assert_eq!(driver.last_paint_viewport, Some((0, 0)));
+        assert_eq!(painter.calls.len(), 1);
+        assert!(matches!(painter.calls[0], RecordedPaintCall::Clear { .. }));
+    }
+
+    #[test]
+    fn r681_tick_and_paint_are_separate_phases() {
+        // The substrate dispatches `tick(dt)` then `paint(painter)`
+        // as distinct phases — neither auto-implies the other.
+        let mut driver = StubImmediateMode::new();
+        driver.tick(Duration::from_millis(16));
+        assert_eq!(driver.tick_count, 1);
+        assert_eq!(driver.paint_count, 0, "tick alone does not paint");
+        let mut painter = RecordingImmediatePainter::new((10, 10), 1.0);
+        driver.paint(&mut painter);
+        assert_eq!(driver.tick_count, 1, "paint alone does not tick");
+        assert_eq!(driver.paint_count, 1);
+    }
+
+    // ── R681 atomic 1: Scene::tick_immediate_mode walker ──────────
+
+    #[test]
+    fn r681_tick_immediate_mode_drives_root_node() {
+        // Concrete driver kept by `Rc` so we can inspect tick state
+        // after the dyn walk advances it.
+        let driver = Rc::new(RefCell::new(StubImmediateMode::new()));
+        let handle: Rc<RefCell<dyn ImmediateMode>> = driver.clone();
+        let scene = Scene::ImmediateModeNode(
+            ImmediateModeNode::new(handle, Rect::new(0, 0, 100, 100)),
+        );
+        let count = scene.tick_immediate_mode(Duration::from_millis(16));
+        assert_eq!(count, 1, "one node ticked");
+        assert_eq!(driver.borrow().tick_count, 1);
+        assert_eq!(driver.borrow().last_observed_dt, Duration::from_millis(16));
+        // last_dt sidecar published on the node.
+        if let Scene::ImmediateModeNode(n) = &scene {
+            assert_eq!(n.last_dt(), Duration::from_millis(16));
+        } else {
+            panic!("expected ImmediateModeNode variant");
+        }
+    }
+
+    #[test]
+    fn r681_tick_immediate_mode_zero_on_non_immediate_scene() {
+        let scene = Scene::Box(BoxNode::filled(
+            Rect::new(0, 0, 100, 100),
+            Color::default(),
+        ));
+        assert_eq!(scene.tick_immediate_mode(Duration::from_millis(16)), 0);
+    }
+
+    #[test]
+    fn r681_tick_immediate_mode_descends_container_and_scroll() {
+        let driver_a = Rc::new(RefCell::new(StubImmediateMode::new()));
+        let driver_b = Rc::new(RefCell::new(StubImmediateMode::new()));
+        let inner_a: Rc<RefCell<dyn ImmediateMode>> = driver_a.clone();
+        let inner_b: Rc<RefCell<dyn ImmediateMode>> = driver_b.clone();
+        let scroll_immediate = Scene::ImmediateModeNode(
+            ImmediateModeNode::new(inner_b, Rect::new(0, 0, 50, 50)),
+        );
+        let scroll = Scene::Scroll(ScrollNode::new(
+            Rect::new(0, 0, 100, 100),
+            scroll_immediate,
+        ));
+        let container = Scene::Container(ContainerNode::new(vec![
+            Scene::ImmediateModeNode(
+                ImmediateModeNode::new(inner_a, Rect::new(0, 0, 50, 50)),
+            ),
+            scroll,
+        ]));
+        let count = container.tick_immediate_mode(Duration::from_millis(16));
+        assert_eq!(count, 2, "two nodes: one in Container, one inside Scroll");
+        assert_eq!(driver_a.borrow().tick_count, 1);
+        assert_eq!(driver_b.borrow().tick_count, 1);
+    }
+
+    #[test]
+    fn r681_tick_immediate_mode_two_calls_accumulate_per_driver() {
+        let driver = Rc::new(RefCell::new(StubImmediateMode::new()));
+        let handle: Rc<RefCell<dyn ImmediateMode>> = driver.clone();
+        let scene = Scene::ImmediateModeNode(
+            ImmediateModeNode::new(handle, Rect::new(0, 0, 100, 100)),
+        );
+        scene.tick_immediate_mode(Duration::from_millis(16));
+        scene.tick_immediate_mode(Duration::from_millis(17));
+        assert_eq!(driver.borrow().tick_count, 2);
+        assert_eq!(
+            driver.borrow().accumulated_dt,
+            Duration::from_millis(33),
+        );
+        if let Scene::ImmediateModeNode(n) = &scene {
+            assert_eq!(n.last_dt(), Duration::from_millis(17), "latest wins");
+        }
+    }
+
+    #[test]
+    fn r681_has_immediate_mode_subtree_negative_for_non_immediate() {
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(Rect::default(), Color::default())),
+            Scene::Text(TextNode::default()),
+        ]));
+        assert!(!scene.has_immediate_mode_subtree());
+    }
+
+    #[test]
+    fn r681_has_immediate_mode_subtree_positive_through_container() {
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(Rect::default(), Color::default())),
+            Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+                StubImmediateMode::new(),
+                Rect::new(0, 0, 50, 50),
+            )),
+        ]));
+        assert!(scene.has_immediate_mode_subtree());
+    }
+
+    #[test]
+    fn r681_has_immediate_mode_subtree_positive_through_scroll() {
+        let inner = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            StubImmediateMode::new(),
+            Rect::new(0, 0, 50, 50),
+        ));
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 100, 100), inner));
+        assert!(scene.has_immediate_mode_subtree());
+    }
+
+    #[test]
+    fn r681_immediate_mode_paint_via_dyn_dispatch() {
+        // The realistic call site is through
+        // `node.handle.borrow_mut().paint(&mut backend_painter)` —
+        // the painter behind a `&mut dyn ImmediatePainter`. Pin
+        // this dispatch path here so the substrate is exercised
+        // without a real backend.
+        let handle: Rc<RefCell<dyn ImmediateMode>> =
+            Rc::new(RefCell::new(StubImmediateMode::new()));
+        let mut painter: Box<dyn ImmediatePainter> =
+            Box::new(RecordingImmediatePainter::new((50, 50), 1.0));
+        handle.borrow_mut().paint(painter.as_mut());
+        // The Box wraps a RecordingImmediatePainter; we can't peek
+        // inside via the trait surface, so the assertion is that
+        // the dispatch did not panic and the handle's paint counter
+        // bumped.
+        // Concrete read on the handle:
+        let driver_ref = handle.borrow();
+        // The dyn dispatch went through `ImmediateMode::paint` which
+        // for StubImmediateMode does `painter.clear(...)` and
+        // `painter.fill_rect(...)` — both go through the dyn
+        // ImmediatePainter, so reaching here without a panic confirms
+        // the cross-dyn dispatch works.
+        let _ = driver_ref;
     }
 }

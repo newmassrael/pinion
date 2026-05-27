@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 
 use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
@@ -129,6 +130,18 @@ struct WindowSlot<R: VelloRenderer> {
     /// for backward-compatible single-window callers
     /// (`ShellCore::dispatch_rpc` without a window scope).
     last_paint_layout: Option<pinion_rpc::LayoutNode>,
+    /// R681 §2 #4 atomic 2 — sticky flag set whenever the most recent
+    /// per-window paint scene contained at least one
+    /// [`pinion_core::Scene::ImmediateModeNode`]. The
+    /// [`ApplicationHandler::about_to_wait`] override consults this
+    /// flag to pick between [`ControlFlow::Wait`] (input-driven, idle
+    /// power) and [`ControlFlow::WaitUntil`] (per-window paint clock
+    /// at ~60 fps) — the §2 #4 game-loop contract for the
+    /// immediate-mode subtree opt-in. Cleared automatically each
+    /// paint cycle: if the view fn stops emitting an immediate-mode
+    /// subtree, the flag falls back to `false` on the next paint and
+    /// the slot returns to input-driven pacing.
+    has_immediate_mode_subtree: bool,
 }
 
 /// The framework-side shell. Generic over a widget binding
@@ -633,6 +646,17 @@ impl<V: WidgetView> AppShell<V> {
             .map(|s| s.spec_id);
         if let Some(slot) = self.windows.get_mut(&window_id) {
             slot.last_paint_layout = Some(paint_layout.clone());
+            // R681 §2 #4 atomic 2 — sticky per-window flag for the
+            // immediate-mode game-loop pacing. The next
+            // `about_to_wait` reads this to choose between
+            // [`ControlFlow::Wait`] and
+            // [`ControlFlow::WaitUntil(deadline)`]. The substrate
+            // tick walker already armed the per-window redraw flag
+            // inside `compute_paint_scene_internal`; the sticky
+            // signal here lets the pacing decision survive the
+            // single-shot redraw-flag drain.
+            slot.has_immediate_mode_subtree =
+                paint_scene.has_immediate_mode_subtree();
         }
         // R51.80 §5.12 §5.35 — hand the rendered scene + the pre-
         // built layout snapshot to the substrate. `finalize_frame`
@@ -883,6 +907,7 @@ impl<V: WidgetView> AppShell<V> {
                         pending_intrinsic_resize,
                         spec_id: spec.id,
                         last_paint_layout: None,
+                        has_immediate_mode_subtree: false,
                     },
                 );
                 self.spec_id_to_window_id.insert(spec.id, window_id);
@@ -913,6 +938,7 @@ impl<V: WidgetView> AppShell<V> {
             pending_intrinsic_resize,
             spec_id: spec.id,
             last_paint_layout: None,
+            has_immediate_mode_subtree: false,
         };
         self.windows.insert(window_id, slot);
         self.spec_id_to_window_id.insert(spec.id, window_id);
@@ -1194,6 +1220,95 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // §5.23 R27 dispatch loop.
             AppEvent::IntentArrived(intent) => self.core.dispatch_intent(&intent),
         }
+        self.drain_redraw_to_winit();
+    }
+
+    /// R681 §2 #4 atomic 2 §5.16 §5.28 — per-window game-loop pacing.
+    /// winit calls `about_to_wait` after every batch of pending events
+    /// has been drained and immediately before the event loop blocks
+    /// for more input. This is the canonical hook to configure the
+    /// next [`ControlFlow`]:
+    ///
+    /// - Any active window slot with `has_immediate_mode_subtree =
+    ///   true` arms the §2 #4 game-loop branch: compute that slot's
+    ///   next-paint deadline as
+    ///   `slot.last_paint_instant + frame_budget`
+    ///   (`frame_budget` = 1/60s; per-window override lands in
+    ///   atomic 3 via
+    ///   [`pinion_runtime::frame_pacing::frame_budget_for_window`]).
+    /// - The earliest deadline across every immediate-mode slot wins
+    ///   — winit has a single global control-flow setting per loop
+    ///   iteration, so the tightest deadline determines when winit
+    ///   wakes up; the per-window paint clock survives because each
+    ///   window's [`Self::render_window`] still reads its own
+    ///   `last_paint_instants` slot for `dt`, and the
+    ///   `redraw_requested_for_window` flag fires only the affected
+    ///   window's redraw.
+    /// - When no slot has an immediate-mode subtree, fall back to
+    ///   [`ControlFlow::Wait`] — the input-driven retained-tree
+    ///   semantics every Phase A binding already relies on.
+    ///
+    /// Each immediate-mode slot also re-arms its per-window redraw
+    /// flag here so the next event-loop iteration's
+    /// [`Self::drain_redraw_to_winit`] dispatches one
+    /// `Window::request_redraw` per slot — that delivers the
+    /// `WindowEvent::RedrawRequested` event the slot's
+    /// [`Self::render_window`] consumes to drive frame N+1. Without
+    /// this re-arm the §2 #4 game-loop would stall after the first
+    /// paint (the substrate's compute-paint-scene wire arms the flag
+    /// on first paint, but only one drain consumes it; subsequent
+    /// frames need the re-arm here).
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        let mut earliest_deadline: Option<Instant> = None;
+        let mut immediate_slot_ids: Vec<&'static str> = Vec::new();
+        for slot in self.windows.values() {
+            if !matches!(slot.render, RenderState::Active { .. }) {
+                continue;
+            }
+            // R681 atomic 3 — derive the per-window frame budget
+            // from the substrate signals: the slot's sticky
+            // `has_immediate_mode_subtree` flag + the binding's
+            // optional `set_target_fps_for_window` override. `None`
+            // budget means "this slot does not contribute a
+            // deadline" (idle policy, the default for retained-tree
+            // windows).
+            let override_fps = self.core.target_fps_for_window(slot.spec_id);
+            let budget = pinion_runtime::frame_pacing::frame_budget_for_window(
+                slot.has_immediate_mode_subtree,
+                override_fps,
+            );
+            let Some(budget) = budget else { continue };
+            immediate_slot_ids.push(slot.spec_id);
+            let deadline = match self
+                .core
+                .last_paint_instant_for_window(slot.spec_id)
+            {
+                Some(prev) => prev + budget,
+                // No prior paint — schedule ASAP (now + 0). winit
+                // clamps WaitUntil(past_or_present) to "wake
+                // immediately" semantics.
+                None => now,
+            };
+            earliest_deadline = Some(match earliest_deadline {
+                Some(d) => d.min(deadline),
+                None => deadline,
+            });
+        }
+        for spec_id in immediate_slot_ids {
+            // Re-arm so the next iteration's
+            // `drain_redraw_to_winit` dispatches the per-window
+            // `Window::request_redraw`. Idempotent: only one redraw
+            // per drain regardless of how many times we set the flag.
+            self.core.request_redraw_for_window(spec_id);
+        }
+        match earliest_deadline {
+            Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
+            None => event_loop.set_control_flow(ControlFlow::Wait),
+        }
+        // Drain the per-window flags we just armed so the
+        // immediate-mode windows receive their next redraw without
+        // waiting on another event-loop cycle.
         self.drain_redraw_to_winit();
     }
 }

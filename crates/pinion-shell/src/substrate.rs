@@ -33,7 +33,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use accesskit::NodeId;
 use pinion_a11y::{
@@ -302,6 +302,19 @@ pub struct ShellCore<V: WidgetView> {
     /// pump. Per-window storage is what makes that real delta
     /// per-window instead of binding-wide.
     last_paint_instants: HashMap<String, Instant>,
+    /// R681 §2 #4 atomic 3 §5.16 §5.28 — per-window target fps
+    /// override map. `&'static str` window id → desired `fps`.
+    /// Bindings populate via
+    /// [`Self::set_target_fps_for_window`]; the surface's
+    /// `about_to_wait` consults
+    /// [`pinion_runtime::frame_pacing::frame_budget_for_window`]
+    /// with this lookup result so per-window pacing overrides the
+    /// 60fps immediate-mode default.
+    ///
+    /// Absent entry → use
+    /// [`pinion_runtime::frame_pacing::default_window_frame_policy`]
+    /// derived from the slot's `has_immediate_mode_subtree` signal.
+    target_fps_per_window: HashMap<String, u32>,
 }
 
 /// R51.77 §5.40 — pure decision returned by
@@ -391,6 +404,7 @@ impl<V: WidgetView> ShellCore<V> {
             redraw_requested: false,
             redraw_requested_per_window: HashMap::new(),
             last_paint_instants: HashMap::new(),
+            target_fps_per_window: HashMap::new(),
         }
     }
 
@@ -559,6 +573,49 @@ impl<V: WidgetView> ShellCore<V> {
             .get(window_id)
             .copied()
             .unwrap_or(false)
+    }
+
+    /// R681 §2 #4 atomic 2 §5.16 §5.28 — per-window last paint
+    /// [`Instant`]. The substrate's
+    /// [`Self::compute_paint_scene_internal`] writes this slot every
+    /// paint cycle (R680 atomic 1 lift); the surface reads it to
+    /// compute the next per-window paint deadline for the
+    /// [`winit::event_loop::ControlFlow::WaitUntil`] game-loop pacing
+    /// branch.
+    ///
+    /// Returns `None` for an unknown / never-painted window key
+    /// (first-paint bootstrap case — the surface treats this as
+    /// "paint ASAP" and dispatches an immediate redraw).
+    #[must_use]
+    pub fn last_paint_instant_for_window(&self, window_id: &str) -> Option<Instant> {
+        self.last_paint_instants.get(window_id).copied()
+    }
+
+    /// R681 §2 #4 atomic 3 §5.16 §5.28 — per-window target fps
+    /// override for the game-loop pacing branch. Bindings call this
+    /// to opt a window into 30fps (battery saver) / 144fps
+    /// (high-refresh display) / 0 (paused polled window sentinel)
+    /// instead of the default
+    /// [`pinion_runtime::frame_pacing::DEFAULT_IMMEDIATE_MODE_FPS`].
+    ///
+    /// The override is consulted by
+    /// [`pinion_shell::AppShell::about_to_wait`] each event-loop
+    /// iteration via
+    /// [`pinion_runtime::frame_pacing::frame_budget_for_window`];
+    /// re-calling this method with a different `fps` is the
+    /// canonical "change pacing on the fly" surface.
+    pub fn set_target_fps_for_window(&mut self, window_id: &str, fps: u32) {
+        self.target_fps_per_window
+            .insert(window_id.to_owned(), fps);
+    }
+
+    /// R681 §2 #4 atomic 3 §5.16 §5.28 — read the per-window target
+    /// fps override, if set. `None` means "use the default policy"
+    /// (60fps when immediate-mode-active, idle otherwise — see
+    /// [`pinion_runtime::frame_pacing::default_window_frame_policy`]).
+    #[must_use]
+    pub fn target_fps_for_window(&self, window_id: &str) -> Option<u32> {
+        self.target_fps_per_window.get(window_id).copied()
     }
 
     /// R51.83 §5.40 — mutable borrow of the §5.36 [`LayoutCache`] for
@@ -1233,6 +1290,30 @@ impl<V: WidgetView> ShellCore<V> {
                 None => V::view(cached_state, &frame),
             });
             compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        }
+        // R681 §2 #4 atomic 1 — per-window immediate-mode tick. The
+        // paint scene the view fn just produced may contain one or
+        // more [`Scene::ImmediateModeNode`]s; each driver advances
+        // its own state by the per-window `dt` and the same value
+        // lands in [`ImmediateModeNode::last_dt`] for AI
+        // introspection. The paint adapter
+        // ([`pinion_runtime::paint_adapter::to_vello`]) invokes
+        // [`pinion_core::scene::ImmediateMode::paint`] later in the
+        // frame (after this tick), so the painted geometry reflects
+        // the post-tick driver state.
+        //
+        // The non-zero count signal flags this binding as
+        // immediate-mode-active for the rest of the paint cycle:
+        // we mark `redraw_requested` so the next frame fires from
+        // the per-window paint clock without waiting on input —
+        // first half of the §2 #4 game-loop contract. The full
+        // [`ControlFlow::Poll`] / [`ControlFlow::WaitUntil`] pacing
+        // wiring lands in atomic 2 on top of this signal.
+        let immediate_dt = Duration::from_secs_f32(dt.max(0.0));
+        let immediate_count = paint_scene.tick_immediate_mode(immediate_dt);
+        if immediate_count > 0 {
+            self.redraw_requested = true;
+            self.request_redraw_for_window(window_key);
         }
         // R51.147 §5.28 — keep painting while any animation registered
         // on the binding is still moving. `request_redraw` is

@@ -68,6 +68,13 @@ pub enum SnapshotNode {
     Effect,
     External(ExternalSnapshot),
     Scroll(ScrollSnapshot),
+    /// R681 §2 #4 — [`Scene::ImmediateModeNode`] payload. Exposes
+    /// the §5.20 tag (so [`find_by_tag`] walks resolve), the
+    /// post-layout `viewport`, and the per-paint `last_dt`
+    /// sidecar (microseconds — `u64` for stable JSON encoding;
+    /// callers convert back to a [`std::time::Duration`] /
+    /// fractional seconds at the boundary).
+    ImmediateModeNode(ImmediateModeSnapshot),
     /// Catch-all for `Scene` variants added in a later pinion-core
     /// version that this dispatcher predates.
     Unknown,
@@ -186,6 +193,30 @@ pub struct ScrollSnapshot {
     pub content: Box<SnapshotNode>,
 }
 
+/// R681 §2 #4 — `ImmediateModeNode` payload of
+/// [`SnapshotNode::ImmediateModeNode`]. Exposes the §5.20 `tag`
+/// (so [`find_by_tag`] walks resolve to the immediate-mode subtree),
+/// the post-layout `viewport` (the rect the backend bridge paints
+/// into), and the substrate-published `last_dt_micros` per-paint
+/// delta sidecar — encoded as `u64` microseconds so JSON consumers
+/// see a stable integer rather than a struct of `secs` + `nanos`.
+///
+/// The driver handle itself is not exposed (`Rc<RefCell<dyn
+/// ImmediateMode>>` is non-serialisable); AI clients reach the
+/// driver state through the `scene/query` / `scene/intervene` /
+/// `scene/invoke` triad against the [`ImmediateMode::introspect`]
+/// opt-in surface (same channel `External` uses).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImmediateModeSnapshot {
+    pub tag: Option<String>,
+    pub viewport: Rect,
+    /// Substrate-published per-paint `dt` (microseconds). `0` is
+    /// the sentinel for "no tick yet" (first paint, before the
+    /// substrate has driven one).
+    pub last_dt_micros: u64,
+}
+
 /// `External` payload of [`SnapshotNode::External`] (R51.198 added
 /// `rect` + `tag`).
 ///
@@ -296,6 +327,21 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             offset_y: node.offset_y,
             content: Box::new(snapshot_root(node.content.as_ref())),
         }),
+        Scene::ImmediateModeNode(node) => {
+            // `Duration → u64 microseconds` clamps at u64::MAX after
+            // ~584,554 years of accumulated wall-clock — well past
+            // any realistic per-frame delta. The substrate clamps
+            // `dt` against the §5.28 `MAX_FRAME_DT_SECS` ceiling
+            // (~33 ms) before reaching the immediate-mode tick, so
+            // the realistic range is `[0, 33333]` micros.
+            let micros = u64::try_from(node.last_dt().as_micros())
+                .unwrap_or(u64::MAX);
+            SnapshotNode::ImmediateModeNode(ImmediateModeSnapshot {
+                tag: cow_to_owned(node.tag.as_ref()),
+                viewport: node.viewport,
+                last_dt_micros: micros,
+            })
+        }
         // `Scene` is non_exhaustive; future variants surface as Unknown
         // until this dispatcher is updated for them.
         _ => SnapshotNode::Unknown,

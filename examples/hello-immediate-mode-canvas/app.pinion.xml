@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R681 §2 #4 — pinion-forge codegen manifest for
+  hello-immediate-mode-canvas. Emits a
+  `HelloImmediateModeCanvasRenderer` Vello-backed struct on the same
+  template the other hello-* bindings use. This binding is the
+  first-time consumer of the §2 #4 immediate-mode subtree opt-in
+  (Scene::ImmediateModeNode + ImmediateMode trait); the renderer
+  wire itself is unchanged from the canonical template.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloImmediateModeCanvasRenderer"
+        backend="vello"/>

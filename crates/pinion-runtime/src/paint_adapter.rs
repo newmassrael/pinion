@@ -37,13 +37,18 @@
 //! transitively.
 
 use pinion_core::Scene;
-use pinion_core::scene::{BoxNode, Rect, TextNode};
+use pinion_core::scene::{
+    BoxNode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
+};
 use pinion_core::style::{Border, BorderPlacement, Color, TextOverflow};
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
 use vello::Glyph;
 use vello::Scene as VelloScene;
-use vello::kurbo::{Affine, Line, Rect as KurboRect, RoundedRect as KurboRoundedRect, Stroke};
+use vello::kurbo::{
+    Affine, BezPath, Line, PathEl, Point as KurboPoint, Rect as KurboRect,
+    RoundedRect as KurboRoundedRect, Stroke,
+};
 use vello::peniko::{Color as PenikoColor, Fill};
 
 /// Build a Vello scene from a pinion [`Scene`] tree. `fill_hook` is
@@ -145,9 +150,179 @@ fn to_vello_inner<F>(
             to_vello_inner(&s.content, fill_hook, text_cache, out, child_transform);
             out.pop_layer();
         }
+        // R681 §2 #4 atomic 1 — ImmediateModeNode paints through
+        // the backend-agnostic [`ImmediatePainter`] surface. The
+        // shell's [`pinion_shell::ShellCore::compute_paint_scene_internal`]
+        // has already invoked `node.handle.borrow_mut().tick(dt)`
+        // by the time the paint walker reaches this branch (the
+        // tick + paint phases are separated so future per-window
+        // [`ControlFlow::Poll`] pacing in atomic 2 can drive the
+        // tick independently of the encode step). The painter
+        // composes `transform * translate(viewport.{x,y})` so the
+        // driver paints in viewport-LOCAL coordinates and the
+        // result lands at the correct screen-space position.
+        Scene::ImmediateModeNode(node) => {
+            paint_immediate_mode_node(out, node, transform);
+        }
         // External / Effect / Path / Image: no-op. Path + Image paint
         // primitives attach in follow-up rounds.
         _ => {}
+    }
+}
+
+/// R681 §2 #4 atomic 1 — paint one [`ImmediateModeNode`] into the
+/// Vello scene. Wraps the inherited `transform` in a viewport-local
+/// frame ([`Affine::translate`] over `(viewport.x, viewport.y)`),
+/// constructs a [`VelloImmediatePainter`] over the resulting
+/// transform, and invokes the driver's
+/// [`pinion_core::scene::ImmediateMode::paint`] hook. The driver
+/// rasterises in viewport-local coordinates; the painter applies
+/// the composed transform at each Vello call site so the result
+/// lands at the correct screen-space rect.
+///
+/// DPI scale is currently fixed at `1.0` (logical pixels). A
+/// future round can thread the per-window DPI through the paint
+/// adapter once a real consumer needs the hint.
+fn paint_immediate_mode_node(
+    out: &mut VelloScene,
+    node: &ImmediateModeNode,
+    parent_transform: Affine,
+) {
+    let viewport = node.viewport;
+    if viewport.w == 0 || viewport.h == 0 {
+        // Zero-size viewport: skip paint entirely (the driver may
+        // emit `clear(...)` against a 0-size canvas, but a Vello
+        // fill with a degenerate rect is a no-op anyway).
+        return;
+    }
+    // Compose `parent_transform * translate(viewport.{x,y})` so
+    // viewport-local `(0, 0)` lands at screen-space
+    // `(viewport.x, viewport.y)` in the parent frame.
+    let local_transform = parent_transform
+        * Affine::translate((f64::from(viewport.x), f64::from(viewport.y)));
+    let mut painter = VelloImmediatePainter {
+        out,
+        viewport,
+        transform: local_transform,
+        dpi: 1.0,
+    };
+    node.handle.borrow_mut().paint(&mut painter);
+}
+
+/// R681 §2 #4 atomic 1 — Vello-backed [`ImmediatePainter`] impl.
+/// Composes the inherited paint transform with a viewport-local
+/// translation so the driver paints in viewport-local logical
+/// pixels without knowing the parent transform chain (Scroll
+/// content offset / Container nesting / etc.).
+///
+/// Lives in the paint-adapter module rather than a separate
+/// `immediate.rs` because the Vello call shape (
+/// [`vello::Scene::fill`] + [`vello::Scene::stroke`] +
+/// [`vello::kurbo`] primitives) is the same surface the retained-tree
+/// paint helpers reach for; sharing the module keeps the Vello
+/// dependency localised.
+pub struct VelloImmediatePainter<'a> {
+    out: &'a mut VelloScene,
+    viewport: Rect,
+    transform: Affine,
+    dpi: f32,
+}
+
+impl ImmediatePainter for VelloImmediatePainter<'_> {
+    fn viewport_size(&self) -> (u32, u32) {
+        (self.viewport.w, self.viewport.h)
+    }
+
+    fn dpi_scale(&self) -> f32 {
+        self.dpi
+    }
+
+    fn clear(&mut self, color: Color) {
+        if color == Color::TRANSPARENT {
+            return;
+        }
+        let rect = KurboRect::new(
+            0.0,
+            0.0,
+            f64::from(self.viewport.w),
+            f64::from(self.viewport.h),
+        );
+        self.out.fill(
+            Fill::NonZero,
+            self.transform,
+            to_peniko(color),
+            None,
+            &rect,
+        );
+    }
+
+    fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
+        if color == Color::TRANSPARENT || w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let rect = KurboRect::new(
+            f64::from(x),
+            f64::from(y),
+            f64::from(x) + f64::from(w),
+            f64::from(y) + f64::from(h),
+        );
+        self.out.fill(
+            Fill::NonZero,
+            self.transform,
+            to_peniko(color),
+            None,
+            &rect,
+        );
+    }
+
+    fn fill_triangle(
+        &mut self,
+        p1: (f32, f32),
+        p2: (f32, f32),
+        p3: (f32, f32),
+        color: Color,
+    ) {
+        if color == Color::TRANSPARENT {
+            return;
+        }
+        let path: BezPath = [
+            PathEl::MoveTo(KurboPoint::new(f64::from(p1.0), f64::from(p1.1))),
+            PathEl::LineTo(KurboPoint::new(f64::from(p2.0), f64::from(p2.1))),
+            PathEl::LineTo(KurboPoint::new(f64::from(p3.0), f64::from(p3.1))),
+            PathEl::ClosePath,
+        ]
+        .into_iter()
+        .collect();
+        self.out.fill(
+            Fill::NonZero,
+            self.transform,
+            to_peniko(color),
+            None,
+            &path,
+        );
+    }
+
+    fn stroke_line(
+        &mut self,
+        p1: (f32, f32),
+        p2: (f32, f32),
+        width: f32,
+        color: Color,
+    ) {
+        if color == Color::TRANSPARENT || width <= 0.0 {
+            return;
+        }
+        let line = Line::new(
+            KurboPoint::new(f64::from(p1.0), f64::from(p1.1)),
+            KurboPoint::new(f64::from(p2.0), f64::from(p2.1)),
+        );
+        self.out.stroke(
+            &Stroke::new(f64::from(width)),
+            self.transform,
+            to_peniko(color),
+            None,
+            &line,
+        );
     }
 }
 

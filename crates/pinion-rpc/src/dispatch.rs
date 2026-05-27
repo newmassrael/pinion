@@ -2022,6 +2022,8 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
         SnapshotNode::Effect => "Effect",
         SnapshotNode::External(_) => "External",
         SnapshotNode::Scroll(_) => "Scroll",
+        // R681 §2 #4 — `ImmediateModeNode` payload wire shape.
+        SnapshotNode::ImmediateModeNode(_) => "ImmediateModeNode",
         // `SnapshotNode::Unknown` and future non_exhaustive additions
         // collapse to "Unknown".
         _ => "Unknown",
@@ -2098,6 +2100,25 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
             obj.insert(
                 "content".to_string(),
                 snapshot_node_to_json(*snap.content),
+            );
+        }
+        // R681 §2 #4 — wire serialisation for `ImmediateModeNode`.
+        // Exposes the §5.20 tag (so `find_by_tag` walks resolve),
+        // the post-layout viewport (so `node_center` works the
+        // same as for any other primitive), and the per-paint
+        // `last_dt_micros` sidecar (substrate-published delta the
+        // AI client can verify the game-loop pacing against).
+        SnapshotNode::ImmediateModeNode(snap) => {
+            obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
+            obj.insert("viewport".to_string(), snapshot_rect_to_json(snap.viewport));
+            // Also expose the viewport under `rect` so the generic
+            // `node_center` / `rect_of` helpers in the test harness
+            // resolve uniformly (they probe `rect` first; only
+            // `Scroll` falls back to `viewport`).
+            obj.insert("rect".to_string(), snapshot_rect_to_json(snap.viewport));
+            obj.insert(
+                "last_dt_micros".to_string(),
+                Value::Number(snap.last_dt_micros.into()),
             );
         }
         _ => {}
