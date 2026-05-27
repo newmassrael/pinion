@@ -281,6 +281,30 @@ reason = "R51.186 audit_impact_refs frozen with missing 5. prefix; intent was §
 applied_in = "pinion R51.186"
 since = "R51.186"
 
+# R682.A — R682.A's audit_impact_refs were appended with
+# ['5.16','5.41','5.46']; §5.46 does not exist as a registered section
+# (atomics 0-3 of the axis 4 paint-fragment cache substrate live in
+# §5.16 paint pipeline + §5.41 render loop). set_changelog_publishable_impact_refs
+# corrected the publishable half to ['5.16','5.41']; the audit half is
+# frozen by design. Register the dangling §5.46 audit ref below.
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "R682.A"
+fields = ["publishable_impact_refs"]
+reason = "R682.A audit impact_refs frozen with ['5.16','5.41','5.46']; §5.46 does not exist as a registered section; set_changelog_publishable_impact_refs corrected publishable half to ['5.16','5.41']. Audit half immutable; orphan_ledger registers the dangling audit ref below."
+applied_in = "pinion R682.A"
+content_hash_before = "d67e79b8662fe34da1e01f5e80d7e80f8b7bcd4e254b710c4ea59fc41366750b"
+content_hash_after = "4443efa2e0fe0c9dbd7da79e4e3bc69e480c7f84efcdf919acc0f52bb087e716"
+
+[[orphan_ledger]]
+kind = "atomic_entry_ref"
+doc = "docs/GENERATED.md"
+from = "R682.A"
+to = "5.46"
+reason = "R682.A audit_impact_refs frozen with §5.46 in error; no §5.46 section exists. Atomics 0-3 of the paint-fragment cache substrate live in §5.16 paint pipeline + §5.41 render loop."
+applied_in = "pinion R682.A"
+since = "R682.A"
+
 [[publishable_override_ledger]]
 kind = "redaction"
 target_id = "Round 525"

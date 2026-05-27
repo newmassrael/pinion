@@ -21181,6 +21181,51 @@
         "ApplicationHandler::about_to_wait is a single global ControlFlow per loop iteration — winit 0.30 limitation. The earliest-deadline-wins logic ensures the tightest paced window's deadline determines wake-up; per-window paint timing stays correct because each window's render_window reads its own last_paint_instants slot for dt. winit upstream RFC for per-window ControlFlow is a future SCE-class concern (multi-pacing windows on the same loop)."
       ]
     },
+    "R682.A": {
+      "decision_summary": "R682.A axis 4 paint-fragment cache substrate (atomics 0-3); split per session budget",
+      "changes_bullets": [
+        "pinion-core: ContainerNode.paint_hash + Scene::paint_hash + is_cacheable_for_paint + sentinels + Rect::union",
+        "pinion-runtime: FragmentCache + to_vello_cached + mark-and-sweep eviction + damage region",
+        "pinion-shell: WindowSlot fragment_cache + FragmentCacheStats publish/getter + AppShell wiring"
+      ],
+      "verification_bullets": [
+        "+52 R682 tests (23 core + 21 runtime + 8 shell); workspace tests pass",
+        "42-demo regression sweep PASS; cached path verified across single-window + multi-window + immediate-mode coexistence",
+        "Clippy clean under workspace -D pedantic baseline"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.41",
+        "5.46"
+      ],
+      "carry_forward_bullets": [
+        "R682.B: todomvc 100-row stress consumer + filter-mode re-encode verify via FragmentCacheStats RPC",
+        "R682.B: tools/demos/r682_dirty_subtree_cache.py with 30+ assertions + 23-demo sweep PASS 3 consecutive runs",
+        "R682+1: transform-aware cache key (or container-local-coord fragments) to enable Scroll-content + reflow cache hits",
+        "R683 axis 1 substrate (dynamic dock + Splitter widget + tear-off lifecycle) continues 4-axis series"
+      ],
+      "publishable_decision_summary": "R682.A axis 4 paint-fragment cache substrate (atomics 0-3); split per session budget",
+      "publishable_changes_bullets": [
+        "pinion-core: ContainerNode.paint_hash + Scene::paint_hash + is_cacheable_for_paint + sentinels + Rect::union",
+        "pinion-runtime: FragmentCache + to_vello_cached + mark-and-sweep eviction + damage region",
+        "pinion-shell: WindowSlot fragment_cache + FragmentCacheStats publish/getter + AppShell wiring"
+      ],
+      "publishable_verification_bullets": [
+        "+52 R682 tests (23 core + 21 runtime + 8 shell); workspace tests pass",
+        "42-demo regression sweep PASS; cached path verified across single-window + multi-window + immediate-mode coexistence",
+        "Clippy clean under workspace -D pedantic baseline"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R682.B: todomvc 100-row stress consumer + filter-mode re-encode verify via FragmentCacheStats RPC",
+        "R682.B: tools/demos/r682_dirty_subtree_cache.py with 30+ assertions + 23-demo sweep PASS 3 consecutive runs",
+        "R682+1: transform-aware cache key (or container-local-coord fragments) to enable Scroll-content + reflow cache hits",
+        "R683 axis 1 substrate (dynamic dock + Splitter widget + tear-off lifecycle) continues 4-axis series"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

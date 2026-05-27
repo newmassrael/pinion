@@ -13331,6 +13331,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R682.A — R682.A axis 4 paint-fragment cache substrate (atomics 0-3); split per session budget
+
+**Changes**:
+- pinion-core: ContainerNode.paint_hash + Scene::paint_hash + is_cacheable_for_paint + sentinels + Rect::union
+- pinion-runtime: FragmentCache + to_vello_cached + mark-and-sweep eviction + damage region
+- pinion-shell: WindowSlot fragment_cache + FragmentCacheStats publish/getter + AppShell wiring
+
+
+
+**Verification**:
+- +52 R682 tests (23 core + 21 runtime + 8 shell); workspace tests pass
+- 42-demo regression sweep PASS; cached path verified across single-window + multi-window + immediate-mode coexistence
+- Clippy clean under workspace -D pedantic baseline
+
+
+
+**Impact**: §5.16, §5.41
+
+
+**Carry forward**:
+- R682.B: todomvc 100-row stress consumer + filter-mode re-encode verify via FragmentCacheStats RPC
+- R682.B: tools/demos/r682_dirty_subtree_cache.py with 30+ assertions + 23-demo sweep PASS 3 consecutive runs
+- R682+1: transform-aware cache key (or container-local-coord fragments) to enable Scroll-content + reflow cache hits
+- R683 axis 1 substrate (dynamic dock + Splitter widget + tear-off lifecycle) continues 4-axis series
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
