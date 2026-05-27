@@ -304,9 +304,23 @@ pub fn view_splitter(
         ContainerNode::new(vec![right])
             .with_layout(LayoutStyle::new().with_flex_grow(one_minus_ratio)),
     );
+    // R683.C §5.16 — fill the splitter Container with the active
+    // theme's `Surface` colour so the substrate paint stays visible
+    // against `pinion_shell::VelloContext`'s default
+    // `PenikoColor::BLACK` clear (`crates/pinion-shell/src/lib.rs`).
+    // Pre-R683.C the splitter Container had no `BoxStyle` — when the
+    // splitter was the binding's root paint scene (every dock + tear-
+    // off application is by construction), the window cleared to
+    // BLACK and the un-filled splitter strip + the 4-px handle's
+    // surrounding gap leaked the clear colour through. The fill
+    // matches `Theme::resolve(ColorRole::Surface)` (M3 Surface neutral)
+    // so dock-panel layouts read against a typical pro-tool authoring
+    // background — DCC / IDE / CAD shells all paint the splitter
+    // background under the panels.
     Scene::Container(
         ContainerNode::new(vec![left_child, handle, right_child])
             .with_tag(style.tag)
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(style.orientation.flex_direction())
@@ -720,6 +734,35 @@ mod tests {
 
     fn theme_light() -> Theme {
         Theme::light()
+    }
+
+    #[test]
+    fn r683_c_view_splitter_outer_container_filled_with_theme_surface() {
+        // R683.C §5.16 — splitter Container fills with the active
+        // theme's `Surface` so the `VelloContext`'s BLACK default
+        // clear is overridden when the splitter is the binding's
+        // root paint scene. Without this, dock + tear-off
+        // applications painted on a black-cleared canvas with un-
+        // filled splitter strips leaking through.
+        run_in_owner(|| {
+            let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+            let theme = theme_light();
+            let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
+            let scene = view_splitter(
+                empty_panel("left_panel"),
+                empty_panel("right_panel"),
+                &ratio,
+                &theme,
+                &style,
+                false,
+            );
+            let Scene::Container(outer) = &scene else { panic!() };
+            assert_eq!(
+                outer.style.fill,
+                theme.resolve(ColorRole::Surface),
+                "splitter outer Container must fill with ColorRole::Surface so VelloContext BLACK clear is hidden",
+            );
+        });
     }
 
     #[test]

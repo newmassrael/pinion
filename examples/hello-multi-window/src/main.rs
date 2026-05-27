@@ -45,10 +45,7 @@
 
 use std::rc::Rc;
 
-use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
-};
+use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -73,7 +70,7 @@ use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
 // binding-agnostic per the substrate's contract.
 use pinion_widget_paint::devtools::{
     find_node_at_path as find_main_node_at_path, rebuild_with_highlight_at_path,
-    scene_root_path_segment, scene_to_tree_item, scene_type_name,
+    scene_root_path_segment, scene_to_tree_item, scene_type_name, ClickRouter,
 };
 use pinion_widget_paint::tree_view::{
     view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
@@ -741,156 +738,23 @@ fn format_size_value(value: pinion_core::style::SizeValue) -> String {
 }
 
 
-/// R679 §5.16 §5.20 §5.49 — `DevTools` bidirectional select router
-/// for the **main** window. AI-invoke-only entry point: a
-/// `scene/invoke /main_click_router/external/click {Text(path)}`
-/// (or `{Null}`) writes the supplied path into the shared
-/// [`use_selected_path`] Signal via the
-/// [`MAIN_CLICK_ROUTER_INTENT_TAG`] reducer arm. Closes the
-/// bidirectional select arc: inspector tree row click writes
-/// [`use_selected_path`] via the R675 arc; main router invoke (or
-/// user mouse click on the main button via the
-/// [`MAIN_BTN_CLICK_INTENT_TAG`] arm) writes the same Signal from
-/// the **main** side.
+/// R683.C §5.16 §5.20 §5.49 — `DevTools` bidirectional select router
+/// for the **main** window. Now powered by the lifted substrate
+/// [`pinion_widget_paint::devtools::ClickRouter`] (R683.C
+/// Rule-of-Three lift; `hello-multi-window` = 1st consumer, R679
+/// origin; `hello-dock-panels` = 2nd consumer, R683.C). AI-invoke-only
+/// entry point: a `scene/invoke /main_click_router/external/click
+/// {Text(path)}` (or `{Null}`) writes the supplied path into the
+/// shared [`use_selected_path`] Signal via the
+/// [`MAIN_CLICK_ROUTER_INTENT_TAG`] reducer arm. The user-mouse half
+/// (clicks on the main button) routes through
+/// [`MAIN_BTN_CLICK_INTENT_TAG`].
 ///
-/// Why a separate External rather than a reducer-only Signal
-/// mutation:
+/// Schema slots, wire shape, and intent payload semantics are pinned
+/// at the substrate layer (see [`ClickRouter`]'s rustdoc); the
+/// binding only carries the tag constant + reducer arm matching the
+/// dotted intent form `main_click_router.click`.
 ///
-/// * **Symbolic introspection** — AI clients query the
-///   `last_clicked` slot via `scene/query` to verify the last
-///   invoke landed without having to scrape the cross-window
-///   banner / focus state-layer from `scene/snapshot`. The slot
-///   is the source-of-truth mirror of the Signal at the AI plane.
-/// * **§5.20 intent stream** — the External enqueues a `click`
-///   intent on the canonical §5.20 channel; the reducer dispatches
-///   off the intent rather than off a direct mutation, keeping
-///   the V::update single-entry-point invariant.
-/// * **Carry to R680+** — the next round adds a 2nd
-///   `DevTools` binding (or the `pinion-devtools` crate skeleton)
-///   that reuses this router shape verbatim. Stamping the External
-///   here today maps the substrate consumer surface for the
-///   substrate lift cycle.
-///
-/// ## Schema slots
-///
-/// * `last_clicked` — last path written via `invoke("click",
-///   Text(path))`, or `Null` after a `Null`-payload invoke. AI-
-///   readable through `scene/query`.
-/// * `click` — the typed invoke shortcut. Accepts `Text(path)`
-///   (select that path) or `Null` (deselect). Each call emits
-///   exactly one `click` intent with the same payload. `Bool(true)`
-///   return on accepted invokes, no `Bool(false)` no-op case in
-///   R679 (every call mutates state + emits intent).
-#[derive(Debug, Default)]
-struct MainWindowClickRouter {
-    /// Mirror of the last `invoke("click", _)` arg. `Some(path)`
-    /// after a select invoke, `None` after a deselect invoke or
-    /// before the first invoke.
-    last_clicked: Option<String>,
-    /// §5.20 intent buffer. `drain_intents` ships the payload
-    /// across the boundary on the next substrate drain pass.
-    pending: Vec<Intent>,
-}
-
-impl MainWindowClickRouter {
-    /// Construct a fresh router with no recorded click and an
-    /// empty intent buffer. Substrate calls this once at
-    /// `WidgetCore::create_extra_externals` time.
-    fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl External for MainWindowClickRouter {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(
-            &[Backend::Gui, Backend::Tui, Backend::Rpc],
-            BackendFallback::Skip,
-        )
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
-        for intent in self.pending.drain(..) {
-            sink(intent);
-        }
-    }
-
-    fn is_dirty(&self) -> bool {
-        !self.pending.is_empty()
-    }
-}
-
-impl ExternalIntrospect for MainWindowClickRouter {
-    fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[
-            ("last_clicked", "string"),
-            ("click", "string"),
-        ])
-    }
-
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        match path {
-            "last_clicked" => Some(match &self.last_clicked {
-                Some(p) => IntrospectValue::Text(p.clone()),
-                None => IntrospectValue::Null,
-            }),
-            _ => None,
-        }
-    }
-
-    fn intervene(
-        &mut self,
-        path: &str,
-        _value: IntrospectValue,
-    ) -> Result<(), InterveneError> {
-        match path {
-            "last_clicked" => Err(InterveneError::ReadOnly),
-            _ => Err(InterveneError::UnknownPath),
-        }
-    }
-
-    fn invoke(
-        &mut self,
-        path: &str,
-        args: IntrospectValue,
-    ) -> Result<IntrospectValue, InvokeError> {
-        match path {
-            "click" => match args {
-                IntrospectValue::Text(p) => {
-                    self.last_clicked = Some(p.clone());
-                    self.pending
-                        .push(Intent::new_static("click", IntrospectValue::Text(p)));
-                    Ok(IntrospectValue::Bool(true))
-                }
-                IntrospectValue::Null => {
-                    self.last_clicked = None;
-                    self.pending
-                        .push(Intent::new_static("click", IntrospectValue::Null));
-                    Ok(IntrospectValue::Bool(true))
-                }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            _ => Err(InvokeError::UnknownPath),
-        }
-    }
-}
-
 /// Binding carrier. `MultiWindowView` carries no fields — every
 /// trait method is associated so AppShell instantiates the binding
 /// without holding a value.
@@ -951,7 +815,7 @@ impl WidgetCore for MultiWindowView {
             // extras).
             ExtraExternal::new(
                 MAIN_CLICK_ROUTER_TAG,
-                Box::new(MainWindowClickRouter::new()),
+                Box::new(ClickRouter::new()),
             ),
         ]
     }

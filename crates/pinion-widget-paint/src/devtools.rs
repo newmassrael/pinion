@@ -51,6 +51,11 @@
 
 use std::collections::HashMap;
 
+use pinion_core::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+};
+use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Scene};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::Color;
@@ -595,6 +600,211 @@ pub fn scene_to_tree_item(scene: &Scene, path: &str) -> TreeItem {
         // variant lands here as an opaque leaf so the inspector
         // never panics on an unknown node.
         _ => TreeItem::leaf(path.to_owned(), "(unknown variant)"),
+    }
+}
+
+/// R683.C §5.16 §5.20 §5.49 — bare event-name the [`ClickRouter`] emits
+/// on each accepted invoke. The runtime intent-queue walker prefixes
+/// this with the producing External's tag, so the binding-side reducer
+/// matches the dotted form `{tag}.click` per
+/// [[intent-tag-dotted-wire-form]]. Public so consumers can spell the
+/// dotted tag via [`intent_tag!`](pinion_core::intent_tag) when the
+/// macro grows non-literal support — pre that, bindings literal the
+/// concatenation themselves (`intent_tag!("my_router", "click")`).
+pub const CLICK_ROUTER_EVENT: &str = "click";
+/// R683.C §5.16 §5.49 — `ExternalIntrospect` schema slot name for the
+/// read-only "most-recent-invoke-payload" mirror. AI clients
+/// `scene/query {path: "/{router_tag}/external/last_clicked"}` to
+/// observe the latest accepted invoke without firing a fresh event.
+pub const CLICK_ROUTER_LAST_CLICKED_SLOT: &str = "last_clicked";
+/// R683.C §5.16 §5.49 — `ExternalIntrospect` invoke path the channel
+/// is bound to. `scene/invoke {path: "/{router_tag}/external/click",
+/// args: Text(path)}` selects; `args: Null` deselects.
+pub const CLICK_ROUTER_INVOKE_PATH: &str = "click";
+
+/// R683.C §5.16 §5.20 §5.49 — backend-agnostic AI-driven click-routing
+/// `External`. Bridges a typed `scene/invoke` call into a `click`
+/// intent the binding's [`WidgetCore::update`](pinion_core::WidgetCore::update)
+/// reducer can mirror into a reactive selection slot (canonically a
+/// shared `Signal<Option<String>>` resolved through
+/// [`Owner::cache`](pinion_core::Owner::cache)).
+///
+/// Lifted at R683.C from `examples/hello-multi-window`'s
+/// `MainWindowClickRouter` (1st consumer, R679) after
+/// `examples/hello-dock-panels` (2nd consumer, R683.C) reached the
+/// `Rule-of-Three` trigger per
+/// [[abstraction-needs-second-consumer]]. The 2nd consumer's
+/// requirements are bit-identical: AI-invoke-only `click` channel
+/// (`Text(path)` selects, `Null` deselects), read-only `last_clicked`
+/// mirror slot for [[ai-first-rpc-introspection-obligation]]-style
+/// observation, single intent emit per accepted invoke (no no-op
+/// fallthrough).
+///
+/// ## Wire
+///
+/// Binding registers an instance via
+/// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
+/// tagged with the binding-local router tag (e.g.
+/// `"main_click_router"`, `"viewport_click_router"`). RPC clients
+/// drive it via `scene/invoke /{tag}/external/click`; the substrate
+/// records the payload into `last_clicked` + enqueues a `click`
+/// intent the framework's per-frame drain ships into the binding's
+/// reducer prefixed with the router's tag (the dotted form
+/// `{tag}.click` consumers match against).
+///
+/// ## Why an `External` (vs. a plain RPC method)
+///
+/// The bridge is paint-side reactive: the binding's reducer mutates a
+/// `Signal<Option<String>>` whose change re-runs every subscribed
+/// view fn (main paint with the selection wrap; inspector paint with
+/// the focus state-layer; both observe the same `Owner::cache` slot).
+/// A bare RPC method would short-circuit the reactive arc — the
+/// External keeps the canonical Signal→view→paint→snapshot chain
+/// intact so the AI client's `scene/snapshot` post-invoke observes the
+/// same scene the user would see post-mouse-click.
+///
+/// ## Versus the [`TreeRowClickExternal`](crate::tree_view::TreeRowClickExternal)
+///
+/// `TreeRowClickExternal` is a real paint-side `External` with an
+/// SCXML statechart (`Idle ↔ Pressed`) that user mouse clicks on a
+/// tagged row drive via the `InputRouter`'s composite-tag dispatch.
+/// `ClickRouter` is the inverse: there is **no SCXML**, **no paint-
+/// side mouse handling** — only the AI-driven `invoke("click", ...)`
+/// channel. User-mouse-driven clicks travel through whatever
+/// paint-side widget the binding wires up (a `Button`, a
+/// `TreeRowClickExternal`, …) and the binding's reducer mirrors that
+/// arc's `click` intent into the same Signal that AI invokes write.
+/// The two `External`s are complementary halves of the bidirectional
+/// select arc — neither subsumes the other.
+#[derive(Debug, Default)]
+pub struct ClickRouter {
+    /// Mirror of the last accepted `invoke("click", _)` arg.
+    /// `Some(path)` after a `Text(path)` select invoke, `None` after
+    /// a `Null` deselect invoke or before the first invoke. Returned
+    /// verbatim through the [`CLICK_ROUTER_LAST_CLICKED_SLOT`] query
+    /// channel.
+    last_clicked: Option<String>,
+    /// §5.20 intent buffer. [`External::drain_intents`] ships each
+    /// queued [`Intent`] across the boundary on the next substrate
+    /// drain pass. v1 enqueues exactly one intent per accepted
+    /// invoke; the `Vec` shape leaves room for future multi-event
+    /// invokes without breaking the queue contract.
+    pending: Vec<Intent>,
+}
+
+impl ClickRouter {
+    /// (R683.C §5.16 §5.49) Construct a fresh router with no recorded
+    /// click and an empty intent buffer. Substrate calls this once at
+    /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
+    /// time per registered router instance.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Read-only accessor for the [`CLICK_ROUTER_LAST_CLICKED_SLOT`]
+    /// mirror. Returns `None` when no `invoke` has fired or when the
+    /// last invoke was a `Null` deselect. Mirrors the query channel
+    /// the introspect surface exposes — useful for unit tests that
+    /// pin the substrate's behaviour without spinning up the full
+    /// `ExternalIntrospect` dispatch.
+    #[must_use]
+    pub fn last_clicked(&self) -> Option<&str> {
+        self.last_clicked.as_deref()
+    }
+}
+
+impl External for ClickRouter {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(
+            &[Backend::Gui, Backend::Tui, Backend::Rpc],
+            BackendFallback::Skip,
+        )
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        for intent in self.pending.drain(..) {
+            sink(intent);
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        !self.pending.is_empty()
+    }
+}
+
+impl ExternalIntrospect for ClickRouter {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            (CLICK_ROUTER_LAST_CLICKED_SLOT, "string"),
+            (CLICK_ROUTER_INVOKE_PATH, "string"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        if path == CLICK_ROUTER_LAST_CLICKED_SLOT {
+            return Some(match &self.last_clicked {
+                Some(p) => IntrospectValue::Text(p.clone()),
+                None => IntrospectValue::Null,
+            });
+        }
+        None
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        if path == CLICK_ROUTER_LAST_CLICKED_SLOT {
+            return Err(InterveneError::ReadOnly);
+        }
+        Err(InterveneError::UnknownPath)
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        if path != CLICK_ROUTER_INVOKE_PATH {
+            return Err(InvokeError::UnknownPath);
+        }
+        match args {
+            IntrospectValue::Text(p) => {
+                self.last_clicked = Some(p.clone());
+                self.pending.push(Intent::new_static(
+                    CLICK_ROUTER_EVENT,
+                    IntrospectValue::Text(p),
+                ));
+                Ok(IntrospectValue::Bool(true))
+            }
+            IntrospectValue::Null => {
+                self.last_clicked = None;
+                self.pending.push(Intent::new_static(
+                    CLICK_ROUTER_EVENT,
+                    IntrospectValue::Null,
+                ));
+                Ok(IntrospectValue::Bool(true))
+            }
+            _ => Err(InvokeError::TypeMismatch),
+        }
     }
 }
 
@@ -1269,6 +1479,178 @@ mod tests {
 
         fn thread_ownership(&self) -> pinion_core::external::ThreadOwnership {
             pinion_core::external::ThreadOwnership::UiThreadSync
+        }
+    }
+
+    // R683.C §5.16 §5.20 §5.49 — `ClickRouter` substrate regression
+    // suite. Lifted at R683.C from the binding-side
+    // `r679_main_window_click_router_*` tests in
+    // `examples/hello-multi-window/src/main.rs`; same behaviours, now
+    // pinned at the substrate layer so every future consumer
+    // (hello-dock-panels = 2nd, future Inspector panes = 3rd, …)
+    // inherits coverage.
+    mod r683_click_router_tests {
+        use super::super::{
+            ClickRouter, CLICK_ROUTER_EVENT, CLICK_ROUTER_INVOKE_PATH,
+            CLICK_ROUTER_LAST_CLICKED_SLOT,
+        };
+        use pinion_core::external::{
+            Backend, External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+        };
+
+        #[test]
+        fn r683_new_router_starts_with_no_recorded_click_and_empty_queue() {
+            let router = ClickRouter::new();
+            assert_eq!(router.last_clicked(), None);
+            assert!(!router.is_dirty(), "fresh router holds no pending intents");
+        }
+
+        #[test]
+        fn r683_router_backends_cover_gui_tui_rpc() {
+            let router = ClickRouter::new();
+            let support = router.backends();
+            // GUI + TUI + RPC must all be supported so the substrate
+            // works under every pinion shell + the headless RPC
+            // backend.
+            assert!(support.supports(Backend::Gui));
+            assert!(support.supports(Backend::Tui));
+            assert!(support.supports(Backend::Rpc));
+        }
+
+        #[test]
+        fn r683_router_schema_exposes_canonical_slot_names() {
+            let router = ClickRouter::new();
+            let schema = router.schema();
+            let names: Vec<&str> = schema.fields.iter().map(|(n, _)| *n).collect();
+            assert!(names.contains(&CLICK_ROUTER_LAST_CLICKED_SLOT));
+            assert!(names.contains(&CLICK_ROUTER_INVOKE_PATH));
+        }
+
+        #[test]
+        fn r683_query_last_clicked_returns_null_pre_invoke() {
+            let router = ClickRouter::new();
+            assert_eq!(
+                router.query(CLICK_ROUTER_LAST_CLICKED_SLOT),
+                Some(IntrospectValue::Null),
+            );
+        }
+
+        #[test]
+        fn r683_query_unknown_path_returns_none() {
+            let router = ClickRouter::new();
+            assert_eq!(router.query("nonexistent"), None);
+        }
+
+        #[test]
+        fn r683_invoke_click_with_text_records_path_and_enqueues_intent() {
+            let mut router = ClickRouter::new();
+            let res = router
+                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("foo/bar".into()))
+                .expect("invoke must succeed for Text payload");
+            assert_eq!(res, IntrospectValue::Bool(true));
+            assert_eq!(router.last_clicked(), Some("foo/bar"));
+            assert!(router.is_dirty(), "invoke must enqueue an intent");
+
+            let mut drained: Vec<pinion_core::intent::Intent> = Vec::new();
+            router.drain_intents(&mut |intent| drained.push(intent));
+            assert_eq!(drained.len(), 1);
+            assert_eq!(drained[0].tag_str(), CLICK_ROUTER_EVENT);
+            assert_eq!(drained[0].payload.as_str(), Some("foo/bar"));
+        }
+
+        #[test]
+        fn r683_invoke_click_with_null_clears_path_and_enqueues_null_intent() {
+            let mut router = ClickRouter::new();
+            // Prime the mirror by selecting first.
+            router
+                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("primed".into()))
+                .unwrap();
+            // Drain so the next emit isolates the deselect intent.
+            router.drain_intents(&mut |_| {});
+
+            let res = router
+                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Null)
+                .expect("invoke must succeed for Null payload");
+            assert_eq!(res, IntrospectValue::Bool(true));
+            assert_eq!(router.last_clicked(), None, "Null clears the mirror");
+
+            let mut drained: Vec<pinion_core::intent::Intent> = Vec::new();
+            router.drain_intents(&mut |intent| drained.push(intent));
+            assert_eq!(drained.len(), 1);
+            assert_eq!(drained[0].payload, IntrospectValue::Null);
+        }
+
+        #[test]
+        fn r683_invoke_click_with_other_payload_returns_type_mismatch() {
+            let mut router = ClickRouter::new();
+            let res = router.invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Bool(true));
+            assert!(matches!(res, Err(InvokeError::TypeMismatch)));
+            assert_eq!(router.last_clicked(), None, "rejected invoke must not mutate state");
+        }
+
+        #[test]
+        fn r683_invoke_unknown_path_returns_unknown_path_error() {
+            let mut router = ClickRouter::new();
+            let res = router.invoke("ghost", IntrospectValue::Text("ignored".into()));
+            assert!(matches!(res, Err(InvokeError::UnknownPath)));
+        }
+
+        #[test]
+        fn r683_intervene_last_clicked_is_read_only() {
+            let mut router = ClickRouter::new();
+            let res = router.intervene(
+                CLICK_ROUTER_LAST_CLICKED_SLOT,
+                IntrospectValue::Text("attempted".into()),
+            );
+            assert!(matches!(res, Err(InterveneError::ReadOnly)));
+        }
+
+        #[test]
+        fn r683_intervene_unknown_path_returns_unknown_path_error() {
+            let mut router = ClickRouter::new();
+            let res = router.intervene("ghost", IntrospectValue::Null);
+            assert!(matches!(res, Err(InterveneError::UnknownPath)));
+        }
+
+        #[test]
+        fn r683_drain_intents_empties_the_pending_queue() {
+            let mut router = ClickRouter::new();
+            router
+                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("a".into()))
+                .unwrap();
+            assert!(router.is_dirty());
+            router.drain_intents(&mut |_| {});
+            assert!(!router.is_dirty(), "drain must empty the queue");
+        }
+
+        #[test]
+        fn r683_multiple_invokes_record_latest_and_enqueue_each_intent() {
+            let mut router = ClickRouter::new();
+            router
+                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("a".into()))
+                .unwrap();
+            router
+                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("b".into()))
+                .unwrap();
+            assert_eq!(router.last_clicked(), Some("b"));
+
+            let mut drained: Vec<pinion_core::intent::Intent> = Vec::new();
+            router.drain_intents(&mut |intent| drained.push(intent));
+            assert_eq!(drained.len(), 2);
+            assert_eq!(drained[0].payload.as_str(), Some("a"));
+            assert_eq!(drained[1].payload.as_str(), Some("b"));
+        }
+
+        #[test]
+        fn r683_introspect_query_reflects_recorded_path() {
+            let mut router = ClickRouter::new();
+            router
+                .invoke(CLICK_ROUTER_INVOKE_PATH, IntrospectValue::Text("p/q".into()))
+                .unwrap();
+            assert_eq!(
+                router.query(CLICK_ROUTER_LAST_CLICKED_SLOT),
+                Some(IntrospectValue::Text("p/q".into())),
+            );
         }
     }
 }

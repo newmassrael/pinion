@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R683.C §5.16 §5.41 §5.45 — pinion-forge codegen manifest for
+  hello-dock-panels. The renderer surface is shared across windows
+  (one HelloDockPanelsRenderer struct; per-window AppShell creates
+  one instance per WindowSpec via Self::new). Multi-window topology
+  is reactive — driven by windows_signal opt-in rather than the
+  compile-time windows() list.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloDockPanelsRenderer"
+        backend="vello"/>

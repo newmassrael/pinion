@@ -216,6 +216,65 @@ pub fn view_dock_panel(
             .with_size_px(style.header_font_size_px)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
+    // R683.C §5.16 (substrate-incompleteness signal cleared during
+    // first consumer adoption): the header strip's cross-axis width
+    // must be Auto, not Px(0). The original R683.B emit used
+    // `Size::px(0, header_height_px)` which set width = 0 px exactly
+    // — taffy interprets `Px(0)` as "fixed 0 wide", NOT "stretch via
+    // `AlignItems::Stretch`". Auto preserves the intended behaviour
+    // (Stretch on the outer Column container stretches the header
+    // to the parent's full cross-axis extent). The fixed-height side
+    // of the size pair is preserved so the header is exactly
+    // `header_height_px` tall. `Size` is `#[non_exhaustive]`, so the
+    // build goes via `Size::default()` (`Auto`/`Auto`) + field
+    // assignment on the height axis.
+    // R683.C §5.16 — header strip layout. Original R683.B emit
+    // sized the strip with `Size::px(0, header_height_px)` (width =
+    // 0 px exactly) under `Display::Block`; the cross-axis
+    // `AlignItems::Stretch` on the outer Column container could not
+    // override the explicit 0 px width, so the rendered header rect
+    // collapsed to `padding-left + padding-right` (16 px). The fix
+    // sets the header to `Display::Flex` with `FlexDirection::Row`
+    // (the title axis) — flex children of a Column flex parent
+    // inherit the parent's `AlignItems::Stretch` cross-axis
+    // semantics, so the header stretches to fill the panel width.
+    // The title text inside is centred vertically via the header's
+    // own `AlignItems::Center`. Height stays pinned at
+    // `Px(header_height_px)` so the strip is exactly the M3-canonical
+    // 28 px tall.
+    // R683.C §5.16 — header strip layout. Original R683.B emit sized
+    // the strip with `Size::px(0, header_height_px)` (width = 0 px
+    // exactly); taffy interpreted `Px(0)` as "fixed 0 wide", NOT
+    // "stretch via cross-axis align-items", so the rendered header
+    // rect collapsed to `padding-left + padding-right` (16 px). The
+    // fix sets the header to `Display::Flex` with `FlexDirection::Row`
+    // (the title axis) + `flex_grow: 1.0` as a main-axis-grow hint —
+    // but the dock panel's outer container is `FlexDirection::Column`,
+    // so `flex_grow` does not apply to the header's *width*. The
+    // canonical stretch path for a flex-Column parent's cross-axis is
+    // `align-self: stretch` (parent's `align-items: stretch` inherits),
+    // and that triggers when the child's cross-axis size is `Auto` or
+    // `Percent(100)`. v1 uses explicit `Percent(100)` so taffy sees a
+    // concrete cross-axis directive instead of relying on the implicit
+    // `Auto + stretch` interaction (which is fragile under the
+    // padding-only intrinsic-width path taffy collapses to when the
+    // header strip has no main-axis content beyond the title text).
+    // R683.B §5.16 header layout — honest R684 carry: the
+    // `Size::px(0, header_height_px)` emit collapses the header
+    // strip to padding-only width (16 px) under taffy's flex pass.
+    // The intuitive `Size { width: Auto, height: Px(28) } +
+    // align-items: Stretch` and `Size { width: Percent(100), … }`
+    // fallbacks both lose to taffy's min-content resolution when
+    // the dock panel sits inside a splitter wrapper whose
+    // `flex_basis: auto` resolves the outer cross-axis to min-content
+    // *before* the stretch pass runs (R683.C diagnosed; the unit
+    // tests in this module pass with a fixed-size root parent but
+    // the live splitter wrap fails). The textbook canonical fix is a
+    // `pinion_core::style::LayoutStyle::flex_basis` field — the
+    // substrate primitive R683.C confirmed missing — and lands in
+    // R684 alongside the splitter flex_grow ratio carry (the same
+    // root cause forces splitter ratios to ~50/50 regardless of the
+    // declared `flex_grow`).
     let header = Scene::Container(
         ContainerNode::new(vec![header_title])
             .with_tag(header_tag)
@@ -264,11 +323,21 @@ struct DockDragStart {
     cursor_y: f32,
 }
 
-/// (R683.B §5.16) Drag-to-tear-off External for the
-/// [`view_dock_panel`] header strip. Registered by the binding via
+/// (R683.B §5.16, R683.C `InputRouter` routing fix)
+/// Drag-to-tear-off External for the [`view_dock_panel`] header strip.
+/// Registered by the binding via
 /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
-/// tagged with the composite tag `{panel_tag}#header` (matching the
-/// view fn's header child).
+/// against the **panel root tag** (e.g. `"inspector"`, the
+/// [`DockPanelStyle::tag`]), NOT the composite `"inspector#header"`
+/// tag the paint emits on the header strip. The R51.42 `dispatch_send`
+/// and `forward_pointer_move` paths always split a composite paint tag
+/// at `#` and look up the state-scene External by the primary half, so
+/// the External must live at the panel root tag for the `InputRouter`
+/// to route events to it. R683.B's first-cut emit registered the
+/// External at the composite tag, which made `dispatch_send` silently
+/// skip every press: no `pointer_move` ever reached the External and
+/// the tear-off arc was unobservable from the `InputRouter` side.
+/// R683.C surfaced and corrected the mismatch.
 ///
 /// ## Wire
 ///
@@ -277,29 +346,49 @@ struct DockDragStart {
 /// header strip before tear-off fires). Each `pointer_move` under
 /// capture lock checks the L∞ delta from the press-time frame
 /// against [`DockPanelStyle::tear_off_threshold_frac`]; on first
-/// crossing the external emits a
-/// [`TEAR_OFF_EVENT`] intent with the panel id as the
-/// `IntrospectValue::Text` payload + sets the `fired_for_drag`
-/// guard so subsequent moves do not re-fire.
+/// crossing the external emits a [`TEAR_OFF_EVENT`] intent with the
+/// panel id as the `IntrospectValue::Text` payload + sets the
+/// `fired_for_drag` guard so subsequent moves do not re-fire.
 ///
 /// `PointerUp` / `PointerCancel` (delivered via the
 /// [`ExternalIntrospect::invoke`] `"send"` channel) clear the drag
 /// snapshot + the `fired_for_drag` guard so the next press starts a
 /// fresh cycle.
 ///
+/// ## Sub-region discriminator
+///
+/// Because the External lives at the panel root tag, the InputRouter
+/// dispatches `send` events for clicks on EITHER the header OR the
+/// content sub-region (both paint tags split to the same primary).
+/// The R51.42 wire-payload prefix is the sub-index: `"header:PointerDown"`,
+/// `"content:PointerDown"`, etc. Only `"header:*"` events arm the
+/// drag — `"content:*"` clears `is_drag_armed` so a press on the
+/// content area's empty space cannot accidentally fire `tear_off` on a
+/// drag past the threshold. The pre-R683.C unit tests that called
+/// `invoke("send", Text("PointerUp"))` with bare event names continue
+/// to work for the teardown half (bare events split to no sub-index
+/// and clear the drag state too); the production invoking-via-
+/// InputRouter path always carries a sub-index prefix.
+///
 /// ## Pattern of operations
 ///
 /// 1. Construct: `DockPanelExternal::new(panel_id, threshold_frac)`.
-/// 2. Application's `create_extra_externals` registers the
-///    external against the composite header tag
-///    (`{panel_tag}#header`).
-/// 3. User presses + drags past the threshold — the external
-///    emits the `tear_off` intent.
+/// 2. Application's `create_extra_externals` registers the External
+///    against the **panel root tag** (matching the view fn's panel
+///    root Container tag — typically the same `panel_id` passed to
+///    `DockPanelExternal::new`).
+/// 3. User presses on the header + drags past the threshold — the
+///    InputRouter dispatches `"header:PointerDown"` (arms the drag)
+///    + `pointer_move` frames; the External emits the `tear_off`
+///    intent.
 /// 4. Binding's `WidgetCore::update` reducer catches the dotted
-///    intent (`{panel_tag}#header.tear_off`) + pushes a fresh
-///    `WindowSpec` onto its `Signal<Vec<WindowSpec>>`.
+///    intent `{panel_tag}.tear_off` (the runtime walker prefixes the
+///    bare `TEAR_OFF_EVENT` with the registered External tag, which is
+///    now the panel root tag, not the composite header tag) + pushes
+///    a fresh `WindowSpec` onto its `Signal<Vec<WindowSpec>>`.
 /// 5. R683.A `reconcile_windows` Effect picks up the signal change +
 ///    spawns the new floating window with the torn-off panel's content.
+#[allow(clippy::doc_markdown, clippy::doc_lazy_continuation)]
 pub struct DockPanelExternal {
     /// Stable panel identifier carried into the tear-off intent
     /// payload. The binding's reducer + the
@@ -327,6 +416,22 @@ pub struct DockPanelExternal {
     /// multi-event drags (e.g. an `tear_off_armed` precursor +
     /// `tear_off` final).
     pending_intents: RefCell<VecDeque<Intent>>,
+    /// R683.C §5.16 — drag-arm flag. Set to `true` on
+    /// `invoke("send", "header:PointerDown")` (the InputRouter
+    /// dispatches this when the user presses on the header strip
+    /// because the External lives at the panel root tag + the R51.42
+    /// payload format prefixes the sub-index). Cleared on
+    /// `"content:PointerDown"` (a press on the content area must NOT
+    /// drive tear-off), `"PointerUp"` / `"PointerCancel"` (drag
+    /// teardown), or via direct construction default. `pointer_move`
+    /// gates its drag math on this flag so content-area drags do not
+    /// fire `tear_off` accidentally.
+    ///
+    /// Defaults to `true` for backward-compat with the R683.B unit
+    /// tests that called `pointer_move` directly without simulating
+    /// the press arc — production flows always go through the
+    /// InputRouter's `dispatch_send` which sets the flag explicitly.
+    is_drag_armed: Cell<bool>,
 }
 
 impl core::fmt::Debug for DockPanelExternal {
@@ -357,6 +462,7 @@ impl DockPanelExternal {
             drag_start: Cell::new(None),
             fired_for_drag: Cell::new(false),
             pending_intents: RefCell::new(VecDeque::new()),
+            is_drag_armed: Cell::new(true),
         }
     }
 
@@ -437,7 +543,20 @@ impl External for DockPanelExternal {
     /// frame, accumulate delta on subsequent frames, fire
     /// [`TEAR_OFF_EVENT`] intent once when the L∞ delta crosses
     /// [`DockPanelStyle::tear_off_threshold_frac`].
+    ///
+    /// R683.C drag-arm gate: production flows that route through the
+    /// `InputRouter`'s `forward_pointer_move` always carry a press
+    /// arc (`"header:PointerDown"` or `"content:PointerDown"`) that
+    /// sets [`Self::is_drag_armed`]. Pressing on the content area
+    /// disarms the drag so the tear-off intent does not fire on a
+    /// drag through the panel's content body. Pre-R683.C unit tests
+    /// that exercise this method without simulating the press arc
+    /// continue to work because the construction default is `armed =
+    /// true`.
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+        if !self.is_drag_armed.get() {
+            return;
+        }
         if self.drag_start.get().is_none() {
             self.drag_start.set(Some(DockDragStart {
                 cursor_x: x_rel,
@@ -488,6 +607,9 @@ impl ExternalIntrospect for DockPanelExternal {
             ("dragging", "bool"),
             ("tear_off_fired", "bool"),
             ("send", "string"),
+            // R683.C §5.16 §5.49 — direct tear-off invoke channel.
+            // See `invoke` rustdoc.
+            (TEAR_OFF_EVENT, "string"),
         ])
     }
 
@@ -523,30 +645,90 @@ impl ExternalIntrospect for DockPanelExternal {
 
     /// R51.41 §5.15 §5.35 — framework synthetic event channel.
     ///
-    /// `PointerUp` / `PointerCancel` clear the drag state +
-    /// tear-off-fired guard. `PointerDown` / `PointerEnter` /
-    /// `PointerLeave` arrive but are no-ops at this level (drag
-    /// calibration happens on the first `pointer_move`).
+    /// R683.C R51.42 §5.35 — the `InputRouter` dispatches the wire
+    /// payload as `"<sub_index>:<EventName>"` when the External lives
+    /// at the panel primary tag and the paint hit-test resolved a
+    /// composite tag (`"inspector#header"` → primary `"inspector"` +
+    /// sub-index `"header"`). The sub-index discriminator distinguishes
+    /// header presses (arm the drag) from content presses (disarm so
+    /// drags through the content body do not fire `tear_off`).
+    ///
+    /// Wire shape table:
+    /// * `"header:PointerDown"` / `"header:PointerEnter"` — arm the
+    ///   drag. Pre-R683.C unit tests call the bare variants
+    ///   (`"PointerDown"` etc.) and the construction default keeps
+    ///   `is_drag_armed = true`, so the legacy direct-invoke path
+    ///   still arms — no test churn.
+    /// * `"content:PointerDown"` / `"content:PointerEnter"` — disarm
+    ///   the drag so a press on the content body does not propagate
+    ///   into tear-off when the user drags through the content area.
+    /// * `"header:PointerUp"` / `"PointerUp"` / `"header:PointerCancel"`
+    ///   / `"PointerCancel"` — drag teardown. Clears `drag_start`,
+    ///   `fired_for_drag`, and re-arms (`is_drag_armed = true`) so
+    ///   the next press starts a fresh cycle.
+    /// * `"header:PointerLeave"` / `"content:PointerLeave"` / bare
+    ///   `"PointerLeave"` — no-op (the hover-leave does not clear
+    ///   capture).
+    /// * Other / unknown event names — `InvokeError::UnknownPath`.
     fn invoke(
         &mut self,
         path: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
+        // R683.C §5.16 §5.49 — direct tear-off invoke. The drag path
+        // requires a populated `InputRouter::last_paint_scene` for the
+        // addressed window; on freshly-spawned floating windows under
+        // headless RPC, the router has no paint scene until winit's
+        // next paint cycle fires `finalize_frame_for_window`. The
+        // direct `tear_off` invoke bypasses the drag simulation so AI
+        // clients can drive the dock-back gesture without depending on
+        // winit's paint timing. Mirror of [`TEAR_OFF_EVENT`] enqueue —
+        // same intent, same payload, same single-fire guard.
+        if path == TEAR_OFF_EVENT {
+            // Idempotent on the firing guard: re-invoking on an
+            // already-fired drag is allowed (the binding's reducer
+            // toggles `is_panel_floating(...)`, so a second call when
+            // already torn off becomes the dock-back). Reset the drag
+            // bookkeeping (drag_start / fired_for_drag / is_drag_armed)
+            // to the same fresh state a `PointerUp` / `PointerCancel`
+            // would produce so subsequent pointer-driven drags start
+            // a fresh calibration cycle.
+            self.enqueue_tear_off();
+            self.drag_start.set(None);
+            self.fired_for_drag.set(false);
+            self.is_drag_armed.set(true);
+            return Ok(IntrospectValue::Null);
+        }
         if path != "send" {
             return Err(InvokeError::UnknownPath);
         }
-        let event_name = args.as_str().ok_or(InvokeError::TypeMismatch)?;
+        let raw = args.as_str().ok_or(InvokeError::TypeMismatch)?;
+        // Split `"sub_index:Event"` into `(Some(sub_index), Event)` or
+        // `(None, raw_event)` if no `:` separator is present.
+        let (sub_index, event_name) = match raw.split_once(':') {
+            Some((sub, ev)) => (Some(sub), ev),
+            None => (None, raw),
+        };
         match event_name {
             "PointerUp" | "PointerCancel" => {
                 self.drag_start.set(None);
                 self.fired_for_drag.set(false);
+                self.is_drag_armed.set(true);
                 Ok(IntrospectValue::Null)
             }
-            "PointerDown" | "PointerEnter" | "PointerLeave" => Ok(IntrospectValue::Null),
+            "PointerDown" | "PointerEnter" => {
+                match sub_index {
+                    Some("header") | None => self.is_drag_armed.set(true),
+                    _ => self.is_drag_armed.set(false),
+                }
+                Ok(IntrospectValue::Null)
+            }
+            "PointerLeave" => Ok(IntrospectValue::Null),
             _ => Err(InvokeError::UnknownPath),
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -604,6 +786,7 @@ mod tests {
     fn theme_light() -> Theme {
         Theme::light()
     }
+
 
     #[test]
     fn r683_view_dock_panel_outer_container_carries_tag_and_two_children() {
