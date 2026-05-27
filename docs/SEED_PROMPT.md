@@ -1,5 +1,11 @@
 # pinion seed prompt — 매 세션 첫 입력
 
+> **R677 land (2026-05-27, commit `4fbbe48`)** — DevTools property pane (Chrome Computed-pane analog) on the path-stable foundation R676 laid. `view_inspector` restructured into 2-pane Row layout (`inspector_tree` left + new `property_pane` right; LayoutStyle::flex_grow=1.0 on the property pane). `property_pane_rows(scene)` field walker emits one row per scene-node field — universal `type:` row + variant-specific rows (Container: tag/style.fill/style.border/layout.size/children; Text: content/font_size/fg; External: tag). `find_main_node_at_path` 2nd consumer reached ([[abstraction-needs-second-consumer]] Rule-of-Three approach tracking: 1st = R676 view_main highlight overlay pre-resolve, 2nd = R677 property_pane selection resolution — 3rd in R678+ will trigger pinion-devtools substrate lift). Inspector window resized 280×140 → 480×320 (hosts the 2-pane layout). Soft-fail "(no selection)" placeholder for inspector-only ids (state/main) and stale paths. Format helpers (format_color CSS rgba mirror / format_border / format_size / format_size_value / format_optional_tag em-dash for None) mirror Chrome DevTools conventions. R671 + R672 demos updated (substrate-evolution-driven: inspector_tree no longer the snapshot root, dimensions changed). 18 new R677 unit tests + tools/demos/r677_devtools_property_pane.py (38+ assertions); 16-demo regression sweep PASS deterministic. 3544 workspace tests pass (+18 net from R676's 3526), clippy clean. **R678 is the next round** — DevTools hover bridge (TreeRowClickExternal SCXML extension with Hover state + cross-window hover-highlight overlay; 2nd consumer of view_main wrap, triggers highlight overlay substrate lift to pinion_widget_paint::devtools per Rule-of-Three).
+>
+> **다음 세션 진입**: `load` 단독 입력. SEED 의 【시작 명령】 절 (R678 atomic list — DevTools hover bridge + highlight overlay substrate lift on Rule-of-Three threshold) 자동 진행. 모든 atomic 은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지. 매 atomic 종료 시 cargo test + clippy + 16-demo regression sweep 검증 후 다음 atomic 진입.
+>
+> R677 가중 진척: Phase A 97% + Phase B 25% × ~20% + Phase D 35% × ~3% (DevTools cascade: outliner → highlight → property pane; second visible Phase D editor feature complete; find_main_node_at_path 2nd consumer Rule-of-Three approach tracked) = 북극성 가중 **~14-15%**. R678+ hover bridge → highlight overlay substrate lift → bidirectional select → 2nd DevTools binding consumer → pinion-devtools crate skeleton (R681) targets ~17-19% over the cascade.
+>
 > **R676 land (2026-05-27, commit `cf3d134`)** — R675 architectural 부채 즉시 청산 (path-stable indexing scheme) + DevTools highlight overlay 1st cut. `scene_to_tree_item` walker rewritten to Browser-DevTools-canonical CSS-selector form `Type[tag-or-nth-of-type]` — tagged Container/External use `Container[main_btn]` form, untagged use `Type[nth-of-type]` form (`Text[0]`); root segment is bare type for untagged singletons. Tagged paths are now invariant to untagged-sibling churn (the R675 banner-on/off issue where Container[main_btn] shifted from sibling-idx 0 to 1 is closed at source). `find_main_node_at_path` + `parse_path_segment` + `find_child_in_container` inverse walker pair lands as soft-signal resolver (returns Option<&Scene>, None for inspector-only ids / stale paths / malformed segments). DevTools highlight overlay = `wrap_with_highlight(scene, ColorRole::Error 2px Border)` non-destructive composition + `rebuild_with_highlight_at_path` by-value walker (std::mem::replace swap+transform pattern). `view_main` two-pass: build raw via new `view_main_raw` (inspector mirrors this — DevTools-style separation between underlying tree and overlay paint, mirroring Chrome / Firefox / Safari inspector architecture) → rebuild with wrap. 38 new R676 unit tests + tools/demos/r676_devtools_highlight.py (42+ assertions); 15-demo regression sweep PASS deterministic (R660 / R664 / R665 / R666 / R667 / R668 / R669 / R670a / R670b / R671 / R672 / R673 / R674 / R675 + R676). 3526 workspace tests pass (+28 net from R675's 3498), clippy clean. R663.5 canonical baseline 유지. **R677 is the next round** — DevTools cascade continuation (property pane / hover bridge / bidirectional select / highlight overlay substrate lift on 2nd consumer surface).
 >
 > **다음 세션 진입**: `load` 단독 입력. SEED 의 【시작 명령】 절 (R677 atomic list — DevTools property pane consumer + selected-node field render) 자동 진행. 모든 atomic 은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지. 매 atomic 종료 시 cargo test + clippy + 16-demo regression sweep 검증 후 다음 atomic 진입.
@@ -18,26 +24,26 @@
 >
 > **R673 land (2026-05-26, commit `4a5a694`)** — Phase B widget catalog substrate maturity (TreeView 2nd application consumer). `AriaRole::Tree` + `TreeItem` (WAI-ARIA 1.2 §5.3.10/§5.3.11) + `TreeViewFocus` + `view_tree_focused` interactive entry + M3 SurfaceContainerHighest focus state-layer overlay. view_tree 레이아웃 정통 정정 — `AlignItems::Stretch` + 고정 너비 glyph column (NBSP leaf ↔ ▶/▼ branch 컬럼 정렬). `examples/hello-tree-view` 18번째 example, sample 파일 트리 모델 + WAI-ARIA tree keyboard model (Arrow Up/Down/Left/Right + Home/End + Space). 13-demo sweep PASS.
 
-【R677 plan】 next round entry — single commit, 4 atomic. substrate-first + Rule-of-Three deferral 정통:
+【R678 plan】 next round entry — single commit, 4 atomic. substrate-lift trigger + Rule-of-Three threshold 도달:
 
-(0) **DevTools property pane — view_inspector layout split** — `view_inspector` 가 현재 single `view_tree_focused` (single-column tree). R677 atomic 0 splits into 2 panes: left = the existing tree, right = the property pane (selected node's field render). Uses LayoutStyle::flex grow (R667 substrate) to allocate widths. Initial property pane = `Text` rendering `format!("{:?}", selected_path)` + the resolved node's `scene_type_name` + (when Container) tag + children count. Soft-fail when no path resolves: pane renders "(no selection)" placeholder. Estimated LOC: +200-300 substrate.
+(0) **TreeRowClickExternal SCXML Hover state extension** — `pinion_widget_paint::tree_view::TreeRowClickExternal` SCXML currently Idle ↔ Pressed. R678 adds Hovered state + `hovered_id: Option<String>` slot + `PointerEnter`/`PointerLeave` event arms. ExternalIntrospect schema gains the new slot (read-only via query, no intervene — mirrors pressed_id contract). Composite-tag dispatch (parse_send_payload — 7th consumer at this point) handles `<id>:PointerEnter` / `<id>:PointerLeave`. New TREE_ROW_HOVER_EVENT = "hover" const + `pinion_core::intent_tag!("<tree_tag>", "hover")` dotted intent emission. 8-12 unit tests in pinion-widget-paint. Estimated LOC: +200-300 substrate.
 
-(1) **Property pane field walker — selected node introspection** — `property_pane_rows(scene: &Scene) -> Vec<TextNode>` helper walks the resolved `&Scene` (from `find_main_node_at_path`) and emits one row per field: `type:`, `tag:`, `style.fill:`, `style.border:`, `layout.size:`, `children:` count. Mirrors Chrome DevTools' Computed pane. Reuses `find_main_node_at_path` from R676 atomic (1) — second consumer ⇒ no substrate lift yet ([[abstraction-needs-second-consumer]] threshold not met until 3rd consumer). Estimated LOC: +150-250.
+(1) **Cross-window hover overlay via `use_hovered_path()` Owner::cache hook** — hello-multi-window adds `use_hovered_path() -> Rc<Signal<Option<String>>>` mirror of use_selected_path. New `INSPECTOR_HOVER_INTENT_TAG` = `"inspector_tree.hover"`. V::update reducer routes hover intent into the signal. view_main reads BOTH signals — when hovered_path resolves to a node, that node gets a *transient hover wrap* (M3 SurfaceContainerHighest low-opacity Border, distinct from Error red selection wrap). Selection wrap takes precedence when both signals point at the same node; otherwise both visible. Estimated LOC: +200-300.
 
-(2) **Inspector window resize for 2-pane layout** — inspector currently 280×140; expand to 480×320 to host the property pane. `windows()` spec update + demo viewport adjust. No substrate change — pure spec config. Estimated LOC: +30 (spec + tests).
+(2) **Highlight overlay substrate lift to `pinion_widget_paint::devtools`** — [[abstraction-needs-second-consumer]] Rule-of-Three threshold reached at R678: view_main selection wrap (R676) + hover wrap (R678 atomic 1) = 2 consumers. New module `pinion_widget_paint::devtools` homes the lifted helpers: `scene_to_tree_item`, `scene_root_path_segment`, `scene_child_path_segment`, `scene_type_name`, `scene_tag`, `find_main_node_at_path`, `parse_path_segment`, `find_child_in_container`, `PathDisambiguator`, `wrap_with_highlight`, `rebuild_with_highlight_at_path`, `descend_and_wrap`. hello-multi-window simplified to `use pinion_widget_paint::devtools::{...};` re-export usage. Tests migrate to the substrate module. Estimated LOC: +250 substrate / -300 hello-multi-window = ~-50 net (refactor cleanup).
 
-(3) **r677 demo + 16-demo sweep + commit + Mnemosyne** — `tools/demos/r677_devtools_property_pane.py` (≥30 assertion): property pane visible at boot ("(no selection)" placeholder); inspector tree click → property pane shows type/tag/children for the selected node; root selection → property pane shows root Container fields; inspector-only id `state` → property pane shows "(no selection)" (path doesn't resolve in main scene); AI-driven selection bit-identical to human; pane updates atomically on selection change. 16-demo regression sweep PASS (R660-R676 + R677). Commit `feat(examples): R677 §5.16 §5.49 DevTools property pane`. Mnemosyne entry_id=R677 + impact_refs [5.16, 5.49, 5.50] + carry (highlight overlay substrate lift on R678 hover bridge as 2nd consumer; bidirectional select R679).
+(3) **r678 demo + 17-demo sweep + commit + Mnemosyne** — `tools/demos/r678_devtools_hover_bridge.py` (≥30 assertion): hover on inspector tree row → main window paints transient hover wrap (M3 SurfaceContainerHighest color); leave hover → wrap disappears; selection + hover on same node → selection wins (Error red); selection + hover on DIFFERENT nodes → both visible simultaneously (different colors); AI send-wire PointerEnter/Leave bit-identical to typed hover shortcut; inspector-only ids (state/main) soft-fail no wrap. 17-demo regression sweep PASS (R660-R677 + R678). Commit `feat(widget-paint): R678 §5.16 §5.49 §5.50 hover bridge + DevTools substrate lift`. Mnemosyne entry_id=R678 + impact_refs [5.16, 5.49, 5.50] + carry (R679 bidirectional select / R680 2nd binding consumer / R681 pinion-devtools crate skeleton).
 
-honest LOC 예측: **R677 = +900-1300 net** — (0) layout split +200-300 / (1) field walker +150-250 / (2) window resize +30 / (3) demo +400-500 + SEED + Mnemosyne entry +120-220.
+honest LOC 예측: **R678 = +900-1500 net** — (0) SCXML Hover state +200-300 / (1) hover bridge wiring +200-300 / (2) substrate lift +250 / -300 hello-multi-window (net -50) / (3) demo +400-500 + SEED + Mnemosyne entry +120-220.
 
-R677 후 가중 진척: ~13-14% → **~14-15%** (Phase D 35% × ~3% — second visible Phase D editor feature = property pane / Computed-tab analog).
+R678 후 가중 진척: ~14-15% → **~15-17%** (Phase D 35% × ~4-5% — DevTools cascade reaches substrate maturity; highlight overlay LIFT triggers per Rule-of-Three; pinion_widget_paint::devtools module crystalizes).
 
-**R677 verification mandatory** (라운드 끝):
-- 16-demo regression sweep PASS deterministic (R660-R676 + R677)
-- property pane reflects the selected scene's fields end-to-end (scene/snapshot {window: "inspector"} carries the field rows)
-- find_main_node_at_path 2nd consumer 정통화 — substrate gap closure 검증
-- soft-fail UX — inspector-only ids show "(no selection)" without breaking layout
-- 부채 surface 정직 받아들임 — hover bridge (R678+), bidirectional select (R679+), highlight overlay substrate lift (R678+ on 2nd consumer)
+**R678 verification mandatory** (라운드 끝):
+- 17-demo regression sweep PASS deterministic (R660-R677 + R678)
+- TreeRowClickExternal Hover state SCXML clean — Idle ↔ Hovered ↔ Pressed three-way transitions verified via composite-tag PointerEnter/Leave/Down/Up matrix
+- highlight overlay substrate at pinion_widget_paint::devtools with both consumers (selection wrap R676 + hover wrap R678) wired through
+- soft-fail UX preserved — inspector-only ids / stale paths gracefully skip both selection AND hover wraps
+- 부채 surface 정직 받아들임 — bidirectional select R679, 2nd DevTools binding R680, pinion-devtools crate skeleton R681
 >
 > **User directive (2026-05-25, R670.A close 시 재확인)**: 비용 무관 + 북극성 anchor + 장기 textbook-canonical 결정 + 부채 즉시 상환 + 한 라운드에 모든 atomic land. R670 original plan 은 6 atomic; session budget honesty 로 R670.A (atomics 0+1+2 = R668/R669 carry clearance + Phase B trait foundation) 우선 land, R670.B (atomics 3+4+5 = AppShell multi-window refactor + RPC window param + `hello-multi-window` + demo + Mnemosyne) 별도 round. **single commit = 1 round 원칙 유지; 매 atomic 종료 시 cargo test + clippy + 기존 demo regression sweep 검증 후 다음 atomic 진입**.
 >
@@ -604,90 +610,83 @@ R673 carry (R674 진입 전 평가):
 
 【시작 명령】
 
-R677 = **DevTools cascade continuation — property pane (Computed-tab analog) on the path-stable foundation R676 laid**. 4 atomic land — substrate-consumer-first ordering. R676 substrate (find_main_node_at_path inverse walker) gets its 2nd consumer via the property pane field walker; [[abstraction-needs-second-consumer]] Rule-of-Three threshold tracks but does NOT yet fire for the highlight overlay lift (still 1st consumer at hello-multi-window — R678+ hover bridge or bidirectional select will be the 2nd consumer that triggers the pinion_widget_paint::overlay substrate lift).
+R678 = **DevTools hover bridge + highlight overlay substrate LIFT (Rule-of-Three threshold reached)**. 4 atomic land — substrate-lift ordering. R676 view_main highlight wrap (selection) + R678 hover wrap = 2 consumers → [[abstraction-needs-second-consumer]] Rule-of-Three fires → new `pinion_widget_paint::devtools` module homes the lifted helpers (scene_to_tree_item / find_main_node_at_path / wrap_with_highlight / rebuild_with_highlight_at_path / 모든 path-stable indexing + walker family).
 
-**R676 honest 부채 surface (R677 inline 청산 mandatory)**:
-- `find_main_node_at_path` 가 R676에서 1st consumer (view_main의 pre-resolve gate)만 가짐. 2nd consumer (property pane field walker) 가 R677 atomic (1)에서 자연 합류 → [[abstraction-needs-second-consumer]] Rule-of-Three threshold approach (3rd consumer 등장 시 pinion_widget_paint::overlay 또는 pinion_runtime::scene_path substrate lift).
-- 현재 inspector window 280×140 이 single-column tree 만 호스팅. R677 atomic (2)에서 480×320 으로 확장 (2-pane layout) — `windows()` spec config 변경만.
+**R677 honest 부채 surface (R678 inline 청산 mandatory)**:
+- `find_main_node_at_path` 가 R676+R677에서 2 consumer 도달 (view_main pre-resolve + property_pane resolution). R678 atomic (1) hover bridge가 3rd consumer 되며 Rule-of-Three threshold 명시적으로 fires.
+- `wrap_with_highlight` + `rebuild_with_highlight_at_path` 가 R676에서 1st consumer (view_main 선택 wrap)만 가짐. R678 atomic (1) hover wrap이 2nd consumer 되며 함께 substrate lift candidate.
+- inspector window 480×320 이 R677 atomic (2)에서 확정 — R678 영향 없음.
 
-**진입 시 즉시 진행 (load 명령 / `R677 진행` 입력 시 자동 시작)**:
+**진입 시 즉시 진행 (load 명령 / `R678 진행` 입력 시 자동 시작)**:
 - 모든 atomic은 "비용 무관 + 장기 textbook canonical" 원칙 따라 작성 — MVP / shortcut 금지
 - 각 substrate atomic 종료 시 cargo test + clippy + 16-demo regression sweep PASS 검증 후 다음 atomic 진입
 - 마지막 atomic (3) 에서 demo + commit + Mnemosyne entry 한꺼번에
 - 라운드 중간 commit 금지 (1 commit = 1 round 원칙) — WIP는 stash 또는 sequence keep
-- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R677.A) — but 우선 4 atomic 모두 한 라운드 land 시도
+- session budget 80% 초과 시 honest stop + 그때까지 land한 atomic의 partial commit 가능 (R678.A) — but 우선 4 atomic 모두 한 라운드 land 시도
 - 매 라운드 끝 push 권한 명시 동의 필요 (CLAUDE.md 영구 원칙)
 
-**R677 atomic land 순서** (substrate-consumer-first, northern-star Phase D 정렬):
+**R678 atomic land 순서** (substrate-lift trigger, northern-star Phase D 정렬):
 
-(0) **DevTools property pane — view_inspector 2-pane layout split** — `view_inspector` 현재 single `view_tree_focused` (single-column). R677 atomic 0 splits into Row[left=tree, right=property pane]:
-   - LayoutStyle::flex 으로 좌우 폭 배분 (R667 flex_grow primitive 2nd application consumer)
-   - 우측 pane = 초기엔 placeholder Text ("(no selection)") — 비어있을 때 graceful default
-   - 좌측 pane = 기존 view_tree_focused 그대로 — 회귀 0
-   - 5-8 unit tests (`r677_property_pane_layout_tests` module):
-     - inspector view returns Container with FlexDirection::Row
-     - tree branch는 좌측에 존재 (find_by_tag(inspector_tree))
-     - property pane branch는 우측에 존재 (find_by_tag(property_pane))
-     - "(no selection)" placeholder visible when selected_path is None
-     - tree pane 폭 + property pane 폭 = inspector window 폭 (flex distribution sanity)
-   - Estimated LOC: +200-300
+(0) **TreeRowClickExternal SCXML Hover state extension** — pinion_widget_paint::tree_view::TreeRowClickExternal:
+   - 현재 SCXML: Idle / Pressed. R678 adds: Hovered state + `hovered_id: Option<String>` slot.
+   - `PointerEnter(id)` → set hovered_id, transition Idle→Hovered or stay Pressed (Pressed wins over Hover when both present)
+   - `PointerLeave(id)` (matching hovered_id) → clear hovered_id, transition Hovered→Idle
+   - Hover은 click과 직교 — Pressed 동안 PointerEnter는 hovered_id 만 업데이트, state 머무름. PointerUp이 click 발사 (R676 동작), 그 후 Hovered/Idle 결정은 hovered_id 잔존 여부에 따라.
+   - New const `TREE_ROW_HOVER_EVENT: &str = "hover"`; intent 발사 form `{tree_tag}.hover`
+   - ExternalIntrospect schema: hovered_id (read-only query, no intervene) + hover (typed shortcut: invoke(/external/hover, Text(id)) for AI-driven hover synthesis)
+   - 8-12 unit tests in pinion-widget-paint::tree_view::r678_tree_row_hover_external_tests
+   - Estimated LOC: +200-300 substrate
 
-(1) **`property_pane_rows(scene: &Scene) -> Vec<TextNode>` field walker** — R676 atomic (1) find_main_node_at_path 2nd consumer. selected_path resolve → 매칭 node 의 fields 를 row 별 Text 로 emit:
-   - `type: <Container|Text|External|...>` — scene_type_name (R676 helper) 재사용
-   - `tag: <tag-or-—>` — scene_tag (R676 helper) 재사용
-   - `style.fill: rgb(R,G,B,A)` — Container/Box fill colour
-   - `style.border: <none|width@color>` — Container/Box border (R676 highlight overlay 도 같은 axis)
-   - `layout.size: <Auto|Fixed(WxH)|...>` — LayoutStyle::size
-   - `children: <count>` — Container children.len()
-   - Chrome DevTools Computed pane 미러 — 한 row = 한 field, 라벨 + 값
-   - 8-12 unit tests (`r677_field_walker_tests` module):
-     - selected = button path → rows include "type: Container", "tag: main_btn", "children: 1"
-     - selected = label path → rows include "type: Text"
-     - selected = root path → rows include "type: Container", "children: 1 or 2" (banner-dependent)
-     - selected_path None → empty Vec
-     - find_main_node_at_path returns None ("state" 등) → empty Vec
-   - Estimated LOC: +150-250
+(1) **Cross-window hover overlay via `use_hovered_path()` Owner::cache hook** — hello-multi-window:
+   - `use_hovered_path() -> Rc<Signal<Option<String>>>` mirror of use_selected_path (Owner::cache "hello_multi_window_hovered_path")
+   - New const `INSPECTOR_HOVER_INTENT_TAG = intent_tag!("inspector_tree", "hover")`
+   - V::update reducer: arm matching INSPECTOR_HOVER_INTENT_TAG → use_hovered_path().set(payload)
+   - view_main reads BOTH use_selected_path() AND use_hovered_path(). When hovered_path resolves to a node AND selected_path doesn't point at same node, wrap with hover style (M3 SurfaceContainerHighest Border, semitransparent). Both wrap composition: hover wrap inside selection wrap (selected element 위에 추가 hover overlay).
+   - 6-10 unit tests (`r678_hover_overlay_tests` module)
+   - Estimated LOC: +200-300 hello-multi-window
 
-(2) **Inspector window resize + windows() spec update** — inspector 280×140 → 480×320 (2-pane layout 호스팅):
-   - `WindowSpec::new("inspector", "...", SizeStrategy::Fixed { width: 480, height: 320 })`
-   - 4-demo (R670b, R671, R672, R673, R674, R675, R676) viewport 갱신 필요? — NO: 모든 demo가 자기 viewport 만 명시적으로 보냄 (snapshot {viewport: {w: 280, h: 140}}). R677 demo만 새 viewport 사용.
-   - R670b/R671/R672/R673/R674/R675 demos 가 보내는 `viewport: {w: 280, h: 140}` 그대로 동작 (substrate가 window의 실제 size 와 무관하게 paint scene 을 viewport 에 맞춰 생성) — 회귀 0
-   - 1 unit test (`r677_inspector_window_dimensions`)
-   - Estimated LOC: +30 (spec + test)
+(2) **Highlight overlay substrate lift to `pinion_widget_paint::devtools`** — [[abstraction-needs-second-consumer]] Rule-of-Three fires:
+   - 신규 module `pinion_widget_paint::devtools` (sibling to tree_view module)
+   - Lifted helpers (from hello-multi-window): scene_to_tree_item, scene_root_path_segment, scene_child_path_segment, scene_type_name, scene_tag, find_main_node_at_path, parse_path_segment, find_child_in_container, PathDisambiguator, wrap_with_highlight, rebuild_with_highlight_at_path, descend_and_wrap
+   - hello-multi-window 단순화: `use pinion_widget_paint::devtools::{scene_to_tree_item, find_main_node_at_path, wrap_with_highlight, ...};`
+   - Tests migrate to substrate module (r676_* + r677_field_walker_tests 그대로)
+   - 4 binding tests at hello-multi-window 유지 (integration-level proofs)
+   - Estimated LOC: +250 substrate / -300 hello-multi-window = net -50
 
-(3) **r677 demo + 16-demo sweep + commit + Mnemosyne** — `tools/demos/r677_devtools_property_pane.py` (≥30 assertion):
-   - (A) inspector window 482×320 — `windows()` spec verify
-   - (B) property pane visible at boot ("(no selection)" placeholder)
-   - (C) inspector tree click button row → property pane shows "type: Container", "tag: main_btn", "children: 1"
-   - (D) inspector tree click label row → property pane shows "type: Text"
-   - (E) inspector tree click root → property pane shows "type: Container", "children: 1 or 2"
-   - (F) inspector-only id "state" → property pane shows "(no selection)" (path doesn't resolve)
-   - (G) AI-driven selection bit-identical to human (via /inspector_tree/external/click)
-   - (H) pane updates atomically on selection change (no stale field rows)
-   - (I) selection survives ButtonState mutations (d/e keypress) — property pane field rows unchanged
-   - 16-demo regression sweep PASS (R660 / R664 / R665 / R666 / R667 / R668 / R669 / R670a / R670b / R671 / R672 / R673 / R674 / R675 / R676 / R677)
-   - Commit `feat(examples): R677 §5.16 §5.49 DevTools property pane`
-   - Mnemosyne `append_changelog_entry_v2 entry_id=R677` + impact_refs [5.16, 5.49, 5.50] + carry_forward (highlight overlay LIFT to substrate on R678+ 2nd consumer; hover bridge R678+; bidirectional select R679+; Phase B Menu/Dialog catalog R680+)
+(3) **r678 demo + 17-demo sweep + commit + Mnemosyne** — `tools/demos/r678_devtools_hover_bridge.py` (≥30 assertion):
+   - (A) baseline: no hover, no selection → no wraps anywhere in main scene
+   - (B) AI hover via `tf.invoke("/inspector_tree/external/hover", "Container/Container[main_btn]")` → main paints hover wrap (M3 SurfaceContainerHighest Border)
+   - (C) hover cleared (`invoke("/external/hover", Null)` or PointerLeave) → wrap disappears
+   - (D) hover one node + select different node → both wraps visible, different colors (Error red selection vs SurfaceContainerHighest hover)
+   - (E) hover + select same node → selection wins (only Error red Border visible)
+   - (F) inspector-only id `state` → both signals soft-fail, no wraps
+   - (G) PointerEnter/Leave send-wire bit-identical to typed hover shortcut
+   - (H) substrate consumers reach through pinion_widget_paint::devtools re-export
+   - 17-demo regression sweep PASS (R660-R677 + R678)
+   - Commit `feat(widget-paint): R678 §5.16 §5.49 §5.50 hover bridge + DevTools substrate lift`
+   - Mnemosyne `append_changelog_entry_v2 entry_id=R678` + impact_refs [5.16, 5.49, 5.50] + carry (R679 bidirectional select; R680 2nd DevTools binding consumer; R681 pinion-devtools crate skeleton)
 
-visible (R677 land 후):
-- `cargo run -p hello-multi-window` 변화 — inspector window가 480×320 으로 확대; 우측 property pane이 selected node의 field rows 표시. tree row 클릭 → property pane 자동 갱신.
-- `python3 tools/demos/r677_devtools_property_pane.py` (≥30 assertion, property pane field walker + AI-driven selection)
-- 기존 15-demo regression sweep PASS
+visible (R678 land 후):
+- `cargo run -p hello-multi-window` 변화 — inspector tree row hover → main window 해당 element에 transient hover border (M3 SurfaceContainerHighest, semitransparent). 클릭하면 Error red selection border로 변환. 다른 row hover 시 hover border 만 이동.
+- `python3 tools/demos/r678_devtools_hover_bridge.py` (≥30 assertion, hover bridge + substrate lift)
+- 기존 16-demo regression sweep PASS
 
-honest LOC 예측: **R677 = +900-1300 net** — (0) layout split +200-300 / (1) field walker +150-250 / (2) window resize +30 / (3) demo +400-500 + SEED + Mnemosyne entry +120-220.
+honest LOC 예측: **R678 = +900-1500 net** — (0) SCXML Hover state +200-300 substrate / (1) hover bridge wiring +200-300 hello-multi-window / (2) substrate lift +250 substrate / -300 hello-multi-window (net -50 net) / (3) demo +400-500 + SEED + Mnemosyne entry +120-220.
 
-**R677 verification mandatory** (라운드 끝):
-- 16-demo regression sweep PASS deterministic (R660-R676 + R677)
-- property pane reflects the selected scene's fields end-to-end (scene/snapshot {window: "inspector"} carries the field rows)
-- find_main_node_at_path 2nd consumer 정통화 검증 ([[abstraction-needs-second-consumer]] Rule-of-Three approach tracking)
-- soft-fail UX — inspector-only ids show "(no selection)" without breaking 2-pane layout
-- 부채 surface 정직 받아들임 — hover bridge (R678+), bidirectional select (R679+), highlight overlay substrate lift (R678+ on 2nd consumer when hover bridge or bidirectional select land)
+**R678 verification mandatory** (라운드 끝):
+- 17-demo regression sweep PASS deterministic (R660-R677 + R678)
+- TreeRowClickExternal Hover state SCXML clean — Idle↔Hovered↔Pressed three-way transitions; PointerEnter/Leave during Pressed leaves state machine in Pressed (Hover orthogonal to click)
+- highlight overlay substrate at pinion_widget_paint::devtools with both consumers (R676 selection wrap + R678 hover wrap) wired through
+- soft-fail UX preserved — inspector-only ids / stale paths gracefully skip both selection AND hover wraps
+- 부채 surface 정직 받아들임 — bidirectional select R679, 2nd DevTools binding R680, pinion-devtools crate skeleton (vs in-pinion_widget_paint::devtools module) R681
 
-**R677 후 진척**: 북극성 가중 ~13-14% → **~14-15%** (Phase D 35% × ~3% — second visible Phase D editor feature; find_main_node_at_path 2nd consumer 도달, substrate maturity tracking [[abstraction-needs-second-consumer]] Rule-of-Three threshold). **R678+ = DevTools cascade hover bridge → bidirectional → substrate LIFT cascade**.
+**R678 후 진척**: 북극성 가중 ~14-15% → **~15-17%** (Phase D 35% × ~4-5% — DevTools cascade reaches substrate maturity; highlight overlay LIFT triggers per Rule-of-Three; pinion_widget_paint::devtools module crystalizes). **R679+ = bidirectional select cascade → 2nd binding consumer → pinion-devtools crate skeleton**.
 
 ---
 
-> 아래는 R670.B → R676 atomic 원본 (historical reference, land 완료):
+> 아래는 R670.B → R677 atomic 원본 (historical reference, land 완료):
+
+R677 = **DevTools property pane (Computed-pane analog) + find_main_node_at_path 2nd consumer Rule-of-Three approach** (✓ land `4fbbe48`). 4 atomic land. 16-demo sweep PASS. view_inspector Row[tree, property_pane] split + property_pane_rows field walker + inspector 480×320 + 18 unit tests + r677 demo (38+ asserts).
 
 R676 = **R675 architectural 부채 청산 (path-stable indexing) + DevTools highlight overlay 1st cut** (✓ land `cf3d134`). 4 atomic land. 15-demo sweep PASS. CSS-selector Type[tag-or-nth-of-type] scheme + find_main_node_at_path inverse walker + view_main_raw split + 2px Error-role wrap + 38 unit tests.
 
