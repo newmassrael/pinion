@@ -13358,6 +13358,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R682.B — R682.B §5.16 §5.41 — paint-fragment cache stress consumer + scene/cache_stats RPC method + FragmentCacheStats type lift out of vello-gated paint_adapter into non-gated paint_cache_stats submodule.
+
+**Changes**:
+- pinion-runtime: new paint_cache_stats submodule (non-vello-gated) homes the FragmentCacheStats struct + hit_rate helper that R682.A originally defined in pinion-shell::substrate. The relocation lets pinion-rpc (no vello feature) hold a typed slot for the per-window stats snapshot; pinion-shell re-exports the type so existing pinion_shell::FragmentCacheStats consumers stay bit-identical. paint_adapter::FragmentCache::stats() snapshot helper added next to the existing hits/misses/paint_count/entries/last_damage_region getters; pinion-shell::AppShell::render_window uses it instead of the per-field constructor.
+- pinion-rpc: new cache_stats module — CacheStatsOutcome { hits, misses, paint_count, entries, hit_rate, last_damage_region } + cache_stats(stats) projector + CacheStatsError::CacheStatsUnavailable. DispatchContext.fragment_cache_stats: Option<FragmentCacheStats> field + with_fragment_cache_stats builder. dispatch arm 'scene/cache_stats' routes through the projector. Read-only HandlerKind. ShellCore::dispatch_rpc_inner pre-resolves per-window stats via fragment_cache_stats_for_window(window_id.unwrap_or(DEFAULT_WINDOW)) and threads into the DispatchContext.
+- examples/todomvc: PINION_TODOMVC_SEED_N env var seeds N synthetic TodoItem rows (1..=10_000) on first paint when the post-hydration todos signal is empty. Deterministic completion pattern (i % 3 == 0 completed) so demo assertions on filter-driven cache eviction counts stay stable. Pure helpers parse_seed_n_env / seed_todo_row / build_seed_rows expose the parse + builder for binding-side tests without invoking the full use_persistence_boot arc. 2nd consumer of FragmentCacheStats per [[abstraction-needs-second-consumer]] (1st = pinion-shell::tests::dispatch_core::r682_fragment_cache_stats_substrate substrate suite).
+- tools/demos/r682_dirty_subtree_cache.py — 31 assertion statements across 8 sections (A substrate sanity + RPC field type validation / B 100-row warmup matrix / C steady-state hit_rate convergence / D filter-driven eviction / E damage region semantics / F immediate-mode coexistence carry-back / G full-hit no-damage stability / H paint_count monotonic). PINION_TODOMVC_SEED_N=100 isolated PINION_STORAGE_DIR per-demo so the host's persistence store stays out of the test cycle. _drive_redraw helper injects benign scene/click at (4, 4) so the InputRouter arms request_redraw → AppShell::render_window runs → FragmentCache.end_paint advances — necessary because scene/snapshot itself runs the paint producer closure but does not go through to_vello_cached.
+
+
+
+**Verification**:
+- +83 net workspace tests (R682.A baseline 3697 → R682.B 3780): 7 cache_stats lib tests in pinion-rpc::cache_stats::tests (None error path / zero stats / counter mirror / damage rect round-trip / serde elision / serde emission / usize saturation) + 4 paint_cache_stats lib tests in pinion-runtime (zero / ratio / default / Copy semantics) + 6 paint_adapter stress matrix tests (first-paint installs N row fragments / 7-paint steady-state hit_rate ≥ 0.85 / filter-change per-row eviction / full-hit no-damage / stats snapshot mirror / paint_count monotonic) + 4 dispatch_core RPC dispatch tests (unavailable error / counter wire / damage region wire / default window resolves to main) + 9 todomvc binding tests (env var parse matrix incl whitespace + zero + overflow + malformed / 12-row builder length + id contiguity / completion stride / one-indexed text format / stride truth table / view fn N row count / completed-row strikethrough composition).
+- tools/demos/r682_dirty_subtree_cache.py PASS in 5.23s. 43-demo regression sweep (R660-R681 todomvc / settings-panel / hello-* / scene_simulate / R670-R681 cascade + R682) PASS deterministic across 3 consecutive runs. cargo clippy --workspace --all-targets --features pinion-runtime/vello clean.
+- Mnemosyne validate-workspace baseline preserved (atomic ledger entries=549 / sections=61 / orphan_refs=5+0 / GENERATED.md=sync / T1 reject=0). impact_refs [5.16, 5.41] are existing sections (no §5.46 typo this time — R682.A audit half retains the orphan ledger row, R682.B publishable half is clean).
+
+
+
+**Impact**: §5.16, §5.41
+
+
+**Carry forward**:
+- R683 axis 1 — runtime WindowSpec lifecycle (Signal<Vec<WindowSpec>>) + Splitter widget + DockSurface dock UX + first dock consumer (`examples/hello-dock-panels`). The 4-axis paint-pipeline rewrite series Round 4 of 4. R679 DevTools 2nd binding consumer + MainWindowClickRouter substrate lift land naturally here per the Rule-of-Three trigger.
+- Transform-aware fragment cache key — Scroll-content + reflow caches currently skip the cache hit path because the accumulated transform is non-identity when the encoder enters Scroll.content. The substrate-incompleteness-signal points to a container-local-coord refactor (cache fragment encoded in container-local space, replay path applies the inherited transform) so caches survive across Scroll offset changes.
+- wgpu SurfaceTexture partial-blit consumer for the damage region — current paint cycle resets the entire vello::Scene and submits a full surface every frame regardless of last_damage_region. The damage region is published + queryable but no GPU upload-path consumer reads it yet. Pair with winit damage-rect coordination on platforms that expose RedrawRequested with a damage hint.
+- Mnemosyne SEED_N_MAX = 10_000 hard cap is conservative — bump when a future stress consumer (long list editor, infinite scroll virtualisation prototype) needs more rows. Carry only on first surface.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
