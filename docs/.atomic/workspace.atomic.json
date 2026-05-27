@@ -21047,6 +21047,66 @@
         "Button-click-payload-with-coordinates substrate (R679 atomic 1 carry) — ButtonExternal's SCXML emit contract is Null-payload; reducer can't dynamically resolve click coordinate → devtools path without a substrate extension that propagates the originating cursor (x, y) through the intent payload. Defer until a binding needs dynamic per-click path resolution (DevTools-on-large-app where button paths aren't statically known)."
       ]
     },
+    "R680": {
+      "decision_summary": "R680 axis 3 per-window Owner scope substrate (4-axis paint-pipeline rewrite series 1 of 4); R670.B 9-round multi-window animation tick compound carry closed structurally",
+      "changes_bullets": [
+        "pinion-core::reactive::Owner: add tick_animations_local(dt) + any_animation_active_local(eps) local-walk variants (skip R51.138 child-scope cascade); cascade primitives kept for pinion-rpc::animate_control headless dispatch",
+        "pinion-runtime::CoreShell: add window_owners: HashMap<String, Owner> with seeded DEFAULT_WINDOW = root_owner.clone() alias (single-window backward-compat); lazy-create Owner::new_child(&root_owner) for secondary window_ids; public API window_owner / window_owner_existing / window_owner_ids",
+        "pinion-runtime::CoreShell: add tick_animations_for_window(window_id, dt) + any_animation_active_for_window(window_id, eps) direct-dispatch primitives; legacy tick_animations(dt) routes through tick_animations_for_window(DEFAULT_WINDOW); _animation_driver Effect kept as no-op subscription anchor for frame_signal observers (the R51.149 Effect-routed tick dispatch is superseded by direct call)",
+        "pinion-shell::ShellCore: lift last_paint_instant: Option<Instant> to last_paint_instants: HashMap<String, Instant> — per-window paint clock so each window's dt measures against its own previous timestamp (closes R670.B compound origin)",
+        "pinion-shell::ShellCore: add redraw_requested_per_window: HashMap<String, bool> + request_redraw_for_window / take_redraw_request_for_window / redraw_requested_for_window opt-in selective wake-up API coexisting with binding-wide fan-out request_redraw; AppShell::drain_redraw_to_winit drains BOTH flags per slot",
+        "Design decision (atomic 1): view-fn wrap stays under CoreShell::root_owner (NOT per-window child scope) so cross-window state sharing via Owner::cache keeps working without binding adjustment — hello-multi-window's use_selected_path / use_hovered_path slots resolve through root regardless of which window is painting; live + RPC paint paths observationally identical (§2 #2 + §2 #7 invariant preservation); per-window scope is substrate for R681-R683 lifecycle anchors",
+        "tools/demos/r680_per_window_owner_scope.py: 45+ assertion executions across 12 sections (multi-window snapshot disjoint, cross-window state sharing preserved, per-window paint clock stability, R675/R679 bidirectional select regression sweep, single-window legacy alias parity)"
+      ],
+      "verification_bullets": [
+        "16 new unit tests in pinion-runtime::core_shell::tests pin window_owners substrate invariants (default seed = root alias, lazy create as Owner::new_child(&root), idempotence, two-secondary isolation, parent-child cleanup on substrate drop, Owner::cache isolation between scopes)",
+        "7 new unit tests pin tick_animations_for_window contract (per-window walk semantics, no-cascade between secondary scopes, single-window backward compat, frame_signal still fires for application observers, unknown window_id no-lazy-create)",
+        "6 new integration tests in pinion-shell::tests::dispatch_core::r680_per_window_redraw_wakeup pin request_redraw_for_window API surface (targeting, drain semantics, binding-wide / per-window coexistence, two-window-ids independent drain)",
+        "20-demo regression sweep PASS deterministic across 3 consecutive full runs (R660-R679 + R680); full cargo test --workspace + cargo clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "R670.B compound elimination evidence: two windows painting in same event-loop turn produce only the primary scope's tick_animations_local walk (all current animations live on root via the root_owner view-fn wrap; secondary windows walk empty local lists); animations advance once per primary paint regardless of secondary paints in the same turn"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.28",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R681 axis 2 — Scene::ImmediateModeNode + immediate-mode subtree opt-in primitive (uses window_owners + per-window paint clock for game-loop ControlFlow::Poll wiring); per-window frame budget cap via frame_pacing extension; first ImmediateMode consumer (hello-immediate-mode-canvas or hello-multi-window inspector fps overlay)",
+        "R682 axis 4 — dirty subtree cache via paint_hash + vello::Scene::append fragment cache; damage rect propagation; todomvc 100-row long-list first consumer",
+        "R683 axis 1 — runtime window lifecycle (Signal<Vec<WindowSpec>> + reconcile_windows Effect) + Splitter widget + DockSurface + tear-off UX; R679 DevTools cascade closure carry (2nd dock-able DevTools consumer + MainWindowClickRouter substrate lift Rule-of-Three trigger) lands naturally inside R683 dock series",
+        "Cross-window Owner::cache shared-state convention: hello-multi-window's use_selected_path / use_hovered_path currently rely on V::update under root_owner.run materialising the slot in root; future per-window-scoped hooks (use_local_X for per-window state) require explicit shared_owner pattern or parent-chain cache walk — defer until 2nd binding consumer surfaces the need",
+        "_animation_driver Effect kept as no-op subscription anchor; can be removed entirely once R682 frame_signal observer set is audited and any observer-list expectations are migrated to explicit Effect::new(&owner, …)"
+      ],
+      "publishable_decision_summary": "R680 axis 3 per-window Owner scope substrate (4-axis paint-pipeline rewrite series 1 of 4); R670.B 9-round multi-window animation tick compound carry closed structurally",
+      "publishable_changes_bullets": [
+        "pinion-core::reactive::Owner: add tick_animations_local(dt) + any_animation_active_local(eps) local-walk variants (skip R51.138 child-scope cascade); cascade primitives kept for pinion-rpc::animate_control headless dispatch",
+        "pinion-runtime::CoreShell: add window_owners: HashMap<String, Owner> with seeded DEFAULT_WINDOW = root_owner.clone() alias (single-window backward-compat); lazy-create Owner::new_child(&root_owner) for secondary window_ids; public API window_owner / window_owner_existing / window_owner_ids",
+        "pinion-runtime::CoreShell: add tick_animations_for_window(window_id, dt) + any_animation_active_for_window(window_id, eps) direct-dispatch primitives; legacy tick_animations(dt) routes through tick_animations_for_window(DEFAULT_WINDOW); _animation_driver Effect kept as no-op subscription anchor for frame_signal observers (the R51.149 Effect-routed tick dispatch is superseded by direct call)",
+        "pinion-shell::ShellCore: lift last_paint_instant: Option<Instant> to last_paint_instants: HashMap<String, Instant> — per-window paint clock so each window's dt measures against its own previous timestamp (closes R670.B compound origin)",
+        "pinion-shell::ShellCore: add redraw_requested_per_window: HashMap<String, bool> + request_redraw_for_window / take_redraw_request_for_window / redraw_requested_for_window opt-in selective wake-up API coexisting with binding-wide fan-out request_redraw; AppShell::drain_redraw_to_winit drains BOTH flags per slot",
+        "Design decision (atomic 1): view-fn wrap stays under CoreShell::root_owner (NOT per-window child scope) so cross-window state sharing via Owner::cache keeps working without binding adjustment — hello-multi-window's use_selected_path / use_hovered_path slots resolve through root regardless of which window is painting; live + RPC paint paths observationally identical (§2 #2 + §2 #7 invariant preservation); per-window scope is substrate for R681-R683 lifecycle anchors",
+        "tools/demos/r680_per_window_owner_scope.py: 45+ assertion executions across 12 sections (multi-window snapshot disjoint, cross-window state sharing preserved, per-window paint clock stability, R675/R679 bidirectional select regression sweep, single-window legacy alias parity)"
+      ],
+      "publishable_verification_bullets": [
+        "16 new unit tests in pinion-runtime::core_shell::tests pin window_owners substrate invariants (default seed = root alias, lazy create as Owner::new_child(&root), idempotence, two-secondary isolation, parent-child cleanup on substrate drop, Owner::cache isolation between scopes)",
+        "7 new unit tests pin tick_animations_for_window contract (per-window walk semantics, no-cascade between secondary scopes, single-window backward compat, frame_signal still fires for application observers, unknown window_id no-lazy-create)",
+        "6 new integration tests in pinion-shell::tests::dispatch_core::r680_per_window_redraw_wakeup pin request_redraw_for_window API surface (targeting, drain semantics, binding-wide / per-window coexistence, two-window-ids independent drain)",
+        "20-demo regression sweep PASS deterministic across 3 consecutive full runs (R660-R679 + R680); full cargo test --workspace + cargo clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "R670.B compound elimination evidence: two windows painting in same event-loop turn produce only the primary scope's tick_animations_local walk (all current animations live on root via the root_owner view-fn wrap; secondary windows walk empty local lists); animations advance once per primary paint regardless of secondary paints in the same turn"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.28",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R681 axis 2 — Scene::ImmediateModeNode + immediate-mode subtree opt-in primitive (uses window_owners + per-window paint clock for game-loop ControlFlow::Poll wiring); per-window frame budget cap via frame_pacing extension; first ImmediateMode consumer (hello-immediate-mode-canvas or hello-multi-window inspector fps overlay)",
+        "R682 axis 4 — dirty subtree cache via paint_hash + vello::Scene::append fragment cache; damage rect propagation; todomvc 100-row long-list first consumer",
+        "R683 axis 1 — runtime window lifecycle (Signal<Vec<WindowSpec>> + reconcile_windows Effect) + Splitter widget + DockSurface + tear-off UX; R679 DevTools cascade closure carry (2nd dock-able DevTools consumer + MainWindowClickRouter substrate lift Rule-of-Three trigger) lands naturally inside R683 dock series",
+        "Cross-window Owner::cache shared-state convention: hello-multi-window's use_selected_path / use_hovered_path currently rely on V::update under root_owner.run materialising the slot in root; future per-window-scoped hooks (use_local_X for per-window state) require explicit shared_owner pattern or parent-chain cache walk — defer until 2nd binding consumer surfaces the need",
+        "_animation_driver Effect kept as no-op subscription anchor; can be removed entirely once R682 frame_signal observer set is audited and any observer-list expectations are migrated to explicit Effect::new(&owner, …)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
