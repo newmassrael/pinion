@@ -216,65 +216,34 @@ pub fn view_dock_panel(
             .with_size_px(style.header_font_size_px)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
-    // R683.C §5.16 (substrate-incompleteness signal cleared during
-    // first consumer adoption): the header strip's cross-axis width
-    // must be Auto, not Px(0). The original R683.B emit used
-    // `Size::px(0, header_height_px)` which set width = 0 px exactly
-    // — taffy interprets `Px(0)` as "fixed 0 wide", NOT "stretch via
-    // `AlignItems::Stretch`". Auto preserves the intended behaviour
-    // (Stretch on the outer Column container stretches the header
-    // to the parent's full cross-axis extent). The fixed-height side
-    // of the size pair is preserved so the header is exactly
-    // `header_height_px` tall. `Size` is `#[non_exhaustive]`, so the
-    // build goes via `Size::default()` (`Auto`/`Auto`) + field
-    // assignment on the height axis.
-    // R683.C §5.16 — header strip layout. Original R683.B emit
-    // sized the strip with `Size::px(0, header_height_px)` (width =
-    // 0 px exactly) under `Display::Block`; the cross-axis
-    // `AlignItems::Stretch` on the outer Column container could not
-    // override the explicit 0 px width, so the rendered header rect
-    // collapsed to `padding-left + padding-right` (16 px). The fix
-    // sets the header to `Display::Flex` with `FlexDirection::Row`
-    // (the title axis) — flex children of a Column flex parent
-    // inherit the parent's `AlignItems::Stretch` cross-axis
-    // semantics, so the header stretches to fill the panel width.
-    // The title text inside is centred vertically via the header's
-    // own `AlignItems::Center`. Height stays pinned at
-    // `Px(header_height_px)` so the strip is exactly the M3-canonical
-    // 28 px tall.
-    // R683.C §5.16 — header strip layout. Original R683.B emit sized
-    // the strip with `Size::px(0, header_height_px)` (width = 0 px
-    // exactly); taffy interpreted `Px(0)` as "fixed 0 wide", NOT
-    // "stretch via cross-axis align-items", so the rendered header
+    // (R684 §5.21 §5.16) Header strip layout — the R683.C honest
+    // carry now closed via the R684 substrate. The original R683.B
+    // emit used `Size::px(0, header_height_px)` — taffy interprets
+    // an explicit `Px(0)` width as "fixed 0 wide" BEFORE the cross-
+    // axis [`AlignItems::Stretch`] resolution runs, so the header
     // rect collapsed to `padding-left + padding-right` (16 px). The
-    // fix sets the header to `Display::Flex` with `FlexDirection::Row`
-    // (the title axis) + `flex_grow: 1.0` as a main-axis-grow hint —
-    // but the dock panel's outer container is `FlexDirection::Column`,
-    // so `flex_grow` does not apply to the header's *width*. The
-    // canonical stretch path for a flex-Column parent's cross-axis is
-    // `align-self: stretch` (parent's `align-items: stretch` inherits),
-    // and that triggers when the child's cross-axis size is `Auto` or
-    // `Percent(100)`. v1 uses explicit `Percent(100)` so taffy sees a
-    // concrete cross-axis directive instead of relying on the implicit
-    // `Auto + stretch` interaction (which is fragile under the
-    // padding-only intrinsic-width path taffy collapses to when the
-    // header strip has no main-axis content beyond the title text).
-    // R683.B §5.16 header layout — honest R684 carry: the
-    // `Size::px(0, header_height_px)` emit collapses the header
-    // strip to padding-only width (16 px) under taffy's flex pass.
-    // The intuitive `Size { width: Auto, height: Px(28) } +
-    // align-items: Stretch` and `Size { width: Percent(100), … }`
-    // fallbacks both lose to taffy's min-content resolution when
-    // the dock panel sits inside a splitter wrapper whose
-    // `flex_basis: auto` resolves the outer cross-axis to min-content
-    // *before* the stretch pass runs (R683.C diagnosed; the unit
-    // tests in this module pass with a fixed-size root parent but
-    // the live splitter wrap fails). The textbook canonical fix is a
-    // `pinion_core::style::LayoutStyle::flex_basis` field — the
-    // substrate primitive R683.C confirmed missing — and lands in
-    // R684 alongside the splitter flex_grow ratio carry (the same
-    // root cause forces splitter ratios to ~50/50 regardless of the
-    // declared `flex_grow`).
+    // textbook fix is the cross-axis = `SizeValue::Auto` so the
+    // outer Column container's `AlignItems::Stretch` can promote
+    // the rect to the dock panel's full width.
+    //
+    // R684 atomic 0 lands [`Size::height_px`] as the substrate
+    // primitive — pinion-widget-paint cannot construct
+    // `Size { width: Auto, height: Px(h) }` directly because `Size`
+    // is `#[non_exhaustive]` (cross-crate struct expression
+    // restriction); the substrate constructor + the call site here
+    // pair land in the same round per [[substrate-incompleteness-
+    // signal]] + Rule-of-One adoption discipline.
+    //
+    // Note: the dock-panel header is NOT a flex-`grow` participant.
+    // The outer Column flex parent's main axis is Y (height); the
+    // header's height is pinned at `Px(header_height_px)` so the
+    // content wrapper's `with_flex_grow(1.0)` claims all leftover
+    // Y space deterministically. Adding `with_flex_basis(Px(0)) +
+    // with_flex_grow(1.0)` to the header would make it compete with
+    // the content wrapper for the parent's Y axis, breaking the
+    // fixed-height header invariant. The R684 splitter atomic 2
+    // is the canonical [[r684-flex-basis-substrate]] consumer; the
+    // dock header strip is a cross-axis-stretch fix only.
     let header = Scene::Container(
         ContainerNode::new(vec![header_title])
             .with_tag(header_tag)
@@ -283,7 +252,7 @@ pub fn view_dock_panel(
             ))
             .with_layout(
                 LayoutStyle::new()
-                    .with_size(Size::px(0, style.header_height_px))
+                    .with_size(Size::height_px(style.header_height_px))
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Start)
                     .with_padding(Rect::new(8, 0, 8, 0)),
@@ -1041,5 +1010,50 @@ mod tests {
     fn r683_dock_panel_external_threshold_accessor() {
         let ext = DockPanelExternal::new("p1", 0.42);
         assert!((ext.tear_off_threshold_frac() - 0.42).abs() < f32::EPSILON);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R684 §5.21 §5.16 — dock panel header cross-axis stretch fix.
+    // Pre-R684 the header used `Size::px(0, h)` which forced taffy
+    // to render the rect at exactly `padding-left + padding-right`
+    // (16 px) because the explicit `Px(0)` width pre-empted the
+    // outer Column container's `AlignItems::Stretch` resolution. The
+    // R684 fix uses `Size::height_px(h)` (Auto width, Px height) so
+    // the stretch path can promote the header to the dock panel's
+    // full width.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r684_view_dock_panel_header_stretches_to_full_panel_width() {
+        // R684 atomic 1 anchor — the header strip must paint at the
+        // dock panel's full width. We build a dock panel and lay it
+        // out inside a fixed 400×300 viewport via `compute_layout`;
+        // the resulting header rect's width must equal the parent
+        // panel's width (within taffy's u32 rounding). Pre-R684 this
+        // assertion failed at width = 16 (padding-only).
+        use pinion_runtime::layout::compute_layout;
+        use pinion_text::LayoutCache;
+
+        run_in_owner(|| {
+            let style = DockPanelStyle::m3_default(PANEL_TAG);
+            let panel = view_dock_panel("Inspector", empty_content(), &theme_light(), &style);
+            let mut cache = LayoutCache::new();
+            let mut scene = panel;
+            let panel_w: u32 = 400;
+            let panel_h: u32 = 300;
+            compute_layout(&mut scene, &mut cache, panel_w, panel_h);
+            let Scene::Container(outer) = &scene else { panic!("outer Container") };
+            // Outer panel fills the viewport (Block default).
+            assert_eq!(outer.rect.w, panel_w, "panel root fills viewport width");
+            let Scene::Container(header) = &outer.children[0] else { panic!("header") };
+            assert_eq!(
+                header.rect.w, panel_w,
+                "R684 atomic 1: header strip must stretch to full panel width \
+                (was {} pre-R684 — padding-only collapse)",
+                header.rect.w,
+            );
+            // Height stays pinned at the M3 default (28 px).
+            assert_eq!(header.rect.h, style.header_height_px);
+        });
     }
 }

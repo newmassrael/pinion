@@ -81,7 +81,7 @@ use pinion_core::external::{
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Scene};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
+    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
 };
 use pinion_core::theme::{ColorRole, Theme};
 
@@ -296,13 +296,43 @@ pub fn view_splitter(
             .with_style(BoxStyle::filled(handle_fill_for_dragging(theme, dragging)))
             .with_layout(LayoutStyle::new().with_size(handle_size)),
     );
+    // (R684 §5.21 §5.16) Splitter ratio fix — the R683.C honest carry
+    // closed via the R684 [`LayoutStyle::flex_basis`] substrate.
+    //
+    // Pre-R684 the left/right wrappers used only `with_flex_grow(ratio)`
+    // (default `flex_basis: Auto`). taffy's `Auto` basis resolves each
+    // child's main-axis size to its intrinsic content size BEFORE the
+    // `flex_grow` pass runs; with content-heavy panels (the dock-panel
+    // case the splitter is built for) each wrapper's intrinsic already
+    // claims most of the parent's extent, leaving `flex_grow` to
+    // distribute only a sliver of leftover. The visible defect was the
+    // rendered split collapsing toward ~50/50 regardless of the
+    // declared `ratio` Signal — proportional distribution failed.
+    //
+    // `flex_basis(Px(0))` short-circuits the intrinsic-basis pass:
+    // each wrapper starts at 0 on the main axis, then `flex_grow`
+    // distributes the FULL parent extent proportionally to the
+    // two ratios. This is the CSS-canonical "flex-basis: 0; flex-grow:
+    // r" idiom every flex-based panel system uses (Slint, Flutter
+    // Flexible, CSS Grid `fr` units, taffy's own
+    // examples/holy_grail).
+    //
+    // Cross-axis (Y for Row, X for Column) stays `Auto` so the
+    // splitter Container's `AlignItems::Stretch` promotes each
+    // wrapper to the full perpendicular extent.
     let left_child = Scene::Container(
-        ContainerNode::new(vec![left])
-            .with_layout(LayoutStyle::new().with_flex_grow(ratio)),
+        ContainerNode::new(vec![left]).with_layout(
+            LayoutStyle::new()
+                .with_flex_basis(SizeValue::Px(0))
+                .with_flex_grow(ratio),
+        ),
     );
     let right_child = Scene::Container(
-        ContainerNode::new(vec![right])
-            .with_layout(LayoutStyle::new().with_flex_grow(one_minus_ratio)),
+        ContainerNode::new(vec![right]).with_layout(
+            LayoutStyle::new()
+                .with_flex_basis(SizeValue::Px(0))
+                .with_flex_grow(one_minus_ratio),
+        ),
     );
     // R683.C §5.16 — fill the splitter Container with the active
     // theme's `Surface` colour so the substrate paint stays visible
@@ -1139,5 +1169,115 @@ mod tests {
         let ext_v = SplitterExternal::new(SplitterOrientation::Vertical);
         assert_eq!(ext_h.orientation(), SplitterOrientation::Horizontal);
         assert_eq!(ext_v.orientation(), SplitterOrientation::Vertical);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R684 §5.21 §5.16 — splitter ratio main-axis proportional split.
+    //
+    // The splitter's left/right wrappers now declare
+    // `flex_basis(Px(0)) + flex_grow(ratio)` so taffy distributes the
+    // FULL parent main-axis extent proportionally to `ratio` rather
+    // than to the leftover after intrinsic-content basis resolution
+    // (the pre-R684 collapse-toward-~50/50 defect documented in
+    // R683.C's honest carry).
+    //
+    // The pinned ratios are 0.80 + 0.20 — far enough from the 50/50
+    // attractor that the pre-R684 leftover-distribution math would
+    // observably fail.
+    // ─────────────────────────────────────────────────────────────────
+
+    fn lay_out_splitter(
+        ratio_value: f32,
+        parent_w: u32,
+        parent_h: u32,
+    ) -> Scene {
+        use pinion_runtime::layout::compute_layout;
+        use pinion_text::LayoutCache;
+        let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(ratio_value));
+        let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
+        let scene = view_splitter(
+            empty_panel("left_panel"),
+            empty_panel("right_panel"),
+            &ratio,
+            &theme_light(),
+            &style,
+            false,
+        );
+        let mut cache = LayoutCache::new();
+        let mut scene = scene;
+        compute_layout(&mut scene, &mut cache, parent_w, parent_h);
+        scene
+    }
+
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "test math — flexible_w fits in f32 mantissa (≤ 1000), expected_left clamped to [0, flexible_w]"
+    )]
+    fn expected_ratio_width(ratio: f32, flexible_w: u32) -> u32 {
+        (ratio * flexible_w as f32) as u32
+    }
+
+    #[test]
+    fn r684_splitter_left_width_matches_main_ratio_at_080() {
+        run_in_owner(|| {
+            let parent_w: u32 = 1000;
+            let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
+            let scene = lay_out_splitter(0.80, parent_w, 300);
+            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(left_wrap) = &outer.children[0] else { panic!() };
+            let Scene::Container(right_wrap) = &outer.children[2] else { panic!() };
+            // The 4-px handle occupies its own main-axis slice; the
+            // flexible width budget the wrappers share is
+            // `parent_w - handle_extent_px`.
+            let flexible_w = parent_w - style.handle_extent_px;
+            // Expected ~0.80 * flexible_w for left, ~0.20 * for right.
+            // 5% tolerance per the R684 verification spec absorbs
+            // taffy's f32→u32 rounding at the wrapper boundary.
+            let expected_left = expected_ratio_width(0.80, flexible_w);
+            let tolerance = expected_left / 20; // 5%
+            assert!(
+                left_wrap.rect.w.abs_diff(expected_left) <= tolerance,
+                "R684 atomic 2: at ratio 0.80 left wrapper must span ~{expected_left} px \
+                of flexible {flexible_w} px (±5%), got {}",
+                left_wrap.rect.w,
+            );
+            // Total widths cover the parent exactly.
+            assert_eq!(
+                left_wrap.rect.w + style.handle_extent_px + right_wrap.rect.w,
+                parent_w,
+                "L + handle + R must equal parent extent",
+            );
+        });
+    }
+
+    #[test]
+    fn r684_splitter_left_width_matches_main_ratio_at_020() {
+        run_in_owner(|| {
+            let parent_w: u32 = 1000;
+            let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
+            let scene = lay_out_splitter(0.20, parent_w, 300);
+            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(left_wrap) = &outer.children[0] else { panic!() };
+            let Scene::Container(right_wrap) = &outer.children[2] else { panic!() };
+            let flexible_w = parent_w - style.handle_extent_px;
+            let expected_left = expected_ratio_width(0.20, flexible_w);
+            // Minimum-tolerance floor of 5 px so the 5% rule does
+            // not become smaller than taffy's u32 rounding noise on
+            // the thinner panel.
+            let tolerance = std::cmp::max(5, expected_left / 20);
+            assert!(
+                left_wrap.rect.w.abs_diff(expected_left) <= tolerance,
+                "R684 atomic 2: at ratio 0.20 left wrapper must span ~{expected_left} px \
+                of flexible {flexible_w} px (±5%), got {}",
+                left_wrap.rect.w,
+            );
+            assert_eq!(
+                left_wrap.rect.w + style.handle_extent_px + right_wrap.rect.w,
+                parent_w,
+                "L + handle + R must equal parent extent",
+            );
+        });
     }
 }

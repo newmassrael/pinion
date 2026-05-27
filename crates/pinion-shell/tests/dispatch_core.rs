@@ -3293,3 +3293,206 @@ mod r683_remove_window_shell_side {
         assert_eq!(core.target_fps_for_window("inspector"), None);
     }
 }
+
+/// R684 §5.16 §5.41 §5.49 atomic 3 — headless-RPC floating-window
+/// paint cycle. The substrate hook in
+/// [`pinion_shell::ShellCore::dispatch_rpc_for_window`] re-runs the
+/// paint pipeline + finalizes the addressed window's
+/// [`pinion_runtime::InputRouter`] after the produce closure was
+/// invoked. The tests below pin the contract:
+///
+/// 1. Calling `dispatch_rpc_for_window` with a paint-touching method
+///    (e.g. `scene/snapshot {viewport: {…}}`) populates the
+///    addressed window's `last_paint_scene` even when no winit
+///    `RedrawRequested` cycle ever fires (the headless RPC case).
+/// 2. Single-window `dispatch_rpc` (without window scope) does NOT
+///    finalize on its own — single-window bindings drive finalize
+///    through their `AppShell`'s winit paint loop; preserving the
+///    legacy behaviour is a backward-compatibility guarantee.
+/// 3. Non-paint-touching RPC methods (e.g. `focus/set`) do NOT
+///    trigger the finalize because the produce closure is never
+///    called (avoids gratuitous paint cycles on read-only dispatches).
+/// 4. Sibling windows stay isolated — a dispatch to window A leaves
+///    window B's router empty.
+/// 5. Repeat dispatches keep the router populated (idempotent).
+mod r684_headless_rpc_floating_window_finalize {
+    use super::*;
+    use pinion_rpc::parse_request;
+
+    fn snapshot_request(id: u64, window: &str, w: u32, h: u32) -> String {
+        // R684 atomic 3 — use `scene/layout` because it ALWAYS calls
+        // the produce closure when `viewport` is supplied (the only
+        // path that triggers the post-dispatch finalize hook). The
+        // alternative — `scene/snapshot {from: "paint", ...}` —
+        // would also work but `scene/layout` is the simpler form
+        // for these substrate-behaviour tests (no `path` /
+        // `from` axes to thread).
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"scene/layout","params":{{"window":"{window}","viewport":{{"width":{w},"height":{h}}}}}}}"#,
+        )
+    }
+
+    fn focus_get_request(id: u64, window: &str) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"focus/get","params":{{"window":"{window}"}}}}"#,
+        )
+    }
+
+    fn no_resize(_w: u32, _h: u32) {}
+
+    #[test]
+    fn r684_dispatch_rpc_for_window_populates_input_router_for_addressed_window() {
+        // R684 atomic 3 anchor — the first-paint contract for
+        // headless-RPC floating windows. Before this dispatch the
+        // addressed window's router is empty (no winit paint
+        // fired). After, the post-dispatch finalize hook re-runs
+        // the paint pipeline + writes the result into the router.
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        // Pre-condition: never-painted floating window.
+        assert!(
+            !core.has_last_paint_scene_for_window("floating"),
+            "fresh router for newly-spawned floating window is empty",
+        );
+        let req = parse_request(&snapshot_request(1, "floating", 320, 200))
+            .expect("snapshot request parses");
+        let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
+        // Post-condition: produce ran (snapshot calls it), so the
+        // post-dispatch finalize populated the router.
+        assert!(
+            core.has_last_paint_scene_for_window("floating"),
+            "post-dispatch finalize must populate the addressed window's router",
+        );
+    }
+
+    #[test]
+    fn r684_dispatch_rpc_single_window_does_not_finalize_default_window_router() {
+        // Single-window `dispatch_rpc` passes `window_id = None`.
+        // R684 atomic 3 explicitly skips the finalize in this path
+        // so the legacy single-window behaviour stays bit-identical
+        // — single-window bindings drive finalize through their
+        // AppShell's winit paint loop, not through RPC dispatch.
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        assert!(
+            !core.has_last_paint_scene_for_window(pinion_runtime::DEFAULT_WINDOW),
+            "fresh DEFAULT_WINDOW router starts empty",
+        );
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"scene/layout","params":{"viewport":{"width":320,"height":200}}}"#;
+        let _ = core.dispatch_rpc(req, &mut no_resize);
+        // R684 atomic 3 contract: single-window path does NOT
+        // finalize. This is intentional backward-compat — changing
+        // it would regress every single-window binding's interaction
+        // with its AppShell-driven paint loop.
+        assert!(
+            !core.has_last_paint_scene_for_window(pinion_runtime::DEFAULT_WINDOW),
+            "single-window dispatch_rpc must NOT finalize the DEFAULT_WINDOW router",
+        );
+    }
+
+    #[test]
+    fn r684_dispatch_rpc_for_window_focus_get_does_not_trigger_paint_finalize() {
+        // `focus/get` is a pure substrate read — it never asks for
+        // the paint scene. The produce closure stays unevoked, so
+        // R684 atomic 3's post-dispatch finalize must NOT run
+        // (avoids paint-cycle overhead for read-only RPCs).
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let req = parse_request(&focus_get_request(1, "floating"))
+            .expect("focus_get request parses");
+        let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
+        assert!(
+            !core.has_last_paint_scene_for_window("floating"),
+            "focus/get must not call produce → no post-dispatch finalize",
+        );
+    }
+
+    #[test]
+    fn r684_dispatch_rpc_for_window_isolates_finalize_to_addressed_window() {
+        // Sibling-isolation pin — a dispatch to window A must NOT
+        // populate window B's router. Critical for multi-window
+        // bindings where each window has its own widget tree.
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let req = parse_request(&snapshot_request(1, "panel_a", 200, 100))
+            .expect("snapshot request parses");
+        let _ = core.dispatch_rpc_for_window(req, "panel_a", None, &mut no_resize);
+        assert!(
+            core.has_last_paint_scene_for_window("panel_a"),
+            "addressed window's router populated",
+        );
+        assert!(
+            !core.has_last_paint_scene_for_window("panel_b"),
+            "sibling window's router stays empty (no cross-window leak)",
+        );
+    }
+
+    #[test]
+    fn r684_dispatch_rpc_for_window_repeat_dispatches_keep_router_populated() {
+        // Idempotent under repeat dispatch — the second snapshot
+        // overwrites the first with the same scene (same view fn,
+        // same state). Post-condition stays consistent.
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        for id in 1_u64..=3 {
+            let req = parse_request(&snapshot_request(id, "floating", 320, 200))
+                .expect("snapshot request parses");
+            let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
+            assert!(
+                core.has_last_paint_scene_for_window("floating"),
+                "router stays populated across repeat dispatches (iter {id})",
+            );
+        }
+    }
+
+    #[test]
+    fn r684_dispatch_rpc_for_window_finalize_advances_last_paint_layout_substrate_mirror() {
+        // Side-channel observation: the `ShellCore.last_paint_layout`
+        // mirror gets updated by `finalize_frame_for_window` (which
+        // calls `last_paint_layout = Some(paint_layout)` per
+        // `pinion_shell::ShellCore::finalize_frame_for_window`).
+        // Before R684 atomic 3 the mirror stayed `None` after a
+        // floating-window RPC dispatch; after, the snapshot is
+        // visible to subsequent `scene/layout {viewport: null}`
+        // callers as the latest paint result.
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        assert!(
+            core.last_paint_layout().is_none(),
+            "fresh ShellCore has no last_paint_layout mirror",
+        );
+        let req = parse_request(&snapshot_request(1, "floating", 320, 200))
+            .expect("snapshot request parses");
+        let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
+        assert!(
+            core.last_paint_layout().is_some(),
+            "post-dispatch finalize updates the substrate-mirror last_paint_layout",
+        );
+    }
+
+    #[test]
+    fn r684_dispatch_rpc_for_window_invalid_window_id_still_finalizes_under_that_key() {
+        // The substrate does not validate window_id against a list of
+        // declared windows — every spec_id the AI client supplies
+        // gets its own router slot lazily. This test pins that even
+        // an unrecognized id (no WindowSpec, no winit Window) gets
+        // a router populated by the finalize hook, so downstream
+        // dispatches addressing the same id hit-test successfully.
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let req = parse_request(&snapshot_request(1, "any_unknown_window_id", 400, 300))
+            .expect("snapshot request parses");
+        let _ = core.dispatch_rpc_for_window(req, "any_unknown_window_id", None, &mut no_resize);
+        assert!(
+            core.has_last_paint_scene_for_window("any_unknown_window_id"),
+            "router for arbitrary spec_id populated post-finalize",
+        );
+    }
+}

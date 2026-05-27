@@ -1098,6 +1098,21 @@ impl<V: WidgetCore> CoreShell<V> {
         self.routers.get(window_id).and_then(|r| r.hover_target(pid))
     }
 
+    /// (R684 §5.35 §5.41 §5.16) Per-window passthrough to
+    /// [`InputRouter::has_last_paint_scene`] — `true` once the
+    /// named window's router has received a paint scene via
+    /// [`Self::update_paint_scene_for_window`]. Returns `false`
+    /// when no router entry exists yet (newly-spawned floating
+    /// window that has never been painted; the canonical
+    /// substrate-incompleteness signal R684 atomic 3 closes for
+    /// headless-RPC consumers).
+    #[must_use]
+    pub fn has_last_paint_scene_for_window(&self, window_id: &str) -> bool {
+        self.routers
+            .get(window_id)
+            .is_some_and(super::input::InputRouter::has_last_paint_scene)
+    }
+
     /// R51.122 §5.41 — drain the post-dispatch bookkeeping artifacts
     /// (intents + optional state change) without running any input
     /// dispatch arm.

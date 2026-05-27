@@ -13483,6 +13483,44 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R684 — LayoutStyle::flex_basis substrate + dock header cross-axis stretch fix + splitter ratio proportional split + headless-RPC floating-window first-paint finalize
+
+**Changes**:
+- atomic 0: `pinion_core::style::LayoutStyle.flex_basis: Option<SizeValue>` field + `with_flex_basis(SizeValue)` builder + manual `Hash` extension; `Size::height_px(h)` + `Size::width_px(w)` constructors (sub-axis pinning for `#[non_exhaustive]` `Size`, cross-crate accessible)
+- atomic 0: `pinion_runtime::layout::to_taffy_style` translates `LayoutStyle::flex_basis` through existing `to_dimension` helper — `None` falls through to taffy `Dimension::Auto` default (pre-R684 layout graph bit-identical)
+- atomic 0 substrate tests: 7 in pinion-core::style (field default / builder / chain / PartialEq / Hash inclusion) + 5 in pinion-runtime::layout::tests (None preserves intrinsic / Px(0)+flex_grow(1.0) takes full parent / Percent(50) maps to 50% / two-sibling 0.3/0.7 ratio split / Some(Auto) ≡ None)
+- atomic 1: `pinion_widget_paint::dock::view_dock_panel` header strip layout: `Size::px(0, h)` → `Size::height_px(h)` so cross-axis `Auto` allows outer Column `AlignItems::Stretch` to promote to full panel width (R683.C honest carry cleared); pinned by `r684_view_dock_panel_header_stretches_to_full_panel_width` (lay out dock panel at 400×300 viewport, assert header rect width == panel width via real `compute_layout` pass)
+- atomic 2: `pinion_widget_paint::splitter::view_splitter` left/right wrappers: `with_flex_basis(SizeValue::Px(0)) + with_flex_grow(ratio)` so taffy distributes FULL parent extent proportionally (not after intrinsic-content basis resolution); pre-R684 ratio collapsed toward ~50/50 under content-heavy panels; pinned by 2 substrate tests at ratios 0.80 + 0.20 against 1000px parent (within 5% tolerance + L+handle+R==parent invariant)
+- atomic 2: `pinion-widget-paint` Cargo.toml gains `pinion-runtime` as dev-dependency (with default features only; vello stays gated) so dock/splitter substrate tests can drive real `compute_layout` passes
+- atomic 3: `pinion-shell::ShellCore::dispatch_rpc_inner` gains post-dispatch headless-RPC paint cycle hook — when `window_id.is_some()` AND produce closure ran AND the addressed window's `InputRouter::has_last_paint_scene()` is `false` (never-painted floating window), re-runs `compute_paint_scene_for_window` + writes the result into the InputRouter + `last_paint_layout` mirror. Gated on first-paint only so already-active windows do NOT pay per-RPC `refresh_hover` side-effect cost
+- atomic 3: bypasses `finalize_frame_for_window` (avoids its `tail()`+`handle_tail()` double-drain of pending intents — the dispatch's existing R51.123 post-dispatch handle_tail call is the canonical drain site)
+- atomic 3: `pinion_runtime::InputRouter::has_last_paint_scene()` + `CoreShell::has_last_paint_scene_for_window()` + `pinion_shell::ShellCore::has_last_paint_scene_for_window()` + `ShellCore::last_paint_layout()` public accessors land for the first-paint gate + substrate tests
+- atomic 3 substrate tests: 7 in pinion-shell::tests::dispatch_core::r684_headless_rpc_floating_window_finalize (router populates on first paint-touching dispatch / single-window dispatch_rpc with `None` window_id does NOT finalize / focus/get does not call produce so no finalize / sibling-window isolation / repeat dispatches stay populated / `last_paint_layout` substrate mirror updates / unknown window id still finalizes lazily)
+- atomic 3 honest carry: R683.C demo's dock-back via direct `invoke('tear_off', Null)` channel preserved (the textbook bypass remains the AI-first canonical path); drag-based dock-back conversion deferred (the demo's section E requires deeper rewriting + real-window first-paint priming via scene/snapshot before drag — out of R684's substrate scope)
+
+
+
+**Verification**:
+- 44-demo regression sweep PASS deterministic ×3 consecutive runs (R660-R683.C + R684 substrate additions; no demo regression)
+- cargo test --workspace PASS: 3910 tests pass / 0 fail (R683.C baseline 3844 → R684 3910; +7 LayoutStyle substrate + +5 layout runtime + +1 dock substrate + +2 splitter substrate + +7 headless-RPC finalize + assorted accessor tests; net new = 22-ish, rest from rebuilds of doctest counts)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace `-D pedantic` baseline
+- todomvc R660 demo regression bisected end-to-end: pre-R684 PASS → naive atomic 3 finalize FAIL (`End jumps to All (last index): expected 2, got 1`) → root caused (`InputRouter::update_paint_scene` synthesises `PointerEnter` via `refresh_hover` for every active cursor, mutating RadioGroup state on every RPC dispatch) → fix gates the finalize on first-paint-only so already-active windows do not pay the side-effect cost → PASS restored
+- Mnemosyne workspace validate clean (T1 reject=0, T2 frozen-ledger jaccard 0, GENERATED.md round-trip 1/1, atomic ledger 552 → 553, orphan_refs 5+0 unchanged)
+
+
+
+**Impact**: §5.21, §5.16, §5.41
+
+
+**Carry forward**:
+- R685 axis (DockSurface topology composition substrate — N-pane recursive split tree across `DockSlot::{Left, Right, Top, Bottom, Center}` per the seed's [`abstraction-needs-second-consumer`] 2nd consumer plan)
+- R682+1 transform-aware fragment cache key (Scroll content + reflow cache hits) carry preserved
+- wgpu damage consumer carry preserved (paint_cache_stats publishes `last_damage_region` but no GPU surface-invalidation consumer wired)
+- atomic 3 demo conversion carry: convert R683.C dock-back demo section E back to drag-based via prior scene/snapshot priming (out of R684 substrate scope; substrate-side first-paint gate is in place, demo-side scaffolding for `scene/snapshot {window: 'torn-...'}` → `scene/drag {window: 'torn-...'}` sequencing is a follow-up dev-experience round)
+- atomic 1 honest narrowing: dock-panel header fix uses `Size::height_px` (cross-axis stretch) rather than `flex_basis + flex_grow` per the seed — flex_basis/flex_grow on the header would compete with the content_wrapper's `flex_grow(1.0)` for the Column-parent Y-axis (header height would no longer pin to 28px). The splitter (atomic 2) is the canonical R684 flex_basis substrate consumer; dock header is the cross-axis-stretch fix.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

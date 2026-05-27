@@ -31,6 +31,7 @@
 //! "visibility downgraded" / "module split" are three different
 //! substantive depths of the same encapsulation claim).
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -502,6 +503,32 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn scene(&self) -> &Scene {
         self.core.scene()
+    }
+
+    /// (R684 §5.16 §5.41 §5.49) Read-only borrow of the substrate
+    /// mirror [`Self::last_paint_layout`] field that
+    /// [`Self::finalize_frame`] / [`Self::finalize_frame_for_window`]
+    /// populate. `None` before any finalize; `Some(&LayoutNode)`
+    /// after. Test-surface accessor — the field's existing read sites
+    /// (the dispatch context fallback for `scene/layout {viewport:
+    /// null}`) consume via field access, but tests outside the crate
+    /// need the public passthrough to assert post-dispatch finalize
+    /// state without crossing the private-field boundary.
+    #[must_use]
+    pub fn last_paint_layout(&self) -> Option<&LayoutNode> {
+        self.last_paint_layout.as_ref()
+    }
+
+    /// (R684 §5.16 §5.41 §5.49) Read-only passthrough to
+    /// [`pinion_runtime::CoreShell::has_last_paint_scene_for_window`]
+    /// — `true` once the named window's
+    /// [`pinion_runtime::InputRouter`] has received a paint scene.
+    /// Used by R684 atomic 3 substrate tests to assert that the
+    /// post-dispatch finalize hook populated the addressed window's
+    /// router (closing the headless-RPC floating-window gap).
+    #[must_use]
+    pub fn has_last_paint_scene_for_window(&self, window_id: &str) -> bool {
+        self.core.has_last_paint_scene_for_window(window_id)
     }
 
     /// R51.76 §5.40 — drain the redraw flag set by `request_redraw`.
@@ -1759,6 +1786,29 @@ impl<V: WidgetView> ShellCore<V> {
         let cache_stats_for_window = self.fragment_cache_stats_for_window(
             window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW),
         );
+        // R684 atomic 3 §5.16 §5.41 §5.49 — record the viewport the
+        // produce closure ran with so the post-dispatch finalize can
+        // populate the addressed window's
+        // [`pinion_runtime::InputRouter::last_paint_scene`] before the
+        // deferred-input drain hit-tests against it. Pre-R684 a
+        // freshly-spawned floating window (R683 dock tear-off; never
+        // got a winit `RedrawRequested` cycle under headless RPC)
+        // would have an empty per-window InputRouter, and
+        // `scene/drag {window: "torn-..."}` silently no-op'd because
+        // the hit-test walked an empty scene. The post-dispatch
+        // finalize re-runs the paint pipeline + writes the result
+        // into the InputRouter so the drag dispatch sees real
+        // geometry.
+        //
+        // `Cell<Option<(u32, u32)>>` is the cheapest interior-
+        // mutability shape that lets the `FnMut` produce closure
+        // record state visible after the borrow-split block ends.
+        // Scene cloning is unavailable (`ExternalNode` carries
+        // `Box<dyn External>` which has no generic clone strategy
+        // per [`pinion_core::scene::ExternalNode`] doc), so the
+        // textbook path is to re-run the paint cycle from the
+        // post-dispatch hook with `&mut self` access restored.
+        let produce_size: Cell<Option<(u32, u32)>> = Cell::new(None);
         let resp = {
             // Disjoint-field split mutable borrows. R51.123 §5.41 —
             // `scene` + `cached_state` live behind
@@ -1804,6 +1854,13 @@ impl<V: WidgetView> ShellCore<V> {
             // view branch.
             let producer_window_id = window_id.map(str::to_owned);
             let mut produce = |w: u32, h: u32| -> Scene {
+                // R684 atomic 3 — record the viewport for the
+                // post-dispatch headless-RPC finalize. Tracking the
+                // last (w, h) the closure ran with lets the post-
+                // dispatch hook re-run `compute_paint_scene_for_window`
+                // at the same viewport so the InputRouter snapshot
+                // matches the geometry the RPC handler just saw.
+                produce_size.set(Some((w, h)));
                 let frame = Frame::new();
                 let mut paint = root_owner.run(|| match producer_window_id.as_deref() {
                     Some(id) => V::view_for_window(id, cached_state, &frame),
@@ -1872,6 +1929,86 @@ impl<V: WidgetView> ShellCore<V> {
             (resp, deferred_inputs)
         };
         let (resp, deferred_inputs) = resp;
+        // R684 atomic 3 §5.16 §5.41 §5.49 — headless-RPC floating-
+        // window paint cycle. When the dispatch is scoped to a
+        // specific window AND the produce closure ran (i.e. an RPC
+        // handler resolved a path or otherwise asked for the paint
+        // scene), re-run the paint pipeline for the addressed
+        // window + finalize the addressed window's
+        // [`pinion_runtime::InputRouter::last_paint_scene`].
+        //
+        // This makes [`pinion_runtime::InputRouter`] hit-testing
+        // work for floating windows that have never been driven by a
+        // winit `RedrawRequested` cycle (the R683 dock tear-off
+        // path under headless RPC produces such windows). Pre-R684
+        // every such window's router stayed empty until winit's
+        // paint loop caught up, so `scene/drag {window: "torn-..."}`
+        // silently no-op'd because the deferred-input drain (below)
+        // had nothing to hit-test against.
+        //
+        // Skipped when `window_id` is `None` (single-window
+        // `Self::dispatch_rpc` path) so the legacy single-window
+        // behaviour stays bit-identical — single-window bindings
+        // already drive finalize through their AppShell's winit
+        // paint loop, and the AppShell-side `dispatch_rpc` ALWAYS
+        // threads `Some(spec_id)` here regardless of how many
+        // windows the binding declared (every multi-window AppShell
+        // RPC frame carries an explicit `{window: "<id>"}` param).
+        //
+        // Skipped when `produce_size` stayed `None` (no RPC handler
+        // asked for the paint scene, e.g. `focus/get` /
+        // `scene/intents` etc. — these are pure substrate reads,
+        // running a full paint cycle just to populate the router
+        // would be pure overhead).
+        //
+        // The double-paint cost (produce closure ran once for
+        // path-resolution, this re-run feeds finalize) is acceptable
+        // for headless-RPC: dt between the two calls is microseconds
+        // so animation tick advances by ~0 (`Instant::now() -
+        // Instant::now()` ≈ 0 → spring solver no-op), layout cache
+        // LRU touches the same entries (no churn), and the second
+        // paint observably equals the first.
+        // R684 atomic 3 finalize: write the post-paint scene into the
+        // addressed window's InputRouter + the substrate
+        // `last_paint_layout` mirror so the downstream
+        // `drain_deferred_inputs_for_window` hit-tests against real
+        // geometry. **First-paint only** — gated on the router
+        // having no `last_paint_scene` yet — so already-active windows
+        // do NOT pay any per-RPC side-effect cost.
+        //
+        // Why first-paint only:
+        //
+        // `update_paint_scene_for_window` calls
+        // [`pinion_runtime::InputRouter::refresh_hover`] for every
+        // active cursor as a side effect (a window resize or scene
+        // re-layout can move widgets under a stationary cursor, and
+        // `refresh_hover` synthesizes the resulting `PointerEnter` /
+        // `PointerLeave` arcs so the SCXML state matches the new
+        // geometry). For already-painted windows this side effect is
+        // already driven by winit's `RedrawRequested` cycle on every
+        // visible frame; re-driving it on every RPC dispatch would
+        // double-fire hover transitions and mutate widget state in
+        // ways the application did not request (the bisect signal
+        // that pinpointed this: `tools/demos/todomvc_r660.py` End-
+        // key assertion regressed because the post-finalize
+        // refresh_hover dispatched a PointerEnter that the RadioGroup
+        // statechart interpreted as a focus shift).
+        //
+        // We deliberately bypass [`Self::finalize_frame_for_window`]
+        // because it ends with `tail()` + `handle_tail()` — the
+        // intent drain belongs to the END of the dispatch cycle and
+        // is performed below by the existing R51.123 §5.41
+        // post-dispatch `handle_tail` call. Routing through
+        // `finalize_frame_for_window` here would double-drain
+        // pending intents queued by the produce-closure's paint walk.
+        if let (Some(id), Some((w, h))) = (window_id, produce_size.get()) {
+            if !self.core.has_last_paint_scene_for_window(id) {
+                let paint = self.compute_paint_scene_for_window(id, w, h);
+                let paint_layout = pinion_rpc::build_layout_node(&paint, "/0");
+                self.last_paint_layout = Some(paint_layout);
+                self.core.update_paint_scene_for_window(id, paint);
+            }
+        }
         // R51.195 §5.49 §5.45 — drain the deferred-input inbox.
         // `&mut scene` is released here, so calling back into
         // `ShellCore` is legal again.

@@ -1787,6 +1787,43 @@ impl Size {
             height: SizeValue::Px(height),
         }
     }
+
+    /// (R684 §5.21) Fixed-height-only constructor — width stays
+    /// [`SizeValue::Auto`] so the cross-axis [`AlignItems::Stretch`]
+    /// path can promote the rect to the parent's cross-axis extent.
+    ///
+    /// Canonical use: a flex-child strip whose height is pinned but
+    /// whose width should fill the parent (e.g. the dock-panel
+    /// header strip R684 atomic 1 lands). Pre-R684 the
+    /// `Size::px(0, h)` shape was the only available form; the
+    /// explicit `Px(0)` width defeated [`AlignItems::Stretch`] (taffy
+    /// honours an explicit zero-width before the cross-axis stretch
+    /// pass runs). `height_px` keeps the substrate `#[non_exhaustive]`
+    /// struct-expression discipline (cross-crate callers cannot build
+    /// `Size { ... }` directly) while landing the natural canonical
+    /// shape.
+    #[must_use]
+    pub const fn height_px(height: u32) -> Self {
+        Self {
+            width: SizeValue::Auto,
+            height: SizeValue::Px(height),
+        }
+    }
+
+    /// (R684 §5.21) Fixed-width-only constructor — height stays
+    /// [`SizeValue::Auto`]. Symmetric mirror of [`Self::height_px`]
+    /// for the Row-axis-pinned case (e.g. a fixed-width gutter
+    /// inside a Column flex parent where the height should fill).
+    /// Currently has no in-tree consumer — landed alongside
+    /// [`Self::height_px`] for symmetry so future widget axes do not
+    /// need to discover the same substrate gap a second time.
+    #[must_use]
+    pub const fn width_px(width: u32) -> Self {
+        Self {
+            width: SizeValue::Px(width),
+            height: SizeValue::Auto,
+        }
+    }
 }
 
 /// Layout sidecar — companion to [`BoxStyle`] / [`TextStyle`] / etc.
@@ -1833,6 +1870,37 @@ pub struct LayoutStyle {
     /// positioning context — a future round adds an opt-out flag if
     /// nested absolute-positioning contexts become necessary.
     pub absolute_position: Option<(u32, u32)>,
+    /// (R684 §5.21) Flex `flex-basis` override — the main-axis size
+    /// taffy uses as the *starting point* for the flex pass, before
+    /// `flex_grow` distributes remaining space and `flex_shrink`
+    /// absorbs deficits.
+    ///
+    /// `None` (the default) maps to taffy's `Dimension::Auto`, which
+    /// derives the basis from the child's intrinsic content size — the
+    /// pre-R684 behaviour. Every existing binding inherits the legacy
+    /// resolution path bit-identically.
+    ///
+    /// `Some(SizeValue::Px(0))` paired with `flex_grow > 0.0` is the
+    /// CSS-canonical "distribute parent extent proportionally to
+    /// `flex_grow`" idiom: the basis is zeroed out so taffy has the
+    /// FULL parent extent to share between children rather than only
+    /// the remainder after each child's intrinsic content. This is
+    /// the substrate primitive R683.C diagnosed as missing — the dock
+    /// panel header strip and the splitter ratio wrappers both want
+    /// the proportional-distribution interpretation of `flex_grow`,
+    /// not the leftover-distribution one taffy applies under
+    /// `Auto` basis.
+    ///
+    /// `Some(SizeValue::Percent(p))` maps to `Dimension::percent(p /
+    /// 100)`; `Some(SizeValue::Auto)` is equivalent to `None` (both
+    /// yield `Dimension::Auto`) but is retained as a valid input so
+    /// builder chains can reset a previously-set basis without
+    /// rebuilding the entire `LayoutStyle`.
+    ///
+    /// Mirrors CSS `flex-basis: <length-percentage | auto>` and
+    /// Slint's `flex-basis` property — both ecosystems carry the same
+    /// field on their layout primitive for the same reasons.
+    pub flex_basis: Option<SizeValue>,
 }
 
 impl LayoutStyle {
@@ -1854,6 +1922,9 @@ impl LayoutStyle {
             margin: crate::scene::Rect::new(0, 0, 0, 0),
             // (R55.D.6 §5.45 §5.21) `None` = normal flow, default.
             absolute_position: None,
+            // (R684 §5.21) `None` = taffy `Dimension::Auto` — intrinsic
+            // content drives the basis. Pre-R684 layout preserved.
+            flex_basis: None,
         }
     }
 
@@ -1934,6 +2005,19 @@ impl LayoutStyle {
         self.flex_grow = grow;
         self
     }
+
+    /// (R684 §5.21) Builder: flex-basis main-axis override.
+    ///
+    /// See [`Self::flex_basis`] for the contract. The canonical use
+    /// is `with_flex_basis(SizeValue::Px(0))` paired with
+    /// `with_flex_grow(ratio)` to opt into CSS-canonical proportional
+    /// distribution of the full parent extent (the splitter ratio +
+    /// dock panel header strip pattern R684 lands).
+    #[must_use]
+    pub const fn with_flex_basis(mut self, basis: SizeValue) -> Self {
+        self.flex_basis = Some(basis);
+        self
+    }
 }
 
 /// (R682 §5.16) Manual `Hash` impl over every paint-affecting
@@ -1963,6 +2047,13 @@ impl core::hash::Hash for LayoutStyle {
         self.padding.hash(hasher);
         self.margin.hash(hasher);
         self.absolute_position.hash(hasher);
+        // (R684 §5.21) `Option<SizeValue>` hashes via `Option::hash`
+        // + derived `SizeValue::Hash` (variant tag + payload `u32`/
+        // `u8`). Pre-R684 caches keyed on a LayoutStyle without
+        // `flex_basis` produce the same byte image when the new field
+        // stays at its `None` default (R682 paint-fragment cache
+        // bit-identical for every pre-R684 binding).
+        self.flex_basis.hash(hasher);
     }
 }
 
@@ -2941,5 +3032,98 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R684 §5.21 — LayoutStyle::flex_basis substrate. Pins the
+    // field default, builder, PartialEq inclusion, and Hash
+    // inclusion. The pinion-runtime layout module owns the taffy
+    // translation tests (None → Auto, Some(Px(0)) + flex_grow →
+    // proportional split, etc.).
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r684_layout_style_flex_basis_default_is_none() {
+        // Backward-compat pin: every pre-R684 binding constructs
+        // LayoutStyle via `new()` and never touches `flex_basis`. The
+        // default must stay `None` so the taffy translation falls
+        // through to `Dimension::Auto`, preserving the legacy
+        // intrinsic-content behaviour.
+        let style = LayoutStyle::new();
+        assert_eq!(style.flex_basis, None);
+    }
+
+    #[test]
+    fn r684_layout_style_with_flex_basis_px_sets_field() {
+        let style = LayoutStyle::new().with_flex_basis(SizeValue::Px(0));
+        assert_eq!(style.flex_basis, Some(SizeValue::Px(0)));
+    }
+
+    #[test]
+    fn r684_layout_style_with_flex_basis_percent_sets_field() {
+        let style = LayoutStyle::new().with_flex_basis(SizeValue::Percent(50));
+        assert_eq!(style.flex_basis, Some(SizeValue::Percent(50)));
+    }
+
+    #[test]
+    fn r684_layout_style_with_flex_basis_auto_sets_some_auto() {
+        // R684 contract: `with_flex_basis(Auto)` wraps the value in
+        // `Some` even though `Some(Auto)` lowers to the same taffy
+        // `Dimension::Auto` as `None`. The wrapper keeps the
+        // builder chain expressive (a downstream override can call
+        // `with_flex_basis(Auto)` to reset a previously-set basis).
+        let style = LayoutStyle::new().with_flex_basis(SizeValue::Auto);
+        assert_eq!(style.flex_basis, Some(SizeValue::Auto));
+    }
+
+    #[test]
+    fn r684_layout_style_flex_basis_chains_with_other_builders() {
+        // Canonical R684 idiom: `flex_basis(Px(0))` + `flex_grow(r)`
+        // pair. Both fields must round-trip through the builder
+        // chain (the splitter + dock cascade depend on the pair).
+        let style = LayoutStyle::new()
+            .with_flex_basis(SizeValue::Px(0))
+            .with_flex_grow(0.7);
+        assert_eq!(style.flex_basis, Some(SizeValue::Px(0)));
+        assert!((style.flex_grow - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r684_layout_style_partial_eq_distinguishes_flex_basis_values() {
+        // Different `flex_basis` values must compare unequal so the
+        // R682 paint-fragment cache invalidates correctly when a
+        // splitter ratio re-emit walks past the basis sentinel.
+        let a = LayoutStyle::new();
+        let b = LayoutStyle::new().with_flex_basis(SizeValue::Px(0));
+        let c = LayoutStyle::new().with_flex_basis(SizeValue::Px(10));
+        let d = LayoutStyle::new().with_flex_basis(SizeValue::Percent(50));
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(b, d);
+        assert_eq!(b, LayoutStyle::new().with_flex_basis(SizeValue::Px(0)));
+    }
+
+    #[test]
+    fn r684_layout_style_hash_includes_flex_basis() {
+        // Hash divergence pin: the R682 paint-fragment cache keys on
+        // the LayoutStyle byte image; if the manual `Hash` impl
+        // forgot the new field, two structurally-distinct splitter
+        // ratios would alias to the same cache slot.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher_a = DefaultHasher::new();
+        LayoutStyle::new().hash(&mut hasher_a);
+
+        let mut hasher_b = DefaultHasher::new();
+        LayoutStyle::new()
+            .with_flex_basis(SizeValue::Px(0))
+            .hash(&mut hasher_b);
+
+        assert_ne!(
+            hasher_a.finish(),
+            hasher_b.finish(),
+            "flex_basis must participate in LayoutStyle::hash",
+        );
     }
 }

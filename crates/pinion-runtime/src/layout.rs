@@ -524,6 +524,17 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         height: to_dimension(layout.size.height),
     };
     s.flex_grow = layout.flex_grow;
+    // (R684 §5.21) `LayoutStyle::flex_basis` lowering. `None` maps to
+    // `Dimension::Auto` (taffy's default — intrinsic content drives
+    // the basis); `Some(v)` reuses `to_dimension` so `SizeValue::Px`,
+    // `SizeValue::Percent`, and `SizeValue::Auto` all reach taffy via
+    // the canonical translation. The pre-R684 substrate had no
+    // `flex_basis` field — taffy's struct default of `Auto` carried
+    // every binding's behaviour, so `None → Auto` keeps the layout
+    // graph bit-identical.
+    if let Some(basis) = layout.flex_basis {
+        s.flex_basis = to_dimension(basis);
+    }
     // §5.21 R24 slice 4: Rect-as-4-inset (x=left, y=top, w=right,
     // h=bottom) → taffy Rect<LengthPercentage>. taffy's padding /
     // margin both take pixel lengths.
@@ -1304,5 +1315,171 @@ mod tests {
         let Scene::Box(b) = &c.children[1] else { panic!("b") };
         assert_eq!(a.rect.y, 0);
         assert_eq!(b.rect.y, 45, "gap=5 honored, no absolute interference");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R684 §5.21 — `LayoutStyle::flex_basis` taffy lowering. The
+    // substrate-side `Option<SizeValue>` field maps to `taffy::Style::
+    // flex_basis: Dimension`, and the four contract points below pin
+    // the canonical translation rules:
+    //
+    //   1. `flex_basis = None` → `Dimension::Auto` (legacy intrinsic
+    //      basis; bit-identical to pre-R684 layout).
+    //   2. `flex_basis = Some(Px(0))` + `flex_grow > 0` distributes
+    //      the FULL parent extent proportionally (the dock + splitter
+    //      cascade R684 lands).
+    //   3. `flex_basis = Some(Percent(p))` resolves to `p%` of the
+    //      parent's main-axis size.
+    //   4. Two siblings with `Px(0)` basis + different `flex_grow`
+    //      values split the parent proportionally to the ratios.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r684_flex_basis_none_default_preserves_intrinsic_layout() {
+        // Pre-R684 behaviour pin. A flex Row child with an explicit
+        // `size: Size::px(120, 40)` and `flex_basis = None` must lay
+        // out at exactly 120 px — the intrinsic basis matches the
+        // declared size, the pre-R684 graph is unchanged.
+        let layout = LayoutStyle::new().flex(FlexDirection::Row);
+        let child = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default())
+                .with_layout(LayoutStyle::new().with_size(Size::px(120, 40))),
+        );
+        let mut scene = Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
+        compute_layout(&mut scene, &mut cache(), 360, 200);
+        let Scene::Container(c) = &scene else { panic!("container") };
+        let Scene::Box(b) = &c.children[0] else { panic!("box child") };
+        assert_eq!(b.rect.w, 120, "None basis → intrinsic 120 px width");
+    }
+
+    #[test]
+    fn r684_flex_basis_zero_px_with_flex_grow_one_takes_full_parent_extent() {
+        // R684 contract atomic 1+2 anchor — the canonical
+        // proportional-distribution idiom. A single flex Row child
+        // with `flex_basis(Px(0))` + `flex_grow(1.0)` claims the
+        // entire 360 px parent width, not just the leftover after
+        // intrinsic content sizing. No explicit `with_size`: the
+        // width-only assertion does not need a height pin (taffy
+        // resolves height to 0 under the default cross-axis Stretch
+        // when no `with_size` is supplied, which is what we want).
+        let layout = LayoutStyle::new().flex(FlexDirection::Row);
+        let child = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default()).with_layout(
+                LayoutStyle::new()
+                    .with_flex_basis(SizeValue::Px(0))
+                    .with_flex_grow(1.0),
+            ),
+        );
+        let mut scene = Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
+        compute_layout(&mut scene, &mut cache(), 360, 200);
+        let Scene::Container(c) = &scene else { panic!("container") };
+        let Scene::Box(b) = &c.children[0] else { panic!("box child") };
+        assert_eq!(
+            b.rect.w, 360,
+            "flex_basis(Px(0)) + flex_grow(1.0) must take the full parent extent",
+        );
+    }
+
+    #[test]
+    fn r684_flex_basis_percent_50_lays_out_at_half_parent() {
+        // `Percent(50)` maps to `Dimension::percent(0.5)` — taffy
+        // resolves the basis to half the parent's main-axis size on
+        // the basis-resolution pass. With `flex_grow = 0` (default)
+        // the layout result equals the basis: 180 px in a 360 px
+        // parent.
+        let layout = LayoutStyle::new().flex(FlexDirection::Row);
+        let child = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default()).with_layout(
+                LayoutStyle::new().with_flex_basis(SizeValue::Percent(50)),
+            ),
+        );
+        let mut scene = Scene::Container(ContainerNode::new(vec![child]).with_layout(layout));
+        compute_layout(&mut scene, &mut cache(), 360, 200);
+        let Scene::Container(c) = &scene else { panic!("container") };
+        let Scene::Box(b) = &c.children[0] else { panic!("box child") };
+        assert_eq!(b.rect.w, 180, "Percent(50) basis → half-parent width");
+    }
+
+    #[test]
+    fn r684_flex_basis_zero_with_flex_grow_ratios_split_proportionally() {
+        // R684 atomic 2 anchor — the splitter ratio fix. Two siblings
+        // with `flex_basis(Px(0))` + ratios 0.3 and 0.7 must split
+        // the 1000-wide parent into 300 + 700 (proportional), NOT
+        // ~500 + ~500 (the pre-R684 `Auto` basis collapsed every
+        // ratio to roughly 50/50 because the leftover-distribution
+        // path operates on a near-zero remainder when both children
+        // already claim full intrinsic width).
+        let parent_w: u32 = 1000;
+        let left = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default()).with_layout(
+                LayoutStyle::new()
+                    .with_flex_basis(SizeValue::Px(0))
+                    .with_flex_grow(0.3),
+            ),
+        );
+        let right = Scene::Box(
+            BoxNode::filled(Rect::default(), Color::default()).with_layout(
+                LayoutStyle::new()
+                    .with_flex_basis(SizeValue::Px(0))
+                    .with_flex_grow(0.7),
+            ),
+        );
+        let layout = LayoutStyle::new().flex(FlexDirection::Row);
+        let mut scene =
+            Scene::Container(ContainerNode::new(vec![left, right]).with_layout(layout));
+        compute_layout(&mut scene, &mut cache(), parent_w, 200);
+        let Scene::Container(c) = &scene else { panic!("container") };
+        let Scene::Box(l) = &c.children[0] else { panic!("left") };
+        let Scene::Box(r) = &c.children[1] else { panic!("right") };
+        // Allow a 1-px tolerance for rounding (taffy rounds f32
+        // pixels to u32 at the layout-apply boundary).
+        assert!(
+            l.rect.w.abs_diff(300) <= 1,
+            "0.3 ratio child must take 300 px ± 1 of {parent_w} px parent, got {}",
+            l.rect.w,
+        );
+        assert!(
+            r.rect.w.abs_diff(700) <= 1,
+            "0.7 ratio child must take 700 px ± 1 of {parent_w} px parent, got {}",
+            r.rect.w,
+        );
+        // The total must equal the parent's main-axis extent (the
+        // children fully cover the row, no leftover gap).
+        assert_eq!(l.rect.w + r.rect.w, parent_w);
+    }
+
+    #[test]
+    fn r684_flex_basis_some_auto_equivalent_to_none() {
+        // The `to_dimension(SizeValue::Auto)` fallback feeds
+        // `taffy::Dimension::Auto`, identical to the `None` branch.
+        // Two scenes constructed with `None` vs `Some(Auto)` must
+        // lay out bit-identical so callers can reset a previously-
+        // set basis via `with_flex_basis(Auto)` without rebuilding
+        // the entire LayoutStyle.
+        let layout = LayoutStyle::new().flex(FlexDirection::Row);
+        let intrinsic_child = |basis: Option<SizeValue>| -> Scene {
+            let mut ls = LayoutStyle::new().with_size(Size::px(140, 40));
+            if let Some(b) = basis {
+                ls = ls.with_flex_basis(b);
+            }
+            Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_layout(ls))
+        };
+
+        let mut none_scene = Scene::Container(
+            ContainerNode::new(vec![intrinsic_child(None)]).with_layout(layout),
+        );
+        let mut some_auto_scene = Scene::Container(
+            ContainerNode::new(vec![intrinsic_child(Some(SizeValue::Auto))]).with_layout(layout),
+        );
+        compute_layout(&mut none_scene, &mut cache(), 360, 200);
+        compute_layout(&mut some_auto_scene, &mut cache(), 360, 200);
+
+        let extract_w = |s: &Scene| -> u32 {
+            let Scene::Container(c) = s else { panic!("container") };
+            let Scene::Box(b) = &c.children[0] else { panic!("box") };
+            b.rect.w
+        };
+        assert_eq!(extract_w(&none_scene), extract_w(&some_auto_scene));
+        assert_eq!(extract_w(&none_scene), 140, "intrinsic 140 preserved");
     }
 }

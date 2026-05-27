@@ -320,6 +320,21 @@ impl InputRouter {
         self.captured_targets.get(&id).map(String::as_str)
     }
 
+    /// (R684 §5.35 §5.41 §5.16) Read-only predicate — whether the
+    /// router has ever received a paint scene via
+    /// [`Self::update_paint_scene`]. The substrate-level signal that
+    /// the per-window `InputRouter` is "primed" for hit-testing /
+    /// drag dispatch / hover resolution. Pre-R684 callers had no
+    /// substrate-visible way to distinguish a never-painted router
+    /// from one whose `last_paint_scene` carried an empty
+    /// [`Scene::Container`]; R684 atomic 3's headless-RPC finalize
+    /// uses this predicate to skip the post-dispatch finalize when
+    /// the live winit paint loop already populated the router.
+    #[must_use]
+    pub fn has_last_paint_scene(&self) -> bool {
+        self.last_paint_scene.is_some()
+    }
+
     /// Update the retained paint scene after each render. Re-resolves
     /// `hover_targets` for every active pointer against the new
     /// layout — a window resize may move the button rect under a

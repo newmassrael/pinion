@@ -3317,6 +3317,7 @@ version = "0.0.1"
 dependencies = [
  "pinion-a11y",
  "pinion-core",
+ "pinion-runtime",
  "pinion-text",
 ]
 
