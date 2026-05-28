@@ -129,10 +129,18 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     // pre-R686.B inline `button_fill_endpoints` did; the tag
     // ("main_btn") routes the InputRouter hit-test to the wrapped
     // ButtonExternal.
+    // R694 §5.39 — `focused = false`: this `#[widget]`-derived demo's
+    // `State` is `ButtonState`, which does not thread the external's
+    // keyboard-focus posture (the derive macro would have to surface the
+    // `focused` introspect slot into `State`). The multi-control consumers
+    // that read state manually (hello-dialog / hello-toolbar / hello-tabs)
+    // paint the ring this round; the derive path follows when the macro
+    // threads the slot. The a11y tree already reports focus precisely.
     let button = view_button(
         label,
         state,
         hover_progress,
+        false,
         &ButtonColors::filled_tonal(&theme),
         &ButtonStyle::m3_default("main_btn")
             .with_size(Size::px(BTN_W, BTN_H))

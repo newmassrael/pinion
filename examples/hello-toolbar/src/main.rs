@@ -48,17 +48,20 @@
 //! - **Tab** — unhandled here, so the shell advances focus past the
 //!   toolbar to the next widget.
 //!
-//! ## Roving-cursor visual (R692 first-slice scope)
+//! ## Roving-cursor visual (R694 shell-focus gating)
 //!
 //! The paint draws the roving cursor's focus ring on the
 //! `ToolbarExternal`'s `focus` control (mirroring
-//! [`pinion_widget_paint::tree_view::view_tree_focused`]). Gating the
-//! paint ring on *shell* focus (so it dims when the toolbar is not the
-//! focused widget) needs a "focused tag → view-fn" channel the pure
-//! `view(state, frame)` signature does not yet carry — the same axis
-//! the R690 Tabs paint deferred. The a11y walker *is* shell-focus
-//! aware (`access_node` receives the focused tag) so AT clients see the
-//! precise focus state regardless.
+//! [`pinion_widget_paint::tree_view::view_tree_focused`]), gated on
+//! `group_focused` so the ring shows only while the strip owns the shell
+//! focus and dims when focus moves elsewhere. R692 deferred this gating
+//! for want of a "does my widget own shell focus" channel into the pure
+//! `view(state, frame)`; R694 §5.39 supplies it the same way hover /
+//! pressed flow — the shell mirrors focus onto the `ToolbarExternal` via
+//! `External::on_focus_change`, the external surfaces it on the `focused`
+//! introspect slot, and `read_state` threads it into `ToolbarState`. The
+//! a11y walker is independently shell-focus aware (`access_node`
+//! receives the focused tag) so AT clients see the same state.
 //!
 //! ## AI clients
 //!
@@ -117,6 +120,11 @@ struct ToolbarState {
     focus: usize,
     /// Per-control pressed bits; a command control's bit stays `false`.
     pressed: [bool; CONTROL_COUNT],
+    /// R694 §5.39 — whether the toolbar owns the shell focus (read from
+    /// the `ToolbarExternal`'s `focused` introspect slot, mirrored by the
+    /// shell via `on_focus_change`). Gates the roving focus ring so it
+    /// shows only while the strip is the focused widget.
+    group_focused: bool,
 }
 
 /// view-fn (§6.3): pure sync mapping `ToolbarState -> Scene`. The
@@ -130,9 +138,19 @@ fn view(state: ToolbarState, _frame: &Frame) -> Scene {
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let on_surface_muted = theme.resolve(ColorRole::OnSurfaceMuted);
 
-    // R692 first-slice: the roving ring always tracks the External's
-    // `focus`; shell-focus gating is a deferred axis (see module docs).
-    let toolbar = view_toolbar(TOOLBAR_TAG, &LABELS, &state.pressed, state.focus, true, &theme, &style);
+    // R694 §5.39 — the roving ring tracks the External's `focus`, gated
+    // on `group_focused` so it paints only while the strip owns shell
+    // focus (the R692 deferred axis, now sourced from the External's
+    // `focused` introspect slot via `read_state`).
+    let toolbar = view_toolbar(
+        TOOLBAR_TAG,
+        &LABELS,
+        &state.pressed,
+        state.focus,
+        state.group_focused,
+        &theme,
+        &style,
+    );
 
     let body = Scene::Text(TextNode::styled(
         "Arrow between controls, Enter/Space to toggle or run; or click a control.",
@@ -206,6 +224,9 @@ impl WidgetCore for ToolbarView {
         for (i, slot) in out.pressed.iter_mut().enumerate() {
             *slot = matches!(intro.query(&format!("pressed.{i}")), Some(IntrospectValue::Bool(true)));
         }
+        // R694 §5.39 — whether the strip owns shell focus, for the ring gate.
+        out.group_focused =
+            matches!(intro.query("focused"), Some(IntrospectValue::Bool(true)));
         out
     }
 
@@ -370,7 +391,11 @@ mod a11y_tests {
     use super::*;
 
     fn state(focus: usize, pressed: [bool; CONTROL_COUNT]) -> ToolbarState {
-        ToolbarState { focus, pressed }
+        ToolbarState {
+            focus,
+            pressed,
+            group_focused: false,
+        }
     }
 
     #[test]

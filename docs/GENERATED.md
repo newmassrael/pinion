@@ -14061,6 +14061,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R694 — R694 shell-focus-paint substrate — keyboard focus ring across the widget catalogue via External focus posture (on_focus_change -> `focused` introspect slot -> read_state), retiring the R690/R692/R693 unpainted-ring carry for the Button + Toolbar consumers
+
+**Changes**:
+- view_button gains a `focused: bool` arg + a FOCUS_RING_WIDTH (3) const + a ButtonColors.focus_ring field (filled_tonal -> Accent, the documented M3 focus-ring role; accent -> OnAccent for contrast; new -> explicit): a focused button paints an M3 focus-indicator Border, orthogonal to the hover/pressed fill
+- ButtonExternal + ToolbarExternal store a keyboard-focus posture set via External::on_focus_change (already fired by both shells' notify_focus_change on every focus transition) and surface it on a new `focused` introspect slot, so the binding's read_state sources it through the same channel hover/pressed already use -- no framework-wide view-fn signature ripple
+- hello-dialog action buttons (the named 3rd shell-focus-paint consumer) now paint a real Tab focus ring sourced from each ButtonExternal's `focused` slot; the restored trigger rings when focus returns to it on close (the substrate is not dialog-specific)
+- hello-toolbar replaces its hard-coded group_focused=true with the ToolbarExternal `focused` slot, so the roving cursor's ring shows only while the strip owns shell focus (the R692 deferred gating axis); the stale module-doc deferral comment is corrected
+- figma-button-m3 / hello-button / hello-dock-panels-editor thread focused=false: the #[widget]-derived State=ButtonState path does not surface the slot, and the editor viewport button is pointer-driven
+
+
+
+**Verification**:
+- cargo test --workspace green (-j2), 0 failures; new tests: view_button focus-ring paint (filled_tonal=Accent, focused=>Border width 3, orthogonal to state), ButtonExternal + ToolbarExternal focus-posture/introspect-slot, hello-dialog focused-action-rings-others-do-not
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic
+- tools/demos/r694_focus_ring.py PASS (39 assertions): dialog auto-focus rings Cancel only at width 3, ring follows focus/next + wraps, trigger behind scrim never rings, restored trigger rings on close; toolbar `focused` slot false at boot then true on focus/set, roving ring width 2 tracks Arrow nav, the four non-roving controls stay ringless; regression sweep r693/r692/r690/r691/hello_button PASS
+
+
+
+**Impact**: §5.16, §5.38, §5.39, §5.50
+
+
+**Carry forward**:
+- Standalone #[widget]-derived buttons (hello-button, figma-button-m3) still paint no keyboard focus ring: their macro-generated State=ButtonState does not thread the `focused` introspect slot; lands when the #[widget] derive surfaces focus posture into State (a derive-macro axis). The a11y tree already reports focus precisely.
+- Tabs (R690) automatic-activation conflates focus with selection (the Accent active-indicator doubles as the focus indicator); a distinct keyboard focus ring + the manual-activation focus state-layer remain a separate future axis (documented in tabs.rs), not the unpainted-ring debt this round cleared.
+- M3 focus-ring offset gap (the 2dp gap between component edge and ring) needs a border-offset primitive pinion lacks; the ring sits on the component edge for now.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

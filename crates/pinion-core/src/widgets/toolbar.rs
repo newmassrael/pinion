@@ -253,6 +253,16 @@ impl Default for Toolbar {
 /// shapes).
 pub struct ToolbarExternal {
     em: IntentEmitter<Toolbar>,
+    /// R694 §5.39 — whether the toolbar group owns the shell
+    /// [`FocusManager`](crate) focus, mirrored via
+    /// [`External::on_focus_change`](crate::external::External::on_focus_change).
+    /// The roving cursor ([`Self::focus`]) is always defined, but its
+    /// focus ring should paint only while the strip is the focused
+    /// widget — `view_toolbar`'s `group_focused` argument. Surfaced via
+    /// the `focused` introspect slot so the binding's `read_state`
+    /// sources it (the same channel hover / pressed already use), instead
+    /// of the pre-R694 hard-coded `true`.
+    group_focused: bool,
 }
 
 impl ToolbarExternal {
@@ -261,6 +271,7 @@ impl ToolbarExternal {
     pub fn new(kinds: Vec<ToolItem>) -> Self {
         Self {
             em: IntentEmitter::new(Toolbar::new(kinds)),
+            group_focused: false,
         }
     }
 
@@ -286,6 +297,14 @@ impl ToolbarExternal {
     #[must_use]
     pub fn focus(&self) -> usize {
         self.em.inner.focus()
+    }
+
+    /// R694 §5.39 — whether the toolbar group currently owns the shell
+    /// focus (set by the shell via
+    /// [`External::on_focus_change`](crate::external::External::on_focus_change)).
+    #[must_use]
+    pub fn group_focused(&self) -> bool {
+        self.group_focused
     }
 
     /// Drive a control pointer event (`i`, `event`). `PointerUp`
@@ -410,6 +429,12 @@ impl External for ToolbarExternal {
     fn is_dirty(&self) -> bool {
         self.em.is_dirty()
     }
+
+    /// R694 §5.39 — mirror the shell focus posture so the roving cursor's
+    /// focus ring paints only while the strip owns shell focus.
+    fn on_focus_change(&mut self, focused: bool) {
+        self.group_focused = focused;
+    }
 }
 
 impl ExternalIntrospect for ToolbarExternal {
@@ -417,6 +442,7 @@ impl ExternalIntrospect for ToolbarExternal {
         IntrospectSchema::new(&[
             ("count", "int"),
             ("focus", "int"),
+            ("focused", "bool"),
             ("kind.<i>", "string"),
             ("pressed.<i>", "bool"),
             ("send", "string"),
@@ -430,6 +456,8 @@ impl ExternalIntrospect for ToolbarExternal {
                 i64::try_from(self.count()).expect("count fits in i64"),
             )),
             "focus" => Some(focus_value(self.focus())),
+            // R694 §5.39 — group shell-focus posture for the ring gate.
+            "focused" => Some(IntrospectValue::Bool(self.group_focused)),
             _ => {
                 if let Some(suffix) = path.strip_prefix("kind.") {
                     let i: usize = suffix.parse().ok()?;
@@ -855,11 +883,30 @@ mod tests {
             &[
                 ("count", "int"),
                 ("focus", "int"),
+                // R694 §5.39 — group shell-focus posture for the ring gate.
+                ("focused", "bool"),
                 ("kind.<i>", "string"),
                 ("pressed.<i>", "bool"),
                 ("send", "string"),
                 ("key", "string"),
             ]
         );
+    }
+
+    #[test]
+    fn r694_group_focus_posture_mirrors_on_focus_change() {
+        use crate::external::External;
+        let mut e = ext();
+        assert!(!e.group_focused(), "toolbar boots without group focus");
+        assert_eq!(e.query("focused"), Some(IntrospectValue::Bool(false)));
+        e.on_focus_change(true);
+        assert!(e.group_focused());
+        assert_eq!(
+            e.query("focused"),
+            Some(IntrospectValue::Bool(true)),
+            "group focus surfaces on the introspect slot for the ring gate",
+        );
+        e.on_focus_change(false);
+        assert_eq!(e.query("focused"), Some(IntrospectValue::Bool(false)));
     }
 }

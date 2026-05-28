@@ -128,12 +128,24 @@ pub struct ButtonExternal {
     /// share the [`IntentEmitter`] helper; the adapter only owns the
     /// transition-detection logic in `send`.
     em: IntentEmitter<Button>,
+    /// R694 §5.39 — keyboard-focus posture, mirrored from the shell
+    /// [`FocusManager`](crate) through
+    /// [`External::on_focus_change`](crate::external::External::on_focus_change).
+    /// Orthogonal to [`ButtonState`] (a focused button can be Idle /
+    /// Hover / Pressed); surfaced via the `focused` introspect slot so
+    /// the binding's `read_state` threads it into
+    /// `view_button`'s focus-ring argument — the same External → query →
+    /// view channel the hover posture already uses.
+    focused: bool,
 }
 
 impl ButtonExternal {
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self {
+            em: IntentEmitter::default(),
+            focused: false,
+        }
     }
 
     /// Drive a [`ButtonEvent`] through the wrapped SCXML and enqueue
@@ -154,6 +166,13 @@ impl ButtonExternal {
     #[must_use]
     pub fn state(&self) -> ButtonState {
         self.em.inner.state()
+    }
+
+    /// R694 §5.39 — current keyboard-focus posture (set by the shell via
+    /// [`External::on_focus_change`](crate::external::External::on_focus_change)).
+    #[must_use]
+    pub fn focused(&self) -> bool {
+        self.focused
     }
 }
 
@@ -199,6 +218,15 @@ impl External for ButtonExternal {
     fn is_dirty(&self) -> bool {
         self.em.is_dirty()
     }
+
+    /// R694 §5.39 — mirror the shell focus posture so the focus ring
+    /// paints. The shell fires this on the gaining tag (`true`) and the
+    /// losing tag (`false`) whenever
+    /// [`FocusManager`](crate) focus moves; the repaint that focus change
+    /// already drives (the a11y tree rebuild) re-reads the posture.
+    fn on_focus_change(&mut self, focused: bool) {
+        self.focused = focused;
+    }
 }
 
 impl ExternalIntrospect for ButtonExternal {
@@ -207,7 +235,11 @@ impl ExternalIntrospect for ButtonExternal {
         // accepting a `ButtonEvent` variant name (invoke); §5.15
         // schema does not yet distinguish state slots from actions
         // syntactically, that classification lands with §5.3 DSL.
-        IntrospectSchema::new(&[("state", "string"), ("send", "string")])
+        IntrospectSchema::new(&[
+            ("state", "string"),
+            ("focused", "bool"),
+            ("send", "string"),
+        ])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -215,6 +247,8 @@ impl ExternalIntrospect for ButtonExternal {
             "state" => Some(IntrospectValue::Text(
                 button_state_name(self.state()).to_string(),
             )),
+            // R694 §5.39 — keyboard-focus posture for the focus-ring read.
+            "focused" => Some(IntrospectValue::Bool(self.focused)),
             _ => None,
         }
     }
@@ -531,6 +565,35 @@ mod tests {
     }
 
     #[test]
+    fn r694_button_external_focus_posture_mirrors_on_focus_change() {
+        use crate::external::External;
+        let mut bx = ButtonExternal::new();
+        assert!(!bx.focused(), "buttons boot unfocused");
+        assert_eq!(bx.query("focused"), Some(IntrospectValue::Bool(false)));
+        bx.on_focus_change(true);
+        assert!(bx.focused(), "focus posture follows the shell");
+        assert_eq!(
+            bx.query("focused"),
+            Some(IntrospectValue::Bool(true)),
+            "focus posture surfaces on the introspect slot for the ring read",
+        );
+        bx.on_focus_change(false);
+        assert_eq!(bx.query("focused"), Some(IntrospectValue::Bool(false)));
+    }
+
+    #[test]
+    fn r694_button_external_focus_orthogonal_to_state() {
+        use crate::external::External;
+        // Focus does not perturb the SCXML interaction state, and a
+        // state transition does not clear focus.
+        let mut bx = ButtonExternal::new();
+        bx.on_focus_change(true);
+        bx.send(ButtonEvent::PointerEnter);
+        assert_eq!(bx.state(), ButtonState::Hover);
+        assert!(bx.focused(), "send did not clear the focus posture");
+    }
+
+    #[test]
     fn button_external_intervene_state_is_read_only() {
         let mut bx = ButtonExternal::new();
         let r = bx.intervene("state", IntrospectValue::Text("Pressed".to_string()));
@@ -618,7 +681,8 @@ mod tests {
         let schema = bx.schema();
         assert_eq!(
             schema.fields,
-            &[("state", "string"), ("send", "string")]
+            // R694 §5.39 — `focused` joins the read-only state slot.
+            &[("state", "string"), ("focused", "bool"), ("send", "string")]
         );
     }
 

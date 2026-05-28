@@ -347,6 +347,10 @@ fn view_viewport_button(state: ButtonState, theme: &Theme) -> Scene {
         VIEWPORT_BTN_LABEL,
         state,
         hover_progress,
+        // R694 §5.39 — the viewport action button is pointer-driven and
+        // is not the focus-ring debt target (Dialog / Toolbar / Tabs are);
+        // pass `false` until the editor threads per-control focus posture.
+        false,
         &ButtonColors::accent(theme),
         &ButtonStyle::m3_default(VIEWPORT_BTN_TAG)
             .with_size(Size::px(180, 40))

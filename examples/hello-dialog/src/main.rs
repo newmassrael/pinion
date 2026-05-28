@@ -164,10 +164,12 @@ fn close_dialog(accepted: bool) {
 }
 
 /// Cached posture of the three buttons (trigger, ok, cancel) read back
-/// from the state scene for the paint fn. `open` / `result` are *not*
-/// here — they live in signals the owner-scoped view + access_node read
-/// directly ([`read_state`](DialogView::read_state) is not owner-wrapped).
-type DialogViewState = (ButtonState, ButtonState, ButtonState);
+/// from the state scene for the paint fn: each button's [`ButtonState`]
+/// plus its R694 keyboard-focus flag (`[trigger, ok, cancel]`). `open` /
+/// `result` are *not* here — they live in signals the owner-scoped view +
+/// access_node read directly ([`read_state`](DialogView::read_state) is
+/// not owner-wrapped).
+type DialogViewState = (ButtonState, ButtonState, ButtonState, [bool; 3]);
 
 /// Read a [`ButtonExternal`]'s [`ButtonState`] out of the state scene by
 /// tag. Defaults to [`ButtonState::Idle`] when the tag is absent.
@@ -184,11 +186,24 @@ fn read_button_state(scene: &Scene, tag: &str) -> ButtonState {
         })
 }
 
+/// R694 §5.39 — read a [`ButtonExternal`]'s keyboard-focus posture (the
+/// `focused` introspect slot the shell mirrors via `on_focus_change`),
+/// so the view paints the focus ring on whichever action button holds
+/// the modal trap's Tab focus. `false` when the tag is absent.
+fn read_button_focused(scene: &Scene, tag: &str) -> bool {
+    scene
+        .find_external_with_tag(tag)
+        .and_then(|node| node.handle.introspect())
+        .and_then(|intro| intro.query("focused"))
+        .is_some_and(|v| matches!(v, pinion_core::external::IntrospectValue::Bool(true)))
+}
+
 /// Render one button via the [`pinion_widget_paint::button`] substrate.
 fn button_scene(
     tag: &'static str,
     label: &str,
     state: ButtonState,
+    focused: bool,
     hover_key: &'static str,
     size: Size,
     theme: &pinion_core::theme::Theme,
@@ -198,6 +213,7 @@ fn button_scene(
         label,
         state,
         hover,
+        focused,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
             .with_size(size)
@@ -211,7 +227,8 @@ fn button_scene(
 /// hit-tests above) the trigger content.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: DialogViewState, _frame: &Frame) -> Scene {
-    let (trigger_state, ok_state, cancel_state) = state;
+    let (trigger_state, ok_state, cancel_state, focus) = state;
+    let [trigger_focused, ok_focused, cancel_focused] = focus;
     let theme = use_theme(THEME_TAG).theme_animated();
     let open = use_dialog_open().get();
     let result = use_dialog_result().get();
@@ -220,6 +237,7 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
         TRIGGER_TAG,
         "Delete file\u{2026}",
         trigger_state,
+        trigger_focused,
         TRIGGER_HOVER_KEY,
         Size::px(TRIGGER_W, TRIGGER_H),
         &theme,
@@ -255,6 +273,7 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
             CANCEL_TAG,
             "Cancel",
             cancel_state,
+            cancel_focused,
             CANCEL_HOVER_KEY,
             Size::px(ACTION_W, ACTION_H),
             &theme,
@@ -263,6 +282,7 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
             OK_TAG,
             "Delete",
             ok_state,
+            ok_focused,
             OK_HOVER_KEY,
             Size::px(ACTION_W, ACTION_H),
             &theme,
@@ -322,6 +342,11 @@ impl WidgetCore for DialogView {
             read_button_state(scene, TRIGGER_TAG),
             read_button_state(scene, OK_TAG),
             read_button_state(scene, CANCEL_TAG),
+            [
+                read_button_focused(scene, TRIGGER_TAG),
+                read_button_focused(scene, OK_TAG),
+                read_button_focused(scene, CANCEL_TAG),
+            ],
         )
     }
 
@@ -470,7 +495,12 @@ mod tests {
     use super::*;
 
     fn idle() -> DialogViewState {
-        (ButtonState::Idle, ButtonState::Idle, ButtonState::Idle)
+        (
+            ButtonState::Idle,
+            ButtonState::Idle,
+            ButtonState::Idle,
+            [false; 3],
+        )
     }
 
     // ----- a11y -----
@@ -525,6 +555,45 @@ mod tests {
             assert_eq!(name(PANEL_TAG), Some("Delete file?"), "dialog name from title");
             assert_eq!(name(CANCEL_TAG), Some("Cancel"));
             assert_eq!(name(OK_TAG), Some("Delete"));
+        });
+    }
+
+    // ----- R694 focus ring -----
+
+    /// Walk the paint scene for the tagged button container.
+    fn find_tagged<'a>(scene: &'a Scene, tag: &str) -> Option<&'a ContainerNode> {
+        if let Scene::Container(c) = scene {
+            if c.tag.as_deref() == Some(tag) {
+                return Some(c);
+            }
+            for child in &c.children {
+                if let Some(found) = find_tagged(child, tag) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn r694_focused_action_button_paints_ring_others_do_not() {
+        Owner::new().run(|| {
+            use_dialog_open().set(true);
+            // Cancel focused (the auto-focus default); ok + trigger not.
+            let state = (
+                ButtonState::Idle,
+                ButtonState::Idle,
+                ButtonState::Idle,
+                [false, false, true],
+            );
+            let scene = view(state, &Frame::new());
+            let cancel = find_tagged(&scene, CANCEL_TAG).expect("cancel button painted");
+            assert!(
+                cancel.style.border.is_some(),
+                "focused Cancel paints the keyboard focus ring",
+            );
+            let ok = find_tagged(&scene, OK_TAG).expect("ok button painted");
+            assert!(ok.style.border.is_none(), "unfocused Delete has no ring");
         });
     }
 

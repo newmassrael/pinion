@@ -196,6 +196,11 @@ fn figma_button_colors() -> ButtonColors {
         BTN_FILL.lerp(CANVAS_BG, DISABLED_STATE_LAYER),
         LABEL_FG,
         LABEL_FG,
+        // R694 §5.39 — focus-ring colour = the M3 primary (the Figma
+        // brand fill). Unpainted in this demo (focused = false below),
+        // present so the substrate's focus-ring axis has a faithful
+        // token if the design surfaces keyboard focus later.
+        BTN_FILL,
     )
 }
 
@@ -231,6 +236,9 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
         "Button",
         state,
         use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY),
+        // R694 §5.39 — `#[widget]`-derived `State = ButtonState` demo;
+        // focus posture is not threaded into `State` (see hello-button).
+        false,
         &figma_button_colors(),
         &ButtonStyle::m3_default("figma_button_m3")
             .with_size(Size::px(BTN_W, BTN_H))
