@@ -489,6 +489,20 @@ pub enum TopologyError {
     /// `InputRouter`'s deepest-tagged hit-test treats empty tags as
     /// no-tag, breaking dispatch).
     EmptyId,
+    /// (R686 §5.16 §5.45) A mutation primitive
+    /// ([`DockTopology::swap_leaves`] / [`DockTopology::split_leaf_into`]
+    /// / [`DockTopology::remove_leaf`]) was given a `panel_id` that no
+    /// [`DockNode::Leaf`] in the topology carries. The drag-to-reorganize
+    /// gesture resolved a stale panel id, or the binding passed a typo;
+    /// either way the mutation cannot proceed without inventing a target.
+    PanelNotFound(String),
+    /// (R686 §5.16 §5.45) [`DockTopology::remove_leaf`] was asked to
+    /// remove the topology's sole panel (the root is a bare
+    /// [`DockNode::Leaf`]). A dock topology must always describe at
+    /// least one pane — an empty topology has no valid layout — so the
+    /// last leaf cannot be removed. The binding closes the whole window
+    /// instead.
+    RootRemoval,
 }
 
 impl core::fmt::Display for TopologyError {
@@ -506,6 +520,8 @@ impl core::fmt::Display for TopologyError {
                 write!(f, "split {split_id:?} has invalid ratio {ratio}; must be finite in [0.0, 1.0]")
             }
             Self::EmptyId => write!(f, "empty id (panel_id or split id) — empty tags collide with InputRouter dispatch"),
+            Self::PanelNotFound(id) => write!(f, "panel_id {id:?} not found in topology"),
+            Self::RootRemoval => write!(f, "cannot remove the topology's sole panel (an empty topology has no valid layout)"),
         }
     }
 }
@@ -638,6 +654,291 @@ impl DockTopology {
     pub fn split_count(&self) -> usize {
         self.root.split_count()
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R686 §5.16 §5.45 — drag-to-reorganize mutation primitives.
+    //
+    // Every primitive is `&self -> Result<DockTopology, TopologyError>`
+    // (immutable / functional form): it produces a *new* validated
+    // topology rather than mutating in place. This is the textbook
+    // canonical shape for an editable document with undo/redo —
+    // the binding holds a `Signal<DockTopology>`, computes the next
+    // value, and `set`s it (or discards it on `Err`), so the reactive
+    // re-render is a clean swap. Every result flows back through
+    // [`Self::try_new`] so an invalid intermediate tree (a generated id
+    // colliding with an existing one, say) surfaces as a typed error
+    // instead of corrupting the live topology.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// (R686 §5.16 §5.45) Swap the two named leaves' positions in the
+    /// tree — the panel previously at `panel_id_a`'s location now sits
+    /// where `panel_id_b` was, and vice versa. The tree *shape* (every
+    /// Split, every ratio, every split id) is unchanged; only which
+    /// panel occupies which leaf slot changes.
+    ///
+    /// This is the [`DockDropZone::Center`] gesture: dragging panel A
+    /// onto panel B's centre swaps them (v1 has no tab-stacking, so a
+    /// centre drop is a swap).
+    ///
+    /// `panel_id_a == panel_id_b` (dropping a panel on itself) is a
+    /// well-defined no-op that returns the topology unchanged.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyError::PanelNotFound`] if either id names no leaf.
+    pub fn swap_leaves(
+        &self,
+        panel_id_a: &str,
+        panel_id_b: &str,
+    ) -> Result<DockTopology, TopologyError> {
+        let ids = self.root.panel_ids();
+        if !ids.contains(&panel_id_a) {
+            return Err(TopologyError::PanelNotFound(panel_id_a.to_string()));
+        }
+        if !ids.contains(&panel_id_b) {
+            return Err(TopologyError::PanelNotFound(panel_id_b.to_string()));
+        }
+        let mut new_root = self.root.clone();
+        swap_panel_ids_rec(&mut new_root, panel_id_a, panel_id_b);
+        // Swapping two distinct existing unique ids preserves uniqueness,
+        // so try_new cannot fail here; routing through it anyway keeps
+        // the single-construction-path invariant uniform.
+        Self::try_new(new_root)
+    }
+
+    /// (R686 §5.16 §5.45) Replace the leaf at `panel_id` with a new
+    /// [`DockNode::Split`] holding the original panel beside a freshly
+    /// inserted `new_leaf_panel_id`. `position` chooses which slot
+    /// (`first` / `second`) the inserted panel takes; `new_orientation`
+    /// + `new_ratio` describe the divider.
+    ///
+    /// This is the [`DockDropZone`] edge gesture's substrate side:
+    /// dropping a dragged panel on the target's left edge calls
+    /// `split_leaf_into(target, dragged, fresh_split_id, Horizontal,
+    /// 0.5, First)`. To *move* an existing panel (rather than spawn a
+    /// new one) the binding composes [`Self::remove_leaf`] first, then
+    /// this — see the editor reducer (R686 atomic 3).
+    ///
+    /// # Errors
+    ///
+    /// * [`TopologyError::PanelNotFound`] if `panel_id` names no leaf.
+    /// * [`TopologyError::DuplicatePanelId`] /
+    ///   [`TopologyError::DuplicateSplitId`] /
+    ///   [`TopologyError::IdCollision`] if `new_leaf_panel_id` or
+    ///   `new_split_id` collides with an existing id (surfaced by the
+    ///   [`Self::try_new`] validation gate).
+    /// * [`TopologyError::InvalidRatio`] if `new_ratio` is non-finite or
+    ///   outside `[0.0, 1.0]`.
+    pub fn split_leaf_into(
+        &self,
+        panel_id: &str,
+        new_leaf_panel_id: impl Into<Cow<'static, str>>,
+        new_split_id: impl Into<Cow<'static, str>>,
+        new_orientation: SplitterOrientation,
+        new_ratio: f32,
+        position: DockSplitPosition,
+    ) -> Result<DockTopology, TopologyError> {
+        if !self.root.panel_ids().contains(&panel_id) {
+            return Err(TopologyError::PanelNotFound(panel_id.to_string()));
+        }
+        let mut insertion = Some(SplitInsertion {
+            new_leaf_id: new_leaf_panel_id.into(),
+            split_id: new_split_id.into(),
+            orientation: new_orientation,
+            ratio: new_ratio,
+            position,
+        });
+        let new_root = split_leaf_rec(&self.root, panel_id, &mut insertion);
+        Self::try_new(new_root)
+    }
+
+    /// (R686 §5.16 §5.45) Remove the leaf at `panel_id` and promote its
+    /// sibling sub-tree into the parent Split's place. The parent Split
+    /// (and its id + ratio) disappears; the surviving sibling slides up
+    /// one level. Every other leaf and Split is untouched.
+    ///
+    /// This is the source side of a drag-to-reparent gesture: the
+    /// binding calls `remove_leaf(dragged)` then
+    /// [`Self::split_leaf_into`] at the drop target. It is also the
+    /// topology mutation behind the R683 tear-off-to-floating-window
+    /// gesture (the torn-off panel leaves the docked tree).
+    ///
+    /// # Errors
+    ///
+    /// * [`TopologyError::PanelNotFound`] if `panel_id` names no leaf.
+    /// * [`TopologyError::RootRemoval`] if `panel_id` is the topology's
+    ///   sole panel (the root is a bare leaf) — an empty topology has no
+    ///   valid layout.
+    pub fn remove_leaf(&self, panel_id: &str) -> Result<DockTopology, TopologyError> {
+        if !self.root.panel_ids().contains(&panel_id) {
+            return Err(TopologyError::PanelNotFound(panel_id.to_string()));
+        }
+        match remove_leaf_rec(&self.root, panel_id) {
+            Some(new_root) => Self::try_new(new_root),
+            // The recursion returns `None` only when the root node *is*
+            // the target leaf — i.e. the topology has a single pane.
+            None => Err(TopologyError::RootRemoval),
+        }
+    }
+}
+
+/// (R686 §5.16 §5.45) Which slot of a newly created
+/// [`DockNode::Split`] an inserted leaf occupies in
+/// [`DockTopology::split_leaf_into`].
+///
+/// `First` is the left child of a `Horizontal` split / the top child
+/// of a `Vertical` split; `Second` is the right / bottom child. The
+/// edge-zone → position mapping for drag-to-reorganize is:
+/// [`DockDropZone::Left`] / [`DockDropZone::Top`] → `First`;
+/// [`DockDropZone::Right`] / [`DockDropZone::Bottom`] → `Second`.
+///
+/// `#[non_exhaustive]` for symmetry with the other R686 enums (a
+/// future N-ary or tab-stack insert position could land here).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockSplitPosition {
+    /// Inserted leaf takes the Split's `first` slot (left / top); the
+    /// pre-existing leaf moves to `second`.
+    First,
+    /// Inserted leaf takes the Split's `second` slot (right / bottom);
+    /// the pre-existing leaf stays as `first`.
+    Second,
+}
+
+/// (R686 §5.16 §5.45) In-place swap of two panel ids throughout a
+/// cloned tree. Each leaf carrying `a` becomes `b` and vice versa.
+/// Panel ids are unique (topology invariant) so at most one leaf
+/// matches each id; the single mutable pass touches both.
+fn swap_panel_ids_rec(node: &mut DockNode, a: &str, b: &str) {
+    match node {
+        DockNode::Leaf { panel_id } => {
+            if panel_id.as_ref() == a {
+                *panel_id = Cow::Owned(b.to_string());
+            } else if panel_id.as_ref() == b {
+                *panel_id = Cow::Owned(a.to_string());
+            }
+        }
+        DockNode::Split { first, second, .. } => {
+            swap_panel_ids_rec(first, a, b);
+            swap_panel_ids_rec(second, a, b);
+        }
+    }
+}
+
+/// (R686 §5.16 §5.45) The owned payload [`DockTopology::split_leaf_into`]
+/// threads into the tree rebuild. Carried in an `Option` so
+/// [`split_leaf_rec`] can `take()` it at the single target leaf — the
+/// owned `Cow`s move into the new nodes exactly once (preserving
+/// `Cow::Borrowed` for static ids; no re-allocation), and the `take`
+/// makes "inserted at most once" a structural guarantee.
+struct SplitInsertion {
+    new_leaf_id: Cow<'static, str>,
+    split_id: Cow<'static, str>,
+    orientation: SplitterOrientation,
+    ratio: f32,
+    position: DockSplitPosition,
+}
+
+/// (R686 §5.16 §5.45) Rebuild `node`, replacing the `target` leaf with
+/// a new Split holding the original panel beside the inserted leaf. The
+/// caller has already verified `target` exists, so the `insertion` is
+/// consumed at exactly one leaf; every other node is cloned verbatim.
+fn split_leaf_rec(
+    node: &DockNode,
+    target: &str,
+    insertion: &mut Option<SplitInsertion>,
+) -> DockNode {
+    match node {
+        DockNode::Leaf { panel_id } if panel_id.as_ref() == target => {
+            let ins = insertion
+                .take()
+                .expect("split_leaf_rec: target leaf visited more than once (unique-id invariant broken)");
+            let existing = DockNode::Leaf {
+                panel_id: panel_id.clone(),
+            };
+            let inserted = DockNode::Leaf {
+                panel_id: ins.new_leaf_id,
+            };
+            let (first, second) = match ins.position {
+                DockSplitPosition::First => (inserted, existing),
+                DockSplitPosition::Second => (existing, inserted),
+            };
+            DockNode::Split {
+                id: ins.split_id,
+                orientation: ins.orientation,
+                ratio: ins.ratio,
+                first: Box::new(first),
+                second: Box::new(second),
+            }
+        }
+        DockNode::Leaf { .. } => node.clone(),
+        DockNode::Split {
+            id,
+            orientation,
+            ratio,
+            first,
+            second,
+        } => DockNode::Split {
+            id: id.clone(),
+            orientation: *orientation,
+            ratio: *ratio,
+            first: Box::new(split_leaf_rec(first, target, insertion)),
+            second: Box::new(split_leaf_rec(second, target, insertion)),
+        },
+    }
+}
+
+/// (R686 §5.16 §5.45) Rebuild `node` with the `target` leaf removed.
+///
+/// Returns:
+/// * `Some(rebuilt)` — the sub-tree with `target` gone (a Split whose
+///   child was `target` collapses to its surviving sibling; an
+///   unaffected sub-tree is cloned verbatim).
+/// * `None` — `node` itself *is* the target leaf, signalling the parent
+///   to drop it and promote the sibling. A `None` at the top level means
+///   the root was the sole leaf ([`TopologyError::RootRemoval`]).
+fn remove_leaf_rec(node: &DockNode, target: &str) -> Option<DockNode> {
+    match node {
+        DockNode::Leaf { panel_id } => {
+            if panel_id.as_ref() == target {
+                None
+            } else {
+                Some(node.clone())
+            }
+        }
+        DockNode::Split {
+            id,
+            orientation,
+            ratio,
+            first,
+            second,
+        } => {
+            let new_first = remove_leaf_rec(first, target);
+            let new_second = remove_leaf_rec(second, target);
+            match (new_first, new_second) {
+                // Target was inside `first` and `first` collapsed to
+                // nothing (it was the bare target leaf) → promote second.
+                (None, Some(s)) => Some(s),
+                // Symmetric: target was `second` → promote first.
+                (Some(f), None) => Some(f),
+                // Neither child was the bare target → keep this Split,
+                // wiring in the (possibly rebuilt) children.
+                (Some(f), Some(s)) => Some(DockNode::Split {
+                    id: id.clone(),
+                    orientation: *orientation,
+                    ratio: *ratio,
+                    first: Box::new(f),
+                    second: Box::new(s),
+                }),
+                // Both children reported themselves as the target leaf —
+                // impossible for a validated topology (panel ids are
+                // unique, so the target appears at most once).
+                (None, None) => {
+                    unreachable!("panel id {target:?} cannot appear in both children of a Split")
+                }
+            }
+        }
+    }
 }
 
 /// (R685.C atomic 1 §5.16) Discriminator for the unified id-namespace
@@ -704,6 +1005,577 @@ fn validate_node(
             validate_node(first, seen)?;
             validate_node(second, seen)?;
             Ok(())
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R686 §5.16 §5.45 — drag-to-reorganize drop-zone geometry.
+// ─────────────────────────────────────────────────────────────────────
+
+/// (R686 §5.16 §5.45) Fraction of a panel's main-axis extent occupied
+/// by each edge drop band. A cursor within `DOCK_EDGE_ZONE_FRAC` of an
+/// edge (normalised to that axis) classifies as that edge's directional
+/// dock zone; the remaining centre rectangle classifies as
+/// [`DockDropZone::Center`].
+///
+/// `0.25` gives a picture-frame of edge bands one-quarter of the way in
+/// from each side, leaving a centre square half the panel's extent on
+/// each axis — the canonical proportion pro-tool docking overlays ship.
+pub const DOCK_EDGE_ZONE_FRAC: f64 = 0.25;
+
+/// (R686 §5.16 §5.45) Geometric classification of a drag-to-reorganize
+/// cursor position over a single dock panel's rect.
+///
+/// ## Geometry, not gesture
+///
+/// This enum names **where the cursor is** over the target panel — a
+/// pure spatial classification. It deliberately does **not** name what
+/// dropping there *does* (swap / reparent / tab-merge); that mapping is
+/// the binding's reducer + the [`DockDragOverExternal`] intent layer's
+/// responsibility (R686 atomic 2+). Keeping geometry and gesture
+/// semantics separate mirrors every real docking framework: the drop
+/// overlay highlights a *direction*, and the host decides the topology
+/// edit. Conflating the two (e.g. naming a zone `SwapLeft`) bakes one
+/// host's policy into the geometry primitive.
+///
+/// ## Zones
+///
+/// A panel rect is divided into a picture-frame of four edge bands
+/// (each [`DOCK_EDGE_ZONE_FRAC`] of the corresponding axis) plus a
+/// centre rectangle. Corner ambiguity — where two edge bands overlap —
+/// resolves to the **nearest** edge, with a fixed `Left → Right → Top →
+/// Bottom` precedence on exact ties (matches the enum declaration
+/// order). The directional zones mean "dock the dragged panel to this
+/// side of the target, splitting the target along the perpendicular
+/// axis"; the centre means "swap the dragged panel with the target".
+///
+/// `#[non_exhaustive]` so a future tab-merge zone (`Center` splitting
+/// into `CenterTab` / `CenterSwap`) or finer corner zones can land
+/// without breaking downstream `match` arms.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockDropZone {
+    /// Cursor is outside the panel rect, or the rect is degenerate
+    /// (zero width or height). No drop target.
+    None,
+    /// Cursor is near the panel's left edge — dock the dragged panel
+    /// to the left, splitting the target horizontally.
+    Left,
+    /// Cursor is near the panel's right edge — dock the dragged panel
+    /// to the right, splitting the target horizontally.
+    Right,
+    /// Cursor is near the panel's top edge — dock the dragged panel
+    /// above, splitting the target vertically.
+    Top,
+    /// Cursor is near the panel's bottom edge — dock the dragged panel
+    /// below, splitting the target vertically.
+    Bottom,
+    /// Cursor is in the panel's centre rectangle — swap the dragged
+    /// panel with the target (no tabs in v1, so centre = swap).
+    Center,
+}
+
+/// (R686 §5.16 §5.45) Pure classification of a cursor position over a
+/// panel rect into a [`DockDropZone`]. No allocation, no `Owner`, no
+/// `Scene` — a deterministic geometry helper the drag-over External
+/// (R686 atomic 2) and the demo / test harness share.
+///
+/// `panel_rect` is the panel's paint-side rect (integer logical pixels,
+/// as `scene/layout` reports). `cursor_x` / `cursor_y` are the live
+/// pointer position in the same coordinate space (f64, as the
+/// `InputRouter` carries them). Containment is **half-open** — the
+/// right / bottom edges are exclusive — to mirror
+/// [`pinion_core::scene`]'s `rect_contains`, so adjacent panels tile
+/// without a one-pixel double-claim seam.
+///
+/// Returns [`DockDropZone::None`] for a degenerate rect (`w == 0` or
+/// `h == 0`) or a cursor outside the rect.
+#[must_use]
+pub fn dock_drop_zone_for(panel_rect: Rect, cursor_x: f64, cursor_y: f64) -> DockDropZone {
+    // Degenerate rect carries no pixels → never a drop target.
+    if panel_rect.w == 0 || panel_rect.h == 0 {
+        return DockDropZone::None;
+    }
+    let x0 = f64::from(panel_rect.x);
+    let y0 = f64::from(panel_rect.y);
+    let w = f64::from(panel_rect.w);
+    let h = f64::from(panel_rect.h);
+    // Half-open containment (mirror of `rect_contains`): the right /
+    // bottom edges belong to the next panel over.
+    if cursor_x < x0 || cursor_y < y0 || cursor_x >= x0 + w || cursor_y >= y0 + h {
+        return DockDropZone::None;
+    }
+    // Normalised distance from each edge, in [0.0, 1.0).
+    let from_left = (cursor_x - x0) / w;
+    let from_right = 1.0 - from_left;
+    let from_top = (cursor_y - y0) / h;
+    let from_bottom = 1.0 - from_top;
+    // Centre rectangle: at least one band-width clear of every edge.
+    let nearest = from_left.min(from_right).min(from_top).min(from_bottom);
+    if nearest >= DOCK_EDGE_ZONE_FRAC {
+        return DockDropZone::Center;
+    }
+    // Edge band: the nearest edge wins; exact ties resolve in
+    // Left → Right → Top → Bottom declaration order.
+    if from_left <= from_right && from_left <= from_top && from_left <= from_bottom {
+        DockDropZone::Left
+    } else if from_right <= from_top && from_right <= from_bottom {
+        DockDropZone::Right
+    } else if from_top <= from_bottom {
+        DockDropZone::Top
+    } else {
+        DockDropZone::Bottom
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R686 §5.16 §5.45 — drag-to-reorganize resolution + apply.
+// ─────────────────────────────────────────────────────────────────────
+
+/// (R686 §5.16 §5.45) Default split ratio a drag-to-reorganize
+/// [`DockReorganizeIntent::SplitInsert`] seeds when it creates a new
+/// divider — an even 50/50 split. The user drags the resulting
+/// splitter afterward to rebalance.
+pub const DEFAULT_REORGANIZE_RATIO: f32 = 0.5;
+
+/// (R686 §5.16 §5.45) Prefix for the stable split ids the
+/// [`DockReorganizeExternal`] mints when a `SplitInsert` gesture
+/// creates a new divider (`reorg-split-{seq}`). Distinct from any
+/// binding-declared split id so a generated split never collides with
+/// the boot topology's ids.
+pub const REORG_SPLIT_ID_PREFIX: &str = "reorg-split-";
+
+/// (R686 §5.16 §5.45) Map an edge [`DockDropZone`] to the
+/// `(orientation, position)` a [`DockTopology::split_leaf_into`] needs:
+/// a left/right drop splits the target **horizontally**, a top/bottom
+/// drop splits it **vertically**; left/top place the dragged panel in
+/// the `first` slot, right/bottom in `second`. Returns `None` for the
+/// non-edge zones ([`DockDropZone::Center`] / [`DockDropZone::None`]),
+/// which are not split gestures.
+fn zone_split_geometry(
+    zone: DockDropZone,
+) -> Option<(SplitterOrientation, DockSplitPosition)> {
+    match zone {
+        DockDropZone::Left => Some((SplitterOrientation::Horizontal, DockSplitPosition::First)),
+        DockDropZone::Right => Some((SplitterOrientation::Horizontal, DockSplitPosition::Second)),
+        DockDropZone::Top => Some((SplitterOrientation::Vertical, DockSplitPosition::First)),
+        DockDropZone::Bottom => Some((SplitterOrientation::Vertical, DockSplitPosition::Second)),
+        DockDropZone::Center | DockDropZone::None => None,
+    }
+}
+
+/// (R686 §5.16 §5.45) Parse the wire string a reorganize gesture
+/// payload carries (`"Center"` / `"Left"` / `"Right"` / `"Top"` /
+/// `"Bottom"`) into a [`DockDropZone`]. `"None"` and any unrecognised
+/// string return `None` (the [`DockReorganizeExternal`] rejects the
+/// invoke). The strings match the [`DockDropZone`] variant names so AI
+/// clients can echo a zone they classified locally.
+fn parse_drop_zone(s: &str) -> Option<DockDropZone> {
+    match s {
+        "Center" => Some(DockDropZone::Center),
+        "Left" => Some(DockDropZone::Left),
+        "Right" => Some(DockDropZone::Right),
+        "Top" => Some(DockDropZone::Top),
+        "Bottom" => Some(DockDropZone::Bottom),
+        _ => None,
+    }
+}
+
+/// (R686 §5.16 §5.45) A resolved drag-to-reorganize gesture — the
+/// topology edit a panel-drag drop produces, fully decided (no
+/// geometry / zone ambiguity left). Built by [`resolve_dock_drop`]
+/// from a cursor position over a layout, or by the
+/// [`DockReorganizeExternal`] from an AI client's invoke payload.
+///
+/// The two variants mirror the two drop outcomes a tab-less v1 dock
+/// supports:
+/// * `Swap` — the cursor landed in a panel's **centre**; the dragged
+///   panel and the target trade places ([`DockTopology::swap_leaves`]).
+/// * `SplitInsert` — the cursor landed near a panel's **edge**; the
+///   dragged panel docks to that side, splitting the target. The
+///   `orientation` + `position` are pre-resolved from the edge zone
+///   (so the intent carries no invalid-zone state), and applying it
+///   moves the dragged panel via [`DockTopology::remove_leaf`] then
+///   re-inserts it via [`DockTopology::split_leaf_into`].
+///
+/// `#[non_exhaustive]` so a future tab-stack outcome can land without
+/// breaking downstream `match` arms.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DockReorganizeIntent {
+    /// Swap the dragged `source` panel with the `target` panel
+    /// (centre drop).
+    Swap {
+        /// Panel being dragged.
+        source: String,
+        /// Panel dropped onto.
+        target: String,
+    },
+    /// Dock the dragged `source` panel beside the `target`, splitting
+    /// the target along `orientation` with the source in `position`.
+    SplitInsert {
+        /// Panel being dragged (moves: removed from its old slot, then
+        /// re-inserted beside the target).
+        source: String,
+        /// Panel whose slot becomes a split.
+        target: String,
+        /// Split axis derived from the drop edge.
+        orientation: SplitterOrientation,
+        /// Which slot of the new split the dragged panel occupies.
+        position: DockSplitPosition,
+    },
+}
+
+impl DockReorganizeIntent {
+    /// The panel being dragged.
+    #[must_use]
+    pub fn source(&self) -> &str {
+        match self {
+            Self::Swap { source, .. } | Self::SplitInsert { source, .. } => source,
+        }
+    }
+
+    /// The panel dropped onto.
+    #[must_use]
+    pub fn target(&self) -> &str {
+        match self {
+            Self::Swap { target, .. } | Self::SplitInsert { target, .. } => target,
+        }
+    }
+
+    /// (R686 §5.16 §5.45) Apply this gesture to `topology`, producing a
+    /// new validated topology. `new_split_id` is the stable id for the
+    /// divider a `SplitInsert` creates (ignored by `Swap`); `ratio` is
+    /// the initial split fraction (typically
+    /// [`DEFAULT_REORGANIZE_RATIO`]).
+    ///
+    /// `SplitInsert` is a **move**: the source panel is removed from
+    /// its current slot (collapsing its old parent split) and
+    /// re-inserted beside the target. Composing the two mutation
+    /// primitives this way keeps the leaf count invariant (one panel
+    /// relocated, none created or destroyed).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the underlying mutation primitives' errors:
+    /// [`TopologyError::PanelNotFound`] if `source` or `target` names
+    /// no leaf, [`TopologyError::RootRemoval`] if `source` is the sole
+    /// panel, or a duplicate/collision error if `new_split_id` clashes
+    /// with an existing id.
+    pub fn apply(
+        &self,
+        topology: &DockTopology,
+        new_split_id: impl Into<Cow<'static, str>>,
+        ratio: f32,
+    ) -> Result<DockTopology, TopologyError> {
+        match self {
+            Self::Swap { source, target } => topology.swap_leaves(source, target),
+            Self::SplitInsert {
+                source,
+                target,
+                orientation,
+                position,
+            } => topology.remove_leaf(source)?.split_leaf_into(
+                target,
+                source.clone(),
+                new_split_id,
+                *orientation,
+                ratio,
+                *position,
+            ),
+        }
+    }
+}
+
+/// (R686 §5.16 §5.45) Resolve a drag-to-reorganize drop into a
+/// [`DockReorganizeIntent`], or `None` if the cursor is over no valid
+/// target.
+///
+/// `panel_rects` is the live layout — each `(panel_id, rect)` pair the
+/// caller read from `scene/layout` (the AI-native primary path) or the
+/// shell's last paint layout. The cursor `(cursor_x, cursor_y)` is in
+/// the same coordinate space. The dragged `source_panel_id` is skipped
+/// (you cannot drop a panel onto itself), and the first remaining panel
+/// whose rect contains the cursor decides the gesture: a centre hit
+/// produces [`DockReorganizeIntent::Swap`], an edge hit a
+/// [`DockReorganizeIntent::SplitInsert`] with the edge mapped to a
+/// split orientation + position.
+///
+/// Returns `None` when the cursor is outside every non-source panel, or
+/// over the source itself.
+#[must_use]
+pub fn resolve_dock_drop(
+    panel_rects: &[(&str, Rect)],
+    source_panel_id: &str,
+    cursor_x: f64,
+    cursor_y: f64,
+) -> Option<DockReorganizeIntent> {
+    for (panel_id, rect) in panel_rects {
+        if *panel_id == source_panel_id {
+            continue;
+        }
+        match dock_drop_zone_for(*rect, cursor_x, cursor_y) {
+            DockDropZone::None => {}
+            DockDropZone::Center => {
+                return Some(DockReorganizeIntent::Swap {
+                    source: source_panel_id.to_string(),
+                    target: (*panel_id).to_string(),
+                });
+            }
+            // `edge` is one of Left/Right/Top/Bottom here (None + Center
+            // handled above), so `zone_split_geometry` always returns
+            // `Some`. The `if let` keeps the SSOT mapping in one place
+            // without a panic path — a hypothetical future non-edge zone
+            // would simply be skipped rather than crashing the resolver.
+            edge => {
+                if let Some((orientation, position)) = zone_split_geometry(edge) {
+                    return Some(DockReorganizeIntent::SplitInsert {
+                        source: source_panel_id.to_string(),
+                        target: (*panel_id).to_string(),
+                        orientation,
+                        position,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// (R686 §5.16 §5.45) AI-native drag-to-reorganize handle — the
+/// [`External`] a dock editor registers (via
+/// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals))
+/// to apply topology edits through the
+/// [`scene/invoke`](pinion_core::external::ExternalIntrospect::invoke)
+/// channel.
+///
+/// ## Why invoke-driven, not pointer-driven
+///
+/// A live mouse drag-to-reorganize needs three things at drop time: the
+/// **absolute** cursor position, the layout rects of **every** panel,
+/// and the dragged panel's identity. The `InputRouter`'s capture lock
+/// (R51.34) routes all pointer events to the **source** panel
+/// exclusively while a drag is in flight, and an [`External`] only ever
+/// sees rect-relative coordinates — so no single pointer-receiving
+/// widget can resolve the drop on its own. The entity that *does* hold
+/// the full picture is the AI client (or shell drag session), which
+/// reads `scene/layout` for the rects and owns the cursor. That client
+/// classifies the drop with [`resolve_dock_drop`] / [`dock_drop_zone_for`]
+/// and applies it here — the §2 #2 RPC-as-primary-path contract. A
+/// pointer-driven mouse gesture with a live drop-zone overlay is a
+/// thin consumer that layers on top (a future round) once the shell
+/// grows a drag-session that feeds absolute cursor + layout to a
+/// resolver.
+///
+/// ## State
+///
+/// Holds a shared `Rc<Signal<DockTopology>>` — the live topology the
+/// dock editor's view fn reads. A successful reorganize calls
+/// `Signal::set` with the mutated topology, and the view fn's reactive
+/// subscription re-renders the new layout. The external also exposes
+/// the current topology as queryable JSON (`query("topology")`) for
+/// §2 #7 scene-as-data introspection.
+pub struct DockReorganizeExternal {
+    /// Live topology the dock editor view fn reads. Mutated via
+    /// `Signal::set` on a successful reorganize → reactive re-render.
+    topology: Rc<Signal<DockTopology>>,
+    /// Monotonic counter feeding the stable id of each generated
+    /// split (`reorg-split-{seq}`). Bumped only when a `SplitInsert`
+    /// actually lands, so ids stay gap-minimal + collision-free.
+    split_seq: Cell<u64>,
+    /// Initial ratio each generated split seeds (even split by default).
+    reorganize_ratio: f32,
+    /// Last gesture outcome, surfaced via `query("last_outcome")` for
+    /// AI clients to confirm an apply succeeded / why it was rejected.
+    last_outcome: RefCell<Option<String>>,
+}
+
+impl core::fmt::Debug for DockReorganizeExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DockReorganizeExternal")
+            .field("split_seq", &self.split_seq.get())
+            .field("reorganize_ratio", &self.reorganize_ratio)
+            .field("last_outcome", &self.last_outcome.borrow())
+            .finish_non_exhaustive()
+    }
+}
+
+impl DockReorganizeExternal {
+    /// Construct a reorganize handle over a shared topology signal.
+    /// The editor binding creates the `Rc<Signal<DockTopology>>` (via
+    /// `Owner::cache`) and hands a clone here so the external + the
+    /// view fn share one source of truth.
+    #[must_use]
+    pub fn new(topology: Rc<Signal<DockTopology>>) -> Self {
+        Self {
+            topology,
+            split_seq: Cell::new(0),
+            reorganize_ratio: DEFAULT_REORGANIZE_RATIO,
+            last_outcome: RefCell::new(None),
+        }
+    }
+
+    /// Diagnostic: how many splits this external has minted so far.
+    #[must_use]
+    pub fn split_seq(&self) -> u64 {
+        self.split_seq.get()
+    }
+
+    /// Apply a resolved [`DockReorganizeIntent`] to the live topology,
+    /// returning a human-readable outcome summary on success. Shared
+    /// by the `invoke("reorganize", …)` wire and exposed for direct
+    /// use by an in-process drag session.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`TopologyError`] from the underlying mutation when
+    /// the gesture cannot apply (stale panel id, root removal, id
+    /// collision). The live topology is left unchanged on error.
+    pub fn apply_intent(
+        &self,
+        intent: &DockReorganizeIntent,
+    ) -> Result<String, TopologyError> {
+        let current = self.topology.get();
+        let seq = self.split_seq.get();
+        let new_split_id = format!("{REORG_SPLIT_ID_PREFIX}{seq}");
+        let next = intent.apply(&current, new_split_id, self.reorganize_ratio)?;
+        if matches!(intent, DockReorganizeIntent::SplitInsert { .. }) {
+            self.split_seq.set(seq + 1);
+        }
+        let summary = format!("{} -> {}", intent.source(), intent.target());
+        *self.last_outcome.borrow_mut() = Some(summary.clone());
+        self.topology.set(next);
+        Ok(summary)
+    }
+}
+
+impl External for DockReorganizeExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for DockReorganizeExternal {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("topology", "json"),
+            ("split_seq", "int"),
+            ("last_outcome", "string"),
+            ("reorganize", "json"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "topology" => {
+                // §2 #7 scene-as-data — the live topology as queryable
+                // JSON. serde cannot fail for the well-formed topology
+                // tree; fall back to Null defensively rather than panic.
+                serde_json::to_value(self.topology.get())
+                    .ok()
+                    .map(IntrospectValue::Json)
+            }
+            "split_seq" => Some(IntrospectValue::Int(i64::try_from(self.split_seq.get()).unwrap_or(i64::MAX))),
+            "last_outcome" => Some(match self.last_outcome.borrow().as_deref() {
+                Some(s) => IntrospectValue::Text(s.to_string()),
+                None => IntrospectValue::Null,
+            }),
+            _ => None,
+        }
+    }
+
+    fn intervene(
+        &mut self,
+        path: &str,
+        _value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        match path {
+            // Topology mutation flows through `invoke("reorganize", …)`,
+            // not direct slot writes — every edit must pass the
+            // mutation primitives' validation gate.
+            "topology" | "split_seq" | "last_outcome" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    /// (R686 §5.16 §5.45) `reorganize` action — apply a drag-to-
+    /// reorganize gesture. The payload is a JSON object
+    /// `{"source": "<panel>", "target": "<panel>", "zone": "<Zone>"}`
+    /// where `zone` is a [`DockDropZone`] variant name (`"Center"` /
+    /// `"Left"` / `"Right"` / `"Top"` / `"Bottom"`). The AI client
+    /// classifies the zone from `scene/layout` rects via
+    /// [`dock_drop_zone_for`]; this handle maps it to the topology edit
+    /// + applies it.
+    ///
+    /// Returns the outcome summary `"<source> -> <target>"` on success.
+    ///
+    /// * [`InvokeError::TypeMismatch`] — payload is not a JSON object
+    ///   with string `source` / `target` / `zone` fields.
+    /// * [`InvokeError::Rejected`] — `zone` is unrecognised / `"None"`,
+    ///   or the topology edit failed (stale panel id, root removal, id
+    ///   collision). The live topology is unchanged.
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "reorganize" => {
+                let IntrospectValue::Json(obj) = args else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                let source = obj.get("source").and_then(serde_json::Value::as_str);
+                let target = obj.get("target").and_then(serde_json::Value::as_str);
+                let zone_str = obj.get("zone").and_then(serde_json::Value::as_str);
+                let (Some(source), Some(target), Some(zone_str)) = (source, target, zone_str)
+                else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                let zone = parse_drop_zone(zone_str).ok_or(InvokeError::Rejected)?;
+                let intent = match zone {
+                    DockDropZone::Center => DockReorganizeIntent::Swap {
+                        source: source.to_string(),
+                        target: target.to_string(),
+                    },
+                    DockDropZone::None => return Err(InvokeError::Rejected),
+                    edge => {
+                        let (orientation, position) =
+                            zone_split_geometry(edge).ok_or(InvokeError::Rejected)?;
+                        DockReorganizeIntent::SplitInsert {
+                            source: source.to_string(),
+                            target: target.to_string(),
+                            orientation,
+                            position,
+                        }
+                    }
+                };
+                match self.apply_intent(&intent) {
+                    Ok(summary) => Ok(IntrospectValue::Text(summary)),
+                    Err(e) => {
+                        *self.last_outcome.borrow_mut() =
+                            Some(format!("rejected: {e}"));
+                        Err(InvokeError::Rejected)
+                    }
+                }
+            }
+            _ => Err(InvokeError::UnknownPath),
         }
     }
 }
@@ -2402,6 +3274,491 @@ mod topology_tests {
         assert_eq!(
             DockTopology::try_new(cross).unwrap_err(),
             TopologyError::IdCollision("cross".to_string()),
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R686 atomic 1 — drag-to-reorganize mutation primitives.
+    // ─────────────────────────────────────────────────────────────────
+
+    use super::{DockSplitPosition, SplitterOrientation as Orient};
+
+    #[test]
+    fn r686_swap_leaves_exchanges_positions() {
+        // toolbar (outer.first) ↔ console (inner_v.second).
+        let swapped = editor_topology().swap_leaves("toolbar", "console").unwrap();
+        // Depth-first panel order: the two ids trade slots; everyone
+        // else keeps their place.
+        assert_eq!(
+            swapped.panel_ids(),
+            vec!["console", "outliner", "viewport", "properties", "toolbar"],
+        );
+        // Tree shape (splits + ratios) is untouched by a swap.
+        assert_eq!(swapped.split_ids(), vec!["outer", "inner_v", "middle_h", "inner_h"]);
+        assert_eq!(swapped.split_count(), 4);
+        assert_eq!(swapped.leaf_count(), 5);
+    }
+
+    #[test]
+    fn r686_swap_leaves_self_is_identity() {
+        let original = editor_topology();
+        let same = original.swap_leaves("viewport", "viewport").unwrap();
+        assert_eq!(same, original);
+    }
+
+    #[test]
+    fn r686_swap_leaves_unknown_panel_errors() {
+        let err = editor_topology().swap_leaves("toolbar", "ghost").unwrap_err();
+        assert_eq!(err, TopologyError::PanelNotFound("ghost".to_string()));
+        // First-arg miss is reported on the first arg.
+        let err_a = editor_topology().swap_leaves("ghost", "toolbar").unwrap_err();
+        assert_eq!(err_a, TopologyError::PanelNotFound("ghost".to_string()));
+    }
+
+    #[test]
+    fn r686_split_leaf_into_second_position() {
+        // Split "outliner" into a vertical pair, the new "assets" panel
+        // taking the bottom (Second) slot.
+        let grown = editor_topology()
+            .split_leaf_into("outliner", "assets", "outliner_v", Orient::Vertical, 0.5, DockSplitPosition::Second)
+            .unwrap();
+        assert_eq!(
+            grown.panel_ids(),
+            vec!["toolbar", "outliner", "assets", "viewport", "properties", "console"],
+        );
+        assert_eq!(grown.split_count(), 5);
+        assert!(grown.split_ids().contains(&"outliner_v"));
+    }
+
+    #[test]
+    fn r686_split_leaf_into_first_position() {
+        // Same split but the new "assets" panel takes the top (First)
+        // slot, pushing "outliner" after it in depth-first order.
+        let grown = editor_topology()
+            .split_leaf_into("outliner", "assets", "outliner_v", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .unwrap();
+        assert_eq!(
+            grown.panel_ids(),
+            vec!["toolbar", "assets", "outliner", "viewport", "properties", "console"],
+        );
+    }
+
+    #[test]
+    fn r686_split_leaf_into_unknown_target_errors() {
+        let err = editor_topology()
+            .split_leaf_into("ghost", "assets", "s", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .unwrap_err();
+        assert_eq!(err, TopologyError::PanelNotFound("ghost".to_string()));
+    }
+
+    #[test]
+    fn r686_split_leaf_into_duplicate_panel_id_rejected() {
+        // New leaf id collides with an existing panel → DuplicatePanelId
+        // surfaced by the try_new gate (the live topology is unchanged).
+        let err = editor_topology()
+            .split_leaf_into("outliner", "viewport", "s", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .unwrap_err();
+        assert_eq!(err, TopologyError::DuplicatePanelId("viewport".to_string()));
+    }
+
+    #[test]
+    fn r686_split_leaf_into_duplicate_split_id_rejected() {
+        let err = editor_topology()
+            .split_leaf_into("outliner", "assets", "outer", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .unwrap_err();
+        assert_eq!(err, TopologyError::DuplicateSplitId("outer".to_string()));
+    }
+
+    #[test]
+    fn r686_split_leaf_into_id_collision_rejected() {
+        // New *leaf* id "outer" collides with an existing *split* id.
+        let err = editor_topology()
+            .split_leaf_into("outliner", "outer", "fresh_split", Orient::Vertical, 0.5, DockSplitPosition::First)
+            .unwrap_err();
+        assert_eq!(err, TopologyError::IdCollision("outer".to_string()));
+    }
+
+    #[test]
+    fn r686_split_leaf_into_invalid_ratio_rejected() {
+        let err = editor_topology()
+            .split_leaf_into("outliner", "assets", "s", Orient::Vertical, f32::NAN, DockSplitPosition::First)
+            .unwrap_err();
+        let TopologyError::InvalidRatio { split_id, .. } = err else {
+            panic!("expected InvalidRatio, got {err:?}");
+        };
+        assert_eq!(split_id, "s");
+    }
+
+    #[test]
+    fn r686_remove_leaf_promotes_sibling_subtree() {
+        // Remove "toolbar" (outer.first) → the "outer" Split disappears
+        // and its sibling sub-tree (inner_v) becomes the new root.
+        let pruned = editor_topology().remove_leaf("toolbar").unwrap();
+        assert_eq!(pruned.panel_ids(), vec!["outliner", "viewport", "properties", "console"]);
+        // "outer" is gone; the remaining splits keep their ids + ratios.
+        assert_eq!(pruned.split_ids(), vec!["inner_v", "middle_h", "inner_h"]);
+        assert!(matches!(pruned.root(), DockNode::Split { id, .. } if id.as_ref() == "inner_v"));
+    }
+
+    #[test]
+    fn r686_remove_leaf_collapses_deep_split() {
+        // Remove "properties" (inner_h.second) → inner_h collapses to
+        // its surviving "viewport" leaf, which takes inner_h's slot.
+        let pruned = editor_topology().remove_leaf("properties").unwrap();
+        assert_eq!(pruned.panel_ids(), vec!["toolbar", "outliner", "viewport", "console"]);
+        assert_eq!(pruned.split_ids(), vec!["outer", "inner_v", "middle_h"]);
+    }
+
+    #[test]
+    fn r686_remove_leaf_unknown_panel_errors() {
+        let err = editor_topology().remove_leaf("ghost").unwrap_err();
+        assert_eq!(err, TopologyError::PanelNotFound("ghost".to_string()));
+    }
+
+    #[test]
+    fn r686_remove_leaf_sole_panel_is_root_removal() {
+        let err = DockTopology::single("only").remove_leaf("only").unwrap_err();
+        assert_eq!(err, TopologyError::RootRemoval);
+    }
+
+    #[test]
+    fn r686_remove_then_split_reparents_existing_panel() {
+        // The drag-to-reparent composition: move "console" to sit left
+        // of "viewport". Step 1 removes it; step 2 re-inserts it.
+        let topology = editor_topology();
+        let without_console = topology.remove_leaf("console").unwrap();
+        assert!(!without_console.panel_ids().contains(&"console"));
+        let reparented = without_console
+            .split_leaf_into("viewport", "console", "viewport_h", Orient::Horizontal, 0.5, DockSplitPosition::First)
+            .unwrap();
+        // console is back, now beside viewport; total leaf count restored.
+        assert_eq!(reparented.leaf_count(), 5);
+        assert!(reparented.panel_ids().contains(&"console"));
+        assert!(reparented.split_ids().contains(&"viewport_h"));
+    }
+}
+
+#[cfg(test)]
+mod drop_zone_tests {
+    //! R686 §5.16 §5.45 — `dock_drop_zone_for` geometry tests.
+    //!
+    //! Pure classification of a cursor over a panel rect into a
+    //! [`DockDropZone`]. The drag-over External (R686 atomic 2) maps
+    //! the zone to a topology edit; these tests pin only the geometry
+    //! contract: edge-band proportions, centre rectangle, corner
+    //! tiebreak precedence, half-open containment, and degenerate-rect
+    //! handling.
+
+    use super::{dock_drop_zone_for, DockDropZone, DOCK_EDGE_ZONE_FRAC};
+    use pinion_core::scene::Rect;
+
+    /// Canonical 400×400 panel at offset (100, 100). With
+    /// `DOCK_EDGE_ZONE_FRAC = 0.25` the edge bands are 100 px thick, so
+    /// the centre rectangle spans (200, 200)..(400, 400).
+    fn panel() -> Rect {
+        Rect::new(100, 100, 400, 400)
+    }
+
+    #[test]
+    fn r686_drop_zone_center_is_center() {
+        // Dead centre — far from every edge.
+        assert_eq!(dock_drop_zone_for(panel(), 300.0, 300.0), DockDropZone::Center);
+    }
+
+    #[test]
+    fn r686_drop_zone_left_edge() {
+        // 50 px in from the left → from_left = 0.125 < 0.25.
+        assert_eq!(dock_drop_zone_for(panel(), 150.0, 300.0), DockDropZone::Left);
+    }
+
+    #[test]
+    fn r686_drop_zone_right_edge() {
+        assert_eq!(dock_drop_zone_for(panel(), 450.0, 300.0), DockDropZone::Right);
+    }
+
+    #[test]
+    fn r686_drop_zone_top_edge() {
+        assert_eq!(dock_drop_zone_for(panel(), 300.0, 150.0), DockDropZone::Top);
+    }
+
+    #[test]
+    fn r686_drop_zone_bottom_edge() {
+        assert_eq!(dock_drop_zone_for(panel(), 300.0, 450.0), DockDropZone::Bottom);
+    }
+
+    #[test]
+    fn r686_drop_zone_corner_resolves_to_nearest_with_left_precedence() {
+        // Top-left corner: from_left == from_top == 0.125 (exact tie).
+        // Declaration-order precedence (Left → Right → Top → Bottom)
+        // resolves the corner to Left.
+        assert_eq!(dock_drop_zone_for(panel(), 150.0, 150.0), DockDropZone::Left);
+        // Bottom-right corner: from_right == from_bottom tie → Right wins
+        // over Bottom by precedence.
+        assert_eq!(dock_drop_zone_for(panel(), 450.0, 450.0), DockDropZone::Right);
+    }
+
+    #[test]
+    fn r686_drop_zone_band_boundary_belongs_to_center() {
+        // Cursor exactly on the inner edge of the left band:
+        // from_left = 0.25 == DOCK_EDGE_ZONE_FRAC. The band is half-open
+        // on its inner side (>= frac → Center), so the boundary pixel is
+        // Center, not Left.
+        let on_boundary = 100.0 + DOCK_EDGE_ZONE_FRAC * 400.0;
+        assert_eq!(
+            dock_drop_zone_for(panel(), on_boundary, 300.0),
+            DockDropZone::Center,
+        );
+    }
+
+    #[test]
+    fn r686_drop_zone_outside_is_none() {
+        // Left / above of the rect.
+        assert_eq!(dock_drop_zone_for(panel(), 50.0, 300.0), DockDropZone::None);
+        assert_eq!(dock_drop_zone_for(panel(), 300.0, 50.0), DockDropZone::None);
+    }
+
+    #[test]
+    fn r686_drop_zone_right_bottom_edges_are_half_open() {
+        // x = 100 + 400 = 500 is the exclusive right edge → None.
+        assert_eq!(dock_drop_zone_for(panel(), 500.0, 300.0), DockDropZone::None);
+        // y = 100 + 400 = 500 is the exclusive bottom edge → None.
+        assert_eq!(dock_drop_zone_for(panel(), 300.0, 500.0), DockDropZone::None);
+    }
+
+    #[test]
+    fn r686_drop_zone_degenerate_rect_is_none() {
+        // Zero width / zero height carry no pixels → never a target.
+        assert_eq!(dock_drop_zone_for(Rect::new(0, 0, 0, 100), 0.0, 50.0), DockDropZone::None);
+        assert_eq!(dock_drop_zone_for(Rect::new(0, 0, 100, 0), 50.0, 0.0), DockDropZone::None);
+    }
+}
+
+#[cfg(test)]
+mod reorganize_tests {
+    //! R686 §5.16 §5.45 — drag-to-reorganize resolution + apply +
+    //! `DockReorganizeExternal` invoke wire.
+    //!
+    //! Three layers:
+    //! 1. [`resolve_dock_drop`] — cursor + layout → typed gesture.
+    //! 2. [`DockReorganizeIntent::apply`] — gesture → mutated topology.
+    //! 3. [`DockReorganizeExternal`] — the `scene/invoke` AI-native
+    //!    wire: parse JSON payload, apply, mutate the shared topology
+    //!    Signal, expose the result via `query`.
+
+    use std::rc::Rc;
+
+    use super::{
+        resolve_dock_drop, DockNode, DockReorganizeExternal, DockReorganizeIntent, DockSplitPosition,
+        DockTopology,
+    };
+    use crate::splitter::SplitterOrientation as Orient;
+    use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
+    use pinion_core::reactive::Signal;
+    use pinion_core::scene::Rect;
+
+    /// 3-panel fixture: `a | (b | c)`. Panel ids depth-first [a, b, c].
+    fn abc_topology() -> DockTopology {
+        DockTopology::new(DockNode::split_horizontal(
+            "root_h",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::split_horizontal("inner_h", 0.5, DockNode::leaf("b"), DockNode::leaf("c")),
+        ))
+    }
+
+    /// Side-by-side layout for the three panels (each 200×400).
+    fn abc_rects() -> Vec<(&'static str, Rect)> {
+        vec![
+            ("a", Rect::new(0, 0, 200, 400)),
+            ("b", Rect::new(200, 0, 200, 400)),
+            ("c", Rect::new(400, 0, 200, 400)),
+        ]
+    }
+
+    #[test]
+    fn r686_resolve_center_drop_is_swap() {
+        // Drop "a" onto b's centre (300, 200).
+        let intent = resolve_dock_drop(&abc_rects(), "a", 300.0, 200.0).unwrap();
+        assert_eq!(
+            intent,
+            DockReorganizeIntent::Swap { source: "a".into(), target: "b".into() },
+        );
+    }
+
+    #[test]
+    fn r686_resolve_edge_drop_is_split_insert() {
+        // Drop "a" onto b's left edge (210, 200) → dock left of b.
+        let intent = resolve_dock_drop(&abc_rects(), "a", 210.0, 200.0).unwrap();
+        assert_eq!(
+            intent,
+            DockReorganizeIntent::SplitInsert {
+                source: "a".into(),
+                target: "b".into(),
+                orientation: Orient::Horizontal,
+                position: DockSplitPosition::First,
+            },
+        );
+    }
+
+    #[test]
+    fn r686_resolve_top_edge_maps_to_vertical_first() {
+        // b's top edge (300, 10) → vertical split, source on top.
+        let intent = resolve_dock_drop(&abc_rects(), "a", 300.0, 10.0).unwrap();
+        let DockReorganizeIntent::SplitInsert { orientation, position, .. } = intent else {
+            panic!("expected SplitInsert, got {intent:?}");
+        };
+        assert_eq!(orientation, Orient::Vertical);
+        assert_eq!(position, DockSplitPosition::First);
+    }
+
+    #[test]
+    fn r686_resolve_skips_source_panel() {
+        // Cursor over "a" itself (the source) → no self-drop; nothing
+        // else under the cursor → None.
+        assert!(resolve_dock_drop(&abc_rects(), "a", 100.0, 200.0).is_none());
+    }
+
+    #[test]
+    fn r686_resolve_outside_all_panels_is_none() {
+        assert!(resolve_dock_drop(&abc_rects(), "a", 9999.0, 9999.0).is_none());
+    }
+
+    #[test]
+    fn r686_intent_apply_swap_exchanges_panels() {
+        let topo = abc_topology();
+        let intent = DockReorganizeIntent::Swap { source: "a".into(), target: "c".into() };
+        let next = intent.apply(&topo, "unused", 0.5).unwrap();
+        assert_eq!(next.panel_ids(), vec!["c", "b", "a"]);
+        // Swap leaves the tree shape intact.
+        assert_eq!(next.split_ids(), vec!["root_h", "inner_h"]);
+    }
+
+    #[test]
+    fn r686_intent_apply_split_insert_moves_panel() {
+        let topo = abc_topology();
+        // Dock "a" to the right of "c".
+        let intent = DockReorganizeIntent::SplitInsert {
+            source: "a".into(),
+            target: "c".into(),
+            orientation: Orient::Horizontal,
+            position: DockSplitPosition::Second,
+        };
+        let next = intent.apply(&topo, "new_split", 0.5).unwrap();
+        // Leaf count invariant (a relocated, not duplicated).
+        assert_eq!(next.leaf_count(), 3);
+        assert!(next.split_ids().contains(&"new_split"));
+        // "a" left its old slot beside the root; root_h collapsed.
+        assert!(!next.split_ids().contains(&"root_h"));
+    }
+
+    #[test]
+    fn r686_external_invoke_center_swaps_topology_signal() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        let payload = IntrospectValue::Json(serde_json::json!({
+            "source": "a", "target": "b", "zone": "Center",
+        }));
+        let result = ext.invoke("reorganize", payload).unwrap();
+        assert!(matches!(result, IntrospectValue::Text(_)));
+        // The shared signal now holds the swapped topology.
+        assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"]);
+    }
+
+    #[test]
+    fn r686_external_invoke_edge_split_inserts_and_bumps_seq() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        assert_eq!(ext.split_seq(), 0);
+        let payload = IntrospectValue::Json(serde_json::json!({
+            "source": "a", "target": "c", "zone": "Right",
+        }));
+        ext.invoke("reorganize", payload).unwrap();
+        // A split was minted → seq bumped; topology grew a reorg split.
+        assert_eq!(ext.split_seq(), 1);
+        assert!(signal.get().split_ids().iter().any(|id| id.starts_with("reorg-split-")));
+        assert_eq!(signal.get().leaf_count(), 3);
+    }
+
+    #[test]
+    fn r686_external_invoke_swap_does_not_bump_seq() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(signal);
+        ext.invoke(
+            "reorganize",
+            IntrospectValue::Json(serde_json::json!({"source":"a","target":"b","zone":"Center"})),
+        )
+        .unwrap();
+        // Swap creates no split → seq stays 0.
+        assert_eq!(ext.split_seq(), 0);
+    }
+
+    #[test]
+    fn r686_external_invoke_non_json_payload_is_type_mismatch() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(signal);
+        let err = ext.invoke("reorganize", IntrospectValue::Text("a:b:Center".into())).unwrap_err();
+        assert_eq!(err, InvokeError::TypeMismatch);
+    }
+
+    #[test]
+    fn r686_external_invoke_unknown_zone_is_rejected() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(signal);
+        let err = ext
+            .invoke(
+                "reorganize",
+                IntrospectValue::Json(serde_json::json!({"source":"a","target":"b","zone":"Diagonal"})),
+            )
+            .unwrap_err();
+        assert_eq!(err, InvokeError::Rejected);
+    }
+
+    #[test]
+    fn r686_external_invoke_stale_panel_rejected_topology_unchanged() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        let before = signal.get();
+        let err = ext
+            .invoke(
+                "reorganize",
+                IntrospectValue::Json(serde_json::json!({"source":"ghost","target":"b","zone":"Center"})),
+            )
+            .unwrap_err();
+        assert_eq!(err, InvokeError::Rejected);
+        // Live topology untouched on a rejected gesture.
+        assert_eq!(signal.get(), before);
+    }
+
+    #[test]
+    fn r686_external_unknown_action_is_unknown_path() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(signal);
+        let err = ext.invoke("teleport", IntrospectValue::Null).unwrap_err();
+        assert_eq!(err, InvokeError::UnknownPath);
+    }
+
+    #[test]
+    fn r686_external_query_topology_returns_json() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let ext = DockReorganizeExternal::new(signal);
+        let IntrospectValue::Json(value) = ext.query("topology").unwrap() else {
+            panic!("topology query must return JSON");
+        };
+        // The serialized tree carries the root node's "type" tag.
+        assert!(value.get("root").is_some(), "topology JSON exposes the root node");
+    }
+
+    #[test]
+    fn r686_external_intervene_slots_are_read_only() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(signal);
+        assert_eq!(
+            ext.intervene("topology", IntrospectValue::Null),
+            Err(InterveneError::ReadOnly),
+        );
+        assert_eq!(
+            ext.intervene("nonexistent", IntrospectValue::Null),
+            Err(InterveneError::UnknownPath),
         );
     }
 }

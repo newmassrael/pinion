@@ -21908,6 +21908,58 @@
         "S15 (architectural) — Scene Clone via External Box<dyn> -> Rc<RefCell<dyn>> lift; natural land at Phase C/D entry."
       ]
     },
+    "R687": {
+      "decision_summary": "R687 delivers the R686-planned DockSurface drag-to-reorganize substrate: drop-zone geometry, immutable topology mutation primitives, a resolver, and an AI-native DockReorganizeExternal driving reactive topology edits.",
+      "changes_bullets": [
+        "pinion-widget-paint::dock: DockDropZone enum (None/Left/Right/Top/Bottom/Center, non_exhaustive) + dock_drop_zone_for(Rect, f64, f64) pure helper (DOCK_EDGE_ZONE_FRAC=0.25 picture-frame, half-open containment, nearest-edge tiebreak Left>Right>Top>Bottom). Geometry/gesture separation: zone names are spatial, not gesture-baked (deviation from the R686 sketch's SwapLeft naming).",
+        "DockTopology mutation primitives, all &self -> Result<DockTopology, TopologyError> (NOT the sketch's Option): swap_leaves / split_leaf_into / remove_leaf; new TopologyError::PanelNotFound + RootRemoval variants; every result flows through the try_new validation gate. SplitInsert uses an Option::take payload (SplitInsertion) so owned Cow ids move into the tree exactly once.",
+        "DockReorganizeIntent enum (Swap / SplitInsert with pre-resolved orientation+position) + apply() composing the primitives (SplitInsert = remove_leaf then split_leaf_into, a move). resolve_dock_drop(panel_rects, source, x, y) pure resolver = layout + cursor -> typed gesture.",
+        "DockReorganizeExternal (invoke-driven, holds Rc<Signal<DockTopology>>): scene/invoke reorganize applies a gesture + Signal::set -> reactive re-render; query(topology) exposes the live tree as JSON (s2 #7 scene-as-data); split_seq monotonic id minting (reorg-split-N). serde_json promoted from dev-only to a normal dep.",
+        "hello-dock-panels-editor wired: use_editor_topology() Signal<DockTopology> via Owner::cache; use_split_ratio lifted to Cow key (runtime reorg-split ids render via Owner::cache); DockReorganizeExternal registered at /dock_reorganize; view fn reads the reactive topology. Design correction: the SEED's non-capturing DockDragOverExternal is incompatible with the InputRouter exclusive capture model (cursor_moved routes only to the captured tag), so resolution is caller-side (AI client has scene/layout) + an invoke-driven external."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 4047 pass / 0 fail (+44 R687: 10 drop-zone geometry + 15 topology mutation + 16 reorganize intent/resolver/external + 3 editor wire).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (fixed doc_markdown brand list, missing_panics_doc via non-panicking if-let, ptr_arg via Option::take payload).",
+        "46-demo regression sweep PASS deterministic (45 baseline R660-R686 bit-identical + new tools/demos/r686_dock_reorganize.py, >=40 assertions A-H, 0.99s). End-to-end RPC: swap, split-insert with reorg-split-0 minted + split_seq bump, stale/unknown-zone rejection, self-drop identity.",
+        "mnemosyne validate_workspace: T1 orphan total=0 (new +0), round-trip 1/1, GENERATED.md sync."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.45",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "Live MOUSE drag-to-reorganize with a drop-zone highlight overlay is NOT implemented — only the s2 #2 RPC-native path. The mouse UX needs a shell-level drag-session feeding absolute cursor + layout to resolve_dock_drop (the capturing source panel only sees rect-relative coords). Documented in DockReorganizeExternal rustdoc.",
+        "reorg-split-N dividers are not drag-resizable: create_extra_externals is boot-only, so no SplitterExternal registers for runtime-minted splits (they render at DEFAULT_REORGANIZE_RATIO). Runtime external (re)registration is a separate substrate axis.",
+        "Phase B widget catalog cascade still pending (Menu / Dialog / Tabs / Toolbar / Table / Tooltip / Drawer / Accordion).",
+        "S15 Scene Clone via External handle Box<dyn> -> Rc<RefCell<dyn>> lift (architectural carry, R682+ paint pipeline)."
+      ],
+      "publishable_decision_summary": "R687 delivers the R686-planned DockSurface drag-to-reorganize substrate: drop-zone geometry, immutable topology mutation primitives, a resolver, and an AI-native DockReorganizeExternal driving reactive topology edits.",
+      "publishable_changes_bullets": [
+        "pinion-widget-paint::dock: DockDropZone enum (None/Left/Right/Top/Bottom/Center, non_exhaustive) + dock_drop_zone_for(Rect, f64, f64) pure helper (DOCK_EDGE_ZONE_FRAC=0.25 picture-frame, half-open containment, nearest-edge tiebreak Left>Right>Top>Bottom). Geometry/gesture separation: zone names are spatial, not gesture-baked (deviation from the R686 sketch's SwapLeft naming).",
+        "DockTopology mutation primitives, all &self -> Result<DockTopology, TopologyError> (NOT the sketch's Option): swap_leaves / split_leaf_into / remove_leaf; new TopologyError::PanelNotFound + RootRemoval variants; every result flows through the try_new validation gate. SplitInsert uses an Option::take payload (SplitInsertion) so owned Cow ids move into the tree exactly once.",
+        "DockReorganizeIntent enum (Swap / SplitInsert with pre-resolved orientation+position) + apply() composing the primitives (SplitInsert = remove_leaf then split_leaf_into, a move). resolve_dock_drop(panel_rects, source, x, y) pure resolver = layout + cursor -> typed gesture.",
+        "DockReorganizeExternal (invoke-driven, holds Rc<Signal<DockTopology>>): scene/invoke reorganize applies a gesture + Signal::set -> reactive re-render; query(topology) exposes the live tree as JSON (s2 #7 scene-as-data); split_seq monotonic id minting (reorg-split-N). serde_json promoted from dev-only to a normal dep.",
+        "hello-dock-panels-editor wired: use_editor_topology() Signal<DockTopology> via Owner::cache; use_split_ratio lifted to Cow key (runtime reorg-split ids render via Owner::cache); DockReorganizeExternal registered at /dock_reorganize; view fn reads the reactive topology. Design correction: the SEED's non-capturing DockDragOverExternal is incompatible with the InputRouter exclusive capture model (cursor_moved routes only to the captured tag), so resolution is caller-side (AI client has scene/layout) + an invoke-driven external."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 4047 pass / 0 fail (+44 R687: 10 drop-zone geometry + 15 topology mutation + 16 reorganize intent/resolver/external + 3 editor wire).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (fixed doc_markdown brand list, missing_panics_doc via non-panicking if-let, ptr_arg via Option::take payload).",
+        "46-demo regression sweep PASS deterministic (45 baseline R660-R686 bit-identical + new tools/demos/r686_dock_reorganize.py, >=40 assertions A-H, 0.99s). End-to-end RPC: swap, split-insert with reorg-split-0 minted + split_seq bump, stale/unknown-zone rejection, self-drop identity.",
+        "mnemosyne validate_workspace: T1 orphan total=0 (new +0), round-trip 1/1, GENERATED.md sync."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.45",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Live MOUSE drag-to-reorganize with a drop-zone highlight overlay is NOT implemented — only the s2 #2 RPC-native path. The mouse UX needs a shell-level drag-session feeding absolute cursor + layout to resolve_dock_drop (the capturing source panel only sees rect-relative coords). Documented in DockReorganizeExternal rustdoc.",
+        "reorg-split-N dividers are not drag-resizable: create_extra_externals is boot-only, so no SplitterExternal registers for runtime-minted splits (they render at DEFAULT_REORGANIZE_RATIO). Runtime external (re)registration is a separate substrate axis.",
+        "Phase B widget catalog cascade still pending (Menu / Dialog / Tabs / Toolbar / Table / Tooltip / Drawer / Accordion).",
+        "S15 Scene Clone via External handle Box<dyn> -> Rc<RefCell<dyn>> lift (architectural carry, R682+ paint pipeline)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

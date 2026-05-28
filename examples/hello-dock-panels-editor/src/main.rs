@@ -57,7 +57,9 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
 use pinion_widget_paint::button::{view_button, ButtonColors, ButtonStyle};
-use pinion_widget_paint::dock::{view_dock_surface, DockNode, DockSplitState, DockTopology};
+use pinion_widget_paint::dock::{
+    view_dock_surface, DockNode, DockReorganizeExternal, DockSplitState, DockTopology,
+};
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::rc::Rc;
 
@@ -96,6 +98,13 @@ const SPLIT_OUTER_TAG: &str = "editor_split_outer";
 const SPLIT_INNER_V_TAG: &str = "editor_split_inner_v";
 const SPLIT_MIDDLE_H_TAG: &str = "editor_split_middle_h";
 const SPLIT_INNER_H_TAG: &str = "editor_split_inner_h";
+
+/// (R686 §5.16 §5.45) Extra-external tag the [`DockReorganizeExternal`]
+/// registers under. AI clients drive drag-to-reorganize through
+/// `scene/invoke /dock_reorganize/external/reorganize` (the §2 #2
+/// RPC-as-primary-path); the external mutates the shared topology
+/// `Signal`, and the view fn's reactive subscription re-renders.
+const DOCK_REORGANIZE_TAG: &str = "dock_reorganize";
 
 // ─── intent tag constants ─────────────────────────────────────────────
 
@@ -159,15 +168,33 @@ const PANEL_BODY_FONT_PX: u32 = 13;
 /// walker's `split_state` callback signature, so the helper is no
 /// longer needed.
 ///
-/// The `cache_key` argument is `&'static str` because the topology's
-/// declared split ids in this binding are all compile-time
-/// constants; runtime-generated ids (R686 dock-reorganize) will
-/// require an `Owner::cache` variant that accepts owned keys —
-/// that's a future-round substrate axis.
-fn use_split_ratio(cache_key: &'static str, initial_ratio: f32) -> Rc<Signal<f32>> {
+/// (R686 §5.16 §5.45) `cache_key` is `impl Into<Cow<'static, str>>`
+/// (R685.C S12 lifted `Owner::cache` to owned keys) so the view fn can
+/// pass a Split's runtime id directly. The boot topology's static
+/// split ids and a reorganize-minted `reorg-split-{n}` id both address
+/// an `Owner::cache` slot by string value — a static `&str` and an
+/// owned `String` carrying the same characters hit the same slot, so
+/// the splitter's `SplitterExternal` (registered at boot) and the view
+/// fn share one `Rc<Signal<f32>>` for the splits that existed at boot.
+fn use_split_ratio(
+    cache_key: impl Into<std::borrow::Cow<'static, str>>,
+    initial_ratio: f32,
+) -> Rc<Signal<f32>> {
     Owner::current()
         .expect("hello-dock-panels-editor: view fn runs inside owner scope")
         .cache(cache_key, || Signal::new(initial_ratio))
+}
+
+/// (R686 §5.16 §5.45) The live editor topology, owned by the binding
+/// as a reactive `Signal<DockTopology>` so drag-to-reorganize gestures
+/// can mutate it. Seeded once (first `Owner::cache` resolution) with
+/// [`build_editor_topology`]; the [`DockReorganizeExternal`] holds a
+/// clone and `set`s a mutated topology on each gesture, and the view
+/// fn's `get()` subscription re-renders the new layout.
+fn use_editor_topology() -> Rc<Signal<DockTopology>> {
+    Owner::current()
+        .expect("hello-dock-panels-editor: view fn runs inside owner scope")
+        .cache("editor_topology", || Signal::new(build_editor_topology()))
 }
 
 fn use_viewport_click_counter() -> Rc<Signal<u32>> {
@@ -209,16 +236,19 @@ fn build_editor_topology() -> DockTopology {
     ))
 }
 
-/// (R685.B §5.16) Resolve a Split's stable id to the canonical
-/// `&'static str` cache key used by `use_split_ratio`. The mapping
-/// is identity for the topology's declared splits (id IS the cache
-/// key — Owner::cache slot lookup, paint-side splitter tag, and
-/// SplitterExternal registration tag all share the same string),
-/// but the lookup table makes the binding's `&'static str` lifetime
-/// requirement explicit (the `Cow<'static, str>` id field from
-/// `DockNode::Split` carries the same data but may be `Cow::Owned`
-/// at runtime — for this binding's static topology, the static-str
-/// fast path applies).
+/// (R686 §5.16 §5.45) Recover a boot Split's stable id as a
+/// `&'static str` — the lifetime [`ExtraExternal::new`] requires for a
+/// registration tag. `create_extra_externals` (boot-time only) walks
+/// the initial topology, whose split ids are all compile-time
+/// constants, so the mapping is total there; `unreachable!` flags a
+/// boot topology that declares a split this table doesn't know.
+///
+/// The **view fn** no longer routes through this table — it passes the
+/// raw `Cow` split id straight to [`use_split_ratio`] (R685.C S12
+/// `Owner::cache` owned-key lift), so a reorganize-minted runtime split
+/// id renders without needing a `&'static str` bridge. Only the
+/// `ExtraExternal::new(&'static str)` registration path still needs the
+/// static recovery, and that path only ever sees boot splits.
 fn split_cache_key_for(split_id: &str) -> &'static str {
     match split_id {
         SPLIT_OUTER_TAG => SPLIT_OUTER_TAG,
@@ -481,14 +511,25 @@ impl WidgetCore for DockPanelsEditorView {
         // per Split keyed on the Split's id (which IS the paint-side
         // tag post-R685.B walker SSOT enforcement). Adding a 6th pane
         // is a one-line topology mutation; this loop grows automatically.
-        let topology = build_editor_topology();
-        let mut externals = Vec::with_capacity(topology.split_count());
+        // (R686) Walk the *live* topology signal's current value so the
+        // boot splitter set matches the seeded topology. Each boot split
+        // id is a compile-time constant, so `split_cache_key_for`
+        // recovers the `&'static str` `ExtraExternal::new` requires.
+        let topology_signal = use_editor_topology();
+        let topology = topology_signal.get();
+        let mut externals = Vec::with_capacity(topology.split_count() + 1);
         topology.for_each_split(|id, orientation, ratio| {
             let cache_key = split_cache_key_for(id);
             let signal = use_split_ratio(cache_key, ratio);
             let external = SplitterExternal::new(orientation).attach_ratio(signal);
             externals.push(ExtraExternal::new(cache_key, Box::new(external)));
         });
+        // (R686 §5.45) The drag-to-reorganize handle — shares the
+        // topology signal so an applied gesture re-renders the view.
+        externals.push(ExtraExternal::new(
+            DOCK_REORGANIZE_TAG,
+            Box::new(DockReorganizeExternal::new(topology_signal)),
+        ));
         externals
     }
 
@@ -504,7 +545,11 @@ impl WidgetCore for DockPanelsEditorView {
 
     fn view(state: Self::State, _frame: &Frame) -> Scene {
         let theme = use_theme(THEME_TAG).theme_animated();
-        let topology = build_editor_topology();
+        // (R686 §5.45) Read the live topology from its reactive Signal
+        // (subscribes the view; a reorganize gesture's `Signal::set`
+        // re-renders the new layout). The boot value is
+        // `build_editor_topology()` (seeded by `use_editor_topology`).
+        let topology = use_editor_topology().get();
         // (R685.B atomic 1 SSOT walker) — the walker auto-builds
         // DockPanelStyle / SplitterStyle from the topology's
         // panel_id / split_id / orientation, and threads the
@@ -514,11 +559,14 @@ impl WidgetCore for DockPanelsEditorView {
         //   - reactive `DockSplitState` per split_id (memoised Signal
         //     + dragging flag); the initial_ratio arg comes from the
         //     topology, so no caller-side ratio default duplication.
+        // (R686) The split_state callback keys `use_split_ratio` on the
+        // raw split id (Cow) so a reorganize-minted runtime split id
+        // resolves an Owner::cache slot without a `&'static str` bridge.
         view_dock_surface(
             &topology,
             |panel_id| panel_content_for(panel_id, state, &theme),
             |split_id, initial_ratio| DockSplitState {
-                ratio_signal: use_split_ratio(split_cache_key_for(split_id), initial_ratio),
+                ratio_signal: use_split_ratio(split_id.to_string(), initial_ratio),
                 dragging: false,
             },
             &theme,
@@ -575,6 +623,7 @@ mod tests {
 
     use super::*;
     use pinion_core::reactive::Owner;
+    use pinion_widget_paint::dock::{DockReorganizeIntent, DockSplitPosition};
     use pinion_widget_paint::splitter::SplitterOrientation;
     use std::borrow::Cow;
 
@@ -794,15 +843,86 @@ mod tests {
     }
 
     #[test]
-    fn r685_editor_create_extra_externals_registers_4_splitters() {
+    fn r686_editor_create_extra_externals_registers_4_splitters_plus_reorganize() {
         run_in_owner(|| {
             let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
-            assert_eq!(externals.len(), 4, "4 SplitterExternals registered");
+            // 4 SplitterExternals + 1 DockReorganizeExternal (R686).
+            assert_eq!(externals.len(), 5);
             let tags: Vec<&str> = externals.iter().map(|e| e.tag).collect();
             assert!(tags.contains(&SPLIT_OUTER_TAG));
             assert!(tags.contains(&SPLIT_INNER_V_TAG));
             assert!(tags.contains(&SPLIT_MIDDLE_H_TAG));
             assert!(tags.contains(&SPLIT_INNER_H_TAG));
+            assert!(tags.contains(&DOCK_REORGANIZE_TAG));
+        });
+    }
+
+    #[test]
+    fn r686_use_editor_topology_seeded_and_memoised() {
+        run_in_owner(|| {
+            let a = use_editor_topology();
+            let b = use_editor_topology();
+            assert!(Rc::ptr_eq(&a, &b), "Owner::cache memoises the topology signal");
+            assert_eq!(
+                a.get().panel_ids(),
+                vec!["toolbar", "outliner", "viewport", "properties", "console"],
+            );
+        });
+    }
+
+    #[test]
+    fn r686_reorganize_external_swap_reflows_topology_and_view() {
+        run_in_owner(|| {
+            // The external registered by create_extra_externals shares
+            // this same Owner::cache topology signal.
+            let topo = use_editor_topology();
+            let ext = DockReorganizeExternal::new(Rc::clone(&topo));
+            ext.apply_intent(&DockReorganizeIntent::Swap {
+                source: "viewport".into(),
+                target: "console".into(),
+            })
+            .unwrap();
+            // Signal now holds the swapped topology.
+            assert_eq!(
+                topo.get().panel_ids(),
+                vec!["toolbar", "outliner", "console", "properties", "viewport"],
+            );
+            // The view fn reads the mutated topology + still renders the
+            // viewport button (its content moved with the panel id).
+            let scene =
+                <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &Frame::default());
+            assert!(format!("{scene:?}").contains(VIEWPORT_BTN_TAG));
+        });
+    }
+
+    #[test]
+    fn r686_view_renders_runtime_reorg_split_id_without_panic() {
+        run_in_owner(|| {
+            // Mint a runtime split id the way a SplitInsert gesture does
+            // and push it into the live topology. The view fn keys
+            // use_split_ratio on the raw id (Cow) — a static-str bridge
+            // would `unreachable!` here; the R686 raw-id path must not.
+            let topo = use_editor_topology();
+            let mutated = topo
+                .get()
+                .remove_leaf("console")
+                .unwrap()
+                .split_leaf_into(
+                    "viewport",
+                    "console",
+                    "reorg-split-0",
+                    SplitterOrientation::Vertical,
+                    0.5,
+                    DockSplitPosition::Second,
+                )
+                .unwrap();
+            topo.set(mutated);
+            let scene =
+                <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &Frame::default());
+            assert!(
+                format!("{scene:?}").contains("reorg-split-0"),
+                "view renders the runtime-minted split tag",
+            );
         });
     }
 
