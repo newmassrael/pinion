@@ -445,19 +445,15 @@ impl<V: WidgetCore> CoreShell<V> {
         let primary = Scene::External(
             ExternalNode::new(root_owner.run(V::create_external)).with_tag(V::tag()),
         );
-        let extras = root_owner.run(V::create_extra_externals);
-        let scene = if extras.is_empty() {
-            primary
-        } else {
-            let mut children: Vec<Scene> = Vec::with_capacity(1 + extras.len());
-            children.push(primary);
-            for extra in extras {
-                children.push(Scene::External(
-                    ExternalNode::new(extra.handle).with_tag(extra.tag),
-                ));
-            }
-            Scene::Container(ContainerNode::new(children))
-        };
+        let extra_children: Vec<Scene> = root_owner
+            .run(V::create_extra_externals)
+            .into_iter()
+            .map(|extra| Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag)))
+            .collect();
+        // (R688.A §5.16) Assemble through the one composition helper
+        // shared with `Self::reconcile_externals` — SSOT for the root
+        // shape (bare External vs Container([primary, ...extras])).
+        let scene = Self::compose_root(primary, extra_children);
         let cached_state = V::read_state(&scene);
         let frame_signal = Signal::new(0_u64);
         let last_dt: std::rc::Rc<Cell<f32>> = std::rc::Rc::new(Cell::new(0.0_f32));
@@ -701,6 +697,26 @@ impl<V: WidgetCore> CoreShell<V> {
         &self.cached_state
     }
 
+    /// (R688.A §5.16) Single source for the state-scene root shape.
+    ///
+    /// A single-External binding (`extra_children` empty) stays a bare
+    /// [`Scene::External`]; a binding with extras becomes
+    /// `Scene::Container([primary, ...extra_children])`. Both the boot
+    /// path ([`Self::new`]) and the runtime reconcile
+    /// ([`Self::reconcile_externals`]) assemble through here, so the
+    /// composition rule lives in exactly one place — a later change to
+    /// the root shape cannot drift between the two call sites.
+    fn compose_root(primary: Scene, extra_children: Vec<Scene>) -> Scene {
+        if extra_children.is_empty() {
+            primary
+        } else {
+            let mut children = Vec::with_capacity(1 + extra_children.len());
+            children.push(primary);
+            children.extend(extra_children);
+            Scene::Container(ContainerNode::new(children))
+        }
+    }
+
     /// R688 §5.16 §5.35 — reconcile the registered external set against
     /// the binding's current reactive state.
     ///
@@ -774,24 +790,25 @@ impl<V: WidgetCore> CoreShell<V> {
             Scene::External(node) => (Scene::External(node), Vec::new()),
             Scene::Container(container) => {
                 let mut children = container.children;
-                // Index 0 is the primary External (see `Self::new`'s
+                // Index 0 is the primary External (see `Self::compose_root`
                 // composition); the rest are the extras.
                 let primary = children.remove(0);
                 (primary, children)
             }
-            other => {
-                // Unexpected shape — restore and bail rather than
-                // corrupt the scene.
-                self.scene = other;
-                return;
-            }
+            // The state-scene root is only ever assembled as
+            // `Scene::External` or `Scene::Container` by `Self::compose_root`
+            // (boot + this method); `scene_mut` hands out a borrow for
+            // path-level intervene/query but never reshapes the root. A
+            // silent restore would hide a contract violation by leaving the
+            // new surface inert, so this is an `unreachable!` contract panic
+            // (the R685 Smell-6 convention: contract panic over fallback).
+            other => unreachable!(
+                "CoreShell state-scene root must be External or Container; got {other:?}"
+            ),
         };
-        // Every extra removed — collapse back to the bare primary shape
-        // (`current_extras` drop here), matching the boot-time empty case.
-        if new_extras.is_empty() {
-            self.scene = primary;
-            return;
-        }
+        // Preserve in-flight state: a surviving tag keeps its live node; a
+        // genuinely new tag adopts the freshly built handle. `existing`
+        // leftovers are removed tags, dropped at the end of this scope.
         let mut existing: HashMap<String, Scene> = HashMap::new();
         for node in current_extras {
             if let Scene::External(ref ext) = node
@@ -800,21 +817,20 @@ impl<V: WidgetCore> CoreShell<V> {
                 existing.insert(tag.to_owned(), node);
             }
         }
-        let mut children: Vec<Scene> = Vec::with_capacity(1 + new_extras.len());
-        children.push(primary);
-        for extra in new_extras {
-            if let Some(node) = existing.remove(extra.tag.as_ref()) {
-                // Surviving tag — keep the live instance (preserve state).
-                children.push(node);
-            } else {
-                // New tag — register the freshly built handle.
-                children.push(Scene::External(
-                    ExternalNode::new(extra.handle).with_tag(extra.tag),
-                ));
-            }
-        }
-        // `existing` leftovers are removed tags — dropped here.
-        self.scene = Scene::Container(ContainerNode::new(children));
+        let extra_children: Vec<Scene> = new_extras
+            .into_iter()
+            .map(|extra| {
+                if let Some(node) = existing.remove(extra.tag.as_ref()) {
+                    node
+                } else {
+                    Scene::External(ExternalNode::new(extra.handle).with_tag(extra.tag))
+                }
+            })
+            .collect();
+        // (R688.A §5.16) Same composition helper as the boot path — the
+        // empty-extras case collapses back to the bare primary inside the
+        // helper, so no separate early return is needed here.
+        self.scene = Self::compose_root(primary, extra_children);
     }
 
     /// R51.142 §5.28 — read-only borrow of the root reactive scope
@@ -3796,6 +3812,23 @@ mod tests {
         assert!(
             matches!(core.scene(), Scene::External(_)),
             "single-External binding stays bare after reconcile",
+        );
+    }
+
+    #[test]
+    fn r688_a_reconcile_collapses_to_bare_when_all_extras_removed() {
+        // Removing every extra collapses the Container root back to the
+        // bare primary — handled by `compose_root`, so the R688.A removal
+        // of reconcile's explicit empty-case early return is behaviour-
+        // preserving.
+        recon_reset(&["a", "b"]);
+        let mut core: CoreShell<ReconcileFixture> = CoreShell::new();
+        assert!(matches!(core.scene(), Scene::Container(_)));
+        recon_set_tags(&[]);
+        core.reconcile_externals();
+        assert!(
+            matches!(core.scene(), Scene::External(_)),
+            "all extras removed collapses the root to the bare primary",
         );
     }
 }

@@ -13830,6 +13830,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R688.A — R688.A audit-clearance: extract a compose_root SSOT helper for the state-scene root shape and replace reconcile_externals' impossible-shape fallback with an unreachable! contract panic.
+
+**Changes**:
+- pinion-runtime/core_shell.rs: new private CoreShell::compose_root(primary, extra_children) -> Scene is the single source for the root-shape rule (bare Scene::External when no extras, else Scene::Container([primary, ...extras])). Both CoreShell::new (boot) and reconcile_externals (runtime) now assemble through it. Finding 1: pre-R688.A the bare-vs-Container decision plus the verbatim ExternalNode::new(handle).with_tag(tag) wrap were duplicated across the two sites, so a future root-shape change could drift between them.
+- reconcile_externals: the match arm for a scene root that is neither External nor Container changed from a silent restore-and-bail to an unreachable! contract panic. Finding 2: the root is only ever assembled as External/Container by compose_root, and scene_mut only hands out a borrow for path-level intervene/query (never reshapes the root), so the arm was dead; the R685 Smell-6 convention is a contract panic over a silent fallback (a silent bail would hide the violation by leaving the new surface inert).
+- reconcile_externals: the explicit new_extras.is_empty() early return was removed because compose_root collapses the empty case to the bare primary, unifying the path (one fewer special-case branch).
+- +1 test r688_a_reconcile_collapses_to_bare_when_all_extras_removed locking the Container->bare collapse that the removed early return used to cover.
+
+
+
+**Verification**:
+- cargo test --workspace: all suites pass (pinion-runtime 266 incl. the 5 R688 reconcile tests plus the new R688.A collapse test).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace -D pedantic.
+- 46/46 demo regression sweep PASS (behavior-preserving refactor; r686_dock_reorganize incl. the E2 runtime-splitter section still green).
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- reconcile_externals still re-runs create_extra_externals every frame/dispatch (R688 honest carry a, audit Finding 3). It mirrors the framework's immediate-mode-reconcile idiom and the no-op guard prevents scene mutation, so it is kept as a documented tradeoff rather than a smell; a dirty-gate / generation-counter is a future optimization candidate.
+- live MOUSE drag-to-reorganize + drop-zone highlight overlay still RPC-native only (R687 carry a).
+- DockReorganizeIntent undo/redo (immutable Result form is undo-stack friendly) — Phase D editor workspace history.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
