@@ -1803,6 +1803,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-menu"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-multi-window"
 version = "0.0.1"
 dependencies = [

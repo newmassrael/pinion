@@ -431,6 +431,13 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // selected, N of M") but the action set matches
         // RadioButton / ListBoxOption.
         | AriaRole::Tab
+        // R691 §5.40 — `MenuItem` is commit-class atomic at the
+        // AT-action surface (Click activates the command, Focus moves
+        // the AT cursor / active descendant). The role identity stays
+        // distinct (`Role::MenuItem` → screen readers announce "menu
+        // item") but the action set matches Button / Tab — a base
+        // `menuitem` is a one-shot command, not a selection.
+        | AriaRole::MenuItem
         | AriaRole::Switch => {
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
@@ -463,6 +470,12 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // `TabPanel` is the active tab's content region — focusable
         // (Tab key lands on it when it carries no focusable content)
         // so it shares the same `Focus`-only action set.
+        // R691 §5.40 — `MenuBar` (the persistent title bar) and `Menu`
+        // (the open dropdown container) join the focus-only container
+        // set (parallel to `TabList` / `Tree` / `Listbox`); their
+        // per-command `MenuItem` children land in the commit-class arm
+        // above. The active dropdown item is surfaced as the menu's
+        // `aria-activedescendant`, not as a focus of the container.
         AriaRole::RadioGroup
         | AriaRole::Listbox
         | AriaRole::List
@@ -470,6 +483,8 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         | AriaRole::Tree
         | AriaRole::TabList
         | AriaRole::TabPanel
+        | AriaRole::MenuBar
+        | AriaRole::Menu
         | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }

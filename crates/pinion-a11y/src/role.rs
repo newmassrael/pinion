@@ -146,6 +146,49 @@ pub enum AriaRole {
     /// container roles. Only the active tab's panel is rendered, so
     /// at most one `tabpanel` node exists in the tree at a time.
     TabPanel,
+    /// R691 §5.40 — WAI-ARIA 1.2 §3.5 `menubar` role. A horizontal
+    /// presentation of a [`Self::Menu`] that usually stays visible
+    /// (the editor `File` / `Edit` / `View` bar). Container for
+    /// [`Self::MenuItem`] title children; owns the WAI-ARIA §3.5
+    /// menubar keyboard model (Arrow Left/Right move between
+    /// top-level items, Arrow Down opens the focused item's menu).
+    /// Joins the focus-only container action set alongside
+    /// [`Self::TabList`] / [`Self::Tree`] / [`Self::Listbox`].
+    MenuBar,
+    /// R691 §5.40 — WAI-ARIA 1.2 §3.5 `menu` role. The dropdown
+    /// container shown when a [`Self::MenuBar`] title opens. Holds the
+    /// open menu's [`Self::MenuItem`] children and owns the in-menu
+    /// keyboard model (Arrow Up/Down move the active item, Home/End
+    /// jump, Escape closes). Focus-only container action set — the
+    /// active item is reported as the menu's `aria-activedescendant`,
+    /// not as a focus of the container itself.
+    Menu,
+    /// R691 §5.40 — WAI-ARIA 1.2 §3.5 `menuitem` role. A single
+    /// **command** within a [`Self::MenuBar`] (a top-level title) or
+    /// a [`Self::Menu`] (a dropdown command). Commit-class atomic at
+    /// the AT-action surface (Click activates, Focus moves the AT
+    /// cursor) — the action set matches [`Self::Button`] /
+    /// [`Self::Tab`].
+    ///
+    /// **Distinct from selection roles.** A base `menuitem` carries
+    /// neither `aria-selected` ([`Self::Tab`] / [`Self::ListBoxOption`])
+    /// nor `aria-checked` ([`Self::RadioButton`] / [`Self::CheckBox`]):
+    /// activating it fires a one-shot command and (for a dropdown
+    /// item) closes the menu. The stateful menu variants
+    /// (`menuitemcheckbox` / `menuitemradio`) are separate WAI-ARIA
+    /// roles that land additively if a consumer needs a toggled menu
+    /// entry. This command-vs-selection split is why the §5.50 menu
+    /// substrate (R691) uses a command-class `MenuBarExternal` rather
+    /// than reusing the
+    /// [`RadioGroupExternal`](pinion_core::widgets::radio_group::RadioGroupExternal)
+    /// the way [`Self::Tab`] does.
+    ///
+    /// `aria-haspopup` (a top-level title that opens a submenu) and
+    /// `aria-expanded` (the open/closed state of that submenu) are
+    /// future additive `AccessNode` axes; R691 encodes the open menu
+    /// structurally (the dropdown `Menu` node is present only while
+    /// open) rather than on the title's a11y state.
+    MenuItem,
     Generic,
 }
 
@@ -174,6 +217,9 @@ impl AriaRole {
             Self::TabList => Role::TabList,
             Self::Tab => Role::Tab,
             Self::TabPanel => Role::TabPanel,
+            Self::MenuBar => Role::MenuBar,
+            Self::Menu => Role::Menu,
+            Self::MenuItem => Role::MenuItem,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -203,6 +249,9 @@ impl AriaRole {
             Self::TabList => "tablist",
             Self::Tab => "tab",
             Self::TabPanel => "tabpanel",
+            Self::MenuBar => "menubar",
+            Self::Menu => "menu",
+            Self::MenuItem => "menuitem",
             Self::Generic => "generic",
         }
     }
@@ -309,5 +358,29 @@ mod tests {
         assert_eq!(AriaRole::TabList.aria_name(), "tablist");
         assert_eq!(AriaRole::Tab.aria_name(), "tab");
         assert_eq!(AriaRole::TabPanel.aria_name(), "tabpanel");
+    }
+
+    // R691 §5.40 — Menu / MenuBar / MenuItem role lowering + names.
+
+    #[test]
+    fn menu_bar_lowers_to_accesskit_menu_bar() {
+        assert_eq!(AriaRole::MenuBar.to_accesskit(), Role::MenuBar);
+    }
+
+    #[test]
+    fn menu_lowers_to_accesskit_menu() {
+        assert_eq!(AriaRole::Menu.to_accesskit(), Role::Menu);
+    }
+
+    #[test]
+    fn menu_item_lowers_to_accesskit_menu_item() {
+        assert_eq!(AriaRole::MenuItem.to_accesskit(), Role::MenuItem);
+    }
+
+    #[test]
+    fn menu_roles_aria_names_match_wai_aria_literals() {
+        assert_eq!(AriaRole::MenuBar.aria_name(), "menubar");
+        assert_eq!(AriaRole::Menu.aria_name(), "menu");
+        assert_eq!(AriaRole::MenuItem.aria_name(), "menuitem");
     }
 }

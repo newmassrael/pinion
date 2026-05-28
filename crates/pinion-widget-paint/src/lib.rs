@@ -79,6 +79,7 @@ pub mod button;
 pub mod checkbox;
 pub mod devtools;
 pub mod dock;
+pub mod menu;
 pub mod scrollbar;
 pub mod splitter;
 pub mod tabs;

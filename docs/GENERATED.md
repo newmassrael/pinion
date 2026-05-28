@@ -13947,6 +13947,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R691 — R691 Menu widget: command-class MenuBar + floating dropdown menus (Phase B widget-catalog entry), first consumer hello-menu.
+
+**Changes**:
+- pinion-a11y::role -- AriaRole::{MenuBar, Menu, MenuItem} (accesskit Role::{MenuBar,Menu,MenuItem} + WAI-ARIA 1.2 3.5 literal names); tree.rs add_actions_for_role: MenuItem = commit-class (Click+Focus), MenuBar/Menu = focus-only container
+- pinion-core::widgets::menu (new) -- MenuBar composite (items_per_menu / open / active / bar_focus) + command-class MenuBarExternal; item activation emits a 'command' intent (payload '<menu>.<item>') and dismisses -- NOT RadioGroupExternal reuse, because a base menuitem carries no aria-selected/aria-checked (R690 audit finding)
+- MenuBarExternal wire surface: invoke('send','t<m>:<PointerEvent>') toggles a title, invoke('send','i<i>:<PointerEvent>') hovers/activates an item, invoke('key','<W3CKey>') runs the whole WAI-ARIA menubar keyboard model; query/intervene open/active/bar_focus/menu_count/item_count.<m>
+- pinion-widget-paint::menu (new) -- MenuStyle::m3_default + composite_title_tag/composite_item_tag + view_menu_bar (title strip) + view_menu_dropdown (LayoutStyle absolute_position floating list, placed last so it paints over content)
+- examples/hello-menu (new, first consumer) -- File/Edit/View menubar; WAI-ARIA 3.5 keyboard (Arrow Left/Right titles + wrap, Down open, Up/Down item + wrap, Home/End, Right/Left switch menus, Escape close, Enter/Space activate); a11y walker MenuBar + MenuItem titles + Menu + MenuItem dropdown with posinset/setsize + active-descendant focus
+- tools/demos/r691_menu.py -- E2E >=30 assertions: menubar shape, click open/close, menu switch, hover-highlights-without-activate, item-click + keyboard-Enter emit the 'command' intent (observed via the shell stderr intent log, which wins the scene/intents drain race per handle_tail), full keyboard model, introspect mirror via /external/open|active|bar_focus
+- workspace Cargo.toml -- examples/hello-menu member
+
+
+
+**Verification**:
+- cargo test --workspace: all pass (pinion-core 1433 incl 35 menu, pinion-widget-paint 296 incl 9 menu, pinion-a11y incl 6 new Menu role tests, hello-menu 21); run at -j2 to cap peak link memory (full -j default OOM-killed the session)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean under the workspace -D pedantic baseline
+- demo sweep 47 -> 48 PASS, regression 0 (sequential, low memory)
+
+
+
+**Impact**: §5.16, §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- Menu click-outside / focus-loss dismiss = cross-widget overlay-dismiss substrate axis (also serves tooltip/popover/combobox); deferred to a 2nd overlay consumer per abstraction-needs-second-consumer. R691 dismisses via Escape / re-click open title / item activation
+- content-width menu titles + content-anchored dropdown (post-view layout-cache anchor, mirroring caret) deferred; R691 uses fixed-width title slots for a deterministic dropdown x anchor in the pure view fn
+- aria-haspopup / aria-expanded on titles + menuitemcheckbox / menuitemradio stateful entries + nested submenus + accelerator/mnemonic keys = additive a11y/widget axes when a consumer needs them
+- elevation shadow under the dropdown deferred (no shadow primitive yet); R691 reads elevation via SurfaceContainerHigh tier + outline + corner radius
+- next Phase B widget catalog: Dialog / Toolbar / Table / Tooltip (1 widget or small pair per round)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

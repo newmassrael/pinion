@@ -4,6 +4,7 @@ pub mod caret_blink;
 pub mod checkbox;
 pub mod listbox;
 pub mod listbox_item;
+pub mod menu;
 pub mod radio;
 pub mod radio_group;
 pub mod scroll;
