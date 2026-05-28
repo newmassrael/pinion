@@ -71,6 +71,7 @@
 //! any click. `DockSurface` (atomic 3) panels are always tagged so
 //! the contract is satisfied automatically.
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -139,7 +140,12 @@ impl SplitterOrientation {
 /// `VSCode` / `JetBrains` / Figma desktop default) tinted with
 /// [`ColorRole::Outline`] for visibility against any palette.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy)]
+/// (R685.B §5.16) Lost `Copy` (was R683.B) when `tag` became
+/// `Cow<'static, str>` — `Cow::Owned(String)` is not `Copy`. `Clone`
+/// is cheap (`Cow::Borrowed` clone is an `&'static str` copy; only
+/// `Cow::Owned` allocates). All call sites that need `Self` by value
+/// use `.clone()` explicitly.
+#[derive(Debug, Clone)]
 pub struct SplitterStyle {
     /// Orientation of the splitter's main flex axis. Determines
     /// both the outer `LayoutStyle::flex_direction` and which
@@ -160,7 +166,13 @@ pub struct SplitterStyle {
     /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals).
     /// Must match the tag the application registers the external
     /// under, or the drag wire stays inert (paint-only mode).
-    pub tag: &'static str,
+    ///
+    /// (R685.B §5.16) `Cow<'static, str>` so dynamic split ids (e.g.
+    /// R686 drag-to-reorganize-generated ids) can flow through
+    /// [`crate::dock::view_dock_surface`] without forcing every Split's
+    /// tag to be a compile-time `&'static str` constant. Static
+    /// literals still coerce via `Cow::Borrowed` with zero overhead.
+    pub tag: Cow<'static, str>,
     /// Minimum ratio bound, clamped on every pointer-move drag
     /// update. Defaults to `0.05` — keeps the smaller panel
     /// non-degenerate so the dock + tear-off arc has a non-zero
@@ -177,15 +189,21 @@ impl SplitterStyle {
     /// `[0.05, 0.95]` clamp bounds. The caller supplies the
     /// orientation + paint-side tag (the only binding-local axes
     /// every consumer must vary).
+    ///
+    /// (R685.B §5.16) `tag: impl Into<Cow<'static, str>>` — static
+    /// `&'static str` literals coerce zero-cost via `Cow::Borrowed`;
+    /// runtime-generated `String` ids (e.g. R686 dock-reorganize)
+    /// flow via `Cow::Owned`. Same conversion contract every
+    /// `with_tag` setter on Scene variants ships.
     #[must_use]
-    pub const fn m3_default(
+    pub fn m3_default(
         orientation: SplitterOrientation,
-        tag: &'static str,
+        tag: impl Into<Cow<'static, str>>,
     ) -> Self {
         Self {
             orientation,
             handle_extent_px: 4,
-            tag,
+            tag: tag.into(),
             min_ratio: 0.05,
             max_ratio: 0.95,
         }
@@ -493,7 +511,7 @@ pub fn view_splitter(
     // background under the panels.
     Scene::Container(
         ContainerNode::new(vec![left_child, handle, right_child])
-            .with_tag(style.tag)
+            .with_tag(style.tag.clone())
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
@@ -1148,6 +1166,13 @@ mod tests {
         assert!((style.min_ratio - 0.05).abs() < f32::EPSILON);
         assert!((style.max_ratio - 0.95).abs() < f32::EPSILON);
         assert_eq!(style.tag, TEST_TAG);
+        // (R685.B) Cow<'static, str> tag accepts Owned String too —
+        // dynamic split ids (e.g. R686 dock-reorganize) flow through.
+        let dynamic_style = SplitterStyle::m3_default(
+            SplitterOrientation::Horizontal,
+            format!("runtime_split_{}", 42),
+        );
+        assert_eq!(dynamic_style.tag.as_ref(), "runtime_split_42");
     }
 
     #[test]

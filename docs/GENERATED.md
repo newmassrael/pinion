@@ -13563,6 +13563,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R685.B — DockSurface SSOT enforcement (S1-S4) + DockTopology validation + R684.B Hack 3.2 substrate split — textbook 정직 audit 후속 청산.
+
+**Changes**:
+- `pinion_widget_paint::splitter::SplitterStyle::tag: &'static str` → `Cow<'static, str>`. `m3_default(orient, tag: impl Into<Cow<'static, str>>)` accepts static literals + dynamic String ids (R686 dock-reorganize prepares). `SplitterStyle` lost `Copy` (Cow::Owned not Copy); `Clone` is cheap. `view_splitter` `.with_tag(style.tag.clone())` call site update.
+- `view_dock_surface` walker SSOT 재설계 — callback signature `Fn(&str) -> DockPanelHandle` + `Fn(&str, SplitterOrientation) -> DockSplitHandle` → `Fn(&str) -> Scene` + `Fn(&str, f32) -> DockSplitState`. 원캙: `DockPanelStyle` + `SplitterStyle` 는 walker 가 topology 의 panel_id / split_id / orientation 으로 자동 구축 (caller cannot drift); `initial_ratio` 는 topology 의 `Split.ratio` 를 walker 가 callback 로 thread (binding 의 Signal 생성자 seed = topology declared value, no defaults duplication). `DockPanelHandle` 제거, `DockSplitHandle` → `DockSplitState` rename (reactive state only).
+- `pinion_widget_paint::dock::TopologyError` 열거형 신규 — `DuplicatePanelId` / `DuplicateSplitId` / `InvalidRatio { split_id, ratio }` / `EmptyId`. `core::fmt::Display` + `std::error::Error` impl.
+- `DockTopology::try_new(root) -> Result<Self, TopologyError>` validation gate — 중복 panel_id / split_id, NaN-or-out-of-[0,1] ratio, empty id 검증. `DockTopology::new` 은 `try_new(...).expect(...)` thin panic wrapper (하드코딩 topology 용). `DockTopology::root` pub field → `pub fn root(&self) -> &DockNode` accessor; 향후 변형 primitive (`swap_leaves`, `split_leaf_into`, `remove_leaf`) 이 유일 단독 변형 path.
+- `examples/hello-dock-panels-editor` 마이그레이션 — `default_ratio_for_split` helper 제거 (Smell 10 / S1 SSOT 청산). `split_tag_for` helper 제거 (R685 atomic 5d 완 identity fn). 대신 `split_cache_key_for` 만 남김 (Owner::cache `&'static str` lifetime requirement). `for_each_split` binding-local helper — topology Split node walk 으로 create_extra_externals 간소화. `use_split_ratio(cache_key, initial_ratio)` signature 유지 — initial_ratio 는 이제 walker 가 제공 (topology SoT).
+- 워크스페이스 dock.rs surface_tests + dock-panels-editor binding tests 업데이트 — 새 walker signature 테스트 + topology validation 9 신규 tests (try_new duplicate panel_id / duplicate split_id / NaN ratio / out-of-range ratio / empty panel_id / empty split_id / valid 5-pane editor / boundary 0.0+1.0 ratios / root() accessor).
+
+
+
+**Verification**:
+- cargo test --workspace PASS (3975 tests; R685 baseline 3966 → +9 R685.B 신규 topology validation tests). cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace `-D pedantic`.
+- 45-demo regression sweep PASS deterministic (R660-R685 + R685.B; 모든 dock 바인딩 행동 bit-identical post-substrate refactor; hello-dock-panels-editor binding tests 31/31 PASS).
+- SSOT audit 청산 증거 — ratio defaults 이제 topology 에만 입재 (binding helper 없음); panel tag = panel_id (walker auto-builds DockPanelStyle); split tag = split_id (walker auto-builds SplitterStyle); topology mutation 은 try_new validation path 만 가능 (pub root 제거).
+- TopologyError 9 검증 tests — 중복 panel_id, 중복 split_id, NaN ratio, out-of-range ratio, empty panel_id, empty split_id, valid 5-pane editor, boundary ratios (0.0 / 1.0), root() accessor.
+- Mnemosyne entry R685.B 깔끔 validate — atomic ledger 554 → 555, T1 reject=0, GENERATED.md sync, orphan_refs 5+0 frozen, impact_refs [5.16, 5.41, 5.49].
+
+
+
+**Impact**: §5.16, §5.41, §5.49
+
+
+**Carry forward**:
+- R684.B 잔여 4 hacks — Hack 0.1 (Size::with_width/with_height SizeValue builder), Hack 3.1 (apply_paint_for_window split), Hack 3.3 (compute_paint_scene_pure variant), Hack 3.4 (Scene Clone via External Rc lift; broader refactor R686+ carry). Hack 3.2 (InputRouter set/refresh split) 이미 R685 에서 청산. Hack 3.5 (dispatch_rpc_inner textbook rewrite) 도 R685 에서 first-paint gate 제거로 관련 청산.
+- R686 carry — DockSurface drag-to-reorganize handles (DockDropZone enum + edge-detection + mutation primitives swap_leaves / split_leaf_into / remove_leaf 가 try_new validation path 로 검증).
+- Smell 5 carry (view_button substrate lift) — 5+ inline binding consumers (hello-button / figma-button-m3 / todomvc / settings-panel / hello-dock-panels / hello-dock-panels-editor) 계속 재생산; R686+ Rule-of-Three audit round 에서 처리.
+- Smell 11 (apply_flex_main Scroll/Effect wildcard) carry — currently untested catch-all branch; Scroll 이 splitter child 로 쓰이는 실 use case 등장 시 구체 테스트 추가.
+- Smell 12 (R683.C splitter Surface fill backstop redundancy) carry — R685 atomic 5a 후 panels 이 fill 하므로 견제 장치 성격. 제거 vs 문서화 남아있음.
+- Smell 8 carry — Topology + Signal 영속화 contract 미정의 (Phase D editor workspace save/restore axis). R686 dock-reorganize land 시 함께 설계.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

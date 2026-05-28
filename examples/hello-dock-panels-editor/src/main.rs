@@ -56,10 +56,8 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
-use pinion_widget_paint::dock::{
-    view_dock_surface, DockNode, DockPanelHandle, DockPanelStyle, DockSplitHandle, DockTopology,
-};
-use pinion_widget_paint::splitter::{SplitterExternal, SplitterOrientation, SplitterStyle};
+use pinion_widget_paint::dock::{view_dock_surface, DockNode, DockSplitState, DockTopology};
+use pinion_widget_paint::splitter::{SplitterExternal, SplitterOrientation};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -146,15 +144,29 @@ const PANEL_BODY_FONT_PX: u32 = 13;
 
 // ─── reactive substrate hooks ─────────────────────────────────────────
 
-/// (R685 atomic 5d) Per-Split ratio handle resolver — single helper
-/// keyed by the Split's stable id. Pre-R685 atomic 5d the binding
-/// had four near-identical `use_split_X_ratio()` functions; the
-/// dedupe is the canonical [[substrate-incompleteness-signal]]
-/// within-binding application of [[abstraction-needs-second-consumer]].
-fn use_split_ratio(split_id: &'static str, default_ratio: f32) -> Rc<Signal<f32>> {
+/// (R685.B §5.16 §5.49) Per-Split ratio handle resolver — keyed by
+/// the Split's stable id, seeded with the initial ratio the
+/// `view_dock_surface` walker hands through from the topology's
+/// declared [`DockNode::Split::ratio`] field. SSOT: the topology
+/// IS the source of truth for initial ratios; this helper just
+/// pairs the id with the live `Rc<Signal<f32>>` via `Owner::cache`
+/// memoisation.
+///
+/// Pre-R685.B atomic 5d the binding had a `default_ratio_for_split`
+/// helper that duplicated the topology's ratios (Smell 10 — SSOT
+/// violation). R685.B atomic 1 lifts the initial ratio into the
+/// walker's `split_state` callback signature, so the helper is no
+/// longer needed.
+///
+/// The `cache_key` argument is `&'static str` because the topology's
+/// declared split ids in this binding are all compile-time
+/// constants; runtime-generated ids (R686 dock-reorganize) will
+/// require an `Owner::cache` variant that accepts owned keys —
+/// that's a future-round substrate axis.
+fn use_split_ratio(cache_key: &'static str, initial_ratio: f32) -> Rc<Signal<f32>> {
     Owner::current()
         .expect("hello-dock-panels-editor: view fn runs inside owner scope")
-        .cache(split_id, || Signal::new(default_ratio))
+        .cache(cache_key, || Signal::new(initial_ratio))
 }
 
 fn use_viewport_click_counter() -> Rc<Signal<u32>> {
@@ -196,22 +208,24 @@ fn build_editor_topology() -> DockTopology {
     ))
 }
 
-/// (R685 atomic 5d) Split-id → default ratio lookup. Pure data;
-/// the binding registers a `Rc<Signal<f32>>` per id at boot via
-/// [`use_split_ratio`].
-fn default_ratio_for_split(split_id: &str) -> f32 {
+/// (R685.B §5.16) Resolve a Split's stable id to the canonical
+/// `&'static str` cache key used by `use_split_ratio`. The mapping
+/// is identity for the topology's declared splits (id IS the cache
+/// key — Owner::cache slot lookup, paint-side splitter tag, and
+/// SplitterExternal registration tag all share the same string),
+/// but the lookup table makes the binding's `&'static str` lifetime
+/// requirement explicit (the `Cow<'static, str>` id field from
+/// `DockNode::Split` carries the same data but may be `Cow::Owned`
+/// at runtime — for this binding's static topology, the static-str
+/// fast path applies).
+fn split_cache_key_for(split_id: &str) -> &'static str {
     match split_id {
-        SPLIT_OUTER_TAG => SPLIT_OUTER_RATIO_DEFAULT,
-        SPLIT_INNER_V_TAG => SPLIT_INNER_V_RATIO_DEFAULT,
-        SPLIT_MIDDLE_H_TAG => SPLIT_MIDDLE_H_RATIO_DEFAULT,
-        SPLIT_INNER_H_TAG => SPLIT_INNER_H_RATIO_DEFAULT,
-        // Unreachable when the binding contract holds — the
-        // build_editor_topology declares exactly these 4 ids; any
-        // other value means the topology was mutated without
-        // updating this table. Explicit panic over defensive
-        // fallback per [[r685-smell-6-defensive-arms]] textbook fix.
+        SPLIT_OUTER_TAG => SPLIT_OUTER_TAG,
+        SPLIT_INNER_V_TAG => SPLIT_INNER_V_TAG,
+        SPLIT_MIDDLE_H_TAG => SPLIT_MIDDLE_H_TAG,
+        SPLIT_INNER_H_TAG => SPLIT_INNER_H_TAG,
         other => unreachable!(
-            "default_ratio_for_split: unknown split id {other:?}; topology declares only \
+            "split_cache_key_for: unknown split id {other:?}; topology declares only \
              outer/inner_v/middle_h/inner_h",
         ),
     }
@@ -431,22 +445,32 @@ fn panel_content_for(panel_id: &str, state: ButtonState, theme: &Theme) -> Scene
     }
 }
 
-/// (R685 atomic 5d) Resolve a Split's stable id to the matching
-/// paint-side splitter tag. The id IS the tag for the topology's
-/// declared splits — same `&'static str` constants used in
-/// [`build_editor_topology`] + the `SplitterExternal` registrations.
-/// Contract-violation panic over defensive fallback per
-/// [[r685-smell-6-defensive-arms]].
-fn split_tag_for(split_id: &str) -> &'static str {
-    match split_id {
-        SPLIT_OUTER_TAG => SPLIT_OUTER_TAG,
-        SPLIT_INNER_V_TAG => SPLIT_INNER_V_TAG,
-        SPLIT_MIDDLE_H_TAG => SPLIT_MIDDLE_H_TAG,
-        SPLIT_INNER_H_TAG => SPLIT_INNER_H_TAG,
-        other => unreachable!(
-            "split_tag_for: unknown split id {other:?}; topology declares only \
-             outer/inner_v/middle_h/inner_h",
-        ),
+// (R685.B atomic 3) `split_tag_for` removed — pre-R685.B identity
+// function. R685.B walker auto-builds the splitter's paint-side tag
+// from `DockNode::Split::id` directly (SSOT), so no caller-side
+// indirection needed. `split_cache_key_for` lives above for the
+// `Owner::cache &'static str` lifetime requirement.
+
+/// (R685.B §5.16) Depth-first pre-order walk over a [`DockNode`]
+/// tree's `Split` nodes; invokes `f(id, orientation, ratio)` once
+/// per Split. Mirror of the substrate `view_dock_surface_node`
+/// traversal but exposed for `create_extra_externals` which needs
+/// to enumerate all splits at boot time.
+fn for_each_split<F>(node: &DockNode, f: &mut F)
+where
+    F: FnMut(&str, SplitterOrientation, f32),
+{
+    if let DockNode::Split {
+        id,
+        orientation,
+        ratio,
+        first,
+        second,
+    } = node
+    {
+        f(id.as_ref(), *orientation, *ratio);
+        for_each_split(first, f);
+        for_each_split(second, f);
     }
 }
 
@@ -473,23 +497,22 @@ impl WidgetCore for DockPanelsEditorView {
     }
 
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        // (R685 atomic 5d) Iterate the topology's stable split ids
-        // + register one SplitterExternal per id with its declared
-        // orientation. Single source of truth — adding a 6th pane
-        // means adding the matching `DockNode::split_*` in
-        // `build_editor_topology` + this loop automatically grows.
+        // (R685.B atomic 3) Walk the topology's `DockNode::Split`
+        // nodes — each node carries its stable id + orientation +
+        // initial ratio. Register one `SplitterExternal` per Split,
+        // keyed on the Split's id (which IS the paint-side tag
+        // post-R685.B walker SSOT enforcement). Adding a 6th pane is
+        // a one-line topology mutation; this loop grows automatically.
         let topology = build_editor_topology();
         let mut externals = Vec::with_capacity(topology.split_count());
-        for split_id in topology.split_ids() {
-            let orient = match split_id {
-                SPLIT_OUTER_TAG | SPLIT_INNER_V_TAG => SplitterOrientation::Vertical,
-                SPLIT_MIDDLE_H_TAG | SPLIT_INNER_H_TAG => SplitterOrientation::Horizontal,
-                other => unreachable!("create_extra_externals: unknown split id {other:?}"),
-            };
-            let signal = use_split_ratio(split_tag_for(split_id), default_ratio_for_split(split_id));
-            let external = SplitterExternal::new(orient).attach_ratio(signal);
-            externals.push(ExtraExternal::new(split_tag_for(split_id), Box::new(external)));
-        }
+        // Walk via split_walks_with_orientation helper below — keeps
+        // the public DockTopology API minimal.
+        for_each_split(topology.root(), &mut |id, orientation, ratio| {
+            let cache_key = split_cache_key_for(id);
+            let signal = use_split_ratio(cache_key, ratio);
+            let external = SplitterExternal::new(orientation).attach_ratio(signal);
+            externals.push(ExtraExternal::new(cache_key, Box::new(external)));
+        });
         externals
     }
 
@@ -506,18 +529,20 @@ impl WidgetCore for DockPanelsEditorView {
     fn view(state: Self::State, _frame: &Frame) -> Scene {
         let theme = use_theme(THEME_TAG).theme_animated();
         let topology = build_editor_topology();
+        // (R685.B atomic 1 SSOT walker) — the walker auto-builds
+        // DockPanelStyle / SplitterStyle from the topology's
+        // panel_id / split_id / orientation, and threads the
+        // topology's declared initial_ratio through to the binding's
+        // Signal constructor. Binding callbacks supply only:
+        //   - panel content `Scene` per panel_id
+        //   - reactive `DockSplitState` per split_id (memoised Signal
+        //     + dragging flag); the initial_ratio arg comes from the
+        //     topology, so no caller-side ratio default duplication.
         view_dock_surface(
             &topology,
-            |panel_id| DockPanelHandle {
-                style: DockPanelStyle::m3_default(panel_id.to_string()),
-                content: panel_content_for(panel_id, state, &theme),
-            },
-            |split_id, orientation| DockSplitHandle {
-                style: SplitterStyle::m3_default(orientation, split_tag_for(split_id)),
-                ratio_signal: use_split_ratio(
-                    split_tag_for(split_id),
-                    default_ratio_for_split(split_id),
-                ),
+            |panel_id| panel_content_for(panel_id, state, &theme),
+            |split_id, initial_ratio| DockSplitState {
+                ratio_signal: use_split_ratio(split_cache_key_for(split_id), initial_ratio),
                 dragging: false,
             },
             &theme,
@@ -622,21 +647,21 @@ mod tests {
     }
 
     #[test]
-    fn r685_editor_split_tag_for_each_declared_id() {
-        assert_eq!(split_tag_for(SPLIT_OUTER_TAG), SPLIT_OUTER_TAG);
-        assert_eq!(split_tag_for(SPLIT_INNER_V_TAG), SPLIT_INNER_V_TAG);
-        assert_eq!(split_tag_for(SPLIT_MIDDLE_H_TAG), SPLIT_MIDDLE_H_TAG);
-        assert_eq!(split_tag_for(SPLIT_INNER_H_TAG), SPLIT_INNER_H_TAG);
+    fn r685_b_editor_split_cache_key_for_each_declared_id() {
+        assert_eq!(split_cache_key_for(SPLIT_OUTER_TAG), SPLIT_OUTER_TAG);
+        assert_eq!(split_cache_key_for(SPLIT_INNER_V_TAG), SPLIT_INNER_V_TAG);
+        assert_eq!(split_cache_key_for(SPLIT_MIDDLE_H_TAG), SPLIT_MIDDLE_H_TAG);
+        assert_eq!(split_cache_key_for(SPLIT_INNER_H_TAG), SPLIT_INNER_H_TAG);
     }
 
     #[test]
     #[should_panic(expected = "unknown split id")]
-    fn r685_editor_split_tag_for_unknown_id_panics() {
-        // R685 atomic 5d Smell-6 fix: contract-violation panic over
-        // silent fallback. Topology declares only the 4 canonical
-        // splits; any other id means the topology was mutated
-        // without updating the lookup table.
-        let _ = split_tag_for("unknown");
+    fn r685_b_editor_split_cache_key_for_unknown_id_panics() {
+        // R685.B Smell-6 fix preserved: contract-violation panic
+        // over silent fallback. Topology declares only the 4
+        // canonical splits; any other id means the topology was
+        // mutated without updating the Owner::cache key table.
+        let _ = split_cache_key_for("unknown");
     }
 
     #[test]
@@ -877,12 +902,12 @@ mod tests {
             first: outer_first,
             second: outer_second,
             ..
-        } = &topology.root
+        } = topology.root()
         else {
             panic!("root is Split");
         };
         assert_eq!(*outer_o, SplitterOrientation::Vertical);
-        assert!(matches!(**outer_first, DockNode::Leaf { .. }));
+        assert!(matches!(outer_first.as_ref(), DockNode::Leaf { .. }));
         let DockNode::Split {
             orientation: inner_v_o,
             first: inner_v_first,
@@ -901,7 +926,7 @@ mod tests {
             panic!("middle H is Split");
         };
         assert_eq!(*middle_h_o, SplitterOrientation::Horizontal);
-        assert!(matches!(**inner_v_second, DockNode::Leaf { .. }));
+        assert!(matches!(inner_v_second.as_ref(), DockNode::Leaf { .. }));
     }
 
     #[test]

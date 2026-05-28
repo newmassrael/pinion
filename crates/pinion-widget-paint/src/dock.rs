@@ -404,30 +404,137 @@ impl DockNode {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DockTopology {
-    /// Recursive root of the dock tree. A single-panel editor's
-    /// topology is `root: DockNode::Leaf { ... }`; a multi-pane
-    /// editor's topology is `root: DockNode::Split { ... }` with
-    /// nested children.
-    pub root: DockNode,
+    /// Recursive root of the dock tree. Private field (R685.B atomic
+    /// 2) — every construction path runs through [`DockTopology::try_new`]
+    /// (validation gate) or one of the convenience constructors
+    /// ([`DockTopology::single`]), so the invariants every walker /
+    /// mutation primitive relies on (unique panel ids, unique split
+    /// ids, finite ratios) cannot be broken from outside the module.
+    /// Read access via [`DockTopology::root`].
+    root: DockNode,
 }
 
+/// (R685.B §5.16 §5.49) Errors [`DockTopology::try_new`] can produce
+/// when the supplied [`DockNode`] tree violates a topology invariant.
+///
+/// `#[non_exhaustive]` so future R686+ rounds (drag-to-reorganize,
+/// runtime mutation primitives) can introduce additional error
+/// classes without breaking downstream `match` arms.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum TopologyError {
+    /// Two [`DockNode::Leaf`] nodes carry the same `panel_id`. AI
+    /// clients addressing the topology by panel id would resolve
+    /// ambiguously; the walker's `panel_content` callback would
+    /// receive duplicate calls; the binding's `Owner::cache` slot
+    /// keyed on panel id would collide.
+    DuplicatePanelId(String),
+    /// Two [`DockNode::Split`] nodes carry the same `id`. The
+    /// `split_state` callback would receive duplicate calls + the
+    /// `Rc<Signal<f32>>` ratio handle would collide on `Owner::cache`.
+    DuplicateSplitId(String),
+    /// A [`DockNode::Split`] carries a non-finite (NaN / Inf) or
+    /// out-of-[0,1] `ratio`. Initial ratios outside `[0.0, 1.0]`
+    /// produce undefined visual layouts; NaN would corrupt the
+    /// `Rc<Signal<f32>>` seed value and propagate through every
+    /// taffy flex computation.
+    InvalidRatio { split_id: String, ratio: f32 },
+    /// A [`DockNode::Split`] or [`DockNode::Leaf`] carries an empty
+    /// id string. Empty ids are technically allowed by `Cow` but
+    /// collide with the substrate's tag-as-`&str` consumers (the
+    /// `InputRouter`'s deepest-tagged hit-test treats empty tags as
+    /// no-tag, breaking dispatch).
+    EmptyId,
+}
+
+impl core::fmt::Display for TopologyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::DuplicatePanelId(id) => write!(f, "duplicate panel_id: {id:?}"),
+            Self::DuplicateSplitId(id) => write!(f, "duplicate split id: {id:?}"),
+            Self::InvalidRatio { split_id, ratio } => {
+                write!(f, "split {split_id:?} has invalid ratio {ratio}; must be finite in [0.0, 1.0]")
+            }
+            Self::EmptyId => write!(f, "empty id (panel_id or split id) — empty tags collide with InputRouter dispatch"),
+        }
+    }
+}
+
+impl std::error::Error for TopologyError {}
+
 impl DockTopology {
-    /// (R685 §5.16) Construct a topology from a single root node.
-    /// Use the [`DockNode::leaf`] / `split_horizontal` /
-    /// `split_vertical` builders to assemble the tree.
+    /// (R685.B §5.16) Construct a topology from a [`DockNode`] tree
+    /// after validating every invariant. Returns [`TopologyError`]
+    /// on the first violation found (walk order = depth-first
+    /// pre-order); reports the offending id / ratio for diagnosis.
+    ///
+    /// Invariants checked:
+    ///
+    /// * No two [`DockNode::Leaf`] nodes share a `panel_id`.
+    /// * No two [`DockNode::Split`] nodes share an `id`.
+    /// * Every Split's `ratio` is finite + in `[0.0, 1.0]`.
+    /// * No panel id or split id is an empty string.
+    ///
+    /// The walker / mutation primitives downstream all assume these
+    /// invariants hold; the validation gate is the only construction
+    /// path so an invalid topology cannot reach them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TopologyError`] on the first invariant violation
+    /// encountered in depth-first pre-order walk over `root`. See
+    /// the enum variants for the specific failure classes.
+    pub fn try_new(root: DockNode) -> Result<Self, TopologyError> {
+        let mut panel_ids = std::collections::HashSet::<String>::new();
+        let mut split_ids = std::collections::HashSet::<String>::new();
+        validate_node(&root, &mut panel_ids, &mut split_ids)?;
+        Ok(Self { root })
+    }
+
+    /// (R685.B §5.16) Construct a topology from a hand-built tree,
+    /// panicking on invariant violation. Convenience wrapper around
+    /// [`Self::try_new`] for tests / hard-coded topologies where a
+    /// violation is a programmer bug rather than a runtime concern.
+    ///
+    /// # Panics
+    ///
+    /// Panics with the [`TopologyError`] `Display` representation
+    /// if `root` violates any topology invariant.
     #[must_use]
     pub fn new(root: DockNode) -> Self {
-        Self { root }
+        Self::try_new(root).expect("DockTopology::new: invariant violation; use try_new for fallible construction")
     }
 
     /// (R685 §5.16) Convenience constructor for a single-panel
-    /// topology (one leaf, no splits). The canonical seed before
-    /// a user adds a second panel via R686+ drag-to-reorganize.
+    /// topology (one leaf, no splits). Always valid (single leaf has
+    /// no duplicate id surface, no ratio); never returns Err.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `panel_id` is the empty string. Empty ids collide
+    /// with the substrate's tag-as-`&str` consumers
+    /// ([`TopologyError::EmptyId`] for the validation-path mirror).
     #[must_use]
     pub fn single(panel_id: impl Into<Cow<'static, str>>) -> Self {
+        let panel_id = panel_id.into();
+        // Single-leaf is always valid as long as the id is non-empty.
+        // Empty id panics here for caller transparency.
+        assert!(!panel_id.is_empty(), "DockTopology::single: panel_id must not be empty");
         Self {
-            root: DockNode::leaf(panel_id),
+            root: DockNode::Leaf { panel_id },
         }
+    }
+
+    /// (R685.B §5.16) Read-only access to the recursive root node.
+    /// Pre-R685.B atomic 2 the `root` field was `pub` — every R686+
+    /// mutation primitive (drag-to-reorganize) needs to enforce the
+    /// validation invariants on its return type, so external mutation
+    /// is no longer permitted (mutations go through future
+    /// `swap_leaves` / `split_leaf_into` / `remove_leaf` primitives
+    /// that all return `Result<DockTopology, TopologyError>`).
+    #[must_use]
+    pub fn root(&self) -> &DockNode {
+        &self.root
     }
 
     /// (R685 §5.16) Depth-first ordered list of all panel ids in
@@ -458,6 +565,51 @@ impl DockTopology {
     #[must_use]
     pub fn split_count(&self) -> usize {
         self.root.split_count()
+    }
+}
+
+/// (R685.B §5.16) Internal recursive validator. Walks the node
+/// tree depth-first pre-order, accumulating panel + split ids into
+/// `HashSet`s for duplicate detection; checks every Split's ratio
+/// for finiteness + bounds; rejects empty ids on first encounter.
+fn validate_node(
+    node: &DockNode,
+    panel_ids: &mut std::collections::HashSet<String>,
+    split_ids: &mut std::collections::HashSet<String>,
+) -> Result<(), TopologyError> {
+    match node {
+        DockNode::Leaf { panel_id } => {
+            if panel_id.is_empty() {
+                return Err(TopologyError::EmptyId);
+            }
+            if !panel_ids.insert(panel_id.to_string()) {
+                return Err(TopologyError::DuplicatePanelId(panel_id.to_string()));
+            }
+            Ok(())
+        }
+        DockNode::Split {
+            id,
+            ratio,
+            first,
+            second,
+            ..
+        } => {
+            if id.is_empty() {
+                return Err(TopologyError::EmptyId);
+            }
+            if !ratio.is_finite() || !(0.0..=1.0).contains(ratio) {
+                return Err(TopologyError::InvalidRatio {
+                    split_id: id.to_string(),
+                    ratio: *ratio,
+                });
+            }
+            if !split_ids.insert(id.to_string()) {
+                return Err(TopologyError::DuplicateSplitId(id.to_string()));
+            }
+            validate_node(first, panel_ids, split_ids)?;
+            validate_node(second, panel_ids, split_ids)?;
+            Ok(())
+        }
     }
 }
 
@@ -816,49 +968,29 @@ pub const DEFAULT_FLOATING_WINDOW_PREFIX: &str = "torn-";
 // id intact, so binding-side state stays bound to the right Split.
 // ─────────────────────────────────────────────────────────────────────
 
-/// (R685 §5.16 §5.49) Per-panel state the binding supplies to
-/// [`view_dock_surface`] for each [`DockNode::Leaf`] in the topology.
-///
-/// The walker passes the `panel_id` (the leaf's
-/// [`DockNode::Leaf::panel_id`] field) to the binding's
-/// `panel_handle` callback; the callback returns this struct. The
-/// `style` is the [`DockPanelStyle`] handed to [`view_dock_panel`]
-/// (per-panel tag + header height + tear-off threshold); `content`
-/// is the panel's inner [`Scene`] (whatever view fragment the
-/// application paints inside the dock panel chrome — toolbar,
-/// outliner tree, property table, viewport, etc.).
-pub struct DockPanelHandle {
-    /// Panel style sidecar handed to [`view_dock_panel`]. The
-    /// [`DockPanelStyle::tag`] must match the leaf's `panel_id`
-    /// (the binding's
-    /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
-    /// registers the [`DockPanelExternal`] under the same tag).
-    pub style: DockPanelStyle,
-    /// Inner content of the panel — the application's view
-    /// fragment (`Scene::Container` / `Scene::Text` / etc.).
-    pub content: Scene,
-}
-
-/// (R685 §5.16 §5.49) Per-split state the binding supplies to
-/// [`view_dock_surface`] for each [`DockNode::Split`] in the
+/// (R685.B §5.16 §5.49) Per-split reactive state the binding hands
+/// to [`view_dock_surface`] for each [`DockNode::Split`] in the
 /// topology, keyed by the Split's stable [`DockNode::Split::id`].
 ///
-/// `style.tag` must be unique across all splits in the topology so
-/// the [`InputRouter`](pinion_runtime::InputRouter) deepest-tagged
-/// hit-test resolves each splitter's drag wire to its own
-/// [`SplitterExternal`](crate::splitter::SplitterExternal). `ratio_signal`
-/// is the live `Rc<Signal<f32>>` the [`SplitterExternal`] mutates on
-/// drag (the topology's [`DockNode::Split::ratio`] field is the
-/// **initial** value, persisted on disk; the runtime drag wire
-/// reads/writes through this Signal). `dragging` is the boolean the
-/// view fn reads off the
+/// `ratio_signal` is the live `Rc<Signal<f32>>` the
+/// [`SplitterExternal`] mutates on drag. The Signal is the run-time
+/// source-of-truth for the current split position; the topology's
+/// [`DockNode::Split::ratio`] field is the **initial** value (boot /
+/// persistence default). `dragging` is the boolean the view fn reads
+/// off
 /// [`SplitterExternal::is_dragging`](crate::splitter::SplitterExternal::is_dragging)
-/// state-layer mirror — passed through so the handle paints with
-/// the M3 dragged-overlay tint.
-pub struct DockSplitHandle {
-    /// Splitter style sidecar handed to [`view_splitter`].
-    /// `tag` must be unique across the topology.
-    pub style: SplitterStyle,
+/// so the M3 dragged-overlay tint paints correctly mid-drag.
+///
+/// (R685.B atomic 1 simplification) Pre-R685.B [`DockSplitHandle`]
+/// also carried the `style: SplitterStyle` field — the walker now
+/// builds the splitter style from the topology's
+/// [`DockNode::Split::id`] + `orientation` automatically (single
+/// source of truth — the topology IS the splitter shape), so the
+/// binding hands only the live reactive state through this struct.
+/// Pre-R685.B [`DockPanelHandle`] is fully removed for the same
+/// reason — the walker builds [`DockPanelStyle`] from
+/// [`DockNode::Leaf::panel_id`] automatically.
+pub struct DockSplitState {
     /// Live ratio signal — the application owns this `Rc<Signal<f32>>`
     /// (typically via [`pinion_core::reactive::Owner::cache`]).
     pub ratio_signal: Rc<Signal<f32>>,
@@ -868,92 +1000,117 @@ pub struct DockSplitHandle {
     pub dragging: bool,
 }
 
-/// (R685 §5.16 §5.49) Recursive walker — lower a [`DockTopology`]
-/// into a nested splitter + dock-panel [`Scene`].
+/// (R685.B §5.16 §5.49) Recursive walker — lower a [`DockTopology`]
+/// into a nested splitter + dock-panel [`Scene`]. The topology IS
+/// the source of truth for tree shape, panel identity, split
+/// identity, orientations, and initial ratios; the binding only
+/// supplies (a) the inner content `Scene` for each panel and (b)
+/// the live reactive state ([`DockSplitState`]) for each split.
 ///
-/// For each [`DockNode::Leaf`], invokes `panel_handle(panel_id)` to
-/// resolve the panel's style + content + composes them via
-/// [`view_dock_panel`]. For each [`DockNode::Split`], invokes
-/// `split_handle(split_id, orientation)` to resolve the splitter's
-/// style + ratio signal + dragging mirror + composes the recursive
-/// children via [`view_splitter`].
+/// ## Callback contract
 ///
-/// `split_id` is the stable [`DockNode::Split::id`] field — the
-/// binding's `split_handle` callback uses it to look up the matching
-/// `Rc<Signal<f32>>` ratio handle + the splitter's paint-side tag.
-/// Stable across topology mutations: a leaf insert / Split rebalance
-/// rewrites the tree shape but keeps every Split's id intact, so the
-/// binding's state binding stays correct.
+/// * `panel_content: Fn(&str) -> Scene` — invoked once per
+///   [`DockNode::Leaf`]; receives the leaf's `panel_id`; returns
+///   the inner content `Scene` the panel hosts (toolbar text /
+///   outliner tree / viewport viewport / property table / etc.).
+///   The walker wraps the returned content in
+///   [`view_dock_panel`](crate::dock::view_dock_panel) with a
+///   [`DockPanelStyle::m3_default(panel_id)`] automatically — the
+///   panel tag is the leaf's stable `panel_id`, single source of
+///   truth.
+/// * `split_state: Fn(&str, f32) -> DockSplitState` — invoked once
+///   per [`DockNode::Split`]; receives the split's stable `id` +
+///   its topology-declared `initial_ratio` (so the binding's
+///   `Rc<Signal<f32>>` constructor seeds the same value the
+///   topology declares — no defaults duplication). Returns the
+///   reactive state pair. The walker builds [`SplitterStyle::m3_default(orientation, id)`]
+///   automatically.
 ///
-/// The walker is pure — no `Owner::cache`, no `Effect`. The
-/// application owns the reactive substrate; this function just
-/// stitches the supplied state through the [`view_splitter`] /
-/// [`view_dock_panel`] composition.
+/// ## SSOT (single source of truth)
 ///
-/// # Panics
+/// The R685.B walker rewrite enforces three SSOT contracts the
+/// pre-R685.B form violated:
 ///
-/// Never panics on its own — `panel_handle` / `split_handle` are
-/// the only sources of state lookup. Callbacks that panic (e.g. on
-/// unknown `panel_id`) surface as panics from the walker; that is
-/// the application's contract (the topology + handles must be
-/// consistent at the call site).
+/// 1. **Panel tag**: leaf `panel_id` IS the
+///    [`DockPanelStyle::tag`]. The binding cannot hand the wrong
+///    tag because the walker doesn't accept one.
+/// 2. **Splitter tag**: Split `id` IS the
+///    [`SplitterStyle::tag`]. Same enforcement; binding cannot
+///    drift.
+/// 3. **Initial ratio**: the topology's `ratio` field IS the
+///    initial value the binding's Signal constructor receives.
+///    Binding has no place to declare it independently — pre-R685.B
+///    the binding had a `default_ratio_for_split` helper duplicating
+///    the topology's ratios.
+///
+/// The walker is pure — no `Owner::cache`, no `Effect`, no
+/// `Signal::set`. The application owns the reactive substrate;
+/// this function just stitches the supplied state through the
+/// [`view_splitter`](crate::splitter::view_splitter) /
+/// [`view_dock_panel`](crate::dock::view_dock_panel) composition.
 #[must_use]
 pub fn view_dock_surface<P, S>(
     topology: &DockTopology,
-    panel_handle: P,
-    split_handle: S,
+    panel_content: P,
+    split_state: S,
     theme: &Theme,
 ) -> Scene
 where
-    P: Fn(&str) -> DockPanelHandle,
-    S: Fn(&str, SplitterOrientation) -> DockSplitHandle,
+    P: Fn(&str) -> Scene,
+    S: Fn(&str, f32) -> DockSplitState,
 {
-    view_dock_surface_node(&topology.root, &panel_handle, &split_handle, theme)
+    view_dock_surface_node(topology.root(), &panel_content, &split_state, theme)
 }
 
-/// (R685 §5.16) Internal recursive helper — walks one
-/// [`DockNode`] subtree. Each visited [`DockNode::Split`] hands its
-/// stable [`DockNode::Split::id`] to the binding's `split_handle`
-/// callback for state lookup.
+/// (R685.B §5.16) Internal recursive helper — walks one
+/// [`DockNode`] subtree. Each [`DockNode::Leaf`] paints via
+/// [`view_dock_panel`] with a [`DockPanelStyle::m3_default`] keyed
+/// on the leaf's `panel_id`. Each [`DockNode::Split`] paints via
+/// [`view_splitter`](crate::splitter::view_splitter) with a
+/// [`SplitterStyle::m3_default`] keyed on the Split's `id` +
+/// `orientation`, and forwards the topology's declared `ratio` as
+/// the initial-value seed for the binding's reactive Signal
+/// constructor.
 fn view_dock_surface_node<P, S>(
     node: &DockNode,
-    panel_handle: &P,
-    split_handle: &S,
+    panel_content: &P,
+    split_state: &S,
     theme: &Theme,
 ) -> Scene
 where
-    P: Fn(&str) -> DockPanelHandle,
-    S: Fn(&str, SplitterOrientation) -> DockSplitHandle,
+    P: Fn(&str) -> Scene,
+    S: Fn(&str, f32) -> DockSplitState,
 {
     match node {
         DockNode::Leaf { panel_id } => {
-            let handle = panel_handle(panel_id.as_ref());
-            view_dock_panel(
-                panel_id.as_ref(),
-                handle.content,
-                theme,
-                &handle.style,
-            )
+            let content = panel_content(panel_id.as_ref());
+            // Walker builds the panel style from the topology's
+            // panel_id — no caller drift possible (SSOT).
+            let style = DockPanelStyle::m3_default(panel_id.clone());
+            view_dock_panel(panel_id.as_ref(), content, theme, &style)
         }
         DockNode::Split {
             id,
             orientation,
+            ratio,
             first,
             second,
-            ..
         } => {
-            let handle = split_handle(id.as_ref(), *orientation);
+            let state = split_state(id.as_ref(), *ratio);
+            // Walker builds the splitter style from the topology's
+            // id + orientation — SSOT.
+            let style = SplitterStyle::m3_default(*orientation, id.clone());
             let first_scene =
-                view_dock_surface_node(first, panel_handle, split_handle, theme);
+                view_dock_surface_node(first, panel_content, split_state, theme);
             let second_scene =
-                view_dock_surface_node(second, panel_handle, split_handle, theme);
+                view_dock_surface_node(second, panel_content, split_state, theme);
             view_splitter(
                 first_scene,
                 second_scene,
-                &handle.ratio_signal,
+                &state.ratio_signal,
                 theme,
-                &handle.style,
-                handle.dragging,
+                &style,
+                state.dragging,
             )
         }
     }
@@ -1951,6 +2108,124 @@ mod topology_tests {
         let sb = serde_json::to_string(&b).expect("b");
         assert_eq!(sa, sb, "two equivalent topologies serialize identically");
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R685.B atomic 2 — DockTopology::try_new validation tests
+    // ─────────────────────────────────────────────────────────────────
+
+    use super::TopologyError;
+
+    #[test]
+    fn r685_b_try_new_rejects_duplicate_panel_ids() {
+        let root = DockNode::split_horizontal(
+            "split",
+            0.5,
+            DockNode::leaf("dup_panel"),
+            DockNode::leaf("dup_panel"),
+        );
+        let err = DockTopology::try_new(root).unwrap_err();
+        assert_eq!(err, TopologyError::DuplicatePanelId("dup_panel".to_string()));
+    }
+
+    #[test]
+    fn r685_b_try_new_rejects_duplicate_split_ids() {
+        let root = DockNode::split_horizontal(
+            "outer",
+            0.5,
+            DockNode::split_vertical(
+                "outer", // duplicate
+                0.5,
+                DockNode::leaf("a"),
+                DockNode::leaf("b"),
+            ),
+            DockNode::leaf("c"),
+        );
+        let err = DockTopology::try_new(root).unwrap_err();
+        assert_eq!(err, TopologyError::DuplicateSplitId("outer".to_string()));
+    }
+
+    #[test]
+    fn r685_b_try_new_rejects_nan_ratio() {
+        let root = DockNode::split_horizontal(
+            "split",
+            f32::NAN,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        );
+        let err = DockTopology::try_new(root).unwrap_err();
+        let TopologyError::InvalidRatio { split_id, .. } = err else {
+            panic!("expected InvalidRatio")
+        };
+        assert_eq!(split_id, "split");
+    }
+
+    #[test]
+    fn r685_b_try_new_rejects_out_of_range_ratio() {
+        let root = DockNode::split_horizontal(
+            "split",
+            1.5,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        );
+        let err = DockTopology::try_new(root).unwrap_err();
+        let TopologyError::InvalidRatio { ratio, .. } = err else {
+            panic!("expected InvalidRatio")
+        };
+        assert!((ratio - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r685_b_try_new_rejects_empty_panel_id() {
+        let root = DockNode::leaf("");
+        let err = DockTopology::try_new(root).unwrap_err();
+        assert_eq!(err, TopologyError::EmptyId);
+    }
+
+    #[test]
+    fn r685_b_try_new_rejects_empty_split_id() {
+        let root = DockNode::split_horizontal(
+            "",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        );
+        let err = DockTopology::try_new(root).unwrap_err();
+        assert_eq!(err, TopologyError::EmptyId);
+    }
+
+    #[test]
+    fn r685_b_try_new_accepts_valid_5_pane_editor() {
+        let topology = editor_topology();
+        // editor_topology uses DockTopology::new (panics on invalid);
+        // re-validate via try_new to confirm valid.
+        let cloned_root = topology.root().clone();
+        assert!(DockTopology::try_new(cloned_root).is_ok());
+    }
+
+    #[test]
+    fn r685_b_try_new_boundary_ratios_accepted() {
+        // 0.0 and 1.0 are valid (degenerate but well-defined).
+        let zero = DockNode::split_horizontal(
+            "z",
+            0.0,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        );
+        assert!(DockTopology::try_new(zero).is_ok());
+        let one = DockNode::split_horizontal(
+            "o",
+            1.0,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        );
+        assert!(DockTopology::try_new(one).is_ok());
+    }
+
+    #[test]
+    fn r685_b_topology_root_accessor_returns_inner_node() {
+        let topology = DockTopology::single("only_panel");
+        assert!(matches!(topology.root(), DockNode::Leaf { .. }));
+    }
 }
 
 #[cfg(test)]
@@ -2026,16 +2301,12 @@ mod placeholder_tests {
 
 #[cfg(test)]
 mod surface_tests {
-    //! R685 §5.16 §5.49 — `view_dock_surface` recursive walker
-    //! tests under the R685 atomic 5b stable-id addressing scheme.
-    //! Each Split carries an `id` field; the `split_handle` callback
-    //! is dispatched with that id (not a positional index).
+    //! R685.B §5.16 §5.49 — `view_dock_surface` recursive walker
+    //! tests under the R685.B SSOT signature (topology owns all
+    //! panel ids / split ids / orientations / initial ratios;
+    //! callbacks supply only panel content + reactive split state).
 
-    use super::{
-        view_dock_surface, DockNode, DockPanelHandle, DockPanelStyle, DockSplitHandle,
-        DockTopology,
-    };
-    use crate::splitter::{SplitterOrientation, SplitterStyle};
+    use super::{view_dock_surface, DockNode, DockSplitState, DockTopology};
     use pinion_core::reactive::{Owner, Signal};
     use pinion_core::scene::{ContainerNode, Scene};
     use pinion_core::style::{BoxStyle, Color, FlexDirection};
@@ -2043,29 +2314,25 @@ mod surface_tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    fn panel_handle_for(tag: &'static str) -> DockPanelHandle {
-        DockPanelHandle {
-            style: DockPanelStyle::m3_default(tag),
-            content: Scene::Container(
-                ContainerNode::new(vec![])
-                    .with_tag(format!("{tag}_content_marker"))
-                    .with_style(BoxStyle::filled(Color::rgba(0, 0, 0, 0))),
-            ),
-        }
+    /// (R685.B test fixture) Minimal panel content — a transparent
+    /// Container tagged for visual identification. The walker now
+    /// auto-builds the [`DockPanelStyle`] from the leaf's `panel_id`,
+    /// so tests supply only the inner content `Scene`.
+    fn panel_content_for(panel_id: &str) -> Scene {
+        Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag(format!("{panel_id}_content_marker"))
+                .with_style(BoxStyle::filled(Color::rgba(0, 0, 0, 0))),
+        )
     }
 
-    fn split_handle_for(
-        split_id: &str,
-        orientation: SplitterOrientation,
-        initial_ratio: f32,
-    ) -> DockSplitHandle {
-        // Test-only `Box::leak` of an id-derived `&'static str` —
-        // production bindings allocate static string constants per
-        // Split at compile time.
-        let tag: &'static str =
-            Box::leak(format!("test_split_{split_id}").into_boxed_str());
-        DockSplitHandle {
-            style: SplitterStyle::m3_default(orientation, tag),
+    /// (R685.B test fixture) Build a fresh [`DockSplitState`] with a
+    /// new `Signal<f32>` seeded at the topology's declared initial
+    /// ratio. The walker now auto-builds the [`SplitterStyle`] from
+    /// the Split's `id` + `orientation`, so the fixture supplies
+    /// only the reactive state pair.
+    fn split_state_for(initial_ratio: f32) -> DockSplitState {
+        DockSplitState {
             ratio_signal: Rc::new(Signal::new(initial_ratio)),
             dragging: false,
         }
@@ -2082,9 +2349,9 @@ mod surface_tests {
                 &topology,
                 |id| {
                     assert_eq!(id, "viewport");
-                    panel_handle_for("viewport")
+                    panel_content_for("viewport")
                 },
-                |_, _| panic!("split_handle should not fire for single-leaf"),
+                |_, _| panic!("split_state should not fire for single-leaf"),
                 &theme_light(),
             );
             let Scene::Container(outer) = &scene else { panic!() };
@@ -2102,25 +2369,24 @@ mod surface_tests {
                 DockNode::leaf("left_panel"),
                 DockNode::leaf("right_panel"),
             ));
-            let calls: Rc<RefCell<Vec<(String, SplitterOrientation)>>> =
-                Rc::new(RefCell::new(Vec::new()));
+            let calls: Rc<RefCell<Vec<(String, f32)>>> = Rc::new(RefCell::new(Vec::new()));
             let cc = Rc::clone(&calls);
             let scene = view_dock_surface(
                 &topology,
-                |id| panel_handle_for(if id == "left_panel" { "left_panel" } else { "right_panel" }),
-                |split_id, orient| {
-                    cc.borrow_mut().push((split_id.to_string(), orient));
-                    split_handle_for(split_id, orient, 0.40)
+                panel_content_for,
+                |split_id, initial_ratio| {
+                    cc.borrow_mut().push((split_id.to_string(), initial_ratio));
+                    split_state_for(initial_ratio)
                 },
                 &theme_light(),
             );
             let Scene::Container(outer) = &scene else { panic!() };
             assert_eq!(outer.layout.flex_direction, FlexDirection::Row);
             assert_eq!(outer.children.len(), 3);
-            assert_eq!(
-                *calls.borrow(),
-                vec![("h_split".to_string(), SplitterOrientation::Horizontal)],
-            );
+            // (R685.B SSOT) Walker passes the topology's declared
+            // initial_ratio to the callback — binding's Signal
+            // constructor seeds from the same SoT.
+            assert_eq!(*calls.borrow(), vec![("h_split".to_string(), 0.40)]);
         });
     }
 
@@ -2135,8 +2401,8 @@ mod surface_tests {
             ));
             let scene = view_dock_surface(
                 &topology,
-                |id| panel_handle_for(if id == "top_panel" { "top_panel" } else { "bot_panel" }),
-                |split_id, orient| split_handle_for(split_id, orient, 0.30),
+                panel_content_for,
+                |_split_id, initial_ratio| split_state_for(initial_ratio),
                 &theme_light(),
             );
             let Scene::Container(outer) = &scene else { panic!() };
@@ -2157,25 +2423,24 @@ mod surface_tests {
                 ),
                 DockNode::leaf("c"),
             ));
-            let calls: Rc<RefCell<Vec<(String, SplitterOrientation)>>> =
-                Rc::new(RefCell::new(Vec::new()));
+            let calls: Rc<RefCell<Vec<(String, f32)>>> = Rc::new(RefCell::new(Vec::new()));
             let cc = Rc::clone(&calls);
             let _scene = view_dock_surface(
                 &topology,
-                |id| panel_handle_for(match id { "a"=>"a","b"=>"b","c"=>"c", o=>panic!("{o}") }),
-                |split_id, orient| {
-                    cc.borrow_mut().push((split_id.to_string(), orient));
-                    split_handle_for(split_id, orient, 0.5)
+                panel_content_for,
+                |split_id, initial_ratio| {
+                    cc.borrow_mut().push((split_id.to_string(), initial_ratio));
+                    split_state_for(initial_ratio)
                 },
                 &theme_light(),
             );
             assert_eq!(
                 *calls.borrow(),
                 vec![
-                    ("outer".to_string(), SplitterOrientation::Horizontal),
-                    ("inner".to_string(), SplitterOrientation::Vertical),
+                    ("outer".to_string(), 0.5),
+                    ("inner".to_string(), 0.3),
                 ],
-                "DF pre-order with declared ids",
+                "DF pre-order with declared ids + topology-sourced ratios",
             );
         });
     }
@@ -2192,27 +2457,20 @@ mod surface_tests {
             ));
             assert_eq!(topology.split_count(), 3);
             assert_eq!(topology.leaf_count(), 4);
-            let calls: Rc<RefCell<Vec<(String, SplitterOrientation)>>> =
-                Rc::new(RefCell::new(Vec::new()));
+            let calls: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
             let cc = Rc::clone(&calls);
             let _scene = view_dock_surface(
                 &topology,
-                |id| panel_handle_for(match id {
-                    "tl"=>"tl","bl"=>"bl","tr"=>"tr","br"=>"br", o=>panic!("{o}")
-                }),
-                |split_id, orient| {
-                    cc.borrow_mut().push((split_id.to_string(), orient));
-                    split_handle_for(split_id, orient, 0.5)
+                panel_content_for,
+                |split_id, initial_ratio| {
+                    cc.borrow_mut().push(split_id.to_string());
+                    split_state_for(initial_ratio)
                 },
                 &theme_light(),
             );
             assert_eq!(
                 *calls.borrow(),
-                vec![
-                    ("outer".to_string(), SplitterOrientation::Horizontal),
-                    ("left_col".to_string(), SplitterOrientation::Vertical),
-                    ("right_col".to_string(), SplitterOrientation::Vertical),
-                ],
+                vec!["outer".to_string(), "left_col".to_string(), "right_col".to_string()],
             );
         });
     }
@@ -2231,8 +2489,7 @@ mod surface_tests {
                     DockNode::leaf("console")),
             ));
             assert_eq!(topology.split_count(), 4);
-            let split_calls: Rc<RefCell<Vec<(String, SplitterOrientation)>>> =
-                Rc::new(RefCell::new(Vec::new()));
+            let split_calls: Rc<RefCell<Vec<(String, f32)>>> = Rc::new(RefCell::new(Vec::new()));
             let panel_calls: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
             let sc = Rc::clone(&split_calls);
             let pc = Rc::clone(&panel_calls);
@@ -2240,25 +2497,22 @@ mod surface_tests {
                 &topology,
                 |id| {
                     pc.borrow_mut().push(id.to_string());
-                    panel_handle_for(match id {
-                        "toolbar"=>"toolbar","outliner"=>"outliner",
-                        "viewport"=>"viewport","properties"=>"properties",
-                        "console"=>"console", o=>panic!("{o}")
-                    })
+                    panel_content_for(id)
                 },
-                |split_id, orient| {
-                    sc.borrow_mut().push((split_id.to_string(), orient));
-                    split_handle_for(split_id, orient, 0.5)
+                |split_id, initial_ratio| {
+                    sc.borrow_mut()
+                        .push((split_id.to_string(), initial_ratio));
+                    split_state_for(initial_ratio)
                 },
                 &theme_light(),
             );
             assert_eq!(
                 *split_calls.borrow(),
                 vec![
-                    ("outer".to_string(),    SplitterOrientation::Vertical),
-                    ("inner_v".to_string(),  SplitterOrientation::Vertical),
-                    ("middle_h".to_string(), SplitterOrientation::Horizontal),
-                    ("inner_h".to_string(),  SplitterOrientation::Horizontal),
+                    ("outer".to_string(),    0.10),
+                    ("inner_v".to_string(),  0.80),
+                    ("middle_h".to_string(), 0.20),
+                    ("inner_h".to_string(),  0.75),
                 ],
             );
             assert_eq!(
@@ -2270,7 +2524,7 @@ mod surface_tests {
     }
 
     #[test]
-    fn r685_dock_surface_split_handle_invoked_once_per_split() {
+    fn r685_dock_surface_split_state_invoked_once_per_split() {
         run_in_owner(|| {
             let topology = DockTopology::new(DockNode::split_horizontal(
                 "outer", 0.5,
@@ -2282,10 +2536,10 @@ mod surface_tests {
             let cc = Rc::clone(&count);
             let _ = view_dock_surface(
                 &topology,
-                |id| panel_handle_for(match id {"a"=>"a","b"=>"b","c"=>"c",o=>panic!("{o}")}),
-                |split_id, orient| {
+                panel_content_for,
+                |_split_id, initial_ratio| {
                     *cc.borrow_mut() += 1;
-                    split_handle_for(split_id, orient, 0.5)
+                    split_state_for(initial_ratio)
                 },
                 &theme_light(),
             );
