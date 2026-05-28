@@ -13658,6 +13658,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R686.A — R686.A audit-clearance: removed stale dead_code suppressions, pinned the apply_flex_main no-layout wildcard, and documented the splitter Surface fill as load-bearing (not redundant) — honest correction of the R685.C "smell-free except S15" overstatement before R686 feature work.
+
+**Changes**:
+- pinion-shell/src/app.rs: deleted `AppShell::primary_slot_mut` (zero call sites; its `#[allow(dead_code, reason="R670.B atomic 1 calls this")]` was false — view_for_window dispatch went through substrate.rs cached_state instead, never this helper).
+- pinion-shell/src/app.rs: removed the stale `#[allow(dead_code)]` on `WindowSlot.spec_id` — the field is read by render_window per-window redraw drain (app.rs:432) + dispatch_rpc window-scope resolution since R670.B; doc updated to cite the real read sites.
+- pinion-widget-paint/src/splitter.rs: rewrote the view_splitter outer-Container fill comment (Smell 12 resolution = keep + document). The ColorRole::Surface fill is load-bearing: (1) gutter/handle-gap backdrop, (2) the exact value pinion_shell::paint_adapter::root_background samples as the Vello clear colour when the splitter is root (fallback PenikoColor::BLACK). Removing it would reintroduce the BLACK leak, not drop a redundant paint.
+- pinion-widget-paint/src/splitter.rs: added test r686_a_apply_flex_main_auto_wraps_layoutless_scenes (Smell 11) — pins the `other =>` auto-wrap arm for Scene::Effect + Scene::Scroll (the two variants without a layout field) → thin Container with flex_basis(Px(0)) + flex_grow, exactly one child, no tag.
+
+
+
+**Verification**:
+- cargo test --workspace: all suites green, 0 failed (baseline 3989 + 1 R686.A splitter test); pinion-widget-paint splitter suite 28/28.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean under workspace -D pedantic (dead-code deletion produced no new warning, confirming spec_id is genuinely used and primary_slot_mut was truly dead).
+- 45-demo regression sweep (release build + tools/demos/*.py): 45/45 PASS, 0 fail — behavior-invariant cleanup confirmed bit-identical across splitter/dock/multi-window demos that exercise the touched surfaces.
+
+
+
+**Impact**: §5.16, §5.41
+
+
+**Carry forward**:
+- R686.B — view_button substrate lift (Smell 5): M3 button state→fill paint genuinely duplicated across hello-button + figma-button-m3 + hello-dock-panels-editor (>= 3 consumers, Rule-of-Three satisfied); lift to pinion_widget_paint::button with ButtonStyle::m3_default.
+- R686 (feature) — DockSurface drag-to-reorganize handles (DockDropZone + mutation primitives swap_leaves/split_leaf_into/remove_leaf through try_new + DockDragOverExternal + editor reorganize wire).
+- Smell 8 — Topology+Signal persistence contract for Phase D editor workspace save/restore; design alongside R686 topology mutation (same axis).
+- S15 (architectural) — Scene Clone via External handle Box<dyn> -> Rc<RefCell<dyn>> lift; natural land at Phase C/D entry (immediate-mode game-loop / dirty subtree cache also benefit).
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

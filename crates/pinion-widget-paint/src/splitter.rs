@@ -496,19 +496,27 @@ pub fn view_splitter(
     // `Effect`).
     let left_child = apply_flex_main(left, ratio);
     let right_child = apply_flex_main(right, one_minus_ratio);
-    // R683.C §5.16 — fill the splitter Container with the active
-    // theme's `Surface` colour so the substrate paint stays visible
-    // against `pinion_shell::VelloContext`'s default
-    // `PenikoColor::BLACK` clear (`crates/pinion-shell/src/lib.rs`).
-    // Pre-R683.C the splitter Container had no `BoxStyle` — when the
-    // splitter was the binding's root paint scene (every dock + tear-
-    // off application is by construction), the window cleared to
-    // BLACK and the un-filled splitter strip + the 4-px handle's
-    // surrounding gap leaked the clear colour through. The fill
-    // matches `Theme::resolve(ColorRole::Surface)` (M3 Surface neutral)
-    // so dock-panel layouts read against a typical pro-tool authoring
-    // background — DCC / IDE / CAD shells all paint the splitter
-    // background under the panels.
+    // R683.C / R686.A §5.16 — fill the splitter Container with the
+    // active theme's `Surface` colour. This fill is **load-bearing**,
+    // not a transient BLACK-clear workaround (the R685 Smell 12
+    // "remove vs document" carry is resolved here as: keep + document).
+    //
+    // 1. Gutter / handle-gap background — the 4-px handle strip + the
+    //    inter-panel gaps need a neutral backdrop. DCC / IDE / CAD
+    //    shells all paint the splitter background under the panels;
+    //    `ColorRole::Surface` (M3 Surface neutral) is the canonical
+    //    pro-tool authoring backdrop.
+    // 2. Root-clear sample source — when the splitter is the binding's
+    //    root paint scene (every dock + tear-off application, by
+    //    construction), `pinion_shell::paint_adapter::root_background`
+    //    samples THIS Container's fill as the Vello surface clear
+    //    colour (its fallback for a fill-less root is
+    //    `PenikoColor::BLACK`, see `pinion_shell::VelloContext`). The
+    //    fill is therefore exactly what prevents the BLACK clear —
+    //    removing it would reintroduce the leak, not drop a redundant
+    //    paint.
+    //
+    // Pinned by `r683_c_view_splitter_outer_container_filled_with_theme_surface`.
     Scene::Container(
         ContainerNode::new(vec![left_child, handle, right_child])
             .with_tag(style.tag.clone())
@@ -904,8 +912,8 @@ mod tests {
     //!    `ratio_signal` is inert (no panic on pointer events).
 
     use super::{
-        handle_fill_for_dragging, view_splitter, SplitterExternal, SplitterOrientation,
-        SplitterStyle,
+        apply_flex_main, handle_fill_for_dragging, view_splitter, SplitterExternal,
+        SplitterOrientation, SplitterStyle,
     };
     use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
     use pinion_core::reactive::{Owner, Signal};
@@ -1173,6 +1181,53 @@ mod tests {
             format!("runtime_split_{}", 42),
         );
         assert_eq!(dynamic_style.tag.as_ref(), "runtime_split_42");
+    }
+
+    #[test]
+    fn r686_a_apply_flex_main_auto_wraps_layoutless_scenes() {
+        // (R686.A Smell 11) `apply_flex_main`'s `other =>` arm
+        // auto-wraps the `Scene` variants without a `layout` field
+        // (`Effect`, `Scroll`) in a thin flex Container carrying
+        // `flex_basis(Px(0)) + flex_grow`. Pre-R686.A the branch was
+        // exercised only indirectly; pinning it here guards the
+        // wrapper contract every future no-`layout` Scene variant
+        // inherits (the `Scene` enum is `#[non_exhaustive]`). The
+        // wrapper must carry the flex props, hold exactly the original
+        // scene, and add no tag (visual shape bit-identical).
+        use pinion_core::scene::{EffectNode, Rect, ScrollNode};
+        use pinion_core::style::SizeValue;
+
+        let cases = [
+            Scene::Effect(EffectNode::new()),
+            Scene::Scroll(ScrollNode::new(
+                Rect::default(),
+                Scene::Container(ContainerNode::new(vec![])),
+            )),
+        ];
+        for layoutless in cases {
+            let wrapped = apply_flex_main(layoutless, 0.42);
+            let Scene::Container(c) = &wrapped else {
+                panic!("layout-less scene must auto-wrap in a Container");
+            };
+            assert_eq!(
+                c.layout.flex_basis,
+                Some(SizeValue::Px(0)),
+                "auto-wrap must zero the flex basis (CSS flex-basis:0 idiom)",
+            );
+            assert!(
+                (c.layout.flex_grow - 0.42).abs() < f32::EPSILON,
+                "auto-wrap must carry the requested flex_grow",
+            );
+            assert_eq!(
+                c.children.len(),
+                1,
+                "wrapper holds exactly the original scene",
+            );
+            assert!(
+                c.tag.is_none(),
+                "wrapper carries no tag (bit-identical visual shape)",
+            );
+        }
     }
 
     #[test]

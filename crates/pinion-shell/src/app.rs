@@ -114,11 +114,9 @@ struct WindowSlot<R: VelloRenderer> {
     /// `"main"`; secondary specs pick their own non-conflicting
     /// names.
     ///
-    /// `#[allow(dead_code)]` — R670.B atomic 0 lands the field; the
-    /// read sites come in atomic 1 (`view_for_window(spec_id, state)`
-    /// trait dispatch + RPC scope resolution). Keeping the field land
-    /// in atomic 0 lets atomic 1's wire change be a single read
-    /// addition rather than a coupled write+read change.
+    /// Read by [`AppShell::render_window`] (per-window redraw drain
+    /// keyed on `spec_id`) + [`AppShell::dispatch_rpc`] window-scope
+    /// resolution.
     ///
     /// R683 §5.16 — `Cow<'static, str>` so dock + tear-off can mint
     /// runtime ids (`Cow::Owned(format!("torn-panel-{n}"))`)
@@ -126,7 +124,6 @@ struct WindowSlot<R: VelloRenderer> {
     /// (`Cow::Borrowed("main")` / `Cow::Borrowed("inspector")`). All
     /// downstream `spec_id: &str` parameter sites stay unchanged —
     /// Cow's `Deref<Target = str>` covers the read API.
-    #[allow(dead_code, reason = "R670.B atomic 1 reads spec_id for view_for_window dispatch")]
     spec_id: Cow<'static, str>,
     /// R671 §5.12 §5.16 — per-window last-painted [`LayoutNode`]
     /// snapshot. R670.B's single `ShellCore.last_paint_layout` was
@@ -355,20 +352,6 @@ impl<V: WidgetView> AppShell<V> {
     /// paths reach the window through this accessor.
     fn primary_slot(&self) -> Option<&WindowSlot<V::Renderer>> {
         self.primary_window_id.and_then(|id| self.windows.get(&id))
-    }
-
-    /// R670.B §5.16 — mut borrow of the primary slot. See
-    /// [`Self::primary_slot`] for the lifecycle contract.
-    ///
-    /// `#[allow(dead_code)]` — R670.B atomic 1 wires the
-    /// `WidgetView::view_for_window` paint producer through here so
-    /// per-window scenes can mutate slot-local state (`vello_scene`
-    /// reset, accesskit cache invalidation). Atomic 0 lands the
-    /// helper; atomic 1 adds the call site.
-    #[allow(dead_code, reason = "R670.B atomic 1 calls this for view_for_window paint")]
-    fn primary_slot_mut(&mut self) -> Option<&mut WindowSlot<V::Renderer>> {
-        let id = self.primary_window_id?;
-        self.windows.get_mut(&id)
     }
 
     /// R670.B §5.16 §5.41 — pull the `RenderState` Window arc out of
