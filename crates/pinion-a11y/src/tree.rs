@@ -424,6 +424,13 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // level + posinset), but the action set matches Button /
         // ListBoxOption / etc.
         | AriaRole::TreeItem
+        // R690 §5.40 — `Tab` is commit-class atomic at the AT-action
+        // surface (Click selects the tab, Focus moves the AT cursor
+        // for roving-tabindex navigation). The role identity stays
+        // distinct (`Role::Tab` → screen readers announce "tab,
+        // selected, N of M") but the action set matches
+        // RadioButton / ListBoxOption.
+        | AriaRole::Tab
         | AriaRole::Switch => {
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
@@ -450,11 +457,19 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // R673 §5.40 — `Tree` joins the focus-only container set
         // (parallel to `Listbox` / `RadioGroup` / `List`). Per-row
         // `TreeItem` AT events land in the commit-class arm above.
+        // R690 §5.40 — `TabList` joins the focus-only container set
+        // (parallel to `Tree` / `Listbox` / `RadioGroup`); its per-tab
+        // `Tab` children land in the commit-class arm above.
+        // `TabPanel` is the active tab's content region — focusable
+        // (Tab key lands on it when it carries no focusable content)
+        // so it shares the same `Focus`-only action set.
         AriaRole::RadioGroup
         | AriaRole::Listbox
         | AriaRole::List
         | AriaRole::ListItem
         | AriaRole::Tree
+        | AriaRole::TabList
+        | AriaRole::TabPanel
         | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }

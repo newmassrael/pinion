@@ -41,6 +41,7 @@ members = [
     "examples/hello-popover",
     "examples/hello-multi-window",
     "examples/hello-tree-view",
+    "examples/hello-tabs",
     "examples/hello-immediate-mode-canvas",
     "examples/hello-dock-panels",
     "examples/hello-dock-panels-editor",

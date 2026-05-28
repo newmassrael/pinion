@@ -81,5 +81,6 @@ pub mod devtools;
 pub mod dock;
 pub mod scrollbar;
 pub mod splitter;
+pub mod tabs;
 pub mod text_field;
 pub mod tree_view;

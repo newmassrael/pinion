@@ -111,6 +111,41 @@ pub enum AriaRole {
     /// [`AccessNode::with_size_of_set`]: crate::AccessNode::with_size_of_set
     /// [`AccessState`]: crate::node::AccessState
     TreeItem,
+    /// R690 §5.40 — WAI-ARIA 1.2 §3.6 `tablist` role. Container for
+    /// [`Self::Tab`] children that owns the roving-tabindex keyboard
+    /// model (Arrow Left/Right move between tabs, Home/End jump to
+    /// first/last). Distinct from [`Self::RadioGroup`] only at the AT
+    /// role surface: the underlying selection substrate is shared
+    /// ([`pinion_core::widgets::radio_group::RadioGroupExternal`] —
+    /// "select 1 of N" is identical semantics), but a `tablist`
+    /// announces "tab list" and its children announce "tab" rather
+    /// than "radio button". Pairs with the §5.50
+    /// `pinion_widget_paint::tabs` substrate (R690) + the
+    /// `hello-tabs` consumer.
+    TabList,
+    /// R690 §5.40 — WAI-ARIA 1.2 §3.6 `tab` role. Single selectable
+    /// child of a [`Self::TabList`] parent. Carries `aria-selected`
+    /// (via [`AccessNode::with_selected`]) for the active tab and
+    /// the WAI-ARIA 1.2 §6.6.9 / §6.6.10 `aria-posinset` /
+    /// `aria-setsize` sibling axes ("tab N of M"). Distinct from
+    /// [`Self::RadioButton`]: a tab is *selected*, not *checked* —
+    /// the truthy axis is `aria-selected`, matching
+    /// [`Self::ListBoxOption`].
+    ///
+    /// `aria-controls` (the tab → tab-panel relationship) is a future
+    /// additive axis once a consumer surfaces multi-panel addressing;
+    /// R690 renders a single panel for the active tab, so the
+    /// relationship is structurally implicit.
+    ///
+    /// [`AccessNode::with_selected`]: crate::AccessNode::with_selected
+    Tab,
+    /// R690 §5.40 — WAI-ARIA 1.2 §3.6 `tabpanel` role. The content
+    /// region associated with the active [`Self::Tab`]. Focusable
+    /// (Tab key lands on the panel when it has no focusable content)
+    /// so it shares the `Focus`-only action set with the other
+    /// container roles. Only the active tab's panel is rendered, so
+    /// at most one `tabpanel` node exists in the tree at a time.
+    TabPanel,
     Generic,
 }
 
@@ -136,6 +171,9 @@ impl AriaRole {
             Self::ListItem => Role::ListItem,
             Self::Tree => Role::Tree,
             Self::TreeItem => Role::TreeItem,
+            Self::TabList => Role::TabList,
+            Self::Tab => Role::Tab,
+            Self::TabPanel => Role::TabPanel,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -162,6 +200,9 @@ impl AriaRole {
             Self::ListItem => "listitem",
             Self::Tree => "tree",
             Self::TreeItem => "treeitem",
+            Self::TabList => "tablist",
+            Self::Tab => "tab",
+            Self::TabPanel => "tabpanel",
             Self::Generic => "generic",
         }
     }
@@ -244,5 +285,29 @@ mod tests {
     #[test]
     fn list_item_lowers_to_accesskit_list_item() {
         assert_eq!(AriaRole::ListItem.to_accesskit(), Role::ListItem);
+    }
+
+    // R690 §5.40 — Tab / TabList / TabPanel role lowering + names.
+
+    #[test]
+    fn tab_list_lowers_to_accesskit_tab_list() {
+        assert_eq!(AriaRole::TabList.to_accesskit(), Role::TabList);
+    }
+
+    #[test]
+    fn tab_lowers_to_accesskit_tab() {
+        assert_eq!(AriaRole::Tab.to_accesskit(), Role::Tab);
+    }
+
+    #[test]
+    fn tab_panel_lowers_to_accesskit_tab_panel() {
+        assert_eq!(AriaRole::TabPanel.to_accesskit(), Role::TabPanel);
+    }
+
+    #[test]
+    fn tab_roles_aria_names_match_wai_aria_literals() {
+        assert_eq!(AriaRole::TabList.aria_name(), "tablist");
+        assert_eq!(AriaRole::Tab.aria_name(), "tab");
+        assert_eq!(AriaRole::TabPanel.aria_name(), "tabpanel");
     }
 }

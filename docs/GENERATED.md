@@ -13884,6 +13884,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R690 — R690 Tabs widget (Phase B catalog) — RadioGroupExternal-backed tab strip with WAI-ARIA tablist/tab/tabpanel roles + automatic-activation roving keyboard.
+
+**Changes**:
+- pinion-a11y::role — AriaRole::{TabList, Tab, TabPanel} (lower to accesskit Role::{TabList,Tab,TabPanel} + WAI-ARIA literal names); tree.rs add_actions_for_role: Tab joins commit-class (Click+Focus), TabList/TabPanel join focus-only set. Mirrors R673 Tree/TreeItem pattern.
+- pinion-widget-paint::tabs (new module) — view_tabs / composite_tab_tag / TabsStyle::m3_default; M3 Primary-tabs strip (48px height, 3px accent active-indicator bar with 3px radius, 14px title-small label, 16px tab padding). Mirrors tree_view substrate carrier pattern.
+- examples/hello-tabs (new binding, first consumer) — reuses RadioGroupExternal for the select-1-of-N statechart (no new SCXML) per abstraction-needs-second-consumer; composite-tag {tag}#{i} #-split dispatch (R51.42); WAI-ARIA a11y walker emits TabList + N Tabs (aria-selected + posinset/setsize) + active TabPanel; Arrow Left/Right + Home/End automatic-activation roving keyboard.
+- tools/demos/r690_tabs.py (new) — E2E >=30 assertions: strip+composite+panel shape, boot indicator on tab 0, click selection swaps indicator+panel, /external/selected_index introspect mirror, keyboard roving with wrap + Home/End jump, label render.
+
+
+
+**Verification**:
+- cargo test --workspace exit 0 — new coverage: tabs.rs 8 paint tests, hello-tabs 11 a11y + 7 key tests, role.rs 3 lowering + 1 name test.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (0 warnings).
+- 47-demo full sweep PASS (46 -> 47, new r690_tabs.py); regression-free.
+- Mnemosyne validate_workspace: T1 orphan=0 (no new), round-trip mandatory 1/1, GENERATED.md sync; impact_refs [5.16, 5.40, 5.50] all resolve.
+
+
+
+**Impact**: §5.16, §5.40, §5.50
+
+
+**Carry forward**:
+- reconcile generation-counter dirty-gate (editor idle-frame skip) — evidence-first, Phase D editor with many dynamic splits + perf signal.
+- Scene Clone via External handle Box<dyn> -> Rc<RefCell<dyn>> (S15 / R684.B Hack 3.4) — Phase C entry (immediate-mode game-loop + dirty cache also benefit).
+- live MOUSE drag-to-reorganize + drop-zone highlight overlay (R687 carry a) — currently RPC-native only.
+- Phase B widget catalog cascade: Menu / Dialog / Toolbar / Table / Tooltip / Drawer / Accordion / DatePicker / ColorPicker (1 round 1 widget or small pair).
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
