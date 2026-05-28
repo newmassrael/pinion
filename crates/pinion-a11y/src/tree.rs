@@ -368,6 +368,14 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_multiselectable();
     }
 
+    // R693 §5.40 — WAI-ARIA `aria-modal` mapping. Set on the open
+    // `Dialog` root so AT confines its virtual cursor to the dialog
+    // subtree (the AT-side mirror of the shell focus trap). Boolean-set;
+    // omitted when false to keep the TreeUpdate payload minimal.
+    if access.modal {
+        node.set_modal();
+    }
+
     if let Some(bounds) = access.bounds {
         node.set_bounds(rect_to_accesskit(bounds));
     }
@@ -491,6 +499,7 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         | AriaRole::MenuBar
         | AriaRole::Menu
         | AriaRole::Toolbar
+        | AriaRole::Dialog
         | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }
@@ -781,6 +790,26 @@ mod tests {
         b.add(&AccessNode::new("opt", AriaRole::ListBoxOption));
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 2);
+    }
+
+    #[test]
+    fn r693_modal_dialog_with_action_buttons_lowers() {
+        // Smoke test: an open modal Dialog root with aria-modal + two
+        // action Button children. AccessKit node internals are opaque
+        // from outside the crate, so we verify build succeeds with the
+        // right node count (root + dialog + 2 actions).
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            &AccessNode::new("dialog", AriaRole::Dialog)
+                .with_modal()
+                .with_name("Confirm")
+                .with_child("dialog_ok")
+                .with_child("dialog_cancel"),
+        );
+        b.add(&AccessNode::new("dialog_ok", AriaRole::Button).with_name("OK"));
+        b.add(&AccessNode::new("dialog_cancel", AriaRole::Button).with_name("Cancel"));
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 4);
     }
 
     #[test]

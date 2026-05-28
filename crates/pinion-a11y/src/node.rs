@@ -118,6 +118,13 @@ pub struct AccessNode {
     /// provides the visible-or-known total here. `None` omits the
     /// attribute.
     pub size_of_set: Option<u32>,
+    /// R693 §5.40 — WAI-ARIA `aria-modal` per WAI-ARIA 1.2 §6.6.1.
+    /// `true` lowers to `accesskit::Node::set_modal` so AT announces the
+    /// node as a modal boundary and confines its virtual cursor to the
+    /// subtree (the AT-side mirror of the [`crate::focus`]-trap the
+    /// shell installs). Meaningful on [`AriaRole::Dialog`]; default
+    /// `false` omits the attribute.
+    pub modal: bool,
 }
 
 impl AccessNode {
@@ -139,6 +146,7 @@ impl AccessNode {
             level: None,
             position_in_set: None,
             size_of_set: None,
+            modal: false,
         }
     }
 
@@ -196,6 +204,16 @@ impl AccessNode {
     #[must_use]
     pub fn with_multiselectable(mut self) -> Self {
         self.multiselectable = true;
+        self
+    }
+
+    /// R693 §5.40 — declare this node exposes `aria-modal="true"`. Used
+    /// on the [`AriaRole::Dialog`] root while the dialog is open so AT
+    /// confines its virtual cursor to the dialog subtree, mirroring the
+    /// shell-side focus trap. See [`Self::modal`].
+    #[must_use]
+    pub fn with_modal(mut self) -> Self {
+        self.modal = true;
         self
     }
 

@@ -978,10 +978,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`Self::apply_key`]; widgets match on the W3C string in their
     /// `apply_key` impls.
     ///
-    /// `Escape` and `Tab` never reach this method — they are
-    /// shell-reserved in `AppShell::handle_key_press` (`Escape` quits
-    /// the window via `event_loop.exit`; `Tab` routes through
-    /// [`Self::handle_focus_traverse`]).
+    /// `Tab` never reaches this method — it is shell-reserved in
+    /// `AppShell::handle_key_press` and routes through
+    /// [`Self::handle_focus_traverse`]. `Escape` normally quits the
+    /// window (`event_loop.exit`), but R693 §5.39 routes it *here* while
+    /// a modal focus trap is active ([`Self::focus_is_modal`]) so the
+    /// dialog binding's `apply_key` can map Escape → cancel instead of
+    /// terminating the app.
     pub fn handle_named_key(&mut self, key_str: &str) {
         // R51.187 §5.45 R55.C.3 — give `V::apply_key` the first
         // chance on the key (widget-bound shortcut: Slider's
@@ -2305,6 +2308,48 @@ impl<V: WidgetView> ShellCore<V> {
         // transition arc regardless of whether the focus came from a
         // pointer press or a programmatic request.
         self.drain_focus_request();
+        // R693 §5.39 — drain the modal focus-trap mailbox a reducer /
+        // `External::invoke` may have populated when a dialog opened or
+        // closed during this dispatch. Same single-frame guarantee as
+        // the focus-request drain above: the trap installs (or lifts)
+        // before the next paint, so auto-focus + Tab confinement are in
+        // place the moment the dialog appears.
+        self.drain_modal_request();
+    }
+
+    /// R693 §5.39 — pop one pending [`pinion_core::modal_scope_request`]
+    /// entry and apply it via [`FocusManager::push_modal_scope`] /
+    /// [`FocusManager::pop_modal_scope`], routing the resulting focus
+    /// move through [`Self::notify_focus_change`] so the auto-focused
+    /// dialog control (and, on close, the restored invoker) fire their
+    /// `External::on_focus_change` observers — the dialog's buttons mark
+    /// themselves focused for the focus ring exactly as a Tab traversal
+    /// would. No-op on an empty mailbox.
+    fn drain_modal_request(&mut self) {
+        let Some(req) = pinion_core::modal_scope_request::drain() else {
+            return;
+        };
+        let focus_before = self.focus.focused().map(str::to_owned);
+        let changed = match req {
+            pinion_core::modal_scope_request::ModalRequest::Open { members } => {
+                self.focus.push_modal_scope(members)
+            }
+            pinion_core::modal_scope_request::ModalRequest::Close => self.focus.pop_modal_scope(),
+        };
+        if changed {
+            self.notify_focus_change(focus_before.as_deref());
+            self.revision.bump();
+            self.request_redraw();
+        }
+    }
+
+    /// R693 §5.39 — `true` while a modal focus trap is active. The
+    /// winit shell consults this to keep `Escape` from terminating the
+    /// event loop while a modal is up: a trapped `Escape` dismisses the
+    /// modal (routed to the widget's `apply_key`) instead of the window.
+    #[must_use]
+    pub fn focus_is_modal(&self) -> bool {
+        self.focus.is_modal()
     }
 
     /// R664 §5.39 — pop one pending [`pinion_core::focus_request`]

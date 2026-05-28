@@ -80,10 +80,18 @@ pub fn focus_set(
         }
         Some(tag) => {
             // `focus_set` returns `false` when the tag is absent
-            // from `tab_order` OR already focused. Distinguish the
-            // two by checking `tab_order` membership explicitly so
-            // the no-op (already-focused) case returns success.
-            let in_order = focus.tab_order().iter().any(|t| t == tag);
+            // from the active order OR already focused. Distinguish the
+            // two by checking membership explicitly so the no-op
+            // (already-focused) case returns success.
+            //
+            // R693 §5.39 — check the *active* order, not the base
+            // `tab_order`: while a modal trap is up the addressable
+            // targets are the scope's members (the dialog's controls,
+            // absent from the static `tab_order`), and the base
+            // focusables (the invoker behind the scrim) are not
+            // addressable. This confines an AI client's `focus/set` to
+            // the modal exactly as it confines Tab.
+            let in_order = focus.active_tab_order().iter().any(|t| t == tag);
             if !in_order {
                 return Err(FocusError::NotFocusable(tag.to_owned()));
             }
@@ -101,7 +109,10 @@ pub fn focus_set(
 pub fn focus_get(focus: &FocusManager) -> FocusState {
     FocusState {
         focused: focus.focused().map(str::to_owned),
-        tab_order: Some(focus.tab_order().to_vec()),
+        // R693 §5.39 — report the *active* order so an AI client sees
+        // the modal trap's enumeration (the dialog controls) while a
+        // dialog is open, and the base `tab_order` otherwise.
+        tab_order: Some(focus.active_tab_order().to_vec()),
     }
 }
 

@@ -44,6 +44,7 @@ members = [
     "examples/hello-tabs",
     "examples/hello-menu",
     "examples/hello-toolbar",
+    "examples/hello-dialog",
     "examples/hello-immediate-mode-canvas",
     "examples/hello-dock-panels",
     "examples/hello-dock-panels-editor",

@@ -895,7 +895,20 @@ impl<V: WidgetView> AppShell<V> {
         logical_key: &Key,
     ) {
         match logical_key.as_ref() {
-            Key::Named(NamedKey::Escape) => event_loop.exit(),
+            // R693 §5.39 — while a modal focus trap is active, Escape
+            // dismisses the modal, not the window: route it to the
+            // widget's `apply_key` (the dialog binding maps Escape →
+            // cancel) instead of `event_loop.exit`. WAI-ARIA modal
+            // contract: you cannot Escape past an open dialog to quit;
+            // you dismiss the dialog first. With no modal up, Escape
+            // keeps the standalone-app convention of closing the window.
+            Key::Named(NamedKey::Escape) => {
+                if self.core.focus_is_modal() {
+                    self.core.handle_named_key("Escape");
+                } else {
+                    event_loop.exit();
+                }
+            }
             Key::Named(NamedKey::Tab) => {
                 self.core.handle_focus_traverse(self.core.modifiers_shift_key());
             }

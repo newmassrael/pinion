@@ -639,7 +639,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // crossterm surface repaints to refresh the focus ring +
         // any focus-gated reactive subscriptions.
         let focus_changed = self.drain_focus_request();
-        state_changed || focus_changed
+        // R693 §5.39 — drain the modal focus-trap mailbox a reducer /
+        // `External::invoke` may have populated when a dialog opened or
+        // closed. Mirror of `pinion_shell::ShellCore::handle_tail`'s
+        // drain call so the modal trap is dual-backend: an AI client
+        // driving the TUI substrate over RPC sees the same Tab
+        // confinement + auto-focus the Vello shell produces.
+        let modal_changed = self.drain_modal_request();
+        state_changed || focus_changed || modal_changed
     }
 
     /// R670 §5.41 §5.39 — fire [`External::on_focus_change`] on the
@@ -702,6 +709,42 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         self.notify_focus_change(focus_before.as_deref());
         self.revision.bump();
         true
+    }
+
+    /// R693 §5.39 — pop one pending
+    /// [`pinion_core::modal_scope_request`] entry and apply it via
+    /// [`FocusManager::push_modal_scope`] /
+    /// [`FocusManager::pop_modal_scope`], routing the resulting focus
+    /// move through [`Self::notify_focus_change`]. Mirror of
+    /// `pinion_shell::ShellCore::drain_modal_request`. Returns `true`
+    /// when a focus mutation committed so [`Self::handle_tail`] can OR
+    /// it into the repaint flag.
+    fn drain_modal_request(&mut self) -> bool {
+        let Some(req) = pinion_core::modal_scope_request::drain() else {
+            return false;
+        };
+        let focus_before = self.focus.focused().map(str::to_owned);
+        let changed = match req {
+            pinion_core::modal_scope_request::ModalRequest::Open { members } => {
+                self.focus.push_modal_scope(members)
+            }
+            pinion_core::modal_scope_request::ModalRequest::Close => self.focus.pop_modal_scope(),
+        };
+        if changed {
+            self.notify_focus_change(focus_before.as_deref());
+            self.revision.bump();
+        }
+        changed
+    }
+
+    /// R693 §5.39 — `true` while a modal focus trap is active. The
+    /// crossterm event loop consults this to keep `Esc` from quitting
+    /// the alternate screen while a modal is up (Esc dismisses the
+    /// modal instead). Mirror of
+    /// `pinion_shell::ShellCore::focus_is_modal`.
+    #[must_use]
+    pub fn focus_is_modal(&self) -> bool {
+        self.focus.is_modal()
     }
 
     /// R670 §5.41 §5.40 — dispatch one JSON-RPC 2.0 frame against the

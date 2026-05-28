@@ -207,6 +207,18 @@ pub enum AriaRole {
     /// `aria-checked` axis a `checkbox` role carries for the same
     /// underlying attribute).
     Toolbar,
+    /// R693 §5.40 — WAI-ARIA 1.2 §3.2 `dialog` role. A modal container
+    /// (the confirm / form / alert dialog every pro tool ships) that
+    /// holds the focus trap while open: focus moves into the dialog on
+    /// open, Tab is confined to the dialog's controls, Escape dismisses,
+    /// and focus returns to the invoker on close (the
+    /// [`crate::node::AccessNode::modal`] flag lowers to the AccessKit
+    /// `aria-modal` attribute so AT announces the modality).
+    ///
+    /// Focus-only container action set (alongside [`Self::MenuBar`] /
+    /// [`Self::Toolbar`] / [`Self::Tree`]): the dialog itself is a
+    /// grouping node; its action buttons are child [`Self::Button`]s.
+    Dialog,
     Generic,
 }
 
@@ -239,6 +251,7 @@ impl AriaRole {
             Self::Menu => Role::Menu,
             Self::MenuItem => Role::MenuItem,
             Self::Toolbar => Role::Toolbar,
+            Self::Dialog => Role::Dialog,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -272,6 +285,7 @@ impl AriaRole {
             Self::Menu => "menu",
             Self::MenuItem => "menuitem",
             Self::Toolbar => "toolbar",
+            Self::Dialog => "dialog",
             Self::Generic => "generic",
         }
     }
@@ -304,6 +318,12 @@ mod tests {
     #[test]
     fn generic_lowers_to_generic_container() {
         assert_eq!(AriaRole::Generic.to_accesskit(), Role::GenericContainer);
+    }
+
+    #[test]
+    fn r693_dialog_lowers_to_accesskit_dialog() {
+        assert_eq!(AriaRole::Dialog.to_accesskit(), Role::Dialog);
+        assert_eq!(AriaRole::Dialog.aria_name(), "dialog");
     }
 
     #[test]

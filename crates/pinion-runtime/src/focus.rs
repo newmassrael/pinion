@@ -37,8 +37,49 @@
 //! [`FocusManager::save`] snapshots the focused tag; [`FocusManager::restore`]
 //! reinstates it. Wiring (`WindowEvent::Focus { focused: bool }` →
 //! save / restore) lands in `pinion-shell` per the R51.59 round.
+//!
+//! ## Modal focus trap (R693 §5.39)
+//!
+//! [`FocusManager::push_modal_scope`] / [`FocusManager::pop_modal_scope`]
+//! implement the WAI-ARIA modal-dialog focus-management contract
+//! (`aria-modal` / the HTML `<dialog>.showModal()` top-layer model):
+//! while a modal scope is active, Tab / Shift+Tab and
+//! [`focus_set`](FocusManager::focus_set) traverse *only* the scope's
+//! member tags (the trap), and the wrap stays inside the modal. Opening
+//! a scope snapshots the invoker's focus and auto-focuses the modal's
+//! first control; closing it restores the invoker.
+//!
+//! The member list is the scope's own *active focusable enumeration* —
+//! it does **not** need to be a subset of the static [`tab_order`]
+//! (`update_focusable_tags`). That is deliberate: a dialog's controls
+//! (action buttons, form fields) are focusable *only while the dialog is
+//! open*, so listing them in the binding's static `focusable_tags` would
+//! make them phantom tab stops when closed (the dynamic-focusable gap
+//! todomvc's R664 in-place editor flagged). Pushing the members as the
+//! active order when the modal opens, and popping back to `tab_order`
+//! when it closes, is the textbook resolution of that gap scoped to the
+//! modal case.
+//!
+//! The stack (`Vec<ModalScope>`) models nested modals (a confirm dialog
+//! over a settings dialog — the HTML top-layer is likewise a stack):
+//! the topmost scope owns traversal, and each scope restores its own
+//! saved focus on pop.
 
 use std::mem;
+
+/// One entry on the modal focus-trap stack. Captures the focus to
+/// restore when the scope closes plus the active focusable enumeration
+/// (the modal's controls, in Tab order) that traversal is confined to
+/// while the scope is on top.
+#[derive(Debug, Clone)]
+struct ModalScope {
+    /// Focus owner at the moment the scope opened (the invoker, e.g.
+    /// the button that opened the dialog). Restored on pop.
+    saved_focus: Option<String>,
+    /// The modal's focusable tags in Tab order. While this scope is the
+    /// topmost, Tab / Shift+Tab / `focus_set` traverse only these.
+    members: Vec<String>,
+}
 
 /// Focused tag identity for key dispatch + ARIA visual indication.
 ///
@@ -55,6 +96,7 @@ pub struct FocusManager {
     focused: Option<String>,
     tab_order: Vec<String>,
     saved: Option<String>,
+    modal_stack: Vec<ModalScope>,
 }
 
 impl FocusManager {
@@ -81,13 +123,103 @@ impl FocusManager {
     /// traversal. If the currently focused tag is no longer in the
     /// new enumeration, focus is dropped — stale focus would dispatch
     /// to a missing target.
+    ///
+    /// R693 §5.39 — the drop-on-removal guard is suppressed while a
+    /// modal scope is active: a modal's members are a *separate* active
+    /// enumeration ([`push_modal_scope`](Self::push_modal_scope)) that
+    /// is intentionally absent from the static `tab_order`, so checking
+    /// the focused member against `tab_order` would spuriously drop the
+    /// modal's focus every render. The base `tab_order` is still
+    /// refreshed underneath so popping the scope restores a current
+    /// enumeration.
     pub fn update_focusable_tags(&mut self, tags: Vec<String>) {
-        if let Some(f) = self.focused.as_deref() {
-            if !tags.iter().any(|t| t == f) {
-                self.focused = None;
+        if self.modal_stack.is_empty() {
+            if let Some(f) = self.focused.as_deref() {
+                if !tags.iter().any(|t| t == f) {
+                    self.focused = None;
+                }
             }
         }
         self.tab_order = tags;
+    }
+
+    /// The focusable enumeration traversal currently operates over: the
+    /// topmost modal scope's members while a modal is open, otherwise
+    /// the base [`tab_order`](Self::tab_order).
+    fn active_order(&self) -> &[String] {
+        match self.modal_stack.last() {
+            Some(scope) => &scope.members,
+            None => &self.tab_order,
+        }
+    }
+
+    /// R693 §5.39 — the focusable enumeration RPC `focus/set` /
+    /// `focus/get` operate against: the topmost modal scope's members
+    /// while a modal is open, otherwise the base
+    /// [`tab_order`](Self::tab_order). AI clients addressing a dialog's
+    /// controls (focusable only while the trap is up) must target this,
+    /// not the static `tab_order` — the trap members are intentionally
+    /// absent from the latter.
+    #[must_use]
+    pub fn active_tab_order(&self) -> &[String] {
+        self.active_order()
+    }
+
+    /// `true` while at least one modal focus scope is active (Tab is
+    /// trapped, Escape dismisses the modal rather than the window).
+    #[must_use]
+    pub fn is_modal(&self) -> bool {
+        !self.modal_stack.is_empty()
+    }
+
+    /// Number of stacked modal scopes (nested modals). `0` when no
+    /// modal is open.
+    #[must_use]
+    pub fn modal_depth(&self) -> usize {
+        self.modal_stack.len()
+    }
+
+    /// Open a modal focus trap over `members` (the modal's controls in
+    /// Tab order). Snapshots the current focus owner for restore on
+    /// [`pop_modal_scope`](Self::pop_modal_scope) and auto-focuses the
+    /// first member (WAI-ARIA "focus moves into the dialog on open").
+    /// Returns `true` if the focused tag changed.
+    ///
+    /// `members` becomes the active focusable enumeration while this
+    /// scope is topmost; it need not intersect the static `tab_order`
+    /// (see the module-level modal-trap note). An empty `members`
+    /// clears focus (a modal with no focusable controls).
+    pub fn push_modal_scope(&mut self, members: Vec<String>) -> bool {
+        let saved_focus = self.focused.clone();
+        let first = members.first().cloned();
+        self.modal_stack.push(ModalScope {
+            saved_focus,
+            members,
+        });
+        match first {
+            Some(tag) => {
+                let changed = self.focused.as_deref() != Some(tag.as_str());
+                self.focused = Some(tag);
+                changed
+            }
+            None => self.focused.take().is_some(),
+        }
+    }
+
+    /// Close the topmost modal focus trap and restore the focus owner
+    /// captured when it opened (the invoker), if that tag is still
+    /// focusable in the now-active enumeration. Returns `true` if the
+    /// focused tag changed. No-op (returns `false`) when no modal scope
+    /// is active.
+    pub fn pop_modal_scope(&mut self) -> bool {
+        let Some(scope) = self.modal_stack.pop() else {
+            return false;
+        };
+        let before = self.focused.take();
+        self.focused = scope
+            .saved_focus
+            .filter(|t| self.active_order().iter().any(|x| x == t));
+        before != self.focused
     }
 
     /// Move focus to the next focusable widget. Returns `true` if
@@ -107,7 +239,7 @@ impl FocusManager {
     /// `false` if `tag` is absent from `tab_order` (caller error) or
     /// is already the focused tag (no-op).
     pub fn focus_set(&mut self, tag: &str) -> bool {
-        if !self.tab_order.iter().any(|t| t == tag) {
+        if !self.active_order().iter().any(|t| t == tag) {
             return false;
         }
         if self.focused.as_deref() == Some(tag) {
@@ -148,10 +280,11 @@ impl FocusManager {
     /// element and the first Shift+Tab focuses the last (ARIA
     /// Authoring Practices convention).
     fn advance(&mut self, direction: i64) -> bool {
-        if self.tab_order.is_empty() {
+        let order = self.active_order();
+        if order.is_empty() {
             return false;
         }
-        let n = self.tab_order.len();
+        let n = order.len();
         let next_idx: usize = match self.focused.as_deref() {
             None => {
                 if direction > 0 {
@@ -160,25 +293,32 @@ impl FocusManager {
                     n - 1
                 }
             }
-            Some(t) => {
-                let Some(cur) = self.tab_order.iter().position(|x| x == t) else {
-                    // Inconsistent state — `update_focusable_tags`
-                    // invariant says focused tag is in tab_order.
-                    // Defensive recovery: drop focus.
-                    self.focused = None;
-                    return true;
-                };
-                let n_i = i64::try_from(n).unwrap_or(i64::MAX);
-                let cur_i = i64::try_from(cur).unwrap_or(0);
-                let stepped = (cur_i + direction).rem_euclid(n_i);
-                usize::try_from(stepped).unwrap_or(0)
-            }
+            Some(t) => match order.iter().position(|x| x == t) {
+                Some(cur) => {
+                    let n_i = i64::try_from(n).unwrap_or(i64::MAX);
+                    let cur_i = i64::try_from(cur).unwrap_or(0);
+                    let stepped = (cur_i + direction).rem_euclid(n_i);
+                    usize::try_from(stepped).unwrap_or(0)
+                }
+                None => {
+                    // Focused tag is not in the active enumeration — a
+                    // stale or cross-scope focus. Recover by entering at
+                    // the leading edge for the direction instead of
+                    // dropping focus, so a trapped modal never lets the
+                    // cursor escape to "no focus".
+                    if direction > 0 {
+                        0
+                    } else {
+                        n - 1
+                    }
+                }
+            },
         };
-        let new_tag = &self.tab_order[next_idx];
+        let new_tag = order[next_idx].clone();
         if self.focused.as_deref() == Some(new_tag.as_str()) {
             return false;
         }
-        self.focused = Some(new_tag.clone());
+        self.focused = Some(new_tag);
         true
     }
 }
@@ -336,6 +476,138 @@ mod tests {
     fn focus_next_no_op_on_empty_enumeration() {
         let mut m = FocusManager::new();
         assert!(!m.focus_next());
+        assert_eq!(m.focused(), None);
+    }
+
+    // ----- R693 §5.39: modal focus trap -----
+
+    #[test]
+    fn push_modal_scope_auto_focuses_first_member() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn"]));
+        m.focus_set("open_btn");
+        assert!(m.push_modal_scope(tags(&["ok", "cancel"])));
+        assert!(m.is_modal());
+        assert_eq!(m.modal_depth(), 1);
+        assert_eq!(m.focused(), Some("ok"), "focus moves into the modal");
+    }
+
+    #[test]
+    fn modal_tab_traps_within_members_and_wraps() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn"]));
+        m.push_modal_scope(tags(&["ok", "cancel"]));
+        assert_eq!(m.focused(), Some("ok"));
+        assert!(m.focus_next());
+        assert_eq!(m.focused(), Some("cancel"));
+        assert!(m.focus_next());
+        assert_eq!(m.focused(), Some("ok"), "Tab wraps inside the trap");
+        assert!(m.focus_prev());
+        assert_eq!(m.focused(), Some("cancel"), "Shift+Tab wraps backward");
+    }
+
+    #[test]
+    fn modal_focus_set_rejects_tags_outside_scope() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn"]));
+        m.push_modal_scope(tags(&["ok", "cancel"]));
+        // The invoker (in tab_order, NOT in the modal members) cannot be
+        // focused while the trap is active.
+        assert!(!m.focus_set("open_btn"));
+        assert_eq!(m.focused(), Some("ok"));
+        assert!(m.focus_set("cancel"));
+        assert_eq!(m.focused(), Some("cancel"));
+    }
+
+    #[test]
+    fn pop_modal_scope_restores_invoker_focus() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn", "other"]));
+        m.focus_set("open_btn");
+        m.push_modal_scope(tags(&["ok", "cancel"]));
+        m.focus_next(); // -> cancel, inside the trap
+        assert!(m.pop_modal_scope());
+        assert!(!m.is_modal());
+        assert_eq!(m.focused(), Some("open_btn"), "invoker focus restored");
+    }
+
+    #[test]
+    fn modal_members_need_not_be_in_tab_order() {
+        // The dynamic-focusable case: a dialog's controls are focusable
+        // only while open, so they are intentionally absent from the
+        // static tab_order. The trap still traverses them.
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn"]));
+        m.push_modal_scope(tags(&["ok", "cancel"]));
+        assert!(m.focus_set("cancel"));
+        assert_eq!(m.focused(), Some("cancel"));
+    }
+
+    #[test]
+    fn update_focusable_tags_does_not_drop_modal_focus() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn"]));
+        m.push_modal_scope(tags(&["ok", "cancel"]));
+        // A render refreshes the static enumeration; the modal member
+        // "ok" is not in it but must survive (it lives in the scope).
+        m.update_focusable_tags(tags(&["open_btn"]));
+        assert_eq!(m.focused(), Some("ok"));
+    }
+
+    #[test]
+    fn nested_modal_scopes_stack_and_unwind() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["root"]));
+        m.focus_set("root");
+        m.push_modal_scope(tags(&["a", "b"])); // settings dialog
+        assert_eq!(m.focused(), Some("a"));
+        m.focus_next(); // -> b, the invoker for the nested modal
+        m.push_modal_scope(tags(&["yes", "no"])); // confirm over settings
+        assert_eq!(m.modal_depth(), 2);
+        assert_eq!(m.focused(), Some("yes"));
+        // Inner trap confines to its own members.
+        m.focus_next();
+        assert_eq!(m.focused(), Some("no"));
+        assert!(!m.focus_set("a"), "outer member unreachable from inner trap");
+        // Pop inner -> restores the settings dialog's saved member.
+        m.pop_modal_scope();
+        assert_eq!(m.modal_depth(), 1);
+        assert_eq!(m.focused(), Some("b"));
+        // Pop outer -> restores the root invoker.
+        m.pop_modal_scope();
+        assert!(!m.is_modal());
+        assert_eq!(m.focused(), Some("root"));
+    }
+
+    #[test]
+    fn pop_without_push_is_noop() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["a"]));
+        m.focus_set("a");
+        assert!(!m.pop_modal_scope());
+        assert_eq!(m.focused(), Some("a"));
+    }
+
+    #[test]
+    fn push_empty_modal_scope_clears_focus() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn"]));
+        m.focus_set("open_btn");
+        assert!(m.push_modal_scope(Vec::new()));
+        assert!(m.is_modal());
+        assert_eq!(m.focused(), None, "a modal with no controls has no focus");
+    }
+
+    #[test]
+    fn pop_drops_focus_when_saved_invoker_gone() {
+        let mut m = FocusManager::new();
+        m.update_focusable_tags(tags(&["open_btn"]));
+        m.focus_set("open_btn");
+        m.push_modal_scope(tags(&["ok"]));
+        // The invoker was removed from the enumeration while the modal
+        // was up (its view branch went away); restore finds nothing.
+        m.update_focusable_tags(tags(&["other"]));
+        assert!(m.pop_modal_scope());
         assert_eq!(m.focused(), None);
     }
 }

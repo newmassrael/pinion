@@ -14010,6 +14010,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R693 — R693 modal Dialog widget + modal-focus-trap substrate (FocusManager modal scope + modal_scope_request mailbox), first consumer hello-dialog
+
+**Changes**:
+- FocusManager modal scope (pinion-runtime/focus.rs): push_modal_scope/pop_modal_scope stack; the scope members become the ACTIVE focusable enumeration (dynamic-focusable, intentionally absent from the static tab_order) so a dialog's controls are focusable only while open; auto-focus first member on open + restore the invoker on close; new active_tab_order accessor
+- pinion-core::modal_scope_request (new, mirror of focus_request): ModalRequest Open{members}/Close written from the reducer/External and drained in handle_tail of BOTH pinion-shell + pinion-tui (dual-backend); modal Escape routing in both shells dismisses the modal instead of quitting
+- pinion-a11y: AriaRole::Dialog (-> accesskit Role::Dialog, aria_name dialog) + AccessNode.modal flag lowering to accesskit set_modal (aria-modal); Dialog joins the focus-only container action arm
+- pinion-rpc focus/set + focus/get made modal-aware (check/report active_tab_order) so an AI client is confined to the trap exactly as Tab is
+- pinion-widget-paint::dialog (new): view_dialog full-window scrim + centered M3 panel (title/message/action row) + DialogStyle/DialogContent; examples/hello-dialog (new) first consumer = destructive-confirm modal over three real Button externals
+
+
+
+**Verification**:
+- cargo test --workspace green (60 test binaries, 0 failures); new: 11 FocusManager modal-trap tests, 5 modal_scope_request, 7 dialog paint, 2 a11y dialog role+modal, 9 hello-dialog
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (view_dialog grouped to 7 args via DialogContent struct + viewport tuple)
+- tools/demos/r693_dialog.py PASS (41 assertions): open via trigger, auto-focus cancel, Tab-trap + wrap within members, focus/set-to-invoker rejected, scrim blocks (no light-dismiss), Cancel/OK/Escape/keyboard-Enter all close + restore focus to trigger; regression sweep toolbar/menu/tabs PASS
+
+
+
+**Impact**: §5.16, §5.39, §5.40, §5.41, §5.50
+
+
+**Carry forward**:
+- Dialog action-button focus RING deferred: ButtonState has no focus posture + view-fn does not receive shell focus (the R690 Tabs / R692 Toolbar shell-focus-paint axis); the trap itself is real + RPC/a11y observable, ring lands when that shared axis does
+- apply_aria_activate assumes a single-External scene; hello-dialog is the first multi-External button-activation consumer and inlines a Container-descending variant — lift into the shared helper on a 2nd consumer (abstraction-needs-second-consumer)
+- Dialog additive axes: light-dismiss (backdrop click closes), M3 elevation shadow (no shadow primitive yet), scrollable content / icon / divider panel slots, nested modal stacking (substrate supports it; no consumer yet)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -9,6 +9,7 @@ pub mod focus_request;
 pub mod frame;
 pub mod input;
 pub mod intent;
+pub mod modal_scope_request;
 pub mod reactive;
 pub mod renderer;
 pub mod revision;

@@ -330,6 +330,21 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
                     continue;
                 }
                 if key.code == crossterm::event::KeyCode::Esc {
+                    // R693 §5.39 — while a modal focus trap is active,
+                    // Esc dismisses the modal (routed to the binding's
+                    // `apply_key` as the W3C "Escape" name) rather than
+                    // quitting the alternate screen. Mirrors the Vello
+                    // shell's modal Escape routing so the dual backends
+                    // honour the WAI-ARIA "Escape closes the dialog,
+                    // not the app" contract identically.
+                    if core.focus_is_modal() {
+                        let modifiers =
+                            crate::input::modifiers_from_crossterm(key.modifiers);
+                        if core.dispatch_key("Escape", modifiers) {
+                            commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
+                        }
+                        continue;
+                    }
                     // Shell-reserved exit key per §5.39 R51.53
                     // convention (Vello shell's `Escape → quit`
                     // mirrors here).
