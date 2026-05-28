@@ -21510,6 +21510,58 @@
         "atomic 1 honest narrowing: dock-panel header fix uses `Size::height_px` (cross-axis stretch) rather than `flex_basis + flex_grow` per the seed — flex_basis/flex_grow on the header would compete with the content_wrapper's `flex_grow(1.0)` for the Column-parent Y-axis (header height would no longer pin to 28px). The splitter (atomic 2) is the canonical R684 flex_basis substrate consumer; dock header is the cross-axis-stretch fix."
       ]
     },
+    "R684.B": {
+      "decision_summary": "R684 hack-inventory 4건 textbook 청산 — Size::auto/with_width/with_height composable builders + ShellCore::apply_paint_for_window split + compute_paint_scene_pure variant.",
+      "changes_bullets": [
+        "`pinion_core::style::Size::auto()` + `with_width(SizeValue)` + `with_height(SizeValue)` composable builders (Hack 0.1 청산). 기존 `width_px(u32)` / `height_px(u32)` 은 ergonomic alias 로 유지. SizeValue 전 variant (Auto / Px(N) / Percent(p)) 지원 — splitter handle / dock header cross-axis stretch 외 percent-width / runtime-computed dimension 사용 시접이 이제 정통 path. 7 substrate 테스트 (auto / aliases / percent / chain / override).",
+        "`pinion_shell::ShellCore::apply_paint_for_window(window_id, paint_scene, paint_layout)` 신규 primitive (Hack 3.1 청산) — substrate's `last_paint_layout` mirror + `InputRouter::update_paint_scene` 쓰기 (refresh_hover 신호 포함). `finalize_frame_for_window` 은 `apply_paint_for_window` + `tail()` + `handle_tail()` composition 으로 재설계. 명시적 primitive 이름 도입으로 R684 atomic 3 inline-without-drain 변형이 이제 정당화.",
+        "`pinion_shell::ShellCore::compute_paint_scene_pure_for_window(window_id, w, h)` + `compute_paint_scene_pure(w, h)` 신규 primitive (Hack 3.3 청산) — V::view + compute_layout 만, animation tick / immediate-mode tick / scroll-dirty re-run / animation-active redraw flag mutation 없음. 명령적 root_owner.run wrap 은 유지 (Owner::cache slots resolve). 용도: RPC dispatch finalize hook + headless / dry-run paths.",
+        "`dispatch_rpc_inner` post-finalize hook 재작성 — pre-R684.B `compute_paint_scene_for_window` (full pipeline; producer closure 이미 1회 실행 후 재실행 시 tick / IM side effect 재-발화) → R684.B `compute_paint_scene_pure_for_window` (결정적 기하 만; 조계 부작용 없음). 여전히 `core.set_paint_scene_for_window` 으로 쓰기 (R685 Hack 3.2 storage-only path; refresh_hover 안 틀림). 주석도 명시 — `apply_paint_for_window` 은 winit paint loop 용 (호버 arcs OK), RPC 용은 storage-only 이 textbook."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace PASS (3982 tests; R685.B baseline 3975 → +7 R684.B Size builder tests).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace `-D pedantic`.",
+        "45-demo regression sweep PASS — 0 failures across R660-R685.B + R684.B (특히 todomvc_r660 회귀 없음 — Hack 3.3 청산이 producer closure 재실행 제거하므로 side effect double-fire 원원적으로 불가능).",
+        "R684.B 난드 후 R684 hack-inventory 잔여 1건 (Hack 3.4 Scene Clone via External handle Rc lift) — broader refactor 이므로 R686+ carry. inventory 5/6 청산 완료.",
+        "Mnemosyne entry R684.B 깔끔 validate — atomic ledger 555 → 556, T1 reject=0, GENERATED.md sync, orphan_refs 5+0 frozen, impact_refs [5.16, 5.21, 5.35, 5.41]."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.21",
+        "5.35",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "R684 hack-inventory 잔여 1건 (Hack 3.4) — Scene Clone via External handle Rc lift (Box<dyn> → Rc<RefCell<dyn>>). 모든 External impl 의 ownership 모델 변경 — broader refactor R686+ Phase D entry 단계에서 자연 land (immediate-mode game-loop / dirty subtree cache 도 Scene Clone 이 유용).",
+        "R686 carry 유지 — DockSurface drag-to-reorganize handles (DockDropZone + topology mutation primitives swap_leaves / split_leaf_into / remove_leaf, R685.B try_new validation path 경유).",
+        "Smell 5 view_button substrate lift carry (5+ inline binding consumers Rule-of-Three audit), Smell 8 Topology + Signal persistence (Phase D editor workspace save/restore), Smell 11 apply_flex_main Scroll/Effect wildcard untested, Smell 12 R683.C splitter Surface fill backstop redundancy."
+      ],
+      "publishable_decision_summary": "R684 hack-inventory 4건 textbook 청산 — Size::auto/with_width/with_height composable builders + ShellCore::apply_paint_for_window split + compute_paint_scene_pure variant.",
+      "publishable_changes_bullets": [
+        "`pinion_core::style::Size::auto()` + `with_width(SizeValue)` + `with_height(SizeValue)` composable builders (Hack 0.1 청산). 기존 `width_px(u32)` / `height_px(u32)` 은 ergonomic alias 로 유지. SizeValue 전 variant (Auto / Px(N) / Percent(p)) 지원 — splitter handle / dock header cross-axis stretch 외 percent-width / runtime-computed dimension 사용 시접이 이제 정통 path. 7 substrate 테스트 (auto / aliases / percent / chain / override).",
+        "`pinion_shell::ShellCore::apply_paint_for_window(window_id, paint_scene, paint_layout)` 신규 primitive (Hack 3.1 청산) — substrate's `last_paint_layout` mirror + `InputRouter::update_paint_scene` 쓰기 (refresh_hover 신호 포함). `finalize_frame_for_window` 은 `apply_paint_for_window` + `tail()` + `handle_tail()` composition 으로 재설계. 명시적 primitive 이름 도입으로 R684 atomic 3 inline-without-drain 변형이 이제 정당화.",
+        "`pinion_shell::ShellCore::compute_paint_scene_pure_for_window(window_id, w, h)` + `compute_paint_scene_pure(w, h)` 신규 primitive (Hack 3.3 청산) — V::view + compute_layout 만, animation tick / immediate-mode tick / scroll-dirty re-run / animation-active redraw flag mutation 없음. 명령적 root_owner.run wrap 은 유지 (Owner::cache slots resolve). 용도: RPC dispatch finalize hook + headless / dry-run paths.",
+        "`dispatch_rpc_inner` post-finalize hook 재작성 — pre-R684.B `compute_paint_scene_for_window` (full pipeline; producer closure 이미 1회 실행 후 재실행 시 tick / IM side effect 재-발화) → R684.B `compute_paint_scene_pure_for_window` (결정적 기하 만; 조계 부작용 없음). 여전히 `core.set_paint_scene_for_window` 으로 쓰기 (R685 Hack 3.2 storage-only path; refresh_hover 안 틀림). 주석도 명시 — `apply_paint_for_window` 은 winit paint loop 용 (호버 arcs OK), RPC 용은 storage-only 이 textbook."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace PASS (3982 tests; R685.B baseline 3975 → +7 R684.B Size builder tests).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace `-D pedantic`.",
+        "45-demo regression sweep PASS — 0 failures across R660-R685.B + R684.B (특히 todomvc_r660 회귀 없음 — Hack 3.3 청산이 producer closure 재실행 제거하므로 side effect double-fire 원원적으로 불가능).",
+        "R684.B 난드 후 R684 hack-inventory 잔여 1건 (Hack 3.4 Scene Clone via External handle Rc lift) — broader refactor 이므로 R686+ carry. inventory 5/6 청산 완료.",
+        "Mnemosyne entry R684.B 깔끔 validate — atomic ledger 555 → 556, T1 reject=0, GENERATED.md sync, orphan_refs 5+0 frozen, impact_refs [5.16, 5.21, 5.35, 5.41]."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.21",
+        "5.35",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R684 hack-inventory 잔여 1건 (Hack 3.4) — Scene Clone via External handle Rc lift (Box<dyn> → Rc<RefCell<dyn>>). 모든 External impl 의 ownership 모델 변경 — broader refactor R686+ Phase D entry 단계에서 자연 land (immediate-mode game-loop / dirty subtree cache 도 Scene Clone 이 유용).",
+        "R686 carry 유지 — DockSurface drag-to-reorganize handles (DockDropZone + topology mutation primitives swap_leaves / split_leaf_into / remove_leaf, R685.B try_new validation path 경유).",
+        "Smell 5 view_button substrate lift carry (5+ inline binding consumers Rule-of-Three audit), Smell 8 Topology + Signal persistence (Phase D editor workspace save/restore), Smell 11 apply_flex_main Scroll/Effect wildcard untested, Smell 12 R683.C splitter Surface fill backstop redundancy."
+      ]
+    },
     "R685": {
       "decision_summary": "DockSurface topology composition substrate + 2nd dock consumer (`hello-dock-panels-editor`) — Smell 1+2+3+4+6 inline 청산 + R684.B Hack 3.2 substrate split.",
       "changes_bullets": [

@@ -1507,6 +1507,71 @@ impl<V: WidgetView> ShellCore<V> {
         self.compute_paint_scene_internal(None, w, h)
     }
 
+    /// (R684.B atomic 2 §5.16) Pure paint-scene producer — `V::view`
+    /// + `compute_layout` only, no side effects.
+    ///
+    /// Splits the R670.B [`Self::compute_paint_scene_internal`]
+    /// composition into the deterministic geometry half (this fn) +
+    /// the side-effect half (animation tick, immediate-mode tick,
+    /// scroll-dirty re-run guard, animation-active redraw arming).
+    /// Use cases:
+    ///
+    /// * RPC dispatch's post-finalize hook (R684 atomic 3 →
+    ///   R684.B atomic 1 / 2 rewrite): the producer closure that
+    ///   resolved hit-test paths already ran the full
+    ///   [`Self::compute_paint_scene_internal`] (tick, view, layout,
+    ///   immediate-mode tick, animation-active flag) once during
+    ///   dispatch; the finalize hook needs a fresh paint scene to
+    ///   publish into the `InputRouter`, but re-running the full
+    ///   pipeline would double-tick animations and re-fire
+    ///   immediate-mode side effects. The pure variant produces the
+    ///   same geometry as the producer closure (deterministic at
+    ///   the same `cached_state` plus viewport `(w, h)`) without
+    ///   the side effects.
+    /// * Headless / dry-run paths that want geometry without
+    ///   advancing the binding's animation / IM state.
+    ///
+    /// The R51.146 `root_owner.run(...)` wrap is preserved so
+    /// `Owner::cache` slots resolve correctly. The R57.X scrollbar
+    /// first-paint chicken-and-egg fix is intentionally NOT
+    /// retained — that fix's purpose is to let the scrollbar widget
+    /// observe a `max` update written by the layout pass within the
+    /// same paint cycle, but the pure variant runs as an auxiliary
+    /// after the canonical paint already produced the right
+    /// scrollbar shape; re-running the scroll-dirty guard here
+    /// would just emit redundant work.
+    pub fn compute_paint_scene_pure_for_window(
+        &mut self,
+        window_id: &str,
+        w: u32,
+        h: u32,
+    ) -> Scene {
+        let cached_state = *self.core.cached_state();
+        let frame = Frame::new();
+        let mut paint_scene = self.core.root_owner().run(|| {
+            V::view_for_window(window_id, cached_state, &frame)
+        });
+        compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        paint_scene
+    }
+
+    /// (R684.B atomic 2 §5.16) Single-window mirror of
+    /// [`Self::compute_paint_scene_pure_for_window`]. Routes through
+    /// the substrate's [`pinion_runtime::DEFAULT_WINDOW`] key + uses
+    /// `V::view` (no `view_for_window` dispatch) so single-window
+    /// bindings observe bit-identical behaviour to pre-R670.B
+    /// `compute_paint_scene` minus the side effects.
+    pub fn compute_paint_scene_pure(&mut self, w: u32, h: u32) -> Scene {
+        let cached_state = *self.core.cached_state();
+        let frame = Frame::new();
+        let mut paint_scene = self
+            .core
+            .root_owner()
+            .run(|| V::view(cached_state, &frame));
+        compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        paint_scene
+    }
+
     /// R51.80 §5.40 — build the inputs to
     /// [`Self::plan_access_emit`] from a freshly-computed paint
     /// scene.
@@ -1588,7 +1653,62 @@ impl<V: WidgetView> ShellCore<V> {
     /// `last_paint_layout` mirror is updated regardless — it is the
     /// primary fallback for single-window dispatch paths that do not
     /// thread a window id (preserved for backward compat).
+    ///
+    /// (R684.B atomic 1 §5.16 §5.41) Composition of two primitives:
+    /// [`Self::apply_paint_for_window`] writes the paint storage
+    /// (substrate's `last_paint_layout` mirror + `InputRouter` paint
+    /// scene + synthetic hover-arc refresh); the trailing `tail()` +
+    /// `handle_tail()` drain emits any reactive intents the paint
+    /// pass queued. The split lets RPC dispatch paths use just the
+    /// storage half (no double-drain — dispatch's own R51.123
+    /// `handle_tail` is the canonical drain site).
     pub fn finalize_frame_for_window(
+        &mut self,
+        window_id: &str,
+        paint_scene: Scene,
+        paint_layout: LayoutNode,
+    ) {
+        self.apply_paint_for_window(window_id, paint_scene, paint_layout);
+        let tail = self.core.tail();
+        self.handle_tail(&tail);
+    }
+
+    /// (R684.B atomic 1 §5.16 §5.41 §5.35) Pure paint-storage write
+    /// for a window. Splits the R672 [`Self::finalize_frame_for_window`]
+    /// composition into (a) storage (`last_paint_layout` mirror +
+    /// `InputRouter::update_paint_scene` for the addressed window)
+    /// and (b) reactive intent drain — the trailing `tail()` +
+    /// `handle_tail()` half is NOT performed here.
+    ///
+    /// ## Use cases for the storage-only path
+    ///
+    /// * RPC dispatch's post-finalize hook (R684 atomic 3 →
+    ///   R684.B atomic 1 rewrite): after the produce closure ran +
+    ///   the substrate's R51.123 `handle_tail` already drained
+    ///   in-flight intents, the dispatch path needs to publish the
+    ///   freshest paint scene to the addressed window's
+    ///   `InputRouter` so downstream RPC hit-tests see current
+    ///   geometry. Routing through `finalize_frame_for_window`
+    ///   would double-drain the same intent queue.
+    /// * Headless / scripted scenarios that want to seed the
+    ///   `last_paint_*` mirrors without simulating a full paint
+    ///   cycle's drain.
+    ///
+    /// The composed [`Self::finalize_frame_for_window`] is the right
+    /// choice for live winit paint cycles — every `RedrawRequested`
+    /// reflects a state change that may have produced reactive
+    /// intents the paint pass queued, and those intents must drain
+    /// to land their side effects before the event loop returns.
+    ///
+    /// `InputRouter::update_paint_scene` still fires the synthetic
+    /// `PointerEnter` / `PointerLeave` hover-arc refresh — that
+    /// side effect is canonical for paint cycles where widgets may
+    /// have moved under a stationary cursor. The R685 Hack 3.2
+    /// `set_paint_scene` storage-only primitive is the right pick
+    /// for paths that want fresh hit-test geometry WITHOUT firing
+    /// hover arcs (e.g. an RPC drag after a state mutation moved
+    /// rects without the cursor moving).
+    pub fn apply_paint_for_window(
         &mut self,
         window_id: &str,
         paint_scene: Scene,
@@ -1596,8 +1716,6 @@ impl<V: WidgetView> ShellCore<V> {
     ) {
         self.last_paint_layout = Some(paint_layout);
         self.core.update_paint_scene_for_window(window_id, paint_scene);
-        let tail = self.core.tail();
-        self.handle_tail(&tail);
     }
 
     /// R51.53 §5.39 — click → focus auto-set / background → clear.
@@ -2002,19 +2120,38 @@ impl<V: WidgetView> ShellCore<V> {
         // `finalize_frame_for_window` here would double-drain
         // pending intents queued by the produce-closure's paint walk.
         if let (Some(id), Some((w, h))) = (window_id, produce_size.get()) {
-            let paint = self.compute_paint_scene_for_window(id, w, h);
+            // (R684.B atomic 2 §5.16) Use the pure variant — V::view
+            // + compute_layout only, no animation tick / IM tick /
+            // scroll-dirty re-run / animation-active redraw flag
+            // mutation. The producer closure already ran the full
+            // pipeline once during dispatch (for path-resolution); a
+            // pure recompute produces the same geometry without the
+            // double-fire side effects. Pre-R684.B the finalize hook
+            // called the full `compute_paint_scene_for_window`,
+            // re-firing every side effect.
+            let paint = self.compute_paint_scene_pure_for_window(id, w, h);
             let paint_layout = pinion_rpc::build_layout_node(&paint, "/0");
+            // (R684.B atomic 1 §5.16 §5.41 §5.35) Storage-only paint
+            // publish via the named primitive. Pre-R684.B the hook
+            // inlined the substrate's `last_paint_layout = Some(...)`
+            // + `core.set_paint_scene_for_window(...)` writes; the
+            // R684.B atomic 1 `apply_paint_for_window` lifts the
+            // composition into a named primitive (same write set,
+            // different consumer). `apply_paint_for_window` routes
+            // through `InputRouter::update_paint_scene` which DOES
+            // fire `refresh_hover` synthetic arcs — the R685 Hack 3.2
+            // storage-only `set_paint_scene_for_window` exists for
+            // the no-side-effect path. The RPC finalize hook uses
+            // the storage-only variant because the RPC didn't move
+            // the cursor (only the layout shifted beneath it).
+            //
+            // NOTE: `apply_paint_for_window` fires hover arcs;
+            // dispatch hook must NOT use it. The named primitive is
+            // for the WINIT paint loop (`AppShell::render_window`)
+            // which is the textbook caller. The RPC hook uses
+            // `core.set_paint_scene_for_window` + the inline
+            // `last_paint_layout` write to stay side-effect-free.
             self.last_paint_layout = Some(paint_layout);
-            // (R685 §5.16 §5.35) Use the storage-only paint-scene write
-            // so the deferred-input drain below sees fresh hit-test
-            // geometry without the synthetic `PointerEnter` /
-            // `PointerLeave` arcs `InputRouter::update_paint_scene`
-            // generates. Pre-R685 the post-dispatch finalize was
-            // gated on `!has_last_paint_scene_for_window` (first-paint
-            // only) to dodge the side effect — the gate left every
-            // subsequent RPC reading stale geometry (R684 hack-inventory
-            // 3.2). R685 lands the substrate split so every RPC that
-            // touched the paint producer publishes a fresh scene safely.
             self.core.set_paint_scene_for_window(id, paint);
         }
         // R51.195 §5.49 §5.45 — drain the deferred-input inbox.

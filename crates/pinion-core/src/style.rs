@@ -1779,6 +1779,20 @@ pub struct Size {
 }
 
 impl Size {
+    /// (R684.B §5.21) Identity size — both axes `Auto`. The base
+    /// for the composable builder chain
+    /// [`Self::with_width`] / [`Self::with_height`]:
+    /// `Size::auto().with_width(SizeValue::Px(4))` reads identically
+    /// to the narrow [`Self::width_px(4)`] wrapper but generalises
+    /// to every [`SizeValue`] variant (`Auto` / `Px` / `Percent`).
+    #[must_use]
+    pub const fn auto() -> Self {
+        Self {
+            width: SizeValue::Auto,
+            height: SizeValue::Auto,
+        }
+    }
+
     /// Fixed pixel width and height.
     #[must_use]
     pub const fn px(width: u32, height: u32) -> Self {
@@ -1788,9 +1802,48 @@ impl Size {
         }
     }
 
+    /// (R684.B §5.21) Composable builder — set the width to any
+    /// [`SizeValue`] (`Auto` / `Px(N)` / `Percent(p)`) leaving the
+    /// height untouched.
+    ///
+    /// Pre-R684.B the only width-setter was the narrow
+    /// [`Self::width_px(u32)`] which baked the `SizeValue::Px`
+    /// variant into the signature. Every R684 hack-inventory entry
+    /// 0.1 caller used the narrow form even when a percent-width
+    /// would have been more textbook (e.g. R685 splitter handle's
+    /// cross-axis Stretch path technically wants
+    /// `Percent(100)`-and-let-Stretch-clamp, not the `Auto`-and-
+    /// pray-Stretch-fires-first contract the narrow `width_px`
+    /// quietly establishes). The composable builder unblocks every
+    /// `SizeValue` variant a caller might need; the narrow
+    /// [`Self::width_px`] survives as an ergonomic alias.
+    ///
+    /// `Size::auto().with_width(SizeValue::Px(4))` is the canonical
+    /// re-spelling of `Size::width_px(4)`; both produce the same
+    /// `Size { width: Px(4), height: Auto }` value.
+    #[must_use]
+    pub const fn with_width(mut self, width: SizeValue) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// (R684.B §5.21) Composable builder — set the height to any
+    /// [`SizeValue`]. See [`Self::with_width`] for the design
+    /// rationale (R684 hack-inventory entry 0.1 cleared).
+    ///
+    /// `Size::auto().with_height(SizeValue::Px(28))` is the
+    /// canonical re-spelling of `Size::height_px(28)`.
+    #[must_use]
+    pub const fn with_height(mut self, height: SizeValue) -> Self {
+        self.height = height;
+        self
+    }
+
     /// (R684 §5.21) Fixed-height-only constructor — width stays
     /// [`SizeValue::Auto`] so the cross-axis [`AlignItems::Stretch`]
     /// path can promote the rect to the parent's cross-axis extent.
+    /// Ergonomic alias for `Size::auto().with_height(SizeValue::Px(h))`
+    /// (R684.B atomic 0 composable builder).
     ///
     /// Canonical use: a flex-child strip whose height is pinned but
     /// whose width should fill the parent (e.g. the dock-panel
@@ -1798,10 +1851,7 @@ impl Size {
     /// `Size::px(0, h)` shape was the only available form; the
     /// explicit `Px(0)` width defeated [`AlignItems::Stretch`] (taffy
     /// honours an explicit zero-width before the cross-axis stretch
-    /// pass runs). `height_px` keeps the substrate `#[non_exhaustive]`
-    /// struct-expression discipline (cross-crate callers cannot build
-    /// `Size { ... }` directly) while landing the natural canonical
-    /// shape.
+    /// pass runs).
     #[must_use]
     pub const fn height_px(height: u32) -> Self {
         Self {
@@ -1814,9 +1864,8 @@ impl Size {
     /// [`SizeValue::Auto`]. Symmetric mirror of [`Self::height_px`]
     /// for the Row-axis-pinned case (e.g. a fixed-width gutter
     /// inside a Column flex parent where the height should fill).
-    /// Currently has no in-tree consumer — landed alongside
-    /// [`Self::height_px`] for symmetry so future widget axes do not
-    /// need to discover the same substrate gap a second time.
+    /// Ergonomic alias for `Size::auto().with_width(SizeValue::Px(w))`
+    /// (R684.B atomic 0 composable builder).
     #[must_use]
     pub const fn width_px(width: u32) -> Self {
         Self {
@@ -3125,5 +3174,61 @@ mod tests {
             hasher_b.finish(),
             "flex_basis must participate in LayoutStyle::hash",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R684.B §5.21 atomic 0 — Size::auto / with_width / with_height
+    // composable builders (R684 hack-inventory entry 0.1 clearance).
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r684_b_size_auto_yields_both_axes_auto() {
+        let s = Size::auto();
+        assert_eq!(s.width, SizeValue::Auto);
+        assert_eq!(s.height, SizeValue::Auto);
+    }
+
+    #[test]
+    fn r684_b_size_with_width_px_aliases_width_px_constructor() {
+        let composable = Size::auto().with_width(SizeValue::Px(4));
+        let narrow = Size::width_px(4);
+        assert_eq!(composable, narrow);
+    }
+
+    #[test]
+    fn r684_b_size_with_height_px_aliases_height_px_constructor() {
+        let composable = Size::auto().with_height(SizeValue::Px(28));
+        let narrow = Size::height_px(28);
+        assert_eq!(composable, narrow);
+    }
+
+    #[test]
+    fn r684_b_size_with_width_percent_sets_axis() {
+        let s = Size::auto().with_width(SizeValue::Percent(50));
+        assert_eq!(s.width, SizeValue::Percent(50));
+        assert_eq!(s.height, SizeValue::Auto);
+    }
+
+    #[test]
+    fn r684_b_size_with_height_percent_sets_axis() {
+        let s = Size::auto().with_height(SizeValue::Percent(75));
+        assert_eq!(s.width, SizeValue::Auto);
+        assert_eq!(s.height, SizeValue::Percent(75));
+    }
+
+    #[test]
+    fn r684_b_size_builder_chain_both_axes() {
+        let s = Size::auto()
+            .with_width(SizeValue::Px(100))
+            .with_height(SizeValue::Percent(50));
+        assert_eq!(s.width, SizeValue::Px(100));
+        assert_eq!(s.height, SizeValue::Percent(50));
+    }
+
+    #[test]
+    fn r684_b_size_with_width_overrides_prior_value() {
+        let s = Size::px(50, 50).with_width(SizeValue::Px(100));
+        assert_eq!(s.width, SizeValue::Px(100));
+        assert_eq!(s.height, SizeValue::Px(50), "height untouched by with_width");
     }
 }
