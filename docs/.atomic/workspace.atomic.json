@@ -22098,6 +22098,52 @@
         "DockReorganizeIntent undo/redo (immutable Result form is undo-stack friendly) — Phase D editor workspace history."
       ]
     },
+    "R689": {
+      "decision_summary": "R689 gates CoreShell::reconcile_externals behind a WidgetCore::external_set_is_dynamic() capability flag so static-set bindings (the default) skip the per-frame factory re-run entirely.",
+      "changes_bullets": [
+        "pinion-core: new `WidgetCore::external_set_is_dynamic() -> bool` (default false) declaring whether `create_extra_externals` can return a different tag set over the binding's lifetime.",
+        "pinion-runtime: `CoreShell::reconcile_externals` early-returns unless the binding opts in. This eliminates the per-frame `V::create_extra_externals` re-run (N throwaway `Box<dyn External>` allocations AND repeated execution of factory boot-seeding side effects such as `intervene(\"value\", ...)` / `use_theme().set_mode(...)`) for the 26 of 27 bindings with a static external set; only the dock editor reconciles.",
+        "hello-dock-panels-editor + the R688 ReconcileFixture test override the flag to true (genuinely runtime-varying tag sets — editor walks `Signal<DockTopology>` to mint `reorg-split-{n}`).",
+        "pinion-shell `finalize_frame_for_window` call-site comment corrected to reflect the gate (no longer 'per-frame tag compare' for static bindings).",
+        "Audit finding: the per-frame re-run was previously documented in the R688.A SEED as a benign 'tradeoff'; independent grep+read audit showed it also re-executed boot-seeding side effects every frame, making it a self-inflicted smell the project's no-carry rule requires clearing inline."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace exit 0; pinion-runtime now 267 tests incl. new `r689_static_set_binding_skips_factory_rerun` (asserts a static-set fixture's construction counter is unchanged across repeated reconcile calls).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace -D pedantic (0 warnings).",
+        "46/46 demo regression sweep PASS (behavior-preserving: boot seeding already runs once in CoreShell::new so removing the redundant per-frame re-run is a no-op for static bindings; editor dynamic reconcile exercised by r686_dock_reorganize stays green)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.35",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "Generation-counter dirty-gate for dynamic-set bindings (the editor still re-runs its factory each frame while the flag is true) — deferred until a Phase D editor spawns enough runtime splits to make the per-frame rebuild measurable; evidence-first, no premature optimization.",
+        "Scene Clone via External handle Box<dyn> -> Rc<RefCell<dyn>> (S15 / R684.B Hack 3.4) — documented architectural carry, naturally lands at Phase C entry (immediate-mode game-loop + dirty subtree cache also benefit)."
+      ],
+      "publishable_decision_summary": "R689 gates CoreShell::reconcile_externals behind a WidgetCore::external_set_is_dynamic() capability flag so static-set bindings (the default) skip the per-frame factory re-run entirely.",
+      "publishable_changes_bullets": [
+        "pinion-core: new `WidgetCore::external_set_is_dynamic() -> bool` (default false) declaring whether `create_extra_externals` can return a different tag set over the binding's lifetime.",
+        "pinion-runtime: `CoreShell::reconcile_externals` early-returns unless the binding opts in. This eliminates the per-frame `V::create_extra_externals` re-run (N throwaway `Box<dyn External>` allocations AND repeated execution of factory boot-seeding side effects such as `intervene(\"value\", ...)` / `use_theme().set_mode(...)`) for the 26 of 27 bindings with a static external set; only the dock editor reconciles.",
+        "hello-dock-panels-editor + the R688 ReconcileFixture test override the flag to true (genuinely runtime-varying tag sets — editor walks `Signal<DockTopology>` to mint `reorg-split-{n}`).",
+        "pinion-shell `finalize_frame_for_window` call-site comment corrected to reflect the gate (no longer 'per-frame tag compare' for static bindings).",
+        "Audit finding: the per-frame re-run was previously documented in the R688.A SEED as a benign 'tradeoff'; independent grep+read audit showed it also re-executed boot-seeding side effects every frame, making it a self-inflicted smell the project's no-carry rule requires clearing inline."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace exit 0; pinion-runtime now 267 tests incl. new `r689_static_set_binding_skips_factory_rerun` (asserts a static-set fixture's construction counter is unchanged across repeated reconcile calls).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace -D pedantic (0 warnings).",
+        "46/46 demo regression sweep PASS (behavior-preserving: boot seeding already runs once in CoreShell::new so removing the redundant per-frame re-run is a no-op for static bindings; editor dynamic reconcile exercised by r686_dock_reorganize stays green)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.35",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Generation-counter dirty-gate for dynamic-set bindings (the editor still re-runs its factory each frame while the flag is true) — deferred until a Phase D editor spawns enough runtime splits to make the per-frame rebuild measurable; evidence-first, no premature optimization.",
+        "Scene Clone via External handle Box<dyn> -> Rc<RefCell<dyn>> (S15 / R684.B Hack 3.4) — documented architectural carry, naturally lands at Phase C entry (immediate-mode game-loop + dirty subtree cache also benefit)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

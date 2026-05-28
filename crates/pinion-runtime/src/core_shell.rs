@@ -730,7 +730,21 @@ impl<V: WidgetCore> CoreShell<V> {
     /// state**: re-run the factory and patch the state scene so every
     /// live surface has a routable [`External`](pinion_core::external::External).
     ///
-    /// ## Mechanism (unconditional re-run + tag guard)
+    /// ## Static-set gate (R689 §5.16 §5.35)
+    ///
+    /// Backends call this each frame / dispatch, but the **vast
+    /// majority** of bindings have a static external set frozen at boot
+    /// ([`WidgetCore::external_set_is_dynamic`] defaults `false`). For
+    /// those this method is a literal early `return` — no factory
+    /// re-run, no throwaway [`External`] allocation, and no
+    /// re-execution of the factory's boot-time seeding side effects
+    /// (which already ran once in [`Self::new`]). Re-running a static
+    /// factory every frame would re-`intervene` seed values and
+    /// re-fire `set_mode`-style side effects on every paint — so the
+    /// gate is a correctness guard, not only a cost cut. Only bindings
+    /// that opt in (returning `true`) reach the reconcile body below.
+    ///
+    /// ## Mechanism for dynamic bindings (re-run + tag guard)
     ///
     /// [`WidgetCore::create_extra_externals`] is re-run inside
     /// [`Self::root_owner`]'s scope (so its `Owner::cache` hooks —
@@ -744,8 +758,11 @@ impl<V: WidgetCore> CoreShell<V> {
     /// `Owner::cache` inside the factory would fail unless the trigger
     /// happened to be owner-wrapped — fragile. Re-running here, where
     /// the caller wraps `root_owner.run`, is robust, and the per-call
-    /// cost (build ~N cheap external structs + a tag compare) is
-    /// negligible beside the view fn that already re-runs each frame.
+    /// cost (build ~N external structs + a tag compare) is intrinsic to
+    /// a binding that genuinely mutates its surface set at runtime.
+    /// (A generation-counter dirty-gate is a deferred optimization
+    /// candidate once a binding spawns enough dynamic surfaces to make
+    /// the per-frame rebuild measurable — Phase D editor territory.)
     ///
     /// ## Preserve-by-tag
     ///
@@ -762,6 +779,14 @@ impl<V: WidgetCore> CoreShell<V> {
     /// the TUI drain. Single-`External` bindings (empty extras) hit the
     /// fast no-op path and are unaffected.
     pub fn reconcile_externals(&mut self) {
+        // (R689 §5.16 §5.35) Static-set bindings (the default) never
+        // change their external tag set after boot — skip the whole
+        // reconcile so the factory is not re-run (no alloc, no repeated
+        // boot-seeding side effects). Only opt-in dynamic-set bindings
+        // fall through to the reactive reconcile below.
+        if !V::external_set_is_dynamic() {
+            return;
+        }
         let new_extras = self.root_owner.run(V::create_extra_externals);
         // Steady-state guard — identical tag list means no surface was
         // added or removed, so every existing instance stays put.
@@ -3697,6 +3722,12 @@ mod tests {
             })
         }
 
+        fn external_set_is_dynamic() -> bool {
+            // The thread-local tag list mutates between reconciles, so
+            // this fixture opts into reactive reconcile (R689 gate).
+            true
+        }
+
         fn tag() -> &'static str {
             "test_btn"
         }
@@ -3830,5 +3861,86 @@ mod tests {
             matches!(core.scene(), Scene::External(_)),
             "all extras removed collapses the root to the bare primary",
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R689 §5.16 §5.35 — static-set gate. A fixture identical to
+    // `ReconcileFixture` except it leaves `external_set_is_dynamic` at
+    // the `false` default. Its factory shares the `RECON_CTR`
+    // construction counter, so a test can assert the factory was NOT
+    // re-run by `reconcile_externals` (the per-frame-rebuild smell that
+    // R689 clears for the common static binding).
+    // ─────────────────────────────────────────────────────────────────
+
+    struct StaticReconcileFixture;
+
+    impl WidgetCore for StaticReconcileFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            <TestButton as WidgetCore>::create_external()
+        }
+
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            RECON_TAGS.with(|tags| {
+                tags.borrow()
+                    .iter()
+                    .map(|&tag| {
+                        let seq = RECON_CTR.with(|c| {
+                            let v = c.get();
+                            c.set(v + 1);
+                            v
+                        });
+                        ExtraExternal::new(tag, Box::new(CountedExternal::new(seq)))
+                    })
+                    .collect()
+            })
+        }
+
+        // No `external_set_is_dynamic` override — defaults to `false`.
+
+        fn tag() -> &'static str {
+            "test_btn"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(state: Self::State, frame: &Frame) -> Scene {
+            <TestButton as WidgetCore>::view(state, frame)
+        }
+
+        fn event_name(event: Self::Event) -> &'static str {
+            <TestButton as WidgetCore>::event_name(event)
+        }
+
+        fn title() -> &'static str {
+            "StaticReconcile"
+        }
+    }
+
+    #[test]
+    fn r689_static_set_binding_skips_factory_rerun() {
+        recon_reset(&["a", "b"]);
+        let mut core: CoreShell<StaticReconcileFixture> = CoreShell::new();
+        // Boot ran the factory exactly once: a=0, b=1, counter now 2.
+        let after_boot = RECON_CTR.with(Cell::get);
+        assert_eq!(after_boot, 2, "boot constructs each extra once");
+        // Even if the underlying tag list is changed, a static-set
+        // binding must not reconcile — the gate returns before the
+        // factory re-runs, so the construction counter never advances.
+        recon_set_tags(&["a", "b", "c"]);
+        core.reconcile_externals();
+        core.reconcile_externals();
+        core.reconcile_externals();
+        assert_eq!(
+            RECON_CTR.with(Cell::get),
+            after_boot,
+            "static-set gate skips create_extra_externals — no per-frame re-run",
+        );
+        // The scene is also untouched (the boot-time 2 extras stay).
+        assert_eq!(recon_extra_tags(core.scene()), vec!["a", "b"]);
     }
 }

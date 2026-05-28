@@ -517,6 +517,16 @@ impl WidgetCore for DockPanelsEditorView {
         externals
     }
 
+    fn external_set_is_dynamic() -> bool {
+        // (R689 §5.16 §5.35) The factory above walks the live
+        // `Signal<DockTopology>`, so a runtime reorganize that mints a
+        // `reorg-split-{n}` changes the returned tag set. Opt into
+        // `CoreShell::reconcile_externals` so the new SplitterExternal
+        // registers a routable target (and becomes drag-resizable);
+        // every static binding leaves this at the `false` default.
+        true
+    }
+
     fn read_state(scene: &Scene) -> Self::State {
         if let Some(node) = scene.find_external_with_tag(VIEWPORT_BTN_TAG)
             && let Some(intro) = node.handle.introspect()

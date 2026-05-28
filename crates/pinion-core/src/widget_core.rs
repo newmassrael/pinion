@@ -187,6 +187,41 @@ pub trait WidgetCore: 'static {
         Vec::new()
     }
 
+    /// (R689 §5.16 §5.35) Whether [`Self::create_extra_externals`] can
+    /// return a **different tag set** over the binding's lifetime.
+    ///
+    /// Default `false` — the external set is frozen at boot. The
+    /// overwhelming majority of bindings declare their extras once (a
+    /// fixed list of scrollbars / toggles / composite-tag routers) and
+    /// never add or remove a routable surface afterwards. For those the
+    /// substrate skips
+    /// [`CoreShell::reconcile_externals`](../../pinion_runtime/struct.CoreShell.html#method.reconcile_externals)
+    /// entirely: no per-frame factory re-run, no throwaway
+    /// [`External`] allocation, and — importantly — no re-execution of
+    /// the factory's boot-time seeding side effects (a factory that
+    /// calls `intervene("value", …)` or `use_theme(...).set_mode(...)`
+    /// to seed first-paint state must run exactly once, at
+    /// [`CoreShell::new`](../../pinion_runtime/struct.CoreShell.html#method.new)).
+    ///
+    /// Override to `true` **only** when the tag set is a projection of
+    /// runtime-mutable reactive state — e.g. a dock editor whose
+    /// `create_extra_externals` walks a `Signal<DockTopology>` and mints
+    /// a `SplitterExternal` per split, so a reorganize gesture that
+    /// spawns `reorg-split-{n}` must register a routable
+    /// [`External`] for the new surface mid-session. Such a binding
+    /// pays the reactive reconcile cost (re-run + tag diff each frame)
+    /// because that cost is intrinsic to having a dynamic surface set;
+    /// a static binding must not subsidise it.
+    ///
+    /// Contract: forgetting to return `true` from a genuinely dynamic
+    /// binding leaves new surfaces painted-but-inert (no router target)
+    /// — the exact R688 motivating symptom, caught immediately in
+    /// interaction testing.
+    #[must_use]
+    fn external_set_is_dynamic() -> bool {
+        false
+    }
+
     /// Stable identifier matching the paint-side `Container::tag` the
     /// view fn attaches to the interactive surface. The input router
     /// forwards pointer / key events to any `Scene::External` in the

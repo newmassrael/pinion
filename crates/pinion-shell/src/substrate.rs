@@ -1687,10 +1687,12 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
         // R688 §5.16 §5.35 — reconcile the external set against the
         // binding's current reactive state. A live structure mutation
-        // (e.g. a future mouse dock-reorganize) that added / removed a
-        // surface registers / drops its routable External here, before
-        // the next frame's hit-test. No-op (cheap tag compare) when the
-        // set is unchanged — the steady-state path.
+        // (e.g. a dock reorganize) that added / removed a surface
+        // registers / drops its routable External here, before the next
+        // frame's hit-test. (R689) Bindings with a static external set
+        // — the default — return immediately from this call (the
+        // `WidgetCore::external_set_is_dynamic` gate), so the per-frame
+        // cost lands only on opt-in dynamic-set bindings.
         self.core.reconcile_externals();
     }
 
