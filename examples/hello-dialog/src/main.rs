@@ -72,6 +72,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
@@ -181,42 +182,6 @@ fn read_button_state(scene: &Scene, tag: &str) -> ButtonState {
             }
             _ => ButtonState::Idle,
         })
-}
-
-/// ARIA Space/Enter activation for a focused button inside the
-/// multi-external state scene. Descends the `Container([trigger, ok,
-/// cancel])` to the focused button's [`ButtonExternal`] and fires
-/// `KeyboardActivate` (which `Button::detect` turns into a `"click"`
-/// intent the reducer below consumes).
-///
-/// This mirrors [`pinion_core::widgets::aria::apply_aria_activate`] but
-/// descends into a `Scene::Container` — that helper assumes the scene
-/// *is* a `Scene::External` (the single-widget shape every existing
-/// button/toggle binding has). hello-dialog is the first multi-external
-/// button-activation consumer; lifting the descent into the shared
-/// helper waits for a 2nd per [[abstraction-needs-second-consumer]].
-fn activate_focused_button(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
-    if !matches!(key, "Space" | "Enter") {
-        return false;
-    }
-    let Some(tag) = focused else {
-        return false;
-    };
-    if tag != TRIGGER_TAG && tag != OK_TAG && tag != CANCEL_TAG {
-        return false;
-    }
-    let Some(node) = scene.find_external_with_tag_mut(tag) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
-    };
-    intro
-        .invoke(
-            "send",
-            pinion_core::external::IntrospectValue::Text("KeyboardActivate".to_string()),
-        )
-        .is_ok()
 }
 
 /// Render one button via the [`pinion_widget_paint::button`] substrate.
@@ -401,7 +366,13 @@ impl WidgetCore for DialogView {
             }
             return false;
         }
-        activate_focused_button(scene, focused, key)
+        // R693.A — Space/Enter on the focused button activate it through
+        // the shared ARIA helper (now multi-External aware: it descends
+        // the Container to the focused button's external). The chained-or
+        // resolves to whichever tag holds focus.
+        apply_aria_activate(scene, focused, key, TRIGGER_TAG)
+            || apply_aria_activate(scene, focused, key, OK_TAG)
+            || apply_aria_activate(scene, focused, key, CANCEL_TAG)
     }
 
     /// R693 §5.39 — bridge the buttons' `"<tag>.click"` intents into the
@@ -434,6 +405,13 @@ impl WidgetA11y for DialogView {
     /// [`AriaRole::Button`]. Open: the `aria-modal` [`AriaRole::Dialog`]
     /// root owning the two action buttons (the trigger is omitted — the
     /// scrim makes the background inert, so AT should not announce it).
+    ///
+    /// R693.A §5.40 — accessible names are left `None` here and derived
+    /// from the paint scene by `enrich_names_from_scene` (the shell runs
+    /// it after `access_node`), so the button labels + dialog title have
+    /// a single source of truth in the paint `TextNode`s — no parallel
+    /// hardcoded copy that could drift (the hello-button / hello-menu
+    /// precedent).
     fn access_node(state: &DialogViewState, focused: Option<&str>) -> Vec<AccessNode> {
         let open = use_dialog_open().get();
         if !open {
@@ -443,18 +421,15 @@ impl WidgetA11y for DialogView {
         }
         let dialog = AccessNode::new(PANEL_TAG, AriaRole::Dialog)
             .with_modal()
-            .with_name("Delete file?")
             .with_child(CANCEL_TAG)
             .with_child(OK_TAG);
         vec![
             dialog,
             AccessNode::new(CANCEL_TAG, AriaRole::Button)
-                .with_name("Cancel")
                 .with_state(button_a11y_state(state.2, focused == Some(CANCEL_TAG)))
                 .with_position_in_set(1)
                 .with_size_of_set(2),
             AccessNode::new(OK_TAG, AriaRole::Button)
-                .with_name("Delete")
                 .with_state(button_a11y_state(state.1, focused == Some(OK_TAG)))
                 .with_position_in_set(2)
                 .with_size_of_set(2),
@@ -524,6 +499,32 @@ mod tests {
             assert!(nodes[1].state.focused, "auto-focused cancel marked focused");
             assert_eq!(nodes[2].tag, OK_TAG);
             assert!(!nodes[2].state.focused);
+        });
+    }
+
+    #[test]
+    fn r693a_names_enriched_from_paint_not_hardcoded() {
+        // SSOT: access_node leaves names None; enrich_names_from_scene
+        // derives them from the paint TextNodes (the button labels +
+        // panel title), so there is no parallel hardcoded copy to drift.
+        Owner::new().run(|| {
+            use_dialog_open().set(true);
+            let scene = view(idle(), &Frame::new());
+            let mut nodes = DialogView::access_node(&idle(), Some(CANCEL_TAG));
+            assert!(
+                nodes.iter().all(|n| n.name.is_none()),
+                "access_node leaves names to enrich"
+            );
+            pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+            let name = |t: &str| {
+                nodes
+                    .iter()
+                    .find(|n| n.tag == t)
+                    .and_then(|n| n.name.as_deref())
+            };
+            assert_eq!(name(PANEL_TAG), Some("Delete file?"), "dialog name from title");
+            assert_eq!(name(CANCEL_TAG), Some("Cancel"));
+            assert_eq!(name(OK_TAG), Some("Delete"));
         });
     }
 

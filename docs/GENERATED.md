@@ -14038,6 +14038,29 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R693.A — R693.A audit-clearance — SSOT a11y names (enrich, drop hardcoded) + apply_aria_activate multi-External descent (drop inline duplication)
+
+**Changes**:
+- examples/hello-dialog access_node: drop hardcoded with_name ("Cancel"/"Delete"/"Delete file?"); names now derived by enrich_names_from_scene from the paint TextNodes = single source of truth, matching the hello-button/hello-menu precedent (enrich only fills None, so the hardcoded copies were a parallel source that would drift)
+- pinion-core::widgets::aria::apply_aria_activate: resolve the target via Scene::find_external_with_tag_mut so it descends a Container (the multi-External composed shape), not only a bare Scene::External; hello-dialog drops its inline activate_focused_button copy (which duplicated the Space|Enter->KeyboardActivate contract) and uses the shared helper
+- added aria r693a_descends_container_to_focused_external test + hello-dialog r693a_names_enriched_from_paint_not_hardcoded SSOT test
+
+
+
+**Verification**:
+- cargo test -p pinion-core (1465) + hello-dialog bin (14, incl. new SSOT + keyboard paths) green, 0 fail
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); tools/demos/r693_dialog.py PASS (keyboard-Enter activate now routes through the shared multi-External-aware helper)
+
+
+
+**Impact**: §5.16, §5.38, §5.40
+
+
+**Carry forward**:
+- Button keyboard-focus RING still unpainted: ButtonState carries no focus posture + view-fn does not receive shell focus. Now a 3-consumer shell-focus-paint axis (R690 Tabs / R692 Toolbar / R693 Dialog) -> Rule-of-Three lift candidate; textbook fix = Button on_focus_change focus posture + view_button focus ring (multi-consumer signature change = own round, R694 candidate)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -60,11 +60,12 @@ use crate::scene::Scene;
 ///   simultaneous focusable widgets do not double-fire on a
 ///   single keystroke.
 /// - `false` if `key` is neither `"Space"` nor `"Enter"`.
-/// - `false` if `scene` is not a [`Scene::External`] or its handle
-///   has no [`crate::external::ExternalIntrospect`] surface (the
-///   "no introspect = no activation" rule from §5.15 — an
-///   `External` without an introspect surface is a paint-only or
-///   pure-side-effect node).
+/// - `false` if no [`Scene::External`] tagged `my_tag` is reachable in
+///   `scene`, or its handle has no
+///   [`crate::external::ExternalIntrospect`] surface (the "no
+///   introspect = no activation" rule from §5.15 — an `External`
+///   without an introspect surface is a paint-only or pure-side-effect
+///   node).
 /// - `false` if the introspect's `invoke("send", ...)` rejects the
 ///   call (e.g. the widget is `Disabled` and the SCXML template
 ///   has no activation transition from that state).
@@ -76,6 +77,17 @@ use crate::scene::Scene;
 /// `KeyEvent::Pressed` vs crossterm `Event::Key`), and that
 /// translation happens shell-side before this helper sees the
 /// already-abstract W3C key string.
+///
+/// R693.A §5.38 — resolves the target via
+/// [`Scene::find_external_with_tag_mut`], so it works for both the
+/// single-widget shape (`scene` IS the `Scene::External(my_tag)`) AND
+/// the multi-External composed shape (`scene` is a
+/// `Container([primary, ...extras])` and `my_tag` names one of the
+/// children, e.g. a dialog's action button). Before R693.A the body
+/// assumed `scene` was directly the `Scene::External`, so a
+/// multi-External binding's Container root silently failed every
+/// activation; `hello-dialog` was the first such consumer
+/// ([[substrate-incompleteness-signal]]).
 pub fn apply_aria_activate(
     scene: &mut Scene,
     focused: Option<&str>,
@@ -88,7 +100,7 @@ pub fn apply_aria_activate(
     if !matches!(key, "Space" | "Enter") {
         return false;
     }
-    let Scene::External(node) = scene else {
+    let Some(node) = scene.find_external_with_tag_mut(my_tag) else {
         return false;
     };
     let Some(intro) = node.handle.introspect_mut() else {
@@ -163,14 +175,30 @@ mod tests {
     }
 
     #[test]
-    fn non_external_scene_does_not_fire() {
-        // The activation path is `Scene::External` only — text /
-        // box / container scenes carry no introspect surface and
-        // are not activation targets.
-        use crate::scene::{ContainerNode, Rect};
+    fn empty_container_scene_does_not_fire() {
+        // A Container with no External tagged `my_tag` has no
+        // activation target — find_external_with_tag_mut returns None.
+        use crate::scene::ContainerNode;
         let mut scene = Scene::Container(ContainerNode::default());
         let fired = apply_aria_activate(&mut scene, Some("btn"), "Space", "btn");
         assert!(!fired);
-        let _ = Rect::new(0, 0, 0, 0);
+    }
+
+    #[test]
+    fn r693a_descends_container_to_focused_external() {
+        // R693.A — multi-External composed shape: the focused button is
+        // a child of a Container (the hello-dialog action-button case).
+        // The helper must descend find_external_with_tag_mut, not assume
+        // `scene` is the External directly.
+        use crate::scene::ContainerNode;
+        let mut scene = Scene::Container(ContainerNode::new(vec![
+            make_scene("dialog_ok"),
+            make_scene("dialog_cancel"),
+        ]));
+        // Enter on the focused cancel button fires only the cancel
+        // child; the chained-or call shape a binding uses resolves to
+        // the matching tag.
+        assert!(!apply_aria_activate(&mut scene, Some("dialog_cancel"), "Enter", "dialog_ok"));
+        assert!(apply_aria_activate(&mut scene, Some("dialog_cancel"), "Enter", "dialog_cancel"));
     }
 }
