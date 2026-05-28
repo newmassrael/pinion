@@ -476,6 +476,11 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // per-command `MenuItem` children land in the commit-class arm
         // above. The active dropdown item is surfaced as the menu's
         // `aria-activedescendant`, not as a focus of the container.
+        // R692 §5.40 — `Toolbar` is the roving-tabindex control strip;
+        // it owns the single Tab stop and surfaces the roving cursor as
+        // its `aria-activedescendant`, so it joins the focus-only
+        // container set. Its command / toggle `Button` children land in
+        // the commit-class arm above.
         AriaRole::RadioGroup
         | AriaRole::Listbox
         | AriaRole::List
@@ -485,6 +490,7 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         | AriaRole::TabPanel
         | AriaRole::MenuBar
         | AriaRole::Menu
+        | AriaRole::Toolbar
         | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }

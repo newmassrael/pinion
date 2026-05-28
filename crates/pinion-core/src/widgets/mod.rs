@@ -13,6 +13,7 @@ pub mod slider;
 pub mod text_edit;
 pub mod text_field;
 pub mod toggle;
+pub mod toolbar;
 pub mod widget;
 
 pub use widget::{IntentEmitter, Widget, WidgetTransition};

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R692 §5.16 §5.50 — pinion-forge renderer manifest for hello-toolbar.
+  Same single-source-of-truth template that emits the other hello-*
+  renderers; only the struct name diverges. backend=vello.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloToolbarRenderer"
+        backend="vello"/>

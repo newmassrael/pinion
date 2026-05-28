@@ -84,4 +84,5 @@ pub mod scrollbar;
 pub mod splitter;
 pub mod tabs;
 pub mod text_field;
+pub mod toolbar;
 pub mod tree_view;

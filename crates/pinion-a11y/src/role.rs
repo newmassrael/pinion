@@ -189,6 +189,24 @@ pub enum AriaRole {
     /// structurally (the dropdown `Menu` node is present only while
     /// open) rather than on the title's a11y state.
     MenuItem,
+    /// R692 §5.40 — WAI-ARIA 1.2 §3.4 `toolbar` role. A horizontal
+    /// grouping of controls (the editor format / command strip every
+    /// DCC / IDE / CAD tool ships) that owns the roving-tabindex
+    /// keyboard model: the toolbar is a single Tab stop, Arrow
+    /// Left/Right move the roving focus between controls, Home/End
+    /// jump to first/last. Joins the focus-only container action set
+    /// alongside [`Self::MenuBar`] / [`Self::TabList`] / [`Self::Tree`].
+    ///
+    /// Distinct from [`Self::MenuBar`]: a `toolbar`'s children are
+    /// directly-actionable controls (command [`Self::Button`]s +
+    /// toggle buttons carrying `aria-pressed`), not titles that open
+    /// dropdown [`Self::Menu`]s. A toggle button is a `Button` whose
+    /// [`AccessState::checked`](crate::node::AccessState) lowers to the
+    /// AccessKit `Toggled` attribute — the WAI-ARIA `aria-pressed`
+    /// axis emerges from the `button` role + the toggled state (vs the
+    /// `aria-checked` axis a `checkbox` role carries for the same
+    /// underlying attribute).
+    Toolbar,
     Generic,
 }
 
@@ -220,6 +238,7 @@ impl AriaRole {
             Self::MenuBar => Role::MenuBar,
             Self::Menu => Role::Menu,
             Self::MenuItem => Role::MenuItem,
+            Self::Toolbar => Role::Toolbar,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -252,6 +271,7 @@ impl AriaRole {
             Self::MenuBar => "menubar",
             Self::Menu => "menu",
             Self::MenuItem => "menuitem",
+            Self::Toolbar => "toolbar",
             Self::Generic => "generic",
         }
     }
@@ -382,5 +402,17 @@ mod tests {
         assert_eq!(AriaRole::MenuBar.aria_name(), "menubar");
         assert_eq!(AriaRole::Menu.aria_name(), "menu");
         assert_eq!(AriaRole::MenuItem.aria_name(), "menuitem");
+    }
+
+    // R692 §5.40 — Toolbar role lowering + name.
+
+    #[test]
+    fn toolbar_lowers_to_accesskit_toolbar() {
+        assert_eq!(AriaRole::Toolbar.to_accesskit(), Role::Toolbar);
+    }
+
+    #[test]
+    fn toolbar_aria_name_matches_wai_aria_literal() {
+        assert_eq!(AriaRole::Toolbar.aria_name(), "toolbar");
     }
 }

@@ -22306,6 +22306,62 @@
         "next Phase B widget catalog: Dialog / Toolbar / Table / Tooltip (1 widget or small pair per round)"
       ]
     },
+    "R692": {
+      "decision_summary": "R692 Toolbar widget: roving-tabindex strip of command + toggle controls (Phase B widget catalog)",
+      "changes_bullets": [
+        "pinion-a11y role.rs: new AriaRole::Toolbar (lowers to accesskit Role::Toolbar, aria_name 'toolbar'); tree.rs add_actions_for_role joins the focus-only container arm (roving-tabindex single tab stop, parallel to MenuBar/TabList/Tree)",
+        "pinion-core widgets/toolbar.rs (new): Toolbar composite (kinds Vec<ToolItem{Command,Toggle}> + parallel pressed bits + roving focus cursor) and ToolbarExternal mirroring MenuBarExternal (External + ExternalIntrospect + IntentEmitter)",
+        "ToolbarExternal wire: invoke('send','<i>:<PointerEvent>') (PointerUp focuses+activates), invoke('key',name) drives the WAI-ARIA 1.2 sec 3.4 toolbar model (Arrow Left/Right roving wrap, Home/End jump, Enter/Space activate); command activation emits 'command' intent (payload '<i>'), toggle emits 'toggle' (payload '<i>.<pressed>') and flips a persistent bit",
+        "pinion-widget-paint toolbar.rs (new): ToolbarStyle::m3_default + composite_item_tag '{bar}#{i}' + view_toolbar (horizontal strip; pressed toggle paints Accent-over-Surface tonal fill at 0.20; roving cursor control paints the accent focus-ring border)",
+        "examples/hello-toolbar (new first consumer): format toolbar [Bold/Italic/Underline toggles + Undo/Redo commands]; single tab stop forwarding keys to the External; access_node = Toolbar root + per-control Button (toggle carries checked which lowers to aria-pressed/Toggled, command leaves it None) + posinset/setsize + composite active-descendant",
+        "tools/demos/r692_toolbar.py (new): RPC headless verification with 35+ assertions",
+        "command-vs-toggle class audit: a toolbar groups command-class (Button, one-shot) + toggle-class (Button + aria-pressed) controls; distinct from the R691 MenuBar (no dropdowns, persistent toggle state). Modal Dialog was deferred this round: a textbook modal focus-trap needs a focus-manager substrate that focus_request.rs explicitly defers, and Tab is hardwired to handle_focus_traverse so it cannot be swallowed by apply_key"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 4208 passed, 0 failed (pinion-core +26 toolbar tests = 1459, pinion-widget-paint +7 = 303, hello-toolbar 18, pinion-a11y +2 role)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean (a needless_range_loop in access_node fixed via KINDS.iter().enumerate())",
+        "demo sweep 48 -> 49 PASS, regression 0; r692_toolbar.py PASS verifying substrate shape, toggle flip + 'toolbar.toggle' intent, 'toolbar.command' intent, keyboard roving with wrap, keyboard activation, and focus-ring paint movement",
+        "toolbar toggle aria-pressed reuses AccessState.checked which already lowers to accesskit set_toggled (tree.rs:343) so it adds zero new a11y axis; the button role vs checkbox role distinguishes aria-pressed from aria-checked"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "modal Dialog needs a modal focus-trap substrate first (auto-focus on open + Tab-trap within the modal + restore focus on close); focus_request.rs:42-50 names modal focus traps as a deferred axis and Tab is hardwired to handle_focus_traverse (app.rs:899) so apply_key cannot swallow it; dual-backend GUI+TUI scope. Substrate-first round before the Dialog consumer",
+        "Toolbar additive axes: hover state-layer (needs a focused-tag to view-fn channel, the same axis R690 Tabs deferred), icon glyphs in place of text, min-width buttons, separators/section groups, overflow menu, vertical orientation (aria-orientation)",
+        "roving-tabindex command container is now a 2-consumer pattern (MenuBar bar-nav + Toolbar); a shared roving substrate is a Rule-of-Three lift candidate if a 3rd consumer arrives"
+      ],
+      "publishable_decision_summary": "R692 Toolbar widget: roving-tabindex strip of command + toggle controls (Phase B widget catalog)",
+      "publishable_changes_bullets": [
+        "pinion-a11y role.rs: new AriaRole::Toolbar (lowers to accesskit Role::Toolbar, aria_name 'toolbar'); tree.rs add_actions_for_role joins the focus-only container arm (roving-tabindex single tab stop, parallel to MenuBar/TabList/Tree)",
+        "pinion-core widgets/toolbar.rs (new): Toolbar composite (kinds Vec<ToolItem{Command,Toggle}> + parallel pressed bits + roving focus cursor) and ToolbarExternal mirroring MenuBarExternal (External + ExternalIntrospect + IntentEmitter)",
+        "ToolbarExternal wire: invoke('send','<i>:<PointerEvent>') (PointerUp focuses+activates), invoke('key',name) drives the WAI-ARIA 1.2 sec 3.4 toolbar model (Arrow Left/Right roving wrap, Home/End jump, Enter/Space activate); command activation emits 'command' intent (payload '<i>'), toggle emits 'toggle' (payload '<i>.<pressed>') and flips a persistent bit",
+        "pinion-widget-paint toolbar.rs (new): ToolbarStyle::m3_default + composite_item_tag '{bar}#{i}' + view_toolbar (horizontal strip; pressed toggle paints Accent-over-Surface tonal fill at 0.20; roving cursor control paints the accent focus-ring border)",
+        "examples/hello-toolbar (new first consumer): format toolbar [Bold/Italic/Underline toggles + Undo/Redo commands]; single tab stop forwarding keys to the External; access_node = Toolbar root + per-control Button (toggle carries checked which lowers to aria-pressed/Toggled, command leaves it None) + posinset/setsize + composite active-descendant",
+        "tools/demos/r692_toolbar.py (new): RPC headless verification with 35+ assertions",
+        "command-vs-toggle class audit: a toolbar groups command-class (Button, one-shot) + toggle-class (Button + aria-pressed) controls; distinct from the R691 MenuBar (no dropdowns, persistent toggle state). Modal Dialog was deferred this round: a textbook modal focus-trap needs a focus-manager substrate that focus_request.rs explicitly defers, and Tab is hardwired to handle_focus_traverse so it cannot be swallowed by apply_key"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 4208 passed, 0 failed (pinion-core +26 toolbar tests = 1459, pinion-widget-paint +7 = 303, hello-toolbar 18, pinion-a11y +2 role)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean (a needless_range_loop in access_node fixed via KINDS.iter().enumerate())",
+        "demo sweep 48 -> 49 PASS, regression 0; r692_toolbar.py PASS verifying substrate shape, toggle flip + 'toolbar.toggle' intent, 'toolbar.command' intent, keyboard roving with wrap, keyboard activation, and focus-ring paint movement",
+        "toolbar toggle aria-pressed reuses AccessState.checked which already lowers to accesskit set_toggled (tree.rs:343) so it adds zero new a11y axis; the button role vs checkbox role distinguishes aria-pressed from aria-checked"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "modal Dialog needs a modal focus-trap substrate first (auto-focus on open + Tab-trap within the modal + restore focus on close); focus_request.rs:42-50 names modal focus traps as a deferred axis and Tab is hardwired to handle_focus_traverse (app.rs:899) so apply_key cannot swallow it; dual-backend GUI+TUI scope. Substrate-first round before the Dialog consumer",
+        "Toolbar additive axes: hover state-layer (needs a focused-tag to view-fn channel, the same axis R690 Tabs deferred), icon glyphs in place of text, min-width buttons, separators/section groups, overflow menu, vertical orientation (aria-orientation)",
+        "roving-tabindex command container is now a 2-consumer pattern (MenuBar bar-nav + Toolbar); a shared roving substrate is a Rule-of-Three lift candidate if a 3rd consumer arrives"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
