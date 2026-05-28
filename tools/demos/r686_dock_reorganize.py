@@ -2,15 +2,21 @@
 """R686 §5.16 §5.45 — DockSurface drag-to-reorganize demo.
 
 Drives `hello-dock-panels-editor` (the R685 5-pane editor) through the
-R686 drag-to-reorganize substrate: the `DockReorganizeExternal`
-registered at `/dock_reorganize`. The AI client reads `scene/layout`
-for panel rects, classifies a drop position into a `DockDropZone` with
-the same geometry the Rust `dock_drop_zone_for` uses, and applies the
-gesture via `scene/invoke /dock_reorganize/external/reorganize` — the
-§2 #2 RPC-as-primary-path contract. The topology mutates reactively
-(the external `set`s the shared `Signal<DockTopology>`), so a follow-up
+R687 drag-to-reorganize substrate: the `DockReorganizeExternal`
+registered at `/dock_reorganize`, with its two wire forms:
+
+  * `drop`  — geometry / cursor path. The client reads `scene/layout`
+    for panel rects and hands the substrate the rects + the release
+    cursor; the **substrate** classifies the drop zone
+    (`dock_drop_zone_for`) and resolves the gesture
+    (`resolve_dock_drop`). The demo never re-implements the zone
+    geometry — the Rust helper is the single source of truth.
+  * `reorganize` — symbolic path. An agent expresses the edit by panel
+    ids + zone name (no pixels).
+
+Both mutate the shared `Signal<DockTopology>` reactively, so a follow-up
 `scene/query /dock_reorganize/external/topology` + `scene/layout`
-observe the rearranged layout.
+observe the rearranged layout — the §2 #2 RPC-as-primary-path contract.
 
 Section roadmap (>=40 assertions across A-H):
 
@@ -19,22 +25,19 @@ Section roadmap (>=40 assertions across A-H):
       depth-first order.
   (B) Baseline layout — every panel root rect is present + non-
       degenerate in `scene/layout`.
-  (C) Drop-zone classification — the Python mirror of
-      `dock_drop_zone_for` classifies a panel rect's centre / edges /
-      exterior the way the Rust unit tests pin (centre=Center,
-      near-edge=directional, outside=None).
-  (D) Centre drop = swap — classify the centre of one panel, invoke a
-      Center reorganize, confirm the two panels traded depth-first
-      slots + split_seq stayed 0 (a swap mints no divider).
-  (E) Edge drop = split-insert — classify a panel's left edge, invoke
-      a Left reorganize moving another panel beside it; confirm a
-      `reorg-split-N` divider appeared, leaf count held at 5 (a move,
-      not a spawn), and split_seq bumped to 1.
+  (C) Substrate no-op drops — dropping onto the source itself or into
+      dead space resolves to no target (Null), topology unchanged.
+  (D) Centre drop = swap — `drop` with a cursor at a panel's centre;
+      the substrate classifies Center + swaps; split_seq stays 0.
+  (E) Edge drop = split-insert — `drop` with a cursor near a panel's
+      left edge; the substrate classifies Left + docks the dragged
+      panel beside it; a `reorg-split-N` divider appears, leaf count
+      holds at 5 (a move), split_seq bumps to 1.
   (F) Layout reflow — re-query `scene/layout`; the relocated panel now
       sits left of its new neighbour (docked-left geometry).
-  (G) Rejected gestures — a stale source id + an unknown zone both
-      reject; the live topology is unchanged; a self-drop is a
-      well-defined identity no-op.
+  (G) Symbolic path + rejected gestures — the `reorganize` symbolic
+      form swaps by id; a stale source + unknown zone + malformed
+      payload all reject; the live topology is unchanged.
   (H) Determinism — two back-to-back topology queries are identical.
 """
 
@@ -66,10 +69,6 @@ _CANONICAL_PANELS = [_TOOLBAR, _OUTLINER, _VIEWPORT, _PROPERTIES, _CONSOLE]
 # `REORG_SPLIT_ID_PREFIX` + `DOCK_REORGANIZE_TAG`).
 _REORG_TAG = "dock_reorganize"
 _REORG_SPLIT_PREFIX = "reorg-split-"
-
-# Edge-band fraction (mirror of `DOCK_EDGE_ZONE_FRAC`).
-_EDGE_FRAC = 0.25
-
 
 # ─── topology JSON walkers ──────────────────────────────────────────
 
@@ -116,10 +115,41 @@ def _split_seq(tf: RpcSubprocess) -> int:
 
 
 def _reorganize(tf: RpcSubprocess, source: str, target: str, zone: str) -> Any:
+    """Symbolic reorganize — the AI-agent path (panel ids + zone name,
+    no pixels). The substrate maps the zone to the topology edit."""
     return tf.invoke(
         f"/{_REORG_TAG}/external/reorganize",
         {"source": source, "target": target, "zone": zone},
     )
+
+
+def _drop(tf: RpcSubprocess, source: str, cursor: tuple[float, float], panels: Any) -> Any:
+    """Geometry / cursor path — hand the substrate the observed
+    scene/layout rects + the release cursor; it classifies the drop
+    zone itself (dock_drop_zone_for is the single source of truth, so
+    this demo never re-implements the zone geometry)."""
+    return tf.invoke(
+        f"/{_REORG_TAG}/external/drop",
+        {"source": source, "cursor": {"x": cursor[0], "y": cursor[1]}, "panels": panels},
+    )
+
+
+def _panels_payload(rects: dict[str, dict[str, float]]) -> list[dict[str, Any]]:
+    """Build the `drop` action's panels payload from observed rects."""
+    return [
+        {"tag": tag, "rect": {k: int(r[k]) for k in ("x", "y", "w", "h")}}
+        for tag, r in rects.items()
+    ]
+
+
+def _all_panel_rects(tf: RpcSubprocess) -> dict[str, dict[str, float]]:
+    layout = _layout(tf)
+    out: dict[str, dict[str, float]] = {}
+    for panel in _CANONICAL_PANELS:
+        rect = _find_rect(layout, panel)
+        if rect is not None:
+            out[panel] = rect
+    return out
 
 
 # ─── layout walkers + drop-zone mirror ──────────────────────────────
@@ -155,31 +185,6 @@ def _find_rect(layout: Any, tag: str) -> Optional[dict[str, float]]:
     if not isinstance(rect, dict):
         return None
     return {k: float(rect.get(k, 0)) for k in ("x", "y", "w", "h")}
-
-
-def _drop_zone(rect: dict[str, float], x: float, y: float) -> str:
-    """Python mirror of `dock_drop_zone_for` (Rust is the SoT; the unit
-    tests in dock.rs pin the canonical behaviour — this replica keeps
-    the demo honest about driving the same geometry)."""
-    rx, ry, rw, rh = rect["x"], rect["y"], rect["w"], rect["h"]
-    if rw == 0 or rh == 0:
-        return "None"
-    if x < rx or y < ry or x >= rx + rw or y >= ry + rh:
-        return "None"
-    from_left = (x - rx) / rw
-    from_right = 1.0 - from_left
-    from_top = (y - ry) / rh
-    from_bottom = 1.0 - from_top
-    nearest = min(from_left, from_right, from_top, from_bottom)
-    if nearest >= _EDGE_FRAC:
-        return "Center"
-    if from_left <= from_right and from_left <= from_top and from_left <= from_bottom:
-        return "Left"
-    if from_right <= from_top and from_right <= from_bottom:
-        return "Right"
-    if from_top <= from_bottom:
-        return "Top"
-    return "Bottom"
 
 
 def _center(rect: dict[str, float]) -> tuple[float, float]:
@@ -232,35 +237,28 @@ def body() -> None:
             "B.order viewport left of properties"
         )
 
-        # ─── (C) drop-zone classification ────────────────────────────
-        _section("C: drop-zone geometry mirror")
-        prop = rects[_PROPERTIES]
-        cx, cy = _center(prop)
-        assert _drop_zone(prop, cx, cy) == "Center", "C.1 centre is Center"
-        lx, ly = _left_edge(prop)
-        assert _drop_zone(prop, lx, ly) == "Left", "C.2 left edge is Left"
-        assert (
-            _drop_zone(prop, cx, prop["y"] + prop["h"] * 0.02) == "Top"
-        ), "C.3 top edge is Top"
-        assert (
-            _drop_zone(prop, prop["x"] + prop["w"] * 0.98, cy) == "Right"
-        ), "C.4 right edge is Right"
-        assert _drop_zone(prop, prop["x"] - 5.0, cy) == "None", (
-            "C.5 outside-left is None"
-        )
-        assert (
-            _drop_zone(prop, prop["x"] + prop["w"], cy) == "None"
-        ), "C.6 exclusive right edge is None (half-open)"
+        # ─── (C) substrate drop resolution — no-op cases ─────────────
+        _section("C: drop over no target is a substrate no-op")
+        panels = _panels_payload(rects)
+        before_c = _topology(tf)
+        # Drop a panel onto its own rect → resolve_dock_drop skips the
+        # source → no target → Null no-op (the substrate decides, not us).
+        res = _drop(tf, _PROPERTIES, _center(rects[_PROPERTIES]), panels)
+        assert res is None, f"C.1 self-drop returns Null no-op, got {res!r}"
+        assert _topology(tf) == before_c, "C.2 self-drop leaves topology unchanged"
+        # Drop into dead space far outside every panel rect → no-op.
+        res = _drop(tf, _OUTLINER, (float(_MAIN_W * 4), float(_MAIN_H * 4)), panels)
+        assert res is None, "C.3 drop into empty space returns Null no-op"
+        assert _topology(tf) == before_c, "C.4 empty-space drop unchanged"
+        assert _split_seq(tf) == 0, "C.5 no-op drops mint no split"
 
-        # ─── (D) centre drop = swap ──────────────────────────────────
+        # ─── (D) centre drop = swap (substrate classifies) ───────────
         _section("D: centre drop swaps panels")
-        # Classify the centre of "properties", then swap outliner onto it.
-        zone = _drop_zone(prop, *_center(prop))
-        assert zone == "Center", "D.1 target centre classifies as Center"
-        outcome = _reorganize(tf, _OUTLINER, _PROPERTIES, zone)
-        assert isinstance(outcome, str) and "outliner" in outcome, (
-            f"D.2 swap returns an outcome summary ({outcome})"
-        )
+        # Hand the substrate the observed rects + a cursor at the centre
+        # of "properties"; it classifies Center → swaps outliner onto it.
+        outcome = _drop(tf, _OUTLINER, _center(rects[_PROPERTIES]), panels)
+        assert isinstance(outcome, str), f"D.1 drop returns an outcome ({outcome!r})"
+        assert "outliner" in outcome, f"D.2 outcome names the source ({outcome})"
         topo = _topology(tf)
         after = _panel_ids(topo)
         assert after == [_TOOLBAR, _PROPERTIES, _VIEWPORT, _OUTLINER, _CONSOLE], (
@@ -272,33 +270,31 @@ def body() -> None:
             "editor_split_middle_h",
             "editor_split_inner_h",
         ], "D.4 swap leaves the split tree shape intact"
-        assert _split_seq(tf) == 0, "D.5 a swap mints no divider (seq unchanged)"
+        assert _split_seq(tf) == 0, "D.5 a centre drop is a swap — no divider minted"
 
-        # ─── (E) edge drop = split-insert ────────────────────────────
+        # ─── (E) edge drop = split-insert (substrate classifies) ─────
         _section("E: edge drop docks a panel beside another")
-        layout = _layout(tf)
-        viewport_rect = _find_rect(layout, _VIEWPORT)
-        assert viewport_rect is not None, "E.1 viewport rect present post-swap"
-        lx, ly = _left_edge(viewport_rect)
-        zone = _drop_zone(viewport_rect, lx, ly)
-        assert zone == "Left", f"E.2 viewport left edge classifies Left ({zone})"
-        outcome = _reorganize(tf, _CONSOLE, _VIEWPORT, zone)
+        rects = _all_panel_rects(tf)
+        vp = rects[_VIEWPORT]
+        # Cursor near viewport's left edge → substrate classifies Left →
+        # docks console to viewport's left, splitting horizontally.
+        outcome = _drop(tf, _CONSOLE, _left_edge(vp), _panels_payload(rects))
         assert isinstance(outcome, str) and "console" in outcome, (
-            f"E.3 split-insert returns an outcome ({outcome})"
+            f"E.1 split-insert returns an outcome ({outcome})"
         )
         topo = _topology(tf)
         after = _panel_ids(topo)
-        assert len(after) == 5, f"E.4 leaf count held at 5 (a move, not a spawn): {after}"
-        assert _CONSOLE in after, "E.5 console still present"
-        # Left drop → console occupies the first slot beside viewport, so
-        # console immediately precedes viewport in depth-first order.
+        assert len(after) == 5, f"E.2 leaf count held at 5 (a move, not a spawn): {after}"
+        assert _CONSOLE in after, "E.3 console still present"
+        # Left drop → console takes the first slot beside viewport, so it
+        # immediately precedes viewport in depth-first order.
         ci, vi = after.index(_CONSOLE), after.index(_VIEWPORT)
-        assert ci + 1 == vi, f"E.6 console docked immediately left of viewport ({after})"
+        assert ci + 1 == vi, f"E.4 console docked immediately left of viewport ({after})"
         new_splits = [s for s in _split_ids(topo) if s.startswith(_REORG_SPLIT_PREFIX)]
         assert new_splits == [f"{_REORG_SPLIT_PREFIX}0"], (
-            f"E.7 exactly one reorg split minted, got {new_splits}"
+            f"E.5 exactly one reorg split minted, got {new_splits}"
         )
-        assert _split_seq(tf) == 1, "E.8 split_seq bumped to 1"
+        assert _split_seq(tf) == 1, "E.6 split_seq bumped to 1"
 
         # ─── (F) layout reflow ───────────────────────────────────────
         _section("F: layout reflects the new docking")
@@ -315,24 +311,42 @@ def body() -> None:
             "F.4 relocated console rect non-degenerate"
         )
 
-        # ─── (G) rejected + identity gestures ────────────────────────
-        _section("G: rejected + identity gestures")
+        # ─── (G) symbolic path + rejected gestures ───────────────────
+        _section("G: symbolic reorganize + rejected gestures")
+        # Symbolic path (AI-agent style, no pixels): swap two panels by
+        # id + zone name. Proves the second wire form is live.
+        sym_before = _panel_ids(_topology(tf))
+        outcome = _reorganize(tf, _PROPERTIES, _OUTLINER, "Center")
+        assert isinstance(outcome, str), f"G.1 symbolic reorganize returns outcome ({outcome!r})"
+        sym_after = _panel_ids(_topology(tf))
+        assert sym_after != sym_before, "G.2 symbolic swap changed the topology"
+        assert sym_after.index(_PROPERTIES) == sym_before.index(_OUTLINER), (
+            "G.3 properties took outliner's slot"
+        )
         before = _topology(tf)
+        # Stale source via the geometry path: cursor over a real panel but
+        # source names no leaf → resolve builds a gesture, apply rejects.
         try:
-            _reorganize(tf, "ghost", _VIEWPORT, "Center")
-            raise AssertionError("G.1 stale source must reject")
+            _drop(tf, "ghost", _center(rects[_VIEWPORT]), _panels_payload(rects))
+            raise AssertionError("G.4 stale source must reject")
         except RpcError as exc:
-            assert exc.code != 0, f"G.1 stale source rejected (code {exc.code})"
+            assert exc.code != 0, f"G.4 stale source rejected (code {exc.code})"
+        # Unknown zone via the symbolic path → reject.
         try:
             _reorganize(tf, _VIEWPORT, _PROPERTIES, "Diagonal")
-            raise AssertionError("G.2 unknown zone must reject")
+            raise AssertionError("G.5 unknown zone must reject")
         except RpcError as exc:
-            assert exc.code != 0, f"G.2 unknown zone rejected (code {exc.code})"
-        assert _topology(tf) == before, "G.3 rejected gestures leave topology unchanged"
-        # Self-drop (swap a panel with itself) is a well-defined identity.
-        _reorganize(tf, _VIEWPORT, _VIEWPORT, "Center")
-        assert _topology(tf) == before, "G.4 self-swap is an identity no-op"
-        assert _split_seq(tf) == 1, "G.5 identity / rejected gestures mint no split"
+            assert exc.code != 0, f"G.5 unknown zone rejected (code {exc.code})"
+        # Malformed drop payload (missing cursor) → reject.
+        try:
+            tf.invoke(
+                f"/{_REORG_TAG}/external/drop",
+                {"source": _VIEWPORT, "panels": _panels_payload(rects)},
+            )
+            raise AssertionError("G.6 malformed drop must reject")
+        except RpcError as exc:
+            assert exc.code != 0, f"G.6 malformed drop rejected (code {exc.code})"
+        assert _topology(tf) == before, "G.7 rejected gestures leave topology unchanged"
 
         # ─── (H) determinism ─────────────────────────────────────────
         _section("H: query determinism")

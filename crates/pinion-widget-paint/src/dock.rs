@@ -1182,6 +1182,16 @@ fn parse_drop_zone(s: &str) -> Option<DockDropZone> {
     }
 }
 
+/// (R687 §5.16 §5.45) Parse a `{"x","y","w","h"}` JSON object (as
+/// `scene/layout` emits each node's integer rect) into a [`Rect`].
+/// Returns `None` if any field is missing or not a non-negative
+/// integer in `u32` range — the [`DockReorganizeExternal`] `drop`
+/// action surfaces that as [`InvokeError::TypeMismatch`].
+fn parse_json_rect(v: &serde_json::Value) -> Option<Rect> {
+    let field = |k: &str| -> Option<u32> { u32::try_from(v.get(k)?.as_u64()?).ok() };
+    Some(Rect::new(field("x")?, field("y")?, field("w")?, field("h")?))
+}
+
 /// (R686 §5.16 §5.45) A resolved drag-to-reorganize gesture — the
 /// topology edit a panel-drag drop produces, fully decided (no
 /// geometry / zone ambiguity left). Built by [`resolve_dock_drop`]
@@ -1478,6 +1488,7 @@ impl ExternalIntrospect for DockReorganizeExternal {
             ("topology", "json"),
             ("split_seq", "int"),
             ("last_outcome", "string"),
+            ("drop", "json"),
             ("reorganize", "json"),
         ])
     }
@@ -1507,36 +1518,98 @@ impl ExternalIntrospect for DockReorganizeExternal {
         _value: IntrospectValue,
     ) -> Result<(), InterveneError> {
         match path {
-            // Topology mutation flows through `invoke("reorganize", …)`,
-            // not direct slot writes — every edit must pass the
-            // mutation primitives' validation gate.
+            // Topology mutation flows through `invoke("drop", …)` /
+            // `invoke("reorganize", …)`, not direct slot writes — every
+            // edit must pass the mutation primitives' validation gate.
             "topology" | "split_seq" | "last_outcome" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
 
-    /// (R686 §5.16 §5.45) `reorganize` action — apply a drag-to-
-    /// reorganize gesture. The payload is a JSON object
-    /// `{"source": "<panel>", "target": "<panel>", "zone": "<Zone>"}`
-    /// where `zone` is a [`DockDropZone`] variant name (`"Center"` /
-    /// `"Left"` / `"Right"` / `"Top"` / `"Bottom"`). The AI client
-    /// classifies the zone from `scene/layout` rects via
-    /// [`dock_drop_zone_for`]; this handle maps it to the topology edit
-    /// + applies it.
+    /// (R687 §5.16 §5.45) Two reorganize action shapes, for the two
+    /// first-class AI interaction modes:
     ///
-    /// Returns the outcome summary `"<source> -> <target>"` on success.
+    /// * **`drop`** — *geometry / cursor* driven. Payload
+    ///   `{"source": "<panel>", "cursor": {"x": f64, "y": f64},
+    ///   "panels": [{"tag": "<panel>", "rect": {"x","y","w","h"}}, …]}`.
+    ///   The caller hands the observed `scene/layout` rects + the
+    ///   release cursor; the **substrate** classifies the drop zone
+    ///   ([`dock_drop_zone_for`]) and resolves the gesture
+    ///   ([`resolve_dock_drop`]) — no client re-implements the zone
+    ///   geometry (the Rust helper is the single source of truth). A
+    ///   drop over empty space / the source itself is a well-defined
+    ///   no-op (`Ok(Null)`), not an error. This is the path a mouse
+    ///   drag-session (RPC today, an in-process shell session later)
+    ///   uses.
+    /// * **`reorganize`** — *symbolic* driven. Payload
+    ///   `{"source": "<panel>", "target": "<panel>", "zone": "<Zone>"}`
+    ///   where `zone` is a [`DockDropZone`] variant name. The path an
+    ///   AI agent reasoning over panel ids (no pixels) uses to express
+    ///   "dock console to the left of viewport" directly.
     ///
-    /// * [`InvokeError::TypeMismatch`] — payload is not a JSON object
-    ///   with string `source` / `target` / `zone` fields.
-    /// * [`InvokeError::Rejected`] — `zone` is unrecognised / `"None"`,
-    ///   or the topology edit failed (stale panel id, root removal, id
-    ///   collision). The live topology is unchanged.
+    /// Both return the outcome summary `"<source> -> <target>"` on a
+    /// successful edit and leave the live topology unchanged on
+    /// [`InvokeError::Rejected`] (stale id / root removal / id
+    /// collision); [`InvokeError::TypeMismatch`] for a malformed
+    /// payload.
     fn invoke(
         &mut self,
         path: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
+            "drop" => {
+                let IntrospectValue::Json(obj) = args else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                let source = obj
+                    .get("source")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or(InvokeError::TypeMismatch)?;
+                let cursor = obj.get("cursor").ok_or(InvokeError::TypeMismatch)?;
+                let cursor_x = cursor
+                    .get("x")
+                    .and_then(serde_json::Value::as_f64)
+                    .ok_or(InvokeError::TypeMismatch)?;
+                let cursor_y = cursor
+                    .get("y")
+                    .and_then(serde_json::Value::as_f64)
+                    .ok_or(InvokeError::TypeMismatch)?;
+                let panels_json = obj
+                    .get("panels")
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or(InvokeError::TypeMismatch)?;
+                let mut panels: Vec<(String, Rect)> = Vec::with_capacity(panels_json.len());
+                for panel in panels_json {
+                    let tag = panel
+                        .get("tag")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    let rect = panel
+                        .get("rect")
+                        .and_then(parse_json_rect)
+                        .ok_or(InvokeError::TypeMismatch)?;
+                    panels.push((tag.to_string(), rect));
+                }
+                let panel_refs: Vec<(&str, Rect)> =
+                    panels.iter().map(|(t, r)| (t.as_str(), *r)).collect();
+                // Substrate classifies + resolves — the single source of
+                // truth for drop-zone geometry. No client re-implements it.
+                let Some(intent) = resolve_dock_drop(&panel_refs, source, cursor_x, cursor_y)
+                else {
+                    // Dropped over no valid target (empty space or the
+                    // source itself) — a cancel, not a failure.
+                    *self.last_outcome.borrow_mut() = Some("no drop target".to_string());
+                    return Ok(IntrospectValue::Null);
+                };
+                match self.apply_intent(&intent) {
+                    Ok(summary) => Ok(IntrospectValue::Text(summary)),
+                    Err(e) => {
+                        *self.last_outcome.borrow_mut() = Some(format!("rejected: {e}"));
+                        Err(InvokeError::Rejected)
+                    }
+                }
+            }
             "reorganize" => {
                 let IntrospectValue::Json(obj) = args else {
                     return Err(InvokeError::TypeMismatch);
@@ -3735,6 +3808,93 @@ mod reorganize_tests {
         let mut ext = DockReorganizeExternal::new(signal);
         let err = ext.invoke("teleport", IntrospectValue::Null).unwrap_err();
         assert_eq!(err, InvokeError::UnknownPath);
+    }
+
+    /// Build the `drop` action's `panels` payload from `abc_rects`.
+    fn abc_panels_json() -> serde_json::Value {
+        serde_json::Value::Array(
+            abc_rects()
+                .into_iter()
+                .map(|(tag, r)| {
+                    serde_json::json!({
+                        "tag": tag,
+                        "rect": {"x": r.x, "y": r.y, "w": r.w, "h": r.h},
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn r687_external_drop_center_resolves_swap_in_substrate() {
+        // The client hands raw cursor + observed rects; the substrate
+        // classifies the centre of "b" + swaps "a" onto it — no client
+        // re-implements dock_drop_zone_for.
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        let payload = IntrospectValue::Json(serde_json::json!({
+            "source": "a",
+            "cursor": {"x": 300.0, "y": 200.0},
+            "panels": abc_panels_json(),
+        }));
+        let result = ext.invoke("drop", payload).unwrap();
+        assert!(matches!(result, IntrospectValue::Text(_)));
+        assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"]);
+        // Centre = swap → no split minted.
+        assert_eq!(ext.split_seq(), 0);
+    }
+
+    #[test]
+    fn r687_external_drop_edge_resolves_split_insert_in_substrate() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        // Cursor near b's left edge (b spans x=200..400).
+        let payload = IntrospectValue::Json(serde_json::json!({
+            "source": "a",
+            "cursor": {"x": 210.0, "y": 200.0},
+            "panels": abc_panels_json(),
+        }));
+        ext.invoke("drop", payload).unwrap();
+        assert_eq!(ext.split_seq(), 1, "edge drop mints a reorg split");
+        assert_eq!(signal.get().leaf_count(), 3, "a relocated, not duplicated");
+        assert!(signal
+            .get()
+            .split_ids()
+            .iter()
+            .any(|id| id.starts_with("reorg-split-")));
+    }
+
+    #[test]
+    fn r687_external_drop_over_source_is_noop() {
+        // Cursor over "a" itself (the source) → no valid target → cancel.
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
+        let before = signal.get();
+        let payload = IntrospectValue::Json(serde_json::json!({
+            "source": "a",
+            "cursor": {"x": 100.0, "y": 200.0},
+            "panels": abc_panels_json(),
+        }));
+        let result = ext.invoke("drop", payload).unwrap();
+        assert_eq!(result, IntrospectValue::Null, "no-target drop returns Null");
+        assert_eq!(signal.get(), before, "topology unchanged on a no-op drop");
+        assert_eq!(ext.split_seq(), 0);
+    }
+
+    #[test]
+    fn r687_external_drop_malformed_payload_is_type_mismatch() {
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let mut ext = DockReorganizeExternal::new(signal);
+        // Missing cursor field.
+        let err = ext
+            .invoke(
+                "drop",
+                IntrospectValue::Json(serde_json::json!({
+                    "source": "a", "panels": abc_panels_json(),
+                })),
+            )
+            .unwrap_err();
+        assert_eq!(err, InvokeError::TypeMismatch);
     }
 
     #[test]

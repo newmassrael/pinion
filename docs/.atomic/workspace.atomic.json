@@ -21960,6 +21960,54 @@
         "S15 Scene Clone via External handle Box<dyn> -> Rc<RefCell<dyn>> lift (architectural carry, R682+ paint pipeline)."
       ]
     },
+    "R687.A": {
+      "decision_summary": "R687.A audit-clearance: wire the dead geometry resolver into the DockReorganizeExternal so drop-zone geometry is a single Rust SSOT reachable via RPC, instead of speculative pub API forcing every client to re-implement it.",
+      "changes_bullets": [
+        "Audit finding (user-requested textbook review, grep-verified): resolve_dock_drop had ZERO production consumers (only unit tests) and dock_drop_zone_for's only caller was resolve_dock_drop itself -> both dead in the shipped path. The R687 RPC wire (reorganize {source,target,zone}) took a pre-classified zone, bypassing the resolver, so the demo + every AI client had to re-implement the zone geometry (SSOT leak). Violates [[abstraction-needs-second-consumer]] + YAGNI.",
+        "Fix: added DockReorganizeExternal invoke(drop, {source, cursor:{x,y}, panels:[{tag,rect}]}) action — caller hands observed scene/layout rects + release cursor, the SUBSTRATE classifies via dock_drop_zone_for + resolves via resolve_dock_drop. Both pub fns now have a real production consumer; geometry is a single Rust SSOT no client re-implements. Drop over no target / the source = Ok(Null) no-op (cancel, not error). parse_json_rect helper added.",
+        "Kept the symbolic reorganize {source,target,zone} action as the distinct AI-agent path (panel ids + zone name, no pixels). The two actions serve two first-class AI interaction modes (pixel-observed cursor vs symbol-known target); both exercised by tests + demo.",
+        "Demo tools/demos/r686_dock_reorganize.py: deleted the Python _drop_zone replica + _EDGE_FRAC const; sections C-E now drive drop (substrate classifies); section G adds a symbolic reorganize positive + malformed-drop + stale-source rejections. The demo picks cursor coords (centre / left-edge) but never classifies zones."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 4051 pass / 0 fail (+4 R687.A: drop center->swap, drop edge->split-insert, drop-over-source no-op, malformed-drop TypeMismatch).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (single_match -> let-else restructure).",
+        "46/46 demo regression sweep PASS (r686_dock_reorganize 0.99s with substrate-classified drop; 45 baseline bit-identical).",
+        "grep re-audit confirms resolve_dock_drop + dock_drop_zone_for now reached from DockReorganizeExternal::invoke(drop) production path."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.45",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "Live MOUSE drag-to-reorganize + drop-zone highlight overlay still RPC-only; a future shell drag-session calls the SAME resolve_dock_drop in-process (now the genuine shared SSOT for both paths).",
+        "reorg-split-N dividers not drag-resizable (create_extra_externals boot-only; runtime external (re)registration is a separate substrate axis, rooted in ExtraExternal::new requiring &'static str).",
+        "Phase B widget catalog cascade pending (Menu / Dialog / Tabs / Toolbar / Table)."
+      ],
+      "publishable_decision_summary": "R687.A audit-clearance: wire the dead geometry resolver into the DockReorganizeExternal so drop-zone geometry is a single Rust SSOT reachable via RPC, instead of speculative pub API forcing every client to re-implement it.",
+      "publishable_changes_bullets": [
+        "Audit finding (user-requested textbook review, grep-verified): resolve_dock_drop had ZERO production consumers (only unit tests) and dock_drop_zone_for's only caller was resolve_dock_drop itself -> both dead in the shipped path. The R687 RPC wire (reorganize {source,target,zone}) took a pre-classified zone, bypassing the resolver, so the demo + every AI client had to re-implement the zone geometry (SSOT leak). Violates [[abstraction-needs-second-consumer]] + YAGNI.",
+        "Fix: added DockReorganizeExternal invoke(drop, {source, cursor:{x,y}, panels:[{tag,rect}]}) action — caller hands observed scene/layout rects + release cursor, the SUBSTRATE classifies via dock_drop_zone_for + resolves via resolve_dock_drop. Both pub fns now have a real production consumer; geometry is a single Rust SSOT no client re-implements. Drop over no target / the source = Ok(Null) no-op (cancel, not error). parse_json_rect helper added.",
+        "Kept the symbolic reorganize {source,target,zone} action as the distinct AI-agent path (panel ids + zone name, no pixels). The two actions serve two first-class AI interaction modes (pixel-observed cursor vs symbol-known target); both exercised by tests + demo.",
+        "Demo tools/demos/r686_dock_reorganize.py: deleted the Python _drop_zone replica + _EDGE_FRAC const; sections C-E now drive drop (substrate classifies); section G adds a symbolic reorganize positive + malformed-drop + stale-source rejections. The demo picks cursor coords (centre / left-edge) but never classifies zones."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 4051 pass / 0 fail (+4 R687.A: drop center->swap, drop edge->split-insert, drop-over-source no-op, malformed-drop TypeMismatch).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (single_match -> let-else restructure).",
+        "46/46 demo regression sweep PASS (r686_dock_reorganize 0.99s with substrate-classified drop; 45 baseline bit-identical).",
+        "grep re-audit confirms resolve_dock_drop + dock_drop_zone_for now reached from DockReorganizeExternal::invoke(drop) production path."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.45",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Live MOUSE drag-to-reorganize + drop-zone highlight overlay still RPC-only; a future shell drag-session calls the SAME resolve_dock_drop in-process (now the genuine shared SSOT for both paths).",
+        "reorg-split-N dividers not drag-resizable (create_extra_externals boot-only; runtime external (re)registration is a separate substrate axis, rooted in ExtraExternal::new requiring &'static str).",
+        "Phase B widget catalog cascade pending (Menu / Dialog / Tabs / Toolbar / Table)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
