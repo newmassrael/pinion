@@ -49,13 +49,14 @@ use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
+use pinion_widget_paint::button::{view_button, ButtonColors, ButtonStyle};
 use pinion_widget_paint::dock::{view_dock_surface, DockNode, DockSplitState, DockTopology};
 use pinion_widget_paint::splitter::SplitterExternal;
 use std::rc::Rc;
@@ -317,36 +318,30 @@ fn view_viewport_content(state: ButtonState, theme: &Theme) -> Scene {
     )
 }
 
-/// Inline M3 Accent-tinted Button paint. State-layer overlays via
-/// linear-space [`Color::lerp`] per `[[color-lerp-linear-space]]`.
+/// (R686.B §5.16) M3 Accent-tinted viewport button via the
+/// `pinion_widget_paint::button` substrate. `ButtonColors::accent`
+/// resolves the same Accent / OnAccent roles + the
+/// SurfaceContainerHigh disabled tier the pre-R686.B inline match did.
+///
+/// This binding's button is **discrete** (no hover spring), so it
+/// passes a step `hover_progress` — `1.0` on Hover, `0.0` otherwise —
+/// which lands `m3_button_fill` on exactly the endpoints the old
+/// inline `match` produced (Idle = Accent, Hover = lerp 0.08).
 fn view_viewport_button(state: ButtonState, theme: &Theme) -> Scene {
-    let accent = theme.resolve(ColorRole::Accent);
-    let on_accent = theme.resolve(ColorRole::OnAccent);
-    let (fill, fg) = match state {
-        ButtonState::Idle => (accent, on_accent),
-        ButtonState::Hover => (accent.lerp(on_accent, 0.08), on_accent),
-        ButtonState::Pressed => (accent.lerp(on_accent, 0.12), on_accent),
-        ButtonState::Disabled => (
-            theme.resolve(ColorRole::SurfaceContainerHigh),
-            theme.resolve(ColorRole::OnSurfaceMuted),
-        ),
+    let hover_progress = if matches!(state, ButtonState::Hover) {
+        1.0
+    } else {
+        0.0
     };
-    Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            VIEWPORT_BTN_LABEL.to_string(),
-            Rect::default(),
-            TextStyle::new().with_size_px(PANEL_BODY_FONT_PX).with_fg(fg),
-        ))])
-        .with_tag(VIEWPORT_BTN_TAG)
-        .with_style(BoxStyle::filled(fill))
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_justify(JustifyContent::Center)
-                .with_padding(Rect::new(16, 8, 16, 8))
-                .with_size(Size::px(180, 40)),
-        ),
+    view_button(
+        VIEWPORT_BTN_LABEL,
+        state,
+        hover_progress,
+        &ButtonColors::accent(theme),
+        &ButtonStyle::m3_default(VIEWPORT_BTN_TAG)
+            .with_size(Size::px(180, 40))
+            .with_padding(Rect::new(16, 8, 16, 8))
+            .with_label_font_size_px(PANEL_BODY_FONT_PX),
     )
 }
 

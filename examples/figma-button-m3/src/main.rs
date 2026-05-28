@@ -98,9 +98,9 @@
 //! ```
 
 use pinion_core::animation::SpringConfig;
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Animation, Color, Frame, Owner, Scene};
@@ -110,6 +110,16 @@ use pinion_core::WidgetCore;
 use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
+// R686.B §5.16 — M3 filled-button paint substrate. The state-layer
+// coefficient matrix moved here; this binding supplies its Figma
+// design tokens via `ButtonColors::new` and keeps `button_fill_for`
+// as a thin adapter that injects the hover spring.
+use pinion_widget_paint::button::{view_button, ButtonColors, ButtonStyle, DISABLED_STATE_LAYER};
+// `m3_button_fill` is only reached by the `#[cfg(test)]` `button_fill_for`
+// helper (the production `view` calls `view_button`, which runs the
+// matrix internally).
+#[cfg(test)]
+use pinion_widget_paint::button::m3_button_fill;
 
 // R650 §5.16 — single-tag binding uses the `"figma_button_m3"`
 // literal directly per [[abstraction-needs-second-consumer]]. The
@@ -155,18 +165,13 @@ const LABEL_PX: u32 = 14;
 // Figma spec value; pinion-side framing only.
 const CANVAS_BG: Color = Color::rgb(0x1F, 0x1F, 0x1F);
 
-/// Material 3 hover state-layer weight — 8 % `onPrimary` overlay on
-/// top of the component fill. Mirrors the Material Design 3 spec
-/// table at <https://m3.material.io/foundations/interaction/states/state-layers>.
-const HOVER_OVERLAY: f32 = 0.08;
-/// Material 3 pressed state-layer weight — 12 % `onPrimary` overlay.
-const PRESSED_OVERLAY: f32 = 0.12;
-/// Material 3 disabled overlay weight — 38 % fade toward the canvas.
-/// Material's actual spec is "12 % onSurface overlay at 38 % alpha";
-/// the binding collapses both factors into a single linear-space
-/// lerp toward `CANVAS_BG`, which is visually indistinguishable for
-/// the Filled / Primary endpoint pair the Figma spec carries.
-const DISABLED_OVERLAY: f32 = 0.38;
+// R686.B §5.16 — the M3 state-layer overlay weights (hover 0.08 /
+// pressed 0.12 / disabled 0.38) moved to the SSOT
+// `pinion_widget_paint::button` substrate
+// (`HOVER_STATE_LAYER` / `PRESSED_STATE_LAYER` / `DISABLED_STATE_LAYER`).
+// This binding's pre-R686.B local copies are gone; `button_fill_for`
+// delegates to `m3_button_fill`, and the disabled fade reuses the
+// substrate's `DISABLED_STATE_LAYER`.
 
 /// R51.150 §5.22 — string key identifying the hover-progress
 /// [`Animation`] in the binding's owner-scoped cache. A `&'static str`
@@ -202,26 +207,36 @@ fn drive_hover_progress(state: ButtonState) -> f32 {
     anim.value()
 }
 
-/// Resolve the current button fill colour for `state`, applying the
-/// Material 3 state-layer overlay matrix. Pure linear-space lerps via
-/// [`Color::lerp`] (R51.151 §5.28) — matches the [[color-lerp-linear-space]]
-/// canon `hello-button` already enforces.
+/// (R686.B §5.16) The Figma design-token [`ButtonColors`] for this
+/// binding: resting `#675AA4` Primary fill, `#FFFFFF` onPrimary state
+/// layer, disabled fade toward the dark canvas at the substrate's
+/// [`DISABLED_STATE_LAYER`] weight, white label in every state.
 ///
-/// Pulled into a free fn (rather than inlined into [`view`]) so the
-/// unit tests can pin the colour math without re-running the whole
-/// view pipeline.
+/// Demonstrates the substrate's hard-coded-token path —
+/// [`ButtonColors::new`] takes explicit [`Color`]s rather than
+/// resolving from a [`Theme`], so the Figma spec is reproduced
+/// verbatim while the M3 overlay matrix lives in the substrate.
+fn figma_button_colors() -> ButtonColors {
+    ButtonColors::new(
+        BTN_FILL,
+        LABEL_FG,
+        BTN_FILL.lerp(CANVAS_BG, DISABLED_STATE_LAYER),
+        LABEL_FG,
+        LABEL_FG,
+    )
+}
+
+/// Resolve the current button fill colour for `state`. Thin adapter:
+/// drives the hover spring ([`drive_hover_progress`]) and delegates
+/// the M3 state-layer overlay matrix to the substrate
+/// [`m3_button_fill`]. The production `view` path calls
+/// [`view_button`] directly (which runs the same matrix internally),
+/// so this helper exists only to let the unit tests pin the colour
+/// math without re-running the whole view pipeline — hence
+/// `#[cfg(test)]`.
+#[cfg(test)]
 fn button_fill_for(state: ButtonState) -> Color {
-    let hover_progress = drive_hover_progress(state);
-    // Hover endpoint = `lerp(fill, onPrimary, 0.08)` — the M3 hover
-    // state-layer canonical 8 % white overlay. The Idle endpoint is
-    // raw `BTN_FILL`; the spring carries the visual through the
-    // intermediate values.
-    let hover_endpoint = BTN_FILL.lerp(LABEL_FG, HOVER_OVERLAY);
-    match state {
-        ButtonState::Idle | ButtonState::Hover => BTN_FILL.lerp(hover_endpoint, hover_progress),
-        ButtonState::Pressed => BTN_FILL.lerp(LABEL_FG, PRESSED_OVERLAY),
-        ButtonState::Disabled => BTN_FILL.lerp(CANVAS_BG, DISABLED_OVERLAY),
-    }
+    m3_button_fill(&figma_button_colors(), state, drive_hover_progress(state))
 }
 
 /// R640 §5.7 — paint the Material 3 Filled Button at the supplied
@@ -234,27 +249,21 @@ fn button_fill_for(state: ButtonState) -> Color {
 /// rule; the `WidgetCore::view` trait shim below dereferences the
 /// `&Frame` argument when forwarding.
 fn view(state: ButtonState, _frame: Frame) -> Scene {
-    let btn_fill = button_fill_for(state);
-    let label = Scene::Text(TextNode::styled(
+    // R686.B §5.16 — M3 filled button via the substrate. The Figma
+    // design tokens flow through `figma_button_colors()`; the pill
+    // corner radius + dense padding + fixed 109×40 size are the Figma
+    // spec geometry carried on `ButtonStyle`. The "figma_button_m3"
+    // tag routes the InputRouter hit-test to the wrapped ButtonExternal.
+    let button = view_button(
         "Button",
-        Rect::default(),
-        TextStyle::new().with_size_px(LABEL_PX).with_fg(LABEL_FG),
-    ));
-    let button = Scene::Container(
-        ContainerNode::new(vec![label])
-            // Framework dispatch identifier — matches `WidgetCore::tag()`
-            // so the shell's `InputRouter` can hit-test pointer events
-            // and dispatch them through the wrapped `ButtonExternal`.
-            .with_tag("figma_button_m3")
-            .with_style(BoxStyle::filled(btn_fill).with_corner_radius(BTN_RADIUS))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(BTN_W, BTN_H))
-                    .with_padding(Rect::new(16, 10, 16, 10)),
-            ),
+        state,
+        drive_hover_progress(state),
+        &figma_button_colors(),
+        &ButtonStyle::m3_default("figma_button_m3")
+            .with_size(Size::px(BTN_W, BTN_H))
+            .with_corner_radius(BTN_RADIUS)
+            .with_padding(Rect::new(16, 10, 16, 10))
+            .with_label_font_size_px(LABEL_PX),
     );
     Scene::Container(
         ContainerNode::new(vec![button])
@@ -320,6 +329,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // R686.B — the M3 overlay coefficients live in the substrate now;
+    // tests assert the binding's fills against the SSOT constants.
+    use pinion_widget_paint::button::{HOVER_STATE_LAYER, PRESSED_STATE_LAYER};
 
     /// Run `body` inside a transient [`Owner`] scope so the view-fn
     /// can resolve `Owner::current()` (R51.146). Mirrors the
@@ -333,8 +345,8 @@ mod tests {
 
     // ─────────────────────────────────────────────────────────────
     // Colour math — pins each Material 3 state-layer overlay weight
-    // against the spec table, so a future drift in `HOVER_OVERLAY`
-    // / `PRESSED_OVERLAY` / `DISABLED_OVERLAY` (or a regression in
+    // against the spec table, so a future drift in `HOVER_STATE_LAYER`
+    // / `PRESSED_STATE_LAYER` / `DISABLED_STATE_LAYER` (or a regression in
     // `Color::lerp`'s linear-space semantics) shows as a typed test
     // failure rather than a pixel-level diff in a downstream demo.
     // ─────────────────────────────────────────────────────────────
@@ -350,14 +362,14 @@ mod tests {
     #[test]
     fn r640_pressed_fill_is_m3_pressed_state_layer() {
         let fill = with_owner(|| button_fill_for(ButtonState::Pressed));
-        let expected = BTN_FILL.lerp(LABEL_FG, PRESSED_OVERLAY);
+        let expected = BTN_FILL.lerp(LABEL_FG, PRESSED_STATE_LAYER);
         assert_eq!(fill, expected);
     }
 
     #[test]
     fn r640_disabled_fill_fades_toward_canvas() {
         let fill = with_owner(|| button_fill_for(ButtonState::Disabled));
-        let expected = BTN_FILL.lerp(CANVAS_BG, DISABLED_OVERLAY);
+        let expected = BTN_FILL.lerp(CANVAS_BG, DISABLED_STATE_LAYER);
         assert_eq!(fill, expected);
     }
 
@@ -374,7 +386,7 @@ mod tests {
         });
         pinion_core::test_fixtures::settle_owner_animations(&owner);
         let fill = owner.run(|| button_fill_for(ButtonState::Hover));
-        let expected = BTN_FILL.lerp(LABEL_FG, HOVER_OVERLAY);
+        let expected = BTN_FILL.lerp(LABEL_FG, HOVER_STATE_LAYER);
         assert_eq!(fill, expected);
     }
 

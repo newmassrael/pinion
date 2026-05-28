@@ -1270,6 +1270,7 @@ dependencies = [
  "pinion-derive",
  "pinion-forge",
  "pinion-shell",
+ "pinion-widget-paint",
  "vello",
 ]
 
@@ -1687,6 +1688,7 @@ dependencies = [
  "pinion-derive",
  "pinion-forge",
  "pinion-shell",
+ "pinion-widget-paint",
  "vello",
 ]
 

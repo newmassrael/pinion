@@ -32,18 +32,19 @@
 //!     tree into a `vello::Scene` and `HelloButtonRenderer` submits it.
 
 use pinion_core::animation::SpringConfig;
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::ContainerNode;
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{use_theme, ColorRole};
 #[cfg(test)]
 use pinion_core::theme::ThemeMode;
-use pinion_core::{Animation, Color, Frame, Owner, Scene, WidgetCore};
+use pinion_core::{Animation, Frame, Owner, Scene, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_derive::widget;
+use pinion_widget_paint::button::{view_button, ButtonColors, ButtonStyle};
 use pinion_shell::vello_renderer_impl;
 
 // R650 §5.16 — single-tag binding uses the `"main_btn"` literal
@@ -122,23 +123,6 @@ fn drive_hover_progress(state: ButtonState) -> f32 {
     anim.value()
 }
 
-/// R51.151 §5.28 — Idle and Hover endpoints for the spring-driven
-/// fade. [`Color::lerp`] interpolates between them in linear-light
-/// space, matching the §5.28 spring solver's own colour-space
-/// convention (R51.134).
-///
-/// (R57.X.button §5.50) Both endpoints are theme-resolved through
-/// [`button_fill_endpoints`]: Idle = [`ColorRole::SurfaceContainerHighest`]
-/// (Material 3 filled-tonal button surface), Hover =
-/// `lerp(SurfaceContainerHighest, OnSurface, 0.08)` (M3 hover state
-/// layer). Pre-cleanup the endpoints were hard-coded white → gray
-/// `Color::rgb(...)` constants.
-fn button_fill_endpoints(theme: &Theme) -> (Color, Color) {
-    let idle = theme.resolve(ColorRole::SurfaceContainerHighest);
-    let hover = idle.lerp(theme.resolve(ColorRole::OnSurface), 0.08);
-    (idle, hover)
-}
-
 /// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
 /// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, ready for
 /// `dt`/`frame_index` without a `SemVer` major. Purity is the §2
@@ -166,52 +150,27 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     // the new tones.
     let theme = use_theme(THEME_TAG).theme_animated();
     // R51.147 §5.28 — animated hover progress (0.0 = Idle baseline,
-    // 1.0 = full Hover). Drives the lightness lerp below.
+    // 1.0 = full Hover). The spring smooths the Idle ↔ Hover lerp over
+    // ~200ms; `view_button` threads it into the M3 state-layer matrix.
     let hover_progress = drive_hover_progress(state);
-    let (idle_fill, hover_fill) = button_fill_endpoints(&theme);
-    let btn_fill: Color = match state {
-        // Idle ↔ Hover lerp in linear-light space via
-        // [`Color::lerp`] (R51.151). The spring smooths the
-        // transition over ~200ms at the default config — no discrete
-        // snap on cursor enter / leave.
-        ButtonState::Idle | ButtonState::Hover => idle_fill.lerp(hover_fill, hover_progress),
-        // (R57.X.button §5.50) Pressed = M3 pressed state layer
-        // (12 % `OnSurface` overlay on the idle surface tier).
-        ButtonState::Pressed => idle_fill.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        // (R57.X.button §5.50) Disabled = M3 disabled overlay
-        // (38 % fade toward `Surface`).
-        ButtonState::Disabled => idle_fill.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    };
     let label = match state {
         ButtonState::Disabled => "Disabled",
         _ => "Click me!",
     };
-    let label_fg = if matches!(state, ButtonState::Disabled) {
-        theme.resolve(ColorRole::OnSurfaceMuted)
-    } else {
-        theme.resolve(ColorRole::OnSurface)
-    };
-    let label_text = Scene::Text(TextNode::styled(
+    // R686.B §5.16 — M3 filled-tonal button via the
+    // `pinion_widget_paint::button` substrate. `ButtonColors::filled_tonal`
+    // resolves the same SurfaceContainerHighest / OnSurface roles the
+    // pre-R686.B inline `button_fill_endpoints` did; the tag
+    // ("main_btn") routes the InputRouter hit-test to the wrapped
+    // ButtonExternal.
+    let button = view_button(
         label,
-        Rect::default(),
-        TextStyle::new().with_size_px(18).with_fg(label_fg),
-    ));
-    let button = Scene::Container(
-        ContainerNode::new(vec![label_text])
-            // R48 §5.35: framework dispatch identifier. The shell's
-            // InputRouter hit-tests the paint scene for this tag and
-            // routes pointer events to the state scene's
-            // ExternalNode("main_btn") — application code never sees
-            // the cursor coordinates.
-            .with_tag("main_btn")
-            .with_style(BoxStyle::filled(btn_fill))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(BTN_W, BTN_H)),
-            ),
+        state,
+        hover_progress,
+        &ButtonColors::filled_tonal(&theme),
+        &ButtonStyle::m3_default("main_btn")
+            .with_size(Size::px(BTN_W, BTN_H))
+            .with_label_font_size_px(18),
     );
     Scene::Container(
         ContainerNode::new(vec![button])
@@ -317,6 +276,8 @@ fn main() {
 #[cfg(test)]
 mod a11y_tests {
     use super::*;
+    use pinion_core::theme::Theme;
+    use pinion_core::Color;
 
     /// R51.69 §5.40 — convenience that mirrors the production
     /// `AppShell::render` pipeline: `view` + `access_node` +
@@ -440,22 +401,34 @@ mod a11y_tests {
 
     #[test]
     fn r57_x_button_idle_endpoint_uses_surface_container_highest() {
+        // R686.B — the fill colours moved to the
+        // `pinion_widget_paint::button` substrate; this binding test
+        // now verifies hello-button picks the M3 filled-tonal palette
+        // (base = SurfaceContainerHighest) via `ButtonColors::filled_tonal`.
         let light = Theme::light();
-        let (idle, _hover) = button_fill_endpoints(&light);
-        assert_eq!(idle, light.surface_container_highest);
+        assert_eq!(
+            ButtonColors::filled_tonal(&light).base,
+            light.surface_container_highest,
+        );
         let dark = Theme::dark();
-        let (idle_d, _hover_d) = button_fill_endpoints(&dark);
-        assert_eq!(idle_d, dark.surface_container_highest);
+        assert_eq!(
+            ButtonColors::filled_tonal(&dark).base,
+            dark.surface_container_highest,
+        );
     }
 
     #[test]
     fn r57_x_button_hover_endpoint_is_m3_state_layer() {
-        // Hover endpoint = `lerp(idle, OnSurface, 0.08)` — M3 hover
-        // state-layer canonical overlay weight.
+        // Hover endpoint = `lerp(base, OnSurface, 0.08)` — M3 hover
+        // state-layer canonical overlay weight, resolved by the
+        // substrate's `m3_button_fill` at full hover progress.
         let theme = Theme::light();
-        let (idle, hover) = button_fill_endpoints(&theme);
-        let expected = idle.lerp(theme.resolve(ColorRole::OnSurface), 0.08);
-        assert_eq!(hover, expected);
+        let colors = ButtonColors::filled_tonal(&theme);
+        let expected = colors.base.lerp(theme.resolve(ColorRole::OnSurface), 0.08);
+        assert_eq!(
+            pinion_widget_paint::button::m3_button_fill(&colors, ButtonState::Hover, 1.0),
+            expected,
+        );
     }
 
     #[test]

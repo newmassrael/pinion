@@ -13686,6 +13686,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R686.B — R686.B view_button substrate lift (Smell 5): the M3 filled-button paint matrix moves into new pinion_widget_paint::button; 3 inline consumers migrate; all per-consumer variance (colour source, disabled strategy, hover animation, geometry) becomes data via ButtonColors + ButtonStyle + a hover_progress arg, following the Splitter/DockPanel sidecar precedent.
+
+**Changes**:
+- New crates/pinion-widget-paint/src/button.rs (459 LOC): ButtonColors value-object (filled_tonal/accent theme ctors + new explicit-token ctor), ButtonStyle geometry sidecar (m3_default + with_corner_radius/padding/size/label_font), HOVER/PRESSED/DISABLED_STATE_LAYER consts (0.08/0.12/0.38 SSOT), m3_button_fill(colors,state,hover_progress) matrix, view_button composition. Reuses pinion_core::widgets::button::ButtonState (state machine already framework-owned; only paint was duplicated). 11 substrate tests + lib.rs mod decl.
+- examples/hello-button: button_fill_endpoints + inline fill match + button Container -> view_button(ButtonColors::filled_tonal, ButtonStyle 160x80/18px). 2 endpoint tests re-pointed at the substrate. Theme/Color imports moved to test scope (now test-only).
+- examples/figma-button-m3: button_fill_for becomes a #[cfg(test)] adapter delegating to m3_button_fill; view uses view_button with figma_button_colors() (ButtonColors::new design tokens) + ButtonStyle pill(100)/109x40/14px. Local HOVER/PRESSED/DISABLED_OVERLAY consts removed -> substrate SSOT constants (tests re-pointed).
+- examples/hello-dock-panels-editor: view_viewport_button -> view_button(ButtonColors::accent) with discrete hover_progress = if Hover {1.0} else {0.0} (no spring) landing bit-identical endpoints; BoxStyle import dropped.
+- Cargo.toml: hello-button + figma-button-m3 gain pinion-widget-paint dep (editor already had it).
+
+
+
+**Verification**:
+- cargo test --workspace: 66 suites green, 0 failed (hello-button 13 / figma 18 / editor 31 / button substrate 11).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (fixed doc_lazy_continuation from a line-leading '+', plus dead-code/unused-import cascade from migrating fill logic out of non-test code: figma button_fill_for + m3_button_fill gated #[cfg(test)], hello-button Theme/Color moved to test scope).
+- 45-demo regression sweep (release build): 45/45 PASS, 0 fail. hello_button_r641 + figma_button_m3_r640 + r685_editor_layout bit-identical post-migration, confirming view_button reproduces each consumer's prior scene (same tag, fill via m3_button_fill, geometry).
+- Honest LOC: substrate +459, bindings net -8 (148 ins / 156 del) => net ~+451. SSOT win (M3 matrix lives once), not a LOC reduction, per the [[abstraction-needs-second-consumer]] precedent.
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- NEW smell discovered in R686.B: drive_hover_progress is triplicated verbatim across hello-button + figma-button-m3 + hello-button-tui (Owner::cache + Animation<f32> + SpringConfig hover spring). Candidate for a pinion_widget_paint::button::use_hover_progress(is_hover, anim_key) reactive-hook lift (R686.C candidate); left out of R686.B to keep the paint lift bounded.
+- R686 (feature) — DockSurface drag-to-reorganize handles (DockDropZone + swap_leaves/split_leaf_into/remove_leaf via try_new + DockDragOverExternal + editor reorganize wire).
+- Smell 8 — Topology+Signal persistence contract for Phase D editor workspace save/restore; design alongside R686 topology mutation.
+- S15 (architectural) — Scene Clone via External Box<dyn> -> Rc<RefCell<dyn>> lift; natural land at Phase C/D entry.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

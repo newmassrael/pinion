@@ -75,6 +75,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod button;
 pub mod checkbox;
 pub mod devtools;
 pub mod dock;
