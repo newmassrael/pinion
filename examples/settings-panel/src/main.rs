@@ -1419,10 +1419,10 @@ impl WidgetCore for SettingsPanelView {
                 IntrospectValue::Bool(notif.signals[i].get()),
             );
             // R55.D.5 composite-tag: shell paint router walks the
-            // base tag + parses the suffix per-row; the const
-            // `&'static str` slot satisfies `ExtraExternal::new`
-            // without a runtime allocation.
-            notif_externals.push(ExtraExternal::new(tag, Box::new(ext)));
+            // base tag + parses the suffix per-row. (R688) The const
+            // `&'static str` becomes a `Cow::Borrowed` in
+            // `ExtraExternal::new` — still no runtime allocation.
+            notif_externals.push(ExtraExternal::new(*tag, Box::new(ext)));
         }
 
         // R669 §5.45 — 4th `ScrollBarExternal` consumer (notifications

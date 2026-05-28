@@ -3643,7 +3643,7 @@ mod tests {
                 6,
                 "R664: 6 extras (delete + toggle + filter + scrollbar + item-edit + editor-field)",
             );
-            let tags: Vec<&str> = extras.iter().map(|e| e.tag).collect();
+            let tags: Vec<&str> = extras.iter().map(|e| e.tag.as_ref()).collect();
             assert!(tags.contains(&DELETE_TAG), "DELETE_TAG still registered");
             assert!(tags.contains(&TOGGLE_TAG), "R658 TOGGLE_TAG registered");
             assert!(tags.contains(&FILTER_TAG), "R659 FILTER_TAG registered");

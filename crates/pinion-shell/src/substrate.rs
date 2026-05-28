@@ -1685,6 +1685,13 @@ impl<V: WidgetView> ShellCore<V> {
         self.apply_paint_for_window_with_hover_refresh(window_id, paint_scene, paint_layout);
         let tail = self.core.tail();
         self.handle_tail(&tail);
+        // R688 §5.16 §5.35 — reconcile the external set against the
+        // binding's current reactive state. A live structure mutation
+        // (e.g. a future mouse dock-reorganize) that added / removed a
+        // surface registers / drops its routable External here, before
+        // the next frame's hit-test. No-op (cheap tag compare) when the
+        // set is unchanged — the steady-state path.
+        self.core.reconcile_externals();
     }
 
     /// (R685.C atomic 4 §5.16 §5.41 §5.35) Paint-storage write +
@@ -2201,6 +2208,13 @@ impl<V: WidgetView> ShellCore<V> {
         self.drain_deferred_inputs_for_window(drain_window, &deferred_inputs);
         let tail = self.core.tail();
         self.handle_tail(&tail);
+        // R688 §5.16 §5.35 — reconcile the external set after the
+        // dispatch. A `scene/invoke` that mutated the binding's
+        // structure (e.g. a dock reorganize minting a `reorg-split-N`)
+        // set its reactive topology Signal during this dispatch; the
+        // freshly created surface needs a routable External before the
+        // next RPC addresses it. No-op when the tag set is unchanged.
+        self.core.reconcile_externals();
         // R51.73 §5.40 — `focus/set` from the AI client must trigger
         // a redraw so the focus ring repaints on the new target. The
         // before/after comparison catches every focus-mutating

@@ -50,6 +50,8 @@
 //! invariant across both backends — the supertrait split moves where
 //! the trait surface lives, never what it guarantees.
 
+use std::borrow::Cow;
+
 use crate::command::Command;
 use crate::external::External;
 use crate::intent::Intent;
@@ -79,7 +81,16 @@ pub struct ExtraExternal {
     /// Symbolic identifier — must match the `Container::tag` the view
     /// fn attaches to this widget's paint surface so the input
     /// router's hit-test routes to the same node.
-    pub tag: &'static str,
+    ///
+    /// (R688 §5.16) `Cow<'static, str>` so a binding can register an
+    /// external under a **runtime-generated** tag (e.g. a dock
+    /// reorganize mints `reorg-split-{n}`) without leaking a
+    /// `&'static str`. Static literals stay `Cow::Borrowed` (no
+    /// allocation); runtime ids are `Cow::Owned`. The reactive
+    /// reconcile path
+    /// ([`CoreShell::reconcile_externals`](../../pinion_runtime/struct.CoreShell.html#method.reconcile_externals))
+    /// keys the external set by this tag.
+    pub tag: Cow<'static, str>,
     /// The widget handle. Boxed for the closed-form `External` trait
     /// object slot the substrate stores on `ExternalNode`.
     pub handle: Box<dyn External>,
@@ -90,9 +101,15 @@ impl ExtraExternal {
     /// `tag`. Equivalent to the struct-literal form; matches the
     /// `Intent::new_static` / `Command::new_static` convention so the
     /// per-widget binding site reads idiomatically.
+    ///
+    /// (R688 §5.16) `tag` accepts `impl Into<Cow<'static, str>>` —
+    /// a `&'static str` literal or an owned `String` runtime id.
     #[must_use]
-    pub fn new(tag: &'static str, handle: Box<dyn External>) -> Self {
-        Self { tag, handle }
+    pub fn new(tag: impl Into<Cow<'static, str>>, handle: Box<dyn External>) -> Self {
+        Self {
+            tag: tag.into(),
+            handle,
+        }
     }
 }
 

@@ -13802,6 +13802,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R688 — Runtime external registration substrate: CoreShell::reconcile_externals makes the ExtraExternal set a reactive projection of state so runtime-minted dock splits register routable Externals (clears R687 carry b).
+
+**Changes**:
+- pinion-core/widget_core.rs: ExtraExternal.tag changed &'static str -> Cow<'static, str>; ExtraExternal::new takes impl Into<Cow<'static, str>> so a binding can register an external under a runtime-generated tag (reorg-split-N) without leaking a static. Static literals stay Cow::Borrowed (no allocation).
+- pinion-runtime/core_shell.rs: new CoreShell::reconcile_externals() re-runs WidgetCore::create_extra_externals in the root_owner scope, diffs the tag list against the state-scene External children with a steady-state no-op guard, and on change rebuilds preserve-by-tag (surviving tags keep their live instance to retain in-flight state like drag capture and id counters; removed tags drop). Single-External bindings hit the bare-scene no-op path.
+- pinion-shell + pinion-tui substrate.rs: reconcile_externals wired into finalize_frame_for_window, the RPC dispatch finalize hook, and the TUI dispatch drain (GUI/TUI parity, called after the dispatch borrow of the scene releases).
+- examples/hello-dock-panels-editor: split_cache_key_for static-recovery table + its 2 tests removed; the Split id is now used directly as the Owner::cache key AND the ExtraExternal registration tag (id.to_string()). A runtime reorganize that mints reorg-split-N registers its SplitterExternal automatically via reconcile_externals.
+- examples/settings-panel, hello-dock-panels, todomvc: ExtraExternal.tag call sites adapted to Cow (*tag deref at the construction site; .tag.as_ref() at the test collection sites).
+
+
+
+**Verification**:
+- cargo test --workspace: all suites pass, including 5 new reconcile_externals tests (add new tag / drop removed tag / preserve existing instance on change / no-op when tags unchanged / single-External binding stays bare).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace -D pedantic.
+- 46/46 demo regression sweep PASS, including the new r686_dock_reorganize E2 section: the runtime-minted reorg-split-0 divider now resolves an External and a scene/drag on its handle moves the ratio Signal (proving the new surface is live, not just resolvable).
+
+
+
+**Impact**: §5.16, §5.35, §5.6
+
+
+**Carry forward**:
+- reconcile_externals re-runs create_extra_externals every frame/dispatch (N throwaway allocations in steady state). The cheaper Effect-subscription path was rejected because an Effect rerun does not push CURRENT_OWNER_HANDLE so the factory's Owner::cache hooks would be fragile. A dirty-flag / generation-counter gate on the topology is a future optimization candidate.
+- live MOUSE drag-to-reorganize + drop-zone highlight overlay still RPC-native only (R687 carry a): a future shell drag-session feeds absolute cursor + layout to resolve_dock_drop, sharing the same in-process SSOT.
+- DockReorganizeIntent undo/redo: the immutable &self -> Result<Self> form is already undo-stack friendly (prior topology retained); Phase D editor workspace history.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

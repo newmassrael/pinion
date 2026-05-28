@@ -33,6 +33,10 @@ Section roadmap (>=40 assertions across A-H):
       left edge; the substrate classifies Left + docks the dragged
       panel beside it; a `reorg-split-N` divider appears, leaf count
       holds at 5 (a move), split_seq bumps to 1.
+  (E2) Runtime registration (R688) — the `reorg-split-N` divider, which
+      had no `SplitterExternal` at boot, now resolves + drags: R688's
+      `CoreShell::reconcile_externals` registered it when the topology
+      Signal changed. Dragging its handle moves the ratio Signal.
   (F) Layout reflow — re-query `scene/layout`; the relocated panel now
       sits left of its new neighbour (docked-left geometry).
   (G) Symbolic path + rejected gestures — the `reorganize` symbolic
@@ -187,6 +191,32 @@ def _find_rect(layout: Any, tag: str) -> Optional[dict[str, float]]:
     return {k: float(rect.get(k, 0)) for k in ("x", "y", "w", "h")}
 
 
+def _find_node(layout: Any, tag: str) -> Optional[dict[str, Any]]:
+    """Walk `scene/layout` for the full node (rect + children) tagged
+    `tag` — used to locate a splitter's handle child for a raw drag."""
+
+    def walk(node: Any) -> Optional[dict[str, Any]]:
+        if not isinstance(node, dict):
+            return None
+        if node.get("tag") == tag:
+            return node
+        for child in node.get("children") or []:
+            found = walk(child)
+            if found is not None:
+                return found
+        content = node.get("content")
+        if isinstance(content, dict):
+            return walk(content)
+        return None
+
+    return walk(layout)
+
+
+def _splitter_ratio(tf: RpcSubprocess, tag: str) -> Optional[float]:
+    val = tf.query(f"/{tag}/external/ratio")
+    return float(val) if isinstance(val, (int, float)) else None
+
+
 def _center(rect: dict[str, float]) -> tuple[float, float]:
     return rect["x"] + rect["w"] * 0.5, rect["y"] + rect["h"] * 0.5
 
@@ -295,6 +325,49 @@ def body() -> None:
             f"E.5 exactly one reorg split minted, got {new_splits}"
         )
         assert _split_seq(tf) == 1, "E.6 split_seq bumped to 1"
+
+        # ─── (E2) the reorg-minted splitter is interactive ───────────
+        _section("E2: runtime-minted splitter is drag-resizable (R688)")
+        reorg_split = f"{_REORG_SPLIT_PREFIX}0"
+        # Pre-R688 this divider had NO SplitterExternal (the external set
+        # was frozen at boot), so it rendered but was inert + unqueryable.
+        # R688's reconcile_externals registers it on the topology change.
+        ratio_before = _splitter_ratio(tf, reorg_split)
+        assert ratio_before is not None, (
+            "E2.1 the runtime split now resolves an External (runtime registration)"
+        )
+        assert tf.query(f"/{reorg_split}/external/orientation") == "horizontal", (
+            "E2.2 left-edge drop produced a horizontal divider"
+        )
+        # Drag the divider's handle (children[1] of the splitter Container)
+        # to a new x; the SplitterExternal's cursor-fraction drag must
+        # move the ratio Signal — proving the new surface is truly live,
+        # not just resolvable.
+        splitter = _find_node(_layout(tf), reorg_split)
+        assert splitter is not None, "E2.3 splitter node present in layout"
+        children = splitter.get("children") or []
+        assert len(children) >= 3, "E2.4 splitter is [left, handle, right]"
+        handle = children[1].get("rect") or {}
+        hy = float(handle.get("y", 0)) + float(handle.get("h", 1)) * 0.5
+        sp_rect = splitter.get("rect") or {}
+        # Drag from the handle toward the splitter's 30%-width mark.
+        from_x = float(handle.get("x", 0)) + float(handle.get("w", 4)) * 0.5
+        to_x = float(sp_rect.get("x", 0)) + float(sp_rect.get("w", 0)) * 0.3
+        drag_resp = tf.request(
+            "scene/drag",
+            {"from": {"x": from_x, "y": hy}, "to": {"x": to_x, "y": hy}, "steps": 4},
+        )
+        assert drag_resp is not None, "E2.5 scene/drag on the runtime splitter returns"
+        time.sleep(_SETTLE_SEC)
+        ratio_after = _splitter_ratio(tf, reorg_split)
+        assert ratio_after is not None, "E2.6 ratio still readable post-drag"
+        assert 0.05 <= ratio_after <= 0.95, (
+            f"E2.7 post-drag ratio {ratio_after} inside the splitter clamp"
+        )
+        assert abs(ratio_after - ratio_before) > 1e-3, (
+            f"E2.8 dragging the runtime splitter moved its ratio "
+            f"({ratio_before} -> {ratio_after}) — the new surface is live"
+        )
 
         # ─── (F) layout reflow ───────────────────────────────────────
         _section("F: layout reflects the new docking")

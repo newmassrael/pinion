@@ -1118,7 +1118,7 @@ mod tests {
             assert_eq!(extras.len(), 7);
             // Declaration order: dock-panel tear-off Externals (3),
             // splitter Externals (2), inspector tree (1), click router (1).
-            let tags: Vec<&str> = extras.iter().map(|e| e.tag).collect();
+            let tags: Vec<&str> = extras.iter().map(|e| e.tag.as_ref()).collect();
             assert_eq!(
                 tags,
                 vec![

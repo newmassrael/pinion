@@ -236,31 +236,11 @@ fn build_editor_topology() -> DockTopology {
     ))
 }
 
-/// (R686 §5.16 §5.45) Recover a boot Split's stable id as a
-/// `&'static str` — the lifetime [`ExtraExternal::new`] requires for a
-/// registration tag. `create_extra_externals` (boot-time only) walks
-/// the initial topology, whose split ids are all compile-time
-/// constants, so the mapping is total there; `unreachable!` flags a
-/// boot topology that declares a split this table doesn't know.
-///
-/// The **view fn** no longer routes through this table — it passes the
-/// raw `Cow` split id straight to [`use_split_ratio`] (R685.C S12
-/// `Owner::cache` owned-key lift), so a reorganize-minted runtime split
-/// id renders without needing a `&'static str` bridge. Only the
-/// `ExtraExternal::new(&'static str)` registration path still needs the
-/// static recovery, and that path only ever sees boot splits.
-fn split_cache_key_for(split_id: &str) -> &'static str {
-    match split_id {
-        SPLIT_OUTER_TAG => SPLIT_OUTER_TAG,
-        SPLIT_INNER_V_TAG => SPLIT_INNER_V_TAG,
-        SPLIT_MIDDLE_H_TAG => SPLIT_MIDDLE_H_TAG,
-        SPLIT_INNER_H_TAG => SPLIT_INNER_H_TAG,
-        other => unreachable!(
-            "split_cache_key_for: unknown split id {other:?}; topology declares only \
-             outer/inner_v/middle_h/inner_h",
-        ),
-    }
-}
+// (R688) `split_cache_key_for` removed. Pre-R688 it recovered a boot
+// split's id as a `&'static str` because `ExtraExternal::new` required
+// that lifetime; the R688 Cow lift lets `create_extra_externals` pass
+// `id.to_string()` directly, so boot + runtime splits share one
+// Cow-keyed path with no static recovery table (and no `unreachable!`).
 
 // ─── panel content view fns ───────────────────────────────────────────
 
@@ -473,8 +453,9 @@ fn panel_content_for(panel_id: &str, state: ButtonState, theme: &Theme) -> Scene
 // (R685.B atomic 3) `split_tag_for` removed — pre-R685.B identity
 // function. R685.B walker auto-builds the splitter's paint-side tag
 // from `DockNode::Split::id` directly (SSOT), so no caller-side
-// indirection needed. `split_cache_key_for` lives above for the
-// `Owner::cache &'static str` lifetime requirement.
+// indirection needed. (R688) `split_cache_key_for` also removed — the
+// `ExtraExternal` Cow lift made the split id usable as the cache key +
+// registration tag directly, so boot + runtime splits share one path.
 //
 // (R685.C atomic 2) binding-local `for_each_split` removed — the
 // walk lifted to `DockTopology::for_each_split` substrate accessor
@@ -508,21 +489,24 @@ impl WidgetCore for DockPanelsEditorView {
         // nodes via the `DockTopology::for_each_split` substrate
         // accessor — each visit carries the Split's stable id +
         // orientation + initial ratio. Register one `SplitterExternal`
-        // per Split keyed on the Split's id (which IS the paint-side
-        // tag post-R685.B walker SSOT enforcement). Adding a 6th pane
-        // is a one-line topology mutation; this loop grows automatically.
-        // (R686) Walk the *live* topology signal's current value so the
-        // boot splitter set matches the seeded topology. Each boot split
-        // id is a compile-time constant, so `split_cache_key_for`
-        // recovers the `&'static str` `ExtraExternal::new` requires.
+        // per Split keyed on the Split's id (which IS the paint-side tag
+        // post-R685.B walker SSOT enforcement).
+        //
+        // (R688) Walk the *live* topology signal's current value. After
+        // the R688 `ExtraExternal` Cow lift the Split's id is the cache
+        // key AND the registration tag directly — `id.to_string()`, no
+        // `&'static str` recovery table. A runtime reorganize that mints
+        // `reorg-split-N` flows through this same loop: the R688
+        // `CoreShell::reconcile_externals` re-runs this factory when the
+        // topology Signal changes, so the new split registers its
+        // `SplitterExternal` (and becomes drag-resizable) automatically.
         let topology_signal = use_editor_topology();
         let topology = topology_signal.get();
         let mut externals = Vec::with_capacity(topology.split_count() + 1);
         topology.for_each_split(|id, orientation, ratio| {
-            let cache_key = split_cache_key_for(id);
-            let signal = use_split_ratio(cache_key, ratio);
+            let signal = use_split_ratio(id.to_string(), ratio);
             let external = SplitterExternal::new(orientation).attach_ratio(signal);
-            externals.push(ExtraExternal::new(cache_key, Box::new(external)));
+            externals.push(ExtraExternal::new(id.to_string(), Box::new(external)));
         });
         // (R686 §5.45) The drag-to-reorganize handle — shares the
         // topology signal so an applied gesture re-renders the view.
@@ -670,24 +654,6 @@ mod tests {
         let serialized = serde_json::to_string(&topology).expect("serialize");
         let parsed: DockTopology = serde_json::from_str(&serialized).expect("parse back");
         assert_eq!(parsed, topology, "5-pane topology round-trips through JSON");
-    }
-
-    #[test]
-    fn r685_b_editor_split_cache_key_for_each_declared_id() {
-        assert_eq!(split_cache_key_for(SPLIT_OUTER_TAG), SPLIT_OUTER_TAG);
-        assert_eq!(split_cache_key_for(SPLIT_INNER_V_TAG), SPLIT_INNER_V_TAG);
-        assert_eq!(split_cache_key_for(SPLIT_MIDDLE_H_TAG), SPLIT_MIDDLE_H_TAG);
-        assert_eq!(split_cache_key_for(SPLIT_INNER_H_TAG), SPLIT_INNER_H_TAG);
-    }
-
-    #[test]
-    #[should_panic(expected = "unknown split id")]
-    fn r685_b_editor_split_cache_key_for_unknown_id_panics() {
-        // R685.B Smell-6 fix preserved: contract-violation panic
-        // over silent fallback. Topology declares only the 4
-        // canonical splits; any other id means the topology was
-        // mutated without updating the Owner::cache key table.
-        let _ = split_cache_key_for("unknown");
     }
 
     #[test]
@@ -848,7 +814,7 @@ mod tests {
             let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
             // 4 SplitterExternals + 1 DockReorganizeExternal (R686).
             assert_eq!(externals.len(), 5);
-            let tags: Vec<&str> = externals.iter().map(|e| e.tag).collect();
+            let tags: Vec<&str> = externals.iter().map(|e| e.tag.as_ref()).collect();
             assert!(tags.contains(&SPLIT_OUTER_TAG));
             assert!(tags.contains(&SPLIT_INNER_V_TAG));
             assert!(tags.contains(&SPLIT_MIDDLE_H_TAG));

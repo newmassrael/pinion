@@ -701,6 +701,122 @@ impl<V: WidgetCore> CoreShell<V> {
         &self.cached_state
     }
 
+    /// R688 §5.16 §5.35 — reconcile the registered external set against
+    /// the binding's current reactive state.
+    ///
+    /// Pre-R688 the external set was frozen at boot
+    /// ([`Self::new`] called [`WidgetCore::create_extra_externals`]
+    /// once). A binding that mutates its structure at runtime — a dock
+    /// editor that reorganizes its panel topology, spawning new
+    /// splitters — could not register an [`crate::input::InputRouter`]
+    /// target for the new surface, so the new widget rendered but was
+    /// inert. This makes the external set a **reactive projection of
+    /// state**: re-run the factory and patch the state scene so every
+    /// live surface has a routable [`External`](pinion_core::external::External).
+    ///
+    /// ## Mechanism (unconditional re-run + tag guard)
+    ///
+    /// [`WidgetCore::create_extra_externals`] is re-run inside
+    /// [`Self::root_owner`]'s scope (so its `Owner::cache` hooks —
+    /// `use_split_ratio` etc. — resolve the same memoised reactive
+    /// state the view fn sees). The result's tag list is compared to
+    /// the current state-scene External children; **if unchanged the
+    /// scene is left untouched** (steady-state no-op — the freshly
+    /// built descriptors are simply dropped). This is deliberately
+    /// *not* an `Effect` subscription: an `Effect` rerun pushes only
+    /// the subscriber stack, not `CURRENT_OWNER_HANDLE`, so
+    /// `Owner::cache` inside the factory would fail unless the trigger
+    /// happened to be owner-wrapped — fragile. Re-running here, where
+    /// the caller wraps `root_owner.run`, is robust, and the per-call
+    /// cost (build ~N cheap external structs + a tag compare) is
+    /// negligible beside the view fn that already re-runs each frame.
+    ///
+    /// ## Preserve-by-tag
+    ///
+    /// When the tag set *does* change, the scene is rebuilt keeping the
+    /// **existing** External node for every surviving tag (only genuinely
+    /// new tags use the freshly built handle). This preserves in-flight
+    /// external state — a `SplitterExternal`'s drag capture, a
+    /// `DockReorganizeExternal`'s id-minting counter — that a blind
+    /// rebuild would reset. Removed tags' nodes drop here.
+    ///
+    /// Backends call this at a safe point each frame / RPC dispatch
+    /// (after the dispatch borrow of the scene is released): the GUI
+    /// shell's `finalize_frame_for_window`, the RPC dispatch finalize,
+    /// the TUI drain. Single-`External` bindings (empty extras) hit the
+    /// fast no-op path and are unaffected.
+    pub fn reconcile_externals(&mut self) {
+        let new_extras = self.root_owner.run(V::create_extra_externals);
+        // Steady-state guard — identical tag list means no surface was
+        // added or removed, so every existing instance stays put.
+        let new_tags: Vec<&str> = new_extras.iter().map(|e| e.tag.as_ref()).collect();
+        let current_tags: Vec<&str> = match &self.scene {
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .skip(1)
+                .filter_map(|child| match child {
+                    Scene::External(node) => node.tag.as_deref(),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        if new_tags == current_tags {
+            return;
+        }
+        // Tag set changed — rebuild, preserving existing instances.
+        let current = std::mem::replace(
+            &mut self.scene,
+            Scene::Container(ContainerNode::new(Vec::new())),
+        );
+        let (primary, current_extras): (Scene, Vec<Scene>) = match current {
+            Scene::External(node) => (Scene::External(node), Vec::new()),
+            Scene::Container(container) => {
+                let mut children = container.children;
+                // Index 0 is the primary External (see `Self::new`'s
+                // composition); the rest are the extras.
+                let primary = children.remove(0);
+                (primary, children)
+            }
+            other => {
+                // Unexpected shape — restore and bail rather than
+                // corrupt the scene.
+                self.scene = other;
+                return;
+            }
+        };
+        // Every extra removed — collapse back to the bare primary shape
+        // (`current_extras` drop here), matching the boot-time empty case.
+        if new_extras.is_empty() {
+            self.scene = primary;
+            return;
+        }
+        let mut existing: HashMap<String, Scene> = HashMap::new();
+        for node in current_extras {
+            if let Scene::External(ref ext) = node
+                && let Some(tag) = ext.tag.as_deref()
+            {
+                existing.insert(tag.to_owned(), node);
+            }
+        }
+        let mut children: Vec<Scene> = Vec::with_capacity(1 + new_extras.len());
+        children.push(primary);
+        for extra in new_extras {
+            if let Some(node) = existing.remove(extra.tag.as_ref()) {
+                // Surviving tag — keep the live instance (preserve state).
+                children.push(node);
+            } else {
+                // New tag — register the freshly built handle.
+                children.push(Scene::External(
+                    ExternalNode::new(extra.handle).with_tag(extra.tag),
+                ));
+            }
+        }
+        // `existing` leftovers are removed tags — dropped here.
+        self.scene = Scene::Container(ContainerNode::new(children));
+    }
+
     /// R51.142 §5.28 — read-only borrow of the root reactive scope
     /// owned by this binding.
     ///
@@ -3510,5 +3626,176 @@ mod tests {
         assert!(core.window_owner_existing("inspector").is_none());
         // Re-creating inspector mints a fresh scope.
         assert_ne!(core.window_owner("inspector").id(), inspector_id);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R688 §5.16 §5.35 — reconcile_externals (runtime registration).
+    //
+    // A fixture whose `create_extra_externals` reads a thread-local tag
+    // list, minting one `CountedExternal` per tag whose `count` is a
+    // monotonic construction sequence. The sequence lets a test detect
+    // whether a given tag's External instance was *preserved* (count
+    // unchanged) or *rebuilt* (count advanced) across a reconcile.
+    // ─────────────────────────────────────────────────────────────────
+
+    use pinion_core::external::CountedExternal;
+
+    thread_local! {
+        static RECON_TAGS: std::cell::RefCell<Vec<&'static str>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+        static RECON_CTR: Cell<i64> = const { Cell::new(0) };
+    }
+
+    fn recon_set_tags(tags: &[&'static str]) {
+        RECON_TAGS.with(|t| *t.borrow_mut() = tags.to_vec());
+    }
+
+    fn recon_reset(tags: &[&'static str]) {
+        RECON_CTR.with(|c| c.set(0));
+        recon_set_tags(tags);
+    }
+
+    struct ReconcileFixture;
+
+    impl WidgetCore for ReconcileFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            <TestButton as WidgetCore>::create_external()
+        }
+
+        fn create_extra_externals() -> Vec<ExtraExternal> {
+            RECON_TAGS.with(|tags| {
+                tags.borrow()
+                    .iter()
+                    .map(|&tag| {
+                        let seq = RECON_CTR.with(|c| {
+                            let v = c.get();
+                            c.set(v + 1);
+                            v
+                        });
+                        ExtraExternal::new(tag, Box::new(CountedExternal::new(seq)))
+                    })
+                    .collect()
+            })
+        }
+
+        fn tag() -> &'static str {
+            "test_btn"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(state: Self::State, frame: &Frame) -> Scene {
+            <TestButton as WidgetCore>::view(state, frame)
+        }
+
+        fn event_name(event: Self::Event) -> &'static str {
+            <TestButton as WidgetCore>::event_name(event)
+        }
+
+        fn title() -> &'static str {
+            "Reconcile"
+        }
+    }
+
+    /// Extra-external tags (skip the primary at index 0) in scene order.
+    fn recon_extra_tags(scene: &Scene) -> Vec<String> {
+        match scene {
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .skip(1)
+                .filter_map(|child| match child {
+                    Scene::External(node) => node.tag.as_deref().map(str::to_owned),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The `count` slot of the `CountedExternal` tagged `tag`.
+    fn recon_count(scene: &Scene, tag: &str) -> Option<i64> {
+        let node = scene.find_external_with_tag(tag)?;
+        match node.handle.introspect()?.query("count")? {
+            IntrospectValue::Int(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r688_reconcile_adds_new_external_tag() {
+        recon_reset(&["a", "b"]);
+        let mut core: CoreShell<ReconcileFixture> = CoreShell::new();
+        assert_eq!(recon_extra_tags(core.scene()), vec!["a", "b"]);
+        recon_set_tags(&["a", "b", "c"]);
+        core.reconcile_externals();
+        assert_eq!(
+            recon_extra_tags(core.scene()),
+            vec!["a", "b", "c"],
+            "a new tag registers a routable External node",
+        );
+    }
+
+    #[test]
+    fn r688_reconcile_drops_removed_tag() {
+        recon_reset(&["a", "b", "c"]);
+        let mut core: CoreShell<ReconcileFixture> = CoreShell::new();
+        recon_set_tags(&["a", "c"]);
+        core.reconcile_externals();
+        assert_eq!(recon_extra_tags(core.scene()), vec!["a", "c"], "b dropped");
+    }
+
+    #[test]
+    fn r688_reconcile_preserves_existing_instance_on_change() {
+        recon_reset(&["a", "b"]);
+        let mut core: CoreShell<ReconcileFixture> = CoreShell::new();
+        // Boot constructed a=0, b=1 (ctr now 2).
+        assert_eq!(recon_count(core.scene(), "a"), Some(0));
+        recon_set_tags(&["a", "b", "c"]);
+        core.reconcile_externals();
+        // The factory rebuilt a=2,b=3,c=4 internally, but reconcile keeps
+        // the existing a/b nodes (preserve-by-tag) and only adopts the new
+        // c. So a is still its boot instance (count 0), not the throwaway 2.
+        assert_eq!(
+            recon_count(core.scene(), "a"),
+            Some(0),
+            "surviving tag keeps its live instance",
+        );
+        assert_eq!(recon_count(core.scene(), "b"), Some(1), "b preserved too");
+        // c is genuinely new — it carries a fresh construction seq.
+        assert!(recon_count(core.scene(), "c").is_some(), "c registered");
+    }
+
+    #[test]
+    fn r688_reconcile_noop_when_tags_unchanged() {
+        recon_reset(&["a", "b"]);
+        let mut core: CoreShell<ReconcileFixture> = CoreShell::new();
+        assert_eq!(recon_count(core.scene(), "a"), Some(0));
+        // Same tag list → no scene mutation; the existing instances stay.
+        recon_set_tags(&["a", "b"]);
+        core.reconcile_externals();
+        assert_eq!(
+            recon_count(core.scene(), "a"),
+            Some(0),
+            "unchanged tags leave the scene (and instances) untouched",
+        );
+    }
+
+    #[test]
+    fn r688_reconcile_single_external_binding_is_noop() {
+        // A binding with no extras keeps the bare Scene::External shape;
+        // reconcile must not wrap it in a Container.
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        assert!(matches!(core.scene(), Scene::External(_)));
+        core.reconcile_externals();
+        assert!(
+            matches!(core.scene(), Scene::External(_)),
+            "single-External binding stays bare after reconcile",
+        );
     }
 }

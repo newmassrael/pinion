@@ -793,6 +793,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         let _ = self.drain_deferred_inputs(&deferred_inputs);
         let tail = self.core.tail();
         let _ = self.handle_tail(&tail);
+        // R688 §5.16 §5.35 §5.6 — reconcile the external set after the
+        // dispatch (GUI/TUI parity, §2 #6). A structure-mutating
+        // `scene/invoke` registers / drops its routable External here,
+        // same as the pinion-shell side. No-op when the tag set is
+        // unchanged.
+        self.core.reconcile_externals();
         // R670 §5.41 §5.39 §5.38 — `focus/set` from the AI client
         // fires the `External::on_focus_change` notification on the
         // old + new tags so the focus arc reaches every observer
