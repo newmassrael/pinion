@@ -917,6 +917,9 @@ fn main() {
 - Hedge runtime cost: zero (match jump table identical); ergonomic tax: downstream forced _ arm
 - Hedge intent: future game-engine evolution (Mesh/Camera/Light) addable without v2 major bump
 - R32 §5.27: Scene closed enum extended to 8th variant VirtualList; non_exhaustive guard validated.
+- R690.A: R32 "8th variant VirtualList" extension never realized; actual Scene = 9 variants.
+- R690.A: no VirtualList; post-External slots = Scroll (R55.A) + ImmediateModeNode (R681).
+- R690.A: non_exhaustive guard holds but variant never added; 5.27 virtualization DEFERRED.
 
 
 
@@ -1544,7 +1547,7 @@ fn main() {
 ### §5.27. Virtualization (VirtualList Scene variant + windowed render)
 
 
-**Intent**: VirtualList<T> = 8th Scene variant; windowed rendering for 10K+ datasets. Materialize only visible_range items at layout; AI agent sees count + window + materialized items via scene/virtual_list RPC.
+**Intent**: VirtualList = planned windowed-render Scene variant for 10K+ datasets. DEFERRED, not implemented (see R690.A caveat); the R32 8th-variant / 14th-RPC numbering is stale.
 
 
 **Rationale**:
@@ -1588,6 +1591,11 @@ fn main() {
 - R32: Damage rect: scroll change marks whole list rect dirty; no partial damage v0.
 - R32: SCE schema: virtual_list block {source, template, size}; Forge emits VirtualListNode.
 - R32: dry_run on VirtualList materializes hypothetical visible_range; not full count.
+- R690.A: VirtualList never implemented; actual Scene = 9 variants, none VirtualList.
+- R690.A: no scene/virtual_list RPC registered; the "14th RPC method" claim is stale.
+- R690.A: R32 "8th variant" numbering stale; Scroll (R55.A) + ImmediateModeNode (R681) took slots.
+- R690.A: design valid (windowed re-materialize at layout; recycle rejected for view-fn purity).
+- R690.A: re-derive vs current 9-variant Scene at impl; tracked R750+ (LazyVStack, evidence-first).
 
 
 
@@ -13910,6 +13918,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - Scene Clone via External handle Box<dyn> -> Rc<RefCell<dyn>> (S15 / R684.B Hack 3.4) — Phase C entry (immediate-mode game-loop + dirty cache also benefit).
 - live MOUSE drag-to-reorganize + drop-zone highlight overlay (R687 carry a) — currently RPC-native only.
 - Phase B widget catalog cascade: Menu / Dialog / Toolbar / Table / Tooltip / Drawer / Accordion / DatePicker / ColorPicker (1 round 1 widget or small pair).
+
+
+
+### R690.A — R690.A audit-clearance — reconcile §5.27 Virtualization spec/code drift: VirtualList + scene/virtual_list were spec-ratified (R32) but never implemented; correct the stale 8th-variant / 14th-RPC claims.
+
+**Changes**:
+- set_section_intent §5.27 to a DEFERRED stance — R32 '8th Scene variant' / 'scene/virtual_list 14th RPC method' numbering marked stale; the windowed-render design stays valid in principle.
+- add 5 caveats on §5.27 + 3 caveats on §5.2 recording the drift authoritatively: actual Scene = 9 variants (Box/Text/Path/Image/Container/Effect/External/Scroll/ImmediateModeNode), none VirtualList; no scene/virtual_list RPC registered; post-External slots went to Scroll (R55.A) + ImmediateModeNode (R681).
+- no code change — the code is correct (VirtualList simply unbuilt); only the spec asserted false implemented-sounding facts. Recycle/RecyclerView pattern still rejected (view-fn purity); windowed re-materialization preserved for Phase B/D re-derivation. Frozen R32 changelog body untouched per ledger contract.
+
+
+
+**Verification**:
+- grep proof: crates/pinion-core/src/scene.rs Scene enum = 9 variants, no VirtualList; crates/pinion-rpc registers ~35 scene/* + focus/* methods, no scene/virtual_list.
+- validate_workspace: T1 orphan=0 (new +0), round-trip mandatory 1/1, GENERATED.md sync, T3 warn 3 / T4 info 240 unchanged (no new violations).
+- audit-clearance round (0 LOC code change, visible-deliverable exempt per SEED); no cargo build/test/sweep required.
+
+
+
+**Impact**: §5.2, §5.7, §5.12, §5.27
+
+
+**Carry forward**:
+- R691 = Menu widget (command-class; RadioGroupExternal reuse forbidden) — resume Phase B catalog.
+- R750+ = virtualization implementation: re-derive VirtualList against the current 9-variant Scene shape; first real consumer = Phase D scene-graph outliner (10K+ objects), evidence-first.
+- standing R690 deferrals persist: reconcile generation-counter dirty-gate (Phase D); Scene Clone Box<dyn> -> Rc<RefCell<dyn>> (Phase C entry).
 
 
 
