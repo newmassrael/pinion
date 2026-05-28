@@ -101,7 +101,10 @@ use pinion_widget_paint::devtools::{
     find_node_at_path, rebuild_with_highlight_at_path, scene_root_path_segment, scene_to_tree_item,
     scene_type_name, ClickRouter,
 };
-use pinion_widget_paint::dock::{view_dock_panel, DockPanelExternal, DockPanelStyle};
+use pinion_widget_paint::dock::{
+    view_dock_panel, view_floating_placeholder, DockPanelExternal, DockPanelStyle,
+    FloatingPlaceholderStyle,
+};
 use pinion_widget_paint::splitter::{
     view_splitter, SplitterExternal, SplitterOrientation, SplitterStyle,
 };
@@ -614,7 +617,7 @@ where
 {
     let panels = use_windows_topology().get();
     if is_panel_floating(&panels, panel_id) {
-        view_floating_placeholder(panel_id, theme)
+        view_floating_placeholder_for(panel_id, theme)
     } else {
         let style = DockPanelStyle::m3_default(panel_id);
         view_dock_panel(panel_title_for(panel_id), content_fn(state, theme), theme, &style)
@@ -622,26 +625,19 @@ where
 }
 
 /// Placeholder Container painted in the dock slot when its panel is
-/// currently floating. Subdued surface fill + a short label so the
-/// user / AI sees the slot is reserved without obscuring the dock
-/// layout's structural shape.
-fn view_floating_placeholder(panel_id: &str, theme: &Theme) -> Scene {
-    Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            format!("({panel_id} torn off)"),
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(PROPERTY_PANE_FONT_PX)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))])
-        .with_tag(format!("{panel_id}_placeholder"))
-        .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)))
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Column)
-                .with_justify(JustifyContent::Center)
-                .with_align_items(AlignItems::Center),
-        ),
+/// currently floating. R685 §5.16 §5.49 — substrate consumer
+/// (lifted into [`pinion_widget_paint::dock::view_floating_placeholder`]
+/// in the R685 round as the [[abstraction-needs-second-consumer]]
+/// Rule-of-Three closure; pre-R685 this was a binding-local
+/// composition. The lifted form takes a [`FloatingPlaceholderStyle`]
+/// sidecar; passing `with_label_font_size_px(PROPERTY_PANE_FONT_PX)`
+/// preserves the pre-lift 14-px label size bit-identically.
+fn view_floating_placeholder_for(panel_id: &str, theme: &Theme) -> Scene {
+    view_floating_placeholder(
+        panel_id,
+        theme,
+        &FloatingPlaceholderStyle::m3_default()
+            .with_label_font_size_px(PROPERTY_PANE_FONT_PX),
     )
 }
 

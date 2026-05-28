@@ -1069,6 +1069,32 @@ impl<V: WidgetCore> CoreShell<V> {
         router.update_paint_scene(paint_scene, scene);
     }
 
+    /// (R685 §5.16 §5.35) Pure-storage paint-scene write — no
+    /// `refresh_hover` side effect. Per-window mirror of
+    /// [`InputRouter::set_paint_scene`].
+    ///
+    /// Used by RPC dispatch paths that need fresh hit-test geometry
+    /// after a state mutation moved widget rects, but **without**
+    /// firing the synthetic `PointerEnter` / `PointerLeave` arcs the
+    /// composed [`Self::update_paint_scene_for_window`] generates
+    /// (those arcs are correct for a real winit paint cycle where
+    /// the user is interactively engaged with the window, but
+    /// incorrect for an AI-driven RPC that didn't move the cursor —
+    /// only the layout moved under it). R684 atomic 3 worked around
+    /// the side-effect with a first-paint-only gate; R685 lands the
+    /// proper substrate split so every-RPC refresh is safe.
+    pub fn set_paint_scene_for_window(
+        &mut self,
+        window_id: &str,
+        paint_scene: Scene,
+    ) {
+        let Self { routers, .. } = self;
+        let router = routers
+            .entry(window_id.to_owned())
+            .or_default();
+        router.set_paint_scene(paint_scene);
+    }
+
     /// R51.122 §5.41 — read-only proxy to the underlying
     /// [`InputRouter::hover_target`]. Backends use this to read the
     /// current hover target for `click_to_focus` style follow-up

@@ -342,8 +342,66 @@ impl InputRouter {
     /// `PointerLeave` transitions fire here so the SCXML matches the
     /// new visual state on the next frame. Pointers under capture
     /// lock keep their hover pinned (the drag invariant).
+    ///
+    /// (R685 §5.16 §5.35) Composition of [`Self::set_paint_scene`] (pure
+    /// storage write) + [`Self::refresh_hover_for_all_active_pointers`]
+    /// (synthetic hover-arc dispatch). Pre-R685 the two responsibilities
+    /// were inlined here; the split lets RPC paths refresh hit-test
+    /// geometry without firing synthetic hover arcs — the R660 `RadioGroup`
+    /// regression bisect end-to-end (R684 atomic 3 worked around via a
+    /// first-paint-only gate; R685 lands the proper substrate split so
+    /// every-RPC refresh is safe).
     pub fn update_paint_scene(&mut self, scene: Scene, state_scene: &mut Scene) {
+        self.set_paint_scene(scene);
+        self.refresh_hover_for_all_active_pointers(state_scene);
+    }
+
+    /// (R685 §5.16 §5.35) Pure-storage paint-scene write — no
+    /// `refresh_hover` side effect.
+    ///
+    /// Splits the R51.39 [`Self::update_paint_scene`] composition into
+    /// (a) storage + (b) side-effect refresh so RPC paths that need
+    /// fresh hit-test geometry **without** firing synthetic
+    /// `PointerEnter` / `PointerLeave` arcs have a safe primitive.
+    /// Pre-R685 the only path was the composed
+    /// [`Self::update_paint_scene`], which made every per-RPC refresh
+    /// double-fire hover transitions and mutate widget state in ways
+    /// the application did not request (R660 `RadioGroup` End-key
+    /// regression caught the issue end-to-end; R684 atomic 3 worked
+    /// around it via a first-paint-only gate; R685 lands the textbook
+    /// split).
+    ///
+    /// Use cases for the storage-only path:
+    ///
+    /// * RPC `scene/drag` / `scene/click` after a state change moved
+    ///   the hit-test geometry — the AI client wants the next hit-test
+    ///   to see fresh rects, but the synthetic hover arcs from a real
+    ///   user "didn't move" the cursor (the cursor stayed put; only
+    ///   the layout shifted under it).
+    /// * Headless / scripted scenarios where firing input arcs would
+    ///   pollute the SCXML transition log captured for assertions.
+    ///
+    /// The composed [`Self::update_paint_scene`] is still the right
+    /// choice for live winit paint cycles (where a real
+    /// `RedrawRequested` reflects either a state change with implicit
+    /// pointer re-targeting, or a window resize moving widgets under a
+    /// stationary cursor — both want the hover arcs).
+    pub fn set_paint_scene(&mut self, scene: Scene) {
         self.last_paint_scene = Some(scene);
+    }
+
+    /// (R685 §5.16 §5.35) Refresh-hover side-effect half of the R51.39
+    /// `update_paint_scene` split. Walks every non-captured pointer +
+    /// re-evaluates its hover target against the current
+    /// `last_paint_scene`, dispatching synthetic `PointerEnter` /
+    /// `PointerLeave` if the deepest-tagged hit changed.
+    ///
+    /// Lives next to [`Self::set_paint_scene`] so the
+    /// [`Self::update_paint_scene`] composition is mechanically
+    /// derivable: write the scene, refresh hover. Pure side effect —
+    /// the function takes `&mut Scene` because `refresh_hover` mutates
+    /// the state scene through `dispatch_send`.
+    pub fn refresh_hover_for_all_active_pointers(&mut self, state_scene: &mut Scene) {
         // Snapshot pointer ids before iterating — refresh_hover
         // takes &mut self and mutates `hover_targets`. Cloning the
         // key set keeps the multi-pointer iteration self-contained

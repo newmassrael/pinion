@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R685 §5.16 §5.41 §5.49 — pinion-forge codegen manifest for
+  hello-dock-panels-editor. 5-pane editor binding consuming the
+  R685 view_dock_surface substrate over a declarative DockTopology.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloDockPanelsEditorRenderer"
+        backend="vello"/>

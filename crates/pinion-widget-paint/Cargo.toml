@@ -21,6 +21,20 @@ pinion-text = { path = "../pinion-text" }
 # widget paint helpers produce Scene with the right `with_aria_label`
 # overrides so the a11y enrich pass downstream wires them.
 pinion-a11y = { path = "../pinion-a11y" }
+# (R685 §5.16 §5.49) `DockTopology` + `DockNode` + `DockSlot` +
+# `SplitterOrientation` derive `Serialize + Deserialize` so the dock
+# topology tree round-trips through JSON for AI-introspection
+# (mirror of `pinion-shell::WindowSpec` serde derive R683.A
+# established). Pulled in at the crate level rather than feature-
+# gated because the topology API surface always exposes serde-shaped
+# data — making serde optional would surface a per-binding compile
+# choice the substrate cannot resolve without a 2nd-consumer signal.
+serde = { workspace = true }
+# (R685 §5.16) `serde_json` is dev-only here — topology JSON round-
+# trip tests need it to assert the bit-stable on-disk form. Production
+# bindings serialize through their own pipelines (pinion-platform-
+# storage or the binding's chosen format); the substrate stays
+# format-agnostic.
 
 [dev-dependencies]
 # (R684 §5.21 §5.16) Test-only dependency on pinion-runtime so the
@@ -31,6 +45,11 @@ pinion-a11y = { path = "../pinion-a11y" }
 # default features stay off so the vello GPU stack does not pull
 # into the test binary.
 pinion-runtime = { path = "../pinion-runtime" }
+# (R685 §5.16 §5.49) `serde_json` for `DockTopology` JSON round-trip
+# tests in `dock::topology::tests`. Dev-only — production bindings
+# serialize through their own pipelines (pinion-platform-storage or
+# the binding's chosen format).
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

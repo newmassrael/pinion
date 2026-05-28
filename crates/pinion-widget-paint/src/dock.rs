@@ -11,8 +11,8 @@
 //! Editor / `VSCode` panel system ships.
 //!
 //! v1 ships the **panel primitive** + tear-off detection only. The
-//! topology composition (recursive split tree across
-//! `DockSlot::{Left, Right, Top, Bottom, Center}` with nested
+//! topology composition (recursive split tree with `Horizontal` /
+//! `Vertical` orientations and nested
 //! splitters) is application-level for v1, composed via
 //! [`splitter::view_splitter`](crate::splitter::view_splitter) +
 //! [`view_dock_panel`]. The substrate-as-topology lift is deferred
@@ -75,6 +75,391 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use std::rc::Rc;
+
+use pinion_core::reactive::Signal;
+
+use crate::splitter::{view_splitter, SplitterOrientation, SplitterStyle};
+
+// ─────────────────────────────────────────────────────────────────────
+// R685 §5.16 §5.49 — DockSurface topology composition substrate.
+//
+// The topology types are pure data — no `External`, no `Scene`
+// composition. They describe the recursive split tree (binary
+// splits + leaf panels) an editor / DCC / IDE shell composes its
+// multi-pane layout from. The matching `view_surface` walker
+// (R685 atomic 1) lowers a [`DockTopology`] into a nested
+// [`crate::splitter::view_splitter`] + [`view_dock_panel`] scene.
+//
+// ## Design references
+//
+//  - `VSCode`: Activity bar (left) + Side bar (left or right) +
+//    Editor (center) + Panel (bottom) + Status bar — fixed slots
+//    with draggable splits between them. The recursive Split/Leaf
+//    abstraction here generalizes to that shape via nested splits.
+//  - `IntelliJ`: Tool windows dock to Left / Right / Bottom / Top
+//    of the editor — same Split tree, different topology shape.
+//  - Photoshop: Side panels stack on left or right — N-leaf
+//    horizontal split.
+//  - Unreal Editor: Free-form docking via nested splits + tabs.
+//
+// The recursive Split tree is the textbook canonical abstraction
+// every pro-tool authoring shell ships under the hood; the
+// per-shell visual feel (tabs, drag-drop, etc.) is composed on
+// top.
+//
+// ## Why binary splits (not N-ary)
+//
+// Every pane system the world ships ultimately reduces to a binary
+// split tree because the user's drag UX is "grab the divider between
+// two panes." A 3-way split is two nested binary splits with a
+// shared edge; the binary form makes the drag wire trivial (one
+// [`crate::splitter::SplitterExternal`] per Split node) and the
+// serialization compact (recursive tree, no N-ary array bookkeeping).
+//
+// ## Stable Split ids (not positional addressing)
+//
+// Each [`DockNode::Split`] carries a stable [`DockNode::Split::id`]
+// the binding uses to look up its per-Split state ratio Signal +
+// the paint-side splitter tag. The id is stable across topology
+// mutations — a leaf insert / Split rebalance / dock-reorganize
+// gesture rewrites the tree shape but keeps every Split's id
+// intact, so binding-side state keyed on id never silently
+// re-binds to the wrong Split. Pre-R685 atomic 5b the walker
+// indexed splits by depth-first traversal order (fragile under
+// topology mutation); R685 atomic 5b lands the stable-id substrate
+// as the textbook canonical form Phase D editor work requires.
+//
+// ## Crate dep boundary
+//
+// Pure data — no Vello, no winit, no `pinion-text`, no `pinion-shell`
+// (the topology is the binding's responsibility; the substrate just
+// renders whatever tree it receives). Lives in `pinion-widget-paint`
+// because the [`view_surface`] walker (atomic 1) composes via
+// [`view_dock_panel`] + [`crate::splitter::view_splitter`].
+//
+// ─────────────────────────────────────────────────────────────────────
+
+/// (R685 §5.16 §5.49) Recursive node of a dock topology tree.
+///
+/// Either a binary [`Split`] (geometric divider between two
+/// child sub-trees, oriented Horizontal or Vertical, with a
+/// `ratio ∈ [0.0, 1.0]` controlling the divider position) or a
+/// [`Leaf`] (a single docked panel addressable by `panel_id`).
+///
+/// The tree's structure encodes the editor's pane layout; the
+/// per-Split `ratio` lives as plain data here, but the runtime
+/// `view_surface` walker (R685 atomic 1) reads it through a paired
+/// [`pinion_core::reactive::Signal<f32>`] so the user-driven splitter
+/// drag mutates the shared ratio and the topology re-paints
+/// reactively. The R685 atomic 1 contract: every Split node gets a
+/// paired `Signal<f32>` registered alongside; the tree carries the
+/// **initial** ratio + the application owns the live signal.
+///
+/// ## Why `Box<DockNode>` for children
+///
+/// Rust requires indirection (`Box`, `Rc`, `Arc`) for recursive
+/// `enum` variants because the variant's size would otherwise be
+/// infinite. `Box` is canonical for owned-by-parent trees with no
+/// sharing requirement (the topology tree is a tree, not a DAG);
+/// `Rc`/`Arc` would surface only if the same sub-tree appears
+/// twice (R685+ carry — every editor we know of has a single
+/// canonical topology).
+///
+/// ## Serialization
+///
+/// `#[serde(tag = "type")]` produces a `{"type": "Split", ...}`
+/// or `{"type": "Leaf", ...}` JSON shape — internally tagged
+/// because the variants have distinguishable field sets. AI
+/// clients reading the topology via `scene/query` get this
+/// shape verbatim.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+pub enum DockNode {
+    /// Binary geometric divider between two child sub-trees.
+    ///
+    /// `orientation = Horizontal` lays `first` on the left and
+    /// `second` on the right; `orientation = Vertical` lays `first`
+    /// on the top and `second` on the bottom. The split-position
+    /// ratio `ratio ∈ [0.0, 1.0]` is the **initial** value the
+    /// topology carries on disk; live runtime drag through
+    /// [`crate::splitter::SplitterExternal`] writes a shared signal
+    /// the binding owns. The shared signal + the splitter's paint-
+    /// side tag are registered against this Split's stable
+    /// [`Self::Split::id`] field — the [`view_dock_surface`]
+    /// walker's `split_handle` callback receives the id as its
+    /// first argument so the binding looks up its per-split state
+    /// by **stable identifier** rather than by traversal order.
+    ///
+    /// ## Why a stable id (not positional index)
+    ///
+    /// Pre-R685 atomic 5b the walker indexed splits by depth-first
+    /// traversal order. The index was fragile: any topology
+    /// mutation (a leaf insert / Split rebalance / dock-reorganize
+    /// gesture) shifted subsequent indices, so binding-side state
+    /// keyed on index would silently re-bind to the wrong Split.
+    /// Phase D's AAA editor needs topology mutation to be cheap +
+    /// safe (every user drag-to-reorganize gesture rewrites the
+    /// tree), and positional addressing makes that unsafe.
+    ///
+    /// The stable id is the textbook canonical: the binding
+    /// declares the id once at topology construction; the
+    /// `Rc<Signal<f32>>` ratio handle + the `SplitterStyle::tag`
+    /// are both registered against the same id; mutation of the
+    /// topology tree shape never affects which Split's state is
+    /// which.
+    Split {
+        /// Stable Split identifier. Used as the lookup key for the
+        /// `split_handle` callback in [`view_dock_surface`] +
+        /// (typically) as the paint-side
+        /// [`SplitterStyle::tag`](crate::splitter::SplitterStyle::tag)
+        /// the binding registers its [`SplitterExternal`](crate::splitter::SplitterExternal)
+        /// against. Stable across topology mutations.
+        id: Cow<'static, str>,
+        /// Layout axis of the divider — `Horizontal` for a vertical
+        /// gutter splitting left / right panes; `Vertical` for a
+        /// horizontal gutter splitting top / bottom panes.
+        orientation: SplitterOrientation,
+        /// Initial split position as a fraction of the parent's
+        /// main-axis extent. `0.5` = even split. The runtime
+        /// `view_dock_surface` walker reads this through a paired
+        /// `Signal<f32>` so user drag mutations refresh the
+        /// layout reactively.
+        ratio: f32,
+        /// Left child (Horizontal) or top child (Vertical).
+        first: Box<DockNode>,
+        /// Right child (Horizontal) or bottom child (Vertical).
+        second: Box<DockNode>,
+    },
+    /// Single docked panel — leaf of the tree.
+    ///
+    /// `panel_id` is the stable identifier the binding uses to
+    /// look up the panel's `Scene` content via the
+    /// [`view_dock_surface`] walker's `panel_handle: Fn(&str) ->
+    /// DockPanelHandle` callback. The same id also pairs with the
+    /// [`DockPanelExternal::new`] tear-off wire so a drag from the
+    /// panel's header forwards the right payload to the binding's
+    /// reducer.
+    ///
+    /// (R685 atomic 5c) The pre-R685 atomic 5c `slot: DockSlot`
+    /// field is removed — it was dead data (no consumer in either
+    /// dock binding read it) and added speculative API surface
+    /// without a clear contract. A future R686+ round can re-add a
+    /// semantic slot label when a real consumer surfaces (focus-
+    /// traversal-order ordering / ARIA region landmark / dock-back
+    /// re-attach hint), with the consumer driving the design.
+    Leaf {
+        /// Stable panel identifier — must match the
+        /// [`DockPanelStyle::tag`] the binding uses for this panel,
+        /// the `panel_handle` callback key, and the
+        /// `DockPanelExternal::new` first argument.
+        panel_id: Cow<'static, str>,
+    },
+}
+
+impl DockNode {
+    /// (R685 §5.16) Convenience constructor for a leaf node.
+    #[must_use]
+    pub fn leaf(panel_id: impl Into<Cow<'static, str>>) -> Self {
+        Self::Leaf {
+            panel_id: panel_id.into(),
+        }
+    }
+
+    /// (R685 §5.16) Convenience constructor for a horizontal split
+    /// (left | right panes). `id` is the stable Split identifier the
+    /// binding uses as the lookup key for the `split_handle` callback +
+    /// the [`SplitterStyle::tag`](crate::splitter::SplitterStyle::tag);
+    /// `ratio` is the initial split fraction.
+    #[must_use]
+    pub fn split_horizontal(
+        id: impl Into<Cow<'static, str>>,
+        ratio: f32,
+        first: DockNode,
+        second: DockNode,
+    ) -> Self {
+        Self::Split {
+            id: id.into(),
+            orientation: SplitterOrientation::Horizontal,
+            ratio,
+            first: Box::new(first),
+            second: Box::new(second),
+        }
+    }
+
+    /// (R685 §5.16) Convenience constructor for a vertical split
+    /// (top / bottom panes). `id` is the stable Split identifier;
+    /// `ratio` is the initial split fraction.
+    #[must_use]
+    pub fn split_vertical(
+        id: impl Into<Cow<'static, str>>,
+        ratio: f32,
+        first: DockNode,
+        second: DockNode,
+    ) -> Self {
+        Self::Split {
+            id: id.into(),
+            orientation: SplitterOrientation::Vertical,
+            ratio,
+            first: Box::new(first),
+            second: Box::new(second),
+        }
+    }
+
+    /// (R685 §5.16) Count of [`DockNode::Leaf`] nodes in the
+    /// sub-tree rooted at `self`. Useful for `panel_views` callback
+    /// validation + persistence size limits.
+    #[must_use]
+    pub fn leaf_count(&self) -> usize {
+        match self {
+            Self::Leaf { .. } => 1,
+            Self::Split { first, second, .. } => first.leaf_count() + second.leaf_count(),
+        }
+    }
+
+    /// (R685 §5.16) Count of [`DockNode::Split`] nodes in the
+    /// sub-tree rooted at `self`. The R685 atomic 1 walker pairs
+    /// each Split with a `Signal<f32>` for the ratio drag wire;
+    /// this count is the signal-pool size the binding must
+    /// register up-front.
+    #[must_use]
+    pub fn split_count(&self) -> usize {
+        match self {
+            Self::Leaf { .. } => 0,
+            Self::Split { first, second, .. } => 1 + first.split_count() + second.split_count(),
+        }
+    }
+
+    /// (R685 §5.16) Walk all leaf panel ids in depth-first order
+    /// (first child before second). Order is stable across
+    /// serialization round-trips so `panel_views` callback indices
+    /// align with `panel_ids()[i]` deterministically.
+    #[must_use]
+    pub fn panel_ids(&self) -> Vec<&str> {
+        let mut out = Vec::with_capacity(self.leaf_count());
+        self.collect_panel_ids(&mut out);
+        out
+    }
+
+    fn collect_panel_ids<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match self {
+            Self::Leaf { panel_id, .. } => out.push(panel_id.as_ref()),
+            Self::Split { first, second, .. } => {
+                first.collect_panel_ids(out);
+                second.collect_panel_ids(out);
+            }
+        }
+    }
+
+    /// (R685 §5.16) Walk all Split ids in depth-first pre-order
+    /// (visit current Split before recursing into children, first
+    /// child before second). Used by the binding to enumerate the
+    /// `Rc<Signal<f32>>` ratio handles it must register up-front +
+    /// by [`view_dock_surface`]'s validation paths.
+    #[must_use]
+    pub fn split_ids(&self) -> Vec<&str> {
+        let mut out = Vec::with_capacity(self.split_count());
+        self.collect_split_ids(&mut out);
+        out
+    }
+
+    fn collect_split_ids<'a>(&'a self, out: &mut Vec<&'a str>) {
+        if let Self::Split {
+            id, first, second, ..
+        } = self
+        {
+            out.push(id.as_ref());
+            first.collect_split_ids(out);
+            second.collect_split_ids(out);
+        }
+    }
+}
+
+/// (R685 §5.16 §5.49) Root descriptor of a dock topology —
+/// thin wrapper around the root [`DockNode`].
+///
+/// The wrapper exists so future R686+ axes (a `name` field for
+/// AI-introspection, per-topology `version` for migration, etc.)
+/// can land without breaking the on-disk serde shape (the wrapper
+/// itself is `#[non_exhaustive]`). The R685 v1 form is minimal —
+/// just the recursive tree.
+///
+/// ## Lifecycle
+///
+/// 1. Binding declares the topology at compile time (often via
+///    [`DockTopology::single`] for a single-pane case + nested
+///    `split_horizontal` / `split_vertical` builders for a
+///    multi-pane editor).
+/// 2. The binding registers a `Signal<f32>` per [`DockNode::Split`]
+///    node (depth-first index) + a `panel_views` callback that
+///    maps `panel_id → Scene`.
+/// 3. R685 atomic 1's `view_surface(topology, panel_views, signals,
+///    theme)` walker emits the nested splitter + panel composition.
+/// 4. User drags a splitter → `SplitterExternal::pointer_move` →
+///    `Signal<f32>::set` → reactive paint → updated ratio.
+/// 5. User drags a panel's header past the tear-off threshold →
+///    `DockPanelExternal` emits `tear_off` → binding reducer
+///    pushes a `WindowSpec` + removes the leaf from the topology
+///    + mutates the topology Signal → reactive repaint.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DockTopology {
+    /// Recursive root of the dock tree. A single-panel editor's
+    /// topology is `root: DockNode::Leaf { ... }`; a multi-pane
+    /// editor's topology is `root: DockNode::Split { ... }` with
+    /// nested children.
+    pub root: DockNode,
+}
+
+impl DockTopology {
+    /// (R685 §5.16) Construct a topology from a single root node.
+    /// Use the [`DockNode::leaf`] / `split_horizontal` /
+    /// `split_vertical` builders to assemble the tree.
+    #[must_use]
+    pub fn new(root: DockNode) -> Self {
+        Self { root }
+    }
+
+    /// (R685 §5.16) Convenience constructor for a single-panel
+    /// topology (one leaf, no splits). The canonical seed before
+    /// a user adds a second panel via R686+ drag-to-reorganize.
+    #[must_use]
+    pub fn single(panel_id: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            root: DockNode::leaf(panel_id),
+        }
+    }
+
+    /// (R685 §5.16) Depth-first ordered list of all panel ids in
+    /// the topology. Order is stable across serialization.
+    #[must_use]
+    pub fn panel_ids(&self) -> Vec<&str> {
+        self.root.panel_ids()
+    }
+
+    /// (R685 §5.16) Depth-first pre-order list of all Split ids in
+    /// the topology. The binding registers one `Rc<Signal<f32>>`
+    /// ratio handle per id at boot.
+    #[must_use]
+    pub fn split_ids(&self) -> Vec<&str> {
+        self.root.split_ids()
+    }
+
+    /// (R685 §5.16) Count of leaf nodes. Equals
+    /// `self.panel_ids().len()`.
+    #[must_use]
+    pub fn leaf_count(&self) -> usize {
+        self.root.leaf_count()
+    }
+
+    /// (R685 §5.16) Count of Split nodes. Equals the signal-pool
+    /// size the binding must register up-front for the
+    /// `view_dock_surface` walker's ratio drag wire.
+    #[must_use]
+    pub fn split_count(&self) -> usize {
+        self.root.split_count()
+    }
+}
 
 /// R683.B §5.16 — symbolic event name the
 /// [`DockPanelExternal`] emits when the user's drag exceeds the
@@ -279,6 +664,299 @@ pub fn view_dock_panel(
 
 fn composite_tag(panel_tag: &str, suffix: &'static str) -> String {
     format!("{panel_tag}#{suffix}")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R685 §5.16 §5.49 — Floating-panel placeholder paint helper.
+//
+// Lifted from `hello-dock-panels` (R683.C, 1st dock consumer's
+// `view_floating_placeholder`) on its 2nd-consumer signal
+// (`hello-dock-panels-editor` R685 atomic 2) per
+// [[abstraction-needs-second-consumer]]. The placeholder Container
+// goes in the dock slot when the panel is currently torn off into
+// a floating window — the structural slot stays present so the
+// dock layout doesn't reshuffle when the user tears off a panel.
+//
+// ## Why a substrate helper (not a binding-local fn)
+//
+// Both dock consumers paint the same shape: subdued
+// `SurfaceContainerLow` fill + centered "({panel_id} torn off)"
+// text in muted on-surface colour. The composition has zero
+// per-binding variance worth duplicating — the text label format,
+// the M3 token choices, and the center-aligned Column layout are
+// canonical. Future dock consumers inherit the same look
+// automatically; the Material 3 token choices remain coherent
+// even if a theme overhaul lands.
+// ─────────────────────────────────────────────────────────────────────
+
+/// (R685 §5.16) Style sidecar for [`view_floating_placeholder`].
+/// `#[non_exhaustive]` so future axes (custom label, icon glyph,
+/// click-to-re-attach hint) land via builders without breaking the
+/// constructor surface. Use [`Self::m3_default`] for the canonical
+/// 14-px Body Medium font tinted with `OnSurfaceMuted` against a
+/// `SurfaceContainerLow` fill.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
+pub struct FloatingPlaceholderStyle {
+    /// Font size for the placeholder label (logical pixels). M3
+    /// Body Medium 14 sp is the canonical fit for a dense dock
+    /// slot label.
+    pub label_font_size_px: u32,
+}
+
+impl FloatingPlaceholderStyle {
+    /// M3-canonical default: 14-px Body Medium label.
+    #[must_use]
+    pub const fn m3_default() -> Self {
+        Self {
+            label_font_size_px: 14,
+        }
+    }
+
+    /// Override the placeholder label font size in logical pixels.
+    #[must_use]
+    pub const fn with_label_font_size_px(mut self, size: u32) -> Self {
+        self.label_font_size_px = size;
+        self
+    }
+}
+
+/// (R685 §5.16) Suffix appended to the placeholder Container's
+/// `tag`. The placeholder paint emits tag `"{panel_id}_placeholder"`
+/// so AI introspection can detect "this slot is currently floating"
+/// without descending into the panel content tree.
+pub const PLACEHOLDER_TAG_SUFFIX: &str = "_placeholder";
+
+/// (R685 §5.16 §5.49) Paint the canonical "(panel torn off)"
+/// placeholder Container for a dock slot whose panel is currently
+/// floating.
+///
+/// Subdued `SurfaceContainerLow` fill + centered
+/// `"({panel_id} torn off)"` Text in `OnSurfaceMuted` colour. The
+/// outer Container carries tag `"{panel_id}_placeholder"` so AI
+/// clients can detect placeholders via `scene/query` without
+/// descending into the panel's full content tree.
+///
+/// Used by both R685 dock consumers (`hello-dock-panels` after the
+/// R685 atomic 2 retrofit + `hello-dock-panels-editor` 2nd consumer).
+/// Production binding-local equivalents collapse into one call
+/// through this substrate.
+#[must_use]
+pub fn view_floating_placeholder(
+    panel_id: &str,
+    theme: &Theme,
+    style: &FloatingPlaceholderStyle,
+) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            format!("({panel_id} torn off)"),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(style.label_font_size_px)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_tag(format!("{panel_id}{PLACEHOLDER_TAG_SUFFIX}"))
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_justify(JustifyContent::Center)
+                .with_align_items(AlignItems::Center),
+        ),
+    )
+}
+
+/// (R685 §5.16 §5.49) Floating-window id convention — the canonical
+/// `"{prefix}{panel_id}"` form both dock consumers use when minting
+/// a [`WindowSpec`](pinion_shell::WindowSpec)-like id for a
+/// torn-off panel. Pulled into substrate as a string-only helper
+/// (no `WindowSpec` dependency) so the prefix convention is
+/// consistent across consumers + AI clients reading the topology
+/// JSON can detect floating panels without per-binding prefix
+/// knowledge.
+///
+/// `prefix` is conventionally `"torn-"` (the
+/// [`DEFAULT_FLOATING_WINDOW_PREFIX`] constant); custom prefixes
+/// land if a binding has a competing convention.
+#[must_use]
+pub fn floating_window_id(prefix: &str, panel_id: &str) -> String {
+    format!("{prefix}{panel_id}")
+}
+
+/// (R685 §5.16) Default floating-window id prefix — `"torn-"`.
+/// Both R685 dock consumers use this; AI clients reading topology
+/// JSON can rely on the prefix to identify torn-off panels by
+/// stripping it.
+pub const DEFAULT_FLOATING_WINDOW_PREFIX: &str = "torn-";
+
+// ─────────────────────────────────────────────────────────────────────
+// R685 §5.16 §5.49 — DockSurface recursive composition walker.
+//
+// `view_dock_surface` lowers a [`DockTopology`] into a nested
+// `view_splitter` + `view_dock_panel` scene. Each `DockNode::Leaf`
+// emits one panel (via a binding-supplied `panel_handle`
+// callback); each `DockNode::Split` emits one splitter (via a
+// binding-supplied `split_handle` callback keyed on the Split's
+// stable [`DockNode::Split::id`]).
+//
+// The walker is **pure** — no `Owner::cache`, no `Effect`, no
+// `Signal::set`. The application owns the per-Split `Rc<Signal<f32>>`
+// ratio handle + the per-Panel `Scene` content + the per-Split
+// `dragging: bool` mirror; the walker just stitches them through
+// `view_splitter` / `view_dock_panel`.
+//
+// ## Stable split id addressing
+//
+// Each [`DockNode::Split`] carries a stable [`DockNode::Split::id`]
+// the walker passes to `split_handle(id, orientation)`. The binding
+// looks up its `Rc<Signal<f32>>` ratio handle + the paint-side
+// [`SplitterStyle::tag`](crate::splitter::SplitterStyle::tag) by
+// stable id — topology mutations (leaf insert / Split rebalance /
+// dock-reorganize) rewrite the tree shape but keep every Split's
+// id intact, so binding-side state stays bound to the right Split.
+// ─────────────────────────────────────────────────────────────────────
+
+/// (R685 §5.16 §5.49) Per-panel state the binding supplies to
+/// [`view_dock_surface`] for each [`DockNode::Leaf`] in the topology.
+///
+/// The walker passes the `panel_id` (the leaf's
+/// [`DockNode::Leaf::panel_id`] field) to the binding's
+/// `panel_handle` callback; the callback returns this struct. The
+/// `style` is the [`DockPanelStyle`] handed to [`view_dock_panel`]
+/// (per-panel tag + header height + tear-off threshold); `content`
+/// is the panel's inner [`Scene`] (whatever view fragment the
+/// application paints inside the dock panel chrome — toolbar,
+/// outliner tree, property table, viewport, etc.).
+pub struct DockPanelHandle {
+    /// Panel style sidecar handed to [`view_dock_panel`]. The
+    /// [`DockPanelStyle::tag`] must match the leaf's `panel_id`
+    /// (the binding's
+    /// [`WidgetCore::create_extra_externals`](pinion_core::WidgetCore::create_extra_externals)
+    /// registers the [`DockPanelExternal`] under the same tag).
+    pub style: DockPanelStyle,
+    /// Inner content of the panel — the application's view
+    /// fragment (`Scene::Container` / `Scene::Text` / etc.).
+    pub content: Scene,
+}
+
+/// (R685 §5.16 §5.49) Per-split state the binding supplies to
+/// [`view_dock_surface`] for each [`DockNode::Split`] in the
+/// topology, keyed by the Split's stable [`DockNode::Split::id`].
+///
+/// `style.tag` must be unique across all splits in the topology so
+/// the [`InputRouter`](pinion_runtime::InputRouter) deepest-tagged
+/// hit-test resolves each splitter's drag wire to its own
+/// [`SplitterExternal`](crate::splitter::SplitterExternal). `ratio_signal`
+/// is the live `Rc<Signal<f32>>` the [`SplitterExternal`] mutates on
+/// drag (the topology's [`DockNode::Split::ratio`] field is the
+/// **initial** value, persisted on disk; the runtime drag wire
+/// reads/writes through this Signal). `dragging` is the boolean the
+/// view fn reads off the
+/// [`SplitterExternal::is_dragging`](crate::splitter::SplitterExternal::is_dragging)
+/// state-layer mirror — passed through so the handle paints with
+/// the M3 dragged-overlay tint.
+pub struct DockSplitHandle {
+    /// Splitter style sidecar handed to [`view_splitter`].
+    /// `tag` must be unique across the topology.
+    pub style: SplitterStyle,
+    /// Live ratio signal — the application owns this `Rc<Signal<f32>>`
+    /// (typically via [`pinion_core::reactive::Owner::cache`]).
+    pub ratio_signal: Rc<Signal<f32>>,
+    /// Drag-state mirror, read off the
+    /// [`SplitterExternal`](crate::splitter::SplitterExternal) on
+    /// each paint cycle.
+    pub dragging: bool,
+}
+
+/// (R685 §5.16 §5.49) Recursive walker — lower a [`DockTopology`]
+/// into a nested splitter + dock-panel [`Scene`].
+///
+/// For each [`DockNode::Leaf`], invokes `panel_handle(panel_id)` to
+/// resolve the panel's style + content + composes them via
+/// [`view_dock_panel`]. For each [`DockNode::Split`], invokes
+/// `split_handle(split_id, orientation)` to resolve the splitter's
+/// style + ratio signal + dragging mirror + composes the recursive
+/// children via [`view_splitter`].
+///
+/// `split_id` is the stable [`DockNode::Split::id`] field — the
+/// binding's `split_handle` callback uses it to look up the matching
+/// `Rc<Signal<f32>>` ratio handle + the splitter's paint-side tag.
+/// Stable across topology mutations: a leaf insert / Split rebalance
+/// rewrites the tree shape but keeps every Split's id intact, so the
+/// binding's state binding stays correct.
+///
+/// The walker is pure — no `Owner::cache`, no `Effect`. The
+/// application owns the reactive substrate; this function just
+/// stitches the supplied state through the [`view_splitter`] /
+/// [`view_dock_panel`] composition.
+///
+/// # Panics
+///
+/// Never panics on its own — `panel_handle` / `split_handle` are
+/// the only sources of state lookup. Callbacks that panic (e.g. on
+/// unknown `panel_id`) surface as panics from the walker; that is
+/// the application's contract (the topology + handles must be
+/// consistent at the call site).
+#[must_use]
+pub fn view_dock_surface<P, S>(
+    topology: &DockTopology,
+    panel_handle: P,
+    split_handle: S,
+    theme: &Theme,
+) -> Scene
+where
+    P: Fn(&str) -> DockPanelHandle,
+    S: Fn(&str, SplitterOrientation) -> DockSplitHandle,
+{
+    view_dock_surface_node(&topology.root, &panel_handle, &split_handle, theme)
+}
+
+/// (R685 §5.16) Internal recursive helper — walks one
+/// [`DockNode`] subtree. Each visited [`DockNode::Split`] hands its
+/// stable [`DockNode::Split::id`] to the binding's `split_handle`
+/// callback for state lookup.
+fn view_dock_surface_node<P, S>(
+    node: &DockNode,
+    panel_handle: &P,
+    split_handle: &S,
+    theme: &Theme,
+) -> Scene
+where
+    P: Fn(&str) -> DockPanelHandle,
+    S: Fn(&str, SplitterOrientation) -> DockSplitHandle,
+{
+    match node {
+        DockNode::Leaf { panel_id } => {
+            let handle = panel_handle(panel_id.as_ref());
+            view_dock_panel(
+                panel_id.as_ref(),
+                handle.content,
+                theme,
+                &handle.style,
+            )
+        }
+        DockNode::Split {
+            id,
+            orientation,
+            first,
+            second,
+            ..
+        } => {
+            let handle = split_handle(id.as_ref(), *orientation);
+            let first_scene =
+                view_dock_surface_node(first, panel_handle, split_handle, theme);
+            let second_scene =
+                view_dock_surface_node(second, panel_handle, split_handle, theme);
+            view_splitter(
+                first_scene,
+                second_scene,
+                &handle.ratio_signal,
+                theme,
+                &handle.style,
+                handle.dragging,
+            )
+        }
+    }
 }
 
 /// (R683.B §5.16) Cursor snapshot captured on the first
@@ -1057,3 +1735,562 @@ mod tests {
         });
     }
 }
+
+#[cfg(test)]
+mod topology_tests {
+    //! R685 §5.16 §5.49 — `DockTopology` / `DockNode` pure-data
+    //! substrate tests.
+    //!
+    //! These tests pin the load-bearing invariants the
+    //! `view_dock_surface` walker (R685 atomic 1) and the binding-side
+    //! `panel_handle` / `split_handle` callbacks rely on:
+    //!
+    //! 1. Constructor + builder API shapes (`leaf` /
+    //!    `split_horizontal` / `split_vertical` / `single`).
+    //! 2. Recursive traversal helpers (`leaf_count` / `split_count`
+    //!    / `panel_ids` / `split_ids` depth-first pre-order).
+    //! 3. JSON serde round-trip — every variant + nested topology
+    //!    parses back to identity (bit-stable on-disk form).
+    //! 4. Stable Split id semantics — every Split's id survives
+    //!    serde + walker traversal without renumbering.
+
+    use super::{DockNode, DockTopology};
+    use crate::splitter::SplitterOrientation;
+
+    /// 5-pane editor topology — the canonical R685 atomic 2 fixture
+    /// shape (top toolbar + bottom console wrap a horizontal split
+    /// of outliner + viewport + properties).
+    ///
+    /// Tree:
+    /// ```text
+    /// Vertical "outer" 0.10            (top: toolbar, rest: middle+bottom)
+    /// ├── Leaf toolbar
+    /// └── Vertical "inner_v" 0.80      (middle: panes, bottom: console)
+    ///     ├── Horizontal "middle_h" 0.20  (left: outliner, rest: viewport+props)
+    ///     │   ├── Leaf outliner
+    ///     │   └── Horizontal "inner_h" 0.75   (left: viewport, right: properties)
+    ///     │       ├── Leaf viewport
+    ///     │       └── Leaf properties
+    ///     └── Leaf console
+    /// ```
+    fn editor_topology() -> DockTopology {
+        DockTopology::new(DockNode::split_vertical(
+            "outer",
+            0.10,
+            DockNode::leaf("toolbar"),
+            DockNode::split_vertical(
+                "inner_v",
+                0.80,
+                DockNode::split_horizontal(
+                    "middle_h",
+                    0.20,
+                    DockNode::leaf("outliner"),
+                    DockNode::split_horizontal(
+                        "inner_h",
+                        0.75,
+                        DockNode::leaf("viewport"),
+                        DockNode::leaf("properties"),
+                    ),
+                ),
+                DockNode::leaf("console"),
+            ),
+        ))
+    }
+
+    #[test]
+    fn r685_dock_node_leaf_constructor_stores_panel_id() {
+        let leaf = DockNode::leaf("viewport");
+        let DockNode::Leaf { panel_id } = leaf else {
+            panic!("expected Leaf");
+        };
+        assert_eq!(panel_id.as_ref(), "viewport");
+    }
+
+    #[test]
+    fn r685_dock_node_split_horizontal_carries_stable_id_and_ratio() {
+        let split = DockNode::split_horizontal(
+            "my_split",
+            0.42,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        );
+        let DockNode::Split {
+            id,
+            orientation,
+            ratio,
+            first,
+            second,
+        } = split
+        else {
+            panic!("expected Split");
+        };
+        assert_eq!(id.as_ref(), "my_split");
+        assert_eq!(orientation, SplitterOrientation::Horizontal);
+        assert!((ratio - 0.42).abs() < f32::EPSILON);
+        let DockNode::Leaf { panel_id: a } = &*first else {
+            panic!("first leaf");
+        };
+        let DockNode::Leaf { panel_id: b } = &*second else {
+            panic!("second leaf");
+        };
+        assert_eq!(a.as_ref(), "a");
+        assert_eq!(b.as_ref(), "b");
+    }
+
+    #[test]
+    fn r685_dock_node_split_vertical_sets_orientation() {
+        let split = DockNode::split_vertical(
+            "v_split",
+            0.5,
+            DockNode::leaf("top"),
+            DockNode::leaf("bot"),
+        );
+        let DockNode::Split { id, orientation, .. } = split else {
+            panic!("expected Split");
+        };
+        assert_eq!(id.as_ref(), "v_split");
+        assert_eq!(orientation, SplitterOrientation::Vertical);
+    }
+
+    #[test]
+    fn r685_dock_topology_single_panel_constructor() {
+        let topology = DockTopology::single("viewport");
+        assert_eq!(topology.leaf_count(), 1);
+        assert_eq!(topology.split_count(), 0);
+        assert_eq!(topology.panel_ids(), vec!["viewport"]);
+        assert_eq!(topology.split_ids(), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn r685_dock_topology_leaf_count_walks_recursive_tree() {
+        let topology = editor_topology();
+        assert_eq!(topology.leaf_count(), 5, "5 panels in editor topology");
+        assert_eq!(topology.split_count(), 4, "4 splits in editor topology");
+    }
+
+    #[test]
+    fn r685_dock_topology_panel_ids_depth_first_first_before_second() {
+        let topology = editor_topology();
+        assert_eq!(
+            topology.panel_ids(),
+            vec!["toolbar", "outliner", "viewport", "properties", "console"],
+            "depth-first first-before-second traversal order",
+        );
+    }
+
+    #[test]
+    fn r685_dock_topology_split_ids_depth_first_pre_order() {
+        // Pre-order: outer (visit) → inner_v (visit) → middle_h (visit)
+        // → inner_h (visit) → leaves only after this. The walker uses
+        // this same order to dispatch split_handle callbacks.
+        let topology = editor_topology();
+        assert_eq!(
+            topology.split_ids(),
+            vec!["outer", "inner_v", "middle_h", "inner_h"],
+            "split_ids walk = depth-first pre-order over Split nodes",
+        );
+    }
+
+    #[test]
+    fn r685_dock_node_leaf_serde_round_trip_through_json() {
+        let leaf = DockNode::leaf("inspector");
+        let serialized = serde_json::to_string(&leaf).expect("serialize leaf");
+        assert!(serialized.contains("\"type\":\"Leaf\""));
+        assert!(serialized.contains("\"panel_id\":\"inspector\""));
+        // Pre-R685 atomic 5c form carried a `"slot":...` field —
+        // R685 dropped the dead field, so it must NOT appear.
+        assert!(!serialized.contains("\"slot\":"));
+        let parsed: DockNode =
+            serde_json::from_str(&serialized).expect("parse leaf");
+        assert_eq!(parsed, leaf, "leaf round-trips through JSON identity");
+    }
+
+    #[test]
+    fn r685_dock_node_split_serde_round_trip_through_json() {
+        let split = DockNode::split_horizontal(
+            "h_split",
+            0.30,
+            DockNode::leaf("a"),
+            DockNode::leaf("b"),
+        );
+        let serialized = serde_json::to_string(&split).expect("serialize split");
+        assert!(serialized.contains("\"type\":\"Split\""));
+        assert!(serialized.contains("\"id\":\"h_split\""));
+        assert!(serialized.contains("\"orientation\":\"Horizontal\""));
+        assert!(serialized.contains("\"ratio\":"));
+        let parsed: DockNode =
+            serde_json::from_str(&serialized).expect("parse split");
+        assert_eq!(parsed, split, "split round-trips through JSON identity");
+    }
+
+    #[test]
+    fn r685_dock_topology_full_editor_serde_round_trip() {
+        let topology = editor_topology();
+        let serialized =
+            serde_json::to_string(&topology).expect("serialize editor topology");
+        let parsed: DockTopology =
+            serde_json::from_str(&serialized).expect("parse editor topology");
+        assert_eq!(parsed, topology, "5-pane editor topology round-trips");
+        assert_eq!(parsed.panel_ids(), topology.panel_ids());
+        assert_eq!(parsed.split_ids(), topology.split_ids());
+    }
+
+    #[test]
+    fn r685_dock_topology_split_count_pairs_with_signal_pool_size() {
+        let topology = editor_topology();
+        let signal_pool_size = topology.split_count();
+        assert_eq!(signal_pool_size, 4, "4 splits = 4 ratio signals");
+        assert_eq!(topology.split_ids().len(), signal_pool_size);
+    }
+
+    #[test]
+    fn r685_dock_topology_serialized_form_stable_across_clones() {
+        let a = editor_topology();
+        let b = editor_topology();
+        let sa = serde_json::to_string(&a).expect("a");
+        let sb = serde_json::to_string(&b).expect("b");
+        assert_eq!(sa, sb, "two equivalent topologies serialize identically");
+    }
+}
+
+#[cfg(test)]
+mod placeholder_tests {
+    //! R685 §5.16 §5.49 — `view_floating_placeholder` substrate
+    //! lift tests. The helper was inlined in `hello-dock-panels`
+    //! (R683.C 1st consumer); R685 lifts it to substrate on the
+    //! 2nd-consumer signal (`hello-dock-panels-editor` round entry)
+    //! per [[abstraction-needs-second-consumer]].
+
+    use super::{
+        view_floating_placeholder, FloatingPlaceholderStyle, PLACEHOLDER_TAG_SUFFIX,
+    };
+    use pinion_core::scene::Scene;
+    use pinion_core::theme::Theme;
+
+    #[test]
+    fn r685_view_floating_placeholder_tags_with_panel_id_suffix() {
+        let theme = Theme::light();
+        let scene =
+            view_floating_placeholder("inspector", &theme, &FloatingPlaceholderStyle::m3_default());
+        let Scene::Container(outer) = &scene else { panic!() };
+        assert_eq!(
+            outer.tag.as_deref(),
+            Some(format!("inspector{PLACEHOLDER_TAG_SUFFIX}").as_str()),
+        );
+    }
+
+    #[test]
+    fn r685_view_floating_placeholder_contains_torn_off_label() {
+        let theme = Theme::light();
+        let scene =
+            view_floating_placeholder("viewport", &theme, &FloatingPlaceholderStyle::m3_default());
+        let Scene::Container(outer) = &scene else { panic!() };
+        assert_eq!(outer.children.len(), 1, "single Text child");
+        let Scene::Text(text) = &outer.children[0] else { panic!("expected Text") };
+        assert!(
+            text.content.contains("viewport") && text.content.contains("torn off"),
+            "label '{}' contains panel id + 'torn off'",
+            text.content,
+        );
+    }
+
+    #[test]
+    fn r685_view_floating_placeholder_default_font_is_14px() {
+        // FloatingPlaceholderStyle::m3_default() should fix the
+        // font size at 14 px (M3 Body Medium default). Pinned
+        // here so a future style tweak doesn't silently drift the
+        // hello-dock-panels visual (which calls
+        // `with_label_font_size_px(PROPERTY_PANE_FONT_PX)` = 14
+        // explicitly to preserve pre-R685 bit-identity).
+        let style = FloatingPlaceholderStyle::m3_default();
+        assert_eq!(style.label_font_size_px, 14);
+    }
+
+    #[test]
+    fn r685_view_floating_placeholder_with_label_font_size_px_overrides() {
+        let style = FloatingPlaceholderStyle::m3_default().with_label_font_size_px(18);
+        assert_eq!(style.label_font_size_px, 18);
+    }
+
+    #[test]
+    fn r685_floating_window_id_uses_prefix_concat() {
+        use super::{floating_window_id, DEFAULT_FLOATING_WINDOW_PREFIX};
+        assert_eq!(
+            floating_window_id(DEFAULT_FLOATING_WINDOW_PREFIX, "inspector"),
+            "torn-inspector",
+        );
+        // Custom prefix preserves the concat form.
+        assert_eq!(floating_window_id("floating-", "panel-1"), "floating-panel-1");
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    //! R685 §5.16 §5.49 — `view_dock_surface` recursive walker
+    //! tests under the R685 atomic 5b stable-id addressing scheme.
+    //! Each Split carries an `id` field; the `split_handle` callback
+    //! is dispatched with that id (not a positional index).
+
+    use super::{
+        view_dock_surface, DockNode, DockPanelHandle, DockPanelStyle, DockSplitHandle,
+        DockTopology,
+    };
+    use crate::splitter::{SplitterOrientation, SplitterStyle};
+    use pinion_core::reactive::{Owner, Signal};
+    use pinion_core::scene::{ContainerNode, Scene};
+    use pinion_core::style::{BoxStyle, Color, FlexDirection};
+    use pinion_core::theme::Theme;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn panel_handle_for(tag: &'static str) -> DockPanelHandle {
+        DockPanelHandle {
+            style: DockPanelStyle::m3_default(tag),
+            content: Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag(format!("{tag}_content_marker"))
+                    .with_style(BoxStyle::filled(Color::rgba(0, 0, 0, 0))),
+            ),
+        }
+    }
+
+    fn split_handle_for(
+        split_id: &str,
+        orientation: SplitterOrientation,
+        initial_ratio: f32,
+    ) -> DockSplitHandle {
+        // Test-only `Box::leak` of an id-derived `&'static str` —
+        // production bindings allocate static string constants per
+        // Split at compile time.
+        let tag: &'static str =
+            Box::leak(format!("test_split_{split_id}").into_boxed_str());
+        DockSplitHandle {
+            style: SplitterStyle::m3_default(orientation, tag),
+            ratio_signal: Rc::new(Signal::new(initial_ratio)),
+            dragging: false,
+        }
+    }
+
+    fn theme_light() -> Theme { Theme::light() }
+    fn run_in_owner<R>(f: impl FnOnce() -> R) -> R { Owner::new().run(f) }
+
+    #[test]
+    fn r685_dock_surface_single_leaf_emits_panel_no_splitter_wrap() {
+        run_in_owner(|| {
+            let topology = DockTopology::single("viewport");
+            let scene = view_dock_surface(
+                &topology,
+                |id| {
+                    assert_eq!(id, "viewport");
+                    panel_handle_for("viewport")
+                },
+                |_, _| panic!("split_handle should not fire for single-leaf"),
+                &theme_light(),
+            );
+            let Scene::Container(outer) = &scene else { panic!() };
+            assert_eq!(outer.tag.as_deref(), Some("viewport"));
+            assert_eq!(outer.children.len(), 2);
+        });
+    }
+
+    #[test]
+    fn r685_dock_surface_2_leaf_horizontal_dispatch_by_id() {
+        run_in_owner(|| {
+            let topology = DockTopology::new(DockNode::split_horizontal(
+                "h_split",
+                0.40,
+                DockNode::leaf("left_panel"),
+                DockNode::leaf("right_panel"),
+            ));
+            let calls: Rc<RefCell<Vec<(String, SplitterOrientation)>>> =
+                Rc::new(RefCell::new(Vec::new()));
+            let cc = Rc::clone(&calls);
+            let scene = view_dock_surface(
+                &topology,
+                |id| panel_handle_for(if id == "left_panel" { "left_panel" } else { "right_panel" }),
+                |split_id, orient| {
+                    cc.borrow_mut().push((split_id.to_string(), orient));
+                    split_handle_for(split_id, orient, 0.40)
+                },
+                &theme_light(),
+            );
+            let Scene::Container(outer) = &scene else { panic!() };
+            assert_eq!(outer.layout.flex_direction, FlexDirection::Row);
+            assert_eq!(outer.children.len(), 3);
+            assert_eq!(
+                *calls.borrow(),
+                vec![("h_split".to_string(), SplitterOrientation::Horizontal)],
+            );
+        });
+    }
+
+    #[test]
+    fn r685_dock_surface_2_leaf_vertical_dispatch_by_id() {
+        run_in_owner(|| {
+            let topology = DockTopology::new(DockNode::split_vertical(
+                "v_split",
+                0.30,
+                DockNode::leaf("top_panel"),
+                DockNode::leaf("bot_panel"),
+            ));
+            let scene = view_dock_surface(
+                &topology,
+                |id| panel_handle_for(if id == "top_panel" { "top_panel" } else { "bot_panel" }),
+                |split_id, orient| split_handle_for(split_id, orient, 0.30),
+                &theme_light(),
+            );
+            let Scene::Container(outer) = &scene else { panic!() };
+            assert_eq!(outer.layout.flex_direction, FlexDirection::Column);
+            assert_eq!(outer.children.len(), 3);
+        });
+    }
+
+    #[test]
+    fn r685_dock_surface_3_leaf_nested_dispatches_by_declared_id() {
+        run_in_owner(|| {
+            let topology = DockTopology::new(DockNode::split_horizontal(
+                "outer", 0.5,
+                DockNode::split_vertical(
+                    "inner", 0.3,
+                    DockNode::leaf("a"),
+                    DockNode::leaf("b"),
+                ),
+                DockNode::leaf("c"),
+            ));
+            let calls: Rc<RefCell<Vec<(String, SplitterOrientation)>>> =
+                Rc::new(RefCell::new(Vec::new()));
+            let cc = Rc::clone(&calls);
+            let _scene = view_dock_surface(
+                &topology,
+                |id| panel_handle_for(match id { "a"=>"a","b"=>"b","c"=>"c", o=>panic!("{o}") }),
+                |split_id, orient| {
+                    cc.borrow_mut().push((split_id.to_string(), orient));
+                    split_handle_for(split_id, orient, 0.5)
+                },
+                &theme_light(),
+            );
+            assert_eq!(
+                *calls.borrow(),
+                vec![
+                    ("outer".to_string(), SplitterOrientation::Horizontal),
+                    ("inner".to_string(), SplitterOrientation::Vertical),
+                ],
+                "DF pre-order with declared ids",
+            );
+        });
+    }
+
+    #[test]
+    fn r685_dock_surface_4_leaf_2x2_grid_by_id() {
+        run_in_owner(|| {
+            let topology = DockTopology::new(DockNode::split_horizontal(
+                "outer", 0.5,
+                DockNode::split_vertical("left_col", 0.5,
+                    DockNode::leaf("tl"), DockNode::leaf("bl")),
+                DockNode::split_vertical("right_col", 0.5,
+                    DockNode::leaf("tr"), DockNode::leaf("br")),
+            ));
+            assert_eq!(topology.split_count(), 3);
+            assert_eq!(topology.leaf_count(), 4);
+            let calls: Rc<RefCell<Vec<(String, SplitterOrientation)>>> =
+                Rc::new(RefCell::new(Vec::new()));
+            let cc = Rc::clone(&calls);
+            let _scene = view_dock_surface(
+                &topology,
+                |id| panel_handle_for(match id {
+                    "tl"=>"tl","bl"=>"bl","tr"=>"tr","br"=>"br", o=>panic!("{o}")
+                }),
+                |split_id, orient| {
+                    cc.borrow_mut().push((split_id.to_string(), orient));
+                    split_handle_for(split_id, orient, 0.5)
+                },
+                &theme_light(),
+            );
+            assert_eq!(
+                *calls.borrow(),
+                vec![
+                    ("outer".to_string(), SplitterOrientation::Horizontal),
+                    ("left_col".to_string(), SplitterOrientation::Vertical),
+                    ("right_col".to_string(), SplitterOrientation::Vertical),
+                ],
+            );
+        });
+    }
+
+    #[test]
+    fn r685_dock_surface_5_leaf_editor_dispatch_by_id() {
+        run_in_owner(|| {
+            let topology = DockTopology::new(DockNode::split_vertical(
+                "outer", 0.10, DockNode::leaf("toolbar"),
+                DockNode::split_vertical("inner_v", 0.80,
+                    DockNode::split_horizontal("middle_h", 0.20,
+                        DockNode::leaf("outliner"),
+                        DockNode::split_horizontal("inner_h", 0.75,
+                            DockNode::leaf("viewport"),
+                            DockNode::leaf("properties"))),
+                    DockNode::leaf("console")),
+            ));
+            assert_eq!(topology.split_count(), 4);
+            let split_calls: Rc<RefCell<Vec<(String, SplitterOrientation)>>> =
+                Rc::new(RefCell::new(Vec::new()));
+            let panel_calls: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+            let sc = Rc::clone(&split_calls);
+            let pc = Rc::clone(&panel_calls);
+            let _scene = view_dock_surface(
+                &topology,
+                |id| {
+                    pc.borrow_mut().push(id.to_string());
+                    panel_handle_for(match id {
+                        "toolbar"=>"toolbar","outliner"=>"outliner",
+                        "viewport"=>"viewport","properties"=>"properties",
+                        "console"=>"console", o=>panic!("{o}")
+                    })
+                },
+                |split_id, orient| {
+                    sc.borrow_mut().push((split_id.to_string(), orient));
+                    split_handle_for(split_id, orient, 0.5)
+                },
+                &theme_light(),
+            );
+            assert_eq!(
+                *split_calls.borrow(),
+                vec![
+                    ("outer".to_string(),    SplitterOrientation::Vertical),
+                    ("inner_v".to_string(),  SplitterOrientation::Vertical),
+                    ("middle_h".to_string(), SplitterOrientation::Horizontal),
+                    ("inner_h".to_string(),  SplitterOrientation::Horizontal),
+                ],
+            );
+            assert_eq!(
+                *panel_calls.borrow(),
+                vec!["toolbar".to_string(),"outliner".to_string(),"viewport".to_string(),
+                     "properties".to_string(),"console".to_string()],
+            );
+        });
+    }
+
+    #[test]
+    fn r685_dock_surface_split_handle_invoked_once_per_split() {
+        run_in_owner(|| {
+            let topology = DockTopology::new(DockNode::split_horizontal(
+                "outer", 0.5,
+                DockNode::split_vertical("inner", 0.5,
+                    DockNode::leaf("a"), DockNode::leaf("b")),
+                DockNode::leaf("c"),
+            ));
+            let count = Rc::new(RefCell::new(0_usize));
+            let cc = Rc::clone(&count);
+            let _ = view_dock_surface(
+                &topology,
+                |id| panel_handle_for(match id {"a"=>"a","b"=>"b","c"=>"c",o=>panic!("{o}")}),
+                |split_id, orient| {
+                    *cc.borrow_mut() += 1;
+                    split_handle_for(split_id, orient, 0.5)
+                },
+                &theme_light(),
+            );
+            assert_eq!(*count.borrow(), topology.split_count());
+        });
+    }
+}
+

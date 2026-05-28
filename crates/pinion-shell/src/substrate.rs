@@ -2002,12 +2002,20 @@ impl<V: WidgetView> ShellCore<V> {
         // `finalize_frame_for_window` here would double-drain
         // pending intents queued by the produce-closure's paint walk.
         if let (Some(id), Some((w, h))) = (window_id, produce_size.get()) {
-            if !self.core.has_last_paint_scene_for_window(id) {
-                let paint = self.compute_paint_scene_for_window(id, w, h);
-                let paint_layout = pinion_rpc::build_layout_node(&paint, "/0");
-                self.last_paint_layout = Some(paint_layout);
-                self.core.update_paint_scene_for_window(id, paint);
-            }
+            let paint = self.compute_paint_scene_for_window(id, w, h);
+            let paint_layout = pinion_rpc::build_layout_node(&paint, "/0");
+            self.last_paint_layout = Some(paint_layout);
+            // (R685 §5.16 §5.35) Use the storage-only paint-scene write
+            // so the deferred-input drain below sees fresh hit-test
+            // geometry without the synthetic `PointerEnter` /
+            // `PointerLeave` arcs `InputRouter::update_paint_scene`
+            // generates. Pre-R685 the post-dispatch finalize was
+            // gated on `!has_last_paint_scene_for_window` (first-paint
+            // only) to dodge the side effect — the gate left every
+            // subsequent RPC reading stale geometry (R684 hack-inventory
+            // 3.2). R685 lands the substrate split so every RPC that
+            // touched the paint producer publishes a fresh scene safely.
+            self.core.set_paint_scene_for_window(id, paint);
         }
         // R51.195 §5.49 §5.45 — drain the deferred-input inbox.
         // `&mut scene` is released here, so calling back into

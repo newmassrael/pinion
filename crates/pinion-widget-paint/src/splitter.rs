@@ -100,7 +100,12 @@ use pinion_core::theme::{ColorRole, Theme};
 /// `Vertical` → `y_rel` drives). Authors who want the cross-axis
 /// behaviour swap the orientation field instead of swapping `left` /
 /// `right` callsite arguments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// (R685 §5.16 §5.49) Derives `serde::Serialize + Deserialize` so it
+/// can participate in [`crate::dock::DockNode`] tree serialization
+/// for AI-introspection. Serialized form mirrors `enum DockSlot`
+/// (untagged unit variants, `"Horizontal"` / `"Vertical"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SplitterOrientation {
     /// Row layout: `Left | Handle | Right` with `Handle` as a
     /// vertical strip. `pointer_move`'s `x_rel` drives ratio
@@ -235,6 +240,86 @@ fn handle_fill_for_dragging(theme: &Theme, dragging: bool) -> Color {
     }
 }
 
+
+/// (R685 §5.21 §5.16) Apply the CSS-canonical
+/// `flex-basis: 0; flex-grow: <ratio>` flex-item idiom **directly**
+/// to a child `Scene`'s `LayoutStyle`. Returns the scene with the
+/// flex props set, ready to drop into a parent flex container.
+///
+/// Every `Scene` variant carrying a `layout: LayoutStyle` field
+/// (`Container` / `Text` / `Box` / `Image` / `External` /
+/// `ImmediateModeNode`) has its existing layout extended in place.
+/// The two variants without a `layout` field (`Scroll` / `Effect`)
+/// auto-wrap in a thin Container carrying the flex props — both
+/// can still participate in flex distribution without the caller
+/// having to write a wrapper manually.
+///
+/// ## Why direct application (not wrapping)
+///
+/// Pre-R685 [`view_splitter`] wrapped each child in an intermediate
+/// `Scene::Container` carrying `flex_basis + flex_grow`. The
+/// wrapper's `Display::Block` + `Size::Auto` made taffy treat its
+/// flex-allocated space as indefinite for the inner layout pass —
+/// the wrapper's child then sized to its intrinsic content rather
+/// than to the wrapper's flex-distributed extent. Applying the
+/// flex props directly on the child's own `LayoutStyle` eliminates
+/// the indirection: taffy sees the child as a flex item of the
+/// parent splitter directly, and the flex pass distributes parent
+/// main-axis space proportionally without falling back to
+/// intrinsic.
+///
+/// `Scroll` and `Effect` are auto-wrapped because the wrapper-free
+/// path requires a `layout` field on the scene; the wrap is a
+/// single Container with no `BoxStyle` (so the scene's visual
+/// shape stays bit-identical) carrying just the flex props.
+fn apply_flex_main(scene: Scene, flex_grow: f32) -> Scene {
+    let basis = Some(SizeValue::Px(0));
+    match scene {
+        Scene::Container(mut c) => {
+            c.layout.flex_basis = basis;
+            c.layout.flex_grow = flex_grow;
+            Scene::Container(c)
+        }
+        Scene::Text(mut t) => {
+            t.layout.flex_basis = basis;
+            t.layout.flex_grow = flex_grow;
+            Scene::Text(t)
+        }
+        Scene::Box(mut b) => {
+            b.layout.flex_basis = basis;
+            b.layout.flex_grow = flex_grow;
+            Scene::Box(b)
+        }
+        Scene::Image(mut i) => {
+            i.layout.flex_basis = basis;
+            i.layout.flex_grow = flex_grow;
+            Scene::Image(i)
+        }
+        Scene::External(mut e) => {
+            e.layout.flex_basis = basis;
+            e.layout.flex_grow = flex_grow;
+            Scene::External(e)
+        }
+        Scene::ImmediateModeNode(mut im) => {
+            im.layout.flex_basis = basis;
+            im.layout.flex_grow = flex_grow;
+            Scene::ImmediateModeNode(im)
+        }
+        // `Scroll` and `Effect` have no `layout` field. Plus the
+        // `Scene` enum is `#[non_exhaustive]` — any future variant
+        // without a `layout` field falls through to the same
+        // auto-wrap branch. The wrapper carries no `BoxStyle` so
+        // the visual shape stays bit-identical.
+        other => Scene::Container(
+            ContainerNode::new(vec![other]).with_layout(
+                LayoutStyle::new()
+                    .with_flex_basis(SizeValue::Px(0))
+                    .with_flex_grow(flex_grow),
+            ),
+        ),
+    }
+}
+
 /// (R683.B §5.16) Backend-agnostic Splitter composition.
 ///
 /// Wraps the supplied `left` + `right` child `Scene`s in a flex
@@ -282,58 +367,117 @@ pub fn view_splitter(
 ) -> Scene {
     let ratio = ratio_signal.get();
     let one_minus_ratio = (1.0_f32 - ratio).max(0.0);
+    // (R685 §5.21 §5.16) Handle cross-axis sizing — same R684 fix
+    // [`view_dock_panel`]'s header strip already carries. Pre-R685 the
+    // handle size was `Size::px(handle_extent_px, 0)` for Horizontal
+    // and `Size::px(0, handle_extent_px)` for Vertical — the explicit
+    // `0` on the cross axis pre-empted the splitter Container's
+    // `AlignItems::Stretch` resolution (taffy treats `Px(0)` as a
+    // *definite* size, not a *placeholder* for stretch). Layout
+    // resolved the handle's cross axis to literal 0, which made
+    // [`pinion_rpc::dispatch::find_rect_by_tag`] return `None` (its
+    // `translate_rect_into_clip` helper rejects zero-area rects). Live
+    // paint still showed the handle as a visible strip because the
+    // Vello backend rasterises at the BoxStyle fill (rect → 0×4 +
+    // stroke / fill pass interpolates), but AI-introspection paths
+    // could not hit-test the handle.
+    //
+    // R685 uses [`Size::width_px`] / [`Size::height_px`] (R684 atomic
+    // 0 substrate additions) so the cross axis stays `SizeValue::Auto`
+    // and the outer Container's `AlignItems::Stretch` correctly
+    // promotes the rect to the full cross-axis extent. Same fix
+    // [`view_dock_panel`]'s header carries — substrate consistency
+    // across both dock primitives.
     let handle_size = match style.orientation {
-        SplitterOrientation::Horizontal => Size::px(style.handle_extent_px, 0),
-        SplitterOrientation::Vertical => Size::px(0, style.handle_extent_px),
+        SplitterOrientation::Horizontal => Size::width_px(style.handle_extent_px),
+        SplitterOrientation::Vertical => Size::height_px(style.handle_extent_px),
     };
     // Handle stretches across the cross axis to fill the splitter's
-    // perpendicular extent. The main-axis extent is pinned to
-    // `handle_extent_px`; the cross-axis `0` value combined with
-    // `AlignItems::Stretch` on the outer container is the canonical
-    // flex idiom for "0 + stretch" → full cross-axis extent.
+    // perpendicular extent. The R685 cross-axis fix uses
+    // [`Size::width_px`] / [`Size::height_px`] (cross-axis `Auto`) so the
+    // outer Container's `AlignItems::Stretch` correctly promotes the
+    // handle rect to the splitter's full cross-axis extent — the
+    // pre-R685 `Size::px(handle_extent_px, 0)` form pinned cross-axis
+    // to literal `Px(0)` and made the handle rect collapse to zero
+    // area in the layout pass (live paint still drew the handle
+    // because the Vello backend rasterises the BoxStyle fill against
+    // the post-layout rect even at degenerate dimensions, but
+    // AI-introspection hit-test paths could not find the handle).
+    //
+    // (R685 §5.16) Handle stays **untagged**. Composite-tag dispatch
+    // (`{splitter_tag}#handle`) was considered + rejected: the
+    // [`InputRouter::forward_pointer_move`] normalises the cursor
+    // against the *composite tag's rect* (the handle's 4-pixel-wide
+    // strip), but [`SplitterExternal::pointer_move`] expects the
+    // cursor fraction to span the *splitter's full main-axis extent*
+    // (so a drag of `Δratio = 0.5` corresponds to a cursor delta of
+    // half the splitter width, not half the handle width). The
+    // composite-tag dispatch would inflate `x_rel` by `splitter_w /
+    // handle_w` (220×) and explode the ratio math past the [0.05,
+    // 0.95] clamp on the very first frame. [`DockPanelExternal`] uses
+    // composite-tag dispatch correctly because its tear-off threshold
+    // is genuinely a fraction of the header rect — coord frames are
+    // per-External.
+    //
+    // The deepest-tagged hit-test falls back to the splitter Container's
+    // primary tag when the cursor lands on the (untagged) handle, which
+    // is the textbook design: SplitterExternal receives drag events
+    // with `x_rel` normalised against the splitter's full extent. AI
+    // clients address the handle by computing its rect via
+    // `scene/layout` + driving `scene/drag` with raw coordinates
+    // (`{from: {x, y}, to: ...}`); the handle's main-axis position is
+    // `splitter_extent * ratio`, where `ratio` is queryable through
+    // the SplitterExternal's introspect schema (`ratio` slot).
     let handle = Scene::Container(
         ContainerNode::new(vec![])
             .with_style(BoxStyle::filled(handle_fill_for_dragging(theme, dragging)))
             .with_layout(LayoutStyle::new().with_size(handle_size)),
     );
-    // (R684 §5.21 §5.16) Splitter ratio fix — the R683.C honest carry
-    // closed via the R684 [`LayoutStyle::flex_basis`] substrate.
+    // (R685 §5.21 §5.16) Splitter ratio fix — substrate-canonical
+    // form lands the flex-item props directly on each child Scene's
+    // own `LayoutStyle`, eliminating the pre-R685 intermediate
+    // wrapper Container.
     //
-    // Pre-R684 the left/right wrappers used only `with_flex_grow(ratio)`
-    // (default `flex_basis: Auto`). taffy's `Auto` basis resolves each
-    // child's main-axis size to its intrinsic content size BEFORE the
-    // `flex_grow` pass runs; with content-heavy panels (the dock-panel
-    // case the splitter is built for) each wrapper's intrinsic already
-    // claims most of the parent's extent, leaving `flex_grow` to
-    // distribute only a sliver of leftover. The visible defect was the
-    // rendered split collapsing toward ~50/50 regardless of the
-    // declared `ratio` Signal — proportional distribution failed.
+    // ## Why the wrapper-elimination matters
     //
-    // `flex_basis(Px(0))` short-circuits the intrinsic-basis pass:
-    // each wrapper starts at 0 on the main axis, then `flex_grow`
-    // distributes the FULL parent extent proportionally to the
-    // two ratios. This is the CSS-canonical "flex-basis: 0; flex-grow:
-    // r" idiom every flex-based panel system uses (Slint, Flutter
-    // Flexible, CSS Grid `fr` units, taffy's own
-    // examples/holy_grail).
+    // The pre-R685 view_splitter wrapped each child in an
+    // intermediate `Scene::Container` carrying `flex_basis(Px(0)) +
+    // flex_grow(ratio)`. The intent: bind the flex-item props to
+    // taffy's flex pass so the parent's main-axis space is
+    // distributed proportionally. The defect: the wrapper itself
+    // had `Display::Block` + `Size::Auto` (no explicit main-axis
+    // size), and taffy treats Block flex items with Auto size as
+    // having an **indefinite** main-axis size when laying out their
+    // children. The wrapper's inner content (a recursive splitter
+    // or dock panel) then sized to its own intrinsic content size,
+    // not to the wrapper's flex-allocated space. Visible defect:
+    // nested splitters' rendered extent collapsed toward the
+    // content's intrinsic sum, not the declared `ratio` × parent
+    // extent (the R685 5-pane editor topology made this glaring —
+    // the topology occupied only the top ~50 % of the viewport).
     //
-    // Cross-axis (Y for Row, X for Column) stays `Auto` so the
-    // splitter Container's `AlignItems::Stretch` promotes each
-    // wrapper to the full perpendicular extent.
-    let left_child = Scene::Container(
-        ContainerNode::new(vec![left]).with_layout(
-            LayoutStyle::new()
-                .with_flex_basis(SizeValue::Px(0))
-                .with_flex_grow(ratio),
-        ),
-    );
-    let right_child = Scene::Container(
-        ContainerNode::new(vec![right]).with_layout(
-            LayoutStyle::new()
-                .with_flex_basis(SizeValue::Px(0))
-                .with_flex_grow(one_minus_ratio),
-        ),
-    );
+    // The R685 substrate-canonical fix applies the flex-item props
+    // (`flex_basis` + `flex_grow`) **directly on the child Scene's
+    // own `LayoutStyle`**. taffy now sees the child as a flex item
+    // of the splitter Container directly — no wrapper indirection,
+    // no Block-vs-Flex display-mode mismatch, no indefinite-size
+    // fallback. The flex pass distributes parent main-axis
+    // proportionally to `flex_grow` (with `flex_basis(Px(0))`
+    // zeroing intrinsic basis per the CSS-canonical
+    // "flex-basis: 0; flex-grow: r" idiom).
+    //
+    // Cross-axis (Y for Row, X for Column) stays governed by the
+    // splitter Container's `AlignItems::Stretch` — the child's
+    // cross-axis Auto size stretches to fill perpendicular extent.
+    //
+    // Pre-R685 the wrapper Container also served as a "uniform
+    // shape" guarantee — children of arbitrary Scene variants
+    // could be lowered through it. R685 uses [`apply_flex_main`]
+    // which handles every variant with a `layout` field directly
+    // and auto-wraps the two variants without one (`Scroll`,
+    // `Effect`).
+    let left_child = apply_flex_main(left, ratio);
+    let right_child = apply_flex_main(right, one_minus_ratio);
     // R683.C §5.16 — fill the splitter Container with the active
     // theme's `Surface` colour so the substrate paint stays visible
     // against `pinion_shell::VelloContext`'s default
@@ -791,6 +935,46 @@ mod tests {
                 outer.style.fill,
                 theme.resolve(ColorRole::Surface),
                 "splitter outer Container must fill with ColorRole::Surface so VelloContext BLACK clear is hidden",
+            );
+        });
+    }
+
+    #[test]
+    fn r685_view_splitter_handle_stays_untagged_for_coord_frame_correctness() {
+        // (R685 §5.16) The handle Container is intentionally
+        // **untagged**. Composite-tag dispatch
+        // (`{splitter_tag}#handle`) would route via
+        // [`InputRouter::forward_pointer_move`] which normalises
+        // `x_rel` / `y_rel` against the *composite tag's rect* — for
+        // the handle, that's a 4-pixel-wide strip, blowing up
+        // [`SplitterExternal::pointer_move`]'s ratio math (the
+        // External expects normalisation against the splitter's full
+        // extent). The textbook design lets the handle inherit its
+        // deepest-tagged-ancestor via hit-test fallback: a cursor on
+        // the handle Container resolves to the splitter's primary tag,
+        // and `forward_pointer_move` normalises against the splitter's
+        // full rect. AI clients address the handle by querying the
+        // splitter's `ratio` slot + computing handle position from the
+        // splitter's `scene/layout` rect, then driving `scene/drag`
+        // with raw `{from: {x, y}, to: ...}` coordinates.
+        run_in_owner(|| {
+            let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
+            let style = SplitterStyle::m3_default(SplitterOrientation::Horizontal, TEST_TAG);
+            let scene = view_splitter(
+                empty_panel("left_panel"),
+                empty_panel("right_panel"),
+                &ratio,
+                &theme_light(),
+                &style,
+                false,
+            );
+            let Scene::Container(outer) = &scene else { panic!() };
+            let Scene::Container(handle) = &outer.children[1] else {
+                panic!("middle child should be the handle Container");
+            };
+            assert!(
+                handle.tag.is_none(),
+                "handle stays untagged (coord-frame correctness over composite-tag convenience)",
             );
         });
     }

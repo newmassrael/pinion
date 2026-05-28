@@ -1750,6 +1750,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-dock-panels-editor"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-immediate-mode-canvas"
 version = "0.0.1"
 dependencies = [
@@ -3319,6 +3332,8 @@ dependencies = [
  "pinion-core",
  "pinion-runtime",
  "pinion-text",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

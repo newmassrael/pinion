@@ -1,0 +1,961 @@
+// R685 §5.16 — example bindings tolerate looser doc-markdown lints
+// than the substrate crates (same waiver hello-dock-panels carries).
+#![allow(clippy::doc_markdown)]
+
+//! `hello-dock-panels-editor` — R685 §5.16 §5.41 §5.49 **2nd dock
+//! consumer** triggering the [[abstraction-needs-second-consumer]]
+//! Rule-of-Three substrate lift gate.
+//!
+//! Five retained dock panels composed into the canonical pro-tool
+//! authoring editor layout every DCC / IDE / 3D-suite shell ships:
+//!
+//! ```text
+//!  ┌──────────────────────────────────────────────────────┐
+//!  │                       Toolbar                        │ Top
+//!  ├──────────┬────────────────────────────┬──────────────┤
+//!  │          │                            │              │
+//!  │ Outliner │          Viewport          │  Properties  │
+//!  │   (Left) │           (Center)         │     (Right)  │
+//!  │          │                            │              │
+//!  ├──────────┴────────────────────────────┴──────────────┤
+//!  │                       Console                        │ Bottom
+//!  └──────────────────────────────────────────────────────┘
+//! ```
+//!
+//! The topology is declared at boot time via
+//! [`pinion_widget_paint::dock::DockTopology`] — a recursive binary
+//! split tree built from `DockNode::split_vertical` /
+//! `DockNode::split_horizontal` / `DockNode::leaf`. The R685 atomic 1
+//! walker [`view_dock_surface`] lowers the topology into a nested
+//! Splitter + DockPanel scene each paint, threading per-Split
+//! [`Signal<f32>`] ratios + per-panel [`Scene`] content through
+//! binding-supplied closures.
+//!
+//! ## Substrate Rule-of-Three evidence (R685 lifts)
+//!
+//! Lifted from `hello-dock-panels` (R683.C, 1st consumer) into
+//! [`pinion_widget_paint::dock`] in the R685 round:
+//!
+//! * `view_floating_placeholder(panel_id, theme, style)` — paint
+//!   "(panel torn off)" placeholder for a dock slot whose panel is
+//!   currently floating.
+//! * `floating_window_id(prefix, panel_id)` + `DEFAULT_FLOATING_WINDOW_PREFIX` —
+//!   `"torn-{panel_id}"` convention.
+
+use pinion_a11y::WidgetA11y;
+use pinion_core::command::Command;
+use pinion_core::external::IntrospectValue;
+use pinion_core::intent::Intent;
+use pinion_core::intent_tag;
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+};
+use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
+use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
+use pinion_widget_paint::dock::{
+    view_dock_surface, DockNode, DockPanelHandle, DockPanelStyle, DockSplitHandle, DockTopology,
+};
+use pinion_widget_paint::splitter::{SplitterExternal, SplitterOrientation, SplitterStyle};
+use std::rc::Rc;
+
+include!(concat!(env!("OUT_DIR"), "/app.rs"));
+
+vello_renderer_impl!(
+    HelloDockPanelsEditorRenderer,
+    HelloDockPanelsEditorRendererError
+);
+
+// ─── window dimensions ────────────────────────────────────────────────
+
+const MAIN_W: u32 = 1200;
+const MAIN_H: u32 = 800;
+
+// ─── theme + paint-side tags ──────────────────────────────────────────
+
+const THEME_TAG: &str = "app";
+
+const TOOLBAR_PANEL_TAG: &str = "toolbar";
+const OUTLINER_PANEL_TAG: &str = "outliner";
+const VIEWPORT_PANEL_TAG: &str = "viewport";
+const PROPERTIES_PANEL_TAG: &str = "properties";
+const CONSOLE_PANEL_TAG: &str = "console";
+
+/// Viewport Button paint-side tag — the only interactive widget in
+/// the v1 editor binding. Routes pointer events to the primary
+/// [`ButtonExternal`].
+const VIEWPORT_BTN_TAG: &str = "viewport_btn";
+
+/// Splitter paint-side tags. Four splits in depth-first pre-order
+/// per R685 [`view_dock_surface`]'s threading scheme:
+/// idx 0 → outer V (toolbar | rest), idx 1 → inner V (middle | console),
+/// idx 2 → middle H (outliner | rest), idx 3 → inner H (viewport | properties).
+const SPLIT_OUTER_TAG: &str = "editor_split_outer";
+const SPLIT_INNER_V_TAG: &str = "editor_split_inner_v";
+const SPLIT_MIDDLE_H_TAG: &str = "editor_split_middle_h";
+const SPLIT_INNER_H_TAG: &str = "editor_split_inner_h";
+
+// ─── intent tag constants ─────────────────────────────────────────────
+
+const VIEWPORT_BTN_CLICK_INTENT_TAG: &str = intent_tag!("viewport_btn", "click");
+
+// ─── default split ratios ─────────────────────────────────────────────
+
+const SPLIT_OUTER_RATIO_DEFAULT: f32 = 0.06;
+const SPLIT_INNER_V_RATIO_DEFAULT: f32 = 0.78;
+const SPLIT_MIDDLE_H_RATIO_DEFAULT: f32 = 0.18;
+const SPLIT_INNER_H_RATIO_DEFAULT: f32 = 0.78;
+
+// ─── panel content text ───────────────────────────────────────────────
+
+const TOOLBAR_LABEL: &str = "File   Edit   View   Window   Help";
+
+const OUTLINER_ROWS: &[&str] = &[
+    "Scene",
+    "  Camera",
+    "  Lights",
+    "    Sun",
+    "    Fill",
+    "  Meshes",
+    "    Cube",
+    "    Sphere",
+];
+
+const VIEWPORT_HEADER_TEXT: &str = "Viewport";
+const VIEWPORT_BTN_LABEL: &str = "Reset camera";
+const VIEWPORT_CLICK_LABEL_PREFIX: &str = "Clicks: ";
+
+const PROPERTIES_ROWS: &[(&str, &str)] = &[
+    ("Position", "0.00, 0.00, 0.00"),
+    ("Rotation", "0.00, 0.00, 0.00"),
+    ("Scale", "1.00, 1.00, 1.00"),
+    ("Visible", "true"),
+];
+
+const CONSOLE_ROWS: &[&str] = &[
+    "[info] scene loaded (5 panels)",
+    "[info] viewport camera initialised",
+    "[warn] no light selected",
+    "[info] ready",
+];
+
+const PANEL_BODY_FONT_PX: u32 = 13;
+
+// ─── reactive substrate hooks ─────────────────────────────────────────
+
+/// (R685 atomic 5d) Per-Split ratio handle resolver — single helper
+/// keyed by the Split's stable id. Pre-R685 atomic 5d the binding
+/// had four near-identical `use_split_X_ratio()` functions; the
+/// dedupe is the canonical [[substrate-incompleteness-signal]]
+/// within-binding application of [[abstraction-needs-second-consumer]].
+fn use_split_ratio(split_id: &'static str, default_ratio: f32) -> Rc<Signal<f32>> {
+    Owner::current()
+        .expect("hello-dock-panels-editor: view fn runs inside owner scope")
+        .cache(split_id, || Signal::new(default_ratio))
+}
+
+fn use_viewport_click_counter() -> Rc<Signal<u32>> {
+    Owner::current()
+        .expect("hello-dock-panels-editor: view fn runs inside owner scope")
+        .cache("editor_viewport_click_counter", || Signal::new(0_u32))
+}
+
+// ─── topology constructor ─────────────────────────────────────────────
+
+/// R685 §5.16 §5.49 — declarative editor topology. Built once per
+/// view-fn paint (the topology is data; the per-split ratios live
+/// in separate `Rc<Signal<f32>>` handles the view fn re-reads each
+/// paint). Each Split carries its stable `id` — the
+/// [`view_dock_surface`] walker dispatches `split_handle` by that
+/// id, so binding state stays bound to the right Split across any
+/// future topology mutation.
+fn build_editor_topology() -> DockTopology {
+    DockTopology::new(DockNode::split_vertical(
+        SPLIT_OUTER_TAG,
+        SPLIT_OUTER_RATIO_DEFAULT,
+        DockNode::leaf(TOOLBAR_PANEL_TAG),
+        DockNode::split_vertical(
+            SPLIT_INNER_V_TAG,
+            SPLIT_INNER_V_RATIO_DEFAULT,
+            DockNode::split_horizontal(
+                SPLIT_MIDDLE_H_TAG,
+                SPLIT_MIDDLE_H_RATIO_DEFAULT,
+                DockNode::leaf(OUTLINER_PANEL_TAG),
+                DockNode::split_horizontal(
+                    SPLIT_INNER_H_TAG,
+                    SPLIT_INNER_H_RATIO_DEFAULT,
+                    DockNode::leaf(VIEWPORT_PANEL_TAG),
+                    DockNode::leaf(PROPERTIES_PANEL_TAG),
+                ),
+            ),
+            DockNode::leaf(CONSOLE_PANEL_TAG),
+        ),
+    ))
+}
+
+/// (R685 atomic 5d) Split-id → default ratio lookup. Pure data;
+/// the binding registers a `Rc<Signal<f32>>` per id at boot via
+/// [`use_split_ratio`].
+fn default_ratio_for_split(split_id: &str) -> f32 {
+    match split_id {
+        SPLIT_OUTER_TAG => SPLIT_OUTER_RATIO_DEFAULT,
+        SPLIT_INNER_V_TAG => SPLIT_INNER_V_RATIO_DEFAULT,
+        SPLIT_MIDDLE_H_TAG => SPLIT_MIDDLE_H_RATIO_DEFAULT,
+        SPLIT_INNER_H_TAG => SPLIT_INNER_H_RATIO_DEFAULT,
+        // Unreachable when the binding contract holds — the
+        // build_editor_topology declares exactly these 4 ids; any
+        // other value means the topology was mutated without
+        // updating this table. Explicit panic over defensive
+        // fallback per [[r685-smell-6-defensive-arms]] textbook fix.
+        other => unreachable!(
+            "default_ratio_for_split: unknown split id {other:?}; topology declares only \
+             outer/inner_v/middle_h/inner_h",
+        ),
+    }
+}
+
+// ─── panel content view fns ───────────────────────────────────────────
+
+fn view_toolbar_content(theme: &Theme) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            TOOLBAR_LABEL.to_string(),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(PANEL_BODY_FONT_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
+        ))])
+        .with_tag("toolbar_content_body")
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Start)
+                .with_padding(Rect::new(12, 0, 12, 0)),
+        ),
+    )
+}
+
+fn view_outliner_content(theme: &Theme) -> Scene {
+    let row_scenes: Vec<Scene> = OUTLINER_ROWS
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                    (*label).to_string(),
+                    Rect::default(),
+                    TextStyle::new()
+                        .with_size_px(PANEL_BODY_FONT_PX)
+                        .with_fg(theme.resolve(ColorRole::OnSurface)),
+                ))])
+                .with_tag(format!("outliner_row_{i}"))
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_padding(Rect::new(4, 2, 4, 2)),
+                ),
+            )
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(row_scenes)
+            .with_tag("outliner_content_body")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_padding(Rect::new(8, 8, 8, 8)),
+            ),
+    )
+}
+
+fn view_viewport_content(state: ButtonState, theme: &Theme) -> Scene {
+    let click_count = use_viewport_click_counter().get();
+    let header = Scene::Text(TextNode::styled(
+        VIEWPORT_HEADER_TEXT.to_string(),
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(PANEL_BODY_FONT_PX + 2)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
+    ));
+    let counter = Scene::Text(TextNode::styled(
+        format!("{VIEWPORT_CLICK_LABEL_PREFIX}{click_count}"),
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(PANEL_BODY_FONT_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+    ));
+    let button_paint = view_viewport_button(state, theme);
+    Scene::Container(
+        ContainerNode::new(vec![header, counter, button_paint])
+            .with_tag("viewport_content_body")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Center)
+                    .with_justify(JustifyContent::Center)
+                    .with_padding(Rect::new(16, 16, 16, 16)),
+            ),
+    )
+}
+
+/// Inline M3 Accent-tinted Button paint. State-layer overlays via
+/// linear-space [`Color::lerp`] per `[[color-lerp-linear-space]]`.
+fn view_viewport_button(state: ButtonState, theme: &Theme) -> Scene {
+    let accent = theme.resolve(ColorRole::Accent);
+    let on_accent = theme.resolve(ColorRole::OnAccent);
+    let (fill, fg) = match state {
+        ButtonState::Idle => (accent, on_accent),
+        ButtonState::Hover => (accent.lerp(on_accent, 0.08), on_accent),
+        ButtonState::Pressed => (accent.lerp(on_accent, 0.12), on_accent),
+        ButtonState::Disabled => (
+            theme.resolve(ColorRole::SurfaceContainerHigh),
+            theme.resolve(ColorRole::OnSurfaceMuted),
+        ),
+    };
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            VIEWPORT_BTN_LABEL.to_string(),
+            Rect::default(),
+            TextStyle::new().with_size_px(PANEL_BODY_FONT_PX).with_fg(fg),
+        ))])
+        .with_tag(VIEWPORT_BTN_TAG)
+        .with_style(BoxStyle::filled(fill))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center)
+                .with_padding(Rect::new(16, 8, 16, 8))
+                .with_size(Size::px(180, 40)),
+        ),
+    )
+}
+
+fn view_properties_content(theme: &Theme) -> Scene {
+    let row_scenes: Vec<Scene> = PROPERTIES_ROWS
+        .iter()
+        .enumerate()
+        .map(|(i, (key, value))| {
+            let key_text = Scene::Text(TextNode::styled(
+                (*key).to_string(),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(PANEL_BODY_FONT_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            ));
+            let value_text = Scene::Text(TextNode::styled(
+                (*value).to_string(),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(PANEL_BODY_FONT_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurface)),
+            ));
+            Scene::Container(
+                ContainerNode::new(vec![key_text, value_text])
+                    .with_tag(format!("property_row_{i}"))
+                    .with_layout(
+                        LayoutStyle::new()
+                            .flex(FlexDirection::Row)
+                            .with_justify(JustifyContent::SpaceBetween)
+                            .with_align_items(AlignItems::Center)
+                            .with_padding(Rect::new(8, 4, 8, 4)),
+                    ),
+            )
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(row_scenes)
+            .with_tag("properties_content_body")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_padding(Rect::new(8, 8, 8, 8)),
+            ),
+    )
+}
+
+fn view_console_content(theme: &Theme) -> Scene {
+    let row_scenes: Vec<Scene> = CONSOLE_ROWS
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                    (*line).to_string(),
+                    Rect::default(),
+                    TextStyle::new()
+                        .with_size_px(PANEL_BODY_FONT_PX)
+                        .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+                ))])
+                .with_tag(format!("console_row_{i}"))
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_padding(Rect::new(8, 2, 8, 2)),
+                ),
+            )
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(row_scenes)
+            .with_tag("console_content_body")
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_padding(Rect::new(8, 8, 8, 8)),
+            ),
+    )
+}
+
+fn panel_content_for(panel_id: &str, state: ButtonState, theme: &Theme) -> Scene {
+    match panel_id {
+        TOOLBAR_PANEL_TAG => view_toolbar_content(theme),
+        OUTLINER_PANEL_TAG => view_outliner_content(theme),
+        VIEWPORT_PANEL_TAG => view_viewport_content(state, theme),
+        PROPERTIES_PANEL_TAG => view_properties_content(theme),
+        CONSOLE_PANEL_TAG => view_console_content(theme),
+        other => Scene::Text(TextNode::styled(
+            format!("(unknown panel: {other})"),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(PANEL_BODY_FONT_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        )),
+    }
+}
+
+/// (R685 atomic 5d) Resolve a Split's stable id to the matching
+/// paint-side splitter tag. The id IS the tag for the topology's
+/// declared splits — same `&'static str` constants used in
+/// [`build_editor_topology`] + the `SplitterExternal` registrations.
+/// Contract-violation panic over defensive fallback per
+/// [[r685-smell-6-defensive-arms]].
+fn split_tag_for(split_id: &str) -> &'static str {
+    match split_id {
+        SPLIT_OUTER_TAG => SPLIT_OUTER_TAG,
+        SPLIT_INNER_V_TAG => SPLIT_INNER_V_TAG,
+        SPLIT_MIDDLE_H_TAG => SPLIT_MIDDLE_H_TAG,
+        SPLIT_INNER_H_TAG => SPLIT_INNER_H_TAG,
+        other => unreachable!(
+            "split_tag_for: unknown split id {other:?}; topology declares only \
+             outer/inner_v/middle_h/inner_h",
+        ),
+    }
+}
+
+// ─── trait wiring ─────────────────────────────────────────────────────
+
+/// R685 §5.16 §5.41 §5.49 — editor binding carrier. No fields — every
+/// trait method is associated.
+pub struct DockPanelsEditorView;
+
+impl WidgetCore for DockPanelsEditorView {
+    type State = ButtonState;
+    type Event = ButtonEvent;
+
+    fn tag() -> &'static str {
+        VIEWPORT_BTN_TAG
+    }
+
+    fn title() -> &'static str {
+        "hello-dock-panels-editor — R685 5-pane editor"
+    }
+
+    fn create_external() -> Box<dyn pinion_core::external::External> {
+        Box::new(ButtonExternal::new())
+    }
+
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        // (R685 atomic 5d) Iterate the topology's stable split ids
+        // + register one SplitterExternal per id with its declared
+        // orientation. Single source of truth — adding a 6th pane
+        // means adding the matching `DockNode::split_*` in
+        // `build_editor_topology` + this loop automatically grows.
+        let topology = build_editor_topology();
+        let mut externals = Vec::with_capacity(topology.split_count());
+        for split_id in topology.split_ids() {
+            let orient = match split_id {
+                SPLIT_OUTER_TAG | SPLIT_INNER_V_TAG => SplitterOrientation::Vertical,
+                SPLIT_MIDDLE_H_TAG | SPLIT_INNER_H_TAG => SplitterOrientation::Horizontal,
+                other => unreachable!("create_extra_externals: unknown split id {other:?}"),
+            };
+            let signal = use_split_ratio(split_tag_for(split_id), default_ratio_for_split(split_id));
+            let external = SplitterExternal::new(orient).attach_ratio(signal);
+            externals.push(ExtraExternal::new(split_tag_for(split_id), Box::new(external)));
+        }
+        externals
+    }
+
+    fn read_state(scene: &Scene) -> Self::State {
+        if let Some(node) = scene.find_external_with_tag(VIEWPORT_BTN_TAG)
+            && let Some(intro) = node.handle.introspect()
+            && let Some(IntrospectValue::Text(name)) = intro.query("state")
+        {
+            return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
+        }
+        ButtonState::Idle
+    }
+
+    fn view(state: Self::State, _frame: &Frame) -> Scene {
+        let theme = use_theme(THEME_TAG).theme_animated();
+        let topology = build_editor_topology();
+        view_dock_surface(
+            &topology,
+            |panel_id| DockPanelHandle {
+                style: DockPanelStyle::m3_default(panel_id.to_string()),
+                content: panel_content_for(panel_id, state, &theme),
+            },
+            |split_id, orientation| DockSplitHandle {
+                style: SplitterStyle::m3_default(orientation, split_tag_for(split_id)),
+                ratio_signal: use_split_ratio(
+                    split_tag_for(split_id),
+                    default_ratio_for_split(split_id),
+                ),
+                dragging: false,
+            },
+            &theme,
+        )
+    }
+
+    fn event_name(event: Self::Event) -> &'static str {
+        <Self::Event as pinion_core::WidgetEventName>::as_name(&event)
+    }
+
+    fn update(_state: Self::State, intent: &Intent) -> Vec<Command> {
+        if intent.tag_str() == VIEWPORT_BTN_CLICK_INTENT_TAG {
+            let counter = use_viewport_click_counter();
+            counter.set(counter.get().wrapping_add(1));
+        }
+        Vec::new()
+    }
+}
+
+impl WidgetA11y for DockPanelsEditorView {}
+
+impl WidgetView for DockPanelsEditorView {
+    type Renderer = HelloDockPanelsEditorRenderer;
+
+    fn initial_size_strategy() -> SizeStrategy {
+        SizeStrategy::Fixed {
+            width: MAIN_W,
+            height: MAIN_H,
+        }
+    }
+}
+
+fn main() {
+    pinion_shell::run::<DockPanelsEditorView>();
+}
+
+// ─── tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    //! R685 §5.16 §5.41 §5.49 — `hello-dock-panels-editor` binding
+    //! tests. Pins the 2nd-dock-consumer + view-fn invariants:
+    //!
+    //! 1. Topology shape — 5 leaves + 4 splits + canonical
+    //!    depth-first panel order.
+    //! 2. Topology serde round-trip — every panel + slot label +
+    //!    split orientation/ratio survives JSON.
+    //! 3. View fn produces a non-empty Scene with the outer
+    //!    splitter Container at root.
+    //! 4. Each panel id is reachable inside the rendered scene.
+    //! 5. Click intent reducer bumps the counter Signal.
+    //! 6. `SplitterExternal` extra externals registered for each
+    //!    of the 4 splits with the canonical tags.
+
+    use super::*;
+    use pinion_core::reactive::Owner;
+    use std::borrow::Cow;
+
+    fn run_in_owner<R>(f: impl FnOnce() -> R) -> R {
+        Owner::new().run(f)
+    }
+
+    #[test]
+    fn r685_editor_topology_has_5_leaves_and_4_splits() {
+        let topology = build_editor_topology();
+        assert_eq!(topology.leaf_count(), 5);
+        assert_eq!(topology.split_count(), 4);
+    }
+
+    #[test]
+    fn r685_editor_topology_panel_ids_depth_first_order() {
+        let topology = build_editor_topology();
+        assert_eq!(
+            topology.panel_ids(),
+            vec![
+                TOOLBAR_PANEL_TAG,
+                OUTLINER_PANEL_TAG,
+                VIEWPORT_PANEL_TAG,
+                PROPERTIES_PANEL_TAG,
+                CONSOLE_PANEL_TAG,
+            ],
+            "panel_ids walk = toolbar → outliner → viewport → properties → console",
+        );
+    }
+
+    #[test]
+    fn r685_editor_topology_split_ids_depth_first_pre_order() {
+        let topology = build_editor_topology();
+        assert_eq!(
+            topology.split_ids(),
+            vec![SPLIT_OUTER_TAG, SPLIT_INNER_V_TAG, SPLIT_MIDDLE_H_TAG, SPLIT_INNER_H_TAG],
+            "split_ids walk in pre-order: outer → inner_v → middle_h → inner_h",
+        );
+    }
+
+    #[test]
+    fn r685_editor_topology_serde_json_round_trip() {
+        let topology = build_editor_topology();
+        let serialized = serde_json::to_string(&topology).expect("serialize");
+        let parsed: DockTopology = serde_json::from_str(&serialized).expect("parse back");
+        assert_eq!(parsed, topology, "5-pane topology round-trips through JSON");
+    }
+
+    #[test]
+    fn r685_editor_split_tag_for_each_declared_id() {
+        assert_eq!(split_tag_for(SPLIT_OUTER_TAG), SPLIT_OUTER_TAG);
+        assert_eq!(split_tag_for(SPLIT_INNER_V_TAG), SPLIT_INNER_V_TAG);
+        assert_eq!(split_tag_for(SPLIT_MIDDLE_H_TAG), SPLIT_MIDDLE_H_TAG);
+        assert_eq!(split_tag_for(SPLIT_INNER_H_TAG), SPLIT_INNER_H_TAG);
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown split id")]
+    fn r685_editor_split_tag_for_unknown_id_panics() {
+        // R685 atomic 5d Smell-6 fix: contract-violation panic over
+        // silent fallback. Topology declares only the 4 canonical
+        // splits; any other id means the topology was mutated
+        // without updating the lookup table.
+        let _ = split_tag_for("unknown");
+    }
+
+    #[test]
+    fn r685_editor_default_split_ratios_within_unit_interval() {
+        for r in [
+            SPLIT_OUTER_RATIO_DEFAULT,
+            SPLIT_INNER_V_RATIO_DEFAULT,
+            SPLIT_MIDDLE_H_RATIO_DEFAULT,
+            SPLIT_INNER_H_RATIO_DEFAULT,
+        ] {
+            assert!(r > 0.0 && r < 1.0, "ratio {r} must be in (0,1)");
+        }
+    }
+
+    #[test]
+    fn r685_editor_panel_content_dispatch_known_panels() {
+        run_in_owner(|| {
+            let theme = Theme::light();
+            for &panel_id in &[
+                TOOLBAR_PANEL_TAG,
+                OUTLINER_PANEL_TAG,
+                VIEWPORT_PANEL_TAG,
+                PROPERTIES_PANEL_TAG,
+                CONSOLE_PANEL_TAG,
+            ] {
+                let scene = panel_content_for(panel_id, ButtonState::Idle, &theme);
+                assert!(
+                    matches!(scene, Scene::Container(_)),
+                    "panel '{panel_id}' should render a Container",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r685_editor_panel_content_dispatch_unknown_panel_falls_back_to_text() {
+        run_in_owner(|| {
+            let theme = Theme::light();
+            let scene = panel_content_for("nonexistent", ButtonState::Idle, &theme);
+            assert!(matches!(scene, Scene::Text(_)));
+        });
+    }
+
+    #[test]
+    fn r685_editor_outliner_renders_one_row_per_outliner_rows_entry() {
+        run_in_owner(|| {
+            let theme = Theme::light();
+            let scene = view_outliner_content(&theme);
+            let Scene::Container(outer) = scene else {
+                panic!("outliner body should be a Container");
+            };
+            assert_eq!(outer.children.len(), OUTLINER_ROWS.len());
+        });
+    }
+
+    #[test]
+    fn r685_editor_properties_renders_one_row_per_property_entry() {
+        run_in_owner(|| {
+            let theme = Theme::light();
+            let scene = view_properties_content(&theme);
+            let Scene::Container(outer) = scene else {
+                panic!("properties body should be a Container");
+            };
+            assert_eq!(outer.children.len(), PROPERTIES_ROWS.len());
+        });
+    }
+
+    #[test]
+    fn r685_editor_console_renders_one_row_per_console_log_line() {
+        run_in_owner(|| {
+            let theme = Theme::light();
+            let scene = view_console_content(&theme);
+            let Scene::Container(outer) = scene else {
+                panic!("console body should be a Container");
+            };
+            assert_eq!(outer.children.len(), CONSOLE_ROWS.len());
+        });
+    }
+
+    #[test]
+    fn r685_editor_viewport_content_contains_header_counter_button() {
+        run_in_owner(|| {
+            let theme = Theme::light();
+            let scene = view_viewport_content(ButtonState::Idle, &theme);
+            let Scene::Container(outer) = scene else {
+                panic!("viewport body should be a Container");
+            };
+            assert_eq!(outer.children.len(), 3, "header + counter + button");
+        });
+    }
+
+    #[test]
+    fn r685_editor_view_root_is_outer_splitter_container() {
+        run_in_owner(|| {
+            let frame = Frame::default();
+            let scene = <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &frame);
+            let Scene::Container(outer) = scene else {
+                panic!("editor view root should be a splitter Container");
+            };
+            assert_eq!(outer.tag.as_deref(), Some(SPLIT_OUTER_TAG));
+        });
+    }
+
+    #[test]
+    fn r685_editor_view_renders_all_5_panels_in_scene() {
+        run_in_owner(|| {
+            let frame = Frame::default();
+            let scene = <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &frame);
+            let serialized = format!("{scene:?}");
+            for &panel_id in &[
+                TOOLBAR_PANEL_TAG,
+                OUTLINER_PANEL_TAG,
+                VIEWPORT_PANEL_TAG,
+                PROPERTIES_PANEL_TAG,
+                CONSOLE_PANEL_TAG,
+            ] {
+                assert!(
+                    serialized.contains(panel_id),
+                    "scene should contain panel tag '{panel_id}'",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r685_editor_view_renders_viewport_button_tag() {
+        run_in_owner(|| {
+            let frame = Frame::default();
+            let scene = <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &frame);
+            let serialized = format!("{scene:?}");
+            assert!(serialized.contains(VIEWPORT_BTN_TAG));
+        });
+    }
+
+    #[test]
+    fn r685_editor_view_renders_all_4_splitter_tags() {
+        run_in_owner(|| {
+            let frame = Frame::default();
+            let scene = <DockPanelsEditorView as WidgetCore>::view(ButtonState::Idle, &frame);
+            let serialized = format!("{scene:?}");
+            for &split_tag in &[
+                SPLIT_OUTER_TAG,
+                SPLIT_INNER_V_TAG,
+                SPLIT_MIDDLE_H_TAG,
+                SPLIT_INNER_H_TAG,
+            ] {
+                assert!(
+                    serialized.contains(split_tag),
+                    "scene should contain splitter tag '{split_tag}'",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r685_editor_create_extra_externals_registers_4_splitters() {
+        run_in_owner(|| {
+            let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
+            assert_eq!(externals.len(), 4, "4 SplitterExternals registered");
+            let tags: Vec<&str> = externals.iter().map(|e| e.tag).collect();
+            assert!(tags.contains(&SPLIT_OUTER_TAG));
+            assert!(tags.contains(&SPLIT_INNER_V_TAG));
+            assert!(tags.contains(&SPLIT_MIDDLE_H_TAG));
+            assert!(tags.contains(&SPLIT_INNER_H_TAG));
+        });
+    }
+
+    #[test]
+    fn r685_editor_viewport_click_intent_bumps_counter() {
+        run_in_owner(|| {
+            let counter = use_viewport_click_counter();
+            let before = counter.get();
+            let intent = Intent {
+                tag: Cow::Borrowed(VIEWPORT_BTN_CLICK_INTENT_TAG),
+                payload: IntrospectValue::Null,
+            };
+            let commands =
+                <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert!(commands.is_empty(), "no Commands emitted for click");
+            assert_eq!(counter.get(), before + 1);
+        });
+    }
+
+    #[test]
+    fn r685_editor_unrelated_intent_leaves_counter_unchanged() {
+        run_in_owner(|| {
+            let counter = use_viewport_click_counter();
+            let before = counter.get();
+            let intent = Intent {
+                tag: Cow::Borrowed(intent_tag!("unrelated_widget", "click")),
+                payload: IntrospectValue::Null,
+            };
+            let _ = <DockPanelsEditorView as WidgetCore>::update(ButtonState::Idle, &intent);
+            assert_eq!(counter.get(), before, "counter untouched");
+        });
+    }
+
+    #[test]
+    fn r685_editor_initial_size_strategy_fixed_main_dimensions() {
+        let SizeStrategy::Fixed { width, height } =
+            <DockPanelsEditorView as WidgetView>::initial_size_strategy()
+        else {
+            panic!("expected Fixed strategy");
+        };
+        assert_eq!(width, MAIN_W);
+        assert_eq!(height, MAIN_H);
+    }
+
+    #[test]
+    fn r685_editor_title_contains_r685_marker() {
+        let title = <DockPanelsEditorView as WidgetCore>::title();
+        assert!(title.contains("R685"));
+        assert!(title.contains("5-pane"));
+    }
+
+    #[test]
+    fn r685_editor_tag_is_viewport_button() {
+        assert_eq!(
+            <DockPanelsEditorView as WidgetCore>::tag(),
+            VIEWPORT_BTN_TAG,
+        );
+    }
+
+    #[test]
+    fn r685_editor_read_state_default_idle_when_no_button_external() {
+        run_in_owner(|| {
+            let empty = Scene::Container(ContainerNode::new(vec![]));
+            let state = <DockPanelsEditorView as WidgetCore>::read_state(&empty);
+            assert_eq!(state, ButtonState::Idle);
+        });
+    }
+
+    #[test]
+    fn r685_editor_topology_split_orientations_match_layout_intent() {
+        let topology = build_editor_topology();
+        let DockNode::Split {
+            orientation: outer_o,
+            first: outer_first,
+            second: outer_second,
+            ..
+        } = &topology.root
+        else {
+            panic!("root is Split");
+        };
+        assert_eq!(*outer_o, SplitterOrientation::Vertical);
+        assert!(matches!(**outer_first, DockNode::Leaf { .. }));
+        let DockNode::Split {
+            orientation: inner_v_o,
+            first: inner_v_first,
+            second: inner_v_second,
+            ..
+        } = outer_second.as_ref()
+        else {
+            panic!("inner V is Split");
+        };
+        assert_eq!(*inner_v_o, SplitterOrientation::Vertical);
+        let DockNode::Split {
+            orientation: middle_h_o,
+            ..
+        } = inner_v_first.as_ref()
+        else {
+            panic!("middle H is Split");
+        };
+        assert_eq!(*middle_h_o, SplitterOrientation::Horizontal);
+        assert!(matches!(**inner_v_second, DockNode::Leaf { .. }));
+    }
+
+    #[test]
+    fn r685_editor_panel_body_font_size_within_m3_dense_row_range() {
+        // M3 Body Medium 14 sp; dense pro-tool surfaces collapse to
+        // 12-13 sp. Pin the editor binding stays in the dense range
+        // even if PANEL_BODY_FONT_PX is bumped in a future round.
+        let px = PANEL_BODY_FONT_PX;
+        assert!((12..=14).contains(&px), "PANEL_BODY_FONT_PX {px} not in [12,14]");
+    }
+
+    #[test]
+    fn r685_editor_outliner_rows_contain_scene_root_label() {
+        assert!(
+            OUTLINER_ROWS.iter().any(|row| row.trim() == "Scene"),
+            "outliner should surface the scene root label",
+        );
+    }
+
+    #[test]
+    fn r685_editor_properties_rows_contain_canonical_transform_keys() {
+        let keys: Vec<&str> = PROPERTIES_ROWS.iter().map(|(k, _)| *k).collect();
+        assert!(keys.contains(&"Position"));
+        assert!(keys.contains(&"Rotation"));
+        assert!(keys.contains(&"Scale"));
+    }
+
+    #[test]
+    fn r685_editor_console_rows_include_info_and_warn_levels() {
+        let any_info = CONSOLE_ROWS.iter().any(|row| row.contains("[info]"));
+        let any_warn = CONSOLE_ROWS.iter().any(|row| row.contains("[warn]"));
+        assert!(any_info, "console must include at least one info line");
+        assert!(any_warn, "console must include at least one warn line");
+    }
+
+    #[test]
+    fn r685_editor_toolbar_label_lists_canonical_editor_menus() {
+        for menu in &["File", "Edit", "View", "Window", "Help"] {
+            assert!(
+                TOOLBAR_LABEL.contains(menu),
+                "toolbar should list canonical {menu} menu",
+            );
+        }
+    }
+
+    #[test]
+    fn r685_editor_use_split_ratio_returns_owner_cached_handle() {
+        run_in_owner(|| {
+            let a = use_split_ratio(SPLIT_OUTER_TAG, SPLIT_OUTER_RATIO_DEFAULT);
+            let b = use_split_ratio(SPLIT_OUTER_TAG, SPLIT_OUTER_RATIO_DEFAULT);
+            assert!(
+                Rc::ptr_eq(&a, &b),
+                "use_split_ratio is Owner::cache-memoised by id",
+            );
+        });
+    }
+}

@@ -76,6 +76,67 @@ _VIEWPORT_HEADER_TAG = "viewport#header"
 _MAIN_SPLITTER_TAG = "main_splitter"
 _LEFT_SPLITTER_TAG = "left_splitter"
 
+# (R685 §5.16) Splitter handle drag — the handle Container is
+# intentionally **untagged** (composite-tag dispatch would route
+# normalisation against the 4-px handle rect, breaking
+# `SplitterExternal::pointer_move`'s splitter-wide cursor-fraction
+# semantics). AI clients drive the drag with raw coordinates: query
+# the splitter's rect via `scene/layout` + the live ratio via
+# `<splitter>/external/ratio`, then compute the handle position as
+# `splitter.x + splitter.w * ratio` and drag a few pixels past that.
+def _find_node_by_tag(node, target):
+    if not isinstance(node, dict):
+        return None
+    if node.get("tag") == target:
+        return node
+    for child in node.get("children") or []:
+        r = _find_node_by_tag(child, target)
+        if r is not None:
+            return r
+    return None
+
+
+def _splitter_handle_rect(tf: "RpcSubprocess", splitter_tag: str, viewport_w: int) -> tuple:
+    """Resolve the splitter's current handle rect (`(x, y, w, h)`).
+
+    The handle Container is intentionally untagged (composite-tag
+    dispatch would route via the 4-px handle rect for cursor
+    normalisation, breaking SplitterExternal's splitter-wide
+    cursor-fraction semantics). The handle is the middle child of
+    the splitter Container, located between the two panel children;
+    its rect is queryable through `scene/layout` by walking the
+    Container's children list at index 1.
+    """
+    layout = tf.request("scene/layout", {"viewport": {"width": viewport_w, "height": _MAIN_H}})
+    if layout is None:
+        return (viewport_w * 0.5 - 2, _MAIN_H * 0.5 - 300, 4, 600)
+    splitter = _find_node_by_tag(layout.result, splitter_tag)
+    if splitter is None:
+        return (viewport_w * 0.5 - 2, _MAIN_H * 0.5 - 300, 4, 600)
+    children = splitter.get("children") or []
+    # Splitter Container layout: [left_panel (tagged), handle (untagged),
+    # right_panel (tagged)]. Pick the middle child for horizontal /
+    # vertical orientation alike.
+    if len(children) >= 3:
+        handle = children[1]
+        rect = handle.get("rect") or {}
+        return (
+            float(rect.get("x", 0)),
+            float(rect.get("y", 0)),
+            float(rect.get("w", 4)),
+            float(rect.get("h", 600)),
+        )
+    sr = splitter.get("rect") or {}
+    return (float(sr.get("x", 0)) + float(sr.get("w", viewport_w)) * 0.5 - 2,
+            float(sr.get("y", 0)),
+            4.0, float(sr.get("h", _MAIN_H)))
+
+
+def _splitter_handle_x(tf: "RpcSubprocess", splitter_tag: str, viewport_w: int) -> float:
+    """Handle main-axis centre x for horizontal splitters."""
+    x, _, w, _ = _splitter_handle_rect(tf, splitter_tag, viewport_w)
+    return x + w * 0.5
+
 # Inspector / property / viewport content tags.
 _INSPECTOR_TREE_TAG = "inspector_tree"
 _PROPERTY_PANE_TAG = "property_pane"
@@ -319,9 +380,17 @@ def body() -> None:
         # forwards through the per-window InputRouter under the R51.34
         # capture lock; `from_path` resolves the main splitter
         # Container's rect centre, `to_at` is the target cursor pixel.
-        _drag_window(
-            tf, "main", _MAIN_SPLITTER_TAG, (_MAIN_W * 0.6, _MAIN_H * 0.5), steps=8
-        )
+        # Press at the current handle x position, drag right to the
+        # target — raw coordinates so the InputRouter dispatches via
+        # splitter-tag fallback (handle is untagged for coord-frame
+        # correctness, see _splitter_handle_x doc).
+        handle_x = _splitter_handle_x(tf, _MAIN_SPLITTER_TAG, _MAIN_W)
+        tf.request("scene/drag", {
+            "window": "main",
+            "from": {"x": handle_x, "y": _MAIN_H * 0.5},
+            "to":   {"x": _MAIN_W * 0.6, "y": _MAIN_H * 0.5},
+            "steps": 8,
+        })
         time.sleep(_SETTLE_SEC)
         main_ratio_after_drag = _query_splitter_ratio(tf, _MAIN_SPLITTER_TAG)
         assert main_ratio_after_drag is not None
@@ -329,11 +398,15 @@ def body() -> None:
             f"main splitter ratio must change after drag; "
             f"boot={main_ratio_boot!r}, after={main_ratio_after_drag!r}"
         )
-        # Drag back to the left so the ratio returns toward the
-        # default; the assertion confirms the drag wire is bidirectional.
-        _drag_window(
-            tf, "main", _MAIN_SPLITTER_TAG, (_MAIN_W * 0.2, _MAIN_H * 0.5), steps=8
-        )
+        # Drag back to the left — re-query handle position because the
+        # first drag moved it.
+        handle_x = _splitter_handle_x(tf, _MAIN_SPLITTER_TAG, _MAIN_W)
+        tf.request("scene/drag", {
+            "window": "main",
+            "from": {"x": handle_x, "y": _MAIN_H * 0.5},
+            "to":   {"x": _MAIN_W * 0.2, "y": _MAIN_H * 0.5},
+            "steps": 8,
+        })
         time.sleep(_SETTLE_SEC)
         main_ratio_after_drag_back = _query_splitter_ratio(tf, _MAIN_SPLITTER_TAG)
         assert main_ratio_after_drag_back is not None
@@ -377,18 +450,42 @@ def body() -> None:
         assert _scene_contains_tag(snap_d_main, _PROPERTY_PANEL_TAG)
         assert _scene_contains_tag(snap_d_main, _VIEWPORT_PANEL_TAG)
 
-        # ── (E) Dock-back — direct tear_off invoke on floating ────
-        # R683.C §5.16 §5.49 — the floating window's InputRouter does
-        # not have a `last_paint_scene` populated in headless RPC mode
-        # (winit's per-window paint cycle requires a real display).
-        # The dock substrate exposes a direct `tear_off` invoke channel
-        # for this exact case: AI clients drive `scene/invoke
-        # /<panel_tag>/external/tear_off {Null}` to enqueue the same
-        # `tear_off` intent the drag path would. The binding's
-        # reducer-driven `Signal<Vec<WindowSpec>>` toggle interprets
-        # this as dock-back when the panel is currently floating
-        # (idempotent on the toggle).
-        tf.invoke(f"/{_INSPECTOR_PANEL_TAG}/external/tear_off", None)
+        # ── (E) Dock-back — drag-based (R685 §5.16 §5.49) ─────────
+        # R683.C originally used a direct `scene/invoke
+        # /<panel_tag>/external/tear_off {Null}` channel because the
+        # floating window's InputRouter had no `last_paint_scene`
+        # populated in headless RPC mode (winit's per-window paint
+        # cycle requires a real display).
+        #
+        # R684 atomic 3 lands a post-dispatch first-paint finalize
+        # hook in `pinion-shell::ShellCore::dispatch_rpc_inner` — when
+        # an RPC frame addresses a window whose InputRouter has no
+        # paint scene yet, the hook re-runs `compute_paint_scene_for_window`
+        # + populates the router. This makes a `scene/snapshot` against
+        # a never-painted floating window prime its hit-test
+        # infrastructure so a subsequent `scene/drag` resolves.
+        #
+        # R685 atomic 3 converts this section to the drag-based path:
+        # the substrate-canonical user gesture (drag the floating
+        # header back past the 0.5 threshold) drives dock-back instead
+        # of the bypass invoke channel.
+        #
+        # Step 1: prime the floating window's InputRouter by
+        # snapshotting it. The R684 first-paint finalize hook
+        # populates `last_paint_scene` so the subsequent drag
+        # resolves the header tag against a real layout.
+        _ = _snap_floating(tf, _INSPECTOR_PANEL_TAG)
+        time.sleep(_SETTLE_SEC)
+        # Step 2: drag the floating panel's header past the 0.5
+        # fraction of its 28-px height (= 14 px). Origin at the
+        # composite header tag; target well past the threshold.
+        _drag_window(
+            tf,
+            f"{_FLOATING_PREFIX}{_INSPECTOR_PANEL_TAG}",
+            _INSPECTOR_HEADER_TAG,
+            (200.0, 200.0),
+            steps=4,
+        )
         time.sleep(_SETTLE_SEC)
         # Main dock re-installs the inspector (the reducer's
         # `is_panel_floating(...)` toggle removed the WindowSpec; the
