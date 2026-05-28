@@ -47,6 +47,7 @@
 //! closures.
 
 use std::any::{Any, TypeId};
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -294,11 +295,18 @@ pub(crate) struct OwnerInner {
     pub(crate) cache: RefCell<HashMap<CacheKey, Rc<dyn Any>>>,
 }
 
-/// (R56.1.b.1 §5.22) Internal cache key for [`OwnerInner::cache`] —
-/// the type id of the cached value plus the user-supplied static
-/// string. Extracted as a type alias to keep the field declaration
-/// under `clippy::type_complexity`.
-type CacheKey = (TypeId, &'static str);
+/// (R56.1.b.1 / R685.C atomic 5 §5.22) Internal cache key for
+/// [`OwnerInner::cache`] — the type id of the cached value plus the
+/// user-supplied key string. Extracted as a type alias to keep the
+/// field declaration under `clippy::type_complexity`.
+///
+/// (R685.C atomic 5) The key string is `Cow<'static, str>` (was
+/// `&'static str`) so runtime-generated ids (R686 dock-reorganize
+/// mints new Split / panel ids at drag time) can address cache
+/// slots without `Box::leak`. Compile-time `&'static str` literals
+/// still coerce zero-cost via `Cow::Borrowed`; only genuinely
+/// dynamic keys allocate (`Cow::Owned`).
+type CacheKey = (TypeId, Cow<'static, str>);
 
 impl ReactiveNode for OwnerInner {
     fn node_id(&self) -> u64 {
@@ -954,13 +962,22 @@ impl Owner {
     /// the downcast failure is a defensive guard against a future
     /// refactor breaking the typed-key invariant and is never
     /// triggered under the current implementation.
-    pub fn cache<V, F>(&self, key: &'static str, factory: F) -> Rc<V>
+    pub fn cache<V, F>(&self, key: impl Into<Cow<'static, str>>, factory: F) -> Rc<V>
     where
         V: 'static,
         F: FnOnce() -> V,
     {
-        // (R56.1.b.1 §5.22) Typed cache key — `(TypeId::of::<V>(), key)`
-        // so the same string addresses a distinct slot per type.
+        // (R56.1.b.1 / R685.C atomic 5 §5.22) Typed cache key —
+        // `(TypeId::of::<V>(), key)` so the same string addresses a
+        // distinct slot per type. R685.C lifts `key` to
+        // `impl Into<Cow<'static, str>>` — static literals coerce
+        // zero-cost (`Cow::Borrowed`); runtime ids allocate
+        // (`Cow::Owned`) without `Box::leak`.
+        let key: Cow<'static, str> = key.into();
+        // Diagnostic copy for the two panic messages below — the
+        // `key` Cow is moved into `typed_key` (then into the cache
+        // entry), so the error paths reference this owned snapshot.
+        let key_for_msg = key.clone().into_owned();
         let typed_key = (TypeId::of::<V>(), key);
         // R666 §5.22 — nested-factory guard. The cache `RefCell` is
         // held with `borrow_mut` across the `or_insert_with` arm, so
@@ -983,7 +1000,7 @@ impl Owner {
                     "Owner::cache factory closures must not call \
                      Owner::cache; pre-resolve dependent slots first \
                      (see [[owner-cache-no-nested-factory]] in \
-                     memory). Re-entering on key={key:?}",
+                     memory). Re-entering on key={key_for_msg:?}",
                 )
             });
             Rc::clone(
@@ -1003,7 +1020,7 @@ impl Owner {
         // triggered under the current invariant.
         Rc::downcast::<V>(any_rc).unwrap_or_else(|_| {
             panic!(
-                "Owner::cache typed-key invariant violated for {key:?}; \
+                "Owner::cache typed-key invariant violated for {key_for_msg:?}; \
                  the typed-key lookup must hand back an Rc<V> matching its TypeId",
             );
         })
@@ -1028,8 +1045,11 @@ impl Owner {
     /// just call [`Self::cache`] — the lazy-init contract handles
     /// the missing-key case transparently.
     #[must_use]
-    pub fn cache_contains<V: 'static>(&self, key: &'static str) -> bool {
-        self.inner.cache.borrow().contains_key(&(TypeId::of::<V>(), key))
+    pub fn cache_contains<V: 'static>(&self, key: impl Into<Cow<'static, str>>) -> bool {
+        self.inner
+            .cache
+            .borrow()
+            .contains_key(&(TypeId::of::<V>(), key.into()))
     }
 
     /// R605 §5.22 — non-mutating typed lookup against the cache,
@@ -1079,7 +1099,7 @@ impl Owner {
             let cache = self.inner.cache.borrow();
             cache
                 .iter()
-                .find(|((tid, k), _)| *tid == type_id && *k == key)
+                .find(|((tid, k), _)| *tid == type_id && k.as_ref() == key)
                 .map(|(_, rc)| Rc::clone(rc))?
         };
         // Downcast is infallible by construction — the slot was
@@ -1368,6 +1388,48 @@ mod tests {
             .cache_get_by_str("abc")
             .expect("middle-of-walk slot must resolve");
         assert_eq!(hit.0, 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R685.C atomic 5 — Owner::cache accepts dynamic (owned) keys.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r685_c_cache_accepts_owned_string_key() {
+        // The crux of R685.C atomic 5: a runtime-generated `String`
+        // (e.g. R686 dock-reorganize mints `format!("split-{n}")`)
+        // can address a cache slot directly — no `Box::leak`.
+        let owner = Owner::new();
+        let dynamic_key: String = format!("split-{}", 42);
+        let inserted = owner.cache::<CacheProbe, _>(dynamic_key.clone(), || CacheProbe(7));
+        // The same dynamic key re-resolves to the same Rc.
+        let again = owner.cache::<CacheProbe, _>(dynamic_key, || CacheProbe(999));
+        assert!(Rc::ptr_eq(&inserted, &again), "owned key memoises");
+        assert_eq!(again.0, 7, "factory not re-run on cache hit");
+    }
+
+    #[test]
+    fn r685_c_cache_static_and_owned_keys_share_slot_when_equal() {
+        // A `&'static str` literal and an owned `String` with the
+        // same bytes address the SAME slot — Cow::Borrowed and
+        // Cow::Owned compare + hash by value, not by provenance.
+        let owner = Owner::new();
+        let from_static = owner.cache::<CacheProbe, _>("shared_key", || CacheProbe(1));
+        let from_owned =
+            owner.cache::<CacheProbe, _>(String::from("shared_key"), || CacheProbe(2));
+        assert!(
+            Rc::ptr_eq(&from_static, &from_owned),
+            "static literal + equal owned String resolve to one slot",
+        );
+        assert_eq!(from_owned.0, 1);
+    }
+
+    #[test]
+    fn r685_c_cache_contains_accepts_owned_key() {
+        let owner = Owner::new();
+        owner.cache::<CacheProbe, _>("widget", || CacheProbe(1));
+        assert!(owner.cache_contains::<CacheProbe>(String::from("widget")));
+        assert!(!owner.cache_contains::<CacheProbe>(String::from("absent")));
     }
 
     // ─────────────────────────────────────────────────────────────────

@@ -57,7 +57,7 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
 use pinion_widget_paint::dock::{view_dock_surface, DockNode, DockSplitState, DockTopology};
-use pinion_widget_paint::splitter::{SplitterExternal, SplitterOrientation};
+use pinion_widget_paint::splitter::SplitterExternal;
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -450,29 +450,11 @@ fn panel_content_for(panel_id: &str, state: ButtonState, theme: &Theme) -> Scene
 // from `DockNode::Split::id` directly (SSOT), so no caller-side
 // indirection needed. `split_cache_key_for` lives above for the
 // `Owner::cache &'static str` lifetime requirement.
-
-/// (R685.B §5.16) Depth-first pre-order walk over a [`DockNode`]
-/// tree's `Split` nodes; invokes `f(id, orientation, ratio)` once
-/// per Split. Mirror of the substrate `view_dock_surface_node`
-/// traversal but exposed for `create_extra_externals` which needs
-/// to enumerate all splits at boot time.
-fn for_each_split<F>(node: &DockNode, f: &mut F)
-where
-    F: FnMut(&str, SplitterOrientation, f32),
-{
-    if let DockNode::Split {
-        id,
-        orientation,
-        ratio,
-        first,
-        second,
-    } = node
-    {
-        f(id.as_ref(), *orientation, *ratio);
-        for_each_split(first, f);
-        for_each_split(second, f);
-    }
-}
+//
+// (R685.C atomic 2) binding-local `for_each_split` removed — the
+// walk lifted to `DockTopology::for_each_split` substrate accessor
+// (DRY — pre-R685.C the binding copied the substrate's
+// view_dock_surface_node traversal).
 
 // ─── trait wiring ─────────────────────────────────────────────────────
 
@@ -497,17 +479,16 @@ impl WidgetCore for DockPanelsEditorView {
     }
 
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        // (R685.B atomic 3) Walk the topology's `DockNode::Split`
-        // nodes — each node carries its stable id + orientation +
-        // initial ratio. Register one `SplitterExternal` per Split,
-        // keyed on the Split's id (which IS the paint-side tag
-        // post-R685.B walker SSOT enforcement). Adding a 6th pane is
-        // a one-line topology mutation; this loop grows automatically.
+        // (R685.C atomic 2) Enumerate the topology's `DockNode::Split`
+        // nodes via the `DockTopology::for_each_split` substrate
+        // accessor — each visit carries the Split's stable id +
+        // orientation + initial ratio. Register one `SplitterExternal`
+        // per Split keyed on the Split's id (which IS the paint-side
+        // tag post-R685.B walker SSOT enforcement). Adding a 6th pane
+        // is a one-line topology mutation; this loop grows automatically.
         let topology = build_editor_topology();
         let mut externals = Vec::with_capacity(topology.split_count());
-        // Walk via split_walks_with_orientation helper below — keeps
-        // the public DockTopology API minimal.
-        for_each_split(topology.root(), &mut |id, orientation, ratio| {
+        topology.for_each_split(|id, orientation, ratio| {
             let cache_key = split_cache_key_for(id);
             let signal = use_split_ratio(cache_key, ratio);
             let external = SplitterExternal::new(orientation).attach_ratio(signal);
@@ -599,6 +580,7 @@ mod tests {
 
     use super::*;
     use pinion_core::reactive::Owner;
+    use pinion_widget_paint::splitter::SplitterOrientation;
     use std::borrow::Cow;
 
     fn run_in_owner<R>(f: impl FnOnce() -> R) -> R {

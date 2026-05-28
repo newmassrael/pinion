@@ -373,6 +373,37 @@ impl DockNode {
             second.collect_split_ids(out);
         }
     }
+
+    /// (R685.C atomic 2 §5.16) Depth-first pre-order walk over the
+    /// sub-tree's [`DockNode::Split`] nodes; invokes
+    /// `f(id, orientation, ratio)` once per Split. The substrate
+    /// home for the Split-enumeration walk every dock consumer
+    /// needs at boot to register one
+    /// [`SplitterExternal`](crate::splitter::SplitterExternal) per
+    /// Split.
+    ///
+    /// Pre-R685.C `hello-dock-panels-editor` carried a binding-local
+    /// `for_each_split` copy of this exact walk (DRY violation — the
+    /// substrate's [`view_dock_surface_node`] already traverses the
+    /// same tree shape). R685.C lifts the walk to the substrate so
+    /// every dock consumer shares one traversal implementation.
+    pub fn for_each_split<F>(&self, f: &mut F)
+    where
+        F: FnMut(&str, SplitterOrientation, f32),
+    {
+        if let Self::Split {
+            id,
+            orientation,
+            ratio,
+            first,
+            second,
+        } = self
+        {
+            f(id.as_ref(), *orientation, *ratio);
+            first.for_each_split(f);
+            second.for_each_split(f);
+        }
+    }
 }
 
 /// (R685 §5.16 §5.49) Root descriptor of a dock topology —
@@ -433,6 +464,19 @@ pub enum TopologyError {
     /// `split_state` callback would receive duplicate calls + the
     /// `Rc<Signal<f32>>` ratio handle would collide on `Owner::cache`.
     DuplicateSplitId(String),
+    /// (R685.C atomic 1 §5.16) The same string appears as both a
+    /// [`DockNode::Leaf::panel_id`] **and** a [`DockNode::Split::id`].
+    /// Pre-R685.C the validator used two separate `HashSet`s and
+    /// silently allowed cross-namespace collision; the runtime
+    /// failure mode was nasty: the binding's
+    /// `create_extra_externals` would register a `DockPanelExternal`
+    /// and a `SplitterExternal` at the same paint-side tag, and the
+    /// `InputRouter` deepest-tagged hit-test would resolve to
+    /// whichever External the registration order put first
+    /// (silent ambiguity, no diagnostic). R685.C lifts the
+    /// validator to a single `HashSet` and surfaces the collision
+    /// as an explicit error.
+    IdCollision(String),
     /// A [`DockNode::Split`] carries a non-finite (NaN / Inf) or
     /// out-of-[0,1] `ratio`. Initial ratios outside `[0.0, 1.0]`
     /// produce undefined visual layouts; NaN would corrupt the
@@ -452,6 +496,12 @@ impl core::fmt::Display for TopologyError {
         match self {
             Self::DuplicatePanelId(id) => write!(f, "duplicate panel_id: {id:?}"),
             Self::DuplicateSplitId(id) => write!(f, "duplicate split id: {id:?}"),
+            Self::IdCollision(id) => write!(
+                f,
+                "id {id:?} appears as both a panel_id and a Split id; \
+                 paint-side tags must be unique across the topology so the \
+                 InputRouter deepest-tagged hit-test resolves unambiguously",
+            ),
             Self::InvalidRatio { split_id, ratio } => {
                 write!(f, "split {split_id:?} has invalid ratio {ratio}; must be finite in [0.0, 1.0]")
             }
@@ -485,9 +535,14 @@ impl DockTopology {
     /// encountered in depth-first pre-order walk over `root`. See
     /// the enum variants for the specific failure classes.
     pub fn try_new(root: DockNode) -> Result<Self, TopologyError> {
-        let mut panel_ids = std::collections::HashSet::<String>::new();
-        let mut split_ids = std::collections::HashSet::<String>::new();
-        validate_node(&root, &mut panel_ids, &mut split_ids)?;
+        // (R685.C atomic 1 §5.16) Unified id namespace — panel_ids
+        // and split_ids share one HashSet so cross-namespace
+        // collisions surface as `TopologyError::IdCollision`.
+        // Tracking which-kind-saw-this-id-first lets the validator
+        // emit the right error variant: `DuplicatePanelId` / `DuplicateSplitId`
+        // for same-kind collisions, `IdCollision` for cross-kind.
+        let mut seen = std::collections::HashMap::<String, NodeKind>::new();
+        validate_node(&root, &mut seen)?;
         Ok(Self { root })
     }
 
@@ -506,23 +561,26 @@ impl DockTopology {
     }
 
     /// (R685 §5.16) Convenience constructor for a single-panel
-    /// topology (one leaf, no splits). Always valid (single leaf has
-    /// no duplicate id surface, no ratio); never returns Err.
+    /// topology (one leaf, no splits).
+    ///
+    /// (R685.C atomic 0 §5.16) Routes through [`Self::try_new`] for
+    /// consistent panic shape — pre-R685.C used an inline `assert!`
+    /// with a distinct message format. The unified path emits
+    /// `expect("...{TopologyError}...")` matching [`Self::new`] for
+    /// every other invariant violation, so callers see one
+    /// `TopologyError`-driven failure mode regardless of constructor.
     ///
     /// # Panics
     ///
-    /// Panics if `panel_id` is the empty string. Empty ids collide
-    /// with the substrate's tag-as-`&str` consumers
-    /// ([`TopologyError::EmptyId`] for the validation-path mirror).
+    /// Panics with the [`TopologyError`] `Display` representation
+    /// if `panel_id` violates any topology invariant (empty id is
+    /// the only failure mode reachable for a single-leaf tree).
     #[must_use]
     pub fn single(panel_id: impl Into<Cow<'static, str>>) -> Self {
-        let panel_id = panel_id.into();
-        // Single-leaf is always valid as long as the id is non-empty.
-        // Empty id panics here for caller transparency.
-        assert!(!panel_id.is_empty(), "DockTopology::single: panel_id must not be empty");
-        Self {
-            root: DockNode::Leaf { panel_id },
-        }
+        Self::try_new(DockNode::Leaf {
+            panel_id: panel_id.into(),
+        })
+        .expect("DockTopology::single: panel_id must be non-empty")
     }
 
     /// (R685.B §5.16) Read-only access to the recursive root node.
@@ -552,6 +610,20 @@ impl DockTopology {
         self.root.split_ids()
     }
 
+    /// (R685.C atomic 2 §5.16) Depth-first pre-order walk over the
+    /// topology's [`DockNode::Split`] nodes; invokes
+    /// `f(id, orientation, ratio)` once per Split. The canonical
+    /// boot-time enumeration for dock consumers registering one
+    /// [`SplitterExternal`](crate::splitter::SplitterExternal) per
+    /// Split (mirror of [`view_dock_surface`]'s own traversal, so
+    /// the binding never re-implements the walk).
+    pub fn for_each_split<F>(&self, mut f: F)
+    where
+        F: FnMut(&str, SplitterOrientation, f32),
+    {
+        self.root.for_each_split(&mut f);
+    }
+
     /// (R685 §5.16) Count of leaf nodes. Equals
     /// `self.panel_ids().len()`.
     #[must_use]
@@ -568,24 +640,41 @@ impl DockTopology {
     }
 }
 
-/// (R685.B §5.16) Internal recursive validator. Walks the node
-/// tree depth-first pre-order, accumulating panel + split ids into
-/// `HashSet`s for duplicate detection; checks every Split's ratio
-/// for finiteness + bounds; rejects empty ids on first encounter.
+/// (R685.C atomic 1 §5.16) Discriminator for the unified id-namespace
+/// validator — tracks whether an id was first seen as a panel or
+/// a Split, so duplicate detection produces the right error
+/// variant (same-kind → `DuplicatePanelId` / `DuplicateSplitId`;
+/// cross-kind → `IdCollision`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeKind {
+    Panel,
+    Split,
+}
+
+/// (R685.B / R685.C §5.16) Internal recursive validator. Walks the
+/// node tree depth-first pre-order, accumulating panel + split ids
+/// into a unified `HashMap<String, NodeKind>` for duplicate +
+/// cross-namespace collision detection. Validates every Split's
+/// ratio for finiteness + bounds; rejects empty ids on first
+/// encounter.
 fn validate_node(
     node: &DockNode,
-    panel_ids: &mut std::collections::HashSet<String>,
-    split_ids: &mut std::collections::HashSet<String>,
+    seen: &mut std::collections::HashMap<String, NodeKind>,
 ) -> Result<(), TopologyError> {
     match node {
         DockNode::Leaf { panel_id } => {
             if panel_id.is_empty() {
                 return Err(TopologyError::EmptyId);
             }
-            if !panel_ids.insert(panel_id.to_string()) {
-                return Err(TopologyError::DuplicatePanelId(panel_id.to_string()));
+            match seen.insert(panel_id.to_string(), NodeKind::Panel) {
+                None => Ok(()),
+                Some(NodeKind::Panel) => {
+                    Err(TopologyError::DuplicatePanelId(panel_id.to_string()))
+                }
+                Some(NodeKind::Split) => {
+                    Err(TopologyError::IdCollision(panel_id.to_string()))
+                }
             }
-            Ok(())
         }
         DockNode::Split {
             id,
@@ -603,11 +692,17 @@ fn validate_node(
                     ratio: *ratio,
                 });
             }
-            if !split_ids.insert(id.to_string()) {
-                return Err(TopologyError::DuplicateSplitId(id.to_string()));
+            match seen.insert(id.to_string(), NodeKind::Split) {
+                None => {}
+                Some(NodeKind::Split) => {
+                    return Err(TopologyError::DuplicateSplitId(id.to_string()));
+                }
+                Some(NodeKind::Panel) => {
+                    return Err(TopologyError::IdCollision(id.to_string()));
+                }
             }
-            validate_node(first, panel_ids, split_ids)?;
-            validate_node(second, panel_ids, split_ids)?;
+            validate_node(first, seen)?;
+            validate_node(second, seen)?;
             Ok(())
         }
     }
@@ -2036,6 +2131,26 @@ mod topology_tests {
     }
 
     #[test]
+    fn r685_c_dock_topology_for_each_split_yields_id_orientation_ratio() {
+        use crate::splitter::SplitterOrientation;
+        let topology = editor_topology();
+        let mut visits: Vec<(String, SplitterOrientation, f32)> = Vec::new();
+        topology.for_each_split(|id, orient, ratio| {
+            visits.push((id.to_string(), orient, ratio));
+        });
+        assert_eq!(
+            visits,
+            vec![
+                ("outer".to_string(), SplitterOrientation::Vertical, 0.10),
+                ("inner_v".to_string(), SplitterOrientation::Vertical, 0.80),
+                ("middle_h".to_string(), SplitterOrientation::Horizontal, 0.20),
+                ("inner_h".to_string(), SplitterOrientation::Horizontal, 0.75),
+            ],
+            "for_each_split walks DF pre-order with id + orientation + initial ratio",
+        );
+    }
+
+    #[test]
     fn r685_dock_topology_split_ids_depth_first_pre_order() {
         // Pre-order: outer (visit) → inner_v (visit) → middle_h (visit)
         // → inner_h (visit) → leaves only after this. The walker uses
@@ -2225,6 +2340,69 @@ mod topology_tests {
     fn r685_b_topology_root_accessor_returns_inner_node() {
         let topology = DockTopology::single("only_panel");
         assert!(matches!(topology.root(), DockNode::Leaf { .. }));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R685.C atomic 1 — cross-namespace IdCollision validation.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r685_c_try_new_rejects_panel_id_split_id_collision_panel_first() {
+        // panel_id "shared" appears first (outer Split's `first` child),
+        // then the same string as a Split id deeper in the tree.
+        let root = DockNode::split_horizontal(
+            "wrapper",
+            0.5,
+            DockNode::leaf("shared"),
+            DockNode::split_vertical(
+                "shared", // collides with the panel_id above
+                0.5,
+                DockNode::leaf("a"),
+                DockNode::leaf("b"),
+            ),
+        );
+        let err = DockTopology::try_new(root).unwrap_err();
+        assert_eq!(err, TopologyError::IdCollision("shared".to_string()));
+    }
+
+    #[test]
+    fn r685_c_try_new_rejects_panel_id_split_id_collision_split_first() {
+        // Split id "shared" appears first (the outer Split), then
+        // the same string as a panel_id leaf.
+        let root = DockNode::split_horizontal(
+            "shared",
+            0.5,
+            DockNode::leaf("a"),
+            DockNode::leaf("shared"), // collides with the outer Split id
+        );
+        let err = DockTopology::try_new(root).unwrap_err();
+        assert_eq!(err, TopologyError::IdCollision("shared".to_string()));
+    }
+
+    #[test]
+    fn r685_c_try_new_distinguishes_duplicate_kind_vs_cross_namespace() {
+        // Same-kind duplicate (two panels with the same id) → DuplicatePanelId.
+        let dup = DockNode::split_horizontal(
+            "outer",
+            0.5,
+            DockNode::leaf("dup"),
+            DockNode::leaf("dup"),
+        );
+        assert_eq!(
+            DockTopology::try_new(dup).unwrap_err(),
+            TopologyError::DuplicatePanelId("dup".to_string()),
+        );
+
+        // Cross-namespace → IdCollision (NOT DuplicatePanelId).
+        let cross = DockNode::split_horizontal(
+            "cross", 0.5,
+            DockNode::leaf("cross"),
+            DockNode::leaf("other"),
+        );
+        assert_eq!(
+            DockTopology::try_new(cross).unwrap_err(),
+            TopologyError::IdCollision("cross".to_string()),
+        );
     }
 }
 

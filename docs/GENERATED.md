@@ -13626,6 +13626,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R685.C — 3차 textbook audit 후속 — S9-S14 6건 청산 (apply_paint 2-primitive split + compute_paint_scene_pure 통합 + cross-namespace validation + for_each_split substrate + Owner::cache Cow lift + panic style 통일).
+
+**Changes**:
+- S13: `DockTopology::single` 이 inline `assert!` 대신 `try_new(...).expect(...)` 통과 — `DockTopology::new` 과 일관된 panic shape.
+- S11: DockTopology validation cross-namespace 충돌 검증 — `validate_node` 가 panel_ids + split_ids 분리 HashSet → 단일 `HashMap<String, NodeKind>` 통합. `TopologyError::IdCollision(String)` variant 신규 (panel_id == split_id 시 InputRouter dispatch 충돌 차단). same-kind 중복은 DuplicatePanelId/DuplicateSplitId, cross-kind는 IdCollision 로 구분.
+- S14: `DockNode::for_each_split` + `DockTopology::for_each_split` substrate accessor 신규 — depth-first pre-order Split walk. hello-dock-panels-editor binding-local `for_each_split` 헬퍼 제거 (DRY — substrate view_dock_surface_node walk 과 중복).
+- S10: `ShellCore::compute_paint_scene_pure_internal(Option<&str>, w, h)` 통합 — `compute_paint_scene_pure_for_window` + `compute_paint_scene_pure` 코드 중복 청산 (기존 compute_paint_scene_internal Option<&str> dispatch shape mirror).
+- S9: `ShellCore::apply_paint_for_window` 2-primitive 분리 — `apply_paint_for_window_with_hover_refresh` (winit paint loop용, refresh_hover synthetic arcs 발화) + `apply_paint_for_window_storage_only` (RPC dispatch용, set_paint_scene_for_window storage-only, hover arcs 안 발화). dispatch_rpc_inner finalize hook이 inline 2-write 대신 명명된 storage_only primitive 사용.
+- S12: `Owner::cache` / `cache_contains` key `&'static str` → `impl Into<Cow<'static, str>>` lift. CacheKey type `(TypeId, &'static str)` → `(TypeId, Cow<'static, str>)`. cache_get_by_str 비교 `*k == key` → `k.as_ref() == key`. R686 dock-reorganize 가 생성하는 runtime String ids 가 Box::leak 없이 cache slot addressing 가능 — Phase D editor blocker 청산. 정적 literal 은 Cow::Borrowed 무비용 coerce.
+
+
+
+**Verification**:
+- cargo test --workspace PASS (3989 tests; R684.B baseline 3982 → +7 R685.C: 3 cross-namespace validation + 1 for_each_split + 3 Owner::cache Cow tests).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under workspace `-D pedantic`.
+- 45-demo regression sweep PASS deterministic (clean run; 직전 빌드+sweep 묶음 실행의 FAIL=1은 빌드 리소스 경합 transient — 재실행 45/45).
+- S9-S14 6건 모두 인라인 청산; S15 (Scene Clone via External Rc lift) 만 broader refactor R686+ carry 로 명시 유지.
+- Mnemosyne entry R685.C 깔끔 validate — atomic ledger 556 → 557, T1 reject=0, GENERATED.md sync, orphan_refs 5+0 frozen, impact_refs [5.16, 5.22, 5.35, 5.41, 5.49].
+
+
+
+**Impact**: §5.16, §5.22, §5.35, §5.41, §5.49
+
+
+**Carry forward**:
+- S15 (Scene Clone via External handle `Box<dyn>` → `Rc<RefCell<dyn>>` lift) — 유일 잔여 architectural smell. Scene Clone 가능 시 compute_paint_scene_pure 자체 불필요 (RPC dispatch가 producer 결과 직접 reuse). 모든 External impl ownership 모델 변경 broader refactor — R686+ Phase D entry 단계 (immediate-mode game-loop / dirty subtree cache 도 Scene Clone 유용).
+- R686 carry — DockSurface drag-to-reorganize handles (DockDropZone + mutation primitives swap_leaves / split_leaf_into / remove_leaf, try_new validation path 경유; Owner::cache Cow lift 이 dynamic split id 지원 ready). Smell 8 (Topology + Signal persistence) 동반 설계.
+- Smell 5 (view_button substrate lift; 5+ inline consumers) carry — 별도 Rule-of-Three audit round.
+- R685 round family 종료 — R685 (DockSurface land) + R685.B (SSOT enforcement) + R685.C (audit 후속 6건) 3-commit-pair 로 textbook canonical 도달. R684.B (hack inventory 5/6) 동반 청산.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
