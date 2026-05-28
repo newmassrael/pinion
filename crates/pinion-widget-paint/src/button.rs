@@ -52,7 +52,10 @@
 //! [`crate::checkbox`].
 
 use std::borrow::Cow;
+use std::rc::Rc;
 
+use pinion_core::animation::{Animation, SpringConfig};
+use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -314,6 +317,41 @@ pub fn view_button(
     )
 }
 
+/// (R686.C §5.16 §5.22 §5.28) Drive a hover-progress spring and read
+/// its current `0.0..=1.0` value.
+///
+/// Materialises a per-key [`Animation<f32>`] in the current
+/// [`Owner`]'s [`cache`](Owner::cache) (so it persists across paint
+/// cycles + is dropped with the owner), retargets it to `1.0` when
+/// `is_hover` else `0.0`, and returns the spring's current value. The
+/// [`SpringConfig::default`] timing smooths the Idle ↔ Hover fade over
+/// ~200 ms; the shell's repaint loop drives it to steady state once
+/// input stops (R51.147).
+///
+/// Threads straight into [`view_button`]'s `hover_progress` argument.
+/// Lifted from the verbatim `drive_hover_progress` helper that
+/// `hello-button`, `figma-button-m3`, and `hello-button-tui` each
+/// carried (R686.C, [[abstraction-needs-second-consumer]] Rule of
+/// Three). The `anim_key` stays per-binding so independent buttons
+/// own independent springs (cache slots keyed on
+/// `(TypeId::of::<Animation<f32>>(), anim_key)`).
+///
+/// # Panics
+///
+/// Panics if called outside an [`Owner`] scope (i.e. not inside the
+/// shell's `root_owner().run(...)` view-fn wrap) — loud failure is
+/// chosen over a silently-broken animation, matching the pre-R686.C
+/// binding-local helpers.
+#[must_use]
+pub fn use_hover_progress(is_hover: bool, anim_key: &'static str) -> f32 {
+    let owner = Owner::current()
+        .expect("use_hover_progress: view fn must run inside ShellCore::root_owner().run(...)");
+    let anim: Rc<Animation<f32>> =
+        owner.cache(anim_key, || Animation::new(&owner, 0.0_f32, SpringConfig::default()));
+    anim.set_target(if is_hover { 1.0 } else { 0.0 });
+    anim.value()
+}
+
 #[cfg(test)]
 mod tests {
     //! R686.B §5.16 — button paint substrate tests. Pin the M3
@@ -321,9 +359,11 @@ mod tests {
     //! + the composition shape the 3 migrated consumers rely on.
 
     use super::{
-        m3_button_fill, view_button, ButtonColors, ButtonStyle, DISABLED_STATE_LAYER,
-        HOVER_STATE_LAYER, PRESSED_STATE_LAYER,
+        m3_button_fill, use_hover_progress, view_button, ButtonColors, ButtonStyle,
+        DISABLED_STATE_LAYER, HOVER_STATE_LAYER, PRESSED_STATE_LAYER,
     };
+    use pinion_core::animation::Animation;
+    use pinion_core::reactive::Owner;
     use pinion_core::scene::{Rect, Scene};
     use pinion_core::style::{Color, Size};
     use pinion_core::theme::{ColorRole, Theme};
@@ -446,6 +486,37 @@ mod tests {
             panic!("child must be the label Text");
         };
         assert_eq!(label.style.fg_color, c.label_disabled);
+    }
+
+    #[test]
+    fn r686_c_use_hover_progress_idle_zero_and_caches_spring() {
+        // Fresh idle spring sits at the 0.0 initial; the hook caches
+        // an Animation<f32> per key so the spring persists across
+        // paint cycles (spring dynamics themselves are pinned in
+        // pinion-core + the bindings' settle tests).
+        let owner = Owner::new();
+        let idle = owner.run(|| use_hover_progress(false, "test::hp"));
+        assert!(
+            idle.abs() < f32::EPSILON,
+            "fresh idle hover spring sits at 0.0, got {idle}",
+        );
+        assert!(
+            owner.cache_contains::<Animation<f32>>("test::hp"),
+            "use_hover_progress must cache the spring under its key",
+        );
+    }
+
+    #[test]
+    fn r686_c_use_hover_progress_independent_per_key() {
+        // Distinct keys own distinct springs (two buttons on screen
+        // animate independently).
+        let owner = Owner::new();
+        owner.run(|| {
+            let _ = use_hover_progress(true, "btn_a::hp");
+            let _ = use_hover_progress(false, "btn_b::hp");
+        });
+        assert!(owner.cache_contains::<Animation<f32>>("btn_a::hp"));
+        assert!(owner.cache_contains::<Animation<f32>>("btn_b::hp"));
     }
 
     #[test]

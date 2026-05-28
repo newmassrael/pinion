@@ -60,38 +60,20 @@
 use std::io::Stdout;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
-use pinion_core::animation::SpringConfig;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::{Animation, Color, Frame, Owner, WidgetCore, style};
+use pinion_core::{Color, Frame, WidgetCore, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
+use pinion_widget_paint::button::use_hover_progress;
 
-/// R51.150 §5.22 — owner-cache key for the TUI hover-progress
-/// [`Animation`]. Distinct prefix from the Vello sibling
-/// (`hello_button::*`) so the two examples can run side-by-side under
-/// future shared infrastructure without key collision.
+/// (R686.C §5.22) Owner-cache key for the TUI hover-progress spring
+/// driven by `pinion_widget_paint::button::use_hover_progress`.
+/// Distinct prefix from the Vello sibling (`hello_button::*`) so the
+/// two examples can run side-by-side without cache-slot collision.
 const HOVER_ANIM_KEY: &str = "hello_button_tui::hover_progress";
-
-/// R51.148 §5.28 + R51.150 §5.22 — drive the hover progress animation
-/// and return the displayed value in `[0.0, 1.0]`. Hover targets
-/// `1.0`; every other state targets `0.0`. Mirrors the Vello
-/// `hello-button` pattern verbatim, with the same R51.150 owner-cache
-/// replacement of the pre-R51.150 `thread_local OnceCell` workaround
-/// (see `hello-button/src/main.rs` for the long-form rationale).
-fn drive_hover_progress(state: ButtonState) -> f32 {
-    let owner = Owner::current().expect(
-        "hello-button-tui view fn must run inside ShellCoreTui::root_owner().run(...)",
-    );
-    let anim: std::rc::Rc<Animation<f32>> = owner.cache(HOVER_ANIM_KEY, || {
-        Animation::new(&owner, 0.0_f32, SpringConfig::default())
-    });
-    let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
-    anim.set_target(target);
-    anim.value()
-}
 
 /// R51.151 §5.28 — idle (white) and hover (gray) lightness endpoints
 /// for the Idle ↔ Hover spring fade. Mirror of `hello-button` (Vello
@@ -165,7 +147,7 @@ impl WidgetCore for HelloButtonTui {
         // Disabled retain their discrete fills (no animation; the
         // shell's adaptive `poll_timeout` keeps the substrate idle
         // once the spring settles).
-        let hover_progress = drive_hover_progress(state);
+        let hover_progress = use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY);
         let bg_fill: Color = match state {
             ButtonState::Idle | ButtonState::Hover => {
                 BTN_FILL_IDLE.lerp(BTN_FILL_HOVER, hover_progress)

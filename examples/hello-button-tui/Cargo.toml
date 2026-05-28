@@ -17,4 +17,8 @@ path = "src/main.rs"
 [dependencies]
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R686.C §5.16 — `use_hover_progress` hover-spring hook (backend-agnostic;
+# pinion-widget-paint pulls no GPU/winit stack, so it is safe for a
+# TUI binding). Replaces this binding's verbatim `drive_hover_progress`.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 pinion-tui = { path = "../../crates/pinion-tui", version = "0.0.1" }

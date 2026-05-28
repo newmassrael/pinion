@@ -1699,6 +1699,7 @@ dependencies = [
  "pinion-a11y",
  "pinion-core",
  "pinion-tui",
+ "pinion-widget-paint",
 ]
 
 [[package]]

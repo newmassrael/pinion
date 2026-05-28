@@ -13716,6 +13716,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R686.C — R686.C lifts the verbatim-triplicated drive_hover_progress hover-spring helper into pinion_widget_paint::button::use_hover_progress(is_hover, anim_key); hello-button + figma-button-m3 + hello-button-tui all delegate, clearing the smell discovered during R686.B.
+
+**Changes**:
+- pinion-widget-paint/src/button.rs: new pub fn use_hover_progress(is_hover: bool, anim_key: &'static str) -> f32 — Owner::current().cache(anim_key, || Animation::new(0.0, SpringConfig::default())) + set_target(if is_hover {1.0} else {0.0}) + value(). Decoupled from ButtonState (takes a bool predicate) so any hoverable widget can reuse it. +2 tests (idle=0.0 + spring cached; independent per key).
+- Migrated hello-button + figma-button-m3 + hello-button-tui: removed each binding's local drive_hover_progress fn (verbatim identical bar the cache-key constant + panic string); call sites become use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY). Each keeps its unique HOVER_ANIM_KEY const so independent buttons own independent springs.
+- hello-button-tui gains a pinion-widget-paint dep (backend-agnostic crate; no GPU/winit pull, safe for the TUI binding) — first non-Vello consumer of the widget-paint substrate.
+- Import cascade cleaned: Animation / SpringConfig / Owner dropped from the 3 bindings' non-test imports (now only the substrate touches them).
+
+
+
+**Verification**:
+- cargo test --workspace: 66 suites green, 0 failed (button substrate 13 incl. 2 new use_hover_progress tests; hello-button 13; figma 18).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (fixed a float_cmp: assert_eq!(idle, 0.0) on f32 -> abs() < f32::EPSILON per the workspace convention).
+- 45-demo regression sweep (release): 45/45 PASS. hello_button_r641 + figma_button_m3_r640 bit-identical post-migration (hover spring behaviour unchanged). hello-button-tui has no demo/unit-test (pre-existing) — covered by compile + the Vello siblings' settle tests + the substrate hook tests.
+- Honest LOC: net ~-3 (substrate hook +75 incl. 2 tests + doc; 3 verbatim ~14-line copies collapsed) — a genuine reduction this round, plus the SSOT win.
+
+
+
+**Impact**: §5.16, §5.22, §5.28
+
+
+**Carry forward**:
+- R686 (feature) — DockSurface drag-to-reorganize handles (DockDropZone + swap_leaves/split_leaf_into/remove_leaf via try_new + DockDragOverExternal + editor reorganize wire); the audit-clearance trilogy (R686.A/B/C) is done, the button widget-catalog entry + hover hook are SSOT, base is clean for the feature round.
+- Smell 8 — Topology+Signal persistence contract for Phase D editor workspace save/restore; design alongside R686 topology mutation.
+- S15 (architectural) — Scene Clone via External Box<dyn> -> Rc<RefCell<dyn>> lift; natural land at Phase C/D entry.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

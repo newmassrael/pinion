@@ -97,13 +97,12 @@
 //! python3 tools/demos/figma_button_m3_r640.py
 //! ```
 
-use pinion_core::animation::SpringConfig;
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Animation, Color, Frame, Owner, Scene};
+use pinion_core::{Color, Frame, Scene};
 #[cfg(test)]
 use pinion_core::WidgetCore;
 #[cfg(test)]
@@ -114,7 +113,9 @@ use pinion_shell::vello_renderer_impl;
 // coefficient matrix moved here; this binding supplies its Figma
 // design tokens via `ButtonColors::new` and keeps `button_fill_for`
 // as a thin adapter that injects the hover spring.
-use pinion_widget_paint::button::{view_button, ButtonColors, ButtonStyle, DISABLED_STATE_LAYER};
+use pinion_widget_paint::button::{
+    use_hover_progress, view_button, ButtonColors, ButtonStyle, DISABLED_STATE_LAYER,
+};
 // `m3_button_fill` is only reached by the `#[cfg(test)]` `button_fill_for`
 // helper (the production `view` calls `view_button`, which runs the
 // matrix internally).
@@ -173,39 +174,11 @@ const CANVAS_BG: Color = Color::rgb(0x1F, 0x1F, 0x1F);
 // delegates to `m3_button_fill`, and the disabled fade reuses the
 // substrate's `DISABLED_STATE_LAYER`.
 
-/// R51.150 §5.22 — string key identifying the hover-progress
-/// [`Animation`] in the binding's owner-scoped cache. A `&'static str`
-/// per [`Owner::cache`]'s contract; the unique name guarantees no
-/// collision with future cached values inside the same scope.
+/// (R686.C §5.22) Per-binding cache key for the hover-progress spring
+/// driven by `pinion_widget_paint::button::use_hover_progress`. The
+/// unique `&'static str` keeps the spring's owner-scoped cache slot
+/// from colliding with any other cached value in the same scope.
 const HOVER_ANIM_KEY: &str = "figma_button_m3::hover_progress";
-
-/// R51.147 §5.28 + R51.150 §5.22 — drive the hover progress animation
-/// off the current [`ButtonState`] and return the displayed value in
-/// `[0.0, 1.0]`.
-///
-/// Materialises (on first call) the [`Animation<f32>`] inside the
-/// binding's root [`Owner`] via [`Owner::cache`] (R51.150). The
-/// animation lives for as long as the shell — owner drop releases the
-/// cache map, dropping the animation and unregistering it from the
-/// tick list. Idle / Pressed / Disabled target `0.0`; Hover targets
-/// `1.0`. The spring carries velocity through re-targets so
-/// transitioning Idle → Hover → Idle without waiting for settle looks
-/// natural — same pattern `hello-button` (R51.147 §5.28) carries.
-fn drive_hover_progress(state: ButtonState) -> f32 {
-    // R51.146 — `Owner::current()` resolves to the shell's
-    // `root_owner` because `compute_paint_scene` wrapped this call in
-    // `root_owner().run(...)`. Panicking here means the view fn is
-    // running outside the framework wrap (a broken integration); we
-    // choose loud failure over a silently-broken animation.
-    let owner = Owner::current()
-        .expect("figma-button-m3 view fn must run inside ShellCore::root_owner().run(...)");
-    let anim: std::rc::Rc<Animation<f32>> = owner.cache(HOVER_ANIM_KEY, || {
-        Animation::new(&owner, 0.0_f32, SpringConfig::default())
-    });
-    let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
-    anim.set_target(target);
-    anim.value()
-}
 
 /// (R686.B §5.16) The Figma design-token [`ButtonColors`] for this
 /// binding: resting `#675AA4` Primary fill, `#FFFFFF` onPrimary state
@@ -236,7 +209,7 @@ fn figma_button_colors() -> ButtonColors {
 /// `#[cfg(test)]`.
 #[cfg(test)]
 fn button_fill_for(state: ButtonState) -> Color {
-    m3_button_fill(&figma_button_colors(), state, drive_hover_progress(state))
+    m3_button_fill(&figma_button_colors(), state, use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY))
 }
 
 /// R640 §5.7 — paint the Material 3 Filled Button at the supplied
@@ -257,7 +230,7 @@ fn view(state: ButtonState, _frame: Frame) -> Scene {
     let button = view_button(
         "Button",
         state,
-        drive_hover_progress(state),
+        use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY),
         &figma_button_colors(),
         &ButtonStyle::m3_default("figma_button_m3")
             .with_size(Size::px(BTN_W, BTN_H))

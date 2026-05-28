@@ -31,7 +31,6 @@
 //!     `paint_adapter::to_vello` (called from the shell) walks the
 //!     tree into a `vello::Scene` and `HelloButtonRenderer` submits it.
 
-use pinion_core::animation::SpringConfig;
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size,
@@ -40,11 +39,11 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::theme::{use_theme, ColorRole};
 #[cfg(test)]
 use pinion_core::theme::ThemeMode;
-use pinion_core::{Animation, Frame, Owner, Scene, WidgetCore};
+use pinion_core::{Frame, Scene, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_derive::widget;
-use pinion_widget_paint::button::{view_button, ButtonColors, ButtonStyle};
+use pinion_widget_paint::button::{use_hover_progress, view_button, ButtonColors, ButtonStyle};
 use pinion_shell::vello_renderer_impl;
 
 // R650 §5.16 — single-tag binding uses the `"main_btn"` literal
@@ -82,46 +81,12 @@ const THEME_TAG: &str = "app";
 const BTN_W: u32 = 160;
 const BTN_H: u32 = 80;
 
-/// R51.150 §5.22 — string key identifying the hover-progress
-/// [`Animation`] in the binding's owner-scoped cache. A `&'static str`
-/// per [`Owner::cache`]'s contract; the unique name guarantees no
-/// collision with future cached values inside the same scope.
+/// (R686.C §5.22) Per-binding cache key for the hover-progress spring
+/// driven by `pinion_widget_paint::button::use_hover_progress`. The
+/// unique `&'static str` keeps the spring's owner-scoped cache slot
+/// from colliding with any other cached value in the same scope.
 const HOVER_ANIM_KEY: &str = "hello_button::hover_progress";
 
-/// R51.147 §5.28 + R51.150 §5.22 — drive the hover progress animation
-/// off the current [`ButtonState`] and return the displayed value in
-/// `[0.0, 1.0]`.
-///
-/// Materialises (on first call) the [`Animation<f32>`] inside the
-/// binding's root [`Owner`] via [`Owner::cache`] (R51.150). The
-/// animation lives for as long as the shell — owner drop releases
-/// the cache map, dropping the animation and unregistering it from
-/// the tick list. Idle / Pressed / Disabled target `0.0`; Hover
-/// targets `1.0`. The spring carries velocity through re-targets so
-/// transitioning Idle → Hover → Idle without waiting for settle looks
-/// natural.
-///
-/// Pre-R51.150 used a thread-local `OnceCell<Animation<f32>>` —
-/// `[[textbook-long-term-correct]]` violation since the cell survived
-/// shell drops and aliased across multiple shells in the same thread.
-/// The [`Owner::cache`] primitive replaces that workaround with the
-/// canonical `SolidJS` / Leptos `useMemo` / React `useRef` shape:
-/// per-owner instance, dropped with the owner.
-fn drive_hover_progress(state: ButtonState) -> f32 {
-    // R51.146 — `Owner::current()` resolves to the shell's
-    // `root_owner` because `compute_paint_scene` wrapped this call in
-    // `root_owner().run(...)`. Panicking here means the view fn is
-    // running outside the framework wrap (a broken integration); we
-    // choose loud failure over a silently-broken animation.
-    let owner = Owner::current()
-        .expect("hello-button view fn must run inside ShellCore::root_owner().run(...)");
-    let anim: std::rc::Rc<Animation<f32>> = owner.cache(HOVER_ANIM_KEY, || {
-        Animation::new(&owner, 0.0_f32, SpringConfig::default())
-    });
-    let target = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
-    anim.set_target(target);
-    anim.value()
-}
 
 /// view-fn (§6.3): pure sync mapping `ButtonState` → `Scene`. The
 /// `&Frame` slot is the §6.3 ZST hedge — zero-cost today, ready for
@@ -149,10 +114,11 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     // anywhere in the application re-runs the view + repaints with
     // the new tones.
     let theme = use_theme(THEME_TAG).theme_animated();
-    // R51.147 §5.28 — animated hover progress (0.0 = Idle baseline,
-    // 1.0 = full Hover). The spring smooths the Idle ↔ Hover lerp over
-    // ~200ms; `view_button` threads it into the M3 state-layer matrix.
-    let hover_progress = drive_hover_progress(state);
+    // R686.C §5.28 — animated hover progress (0.0 = Idle baseline,
+    // 1.0 = full Hover) via the shared substrate hook. The spring
+    // smooths the Idle ↔ Hover lerp over ~200ms; `view_button` threads
+    // it into the M3 state-layer matrix.
+    let hover_progress = use_hover_progress(matches!(state, ButtonState::Hover), HOVER_ANIM_KEY);
     let label = match state {
         ButtonState::Disabled => "Disabled",
         _ => "Click me!",
