@@ -14119,6 +14119,24 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R695.A — R695.A audit-clearance — TooltipExternal::dismiss is a no-op while hidden so a stray dismiss cannot arm a latent latch that suppresses the next hover/focus show
+
+**Changes**:
+- TooltipExternal::dismiss now guards on visible(): a dismiss with nothing shown is a no-op, so a stray RPC scene/invoke dismiss against a hidden tooltip cannot leave a latent latch suppressing the next hover/focus show -- 'dismiss' means 'hide the currently-shown tooltip'. The shell Escape path already guarded (only invokes dismiss when visible); this closes the raw RPC invoke edge at the source
+
+
+
+**Verification**:
+- cargo test --workspace green (-j2), 0 failures; new test dismiss_while_hidden_is_a_noop_not_a_latent_latch (stray dismiss leaves dismissed=false; the next PointerEnter still shows)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic
+- tools/demos/r695_tooltip.py PASS -- the live dismiss paths fire while visible and are unaffected by the guard
+
+
+
+**Impact**: §5.38
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

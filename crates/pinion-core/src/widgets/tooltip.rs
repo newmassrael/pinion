@@ -132,9 +132,14 @@ impl TooltipExternal {
     }
 
     /// WCAG 1.4.13 dismiss — hide the tooltip while hover / focus stays
-    /// put. Idempotent.
+    /// put. A **no-op when nothing is shown**: "dismiss" means "hide the
+    /// currently-shown tooltip", so a stray dismiss (e.g. an RPC
+    /// `scene/invoke dismiss` against a hidden tooltip) must not arm the
+    /// latch and suppress the *next* hover / focus show. Idempotent.
     fn dismiss(&mut self) {
-        self.dismissed = true;
+        if self.visible() {
+            self.dismissed = true;
+        }
     }
 
     /// Drive a pointer event by W3C name. `PointerEnter` / `PointerLeave`
@@ -378,6 +383,18 @@ mod tests {
         send(&mut t, "PointerLeave");
         assert!(t.dismissed(), "focus still holds the episode -> latch persists");
         assert!(!t.visible());
+    }
+
+    #[test]
+    fn dismiss_while_hidden_is_a_noop_not_a_latent_latch() {
+        // A stray dismiss with nothing shown must not arm the latch —
+        // that would suppress the next hover / focus show. "Dismiss"
+        // means "hide the currently-shown tooltip".
+        let mut t = TooltipExternal::new();
+        t.invoke("dismiss", IntrospectValue::Null).unwrap();
+        assert!(!t.dismissed(), "dismiss with nothing shown is a no-op");
+        send(&mut t, "PointerEnter");
+        assert!(t.visible(), "the next hover still shows the tooltip");
     }
 
     #[test]

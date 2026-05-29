@@ -22562,6 +22562,32 @@
         "overlay-dismiss substrate (menu click-outside + popover + combobox) still 1-consumer -- Tooltip dismisses via pointer-leave/blur/Escape, not click-outside, so it is not the clean 2nd consumer"
       ]
     },
+    "R695.A": {
+      "decision_summary": "R695.A audit-clearance — TooltipExternal::dismiss is a no-op while hidden so a stray dismiss cannot arm a latent latch that suppresses the next hover/focus show",
+      "changes_bullets": [
+        "TooltipExternal::dismiss now guards on visible(): a dismiss with nothing shown is a no-op, so a stray RPC scene/invoke dismiss against a hidden tooltip cannot leave a latent latch suppressing the next hover/focus show -- 'dismiss' means 'hide the currently-shown tooltip'. The shell Escape path already guarded (only invokes dismiss when visible); this closes the raw RPC invoke edge at the source"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (-j2), 0 failures; new test dismiss_while_hidden_is_a_noop_not_a_latent_latch (stray dismiss leaves dismissed=false; the next PointerEnter still shows)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic",
+        "tools/demos/r695_tooltip.py PASS -- the live dismiss paths fire while visible and are unaffected by the guard"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "publishable_decision_summary": "R695.A audit-clearance — TooltipExternal::dismiss is a no-op while hidden so a stray dismiss cannot arm a latent latch that suppresses the next hover/focus show",
+      "publishable_changes_bullets": [
+        "TooltipExternal::dismiss now guards on visible(): a dismiss with nothing shown is a no-op, so a stray RPC scene/invoke dismiss against a hidden tooltip cannot leave a latent latch suppressing the next hover/focus show -- 'dismiss' means 'hide the currently-shown tooltip'. The shell Escape path already guarded (only invokes dismiss when visible); this closes the raw RPC invoke edge at the source"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (-j2), 0 failures; new test dismiss_while_hidden_is_a_noop_not_a_latent_latch (stray dismiss leaves dismissed=false; the next PointerEnter still shows)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic",
+        "tools/demos/r695_tooltip.py PASS -- the live dismiss paths fire while visible and are unaffected by the guard"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
