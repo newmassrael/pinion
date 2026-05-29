@@ -14155,6 +14155,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R696 — R696 Disclosure (show/hide) widget + WAI-ARIA aria-expanded a11y axis + #[widget] state_flags(expanded) derive extension (accordion's atomic unit, first descriptive show/hide control).
+
+**Changes**:
+- pinion-a11y: AccessNode.expanded Option<bool> field + with_expanded builder + tree.rs lowering via accesskit set_expanded/clear; placed on AccessNode (mirror selected/modal/described_by) NOT AccessState, so the additive aria-expanded axis defaults absent without forcing the ~20 hand-written AccessState{..} a11y_manual literals to enumerate it (R674/R693/R695 additive-axis convention).
+- pinion-core: widgets/disclosure.scxml (standard_button.sce-template, activate_event=disclosure.activate) + build.rs entry → DisclosurePolicy/State/Event; widgets/disclosure.rs Disclosure + DisclosureExternal — 1:1 mirror of Checkbox with an expanded:bool sidecar, an "expanded" intent (distinct from checkbox "checked" so AI listeners separate show/hide from form state), and introspect slots state/expanded/send.
+- pinion-derive: #[widget] state_flags gains expanded = bool_field(N) (same two source forms as checked) emitting a .with_expanded(..) chain on the derived AccessNode (aria-expanded), distinct from checked/aria-checked + access_value/AccessValue.
+- pinion-widget-paint: disclosure.rs DisclosureStyle::m3 + view_disclosure — U+25B6/U+25BC twisty + summary header on a SurfaceContainerHigh state-layer ramp (hover .08/pressed .12/disabled .38, identical weights to checkbox) + content panel sibling shown only while expanded; dispatch tag on the header (not the root) so content clicks never toggle.
+- examples/hello-disclosure: first consumer — role=Button + state_flags(expanded=bool_field(1)), Space AND Enter activate (APG disclosure keyboard model); workspace member added.
+- tools/demos/r696_disclosure.py: ~35-assertion AI-first RPC dogfood (expand/collapse via invoke-send arc + real scene/click + focus+scene/key Space/Enter + scene/intervene; aria-expanded introspect; paint panel present-only-when-expanded via scene/snapshot; disabled gate swallows pointer+keyboard).
+- AriaRole::Region considered + dropped — WAI-ARIA APG marks role=region optional on disclosure content and no 2nd consumer exists ([[abstraction-needs-second-consumer]]); the panel is a plain grouping container.
+
+
+
+**Verification**:
+- cargo test --workspace -j2: 0 fail — incl. 14 disclosure core + 7 view_disclosure paint + 7 hello-disclosure a11y + 4 aria-expanded a11y substrate tests.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean.
+- full demo sweep 53/53 PASS including r696_disclosure (1.4s).
+- Mnemosyne: validate_workspace baseline (ledger 575) → append R696 → re-validate (T1 reject 0 / new orphan +0 / round-trip 1/1 / GENERATED.md sync).
+
+
+
+**Impact**: §5.16, §5.35, §5.38, §5.39, §5.40, §5.49, §5.50
+
+
+**Carry forward**:
+- Accordion (multi-section stack: N disclosures via create_extra_externals + a section-group container) deferred — Disclosure is the atomic unit; the multi-section composition is a consumer round once the section-group + roving keyboard model is needed.
+- aria-expanded 2nd/3rd consumers latent: submenu title (menu.rs aria-haspopup/expanded, currently structural) and tree-row twisty (TreeItem currently glyph-only per role.rs) — retrofit AccessNode.with_expanded when those rounds land.
+- Disclosure content height-collapse animation — instant show/hide today; a spring height transition needs a measured-content clip substrate (Phase B polish).
+- Optional role=region on the disclosure panel — add AriaRole::Region when a labelled-landmark 2nd consumer surfaces (APG-optional today).
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

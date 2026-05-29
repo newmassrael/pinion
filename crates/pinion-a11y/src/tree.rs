@@ -343,6 +343,16 @@ fn lower_access_node(access: &AccessNode) -> Node {
     if let Some(checked) = access.state.checked {
         node.set_toggled(if checked { accesskit::Toggled::True } else { accesskit::Toggled::False });
     }
+    // R696 §5.40 — WAI-ARIA `aria-expanded` mapping for disclosure
+    // controls (accordion header, future submenu title / tree twisty).
+    // AccessKit's `Expanded` is a boolean flag: `set_expanded(true)` =
+    // shown, `set_expanded(false)` = collapsed; we omit it (no call)
+    // when the axis is `None` so non-disclosure roles keep the
+    // attribute absent. An `AccessNode` field (mirror `selected` /
+    // `modal`), distinct from `set_toggled` (`aria-checked`).
+    if let Some(expanded) = access.expanded {
+        node.set_expanded(expanded);
+    }
     if access.state.disabled {
         node.set_disabled();
     }
@@ -827,6 +837,32 @@ mod tests {
         b.add(&AccessNode::new("dialog_cancel", AriaRole::Button).with_name("Cancel"));
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 4);
+    }
+
+    #[test]
+    fn r696_disclosure_header_with_expanded_lowers() {
+        // Smoke test: a disclosure header Button carrying aria-expanded
+        // (the WAI-ARIA disclosure pattern's primary requirement).
+        // AccessKit node internals are opaque from outside the crate,
+        // so we verify build succeeds for both expanded and collapsed
+        // forms. The content panel is a plain grouping container (the
+        // APG marks `role=region` optional, so no dedicated role is
+        // emitted — see [[abstraction-needs-second-consumer]]).
+        let mut open = AccessTreeBuilder::new();
+        open.add(
+            &AccessNode::new("section_hdr", AriaRole::Button)
+                .with_name("Section")
+                .with_expanded(true),
+        );
+        assert_eq!(open.build(None).nodes.len(), 2); // root + header
+
+        let mut closed = AccessTreeBuilder::new();
+        closed.add(
+            &AccessNode::new("section_hdr", AriaRole::Button)
+                .with_name("Section")
+                .with_expanded(false),
+        );
+        assert_eq!(closed.build(None).nodes.len(), 2); // root + header
     }
 
     #[test]

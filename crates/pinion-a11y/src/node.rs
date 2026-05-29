@@ -141,6 +141,30 @@ pub struct AccessNode {
     /// until a 2nd consumer surfaces one
     /// (`[[abstraction-needs-second-consumer]]`).
     pub described_by: Option<String>,
+    /// R696 §5.40 — WAI-ARIA 1.2 §6.6.3 `aria-expanded`, the truthy
+    /// axis for **disclosure** controls (a `Button` whose activation
+    /// shows / hides an associated content panel). `Some(true)` lowers
+    /// to `accesskit::Node::set_expanded(true)` (shown), `Some(false)`
+    /// to `set_expanded(false)` (collapsed), `None` omits the attribute
+    /// (the default for roles without a disclosure semantic).
+    ///
+    /// Distinct axis from [`AccessState::checked`]: `aria-checked` is
+    /// the on/off *value* of a two-state control (`Switch` / `CheckBox`
+    /// / `RadioButton`); `aria-expanded` is whether a *separate*
+    /// element this control governs is revealed. The disclosure /
+    /// accordion pattern (R696) is the first consumer; a submenu title
+    /// (`role.rs` §3.5 future axis) and a tree-row twisty
+    /// ([`AriaRole::TreeItem`] future axis) are latent consumers.
+    ///
+    /// Placed on [`AccessNode`] (alongside [`Self::selected`] /
+    /// [`Self::modal`]) rather than in [`AccessState`] so the additive
+    /// axis defaults to absent in [`AccessNode::new`] without forcing
+    /// every hand-written `AccessState { .. }` literal to enumerate it
+    /// — the R674 / R693 / R695 additive-axis convention.
+    ///
+    /// [`AccessState::checked`]: crate::node::AccessState::checked
+    /// [`AriaRole::TreeItem`]: crate::role::AriaRole::TreeItem
+    pub expanded: Option<bool>,
 }
 
 impl AccessNode {
@@ -164,6 +188,7 @@ impl AccessNode {
             size_of_set: None,
             modal: false,
             described_by: None,
+            expanded: None,
         }
     }
 
@@ -265,6 +290,17 @@ impl AccessNode {
     #[must_use]
     pub fn with_described_by(mut self, tag: impl Into<String>) -> Self {
         self.described_by = Some(tag.into());
+        self
+    }
+
+    /// R696 §5.40 — set the WAI-ARIA `aria-expanded` state. `true`
+    /// marks the disclosure panel as shown, `false` as collapsed;
+    /// leaving it unset (the default) omits the attribute for roles
+    /// without a disclosure semantic. See [`Self::expanded`] for the
+    /// axis distinction from `checked`.
+    #[must_use]
+    pub fn with_expanded(mut self, expanded: bool) -> Self {
+        self.expanded = Some(expanded);
         self
     }
 }
@@ -392,6 +428,33 @@ mod tests {
         assert!(!s.hovered);
         assert!(!s.pressed);
         assert_eq!(s.checked, None);
+    }
+
+    // R696 §5.40 — aria-expanded builder + default omission +
+    // checked/expanded axis independence. `expanded` is an AccessNode
+    // field (mirror `selected` / `modal`), not an AccessState flag.
+
+    #[test]
+    fn r696_new_omits_expanded() {
+        let n = AccessNode::new("section_hdr", AriaRole::Button);
+        assert_eq!(n.expanded, None);
+    }
+
+    #[test]
+    fn r696_with_expanded_records_axis() {
+        let open = AccessNode::new("section_hdr", AriaRole::Button).with_expanded(true);
+        assert_eq!(open.expanded, Some(true));
+        let closed = AccessNode::new("section_hdr", AriaRole::Button).with_expanded(false);
+        assert_eq!(closed.expanded, Some(false));
+    }
+
+    #[test]
+    fn r696_expanded_axis_independent_of_checked() {
+        // A disclosure header carries aria-expanded but not
+        // aria-checked; the two axes must not alias.
+        let n = AccessNode::new("section_hdr", AriaRole::Button).with_expanded(true);
+        assert_eq!(n.expanded, Some(true));
+        assert_eq!(n.state.checked, None);
     }
 
     #[test]

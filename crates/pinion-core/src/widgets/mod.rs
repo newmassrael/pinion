@@ -2,6 +2,7 @@ pub mod aria;
 pub mod button;
 pub mod caret_blink;
 pub mod checkbox;
+pub mod disclosure;
 pub mod listbox;
 pub mod listbox_item;
 pub mod menu;

@@ -1753,6 +1753,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-disclosure"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-dock-panels"
 version = "0.0.1"
 dependencies = [

@@ -8,6 +8,7 @@ fn main() {
         "widgets/button.scxml",
         "widgets/toggle.scxml",
         "widgets/checkbox.scxml",
+        "widgets/disclosure.scxml",
         "widgets/radio.scxml",
         "widgets/listbox_item.scxml",
         "widgets/slider.scxml",

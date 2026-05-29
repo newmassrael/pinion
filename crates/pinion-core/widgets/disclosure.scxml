@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.38 Round 696 — Disclosure widget statechart.
+
+     Same shared interaction body as Button R12 / Toggle R51.2 /
+     Checkbox R51.5 (idle / hover / pressed / disabled) via the
+     `standard_button.sce-template.xml` template (R51.3). This
+     document selects the `disclosure.activate` event name; the
+     pressed -> hover transition raises it on `pointer_up`. The
+     Rust binding (`Disclosure` + `DisclosureExternal`) listens for
+     `disclosure.activate` to flip an `expanded: bool` sidecar (same
+     shape as Checkbox's `value`) and emits an `"expanded"` intent
+     carrying the new boolean as `IntrospectValue::Bool`.
+
+     Semantic note: at the statechart level Disclosure is the same
+     four-state button-toggle as Checkbox / Toggle. The divergence is
+     the *intent name* (`"expanded"`, so AI listeners distinguish a
+     show/hide control from a form checkbox or settings switch) and
+     the surrounding accessibility surface: a `button` role carrying
+     WAI-ARIA `aria-expanded` (R696 `AccessState::expanded`) that
+     governs a separate `region` panel, rather than a `checkbox`
+     carrying `aria-checked` on its own value.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:sce="http://sce.dev/ext"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <sce:use template="standard_button.sce-template.xml"
+           activate_event="disclosure.activate"/>
+
+</scxml>

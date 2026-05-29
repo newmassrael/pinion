@@ -89,8 +89,8 @@
 //!
 //! `state_flags(...)` declares the state-variant → [`AccessState`]
 //! bool-flag mapping. Each entry is `flag = Variant` where `flag` is
-//! one of `hovered` / `pressed` / `disabled` / `checked` and
-//! `Variant` is a bare unit-variant ident of `Self::State`:
+//! one of `hovered` / `pressed` / `disabled` / `checked` / `expanded`
+//! and `Variant` is a bare unit-variant ident of `Self::State`:
 //!
 //! | Flag       | Maps to                              | Variant absent → |
 //! | ---------- | ------------------------------------ | ---------------- |
@@ -98,6 +98,15 @@
 //! | `pressed`  | `matches!(state, State::Variant)`    | `false`          |
 //! | `disabled` | `matches!(state, State::Variant)`    | `false`          |
 //! | `checked`  | `Some(matches!(state, State::Variant))` _or_ `Some(state.N)` | `None`        |
+//! | `expanded` | `Some(matches!(state, State::Variant))` _or_ `Some(state.N)` | `None`        |
+//!
+//! R696 §5.16 — `expanded` (WAI-ARIA `aria-expanded`) accepts the same
+//! two forms as `checked` and maps to `AccessNode::expanded`. The
+//! disclosure / accordion widget (`(DisclosureState, bool)`) is the
+//! first consumer, declared as `expanded = bool_field(1)`. It is a
+//! distinct a11y axis from `checked`: a disclosure header is a
+//! `button` reporting whether a *separate* region is shown, not a
+//! `checkbox` reporting its own on/off value.
 //!
 //! `focused` is auto-derived from `focused == Some(<Self as WidgetCore>::tag())`
 //! for every declarative node — no `state_flags` entry needed.
@@ -507,6 +516,26 @@ fn emit_a11y_impl(
                 }
             },
         );
+        // R696 §5.16 — optional `.with_expanded(bool)` chain for the
+        // WAI-ARIA `aria-expanded` axis (disclosure controls). Like
+        // `value_chain`, this attaches to the derived `AccessNode`
+        // builder rather than the `AccessState` literal — `expanded` is
+        // an `AccessNode` field (mirror `selected` / `modal`), so the
+        // additive axis stays off the `AccessState` struct the
+        // hand-written `a11y_manual` bindings construct by literal.
+        // Maps the declared source (enum-variant or tuple
+        // `bool_field(N)`) to a bare `bool`; absent → no chain so
+        // non-disclosure widgets keep the attribute omitted.
+        let expanded_chain = match &state_flags.expanded {
+            None => TokenStream2::new(),
+            Some(StateFlagSource::Variant(v)) => quote! {
+                .with_expanded(::core::matches!(#match_target, #enum_type::#v))
+            },
+            Some(StateFlagSource::BoolField(idx)) => {
+                let idx_lit = syn::Index::from(*idx);
+                quote! { .with_expanded(state.#idx_lit) }
+            }
+        };
 
         // R653 §5.16 — optional `.with_value(AccessValue::Bool(state.N))`
         // chain for value-bearing ARIA roles (Switch / CheckBox /
@@ -559,6 +588,7 @@ fn emit_a11y_impl(
                             ::pinion_a11y::AriaRole::#role_ident,
                         )
                         #value_chain
+                        #expanded_chain
                         .with_state(access_state)
                     ]
                 }
@@ -608,6 +638,14 @@ struct StateFlagsConfig {
     /// (`hovered` / `pressed` / `disabled`) are always interaction-
     /// state-enum dispatched, so they keep the simpler `Ident` slot.
     checked: Option<StateFlagSource>,
+    /// (R696 §5.16) WAI-ARIA `aria-expanded` for disclosure controls.
+    /// Same two accepted forms as `checked` (enum-variant or
+    /// `bool_field(N)`); the canonical disclosure shape is
+    /// `(DisclosureState, bool)` so the usual spelling is
+    /// `expanded = bool_field(1)`. Maps to
+    /// [`AccessNode::expanded`](pinion_a11y::node::AccessNode::expanded),
+    /// a distinct axis from `checked` (see that field's docs).
+    expanded: Option<StateFlagSource>,
 }
 
 struct WidgetArgs {
@@ -774,6 +812,7 @@ impl StateFlagsConfig {
             || self.pressed.is_some()
             || self.disabled.is_some()
             || self.checked.is_some()
+            || self.expanded.is_some()
     }
 }
 
@@ -945,12 +984,21 @@ fn parse_state_flags(input: ParseStream) -> syn::Result<StateFlagsConfig> {
                 }
                 cfg.checked = Some(source);
             }
+            // R696 §5.16 — `aria-expanded` for disclosure controls.
+            // Same source forms as `checked` (enum-variant or
+            // `bool_field(N)`); maps to `AccessNode::expanded`.
+            "expanded" => {
+                if cfg.expanded.is_some() {
+                    return Err(syn::Error::new(name.span(), "duplicate 'expanded' state_flag"));
+                }
+                cfg.expanded = Some(source);
+            }
             other => {
                 return Err(syn::Error::new(
                     name.span(),
                     format!(
                         "unknown state_flag '{other}' — expected one of: \
-                         hovered, pressed, disabled, checked",
+                         hovered, pressed, disabled, checked, expanded",
                     ),
                 ));
             }
@@ -1011,7 +1059,8 @@ fn require_variant(name: &Ident, flag: &str, source: StateFlagSource) -> syn::Re
             format!(
                 "'{flag}' state_flag requires a bare enum-variant ident; \
                  the 'bool_field(N)' call form is accepted only for 'checked' \
-                 (interaction state is always enum-variant dispatched)",
+                 / 'expanded' (interaction state is always enum-variant \
+                 dispatched)",
             ),
         )),
     }
