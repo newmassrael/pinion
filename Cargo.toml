@@ -28,6 +28,7 @@ members = [
     "examples/hello-checkbox",
     "examples/hello-disclosure",
     "examples/hello-accordion",
+    "examples/hello-accordion-single",
     "examples/hello-radio",
     "examples/hello-radio-group",
     "examples/hello-listbox",

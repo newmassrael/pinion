@@ -1,0 +1,32 @@
+[package]
+name = "hello-accordion-single"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R701 §5.38 single-open WAI-ARIA APG accordion — GUI consumer of the R700 DisclosureGroup single-expand coordinator; one DisclosureGroupExternal at the composite paint root 'accordion_single', per-header Tab stops via composite '#' tags + arrow roving, single-open mutual exclusion enforced by the framework coordinator"
+publish = false
+
+[[bin]]
+name = "hello-accordion-single"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R696 §5.50 — disclosure paint composition (`view_disclosure`), one per section.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

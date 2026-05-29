@@ -14348,6 +14348,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R701 — R701 hello-accordion-single — GUI + RPC consumer of the R700 DisclosureGroup single-expand coordinator (single-open WAI-ARIA APG accordion).
+
+**Changes**:
+- New example crate examples/hello-accordion-single (src/main.rs binding + Cargo.toml + build.rs + app.pinion.xml HelloAccordionSingleRenderer); registered in workspace members alphabetically after hello-accordion.
+- One composite DisclosureGroupExternal::new(N) at the composite paint root tag accordion_single (mirror of hello-radio-group over RadioGroupExternal); per-header rows tagged accordion_single#<i> so the R51.42 InputRouter '#'-split routes a click on header i to invoke(send, <i>:<EventName>) against the single coordinator. read_state reads per-section state via the R700 state.<i> / expanded.<i> query paths.
+- Per-header Tab stops: focusable_tags() returns the N composite sub-tags (unlike RadioGroup's single tab stop with internal roving), so click-to-focus and RPC focus/set land focus directly on accordion_single#<i>. apply_key parses the index from the focused sub-tag; Space/Enter toggle via the coordinator's <i>:KeyboardActivate wire form (single-open exclusion holds); ArrowDown/Up/Home/End move focus only through the R664 focus_request mailbox (R697-equivalent), never expansion.
+- WidgetA11y: flat N AriaRole::Button nodes each carrying aria-expanded + interaction state flags + focused (no accordion parent role per WAI-ARIA); access_child_invoke runs the pointer cycle against the coordinator for AT Click/Default; default atomic access_focus_target is correct because focus lands on the composite sub-tag header itself (no active-descendant redirect, the divergence from hello-radio-group whose tab stop is the parent group). 19 unit tests.
+- New RPC demo tools/demos/r701_accordion_single.py (49 assertions) proving single-open: expanded_index single source of truth, open-switch-collapse, re-activate collapse-to-none, across pointer (scene/click composite tag) + keyboard (Space/Enter/arrows) + scene/invoke send + model-driven scene/intervene expanded_index (Int/Null restore) + negative rejects (out-of-range index, unknown event, unknown slot).
+
+
+
+**Verification**:
+- cargo test --workspace -j2: 74 suites green (no core crate touched; +1 example test binary with 19 new unit tests; core suite unchanged at 1514).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean.
+- tools/demos/r701_accordion_single.py PASS (49 assertions, 1.38s); tools/demos/r697_accordion.py multi-open regression PASS (no shared substrate touched).
+
+
+
+**Impact**: §5.38, §5.40, §5.35, §5.34
+
+
+**Carry forward**:
+- AT-action Focus on a composite '#' header tag focuses parent_tag via the shell's dispatch_access_action split (not the header sub-tag). Harmless here — the accordion parent (accordion_single) is not a focusable tab stop, and all RPC-verifiable paths (scene/click, focus/set, keyboard apply_key) land focus on the header sub-tag — but it is an honest a11y edge rooted in the shell's composite-Focus convention (built for RadioGroup's active-descendant roving). Not worked around; documented.
+- Phase B widget-catalog breadth resumes R702+: Table (Model/View + virtualization, substrate-first), Drawer (overlay-dismiss substrate-first, clears menu click-outside R691 carry), DatePicker, ColorPicker.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
