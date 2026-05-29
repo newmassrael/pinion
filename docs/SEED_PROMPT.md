@@ -77,8 +77,8 @@ R690 carry (deferred — evidence-first):
 - Scene Clone via External handle `Box<dyn>` → `Rc<RefCell<dyn>>` (S15 / R684.B Hack 3.4) — Phase C entry 자연 land (immediate-mode game-loop + dirty cache 도 이득)
 
 cross-widget SSOT 부채:
-- ✓ CLEARED R698: `widget_state_name!` state-name sweep (8 core widget + paint + ~16 example, 전부 `WidgetStateName` trait 라우팅; git a737f93 참조).
-- `widget_event_name!` from_name 확장 + `parse_*_event` 청산 (R698 발견) — macro 가 forward `as_name` 만 emit, reverse 無 → Disclosure 포함 모든 위젯이 hand-written `parse_*_event` 잔존. macro 에 `from_name_or_default` arm 추가 = state-name sweep 의 event 짝, R699 후보(low-cost).
+- ✓ CLEARED R698 + R698.A: state-name sweep (8 core widget + paint + ~16 example) + 자기감사로 잡은 3 누락(core_shell TestButton fixture, hello-slider/-vertical 의 `name=="Disabled"` 리터럴 guard) 도 `WidgetStateName` 라우팅. button label 식 `=> "Disabled"` 는 display copy(id 아님)라 정당 보존. git a737f93 + R698.A 참조.
+- `widget_event_name!` from_name 확장 + `parse_*_event` 청산 (R698 발견, R698.A 에서 trait doc 의 "no inverse needed" 허위 rationale 정정) — macro 가 forward `as_name` 만 emit; RPC `invoke("send",name)` 가 string→event 필요해 11 위젯이 fallible `parse_*_event` hand-write(Option, internal/Null 거부). state side(total `from_name_or_default`)와 **의미가 달라**(fallible + external-drivable subset) 단순 mirror 불가 → `from_name(&str)->Option<Self>` + 2-group macro(external/internal) 설계 필요. **우리 코드 부채(외부 carry 아님)** = R699 headline.
 R697 carry (accordion 잔여):
 - Accordion single-open(exclusive) variant — framework-owned single-expand coordination(RadioGroup mould); 2nd consumer/명시 필요 시 land. 현재 multi-open(APG 기본)만.
 - accordion 헤더 visual focus-ring 無 — R694 composite-paint focus-ring carry 상속(view_disclosure ring 미그림). focus 는 AT-reported + RPC-verifiable; 시각 표시는 focus-ring substrate 라운드 일괄.
