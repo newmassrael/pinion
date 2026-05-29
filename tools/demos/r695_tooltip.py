@@ -47,20 +47,20 @@ from rpc_verify import (  # noqa: E402
 VIEWPORT = (520, 360)
 PAUSE = 0.12
 
-SAVE = "save"
-DELETE = "delete"
-SAVE_POP = "save#pop"
-DELETE_POP = "delete#pop"
+AUTOSAVE = "autosave"
+OFFLINE = "offline"
+AUTOSAVE_POP = "autosave#pop"
+OFFLINE_POP = "offline#pop"
 
-# Fixed trigger geometry (mirrors the binding consts).
-SAVE_RECT = (40, 64, 170, 44)
-DELETE_RECT = (372, 296, 120, 44)
+# Fixed control geometry (mirrors the binding consts).
+AUTOSAVE_RECT = (40, 64, 170, 44)
+OFFLINE_RECT = (372, 296, 120, 44)
 # Expected anchored tooltip rects (see the binding's anchor_position
-# unit tests): save opens flush below; delete flips above + clamps left.
-SAVE_TIP_RECT = (40, 108, 210, 28)
-DELETE_TIP_RECT = (300, 268, 220, 28)
+# unit tests): autosave opens flush below; offline flips above + clamps.
+AUTOSAVE_TIP_RECT = (40, 108, 210, 28)
+OFFLINE_TIP_RECT = (300, 268, 220, 28)
 
-EMPTY = (260, 180)  # a window region over no widget (hover-away target)
+EMPTY = (260, 180)  # a window region over no control (hover-away target)
 
 
 def _overlay(tf, tag):
@@ -74,133 +74,133 @@ def _rect_tuple(node) -> tuple[int, int, int, int]:
     return (int(r["x"]), int(r["y"]), int(r["w"]), int(r["h"]))
 
 
-def _save_slot(tf, slot: str) -> bool:
+def _autosave_slot(tf, slot: str) -> bool:
     return bool(tf.query(f"/external/{slot}"))
 
 
-def _delete_slot(tf, slot: str) -> bool:
-    return bool(tf.query(f"/{DELETE}/external/{slot}"))
+def _offline_slot(tf, slot: str) -> bool:
+    return bool(tf.query(f"/{OFFLINE}/external/{slot}"))
 
 
 def _body() -> None:
     with RpcSubprocess("hello-tooltip", boot_grace=1.5) as tf:
-        # ── (A) hover trigger + anchored position (save, below) ───────
-        assert_eq(_save_slot(tf, "visible"), False, "save tooltip boots hidden")
-        assert _overlay(tf, SAVE_POP) is None, "no save overlay painted while hidden"
+        # ── (A) hover trigger + anchored position (autosave, below) ───
+        assert_eq(_autosave_slot(tf, "visible"), False, "autosave tooltip boots hidden")
+        assert _overlay(tf, AUTOSAVE_POP) is None, "no autosave overlay while hidden"
 
-        tf.hover(path=SAVE)
+        tf.hover(path=AUTOSAVE)
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "visible"), True, "hover shows the save tooltip")
-        assert_eq(_save_slot(tf, "hovered"), True, "save trigger is hovered")
-        assert_eq(_save_slot(tf, "focused"), False, "hover does not focus")
+        assert_eq(_autosave_slot(tf, "visible"), True, "hover shows the autosave tooltip")
+        assert_eq(_autosave_slot(tf, "hovered"), True, "autosave control is hovered")
+        assert_eq(_autosave_slot(tf, "focused"), False, "hover does not focus")
 
-        node = _overlay(tf, SAVE_POP)
-        assert node is not None, "save overlay painted while shown"
-        assert_eq(_rect_tuple(node), SAVE_TIP_RECT, "save tooltip anchored flush below")
-        # Flush-below contract: overlay top == trigger bottom (gap 0).
+        node = _overlay(tf, AUTOSAVE_POP)
+        assert node is not None, "autosave overlay painted while shown"
+        assert_eq(_rect_tuple(node), AUTOSAVE_TIP_RECT, "autosave tooltip flush below")
+        # Flush-below contract: overlay top == control bottom (gap 0).
         assert_eq(
-            SAVE_TIP_RECT[1],
-            SAVE_RECT[1] + SAVE_RECT[3],
-            "save overlay top touches the trigger bottom (hoverable contiguity)",
+            AUTOSAVE_TIP_RECT[1],
+            AUTOSAVE_RECT[1] + AUTOSAVE_RECT[3],
+            "overlay top touches the control bottom (hoverable contiguity)",
         )
 
         # ── (B) hoverable: hovering the tooltip body keeps it shown ───
-        tf.hover(path=SAVE_POP)
+        tf.hover(path=AUTOSAVE_POP)
         time.sleep(PAUSE)
         assert_eq(
-            _save_slot(tf, "visible"),
+            _autosave_slot(tf, "visible"),
             True,
             "hovering the tooltip body keeps it shown (WCAG 1.4.13 hoverable)",
         )
-        assert_eq(_save_slot(tf, "hovered"), True, "body hover still reads as hovered")
+        assert_eq(_autosave_slot(tf, "hovered"), True, "body hover still reads as hovered")
 
         # ── hover away hides it ───────────────────────────────────────
         tf.hover(at=EMPTY)
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "visible"), False, "hover-away hides the tooltip")
-        assert _overlay(tf, SAVE_POP) is None, "save overlay gone after hover-away"
+        assert_eq(_autosave_slot(tf, "visible"), False, "hover-away hides the tooltip")
+        assert _overlay(tf, AUTOSAVE_POP) is None, "autosave overlay gone after hover-away"
 
         # ── (C) focus trigger + dismiss + latch reset ─────────────────
-        tf.request("focus/set", {"tag": SAVE})
+        tf.request("focus/set", {"tag": AUTOSAVE})
         time.sleep(PAUSE)
         assert_eq(
             tf.request("focus/get").result.get("focused"),
-            SAVE,
-            "focus/set lands on the save trigger",
+            AUTOSAVE,
+            "focus/set lands on the autosave control",
         )
-        assert_eq(_save_slot(tf, "focused"), True, "save trigger reports focus")
-        assert_eq(_save_slot(tf, "visible"), True, "keyboard focus shows the tooltip")
-        assert _overlay(tf, SAVE_POP) is not None, "focus-shown overlay painted"
+        assert_eq(_autosave_slot(tf, "focused"), True, "autosave control reports focus")
+        assert_eq(_autosave_slot(tf, "visible"), True, "keyboard focus shows the tooltip")
+        assert _overlay(tf, AUTOSAVE_POP) is not None, "focus-shown overlay painted"
 
         # dismiss while focus stays (WCAG dismissible) — RPC action
         # channel, the same funnel the shell's Escape key uses.
         tf.invoke("/external/dismiss", None)
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "dismissed"), True, "dismiss latch set")
-        assert_eq(_save_slot(tf, "visible"), False, "dismiss hides while still focused")
-        assert _overlay(tf, SAVE_POP) is None, "dismissed overlay not painted"
-        assert_eq(_save_slot(tf, "focused"), True, "focus unchanged by dismiss")
+        assert_eq(_autosave_slot(tf, "dismissed"), True, "dismiss latch set")
+        assert_eq(_autosave_slot(tf, "visible"), False, "dismiss hides while still focused")
+        assert _overlay(tf, AUTOSAVE_POP) is None, "dismissed overlay not painted"
+        assert_eq(_autosave_slot(tf, "focused"), True, "focus unchanged by dismiss")
 
         # blur clears the latch so a later focus re-shows it.
-        tf.request("focus/set", {"tag": DELETE})
+        tf.request("focus/set", {"tag": OFFLINE})
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "focused"), False, "focus moved off save")
-        assert_eq(_save_slot(tf, "dismissed"), False, "blur clears the dismiss latch")
-        tf.request("focus/set", {"tag": SAVE})
+        assert_eq(_autosave_slot(tf, "focused"), False, "focus moved off autosave")
+        assert_eq(_autosave_slot(tf, "dismissed"), False, "blur clears the dismiss latch")
+        tf.request("focus/set", {"tag": AUTOSAVE})
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "visible"), True, "re-focus after dismiss re-shows")
-        # park focus away from save for the delete checks.
-        tf.request("focus/set", {"tag": DELETE})
+        assert_eq(_autosave_slot(tf, "visible"), True, "re-focus after dismiss re-shows")
+        # park focus away from autosave for the offline checks.
+        tf.request("focus/set", {"tag": OFFLINE})
         time.sleep(PAUSE)
 
-        # ── (D) flip + clamp (delete, low-right) ──────────────────────
-        # delete already has focus from the park above -> tooltip shown.
-        assert_eq(_delete_slot(tf, "visible"), True, "delete tooltip shown on focus")
-        node = _overlay(tf, DELETE_POP)
-        assert node is not None, "delete overlay painted"
-        assert_eq(_rect_tuple(node), DELETE_TIP_RECT, "delete tooltip flips + clamps")
+        # ── (D) flip + clamp (offline, low-right) ─────────────────────
+        # offline already has focus from the park above -> tooltip shown.
+        assert_eq(_offline_slot(tf, "visible"), True, "offline tooltip shown on focus")
+        node = _overlay(tf, OFFLINE_POP)
+        assert node is not None, "offline overlay painted"
+        assert_eq(_rect_tuple(node), OFFLINE_TIP_RECT, "offline tooltip flips + clamps")
         # Flip contract: below would overflow, so the overlay opens ABOVE.
         assert (
-            DELETE_TIP_RECT[1] + DELETE_TIP_RECT[3] <= DELETE_RECT[1]
-        ), "delete overlay flipped above its trigger"
+            OFFLINE_TIP_RECT[1] + OFFLINE_TIP_RECT[3] <= OFFLINE_RECT[1]
+        ), "offline overlay flipped above its control"
         # Clamp contract: the overlay's right edge sits on the viewport edge.
         assert_eq(
-            DELETE_TIP_RECT[0] + DELETE_TIP_RECT[2],
+            OFFLINE_TIP_RECT[0] + OFFLINE_TIP_RECT[2],
             VIEWPORT[0],
-            "delete overlay clamped to the right viewport edge",
+            "offline overlay clamped to the right viewport edge",
         )
 
-        # delete hover trigger also works (extra external, scene/hover).
-        tf.request("focus/set", {"tag": SAVE})  # drop delete focus
+        # offline hover trigger also works (extra external, scene/hover).
+        tf.request("focus/set", {"tag": AUTOSAVE})  # drop offline focus
         time.sleep(PAUSE)
-        assert_eq(_delete_slot(tf, "visible"), False, "delete hidden after blur")
-        tf.hover(path=DELETE)
+        assert_eq(_offline_slot(tf, "visible"), False, "offline hidden after blur")
+        tf.hover(path=OFFLINE)
         time.sleep(PAUSE)
-        assert_eq(_delete_slot(tf, "visible"), True, "hover shows the delete tooltip")
-        assert _overlay(tf, DELETE_POP) is not None, "hover-shown delete overlay painted"
+        assert_eq(_offline_slot(tf, "visible"), True, "hover shows the offline tooltip")
+        assert _overlay(tf, OFFLINE_POP) is not None, "hover-shown offline overlay painted"
         tf.hover(at=EMPTY)
         time.sleep(PAUSE)
-        assert_eq(_delete_slot(tf, "visible"), False, "hover-away hides delete")
+        assert_eq(_offline_slot(tf, "visible"), False, "hover-away hides offline")
 
         # ── (E) Escape key dismiss (the real-keyboard funnel) ─────────
         # `scene/key "Escape"` routes through the shell's apply_key (the
         # same funnel a winit Escape now takes), which the binding maps
         # to the tooltip's WCAG dismiss — without moving hover. Park
-        # focus off save first so the dismiss latch's falling edge is
+        # focus off autosave first so the dismiss latch's falling edge is
         # the hover-leave (not gated by a lingering focus episode).
-        tf.request("focus/set", {"tag": DELETE})
+        tf.request("focus/set", {"tag": OFFLINE})
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "focused"), False, "save unfocused for the Escape test")
-        tf.hover(path=SAVE)
+        assert_eq(_autosave_slot(tf, "focused"), False, "autosave unfocused for the Escape test")
+        tf.hover(path=AUTOSAVE)
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "visible"), True, "hover re-shows save for the Escape test")
-        tf.key(path=SAVE, name="Escape")
+        assert_eq(_autosave_slot(tf, "visible"), True, "hover re-shows autosave for Escape test")
+        tf.key(path=AUTOSAVE, name="Escape")
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "dismissed"), True, "Escape sets the dismiss latch")
-        assert_eq(_save_slot(tf, "visible"), False, "Escape dismisses while still hovered")
+        assert_eq(_autosave_slot(tf, "dismissed"), True, "Escape sets the dismiss latch")
+        assert_eq(_autosave_slot(tf, "visible"), False, "Escape dismisses while still hovered")
         tf.hover(at=EMPTY)
         time.sleep(PAUSE)
-        assert_eq(_save_slot(tf, "dismissed"), False, "hover-away clears the latch after Escape")
+        assert_eq(_autosave_slot(tf, "dismissed"), False, "hover-away clears latch after Escape")
 
 
 if __name__ == "__main__":

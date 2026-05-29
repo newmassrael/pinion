@@ -11,28 +11,38 @@
 //! ## Why this binding exists
 //!
 //! Phase B widget-catalog entry. A descriptive tooltip — the contextual
-//! "what does this do?" popup every pro DCC / IDE / CAD tool attaches to
-//! its toolbar glyphs, and a direct step toward the northern-star
-//! "Unreal-class editor self-hosted in pinion" (every icon button ships
-//! one). It is the catalog's first **descriptive-class** widget
-//! (WAI-ARIA `tooltip`): no command, no selection, no toggle — passive
-//! text the trigger references through `aria-describedby`.
+//! "what does this do?" popup a control surfaces on hover / focus, and a
+//! direct step toward the northern-star "Unreal-class editor self-hosted
+//! in pinion" (every toolbar glyph + settings affordance ships one). It
+//! is the catalog's first **descriptive-class** widget (WAI-ARIA
+//! `tooltip`): no command, no selection, no toggle — passive text the
+//! control references through `aria-describedby`.
+//!
+//! The two demo controls are **status / feature affordances** (`Auto-save`,
+//! `Offline`) — the canonical SC 1.4.13 case where the control's whole
+//! job is to explain itself: hovering or focusing it reveals the detail.
+//! They are deliberately *not* labelled as destructive verbs ("Delete"):
+//! a tooltip-only control should not imply a click action it does not
+//! perform. Wiring a real command onto a tooltip-bearing control is the
+//! generic "attach a tooltip to an arbitrary widget" axis, deferred to a
+//! 2nd consumer (`[[abstraction-needs-second-consumer]]`) — here the
+//! control *is* the [`TooltipExternal`].
 //!
 //! ## Trigger + dismiss (WCAG 2.2 SC 1.4.13)
 //!
-//! Two trigger buttons (`save` = the primary external, `delete` = an
-//! extra external) each own a [`TooltipExternal`]. A tooltip shows while
-//! its trigger is **hovered or keyboard-focused** and hides once both
-//! clear (*persistent* — no timer):
+//! Two controls (`autosave` = the primary external, `offline` = an extra
+//! external) each own a [`TooltipExternal`]. A tooltip shows while its
+//! control is **hovered or keyboard-focused** and hides once both clear
+//! (*persistent* — no timer):
 //!
 //! - **Hover** — the `scene/hover` RPC (and a real cursor) drive the
-//!   router's `PointerEnter` / `PointerLeave` arc into the trigger's
+//!   router's `PointerEnter` / `PointerLeave` arc into the control's
 //!   external.
-//! - **Focus** — Tab moves the shell focus between the two triggers;
+//! - **Focus** — Tab moves the shell focus between the two controls;
 //!   [`External::on_focus_change`](pinion_core::external::External)
 //!   mirrors it into the tooltip statechart (the R694 channel).
 //! - **Hoverable** — [`view_tooltip`] paints the overlay with the
-//!   trigger's tag plus a `#pop` sub-index, so the router routes a hover
+//!   control's tag plus a `#pop` sub-index, so the router routes a hover
 //!   over the tooltip body back to the *same* external (the cursor can
 //!   rest on the tooltip without it vanishing).
 //! - **Dismissible** — `Escape` (and the RPC `scene/invoke` `dismiss`
@@ -41,19 +51,19 @@
 //!
 //! ## Anchored positioning (flip + clamp)
 //!
-//! [`anchor_position`] places each tooltip flush against its trigger,
+//! [`anchor_position`] places each tooltip flush against its control,
 //! flipping above when below would overflow the window and clamping
-//! horizontally so it never paints off-screen. `save` sits high (tooltip
-//! opens below); `delete` sits low at the right edge so its tooltip
-//! demonstrates both the vertical flip *and* the horizontal clamp.
+//! horizontally so it never paints off-screen. `autosave` sits high
+//! (tooltip opens below); `offline` sits low at the right edge so its
+//! tooltip demonstrates both the vertical flip *and* the horizontal clamp.
 //!
 //! ## AI clients (§2 invariant #2)
 //!
 //! `query("visible" | "hovered" | "focused" | "dismissed")` reads each
-//! trigger's tooltip posture; `scene/hover {at}` drives the hover
+//! control's tooltip posture; `scene/hover {at}` drives the hover
 //! trigger, `focus/set` the focus trigger, and `scene/invoke` with the
 //! `dismiss` action the WCAG dismiss. The overlay is queryable via
-//! `scene/snapshot` / `scene/bbox` on the `<trigger>#pop` node (§2
+//! `scene/snapshot` / `scene/bbox` on the `<control>#pop` node (§2
 //! invariant #7).
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
@@ -76,42 +86,44 @@ const WIN_W: u32 = 520;
 const WIN_H: u32 = 360;
 const THEME_TAG: &str = "app";
 
-/// Primary trigger button tag (the `save` toolbar glyph).
-const SAVE_TAG: &str = "save";
-/// Extra trigger button tag (the `delete` glyph, placed low + right).
-const DELETE_TAG: &str = "delete";
+/// Primary control tag (the high-left `Auto-save` affordance).
+const AUTOSAVE_TAG: &str = "autosave";
+/// Extra control tag (the low-right `Offline` affordance).
+const OFFLINE_TAG: &str = "offline";
 
-/// Trigger labels (single source — the paint label + the enriched a11y
-/// name both derive from these).
-const SAVE_LABEL: &str = "Save";
-const DELETE_LABEL: &str = "Delete";
+/// Control labels (single source — the paint label + the enriched a11y
+/// name both derive from these). Status / feature names (nouns), not
+/// destructive verbs: a tooltip-only control must not imply a click
+/// action it does not perform.
+const AUTOSAVE_LABEL: &str = "Auto-save";
+const OFFLINE_LABEL: &str = "Offline";
 
 /// Tooltip descriptions (single source — passed to [`view_tooltip`];
 /// the a11y tooltip-node name is enriched from the painted text, so
 /// there is no parallel hardcoded a11y copy to drift).
-const SAVE_TIP: &str = "Saves the current document.";
-const DELETE_TIP: &str = "Permanently deletes the file.";
+const AUTOSAVE_TIP: &str = "Saves your work as you go.";
+const OFFLINE_TIP: &str = "Files never leave this device.";
 
-/// Fixed trigger geometry (root-content coordinates). Both triggers are
+/// Fixed control geometry (root-content coordinates). Both controls are
 /// absolutely positioned so the anchored-positioning math is
-/// deterministic (and the demo can assert exact tooltip rects). `save`
-/// is high-left (tooltip opens below, no flip); `delete` is low-right
-/// (tooltip flips above + clamps left).
-const SAVE_RECT: Rect = Rect::new(40, 64, 170, 44);
-const DELETE_RECT: Rect = Rect::new(372, 296, 120, 44);
+/// deterministic (and the demo can assert exact tooltip rects).
+/// `autosave` is high-left (tooltip opens below, no flip); `offline` is
+/// low-right (tooltip flips above + clamps left).
+const AUTOSAVE_RECT: Rect = Rect::new(40, 64, 170, 44);
+const OFFLINE_RECT: Rect = Rect::new(372, 296, 120, 44);
 
-/// Tooltip box sizes (width chosen to fit each label single-line; height
-/// is the M3 plain-tooltip single line).
-const SAVE_TIP_SIZE: (u32, u32) = (210, 28);
-const DELETE_TIP_SIZE: (u32, u32) = (220, 28);
+/// Tooltip box sizes (width chosen to fit each description single-line;
+/// height is the M3 plain-tooltip single line).
+const AUTOSAVE_TIP_SIZE: (u32, u32) = (210, 28);
+const OFFLINE_TIP_SIZE: (u32, u32) = (220, 28);
 
 /// M3 keyboard focus-ring width (mirrors the R694 button ring).
 const FOCUS_RING_WIDTH: u32 = 3;
 /// M3 hover state-layer weight (`onSurface` over the surface at 8 %).
 const HOVER_STATE_LAYER: f32 = 0.08;
 
-/// Per-trigger tooltip posture read back from the state scene for the
-/// view + a11y: is the tooltip shown, does the trigger hold keyboard
+/// Per-control tooltip posture read back from the state scene for the
+/// view + a11y: is the tooltip shown, does the control hold keyboard
 /// focus, is it hovered. `Copy` so the shell hands it into the paint
 /// closure without lifetime gymnastics.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -121,17 +133,17 @@ struct AnchorState {
     hovered: bool,
 }
 
-/// `(save, delete)` postures.
+/// `(autosave, offline)` postures.
 type TooltipViewState = (AnchorState, AnchorState);
 
-/// The `#pop` sub-tag the tooltip overlay carries (anchor tag + this
-/// suffix) so the hover router routes the body back to the trigger's
+/// The `#pop` sub-tag the tooltip overlay carries (control tag + this
+/// suffix) so the hover router routes the body back to the control's
 /// external while the overlay stays independently locatable.
 fn pop_tag(anchor: &str) -> String {
     format!("{anchor}#pop")
 }
 
-/// Read one trigger's [`AnchorState`] from the state scene by tag.
+/// Read one control's [`AnchorState`] from the state scene by tag.
 fn read_anchor(scene: &Scene, tag: &str) -> AnchorState {
     let Some(intro) = scene
         .find_external_with_tag(tag)
@@ -147,10 +159,10 @@ fn read_anchor(scene: &Scene, tag: &str) -> AnchorState {
     }
 }
 
-/// Paint one trigger button as an M3 chip: an outlined surface with a
-/// centred label, a hover state-layer, and the R694 keyboard focus ring
-/// (an [`FOCUS_RING_WIDTH`]-px accent border) when focused.
-fn trigger_scene(
+/// Paint one control as an M3 chip: an outlined surface with a centred
+/// label, a hover state-layer, and the R694 keyboard focus ring (an
+/// [`FOCUS_RING_WIDTH`]-px accent border) when focused.
+fn control_scene(
     tag: &'static str,
     label: &str,
     rect: Rect,
@@ -189,19 +201,19 @@ fn trigger_scene(
     )
 }
 
-/// view-fn (§6.3): pure sync mapping `(save, delete postures) -> Scene`.
-/// The two triggers paint at their fixed rects; each visible tooltip is
-/// appended **last** (absolutely positioned over the content) so it
-/// paints on top.
+/// view-fn (§6.3): pure sync mapping `(autosave, offline postures) ->
+/// Scene`. The two controls paint at their fixed rects; each visible
+/// tooltip is appended **last** (absolutely positioned over the content)
+/// so it paints on top.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: TooltipViewState, _frame: &Frame) -> Scene {
-    let (save, delete) = state;
+    let (autosave, offline) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let style = TooltipStyle::m3_default();
 
     let header = Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            "Hover or Tab to a button for its tooltip.  Esc dismisses.",
+            "Hover or Tab to a control for its tooltip.  Esc dismisses.",
             Rect::default(),
             TextStyle::new()
                 .with_size_px(14)
@@ -216,16 +228,16 @@ fn view(state: TooltipViewState, _frame: &Frame) -> Scene {
 
     let mut children = vec![
         header,
-        trigger_scene(SAVE_TAG, SAVE_LABEL, SAVE_RECT, save, &theme),
-        trigger_scene(DELETE_TAG, DELETE_LABEL, DELETE_RECT, delete, &theme),
+        control_scene(AUTOSAVE_TAG, AUTOSAVE_LABEL, AUTOSAVE_RECT, autosave, &theme),
+        control_scene(OFFLINE_TAG, OFFLINE_LABEL, OFFLINE_RECT, offline, &theme),
     ];
-    if save.visible {
+    if autosave.visible {
         children.push(view_tooltip(
-            pop_tag(SAVE_TAG),
-            SAVE_TIP,
+            pop_tag(AUTOSAVE_TAG),
+            AUTOSAVE_TIP,
             &TooltipPlacement {
-                anchor: SAVE_RECT,
-                tip_size: SAVE_TIP_SIZE,
+                anchor: AUTOSAVE_RECT,
+                tip_size: AUTOSAVE_TIP_SIZE,
                 side: TooltipSide::Below,
             },
             (WIN_W, WIN_H),
@@ -233,13 +245,13 @@ fn view(state: TooltipViewState, _frame: &Frame) -> Scene {
             &style,
         ));
     }
-    if delete.visible {
+    if offline.visible {
         children.push(view_tooltip(
-            pop_tag(DELETE_TAG),
-            DELETE_TIP,
+            pop_tag(OFFLINE_TAG),
+            OFFLINE_TIP,
             &TooltipPlacement {
-                anchor: DELETE_RECT,
-                tip_size: DELETE_TIP_SIZE,
+                anchor: OFFLINE_RECT,
+                tip_size: OFFLINE_TIP_SIZE,
                 side: TooltipSide::Below,
             },
             (WIN_W, WIN_H),
@@ -275,15 +287,18 @@ impl WidgetCore for TooltipView {
     }
 
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(DELETE_TAG, Box::new(TooltipExternal::new()))]
+        vec![ExtraExternal::new(OFFLINE_TAG, Box::new(TooltipExternal::new()))]
     }
 
     fn tag() -> &'static str {
-        SAVE_TAG
+        AUTOSAVE_TAG
     }
 
     fn read_state(scene: &Scene) -> TooltipViewState {
-        (read_anchor(scene, SAVE_TAG), read_anchor(scene, DELETE_TAG))
+        (
+            read_anchor(scene, AUTOSAVE_TAG),
+            read_anchor(scene, OFFLINE_TAG),
+        )
     }
 
     fn view(state: TooltipViewState, frame: &Frame) -> Scene {
@@ -302,11 +317,11 @@ impl WidgetCore for TooltipView {
         None
     }
 
-    /// Both triggers are static Tab stops, so Tab moves focus between
-    /// them and (via `on_focus_change`) shows the focused trigger's
+    /// Both controls are static Tab stops, so Tab moves focus between
+    /// them and (via `on_focus_change`) shows the focused control's
     /// tooltip.
     fn focusable_tags() -> Vec<&'static str> {
-        vec![SAVE_TAG, DELETE_TAG]
+        vec![AUTOSAVE_TAG, OFFLINE_TAG]
     }
 
     /// R695 §5.35 — `Escape` dismisses any shown tooltip without moving
@@ -324,7 +339,7 @@ impl WidgetCore for TooltipView {
             return false;
         }
         let mut dismissed_any = false;
-        for tag in [SAVE_TAG, DELETE_TAG] {
+        for tag in [AUTOSAVE_TAG, OFFLINE_TAG] {
             let Some(intro) = scene
                 .find_external_with_tag_mut(tag)
                 .and_then(|node| node.handle.introspect_mut())
@@ -343,38 +358,38 @@ impl WidgetCore for TooltipView {
 
     fn fmt_state_log(state: &TooltipViewState) -> String {
         format!(
-            "save(vis={} foc={}) delete(vis={} foc={})",
+            "autosave(vis={} foc={}) offline(vis={} foc={})",
             state.0.visible, state.0.focused, state.1.visible, state.1.focused
         )
     }
 }
 
 impl WidgetA11y for TooltipView {
-    /// R695 §5.40 — each trigger is an [`AriaRole::Button`] carrying its
+    /// R695 §5.40 — each control is an [`AriaRole::Button`] carrying its
     /// focus state; while its tooltip is shown it gains an
     /// `aria-describedby` relation to an [`AriaRole::Tooltip`] node (the
-    /// overlay's `#pop` tag), so AT announces "Save, button, Saves the
-    /// current document." The tooltip node's name is left `None` and
+    /// overlay's `#pop` tag), so AT announces "Auto-save, button, Saves
+    /// your work as you go." The tooltip node's name is left `None` and
     /// enriched from the painted text by `enrich_names_from_scene` (the
     /// hello-dialog / hello-menu SSOT precedent — no parallel hardcoded
     /// a11y copy). The relation + tooltip node appear only while visible,
     /// so the described-by NodeId never dangles.
     fn access_node(state: &TooltipViewState, focused: Option<&str>) -> Vec<AccessNode> {
-        let (save, delete) = state;
+        let (autosave, offline) = state;
         let mut nodes = Vec::new();
-        for (tag, posture) in [(SAVE_TAG, save), (DELETE_TAG, delete)] {
-            let mut trigger = AccessNode::new(tag, AriaRole::Button).with_state(AccessState {
+        for (tag, posture) in [(AUTOSAVE_TAG, autosave), (OFFLINE_TAG, offline)] {
+            let mut control = AccessNode::new(tag, AriaRole::Button).with_state(AccessState {
                 focused: focused == Some(tag),
                 hovered: posture.hovered,
                 ..AccessState::default()
             });
             if posture.visible {
                 let desc = pop_tag(tag);
-                trigger = trigger.with_described_by(desc.clone());
-                nodes.push(trigger);
+                control = control.with_described_by(desc.clone());
+                nodes.push(control);
                 nodes.push(AccessNode::new(desc, AriaRole::Tooltip));
             } else {
-                nodes.push(trigger);
+                nodes.push(control);
             }
         }
         nodes
@@ -433,23 +448,23 @@ mod tests {
     fn r695_hidden_tooltips_not_painted() {
         let scene = pinion_core::Owner::new()
             .run(|| view((hidden(), hidden()), &Frame::new()));
-        assert!(find_container(&scene, &pop_tag(SAVE_TAG)).is_none());
-        assert!(find_container(&scene, &pop_tag(DELETE_TAG)).is_none());
-        // Triggers are always present.
-        assert!(find_container(&scene, SAVE_TAG).is_some());
-        assert!(find_container(&scene, DELETE_TAG).is_some());
+        assert!(find_container(&scene, &pop_tag(AUTOSAVE_TAG)).is_none());
+        assert!(find_container(&scene, &pop_tag(OFFLINE_TAG)).is_none());
+        // Controls are always present.
+        assert!(find_container(&scene, AUTOSAVE_TAG).is_some());
+        assert!(find_container(&scene, OFFLINE_TAG).is_some());
     }
 
     #[test]
     fn r695_visible_tooltip_painted_at_anchored_position() {
         let scene = pinion_core::Owner::new()
             .run(|| view((shown(false, true), hidden()), &Frame::new()));
-        let tip = find_container(&scene, &pop_tag(SAVE_TAG)).expect("save tooltip painted");
-        // save sits high -> opens below, flush, no clamp.
+        let tip = find_container(&scene, &pop_tag(AUTOSAVE_TAG)).expect("autosave tooltip painted");
+        // autosave sits high -> opens below, flush, no clamp.
         let expected = anchor_position(
             &TooltipPlacement {
-                anchor: SAVE_RECT,
-                tip_size: SAVE_TIP_SIZE,
+                anchor: AUTOSAVE_RECT,
+                tip_size: AUTOSAVE_TIP_SIZE,
                 side: TooltipSide::Below,
             },
             (WIN_W, WIN_H),
@@ -459,12 +474,12 @@ mod tests {
     }
 
     #[test]
-    fn r695_delete_tooltip_flips_above_and_clamps() {
+    fn r695_offline_tooltip_flips_above_and_clamps() {
         let scene = pinion_core::Owner::new()
             .run(|| view((hidden(), shown(true, false)), &Frame::new()));
-        let tip = find_container(&scene, &pop_tag(DELETE_TAG)).expect("delete tooltip painted");
+        let tip = find_container(&scene, &pop_tag(OFFLINE_TAG)).expect("offline tooltip painted");
         let pos = tip.layout.absolute_position.expect("absolute");
-        // delete is low-right: below would overflow (296+44+28=368 > 360)
+        // offline is low-right: below would overflow (296+44+28=368 > 360)
         // -> flip above (296-28=268); right clamp (372+220=592 > 520) ->
         // 520-220=300.
         assert_eq!(pos, (300, 268));
@@ -473,17 +488,17 @@ mod tests {
     // ----- view: focus ring -----
 
     #[test]
-    fn r695_focused_trigger_paints_accent_ring() {
+    fn r695_focused_control_paints_accent_ring() {
         let scene = pinion_core::Owner::new()
             .run(|| view((shown(true, false), hidden()), &Frame::new()));
-        let save = find_container(&scene, SAVE_TAG).expect("save trigger");
-        let border = save.style.border.expect("focused trigger has a ring");
+        let autosave = find_container(&scene, AUTOSAVE_TAG).expect("autosave control");
+        let border = autosave.style.border.expect("focused control has a ring");
         assert_eq!(border.width, FOCUS_RING_WIDTH);
-        let delete = find_container(&scene, DELETE_TAG).expect("delete trigger");
+        let offline = find_container(&scene, OFFLINE_TAG).expect("offline control");
         assert_eq!(
-            delete.style.border.map(|b| b.width),
+            offline.style.border.map(|b| b.width),
             Some(1),
-            "unfocused trigger keeps the 1px outline, not the ring",
+            "unfocused control keeps the 1px outline, not the ring",
         );
     }
 
@@ -500,27 +515,30 @@ mod tests {
     #[test]
     fn r695_visible_emits_tooltip_node_and_describedby() {
         let nodes = TooltipView::access_node(&(shown(false, true), hidden()), None);
-        // save: button + tooltip ; delete: button.
+        // autosave: button + tooltip ; offline: button.
         assert_eq!(nodes.len(), 3);
-        let save = nodes.iter().find(|n| n.tag == SAVE_TAG).unwrap();
-        assert_eq!(save.described_by.as_deref(), Some(pop_tag(SAVE_TAG).as_str()));
+        let autosave = nodes.iter().find(|n| n.tag == AUTOSAVE_TAG).unwrap();
+        assert_eq!(
+            autosave.described_by.as_deref(),
+            Some(pop_tag(AUTOSAVE_TAG).as_str())
+        );
         let tip = nodes.iter().find(|n| n.role == AriaRole::Tooltip).unwrap();
-        assert_eq!(tip.tag, pop_tag(SAVE_TAG));
+        assert_eq!(tip.tag, pop_tag(AUTOSAVE_TAG));
     }
 
     #[test]
-    fn r695_focused_trigger_marks_a11y_focus() {
-        let nodes = TooltipView::access_node(&(hidden(), hidden()), Some(DELETE_TAG));
-        let delete = nodes.iter().find(|n| n.tag == DELETE_TAG).unwrap();
-        assert!(delete.state.focused);
-        let save = nodes.iter().find(|n| n.tag == SAVE_TAG).unwrap();
-        assert!(!save.state.focused);
+    fn r695_focused_control_marks_a11y_focus() {
+        let nodes = TooltipView::access_node(&(hidden(), hidden()), Some(OFFLINE_TAG));
+        let offline = nodes.iter().find(|n| n.tag == OFFLINE_TAG).unwrap();
+        assert!(offline.state.focused);
+        let autosave = nodes.iter().find(|n| n.tag == AUTOSAVE_TAG).unwrap();
+        assert!(!autosave.state.focused);
     }
 
     #[test]
     fn r695_tooltip_name_enriched_from_paint_not_hardcoded() {
         // SSOT: access_node leaves the tooltip name None; enrich derives
-        // it from the painted tooltip text (single source = SAVE_TIP).
+        // it from the painted tooltip text (single source = AUTOSAVE_TIP).
         pinion_core::Owner::new().run(|| {
             let state = (shown(false, true), hidden());
             let scene = view(state, &Frame::new());
@@ -529,7 +547,7 @@ mod tests {
             assert!(tip.name.is_none(), "access_node leaves the tooltip name to enrich");
             pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
             let tip = nodes.iter().find(|n| n.role == AriaRole::Tooltip).unwrap();
-            assert_eq!(tip.name.as_deref(), Some(SAVE_TIP));
+            assert_eq!(tip.name.as_deref(), Some(AUTOSAVE_TIP));
         });
     }
 
@@ -539,14 +557,16 @@ mod tests {
     fn r695_escape_dismisses_visible_tooltip() {
         use pinion_core::scene::ExternalNode;
         let mut scene = Scene::Container(ContainerNode::new(vec![
-            Scene::External(ExternalNode::new(Box::new(TooltipExternal::new())).with_tag(SAVE_TAG)),
             Scene::External(
-                ExternalNode::new(Box::new(TooltipExternal::new())).with_tag(DELETE_TAG),
+                ExternalNode::new(Box::new(TooltipExternal::new())).with_tag(AUTOSAVE_TAG),
+            ),
+            Scene::External(
+                ExternalNode::new(Box::new(TooltipExternal::new())).with_tag(OFFLINE_TAG),
             ),
         ]));
-        // Show the save tooltip via hover.
+        // Show the autosave tooltip via hover.
         if let Some(intro) = scene
-            .find_external_with_tag_mut(SAVE_TAG)
+            .find_external_with_tag_mut(AUTOSAVE_TAG)
             .and_then(|n| n.handle.introspect_mut())
         {
             intro
@@ -555,20 +575,20 @@ mod tests {
         }
         let handled = TooltipView::apply_key(
             &mut scene,
-            Some(SAVE_TAG),
+            Some(AUTOSAVE_TAG),
             "Escape",
             pinion_core::Modifiers::empty(),
         );
         assert!(handled, "Escape dismissed a visible tooltip");
-        let save = read_anchor(&scene, SAVE_TAG);
-        assert!(!save.visible, "tooltip hidden after Escape while still hovered");
+        let autosave = read_anchor(&scene, AUTOSAVE_TAG);
+        assert!(!autosave.visible, "tooltip hidden after Escape while still hovered");
     }
 
     #[test]
     fn r695_escape_ignored_when_no_tooltip_shown() {
         use pinion_core::scene::ExternalNode;
         let mut scene = Scene::Container(ContainerNode::new(vec![Scene::External(
-            ExternalNode::new(Box::new(TooltipExternal::new())).with_tag(SAVE_TAG),
+            ExternalNode::new(Box::new(TooltipExternal::new())).with_tag(AUTOSAVE_TAG),
         )]));
         assert!(!TooltipView::apply_key(
             &mut scene,
@@ -579,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn r695_view_contains_trigger_paint_tag() {
+    fn r695_view_contains_control_paint_tag() {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<TooltipView>(
             (hidden(), hidden()),
             &Frame::default(),

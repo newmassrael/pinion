@@ -14137,6 +14137,24 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R695.B — R695.B example honesty — hello-tooltip controls reframed from destructive-verb labels (Save/Delete) to status/feature affordances (Auto-save/Offline) so a tooltip-only control implies no unfulfilled click action
+
+**Changes**:
+- hello-tooltip: the two triggers relabelled Save/Delete -> Auto-save/Offline (tags autosave/offline, descriptive tooltips), reframed as status/feature affordances whose whole job is to explain themselves on hover/focus -- a tooltip-only control must not imply a destructive click it does not perform (self-review honesty finding). The generic 'attach a tooltip to a real command widget' axis stays deferred to a 2nd consumer
+- geometry (rects, tip sizes, positions) is unchanged, so the anchored-positioning flip/clamp assertions are identical; tools/demos/r695_tooltip.py tags + helper/var names track the rename
+
+
+
+**Verification**:
+- cargo test -p hello-tooltip green (-j2), 11 tests; cargo clippy -p hello-tooltip --all-targets clean under -D pedantic
+- tools/demos/r695_tooltip.py PASS -- positions unchanged (autosave below at (40,108); offline flips above + clamps to (300,268))
+
+
+
+**Impact**: §5.16
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
