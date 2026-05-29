@@ -14271,6 +14271,30 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R698.A — R698.A self-audit clearance: route the 3 state-name mapping sites the R698 sweep missed through the WidgetStateName SSOT, and correct the WidgetEventName doc rationale that falsely claimed no reverse parse is needed.
+
+**Changes**:
+- crates/pinion-runtime/src/core_shell.rs: the TestButton fixture read_state hand-wrote a string->ButtonState match (3 arms) duplicating from_name_or_default; now routes through ButtonState::from_name_or_default (test-fixture, but a real SSOT duplicate once the trait existed).
+- examples/hello-slider + hello-slider-vertical: apply_key disabled-guard used a hard-coded `name == "Disabled"` SCXML-id literal; now matches!(SliderState::from_name_or_default(&name), SliderState::Disabled) so the SCXML id has one source.
+- crates/pinion-core/src/widget_core.rs: WidgetEventName doc claimed SCXML events need no inverse parse; corrected to state that 11 widgets hand-write fallible parse_*_event for the RPC invoke(send,name) path, and that unifying them needs a from_name(&str)->Option<Self> over the externally-drivable subset (R699).
+
+
+
+**Verification**:
+- cargo test --workspace -j2: 0 failed.
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2 (-D pedantic): clean.
+- Audit method: grep for inline state-name literals in both `=> "X"` and `== "X"` forms across crates/ + examples/; confirmed exactly these 3 sites remained (button label matches like `ButtonState::Disabled => "Disabled"` are display copy, not id mappings, correctly left).
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- Event-name SSOT remains the open headline item (R699): widget_event_name! is forward-only; 11 hand-written parse_*_event fns duplicate the reverse mapping with Option semantics (reject internal/Null). Our-code debt, not external carry; macro-family asymmetry is the structural smell to close.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -1756,7 +1756,7 @@ mod tests {
     use super::*;
     use pinion_core::test_fixtures::ButtonFixture as TestButton;
     use pinion_core::widgets::button::{ButtonEvent, ButtonState};
-    use pinion_core::Frame;
+    use pinion_core::{Frame, WidgetStateName};
 
     #[test]
     fn constructor_seeds_cached_state_from_introspect() {
@@ -2859,9 +2859,9 @@ mod tests {
                 .and_then(|n| n.handle.introspect())
                 .and_then(|i| i.query("state"))
                 .map_or(ButtonState::Idle, |v| match v {
-                    IntrospectValue::Text(s) if s == "Hover" => ButtonState::Hover,
-                    IntrospectValue::Text(s) if s == "Pressed" => ButtonState::Pressed,
-                    IntrospectValue::Text(s) if s == "Disabled" => ButtonState::Disabled,
+                    // R698.A §5.16 — route through the WidgetStateName SSOT
+                    // instead of a fixture-local string->state table.
+                    IntrospectValue::Text(s) => ButtonState::from_name_or_default(&s),
                     _ => ButtonState::Idle,
                 })
         }

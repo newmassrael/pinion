@@ -322,7 +322,9 @@ impl SliderView {
             return false;
         };
         if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-            if name == "Disabled" {
+            // R698.A §5.16 — compare against the SSOT variant, not a
+            // hard-coded SCXML-id literal.
+            if matches!(SliderState::from_name_or_default(&name), SliderState::Disabled) {
                 return false;
             }
         }

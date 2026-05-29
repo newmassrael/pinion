@@ -22822,6 +22822,42 @@
         "Accordion single-open exclusive variant plus widget-catalogue visual focus-ring (R694 carry) remain open."
       ]
     },
+    "R698.A": {
+      "decision_summary": "R698.A self-audit clearance: route the 3 state-name mapping sites the R698 sweep missed through the WidgetStateName SSOT, and correct the WidgetEventName doc rationale that falsely claimed no reverse parse is needed.",
+      "changes_bullets": [
+        "crates/pinion-runtime/src/core_shell.rs: the TestButton fixture read_state hand-wrote a string->ButtonState match (3 arms) duplicating from_name_or_default; now routes through ButtonState::from_name_or_default (test-fixture, but a real SSOT duplicate once the trait existed).",
+        "examples/hello-slider + hello-slider-vertical: apply_key disabled-guard used a hard-coded `name == \"Disabled\"` SCXML-id literal; now matches!(SliderState::from_name_or_default(&name), SliderState::Disabled) so the SCXML id has one source.",
+        "crates/pinion-core/src/widget_core.rs: WidgetEventName doc claimed SCXML events need no inverse parse; corrected to state that 11 widgets hand-write fallible parse_*_event for the RPC invoke(send,name) path, and that unifying them needs a from_name(&str)->Option<Self> over the externally-drivable subset (R699)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 0 failed.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2 (-D pedantic): clean.",
+        "Audit method: grep for inline state-name literals in both `=> \"X\"` and `== \"X\"` forms across crates/ + examples/; confirmed exactly these 3 sites remained (button label matches like `ButtonState::Disabled => \"Disabled\"` are display copy, not id mappings, correctly left)."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Event-name SSOT remains the open headline item (R699): widget_event_name! is forward-only; 11 hand-written parse_*_event fns duplicate the reverse mapping with Option semantics (reject internal/Null). Our-code debt, not external carry; macro-family asymmetry is the structural smell to close."
+      ],
+      "publishable_decision_summary": "R698.A self-audit clearance: route the 3 state-name mapping sites the R698 sweep missed through the WidgetStateName SSOT, and correct the WidgetEventName doc rationale that falsely claimed no reverse parse is needed.",
+      "publishable_changes_bullets": [
+        "crates/pinion-runtime/src/core_shell.rs: the TestButton fixture read_state hand-wrote a string->ButtonState match (3 arms) duplicating from_name_or_default; now routes through ButtonState::from_name_or_default (test-fixture, but a real SSOT duplicate once the trait existed).",
+        "examples/hello-slider + hello-slider-vertical: apply_key disabled-guard used a hard-coded `name == \"Disabled\"` SCXML-id literal; now matches!(SliderState::from_name_or_default(&name), SliderState::Disabled) so the SCXML id has one source.",
+        "crates/pinion-core/src/widget_core.rs: WidgetEventName doc claimed SCXML events need no inverse parse; corrected to state that 11 widgets hand-write fallible parse_*_event for the RPC invoke(send,name) path, and that unifying them needs a from_name(&str)->Option<Self> over the externally-drivable subset (R699)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 0 failed.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2 (-D pedantic): clean.",
+        "Audit method: grep for inline state-name literals in both `=> \"X\"` and `== \"X\"` forms across crates/ + examples/; confirmed exactly these 3 sites remained (button label matches like `ButtonState::Disabled => \"Disabled\"` are display copy, not id mappings, correctly left)."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Event-name SSOT remains the open headline item (R699): widget_event_name! is forward-only; 11 hand-written parse_*_event fns duplicate the reverse mapping with Option semantics (reject internal/Null). Our-code debt, not external carry; macro-family asymmetry is the structural smell to close."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

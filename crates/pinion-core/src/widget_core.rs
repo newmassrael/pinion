@@ -598,10 +598,18 @@ pub trait WidgetStateName: Sized {
 /// R643 §5.16 — `Self → &'static str` mapping for
 /// [`WidgetCore::Event`] enums.
 ///
-/// Mirror of [`WidgetStateName`] for the event side. SCXML events are
-/// fired one-way (no inverse parse needed at this level — the wire
-/// receives the name and SCXML's own event router consumes it), so
-/// the trait carries only the forward direction.
+/// Mirror of [`WidgetStateName`] for the event side, currently
+/// forward-only (`as_name`).
+///
+/// R698.A honesty correction: a reverse `name -> event` parse IS
+/// needed in practice — the RPC `invoke("send", name)` path drives the
+/// statechart by event name, so every widget still hand-writes a
+/// fallible `parse_*_event` (string -> `Option<Event>`, rejecting
+/// internal / `Null` SCXML 3.13 variants). Unifying those through this
+/// trait needs a fallible `from_name(&str) -> Option<Self>` over the
+/// *externally-drivable* variant subset — distinct from the total
+/// `from_name_or_default` on the state side, which is why R698 left the
+/// event axis untouched. Tracked as the R699 event-name SSOT round.
 pub trait WidgetEventName {
     /// Map `self` to its `PascalCase` SCXML event name (1:1 with the
     /// `<transition event="...">` attribute in the source `.scxml`).
