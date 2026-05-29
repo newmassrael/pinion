@@ -41,6 +41,16 @@ mod sm {
 pub use sm::{DisclosureEvent, DisclosureState};
 use sm::DisclosurePolicy;
 
+// R696.A §5.16 — route the DisclosureState <-> SCXML-id mapping through
+// the R643 `WidgetStateName` SSOT primitive (single variant list emits
+// both `as_name` and `from_name_or_default`), instead of a hand-written
+// `*_state_name` fn + a per-example `parse_*_state` fallback. The
+// External introspect below calls `self.state().as_name()`; the
+// hello-disclosure binding's `read_state` calls `from_name_or_default`.
+crate::widget_state_name!(DisclosureState, default = Idle, [
+    Idle, Hover, Pressed, Disabled,
+]);
+
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
@@ -48,6 +58,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// Disclosure widget state machine + collapsed/expanded sidecar.
 /// Statechart identical to [`crate::widgets::Checkbox`]; divergence is
@@ -252,9 +263,7 @@ impl ExternalIntrospect for DisclosureExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "state" => Some(IntrospectValue::Text(
-                disclosure_state_name(self.state()).to_string(),
-            )),
+            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
             "expanded" => Some(IntrospectValue::Bool(self.is_expanded())),
             _ => None,
         }
@@ -288,23 +297,12 @@ impl ExternalIntrospect for DisclosureExternal {
                 IntrospectValue::Text(ref name) => {
                     let ev = parse_disclosure_event(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
-                    Ok(IntrospectValue::Text(
-                        disclosure_state_name(self.state()).to_string(),
-                    ))
+                    Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-fn disclosure_state_name(state: DisclosureState) -> &'static str {
-    match state {
-        DisclosureState::Idle => "Idle",
-        DisclosureState::Hover => "Hover",
-        DisclosureState::Pressed => "Pressed",
-        DisclosureState::Disabled => "Disabled",
     }
 }
 

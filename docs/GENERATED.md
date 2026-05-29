@@ -14187,6 +14187,31 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R696.A — R696.A self-review audit-clearance — route DisclosureState <-> SCXML-id mapping through the R643 widget_state_name! SSOT primitive, eliminating the triplicated hand-written state-name fns the checkbox mirror had propagated.
+
+**Changes**:
+- pinion-core/widgets/disclosure.rs: declare widget_state_name!(DisclosureState, default=Idle, [Idle,Hover,Pressed,Disabled]) (R643 SSOT primitive: one variant list emits both as_name + from_name_or_default); External introspect query("state") + invoke("send") return now call self.state().as_name(); removed the local disclosure_state_name fn.
+- examples/hello-disclosure: read_state uses DisclosureState::from_name_or_default(&name); fmt_state_log uses state.0.as_name(); removed the local parse_disclosure_state + disclosure_state_name fns. Net: the Idle/Hover/Pressed/Disabled mapping is now written once (the macro) instead of 3x (core fn + example fn + example parser).
+- Honest cross-widget carry surfaced: checkbox/radio/button/slider External introspect still use local *_state_name fns despite the R643 primitive (button/slider declare the macro only for their example state_name_derive path, not their own introspect) — a widget_state_name! adoption sweep is a separate round; R696.A makes Disclosure the first widget fully routed through the trait on both the External and binding sides.
+
+
+
+**Verification**:
+- Behaviour-identical: widget_state_name! as_name output == the removed fns' strings (Idle/Hover/Pressed/Disabled), from_name_or_default default==Idle == the removed parser fallback.
+- cargo test --workspace -j2: 0 fail (disclosure core 14 + hello-disclosure a11y 7 unchanged).
+- cargo clippy (pinion-core + hello-disclosure) clean; r696_disclosure.py 35-assert PASS (state wire strings unchanged).
+- Mnemosyne: append R696.A after R696 (ledger 576 -> 577); validate T1 +0 / round-trip 1/1 / GENERATED sync.
+
+
+
+**Impact**: §5.16, §5.38
+
+
+**Carry forward**:
+- widget_state_name! adoption sweep: checkbox/radio/button/slider External introspect route through State::as_name() instead of local *_state_name fns (pre-existing cross-widget SSOT debt the R643 primitive was meant to retire; underused since R643). Separate cleanup round, cost-low, behaviour-preserving.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

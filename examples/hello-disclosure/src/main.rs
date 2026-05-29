@@ -26,7 +26,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 #[cfg(test)]
 use pinion_core::theme::Theme;
 use pinion_core::widgets::disclosure::{DisclosureEvent, DisclosureExternal, DisclosureState};
-use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_derive::widget;
@@ -122,7 +122,7 @@ impl DisclosureView {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
                 let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    parse_disclosure_state(&name)
+                    DisclosureState::from_name_or_default(&name)
                 } else {
                     DisclosureState::Idle
                 };
@@ -187,27 +187,9 @@ impl DisclosureView {
     fn fmt_state_log(state: (DisclosureState, bool)) -> String {
         format!(
             "{} / {}",
-            disclosure_state_name(state.0),
+            state.0.as_name(),
             if state.1 { "expanded" } else { "collapsed" },
         )
-    }
-}
-
-fn parse_disclosure_state(name: &str) -> DisclosureState {
-    match name {
-        "Hover" => DisclosureState::Hover,
-        "Pressed" => DisclosureState::Pressed,
-        "Disabled" => DisclosureState::Disabled,
-        _ => DisclosureState::Idle,
-    }
-}
-
-fn disclosure_state_name(state: DisclosureState) -> &'static str {
-    match state {
-        DisclosureState::Idle => "Idle",
-        DisclosureState::Hover => "Hover",
-        DisclosureState::Pressed => "Pressed",
-        DisclosureState::Disabled => "Disabled",
     }
 }
 
