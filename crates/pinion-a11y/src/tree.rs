@@ -410,6 +410,16 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.push_child(tag_to_node_id(child_tag));
     }
 
+    // R695 §5.40 — WAI-ARIA `aria-describedby`. The related tag is
+    // hashed through the same `tag_to_node_id` the children list uses,
+    // so the AT resolves the description target through a NodeId that
+    // already exists in this frame's tree (the tooltip node) — no
+    // out-of-band lookup. Omitted when absent to keep the payload
+    // minimal.
+    if let Some(desc_tag) = &access.described_by {
+        node.push_described_by(tag_to_node_id(desc_tag));
+    }
+
     add_actions_for_role(&mut node, access.role);
     node
 }
@@ -513,6 +523,13 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
             node.add_action(Action::Focus);
             node.add_action(Action::Click);
         }
+        // R695 §5.40 — `Tooltip` (WAI-ARIA 1.2 §3.7) is a passive
+        // description region with **no** AT actions: it never receives
+        // focus and is not clickable. AT reaches it only through the
+        // trigger's `aria-describedby` relation (the trigger announces
+        // the tooltip text as its description). So the node carries
+        // zero actions — distinct from every other role.
+        AriaRole::Tooltip => {}
     }
 }
 
@@ -810,6 +827,23 @@ mod tests {
         b.add(&AccessNode::new("dialog_cancel", AriaRole::Button).with_name("Cancel"));
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 4);
+    }
+
+    #[test]
+    fn r695_tooltip_describedby_lowers() {
+        // Smoke test: a Button trigger describing-by a Tooltip node.
+        // AccessKit node internals are opaque from outside the crate,
+        // so we verify build succeeds with both nodes present (root +
+        // trigger + tooltip).
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            &AccessNode::new("save_btn", AriaRole::Button)
+                .with_name("Save")
+                .with_described_by("save_tip"),
+        );
+        b.add(&AccessNode::new("save_tip", AriaRole::Tooltip).with_name("Saves the file"));
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 3);
     }
 
     #[test]

@@ -903,9 +903,14 @@ impl<V: WidgetView> AppShell<V> {
             // you dismiss the dialog first. With no modal up, Escape
             // keeps the standalone-app convention of closing the window.
             Key::Named(NamedKey::Escape) => {
-                if self.core.focus_is_modal() {
-                    self.core.handle_named_key("Escape");
-                } else {
+                // R695 §5.35 — offer Escape to the focused widget first
+                // (the Tooltip's WCAG 1.4.13 dismiss, the Dialog's modal
+                // cancel). Only fall back to the standalone-app
+                // close-window convention when no widget consumes it AND
+                // no modal trap is up — you cannot Escape past an open
+                // modal to quit (WAI-ARIA modal contract).
+                let handled = self.core.try_apply_key("Escape");
+                if !handled && !self.core.focus_is_modal() {
                     event_loop.exit();
                 }
             }

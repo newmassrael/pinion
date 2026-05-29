@@ -125,6 +125,22 @@ pub struct AccessNode {
     /// shell installs). Meaningful on [`AriaRole::Dialog`]; default
     /// `false` omits the attribute.
     pub modal: bool,
+    /// R695 §5.40 — WAI-ARIA `aria-describedby` per WAI-ARIA 1.2
+    /// §6.6.2. The tag of another [`AccessNode`] whose accessible name
+    /// supplies *this* node's description (announced after the name).
+    /// The tree builder resolves the tag into the target's
+    /// `accesskit::NodeId` and lowers it via
+    /// `accesskit::Node::set_described_by`. `None` omits the relation.
+    ///
+    /// The canonical use is the WCAG 2.2 SC 1.4.13 tooltip pattern: a
+    /// trigger widget points its `described_by` at the
+    /// [`AriaRole::Tooltip`] node so AT reads "Save, Saves the current
+    /// file" — the tooltip text becomes the trigger's description, not
+    /// a separately-focusable node. Single tag (not a list): pinion's
+    /// one-description-source widgets need no multi-target relation
+    /// until a 2nd consumer surfaces one
+    /// (`[[abstraction-needs-second-consumer]]`).
+    pub described_by: Option<String>,
 }
 
 impl AccessNode {
@@ -147,6 +163,7 @@ impl AccessNode {
             position_in_set: None,
             size_of_set: None,
             modal: false,
+            described_by: None,
         }
     }
 
@@ -239,6 +256,15 @@ impl AccessNode {
     #[must_use]
     pub fn with_size_of_set(mut self, size: u32) -> Self {
         self.size_of_set = Some(size);
+        self
+    }
+
+    /// R695 §5.40 — set the WAI-ARIA `aria-describedby` relation to the
+    /// node tagged `tag`. See [`Self::described_by`] for the semantic
+    /// axis (the tooltip-description pattern).
+    #[must_use]
+    pub fn with_described_by(mut self, tag: impl Into<String>) -> Self {
+        self.described_by = Some(tag.into());
         self
     }
 }
@@ -412,6 +438,20 @@ mod tests {
         let n = AccessNode::new("row", AriaRole::TreeItem)
             .with_size_of_set(5);
         assert_eq!(n.size_of_set, Some(5));
+    }
+
+    // R695 §5.40 — aria-describedby builder + default omission.
+
+    #[test]
+    fn r695_new_omits_described_by() {
+        let n = AccessNode::new("save_btn", AriaRole::Button);
+        assert!(n.described_by.is_none());
+    }
+
+    #[test]
+    fn r695_with_described_by_records_relation() {
+        let n = AccessNode::new("save_btn", AriaRole::Button).with_described_by("save_tip");
+        assert_eq!(n.described_by.as_deref(), Some("save_tip"));
     }
 
     #[test]

@@ -989,19 +989,36 @@ impl<V: WidgetView> ShellCore<V> {
         // R51.187 §5.45 R55.C.3 — give `V::apply_key` the first
         // chance on the key (widget-bound shortcut: Slider's
         // arrows, Toggle's Space, Button's Enter, etc.). If the
-        // widget reports unhandled (`None` return from
-        // [`CoreShell::apply_key`]), fall through to the scroll-
+        // widget reports unhandled, fall through to the scroll-
         // routing dispatch so an unbound arrow / page / Home / End
         // over a scroll container still scrolls. The two arcs are
         // mutually exclusive — a widget that consumes the key
         // never lets the scroll arc fire.
+        if !self.try_apply_key(key_str) {
+            self.scroll_key(PointerId::MOUSE, key_str);
+        }
+    }
+
+    /// R695 §5.35 — offer `key_str` to the focused widget's
+    /// [`WidgetView::apply_key`] and run the post-input bookkeeping
+    /// (revision bump + [`Self::handle_tail`]) when it handles the key.
+    /// Returns whether the widget consumed it.
+    ///
+    /// Split out of [`Self::handle_named_key`] so the winit `Escape`
+    /// arc can offer the key to the widget (the `Tooltip`'s WCAG 1.4.13
+    /// dismiss, the `Dialog`'s modal cancel) *before* the shell's
+    /// standalone-app quit fallback — without the scroll-routing
+    /// fallthrough that an unhandled arrow / page key wants but an
+    /// unhandled `Escape` does not.
+    pub fn try_apply_key(&mut self, key_str: &str) -> bool {
         let focused = self.focus.focused().map(str::to_owned);
         if let Some(tail) = self.core.apply_key(focused.as_deref(), key_str, self.modifiers) {
             self.revision.bump();
             self.handle_tail(&tail);
-            return;
+            true
+        } else {
+            false
         }
-        self.scroll_key(PointerId::MOUSE, key_str);
     }
 
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll dispatch — the
@@ -1207,6 +1224,16 @@ impl<V: WidgetView> ShellCore<V> {
                     self.mouse_released_for_window(window_id, PointerId::MOUSE);
                     self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
                     self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                }
+                // R695 §5.49 §5.35 — `scene/hover` mirror: a bare cursor
+                // move with no press. `cursor_moved_for_window` re-resolves
+                // the addressed window's hover target and fires the
+                // synthetic `PointerEnter` / `PointerLeave` arc on a tag
+                // transition (the `Tooltip` show/hide trigger). No
+                // `mouse_pressed` follows — this is the pointer-position-
+                // only peer to the `Click` arc.
+                DeferredInput::Hover { x, y } => {
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                 }
                 DeferredInput::Key { x, y, ref key } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);

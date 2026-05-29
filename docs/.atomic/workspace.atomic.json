@@ -22502,6 +22502,66 @@
         "M3 focus-ring offset gap (the 2dp gap between component edge and ring) needs a border-offset primitive pinion lacks; the ring sits on the component edge for now."
       ]
     },
+    "R695": {
+      "decision_summary": "R695 Tooltip widget (WAI-ARIA tooltip, WCAG 1.4.13 hover/focus + dismissible/hoverable/persistent) + scene/hover RPC input primitive + aria-describedby a11y relation, first consumer hello-tooltip",
+      "changes_bullets": [
+        "pinion-a11y: AriaRole::Tooltip (-> accesskit Role::Tooltip, aria_name \"tooltip\", zero AT actions -- a passive description region) + AccessNode.described_by (aria-describedby) with a with_described_by builder, lowered via accesskit push_described_by so the relation resolves to the tooltip NodeId already in the frame",
+        "pinion-rpc: scene/hover input primitive -- DeferredInput::Hover{x,y} + handle_scene_hover (at/path selector, mirror of scene/click) drained by the shell as a bare cursor_moved (no press) so the InputRouter fires the PointerEnter/PointerLeave arc; the pointer-position-only peer to scene/click and the tooltip's primary trigger (rpc_verify gains a hover() wrapper)",
+        "pinion-core::widgets::tooltip::TooltipExternal -- a self-contained visibility statechart (hovered/focused/dismissed; visible = (hovered||focused) && !dismissed): PointerEnter/Leave hover (composite #pop sub-tag aware), on_focus_change focus trigger, invoke(\"dismiss\") WCAG dismiss; the dismiss latch clears on the trigger-episode falling edge (leave with no focus, or blur with no hover) so a later hover/focus re-shows it",
+        "pinion-widget-paint::tooltip -- view_tooltip M3 elevated/outlined surface (SurfaceContainerHighest + Outline + OnSurface) + TooltipPlacement + anchor_position (flush against the anchor edge, flip-on-overflow vertically, clamp horizontally); the overlay carries the anchor tag + a #pop sub-index so a hover over the tooltip body routes to the same external (WCAG 1.4.13 hoverable contiguity) while staying independently locatable",
+        "shell: Escape is now offered to the focused widget's apply_key first (new CoreShell::try_apply_key), falling back to the standalone-app quit only when unhandled AND no modal trap is up -- so the Tooltip WCAG dismiss and the Dialog modal cancel ride one funnel; handle_named_key refactored onto the shared try_apply_key (scroll fallback preserved for non-Escape keys)",
+        "examples/hello-tooltip -- two trigger buttons (save = primary external, delete = extra external) each owning a TooltipExternal; save opens below, delete (low + right) flips above + clamps to the right edge; aria-describedby links each trigger to its Tooltip node whose name is enriched from the painted text (SSOT, no hardcoded a11y copy)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (-j2), 0 failures; new tests: AriaRole::Tooltip lowering + name, AccessNode described_by builder + tree push_described_by lowering, scene/hover dispatch (enqueue + missing-at + no-inbox), TooltipExternal statechart (hover/focus/dismiss/latch-reset/composite-#pop/inert-press), view_tooltip + anchor_position flip+clamp, hello-tooltip view (hidden/visible/flip)+a11y(describedby/enrich)+Escape dismiss",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (TooltipPlacement bundling keeps view_tooltip within the 7-arg view-fn limit)",
+        "tools/demos/r695_tooltip.py PASS (35+ assertions): hover shows + anchored flush below, hoverable (body hover keeps it shown), focus trigger, dismiss via scene/invoke + Escape via scene/key, latch reset on leave/blur, delete flips above + clamps right, scene/hover drives both the primary and the extra external; full demo sweep 52/52 PASS"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.35",
+        "5.38",
+        "5.39",
+        "5.40",
+        "5.49",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "M3 plain-tooltip inverse-surface palette (inverseSurface / inverseOnSurface ColorRoles) deferred -- the tooltip uses the existing SurfaceContainerHighest elevated surface (a valid M3 rich-tooltip tone); the inverse roles are a separate palette-completeness axis, not this widget's debt",
+        "Cross-widget 'attach a tooltip to an arbitrary existing widget' coupling primitive deferred -- hello-tooltip's anchor IS the TooltipExternal; a generic anchor->overlay back-channel waits for a 2nd consumer (abstraction-needs-second-consumer)",
+        "M3 4dp tooltip offset deferred -- gap 0 (contiguous) is required for the shared-tag hoverable contract; a visible gap needs a transparent hit-bridge primitive",
+        "overlay-dismiss substrate (menu click-outside + popover + combobox) still 1-consumer -- Tooltip dismisses via pointer-leave/blur/Escape, not click-outside, so it is not the clean 2nd consumer"
+      ],
+      "publishable_decision_summary": "R695 Tooltip widget (WAI-ARIA tooltip, WCAG 1.4.13 hover/focus + dismissible/hoverable/persistent) + scene/hover RPC input primitive + aria-describedby a11y relation, first consumer hello-tooltip",
+      "publishable_changes_bullets": [
+        "pinion-a11y: AriaRole::Tooltip (-> accesskit Role::Tooltip, aria_name \"tooltip\", zero AT actions -- a passive description region) + AccessNode.described_by (aria-describedby) with a with_described_by builder, lowered via accesskit push_described_by so the relation resolves to the tooltip NodeId already in the frame",
+        "pinion-rpc: scene/hover input primitive -- DeferredInput::Hover{x,y} + handle_scene_hover (at/path selector, mirror of scene/click) drained by the shell as a bare cursor_moved (no press) so the InputRouter fires the PointerEnter/PointerLeave arc; the pointer-position-only peer to scene/click and the tooltip's primary trigger (rpc_verify gains a hover() wrapper)",
+        "pinion-core::widgets::tooltip::TooltipExternal -- a self-contained visibility statechart (hovered/focused/dismissed; visible = (hovered||focused) && !dismissed): PointerEnter/Leave hover (composite #pop sub-tag aware), on_focus_change focus trigger, invoke(\"dismiss\") WCAG dismiss; the dismiss latch clears on the trigger-episode falling edge (leave with no focus, or blur with no hover) so a later hover/focus re-shows it",
+        "pinion-widget-paint::tooltip -- view_tooltip M3 elevated/outlined surface (SurfaceContainerHighest + Outline + OnSurface) + TooltipPlacement + anchor_position (flush against the anchor edge, flip-on-overflow vertically, clamp horizontally); the overlay carries the anchor tag + a #pop sub-index so a hover over the tooltip body routes to the same external (WCAG 1.4.13 hoverable contiguity) while staying independently locatable",
+        "shell: Escape is now offered to the focused widget's apply_key first (new CoreShell::try_apply_key), falling back to the standalone-app quit only when unhandled AND no modal trap is up -- so the Tooltip WCAG dismiss and the Dialog modal cancel ride one funnel; handle_named_key refactored onto the shared try_apply_key (scroll fallback preserved for non-Escape keys)",
+        "examples/hello-tooltip -- two trigger buttons (save = primary external, delete = extra external) each owning a TooltipExternal; save opens below, delete (low + right) flips above + clamps to the right edge; aria-describedby links each trigger to its Tooltip node whose name is enriched from the painted text (SSOT, no hardcoded a11y copy)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (-j2), 0 failures; new tests: AriaRole::Tooltip lowering + name, AccessNode described_by builder + tree push_described_by lowering, scene/hover dispatch (enqueue + missing-at + no-inbox), TooltipExternal statechart (hover/focus/dismiss/latch-reset/composite-#pop/inert-press), view_tooltip + anchor_position flip+clamp, hello-tooltip view (hidden/visible/flip)+a11y(describedby/enrich)+Escape dismiss",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic (TooltipPlacement bundling keeps view_tooltip within the 7-arg view-fn limit)",
+        "tools/demos/r695_tooltip.py PASS (35+ assertions): hover shows + anchored flush below, hoverable (body hover keeps it shown), focus trigger, dismiss via scene/invoke + Escape via scene/key, latch reset on leave/blur, delete flips above + clamps right, scene/hover drives both the primary and the extra external; full demo sweep 52/52 PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.35",
+        "5.38",
+        "5.39",
+        "5.40",
+        "5.49",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "M3 plain-tooltip inverse-surface palette (inverseSurface / inverseOnSurface ColorRoles) deferred -- the tooltip uses the existing SurfaceContainerHighest elevated surface (a valid M3 rich-tooltip tone); the inverse roles are a separate palette-completeness axis, not this widget's debt",
+        "Cross-widget 'attach a tooltip to an arbitrary existing widget' coupling primitive deferred -- hello-tooltip's anchor IS the TooltipExternal; a generic anchor->overlay back-channel waits for a 2nd consumer (abstraction-needs-second-consumer)",
+        "M3 4dp tooltip offset deferred -- gap 0 (contiguous) is required for the shared-tag hoverable contract; a visible gap needs a transparent hit-bridge primitive",
+        "overlay-dismiss substrate (menu click-outside + popover + combobox) still 1-consumer -- Tooltip dismisses via pointer-leave/blur/Escape, not click-outside, so it is not the clean 2nd consumer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

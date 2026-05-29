@@ -441,6 +441,20 @@ pub enum DeferredInput {
         to_y: f64,
         steps: u32,
     },
+    /// R695 §5.49 §5.35 — `scene/hover` injection. The embedder applies
+    /// a single `cursor_moved(MOUSE, x, y)` and nothing else, so the
+    /// `InputRouter` re-resolves its hover target and fires the
+    /// synthetic `PointerEnter` / `PointerLeave` arc on a tag
+    /// transition — exactly the winit `WindowEvent::CursorMoved` flow,
+    /// minus any press. The pointer-position-only peer to [`Click`]
+    /// (which adds press/release) for the hover-driven widgets a real
+    /// mouse cursor exercises incidentally on every button but which a
+    /// `Tooltip` (R695) makes its **primary** trigger. Previously the
+    /// AI client could observe hover state only as a side effect of
+    /// `scene/click`'s leading `cursor_moved` (which then pressed);
+    /// `scene/hover` exposes the bare hover transition (§2 invariant #2
+    /// — every input a human makes must have an RPC peer).
+    Hover { x: f64, y: f64 },
 }
 
 impl<'a> DispatchContext<'a> {
@@ -774,6 +788,22 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
                 handle_scene_click(inbox, producer, last_paint_layout, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/hover" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = paint_producer.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_hover(inbox, producer, last_paint_layout, request.params.as_ref()),
                 HandlerKind::Mutate,
             )
         }
@@ -1208,6 +1238,31 @@ where
     let params = require_params(params)?;
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
     inbox.push(DeferredInput::Click { x, y });
+    Ok(Value::Null)
+}
+
+/// R695 §5.49 §5.35 — `scene/hover` handler: mirror of
+/// [`handle_scene_click`]'s `at` / `path` selector taxonomy but
+/// enqueues a single [`DeferredInput::Hover`] (cursor move, no press).
+/// Drives the hover-resolution arc the `Tooltip` (R695) uses as its
+/// primary trigger; returns `null` on success, after which the AI
+/// client reads the resulting state via `scene/query` /
+/// `scene/snapshot`.
+fn handle_scene_hover<F>(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    paint_producer: Option<&mut F>,
+    last_paint_layout: Option<&LayoutNode>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let params = require_params(params)?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
+    inbox.push(DeferredInput::Hover { x, y });
     Ok(Value::Null)
 }
 

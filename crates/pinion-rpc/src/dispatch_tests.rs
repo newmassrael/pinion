@@ -691,6 +691,54 @@ fn scene_click_v1_enqueues_click_at_coordinate() {
     assert!((y - 80.0).abs() < f64::EPSILON);
 }
 
+// ---- R695 §5.49 §5.35 — scene/hover (DeferredInput::Hover) ----
+
+#[test]
+fn scene_hover_enqueues_hover_at_coordinate() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/hover","params":{"at":{"x":64.0,"y":48.0}},"id":91}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::Hover { x, y } = inbox[0] else {
+        panic!("expected Hover variant, got {:?}", inbox[0]);
+    };
+    assert!((x - 64.0).abs() < f64::EPSILON);
+    assert!((y - 48.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn scene_hover_without_inbox_is_unavailable() {
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/hover","params":{"at":{"x":0.0,"y":0.0}},"id":92}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+    assert!(data.contains("InputInjectionUnavailable"), "data: {data:?}");
+}
+
+#[test]
+fn scene_hover_missing_at_is_invalid() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/hover","params":{},"id":93}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.unwrap();
+    assert_eq!(err.code, -32602);
+    assert!(inbox.is_empty());
+}
+
 #[test]
 fn scene_click_v1_without_inbox_is_unavailable() {
     let mut scene = counted_scene(0);

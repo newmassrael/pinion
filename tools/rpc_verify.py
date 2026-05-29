@@ -404,6 +404,35 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params = {"path": path}
         self.request("scene/click", params)
 
+    def hover(
+        self,
+        at: Optional[tuple[float, float]] = None,
+        *,
+        path: Optional[str] = None,
+    ) -> None:
+        """`scene/hover` typed wrapper (R695 §5.35 §5.49).
+
+        Moves the pointer to `(x, y)` (or the centre of the node tagged
+        `path`) with no press — the bare hover transition. The shell
+        drains the deferred-input inbox after this returns, applying a
+        single `cursor_moved` so the `InputRouter` re-resolves its hover
+        target and fires the synthetic `PointerEnter` / `PointerLeave`
+        arc (the Tooltip show/hide trigger). The pointer-position-only
+        peer to `click()`; follow up with `query(...)` or
+        `snapshot(...)` to observe the resulting hover-driven state.
+
+        Selector taxonomy mirrors `click()` — supply exactly one of
+        `at = (x, y)` or `path = "<tag>"`.
+        """
+        if (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        if at is not None:
+            params: dict[str, Any] = {"at": {"x": float(at[0]), "y": float(at[1])}}
+        else:
+            assert path is not None
+            params = {"path": path}
+        self.request("scene/hover", params)
+
     def double_click(
         self,
         at: Optional[tuple[float, float]] = None,

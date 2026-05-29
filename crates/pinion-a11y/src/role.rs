@@ -219,6 +219,19 @@ pub enum AriaRole {
     /// [`Self::Toolbar`] / [`Self::Tree`]): the dialog itself is a
     /// grouping node; its action buttons are child [`Self::Button`]s.
     Dialog,
+    /// R695 §5.40 — WAI-ARIA 1.2 §3.7 `tooltip` role. A contextual
+    /// descriptive popup shown on hover / keyboard focus of a trigger
+    /// element (WCAG 2.2 SC 1.4.13 "Content on Hover or Focus"). The
+    /// tooltip carries **no interactive semantics** — it is a passive
+    /// label region the trigger references through
+    /// [`AccessNode::with_described_by`](crate::AccessNode::with_described_by)
+    /// (the `aria-describedby` relation), so AT announces the tooltip
+    /// text as the trigger's description rather than as a focusable
+    /// node. Distinct from [`Self::Dialog`] (a focus container) and
+    /// [`Self::Menu`] (a command popup): a tooltip never receives focus
+    /// and owns no keyboard model of its own — `Escape` dismisses it
+    /// while focus stays on the trigger.
+    Tooltip,
     Generic,
 }
 
@@ -252,6 +265,7 @@ impl AriaRole {
             Self::MenuItem => Role::MenuItem,
             Self::Toolbar => Role::Toolbar,
             Self::Dialog => Role::Dialog,
+            Self::Tooltip => Role::Tooltip,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -286,6 +300,7 @@ impl AriaRole {
             Self::MenuItem => "menuitem",
             Self::Toolbar => "toolbar",
             Self::Dialog => "dialog",
+            Self::Tooltip => "tooltip",
             Self::Generic => "generic",
         }
     }
@@ -434,5 +449,13 @@ mod tests {
     #[test]
     fn toolbar_aria_name_matches_wai_aria_literal() {
         assert_eq!(AriaRole::Toolbar.aria_name(), "toolbar");
+    }
+
+    // R695 §5.40 — Tooltip role lowering + name.
+
+    #[test]
+    fn r695_tooltip_lowers_to_accesskit_tooltip() {
+        assert_eq!(AriaRole::Tooltip.to_accesskit(), Role::Tooltip);
+        assert_eq!(AriaRole::Tooltip.aria_name(), "tooltip");
     }
 }
