@@ -27,6 +27,7 @@ members = [
     "examples/hello-toggle-tui",
     "examples/hello-checkbox",
     "examples/hello-disclosure",
+    "examples/hello-accordion",
     "examples/hello-radio",
     "examples/hello-radio-group",
     "examples/hello-listbox",

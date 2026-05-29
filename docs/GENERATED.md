@@ -14212,6 +14212,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R697 — R697 — multi-open WAI-ARIA APG Accordion as the 2nd consumer of the R696 Disclosure substrate: N DisclosureExternal sections composed through create_extra_externals with per-header Tab stops + arrow-roving focus, zero new core widget.
+
+**Changes**:
+- examples/hello-accordion (new crate) — N=3 DisclosureExternal sections via WidgetCore::create_extra_externals (homogeneous-cluster path, same as settings-panel's 6 CheckboxExternal); section 0 = create_external, sections 1-2 = extras, each header tagged accordion_sec_{i}; InputRouter depth-first walk routes per-header clicks independently.
+- Multi-open is the default (APG): toggling one section never collapses another — no cross-section coordination, no reducer, no new substrate. Single-open exclusive mode = framework-owned mutual exclusion in the RadioGroup mould, deferred to a 2nd consumer per [[abstraction-needs-second-consumer]].
+- Keyboard model: focusable_tags() enumerates all N headers (each its own Tab stop, unlike RadioGroup's single-tab-stop roving); apply_key routes Space/Enter to KeyboardActivate the focused section and ArrowDown/Up (wrapping) + Home/End to move focus between headers via the R664 pinion_core::focus_request mailbox (drained post-dispatch through FocusManager::focus_set in both the winit and RPC arcs).
+- WidgetA11y::access_node emits N flat AriaRole::Button nodes, each with aria-expanded (R696 AccessNode::with_expanded), interaction state flags, and focused marking; accessible names come from name-from-contents enrichment of each header summary (no parent container — WAI-ARIA defines no accordion role).
+- Reuses pinion_widget_paint::disclosure::view_disclosure (R696) bit-identically per section — no paint change; the panel body is present in the scene only while its section is expanded.
+- tools/demos/r697_accordion.py — RPC E2E proving multi-open independence, per-section click/invoke/intervene, Space+Enter focused-section toggle, and ArrowDown/Up/Home/End focus roving via focus/get.
+- Cargo.toml workspace member added; purely additive round (no existing crate edited).
+
+
+
+**Verification**:
+- cargo test --workspace -j2: 0 failures (hello-accordion 15 unit tests: composition/multi-open/focus-roving/a11y; full workspace green).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean under -D pedantic.
+- tools/demos/r697_accordion.py: PASS (>40 assertions) — initial collapsed, click independence, simultaneous multi-open of all three, per-section intervene/invoke, Space+Enter toggle of focused section only, ArrowDown/Up wrap + Home/End focus moves observed via focus/get, bad-slot negative.
+- Full demo sweep: 54/54 PASS (no regression; change is additive).
+- Mnemosyne: validate_workspace T1 orphan +0, round-trip 1/1, GENERATED.md sync.
+
+
+
+**Impact**: §5.16, §5.38, §5.39, §5.40, §5.45, §5.50
+
+
+**Carry forward**:
+- Single-open (exclusive) accordion variant — framework-owned single-expand coordination (RadioGroup mould); lands with a 2nd consumer or explicit need.
+- Visual focus ring on accordion headers — inherits the R694 composite-paint focus-ring carry (view_disclosure draws no ring); focus is AT-reported (access_node focused flag) + RPC-verifiable (focus/get) but not yet visually indicated. Lands uniformly when the focus-ring substrate round lights up the catalog.
+- Content height-collapse animation — instant show/hide today; spring height needs the measured-content clip substrate (Phase B polish), shared with the R696 disclosure carry.
+- widget_state_name! adoption sweep (R696.A carry) still open — checkbox/radio/button/slider External introspect still use local *_state_name fns; Disclosure (hence accordion) is the only fully-routed widget.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
