@@ -14322,6 +14322,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R700 — R700 DisclosureGroup single-expand coordinator (substrate-first; single-open accordion mutual-exclusion, RadioGroup mould)
+
+**Changes**:
+- New crates/pinion-core/src/widgets/disclosure_group.rs: `DisclosureGroup` framework-owned single-expand mutual-exclusion coordinator over N Disclosure sections (R47-class: 'collapse the open section when another opens' is framework-owned, not application). Mirrors RadioGroup (R51.15) structure but simpler — single `expanded: Option<usize>`, NO roving `focused_index` (WAI-ARIA APG accordion gives each header its own Tab stop; arrow keys move focus without expanding, so that focus model stays in the binding's focusable_tags + focus_request plumbing per R697)
+- send(i, ev): drives section i; on collapsed->expanded edge collapses all siblings via Disclosure::set_expanded(false) + expanded=Some(i); on expanded->collapsed edge expanded=None. set_expanded(Option<usize>) model-driven restore (slot-assign, no intent). WidgetTransition::detect emits `expanded` intent (Int index, or Null on collapse-to-none — reachable via send re-activation, distinct from RadioGroup where clear needs set_selected)
+- DisclosureGroupExternal adapter on the §5.12 RPC surface (mirrors RadioGroupExternal): query count/expanded_index/state.<i>/expanded.<i>; intervene expanded_index (Int/Null, OutOfRange/TypeMismatch/ReadOnly); invoke send '<index>:<EventName>' via the R660 parse_send_payload composite substrate + DisclosureEvent::from_name (R699). Registered in widgets/mod.rs
+- Substrate-first round (RadioGroup R51.15 precedent: logical coordinator lands before its Scene consumers). The single-open accordion GUI consumer + RPC demo are R701 (hello-radio-group is the wiring template; tracked in SEED). Clears the R697 'Accordion single-open variant' carry's substrate half
+
+
+
+**Verification**:
+- 12 new unit tests covering the full §5.12 RPC contract: single-open enforcement (open switch collapses previous, re-activate collapses to none) through both the typed API and invoke('send','<i>:<Event>'); set_expanded model-driven + out-of-range panic; expanded-intent emission on open/switch/close (Int + Null) and silence on idempotent; query/intervene/invoke happy + every rejection path (OutOfRange/TypeMismatch/ReadOnly/UnknownPath/Rejected incl. internal DisclosureActivate + malformed payload); schema advertises all paths
+- cargo test --workspace -j2: 73 suites green, 0 failed (pinion-core now 1514 = 1502 + 12)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2: clean under -D pedantic
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- R701 = single-open accordion GUI consumer (hello-accordion-single, mirror hello-radio-group composite-tag wiring: single DisclosureGroupExternal at PRIMARY_TAG, view reads per-section state via query, rows invoke send '<i>:<Event>', per-header Tab stops + arrow-roving via focus_request as R697) + RPC demo >=30 assert. This is the visible-deliverable half deferred by the substrate-first split
+- menu/toolbar PointerEvent byte-identical dup still correctly deferred per Rule of Three (2 consumers); see R699 carry
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
