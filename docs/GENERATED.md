@@ -14375,6 +14375,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R702 — R702 hello-drawer — modal navigation Drawer, the 2nd consumer of the R693 modal focus-trap substrate, with edge-anchored view_drawer chrome + scrim-click light-dismiss (clears the R693 light-dismiss carry).
+
+**Changes**:
+- New paint helper crates/pinion-widget-paint/src/drawer.rs: DrawerStyle (M3 nav-drawer tokens + DrawerEdge Left/Right folded into the carrier to keep view_drawer within the 7-arg view_* convention) + view_drawer(scrim_tag, panel_tag, title, items, viewport, theme, style) composing a full-window scrim with a full-height edge-anchored panel. Mirrors view_dialog but edge-anchors instead of centring. Registered mod drawer in lib.rs. 9 unit tests.
+- New example crate examples/hello-drawer (main.rs + Cargo.toml + build.rs + app.pinion.xml HelloDrawerRenderer); registered in workspace members after hello-dialog. Mirrors hello-dialog's modal pattern: trigger ButtonExternal (primary) + N=3 nav-item ButtonExternals + a click-only scrim ButtonExternal (extras); reactive drawer_open + drawer_active Signals via Owner::cache; modal_scope_request::open(nav_members)/close() drives the R693 focus trap; reducer maps <tag>.click intents to the signals + modal lifecycle. 13 unit tests.
+- Scrim-click light-dismiss (the R693 carry this round clears): the scrim is registered as a real ButtonExternal at drawer_scrim, so a backdrop click emits drawer_scrim.click and the reducer close_drawer()s without navigating. Reuses ButtonExternal rather than minting a ScrimExternal per [[abstraction-needs-second-consumer]] (the binding omits the scrim from the a11y tree, paints it flat, never lists it in focusable_tags). Dialog keeps the WAI-ARIA modal default (Esc-only) by not binding an External to its scrim; the mechanism is now opt-in per widget.
+- Three dismissal paths converge on the modal substrate: scrim tap (drawer_scrim.click), Escape (apply_key while trap active), and selecting a destination (drawer_item_<i>.click sets active + closes, the modal nav-drawer convention). Per-header focus trap via modal scope (nav items dynamic-focusable, only the trigger is a static focusable_tag); active destination reflected in a tagged drawer_status TextNode (RPC-readable). WidgetA11y: closed = trigger Button; open = aria-modal Dialog owning N Button children (scrim + trigger omitted), names enriched from paint.
+- New RPC demo tools/demos/r702_drawer.py (39 assertions): open/close, scrim+panel+items paint, auto-focus first item, focus/next-prev Tab-trap cycle+wrap, focus/set trap confinement (trigger rejected), scrim LIGHT-DISMISS (closes without navigating + focus restored), selection-navigates-and-closes, Escape-without-navigating, keyboard Enter activate, unknown-tag focus/set reject. Corrects the SEED premise: a modal drawer's scrim-dismiss is the R693 light-dismiss mechanism (scrim External), NOT the non-modal menu click-outside (R691) which stays deferred for a no-scrim consumer.
+
+
+
+**Verification**:
+- cargo test --workspace -j2: 75 suites green (+1 hello-drawer example with 13 unit tests; pinion-widget-paint +9 drawer tests; core unchanged).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean (view_drawer kept to 7 args by folding DrawerEdge into DrawerStyle).
+- tools/demos/r702_drawer.py PASS (39 assertions, 2.87s); tools/demos/r693_dialog.py modal-substrate regression PASS (2.89s).
+
+
+
+**Impact**: §5.16, §5.39, §5.40
+
+
+**Carry forward**:
+- R693 light-dismiss carry CLEARED for the scrim-External mechanism (drawer opts in; dialog deliberately opts out, WAI-ARIA modal default). The non-modal menu click-outside (R691) stays deferred: it needs global click-outside detection with NO scrim blocker (different substrate); awaits a no-scrim 2nd consumer (Popover/Combobox) per [[abstraction-needs-second-consumer]].
+- Drawer slide-in animation deferred (instant show/hide today); the spring-position axis lands with the shared measured-content / animation polish round (R696 disclosure height-collapse carry shares it).
+- Standard (non-modal, permanent) drawer variant deferred: no scrim, no focus-trap, stays docked; a 2nd consumer (IDE side panel) would justify the split. Current = modal nav drawer only.
+- Phase B widget-catalog breadth continues R703+: Table (Model/View + virtualization, substrate-first or documented row-limit), DatePicker (calendar grid + date types, zero substrate today), ColorPicker (2D pad + HSV math).
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

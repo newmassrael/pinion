@@ -81,6 +81,7 @@ pub mod devtools;
 pub mod disclosure;
 pub mod dialog;
 pub mod dock;
+pub mod drawer;
 pub mod menu;
 pub mod scrollbar;
 pub mod splitter;

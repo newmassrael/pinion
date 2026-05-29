@@ -1,0 +1,32 @@
+[package]
+name = "hello-drawer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R702 §5.16 §5.39 §5.40 Drawer — modal navigation drawer (side sheet); 2nd consumer of the R693 modal focus-trap substrate with edge-anchored view_drawer chrome + scrim-click light-dismiss (clears the R693 light-dismiss carry)"
+publish = false
+
+[[bin]]
+name = "hello-drawer"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R702 §5.50 — view_drawer chrome + view_button item rendering.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
